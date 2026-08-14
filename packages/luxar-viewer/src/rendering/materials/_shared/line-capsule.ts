@@ -42,7 +42,7 @@
  * max(mine, partner). For congruent legs at a turn of 120° or less the
  * congruence gate (`CAPSULE_JOINT_DEFICIT_GATE`) keeps the packet empty and
  * the cut is an exact zero-double-count partition — the same domain
- * partition the volumetric primitive integrates per ray; past 120° even
+ * partition the deleted volumetric primitive integrated per ray; past 120° even
  * congruent legs need a live packet, since the bisector then cuts each rod
  * lengthwise (#1501, and #1495 below the width gate). Where the partner tapers away
  * or its apparent radius diverges under perspective, the deficit term
@@ -50,9 +50,10 @@
  * vertex's disc keeps the half a thin neighbour cannot render). The
  * partner's field is rebuilt per fragment from the cut varying's packed
  * radius gradient + projected length and the shared-vertex radius
- * (`vREnd`, #1494), with the far cap closing the rod (#1490); the stencil
- * reserves the full disc when a packet exists, the deficit being bounded
- * by my own profile (#1488). The partner's far endpoint is
+ * (the packed `vPack.z` lane, unpacked as `pkR`, #1494), with the far cap
+ * closing the rod (#1490); the stencil reserves the full disc when a
+ * packet exists, the deficit being bounded by my own profile (#1488).
+ * The partner's far endpoint is
  * near-plane-clipped toward the joint vertex before projecting (a
  * behind-eye projection flips and poisons the cut normal). A CPU model of
  * this composition lives at the bottom of this file; the unit sweep
@@ -166,8 +167,13 @@ export function capsuleProfile(p: number, sharpKnob = 0.5): number {
  * 1 px AA ramp, the deficit rule with the packed gradient/length and
  * the shared-vertex radius). Exists for the numeric composition test:
  * the two legs' rendered sum must track max(mine, partner) — the three
- * #1487-review defects (#1494/#1488/#1490) were all invisible to
- * source-substring pins and all visible to this sweep.
+ * #1487-review defects (#1494/#1488/#1490) were all visible to this
+ * sweep. #1494 and #1490 now also have source locks over the four shader
+ * surfaces (`tests/unit/rendering/materials/line/capsule-partner-radius.test.ts`
+ * and `tests/unit/rendering/materials/line/capsule-joint-packet-source-lock.test.ts`),
+ * which this model cannot provide: it binds only itself. #1488 has
+ * no comparable cross-surface lock (only a single GLSL-only reach pin
+ * in `line-capsule.test.ts` itself), so for it this sweep is it.
  *
  * `vFade` is modelled by HALF: its `widthScale` factor
  * (`capsuleLegWidthScale`) is carried, because a leg thinner than the AA

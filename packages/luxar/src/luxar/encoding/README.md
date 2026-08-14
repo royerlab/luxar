@@ -17,13 +17,14 @@ Encode arrays for storage in 3 simple steps:
 
 ```python
 from luxar.encoding import ArrayEncoder, SemanticType, EncodingMode
-import zarr
 import numpy as np
+from luxar._zarr_compat import open_group
 
 # 1. Create encoder
 encoder = ArrayEncoder()
-store = zarr.DirectoryStore("output.zarr")
-root = zarr.group(store=store)
+# Through the facade: Luxar writes zarr FORMAT 2 from zarr-python 3, and a bare
+# `zarr.group()` would create a format-3 store (`zarr.DirectoryStore` is gone).
+root = open_group("output.zarr", mode="w")
 
 # 2. Encode positions (automatic optimization!)
 positions = np.random.randn(1000, 3).astype(np.float32)
@@ -123,15 +124,14 @@ Unified encoding system with automatic deduplication and intelligent encoding se
 **Usage Example:**
 ```python
 from luxar.encoding import ArrayEncoder, SemanticType, EncodingMode
-import zarr
 import numpy as np
+from luxar._zarr_compat import open_group
 
 # Create encoder
 encoder = ArrayEncoder()
 
-# Create zarr group
-store = zarr.DirectoryStore("output.zarr")
-root = zarr.group(store=store)
+# Create zarr group (format 2, via the compatibility facade)
+root = open_group("output.zarr", mode="w")
 
 # Encode positions (COORDINATE semantic type)
 positions = np.random.randn(1000, 3).astype(np.float32)

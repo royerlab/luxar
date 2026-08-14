@@ -11,6 +11,12 @@
 
 import * as THREE from 'three';
 import { requireWebGLSources } from '../../../../rendering/materials/_shared/shader-source';
+import {
+  elementTextureWidthDefines,
+  LINE_TEXTURE_LAYOUT,
+  POINT_TEXTURE_LAYOUT,
+  SPLAT_TEXTURE_LAYOUT,
+} from '../../../../rendering/element-texture-layout';
 import { buildDefaultCamera } from './shared';
 // Intentional module cycle: `index.ts` assembles SHADER_REGISTRY from the
 // family modules and re-exports these executors. The registry binding is
@@ -35,9 +41,10 @@ export function renderGLSL(shaderName: string): Uint8Array {
   // for any shader currently in the registry).
   const glsl = requireWebGLSources(entry.source);
   const uniforms = entry.buildUniforms();
-  // Build the ShaderMaterial. We pass `defines` only when the
-  // registry entry supplies it — Three.js warns "parameter 'defines'
-  // has value of undefined" otherwise.
+  // Build the ShaderMaterial. `defines` is always an object (never
+  // undefined — Three.js warns "parameter 'defines' has value of
+  // undefined"); it is assembled below from the element-texture width
+  // defines plus whatever the registry entry supplies.
   const materialParams: THREE.ShaderMaterialParameters = {
     vertexShader: glsl.vertex,
     fragmentShader: glsl.fragment,
@@ -50,9 +57,29 @@ export function renderGLSL(shaderName: string): Uint8Array {
     depthWrite: entry.depthCompete ?? false,
     transparent: false,
   };
-  if (entry.buildDefines) {
-    materialParams.defines = entry.buildDefines();
+  // Element-texture width defines: production materials stamp their
+  // own layout's define at construction and re-stamp it at texture
+  // bind; this harness compiles the raw sources, so inject all three
+  // unconditionally (an unused define is inert). When the fixture
+  // supplies its own element texture, its width is the authority —
+  // the multirow/sorted-permuted sentinels deliberately use tiny
+  // custom-width textures to pin the row-stride addressing.
+  const widthDefines = elementTextureWidthDefines();
+  for (const [uniformName, layout] of [
+    ['uLineTex', LINE_TEXTURE_LAYOUT],
+    ['uPointTex', POINT_TEXTURE_LAYOUT],
+    ['uSplatTex', SPLAT_TEXTURE_LAYOUT],
+  ] as const) {
+    const tex = uniforms[uniformName]?.value as { image?: { width?: number } } | undefined;
+    const width = tex?.image?.width;
+    if (typeof width === 'number' && width > 0) {
+      widthDefines[layout.widthDefine] = String(width);
+    }
   }
+  materialParams.defines = {
+    ...widthDefines,
+    ...(entry.buildDefines ? entry.buildDefines() : {}),
+  };
   if (entry.vertexColors) {
     materialParams.vertexColors = true;
   }
@@ -134,7 +161,7 @@ export async function renderTSL(
   // WebGL paths', so the flip is applied before returning — both modes
   // hand back the same bottom-up row convention and compare directly
   // against renderGLSL (verified 2026-08 on Apple Metal 3, where every
-  // line-volprim-* fixture matched its GLSL render EXACTLY — mean-covered
+  // line-primitive fixture matched its GLSL render EXACTLY — mean-covered
   // diff 0.000).
   if (opts.native && !('gpu' in navigator)) {
     throw new Error('native WebGPU requested but navigator.gpu is unavailable');

@@ -6,19 +6,58 @@ before every test in the package. Tests using `np.random.*` (without an
 explicit `default_rng(seed)`) inherit determinism for free. Tests that
 already create their own seeded `default_rng` are unaffected.
 
-Also holds a couple of small cross-language-constant-lock helpers
-(``find_repo_relative_file`` / ``read_ts_number_const``) shared by the
-handful of Python tests that read a numeric constant straight out of a
-TypeScript source file rather than trust a prose comment to stay in sync.
+Also pins zarr's ambient default format to 2 for the whole session (see
+``_zarr_format_2_by_default``), and holds a couple of small
+cross-language-constant-lock helpers (``find_repo_relative_file`` /
+``read_ts_number_const``) shared by the handful of Python tests that read a
+numeric constant straight out of a TypeScript source file rather than trust a
+prose comment to stay in sync.
 """
 
 from __future__ import annotations
 
 import re
+from collections.abc import Iterator
 from pathlib import Path
 
 import numpy as np
 import pytest
+import zarr
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _zarr_format_2_by_default() -> Iterator[None]:
+    """Make bare ``zarr.group()`` / ``zarr.open_group(mode="w")`` write format 2.
+
+    Luxar runs on zarr-python 3 but WRITES zarr format 2 (see
+    :mod:`luxar._zarr_compat`). zarr 3's own default is format 3, so ~700 test
+    call sites that construct a store directly — rather than through Luxar's
+    writers — would silently produce format-3 fixtures. Those then fail in
+    confusing ways: ``consolidate`` puts ``consolidated_metadata`` inside
+    ``zarr.json`` instead of emitting a ``.zmetadata`` document, so Luxar's
+    "``.zmetadata`` means the save completed" sentinel reports the store as
+    incomplete, and any assertion on ``.zarray`` / ``.zattrs`` finds nothing.
+
+    A fixture is the right lever because a test fixture SHOULD look like real
+    Luxar output. Crucially, this cannot paper over a production regression:
+    :mod:`luxar._zarr_compat` passes ``zarr_format`` explicitly and never reads
+    this config, and
+    ``tests/test_zarr_compat.py::test_open_group_writes_v2_even_when_the_global_default_is_3``
+    pins exactly that independence by flipping the default to 3 and asserting the
+    facade still writes 2.
+
+    KNOWN LIMIT — it covers this PROCESS only. Anything that writes a store from a
+    subprocess, or from a script run outside pytest, gets zarr's own default
+    instead. That is not hypothetical: it is exactly how
+    ``packages/luxar-viewer/tests/fixtures/generate_test_data.py`` came to emit
+    two format-3 fixtures, since it is a standalone script rather than a test. Any
+    such writer must go through :mod:`luxar._zarr_compat` or pass ``zarr_format=``
+    itself, which
+    ``test_zarr_compat.py::test_no_writer_creates_a_store_without_pinning_the_format``
+    enforces across the package, the scripts, the examples and the generators.
+    """
+    with zarr.config.set({"default_zarr_format": 2}):
+        yield
 
 
 @pytest.fixture(autouse=True)

@@ -89,7 +89,7 @@ def load_3d_chimera() -> np.ndarray:
             mapper = fsspec.get_mapper(ZARR_URL)
             try:
                 store = zarr.open_group(mapper, mode="r")
-            except (zarr.errors.PathNotFoundError, zarr.errors.GroupNotFoundError):
+            except FileNotFoundError:
                 store = zarr.open_array(mapper, mode="r")
 
             data = store["0"]

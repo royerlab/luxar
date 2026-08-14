@@ -58,6 +58,7 @@ from typing import (
     List,
     Optional,
     Sequence,
+    Tuple,
     Union,
 )
 
@@ -188,6 +189,40 @@ def serialized_bsp_leaf_labels(node: Dict[str, Any]) -> List[int]:
     return serialized_bsp_leaf_labels(node["left"]) + serialized_bsp_leaf_labels(
         node["right"]
     )
+
+
+def serialized_bsp_leaf_cells(
+    node: Dict[str, Any], ndim: int
+) -> Dict[int, List[Tuple[float, float]]]:
+    """Each leaf's axis-aligned CELL: the region the splits above it carve out.
+
+    Returns ``{part_label: [(low, high)] * ndim}``, with ``-inf`` / ``+inf`` on
+    sides no split bounds — the outer faces of the root box are open, since a BSP
+    records cuts, not extents. Callers clamp those to their own domain.
+
+    This is the tile's true boundary, which is NOT the same as the hull of the
+    splats it happens to contain: a splat sits somewhere inside its cell, so the
+    hull is strictly tighter and using it would crop away signal the tile is
+    responsible for. Only axes below ``min(3, ndim)`` are ever split
+    (:func:`spatial_bsp_tree`), so higher dims come back unbounded.
+    """
+    cells: Dict[int, List[Tuple[float, float]]] = {}
+
+    def walk(n: Dict[str, Any], box: List[Tuple[float, float]]) -> None:
+        if "part" in n:
+            cells[int(n["part"])] = list(box)
+            return
+        axis, split = int(n["axis"]), float(n["split"])
+        low, high = box[axis]
+        left = list(box)
+        left[axis] = (low, min(high, split))
+        right = list(box)
+        right[axis] = (max(low, split), high)
+        walk(n["left"], left)
+        walk(n["right"], right)
+
+    walk(node, [(float("-inf"), float("inf"))] * int(ndim))
+    return cells
 
 
 def prune_serialized_bsp_tree(

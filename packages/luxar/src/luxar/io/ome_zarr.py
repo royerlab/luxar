@@ -94,7 +94,11 @@ def discover_ome_zarr_shape(
     """
     import zarr
 
-    store = zarr.open(str(path), mode="r")
+    from luxar._zarr_compat import open_store
+
+    # See the note in `luxar.io.volume`: zarr 3 no longer sniffs a `.zip` suffix,
+    # so the ZipStore dispatch has to be explicit or `.zarr.zip` inputs raise.
+    store = zarr.open(store=open_store(path, mode="r"), mode="r")
 
     # Navigate to the group/array
     if isinstance(store, zarr.Array):

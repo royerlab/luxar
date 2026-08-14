@@ -4,8 +4,8 @@
  * premultiply, volumetric emission–absorption, colormap LUT,
  * behind-camera + ortho-near culling, sorted-index permutation) plus
  * the line-pick counterparts + multi-row, cap-suppression, clipping-remap,
- * and exact-near-plane boundary variants, plus the volumetric-primitive
- * (`line-volprim-*`) family, visual and pick alike (hardcoded entry
+ * and exact-near-plane boundary variants, plus the capsule-primitive
+ * (`line-capsule-*`) family, visual and pick alike (hardcoded entry
  * counts drift — count `Object.keys(LINE_SHADERS)` when it matters).
  *
  * @module tests/e2e/harnesses/tsl-harness/lines
@@ -13,8 +13,6 @@
 
 import * as THREE from 'three';
 import { LINE_SOURCE } from '../../../../rendering/materials/line/shader-glsl';
-import { VOLUMETRIC_LINE_SOURCE } from '../../../../rendering/materials/line/shader-glsl-volumetric';
-import { volumetricLineWebGPUFactory } from '../../../../rendering/materials/line/shader-tsl-volumetric';
 import { CAPSULE_LINE_SOURCE } from '../../../../rendering/materials/line/shader-glsl-capsule';
 import { capsuleLineWebGPUFactory } from '../../../../rendering/materials/line/shader-tsl-capsule';
 import { CAPSULE_LINE_PICK_SOURCE } from '../../../../rendering/picking/line/shaders-capsule';
@@ -23,10 +21,7 @@ import {
   lineWebGPUFactory,
   buildLineTSLNodesFromUniforms,
 } from '../../../../rendering/materials/line/shader-tsl';
-import { getLineRadialLUTTexture } from '../../../../rendering/materials/_shared/line-integral-lut';
 import { LINE_PICK_SOURCE } from '../../../../rendering/picking/line/shaders';
-import { VOLUMETRIC_LINE_PICK_SOURCE } from '../../../../rendering/picking/line/shaders-volumetric';
-import { volumetricLinePickWebGPUFactory } from '../../../../rendering/picking/line/pick-volumetric.tsl';
 import {
   linePickWebGPUFactory,
   buildLinePickTSLNodesFromUniforms,
@@ -411,26 +406,6 @@ function buildVisualLineUniforms(
   };
 }
 
-/**
- * {@link buildVisualLineUniforms} plus the sharpness radial LUT (#1352
- * PR-4), for the `line-volprim-*` fixtures. Mirrors production, which binds
- * the LUT iff the material is the volumetric primitive (any blending mode;
- * peak graphs simply never sample it) — screen-space fixtures stay LUT-free
- * so the harness never constructs the texture on a path production would
- * not, and an accidental eager build on the screen-space path stays
- * observable rather than pre-hidden here.
- */
-function buildVolprimLineUniforms(
-  texture: THREE.DataTexture,
-  isOrtho: boolean,
-  nearCull = 0.01
-): Record<string, THREE.IUniform> {
-  return {
-    ...buildVisualLineUniforms(texture, isOrtho, nearCull),
-    uLineRadialLUT: { value: getLineRadialLUTTexture() },
-  };
-}
-
 function buildPickLineUniforms(
   texture: THREE.DataTexture,
   isOrtho: boolean,
@@ -708,124 +683,6 @@ function buildNearPlaneJoinTexelSource(): LineTexelSource {
 }
 
 /**
- * A 2-segment chain STRADDLING the perspective near plane (nearCull 0.35,
- * camera at world z = 1 looking −z): segment 0 runs end-on from camera-space
- * z = +0.6 (behind the eye) through the near plane to the shared vertex at
- * z = −0.6, where segment 1 branches off side-on. Segment 0 is therefore a
- * MIXED chain-end segment (soft cap behind the camera, bisector cut at the
- * joint) whose general-lane fragments have the near clip as their BINDING
- * lower bracket edge — the cap-as-plane / product code path that no other
- * fixture reaches (`line-volprim-nearclip` pins the structural-parallel
- * lane instead).
- */
-function buildStraddlingJoinTexelSource(): LineTexelSource {
-  // A FAT chain (width 1.2 → σ ≈ 0.79) whose soft start sits well BEHIND
-  // the eye (camera-space z = +0.9) and whose cut end lies deep in front
-  // (z = −1.8): geometry chosen by a CPU-reference sweep to maximize the
-  // pixel population where the near clip changes the true integral AND
-  // the near fade has released (their overlap is a design property, which
-  // made every thinner/closer variant of this fixture mutation-blind).
-  // Mutation-calibrated on this build: disabling the ξ-near tightening on
-  // one backend reads mean 12.2 / max 96; disabling the nearBinding
-  // selection reads max 119 and blanks the straddler outright (the
-  // black-hole class the cap-as-plane form exists to fix).
-  // INSTANCE ORDER is load-bearing under the harness's NoBlending: the
-  // straddling segment must be SLOT 1 (drawn last) or the side branch's
-  // fat, never-discarding footprint stomps the discriminating fragments
-  // (measured: with the order swapped, every mutation was invisible).
-  return {
-    startPositions: new Float32Array([0.15, 0.15, -0.8, 0.15, -0.1, 1.9]),
-    endPositions: new Float32Array([0.6, 0.29, -0.9, 0.15, 0.15, -0.8]),
-    startColors: new Float32Array([1, 0.5, 0.25, 1, 0.5, 0.25]),
-    endColors: new Float32Array([1, 0.5, 0.25, 1, 0.5, 0.25]),
-    startWidths: new Float32Array([0.8, 1.2]),
-    endWidths: new Float32Array([0.8, 1.2]),
-    startSharpness: new Float32Array([0.5, 0.5]),
-    endSharpness: new Float32Array([0.5, 0.5]),
-    segmentLengths: new Float32Array([0.4712, 2.7115]),
-    // slot 0 = the side branch: its START joins slot 1's END (code −4);
-    // slot 1 = the straddler: soft start, its END joins slot 0's START
-    // (code +1).
-    startJointCode: new Float32Array([-4, 0]),
-    endJointCode: new Float32Array([0, 1]),
-  };
-}
-
-/**
- * {@link buildJoinTexelSource} with every joint code replaced by the
- * free-end sentinel: identical geometry, no bisector cut. The control half
- * of the `line-volprim-peak-cut` / `-uncut` pair.
- */
-function buildFreeEndJoinTexelSource(): LineTexelSource {
-  const src = buildJoinTexelSource();
-  return {
-    ...src,
-    startJointCode: new Float32Array([0, 0]),
-    endJointCode: new Float32Array([0, 0]),
-  };
-}
-
-/**
- * One registry entry of the peak-lane bisector-cut pair: the V's texels in
- * the (2-row) uniform texture so the partner fetch resolves, but a mesh of
- * ONE instance so only the first leg renders. MAX blending + the peak
- * define, i.e. the lane under test.
- */
-function peakCutEntry(src: LineTexelSource): RegistryEntry {
-  return {
-    source: VOLUMETRIC_LINE_SOURCE,
-    buildUniforms: () => buildVolprimLineUniforms(buildJoinDataTexture(src), true),
-    buildDefines: () => ({ LUXAR_PEAK_PROJECTION: '', LUXAR_MAX_RGB_CONTRIBUTION: '' }),
-    buildTSLMaterial: (uniforms) => {
-      const m = volumetricLineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
-        blendingMode: 'max',
-        isOrtho: true,
-      }) as unknown as THREE.Material;
-      m.transparent = false;
-      m.blending = THREE.NoBlending;
-      return m;
-    },
-    buildMesh: (material) => {
-      const mesh = createInstancedLinesMesh({ ...src, segmentCount: 1 }, material);
-      mesh.frustumCulled = false;
-      return mesh;
-    },
-  };
-}
-
-/**
- * Non-uniform model scale for `line-volprim-joint-scaled`, chosen so the
- * composed WORLD geometry equals the unscaled joint while an object-space-
- * normalized partner direction comes out badly non-unit in camera space:
- * |MV·q̂_obj| = 1/√(a²/sx² + b²/sy²) for world direction (a, b), which for
- * this joint's (±0.894, −0.447) legs is 0.55 under (4, 0.25) — a 45%
- * length error that visibly skews the bisector normal and tanHalf. NOT
- * (2, 0.5): that pair is CONJUGATE to this exact geometry (the expression
- * above evaluates to 1.0) and left the pre-fix bug invisible (measured
- * mutation-blind before this scale was derived).
- */
-const JOIN_MODEL_SCALE: readonly [number, number, number] = [4, 0.25, 1];
-
-/** {@link buildJoinTexelSource} with positions pre-divided by {@link JOIN_MODEL_SCALE}. */
-function buildScaledJoinTexelSource(): LineTexelSource {
-  const src = buildJoinTexelSource();
-  const unscale = (arr: Float32Array) => {
-    const out = new Float32Array(arr.length);
-    for (let i = 0; i < arr.length; i += 3) {
-      out[i] = arr[i] / JOIN_MODEL_SCALE[0];
-      out[i + 1] = arr[i + 1] / JOIN_MODEL_SCALE[1];
-      out[i + 2] = arr[i + 2] / JOIN_MODEL_SCALE[2];
-    }
-    return out;
-  };
-  return {
-    ...src,
-    startPositions: unscale(src.startPositions),
-    endPositions: unscale(src.endPositions),
-  };
-}
-
-/**
  * SHARP-FOLD joint (#1352): two segments sharing a vertex with a ~150°
  * direction change. Every interior end renders its half of the joint
  * DISC (round cap partitioned at the bisector), so the wide variant
@@ -848,6 +705,138 @@ function buildFoldJoinTexelSource(width: number): LineTexelSource {
     // seg1's START joins seg0 (slot 0, shares its END ⇒ code −(slot+3) = −3).
     startJointCode: new Float32Array([0, -3]),
     endJointCode: new Float32Array([2, 0]),
+  };
+}
+
+/**
+ * SHORT-PARTNER joint (#1490): the first fixture in this suite that publishes
+ * a deficit packet whose partner ENDS INSIDE the joint disc — the regime where
+ * the fragment's far-cap term (`clamp(xp, 0, cut.w)` on the radius,
+ * `xp - cut.w` on the overshoot) is the only thing standing between the
+ * reconstructed partner rod and an unbounded one.
+ *
+ * Nothing else here reaches it. `line-capsule-joint` / `-fold` / `-fold-thin`
+ * / `-fold-mid` / `-pick-joint` all carry UNIFORM widths, so their packets
+ * (where they open at all) have gradient 0 and a partner far longer than the
+ * disc: `-fold`'s ql is ~28.8 px against a ~12 px radius, so `xp` never
+ * reaches `cut.w` and the far-cap term is inert. Deleting the far cap from all
+ * four capsule shader sources left the whole viewer unit suite green — the
+ * companion source lock
+ * `tests/unit/rendering/materials/line/capsule-joint-packet-source-lock.test.ts`
+ * closes that hole by text; this pair closes it by pixels. Mutation-proved
+ * both ways, over the 21 tests `-g "capsule"` selects (19 fixture variants
+ * plus 2 standalone checks): unbinding the rod in the VISUAL GLSL fragment
+ * alone fails `line-capsule-joint-short-partner` at 4.433 per-covered-pixel
+ * (bound 2.0) with the OTHER 20 still green, and the same edit to the PICK
+ * GLSL fragment alone fails `line-capsule-pick-joint-short-partner` at 2.715,
+ * again with the other 20 green.
+ *
+ * Geometry, every number derived at the harness's ortho mapping — the default
+ * `OrthographicCamera(-1, 1, 1, -1)` over a 64x64 target is 32 px per world
+ * unit, and the capsule pixel radius is
+ * `width x uOrthoLineScale(64) x CAPSULE_RADIUS_PER_QUAD_HALFWIDTH(0.6590102)`
+ * (offsets below are px from the viewport centre, where the joint sits):
+ *
+ *   seg 0 (the SHORT partner)  (0, 0) -> 0.08 x (cos60, sin60)   2.56 px long,
+ *                    12.653 px at the joint tapering to 8.435 px at its far end
+ *   seg 1 (the LONG leg)       (-0.5, 0) -> (0, 0)  16.00 px long, 12.653 px radius
+ *
+ * THE SEGMENT ORDER IS LOAD-BEARING — do not "tidy" it back to the natural
+ * short-after-long reading. The registry entries render with
+ * `THREE.NoBlending`, and for the VISUAL pair nothing ever populates the depth
+ * buffer, so the LAST-drawn instance simply overwrites and instance order is
+ * storage order. (The two backends get there differently, which is worth
+ * knowing: `depthCompete` gates only the GLSL `ShaderMaterial`, which is
+ * depth-test-OFF without it, while the TSL NodeMaterial takes max mode's
+ * blending state — depthTest true but depthWrite FALSE. Nothing writes depth
+ * either way, every fragment tests against the cleared 1.0 and passes, so both
+ * sides resolve last-drawn-wins. The pick pair is the opposite case: both
+ * backends write brightness-as-depth and the brighter fragment wins, which is
+ * why those two entries DO set `depthCompete`.) The only
+ * leg whose output the far-cap term changes is the LONG one (it is the leg
+ * that reconstructs a SHORT partner; seg 0's own packet has ql = 16 px, past
+ * its 12.653 px support, so its far cap is inert). Worse, the region where the
+ * two reconstructions differ lies inside the SHORT partner's own support by
+ * construction — at 6.0 px along the partner axis and 2 px off it the bounded
+ * long leg's deficit is 0 (it discards) while the unbounded one draws 0.33,
+ * and the short partner draws 0.605 there either way. So with the long leg
+ * authored FIRST the short partner overwrites the whole difference and the
+ * fixture is exactly vacuous — measured: the GLSL-visual-only unbounded
+ * mutation produced 0 differing pixels in that order. Authored LAST, the long
+ * leg's differing fragment is the one left in the framebuffer.
+ *
+ * Both packet gates open, and for different reasons — checked clause by
+ * clause against the vertex stages (`CAPSULE_JOINT_DEFICIT_GATE` = 0.02, and
+ * both ends clear the 4 px `CAPSULE_JOINT_PACKET_MIN_RADIUS_PX` width gate at
+ * rMax = 13.153):
+ *   - seg 1's END (rB = 12.653), the long leg — THE ONE THAT MATTERS: taper
+ *     |1 - 8.435/12.653| = 0.333 > 0.02 AND short partner 2.56 < 2 x 12.653 =
+ *     25.31. (Own-widening false: uniform, 12.653 does not exceed 12.906.
+ *     Sharp turn false: dot(q, u) = +0.500, and this end's clause is < -0.5.)
+ *   - seg 0's START (rA = 12.653), the short partner: short partner 16.00 <
+ *     25.31. (Taper 0: the long leg's far radius equals the joint radius.
+ *     Own-widening false: 8.435 does not exceed 12.906. Sharp turn false:
+ *     dot(q, u) = -0.500, and this end's clause is > 0.5.)
+ * Neither end is the degenerate near-hairpin fallback: nl = 1.7321 at both,
+ * far above the 1e-3 floor, and the two cut normals are exact negations OF
+ * EACH OTHER IN WORLD SPACE — +/-(0.8660, 0.5000) there. Each leg stores its
+ * own in ITS OWN (u, v) frame, where the two read nLoc = (+0.8660, +0.5) at
+ * seg 1's end and (-0.8660, +0.5) at seg 0's start; those two are NOT
+ * negations as printed, because the frames differ by the 60 deg turn.
+ *
+ * Why THIS partner and not a fatter one: the packed gradient at seg 1's end is
+ * (8.435 - 12.653) / 2.56 = -1.6475 px/px, so an UNBOUNDED rod keeps shrinking
+ * and hits the 1e-4 radius floor 7.68 px along the partner axis — still inside
+ * seg 1's 12.653 px joint disc. The partner term collapses to ~0 there and the
+ * deficit `max(mine - partner, 0)` returns the leg's FULL profile: sampled at
+ * the 4096 pixel centres through the CPU mirror, the unbounded composition
+ * exceeds max(mine, partner) by up to +0.529 of peak (74 of those centres
+ * differ by more than 0.02), while the bounded one tracks it to 1e-15. A
+ * partner WIDER at its far end (gradient > 0) renders identically either way —
+ * the unbounded rod only grows, the deficit floors at 0, and the fixture would
+ * be silently vacuous (measured: max difference exactly 0 at far width 0.45).
+ *
+ * Everything stays in frame. The profile has compact support at exactly the
+ * pixel radius, so the analytic reach from the joint is the long leg's far cap
+ * at 16.00 + 12.653 = 28.65 px (the short partner's is 2.56 + 8.435 = 11.00
+ * px), and the stencil quads extend to |x| = 29.15 / |y| = 13.15 px (the long
+ * leg) and |x| = 19.25 / |y| = 20.18 px (the short partner) — all inside the
+ * +/-32 px half-viewport.
+ *
+ * Codes follow compute_joint_codes, re-derived for THIS authoring order (the
+ * sign says which of the PARTNER's endpoints is the shared one, which is what
+ * `luxarPartnerFar` decodes back into `far = code > 0 ? pEnd : pStart`):
+ *   - seg 0's START meets seg 1's END, so it names slot 1 at that segment's
+ *     END: -(1 + 3) = -4. Decode: slot = int(4 + 0.5) - 3 = 1, code < 0 so
+ *     far = slot 1's pStart = (-0.5, 0) with width 0.3 — the long leg's free
+ *     end, 12.653 px. Correct.
+ *   - seg 1's END meets seg 0's START, so it names slot 0 at that segment's
+ *     START: +(0 + 1) = 1. Decode: slot = int(1 + 0.5) - 1 = 0, code > 0 so
+ *     far = slot 0's pEnd = 0.08 x (cos60, sin60) with width 0.2 — the short
+ *     partner's free end, 8.435 px. Correct.
+ * Both outer ends are free (0). Getting either code wrong is a quiet second
+ * kind of vacuity: `luxarPartnerFar` returns w = -1 for a non-interior code
+ * and no packet is built at all.
+ */
+function buildShortPartnerJoinTexelSource(): LineTexelSource {
+  // 60 deg from the LONG leg's direction: 0.08 x (cos 60, sin 60).
+  const partnerFar: readonly [number, number, number] = [0.04, 0.069282, 0];
+  return {
+    // Storage order IS draw order — see the ordering note above.
+    startPositions: new Float32Array([0, 0, 0, -0.5, 0, 0]),
+    endPositions: new Float32Array([...partnerFar, 0, 0, 0]),
+    startColors: new Float32Array([1, 1, 1, 1, 1, 1]),
+    endColors: new Float32Array([1, 1, 1, 1, 1, 1]),
+    // The shared vertex carries ONE width (0.3) on both segments, as a real
+    // polyline would; only the short partner's FAR end tapers, which is what
+    // makes the packed radius gradient non-zero.
+    startWidths: new Float32Array([0.3, 0.3]),
+    endWidths: new Float32Array([0.2, 0.3]),
+    startSharpness: new Float32Array([0.5, 0.5]),
+    endSharpness: new Float32Array([0.5, 0.5]),
+    segmentLengths: new Float32Array([0.08, 0.5]),
+    startJointCode: new Float32Array([-4, 0]),
+    endJointCode: new Float32Array([0, 1]),
   };
 }
 
@@ -1631,521 +1620,6 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
   },
 
   // ============================================================
-  // VOLUMETRIC LINE PRIMITIVE (#1352, ?linePrimitive=volumetric).
-  // `volprim` = the PRIMITIVE — distinct from the `line-volumetric-*`
-  // fixtures above, which exercise the volumetric BLENDING MODE on the
-  // screen-space quad. Value-level parity contract: the two backends
-  // share every constant through _shared/line-volumetric.ts and
-  // _shared/erf.ts, and the lane math is quadrature-validated in
-  // line-volumetric-integral.test.ts — these fixtures pin that the two
-  // CODE PATHS (GLSL strings vs TSL graph) evaluate it identically.
-  // NOTE for snapshot hygiene: entries are appended at the END of
-  // LINE_SHADERS (codegen snapshot order shifts shared-UBO layouts).
-  // ============================================================
-
-  // Side-on segment, additive: the σ-calibration anchor (core intensity
-  // must match the screen-space quad by construction) through the
-  // soft/soft erf-difference lane.
-  'line-volprim-sideon': {
-    source: VOLUMETRIC_LINE_SOURCE,
-    buildUniforms: () => buildVolprimLineUniforms(buildLineDataTexture(), true),
-    buildTSLMaterial: (uniforms) => {
-      const m = volumetricLineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
-        blendingMode: 'additive',
-        isOrtho: true,
-      }) as unknown as THREE.Material;
-      m.transparent = false;
-      m.blending = THREE.NoBlending;
-      return m;
-    },
-    buildMesh: buildLineInstancedMesh,
-  },
-  // SHARPNESS extremes under additive (#1352 PR-4): every fixture above
-  // rides the default knob 0.5 (β = 2, the LUT row that IS the old
-  // analytic radial), so these two are the only coverage of the LUT's
-  // OTHER rows. `sharp-hard` pins the knob ceiling (β = 16, near-tophat
-  // radial); `sharp-taper` interpolates the knob 0 → 1 ALONG the segment,
-  // driving the per-fragment `sharp` mix through the LUT's v-axis
-  // filtering on both backends at once. Wide so the profile shape spans
-  // many pixels instead of hiding inside edge AA.
-  'line-volprim-sharp-hard': {
-    source: VOLUMETRIC_LINE_SOURCE,
-    buildUniforms: () =>
-      buildVolprimLineUniforms(
-        buildLineDataTexture(undefined, undefined, undefined, undefined, {
-          startWidth: 0.3,
-          endWidth: 0.3,
-          startSharpness: 1.0,
-          endSharpness: 1.0,
-        }),
-        true
-      ),
-    buildTSLMaterial: (uniforms) => {
-      const m = volumetricLineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
-        blendingMode: 'additive',
-        isOrtho: true,
-      }) as unknown as THREE.Material;
-      m.transparent = false;
-      m.blending = THREE.NoBlending;
-      return m;
-    },
-    buildMesh: (m) =>
-      buildLineInstancedMesh(m, undefined, undefined, undefined, undefined, {
-        startWidth: 0.3,
-        endWidth: 0.3,
-        startSharpness: 1.0,
-        endSharpness: 1.0,
-      }),
-  },
-  'line-volprim-sharp-taper': {
-    source: VOLUMETRIC_LINE_SOURCE,
-    buildUniforms: () =>
-      buildVolprimLineUniforms(
-        buildLineDataTexture(undefined, undefined, undefined, undefined, {
-          startWidth: 0.3,
-          endWidth: 0.3,
-          startSharpness: 0.0,
-          endSharpness: 1.0,
-        }),
-        true
-      ),
-    buildTSLMaterial: (uniforms) => {
-      const m = volumetricLineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
-        blendingMode: 'additive',
-        isOrtho: true,
-      }) as unknown as THREE.Material;
-      m.transparent = false;
-      m.blending = THREE.NoBlending;
-      return m;
-    },
-    buildMesh: (m) =>
-      buildLineInstancedMesh(m, undefined, undefined, undefined, undefined, {
-        startWidth: 0.3,
-        endWidth: 0.3,
-        startSharpness: 0.0,
-        endSharpness: 1.0,
-      }),
-  },
-  // End-on segment under an ORTHO camera: every fragment's ray is
-  // structurally parallel to the axis — the lane the screen-space quad
-  // degenerates on (#1352's headline case) and the only fixture that
-  // reaches the parallel closed forms (G_len, Ψ) in both backends.
-  'line-volprim-endon-ortho': {
-    source: VOLUMETRIC_LINE_SOURCE,
-    buildUniforms: () =>
-      buildVolprimLineUniforms(
-        buildLineDataTexture([0, 0, 0.3], [0, 0, -0.5], undefined, VOLUMETRIC_LINE_ALPHAS),
-        true
-      ),
-    buildTSLMaterial: (uniforms) => {
-      const m = volumetricLineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
-        blendingMode: 'additive',
-        isOrtho: true,
-      }) as unknown as THREE.Material;
-      m.transparent = false;
-      m.blending = THREE.NoBlending;
-      return m;
-    },
-    buildMesh: (m) =>
-      buildLineInstancedMesh(m, [0, 0, 0.3], [0, 0, -0.5], undefined, VOLUMETRIC_LINE_ALPHAS),
-  },
-  // End-on under a PERSPECTIVE camera: rays diverge slightly off-axis, so
-  // fragments sweep the NEAR-axial region of the general soft lane (the
-  // Taylor branch and the kk→0 behaviour) instead of the structural lane.
-  'line-volprim-endon-persp': {
-    source: VOLUMETRIC_LINE_SOURCE,
-    buildUniforms: () =>
-      buildVolprimLineUniforms(buildLineDataTexture([0, 0, 0.5], [0, 0, -0.3]), false),
-    buildTSLMaterial: (uniforms) => {
-      const m = volumetricLineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
-        blendingMode: 'additive',
-        isOrtho: false,
-      }) as unknown as THREE.Material;
-      m.transparent = false;
-      m.blending = THREE.NoBlending;
-      return m;
-    },
-    buildMesh: (m) => buildLineInstancedMesh(m, [0, 0, 0.5], [0, 0, -0.3]),
-    buildCamera: buildBehindCamera,
-  },
-  // A REAL degree-2 joint (the join fixtures' V geometry, slot-bearing
-  // joint codes): the only fixture that reaches the partner fetch, the
-  // bisector-cut construction, and the MIXED (one hard cut, one soft cap)
-  // fragment lane — both its splits — in both backends. Additive, so the
-  // two segments must partition the bend seamlessly.
-  'line-volprim-joint': {
-    source: VOLUMETRIC_LINE_SOURCE,
-    buildUniforms: () =>
-      buildVolprimLineUniforms(buildJoinDataTexture(buildJoinTexelSource()), true),
-    buildTSLMaterial: (uniforms) => {
-      const m = volumetricLineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
-        blendingMode: 'additive',
-        isOrtho: true,
-      }) as unknown as THREE.Material;
-      m.transparent = false;
-      m.blending = THREE.NoBlending;
-      return m;
-    },
-    buildMesh: (material) => buildJoinMesh(buildJoinTexelSource(), material),
-  },
-  // The SAME joint under a non-uniform MODEL SCALE (PR #1426 review,
-  // finding 1): positions are authored pre-divided by JOIN_MODEL_SCALE
-  // (4, 0.25, 1) and the mesh carries mesh.scale = JOIN_MODEL_SCALE, so
-  // the WORLD geometry — and therefore the correct render — is identical
-  // to `line-volprim-joint`
-  // (widths are world-unit, untouched by the model matrix). The partner
-  // direction is fetched in OBJECT space and must be normalized AFTER the
-  // modelView transform; normalizing in object space leaves a non-unit
-  // camera-space direction that skews the bisector normal and tanHalf —
-  // exactly what this fixture renders. The parity spec asserts both
-  // cross-backend parity AND equality with the unscaled joint.
-  'line-volprim-joint-scaled': {
-    source: VOLUMETRIC_LINE_SOURCE,
-    buildUniforms: () =>
-      buildVolprimLineUniforms(buildJoinDataTexture(buildScaledJoinTexelSource()), true),
-    buildTSLMaterial: (uniforms) => {
-      const m = volumetricLineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
-        blendingMode: 'additive',
-        isOrtho: true,
-      }) as unknown as THREE.Material;
-      m.transparent = false;
-      m.blending = THREE.NoBlending;
-      return m;
-    },
-    buildMesh: (material) => {
-      const mesh = buildJoinMesh(buildScaledJoinTexelSource(), material);
-      mesh.scale.set(...JOIN_MODEL_SCALE);
-      return mesh;
-    },
-  },
-  // The same joint under MAX blending: the peak-family capsule body
-  // (LUXAR_PEAK_PROJECTION on the GLSL side, the peak graph variant on
-  // the TSL side) plus the max-mode premultiplied output tail.
-  'line-volprim-peak': {
-    source: VOLUMETRIC_LINE_SOURCE,
-    buildUniforms: () =>
-      buildVolprimLineUniforms(buildJoinDataTexture(buildJoinTexelSource()), true),
-    buildDefines: () => ({ LUXAR_PEAK_PROJECTION: '', LUXAR_MAX_RGB_CONTRIBUTION: '' }),
-    buildTSLMaterial: (uniforms) => {
-      const m = volumetricLineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
-        blendingMode: 'max',
-        isOrtho: true,
-      }) as unknown as THREE.Material;
-      m.transparent = false;
-      m.blending = THREE.NoBlending;
-      return m;
-    },
-    buildMesh: (material) => buildJoinMesh(buildJoinTexelSource(), material),
-  },
-  // The peak lane's BISECTOR CUT, rendered in isolation: the same V, but
-  // only the FIRST leg is drawn (one instance; the partner still lives in
-  // the texture so the vertex stage can fetch its direction). Its cut end
-  // is the unbounded rod restricted to the half-space x_world <= 0, so
-  // nothing may light the far side of the plane — the partner would have
-  // owned it. `-uncut` is the same fixture with the joint codes replaced
-  // by free-end sentinels: there the soft cap DOES reach across, which is
-  // what proves the `-cut` assertion is not vacuous. Face-on the view
-  // direction lies IN the bisector plane, so this pair also drives the
-  // |dn| ≈ 0 side test rather than a finite plane crossing.
-  'line-volprim-peak-cut': peakCutEntry(buildJoinTexelSource()),
-  'line-volprim-peak-uncut': peakCutEntry(buildFreeEndJoinTexelSource()),
-  // Width taper: σ varies with the clamped closest-approach coordinate
-  // sHat (NOT the rasterised quad t) — a per-fragment σ(sHat), invSE, and
-  // energy-compensation path no constant-width fixture exercises.
-  'line-volprim-taper': {
-    source: VOLUMETRIC_LINE_SOURCE,
-    buildUniforms: () =>
-      buildVolprimLineUniforms(
-        buildLineDataTexture([-0.5, 0, 0], [0.5, 0, 0], undefined, undefined, REMAP_STYLE),
-        true
-      ),
-    buildTSLMaterial: (uniforms) => {
-      const m = volumetricLineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
-        blendingMode: 'additive',
-        isOrtho: true,
-      }) as unknown as THREE.Material;
-      m.transparent = false;
-      m.blending = THREE.NoBlending;
-      return m;
-    },
-    buildMesh: (m) =>
-      buildLineInstancedMesh(m, [-0.5, 0, 0], [0.5, 0, 0], undefined, undefined, REMAP_STYLE),
-  },
-  // Colormap path: the volumetric primitive samples the LUT in the
-  // FRAGMENT stage at sHat (the quad samples per-vertex scalars smoothly
-  // interpolated by t) — a genuinely new sampling site needing its own
-  // parity pin. Scalars 0.2 → 0.8 across the segment.
-  'line-volprim-colormap': {
-    source: VOLUMETRIC_LINE_SOURCE,
-    buildUniforms: () => ({
-      ...buildVolprimLineUniforms(
-        buildLineDataTexture([-0.5, 0, 0], [0.5, 0, 0], [0.2, 0.8]),
-        true
-      ),
-      uColormapTex: { value: buildColormapTexture() },
-      uScalarMin: { value: 0.0 },
-      uScalarScale: { value: 1.0 },
-    }),
-    buildDefines: () => ({ USE_COLORMAP: '' }),
-    buildTSLMaterial: (uniforms) => {
-      const m = volumetricLineWebGPUFactory(
-        buildLineTSLNodesFromUniforms(uniforms, { useColormap: true }),
-        {
-          useColormap: true,
-          blendingMode: 'additive',
-          isOrtho: true,
-        }
-      ) as unknown as THREE.Material;
-      m.transparent = false;
-      m.blending = THREE.NoBlending;
-      return m;
-    },
-    buildMesh: (m) => buildLineInstancedMesh(m, [-0.5, 0, 0], [0.5, 0, 0], [0.2, 0.8]),
-  },
-  // === Volumetric PICK parity + footprint agreement (#1352 PR-3) ===
-  // The volumetric pick pass: the visual stadium stencil vertex with the
-  // pick IDs, and the PEAK capsule fragment used UNCONDITIONALLY (the
-  // pick hotspot sits on the centerline regardless of the visual blending
-  // mode). Output contract matches `line-pick`:
-  // (nodeId, elementIdLow16, brightness, elementIdHigh16), depth = 1 − b.
-  //
-  // The sideon/endon pick fixtures and their `-fat-` visual twins share
-  // FAT geometry (FOOTPRINT_STYLE, drawn half-width ≈ 19 px at this ortho
-  // scale) so the pick/visible footprint-agreement spec has real
-  // sensitivity: a 20% σ divergence moves the coverage boundary ~4 px —
-  // far outside the 1-px rasterisation ribbon — where the default ~3 px
-  // half-width would bury it in quantisation.
-  'line-volprim-fat-sideon': {
-    source: VOLUMETRIC_LINE_SOURCE,
-    buildUniforms: () =>
-      buildVolprimLineUniforms(
-        buildLineDataTexture(undefined, undefined, undefined, undefined, FOOTPRINT_STYLE),
-        true
-      ),
-    buildTSLMaterial: (uniforms) => {
-      const m = volumetricLineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
-        blendingMode: 'additive',
-        isOrtho: true,
-      }) as unknown as THREE.Material;
-      m.transparent = false;
-      m.blending = THREE.NoBlending;
-      return m;
-    },
-    buildMesh: (m) =>
-      buildLineInstancedMesh(m, undefined, undefined, undefined, undefined, FOOTPRINT_STYLE),
-  },
-  'line-volprim-fat-endon': {
-    source: VOLUMETRIC_LINE_SOURCE,
-    buildUniforms: () =>
-      buildVolprimLineUniforms(
-        buildLineDataTexture([0, 0, 0.3], [0, 0, -0.5], undefined, undefined, FOOTPRINT_STYLE),
-        true
-      ),
-    buildTSLMaterial: (uniforms) => {
-      const m = volumetricLineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
-        blendingMode: 'additive',
-        isOrtho: true,
-      }) as unknown as THREE.Material;
-      m.transparent = false;
-      m.blending = THREE.NoBlending;
-      return m;
-    },
-    buildMesh: (m) =>
-      buildLineInstancedMesh(m, [0, 0, 0.3], [0, 0, -0.5], undefined, undefined, FOOTPRINT_STYLE),
-  },
-  // The same fat side-on segment under MAX blending: the PEAK capsule the
-  // pick pass mirrors. The footprint-agreement spec asserts pick ≡ this
-  // fixture EXACTLY (same capsule on both sides), while the additive twin
-  // above is a superset (its separable radial·axial coverage keeps dim
-  // corner crescents beyond the endpoints that no capsule reaches).
-  'line-volprim-fat-peak': {
-    source: VOLUMETRIC_LINE_SOURCE,
-    buildUniforms: () =>
-      buildVolprimLineUniforms(
-        buildLineDataTexture(undefined, undefined, undefined, undefined, FOOTPRINT_STYLE),
-        true
-      ),
-    buildDefines: () => ({ LUXAR_PEAK_PROJECTION: '', LUXAR_MAX_RGB_CONTRIBUTION: '' }),
-    buildTSLMaterial: (uniforms) => {
-      const m = volumetricLineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
-        blendingMode: 'max',
-        isOrtho: true,
-      }) as unknown as THREE.Material;
-      m.transparent = false;
-      m.blending = THREE.NoBlending;
-      return m;
-    },
-    buildMesh: (m) =>
-      buildLineInstancedMesh(m, undefined, undefined, undefined, undefined, FOOTPRINT_STYLE),
-  },
-  'line-volprim-pick-sideon': {
-    source: VOLUMETRIC_LINE_PICK_SOURCE,
-    buildUniforms: () =>
-      buildPickLineUniforms(
-        buildLineDataTexture(undefined, undefined, undefined, undefined, FOOTPRINT_STYLE),
-        true
-      ),
-    buildTSLMaterial: (uniforms) =>
-      volumetricLinePickWebGPUFactory(buildLinePickTSLNodesFromUniforms(uniforms), {
-        isOrtho: true,
-      }) as unknown as THREE.Material,
-    buildMesh: (m) =>
-      buildLineInstancedMesh(m, undefined, undefined, undefined, undefined, FOOTPRINT_STYLE),
-  },
-  // END-ON pick — the #1352 headline case: the screen-space pick quad
-  // degenerates to a sliver here, the volumetric capsule picks a finite
-  // disc. Same geometry as `line-volprim-fat-endon`.
-  'line-volprim-pick-endon': {
-    source: VOLUMETRIC_LINE_PICK_SOURCE,
-    buildUniforms: () =>
-      buildPickLineUniforms(
-        buildLineDataTexture([0, 0, 0.3], [0, 0, -0.5], undefined, undefined, FOOTPRINT_STYLE),
-        true
-      ),
-    buildTSLMaterial: (uniforms) =>
-      volumetricLinePickWebGPUFactory(buildLinePickTSLNodesFromUniforms(uniforms), {
-        isOrtho: true,
-      }) as unknown as THREE.Material,
-    buildMesh: (m) =>
-      buildLineInstancedMesh(m, [0, 0, 0.3], [0, 0, -0.5], undefined, undefined, FOOTPRINT_STYLE),
-  },
-  // PERSPECTIVE pick — the only pick fixture that builds the TSL
-  // perspective graph variant (diverging rays, the vertex near-clip
-  // chain, per-fragment nearFade at the hit depth) and drives the GLSL
-  // uIsOrtho=0 branches. NEAR-PLANE STRADDLING geometry + knobs of
-  // `line-volprim-nearclip` below (starts BEHIND the eye at camera-space
-  // z = +0.5, nearCull 0.35), so the vertex stage's quad near-clip
-  // reshaping is load-bearing here, not decorative. The thin world width
-  // (0.002), telephoto scale (6400) and raised extent clamp (128) are
-  // required, not stylistic: at the default width the near-clipped
-  // endpoint's raw stencil width trips the coverageFade cull, NOTHING
-  // renders, and `assertBothRendered` rejects the buffer as vacuous —
-  // see the sibling's comment for the numbers.
-  'line-volprim-pick-persp': {
-    source: VOLUMETRIC_LINE_PICK_SOURCE,
-    buildUniforms: () => ({
-      ...buildPickLineUniforms(
-        buildLineDataTexture([0, 0, 1.5], [0, 0, -0.5], undefined, undefined, {
-          startWidth: 0.002,
-          endWidth: 0.002,
-        }),
-        false,
-        0.35
-      ),
-      uPerspectiveLineScale: { value: 6400.0 },
-      uMaxLinePixelWidth: { value: 128.0 },
-    }),
-    buildTSLMaterial: (uniforms) =>
-      volumetricLinePickWebGPUFactory(buildLinePickTSLNodesFromUniforms(uniforms), {
-        isOrtho: false,
-      }) as unknown as THREE.Material,
-    buildMesh: (m) =>
-      buildLineInstancedMesh(m, [0, 0, 1.5], [0, 0, -0.5], undefined, undefined, {
-        startWidth: 0.002,
-        endWidth: 0.002,
-      }),
-    buildCamera: buildBehindCamera,
-  },
-  // The V joint under pick: the only pick fixture that reaches the
-  // partner fetch, the bisector-cut construction, and the peak lane's
-  // ray-domain cut interval [tLo, tHi] — in both backends.
-  'line-volprim-pick-joint': {
-    source: VOLUMETRIC_LINE_PICK_SOURCE,
-    buildUniforms: () => buildPickLineUniforms(buildJoinDataTexture(buildJoinTexelSource()), true),
-    buildTSLMaterial: (uniforms) =>
-      volumetricLinePickWebGPUFactory(buildLinePickTSLNodesFromUniforms(uniforms), {
-        isOrtho: true,
-      }) as unknown as THREE.Material,
-    buildMesh: (material) => buildJoinMesh(buildJoinTexelSource(), material),
-  },
-  // NEAR-PLANE STRADDLING (review finding 2 on PR #1426): an end-on
-  // segment that starts BEHIND the eye (camera-space z = +0.5) and ends in
-  // front (z = −1.5), with a deliberately large nearCull (0.35) so the
-  // ray-domain clip cuts visibly into the in-front portion too (counted
-  // chord 1.15 of 2.0 — a ~0.57× core). Exercises the STRUCTURAL-PARALLEL
-  // lane's near s-bound plus the vertex stage's quad near-clip reshaping
-  // on both backends. Two knobs are load-bearing, both mutation-verified
-  // (disabling the clip on one backend must FAIL parity):
-  // - TELEPHOTO rays (uPerspectiveLineScale 6400): at the default 64 even
-  //   the central pixel ray sits at sin² ≈ 5e-4, far above the 1e-5
-  //   structural threshold, so every fragment lands in the soft/soft
-  //   GENERAL lane — which deliberately keeps the full-line convention
-  //   (the documented residual) and never sees the clip.
-  // - THIN world width (0.002 → σ ≈ 8 px at this scale) with the extent
-  //   clamp raised to 128: at the default width 0.1 the near-clipped
-  //   endpoint's raw stencil width (width·scale/nearCull ≈ 37 px… 640 px
-  //   pre-clip) trips the coverageFade cull and NOTHING renders — a
-  //   uniform buffer that the vacuous-parity guard rejects.
-  // - LINEAR range via uOpacity 0.0034: the additive tail carries the
-  //   integral in the ALPHA channel (fragColor = vec4(color, intensity ·
-  //   uOpacity)), and at this fixture's scale the raw intensity is ~236
-  //   (unclipped) vs ~136 (clipped) — both clamp to alpha 1.0 and the
-  //   clip ratio vanishes. uOpacity scales alpha into the 8-bit linear
-  //   range (~0.80 vs ~0.46); uIntensity would only scale the COLOR.
-  'line-volprim-nearclip': {
-    source: VOLUMETRIC_LINE_SOURCE,
-    buildUniforms: () => ({
-      ...buildVolprimLineUniforms(
-        buildLineDataTexture([0, 0, 1.5], [0, 0, -0.5], undefined, undefined, {
-          startWidth: 0.002,
-          endWidth: 0.002,
-        }),
-        false,
-        0.35
-      ),
-      uPerspectiveLineScale: { value: 6400.0 },
-      uMaxLinePixelWidth: { value: 128.0 },
-      uOpacity: { value: 0.0034 },
-    }),
-    buildTSLMaterial: (uniforms) => {
-      const m = volumetricLineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
-        blendingMode: 'additive',
-        isOrtho: false,
-      }) as unknown as THREE.Material;
-      m.transparent = false;
-      m.blending = THREE.NoBlending;
-      return m;
-    },
-    buildMesh: (m) =>
-      buildLineInstancedMesh(m, [0, 0, 1.5], [0, 0, -0.5], undefined, undefined, {
-        startWidth: 0.002,
-        endWidth: 0.002,
-      }),
-    buildCamera: buildBehindCamera,
-  },
-  // NEAR-PLANE STRADDLING JOINT: the GENERAL-lane sibling of the fixture
-  // above (see buildStraddlingJoinTexelSource). Exercises the mixed lane's
-  // binding-near-clip forms (cap-as-plane + constant-cap product) plus the
-  // ξ-near bracket tightening, in perspective, on both backends. uOpacity
-  // keeps the alpha-channel integral inside the 8-bit linear range so the
-  // clip's effect survives the readback (same trap as the sibling).
-  'line-volprim-nearclip-joint': {
-    source: VOLUMETRIC_LINE_SOURCE,
-    buildUniforms: () => ({
-      ...buildVolprimLineUniforms(
-        buildJoinDataTexture(buildStraddlingJoinTexelSource()),
-        false,
-        0.35
-      ),
-      // The near-clipped start projects to ~220 raw px — the default
-      // 32 px extent clamp would coverageFade-cull the whole segment.
-      uMaxLinePixelWidth: { value: 512.0 },
-      // Keeps the discriminating band's alpha ~0.4 (linear range).
-      uOpacity: { value: 0.6 },
-    }),
-    buildTSLMaterial: (uniforms) => {
-      const m = volumetricLineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
-        blendingMode: 'additive',
-        isOrtho: false,
-      }) as unknown as THREE.Material;
-      m.transparent = false;
-      m.blending = THREE.NoBlending;
-      return m;
-    },
-    buildMesh: (m) => buildJoinMesh(buildStraddlingJoinTexelSource(), m),
-    buildCamera: buildBehindCamera,
-  },
-  // ============================================================
   // CAPSULE LINE PRIMITIVE (#1352, ?linePrimitive=capsule).
   // Gaussian-like quartic profile of the 2D point-to-segment distance —
   // see _shared/line-capsule.ts. These fixtures pin value-level parity
@@ -2470,13 +1944,78 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
     buildMesh: (m) =>
       buildLineInstancedMesh(m, [0, 0, 0.3], [0, 0, -0.5], undefined, undefined, FOOTPRINT_STYLE),
   },
+  // TWO segments, so the two legs' fragments overlap in the joint region and
+  // COMPETE through the depth test: the pick fragment writes brightness-as-
+  // depth (`gl_FragDepth = 1 - brightness`) and its element id, so whichever
+  // fragment wins decides the READBACK VALUE, not just a tie-break. The TSL
+  // pick factory already sets depthTest/depthWrite on its NodeMaterial
+  // (see types.ts), so the GLSL3 ShaderMaterial must opt in too or the two
+  // backends resolve different winners — measured 1.846 per-covered-pixel
+  // across 7 pixels without it, i.e. passing only by sitting under the 2.0
+  // bound. The single-segment pick entries above cannot compete and stay
+  // depth-off.
   'line-capsule-pick-joint': {
     source: CAPSULE_LINE_PICK_SOURCE,
+    depthCompete: true,
     buildUniforms: () => buildPickLineUniforms(buildJoinDataTexture(buildJoinTexelSource()), true),
     buildTSLMaterial: (uniforms) =>
       capsuleLinePickWebGPUFactory(buildLinePickTSLNodesFromUniforms(uniforms), {
         isOrtho: true,
       }) as unknown as THREE.Material,
     buildMesh: (material) => buildJoinMesh(buildJoinTexelSource(), material),
+  },
+  // SHORT-partner joint: the deficit packet's far-cap term, live on both
+  // backends for the first time (#1490). See
+  // {@link buildShortPartnerJoinTexelSource} for every derived number.
+  'line-capsule-joint-short-partner': {
+    source: CAPSULE_LINE_SOURCE,
+    // MAX mode, for the reason `joinEntry` and `jointCodeEntry` above give:
+    // max premultiplies RGB by the profile, so the deficit lands in all four
+    // channels. In additive mode it rides ALPHA alone, and the parity metric
+    // averages over four channels — measured, the GLSL-only unbounded mutation
+    // moved 87 pixels but scored 1.108, quietly under the 2.0 bound. The same
+    // 87 pixels in max mode score 4.433.
+    //
+    // How that 87 was counted, since a CPU model of the same scene gives 80-86
+    // depending on how the 1 px AA ramp and the `profile <= 0 => no write` rule
+    // are sampled: it is the HARNESS's own readback — the 64x64 render target,
+    // GLSL-with-the-mutation against TSL-bounded, counting RGBA quadruplets
+    // that differ in any channel, out of 916 covered. The pick twin measures
+    // 70 of 908 under its own shader's mutation.
+    buildDefines: () => ({ LUXAR_GAMMA_ONE: '', LUXAR_MAX_RGB_CONTRIBUTION: '' }),
+    buildUniforms: () =>
+      buildVisualLineUniforms(buildJoinDataTexture(buildShortPartnerJoinTexelSource()), true),
+    buildTSLMaterial: (uniforms) => {
+      const m = capsuleLineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
+        blendingMode: 'max',
+        gammaOne: true,
+        isOrtho: true,
+      }) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: (material) => buildJoinMesh(buildShortPartnerJoinTexelSource(), material),
+  },
+  // The pick twin of the same geometry: the pick stencil rebuilds the partner
+  // rod from its own copy of the packet, so it regresses independently — and
+  // it does witness the far-cap term on its own (unbinding the rod in the PICK
+  // GLSL fragment alone fails this entry at 2.715, 70 of 908 covered pixels,
+  // with the other 20 capsule tests still green). It needs NO max-mode define:
+  // the pick fragment already carries brightness in a colour channel.
+  // `depthCompete` for the same reason as the entry above, and here it is not
+  // marginal: the fat 12.653 px legs overlap deeply, and depth-off measures
+  // 6.311 per-covered-pixel — flipped pick WINNERS (GLSL element id 1 against
+  // TSL element id 0), not near-ties.
+  'line-capsule-pick-joint-short-partner': {
+    source: CAPSULE_LINE_PICK_SOURCE,
+    depthCompete: true,
+    buildUniforms: () =>
+      buildPickLineUniforms(buildJoinDataTexture(buildShortPartnerJoinTexelSource()), true),
+    buildTSLMaterial: (uniforms) =>
+      capsuleLinePickWebGPUFactory(buildLinePickTSLNodesFromUniforms(uniforms), {
+        isOrtho: true,
+      }) as unknown as THREE.Material,
+    buildMesh: (material) => buildJoinMesh(buildShortPartnerJoinTexelSource(), material),
   },
 };

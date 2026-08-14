@@ -29,6 +29,7 @@ from typing import Any, Dict, List, Literal, Optional
 
 import zarr
 
+from luxar._zarr_compat import open_group as zc_open_group
 from luxar.encoding import ArrayDecoder, EncodingMode
 from luxar.gsplats.gsplat_data import (
     AdditiveSubLOD,
@@ -89,7 +90,7 @@ def detect_legacy_format(input_path: Path) -> str:
                 zarr_path = extract_compressed_zarr(input_path)
                 cleanup_temp = zarr_path.parent
             try:
-                root = zarr.open_group(str(zarr_path), mode="r")
+                root = zc_open_group(str(zarr_path), mode="r")
             except Exception:
                 # Not a zarr group at all — fall through to the catch-all raise
                 root = None
@@ -345,7 +346,7 @@ def _read_substitutive_directory(input_path: Path) -> GSplatData:
             raise FileNotFoundError(
                 f"manifest references {file_name} but it doesn't exist under {input_path}"
             )
-        root = zarr.open_group(str(level_path), mode="r")
+        root = zc_open_group(str(level_path), mode="r")
         data_one, _, _, _ = _read_v1_x_root(root, include_stats=False)
         # data_one always has n_substitutive == 1; take its single additive sub-LOD
         only_sublod = data_one.substitutive_levels[0].additive_sublods[0]
@@ -466,7 +467,7 @@ def migrate_format(
             if input_path.is_file():
                 zarr_path = extract_compressed_zarr(input_path)
                 cleanup_temp = zarr_path.parent
-            root = zarr.open_group(str(zarr_path), mode="r")
+            root = zc_open_group(str(zarr_path), mode="r")
             if detected.endswith("-lod-pixel-size"):
                 # v3.0/v3.1 node tree whose kind=lod groups still carry the
                 # pre-v3.2 'pixel_size' selector attrs. The live read→write

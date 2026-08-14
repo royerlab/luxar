@@ -37,7 +37,6 @@ import {
   attribute,
   varying,
   texture,
-  textureSize,
   vec2 as _vec2,
   vec3 as _vec3,
   vec4 as _vec4,
@@ -65,7 +64,11 @@ import {
   type TSLNode,
   sortedIndexNode,
 } from '../../materials/_shared/tsl-helpers';
-import { getPlaceholderElementTexture } from '../../element-texture-layout';
+import {
+  getPlaceholderElementTexture,
+  resolveElementTextureWidth,
+  POINT_TEXTURE_LAYOUT,
+} from '../../element-texture-layout';
 
 // Type-erased constructor aliases — same rationale as the gsplat TSL
 // factories (see materials/gsplat/shader-tsl.ts).
@@ -166,13 +169,17 @@ export function pointPickWebGPUFactory(
     // and scalar are not fetched. Every value is a `.toVar()` STATEMENT
     // (Fn house rule). Width is a multiple of 3 -> one row per point.
     const pointBase: TSLNode = int(aSortedIndex).mul(int(3)).toVar();
-    // int() wrap is LOAD-BEARING: TSL types textureSize() as uint (the
-    // WGSL textureDimensions convention), but the WebGL2 fallback emits
-    // GLSL textureSize() which returns int -- without the explicit
-    // conversion the generated `uint nodeVar = textureSize(...).x;`
-    // fails to compile on the forceWebGL backend.
+    // The width is baked as a LITERAL, not read via textureSize(): a
+    // compile-time constant lets the shader compiler strength-reduce
+    // the per-vertex %/int-div addressing below (measured -7% on the
+    // quad's whole GPU pass; a uniform recovered almost none of it).
+    // Safe because the width is a per-layout session constant, capped
+    // at 4096 on every device (element-texture-layout.ts).
     const pointTexW: TSLNode = int(
-      (textureSize(uPointTex, int(0)) as unknown as TSLNode).x
+      resolveElementTextureWidth(
+        POINT_TEXTURE_LAYOUT,
+        (nodes.uPointTex as unknown as { value?: { image?: { width?: number } } }).value ?? null
+      )
     ).toVar();
     const texelX: TSLNode = pointBase.mod(pointTexW).toVar();
     const texelY: TSLNode = pointBase.div(pointTexW).toVar();

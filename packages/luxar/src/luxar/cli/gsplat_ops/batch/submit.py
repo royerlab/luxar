@@ -142,7 +142,15 @@ def run_batch_submit(
         "still estimates the floor on its own crop. Unset lets a `floor:` "
         "in --config apply, else defaults to auto. See `gsplat fit --help`.",
     ),
-    seeds: Optional[str] = typer.Option(None, "--seeds", help="Seed count or ratio"),
+    seeds: Optional[str] = typer.Option(
+        None,
+        "--seeds",
+        help="Seed count or ratio. Under uniform tiling an integer is a "
+        "WHOLE-VOLUME budget per (t, c) volume: each task divides it across "
+        "that volume's tiles rather than fitting the full count per tile. "
+        "Under --tiling content it is ignored (per-box budgets come from the "
+        "density plan).",
+    ),
     iters: Optional[int] = typer.Option(
         None, "--iters", "-n", help="Max optimization iterations (overrides preset)"
     ),
@@ -363,6 +371,22 @@ def run_batch_submit(
         help="Substitutive level count for --merge-recipe.",
         rich_help_panel="Merge LOD",
     ),
+    merge_refine: Optional[str] = typer.Option(
+        None,
+        "--merge-refine",
+        help="[--merge-recipe levels] refine each per-tile coarse level at merge: "
+        "none (default) | l2 (against its fine input) | volume (re-open THIS "
+        "input and re-fit each tile against its own crop of it — highest "
+        "fidelity). 'volume' needs --axes recorded and a single channel.",
+        rich_help_panel="Merge LOD",
+    ),
+    merge_refine_iters: Optional[int] = typer.Option(
+        None,
+        "--merge-refine-iters",
+        help="[--merge-recipe levels] refinement steps per level (default 120 "
+        "for l2, 300 for volume).",
+        rich_help_panel="Merge LOD",
+    ),
     merge_substitutive_method: Optional[str] = typer.Option(
         None,
         "--merge-subst-method",
@@ -528,6 +552,8 @@ def run_batch_submit(
             merge_bytes_per_splat=merge_bytes_per_splat,
             merge_compression_factor=merge_compression_factor,
             merge_levels=merge_levels,
+            merge_refine=merge_refine,
+            merge_refine_iters=merge_refine_iters,
             merge_substitutive_method=merge_substitutive_method,
             merge_coarsen_dims=merge_coarsen_dims,
         )
