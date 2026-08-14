@@ -262,6 +262,7 @@ export async function createWebGPURenderer(
     const requestedMax = typeof adapterMax === 'number' ? Math.min(adapterMax, 16) : undefined;
     const adapterMaxBufferSize = adapter.limits?.maxBufferSize;
     const adapterMaxStorageBuffer = adapter.limits?.maxStorageBufferBindingSize;
+    const adapterMaxTexture2D = adapter.limits?.maxTextureDimension2D;
 
     const requiredFeatures: string[] = [];
     for (const name of adapter.features) {
@@ -275,14 +276,28 @@ export async function createWebGPURenderer(
     if (typeof adapterMaxStorageBuffer === 'number') {
       requiredLimits.maxStorageBufferBindingSize = adapterMaxStorageBuffer;
     }
+    // Element-data textures (points/lines/gsplats) grow DOWNWARD in rows,
+    // so the device's maxTextureDimension2D is the per-node element
+    // ceiling (renderer-capabilities reads it off the live device and
+    // element-texture-layout derives every clamp from it). The WebGPU
+    // default is 8192 rows — for lines (6 texels/segment, 682
+    // segments/row at width 4096) that caps a node at 5,586,944
+    // segments while the same GPU's WebGL context exposes 16384 rows =
+    // 11.2 M. Request the adapter's full limit, same policy as the
+    // buffer sizes above.
+    if (typeof adapterMaxTexture2D === 'number') {
+      requiredLimits.maxTextureDimension2D = adapterMaxTexture2D;
+    }
     log.info(
       Modules.RENDERER,
       `WebGPU adapter advertises maxVertexBuffers=${adapterMax}, ` +
         `maxBufferSize=${adapterMaxBufferSize}, ` +
-        `maxStorageBufferBindingSize=${adapterMaxStorageBuffer}; ` +
+        `maxStorageBufferBindingSize=${adapterMaxStorageBuffer}, ` +
+        `maxTextureDimension2D=${adapterMaxTexture2D}; ` +
         `requesting maxVertexBuffers=${requestedMax}, ` +
         `maxBufferSize=${requiredLimits.maxBufferSize ?? 'default'}, ` +
-        `maxStorageBufferBindingSize=${requiredLimits.maxStorageBufferBindingSize ?? 'default'}`
+        `maxStorageBufferBindingSize=${requiredLimits.maxStorageBufferBindingSize ?? 'default'}, ` +
+        `maxTextureDimension2D=${requiredLimits.maxTextureDimension2D ?? 'default'}`
     );
     try {
       device = await adapter.requestDevice({ requiredFeatures, requiredLimits });
