@@ -67,6 +67,17 @@ describe('dimension-sliders.css — §5.1.2 scroll delegation', () => {
     expect(root).toMatch(/max-height:\s*\S+/);
   });
 
+  it('the root is the flex column that makes that bound reach the wrapper', () => {
+    // The other half of the same mechanism, and the one nothing else catches:
+    // without `display: flex; flex-direction: column` here, the wrapper's
+    // `flex: 1; min-height: 0` is inert, so it grows to its content instead of
+    // capping — and since the root is `overflow: visible`, the rows then paint
+    // outside the panel. `ui/dimension-sliders.ts` guards the same property
+    // against being overwritten inline; this guards the declaration itself.
+    expect(root).toMatch(/display:\s*flex/);
+    expect(root).toMatch(/flex-direction:\s*column/);
+  });
+
   it('the floating panel sits on the dropdown tier, not the baseline layer (§3.5)', () => {
     expect(root).toMatch(/z-index:\s*var\(--luxar-z-dropdown\)/);
     expect(root).not.toMatch(/z-index:\s*var\(--luxar-z-base\)/);

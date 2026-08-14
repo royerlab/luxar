@@ -965,9 +965,11 @@ Further requirements:
 
 1. Root: surface recipe (§7.1) + `luxar-glass-surface` (unless it is one of
    §5's three opt-outs — frameless by design, a transient cursor popover, §7.8,
-   or an over-canvas badge). A badge that ramps `opacity` on its own root MUST
-   be un-glassed (§5.1.3, the toast); one that does not may still be glassed
-   (the resolution indicator is, and ramps anyway — §15.4).
+   or one of the two un-glassed over-canvas badges, the toast and the REC pill).
+   Being a badge is not itself the criterion: a badge that ramps `opacity` on
+   its own root MUST be un-glassed (§5.1.3, the toast); one that does not may go
+   either way (the REC pill is not glassed, the resolution indicator is — and
+   ramps anyway, which is why §15.4 logs it as drift).
    + `overflow: visible` + inner `__scroll` wrapper if it scrolls.
 2. Correct tier: panel / modal (+scrim) / popover / badge (§7.1 table) with
    token z-index — and if it docks beside the rail, it joins the exclusive
