@@ -9,6 +9,8 @@ import numpy as np
 import zarr
 from arbol import aprint
 
+from luxar._zarr_compat import create_array
+
 from ...encoding.compression import WIDTH_AWARE_DEFAULT, resolve_compressor
 
 
@@ -93,7 +95,8 @@ def write_colormap_lut_if_needed(
         # store as "custom" so the viewer can render it without needing
         # matplotlib/colorcet at display time.
         lut = resolve_colormap(colormap)  # Raises ValueError if unknown
-        group.create_dataset(
+        create_array(
+            group,
             "colormap_lut",
             data=lut,
             chunks=(256, 3),
@@ -106,7 +109,8 @@ def write_colormap_lut_if_needed(
 
     # Array colormap — resolve and write as dataset
     lut = resolve_colormap(colormap)  # (256, 3) uint8
-    group.create_dataset(
+    create_array(
+        group,
         "colormap_lut",
         data=lut,
         chunks=(256, 3),

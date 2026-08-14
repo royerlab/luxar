@@ -270,7 +270,9 @@ class TestEdgeCases:
 
             store = zarr.open_group(zarr_path, mode="r")
             assert "points1" in store
-            points1_count = len(store["points1/positions"])
+            # `.shape[0]`, not `len(...)`: zarr 2's Array defined __len__, zarr 3's
+            # does not, so `len(array)` raises TypeError.
+            points1_count = store["points1/positions"].shape[0]
             assert points1_count == 100
 
             # Create second scene at same path - overwrites

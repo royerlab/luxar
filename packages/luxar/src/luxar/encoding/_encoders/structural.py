@@ -8,6 +8,8 @@ from typing import Any, Optional, Union
 import numpy as np
 import zarr
 
+from luxar._zarr_compat import create_array
+
 from ..compression import resolve_compressor
 from ..modes import EncodingMode
 from ..semantic_types import SemanticType
@@ -173,7 +175,8 @@ class StructuralEncoderMixin(BaseEncoderMixin):
             chunks: Optional chunk shape
             compressor: Optional compressor
         """
-        zarr_group.create_dataset(
+        create_array(
+            zarr_group,
             name,
             data=data,
             chunks=chunks,
@@ -211,7 +214,8 @@ class StructuralEncoderMixin(BaseEncoderMixin):
         else:
             broadcast_data = data[:1, :]
 
-        zarr_group.create_dataset(
+        create_array(
+            zarr_group,
             name,
             data=broadcast_data,
             compressor=resolve_compressor(compressor, broadcast_data.dtype),
@@ -298,7 +302,8 @@ class StructuralEncoderMixin(BaseEncoderMixin):
                 original_dtype)
         """
         # Write the single value
-        zarr_group.create_dataset(
+        create_array(
+            zarr_group,
             name,
             data=data,
             compressor=resolve_compressor(compressor, data.dtype),
@@ -346,7 +351,8 @@ class StructuralEncoderMixin(BaseEncoderMixin):
             empty_shape = (0, *shape[1:])
 
         empty_data = np.array([], dtype=dtype).reshape(empty_shape)
-        zarr_group.create_dataset(
+        create_array(
+            zarr_group,
             name,
             data=empty_data,
             compressor=resolve_compressor(compressor, empty_data.dtype),
@@ -392,7 +398,8 @@ class StructuralEncoderMixin(BaseEncoderMixin):
             # Scalar mode: indices keep the original shape.
             indices_chunks = chunks
 
-        zarr_group.create_dataset(
+        create_array(
+            zarr_group,
             name,
             data=plan.indices,
             chunks=indices_chunks,
@@ -448,7 +455,8 @@ class StructuralEncoderMixin(BaseEncoderMixin):
             target_dtype = np.dtype("uint64")
 
         encoded_data = data.astype(target_dtype)
-        zarr_group.create_dataset(
+        create_array(
+            zarr_group,
             name,
             data=encoded_data,
             chunks=chunks,
@@ -510,7 +518,8 @@ class StructuralEncoderMixin(BaseEncoderMixin):
         encoded_data, metadata = getattr(self, handler_name)(
             data, encoder_name, bounds, str(data.dtype)
         )
-        zarr_group.create_dataset(
+        create_array(
+            zarr_group,
             name,
             data=encoded_data,
             chunks=chunks,

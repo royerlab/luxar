@@ -45,7 +45,6 @@ import {
   length,
   exp,
   texture,
-  textureSize,
   modelViewMatrix,
   cameraProjectionMatrix,
   Discard,
@@ -65,7 +64,11 @@ import {
   tslLineJoin,
   tslLineJointCapSuppression,
 } from '../../materials/_shared/tsl-helpers';
-import { getPlaceholderElementTexture } from '../../element-texture-layout';
+import {
+  getPlaceholderElementTexture,
+  resolveElementTextureWidth,
+  LINE_TEXTURE_LAYOUT,
+} from '../../element-texture-layout';
 import { resolveLineJoin, type LineJoinStyle } from '../../../types/line-join';
 
 /**
@@ -196,9 +199,14 @@ export function linePickWebGPUFactory(
     // Colors (texels 2/3 .rgb) and scalars (texel 5) are not needed
     // for picking; only the .w sharpness of texels 2/3 is read.
     const lineBase: TSLNode = int(aSortedIndex).mul(int(6)).toVar();
-    // int() wrap is LOAD-BEARING — see the visual factory
-    // (shader-tsl.ts) for the WebGL2-fallback rationale.
-    const lineTexW: TSLNode = int((textureSize(uLineTex, int(0)) as unknown as TSLNode).x).toVar();
+    // Width baked as a literal — see the visual factory
+    // (shader-tsl.ts) for the strength-reduction rationale.
+    const lineTexW: TSLNode = int(
+      resolveElementTextureWidth(
+        LINE_TEXTURE_LAYOUT,
+        (nodes.uLineTex as unknown as { value?: { image?: { width?: number } } }).value ?? null
+      )
+    ).toVar();
     const texelX: TSLNode = lineBase.mod(lineTexW).toVar();
     const texelY: TSLNode = lineBase.div(lineTexW).toVar();
     const lineT0: TSLNode = uLineTex.load(ivec2(texelX, texelY)).toVar();

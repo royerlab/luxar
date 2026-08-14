@@ -8,6 +8,8 @@ import numpy as np
 import zarr
 from arbol import aprint
 
+from luxar._zarr_compat import create_array
+
 from ....encoding.compression import resolve_compressor
 
 if TYPE_CHECKING:
@@ -69,14 +71,16 @@ def write_labels_csr(
             pos += len(encoded)
 
     # Write to zarr
-    group.create_dataset(
+    create_array(
+        group,
         "label_offsets",
         data=offsets,
         chunks=(min(n_elements + 1, 65536),),
         compressor=resolve_compressor(compressor, offsets.dtype),
         overwrite=True,
     )
-    group.create_dataset(
+    create_array(
+        group,
         "label_bytes",
         data=label_bytes,
         chunks=(min(total_bytes, 65536) if total_bytes > 0 else 1,),

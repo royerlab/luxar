@@ -8,6 +8,7 @@ from typing import Iterator
 
 import pytest
 
+from luxar._zarr_compat import memory_group
 from luxar.utils.arbol_warnings import (
     _arbol_showwarning,
     _default_display_active,
@@ -130,7 +131,6 @@ class TestPytestWarnsIntegration:
         """The compiler-path warning that motivated this module stays
         catchable through the decorated encoder path."""
         import numpy as np
-        import zarr
 
         from luxar.encoding.encoder import ArrayEncoder
 
@@ -142,7 +142,7 @@ class TestPytestWarnsIntegration:
         diag = rng.uniform(0.4, 5.0, size=(n, ndim)).astype(np.float32)
         diag[:10] = 1e8
         offdiag = (rng.standard_normal((n, ndim)) * 0.3).astype(np.float32)
-        group = zarr.group(store=zarr.MemoryStore())
+        group = memory_group()
         with pytest.warns(UserWarning, match="escalating to uint16"):
             with arbol_warnings():
                 ArrayEncoder().encode_cholesky_split(

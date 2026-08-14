@@ -30,7 +30,12 @@
 
 import * as THREE from 'three';
 import { GSPLAT_VERTEX_SHADER, GSPLAT_FRAGMENT_SHADER } from './shader-glsl';
-import { getPlaceholderElementTexture } from '../../element-texture-layout';
+import {
+  getPlaceholderElementTexture,
+  getElementTextureWidth,
+  applyElementTextureWidthDefine,
+  SPLAT_TEXTURE_LAYOUT,
+} from '../../element-texture-layout';
 import type { CameraAwareMaterial } from '../_shared/camera-aware-material';
 import type { BlendingMode } from '../../../types/blending';
 import type { ColormapAwareMaterial } from '../_shared/colormap-aware-material';
@@ -235,6 +240,12 @@ export class GSplatMaterial
       // chain when intensity == 1 && offset == 0 (toggled by
       // `updateIntensity` / `updateOffset` — mirrors the Line material).
       defines: {
+        // Element-texture width, baked as a compile-time constant so
+        // the per-vertex %/int-div addressing strength-reduces (see
+        // element-texture-layout.ts). Pre-stamped with the session
+        // width; the texture-update method re-stamps from the actually
+        // bound texture (a no-op recompile-wise in the common path).
+        [SPLAT_TEXTURE_LAYOUT.widthDefine]: String(getElementTextureWidth(SPLAT_TEXTURE_LAYOUT)),
         ...(materialConfig.colormapTexture ? { USE_COLORMAP: '' } : {}),
         ...(isGammaOne(gammaValue) ? { LUXAR_GAMMA_ONE: '' } : {}),
         ...(isNoGOG(materialConfig.intensity ?? 1.0, materialConfig.offset ?? 0.0)
@@ -444,6 +455,13 @@ export class GSplatMaterial
     // `null` falls back to the shared placeholder (never unbind the
     // sampler) — mirrors PointMaterial.updatePointTexture.
     this.uniforms.uSplatTex.value = texture ?? getPlaceholderElementTexture();
+    // Re-stamp the width define from the texture actually bound
+    // (bind-time authority — see applyElementTextureWidthDefine).
+    applyElementTextureWidthDefine(
+      this,
+      SPLAT_TEXTURE_LAYOUT,
+      this.uniforms.uSplatTex.value as THREE.Texture | null
+    );
   }
 
   /** The currently bound splat data texture (mirrors getPointTexture/getLineTexture). */
@@ -509,7 +527,10 @@ export class GSplatMaterial
       cloned.blendDstAlpha = this.blendDstAlpha;
     }
 
-    cloned.uniforms.uSplatTex.value = this.uniforms.uSplatTex.value;
+    // Routed through the rebind chokepoint so the clone's width define
+    // is re-stamped from the texture it actually binds rather than left
+    // on the constructor's session-width pre-stamp.
+    cloned.updateSplatTexture(this.uniforms.uSplatTex.value as THREE.DataTexture | null);
     cloned.uniforms.uFx.value = this.uniforms.uFx.value;
     cloned.uniforms.uFy.value = this.uniforms.uFy.value;
     cloned.uniforms.uResolution.value.copy(this.uniforms.uResolution.value);

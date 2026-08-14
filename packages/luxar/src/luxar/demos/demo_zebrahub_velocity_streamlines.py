@@ -23,10 +23,10 @@ Usage:
 Requirements:
     pip install 'luxar[demos]' gdown
 
-    ``anndata``/``h5py``/``scipy`` ship in the ``demos`` extra. If you install
-    anndata by hand, KEEP THE UPPER BOUND — ``pip install 'anndata>=0.10,<0.13'``
-    — because anndata >= 0.13 requires zarr >= 3.1 and Luxar pins
-    ``zarr>=2.16,<3.0``.
+    ``anndata``/``h5py``/``scipy`` ship in the ``demos`` extra
+    (``anndata>=0.10``, unbounded — the old ``<0.13`` ceiling existed only
+    because anndata 0.13 requires zarr >= 3.1, which Luxar's former zarr-2 pin
+    could not satisfy).
 """
 
 from __future__ import annotations
