@@ -25,6 +25,7 @@
  */
 
 import { config } from './index';
+import { LINE_PRIMITIVE_POLICIES, type LinePrimitivePolicy } from '../types/line-primitive';
 import { StorageKeys } from '../utils/storage-keys';
 import { log, Modules } from '../utils/log';
 
@@ -69,7 +70,7 @@ export interface UserSettings {
      * nodes, which build the cheaper quad — see
      * `types/line-primitive.ts` for the measured rule.
      */
-    linePrimitivePolicy: 'auto' | 'capsule' | 'quad';
+    linePrimitivePolicy: LinePrimitivePolicy;
   };
 }
 
@@ -206,9 +207,12 @@ function sanitizeUserSettings(raw: unknown): UserSettings {
     },
     advanced: {
       renderer: enumOrDefault(advanced.renderer, ['auto', 'webgl', 'webgpu'], d.advanced.renderer),
+      // Vocabulary from `types/line-primitive.ts` rather than a local
+      // literal: a new policy value must not be able to pass validation
+      // here while the resolver rejects it (or vice versa).
       linePrimitivePolicy: enumOrDefault(
         advanced.linePrimitivePolicy,
-        ['auto', 'capsule', 'quad'],
+        LINE_PRIMITIVE_POLICIES,
         d.advanced.linePrimitivePolicy
       ),
     },

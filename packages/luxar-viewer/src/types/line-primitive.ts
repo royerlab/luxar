@@ -71,7 +71,12 @@ export const LINE_PRIMITIVES: readonly LinePrimitive[] = ['screen-space', 'capsu
  */
 export type LinePrimitivePolicy = 'auto' | 'capsule' | 'quad';
 
-/** Every valid policy value, for settings validation. */
+/**
+ * Every valid policy value. The single vocabulary: the settings
+ * sanitizer (`config/user-settings.ts`) validates the stored value
+ * against THIS list, so storage and the resolver below can never
+ * disagree about what a policy is.
+ */
 export const LINE_PRIMITIVE_POLICIES: readonly LinePrimitivePolicy[] = ['auto', 'capsule', 'quad'];
 
 /**
@@ -167,17 +172,6 @@ let sessionPolicy: LinePrimitivePolicy = 'auto';
 /** Install the session policy (call once from bootstrap). */
 export function setLinePrimitivePolicy(policy: LinePrimitivePolicy): void {
   sessionPolicy = policy;
-}
-
-/** Parse a policy from untrusted text (settings storage). */
-export function parseLinePrimitivePolicy(
-  raw: string | null | undefined
-): LinePrimitivePolicy | null {
-  if (raw === null || raw === undefined) return null;
-  const v = raw.trim().toLowerCase();
-  return (LINE_PRIMITIVE_POLICIES as readonly string[]).includes(v)
-    ? (v as LinePrimitivePolicy)
-    : null;
 }
 
 /**

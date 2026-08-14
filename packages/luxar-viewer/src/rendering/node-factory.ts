@@ -91,7 +91,9 @@ interface PickMaterialRecipe {
  *
  * Each recipe reads whatever its type's pick material needs off the visual node: points
  * need the geometry's `radiusScale` (the 80%-radius pick footprint derives from it),
- * lines need the join style (the pick pass builds the same screen-space quad), mesh
+ * lines need the join style AND the primitive (the pick pass rasterizes the same
+ * stencil the visual material draws, and under the `auto` policy that is a per-node
+ * choice — see {@link linePrimitiveFromVisual}), mesh
  * needs the node opacity and cutout threshold (they are its coverage term). Only
  * gsplats need nothing but the id.
  */

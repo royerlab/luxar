@@ -13,7 +13,6 @@ import {
   MIN_RENDERED_WIDTH_PX,
   NOMINAL_VIEWPORT_PX,
   effectiveSegmentLoad,
-  parseLinePrimitivePolicy,
   resolveLinePrimitive,
   resolveLinePrimitiveForNode,
   setLinePrimitiveOverride,
@@ -36,19 +35,14 @@ function loadWithStoredPolicy(value: string) {
   return loadUserSettings();
 }
 
-describe('parseLinePrimitivePolicy', () => {
-  it('parses known policies case/whitespace-insensitively, null otherwise', () => {
+describe('LINE_PRIMITIVE_POLICIES', () => {
+  it('is the whole policy vocabulary, and is NOT the primitive vocabulary', () => {
     expect(LINE_PRIMITIVE_POLICIES).toEqual(['auto', 'capsule', 'quad']);
-    expect(parseLinePrimitivePolicy('auto')).toBe('auto');
-    expect(parseLinePrimitivePolicy(' Quad ')).toBe('quad');
-    expect(parseLinePrimitivePolicy('Capsule')).toBe('capsule');
-    // The policy vocabulary is NOT the primitive vocabulary: the internal
-    // name must stay unrecognised here (and 'quad' stays unrecognised in
+    // The two vocabularies are deliberately distinct: the policy says
+    // 'quad', the primitive says 'screen-space'. Neither name may leak
+    // into the other's validation ('quad' stays unrecognised in
     // parseLinePrimitive — pinned in line-primitive-toggle.test.ts).
-    expect(parseLinePrimitivePolicy('screen-space')).toBeNull();
-    expect(parseLinePrimitivePolicy('')).toBeNull();
-    expect(parseLinePrimitivePolicy(null)).toBeNull();
-    expect(parseLinePrimitivePolicy(undefined)).toBeNull();
+    expect(LINE_PRIMITIVE_POLICIES).not.toContain('screen-space');
   });
 });
 
