@@ -53,30 +53,56 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = REPO_ROOT / "packages/luxar/src/luxar/demos/data"
 MANIFEST = REPO_ROOT / "packages/luxar/src/luxar/demos/data_manifest.json"
 
-# Zenodo records, grouped by license family. IDs/DOIs/base_url are null until the
-# depositions are created and files uploaded (R17 step 2); once set, the fetch
-# helper pulls from Zenodo instead of the in-repo LFS copy.
+# Zenodo records, grouped by license family.
+#
+# The record ids and DOIs below are REAL and final: Zenodo reserves a DOI at
+# deposition time and the deposition id becomes the record id on publication, so
+# `https://zenodo.org/records/<id>/...` is already the right URL. What is not yet
+# true is that the records are PUBLIC — all three are still unsubmitted drafts,
+# and a file URL into a draft 404s for everyone.
+#
+# `zenodo_doi` is that reserved DOI, i.e. the VERSION DOI of this deposition —
+# NOT the version-independent concept DOI, which is a different identifier Zenodo
+# mints on publication and which cannot be known from the deposition id.
+#
+# Hence `published`: while it is false the fetch helper builds no URL at all, so
+# the Zenodo leg stays dormant exactly as it did when the ids were null, and
+# demos keep resolving cache -> in-repo LFS. Flipping the three flags at
+# publication time is what activates fetching, and it is the only edit needed.
+# Recording the ids now (rather than at publish time) means the manifest, the
+# record descriptions and the reserved DOIs cannot drift apart in the meantime.
+#
+# Titles are kept in step with the live record titles on purpose: they are what a
+# `luxar demo` user is pointed at, and the h2afva one in particular used to
+# describe the 51tp cut as a "subset", which its own record text contradicts.
 RECORDS = {
     "cc-by": {
-        "title": "Luxar demo datasets (CC-BY / CC0 / public domain)",
+        "title": "Luxar demo datasets: permissively licensed (CC-BY, CC0, public domain)",
         "license": "cc-by-4.0",
-        "zenodo_concept_doi": None,
-        "zenodo_record": None,
+        "zenodo_doi": "10.5281/zenodo.21912280",
+        "zenodo_record": "21912280",
         "base_url": None,
+        "published": False,
     },
     "cc-by-sa": {
-        "title": "Luxar demo datasets (CC-BY-SA)",
+        "title": "Luxar demo datasets: ShareAlike (CC BY-SA 4.0)",
         "license": "cc-by-sa-4.0",
-        "zenodo_concept_doi": None,
-        "zenodo_record": None,
+        "zenodo_doi": "10.5281/zenodo.21912282",
+        "zenodo_record": "21912282",
         "base_url": None,
+        "published": False,
     },
     "h2afva": {
-        "title": "h2afva zebrafish histone light-sheet TIMELAPSE, full 253 timepoints (Gaussian splats; a 51-timepoint subset is included for easier download)",
+        "title": (
+            "Zebrafish embryogenesis, histone-labelled nuclei: 253-timepoint "
+            "light-sheet timelapse as Gaussian splats (with a lighter "
+            "51-timepoint fit)"
+        ),
         "license": "cc-by-4.0",
-        "zenodo_concept_doi": None,
-        "zenodo_record": None,
+        "zenodo_doi": "10.5281/zenodo.21912284",
+        "zenodo_record": "21912284",
         "base_url": None,
+        "published": False,
     },
 }
 
@@ -231,16 +257,18 @@ DATASETS: dict[str, dict] = {
         source="Zenodo 1211599 (zebrafish light-sheet)",
         attribution="Pia Aanstad — doi:10.5281/zenodo.1211599 (CC BY-SA 4.0).",
     ),
-    # -- NEW heavy timelapses computed on obsidian (not yet in LFS) ----------
+    # -- Heavy timelapses computed on obsidian -------------------------------
     "gsplats_4d_neuromast_2ch": dict(
         bucket="zenodo",
         record="cc-by",
         license="cc-by-4.0",
         source="Neuromast 2-channel light-sheet timelapse (iSIM)",
         attribution="Adrian Jacobo (CZ Biohub SF); used with permission (CC BY 4.0).",
-        # Permission CONFIRMED by the author 2026-08-12 — no longer blocked;
-        # bytes are on obsidian (~250 MB) awaiting upload to the cc-by record.
-        pending_upload=True,
+        # Permission CONFIRMED by the author 2026-08-12; both channels uploaded to
+        # the cc-by record and pinned below (md5 verified against Zenodo). The
+        # record is still a DRAFT, so RECORDS["cc-by"] carries its id but
+        # `published: False`, and the fetch leg stays dormant until that flips —
+        # the pins are what publication turns on.
     ),
     "h2afva": dict(
         bucket="zenodo",
@@ -248,21 +276,30 @@ DATASETS: dict[str, dict] = {
         license="cc-by-4.0",
         source="h2afva zebrafish histone light-sheet timelapse (Royer lab)",
         attribution="Royer lab, CZ Biohub SF (CC BY 4.0).",
+        # Still pending: the 253tp variant is uploaded and pinned, but the 51tp
+        # file in the record is a SUPERSEDED build and must not be pinned. It
+        # predates the isotropic correction (z extent 405 raw voxels instead of
+        # 1620), carries no substitutive LOD levels at all, is format 3.2, and
+        # keeps the acquisition time numbering 0..250 rather than 0..50. Pinning
+        # it would make the demo fetch a dataset that renders squashed 4x in z.
+        # Replacement build is verified; upload is held pending the zarr-v3
+        # landing and the wider gsplat dataset audit.
         pending_upload=True,
-        # This record's PURPOSE is the full 253-timepoint timelapse. The 51tp
-        # variant is a strict SUBSET of it, shipped anyway because pulling 2.9 GB
-        # is far easier than 16 GB over Zenodo's best-effort bandwidth — the demo
-        # takes 51tp by default and the full timelapse is opt-in. Redundant in
-        # content, not in usability. Files filled at upload.
+        # The 51tp variant covers every FIFTH timepoint of the same acquisition
+        # (frames 0, 5, ... 250 — measured, 51 clusters spaced 5.0000), renumbered
+        # 0..50. It is a temporal subsample, but an INDEPENDENT fit rather than a
+        # decimation of the full one: per-timepoint splat counts differ (2.50M vs
+        # 2.38M at the finest level). Shipped as the default because pulling
+        # ~2.1 GB is far easier than ~11.4 GB over Zenodo's best-effort bandwidth.
         variants={
             "51tp": dict(
                 default=True,
-                approx_bytes=2_900_000_000,
-                note="51-timepoint refit — lighter default for the demo.",
+                approx_bytes=2_134_212_223,
+                note="51-timepoint fit (every 5th frame) — lighter default for the demo.",
             ),
             "253tp": dict(
                 default=False,
-                approx_bytes=16_000_000_000,
+                approx_bytes=11_428_060_091,
                 note="Full 253-timepoint timelapse — opt-in (large download).",
             ),
         },
@@ -273,7 +310,6 @@ DATASETS: dict[str, dict] = {
         license="cc-by-4.0",
         source="Drosophila His2Av::mRFP1 embryo, SiMView light-sheet (Royer/Keller)",
         attribution="Royer & Keller labs — Royer et al., Nat. Biotechnol. 34, 1267-1278 (2016), doi:10.1038/nbt.3708 (CC BY 4.0).",
-        pending_upload=True,
     ),
     "gsplats_3d_h2afva_stack": dict(
         bucket="zenodo",
@@ -284,7 +320,6 @@ DATASETS: dict[str, dict] = {
         license="cc-by-4.0",
         source="h2afva zebrafish histone light-sheet, single stack (Royer lab)",
         attribution="Royer lab, CZ Biohub SF (CC BY 4.0).",
-        pending_upload=True,
     ),
     "gsplats_3d_h2afva_decimation": dict(
         bucket="zenodo",
@@ -292,7 +327,6 @@ DATASETS: dict[str, dict] = {
         license="cc-by-4.0",
         source="h2afva single stack at four decimation levels (Royer lab)",
         attribution="Royer lab, CZ Biohub SF (CC BY 4.0).",
-        pending_upload=True,
     ),
     # ---- Bucket 3: NOT redistributable → fetch raw + compute locally -------
     "milky_way_gaia_3m": dict(
