@@ -15,6 +15,8 @@ import numpy as np
 import zarr
 from arbol import aprint
 
+from luxar._zarr_compat import create_array
+
 from ....encoding.compression import resolve_compressor
 
 if TYPE_CHECKING:
@@ -402,7 +404,8 @@ def write_image_labels_csr(
             pos += len(blob)
 
     # Write offsets (small, compressible)
-    group.create_dataset(
+    create_array(
+        group,
         "image_label_offsets",
         data=offsets,
         chunks=(min(n_elements + 1, 65536),),
@@ -410,7 +413,8 @@ def write_image_labels_csr(
         overwrite=True,
     )
     # Write image bytes — NO compression (already compressed blobs), 1MB chunks
-    group.create_dataset(
+    create_array(
+        group,
         "image_label_bytes",
         data=image_bytes,
         chunks=(min(total_bytes, 1_048_576) if total_bytes > 0 else 1,),

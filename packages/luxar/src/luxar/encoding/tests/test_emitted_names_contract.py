@@ -14,15 +14,15 @@ it and this fails — which the drift gate alone would NOT catch.
 from __future__ import annotations
 
 import numpy as np
-import zarr
 
+from luxar._zarr_compat import memory_group
 from luxar.encoding import ArrayEncoder, EncodingMode, SemanticType
 from luxar.typing_utils._format_contract import ENCODING_NAMES
 
 
 def _emit(data, semantic_type, mode=EncodingMode.AUTO, **kw) -> str:
     """Encode ``data`` and return the emitted ``encoding.name``."""
-    g = zarr.group(store=zarr.MemoryStore())
+    g = memory_group()
     ArrayEncoder().encode(
         data=data, zarr_group=g, name="a", semantic_type=semantic_type, mode=mode, **kw
     )
@@ -34,19 +34,38 @@ def _collect_emitted_names() -> set[str]:
     names: set[str] = set()
 
     # POSITIVE_SCALAR → bounded_scalar_uint8 / _uint16 / geolog_scalar_uint16
-    names.add(_emit(np.linspace(0.1, 1.0, 1000, dtype=np.float32), SemanticType.POSITIVE_SCALAR))
-    names.add(_emit(np.linspace(0.001, 1.0, 1000, dtype=np.float32), SemanticType.POSITIVE_SCALAR))
-    names.add(_emit(np.array([1e-6, 1e-3, 1.0], dtype=np.float32), SemanticType.POSITIVE_SCALAR))
+    names.add(
+        _emit(
+            np.linspace(0.1, 1.0, 1000, dtype=np.float32), SemanticType.POSITIVE_SCALAR
+        )
+    )
+    names.add(
+        _emit(
+            np.linspace(0.001, 1.0, 1000, dtype=np.float32),
+            SemanticType.POSITIVE_SCALAR,
+        )
+    )
+    names.add(
+        _emit(
+            np.array([1e-6, 1e-3, 1.0], dtype=np.float32), SemanticType.POSITIVE_SCALAR
+        )
+    )
 
     # COORDINATE → linear_perchannel_u16 (per-axis fixed point)
     pos = (rng.random((4000, 3)) * [400, 1800, 2000] + [3, 100, 30]).astype(np.float32)
     names.add(_emit(pos, SemanticType.COORDINATE))
 
     # COLOR → rgb_uint8 (SDR) / geolog_perchannel_u16 (HDR AUTO) / _u8 (HDR MEMORY)
-    hdr = (rng.random((2000, 3)).astype(np.float32) * 50.0 + 0.01)
+    hdr = rng.random((2000, 3)).astype(np.float32) * 50.0 + 0.01
     names.add(_emit(hdr, SemanticType.COLOR, EncodingMode.AUTO, color_mode="hdr"))
     names.add(_emit(hdr, SemanticType.COLOR, EncodingMode.MEMORY, color_mode="hdr"))
-    names.add(_emit(rng.random((2000, 3)).astype(np.float32), SemanticType.COLOR, color_mode="sdr"))
+    names.add(
+        _emit(
+            rng.random((2000, 3)).astype(np.float32),
+            SemanticType.COLOR,
+            color_mode="sdr",
+        )
+    )
 
     # Broadcast (uniform) and passthrough (empty) → "broadcasted" / "none"
     names.add(_emit(np.full(500, 2.0, dtype=np.float32), SemanticType.POSITIVE_SCALAR))
@@ -56,7 +75,7 @@ def _collect_emitted_names() -> set[str]:
     names.add(_emit(np.arange(70000, dtype=np.int64), SemanticType.INDEX))
 
     # CHOLESKY split entry point → log_perchannel_u8 + signed_log_perchannel_u8
-    g = zarr.group(store=zarr.MemoryStore())
+    g = memory_group()
     diag = rng.uniform(0.4, 5.0, size=(2000, 3)).astype(np.float32)
     off = (rng.standard_normal((2000, 3)) * 0.3).astype(np.float32)
     ArrayEncoder().encode_cholesky_split(g, diag, off, 3, EncodingMode.AUTO)

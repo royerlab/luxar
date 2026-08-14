@@ -42,7 +42,6 @@ import {
   ivec2 as _ivec2,
   float,
   int,
-  textureSize,
   max,
   min,
   mix,
@@ -70,7 +69,11 @@ import {
   VOLUMETRIC_SERIES_TAU_THRESHOLD,
   VOLUMETRIC_TAU_EPS,
 } from '../_shared/volumetric';
-import { getPlaceholderElementTexture } from '../../element-texture-layout';
+import {
+  getPlaceholderElementTexture,
+  resolveElementTextureWidth,
+  POINT_TEXTURE_LAYOUT,
+} from '../../element-texture-layout';
 import {
   applyBlendingStateToMaterial,
   getPointBlendingState,
@@ -298,13 +301,17 @@ export function pointWebGPUFactory(
     // written unconditionally by the texel writer — 1.0 for RGB data)
     // — mirrors the GLSL twin's unconditional fetch.
     const pointBase: TSLNode = int(aSortedIndex).mul(int(3)).toVar();
-    // int() wrap is LOAD-BEARING: TSL types textureSize() as uint (the
-    // WGSL textureDimensions convention), but the WebGL2 fallback emits
-    // GLSL textureSize() which returns int -- without the explicit
-    // conversion the generated `uint nodeVar = textureSize(...).x;`
-    // fails to compile on the forceWebGL backend.
+    // The width is baked as a LITERAL, not read via textureSize(): a
+    // compile-time constant lets the shader compiler strength-reduce
+    // the per-vertex %/int-div addressing below (measured -7% on the
+    // quad's whole GPU pass; a uniform recovered almost none of it).
+    // Safe because the width is a per-layout session constant, capped
+    // at 4096 on every device (element-texture-layout.ts).
     const pointTexW: TSLNode = int(
-      (textureSize(uPointTex, int(0)) as unknown as TSLNode).x
+      resolveElementTextureWidth(
+        POINT_TEXTURE_LAYOUT,
+        (nodes.uPointTex as unknown as { value?: { image?: { width?: number } } }).value ?? null
+      )
     ).toVar();
     const texelX: TSLNode = pointBase.mod(pointTexW).toVar();
     const texelY: TSLNode = pointBase.div(pointTexW).toVar();

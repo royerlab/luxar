@@ -63,6 +63,71 @@ def test_run_dry_run_reports_plan_without_fitting(tmp_path: Path) -> None:
     assert not (out / "tiles").exists() or not list((out / "tiles").glob("*.zarr"))
 
 
+def test_run_dry_run_announces_whole_volume_seed_split(tmp_path: Path) -> None:
+    """The plan announces how an integer ``--seeds`` divides across tiles (#1556).
+
+    Every task is a ``--tile k/M`` fit that divides the budget itself, but the
+    task pool captures worker output (``task_pool.py``), so the worker's own
+    notice never reaches the console. Plan time is the one place the tile count
+    is known before anything runs, so the notice belongs there — which also
+    makes it visible under ``--dry-run``.
+    """
+    src = tmp_path / "vol.zarr"
+    _make_zarr(src)
+    res = runner.invoke(
+        app_gsplat,
+        [
+            "batch-fit",
+            "run",
+            str(src),
+            str(tmp_path / "out"),
+            "--axes",
+            "z,y,x",
+            "--tile-size",
+            "32",
+            "--overlap",
+            "8",  # 48^3 / 32 / 8 -> a 2x2x2 grid = 8 tiles
+            "--gpus",
+            "cpu",
+            "--seeds",
+            "800",
+            "--dry-run",
+        ],
+    )
+    assert res.exit_code == 0, res.output
+    assert "whole-volume budget" in res.output
+    assert "100 per tile" in res.output  # 800 / 8 tiles
+    assert "8 tiles" in res.output
+
+
+def test_run_dry_run_no_seed_notice_without_seeds(tmp_path: Path) -> None:
+    """Guard: no ``--seeds`` means no split notice (auto is sized per tile)."""
+    src = tmp_path / "vol.zarr"
+    _make_zarr(src)
+    res = runner.invoke(
+        app_gsplat,
+        # fmt: off
+        [
+            "batch-fit",
+            "run",
+            str(src),
+            str(tmp_path / "out"),
+            "--axes",
+            "z,y,x",
+            "--tile-size",
+            "32",
+            "--overlap",
+            "8",
+            "--gpus",
+            "cpu",
+            "--dry-run",
+        ],
+        # fmt: on
+    )
+    assert res.exit_code == 0, res.output
+    assert "whole-volume budget" not in res.output
+
+
 def test_run_rejects_npy_input_with_clear_message(tmp_path: Path) -> None:
     """batch-fit needs OME-Zarr; a .npy input must fail fast with a clear pointer
     (not an opaque zarr 'not a directory' error)."""

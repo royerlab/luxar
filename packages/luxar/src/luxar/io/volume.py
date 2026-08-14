@@ -17,6 +17,8 @@ from typing import Any, List, Optional, Tuple
 import numpy as np
 from arbol import aprint
 
+from luxar._zarr_compat import is_zarr_path
+
 __all__ = [
     "decode_flat_channel_index",
     "load_volume",
@@ -61,6 +63,153 @@ def decode_flat_channel_index(
     return tuple(coords)
 
 
+def _axis_kind(label: str, flag: str = "--axes") -> str:
+    """Classify one axis label as time, channel or spatial.
+
+    ``flag`` names the option being parsed, so a typo is reported against the
+    option the user actually typed: this vocabulary is shared by ``--axes`` and
+    ``--target-axes``, which mean different things.
+    """
+    if label in ("t", "time"):
+        return "t"
+    if label in ("c", "channel", "ch", "camera", "cam"):
+        return "c"
+    if label in ("z", "y", "x", "depth", "height", "width"):
+        return "s"
+    raise ValueError(
+        f"{flag} label {label!r} not recognised; use time/t, "
+        "channel/c/ch/camera/cam, or z/y/x (depth/height/width)."
+    )
+
+
+def open_volume_lazy(path: Path, array_key: Optional[str] = None) -> Any:
+    """Open a volume WITHOUT materialising it, when the format allows.
+
+    A zarr store is returned as its array object, so a caller that only ever
+    slices it (a per-timepoint or per-tile volume re-fit) never pays for the
+    whole dataset: a 253-timepoint 407x2048x2048 uint16 timelapse is 431 GB while
+    one timepoint is 3.4 GB. Formats with no lazy reader (.npy/.npz/.tiff) fall
+    back to :func:`load_volume`; those are single volumes by nature, so the
+    fallback is not the case this exists for.
+
+    The returned object supports ``.shape`` and numpy basic indexing — the
+    contract :func:`~luxar.gsplats.lod.volume_regions.select_sub_volume` needs.
+
+    Array selection within a group follows the SAME rules as
+    :func:`load_volume` / :func:`~luxar.io.ome_zarr.discover_ome_zarr_shape` —
+    explicit ``array_key``, else the OME-NGFF resolution level ``"0"``, else the
+    largest array found recursively. It has to: the caller re-opens a store some
+    other command already read the shape of, and a different choice here would
+    silently re-fit against a different (e.g. downsampled) array.
+    """
+    if is_zarr_path(path):
+        import zarr
+
+        from luxar._zarr_compat import open_store
+
+        # This branch explicitly accepts `.zarr.zip`, so the store has to be
+        # dispatched explicitly: zarr 2 sniffed the suffix inside
+        # `normalize_store_arg`, zarr 3 does not, and a bare
+        # `zarr.open(str(path))` on an archive raises GroupNotFoundError.
+        node = zarr.open(store=open_store(path, mode="r"), mode="r")
+        if array_key:
+            try:
+                node = node[array_key]
+            except (KeyError, TypeError) as e:
+                raise ValueError(
+                    f"array key {array_key!r} not found in {path.name}"
+                ) from e
+        elif isinstance(node, zarr.Group):
+            if "0" in node:
+                node = node["0"]  # OME-NGFF: level "0" is full resolution
+            else:
+                arrays = _find_all_arrays(node)
+                if not arrays:
+                    raise ValueError(f"No arrays found in zarr group: {path}")
+                node = max(arrays, key=lambda kv: int(np.prod(kv[1].shape)))[1]
+        if not hasattr(node, "shape"):
+            raise ValueError(
+                f"{path.name} is a zarr GROUP; pass an array_key naming the "
+                "array to re-fit against"
+            )
+        return node
+    return load_volume(path, array_key=array_key)
+
+
+class _PinnedAxes:
+    """Lazy view of an array-like with some axes fixed to a single index.
+
+    A zarr array MATERIALISES on ``__getitem__``, so pre-slicing away the axes a
+    caller does not need (a channel it selected, a time axis it is not walking)
+    would defeat the whole point of :func:`open_volume_lazy`. This defers the
+    pinned indices into every read instead.
+
+    Only ``.shape`` and numpy basic indexing are provided — the contract
+    :func:`~luxar.gsplats.lod.volume_regions.select_sub_volume` needs.
+    """
+
+    def __init__(self, base: Any, pins: dict) -> None:
+        shape = tuple(int(s) for s in base.shape)
+        for axis, index in pins.items():
+            if not 0 <= int(axis) < len(shape):
+                raise ValueError(f"pinned axis {axis} out of range for {shape}")
+            if not 0 <= int(index) < shape[int(axis)]:
+                raise ValueError(
+                    f"pinned index {index} out of range on axis {axis} "
+                    f"(extent {shape[int(axis)]})"
+                )
+        self._base = base
+        self._pins = {int(a): int(i) for a, i in pins.items()}
+        self._free = [i for i in range(len(shape)) if i not in self._pins]
+        self.shape = tuple(shape[i] for i in self._free)
+        self.dtype = getattr(base, "dtype", None)
+
+    def __getitem__(self, key: Any) -> Any:
+        idx = key if isinstance(key, tuple) else (key,)
+        full: List[Any] = [slice(None)] * (len(self._free) + len(self._pins))
+        for axis, index in self._pins.items():
+            full[axis] = index
+        for position, entry in zip(self._free, idx):
+            full[position] = entry
+        return self._base[tuple(full)]
+
+
+def pin_volume_axes(volume: Any, pins: dict) -> Any:
+    """Fix ``{axis: index}`` of ``volume``, dropping those axes, without reading.
+
+    Returns ``volume`` unchanged when there is nothing to pin, so the common case
+    keeps handing the underlying store straight through.
+    """
+    return _PinnedAxes(volume, pins) if pins else volume
+
+
+def volume_axes_from_spec(
+    axes: str, ndim: int, *, flag: str = "--target-axes"
+) -> tuple:
+    """Map each SPLAT center dim to the volume axis that holds it.
+
+    The counterpart of :func:`_apply_axes_spec` for the case where a non-spatial
+    axis must be KEPT rather than sliced away: a volume re-fit of a stacked
+    timelapse walks the barrier axis itself, one slice per group.
+
+    Luxar's fitted splats order their center columns spatial-first (in the
+    array's own spatial order) with stacked time/channel dims LAST, while a
+    source array is usually the other way round (``t, z, y, x``). So the mapping
+    is the spatial axis positions followed by the stacked ones:
+    ``"t,z,y,x"`` gives ``(1, 2, 3, 0)``.
+    """
+    labels = [a.strip().lower() for a in axes.split(",") if a.strip() != ""]
+    if len(labels) != ndim:
+        raise ValueError(
+            f"{flag} has {len(labels)} labels but the splats are {ndim}D; "
+            "give one label per dimension."
+        )
+    kinds = [_axis_kind(label, flag) for label in labels]
+    spatial = [i for i, k in enumerate(kinds) if k == "s"]
+    stacked = [i for i, k in enumerate(kinds) if k in ("t", "c")]
+    return tuple(spatial + stacked)
+
+
 def _apply_axes_spec(
     arr: np.ndarray,
     axes: str,
@@ -85,19 +234,7 @@ def _apply_axes_spec(
             f"(shape {arr.shape}); give one label per dimension."
         )
 
-    def _kind(label: str) -> str:
-        if label in ("t", "time"):
-            return "t"
-        if label in ("c", "channel", "ch", "camera", "cam"):
-            return "c"
-        if label in ("z", "y", "x", "depth", "height", "width"):
-            return "s"
-        raise ValueError(
-            f"--axes label {label!r} not recognised; use time/t, "
-            "channel/c/ch/camera/cam, or z/y/x (depth/height/width)."
-        )
-
-    kinds = [_kind(label) for label in labels]
+    kinds = [_axis_kind(label) for label in labels]
     index: list = [slice(None)] * arr.ndim
     for i, k in enumerate(kinds):
         if k in ("t", "c"):
@@ -175,7 +312,7 @@ def load_volume(
                 if len(keys) > 1:
                     aprint(f"  Using first array '{keys[0]}' (available: {keys})")
 
-    elif suffix == ".zarr" or (suffix == ".zip" and path.stem.endswith(".zarr")):
+    elif is_zarr_path(path):
         # Handles both plain .zarr directories and .zarr.zip archives.
         # zarr natively supports ZipStore so no extraction needed. With an
         # explicit --axes the raw array is loaded and sliced by _apply_axes_spec
@@ -218,8 +355,10 @@ def load_volume(
         volume = np.asarray(volume, dtype=np.float32)
     else:
         # Post-process: drop incidental size-1 dims from the positional heuristic.
+        # The second asarray is a no-op at runtime (already float32, no copy); it
+        # is there because np.squeeze is typed as returning Any.
         volume = np.asarray(volume, dtype=np.float32)
-        volume = np.squeeze(volume)
+        volume = np.asarray(np.squeeze(volume), dtype=np.float32)
 
     if volume.ndim < 2:
         raise ValueError(
@@ -261,8 +400,15 @@ def _load_zarr_volume(
     """
     import zarr
 
+    from luxar._zarr_compat import open_store
+
     aprint(f"Loading Zarr: {path.name}")
-    store = zarr.open(str(path), mode="r")
+    # `open_store`, not a bare `zarr.open(str(path))`: zarr 2 sniffed a `.zip`
+    # suffix inside `normalize_store_arg` and handed back a ZipStore, but zarr 3
+    # does not — it treats the archive as a LocalStore directory and raises
+    # GroupNotFoundError. That would break `luxar gsplat fit data.zarr.zip`, a
+    # documented entry point, so the dispatch is explicit here.
+    store = zarr.open(store=open_store(path, mode="r"), mode="r")
 
     # Navigate to the target array
     if isinstance(store, zarr.Array):
