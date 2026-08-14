@@ -58,6 +58,7 @@ Each subdirectory contains pre-fitted `.gsplats.zarr.zip` files for one demo:
 | `gsplats_cryoem_virus/` | 3D cryo-EM giant-virus capsid (EMDB EMD-5384, PBCV-1) | 1 `.gsplats.zarr.zip` |
 | `gsplats_milkyway_dust/` | 3D interstellar dust of the solar neighborhood (Leike & Enßlin 2020) | 1 `.gsplats.zarr.zip` (~8 MB) |
 | `gsplats_visible_human_head/` | 3D Visible Human head, true-color cryosections (NLM) | 1 `.gsplats.zarr.zip` + `vh_head_colors.npz` (per-splat RGB) |
+| `gsplats_flylight_mcfo_63x/` | 3D *Drosophila* whole brain, MultiColor FlpOut (Janelia FlyLight, 63x) | 1 `.gsplats.zarr.zip` (~5 MB) |
 | `gsplats_nexrad_supercell/` | 4D NEXRAD Oklahoma convective evening incl. the El Reno tornadic supercell (KTLX, 2013-05-31 21Z - 06-01 03Z) | 1 bundle zip with 82 volume scans (~9.6 MB) |
 | _(not bundled)_ `gsplats_4d_neuromast_2ch` | 4D two-channel neuromast timelapse | 2 channel `.gsplats.zarr` (~220 MB unzipped) — **not in Git LFS**; the zips (133 MB) are in the `cc-by` record and pinned in the manifest, and the demo reads the unzipped pair from a local store |
 
@@ -151,6 +152,12 @@ Outer zip containing many per-frame `.gsplats.zarr.zip` files. Automatically ext
   (17 U.S.C. 105) via NOAA Open Data Dissemination; acknowledge NOAA, no
   endorsement implied. Derived product: regridded and Gaussian-fitted.
   - https://registry.opendata.aws/noaa-nexrad (bucket `unidata-nexrad-level2`)
+- **FlyLight MCFO whole brain**: Janelia FlyLight Gen1 MCFO, line VT019012, slide
+  20140423_20_D5, 63x (CC BY 4.0) — credit the FlyLight Project Team, HHMI Janelia
+  Research Campus. Derived product: ten raw LSM tiles registered, blended and
+  Gaussian-fitted.
+  - Meissner et al. (2023) eLife 12:e80660; Nern, Pfeiffer & Rubin (2015) PNAS
+    112(22); Tirian & Dickson (2017) bioRxiv 198648
 - **Dip-C 3D genome**: GEO GSE117876 (GM12878)
   - Tan et al. (2018) Science 361(6405):924–928
 
