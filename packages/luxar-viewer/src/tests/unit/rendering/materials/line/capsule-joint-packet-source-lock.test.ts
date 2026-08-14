@@ -27,22 +27,19 @@
  * Why a string-level lock rather than "just test the behaviour":
  *
  * - The behaviour IS tested — but only through the CPU mirror. Deleting the
- *   far cap from `_shared/line-capsule.ts::capsuleJointRenderLeg` fails TWO
- *   TESTS in `tests/unit/rendering/materials/line-capsule.test.ts`, both under
- *   `joint composition — the rendered pair tracks max(mine, partner)`:
- *   `short partners (#1488/#1490)` (first failing row `ql 2 max` 0.715 against
- *   a 0.06 bound) and `constant-width and widening cases (#1495)` (first
- *   failing row `const partner 120° ql2 min` −0.399 against −0.03). Each test
- *   stops at its first failing row, so the row count is at least two and
- *   unknown beyond that — the TEST count is the measured figure.
+ *   far cap from `_shared/line-capsule.ts::capsuleJointRenderLeg` fails SIX
+ *   TESTS in `tests/unit/rendering/materials/line-capsule.test.ts`, all under
+ *   `joint composition — the rendered pair tracks max(mine, partner)` — among
+ *   them `short partners (#1488/#1490)` (first failing row `ql 2 max` 0.715
+ *   against a 0.005 bound) and `constant-width and widening cases (#1495)`
+ *   (first failing row `const partner 120° ql2 min` −0.399 against −0.01).
+ *   Each test stops at its first failing row, so the row count is at least six
+ *   and unknown beyond that — the TEST count is the measured figure.
  * - Deleting the SAME far cap from all four SHADER sources and leaving the
- *   mirror alone leaves the entire viewer unit suite green. Measured on the
- *   tree BEFORE this file existed: 553 files, 11513 passing tests — derived
- *   from a full `vitest run` of 554 files / 11547 passing (+2 skipped) WITH
- *   this file, which contributes exactly 1 file and 34 tests. Nothing tied the
- *   shader text to the model, so the exact regression #1490 describes (a
- *   packing refactor applied identically to all four twins) could land again
- *   invisibly.
+ *   mirror alone leaves the entire viewer unit suite green — every one of the
+ *   11363 tests in the 552 files this one joins. Nothing tied the shader text
+ *   to the model, so the exact regression #1490 describes (a packing refactor
+ *   applied identically to all four twins) could land again invisibly.
  * - The TSL↔GLSL parity harness cannot see it either: it runs under
  *   `.github/workflows/ci.yml`'s `e2e-tests` job, which is `if: false`
  *   repo-wide, and until the fixture added alongside this file
@@ -509,14 +506,15 @@ describe('capsule joint deficit packet: the gate clauses (#1495 / #1501)', () =>
         expect(gate, `${label}: missing packet-gate clause ${clause}`).toContain(clause);
       }
       // The sharp-turn clause is pinned OPERAND-AGNOSTICALLY: "a dot product,
-      // compared against ±0.5". #1562 (issue #1495) adds the same expression
-      // to the width gate just above, and the natural cleanup once it appears
-      // twice is to hoist it to a local — exactly what the TSL twin already
-      // does (`dot(qhat, u)`). Two `toContain`s rather than one regex: a
-      // regex tight enough to bind the operands would red on that hoist, and
-      // one loose enough to tolerate it (`dot\([^)]*\)`) cannot cross a
-      // nested `)`, so it would ALSO red on `dot(normalize(qq), u)`. Each
-      // gate statement holds exactly one `dot(` and one `±0.5` today, and
+      // compared against ±0.5". #1562 (issue #1495) has since put the same
+      // expression in the width gate just above, and the natural cleanup now
+      // that it appears twice is to hoist it to a local — exactly what the TSL
+      // twin already does (`dot(qhat, u)`). Two `toContain`s rather than one
+      // regex: a regex tight enough to bind the operands would red on that
+      // hoist, and one loose enough to tolerate it (`dot\([^)]*\)`) cannot
+      // cross a nested `)`, so it would ALSO red on `dot(normalize(qq), u)`.
+      // Each gate STATEMENT — the scope `statement()` cuts, which stops short
+      // of the width gate — holds exactly one `dot(` and one `±0.5`, and
       // deleting the clause removes both.
       expect(gate, `${label}: the sharp-turn clause needs a dot product`).toContain('dot(');
       expect(gate, `${label}: the sharp-turn clause must compare against ${turn}`).toContain(turn);

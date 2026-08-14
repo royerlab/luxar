@@ -716,20 +716,20 @@ function buildFoldJoinTexelSource(width: number): LineTexelSource {
  * reconstructed partner rod and an unbounded one.
  *
  * Nothing else here reaches it. `line-capsule-joint` / `-fold` / `-fold-thin`
- * / `-pick-joint` all carry UNIFORM widths, so their packets (where they open
- * at all) have gradient 0 and a partner far longer than the disc: `-fold`'s
- * ql is ~28.8 px against a ~12 px radius, so `xp` never reaches `cut.w` and
- * the far-cap term is inert. Deleting the far cap from all four capsule shader
- * sources left the whole viewer unit suite green (measured: 553 files, 11513
- * tests) — the companion source lock
+ * / `-fold-mid` / `-pick-joint` all carry UNIFORM widths, so their packets
+ * (where they open at all) have gradient 0 and a partner far longer than the
+ * disc: `-fold`'s ql is ~28.8 px against a ~12 px radius, so `xp` never
+ * reaches `cut.w` and the far-cap term is inert. Deleting the far cap from all
+ * four capsule shader sources left the whole viewer unit suite green — the
+ * companion source lock
  * `tests/unit/rendering/materials/line/capsule-joint-packet-source-lock.test.ts`
  * closes that hole by text; this pair closes it by pixels. Mutation-proved
- * both ways, over the 20 tests `-g "capsule"` selects (18 fixture variants
+ * both ways, over the 21 tests `-g "capsule"` selects (19 fixture variants
  * plus 2 standalone checks): unbinding the rod in the VISUAL GLSL fragment
  * alone fails `line-capsule-joint-short-partner` at 4.433 per-covered-pixel
- * (bound 2.0) with the OTHER 19 still green, and the same edit to the PICK
+ * (bound 2.0) with the OTHER 20 still green, and the same edit to the PICK
  * GLSL fragment alone fails `line-capsule-pick-joint-short-partner` at 2.715,
- * again with the other 19 green.
+ * again with the other 20 green.
  *
  * Geometry, every number derived at the harness's ortho mapping — the default
  * `OrthographicCamera(-1, 1, 1, -1)` over a 64x64 target is 32 px per world
@@ -2001,12 +2001,12 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
   // rod from its own copy of the packet, so it regresses independently — and
   // it does witness the far-cap term on its own (unbinding the rod in the PICK
   // GLSL fragment alone fails this entry at 2.715, 70 of 908 covered pixels,
-  // with the other 19 capsule tests still green). It needs NO max-mode define:
+  // with the other 20 capsule tests still green). It needs NO max-mode define:
   // the pick fragment already carries brightness in a colour channel.
   // `depthCompete` for the same reason as the entry above, and here it is not
-  // marginal: the fat 12.653 px legs overlap deeply, and depth-off measured
-  // 4.529 per-covered-pixel across 55 pixels — every one of them a flipped
-  // WINNER (GLSL element id 1 against TSL element id 0), not a near-tie.
+  // marginal: the fat 12.653 px legs overlap deeply, and depth-off measures
+  // 6.311 per-covered-pixel — flipped pick WINNERS (GLSL element id 1 against
+  // TSL element id 0), not near-ties.
   'line-capsule-pick-joint-short-partner': {
     source: CAPSULE_LINE_PICK_SOURCE,
     depthCompete: true,
