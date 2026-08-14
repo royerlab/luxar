@@ -36,9 +36,19 @@ import { resolveLinePrimitiveForNode } from '../../types/line-primitive';
  * yet on the streaming path (the material is built on the empty
  * placeholder mesh). Ordered nodes are exactly the large ones the auto
  * policy is for; an `ordering: 'none'` node loads whole and small.
+ *
+ * VERTEX ordering, not segment ordering: vertices are indexed in
+ * D-space, so its bounds ARE the node's bbox, while segment ordering
+ * runs in (2×D)-space (both endpoints concatenated — see
+ * `io/_ordering/lines.py`) and its two coordinate blocks span the same
+ * extent, which makes a hypot over them exactly √2 × the diagonal. The
+ * compiler always writes both together, so the segment fallback below
+ * only ever fires on hand-written metadata; it stays because a √2-large
+ * denominator is merely conservative (a smaller width factor keeps the
+ * capsule longer), never wrong in the dangerous direction.
  */
 function lineBoundsDiagonal(attrs: LinesMetadata): number | undefined {
-  const ordering = attrs.segment_ordering ?? attrs.vertex_ordering;
+  const ordering = attrs.vertex_ordering ?? attrs.segment_ordering;
   if (!ordering) return undefined;
   const { ordering_min: min, ordering_max: max } = ordering;
   if (!Array.isArray(min) || !Array.isArray(max) || min.length !== max.length || !min.length) {

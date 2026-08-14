@@ -99,19 +99,25 @@ export const AUTO_QUAD_EFFECTIVE_SEGMENTS = 2_000_000;
  *   openingPx  = max_width / bboxDiagonal × NOMINAL_VIEWPORT_PX
  *   widthFactor = max(1, openingPx / MIN_RENDERED_WIDTH_PX)
  *
- * Deliberately order-of-magnitude, not exact: the authored width is the
- * quad's HALF-width and each primitive draws a slightly different
- * support multiple of it (see `_shared/line-capsule.ts`), so `openingPx`
- * underestimates the drawn footprint by a small constant — conservative
- * (keeps capsule a bit longer), which is the right bias for a quality
+ * Deliberately order-of-magnitude, not exact: `openingPx` is the
+ * authored width times a nominal px-per-unit, but the line shaders draw
+ * about FOUR times that. Two factors of 2 stack — `uPerspectiveLineScale`
+ * is `res.y / tan(fov/2)`, i.e. twice the true px-per-unit conversion,
+ * and the shader then consumes the result as the quad's HALF-extent
+ * (`aQuadCorner.y ∈ {-1,+1}` in `shader-glsl.ts`) — on top of which each
+ * primitive draws its own support multiple (see
+ * `_shared/line-capsule.ts`). Left uncorrected on purpose: a ~4× small
+ * factor keeps the capsule longer, which is the right bias for a quality
  * default. Two properties make the ratio robust: `max_width` and the
  * bounds diagonal live in the SAME authored space, so a uniform node
  * transform cancels out of the ratio; and an nD bounds diagonal (extra
  * non-spatial dims) only grows the denominator, again conservative.
  *
- * Floored at 1 because the shader clamps thinner lines to
- * `minPixelWidth` (1.5 px in shader-glsl.ts) — below the clamp, fill
- * cost stops shrinking with width. Measured: capsule GPU cost grew
+ * Floored at 1 because the shader clamps thin lines to `minPixelWidth`
+ * (1.5 px in shader-glsl.ts) — below the clamp, fill cost stops
+ * shrinking with width. With the 4× above, the floor in fact holds until
+ * a line draws roughly 6 px rather than releasing exactly at the clamp;
+ * same conservative direction. Measured: capsule GPU cost grew
  * ~2.8× from the thin bench arms to the width-3 arms at equal count,
  * i.e. ~linearly in rendered width, which is what a linear factor
  * models. Nodes without authored bounds fall back to factor 1
