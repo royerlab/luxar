@@ -723,10 +723,13 @@ function buildFoldJoinTexelSource(width: number): LineTexelSource {
  * a shared-loop mean of 0.1956 and fails nothing (measured before this branch
  * merged main's #1495/#1494 work and not re-measured after — every radius here
  * clears the AA floor, so the widthScale factor is 1 and the comparison should
- * carry, but read the counts as indicative). (`line-capsule-fold-thin` is
- * width-gated off at rMax 2.0 — its 122.7° turn does clear the sharp-turn
- * test, but #1495's escape also demands both RAW radii reach the 1.5 px AA
- * floor and its width 0.02 gives 0.84 px, so the gate holds;
+ * carry, but read the counts as indicative). `line-capsule-fold-mid` (width
+ * 0.05, 2.11 px) reaches the branch too, through #1495's floored sharp-turn
+ * escape rather than the width gate, and its legs are congruent as well.
+ * (`line-capsule-fold-thin` is width-gated off at rMax 2.0 — its 122.7° turn
+ * does clear the sharp-turn test, but #1495's escape also demands both RAW
+ * radii reach the 1.5 px AA floor and its width 0.02 gives 0.84 px, so the
+ * gate holds;
  * `line-capsule-joint`, uniform 0.1 widths, genuinely closes all four clauses
  * at both ends and never reaches the branch at all.)
  *

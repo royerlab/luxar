@@ -299,6 +299,13 @@ export function capsuleLegField(leg: CapsuleJointLeg, px: number, py: number): n
  * 0) ≤ mine), so the end must reserve the FULL disc or the rasterizer chops
  * the light the deficit rule draws (#1488). Both carry the AA apron.
  *
+ * `rMax` is the vertex stage's OWN `rMax` — `max(rA, rB) + apron`, the same
+ * value the width gate compares and the quad's half-width uses — so both arms
+ * add the apron a second time, exactly as the four `ext` writes do
+ * (`extA = rMax + APRON` / `abs(nLoc.y) * rMax + APRON`). Passing the bare
+ * drawn radius instead would make this model reserve 0.5 px LESS than the
+ * shader: faithful-looking, and quietly able to chop what the shader draws.
+ *
  * The two arms it does NOT model: the bare-apron BUTT an interior end keeps
  * when there is no partner-far texel, the joint vertex is behind the near
  * plane, the projected partner length degenerates (the shaders' `ql > 1e-4`
