@@ -178,13 +178,34 @@ ADDITIVE_LADDERS = False
 # diffuse background (see combine_to_4d for why this matters so much here).
 SCALE_MAX_PERCENTILE = 95.0
 
-# Volumetric absorption. Measured by sweeping the live uniform against this data:
-# at the usual 1.0 a view ray crosses ~50 densely packed nuclei and saturates, so
-# the embryo reads as one flat bright mass; by 8.0 only a thin front shell
-# survives and the volume all but disappears. 2.0 keeps the nuclei bright while
-# giving enough front-to-back occlusion to read as a solid 3D body. It is a
-# starting point, not a verdict — the Layers panel exposes the slider.
-VOLUME_ABSORPTION = 2.0
+# Volume appearance, tuned in the viewer's Layers panel against the built matrix
+# and applied to every crop.
+#
+# The two knobs work together, and the pairing is not the intuitive one. My first
+# guess was to hold opacity at 1.0 and raise absorption for occlusion; sweeping
+# the live uniforms showed that just trades a flat bright mass (absorption 1) for
+# a near-invisible front shell (absorption 8). What actually reads is the
+# opposite corner: a LOW per-splat opacity so ~50 nuclei along a ray accumulate
+# instead of saturating, with only mild absorption for depth.
+VOLUME_OPACITY = 0.11
+VOLUME_ABSORPTION = 0.38
+
+# Display-range window, i.e. which slice of the amplitude range the colormap
+# spans. The panel exposes it as [min, max] and stores it as the shader pair
+# ``intensity = 1 / (max - min)``, ``offset = -min / (max - min)``; the viewer
+# recovers the window from them (ui/layers/layer-state.ts), so authoring the pair
+# reproduces the tuned look exactly instead of re-defaulting to the full range.
+#
+# The window is [0.029, 0.562]: it floors the near-zero tail and clips the top
+# ~25% of the range, which brightens the nuclei without letting the brightest
+# few clip to white. These are ABSOLUTE amplitude values, which is safe here
+# because every crop goes through the same per-timepoint normalization — the
+# measured finest-level ranges across the seven built crops span only
+# 0.029-0.063 (low) and 0.712-0.798 (high), so one window suits them all.
+VOLUME_DISPLAY_MIN = 0.029
+VOLUME_DISPLAY_MAX = 0.562
+VOLUME_INTENSITY = 1.0 / (VOLUME_DISPLAY_MAX - VOLUME_DISPLAY_MIN)
+VOLUME_OFFSET = -VOLUME_DISPLAY_MIN / (VOLUME_DISPLAY_MAX - VOLUME_DISPLAY_MIN)
 
 # Nuclei in these crops are ~8 um across; a marker a bit under half that reads as
 # "this cell is tracked" without hiding the splatted nucleus underneath it.
@@ -738,15 +759,19 @@ Navigation:
 
                 # Volumetric + absorption for the image: emissive-only additive
                 # rendering makes a dense nuclei stack read as a flat glow, while
-                # volumetric occlusion keeps the embryo's depth structure.
+                # volumetric occlusion keeps the embryo's depth structure. The
+                # opacity / absorption / window trio is the tuned set — see the
+                # VOLUME_* constants for what each one is doing and why.
                 group.add_gsplats_from_data(
                     "volume",
                     crop["lod"],
                     lod_group=True,
                     dim_order=["z", "y", "x", "time"],
                     extend_to_all=[],
-                    opacity=1.0,
+                    opacity=VOLUME_OPACITY,
                     absorption=VOLUME_ABSORPTION,
+                    intensity=VOLUME_INTENSITY,
+                    offset=VOLUME_OFFSET,
                     blending_mode="volumetric",
                     colormap="bop_blue",
                 )
