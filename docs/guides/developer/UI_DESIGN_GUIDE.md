@@ -183,7 +183,7 @@ exist). This is the single most common authoring mistake.
 
 | Token | Value | Layer |
 | --- | --- | --- |
-| `--luxar-z-base` | 100 | Baseline layer — in-canvas widgets and frameless overlays. Both prescribed migrations are still pending, so today it holds the opposite: the data monitor and the dimension sliders, which belong a tier up (§15.4), while the widgets that belong here sit on `tooltip` (§15.1) |
+| `--luxar-z-base` | 100 | Baseline layer — in-canvas widgets and frameless overlays. The prescribed migrations are still pending, so today it holds the opposite: the data monitor, which belongs a tier up (§15.4), while the widgets that belong here sit on `tooltip` (§15.1) |
 | `--luxar-z-dropdown` | 1000 | Docked panels, the rail |
 | `--luxar-z-modal` | 2000 | Modal dialogs (+ scrim at `calc(var(--luxar-z-modal) - 1)`) |
 | `--luxar-z-popover` | 3000 | Rail popovers/flyouts, first-run hint |
@@ -198,7 +198,7 @@ shipped uses: the modal scrim at `calc(var(--luxar-z-modal) - 1)`
 (`dataset-browser.css:18`), the debug console at
 `calc(var(--luxar-z-base) + 50)` (`debug-console.css:31` — just above the
 baseline layer, deliberately below every panel), and the toast at
-`calc(var(--luxar-z-tooltip) + 1000)` (`toast.css:22` — deliberately above
+`calc(var(--luxar-z-tooltip) + 1000)` (`toast.css:28` — deliberately above
 *every* tier in the table, because a transient notice must not be occluded).
 Keep the offset readable as an intent ("just above/below tier X"); if you need
 a whole new band, that is a token, not a `calc`. All three are registered in
@@ -214,7 +214,7 @@ and `performance-monitor.ts:87`, which writes `statsMonitor`, *not* the
 
 | `config.ui.zIndex` key | Value | Nearest token tier |
 | --- | --- | --- |
-| `dimensionSliders`, `performanceMonitor` | 100 | `base` (100) |
+| `dimensionSliders`, `performanceMonitor` | 100 | `base` (100) — `dimensionSliders` is one of the unread keys; its stylesheet is on `--luxar-z-dropdown` (#1483), so this row does not describe where the panel paints |
 | `debugConsole` | 150 | just above `base` |
 | `datasetBrowser`, `loading`, `error` | 1000 | `dropdown` (1000) |
 | `help` | 1001 | just above `dropdown` |
@@ -359,12 +359,29 @@ refraction injector in `glass-filters.ts` all read the same class.
 
 - **Opt in**: self-contained bordered panels (rail, GUI panels, help overlay,
   layers panel, monitor, dataset browser, debug console, dimension sliders,
-  toast, resolution indicator, error overlay, scene-identity banner, rail
+  resolution indicator, error overlay, scene-identity banner, rail
   flyout/popover).
-- **Opt out**, two kinds: frameless in-canvas widgets (scale bar, colormap
+- **Opt out**, three kinds: frameless in-canvas widgets (scale bar, colormap
   legend) are deliberately NOT glass — they use drop-shadows instead of a
-  panel material; and transient cursor popovers (context menus, §7.8) are
-  *framed* but still not glassed, because they live and die with the cursor.
+  panel material; transient cursor popovers (context menus, §7.8) are
+  *framed* but still not glassed, because they live and die with the cursor;
+  and two over-canvas badges — the toast and the REC pill — are framed on the
+  badge variant of the recipe (§7.1) but likewise not glassed. **Being a badge
+  is not the criterion**, and the two have different-strength reasons. For the
+  toast, un-glassing is *mandatory*: its dismiss animation is an `opacity` fade
+  on its own root, which §5.1.3 forbids on a glass surface. The REC pill's reason
+  is weaker — it is simply not put on the panel material
+  (`recording-panel.css:85-97`, a hairline-bordered pill in the untokenised 9999
+  band that must beat unknown host chrome, §15.6); it does not fade its root
+  (only `transition: border-color`, with the pulse on its inner `__dot`), so it
+  *could* be glassed. The resolution indicator shows why the toast's reason is
+  the load-bearing one: a badge that IS glassed (opt-in list above) and ramps
+  `opacity` on its root anyway — drift (§15.4), not a member of this kind.
+  These last two kinds take the liquid-glass
+  dark tint explicitly — `background: var(--luxar-glass-tint)` in
+  `liquid-glass.css`, never a hardcoded `rgba()` of their own (§15.6) — since
+  without the glass `::after` layer they would paint that theme's
+  translucent-white `--luxar-bg-secondary` under white text.
 - **Nested surfaces must de-glass**: a GUI mounted inside an already-glass
   rail popover removes the class (`rail-panels/popover-gui.ts`) — never
   double-glass.
@@ -471,10 +488,11 @@ font-family:     var(--luxar-font-base);
 font-size:       var(--luxar-text-base);                 /* 13px */
 ```
 
-…plus `luxar-glass-surface` on the root element in TS — except for §5's two
-opt-outs (frameless in-canvas widgets, and transient cursor popovers such as
-context menus, §7.8), which take the recipe without the glass class. Do NOT
-add per-theme `box-shadow` rings on top (removed deliberately in PR #447).
+…plus `luxar-glass-surface` on the root element in TS — except for §5's three
+opt-outs (frameless in-canvas widgets, transient cursor popovers such as
+context menus, §7.8, and the two un-glassed over-canvas badges, toast and REC
+pill), which take the recipe without the glass class. Do NOT add per-theme
+`box-shadow` rings on top (removed deliberately in PR #447).
 
 **Tier variants:**
 
@@ -555,6 +573,30 @@ in an inner wrapper:
   border-radius: var(--luxar-radius-full);
 }
 ```
+
+**Shipped variant — bound on the root.** Three panels put the height bound on
+the root instead and make it a flex column (`max-height` +
+`display: flex; flex-direction: column`), driving the scrolling child with
+`flex: 1; min-height: 0` so it caps against that bound: the help overlay
+(`help-overlay.css:19-21` root, `:51-61` wrapper), the dimension sliders
+(`dimension-sliders.css`, #1483), and the data monitor (`overflow: visible` root
+at `data-loading-monitor.css:24`, the `--expanded` bound at `:62-67`, capped by
+`.luxar-monitor-detailed` `:88-89` and `.luxar-data-monitor__content`
+`:139-144`). The point is that the root owns the panel's single height bound and
+the scroller caps against it, so the glass root stays `overflow: visible`
+without the bound being duplicated on two boxes. It also lets a panel pin
+content *outside* the scroll area — the help overlay keeps its header and filter
+row there, and the monitor its header and tabs; the dimension sliders put
+everything, header included, inside the wrapper.
+
+Two consequences. The root's `display` must not be overwritten inline or the cap
+is lost (see `ui/dimension-sliders.ts::setVisible`). And the panel's padding must
+be *inside* the scrollport whenever a focusable descendant sits flush with that
+scrollport's edge: a scroll container clips ink overflow at its padding edge, so
+a focus ring on a flush child is cut off if the slack is on the root instead —
+which is why the sliders moved their padding onto the wrapper (#1483) while the
+monitor, whose scrollers have no flush focusable edge, keeps its padding on the
+root (`:65`).
 
 ### 7.5 The control rail and its satellites
 
@@ -806,11 +848,13 @@ ease`) over `all` in hot paths (long lists).
   channel, which would yank it out of position for a frame; give it a
   composed keyframe in its own CSS (`translate…(-50%) scale(…)`) instead.
 - Scrims and genuinely **non-glass** transients (badges, frameless in-canvas
-  widgets): opacity fades are fine. **The toast is not one of them** — it
-  carries `luxar-glass-surface` (`ui/toast.ts:17`), so §5.1.3 governs its
-  root: a new transient of that shape fades an inner wrapper or moves with
-  transform. The shipped toast fades its own root; that is drift (§15.4), not
-  the pattern to copy.
+  widgets): opacity fades are fine. The toast is one of them — it is
+  deliberately un-glassed for exactly this reason (§5's third opt-out), so its
+  `transition: opacity 0.3s ease` root fade is legal. The rule it illustrates
+  is the constraint's boundary, not an exemption from it: a *glass* surface
+  still must not fade its own root — fade an inner wrapper or move with
+  transform, or drop the glass class as the toast does and take the theme tint
+  instead.
 - The rail collapse/expand animates `opacity 0.3s ease` alongside
   `transform 0.28s cubic-bezier(0.2, 0.7, 0.2, 1)`. The rail is the sanctioned
   steady-translucency exception to §5.1.3: its resting state is already
@@ -954,7 +998,12 @@ Further requirements:
 ## 14. Checklist for a new UI surface
 
 1. Root: surface recipe (§7.1) + `luxar-glass-surface` (unless it is one of
-   §5's opt-outs — frameless by design, or a transient cursor popover, §7.8)
+   §5's three opt-outs — frameless by design, a transient cursor popover, §7.8,
+   or one of the two un-glassed over-canvas badges, the toast and the REC pill).
+   Being a badge is not itself the criterion: a badge that ramps `opacity` on
+   its own root MUST be un-glassed (§5.1.3, the toast); one that does not may go
+   either way (the REC pill is not glassed, the resolution indicator is — and
+   ramps anyway, which is why §15.4 logs it as drift).
    + `overflow: visible` + inner `__scroll` wrapper if it scrolls.
 2. Correct tier: panel / modal (+scrim) / popover / badge (§7.1 table) with
    token z-index — and if it docks beside the rail, it joins the exclusive
@@ -1179,19 +1228,20 @@ last stylesheet that lacked one.)
 
 ### 15.4 Glass-constraint (§5.1) and layer-tier violations
 
-- The toast fades `opacity` on its own `luxar-glass-surface` root
-  (`toast.css` `transition: opacity 0.3s ease`, driven by
-  `ui/toast.ts:19,24`) — the one surface still doing what §5.1.3 forbids, so
-  under liquid-glass its refraction layers ride the fade with it. Fix by
-  moving the fade to an inner wrapper (or dropping the glass class); until
-  then, do not cite it as precedent (§10.2).
-- `.luxar-dimension-sliders` is a glass surface whose root sets
-  `overflow-y: auto` instead of delegating to an inner `__scroll` wrapper
-  (§5.1.2/§7.4).
-- Two standing panels sit on the baseline tier rather than the `dropdown`
-  layer their placement implies (§3.5): `dimension-sliders.css:31` and
-  `data-loading-monitor.css:12`, both `--luxar-z-base`. They are the only two
-  component stylesheets on that token, which is why §3.5's table names them.
+- The resolution indicator ramps `opacity` on its own `luxar-glass-surface`
+  root — the class is added at `ui/resolution-indicator.ts:48`, and
+  `resolution-indicator.css:70` runs `animation: luxar-resolution-fade-in 0.3s
+  ease-out forwards` on that root, with the `--hidden` modifier (`:78`) swapping
+  in `luxar-resolution-fade-out`; both keyframes (`:12-32`) ramp `opacity` 0→1 /
+  1→0. It is the remaining §5.1.3 violation, so under liquid-glass its
+  refraction layers ride the ramp with it. Fix by moving the ramp to an inner
+  wrapper, or by dropping the glass class as the toast did (#1483) and taking
+  the theme's dark tint explicitly. Until then, do not cite it as precedent
+  (§10.2).
+- One standing panel sits on the baseline tier rather than the `dropdown`
+  layer its placement implies (§3.5): `data-loading-monitor.css:12`,
+  `--luxar-z-base`. It is the only component stylesheet left on that token,
+  which is why §3.5's table names it.
 
 ### 15.5 Private context menu predating the shared widget
 
@@ -1237,7 +1287,7 @@ migrated.
 - Off-tier z-indexes via `calc()` (§3.5): the modal scrim at
   `calc(var(--luxar-z-modal) - 1)` (`dataset-browser.css:18`), the debug
   console at `calc(var(--luxar-z-base) + 50)` (`debug-console.css:31`), the
-  toast at `calc(var(--luxar-z-tooltip) + 1000)` (`toast.css:22`).
+  toast at `calc(var(--luxar-z-tooltip) + 1000)` (`toast.css:28`).
 - Untokenized z-index magnitudes with a stated reason: the recording panel's
   `9999/10000/100000` (`recording-panel.css:80,132,225`), whose whole point is
   to beat unknown third-party host UI (documented in that file's header). Small
@@ -1251,10 +1301,14 @@ migrated.
   itself, and every non-`.luxar-glass-surface` surface that would otherwise
   paint white text over too-light a background on a bright scene (currently
   the recording indicator, cursor-anchored context menus, control-rail
-  tooltips, and the control-rail first-run hint — all white-on-white over the
-  bare canvas — plus the recording confirmation dialog and the offline
-  capture overlay, which sit over the `--luxar-bg-overlay` scrim and so are
-  merely too-light rather than literally white-on-white). It stays a plain
+  tooltips, the control-rail first-run hint, and the toast (#1483) — all
+  white-on-white over the bare canvas — plus the recording confirmation
+  dialog and the offline capture overlay, which sit over the
+  `--luxar-bg-overlay` scrim and so are merely too-light rather than literally
+  white-on-white). A new member of that list spells
+  `var(--luxar-glass-tint)`, not a fresh `rgba()` literal: the old duplicated
+  `rgba(0, 0, 0, 0.55)` is 4.48:1 against `text-primary` over a white scene,
+  which is what #1513 was. It stays a plain
   stylesheet declaration rather
   than moving into `ThemeManager`'s `themeToCSSVariables()` because it is
   this one theme's CSS-layer implementation detail — a tint painted by a
