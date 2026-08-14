@@ -117,40 +117,75 @@ export interface RemoteValidationToken {
 }
 
 /**
+ * Root metadata documents that carry a node's attributes, newest format first.
+ * Format 3 nests them inside `zarr.json`; format 2 uses a separate `.zattrs`.
+ */
+const ROOT_ATTR_DOCS = ['zarr.json', '.zattrs'] as const;
+
+/**
+ * A node's attributes, from either root document shape.
+ *
+ * A `.zattrs` IS the attributes object; a `zarr.json` is the whole node record
+ * with the attributes nested under `attributes`, so reading `content_hash` off
+ * the top level of the latter always yields `undefined`.
+ */
+function rootAttributes(parsed: unknown): Record<string, unknown> {
+  if (parsed === null || typeof parsed !== 'object') return {};
+  const record = parsed as Record<string, unknown>;
+  if (record.zarr_format === 3 && typeof record.attributes === 'object') {
+    return (record.attributes as Record<string, unknown>) ?? {};
+  }
+  return record;
+}
+
+/**
  * Fetch the dataset's validation token directly from the server, bypassing
  * every cache tier. Used by validation to detect server-side dataset
  * changes. Uses the dedicated `validationTimeoutMs` budget so a flaky
  * network does not block scene loading for the full data-fetch timeout.
  *
- * When the root `.zattrs` carries Luxar's `content_hash` attr, that is the
+ * When the root metadata carries Luxar's `content_hash` attr, that is the
  * token (`content-hash` mode — strongest guarantee). Otherwise the SHA-256
- * of the raw `.zattrs` bytes serves as an implicit token (`zattrs-hash`
+ * of the raw document bytes serves as an implicit token (`zattrs-hash`
  * mode): every Luxar writer re-stamps a per-save `timestamp` attr and most
  * external producers rewrite root metadata on regeneration, so a dataset
  * replaced in place at the same URL still invalidates instead of being
  * served stale from OPFS forever (the pre-fix behaviour with the default
  * `externalDatasetTtlMs: null`).
  *
- * Returns `null` if the `.zattrs` fetch fails or is non-ok (offline /
- * truly headerless store) — callers then fall back to the TTL path.
+ * BOTH formats' documents are tried, `zarr.json` first. Probing only `.zattrs`
+ * — correct while every store was format 2 — returns `null` for a format-3
+ * dataset, which drops the caller onto the TTL path and reinstates exactly the
+ * serve-stale-forever behaviour this function exists to prevent. The
+ * `zattrs-hash` mode name is kept for a format-3 document too: it is a stable
+ * identifier that callers and tests match on, and renaming it to suit the
+ * format would break them to describe the same thing.
+ *
+ * Returns `null` only if NEITHER document can be fetched or both are non-ok
+ * (offline / truly headerless store) — callers then fall back to the TTL path.
  */
 export async function getRemoteContentHash(
   baseUrl: string,
   options: { signal?: AbortSignal; timeoutMsOverride?: number }
 ): Promise<RemoteValidationToken | null> {
   try {
-    const fetched = await fetchWithRetry(buildUrl(baseUrl, '.zattrs'), {
-      timeoutMsOverride: options.timeoutMsOverride,
-      signal: options.signal,
-    });
-    if (!fetched) return null;
+    let fetched = null;
+    let response: Response | null = null;
+    for (const doc of ROOT_ATTR_DOCS) {
+      fetched = await fetchWithRetry(buildUrl(baseUrl, doc), {
+        timeoutMsOverride: options.timeoutMsOverride,
+        signal: options.signal,
+      });
+      if (fetched && fetched.response.ok) {
+        response = fetched.response;
+        break;
+      }
+    }
+    if (!fetched || response === null) return null;
 
     try {
-      const { response } = fetched;
-      if (!response.ok) return null;
-
       const data = await response.arrayBuffer();
-      const attrs = JSON.parse(new TextDecoder().decode(data));
+      const attrs = rootAttributes(JSON.parse(new TextDecoder().decode(data)));
       const stamped = attrs?.content_hash;
       if (typeof stamped === 'string' && stamped.length > 0) {
         return { hash: stamped, mode: 'content-hash' };
