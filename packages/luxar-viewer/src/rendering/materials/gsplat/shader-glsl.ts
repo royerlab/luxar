@@ -110,7 +110,7 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
         // 4 (element-texture-layout.ts), so a splat's 4 texels share one
         // row and only x advances.
         int splatBase = int(luxarSortedIndex()) * 4;
-        int splatTexW = textureSize(uSplatTex, 0).x;
+        int splatTexW = LUXAR_SPLAT_TEX_W;
         ivec2 texel0 = ivec2(splatBase % splatTexW, splatBase / splatTexW);
         vec4 splatT0 = texelFetch(uSplatTex, texel0, 0);
         vec4 splatT1 = texelFetch(uSplatTex, ivec2(texel0.x + 1, texel0.y), 0);

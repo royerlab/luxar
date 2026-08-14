@@ -37,10 +37,23 @@
  * `gpu-byte-budget.ts` live-authority pattern — the GPU buffer pool is
  * constructed far from the renderer, so capabilities can't be threaded
  * through its constructor). Texture height varies per allocation:
- * `ceil(capacity × texelsPerElement / width)`. Shaders don't bake the
- * width at all — they read it per-draw via `textureSize(uSplatTex, 0)`,
- * so addressing is correct for any texture bound to the node (no
- * define lifecycle); only the texture binding itself changes per node.
+ * `ceil(capacity × texelsPerElement / width)`. Shaders bake the width
+ * as a COMPILE-TIME constant (the layout's `widthDefine` on the
+ * GLSL materials; a literal int node in the TSL graphs), read from
+ * {@link getElementTextureWidth} at material construction. A constant
+ * (unlike the per-draw `textureSize(uSplatTex, 0)` query this replaced)
+ * lets the shader compiler strength-reduce the per-vertex `%`/`/`
+ * addressing math — measured −7% on the quad line primitive's whole
+ * GPU pass at 4 M segments (RTX 3070, WebGPU timestamps); a uniform
+ * captured almost none of that (−1%), so a define it is. The baked
+ * value is correct because the ADDRESSING AUTHORITY is the bound
+ * texture's own width: materials pre-stamp the session width at
+ * construction and re-stamp from the texture at every bind
+ * ({@link applyElementTextureWidthDefine}); the TSL graphs re-bake on
+ * texture rebind (their texture node is factory-time bound, so a
+ * rebind rebuilds the graph). Pool textures allocate at the session
+ * width (capped at {@link ELEMENT_TEXTURE_MAX_WIDTH}), so re-stamps
+ * are no-ops in the common path and nothing recompiles.
  *
  * Unconfigured (unit tests, headless), the width defaults to 4096 and
  * the capacity bound assumes a 4096² texture — the conservative
@@ -57,12 +70,92 @@ export interface ElementTextureLayout {
   readonly floatsPerElement: number;
   /** Element noun for log messages ('splat' | 'point' | 'segment'). */
   readonly label: string;
+  /**
+   * Name of the GLSL define carrying this layout's texture width
+   * (see {@link elementTextureWidthDefines}).
+   */
+  readonly widthDefine: string;
   /** Remediation hint appended to the capacity-clamp warning. */
   readonly clampHint: string;
 }
 
 /** Preferred (and maximum) element-texture width in texels. */
 export const ELEMENT_TEXTURE_MAX_WIDTH = 4096;
+
+/**
+ * The GLSL `#define`s carrying each layout's element-texture width.
+ * Pre-stamped at material construction (visual + picking, all three
+ * geometry types) with `String(getElementTextureWidth(layout))` via
+ * the layout's own `widthDefine` name, then re-stamped from the bound
+ * texture on every texture update ({@link
+ * applyElementTextureWidthDefine}) — pool textures allocate at the
+ * session width, so the re-stamp is a no-op in the common path. The
+ * TSL twins bake the same value as a literal int node at graph build
+ * instead of a define ({@link resolveElementTextureWidth}). The names are PER GEOMETRY
+ * (widths differ: texels-per-element 6/3/4 → 4092/4095/4096) so a
+ * harness compiling raw shader sources can inject all of them
+ * unconditionally via {@link elementTextureWidthDefines} — an unused
+ * define is inert.
+ */
+export function elementTextureWidthDefines(): Record<string, string> {
+  const defines: Record<string, string> = {};
+  for (const layout of [LINE_TEXTURE_LAYOUT, POINT_TEXTURE_LAYOUT, SPLAT_TEXTURE_LAYOUT]) {
+    defines[layout.widthDefine] = String(getElementTextureWidth(layout));
+  }
+  return defines;
+}
+
+/**
+ * Width to bake for a material about to draw `texture`: the texture's
+ * own width when a real one is bound (bind-time authority — see
+ * {@link applyElementTextureWidthDefine}), else the session width
+ * (constructor pre-stamp / placeholder phase, whose draws are empty).
+ * The TSL factories call this at graph build — the texture node is
+ * factory-time bound and a rebind rebuilds the graph, so the literal
+ * always matches the texture the graph will sample.
+ */
+export function resolveElementTextureWidth(
+  layout: ElementTextureLayout,
+  texture: { image?: { width?: number } } | null | undefined
+): number {
+  if (texture && texture !== (placeholderElementTexture as unknown)) {
+    const width = texture.image?.width;
+    if (typeof width === 'number' && Number.isFinite(width) && width > 0) return width;
+  }
+  return getElementTextureWidth(layout);
+}
+
+/**
+ * Re-stamp a material's width define from the texture actually being
+ * bound. The addressing authority is the BOUND texture's own width,
+ * never the global session value (same rationale as the row math in
+ * `element-storage.ts`: a renderer swap can reconfigure the session
+ * width while an existing texture keeps its allocated width). The
+ * constructor pre-stamps the session width so the common first bind —
+ * a pool texture allocated at that same width — changes nothing and
+ * never recompiles; this only triggers a program rebuild (cached by
+ * define set) when a genuinely different-width texture binds
+ * (harness fixtures, post-swap stragglers).
+ *
+ * The placeholder binding is exempt: its draws are empty
+ * (`instanceCount` 0 until the first commit), so restamping for its
+ * 12-texel width would only force a pointless recompile round-trip.
+ */
+export function applyElementTextureWidthDefine(
+  material: { defines?: Record<string, unknown>; needsUpdate: boolean },
+  layout: ElementTextureLayout,
+  texture: THREE.Texture | null
+): void {
+  if (!texture || texture === placeholderElementTexture) return;
+  const width = (texture as THREE.DataTexture).image?.width;
+  if (!Number.isFinite(width) || width <= 0) return;
+  const next = String(width);
+  if (!material.defines) material.defines = {};
+  if (material.defines[layout.widthDefine] !== next) {
+    material.defines[layout.widthDefine] = next;
+    material.needsUpdate = true;
+  }
+}
 
 let configuredMaxTextureSize: number | null = null;
 const warnedCapacityClamp = new Set<ElementTextureLayout>();
@@ -188,6 +281,7 @@ export const SPLAT_TEXTURE_LAYOUT: ElementTextureLayout = {
   texelsPerElement: 4,
   floatsPerElement: 16,
   label: 'splat',
+  widthDefine: 'LUXAR_SPLAT_TEX_W',
   clampHint:
     'Repartition the dataset (e.g. `luxar gsplat lod --recipe tiles`) to render every splat.',
 };
@@ -210,6 +304,7 @@ export const POINT_TEXTURE_LAYOUT: ElementTextureLayout = {
   texelsPerElement: 3,
   floatsPerElement: 12,
   label: 'point',
+  widthDefine: 'LUXAR_POINT_TEX_W',
   clampHint: 'Split the dataset into multiple nodes to render every point.',
 };
 
@@ -231,6 +326,7 @@ export const LINE_TEXTURE_LAYOUT: ElementTextureLayout = {
   texelsPerElement: 6,
   floatsPerElement: 24,
   label: 'segment',
+  widthDefine: 'LUXAR_LINE_TEX_W',
   clampHint: 'Split the dataset into multiple nodes to render every segment.',
 };
 

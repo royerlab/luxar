@@ -282,7 +282,7 @@ void main() {
 	nodeVarying6 = vec3( 0.0, 0.0, 0.0 );
 	nodeVarying4 = 1.0;
 	nodeVar69 = ( ( ( int( aSortedIndex ) * ( 1 - int( nodeUniform9 ) ) ) + ( int( aSortedIndexB ) * int( nodeUniform9 ) ) ) * 6 );
-	nodeVar70 = int( textureSize( nodeUniform10, 0 ).x );
+	nodeVar70 = 6;
 	nodeVar71 = ( nodeVar69 % nodeVar70 );
 	nodeVar72 = ( nodeVar69 / nodeVar70 );
 	nodeVar73 = ( nodeUniform11 * vec3( vec2( ivec2( nodeVar71, nodeVar72 ) ), 1.0 ) ).xy;
