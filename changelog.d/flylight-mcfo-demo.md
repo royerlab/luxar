@@ -38,6 +38,32 @@ globally while dropping *half* the neurite brightness, and the neurites visibly
 break into disconnected beads on a MIP. Scoring against the ground-truth
 instance masks exposes a ~17 dB gap.
 
+The floor is the most consequential knob, and a percentile floor is brutal.
+`--floor p99` subtracts 0.0337 here: it zeroes 99% of voxels and removes
+**97.5% of the image's energy before a single splat is placed**, most of the
+faint neurites with it. Measured against the raw data on the annotated neuron,
+that configuration reproduced 0.57x of its energy and lost 87.8% of its
+faintest fifth. `auto` (the CLI default) subtracts 0.0029, removes 35% of
+energy, and takes the dim-band dropout to **zero** at 787K splats — beating
+even a zero floor on the foreground while using 30% fewer splats. The demo now
+uses `auto`.
+
+The trap that hid it: scoring against the floor-*suppressed* target rather than
+the raw data. Against that reference the p99 fit reads a respectable 28.10 dB,
+because the reference has had the same signal deleted from it.
+
+Background suppression moved to render time, where it belongs. Each neuron
+splat's alpha now ramps with its own amplitude, so haze goes optically thin
+while neurites stay opaque — and unlike a floor it is reversible, because the
+faint splats are still in the scene for the display range to recover.
+
+The initial camera is measured, not defaulted. FISBe ships the *unaligned*
+FlyLight stack — the specimen as mounted, ~52 degrees off axis for this sample.
+Rather than rotate the splats (which would desynchronise them from FISBe's
+annotations and require rotating every covariance), the demo measures the
+specimen's principal axis and rolls the camera to match, framed close. The
+angle is per-specimen, measured at authoring time.
+
 Seeds are not the splat count — `cull_retention` is. The optimiser works a fixed
 pool of `seeds` splats and then culls by cumulative amplitude mass (default
 0.95), which on floor-suppressed data discards nearly everything: 1.2 M seeds

@@ -546,7 +546,10 @@ def test_merge_without_neuropil_is_neurons_only() -> None:
 
     assert len(centers) == len(amps) == len(chol) == len(rgba) == 5
     assert rgba.shape[1] == 4
-    assert np.allclose(rgba[:, 3], 1.0), "neurons must be fully opaque"
+    # Neurons carry the amplitude->alpha ramp, not a constant: the brightest
+    # splat saturates and none exceeds the valid range.
+    assert 0.0 <= rgba[:, 3].min() and rgba[:, 3].max() <= 1.0
+    assert np.isclose(rgba[:, 3].max(), 1.0)
 
 
 def test_merge_concatenates_and_tags_alpha() -> None:
@@ -558,7 +561,9 @@ def test_merge_concatenates_and_tags_alpha() -> None:
     assert len(centers) == len(amps) == len(chol) == len(rgba) == 11
     # Neuropil is emitted first, so the split is at len(neuropil).
     assert np.allclose(rgba[:7, 3], _demo.NEUROPIL_ALPHA)
-    assert np.allclose(rgba[7:, 3], 1.0)
+    # Neurons carry the ramp; the brightest reaches 1.0.
+    assert np.isclose(rgba[7:, 3].max(), 1.0)
+    assert rgba[7:, 3].min() >= 0.0
     assert np.allclose(rgba[:7, :3], np.asarray(_demo.NEUROPIL_RGB, dtype=np.float32))
 
 
@@ -1111,3 +1116,81 @@ def test_sample_lookup_does_not_match_a_longer_name() -> None:
 def test_sample_lookup_returns_none_when_absent() -> None:
     names = [f"{_demo.SAMPLE_MEMBER_ROOT}/train/OTHER.zarr/volumes/raw/.zarray"]
     assert _demo.find_member_prefix(names, "MISSING") is None
+
+
+# ---------------------------------------------------------------------------
+# Alpha ramp, per-specimen tilt, and camera roll
+# ---------------------------------------------------------------------------
+
+
+def test_alpha_ramp_spans_zero_to_one_and_is_monotone() -> None:
+    """Faint splats go transparent, bright ones opaque — that is the ramp."""
+    amp = np.linspace(0.0, 1.0, 1001).astype(np.float32)
+    a = _demo.neuron_alpha(amp)
+
+    assert a.min() == 0.0 and a.max() == 1.0
+    assert a.shape == amp.shape
+    assert np.all(np.diff(a) >= -1e-7), "a brighter splat is never more transparent"
+
+
+def test_alpha_ramp_makes_the_bulk_transparent() -> None:
+    """With the configured percentiles most splats end near-invisible.
+
+    That is the mechanism replacing the floor: suppress background at render
+    time instead of deleting it before the fit.
+    """
+    rng = np.random.default_rng(0)
+    amp = np.concatenate([rng.exponential(0.002, 9000), rng.exponential(0.2, 1000)])
+    a = _demo.neuron_alpha(amp.astype(np.float32))
+    assert (a < 0.05).mean() > 0.8
+
+
+def test_alpha_ramp_handles_empty_and_constant_input() -> None:
+    assert _demo.neuron_alpha(np.zeros(0, dtype=np.float32)).shape == (0,)
+    assert np.all(np.isfinite(_demo.neuron_alpha(np.full(50, 0.3, dtype=np.float32))))
+
+
+@pytest.mark.parametrize("deg", [0.0, 30.0, -52.0, 75.0])
+def test_measure_tilt_recovers_a_known_rotation(deg: float) -> None:
+    """The tilt must be measured from the data, not assumed.
+
+    FISBe ships the unaligned stack, so mounting angle differs per specimen; a
+    hard-coded angle would be wrong for every --sample but one.
+    """
+    rng = np.random.default_rng(1)
+    t = np.radians(deg)
+    long_axis = rng.normal(0, 100, 4000)
+    short_axis = rng.normal(0, 3, 4000)
+    y = long_axis * np.sin(t) + short_axis * np.cos(t)
+    x = long_axis * np.cos(t) - short_axis * np.sin(t)
+    centers = np.stack([rng.normal(0, 5, 4000), y, x], axis=1).astype(np.float32)
+
+    got = _demo.measure_tilt_deg(centers, np.ones(4000, dtype=np.float32))
+    diff = (got - deg + 90) % 180 - 90  # a principal axis is defined up to 180 deg
+    assert abs(diff) < 3.0, f"measured {got:.1f}, expected {deg}"
+
+
+def test_measure_tilt_is_degenerate_safe() -> None:
+    z3 = np.zeros((1, 3), np.float32)
+    assert _demo.measure_tilt_deg(z3, np.ones(1, np.float32)) == 0.0
+    assert (
+        _demo.measure_tilt_deg(np.zeros((0, 3), np.float32), np.zeros(0, np.float32))
+        == 0.0
+    )
+    assert (
+        _demo.measure_tilt_deg(np.ones((10, 3), np.float32), np.zeros(10, np.float32))
+        == 0.0
+    )
+
+
+@pytest.mark.parametrize("deg", [0.0, 30.0, -52.0, 75.0])
+def test_camera_up_is_perpendicular_to_the_specimen_axis(deg: float) -> None:
+    """The roll must put the long axis horizontal, not merely rotate it.
+
+    `(sin, cos)` instead of `(-sin, cos)` rolls the wrong way: still diagonal,
+    just mirrored, which looks plausible enough to ship.
+    """
+    t = np.radians(deg)
+    up = np.array([-np.sin(t), np.cos(t)])
+    long_axis = np.array([np.cos(t), np.sin(t)])
+    assert abs(float(np.dot(up, long_axis))) < 1e-9

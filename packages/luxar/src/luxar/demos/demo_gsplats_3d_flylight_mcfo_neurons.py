@@ -37,47 +37,55 @@ noise even though values remain 12-bit. A sweep returns
 ``--k-star-metric gain``; we drove K off a measured quality curve instead.
 
 --------------------------------------------------------------------------------
-2. GLOBAL PSNR IS THE WRONG NUMBER — score the foreground
+2. THE FLOOR IS THE MOST CONSEQUENTIAL KNOB — and a percentile floor is brutal
+--------------------------------------------------------------------------------
+
+``--floor`` subtracts a background level before fitting. What it removes here:
+
+  floor       value    % voxels zeroed   % of image energy removed
+  auto      0.00293             60.7%                       35.1%
+  p90       0.01783             90.3%                       89.0%
+  p95       0.02198             95.1%                       93.4%
+  p99       0.03370             99.0%                       97.5%
+
+A percentile floor looks like a mild cleanup and is not: ``p99`` deletes 97.5%
+of the image's energy before a single splat is placed, and most of the faint
+neurites go with it. No splat count recovers them. Measured on the annotated
+neuron, against the RAW data:
+
+  floor  retention  splats     fg PSNR   energy kept   faintest fifth lost
+  p99      0.999    32,709      24.70        0.57x                  87.8%
+  p97      0.9999   62,213      26.47        0.66x                  68.6%
+  p95      0.9999   90,506      26.79        0.69x                  55.8%
+  p90      0.9999  170,835      27.49        0.73x                  35.1%
+  auto     0.9999  786,986      28.01        0.85x                   0.0%
+  0        0.9999 1,117,196     27.64        0.87x                   0.0%
+
+``auto`` — the CLI default — beats a zero floor on the foreground while using
+30% fewer splats, and takes the dim-band dropout to zero.
+
+Beware which reference you score against: measured against the floor-SUPPRESSED
+target instead of the raw data, the p99 fit scores a respectable 28.10 dB and
+the floor's damage is invisible, because the reference has had the same signal
+deleted from it. That is how the p99 configuration survived review here.
+
+--------------------------------------------------------------------------------
+3. GLOBAL PSNR IS THE WRONG NUMBER — score the foreground
 --------------------------------------------------------------------------------
 
 Only ~1.5% of the raw composite's energy lies inside the annotated neurons —
 41% once the floor is suppressed — so global PSNR mostly scores empty space.
-(Both figures use the same mask, the union of the ground-truth instances;
-quoting one against a single-instance mask would flatter the gap.) Measured on
-the default sample, ``fg`` restricted to that mask:
+(Both figures use the same mask, the union of the ground-truth instances.)
+Averages also hide the failure that matters: at low splat counts the neurites
+break into disconnected beads, which no PSNR variant flags. Band the mask by
+intensity and look at a zoomed MIP.
 
-        K   global     fg   energy
-   30,000   42.29   24.70    0.51x   <- neurites break into beads
-  100,000   43.58   27.33    0.69x
-  300,000   45.53   28.54    0.76x
-  600,000   46.37   28.91    0.78x   <- continuity recovers
-1,200,000   47.10   29.63    0.81x
-
-A ~17 dB global-to-foreground gap. At K=30,000 the fit reads 42 dB globally
-while dropping *half* the neurite brightness, and the failure is qualitative:
-on a MIP the neurites break into disconnected beads where the original is a
-continuous process. No global metric flags that; only looking does.
-
---------------------------------------------------------------------------------
-3. SEEDS ARE NOT THE SPLAT COUNT — ``cull_retention`` is
---------------------------------------------------------------------------------
-
-``fit_gaussian_splats`` optimises a fixed pool of ``seeds`` splats, then culls
-by cumulative amplitude mass at the end (``cull_retention``, default 0.95). On
-floor-suppressed data a handful of splats carry most of the mass, so the
-default throws away nearly everything: 1.2M seeds settle at ~19K splats.
-
-The trap is fixing that by *lowering seeds*. Measured, same floor and volume:
-
-  1.2M seeds, retention 0.95   ->   18,623 splats   fg 27.60   energy 0.81x
-  128K seeds, retention 1.0    ->  128,000 splats   fg 25.97   energy 0.78x  (!)
-  1.2M seeds, retention 0.99   ->   26,238 splats   fg 26.79   energy 0.81x
-  1.2M seeds, retention 0.999  ->   32,709 splats   fg 27.80   energy 0.84x  <- used
-
-**128,000 splats scored worse than 18,623**, and its axon was visibly *more*
-beaded. Seeds set the optimiser's search pool; retention sets the output size.
+Seeds are not the splat count either: the optimiser works a fixed pool of
+``seeds`` and then culls by cumulative amplitude mass (``cull_retention``).
 Shrinking seeds to hit a target count throws away the search that makes the
-surviving splats good. Keep seeds high, raise retention.
+survivors good — 128,000 seeds at retention 1.0 scored *worse* (fg 25.97) than
+18,623 splats drawn from a 1.2M pool (fg 27.60). Keep seeds high; tune
+retention.
 
 --------------------------------------------------------------------------------
 4. ONE NODE, and alpha is OPTICAL DEPTH
@@ -97,8 +105,20 @@ body with neurons emerging from it. Lower ``NEUROPIL_ALPHA`` toward ~0.01 for a
 translucent haze with every neurite visible; both are one constant apart and
 worth trying.
 
+Alpha is also how the BACKGROUND is suppressed: each neuron splat's alpha ramps
+with its own amplitude (``NEURON_ALPHA_*_AMP_PCT``), so haze goes optically thin
+while neurites stay opaque. Doing that job with a floor instead is what cost
+97.5% of the image (finding 2) — and unlike a floor this is reversible, because
+the faint splats are still in the scene for the display range to recover.
+
 The cost of one node: the Layers panel can no longer fade the neuropil
 independently, because there is no second layer. That trade is deliberate.
+
+The initial camera is measured, not defaulted. FISBe ships the UNALIGNED
+FlyLight stack, so the specimen sits at whatever angle it was mounted (~52 deg
+here). The demo measures its principal axis and rolls the camera to match,
+framed close; rotating the splats instead would desynchronise them from FISBe's
+annotations and require rotating every covariance.
 
 --------------------------------------------------------------------------------
 5. FIT THE COMPOSITE ONCE, THEN COLOUR
@@ -230,7 +250,7 @@ import zarr
 from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.core.viewer_config import ViewerConfig
+from luxar.core.viewer_config import CameraConfig, ViewerConfig
 from luxar.demos import (
     launch_viewer,
     parse_demo_flags,
@@ -272,8 +292,15 @@ VOXEL_SIZE_ZYX = (0.44, 0.44, 0.44)
 # Neurons. SEEDS is the optimiser's pool, CULL_RETENTION decides how much of it
 # survives — see finding 3. Do NOT lower SEEDS to shrink the output.
 SEEDS = 1_200_000
-CULL_RETENTION = 0.999
-FLOOR = "p99"
+CULL_RETENTION = 0.9999
+
+# The CLI's own default, and it matters more than any other constant here —
+# see finding 2. ``auto`` subtracts a histogram-mode estimate (~0.0029 on this
+# sample, removing ~35% of total energy: the pedestal, and little else). A
+# percentile floor looks superficially similar and is not: ``p99`` subtracts
+# 0.0337 and removes 97.5% of the image's energy BEFORE a single splat is
+# placed, taking most of the neurites with it.
+FLOOR = "auto"
 
 # Neuropil. Fewer splats than the neurons need, because it is a smooth medium.
 NEUROPIL_SEEDS = 600_000
@@ -281,7 +308,19 @@ NEUROPIL_ALPHA = 0.12  # optical depth per splat — see finding 4
 NEUROPIL_AMP = 0.6
 NEUROPIL_RGB = (0.15, 0.25, 1.0)
 
+# Background suppression happens HERE, at render time, not in the fit: a splat's
+# alpha ramps from 0 to 1 between these two percentiles of splat AMPLITUDE.
+# (Percentiles of amplitude — not of voxel intensity like FLOOR. Two different
+# quantities; keeping the names distinct is deliberate.)
+NEURON_ALPHA_LO_AMP_PCT = 90.0
+NEURON_ALPHA_HI_AMP_PCT = 99.5
+
 COLOR_BALANCE_PERCENTILE = 99.99
+
+# Initial framing. <1 starts closer than a just-fits view of the bounding
+# sphere; the specimen tilt is MEASURED per sample, never hard-coded.
+CAMERA_FOV_DEG = 47.0
+CAMERA_FRAMING = 0.60
 
 CACHE_DIR = Path.home() / ".cache" / "luxar" / "gsplats_flylight_mcfo"
 
@@ -1011,6 +1050,51 @@ def splat_colors(centers, channels, voxel_size=VOXEL_SIZE_ZYX):
     return rgb
 
 
+def neuron_alpha(amplitudes):
+    """Map splat amplitude to per-splat alpha (optical depth).
+
+    This is where background suppression belongs. Doing it with a FLOOR instead
+    deletes the faint signal before fitting, and no splat count recovers it —
+    measured, a p99 floor lost 88% of the neuron's faintest fifth while ``auto``
+    loses none. Here the haze is merely made optically thin: the splats are
+    still in the scene, so the display range can bring them back.
+    """
+    amp = np.asarray(amplitudes, dtype=np.float32)
+    if amp.size == 0:
+        return amp.reshape(0)
+    lo = float(np.percentile(amp, NEURON_ALPHA_LO_AMP_PCT))
+    hi = float(np.percentile(amp, NEURON_ALPHA_HI_AMP_PCT))
+    a = np.clip((amp - lo) / max(hi - lo, 1e-9), 0.0, 1.0).astype(np.float32)
+    aprint(
+        f"  alpha ramp: amp p{NEURON_ALPHA_LO_AMP_PCT}={lo:.5f} -> "
+        f"p{NEURON_ALPHA_HI_AMP_PCT}={hi:.5f}; {100 * (a < 0.05).mean():.1f}% "
+        "of splats below alpha 0.05"
+    )
+    return a
+
+
+def measure_tilt_deg(centers, amplitudes):
+    """Angle of the specimen's long axis, in degrees, in the display plane.
+
+    FISBe ships the UNALIGNED FlyLight stack — the brain as mounted, which for
+    this sample sits at ~52 degrees. The angle is per-specimen, so it is
+    measured rather than hard-coded; another ``--sample`` will differ.
+
+    Centres arrive as (Z, Y, X); the display plane is the (Y, X) one.
+    """
+    c = np.asarray(centers, dtype=np.float64)
+    w = np.asarray(amplitudes, dtype=np.float64)
+    total = w.sum()
+    if len(c) < 2 or total <= 0:
+        return 0.0
+    w = w / total
+    d = c - (c * w[:, None]).sum(0)
+    cov = (d * w[:, None]).T @ d
+    ev, evec = np.linalg.eigh(cov[np.ix_([1, 2], [1, 2])])
+    major = evec[:, int(np.argmax(ev))]
+    return float(np.degrees(np.arctan2(major[0], major[1])))
+
+
 def merge_for_render(neurons, neuron_rgb, neuropil):
     """Merge neurons and neuropil into one splat set with per-splat RGBA.
 
@@ -1018,10 +1102,10 @@ def merge_for_render(neurons, neuron_rgb, neuropil):
     first purely for readability; ordering within a node is resolved by the
     renderer's depth sort, which is the whole reason for using one node.
     """
-    n = len(neurons.amplitudes)
-    neuron_rgba = np.concatenate(
-        [neuron_rgb, np.ones((n, 1), dtype=np.float32)], axis=1
-    ).astype(np.float32)
+    alpha = neuron_alpha(neurons.amplitudes)
+    neuron_rgba = np.concatenate([neuron_rgb, alpha[:, None]], axis=1).astype(
+        np.float32
+    )
     if neuropil is None:
         return (
             neurons.centers,
@@ -1071,6 +1155,20 @@ def create_luxar_scene(centers, amplitudes, cholesky, rgba, output_path=None):
         with LuxarZarrCompiler(
             output_path, encoding_mode=EncodingMode.PRECISION
         ) as compiler:
+            # Roll the CAMERA to compensate for how the specimen was mounted,
+            # rather than rotating the data. Rotating splats would desynchronise
+            # them from FISBe's annotations (which live in this unaligned space)
+            # and would mean rotating every covariance too — easy to get subtly
+            # wrong. The camera costs nothing and the user can undo it.
+            centroid = (centers.T @ amplitudes) / max(float(amplitudes.sum()), 1e-9)
+            tilt = np.radians(measure_tilt_deg(centers, amplitudes))
+            radius = float(np.linalg.norm(centers - centroid, axis=1).max())
+            dist = radius / np.tan(np.radians(CAMERA_FOV_DEG / 2)) * CAMERA_FRAMING
+            aprint(
+                f"Camera: tilt {np.degrees(tilt):.1f} deg, radius {radius:.0f}, "
+                f"distance {dist:.0f}"
+            )
+
             scene = compiler.create_scene(
                 dimensions=dims,
                 # A film look suits this scene: it IS a microscope image, so a
@@ -1097,6 +1195,16 @@ def create_luxar_scene(centers, amplitudes, cholesky, rgba, output_path=None):
                     detector_noise_readout_sigma=0.002,
                     detector_noise_photon_gain=0.002,
                     detector_noise_fpn_sigma=0.001,
+                    camera=CameraConfig(
+                        position=(0.0, 0.0, dist),
+                        target=(0.0, 0.0, 0.0),
+                        # PERPENDICULAR to the specimen's long axis, so that
+                        # axis lands horizontal: (-sin, cos), not (sin, cos).
+                        # The un-negated version rolls the wrong way and still
+                        # looks plausible — diagonal, just mirrored.
+                        up=(float(-np.sin(tilt)), float(np.cos(tilt)), 0.0),
+                        fov=CAMERA_FOV_DEG,
+                    ),
                 ),
             )
 
@@ -1130,7 +1238,6 @@ Controls:
   - Mouse drag to rotate, scroll to zoom, right-click drag to pan
             """
 
-            centroid = (centers.T @ amplitudes) / max(float(amplitudes.sum()), 1e-9)
             aprint(f"Centroid: {centroid}")
 
             scene.add_gsplats(
