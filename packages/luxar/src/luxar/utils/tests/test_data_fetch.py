@@ -966,6 +966,25 @@ def test_explicit_base_url_wins_over_the_derived_form():
     )
 
 
+def test_base_url_is_not_gated_by_published():
+    """The Sandbox rehearsal: a mirror URL on a record that is still a draft.
+
+    The migration runbook rehearses against sandbox.zenodo.org by pointing a
+    record's `base_url` there while keeping the production record an unpublished
+    (still deletable) draft. `published` describes THAT record, so it must not
+    silence a `base_url` aimed somewhere else — otherwise the rehearsal needs
+    `published: true` on a draft, which the audit script would report as LIVE.
+    """
+    rec = {
+        "zenodo_record": "21912280",
+        "base_url": "https://sandbox.zenodo.org/records/1234/files",
+        "published": False,
+    }
+    assert data_fetch.zenodo_file_url(rec, "a.zip") == (
+        "https://sandbox.zenodo.org/records/1234/files/a.zip?download=1"
+    )
+
+
 def test_record_without_ids_builds_no_url():
     assert data_fetch.zenodo_file_url({}, "a.zip") is None
 
@@ -1000,7 +1019,10 @@ def test_every_shipped_record_agrees_with_its_published_flag():
     for name, rec in m["records"].items():
         assert rec.get("zenodo_record"), f"{name}: record id should be recorded"
         url = data_fetch.zenodo_file_url(rec, "x.zip")
-        if rec.get("published"):
-            assert url, f"{name}: marked published but builds no URL"
+        # `base_url` is an explicit "the files are HERE" override that outranks the
+        # flag (the Sandbox rehearsal), so it belongs on the reachable side here —
+        # this has to mirror `zenodo_file_url`, not restate a subset of it.
+        if rec.get("published") or rec.get("base_url"):
+            assert url, f"{name}: reachable per its flags but builds no URL"
         else:
             assert url is None, f"{name}: unpublished draft, but the leg is live"

@@ -57,12 +57,29 @@ CACHE = Path.home() / ".cache" / "luxar"
 DATA_SUFFIXES = (".zip", ".npz", ".parquet", ".npy")
 
 
-def files_of(spec: dict) -> list[dict]:
-    """A dataset's file entries, flattening size variants into one list."""
+def files_of(spec: dict) -> list[tuple[str, dict]]:
+    """``(variant, entry)`` per declared file; variant ``""`` when there are none.
+
+    The variant name has to travel with the entry: a variant's files sit one level
+    deeper than the dataset's, ``<dir>/<variant>/`` in-repo and ``<name>/<variant>/``
+    in the cache, exactly as ``ensure_dataset`` resolves them. Flattening the
+    variants into a bare file list drops that segment, so every path built from it
+    points at a file that is never there — h2afva's pinned 253tp being the first
+    declared variant file this could get wrong.
+    """
     files = spec.get("files") or []
-    if not files and "variants" in spec:
-        files = [f for v in spec["variants"].values() for f in (v.get("files") or [])]
-    return files
+    if files:
+        return [("", f) for f in files]
+    return [
+        (vname, f)
+        for vname, v in (spec.get("variants") or {}).items()
+        for f in (v.get("files") or [])
+    ]
+
+
+def _under(root: Path, *parts: str) -> Path:
+    """*root* joined with the non-empty *parts* (an empty dir/variant is a no-op)."""
+    return root.joinpath(*[p for p in parts if p])
 
 
 def is_lfs_pointer(path: Path) -> bool:
@@ -89,18 +106,22 @@ def _audit_records(records: dict) -> None:
         # An id alone does not make a record reachable: Zenodo hands out the id
         # (and a reserved DOI) at DEPOSITION time, and a file URL into an
         # unpublished draft 404s. `published` is what decides, so report the
-        # three states separately rather than reading id-presence as LIVE.
-        # Read it exactly as `zenodo_file_url` does -- only an explicit false is
-        # a draft -- or this report would call a record dormant that the fetch
-        # leg happily downloads from.
-        if not r.get("zenodo_record"):
+        # states separately rather than reading id-presence as LIVE.
+        # Decide it in the SAME ORDER as `zenodo_file_url`, or this report would
+        # call a record dormant that the fetch leg happily downloads from: an
+        # explicit `base_url` outranks the flag (that is how the Sandbox
+        # rehearsal fetches while the real record is still a draft), and only an
+        # explicit `published: false` means draft.
+        if r.get("base_url"):
+            state = "LIVE (base_url)"
+        elif not r.get("zenodo_record"):
             state = "NOT CREATED"
         elif r.get("published") is False:
             state = "DRAFT"
         else:
             state = "LIVE"
         print(
-            f"  {name:10s} {state:12s} {r.get('license', '?'):14s} doi={r.get('zenodo_doi')}"
+            f"  {name:10s} {state:15s} {r.get('license', '?'):14s} doi={r.get('zenodo_doi')}"
         )
 
 
@@ -120,16 +141,14 @@ def _bucket_row(
     """
     files = files_of(spec)
     sub = spec.get("dir", "")
-    repo_paths = [
-        (DATA_DIR / sub / f["name"]) if sub else (DATA_DIR / f["name"]) for f in files
-    ]
-    cache_paths = [CACHE / name / f["name"] for f in files]
+    repo_paths = [_under(DATA_DIR, sub, var, f["name"]) for var, f in files]
+    cache_paths = [_under(CACHE, name, var, f["name"]) for var, f in files]
     in_repo = sum(1 for p in repo_paths if has_bytes(p))
     in_cache = sum(1 for p in cache_paths if has_bytes(p))
     here = sum(
         1 for r, c in zip(repo_paths, cache_paths) if has_bytes(r) or has_bytes(c)
     )
-    size = sum(f.get("bytes", 0) for f in files) / 1048576
+    size = sum(f.get("bytes", 0) for _, f in files) / 1048576
     flag = ""
     if bucket == "zenodo":
         if not files:
@@ -220,10 +239,8 @@ def _audit_files_on_disk(datasets: dict) -> list:
     declared = set()
     for name, spec in datasets.items():
         sub = spec.get("dir", "")
-        for f in files_of(spec):
-            declared.add(
-                (DATA_DIR / sub / f["name"]) if sub else (DATA_DIR / f["name"])
-            )
+        for var, f in files_of(spec):
+            declared.add(_under(DATA_DIR, sub, var, f["name"]))
     actual = (
         {p for p in DATA_DIR.rglob("*") if p.is_file() and p.suffix in DATA_SUFFIXES}
         if DATA_DIR.exists()

@@ -144,27 +144,33 @@ def zenodo_file_url(record: Manifest, filename: str) -> Optional[str]:
     Returns None when the record has neither (i.e. not uploaded yet), which keeps
     the fetch path dormant and demos on the in-repo fallback.
 
-    A record that carries ids but is not yet ``published`` also returns None. The
-    ids are reserved and final from deposition time, so they are recorded well
-    before the record goes public -- but a file URL into an unpublished draft 404s
-    for everyone, and turning a clean "not hosted yet" into an HTTP error would be
-    a worse story for the one caller who has no in-repo copy. ``published``
-    therefore gates the URL, not the presence of an id.
+    A record that carries ids but is not yet ``published`` returns None for the
+    DERIVED form. The ids are reserved and final from deposition time, so they are
+    recorded well before the record goes public -- but a file URL into an
+    unpublished draft 404s for everyone, and turning a clean "not hosted yet" into
+    an HTTP error would be a worse story for the one caller who has no in-repo
+    copy. ``published`` therefore gates the URL, not the presence of an id.
+
+    It does NOT gate an explicit ``base_url``, which says "the files are HERE"
+    about somewhere other than the record the flag describes. That ordering is
+    what the migration runbook's rehearsal needs: point a record's ``base_url``
+    at sandbox.zenodo.org and fetch through ``ensure_dataset`` *while the
+    production record stays an unpublished draft*. Gating it the other way round
+    would force ``published: true`` onto a record that is still a draft -- a lie
+    the audit script would then report as LIVE.
 
     Only an explicit ``published: false`` gates: a record that omits the field
     is treated as reachable, which is what keeps a hand-rolled record (a test
     fixture, or a ``base_url`` pointed at a one-off mirror) working without it.
     The generator always emits the flag, so every shipped record has one --
     ``test_every_shipped_record_agrees_with_its_published_flag`` holds that both
-    ways. Note the corollary for the sandbox.zenodo.org rehearsal in the
-    migration runbook: pointing a record's ``base_url`` at Sandbox is not enough
-    on its own, since the gate runs before ``base_url`` is read.
+    ways.
     """
-    if record.get("published") is False:
-        return None
     base = record.get("base_url")
     if base:
         return f"{base.rstrip('/')}/{filename}?download=1"
+    if record.get("published") is False:
+        return None
     rec = record.get("zenodo_record")
     if rec:
         return f"https://zenodo.org/records/{rec}/files/{filename}?download=1"

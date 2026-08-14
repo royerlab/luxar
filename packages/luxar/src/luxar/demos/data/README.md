@@ -72,7 +72,7 @@ Each subdirectory contains pre-fitted `.gsplats.zarr.zip` files for one demo:
 > built and verified but not yet uploaded, and until it is, `ensure_dataset(
 > "h2afva")` has nothing to fetch for the default variant. Note that a pin is
 > only half of a download: all three records are still unsubmitted drafts, so each
-> carries `published: false` and the Zenodo leg of the fetch builds no URL at all
+> carries `published: false` and the fetch derives no URL from the record id
 > — the record ids and reserved DOIs *are* recorded (Zenodo fixes both at
 > deposition time), but a file URL into a draft 404s for everyone. Flipping those
 > three flags once the depositions are published is what activates fetching.
