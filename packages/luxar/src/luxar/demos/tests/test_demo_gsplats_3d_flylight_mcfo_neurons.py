@@ -247,6 +247,58 @@ def test_non_206_response_is_a_clear_error() -> None:
         f.read(10)
 
 
+class _ProbeResponse:
+    def __init__(self, status_code: int, headers: dict, url: str = "http://x/a.zip"):
+        self.status_code = status_code
+        self.headers = headers
+        self.url = url
+        self.content = b"\x00"
+
+    def raise_for_status(self) -> None:
+        pass
+
+
+class _ProbeSession:
+    """A session whose only job is to answer the size-probing ranged GET."""
+
+    def __init__(self, status_code: int, headers: dict):
+        self._status_code = status_code
+        self._headers = headers
+
+    def get(self, url, headers=None, allow_redirects=None, timeout=None):  # noqa: D102
+        return _ProbeResponse(self._status_code, self._headers, url)
+
+
+def _probe_with(monkeypatch, status_code: int, headers: dict) -> None:
+    monkeypatch.setattr(
+        _demo.requests, "Session", lambda: _ProbeSession(status_code, headers)
+    )
+
+
+@pytest.mark.parametrize("headers", [{"Content-Range": "bytes 0-0/*"}, {}])
+def test_unknown_total_size_is_refused_with_the_range_explanation(
+    monkeypatch, headers: dict
+) -> None:
+    """``bytes 0-0/*`` is a legal 206 carrying no total — and unusable here.
+
+    Without the size there is nothing to seek against, so it must produce the
+    "did not honour a byte-range request" guidance rather than a bare ValueError
+    out of ``int('*')``.
+    """
+    _probe_with(monkeypatch, 206, headers)
+
+    with pytest.raises(RuntimeError, match="did not honour a byte-range"):
+        _demo._open_remote_zip("http://x/a.zip")
+
+
+def test_non_206_probe_is_refused(monkeypatch) -> None:
+    """A host answering 200 to a ranged GET would mean a 7.1 GB download."""
+    _probe_with(monkeypatch, 200, {"Content-Range": "bytes 0-0/4096"})
+
+    with pytest.raises(RuntimeError, match="did not honour a byte-range"):
+        _demo._open_remote_zip("http://x/a.zip")
+
+
 def test_read_spanning_multiple_blocks() -> None:
     blob = _blob(1024)
     session = _FakeSession(blob)
@@ -430,6 +482,64 @@ def test_merge_outputs_are_float32() -> None:
 
     for arr in merge_for_render(neurons, rgb, neuropil):
         assert arr.dtype == np.float32
+
+
+# ---------------------------------------------------------------------------
+# Scene authoring: one volumetric node, per-splat RGBA, the film look
+# ---------------------------------------------------------------------------
+
+
+def _tiny_scene(tmp_path, alpha: float = 0.5):
+    """Build the demo's scene from six splats and return the opened store."""
+    import zarr as _zarr
+
+    rng = np.random.default_rng(0)
+    n = 6
+    centers = rng.uniform(0, 10, (n, 3)).astype(np.float32)
+    amplitudes = rng.uniform(0.2, 1.0, n).astype(np.float32)
+    cholesky = np.tile([1, 0, 1, 0, 0, 1], (n, 1)).astype(np.float32)
+    rgba = np.concatenate(
+        [rng.uniform(0.1, 0.9, (n, 3)), np.full((n, 1), alpha)], axis=1
+    ).astype(np.float32)
+
+    out = _demo.create_luxar_scene(
+        centers, amplitudes, cholesky, rgba, tmp_path / "mcfo.luxar.zarr"
+    )
+    return _zarr.open_group(str(out), mode="r")
+
+
+def test_scene_is_one_volumetric_node_with_per_splat_rgba(tmp_path) -> None:
+    """The whole point of the demo: one node, volumetric, alpha per splat.
+
+    Under additive compositing the neuropil would glow through the neurites
+    instead of occluding them, and splitting the two into separate nodes would
+    reintroduce the draw-order problem the merge exists to avoid.
+    """
+    scene = _tiny_scene(tmp_path)
+
+    nodes = [k for k in scene.group_keys() if k != "overlays"]
+    assert nodes == ["gsplats_mcfo"], f"expected exactly one splat node, got {nodes}"
+    node = scene["gsplats_mcfo"]
+    assert node.attrs["blending_mode"] == "volumetric"
+    assert node.attrs["absorption"] == 1.0
+    # Four columns: the alpha one is the optical depth that distinguishes
+    # neuropil from neurons inside the single node.
+    assert node["colors"].shape[1] == 4
+
+
+def test_scene_bakes_the_film_look_effect_by_effect(tmp_path) -> None:
+    """``cinematic_mode`` alone renders nothing — the effects must be authored.
+
+    The viewer applies its cinematic preset from the C-key toggle; a scene's
+    flag only sets the panel's summary state. So the scene has to carry the
+    individual effects, or the demo ships plain ACES and the documented look
+    silently never happens.
+    """
+    config = dict(_tiny_scene(tmp_path).attrs)["viewer_config"]
+
+    assert config["tone_mapping"] == "ACES"
+    for key in ("bloom_enabled", "vignette_enabled", "detector_noise_enabled"):
+        assert config.get(key) is True, f"{key} missing from the authored scene"
 
 
 # ---------------------------------------------------------------------------
@@ -661,18 +771,43 @@ def test_h5j_and_npy_caches_are_published_atomically(tmp_path) -> None:
 
 
 def test_atomic_write_leaves_no_partial_on_failure(tmp_path, monkeypatch) -> None:
-    """A failed write must not publish anything at the destination."""
+    """A failed write publishes nothing AND strands no temporary sibling.
+
+    The interesting failure is the one that dies part-way through (disk full):
+    a stub that raises before creating anything passes even when the cleanup is
+    missing entirely, so this one writes half the payload first.
+    """
     dest = tmp_path / "broken.h5j"
+    real_write_bytes = Path.write_bytes
 
     def _boom(self, data):
+        real_write_bytes(self, data[: len(data) // 2])
         raise OSError("disk full")
 
     monkeypatch.setattr(Path, "write_bytes", _boom)
 
     with pytest.raises(OSError, match="disk full"):
-        _demo._atomic_write(dest, b"payload")
+        _demo._atomic_write(dest, b"payload" * 100)
 
     assert not dest.exists()
+    assert not dest.with_suffix(".h5j.part").exists(), "partial left in the cache"
+
+
+def test_atomic_save_npy_leaves_no_partial_on_failure(tmp_path, monkeypatch) -> None:
+    """Same for the decoded volume, where the partial is hundreds of MB."""
+    dest = tmp_path / "vol.npy"
+
+    def _boom(fh, array):
+        fh.write(b"partially written")
+        raise OSError("disk full")
+
+    monkeypatch.setattr(_demo.np, "save", _boom)
+
+    with pytest.raises(OSError, match="disk full"):
+        _demo._atomic_save_npy(dest, np.zeros(4, dtype=np.uint8))
+
+    assert not dest.exists()
+    assert not dest.with_suffix(".npy.part").exists(), "partial left in the cache"
 
 
 # ---------------------------------------------------------------------------
@@ -682,13 +817,18 @@ def test_atomic_write_leaves_no_partial_on_failure(tmp_path, monkeypatch) -> Non
 
 @pytest.mark.parametrize("missing", ["ffmpeg", "h5py"])
 def test_neuropil_degrades_when_an_optional_dep_is_missing(
-    monkeypatch, missing: str
+    tmp_path, monkeypatch, missing: str
 ) -> None:
     """Both neuropil dependencies must degrade to a neurons-only scene.
 
     The demo documents that fallback, so a missing optional dependency has to
     return None rather than raise out of the run.
     """
+    # An empty cache, not the developer's own: on a machine that has actually
+    # run this demo the real cache holds a decoded neuropil, which is returned
+    # before the dependencies are ever consulted (see the warm-cache test).
+    monkeypatch.setattr(_demo, "CACHE_DIR", tmp_path)
+    monkeypatch.setattr(_demo, "RECOMPUTE", False)
     monkeypatch.setattr(
         _demo.shutil, "which", lambda name: None if name == "ffmpeg" else "/bin/x"
     )
@@ -704,6 +844,23 @@ def test_neuropil_degrades_when_an_optional_dep_is_missing(
         monkeypatch.setattr(_demo.shutil, "which", lambda name: "/usr/bin/ffmpeg")
 
     assert _demo.fetch_neuropil(_demo.DEFAULT_SAMPLE) is None
+
+
+def test_matching_grids_produce_no_registration_warning() -> None:
+    assert _demo.neuropil_grid_mismatch((390, 1058, 907), (390, 1058, 907)) is None
+
+
+def test_mismatched_grids_are_reported() -> None:
+    """Two independently released files on different grids cannot register.
+
+    Both clouds are fitted in physical units from the origin, so a reference
+    channel of a different shape lands off its own neurons — worth saying out
+    loud, because it looks like a fitting artefact rather than wrong inputs.
+    """
+    warning = _demo.neuropil_grid_mismatch((389, 1058, 907), (390, 1058, 907))
+
+    assert warning is not None
+    assert "(389, 1058, 907)" in warning and "(390, 1058, 907)" in warning
 
 
 def test_neuropil_skipped_for_an_unmapped_sample() -> None:

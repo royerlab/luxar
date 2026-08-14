@@ -4,11 +4,12 @@
 from the FISBe benchmark — long, thin, widely branching — threaded through the
 counterstained brain they live in, as one volume-rendered Gaussian splat cloud.
 
-It is the first demo whose content is filamentous rather than blobby, and the
-first where the dense medium is the point rather than a nuisance: under
-volumetric (emission-absorption) compositing the neuropil occludes front-to-back,
-so the brain reads as a solid body and neurites genuinely pass behind it and are
-dimmed, instead of glowing through as they would under additive.
+It is the first gsplat demo whose *microscopy* is filamentous rather than
+blobby, and the first where the dense medium is the point rather than something
+to see past: under volumetric (emission-absorption) compositing the neuropil
+occludes front-to-back, so the brain reads as a solid body and neurites
+genuinely pass behind it and are dimmed, instead of glowing through as they
+would under additive.
 
 The neurons come from FISBe's Zenodo archive, range-extracted over HTTP so a
 first run transfers ~415 MB rather than the whole 7.1 GB. (Zenodo's `HEAD`

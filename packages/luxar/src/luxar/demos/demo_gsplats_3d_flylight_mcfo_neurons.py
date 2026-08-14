@@ -439,14 +439,19 @@ def _open_remote_zip(url: str):
     )
     probe.raise_for_status()
     content_range = probe.headers.get("Content-Range", "")
-    if probe.status_code != 206 or "/" not in content_range:
+    # A 206 may legally report an unknown total (``bytes 0-0/*``), which is no
+    # more usable here than a refused range: without the size there is nothing
+    # to seek against. Insist on a digit total so an odd host produces the
+    # explanation below instead of a bare ValueError from int().
+    total = content_range.rsplit("/", 1)[-1].strip()
+    if probe.status_code != 206 or not total.isdigit():
         raise RuntimeError(
             f"{url} did not honour a byte-range request (status "
             f"{probe.status_code}), so extracting one sample would require "
             "downloading the full 7.1 GB archive. Download it manually and "
             f"extract the sample into {CACHE_DIR} as <sample>.zarr instead."
         )
-    size = int(content_range.rsplit("/", 1)[1])
+    size = int(total)
 
     handle = _HttpRangeFile(probe.url, size, session)
     return zipfile.ZipFile(io.BufferedReader(handle, buffer_size=1 << 20)), handle
@@ -667,10 +672,19 @@ def decode_h5j_channel(h5j_path: Path, channel: int) -> np.ndarray:
 
 
 def _atomic_write(path: Path, payload: bytes) -> None:
-    """Write ``payload`` to ``path`` via a temporary sibling + rename."""
+    """Write ``payload`` to ``path`` via a temporary sibling + rename.
+
+    The sibling is removed if anything goes wrong: a disk-full or interrupted
+    write would otherwise strand a large ``.part`` file that nothing ever
+    cleans up, occupying exactly the space the retry needs.
+    """
     tmp = path.with_suffix(path.suffix + ".part")
-    tmp.write_bytes(payload)
-    tmp.replace(path)
+    try:
+        tmp.write_bytes(payload)
+        tmp.replace(path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def _atomic_save_npy(path: Path, array: np.ndarray) -> None:
@@ -680,11 +694,38 @@ def _atomic_save_npy(path: Path, array: np.ndarray) -> None:
     ``.npy`` to any *name* that does not already end in it, so a temporary
     called ``vol.npy.part`` would silently be written as ``vol.npy.part.npy``
     and the rename would then fail on a missing file.
+
+    As in :func:`_atomic_write`, a failed save takes its sibling with it — the
+    partial here is a whole decoded volume, hundreds of megabytes of it.
     """
     tmp = path.with_suffix(path.suffix + ".part")
-    with open(tmp, "wb") as fh:
-        np.save(fh, array)
-    tmp.replace(path)
+    try:
+        with open(tmp, "wb") as fh:
+            np.save(fh, array)
+        tmp.replace(path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
+def neuropil_grid_mismatch(ref_shape, neuron_shape) -> str | None:
+    """Return a warning if the two sources are not on the same voxel grid.
+
+    The two clouds are fitted independently, in physical units anchored at the
+    volume origin, so the merge only registers if the reference channel has the
+    same (Z, Y, X) shape as the MCFO composite. FISBe derives from the same
+    FlyLight stack and the default sample matches, but a newly mapped sample
+    that does not would place the brain off its own neurons — an error easy to
+    read as a fitting artefact rather than as a mismatch of inputs.
+    """
+    if tuple(ref_shape) == tuple(neuron_shape):
+        return None
+    return (
+        f"⚠️  Reference channel is {tuple(ref_shape)} but the MCFO composite is "
+        f"{tuple(neuron_shape)}: the two are on different voxel grids, so the "
+        "neuropil will be misregistered against the neurons. Check this "
+        "sample's FLYLIGHT_H5J mapping."
+    )
 
 
 def fetch_neuropil(sample: str):
@@ -955,17 +996,30 @@ def create_luxar_scene(centers, amplitudes, cholesky, rgba, output_path=None):
         ) as compiler:
             scene = compiler.create_scene(
                 dimensions=dims,
-                # Cinematic mode (ACES + a subtle wide bloom, detector noise,
-                # vignette, chromatic lens distortion, 35mm FOV) suits this
-                # scene: it IS a microscope image, so film-grain and lens
-                # character read as photographic rather than as decoration, and
-                # the bloom gives the bright neurites the glow they have in the
-                # raw data. ACES is set explicitly too — cinematic mode selects
-                # it, but stating it keeps the intent legible if the preset ever
-                # changes.
+                # A film look suits this scene: it IS a microscope image, so a
+                # little grain and a soft glow read as photographic rather than
+                # as decoration, and the bloom gives the bright neurites the
+                # halo they have in the raw data.
+                #
+                # Each effect is spelled out because ``cinematic_mode`` alone
+                # would render none of them: the viewer applies its cinematic
+                # preset from the C-key toggle, and a scene's flag only sets the
+                # panel's summary state. The values below are that preset's, so
+                # the two agree; the flag stays so the toggle reads as already
+                # on. ACES is stated explicitly for the same reason.
                 viewer_config=ViewerConfig(
                     tone_mapping="ACES",
                     cinematic_mode=True,
+                    bloom_enabled=True,
+                    bloom_threshold=0.01,
+                    bloom_strength=0.05,
+                    bloom_radius=1.0,
+                    bloom_levels=8,
+                    vignette_enabled=True,
+                    detector_noise_enabled=True,
+                    detector_noise_readout_sigma=0.002,
+                    detector_noise_photon_gain=0.002,
+                    detector_noise_fpn_sigma=0.001,
                 ),
             )
 
@@ -1086,6 +1140,9 @@ def main():
         with asection("Neuropil (reference channel)"):
             ref = fetch_neuropil(SAMPLE)
             if ref is not None:
+                mismatch = neuropil_grid_mismatch(ref.shape, combined.shape)
+                if mismatch:
+                    aprint(mismatch)
                 neuropil = fit_volume(
                     ref.astype(np.float32) / 255.0,
                     _fit_cache_path("neuropil", NEUROPIL_SEEDS, "auto", 0.95),
@@ -1107,8 +1164,11 @@ def main():
         else:
             aprint("  Neuropil: skipped")
         aprint(f"  Total:    {len(amps):,} splats")
-        # 11 floats per splat: 3 centers + 6 Cholesky + amplitude + pad.
-        aprint(f"  Compression: {(combined.size * 4) / (len(amps) * 11 * 4):.0f}:1")
+        # 15 floats per splat: the 11 the other gsplat demos count (3 centers +
+        # 6 Cholesky + amplitude + pad) plus the 4 baked RGBA columns, which are
+        # part of what ships for this scene — colour is per-splat here, not a
+        # colormap applied at render time.
+        aprint(f"  Compression: {(combined.size * 4) / (len(amps) * 15 * 4):.0f}:1")
 
     scene_path = create_luxar_scene(centers, amps, chol, rgba, output_path)
 
