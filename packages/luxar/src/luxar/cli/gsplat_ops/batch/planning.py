@@ -425,6 +425,33 @@ def _assemble_fit_args(
     return fit_args, denoise_mode, None
 
 
+def _announce_seed_split(mode: str, fit_args: dict, n_tiles: int) -> None:
+    """Announce how an integer ``--seeds`` budget divides across a task's tiles.
+
+    Emitted ONCE at plan time — the only place the tile count is known before
+    any task runs, so both ``batch-fit run`` and ``batch-fit submit --dry-run``
+    show it. Every task is a ``--tile k/M`` fit that divides the budget itself,
+    but its own notice never reaches the console: the task pool captures worker
+    output (``task_pool.py``, ``capture_output=True``) and Slurm sends it to a
+    log. The split's return value is deliberately DROPPED — applying it here
+    would double-divide the count that goes into ``fit_args``. Content plans
+    ignore ``--seeds`` (per-box budgets come from the density), so they are
+    skipped.
+    """
+    if mode == "content" or not fit_args.get("seeds"):
+        return
+    from luxar.cli.gsplat_config import parse_seeds
+    from luxar.cli.gsplat_ops.fitting.fit_utils import split_seeds_across_tiles
+
+    # batch does not parse --seeds itself (it forwards the string verbatim, and
+    # each task's own `fit` validates it), so guard: a malformed value must fail
+    # in the task as it always has, not break planning here over a notice.
+    try:
+        split_seeds_across_tiles(parse_seeds(fit_args["seeds"]), n_tiles)
+    except ValueError:
+        pass
+
+
 def plan_batch(
     *,
     input_path: Path,
@@ -681,6 +708,8 @@ def plan_batch(
         tile_voxels = tile_size ** len(spatial) if needs_tiling else total_voxels
 
     total_tasks = n_t * n_c * n_tiles
+
+    _announce_seed_split(mode, fit_args, n_tiles)
 
     preset_config = PRESETS.get(fit.preset, PRESETS["standard"])
     n_iters = fit.iters if fit.iters is not None else preset_config.get("n_iters", 3000)
