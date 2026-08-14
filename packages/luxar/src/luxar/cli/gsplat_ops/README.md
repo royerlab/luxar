@@ -107,10 +107,10 @@ Colormap/gamma/intensity/layer flow through `**attrs`; tone-mapping goes through
 default; passing it explicitly records the choice and silences the compiler's
 LUT notice, which fires only when nothing was chosen). When a colormap carries
 an exact scientific color encoding — ACES shifts hues — reach for `None`, an
-exact passthrough, provided the scene stays inside [0, 1]; `Neutral` is not
-an identity anywhere (it subtracts an offset even below its knee, and over range
-it keeps hue but sheds chroma, while a `None` clamp keeps chroma and can shift
-hue instead).
+exact passthrough, provided the scene stays inside [0, 1]; `Neutral` is not one
+(even below its knee it subtracts a channel-minimum offset, so anything but a
+fully saturated colour moves, and over range it keeps hue but sheds chroma,
+while a `None` clamp keeps chroma and can shift hue instead).
 
 ## Refactor invariants
 

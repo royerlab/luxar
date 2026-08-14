@@ -310,11 +310,13 @@ console.log('Float support:', !!gl.getExtension('EXT_color_buffer_float'));
   (exposure, offset and gamma still apply; the shader runs them *before* the
   tone-mapping switch). Luxar aliases `"None"` and `"Linear"` to the same
   clamp mode, so either spelling is the passthrough; `"None"` is just the
-  clearer name for it. Neutral is not an identity anywhere: even below its
-  knee it subtracts an offset (0.04 once the channel minimum reaches 0.08,
-  `x - 6.25*x*x` below that, which crushes near-black hardest — `(0.5, 0.5, 0.5)`
-  comes out `(0.46, 0.46, 0.46)`), so it dulls the very encoding you are
-  protecting
+  clearer name for it. Neutral is not a passthrough: even below its knee it
+  subtracts an offset taken from the channel *minimum* (0.04 once that minimum
+  reaches 0.08, `x - 6.25*x*x` below that, which crushes near-black hardest —
+  `(0.5, 0.5, 0.5)` comes out `(0.46, 0.46, 0.46)`), so it dulls the very
+  encoding you are protecting. Only a colour whose minimum is exactly 0 and
+  whose peak is below the 0.76 knee — a fully saturated hue, or black — comes
+  through it untouched
 - Over range no operator is faithful, and the two fail in *different* ways.
   Neutral compresses the peak and mixes toward the grey equal to that compressed
   peak; since that is "scale every channel, then add the same amount to all", it

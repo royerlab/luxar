@@ -12,10 +12,13 @@ them *before* the tone-mapping switch. ``"Linear"`` aliases to that same clamp
 mode, so it is bit-identical to ``"None"``; ``"None"`` is simply the clearer
 name for the passthrough, which is why the policy below names that one.
 
-``"Neutral"`` (Khronos PBR Neutral) is not an identity anywhere. It subtracts an
-offset (0.04 once the channel minimum reaches 0.08, ``x - 6.25*x*x`` below that,
-which crushes near-black hardest), so even a well in-gamut colour moves:
-``(0.5, 0.5, 0.5) -> (0.46, 0.46, 0.46)``. From peak 0.76 upward it additionally
+``"Neutral"`` (Khronos PBR Neutral) is not a passthrough. It subtracts an offset
+taken from the channel MINIMUM (0.04 once that minimum reaches 0.08,
+``x - 6.25*x*x`` below that, which crushes near-black hardest), so even a well
+in-gamut colour moves: ``(0.5, 0.5, 0.5) -> (0.46, 0.46, 0.46)``. The one class
+it does leave alone is a colour whose minimum is exactly 0 below the knee — a
+fully saturated hue, or black — where the offset is 0 too; anything desaturated
+at all moves. From peak 0.76 upward it additionally
 compresses the peak and mixes toward the grey EQUAL to that compressed peak,
 with weight ``g = 1 - 1/(0.15*(peak - newPeak) + 1)``. Running the three.js
 formula: ``(1, 0, 0) -> (0.880, 0.016, 0.016)``,
@@ -59,14 +62,16 @@ scope: the viewer's own default is ACES, so silence already complies.
 three shapes — an inline literal call keyword, a signature default, and a plain
 ``NAME = "..."`` string constant — and reads nothing else. Constants are
 resolved in the scope they are USED in: a function-local binding shadows a
-module-level one of the same name, as do the function's own parameters, so a
-name never reports a value from a scope it cannot see. A conditional expression
+module-level one of the same name, as do the parameters of a ``def`` or a
+``lambda``, so a name never reports a value from a scope it cannot see. Within
+one scope the scan does not track statement ORDER; a name rebound to a second
+string reports both values, so a later compliant binding cannot mask an earlier
+stray one. A conditional expression
 (``tone_mapping="Neutral" if hdr else "ACES"``), a ``**{...}`` splat, a
-tuple-unpacked constant, a constant bound inside an ``if:``/``try:`` block,
-``+=`` string building and a name bound by a ``lambda`` parameter all read as
-nothing or as a partial string. That is by design — the guard reads a static
-tree, it does not evaluate one — and none of those spellings occur in the demo
-package today.
+tuple-unpacked constant, a constant bound inside an ``if:``/``try:`` block and
+``+=`` string building all read as nothing or as a partial string. That is by
+design — the guard reads a static tree, it does not evaluate one — and none of
+those spellings occur in the demo package today.
 """
 
 from __future__ import annotations
@@ -148,7 +153,7 @@ EXCEPTIONS: dict[str, tuple[tuple[str, ...], str]] = {
 MIN_MODULES_WITH_PINS = 25
 
 
-def _string_constants(body: list[ast.stmt]) -> dict[str, str]:
+def _string_constants(body: list[ast.stmt]) -> dict[str, tuple[str, ...]]:
     """``NAME = "..."`` bindings directly in ``body``, annotated ones included.
 
     ``TONE: Final = "Neutral"`` at module level, then
@@ -158,8 +163,18 @@ def _string_constants(body: list[ast.stmt]) -> dict[str, str]:
     the same way, so a local ``TONE = "Neutral"`` is caught in its own right
     (and shadows a module constant of the same name — see
     :func:`_function_scope`).
+
+    A name bound more than once keeps EVERY distinct value it is bound to. The
+    scan has no notion of where in a body a use sits, so keeping only the last
+    binding would let ``TONE = "Neutral"``,
+    ``ViewerConfig(tone_mapping=TONE)``, ``TONE = "ACES"`` report ``"ACES"``
+    alone and hide a real pin behind a later compliant one. Reporting both is
+    the conservative direction: the policy check sees the ``"Neutral"``, and the
+    worst case is a spurious failure on a demo that genuinely rebinds a
+    tone-mapping constant — which none does, and which an EXCEPTIONS row
+    settles.
     """
-    consts: dict[str, str] = {}
+    consts: dict[str, list[str]] = {}
     for stmt in body:
         if isinstance(stmt, ast.Assign):
             targets: list[ast.expr] = list(stmt.targets)
@@ -173,51 +188,60 @@ def _string_constants(body: list[ast.stmt]) -> dict[str, str]:
             continue
         for target in targets:
             if isinstance(target, ast.Name):
-                consts[target.id] = value.value
-    return consts
+                bound = consts.setdefault(target.id, [])
+                if value.value not in bound:
+                    bound.append(value.value)
+    return {name: tuple(bound) for name, bound in consts.items()}
 
 
-def _as_string(node: ast.expr, consts: dict[str, str]) -> str | None:
-    """A ``tone_mapping`` value as a string, or ``None`` if it carries no policy."""
+def _as_strings(node: ast.expr, consts: dict[str, tuple[str, ...]]) -> tuple[str, ...]:
+    """The ``tone_mapping`` values a node can carry; empty if it carries none."""
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
-        return node.value
+        return (node.value,)
     if isinstance(node, ast.Name):
-        return consts.get(node.id)
-    return None
+        return consts.get(node.id, ())
+    return ()
 
 
-def _function_scope(
-    node: ast.FunctionDef | ast.AsyncFunctionDef, consts: dict[str, str]
-) -> dict[str, str]:
-    """``consts`` as seen from inside ``node``'s body.
+def _without_params(
+    args: ast.arguments, consts: dict[str, tuple[str, ...]]
+) -> dict[str, tuple[str, ...]]:
+    """``consts`` with every parameter name of ``args`` removed.
 
-    Its own string constants win, and its parameters shadow an outer constant of
-    the same name — a parameter carries no policy of its own, which is what
-    keeps ``tone_mapping=tone_mapping`` (a forwarded value) from being read as
-    whatever a module happens to bind that name to.
+    A parameter shadows an outer constant of the same name and carries no
+    policy of its own, which is what keeps ``tone_mapping=tone_mapping`` (a
+    forwarded value) from being read as whatever a module happens to bind that
+    name to.
     """
-    args = node.args
     params = [*args.posonlyargs, *args.args, *args.kwonlyargs]
     params += [a for a in (args.vararg, args.kwarg) if a is not None]
     scope = dict(consts)
     for param in params:
         scope.pop(param.arg, None)
+    return scope
+
+
+def _function_scope(
+    node: ast.FunctionDef | ast.AsyncFunctionDef, consts: dict[str, tuple[str, ...]]
+) -> dict[str, tuple[str, ...]]:
+    """``consts`` as seen from inside ``node``'s body: own constants win."""
+    scope = _without_params(node.args, consts)
     scope.update(_string_constants(node.body))
     return scope
 
 
-def _keyword_values(node: ast.Call, consts: dict[str, str]) -> list[str]:
+def _keyword_values(node: ast.Call, consts: dict[str, tuple[str, ...]]) -> list[str]:
     """``tone_mapping=`` values passed to one call."""
     values: list[str] = []
     for kw in node.keywords:
         if kw.arg == "tone_mapping":
-            value = _as_string(kw.value, consts)
-            if value is not None:
-                values.append(value)
+            values.extend(_as_strings(kw.value, consts))
     return values
 
 
-def _default_values(args: ast.arguments, consts: dict[str, str]) -> list[str]:
+def _default_values(
+    args: ast.arguments, consts: dict[str, tuple[str, ...]]
+) -> list[str]:
     """``tone_mapping`` signature defaults of one function."""
     positional = args.posonlyargs + args.args
     pairs = list(
@@ -226,16 +250,16 @@ def _default_values(args: ast.arguments, consts: dict[str, str]) -> list[str]:
     values: list[str] = []
     for arg, default in pairs:
         if arg.arg == "tone_mapping":
-            value = _as_string(default, consts)
-            if value is not None:
-                values.append(value)
+            values.extend(_as_strings(default, consts))
     return values
 
 
-def _collect(node: ast.AST, consts: dict[str, str], found: list[str]) -> None:
+def _collect(
+    node: ast.AST, consts: dict[str, tuple[str, ...]], found: list[str]
+) -> None:
     """Walk ``node``, appending every statically known ``tone_mapping`` value.
 
-    ``consts`` is the name → string binding visible AT ``node``: module-level
+    ``consts`` is the name → string bindings visible AT ``node``: module-level
     constants, overridden by those of each enclosing function body. Descending
     with a per-scope map (rather than walking the whole tree against one
     module-level map) is what makes a name resolve to the value the interpreter
@@ -250,6 +274,13 @@ def _collect(node: ast.AST, consts: dict[str, str], found: list[str]) -> None:
         scope = _function_scope(node, consts)
         for stmt in node.body:
             _collect(stmt, scope, found)
+        return
+    if isinstance(node, ast.Lambda):
+        # Same split as a `def`, and for the same reason: only the body sees the
+        # lambda's parameters, so a forwarded one carries no policy.
+        found.extend(_default_values(node.args, consts))
+        _collect(node.args, consts, found)
+        _collect(node.body, _without_params(node.args, consts), found)
         return
     if isinstance(node, ast.Call):
         found.extend(_keyword_values(node, consts))
@@ -287,9 +318,10 @@ def test_every_demo_tone_mapping_is_aces_or_a_justified_exception() -> None:
     assert not offenders, (
         "demo tone-mapping policy (#1459): ACES is the house default, and where "
         "it is wrong the choice is made by RANGE — inside [0, 1] 'None' is an "
-        "exact passthrough, and 'Neutral' is not an identity anywhere (it "
-        "subtracts an offset even below its knee, and over range it keeps the "
-        "hue angle but sheds chroma). Fix the pin, or add the module to "
+        "exact passthrough, while 'Neutral' is not (it subtracts a "
+        "channel-minimum offset even below its knee, so anything but a fully "
+        "saturated colour moves, and over range it keeps the hue angle but "
+        "sheds chroma). Fix the pin, or add the module to "
         "EXCEPTIONS with the reason:\n  " + "\n  ".join(sorted(offenders))
     )
 
@@ -377,12 +409,41 @@ def test_the_guard_detects_a_stray_neutral(tmp_path: Path) -> None:
     assert _tone_mappings(shadowed) == ["Neutral"]
 
     # A parameter shadows an outer constant too, so a forwarded value stays
-    # policy-free even when the module binds that very name.
+    # policy-free even when the module binds that very name — for a lambda's
+    # parameters as much as for a def's.
     param = tmp_path / "demo_param_shadow.py"
     param.write_text(
         'tone_mapping = "Neutral"\n'
         "def build(tone_mapping):\n"
-        "    return ViewerConfig(tone_mapping=tone_mapping)\n",
+        "    return ViewerConfig(tone_mapping=tone_mapping)\n"
+        "make = lambda tone_mapping: ViewerConfig(tone_mapping=tone_mapping)\n",
         encoding="utf-8",
     )
     assert _tone_mappings(param) == []
+
+
+def test_a_rebound_constant_cannot_mask_a_stray_neutral(tmp_path: Path) -> None:
+    """A name bound twice reports both values, so order cannot hide a pin.
+
+    The scan resolves a name per SCOPE, not per statement, so ``TONE`` below is
+    ambiguous to it. Reporting only the last binding would let a compliant
+    reassignment placed after the call hide the ``"Neutral"`` the scene actually
+    receives; reporting both keeps the policy check on the safe side.
+    """
+    module_level = tmp_path / "demo_rebound_module.py"
+    module_level.write_text(
+        'TONE = "Neutral"\nViewerConfig(tone_mapping=TONE)\nTONE = "ACES"\n',
+        encoding="utf-8",
+    )
+    assert sorted(_tone_mappings(module_level)) == ["ACES", "Neutral"]
+
+    local = tmp_path / "demo_rebound_local.py"
+    local.write_text(
+        "def build():\n"
+        '    TONE = "Neutral"\n'
+        "    cfg = ViewerConfig(tone_mapping=TONE)\n"
+        '    TONE = "ACES"\n'
+        "    return cfg, TONE\n",
+        encoding="utf-8",
+    )
+    assert sorted(_tone_mappings(local)) == ["ACES", "Neutral"]

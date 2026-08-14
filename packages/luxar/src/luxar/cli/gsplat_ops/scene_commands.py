@@ -85,8 +85,9 @@ def convert_to_scene(
     When a colormap carries an exact scientific color encoding that ACES's hue
     shift would distort, pick by range: inside [0, 1], ``None`` is the only
     exact passthrough (the mega-shader applies exposure/offset/gamma *before*
-    the tone-mapping switch, so those still work). ``Neutral`` is not an
-    identity anywhere — it subtracts an offset even below its knee. Over range
+    the tone-mapping switch, so those still work). ``Neutral`` is not a
+    passthrough — even below its knee it subtracts an offset taken from the
+    channel minimum, so anything but a fully saturated colour moves. Over range
     nothing is faithful: ``Neutral`` keeps the HSV hue angle exactly but sheds
     chroma (essentially white by peak 100), while a ``None`` clamp keeps chroma
     yet shifts hue when several channels clip unequally. So either bring the

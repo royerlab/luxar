@@ -319,8 +319,9 @@ class ViewerConfig:
     # does intentionally shift hues, so in the narrower case where a colormap
     # LUT carries an exact color encoding that must survive to the screen,
     # prefer "None" — an exact passthrough, valid while the scene stays
-    # inside [0, 1]. "Neutral" is not an identity anywhere: it subtracts an
-    # offset even below its knee, and over range it keeps the hue angle but
+    # inside [0, 1]. "Neutral" is not a passthrough: even below its knee it
+    # subtracts an offset taken from the channel minimum, so anything but a
+    # fully saturated colour moves, and over range it keeps the hue angle but
     # sheds chroma (a `None` clamp does the reverse) — a gentle rolloff rather
     # than a fidelity choice.
     # Setting this explicitly — to "ACES" as much

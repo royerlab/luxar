@@ -100,9 +100,10 @@ Appearance is baked in here:
   records the choice and silences the compiler's LUT notice, which only fires
   when nothing was chosen); when the colormap carries an exact scientific color
   encoding (ACES shifts hues) reach for `None` — an exact passthrough — as
-  long as the scene stays inside [0, 1]. `Neutral` is not an identity anywhere:
-  it subtracts an offset even below its knee, and over range it keeps the hue
-  angle but sheds chroma (a `None` clamp keeps chroma and can shift hue).
+  long as the scene stays inside [0, 1]. `Neutral` is not a passthrough: even
+  below its knee it subtracts a channel-minimum offset, so anything but a fully
+  saturated colour moves, and over range it keeps the hue angle but sheds chroma
+  (a `None` clamp keeps chroma and can shift hue).
 - `--gamma` (1.0) — display gamma.
 - `--intensity` (1.0) — display intensity multiplier.
 - `--layer`/`--no-layer` (default `layer`) — list the gsplats node in the viewer Layers panel.

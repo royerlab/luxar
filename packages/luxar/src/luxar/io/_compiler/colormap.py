@@ -51,9 +51,10 @@ def write_colormap_lut_if_needed(
     # a colormap LUT, so flag it for authors who have not considered the
     # choice at all — when the LUT carries a scientific color encoding and the
     # scene stays inside [0, 1], tone_mapping="None" is an exact
-    # passthrough ("Neutral" is not an identity anywhere: it subtracts an
-    # offset even below its knee, and over range it keeps the hue angle but
-    # sheds chroma, while a "None" clamp keeps chroma and can shift hue).
+    # passthrough ("Neutral" is not one: even below its knee it subtracts an
+    # offset taken from the channel minimum, so anything but a fully saturated
+    # colour moves, and over range it keeps the hue angle but sheds chroma,
+    # while a "None" clamp keeps chroma and can shift hue).
     #
     # Fires ONLY when the author set no tone_mapping. An explicit value —
     # including "ACES" — is a deliberate decision and must not be second-

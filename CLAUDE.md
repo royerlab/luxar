@@ -400,9 +400,9 @@ luxar gsplat convert splats.gsplats.zarr scene.luxar.zarr --colormap plasma --to
 # When the colormap carries an exact scientific color encoding that must survive
 # to the screen (ACES shifts hues), pick by RANGE. Inside [0, 1] `None` is an
 # exact passthrough (exposure/offset/gamma still apply — the shader runs
-# them before the tone-mapping switch). Neutral is NOT an identity anywhere: it
-# subtracts an offset even below its knee, dulling the encoding you meant to
-# protect:
+# them before the tone-mapping switch). Neutral is NOT a passthrough: even below
+# its knee it subtracts an offset taken from the channel MINIMUM, so anything
+# but a fully saturated colour moves, dulling the encoding you meant to protect:
 luxar gsplat convert splats.gsplats.zarr scene.luxar.zarr --colormap plasma --tone-mapping None
 # Over range NO operator is faithful, and they fail differently: Neutral keeps
 # the HSV hue angle exactly but sheds chroma (at peak 100 a saturated colour
