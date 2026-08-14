@@ -105,6 +105,7 @@ __all__ = [
     "open_group",
     "open_store",
     "read_array_meta",
+    "read_consolidated_attrs",
     "read_node_attrs",
     "set_zarr_format",
     "zarr_format",
@@ -258,6 +259,48 @@ def _read_json_doc(path: Path) -> dict[str, Any] | None:
     except (OSError, json.JSONDecodeError):
         return None
     return loaded if isinstance(loaded, dict) else None
+
+
+def read_consolidated_attrs(store_dir: Path) -> dict[str, dict[str, Any]]:
+    """Every node's attributes, keyed by node path, from the consolidated index.
+
+    The root is keyed ``"/"``; children by their store-relative path
+    (``"points"``, ``"grp/child"``). Reading the consolidated document rather
+    than walking the tree is what makes this ONE file read instead of one per
+    node, which is why writers' round-trip tests use it.
+
+    The formats key it differently and this is where that is absorbed. Format 2
+    lists every metadata document — ``"points/.zattrs"``, ``"points/.zarray"``,
+    ``"points/.zgroup"`` — so the attribute documents have to be picked out by
+    suffix. Format 3 lists one entry per NODE, whose attributes are nested under
+    ``attributes``, and the root's own attributes live outside
+    ``consolidated_metadata`` entirely, in the top-level document.
+
+    Empty when there is no consolidated index — that is "nothing to read here",
+    not "a store with no nodes"; use :func:`is_consolidated` to tell them apart.
+    """
+    v2 = _read_json_doc(store_dir / ".zmetadata")
+    if v2 is not None:
+        out: dict[str, dict[str, Any]] = {}
+        for key, value in (v2.get("metadata") or {}).items():
+            if key.endswith(".zattrs") and isinstance(value, dict):
+                out[key[: -len("/.zattrs")] or "/"] = value
+        return out
+
+    root = _read_json_doc(store_dir / _V3_METADATA_DOC)
+    if root is None or root.get("consolidated_metadata") is None:
+        return {}
+    out = {}
+    root_attrs = root.get("attributes")
+    out["/"] = root_attrs if isinstance(root_attrs, dict) else {}
+    consolidated = root["consolidated_metadata"]
+    entries = consolidated.get("metadata") if isinstance(consolidated, dict) else None
+    for path, node in (entries or {}).items():
+        if not isinstance(node, dict):
+            continue
+        attrs = node.get("attributes")
+        out[str(path).lstrip("/") or "/"] = attrs if isinstance(attrs, dict) else {}
+    return out
 
 
 def read_array_meta(array_dir: Path) -> dict[str, Any] | None:
