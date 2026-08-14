@@ -51,7 +51,9 @@ USAGE
     python demo_gsplats_4d_cell_tracking_challenge.py [options]
 
 Options:
-    --datasets=N      How many crops to show: 1, 4 or 9 (default: 9 -> 3x3)
+    --datasets=N      How many crops to show, 1..9 (default: 9). They are laid out
+                      on the smallest square grid that fits: 1 -> 1x1, 4 -> 2x2,
+                      7 or 9 -> 3x3. Useful when only some crops have downloaded.
     --timepoints=N    Timepoints per crop (default: 100, the whole timelapse)
     --seeds=K         Splats per timepoint fit (default: 12126, from `gsplat cal`)
     --recompute       Re-fit from scratch, ignoring the fit cache
@@ -217,12 +219,17 @@ def _kaggle_cli() -> str:
     )
 
 
-def _crop_files(dataset: str, n_timepoints: int) -> list[str]:
-    """Every competition file making up one crop: GEFF graph + image store.
+def _crop_metadata_files(dataset: str) -> list[str]:
+    """The small files every run needs: the GEFF graph, and the image METADATA.
 
     Spelled out rather than listed from the API because the full file listing is
     ~25,000 rows (one per chunk across 199 crops) and paging it costs far more
     requests than fetching the ~120 files we actually want.
+
+    The image ``zarr.json`` pair is in here rather than with the chunks because the
+    scene needs the crop's shape and voxel size — to place the tile and to convert
+    the GEFF's voxel coordinates to um — even when every timepoint is already
+    fitted and no pixel is ever read.
     """
     geff, img = f"train/{dataset}.geff", f"train/{dataset}.zarr"
     paths = [
@@ -243,8 +250,12 @@ def _crop_files(dataset: str, n_timepoints: int) -> list[str]:
             f"{geff}/nodes/props/{axis}/values/c/0",
         ]
     paths += [f"{img}/zarr.json", f"{img}/0/zarr.json"]
-    paths += [f"{img}/0/c/{t}/0/0/0" for t in range(n_timepoints)]
     return paths
+
+
+def _crop_chunk_files(dataset: str, n_timepoints: int) -> list[str]:
+    """The image chunks — one per timepoint, ~4.5 MB each. Only fitting reads these."""
+    return [f"train/{dataset}.zarr/0/c/{t}/0/0/0" for t in range(n_timepoints)]
 
 
 def _fetch_file(exe: str, rel: str, dest_root: Path, max_tries: int = 6) -> bool:
@@ -292,16 +303,26 @@ def _fetch_file(exe: str, rel: str, dest_root: Path, max_tries: int = 6) -> bool
     return False
 
 
-def fetch_dataset(dataset: str, n_timepoints: int) -> tuple[Path, Path]:
-    """Ensure one crop's image store and GEFF graph are on disk.
+def fetch_dataset(
+    dataset: str, n_timepoints: int, *, need_images: bool
+) -> tuple[Path, Path]:
+    """Ensure one crop's GEFF graph, image metadata and (if needed) chunks are local.
 
-    Returns ``(image_store, geff_store)``. Already-present files are skipped, so
-    an interrupted download resumes rather than restarting.
+    Returns ``(image_store, geff_store)``. Already-present files are skipped, so an
+    interrupted download resumes rather than restarting.
+
+    ``need_images`` is False when every timepoint of this crop is already fitted.
+    That skips ~450 MB of image chunks per crop, which is the difference between a
+    warm-cache run working on a laptop and demanding 4 GB of raw data it will never
+    read. Kaggle also rate-limits bulk single-file downloads hard enough that not
+    asking is worth real time.
     """
     image = DATA_DIR / "train" / f"{dataset}.zarr"
     geff = DATA_DIR / "train" / f"{dataset}.geff"
 
-    wanted = _crop_files(dataset, n_timepoints)
+    wanted = _crop_metadata_files(dataset)
+    if need_images:
+        wanted += _crop_chunk_files(dataset, n_timepoints)
     missing = [p for p in wanted if not (DATA_DIR / p).is_file()]
     if not missing:
         return image, geff
@@ -346,6 +367,34 @@ def voxel_size_of(image_store: Path) -> tuple[float, float, float]:
     return tuple(float(s) for s in scale[1:])  # drop the time axis
 
 
+def _fit_cache_path(dataset: str, t: int) -> Path:
+    return CACHE_DIR / dataset / f"t{t:04d}_k{SEEDS}.gsplats.zarr.zip"
+
+
+def is_fit_cached(dataset: str, t: int) -> bool:
+    """Whether timepoint ``t`` of ``dataset`` is already fitted.
+
+    A cache entry counts only when its in-progress ``.tmp`` marker is absent: a
+    process killed mid-save leaves a truncated store behind, and loading that
+    would be worse than re-fitting.
+    """
+    path = _fit_cache_path(dataset, t)
+    marker = path.with_suffix(path.suffix + ".tmp")
+    return path.exists() and not marker.exists()
+
+
+def needs_fitting(dataset: str, n_timepoints: int) -> bool:
+    """Whether any timepoint of this crop still has to be fitted.
+
+    Asked BEFORE downloading, so a fully-fitted crop never pulls its ~450 MB of
+    image chunks (see :func:`fetch_dataset`), and torch is never demanded on a
+    machine that only assembles a scene from a warm cache.
+    """
+    return FLAGS["recompute"] or any(
+        not is_fit_cached(dataset, t) for t in range(n_timepoints)
+    )
+
+
 def fit_timelapse(
     dataset: str, image_store: Path, n_timepoints: int
 ) -> list[GSplatData]:
@@ -357,23 +406,20 @@ def fit_timelapse(
     """
     from luxar.io.zarr_v3 import open_zarr_v3
 
-    arr = open_zarr_v3(image_store)["0"]
+    will_fit = needs_fitting(dataset, n_timepoints)
     voxel = voxel_size_of(image_store)
     cache = CACHE_DIR / dataset
     cache.mkdir(parents=True, exist_ok=True)
 
     def cache_path(t: int) -> Path:
-        return cache / f"t{t:04d}_k{SEEDS}.gsplats.zarr.zip"
+        return _fit_cache_path(dataset, t)
 
     def is_cached(t: int) -> bool:
-        """A cache entry counts only without its in-progress marker beside it."""
-        path = cache_path(t)
-        marker = path.with_suffix(path.suffix + ".tmp")
-        return path.exists() and not marker.exists()
+        return is_fit_cached(dataset, t)
 
-    # Demand torch only if a fit will actually run: a warm cache must build a
-    # scene on a machine that has no fitting stack at all.
-    will_fit = FLAGS["recompute"] or any(not is_cached(t) for t in range(n_timepoints))
+    # The image array is only opened when a fit will actually read pixels from it —
+    # a warm cache must not need the chunks on disk at all.
+    arr = open_zarr_v3(image_store)["0"] if will_fit else None
     if will_fit:
         require_module("torch", pip_name="luxar[gsplats]")
         warn_if_no_cuda_gpu()
@@ -392,6 +438,15 @@ def fit_timelapse(
                     aprint(f"  t={t} cache unreadable ({exc}); re-fitting")
                     cache_file.unlink(missing_ok=True)
 
+            if arr is None:
+                # A cache entry vanished (or turned unreadable) between the scan
+                # above and now, so the images we decided not to fetch are exactly
+                # what is missing. Say so instead of failing on a None.
+                raise RuntimeError(
+                    f"{dataset}: timepoint {t} is not in the fit cache, but the "
+                    "image chunks were skipped because the cache looked complete. "
+                    "Re-run the demo — the scan will now ask for them."
+                )
             volume = np.asarray(arr[t]).astype(np.float32)
             fitted = fit_gaussian_splats(
                 volume,
@@ -789,7 +844,11 @@ def main() -> None:
     crops: list[dict] = []
     for i, dataset in enumerate(chosen, 1):
         with asection(f"[{i}/{n_datasets}] {dataset}"):
-            image_store, geff_store = fetch_dataset(dataset, n_timepoints)
+            image_store, geff_store = fetch_dataset(
+                dataset,
+                n_timepoints,
+                need_images=needs_fitting(dataset, n_timepoints),
+            )
             centre = crop_centre_um(image_store)
             per_tp = fit_timelapse(dataset, image_store, n_timepoints)
             combined = combine_to_4d(per_tp, centre)
