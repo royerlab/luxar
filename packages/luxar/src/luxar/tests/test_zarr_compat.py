@@ -356,6 +356,38 @@ def test_production_create_array_calls_pass_a_compressor() -> None:
     )
 
 
+def test_no_zarr_2_create_dataset_calls_remain() -> None:
+    """``Group.create_dataset`` was REMOVED in zarr 3 — no call site may survive.
+
+    Scanned as text over the whole repo rather than just this package, because the
+    call sites that actually bit were outside it (the viewer's fixture generators)
+    and because a branch merged from before this migration reintroduces them
+    invisibly: that is exactly how `io/tests/test_volume_lazy.py` arrived mid-PR.
+    ``AttributeError`` at runtime is a poor substitute for failing here.
+    """
+    repo = PROD_ROOT.parents[3]
+    offenders: list[str] = []
+    for path in sorted(repo.rglob("*.py")):
+        parts = set(path.parts)
+        if (
+            "node_modules" in parts
+            or ".venv" in parts
+            or "_zarr_compat.py" == path.name
+        ):
+            continue
+        for lineno, line in enumerate(
+            path.read_text(encoding="utf-8", errors="replace").splitlines(), 1
+        ):
+            # `create_resizable_dataset` is Luxar's OWN API and stays.
+            if ".create_dataset(" in line and "create_resizable_dataset" not in line:
+                offenders.append(f"{path.relative_to(repo)}:{lineno}")
+
+    assert not offenders, (
+        "zarr 3 removed Group.create_dataset; use "
+        f"luxar._zarr_compat.create_array instead: {offenders}"
+    )
+
+
 def test_the_lint_can_actually_fail(tmp_path: Path) -> None:
     """Guard the guard: prove the AST walk detects a missing compressor.
 

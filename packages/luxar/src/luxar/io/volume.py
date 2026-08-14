@@ -104,7 +104,13 @@ def open_volume_lazy(path: Path, array_key: Optional[str] = None) -> Any:
     if suffix == ".zarr" or (suffix == ".zip" and path.stem.endswith(".zarr")):
         import zarr
 
-        node = zarr.open(str(path), mode="r")
+        from luxar._zarr_compat import open_store
+
+        # This branch explicitly accepts `.zarr.zip`, so the store has to be
+        # dispatched explicitly: zarr 2 sniffed the suffix inside
+        # `normalize_store_arg`, zarr 3 does not, and a bare
+        # `zarr.open(str(path))` on an archive raises GroupNotFoundError.
+        node = zarr.open(store=open_store(path, mode="r"), mode="r")
         if array_key:
             try:
                 node = node[array_key]
