@@ -421,6 +421,11 @@ at — which is what keeps a reloaded or shared post-switch link named.
 | Dimensions | `dimensions.current_step`, `dimensions.selected_dimension` |
 | Animation | `animation` (per-dimension: loop mode, direction, speed) |
 
+Setting `cinematic_mode=True` expands the whole cinematic preset (ACES tone
+mapping, a subtle wide bloom, detector noise, vignette, and the 35 mm
+chromatic lens + FOV) for every field the scene does not set itself — so you
+can enable the look and still override, say, `bloom_strength` on top of it.
+
 See `luxar.ViewerConfig` docstring for the full field list with types and
 valid ranges.
 

@@ -10,6 +10,7 @@ import {
   renderingSettingsToZarr,
   RENDERING_SETTINGS_MAP,
 } from '../../../config/zarr-bridge/viewer-config-utils';
+import { buildCinematicValues, CINEMATIC_SNAPSHOT_KEYS } from '../../../config/cinematic-preset';
 import type { ZarrViewerConfig } from '../../../types/zarr';
 
 describe('extractRenderingOverrides', () => {
@@ -200,6 +201,74 @@ describe('extractRenderingOverrides', () => {
     expect(overrides.fovPreset).toBe('50mm Normal');
     expect(overrides.near).toBe(0.1);
     expect(overrides.far).toBe(1000);
+  });
+});
+
+describe('extractRenderingOverrides — cinematic_mode preset expansion', () => {
+  // `cinematic_mode` used to be a pass-through flag nothing acted on, so a
+  // scene authoring it rendered with none of the preset's effects. The bridge
+  // now expands the preset for every key the scene did NOT set explicitly.
+
+  it('expands the whole cinematic preset when cinematic_mode is true', () => {
+    const overrides = extractRenderingOverrides({ cinematic_mode: true });
+    const preset = buildCinematicValues();
+
+    // Assert against buildCinematicValues() itself so this test cannot drift
+    // from the preset definition.
+    for (const key of CINEMATIC_SNAPSHOT_KEYS) {
+      expect(overrides[key]).toBe(preset[key]);
+    }
+    // The flag itself survives, so the panel checkbox still reads as on.
+    expect(overrides.cinematicMode).toBe(true);
+  });
+
+  it('keeps author-set keys — the scene wins over the preset', () => {
+    const overrides = extractRenderingOverrides({
+      cinematic_mode: true,
+      bloom_strength: 0.9,
+      tone_mapping: 'Neutral',
+      vignette_enabled: false,
+    });
+    const preset = buildCinematicValues();
+
+    expect(overrides.bloomStrength).toBe(0.9);
+    expect(overrides.toneMapping).toBe('Neutral');
+    expect(overrides.vignetteEnabled).toBe(false);
+    // Unset preset keys are still expanded around them.
+    expect(overrides.bloomThreshold).toBe(preset.bloomThreshold);
+    expect(overrides.detectorNoiseEnabled).toBe(preset.detectorNoiseEnabled);
+    expect(overrides.chromaticLensDispersion).toBe(preset.chromaticLensDispersion);
+  });
+
+  it('keeps an author-set camera.fov / camera.fov_preset', () => {
+    const overrides = extractRenderingOverrides({
+      cinematic_mode: true,
+      camera: { fov: 90 },
+    });
+    const preset = buildCinematicValues();
+
+    expect(overrides.fov).toBe(90);
+    // fov_preset was NOT set, so it still comes from the preset.
+    expect(overrides.fovPreset).toBe(preset.fovPreset);
+  });
+
+  it('does not expand for cinematic_mode false, absent, or non-boolean truthy', () => {
+    expect(extractRenderingOverrides({ cinematic_mode: false }).toneMapping).toBeUndefined();
+    expect(extractRenderingOverrides({}).toneMapping).toBeUndefined();
+    // Strictly `=== true`: a corrupt config must not silently restyle the scene.
+    const truthy = extractRenderingOverrides({
+      cinematic_mode: 1 as unknown as boolean,
+    });
+    expect(truthy.toneMapping).toBeUndefined();
+    expect(truthy.bloomEnabled).toBeUndefined();
+  });
+
+  it('cinematic_mode false leaves the overrides to the explicit keys only', () => {
+    const overrides = extractRenderingOverrides({
+      cinematic_mode: false,
+      bloom_enabled: true,
+    });
+    expect(Object.keys(overrides).sort()).toEqual(['bloomEnabled', 'cinematicMode']);
   });
 });
 

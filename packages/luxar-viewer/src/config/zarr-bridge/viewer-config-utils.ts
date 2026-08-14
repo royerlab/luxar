@@ -8,6 +8,7 @@
 
 import type { ZarrViewerConfig } from '../../types/zarr';
 import type { RenderingSettings } from '../types';
+import { buildCinematicValues, CINEMATIC_SNAPSHOT_KEYS } from '../cinematic-preset';
 import { log, Modules } from '../../utils/log';
 
 /**
@@ -98,10 +99,12 @@ export const REVERSE_SETTINGS_MAP: Record<string, string> = Object.fromEntries(
 
 /**
  * Extract RenderingSettings overrides from zarr viewer_config.
- * Returns only the fields that are set (partial object).
+ * Returns only the fields that are set (partial object), plus — when the
+ * scene asks for cinematic mode — the cinematic preset expanded into the
+ * fields the scene left unset (see {@link expandCinematicPreset}).
  *
  * @param zarrConfig - Viewer config from zarr root attributes
- * @returns Partial RenderingSettings with only the fields set in zarr
+ * @returns Partial RenderingSettings with the fields set in zarr
  */
 export function extractRenderingOverrides(
   zarrConfig: ZarrViewerConfig
@@ -133,7 +136,53 @@ export function extractRenderingOverrides(
     overrides.far = zarrConfig.camera.far;
   }
 
+  expandCinematicPreset(zarrConfig, overrides);
+
   return overrides;
+}
+
+/**
+ * Expand `viewer_config.cinematic_mode = true` into the actual preset values
+ * (ACES, subtle wide bloom, detector noise, vignette, 35 mm chromatic lens +
+ * FOV).
+ *
+ * Why here: `cinematic_mode` used to map straight through to
+ * `RenderingSettings.cinematicMode`, a flag nothing downstream acted on — the
+ * preset was only ever applied by the C-key/rail toggle, so an authored scene
+ * rendered with none of the effects. Expanding at the bridge means BOTH
+ * consumers of `extractRenderingOverrides` get it for free:
+ * `RenderingControls.applyZarrDefaults` (first-time scene load) and
+ * `buildResetDefaults` (reset-to-defaults for a scene that ships a config).
+ *
+ * PRECEDENCE — an author-set key always wins over the preset. A key counts as
+ * author-set exactly when it is already present in `overrides`, which is the
+ * single uniform test for both routes into this object: the
+ * `RENDERING_SETTINGS_MAP` walk above only adds a key when its snake_case
+ * spelling was present and non-null in the zarr config, and the camera block
+ * only adds `fov` / `fovPreset` when `camera.fov` / `camera.fov_preset` were.
+ * So `{cinematic_mode: true, bloom_strength: 0.9}` yields the full preset with
+ * `bloomStrength = 0.9`.
+ *
+ * Strictly `=== true`: a `false`, `null`, absent, or non-boolean truthy value
+ * expands nothing (a corrupt config must not silently restyle the scene).
+ *
+ * `cinematicMode: true` itself stays in the overrides, so the panel checkbox
+ * still reads as on.
+ *
+ * @param zarrConfig - Viewer config from zarr root attributes
+ * @param overrides - Overrides built so far; mutated in place
+ */
+function expandCinematicPreset(
+  zarrConfig: ZarrViewerConfig,
+  overrides: Partial<RenderingSettings>
+): void {
+  if (zarrConfig.cinematic_mode !== true) return;
+
+  const preset = buildCinematicValues();
+  for (const key of CINEMATIC_SNAPSHOT_KEYS) {
+    if (key in overrides) continue; // author-set — leave it alone
+    (overrides as Record<string, unknown>)[key] = preset[key];
+  }
 }
 
 /**
