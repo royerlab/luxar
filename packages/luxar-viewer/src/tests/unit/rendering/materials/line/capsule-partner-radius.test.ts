@@ -9,7 +9,8 @@
  * review rows of `tests/unit/rendering/materials/line-capsule.test.ts` (θ = 60°,
  * vertex radius 10, partner tapering 10 → 5 over 30 px), measures +0.077 of peak
  * over-draw where my own leg tapers and −0.192 where it widens. The larger
- * −0.478 / +0.263 pair recorded at `line-capsule.test.ts:199` is the worst seen
+ * −0.478 / +0.263 pair recorded in `line-capsule.test.ts` (the 'tapered own leg
+ * (the #1494 rows)' test) is the worst seen
  * across those same four rows on a code state that also lacked #1488's reach and
  * #1490's far cap.
  *

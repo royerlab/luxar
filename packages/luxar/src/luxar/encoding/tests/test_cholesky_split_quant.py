@@ -9,8 +9,8 @@ point with the encode-time covariance certificate) — tested in
 
 import numpy as np
 import pytest
-import zarr
 
+from luxar._zarr_compat import create_array, memory_group
 from luxar.encoding.decoder import ArrayDecoder
 from luxar.encoding.encoder import ArrayEncoder
 from luxar.encoding.modes import EncodingMode
@@ -20,7 +20,7 @@ from luxar.encoding.semantic_types import SemanticType
 def _roundtrip(data, semantic_type, mode):
     """Encode then decode `data`, returning (decoded, encoding_dict)."""
     enc = ArrayEncoder()  # fresh: avoid cross-call array_ref dedup in unit tests
-    g = zarr.group(store=zarr.MemoryStore())
+    g = memory_group()
     enc.encode(
         data=data, zarr_group=g, name="a", semantic_type=semantic_type, mode=mode
     )
@@ -201,7 +201,7 @@ class TestEncodeCholeskySplit:
 
     @staticmethod
     def _encode(diag, off, mode, ndim=3, **kw):
-        g = zarr.group(store=zarr.MemoryStore())
+        g = memory_group()
         ArrayEncoder().encode_cholesky_split(g, diag, off, ndim, mode, **kw)
         return g
 
@@ -406,7 +406,7 @@ class TestDecoderValidation:
         rng = np.random.default_rng(9)
         diag = rng.uniform(0.4, 5.0, size=(100, 3)).astype(np.float32)
         enc = ArrayEncoder()
-        g = zarr.group(store=zarr.MemoryStore())
+        g = memory_group()
         enc.encode(
             data=diag,
             zarr_group=g,
@@ -476,8 +476,8 @@ class TestDecoderValidation:
         )
         legacy = dict(enc)
         legacy.pop("zero_level")
-        g = zarr.group(store=zarr.MemoryStore())
-        g.create_dataset("a", data=stored, overwrite=True)
+        g = memory_group()
+        create_array(g, "a", data=stored, overwrite=True)
         g["a"].attrs["encoding"] = legacy
         decoded = ArrayDecoder().decode(g["a"], g)
         lo = np.asarray(legacy["col_lo"])

@@ -11,8 +11,8 @@ import warnings
 
 import numpy as np
 import pytest
-import zarr
 
+from luxar._zarr_compat import create_array, memory_group
 from luxar.encoding.decoder import ArrayDecoder
 from luxar.encoding.encoder import ArrayEncoder
 from luxar.encoding.modes import EncodingMode
@@ -22,7 +22,7 @@ from luxar.encoding.semantic_types import SemanticType
 def _roundtrip(data, mode, float16_allowed=False):
     """Encode `data` as COORDINATE then decode; return (decoded, encoding, stored)."""
     enc = ArrayEncoder(float16_allowed=float16_allowed)
-    g = zarr.group(store=zarr.MemoryStore())
+    g = memory_group()
     enc.encode(
         data=data,
         zarr_group=g,
@@ -203,8 +203,8 @@ class TestGenericLinearPerchannel:
         levels = (1 << bits) - 1
         rngv = np.maximum(hi - lo, 1e-30)
         u = np.round((vals - lo) / rngv * levels).astype(udtype)
-        g = zarr.group(store=zarr.MemoryStore())
-        g.create_dataset("a", data=u)
+        g = memory_group()
+        create_array(g, "a", data=u)
         g["a"].attrs["encoding"] = {
             "name": f"linear_perchannel_u{bits}",
             "col_lo": lo.tolist(),
@@ -219,7 +219,7 @@ class TestGenericLinearPerchannel:
     def test_decoder_rejects_non_finite_scales(self):
         rng = np.random.default_rng(12)
         vals = (rng.standard_normal((50, 3)) * 5).astype(np.float32)
-        g = zarr.group(store=zarr.MemoryStore())
+        g = memory_group()
         ArrayEncoder().encode(
             data=vals,
             zarr_group=g,
@@ -236,7 +236,7 @@ class TestGenericLinearPerchannel:
     def test_decoder_rejects_length_mismatch(self):
         rng = np.random.default_rng(13)
         vals = (rng.standard_normal((50, 3)) * 5).astype(np.float32)
-        g = zarr.group(store=zarr.MemoryStore())
+        g = memory_group()
         ArrayEncoder().encode(
             data=vals,
             zarr_group=g,

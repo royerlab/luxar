@@ -36,7 +36,8 @@ from typing import (
 
 import numpy as np
 import zarr
-from zarr.storage import DirectoryStore
+
+from luxar._zarr_compat import consolidate, create_root_group, open_store
 
 if TYPE_CHECKING:
     from luxar.gsplats.tree import GSplatNode
@@ -418,8 +419,8 @@ def write_gsplats_tree(
         # as complete).
         zarr_path = _tmp_sibling(path)
 
-    store = DirectoryStore(str(zarr_path))
-    root = zarr.group(store=store, overwrite=True)
+    store = open_store(zarr_path, mode="w")
+    root = create_root_group(store, overwrite=True)
     try:
         # Barrier axes for ordering: explicit arg wins; else the LOD reduction
         # barrier (complement of the persisted coarsen_dims); else per-leaf
@@ -477,7 +478,7 @@ def write_gsplats_tree(
 
         # Stamp BEFORE consolidating so the hash lands in ``.zmetadata`` too.
         _stamp_content_hash(root)
-        zarr.consolidate_metadata(store)
+        consolidate(root)
 
         if compress:
             _compress_zarr(zarr_path, path, compress, zip_deflate, temp_dir)
@@ -572,8 +573,8 @@ def write_partition_streaming(
     # landed, and a crashed merge left a partial store that the batch-merge
     # resume (existence-gated) then treated as complete.
     tmp = _tmp_sibling(path)
-    store = DirectoryStore(str(tmp))
-    root = zarr.group(store=store, overwrite=True)
+    store = open_store(tmp, mode="w")
+    root = create_root_group(store, overwrite=True)
     try:
         dataset_ctx = make_dataset_ctx(encoding_mode, compressor=compressor)
         ordering_ctx = make_ordering_ctx(ordering)
@@ -651,7 +652,7 @@ def write_partition_streaming(
 
         # Stamp BEFORE consolidating so the hash lands in ``.zmetadata`` too.
         _stamp_content_hash(root)
-        zarr.consolidate_metadata(store)
+        consolidate(root)
     except BaseException:
         # Includes the n_written == 0 ValueError above — no partial root is
         # left behind either way; the destination stays untouched.

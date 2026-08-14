@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/royerlab/luxar/actions/workflows/ci.yml/badge.svg)](https://github.com/royerlab/luxar/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/License-BSD_3--Clause-blue.svg)](LICENSE)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/downloads/)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue)](https://www.python.org/downloads/)
 
 **High-performance n-dimensional scientific visualization.**
 
@@ -78,7 +78,7 @@ is the slow exception).
 
 ### Prerequisites
 
-- Python 3.10+ (usually pre-installed on Linux/macOS)
+- Python 3.12+ (usually pre-installed on Linux/macOS)
 - Modern browser with WebGL 2.0
 - **Gaussian-splat _fitting_** also needs an NVIDIA **CUDA GPU** (see `make build-cuda`); _viewing_ splats in the browser does not.
 - **Ubuntu/Debian only**: `sudo apt-get install -y pipx && pipx ensurepath`
@@ -89,7 +89,7 @@ is the slow exception).
 git clone https://github.com/royerlab/luxar.git
 cd luxar
 make setup-dev          # Auto-installs Node.js, pnpm, Hatch (no sudo)
-luxar demo              # Browse the 83 bundled demos
+luxar demo              # Browse the 84 bundled demos
 luxar demo run lorenz   # Run one — generates the data and opens the viewer
 ```
 
@@ -103,7 +103,7 @@ That last command generates a Lorenz attractor and opens the viewer:
 category, what it needs, and whether you have already built it:
 
 ```
-🎬 [Luxar] 83 demos
+🎬 [Luxar] 84 demos
 
   #  KEY                                    GEOM         CATEGORY       NEEDS                STATUS
 ───────────────────────────────────────────────────────────────────────────────────────────────────
