@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 import zarr
 
+from luxar._zarr_compat import create_array
 from luxar.core.group.lod.group import MAX_COVERAGE_FRACTION
 from luxar.io._compiler.finalize.hashing import compute_content_hashes
 from luxar.io._compiler.finalize.lod_backfill import (
@@ -141,8 +142,8 @@ def test_compute_content_hashes_is_deterministic_and_stamps_attrs() -> None:
 
 def test_compute_content_hashes_changes_with_data() -> None:
     root = _lod_tree()
-    root["lodgrp"]["fine"].create_dataset(
-        "centers", data=np.ones((3, 3), dtype=np.float32)
+    create_array(
+        root["lodgrp"]["fine"], "centers", data=np.ones((3, 3), dtype=np.float32)
     )
     h_with = compute_content_hashes(root)
     assert h_with != compute_content_hashes(_lod_tree())
@@ -287,8 +288,8 @@ def _lod_tree_with_unrecognized_leaf() -> zarr.Group:
     leaf = lod.create_group("leaf")
     leaf.attrs["type"] = "some_future_type"
     leaf.attrs["child_index"] = 0
-    leaf.create_dataset("vertices", data=np.zeros((3, 3), dtype=np.float32))
-    leaf.create_dataset("faces", data=np.zeros((1, 3), dtype=np.uint32))
+    create_array(leaf, "vertices", data=np.zeros((3, 3), dtype=np.float32))
+    create_array(leaf, "faces", data=np.zeros((1, 3), dtype=np.uint32))
     return root
 
 
@@ -319,7 +320,7 @@ def test_display_type_backfill_ignores_arrays_when_picking_finest_child() -> Non
     lod.attrs["kind"] = "lod"
     wrapper = lod.create_group("wrapper")
     wrapper.attrs["type"] = "group"
-    wrapper.create_dataset("zz_data", data=np.zeros((2, 2), dtype=np.float32))
+    create_array(wrapper, "zz_data", data=np.zeros((2, 2), dtype=np.float32))
     leaf = wrapper.create_group("aa_leaf")
     leaf.attrs["type"] = "lines"
 
@@ -395,7 +396,7 @@ def test_display_type_backfill_ignores_a_typed_array_sibling() -> None:
     lod.attrs["kind"] = "lod"
     leaf = lod.create_group("aaa_real_child")
     leaf.attrs["type"] = "lines"
-    stray = lod.create_dataset("zzz_array", data=np.zeros((2, 2), dtype=np.float32))
+    stray = create_array(lod, "zzz_array", data=np.zeros((2, 2), dtype=np.float32))
     stray.attrs["type"] = "gsplats"
 
     finalize_lod_display_types(root)
@@ -414,7 +415,7 @@ def test_position_bounds_backfill_ignores_array_siblings() -> None:
     root = zarr.group()
     lod = root.create_group("lodgrp")
     lod.attrs["kind"] = "lod"
-    lod.create_dataset("stray", data=np.zeros((2, 2), dtype=np.float32))
+    create_array(lod, "stray", data=np.zeros((2, 2), dtype=np.float32))
     for name, bounds in (
         ("a", {"min": [0.0, 0.0, 0.0], "max": [1.0, 1.0, 1.0]}),
         ("b", {"min": [-1.0, 0.0, 0.0], "max": [1.0, 2.0, 1.0]}),

@@ -430,18 +430,23 @@ install-pnpm:  ## Install pnpm package manager
 
 install-hatch:  ## Install Hatch for Python environment management
 	@echo "📦 Installing Hatch..."
-	@# Find a suitable Python 3.10+ interpreter
+	@# Find a suitable Python 3.12+ interpreter
 	@PYTHON_CMD=""; \
-	for py in python3.13 python3.12 python3.11 python3.10 python3; do \
+	for py in python3.14 python3.13 python3.12 python3; do \
 		if command -v $$py >/dev/null 2>&1; then \
 			PY_MAJOR=$$($$py -c "import sys; print(sys.version_info.major)" 2>/dev/null); \
 			PY_MINOR=$$($$py -c "import sys; print(sys.version_info.minor)" 2>/dev/null); \
-			if [ "$$PY_MAJOR" = "3" ] && [ "$$PY_MINOR" -ge 10 ] 2>/dev/null; then \
+			if [ "$$PY_MAJOR" = "3" ] && [ "$$PY_MINOR" -ge 12 ] 2>/dev/null; then \
 				PYTHON_CMD=$$py; \
 				break; \
 			fi; \
 		fi; \
 	done; \
+	if [ -z "$$PYTHON_CMD" ]; then \
+		echo "⚠️  No Python 3.12+ on PATH (the project floor is 3.12)."; \
+		echo "   Hatch installs on an older interpreter, but it will not be able"; \
+		echo "   to create the project environment until a 3.12+ one exists."; \
+	fi; \
 	if command -v hatch >/dev/null 2>&1; then \
 		echo "✅ Hatch already installed: $$(hatch --version)"; \
 	elif [ -x "$$HOME/.local/bin/hatch" ]; then \
@@ -479,9 +484,9 @@ install-hatch:  ## Install Hatch for Python environment management
 			exit 1; \
 		fi; \
 	else \
-		echo "❌ No suitable Python 3.10+ found and pipx not available."; \
+		echo "❌ No suitable Python 3.12+ found and pipx not available."; \
 		echo ""; \
-		echo "Please install pipx or ensure Python 3.10+ is in PATH:"; \
+		echo "Please install pipx or ensure Python 3.12+ is in PATH:"; \
 		echo ""; \
 		if [ "$(PKG_MANAGER)" = "apt" ]; then \
 			echo "  sudo apt-get install -y pipx"; \
@@ -1178,9 +1183,9 @@ setup-dev:  ## Complete development setup (auto-installs missing dependencies)
 	@# Step 1: Check and install Python dependencies
 	@echo "=== Step 1: Python Environment ==="
 	@if ! command -v python3 >/dev/null 2>&1; then \
-		echo "❌ Python3 not found. Please install Python 3.10+ first:"; \
+		echo "❌ Python3 not found. Please install Python 3.12+ first:"; \
 		if [ "$(OS)" = "macos" ]; then \
-			echo "   brew install python@3.11"; \
+			echo "   brew install python@3.12"; \
 		elif [ "$(PKG_MANAGER)" = "apt" ]; then \
 			echo "   sudo apt-get install python3 python3-pip python3-venv"; \
 		fi; \
@@ -1189,16 +1194,23 @@ setup-dev:  ## Complete development setup (auto-installs missing dependencies)
 	@echo "✅ Python: $$(python3 --version)"
 	@# Install/fix hatch (use pipx or pip --user fallback for HPC/no-sudo systems)
 	@PYTHON_CMD=""; \
-	for py in python3.13 python3.12 python3.11 python3.10 python3; do \
+	for py in python3.14 python3.13 python3.12 python3; do \
 		if command -v $$py >/dev/null 2>&1; then \
 			PY_MAJOR=$$($$py -c "import sys; print(sys.version_info.major)" 2>/dev/null); \
 			PY_MINOR=$$($$py -c "import sys; print(sys.version_info.minor)" 2>/dev/null); \
-			if [ "$$PY_MAJOR" = "3" ] && [ "$$PY_MINOR" -ge 10 ] 2>/dev/null; then \
+			if [ "$$PY_MAJOR" = "3" ] && [ "$$PY_MINOR" -ge 12 ] 2>/dev/null; then \
 				PYTHON_CMD=$$py; \
 				break; \
 			fi; \
 		fi; \
 	done; \
+	if [ -z "$$PYTHON_CMD" ]; then \
+		echo "⚠️  No Python 3.12+ on PATH — the project floor is 3.12, and the"; \
+		echo "   version printed above is below it. Hatch installs anyway (pipx"; \
+		echo "   can use an older interpreter for Hatch itself), but Step 3 will"; \
+		echo "   NOT be able to create the project environment. Install Python"; \
+		echo "   3.12+ (or 'hatch python install 3.12'), then re-run this target."; \
+	fi; \
 	if command -v hatch >/dev/null 2>&1; then \
 		echo "✅ Hatch: $$(hatch --version)"; \
 	elif [ -x "$$HOME/.local/bin/hatch" ]; then \
@@ -1245,9 +1257,9 @@ setup-dev:  ## Complete development setup (auto-installs missing dependencies)
 	else \
 		echo ""; \
 		echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
-		echo "⚠️  pipx not found and no Python 3.10+ available for pip install."; \
+		echo "⚠️  pipx not found and no Python 3.12+ available for pip install."; \
 		echo ""; \
-		echo "Please install pipx or load a Python 3.10+ module, then re-run 'make setup-dev':"; \
+		echo "Please install pipx or load a Python 3.12+ module, then re-run 'make setup-dev':"; \
 		echo ""; \
 		if [ "$(PKG_MANAGER)" = "apt" ]; then \
 			echo "  sudo apt-get install -y pipx"; \

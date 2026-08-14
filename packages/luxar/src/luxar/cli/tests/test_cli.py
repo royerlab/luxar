@@ -8,6 +8,7 @@ import zarr
 from typer.testing import CliRunner
 
 from luxar import Dimensions, LuxarZarrCompiler
+from luxar._zarr_compat import create_array
 from luxar.cli import app
 from luxar.cli.main import _dfs
 
@@ -311,10 +312,10 @@ def test_info_detects_lines_objects(runner, tmp_path) -> None:
     root.attrs["type"] = "scene"
     lines_group = root.create_group("my_lines")
     lines_group.attrs["type"] = "lines"
-    lines_group.create_dataset(
-        "vertices", data=np.random.rand(100, 3).astype(np.float32)
+    create_array(
+        lines_group, "vertices", data=np.random.rand(100, 3).astype(np.float32)
     )
-    lines_group.create_dataset("widths", data=np.ones(100, dtype=np.float32))
+    create_array(lines_group, "widths", data=np.ones(100, dtype=np.float32))
 
     result = runner.invoke(app, ["info", str(store_path), "--format", "json"])
     assert result.exit_code == 0
@@ -333,7 +334,7 @@ def test_info_detects_gsplats_objects(runner, tmp_path) -> None:
     root.attrs["type"] = "scene"
     gs_group = root.create_group("my_gsplats")
     gs_group.attrs["type"] = "gsplats"
-    gs_group.create_dataset("centers", data=np.random.rand(50, 3).astype(np.float32))
+    create_array(gs_group, "centers", data=np.random.rand(50, 3).astype(np.float32))
 
     result = runner.invoke(app, ["info", str(store_path), "--format", "json"])
     assert result.exit_code == 0
@@ -354,9 +355,7 @@ def test_info_tree_shows_lines_icon(runner, tmp_path) -> None:
     root.attrs["type"] = "scene"
     lines_group = root.create_group("my_lines")
     lines_group.attrs["type"] = "lines"
-    lines_group.create_dataset(
-        "vertices", data=np.random.rand(10, 3).astype(np.float32)
-    )
+    create_array(lines_group, "vertices", data=np.random.rand(10, 3).astype(np.float32))
 
     result = runner.invoke(app, ["info", str(store_path)])
     assert result.exit_code == 0

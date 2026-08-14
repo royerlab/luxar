@@ -6,6 +6,8 @@ from typing import Any, Literal, Optional, Union
 import numpy as np
 import zarr
 
+from luxar._zarr_compat import create_array
+
 from ...validation.base import _validate_numeric_finite_values
 from ..compression import resolve_compressor
 from ..modes import EncodingMode
@@ -452,7 +454,8 @@ class BaseEncoderMixin:
     ) -> None:
         """Write ``data`` cast to ``target_dtype`` with a plain dtype encoding."""
         original_dtype = str(data.dtype)
-        zarr_group.create_dataset(
+        create_array(
+            zarr_group,
             name,
             data=data.astype(target_dtype),
             chunks=chunks,
@@ -463,4 +466,3 @@ class BaseEncoderMixin:
             "name": target_dtype.name,
             "original_dtype": original_dtype,
         }
-

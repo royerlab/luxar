@@ -22,6 +22,7 @@ from pathlib import Path
 import numpy as np
 import zarr
 
+from luxar._zarr_compat import create_array, create_root_group
 from luxar.cli.gsplat_ops.batch.validation import validate_tile as _validate_tile
 from luxar.gsplats.gsplat_data import AdditiveSubLOD
 from luxar.gsplats.io.save_gsplats import save_gsplats, write_gsplats_tree
@@ -45,9 +46,17 @@ def _leaf(n: int, seed: int = 0) -> GSplatLeaf:
 
 
 def _make_v2_0_tile(path: Path, n: int = 5) -> None:
-    """A legacy v2.0 substitutive_0/additive_0 tile (must be 'unmigrated')."""
-    store = zarr.DirectoryStore(str(path))
-    root = zarr.group(store=store, overwrite=True)
+    """A legacy v2.0 substitutive_0/additive_0 tile (must be 'unmigrated').
+
+    Built through :func:`create_root_group` so it is a zarr FORMAT 2 store, which
+    is what a legacy tile actually is. A bare ``zarr.group()`` would now produce
+    format 3, and then ``consolidate`` writes ``consolidated_metadata`` inside
+    ``zarr.json`` instead of a ``.zmetadata`` document — so the validator's
+    "``.zmetadata`` means the save completed" sentinel would report
+    ``no_zmetadata`` and this test would assert on the wrong failure entirely.
+    """
+    store = zarr.storage.LocalStore(str(path))
+    root = create_root_group(store, overwrite=True)
     root.attrs.update(
         {
             "format_version": "2.0",
@@ -60,9 +69,9 @@ def _make_v2_0_tile(path: Path, n: int = 5) -> None:
     sub = splats.create_group("substitutive_0")
     add = sub.create_group("additive_0")
     s = _splats(n)
-    add.create_dataset("centers", data=s["centers"])
-    add.create_dataset("amplitudes", data=s["amplitudes"])
-    add.create_dataset("cholesky_factors", data=s["cholesky_factors"])
+    create_array(add, "centers", data=s["centers"])
+    create_array(add, "amplitudes", data=s["amplitudes"])
+    create_array(add, "cholesky_factors", data=s["cholesky_factors"])
     zarr.consolidate_metadata(store)
 
 

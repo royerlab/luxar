@@ -17,13 +17,13 @@ colors = np.random.rand(1000, 3).astype(np.float32)
 dims = Dimensions.default_3d()
 
 # 2. Write to zarr (progressive - data written immediately)
-with LuxarZarrCompiler('scene.luxar.zarr') as compiler:
+with LuxarZarrCompiler("scene.luxar.zarr") as compiler:
     scene = compiler.create_scene(dimensions=dims)
-    scene.add_points('cloud', positions, colors, radii=0.1)
+    scene.add_points("cloud", positions, colors, radii=0.1)
 
 # 3. Read it back (memory-efficient lazy loading)
-scene = LuxarScene.load('scene.luxar.zarr')
-points = scene.get_points('cloud')
+scene = LuxarScene.load("scene.luxar.zarr")
+points = scene.get_points("cloud")
 print(f"Loaded {points['positions'].shape[0]} points")
 ```
 
@@ -51,22 +51,27 @@ Main entry point for creating Luxar scenes with progressive writing.
 from luxar.io import LuxarZarrCompiler
 from luxar.encoding import EncodingMode
 
-with LuxarZarrCompiler(
-    'scene.luxar.zarr',
-    encoding_mode=EncodingMode.AUTO,      # AUTO, PRECISION, or MEMORY
-    ordering_method="hilbert",            # "hilbert" (default, best locality) or "morton" (fastest)
-    enable_spatial_index=True,            # Apply spatial ordering
-) as compiler:
+with (
+    LuxarZarrCompiler(
+        "scene.luxar.zarr",
+        encoding_mode=EncodingMode.AUTO,  # AUTO, PRECISION, or MEMORY
+        ordering_method="hilbert",  # "hilbert" (default, best locality) or "morton" (fastest)
+        enable_spatial_index=True,  # Apply spatial ordering
+    ) as compiler
+):
     scene = compiler.create_scene(dimensions=dims)
 
     # Full arrays
-    scene.add_points('cloud', positions, colors, radii)
+    scene.add_points("cloud", positions, colors, radii)
 
     # Scalar convenience - no intermediate arrays!
-    scene.add_points('uniform', positions,
-                     radii=0.5,              # Scalar instead of np.full(N, 0.5)
-                     colors=(1.0, 0, 0),     # Tuple instead of np.full((N,3), [1,0,0])
-                     sharpness=0.5)          # Scalar instead of np.full(N, 0.5)
+    scene.add_points(
+        "uniform",
+        positions,
+        radii=0.5,  # Scalar instead of np.full(N, 0.5)
+        colors=(1.0, 0, 0),  # Tuple instead of np.full((N,3), [1,0,0])
+        sharpness=0.5,
+    )  # Scalar instead of np.full(N, 0.5)
 ```
 
 **Key Features**:
@@ -104,43 +109,43 @@ Read-only access to Luxar zarr scenes with automatic decoding.
 from luxar.io import LuxarScene
 
 # Load a scene
-scene = LuxarScene.load('scene.luxar.zarr')
+scene = LuxarScene.load("scene.luxar.zarr")
 
 # Scene metadata
-print(scene.version)        # "0.1" (LUXAR_VERSION_CURRENT)
-print(scene.dimensions)     # Dimensions object or None
-print(scene.path)           # Path to zarr store
+print(scene.version)  # "0.1" (LUXAR_VERSION_CURRENT)
+print(scene.dimensions)  # Dimensions object or None
+print(scene.path)  # Path to zarr store
 
 # List nodes by type
 print(scene.list_points())  # ['cloud1', 'cloud2']
-print(scene.list_gsplats()) # ['splats1']
-print(scene.list_lines())   # []
+print(scene.list_gsplats())  # ['splats1']
+print(scene.list_lines())  # []
 print(scene.list_groups())  # ['group1']
 
 # Check if a node exists
-if scene.has_node('cloud1'):
-    print(scene.get_node_type('cloud1'))  # 'points'
+if scene.has_node("cloud1"):
+    print(scene.get_node_type("cloud1"))  # 'points'
 
 # Get node metadata (without loading array data)
-metadata = scene.get_node_metadata('cloud1')
-print(metadata['type'])            # 'points'
-print(metadata['n_points'])        # Number of points
+metadata = scene.get_node_metadata("cloud1")
+print(metadata["type"])  # 'points'
+print(metadata["n_points"])  # Number of points
 
 # Get full point data with automatic decoding
-points = scene.get_points('cloud1')
-print(points['positions'].shape)   # (N, 3)
-print(points['colors'].shape)      # (N, 3) or None
-print(points['radii'].shape)       # (N,) or None
-print(points['metadata']['transform'])  # 4x4 numpy array (if present)
+points = scene.get_points("cloud1")
+print(points["positions"].shape)  # (N, 3)
+print(points["colors"].shape)  # (N, 3) or None
+print(points["radii"].shape)  # (N,) or None
+print(points["metadata"]["transform"])  # 4x4 numpy array (if present)
 
 # Similarly for GSplats and Lines
-splats = scene.get_gsplats('splats1')
-print(splats['centers'].shape)           # (N, 3)
-print(splats['cholesky_factors'].shape)  # (N, 6)
+splats = scene.get_gsplats("splats1")
+print(splats["centers"].shape)  # (N, 3)
+print(splats["cholesky_factors"].shape)  # (N, 6)
 
 # A node whose colormap attr is the sentinel 'custom' carries its palette as a
 # LUT dataset (the writer resolves any non-builtin name or array to that pair)
-print(scene.get_colormap_lut('cloud1'))  # (256, 3) uint8, or None
+print(scene.get_colormap_lut("cloud1"))  # (256, 3) uint8, or None
 
 # Scene-level viewer hints, parsed like Scene.viewer_config (None if unset).
 # A rewriter must carry this across, or the output silently falls back to the
@@ -343,18 +348,20 @@ from luxar.io import LuxarZarrCompiler
 from luxar.core import Dimensions, Dimension
 
 # Define nD dimensions
-dims = Dimensions([
-    Dimension("X", unit="um", display=True),
-    Dimension("Y", unit="um", display=True),
-    Dimension("Z", unit="um", display=True),
-    Dimension("Time", discrete=True, display=False),  # Discrete dimension
-])
+dims = Dimensions(
+    [
+        Dimension("X", unit="um", display=True),
+        Dimension("Y", unit="um", display=True),
+        Dimension("Z", unit="um", display=True),
+        Dimension("Time", discrete=True, display=False),  # Discrete dimension
+    ]
+)
 
-with LuxarZarrCompiler('scene.luxar.zarr', ordering_method="hilbert") as compiler:
+with LuxarZarrCompiler("scene.luxar.zarr", ordering_method="hilbert") as compiler:
     scene = compiler.create_scene(dimensions=dims)
 
     # Data will be compound-sorted: Time first, then Hilbert(X,Y,Z)
-    scene.add_points('cells', positions_4d, colors, radii)
+    scene.add_points("cells", positions_4d, colors, radii)
 ```
 
 ### Memory-Optimized Scene
@@ -364,12 +371,12 @@ from luxar.io import LuxarZarrCompiler
 from luxar.encoding import EncodingMode
 
 with LuxarZarrCompiler(
-    'compressed.luxar.zarr',
+    "compressed.luxar.zarr",
     encoding_mode=EncodingMode.MEMORY,  # Aggressive quantization
     ordering_method="hilbert",
 ) as compiler:
     scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-    scene.add_points('cloud', positions, colors, radii)
+    scene.add_points("cloud", positions, colors, radii)
     # Positions: float16
     # Colors: uint8 (if SDR)
     # Radii: log_scalar_uint8
@@ -386,17 +393,17 @@ import numpy as np
 positions = np.random.randn(1000, 3).astype(np.float32)
 colors = np.random.rand(1000, 3).astype(np.float32)
 
-with LuxarZarrCompiler('scene.luxar.zarr') as compiler:
+with LuxarZarrCompiler("scene.luxar.zarr") as compiler:
     scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-    scene.add_points('cloud', positions, colors, radii=0.1)
+    scene.add_points("cloud", positions, colors, radii=0.1)
 
 # Read it back
-scene = LuxarScene.load('scene.luxar.zarr')
-points = scene.get_points('cloud')
+scene = LuxarScene.load("scene.luxar.zarr")
+points = scene.get_points("cloud")
 
 # Verify data (accounting for encoding precision)
-np.testing.assert_allclose(points['positions'], positions, atol=1e-5)
-np.testing.assert_allclose(points['colors'], colors, atol=1e-5)
+np.testing.assert_allclose(points["positions"], positions, atol=1e-5)
+np.testing.assert_allclose(points["colors"], colors, atol=1e-5)
 ```
 
 ## Performance
@@ -425,7 +432,11 @@ Compression gains from:
 - `luxar.validation`: Data validation
 
 **External**:
-- `zarr>=2.16,<3.0`: Storage backend
+- `zarr>=3.2,<4`: Storage backend. Note the library version and the on-disk
+  format are separate axes — Luxar writes zarr **format 2** from zarr-python 3.
+  Both are pinned in `luxar._zarr_compat`, which is the only module that names a
+  zarr format; go through its helpers (`open_group`, `create_array`,
+  `consolidate`, ...) rather than calling `zarr.*` directly.
 - `numpy>=2.0`: Array operations
 - `numcodecs`: Blosc compressor (`DEFAULT_COMP`)
 - `arbol>=0.3.5`: Progress logging
