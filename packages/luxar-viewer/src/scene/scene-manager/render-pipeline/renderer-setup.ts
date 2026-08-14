@@ -101,6 +101,12 @@ export const FORWARDED_ADAPTER_LIMIT_NAMES = [
 /** One of the adapter limits forwarded verbatim into `requiredLimits`. */
 export type ForwardedAdapterLimitName = (typeof FORWARDED_ADAPTER_LIMIT_NAMES)[number];
 
+/**
+ * Pick the {@link FORWARDED_ADAPTER_LIMIT_NAMES} entries the adapter
+ * advertises as numbers, shaped for a `requestDevice` descriptor's
+ * `requiredLimits`. Absent / non-numeric entries are omitted so the
+ * device keeps the WebGPU spec default for them.
+ */
 export function forwardedAdapterLimits(
   // Structural over the three explicit names only — a real
   // `GPUSupportedLimits` (no string index signature) satisfies this,
