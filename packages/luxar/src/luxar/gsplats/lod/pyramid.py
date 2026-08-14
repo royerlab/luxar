@@ -47,6 +47,7 @@ def make_lod_pyramid(
     refine: str = "none",
     refine_iters: Optional[int] = None,
     volume: Optional[np.ndarray] = None,
+    volume_axes: Optional[Sequence[int]] = None,
     device: Union[str, torch.device, None] = "auto",
     coarsen_dims: Optional[Sequence[int]] = None,
     n_additive_lods: int = 4,
@@ -76,7 +77,7 @@ def make_lod_pyramid(
     compression_factor, levels
         Substitutive axis parameters (passed to
         :func:`make_substitutive_lod`).
-    substitutive_method, lloyd_iterations, candidate_bins_k, coverage_inflation, refine, refine_iters, volume, device
+    substitutive_method, lloyd_iterations, candidate_bins_k, coverage_inflation, refine, refine_iters, volume, volume_axes, device
         Substitutive axis algorithm parameters (``coverage_inflation`` is the
         anti-grid inter-spread widening; ``refine="l2"`` post-optimizes each
         level under the closed-form mixture L²; ``refine="volume"`` warm-start
@@ -122,6 +123,7 @@ def make_lod_pyramid(
         refine=refine,  # type: ignore[arg-type]
         refine_iters=refine_iters,
         volume=volume,
+        volume_axes=volume_axes,
         device=device,
         seed=seed,
         coarsen_dims=coarsen_dims,

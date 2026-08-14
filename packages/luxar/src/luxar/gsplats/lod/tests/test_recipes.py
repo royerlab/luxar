@@ -516,15 +516,95 @@ def test_substitutive_recipe_threads_volume_refine():
     assert "mse_seed" in lev.stats["refine_stats"]
 
 
-def test_adaptive_recipe_rejects_volume_refine():
-    """Per-part levels must not re-fit against the FULL volume (splats would
-    leave their tile); the adaptive recipe rejects refine="volume" loudly."""
+def test_adaptive_recipe_supports_volume_refine_per_tile():
+    """Per-part levels re-fit against each tile's own CROP of the volume.
+
+    This replaces an older test that asserted the combination was rejected. The
+    rejection existed because a part re-fitted against the FULL volume gets
+    pulled out of its tile to explain a neighbour's signal; cropping to the tile
+    removes the cause, and a re-fit that escapes anyway is discarded in favour of
+    the merge.
+    """
     import numpy as np
 
+    from luxar.core.group.partition import serialized_bsp_leaf_cells
+    from luxar.gsplats.fit_gsplats import fit_gaussian_splats
+    from luxar.gsplats.tree import center_bounds, iter_leaves
+
+    size = 24
+    rng = np.random.default_rng(0)
+    grid = np.mgrid[0:size, 0:size, 0:size].astype(np.float32)
+    vol = np.zeros((size,) * 3, np.float32)
+    for _ in range(8):
+        c = rng.uniform(4, size - 4, 3)
+        s = rng.uniform(1.5, 2.2)
+        r2 = sum((grid[d] - c[d]) ** 2 for d in range(3))
+        vol += rng.uniform(0.4, 1.0) * np.exp(-r2 / (2 * s * s))
+    fine = fit_gaussian_splats(vol, seeds=200, n_iters=200, device="cpu", verbose=False)
+
+    p = _params(
+        max_elements=60,
+        compression_factor=2,
+        levels=1,
+        refine="volume",
+        refine_iters=25,
+        volume=vol,
+        device="cpu",
+        quality_stamps=False,
+    )
+    node = build_recipe(fine, "adaptive", p)
+    assert len(node.children) > 1, "need a real tiling for this to mean anything"
+
+    stats = [
+        st
+        for child in node.children
+        for leaf in iter_leaves(child)
+        if (st := (leaf.meta.get("stats") or {}).get("refine_stats"))
+    ]
+    assert stats, "no part recorded a volume re-fit — the recipe did not run one"
+
+    # The invariant the old rejection protected: a centre must not MIGRATE out of
+    # its own tile, or the viewer's per-part frustum culling would stop drawing it
+    # from most viewpoints. The allowance is the level's own median splat sigma,
+    # matching `_relocated`'s reasoning that correcting within a splat's own
+    # footprint is optimization rather than migration — a hard bound instead
+    # discarded half the tiles' re-fits over sub-voxel drift.
+    from luxar.gsplats.lod.volume_refit import _median_splat_sigma
+
+    cells = serialized_bsp_leaf_cells(node.bsp_tree, 3)
+    for i, child in enumerate(node.children):
+        for leaf in iter_leaves(child):
+            bounds = center_bounds(leaf)
+            if bounds is None:
+                continue
+            slack = max(1e-3, _median_splat_sigma(GSplatData.from_tree(leaf)))
+            lo, hi = bounds
+            for d in range(3):
+                assert lo[d] >= cells[i][d][0] - slack, (
+                    f"part {i} dim {d}: a centre at {lo[d]} is more than one "
+                    f"sigma ({slack:.3f}) below its cell {cells[i][d]} — the "
+                    "re-fit migrated out of the tile"
+                )
+                assert hi[d] <= cells[i][d][1] + slack, (
+                    f"part {i} dim {d}: a centre at {hi[d]} is more than one "
+                    f"sigma ({slack:.3f}) above its cell {cells[i][d]} — the "
+                    "re-fit migrated out of the tile"
+                )
+
+
+def test_adaptive_volume_refine_needs_a_cell():
+    """Called without a tile to crop to, the per-part re-fit refuses rather than
+    silently targeting the whole volume — the unsound case the old guard covered
+    and the one thing that must still raise."""
+    import numpy as np
+
+    from luxar.gsplats.lod.recipes import _substitutive_for_part
+
     data = _make_random_gsplat(n=256)
+    partition = data.flattened().to_spatial_partition(max_elements=64)
     p = _params(refine="volume", volume=np.zeros((8, 8, 8), np.float32))
-    with pytest.raises(ValueError, match="per-part levels"):
-        build_recipe(data, "adaptive", p)
+    with pytest.raises(ValueError, match="needs the part's own cell"):
+        _substitutive_for_part(partition.children[0], p, cell=None)
 
 
 def test_additive_ladders_default_on_everywhere():
@@ -772,3 +852,123 @@ def test_overview_cap_keeps_no_energy_weight_under_a_reveal_ordering():
     ordered_cap_stats = ordered.children[0].meta.get("stats", {})
     assert "quality" in ordered_cap_stats
     assert "reference_energy" in ordered_cap_stats
+
+
+def test_every_volume_forwarding_site_also_forwards_the_axis_map():
+    """Structural guard against a fix-N-minus-1.
+
+    ``RecipeParams`` carries the source volume AND the map saying which volume
+    axis holds which center dim. Four different recipe paths reach
+    ``make_substitutive_lod``, and one of them originally forwarded ``volume``
+    without ``volume_axes``: a stacked target then fell back to the identity map,
+    every re-fit tripped the frame guard, and `--recipe levels --refine volume`
+    reported success while refining nothing at all.
+
+    Counting the two forwardings in the source is crude but catches exactly the
+    regression that happened — a new path that copies the ``volume=`` line and
+    forgets its partner.
+    """
+    from pathlib import Path
+
+    import luxar.gsplats.lod.recipes as recipes_module
+
+    source = Path(recipes_module.__file__).read_text()
+    volume_sites = source.count("volume=params.volume,")
+    axes_sites = source.count("volume_axes=params.volume_axes,")
+    assert volume_sites > 0, "sanity: the forwarding pattern moved"
+    assert axes_sites == volume_sites, (
+        f"{volume_sites} sites forward `volume` but {axes_sites} forward "
+        "`volume_axes`; a stacked target would silently frame-mismatch on the "
+        "path that drops it"
+    )
+
+
+def test_levels_recipe_refines_a_stacked_target_through_the_ladder():
+    """End-to-end at the recipe layer, on the path the CLI actually takes.
+
+    `levels` builds through ``make_lod_pyramid`` (ladders are on by default), a
+    different route to the reduction than the per-part ``adaptive`` path, so it
+    needs its own coverage: the unit tests on ``make_substitutive_lod`` passed
+    throughout while this route was broken.
+    """
+    import numpy as np
+
+    from luxar.gsplats.fit_gsplats import fit_gaussian_splats
+    from luxar.gsplats.utils.trils import embed_cholesky_packed
+
+    size, n_t = 20, 3
+    rng = np.random.default_rng(0)
+    grid = np.mgrid[0:size, 0:size, 0:size].astype(np.float32)
+    field = np.zeros((size,) * 3, np.float32)
+    for _ in range(5):
+        c = rng.uniform(5, 15, 3)
+        s = rng.uniform(1.6, 2.2)
+        field += rng.uniform(0.4, 1.0) * np.exp(
+            -sum((grid[d] - c[d]) ** 2 for d in range(3)) / (2 * s * s)
+        )
+    # Source array is (t, z, y, x) — time FIRST, as microscopy data comes.
+    vol = np.stack([(1.0 + 0.3 * t) * field for t in range(n_t)]).astype(np.float32)
+
+    fit = fit_gaussian_splats(
+        vol[0], seeds=80, n_iters=150, device="cpu", verbose=False
+    )
+    n = fit.n_splats
+    packed = embed_cholesky_packed(
+        np.asarray(fit.cholesky_factors), 3, 4, [0, 1, 2], fill_sigma={3: 1e-4}
+    )
+    data = GSplatData(
+        centers=np.concatenate(
+            [
+                np.column_stack([np.asarray(fit.centers), np.full(n, float(t))])
+                for t in range(n_t)
+            ]
+        ).astype(np.float32),
+        amplitudes=np.tile(np.asarray(fit.amplitudes), n_t).astype(np.float32),
+        cholesky_factors=np.tile(packed, (n_t, 1)).astype(np.float32),
+    )
+
+    p = _params(
+        compression_factor=4,
+        levels=1,
+        refine="volume",
+        refine_iters=25,
+        volume=vol,
+        volume_axes=(1, 2, 3, 0),  # splats are (z,y,x,t); volume is (t,z,y,x)
+        coarsen_dims=(0, 1, 2),
+        device="cpu",
+    )
+    out = build_recipe(data, "levels", p)
+    stats = out.substitutive_levels[1].stats["refine_stats"]
+    assert stats["frame_mismatch_frac"] == 0.0, (
+        "every group tripped the frame guard — the axis map did not reach the "
+        f"reduction through this path (stats: {stats})"
+    )
+    assert stats["improved_frac"] > 0.0, "no group's re-fit was kept"
+    assert stats["mse_stored"] <= stats["mse_seed"] + 1e-12
+
+
+def test_tile_box_follows_the_subvolume_dim_order_not_the_spelling() -> None:
+    """A tile's box is indexed by the RETAINED dims, which come back ascending.
+
+    ``select_sub_volume`` drops the barrier dims and hands back the survivors in
+    ascending order, and ``make_substitutive_lod`` normalises ``coarsen_dims`` the
+    same way. So the box has to be built in that order too — built in the order
+    the caller happened to spell them (``2,1,0``, or with a repeat), each axis
+    would be cropped to another axis's bounds. Fails pre-fix on the reversed
+    spelling.
+    """
+    from luxar.gsplats.lod.recipes import _cell_for_coarsened_dims
+
+    cell = [(0.0, 1.0), (10.0, 11.0), (20.0, 21.0), (float("-inf"), float("inf"))]
+    ascending = [(0.0, 1.0), (10.0, 11.0), (20.0, 21.0)]
+
+    for spelling in ((0, 1, 2), (2, 1, 0), (1, 0, 2), (2, 0, 1, 0)):
+        p = _params(refine="volume", coarsen_dims=spelling)
+        assert _cell_for_coarsened_dims(cell, p, 4) == ascending, spelling
+
+    # No barrier dims → every dim retained, still ascending.
+    p = _params(refine="volume", coarsen_dims=None)
+    assert _cell_for_coarsened_dims(cell, p, 4) == cell
+    # Not a volume re-fit → the box would be dead weight.
+    assert _cell_for_coarsened_dims(cell, _params(refine="l2"), 4) is None
+    assert _cell_for_coarsened_dims(None, p, 4) is None

@@ -18,6 +18,7 @@ from .fit_utils import (
     fit_sequential_tiled,
     fit_single_tile,
     maybe_denoise_full_volume,
+    reject_downscaled_volume_refit,
     rescale_and_save,
     resolve_denoise_h,
     validate_and_build_recipe,
@@ -40,7 +41,15 @@ def run_fit_volume(
         None,
         "--seeds",
         "-s",
-        help="Seed count (int), compression ratio (float 0-1), or 'auto'",
+        help=(
+            "Seed count (int), compression ratio (float in (0,1]), or 'auto'. "
+            "An integer is a WHOLE-VOLUME budget (what a default `gsplat cal` "
+            "reports): a tiled fit divides it across its tiles instead of "
+            "giving every tile the full count. Not an exact count — tiles with "
+            "no signal are skipped (a sparse volume realizes less) and a K "
+            "below the tile count gives one seed per tile. A ratio is "
+            "scale-free and is applied per tile unchanged."
+        ),
     ),
     iters: Optional[int] = typer.Option(
         None, "--iters", "-n", help="Max optimization iterations"
@@ -255,6 +264,23 @@ def run_fit_volume(
         None,
         "--subst-method",
         help="[--recipe levels] auto (default) / kmeans-lloyd / greedy / greedy-lloyd.",
+        rich_help_panel="Per-part LOD",
+    ),
+    recipe_refine: Optional[str] = typer.Option(
+        None,
+        "--refine",
+        help="[--recipe levels] refine each per-tile coarse level: none "
+        "(default) | l2 (against its fine input) | volume (re-fit against the "
+        "volume being fitted, cropped to each tile — highest fidelity). No "
+        "--target is needed: the volume is already in hand and the splats are "
+        "in its voxel frame.",
+        rich_help_panel="Per-part LOD",
+    ),
+    recipe_refine_iters: Optional[int] = typer.Option(
+        None,
+        "--refine-iters",
+        help="[--recipe levels] refinement steps per level (default 120 for "
+        "--refine l2, 300 for --refine volume).",
         rich_help_panel="Per-part LOD",
     ),
     recipe_coarsen_dims: Optional[str] = typer.Option(
@@ -541,6 +567,8 @@ def run_fit_volume(
                 recipe_levels=recipe_levels,
                 recipe_substitutive_method=recipe_substitutive_method,
                 recipe_coarsen_dims=recipe_coarsen_dims,
+                recipe_refine=recipe_refine,
+                recipe_refine_iters=recipe_refine_iters,
                 cal=cal,
                 k_star_ref=k_star_ref,
                 n_features_ref=n_features_ref,
@@ -565,7 +593,7 @@ def run_fit_volume(
             warn_ignored_density_flags(ctx)
 
             # Per-part LOD recipe (tiled partition only): validate + build params.
-            recipe_params: "Any" = validate_and_build_recipe(ctx, volume.ndim)
+            recipe_params: "Any" = validate_and_build_recipe(ctx, volume.ndim, volume)
 
             if resolved_tiling == "content":
                 from luxar.cli.gsplat_ops.planner import run_content_fit
@@ -653,6 +681,10 @@ def run_fit_volume(
             fit_config, parsed_seeds, effective_downscale = assemble_fit_config(
                 ctx, is_tiled
             )
+
+            # A per-tile volume re-fit needs the tile grid and the splats in ONE
+            # coordinate frame, which --downscale breaks (see the helper).
+            reject_downscaled_volume_refit(recipe_params, effective_downscale)
 
             # 5b. Parallel tiled fitting: spawn one subprocess per tile (branch
             # BEFORE the in-memory downscale below — see dispatch_parallel_tiled).

@@ -404,14 +404,56 @@ Engineering guarantees and scope:
 - **Chain semantics** — unlike `l2`, the merge chain continues from the
   *unrefined* merge output; only the stored level is replaced by the re-fit
   (each level's re-fit is independently seeded from its own merge).
-- **Requires the volume in hand** — exposed via `luxar gsplat lod --target
-  <volume> --refine volume` (CLI loads with the shared `load_volume`); the
-  fit-time (`fit --recipe levels`) and batch-merge paths are follow-ups (the
-  batch streaming merge is volume-free by design).
-- **No-barrier scope (MVP)** — rejected when `coarsen_dims` sets barrier dims
-  (one volume cannot serve all barrier groups) and for the per-part `adaptive`
-  recipe (a tile's splats re-fit against the full volume would leave the
-  tile). `levels` and the global `overview` cap are supported.
+- **Requires the volume in hand** — exposed at all three entry points:
+  - `gsplat lod --target <volume> --refine volume` (+ `--target-axes` for a
+    stacked target);
+  - `gsplat fit --recipe levels --refine volume` — no `--target` needed, since
+    the volume being fitted is already in hand and the fit emits splats in its
+    voxel frame, so the identity axis map is correct by construction;
+  - `batch-fit merge --recipe levels --refine volume` (and the same thing spelled
+    `--merge-refine volume` on `batch-fit run` / `batch-fit submit`, which record
+    it into the manifest so the local auto-merge and the Slurm merge job both
+    pick it up; validated at PLAN time so a typo does not surface after every
+    tile has been fitted) — the streaming merge
+    re-opens the source the manifest recorded and crops it to each tile as that
+    tile streams. It validates up front (source readable, `--axes` recorded, no
+    folded channel axis) because a per-part failure mid-stream would leave a
+    half-written store. This path composes BOTH mechanisms: each tile-part is
+    cropped spatially AND split per stacked timepoint, which is what a tiled
+    timelapse needs.
+- **Barrier dims and per-tile crops are supported** — both once meant "one
+  volume cannot serve every seed", and both are answered the same way: each
+  re-fit is handed the sub-volume it is actually responsible for
+  (`volume_regions.py`). A barrier group owns one index along the barrier axes
+  and re-fits against that slice; a partition part owns a box of the spatial
+  axes and re-fits against that crop. They compose, which is what a tiled
+  timelapse needs. So `levels`, the `overview` cap, and per-part `adaptive` are
+  all supported.
+  - The barrier axis is **sliced out of the fit**, not held still, because it
+    cannot be held still: the fitting stack has no freeze mechanism, it
+    re-parameterises centers as `sigmoid(raw)·(shape−1)` over every axis and
+    floors every per-axis sigma, so a 4D re-fit would drag splats off their
+    timepoint and widen them along time whatever penalty it was given. The
+    barrier coordinate and covariance rows come back verbatim from the seed,
+    recombined in factor space (`L = [[A,0],[B,C]]`, substitute only `A`) so
+    positive-definiteness is structural.
+  - A stacked target needs `--target-axes` (e.g. `time,z,y,x`): fitted splats
+    order their centers spatial-first with the stacked axis LAST, while a source
+    array is usually time-FIRST, so the identity map would target the wrong
+    axis. Distinct from `--timepoint`, which slices one timepoint out instead.
+  - **Tile containment** — a per-part re-fit that moves a centre out of its own
+    cell is discarded in favour of the merge (stat: `tile_escape`). The
+    never-worse MSE guard is structurally blind to this, since an escapee can
+    still lower the crop's MSE, while the viewer frustum-culls by part bounds,
+    so an escapee would simply stop being drawn.
+  - **The volume is only ever sliced**, never coerced whole, so a lazy zarr
+    store stays lazy: a 253-timepoint 407×2048×2048 uint16 timelapse is 431 GB
+    while one timepoint is 3.4 GB.
+  - Level stats are **aggregated** once a level is refined in pieces
+    (`n_pieces`, `*_frac` fractions instead of one verdict that would hide 252
+    of 253 outcomes) plus `mse_stored`, which reads the kept verdict rather than
+    `min(seed, refit)` — a re-fit rejected for leaving its tile can hold the
+    lower MSE without being what was stored.
 
 Only `refine_iters` (default 300 — omitted resolves to `VolumeRefitConfig`'s
 value in both the API and CLI) and the ladder-wide `conserve_mass` are exposed;
