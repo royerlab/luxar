@@ -255,15 +255,20 @@ DATASETS: dict[str, dict] = {
             "group, CZ Biohub SF. Derived product: per-crop 4D Gaussian-splat "
             "fits with substitutive LOD."
         ),
-        # Computed on obsidian, ~2 GB, awaiting upload. Redistributable as a
-        # DERIVED product because the source is CC0 — but the raw competition
-        # data is behind an authenticated endpoint, so hosting the fits is what
-        # makes the demo runnable without Kaggle credentials at all.
+        # Computed on obsidian, awaiting upload. Redistributable as a DERIVED
+        # product because the source is CC0 — and since the raw competition data
+        # is behind an authenticated endpoint, hosting the fits is what makes the
+        # demo runnable with no Kaggle credentials and no GPU at all.
+        #
+        # Sizes are MEASURED from a built crop (77.3 MB full / 19.2 MB light,
+        # x9 crops), not estimated: the derived product is far more compact than
+        # the ~4 GB of raw crops or the ~450 MB of per-timepoint fit cache it
+        # comes from, because a fitted splat is ~12 bytes once encoded and zipped.
         pending_upload=True,
         variants={
             "light": dict(
                 default=True,
-                approx_bytes=500_000_000,
+                approx_bytes=175_000_000,
                 note=(
                     "Every 4th timepoint (25 of 100) for all nine crops — keeps "
                     "the 3x3 matrix and the animation at a quarter of the "
@@ -272,7 +277,7 @@ DATASETS: dict[str, dict] = {
             ),
             "full": dict(
                 default=False,
-                approx_bytes=2_000_000_000,
+                approx_bytes=700_000_000,
                 note="All nine crops at all 100 timepoints — opt-in.",
             ),
         },

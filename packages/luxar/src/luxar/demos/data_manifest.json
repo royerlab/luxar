@@ -361,13 +361,13 @@
       "variants": {
         "light": {
           "default": true,
-          "approx_bytes": 500000000,
+          "approx_bytes": 175000000,
           "note": "Every 4th timepoint (25 of 100) for all nine crops \u2014 keeps the 3x3 matrix and the animation at a quarter of the download.",
           "files": []
         },
         "full": {
           "default": false,
-          "approx_bytes": 2000000000,
+          "approx_bytes": 700000000,
           "note": "All nine crops at all 100 timepoints \u2014 opt-in.",
           "files": []
         }
