@@ -47,8 +47,13 @@ PIPELINE (how the bundled gsplats were produced — provenance, NOT re-run here)
        the curve is ``signal_limited`` (K* = 512,000) with diminishing returns
        flagged at 256,000 — the operating point used here.
     3. ``gsplat fit --tiling none --seeds 256000`` -> 200,155 splats.
-       (``--tiling none`` matters: with auto-tiling, ``--seeds`` is applied *per
-       tile*, which would multiply the calibrated budget by the tile count.)
+       (The recorded run pinned ``--tiling none``, which at the time was
+       required: ``--seeds`` was then applied *per tile*, so auto-tiling this
+       stack into 21 tiles multiplied the calibrated budget by 21. Since #1556
+       an integer ``--seeds`` is a whole-volume budget that a tiled fit divides
+       across its tiles, so the pin is no longer needed to keep the budget
+       honest — it is kept here only because it is what actually produced the
+       numbers below.)
     4. Quality vs the original volume: **39.89 dB PSNR, 0.911 SSIM**.
     5. ``gsplat transform --scale 1.93,0.40625,0.40625`` -> physical microns.
     6. ``gsplat lod --recipe stream --target-ms 200`` -> progressive ladder.

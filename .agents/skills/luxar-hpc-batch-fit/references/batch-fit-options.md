@@ -30,6 +30,15 @@ timepoint instead. Tuning: `--saturation-exponent` (0.44), `--saturation-cap`,
 `--splats-per-pass`, `--psnr-patience`, `--max-passes`, `--cull-retention`
 (default 0.95 uniform / 0.999 content; 0 keeps all).
 
+Under **uniform** tiling an integer `--seeds K` is a **whole-volume budget per
+(t, c) volume**: every task is a `--tile k/M` fit, which divides K across that
+volume's M tiles (`ceil(K/M)`, floored at 1) instead of fitting K per tile, so
+each timepoint/channel tracks K rather than K x M. Not an exact count — tiles
+windowing to near-zero signal are skipped, and `K < M` gives M. A float ratio is
+scale-free and applied per tile unchanged. Under **content** tiling `--seeds` is
+ignored: tasks are emitted as `--tiling content --plan … --plan-box k` and each
+box takes its budget from the shared density plan.
+
 `--floor` (default `auto`, same as `fit`/`cal`): subtract a background floor /
 DC-offset (clip at 0) before normalization, so amplitudes are background-relative.
 `auto` = histogram-mode estimate (capped at median; no-op on clean data);
@@ -51,7 +60,12 @@ DC-offset (clip at 0) before normalization, so amplitudes are background-relativ
 `--merge-recipe` (`stream` → tiles topology; `levels` → adaptive; default
 bare-leaf parts) + `--merge-n-lods`, `--merge-add-method`, `--merge-breakpoints`,
 `--merge-compression-factor`, `--merge-levels`, `--merge-subst-method`,
-`--merge-coarsen-dims` (default spatial only; stacked-timepoint axis stays a barrier).
+`--merge-coarsen-dims` (default spatial only; stacked-timepoint axis stays a barrier),
+`--merge-refine` (`none`/`l2`/`volume`) + `--merge-refine-iters`. `volume` re-opens
+THIS input at merge time and re-fits each tile against its own crop (one slice per
+stacked timepoint) — the highest-fidelity coarse levels; it needs `--axes` recorded
+and a single channel, both checked at PLAN time so a typo costs nothing.
+On `batch-fit merge` the same pair is spelled `--refine` / `--refine-iters`.
 `--channel-colors "#ff0080,#00ff00"` for per-channel merge. LOD switch thresholds
 are auto-derived (`coverage_fraction`, no knob — the `--merge-lod-method` flag
 has been removed).
