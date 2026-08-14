@@ -283,9 +283,11 @@ describe('capsuleProfile (CPU reference)', () => {
 });
 
 describe('joint composition — the rendered pair tracks max(mine, partner)', () => {
-  // The numeric sweep the #1487 review asked for: none of #1494 (wrong
-  // vertex radius), #1488 (reach shortfall) or #1490 (missing far cap)
-  // were visible to source-substring pins; all three blow these bounds.
+  // The numeric sweep the #1487 review asked for: all three of #1494
+  // (wrong vertex radius), #1488 (reach shortfall) and #1490 (missing far
+  // cap) blow these bounds. #1494 additionally has a source lock over the
+  // four shader surfaces now (`line/capsule-partner-radius.test.ts`);
+  // #1488 and #1490 have no comparable one, so this sweep binds them.
   const leg = (
     angleDeg: number,
     rJoint: number,
