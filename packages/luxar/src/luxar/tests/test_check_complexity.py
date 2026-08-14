@@ -733,8 +733,9 @@ def test_main_reports_a_ruff_failure_as_exit_2(
 def test_default_targets_match_the_lint_scripts_ruff_paths() -> None:
     """`DEFAULT_TARGETS` must cover exactly what `hatch run lint` lints.
 
-    Read as TEXT rather than with ``tomllib`` — this repo supports Python 3.10,
-    where that module does not exist.
+    Read as TEXT rather than with ``tomllib``: the assertion is about the literal
+    argument list written in the ``lint`` script, so parsing would only add a
+    round-trip without making the comparison any stronger.
     """
     pyproject = (PROJECT_ROOT / "pyproject.toml").read_text()
     lint_block = re.search(r"^lint = \[\n(.*?)^\]", pyproject, re.MULTILINE | re.DOTALL)

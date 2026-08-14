@@ -52,7 +52,7 @@ def validate_node_name(name: Any, context: str = "node name") -> str:
       exact reserved set, but safe: it also covers future zarr metadata keys
       and hidden dot-files that most tooling cannot see).
     - Must not contain control characters (``\\x00``–``\\x1f``, ``\\x7f``) —
-      filesystem and JSON hazards for DirectoryStore-backed scenes.
+      filesystem and JSON hazards for directory-backed scenes.
 
     Args:
         name: Candidate node name.

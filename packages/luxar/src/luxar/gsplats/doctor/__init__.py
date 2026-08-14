@@ -25,6 +25,8 @@ from typing import List, Optional
 
 import zarr
 
+from luxar._zarr_compat import consolidate, open_group
+
 from .checks import ALL_CHECKS
 from .model import Check, DoctorReport, Finding
 
@@ -108,7 +110,7 @@ def _diagnose_opened(
     """
     from luxar.gsplats.io.save_gsplats import _stamp_content_hash
 
-    root = zarr.open_group(str(store_path), mode="r+" if fix else "r")
+    root = open_group(store_path, mode="r+" if fix else "r")
     fmt = root.attrs.get("format_type")
     if fmt != "gsplats_zarr":
         raise ValueError(
@@ -141,7 +143,7 @@ def _diagnose_opened(
         # .zattrs a fix just wrote, so skipping this would leave every repair
         # invisible to readers while looking applied on disk.
         _stamp_content_hash(root)
-        zarr.consolidate_metadata(root.store)
+        consolidate(root)
         # Then re-diagnose. A repair is not always a cure: removing a misleading
         # tree from parts that cannot be ordered exactly leaves the lesser
         # "no split planes" condition behind, and a run that called every fix

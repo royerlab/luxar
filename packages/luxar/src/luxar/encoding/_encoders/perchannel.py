@@ -7,6 +7,8 @@ from typing import Any, Optional
 import numpy as np
 import zarr
 
+from luxar._zarr_compat import create_array
+
 from ..compression import resolve_compressor
 from ..modes import EncodingMode
 from .base import BaseEncoderMixin
@@ -175,7 +177,8 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
         # coherent colors compress better as columnar residuals. float32
         # encodings decline automatically (probe accepts u8/u16 only).
         comp = resolve_compressor(compressor, encoded_data.dtype)
-        zarr_group.create_dataset(
+        create_array(
+            zarr_group,
             name,
             data=encoded_data,
             chunks=chunks,
@@ -303,7 +306,8 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
             raise ValueError(f"Unexpected mode for BOUNDED_SCALAR: {mode}")
 
         comp = resolve_compressor(compressor, encoded_data.dtype)
-        zarr_group.create_dataset(
+        create_array(
+            zarr_group,
             name,
             data=encoded_data,
             chunks=chunks,
@@ -433,7 +437,8 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
             raise ValueError(f"Unexpected mode for POSITIVE_SCALAR: {mode}")
 
         comp = resolve_compressor(compressor, encoded_data.dtype)
-        zarr_group.create_dataset(
+        create_array(
+            zarr_group,
             name,
             data=encoded_data,
             chunks=chunks,
@@ -473,7 +478,8 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
                 "the reserved zero level"
             )
         comp = resolve_compressor(compressor, codes.dtype)
-        zarr_group.create_dataset(
+        create_array(
+            zarr_group,
             name,
             data=codes,
             chunks=chunks,
@@ -516,7 +522,8 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
         y = np.asarray(data).astype(np.float64)
         u, lo_list, hi_list = self._quantize_per_column(y, bits, lo=lo, hi=hi)
         comp = resolve_compressor(compressor, u.dtype)
-        zarr_group.create_dataset(
+        create_array(
+            zarr_group,
             name,
             data=u,
             chunks=chunks,
@@ -569,7 +576,8 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
         nonzero = self._perchannel_nonzero_mask(x, signed=False)
         u = self._quantize_perchannel_zero_level(y, nonzero, bits, lo, hi)
         comp = resolve_compressor(compressor, u.dtype)
-        zarr_group.create_dataset(
+        create_array(
+            zarr_group,
             name,
             data=u,
             chunks=chunks,
@@ -621,7 +629,8 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
         nonzero = self._perchannel_nonzero_mask(x, signed=True)
         u = self._quantize_perchannel_zero_level(y, nonzero, bits, lo, hi)
         comp = resolve_compressor(compressor, u.dtype)
-        zarr_group.create_dataset(
+        create_array(
+            zarr_group,
             name,
             data=u,
             chunks=chunks,
@@ -670,7 +679,8 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
         y = np.log(np.where(nonzero, x, 1.0))
         u = self._quantize_perchannel_zero_level(y, nonzero, bits, lo, hi)
         comp = resolve_compressor(compressor, u.dtype)
-        zarr_group.create_dataset(
+        create_array(
+            zarr_group,
             name,
             data=u,
             chunks=chunks,
