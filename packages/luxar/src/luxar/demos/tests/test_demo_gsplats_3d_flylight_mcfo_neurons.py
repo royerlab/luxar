@@ -229,3 +229,106 @@ def test_read_spanning_multiple_blocks() -> None:
 
     assert f.read(450) == blob[:450]
     assert len(session.requests) >= 4
+
+
+# ---------------------------------------------------------------------------
+# Archive extraction safety (zip-slip) and --recompute replacement
+# ---------------------------------------------------------------------------
+
+_safe_extract_path = _demo._safe_extract_path
+
+
+def test_safe_extract_path_accepts_normal_members(tmp_path) -> None:
+    root = (tmp_path / "store").resolve()
+    dest = _safe_extract_path(root, "volumes/raw/0.0.0.0", "m")
+    assert dest == root / "volumes" / "raw" / "0.0.0.0"
+
+
+@pytest.mark.parametrize(
+    "rel",
+    [
+        "../escape.txt",
+        "volumes/../../escape.txt",
+        "a/b/../../../escape.txt",
+    ],
+)
+def test_safe_extract_path_rejects_traversal(tmp_path, rel: str) -> None:
+    """A zip member must not be able to write outside the extraction root."""
+    root = (tmp_path / "store").resolve()
+    with pytest.raises(RuntimeError, match="escapes the extraction root"):
+        _safe_extract_path(root, rel, f"member:{rel}")
+
+
+@pytest.mark.parametrize("rel", ["/etc/passwd", "C:\\\\windows\\\\system32\\\\x"])
+def test_safe_extract_path_rejects_absolute(tmp_path, rel: str) -> None:
+    root = (tmp_path / "store").resolve()
+    with pytest.raises(RuntimeError, match="absolute path"):
+        _safe_extract_path(root, rel, f"member:{rel}")
+
+
+def test_recompute_replaces_a_populated_target(tmp_path, monkeypatch) -> None:
+    """`--recompute` must replace an existing store, not trip over it.
+
+    Renaming the freshly extracted directory onto a populated target raises
+    ENOTEMPTY, which broke the documented recompute path on every second run.
+    """
+    import zipfile
+
+    sample = "SAMPLE_X"
+    cache = tmp_path / "cache"
+    cache.mkdir()
+
+    # An existing, non-empty store — what --recompute finds on a second run.
+    target = cache / f"{sample}.zarr"
+    (target / "volumes").mkdir(parents=True)
+    (target / "volumes" / "stale").write_bytes(b"old")
+
+    archive = tmp_path / "a.zip"
+    prefix = f"{_demo.SAMPLE_MEMBER_PREFIX}/{sample}.zarr/"
+    with zipfile.ZipFile(archive, "w") as zf:
+        zf.writestr(f"{prefix}volumes/raw/.zarray", b"{}")
+        zf.writestr(f"{prefix}volumes/raw/0.0.0.0", b"new")
+
+    monkeypatch.setattr(_demo, "CACHE_DIR", cache)
+    monkeypatch.setattr(_demo, "RECOMPUTE", True)
+    monkeypatch.setattr(
+        _demo, "_open_remote_zip", lambda url: (zipfile.ZipFile(archive), None)
+    )
+
+    out = _demo.fetch_sample(sample)
+
+    assert out == target
+    assert (target / "volumes" / "raw" / "0.0.0.0").read_bytes() == b"new"
+    assert not (target / "volumes" / "stale").exists(), "old store was not replaced"
+    assert not target.with_suffix(".zarr.partial").exists()
+    assert not target.with_suffix(".zarr.stale").exists()
+
+
+def test_extraction_loop_rejects_a_traversing_member(tmp_path, monkeypatch) -> None:
+    """The guard must be wired into the extraction loop, not merely exist.
+
+    Testing ``_safe_extract_path`` alone would still pass if the loop stopped
+    calling it, so this drives a malicious archive through ``fetch_sample``.
+    """
+    import zipfile
+
+    sample = "EVIL"
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    archive = tmp_path / "evil.zip"
+    prefix = f"{_demo.SAMPLE_MEMBER_PREFIX}/{sample}.zarr/"
+    with zipfile.ZipFile(archive, "w") as zf:
+        zf.writestr(f"{prefix}volumes/raw/.zarray", b"{}")
+        zf.writestr(f"{prefix}../../../pwned.txt", b"escaped")
+
+    monkeypatch.setattr(_demo, "CACHE_DIR", cache)
+    monkeypatch.setattr(_demo, "RECOMPUTE", False)
+    monkeypatch.setattr(
+        _demo, "_open_remote_zip", lambda url: (zipfile.ZipFile(archive), None)
+    )
+
+    with pytest.raises(RuntimeError, match="escapes the extraction root"):
+        _demo.fetch_sample(sample)
+
+    assert not (tmp_path / "pwned.txt").exists()
+    assert not (cache.parent / "pwned.txt").exists()

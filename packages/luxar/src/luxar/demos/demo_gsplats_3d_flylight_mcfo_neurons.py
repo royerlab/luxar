@@ -162,8 +162,10 @@ DEMO_META = {
 }
 
 import io
+import ntpath
+import shutil
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import numpy as np
 import requests
@@ -368,6 +370,24 @@ def _open_remote_zip(url: str):
     return zipfile.ZipFile(io.BufferedReader(handle, buffer_size=1 << 20)), handle
 
 
+def _safe_extract_path(root: Path, rel: str, member: str) -> Path:
+    """Resolve ``rel`` under ``root``, refusing anything that escapes it.
+
+    Archive member names are attacker-controlled in the general case, and a
+    member spelled ``../../…`` (or with an absolute path) would otherwise be
+    written outside the cache directory — the classic zip-slip. Refuse rather
+    than sanitise, so a malformed archive is loud instead of silently partial.
+    """
+    if PurePosixPath(rel).is_absolute() or ntpath.isabs(rel):
+        raise RuntimeError(f"Refusing absolute path in archive member: {member!r}")
+    dest = (root / rel).resolve()
+    if dest != root and root not in dest.parents:
+        raise RuntimeError(
+            f"Refusing archive member that escapes the extraction root: {member!r}"
+        )
+    return dest
+
+
 def fetch_sample(sample: str) -> Path:
     """Range-extract one FISBe sample's zarr store into the demo cache."""
     target = CACHE_DIR / f"{sample}.zarr"
@@ -394,12 +414,18 @@ def fetch_sample(sample: str) -> Path:
             payload = sum(zf.getinfo(n).compress_size for n in members)
             aprint(f"{len(members)} members, {payload / 1e6:.0f} MB compressed")
 
+            # A previous interrupted run can leave a stale partial directory,
+            # and --recompute reaches here with `target` already populated.
             tmp = target.with_suffix(".zarr.partial")
+            if tmp.exists():
+                shutil.rmtree(tmp)
+
+            root = tmp.resolve()
             for i, name in enumerate(members):
                 rel = name[len(member_prefix) :]
                 if not rel:
                     continue
-                dest = tmp / rel
+                dest = _safe_extract_path(root, rel, name)
                 if name.endswith("/"):
                     dest.mkdir(parents=True, exist_ok=True)
                     continue
@@ -408,7 +434,21 @@ def fetch_sample(sample: str) -> Path:
                     dest.write_bytes(src.read())
                 if i % 200 == 0:
                     aprint(f"  {i}/{len(members)} members")
-            tmp.rename(target)
+
+            # Replace any existing store only once the new one is complete, and
+            # move the old one aside first: renaming onto a populated directory
+            # raises ENOTEMPTY, which used to break every --recompute run.
+            if target.exists():
+                stale = target.with_suffix(".zarr.stale")
+                if stale.exists():
+                    shutil.rmtree(stale)
+                target.rename(stale)
+                try:
+                    tmp.rename(target)
+                finally:
+                    shutil.rmtree(stale, ignore_errors=True)
+            else:
+                tmp.rename(target)
         finally:
             zf.close()
 
@@ -569,7 +609,8 @@ def create_luxar_scene(gsplats, rgb, output_path=None):
             )
 
             scene.attrs["title"] = "GSplats: 3-Colour MCFO Fly Brain Neurons"
-            scene.attrs["description"] = """
+            scene.attrs["sample"] = SAMPLE
+            scene.attrs["description"] = f"""
 3-Colour MCFO Fly Brain Neurons (FlyLight / FISBe)
 ==================================================
 
@@ -585,7 +626,7 @@ co-location and stripe each axon.
 
 Data Source:
   - FISBe v1.0, Zenodo 10.5281/zenodo.10875063 (CC BY 4.0)
-  - Sample VT047848-20171020_66_I3, 'completely' split
+  - Sample {SAMPLE}, 'completely' split
   - Janelia FlyLight Gen1 MCFO collection
   - Zeiss LSM 710/780 confocal, 40x/1.3 Oil, 0.44 um isotropic
 
@@ -654,7 +695,12 @@ def main():
     aprint("Long-range thin filamentous neurons as anisotropic Gaussian splats")
     aprint("")
 
-    output_path = get_demos_output_dir() / "gsplats_3d_flylight_mcfo_neurons.luxar.zarr"
+    # A non-default --sample writes beside the default scene rather than
+    # silently replacing it, so the two are never confused for one another.
+    stem = "gsplats_3d_flylight_mcfo_neurons"
+    if SAMPLE != DEFAULT_SAMPLE:
+        stem = f"{stem}_{SAMPLE}"
+    output_path = get_demos_output_dir() / f"{stem}.luxar.zarr"
 
     if SERVE_ONLY:
         if output_path.exists():
