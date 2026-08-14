@@ -55,7 +55,10 @@ because the reference has had the same signal deleted from it.
 Background suppression moved to render time, where it belongs. Each neuron
 splat's alpha now ramps with its own amplitude, so haze goes optically thin
 while neurites stay opaque — and unlike a floor it is reversible, because the
-faint splats are still in the scene for the display range to recover.
+faint splats are still in the scene for the display range to recover. The ramp
+bottoms out at a small non-zero alpha for exactly that reason: alpha 0 is folded
+into a splat's contribution before the shader's discard, so it would delete the
+splat as thoroughly as the floor did.
 
 The initial camera is measured, not defaulted. FISBe ships the *unaligned*
 FlyLight stack — the specimen as mounted, ~52 degrees off axis for this sample.
@@ -70,9 +73,9 @@ pool of `seeds` splats and then culls by cumulative amplitude mass (default
 settle at ~19 K splats. The trap is fixing that by lowering seeds. Measured,
 128,000 seeds at retention 1.0 scored *worse* than 18,623 splats from 1.2 M
 seeds (fg 25.97 vs 27.60) with a visibly more beaded axon — seeds buy search,
-retention buys count. The demo keeps seeds at 1.2 M and raises retention to
-0.999, giving 32.7 K splats at the best foreground PSNR and energy of any
-variant tried.
+retention buys count. The demo keeps seeds at 1.2 M and retention at 0.9999,
+which with the `auto` floor gives ~787 K neuron splats (~1.14 M in the scene
+with the neuropil).
 
 Neurons and neuropil share one node. Two nodes covering the same volume have no
 correct draw order, so they are merged and depth-sorted together, distinguished

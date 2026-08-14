@@ -109,7 +109,10 @@ Alpha is also how the BACKGROUND is suppressed: each neuron splat's alpha ramps
 with its own amplitude (``NEURON_ALPHA_*_AMP_PCT``), so haze goes optically thin
 while neurites stay opaque. Doing that job with a floor instead is what cost
 97.5% of the image (finding 2) — and unlike a floor this is reversible, because
-the faint splats are still in the scene for the display range to recover.
+the faint splats are still in the scene for the display range to recover. The
+ramp therefore bottoms out at ``NEURON_ALPHA_MIN``, not at zero: alpha 0 is
+folded into the splat's contribution before the shader's discard, so it is as
+irreversible as never having fitted the splat at all.
 
 The cost of one node: the Layers panel can no longer fade the neuropil
 independently, because there is no second layer. That trade is deliberate.
@@ -309,11 +312,20 @@ NEUROPIL_AMP = 0.6
 NEUROPIL_RGB = (0.15, 0.25, 1.0)
 
 # Background suppression happens HERE, at render time, not in the fit: a splat's
-# alpha ramps from 0 to 1 between these two percentiles of splat AMPLITUDE.
-# (Percentiles of amplitude — not of voxel intensity like FLOOR. Two different
-# quantities; keeping the names distinct is deliberate.)
+# alpha ramps from NEURON_ALPHA_MIN to 1 between these two percentiles of splat
+# AMPLITUDE. (Percentiles of amplitude — not of voxel intensity like FLOOR. Two
+# different quantities; keeping the names distinct is deliberate.)
 NEURON_ALPHA_LO_AMP_PCT = 90.0
 NEURON_ALPHA_HI_AMP_PCT = 99.5
+# The ramp never reaches exactly 0, and that is the whole difference from a
+# floor. The shader folds alpha into a splat's contribution and then discards
+# anything negligible, so an alpha of exactly 0 makes a splat emit and absorb
+# nothing NO MATTER what the display range does afterwards — as irreversible as
+# deleting it. 0.01 is optical depth −ln(1 − a) ≈ 0.01: ~600x thinner than an
+# opaque neurite and ~12x thinner than a neuropil splat, so the haze is
+# invisible at the default display range and comes back when the range is
+# widened.
+NEURON_ALPHA_MIN = 0.01
 
 COLOR_BALANCE_PERCENTILE = 99.99
 
@@ -1058,13 +1070,20 @@ def neuron_alpha(amplitudes):
     measured, a p99 floor lost 88% of the neuron's faintest fifth while ``auto``
     loses none. Here the haze is merely made optically thin: the splats are
     still in the scene, so the display range can bring them back.
+
+    Which is why the floor of the ramp is ``NEURON_ALPHA_MIN`` and not zero. A
+    zero-alpha splat neither emits nor absorbs and the shader discards it, so
+    clipping the bottom decile to 0 would be exactly the irreversible deletion
+    this function exists to avoid — one shader stage later than the floor does
+    it, and no more recoverable.
     """
     amp = np.asarray(amplitudes, dtype=np.float32)
     if amp.size == 0:
         return amp.reshape(0)
     lo = float(np.percentile(amp, NEURON_ALPHA_LO_AMP_PCT))
     hi = float(np.percentile(amp, NEURON_ALPHA_HI_AMP_PCT))
-    a = np.clip((amp - lo) / max(hi - lo, 1e-9), 0.0, 1.0).astype(np.float32)
+    ramp = np.clip((amp - lo) / max(hi - lo, 1e-9), 0.0, 1.0)
+    a = (NEURON_ALPHA_MIN + (1.0 - NEURON_ALPHA_MIN) * ramp).astype(np.float32)
     aprint(
         f"  alpha ramp: amp p{NEURON_ALPHA_LO_AMP_PCT}={lo:.5f} -> "
         f"p{NEURON_ALPHA_HI_AMP_PCT}={hi:.5f}; {100 * (a < 0.05).mean():.1f}% "
@@ -1136,8 +1155,70 @@ def merge_for_render(neurons, neuron_rgb, neuropil):
 # =============================================================================
 
 
-def create_luxar_scene(centers, amplitudes, cholesky, rgba, output_path=None):
-    """Create the 3D scene: one volume-rendered node with per-splat RGBA."""
+def scene_description(has_neuropil: bool) -> str:
+    """The scene's own description of itself — neuropil or neurons only.
+
+    Four ordinary conditions produce a neurons-only scene (no ffmpeg, no h5py,
+    an unmapped sample, a reference channel on a different voxel grid) and
+    ``--no-neuropil`` asks for one outright, so the text cannot assume the
+    counterstain is there: a scene that describes a volume-rendered brain it
+    never fitted sends the reader looking for the demo's whole point.
+    """
+    if has_neuropil:
+        heading = "MCFO Fly Brain Neurons in a Volume-Rendered Neuropil"
+        medium = """The neuropil counterstain is a dense semi-transparent medium; under volumetric
+(emission-absorption) compositing it occludes front-to-back, so the brain reads
+as a solid body and neurites genuinely pass behind it. Neurons and neuropil
+share ONE node with per-splat RGBA — as two nodes covering the same volume
+there would be no correct draw order."""
+        source = (
+            "  - Neuropil: Janelia FlyLight Gen1 MCFO reference channel "
+            "(CC BY 4.0),\n    which FISBe does not distribute"
+        )
+    else:
+        heading = "MCFO Fly Brain Neurons (neurons only, no neuropil)"
+        medium = """There is no neuropil in this scene. FISBe distributes only the signal channels,
+and the FlyLight reference channel was unavailable on this run — missing ffmpeg
+or h5py, an unmapped sample, a reference channel on a different voxel grid, or
+--no-neuropil. The neurons still composite volumetrically; they simply have no
+brain around them."""
+        source = "  - Neuropil: not included in this scene"
+
+    return f"""
+{heading}
+{"=" * len(heading)}
+
+Labelled Drosophila neurons — long, thin, widely branching — threaded through
+the brain they live in, as one volume-rendered Gaussian splat cloud.
+
+{medium}
+
+Data Source:
+  - Neurons: FISBe v1.0, Zenodo 10.5281/zenodo.10875063 (CC BY 4.0)
+    Sample {SAMPLE}, 'completely' split
+{source}
+  - Zeiss LSM 710/780 confocal, 40x/1.3 Oil, 0.44 um isotropic
+
+Cite: Mais et al. (FISBe, CVPR 2024); Meissner et al. (eLife 2023
+12:e80660); Tirian & Dickson (2017). Credit the FlyLight Project Team,
+Janelia Research Campus, HHMI.
+
+Controls:
+  - Mouse drag to rotate, scroll to zoom, right-click drag to pan
+"""
+
+
+def create_luxar_scene(
+    centers, amplitudes, cholesky, rgba, output_path=None, has_neuropil: bool = True
+):
+    """Create the 3D scene: one volume-rendered node with per-splat RGBA.
+
+    ``has_neuropil`` is what the scene DESCRIBES itself as, so it has to be the
+    truth: the neuropil is absent whenever ffmpeg or h5py is missing, the sample
+    is unmapped, its grid does not register, or ``--no-neuropil`` was passed, and
+    a scene that still claims a volume-rendered counterstain in that case sends
+    the reader looking for a brain that was never fitted.
+    """
     if output_path is None:
         output_path = (
             get_demos_output_dir() / "gsplats_3d_flylight_mcfo_neurons.luxar.zarr"
@@ -1210,33 +1291,7 @@ def create_luxar_scene(centers, amplitudes, cholesky, rgba, output_path=None):
 
             scene.attrs["title"] = "GSplats: MCFO Fly Brain Neurons"
             scene.attrs["sample"] = SAMPLE
-            scene.attrs["description"] = f"""
-MCFO Fly Brain Neurons in a Volume-Rendered Neuropil
-====================================================
-
-Labelled Drosophila neurons — long, thin, widely branching — threaded through
-the brain they live in, as one volume-rendered Gaussian splat cloud.
-
-The neuropil counterstain is a dense semi-transparent medium; under volumetric
-(emission-absorption) compositing it occludes front-to-back, so the brain reads
-as a solid body and neurites genuinely pass behind it. Neurons and neuropil
-share ONE node with per-splat RGBA — as two nodes covering the same volume
-there would be no correct draw order.
-
-Data Source:
-  - Neurons: FISBe v1.0, Zenodo 10.5281/zenodo.10875063 (CC BY 4.0)
-    Sample {SAMPLE}, 'completely' split
-  - Neuropil: Janelia FlyLight Gen1 MCFO reference channel (CC BY 4.0),
-    which FISBe does not distribute
-  - Zeiss LSM 710/780 confocal, 40x/1.3 Oil, 0.44 um isotropic
-
-Cite: Mais et al. (FISBe, CVPR 2024); Meissner et al. (eLife 2023
-12:e80660); Tirian & Dickson (2017). Credit the FlyLight Project Team,
-Janelia Research Campus, HHMI.
-
-Controls:
-  - Mouse drag to rotate, scroll to zoom, right-click drag to pan
-            """
+            scene.attrs["description"] = scene_description(has_neuropil)
 
             aprint(f"Centroid: {centroid}")
 
@@ -1351,7 +1406,9 @@ def main():
         # colormap applied at render time.
         aprint(f"  Compression: {(combined.size * 4) / (len(amps) * 15 * 4):.0f}:1")
 
-    scene_path = create_luxar_scene(centers, amps, chol, rgba, output_path)
+    scene_path = create_luxar_scene(
+        centers, amps, chol, rgba, output_path, has_neuropil=neuropil is not None
+    )
 
     if NO_SERVE:
         aprint(f"Dataset generated at {scene_path}")

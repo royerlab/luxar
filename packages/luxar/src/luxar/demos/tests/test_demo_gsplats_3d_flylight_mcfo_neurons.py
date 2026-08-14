@@ -630,6 +630,26 @@ def test_scene_is_one_volumetric_node_with_per_splat_rgba(tmp_path) -> None:
     assert node["colors"].shape[1] == 4
 
 
+def test_scene_describes_a_neuropil_only_when_there_is_one() -> None:
+    """A neurons-only run must not advertise a counterstain it never fitted.
+
+    Missing ffmpeg/h5py, an unmapped sample, a grid that does not register and
+    --no-neuropil all produce that scene, and the description is where a reader
+    finds out which of the two they are looking at.
+    """
+    with_pil = _demo.scene_description(True)
+    assert "Volume-Rendered Neuropil" in with_pil
+    assert "FlyLight Gen1 MCFO reference channel" in with_pil
+
+    without = _demo.scene_description(False)
+    assert "neurons only, no neuropil" in without
+    assert "There is no neuropil in this scene" in without
+    assert "FlyLight Gen1 MCFO reference channel" not in without
+    # Both keep the citations: the neurons are FISBe imagery either way.
+    for text in (with_pil, without):
+        assert "Mais et al." in text and _demo.SAMPLE in text
+
+
 def test_scene_bakes_the_film_look_effect_by_effect(tmp_path) -> None:
     """``cinematic_mode`` alone renders nothing — the effects must be authored.
 
@@ -1123,14 +1143,29 @@ def test_sample_lookup_returns_none_when_absent() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_alpha_ramp_spans_zero_to_one_and_is_monotone() -> None:
+def test_alpha_ramp_spans_min_to_one_and_is_monotone() -> None:
     """Faint splats go transparent, bright ones opaque — that is the ramp."""
     amp = np.linspace(0.0, 1.0, 1001).astype(np.float32)
     a = _demo.neuron_alpha(amp)
 
-    assert a.min() == 0.0 and a.max() == 1.0
+    assert np.isclose(a.min(), _demo.NEURON_ALPHA_MIN) and a.max() == 1.0
     assert a.shape == amp.shape
     assert np.all(np.diff(a) >= -1e-7), "a brighter splat is never more transparent"
+
+
+def test_alpha_ramp_never_reaches_zero() -> None:
+    """A zero-alpha splat is discarded in the shader, display range or not.
+
+    The suppressed splats are only worth fitting because they can be brought
+    back; clipping the bottom of the ramp to 0 makes them as unrecoverable as a
+    floor would have, which is the entire argument for doing this at render
+    time.
+    """
+    assert 0.0 < _demo.NEURON_ALPHA_MIN < 0.1
+    rng = np.random.default_rng(0)
+    amp = np.concatenate([rng.exponential(0.002, 9000), rng.exponential(0.2, 1000)])
+    a = _demo.neuron_alpha(amp.astype(np.float32))
+    assert a.min() > 0.0, "the faint splats must still emit something"
 
 
 def test_alpha_ramp_makes_the_bulk_transparent() -> None:
@@ -1183,14 +1218,50 @@ def test_measure_tilt_is_degenerate_safe() -> None:
     )
 
 
-@pytest.mark.parametrize("deg", [0.0, 30.0, -52.0, 75.0])
-def test_camera_up_is_perpendicular_to_the_specimen_axis(deg: float) -> None:
+def _tilted_cloud(deg: float, n: int = 600):
+    """A thin (Z, Y, X) cloud whose long axis sits at ``deg`` in the Y/X plane."""
+    rng = np.random.default_rng(2)
+    t = np.radians(deg)
+    long_axis = rng.normal(0, 100, n)
+    short_axis = rng.normal(0, 3, n)
+    y = long_axis * np.sin(t) + short_axis * np.cos(t)
+    x = long_axis * np.cos(t) - short_axis * np.sin(t)
+    centers = np.stack([rng.normal(0, 5, n), y, x], axis=1).astype(np.float32)
+    return centers, np.full(n, 0.5, dtype=np.float32)
+
+
+@pytest.mark.parametrize("deg", [30.0, -52.0, 75.0])
+def test_authored_camera_up_is_perpendicular_to_the_specimen_axis(
+    tmp_path, deg: float
+) -> None:
     """The roll must put the long axis horizontal, not merely rotate it.
 
     `(sin, cos)` instead of `(-sin, cos)` rolls the wrong way: still diagonal,
-    just mirrored, which looks plausible enough to ship.
+    just mirrored, which looks plausible enough to ship. Read back out of the
+    authored scene, so the check covers the measurement, the sign and the
+    serialization rather than restating the formula.
     """
+    import zarr as _zarr
+
+    centers, amps = _tilted_cloud(deg)
+    chol = np.tile([1, 0, 1, 0, 0, 1], (len(centers), 1)).astype(np.float32)
+    rgba = np.ones((len(centers), 4), dtype=np.float32)
+
+    out = _demo.create_luxar_scene(
+        centers, amps, chol, rgba, tmp_path / f"tilt{deg}.luxar.zarr"
+    )
+    cam = dict(_zarr.open_group(str(out), mode="r").attrs)["viewer_config"]["camera"]
+
+    # The scene's dimensions are (x, y, z), so the up vector's first two
+    # components are the world x/y the specimen's long axis lives in.
+    up = np.asarray(cam["up"], dtype=np.float64)
     t = np.radians(deg)
-    up = np.array([-np.sin(t), np.cos(t)])
     long_axis = np.array([np.cos(t), np.sin(t)])
-    assert abs(float(np.dot(up, long_axis))) < 1e-9
+    assert abs(float(np.dot(up[:2], long_axis))) < 0.06, f"up={up} rolls the wrong way"
+    assert up[2] == 0.0
+    assert np.isclose(np.linalg.norm(up), 1.0)
+    # Framed from +z at a measured distance, looking at the recentred cloud.
+    assert cam["position"][0] == cam["position"][1] == 0.0
+    assert cam["position"][2] > 0.0
+    assert cam["target"] == [0.0, 0.0, 0.0]
+    assert cam["fov"] == _demo.CAMERA_FOV_DEG
