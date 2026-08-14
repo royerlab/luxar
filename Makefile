@@ -884,10 +884,22 @@ clean-viewer:  ## Clean viewer artifacts (node_modules, dist, coverage)
 	rm -rf packages/luxar-viewer/playwright-report/
 	rm -rf packages/luxar-viewer/test-results/
 
-clean-cache:  ## Clear the Luxar user cache (~/.cache/luxar)
+clean-cache:  ## Clear the Luxar user cache (~/.cache/luxar), keeping hand-placed demo inputs
 	@echo "🧹 Clearing Luxar cache..."
-	rm -rf ~/.cache/luxar
-	@echo "✅ Luxar cache cleared!"
+	@# Everything under the cache root is re-downloadable EXCEPT a hand-placed
+	@# demo input: milky_way_gaia_3m holds the CC BY-NC Gaia catalog, which is not
+	@# shipped and whose loss costs a ~90-minute ESA TAP re-query. The name is
+	@# spelled out rather than read from luxar.demos.registry.PROTECTED_INPUT_DIRS
+	@# because a clean target must work with a broken/absent env; a unit test pins
+	@# this exclusion list against that constant.
+	@# `-H` (POSIX: follow command-line operands only) is what makes a SYMLINKED
+	@# cache root — someone parking it on another disk — actually get cleared;
+	@# find's default -P would match the link alone and no-op while printing
+	@# success. Portable to BSD/macOS, unlike the trailing-slash trick.
+	@if [ -d ~/.cache/luxar ]; then \
+		find -H ~/.cache/luxar -mindepth 1 -maxdepth 1 ! -name milky_way_gaia_3m -exec rm -rf {} +; \
+	fi
+	@echo "✅ Luxar cache cleared (hand-placed demo inputs kept)."
 
 clean-examples:  ## Clean up generated datasets (examples, demos, zarr files)
 	@echo "🧹 Cleaning generated datasets..."

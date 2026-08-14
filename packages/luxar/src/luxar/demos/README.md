@@ -42,6 +42,11 @@ luxar demo deps --only scipy       # report one import module
 luxar demo deps --only scipy --install  # install only scipy's constrained spec
 ```
 
+A cache directory holding a **hand-placed input** — bytes with no download path,
+listed in `luxar.demos.registry.PROTECTED_INPUT_DIRS` — is inventoried by `demo
+cache list` (marked `🔒 hand-placed input`) but is never reported as an orphan and
+never deleted by `demo cache clear`, by key, under `--all` or under `--orphans`.
+
 Eleven gsplat demos also accept `--show-roundtrip`, which renders the fitted
 splats back and shows original / reconstruction / absolute-difference panels
 with PSNR and MSE (needs `matplotlib`). The five whose figure is one row per
