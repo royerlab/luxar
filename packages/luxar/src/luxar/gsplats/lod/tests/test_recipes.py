@@ -11,7 +11,10 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from luxar.core.group.lod.group import MAX_COVERAGE_FRACTION
+from luxar.core.group.lod.group import (
+    PARTITION_FINEST_AREA,
+    WHOLE_OBJECT_FINEST_ANCHOR,
+)
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.lod.additive import make_additive_lod
 from luxar.gsplats.lod.pyramid import make_lod_pyramid
@@ -249,47 +252,55 @@ def test_tiles_clamps_ladder_on_small_parts():
 
 def test_overview_stamps_coverage_fractions_by_default():
     """overview always pre-stamps the coarse↔fine selector thresholds on the
-    children's meta as viewport-relative ``coverage_fraction`` values
-    (``sqrt(N_i/N_finest)``): the coarse cap gets 0.0 (always-eligible floor) and
-    the fine partition gets the finest rung.
+    children's meta as screen-area ``coverage_fraction`` values: the coarse cap
+    gets 0.0 (always-eligible floor) and the fine partition gets the finest rung.
 
-    The finest rung is ``MAX_COVERAGE_FRACTION``, not 1.0: this is a
-    PARTITION-bound ladder (the fine child is the whole dataset as a
-    kind=partition, reached by zooming in), so it keeps the fills-screen anchor
-    rather than the whole-object half-fitted-axis one — see
+    The finest rung is ``PARTITION_FINEST_AREA`` (1.0 — the node alone fills
+    the screen), not the whole-object 0.5: this is a PARTITION-bound ladder
+    (the fine child is the whole dataset as a kind=partition, reached by
+    zooming in), so it keeps the fills-screen anchor rather than the
+    whole-object half-screen-area one — see
     ``partitioned_coverage_fractions``."""
     data = _make_random_gsplat(n=400)
 
     res = build_recipe(data, "overview", _params(max_elements=120))
     coarse, fine = res.children  # coarsest→finest in memory
     assert coarse.meta["coverage_fraction"] == 0.0  # coarsest = always-eligible floor
-    assert fine.meta["coverage_fraction"] == pytest.approx(MAX_COVERAGE_FRACTION)
+    assert fine.meta["coverage_fraction"] == pytest.approx(PARTITION_FINEST_AREA)
     assert fine.meta["coverage_fraction"] > coarse.meta["coverage_fraction"]
 
 
 def test_overview_fine_branch_keeps_the_fills_screen_anchor():
-    """Regression for the #1361 anchor move: the overview recipe's contract is
-    "instant coarse overview level + fine tiles on zoom", which requires the
-    fine partition to anchor at the PARTITION-bound fills-screen ceiling
-    (``MAX_COVERAGE_FRACTION``) rather than the whole-object anchor (``1.0``).
-    If the fine partition were anchored at ``1.0`` instead, it would be
-    selected on frame 1 — the entire dataset, eagerly — inverting the recipe.
+    """Regression for the anchor move: the overview recipe's contract is
+    "instant coarse overview level + fine tiles on zoom".
 
-    This pins the STORED ``coverage_fraction`` values directly (exactly what
-    the viewer's selector compares against), rather than reproducing the
-    viewer's pixel-based coverage metric (``rawFraction / FILL_FACTOR``,
-    aspect- and viewport-dependent) in Python — see
-    ``test_demo_biodiversity_planetary_scale.py``, which reads the live
-    ``FILL_FACTOR`` out of the TS source when it needs the real thing."""
+    Under ``selector="screen-area"`` a threshold is a literal screen-area
+    fraction, and the fine partition is pinned at ``PARTITION_FINEST_AREA``
+    (1.0 — the node alone occupying the FULL screen). An object never covers
+    the full screen at the fit (opening) framing — measured area occupancy is
+    ~0.5–0.86 at most — so the coarse cap shows on frame 1 and the fine branch
+    (the entire dataset, eagerly loaded) engages only on zoom-in. Anchored at
+    the whole-object 0.5 instead, the fine branch WOULD be selected at the
+    opening framing, inverting the recipe."""
     data = _make_random_gsplat(n=400)
     res = build_recipe(data, "overview", _params(max_elements=120))
     coarse, fine = res.children
-    assert coarse.meta["coverage_fraction"] == 0.0  # coarsest = always-eligible floor
-    assert fine.meta["coverage_fraction"] == pytest.approx(MAX_COVERAGE_FRACTION), (
-        "the fine partition must anchor at the fills-screen ceiling, not the "
-        "whole-object 1.0 anchor"
+
+    # Pin the stamped thresholds themselves (a 2-child group: floor + anchor).
+    assert fine.meta["coverage_fraction"] == pytest.approx(PARTITION_FINEST_AREA)
+    assert coarse.meta["coverage_fraction"] == 0.0
+    assert coarse.meta["coverage_fraction"] < fine.meta["coverage_fraction"]
+
+    # A generous upper bound on any normal opening framing's area occupancy —
+    # strictly below the fills-screen anchor, so the coarse cap shows first.
+    opening_area = 0.86
+    assert opening_area < fine.meta["coverage_fraction"], (
+        "the fine partition must NOT be selected at the opening framing"
     )
-    assert fine.meta["coverage_fraction"] > coarse.meta["coverage_fraction"]
+
+    # Zoomed until the node alone occupies the whole screen (area 1.0) → the
+    # fine branch engages.
+    assert 1.0 >= fine.meta["coverage_fraction"]
 
 
 def test_overview_is_unbalanced_lod_over_partition():
@@ -338,30 +349,30 @@ def test_adaptive_is_partition_of_substitutive_lod_groups():
 def test_adaptive_per_part_ladders_keep_the_fills_screen_anchor():
     """Each adaptive part is its OWN lod group whose bbox is one BSP tile.
 
-    A tile's projected diagonal is intrinsically a fraction of the whole
-    object's, so the whole-object half-fitted-axis anchor would put every tile on
-    its FINEST level while the object is merely full-frame (#1361 follow-up).
-    Per-part ladders therefore keep the fills-screen anchor: coarsest 0.0, finest
-    MAX_COVERAGE_FRACTION, strictly ascending. This pins the STORED
-    ``coverage_fraction`` values directly (exactly what the viewer's selector
-    compares against) rather than reproducing the viewer's pixel-based
-    coverage metric in Python — see
-    ``test_demo_biodiversity_planetary_scale.py``, which reads the live
-    ``FILL_FACTOR`` out of the TS source when it needs the real thing."""
+    A tile's projected footprint is intrinsically a fraction of the whole
+    object's, so the whole-object half-screen-area anchor would put every tile
+    on its FINEST level while the object is merely full-frame (#1361
+    follow-up). Per-part ladders therefore keep the fills-screen anchor:
+    coarsest 0.0, finest PARTITION_FINEST_AREA (1.0 — the tile alone fills the
+    screen), strictly ascending."""
     data = _make_random_gsplat(n=400)
     res = build_recipe(
         data, "adaptive", _params(max_elements=120, compression_factor=4, levels=2)
     )
+    # An 8-part split puts a tile's projected bbox rect at roughly 0.09 of the
+    # screen AREA at whole-object framing (~0.30 of the viewport diagonal),
+    # which must stay below the finest rung.
+    tile_area_at_whole_object_framing = 0.09
     for part in res.children:
         assert isinstance(part, GSplatLodGroup)
         covs = [c.meta["coverage_fraction"] for c in part.children]
         assert covs[0] == 0.0  # coarsest = always-eligible floor
-        assert covs[-1] == pytest.approx(MAX_COVERAGE_FRACTION), (
-            "a tile's finest rung must anchor at the fills-screen ceiling, "
-            "not the whole-object 1.0 anchor"
-        )
+        assert covs[-1] == pytest.approx(PARTITION_FINEST_AREA)
         assert covs == sorted(covs) and len(set(covs)) == len(covs)  # strict ascent
-        assert all(0.0 <= c <= MAX_COVERAGE_FRACTION for c in covs)
+        assert all(0.0 <= c <= PARTITION_FINEST_AREA for c in covs)
+        assert tile_area_at_whole_object_framing < covs[-1], (
+            "a tile must not sit on its finest level at whole-object framing"
+        )
 
 
 def test_adaptive_single_part_keeps_the_whole_object_anchor():
@@ -372,8 +383,8 @@ def test_adaptive_single_part_keeps_the_whole_object_anchor():
     ``GSplatPartition``, and the BSP stops as soon as the whole dataset fits
     ``max_elements`` — whose default is 1,000,000, so ``gsplat lod --recipe
     adaptive`` lands here for any ordinary dataset. That lone part's bbox IS the
-    whole object's, so anchoring its ladder at MAX_COVERAGE_FRACTION would hold
-    the finest level back until the object overfills the screen: exactly the
+    whole object's, so anchoring its ladder at PARTITION_FINEST_AREA would hold
+    the finest level back until the object alone filled the screen: exactly the
     #1361 blur, reintroduced by the fix for it."""
     data = _make_random_gsplat(n=120)
     res = build_recipe(
@@ -384,15 +395,16 @@ def test_adaptive_single_part_keeps_the_whole_object_anchor():
     (part,) = res.children
     assert isinstance(part, GSplatLodGroup)
     covs = [c.meta["coverage_fraction"] for c in part.children]
-    assert covs[0] == 0.0
-    assert covs[-1] == pytest.approx(1.0), (
+    assert covs == pytest.approx([0.0, 0.25, 0.5])
+    assert covs[-1] == pytest.approx(WHOLE_OBJECT_FINEST_ANCHOR), (
         f"a one-part partition must use the whole-object anchor; got {covs}"
     )
-    # The pin above (finest == 1.0, not MAX_COVERAGE_FRACTION) IS the
-    # opening-framing guarantee: the viewer's real coverage metric is not
-    # reproduced here (aspect- and viewport-dependent pixel math) — see
-    # `test_demo_biodiversity_planetary_scale.py`, which reads the live
-    # `FILL_FACTOR` out of the TS source when it needs the real thing.
+    # #1361 opening-framing contract, in AREA terms: the occupancy-halving
+    # rule's deliberate design premise is that a normal opening (fit) framing
+    # occupies well over half the screen area (measured ~0.5–0.8 for cube-ish
+    # objects), so a finest threshold at half-screen occupancy is already
+    # reached on frame 1.
+    assert covs[-1] <= 0.5
 
 
 # ── absorption regression: recipes == the builders they wrap ──────────────

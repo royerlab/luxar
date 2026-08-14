@@ -133,9 +133,11 @@ describe('erfPoly (the shader polynomial)', () => {
   });
 
   it('keeps the difference-quotient error under 3e-3 for arguments >= 0.5 apart', () => {
-    // The volumetric line shader computes (erf(x1) - erf(x0)) / dx and
-    // switches to a midpoint/Taylor lane below dx = 0.5 — this bound is
-    // what makes that lane threshold sufficient.
+    // An erf-window consumer computes (erf(x1) - erf(x0)) / dx and must
+    // switch to a midpoint/Taylor lane below dx = 0.5 (the deleted
+    // volumetric line shader did exactly that) — this bound is what makes
+    // that lane threshold sufficient, so it stays pinned for the next
+    // erf-window consumer.
     const dx = 0.5;
     let worst = 0;
     for (let i = 0; i <= 700; i++) {

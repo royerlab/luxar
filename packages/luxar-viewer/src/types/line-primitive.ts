@@ -6,22 +6,23 @@
  * | -------------- | -------------------------------------------------------- |
  * | `screen-space` | today's flat quad: perpendicular super-Gaussian profile, |
  * |                | screen-space width, degenerate end-on                    |
- * | `volumetric`   | segment ⊛ isotropic 3D Gaussian: the quad is only a      |
- * |                | rasterization stencil; every shading quantity is solved  |
- * |                | per-fragment against the true camera-space segment, so   |
- * |                | end-on viewing is exact and a joint's two cells partition |
- * |                | the bend at a bisector plane instead of overlapping      |
  * | `capsule`      | gaussian-like profile of the 2D point-to-segment distance |
  * |                | in pixel space: direction-stable near-axial (end-on is a  |
  * |                | radial disc), 2D bisector-cut joins, quad-class cost —    |
  * |                | see `_shared/line-capsule.ts` for the model + the three   |
  * |                | deliberate exactness relaxations                          |
  *
- * `volumetric` and `capsule` are calibrated so the side-on appearance
- * matches `screen-space` by construction (the shared Gaussian-equivalent
- * truncation T relates drawn width to σ; see `_shared/line-volumetric.ts`
- * and `_shared/line-capsule.ts`), which is what makes a session-wide A/B
- * meaningful.
+ * `capsule` is calibrated so the side-on appearance matches
+ * `screen-space` by construction (the Gaussian-equivalent truncation T in
+ * `_shared/line-capsule.ts` relates drawn width to σ), which is what makes
+ * a session-wide A/B meaningful.
+ *
+ * A third primitive, `volumetric` (segment ⊛ isotropic 3D Gaussian, solved
+ * per-fragment against the true camera-space segment), shipped behind this
+ * toggle during #1352 and was deleted after the capsule flip: the capsule
+ * matched or beat it visually — including near-axial, its signature case —
+ * at quad-class cost. Its closed-form ray-integral math survives in git
+ * history (branch point `1481995d9`).
  *
  * Unlike `lineJoin` this is NOT an authorable node attribute: the primitive is
  * a renderer implementation choice, not scene content, and the flip to a new
@@ -37,19 +38,18 @@
  */
 
 /** Selectable line primitives. */
-export type LinePrimitive = 'screen-space' | 'volumetric' | 'capsule';
+export type LinePrimitive = 'screen-space' | 'capsule';
 
 /**
  * The default when nothing is overridden. Flipped to `capsule` after the
  * #1352 re-gate passed (2026-08-11: ≤1.09× the quad on the 10M worst
  * case, parity at vsync on fills, visual sign-off on the QA grid at any
- * zoom). `screen-space` and `volumetric` remain selectable via
- * `?linePrimitive=` until their scheduled deletion.
+ * zoom). `screen-space` remains selectable via `?linePrimitive=`.
  */
 export const DEFAULT_LINE_PRIMITIVE: LinePrimitive = 'capsule';
 
 /** Every valid primitive, for validation and for error messages. */
-export const LINE_PRIMITIVES: readonly LinePrimitive[] = ['screen-space', 'volumetric', 'capsule'];
+export const LINE_PRIMITIVES: readonly LinePrimitive[] = ['screen-space', 'capsule'];
 
 /**
  * Parse a primitive from untrusted text (the `?linePrimitive=` URL

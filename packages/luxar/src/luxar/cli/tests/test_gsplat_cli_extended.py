@@ -2822,11 +2822,17 @@ class TestTransformCommand:
 
         # multiscale-like: lod( coarse_leaf, partition[ leaf, leaf ] ); stamp a
         # deliberately-wrong coverage_fraction on the partition GROUP node.
+        # The ladder must be FULLY authored (coarse leaf too): the writer's
+        # selector/threshold consistency gate re-derives partially-authored
+        # ladders at the first write, which would erase the stale value before
+        # the transform ever saw it — the very premise this test needs.
         STALE = 0.5
         fine = GSplatPartition(
             children=[_leaf(1.0, 0), _leaf(1.0, 1)], meta={"coverage_fraction": STALE}
         )
-        root = GSplatLodGroup(children=[_leaf(0.3, 2), fine])
+        coarse = _leaf(0.3, 2)
+        coarse.meta["coverage_fraction"] = 0.0
+        root = GSplatLodGroup(children=[coarse, fine])
 
         src = tmp_path / "multiscale.gsplats.zarr"
         write_gsplats_tree(src, root)
@@ -3557,10 +3563,10 @@ class TestLODCommand:
         pairing the user typed. Deliberately unlike `--coarsen-dims`, where a
         barrier SET is order-free.
         """
-        from luxar.cli.lod import _parse_reveal_spatial_dims
+        from luxar.cli.reveal_options import parse_reveal_spatial_dims
 
-        assert _parse_reveal_spatial_dims("2,0", 3) == [2, 0]
-        assert _parse_reveal_spatial_dims("0,2", 3) == [0, 2]
+        assert parse_reveal_spatial_dims("2,0", 3) == [2, 0]
+        assert parse_reveal_spatial_dims("0,2", 3) == [0, 2]
 
     @pytest.mark.parametrize(
         "spec", ["nan,0,0", "inf,0,0", "0,-inf,0"], ids=["nan", "inf", "-inf"]
@@ -3572,18 +3578,18 @@ class TestLODCommand:
         equal under the stable argsort, so the ladder comes out in input order and
         the user gets no reveal and no error.
         """
-        from luxar.cli.lod import _parse_reveal_centre
+        from luxar.cli.reveal_options import parse_reveal_centre
 
         with pytest.raises(typer.BadParameter, match="finite"):
-            _parse_reveal_centre(spec)
+            parse_reveal_centre(spec)
 
     def test_spatial_dims_rejects_duplicates(self) -> None:
         """A duplicate was silently collapsed by `set()`; it now errors, because a
         repeat would count that axis twice in the distance."""
-        from luxar.cli.lod import _parse_reveal_spatial_dims
+        from luxar.cli.reveal_options import parse_reveal_spatial_dims
 
         with pytest.raises(typer.BadParameter, match="must not repeat"):
-            _parse_reveal_spatial_dims("0,0", 3)
+            parse_reveal_spatial_dims("0,0", 3)
 
     def test_coarsen_dims_rejected_for_additive(
         self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
@@ -4190,12 +4196,14 @@ class TestLODCommand:
     def test_recipe_substitutive_stamps_coverage_fractions(
         self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
     ) -> None:
-        """#5: `gsplat lod --recipe levels` stamps viewport-relative
-        ``coverage_fraction`` (``sqrt(N_i/N_finest)``) on the on-disk lod children:
-        coarsest = 0.0, finest = 1.0, strictly ascending."""
-        import math
-
+        """#5: `gsplat lod --recipe levels` stamps SCREEN-AREA
+        ``coverage_fraction`` (occupancy halving; group ``selector`` =
+        ``"screen-area"``) on the on-disk lod children: coarsest = 0.0, finest
+        = the half-screen anchor (0.5), one area-halving per level, strictly
+        ascending — independent of per-level counts."""
         import zarr
+
+        from luxar.core.group.lod.group import WHOLE_OBJECT_FINEST_ANCHOR
 
         out = tmp_path / "sub.gsplats.zarr"
         r = runner.invoke(
@@ -4222,12 +4230,14 @@ class TestLODCommand:
             key=lambda s: int(s.split("_")[1]),
         )
         cov = [float(g[k].attrs["coverage_fraction"]) for k in ch]
-        counts = [int(g[k].attrs["n_splats"]) for k in ch]  # child_0 = coarsest
+        assert g.attrs["selector"] == "screen-area"
         assert cov[0] == 0.0
-        assert cov[-1] == pytest.approx(1.0)
-        # coverage_i = sqrt(n_i / n_finest) for the non-coarsest children.
+        assert cov[-1] == pytest.approx(WHOLE_OBJECT_FINEST_ANCHOR)
+        # coverage_i halves per level below the finest (count-independent).
         for i in range(1, len(cov)):
-            assert cov[i] == pytest.approx(math.sqrt(counts[i] / counts[-1]))
+            assert cov[i] == pytest.approx(
+                WHOLE_OBJECT_FINEST_ANCHOR / 2 ** (len(cov) - 1 - i)
+            )
         assert all(cov[i] > cov[i - 1] for i in range(1, len(cov)))
 
     def test_recipe_pyramid(
@@ -4474,20 +4484,21 @@ class TestLODCommand:
     def test_recipe_multiscale_stamps_coverage_fractions(
         self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
     ) -> None:
-        """multiscale stamps viewport-relative ``coverage_fraction`` on the coarse
+        """multiscale stamps screen-area ``coverage_fraction`` on the coarse
         cap (0.0, always-eligible) and the fine partition wrapper (the finest rung)
         — the on-disk attrs the viewer's selector reads.
 
-        The finest rung is ``MAX_COVERAGE_FRACTION``, not 1.0: overview's fine child
-        is the whole dataset as a ``kind=partition`` and is by contract a zoom-in
+        The finest rung is ``PARTITION_FINEST_AREA`` (screen-area 1.0 —
+        fills-screen), not the whole-object 0.5: overview's fine child is the
+        whole dataset as a ``kind=partition`` and is by contract a zoom-in
         branch, so the pair keeps the fills-screen anchor rather than the
-        whole-object half-fitted-axis one (``partitioned_coverage_fractions``)."""
-        from luxar.core.group.lod.group import MAX_COVERAGE_FRACTION
+        whole-object half-screen one (``partitioned_coverage_fractions``)."""
+        from luxar.core.group.lod.group import PARTITION_FINEST_AREA
 
         out = tmp_path / "ms.gsplats.zarr"
         fine_cov = self._multiscale_fine_threshold(runner, medium_gsplats, out)
-        # partitioned_coverage_fractions([N_coarse, N_fine]) = [0.0, 4.0].
-        assert fine_cov == pytest.approx(MAX_COVERAGE_FRACTION)
+        # partitioned_coverage_fractions([N_coarse, N_fine]) = [0.0, 1.0].
+        assert fine_cov == pytest.approx(PARTITION_FINEST_AREA)
 
     def test_quiet_suppresses_saved_line(
         self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path

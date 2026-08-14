@@ -54,8 +54,15 @@ if TYPE_CHECKING:
 
 #: Provenance / selector attr keys carried per-node in a leaf's ``meta`` and
 #: surfaced verbatim onto the node's zarr ``.zattrs``.
+#:
+#: ``selector`` (a kind=lod GROUP's meta, never a leaf's in practice) names the
+#: UNITS of the children's ``coverage_fraction`` thresholds and must round-trip
+#: WITH them: a legacy store's authored diagonal-metric values re-saved under a
+#: fresh ``"screen-area"`` stamp would be misread by the viewer. The reader
+#: whitelists it to the known modes so a stale pre-v3.2 value can't ride along.
 _NODE_META_ATTR_KEYS = (
     "coverage_fraction",
+    "selector",
     "compression_factor",
     "parent_method",
     "level_index",
@@ -554,9 +561,9 @@ def write_gsplat_node(
             partitioned_coverage_fractions if partition_bound else coverage_fractions
         )
         # Derive a per-child selector threshold (coarsest→finest) so EVERY child —
-        # leaf OR nested Group — is viewer-selectable. Viewport-relative
-        # ``coverage_fraction`` = ``sqrt(N_i/N_finest)`` (count ratios; the viewer
-        # multiplies by half of the live fitted screen axis). An authored
+        # leaf OR nested Group — is viewer-selectable. ``coverage_fraction``
+        # derived as a screen-area fraction by occupancy halving (the group's
+        # ``selector`` attr below names the units). An authored
         # coverage_fraction on the child still takes precedence: for a leaf child
         # it is merged over these
         # passed attrs by ``_leaf_child_attrs`` in the leaf writer; for a nested group
@@ -564,6 +571,22 @@ def write_gsplat_node(
         # only sets the threshold for meta-less (e.g. hand-built) trees. Without it a
         # nested lod-of-Group child carried no threshold and the selector was stuck
         # always-finest.
+        #
+        # SELECTOR/THRESHOLD CONSISTENCY — the shared all-or-none gate (see
+        # ``gsplats.tree.gate_authored_selector``), the same one the scene
+        # graft runs, so direct-file and grafted rendering agree: unknown meta
+        # selectors are refused, a selector is preserved only when EVERY child
+        # carries an authored threshold (validated against that selector's
+        # contract; selector-less authored ladders stay legacy "coverage"),
+        # and partially-authored ladders are scrubbed and fully re-derived in
+        # screen-area units.
+        from luxar.gsplats.tree import gate_authored_selector
+
+        on_disk, selector_out = gate_authored_selector(
+            on_disk,
+            node.meta.get("selector"),
+            source="kind=lod group (standalone writer)",
+        )
         derived_cov = derive_cov([total_splats(c) for c in on_disk])
         child_bounds: List[Dict[str, List[float]]] = []
         for i, child in enumerate(on_disk):
@@ -601,7 +624,14 @@ def write_gsplat_node(
             group.attrs[k] = v
         group.attrs["type"] = "group"
         group.attrs["kind"] = "lod"
-        group.attrs["selector"] = "coverage"
+        # The selector names the UNITS of the children's coverage_fraction
+        # thresholds, so it must travel with them. A tree read from an existing
+        # store carries its on-disk mode in meta (preserved — with its FULLY
+        # authored thresholds — by the consistency gate above); everything
+        # else — fresh recipe/backfill trees, the meta-less hand-built case,
+        # and partially-authored trees whose ladder the gate just re-derived —
+        # is in screen-area units (every live derivation is).
+        group.attrs["selector"] = selector_out
         # The viewer's INITIAL level (before the coverage selector runs) — the
         # COARSEST child (child_0). This is purely a progressive-load hint: it
         # makes the scene appear instantly at low detail, then refine. It is
@@ -719,10 +749,17 @@ def _read_leaf_arrays(group: zarr.Group, root: zarr.Group, decoder: Any) -> Any:
 
 def _node_meta_from_attrs(group: zarr.Group) -> Dict[str, Any]:
     """Recover the per-node ``meta`` dict (provenance/selector) from ``.zattrs``."""
+    from luxar.typing_utils.constants import LOD_SELECTORS
+
     out: Dict[str, Any] = {}
     for key in _NODE_META_ATTR_KEYS:
         if key in group.attrs:
             val = group.attrs[key]
+            if key == "selector" and val not in LOD_SELECTORS:
+                # A stale pre-v3.2 selector spelling (the pixel_size era) —
+                # drop it so the writer re-stamps a valid mode alongside the
+                # thresholds it re-derives.
+                continue
             out[key] = None if (key == "parent_method" and val == "") else val
     if "level_stats" in group.attrs:
         ls = group.attrs["level_stats"]

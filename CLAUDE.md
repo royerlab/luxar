@@ -545,17 +545,17 @@ luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe levels --target vol.t
 # so the CLI takes explicit indices and warns on >3D input without the flag.)
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe levels --coarsen-dims 1,2,3
 # LOD switch thresholds (ANY recipe with a kind=lod group — overview,
-# levels, adaptive) are auto-derived as viewport-relative
-# `coverage_fraction` = sqrt(N_i/N_finest). For `levels` (a WHOLE-OBJECT ladder) the
-# finest level shows once the object's
-# projected size reaches ~half of the viewport's fitted screen axis (the smaller
-# of its width/height — any normal full-frame view) and coarser levels step in
-# as it shrinks below that (the viewer anchors to the live viewport, so it
-# self-calibrates on any monitor or aspect ratio — no threshold knob).
-# EXCEPTION — `adaptive` and `overview` are PARTITION-BOUND and keep the older
-# fills-screen anchor (finest = 4.0 = SCREEN_FILL_DIAGONAL_RATIO/FILL_FACTOR,
-# approximately — exact only near aspect ratio sqrt(3); see
-# `scene/lod-group-registry.ts`'s `FILL_FACTOR` doc), via
+# levels, adaptive) are auto-derived by SCREEN-OCCUPANCY HALVING (count-
+# independent), stamped as selector="screen-area": each coverage_fraction is a
+# literal screen-area fraction (projected bbox rect area / viewport area). For
+# `levels` (a WHOLE-OBJECT ladder) the finest level shows while the object
+# occupies at least HALF THE SCREEN (finest anchor 0.5) and each halving of
+# occupied area steps one level coarser (NDC-fraction metric → identical on
+# any monitor — no threshold knob). Legacy stores / explicit
+# coverage_fractions=[...] lists keep selector="coverage" (diagonal metric,
+# thresholds in [0,4]); the viewer supports both.
+# EXCEPTION — `adaptive` and `overview` are PARTITION-BOUND and keep the
+# fills-screen anchor (finest = area 1.0 = the tile alone fills the screen), via
 # `partitioned_coverage_fractions`. For `adaptive` that is geometry (each lod
 # group's bbox is one BSP tile, so it projects to a fraction of the whole object);
 # for `overview` it is the recipe's contract — the coarse cap is what you see at

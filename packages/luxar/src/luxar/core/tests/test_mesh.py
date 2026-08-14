@@ -2673,3 +2673,30 @@ def test_additive_lod_propagates_a_resolved_extend_to_all(tmp_path) -> None:
     assert parent.attrs["extend_to_all"] == ["t"]
     for i in range(3):
         assert parent[f"additive_{i}"].attrs["extend_to_all"] == ["t"]
+
+
+def test_no_sub_LOD_carries_the_private_skip_scene_bounds_flag(tmp_path) -> None:
+    """`_skip_scene_bounds` is plumbing between writers, not part of the format.
+
+    The ladder writers pass it to the per-level write to say "the parent will
+    aggregate the bbox, do not do it per level". It was popped BELOW
+    `group.attrs.update(attrs)`, so every sub-LOD of every ladder carried it on
+    disk — an internal flag in the on-disk format, and one that round-trips: a tool
+    that reads a level's attrs and re-writes them hands it straight back as a
+    caller attribute.
+
+    Shared with the Points and Lines ladder writers, which had the identical
+    ordering; this asserts the mesh one and their own suites cover theirs.
+    """
+    store, _vertices, _faces = _write_ladder(tmp_path, additive_lod={"n_lods": 3})
+    parent = zarr.open_group(str(store), mode="r")["surf"]
+
+    assert "_skip_scene_bounds" not in parent.attrs
+    for i in range(int(parent.attrs["n_additive_sublods"])):
+        level = parent[f"additive_{i}"]
+        assert "_skip_scene_bounds" not in level.attrs, (
+            f"additive_{i} carries the private flag; it is popped after "
+            "`group.attrs.update(attrs)` again"
+        )
+    # The flag must still DO its job: the parent describes the whole ladder.
+    assert "position_bounds" in parent.attrs
