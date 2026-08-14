@@ -13,6 +13,11 @@ import type { CameraAwareMaterial } from '../../materials/_shared/camera-aware-m
 import { LINE_PICK_SOURCE } from './shaders';
 import { CAPSULE_LINE_PICK_SOURCE } from './shaders-capsule';
 import { requireWebGLSources } from '../../materials/_shared/shader-source';
+import {
+  getElementTextureWidth,
+  applyElementTextureWidthDefine,
+  LINE_TEXTURE_LAYOUT,
+} from '../../element-texture-layout';
 import { resolveLineJoin, type LineJoinStyle } from '../../../types/line-join';
 import { resolveLinePrimitive, type LinePrimitive } from '../../../types/line-primitive';
 
@@ -73,6 +78,14 @@ export class LinePickingMaterial extends THREE.ShaderMaterial implements CameraA
       vertexShader: glsl.vertex,
       fragmentShader: glsl.fragment,
       glslVersion: THREE.GLSL3,
+      // Element-texture width, baked as a compile-time constant so the
+      // per-vertex %/int-div addressing strength-reduces (see
+      // element-texture-layout.ts). Pre-stamped with the session width;
+      // the texture-update method re-stamps from the actually bound
+      // texture (a no-op recompile-wise in the common path).
+      defines: {
+        [LINE_TEXTURE_LAYOUT.widthDefine]: String(getElementTextureWidth(LINE_TEXTURE_LAYOUT)),
+      },
       transparent: false,
       depthTest: true,
       depthWrite: true,
@@ -150,5 +163,8 @@ export class LinePickingMaterial extends THREE.ShaderMaterial implements CameraA
    */
   updateLineTexture(texture: THREE.DataTexture | null): void {
     this.uniforms.uLineTex.value = texture;
+    // Re-stamp the width define from the texture actually bound
+    // (bind-time authority — see applyElementTextureWidthDefine).
+    applyElementTextureWidthDefine(this, LINE_TEXTURE_LAYOUT, texture);
   }
 }

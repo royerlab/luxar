@@ -100,7 +100,7 @@ export const CAPSULE_LINE_PICK_VERTEX_SHADER = /* glsl */ `
       vElementId = luxarElementIdParts();
 
       int lineBase = int(luxarSortedIndex()) * 6;
-      int lineTexW = textureSize(uLineTex, 0).x;
+      int lineTexW = LUXAR_LINE_TEX_W;
       ivec2 texel0 = ivec2(lineBase % lineTexW, lineBase / lineTexW);
       vec4 lineT0 = texelFetch(uLineTex, texel0, 0);
       vec4 lineT1 = texelFetch(uLineTex, ivec2(texel0.x + 1, texel0.y), 0);

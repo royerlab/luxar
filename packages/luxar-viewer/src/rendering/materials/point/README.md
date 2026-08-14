@@ -50,10 +50,13 @@ uniform selects the buffer the shaders read. Consequences (mirroring the gsplat 
 - **TSL texture-node lifecycle.** The TSL `texture()` node is factory-time
   bound, so `updatePointTexture` rebuilds the graph on an identity change
   (exact mirror of the colormap-texture lifecycle) and no-ops otherwise.
-- **GLSL fallback trap (load-bearing `int()`).** TSL types `textureSize()`
-  as `uint` (WGSL convention) but GLSL's `textureSize` returns `int` — the
-  width read is wrapped in `int(...)` or the generated GLSL fails to compile
-  on the `forceWebGL` backend.
+- **Baked texture width (no per-vertex `textureSize`).** The element-texture
+  width is a per-layout session constant (`getElementTextureWidth`, capped at
+  4096 on every device), so the GLSL material stamps it as the
+  `LUXAR_ELEM_TEX_W` define and the TSL graph bakes it as a literal int
+  node. A compile-time constant lets the shader compiler strength-reduce the
+  per-vertex `%`/int-div addressing — measured −7% on the quad line
+  primitive's whole GPU pass, where a uniform recovered almost none of it.
 
 The texel fetch prologue reconstructs the historical local names, so the
 math below it is unchanged:

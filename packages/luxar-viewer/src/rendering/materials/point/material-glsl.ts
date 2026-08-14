@@ -7,7 +7,12 @@
 
 import * as THREE from 'three';
 import { POINT_VERTEX_SHADER, POINT_FRAGMENT_SHADER } from './shader-glsl';
-import { getPlaceholderElementTexture } from '../../element-texture-layout';
+import {
+  getPlaceholderElementTexture,
+  getElementTextureWidth,
+  applyElementTextureWidthDefine,
+  POINT_TEXTURE_LAYOUT,
+} from '../../element-texture-layout';
 import type { CameraAwareMaterial } from '../_shared/camera-aware-material';
 import type { ColormapAwareMaterial } from '../_shared/colormap-aware-material';
 import { clampGamma, isGammaOne, isNoGOG } from '../_shared/uniform-helpers';
@@ -177,6 +182,12 @@ export class PointMaterial
       // (toggled by `updateIntensity` / `updateOffset` — mirrors the
       // Line material).
       defines: {
+        // Element-texture width, baked as a compile-time constant so
+        // the per-vertex %/int-div addressing strength-reduces (see
+        // element-texture-layout.ts). Pre-stamped with the session
+        // width; the texture-update method re-stamps from the actually
+        // bound texture (a no-op recompile-wise in the common path).
+        [POINT_TEXTURE_LAYOUT.widthDefine]: String(getElementTextureWidth(POINT_TEXTURE_LAYOUT)),
         ...(materialConfig.colormapTexture ? { USE_COLORMAP: '' } : {}),
         ...(isGammaOne(gammaValue) ? { LUXAR_GAMMA_ONE: '' } : {}),
         ...(isNoGOG(materialConfig.intensity ?? 1.0, materialConfig.offset ?? 0.0)
@@ -361,6 +372,13 @@ export class PointMaterial
    */
   updatePointTexture(texture: THREE.DataTexture | null): void {
     this.uniforms.uPointTex.value = texture ?? getPlaceholderElementTexture();
+    // Re-stamp the width define from the texture actually bound
+    // (bind-time authority — see applyElementTextureWidthDefine).
+    applyElementTextureWidthDefine(
+      this,
+      POINT_TEXTURE_LAYOUT,
+      this.uniforms.uPointTex.value as THREE.Texture | null
+    );
   }
 
   /** The currently bound point data texture. */

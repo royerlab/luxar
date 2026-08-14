@@ -16,6 +16,11 @@ import {
 } from '../../materials/_shared/camera-uniforms';
 import { POINT_PICK_SOURCE } from './shaders';
 import { requireWebGLSources } from '../../materials/_shared/shader-source';
+import {
+  getElementTextureWidth,
+  applyElementTextureWidthDefine,
+  POINT_TEXTURE_LAYOUT,
+} from '../../element-texture-layout';
 
 // Module-load assertion: the GLSL wrapper requires the GLSL source.
 // Captured once so the constructor can splice the strings into super().
@@ -55,6 +60,14 @@ export class PointPickingMaterial extends THREE.ShaderMaterial implements Camera
       vertexShader: POINT_PICK_GLSL.vertex,
       fragmentShader: POINT_PICK_GLSL.fragment,
       glslVersion: THREE.GLSL3,
+      // Element-texture width, baked as a compile-time constant so the
+      // per-vertex %/int-div addressing strength-reduces (see
+      // element-texture-layout.ts). Pre-stamped with the session width;
+      // the texture-update method re-stamps from the actually bound
+      // texture (a no-op recompile-wise in the common path).
+      defines: {
+        [POINT_TEXTURE_LAYOUT.widthDefine]: String(getElementTextureWidth(POINT_TEXTURE_LAYOUT)),
+      },
       // Picking settings: opaque, depth test, no blending
       transparent: false,
       depthTest: true,
@@ -118,5 +131,8 @@ export class PointPickingMaterial extends THREE.ShaderMaterial implements Camera
    */
   updatePointTexture(texture: THREE.DataTexture | null): void {
     this.uniforms.uPointTex.value = texture;
+    // Re-stamp the width define from the texture actually bound
+    // (bind-time authority — see applyElementTextureWidthDefine).
+    applyElementTextureWidthDefine(this, POINT_TEXTURE_LAYOUT, texture);
   }
 }

@@ -13,6 +13,11 @@ import type { CameraAwareMaterial } from '../../materials/_shared/camera-aware-m
 import { computeFocalLength } from '../../materials/_shared/camera-uniforms';
 import { GSPLAT_PICK_SOURCE } from './shaders';
 import { requireWebGLSources } from '../../materials/_shared/shader-source';
+import {
+  getElementTextureWidth,
+  applyElementTextureWidthDefine,
+  SPLAT_TEXTURE_LAYOUT,
+} from '../../element-texture-layout';
 import { GSPLAT_COV2D_DILATION_DEFAULT } from '../../materials/gsplat/math';
 
 // Module-load assertion: the GLSL wrapper requires the GLSL source.
@@ -97,6 +102,14 @@ export class GSplatPickingMaterial
       vertexShader: GSPLAT_PICK_GLSL.vertex,
       fragmentShader: GSPLAT_PICK_GLSL.fragment,
       glslVersion: THREE.GLSL3,
+      // Element-texture width, baked as a compile-time constant so the
+      // per-vertex %/int-div addressing strength-reduces (see
+      // element-texture-layout.ts). Pre-stamped with the session width;
+      // the texture-update method re-stamps from the actually bound
+      // texture (a no-op recompile-wise in the common path).
+      defines: {
+        [SPLAT_TEXTURE_LAYOUT.widthDefine]: String(getElementTextureWidth(SPLAT_TEXTURE_LAYOUT)),
+      },
       transparent: false,
       depthTest: true,
       depthWrite: true,
@@ -109,6 +122,9 @@ export class GSplatPickingMaterial
   /** Rebind the splat data texture (plain uniform update). */
   updateSplatTexture(texture: THREE.DataTexture | null): void {
     this.uniforms.uSplatTex.value = texture;
+    // Re-stamp the width define from the texture actually bound
+    // (bind-time authority — see applyElementTextureWidthDefine).
+    applyElementTextureWidthDefine(this, SPLAT_TEXTURE_LAYOUT, texture);
   }
 
   /**
