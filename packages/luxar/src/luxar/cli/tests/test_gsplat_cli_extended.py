@@ -5,6 +5,7 @@ Also tests the config system (presets, YAML loading, dump) and volume loader.
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -5409,6 +5410,155 @@ class TestLODCommand:
         )
         assert result.exit_code == 0, f"failed:\n{result.stdout}"
         assert out.exists()
+
+
+class TestLODCarriesAuthoredAppearance:
+    """`gsplat lod` rebuilds the STRUCTURE and must not touch the APPEARANCE.
+
+    Regression for #1600: the recipe builders construct fresh nodes that know
+    nothing about the input, so the writer's own defaults used to take over —
+    ``blending_mode`` disappeared entirely and opacity/gamma/intensity/absorption
+    snapped back to their identity. Anyone who tuned a dataset in the Layers
+    panel and then re-laddered it silently lost all of it, with a result that
+    still looked structurally perfect.
+    """
+
+    #: Non-default value per carried attr. Identity values (``opacity=1.0``,
+    #: ``absorption=1.0``) would make the bug INVISIBLE — the stamped default
+    #: coincides with the input — so every value here differs from the default.
+    AUTHORED: dict[str, Any] = {
+        "blending_mode": "volumetric",
+        "opacity": 0.75,
+        "absorption": 0.37,
+        "gamma": 1.3,
+        "intensity": 2.5,
+        "offset": 0.125,
+        "layer": False,
+        "visible": False,
+    }
+
+    #: Carried by the registry but not exercised here, each for a stated reason.
+    #: Asserted against the registry below so a NEW key cannot slip through
+    #: unnoticed — it lands in neither dict and the coverage test fails.
+    NOT_EXERCISED = {
+        "join": "lines-only; a gsplats node rejects it",
+        "transform": "rewritten to column-major by prepare_transform_for_zarr, "
+        "so it is not attr-equal by construction",
+        "nd_transform": "needs scene Dimensions to validate against",
+    }
+
+    def test_authored_table_covers_the_registry(self) -> None:
+        """Guard the guard: every carried attr is either exercised or excused.
+
+        Without this, adding an attr to ``AUTHORED_APPEARANCE_ATTRS`` would be
+        silently uncovered by the round-trip test below.
+        """
+        from luxar.core.group.compositing import AUTHORED_APPEARANCE_ATTRS
+
+        accounted = set(self.AUTHORED) | set(self.NOT_EXERCISED)
+        assert accounted == set(AUTHORED_APPEARANCE_ATTRS), (
+            "AUTHORED_APPEARANCE_ATTRS changed: "
+            f"unaccounted={sorted(set(AUTHORED_APPEARANCE_ATTRS) - accounted)}, "
+            f"stale={sorted(accounted - set(AUTHORED_APPEARANCE_ATTRS))}"
+        )
+
+    @staticmethod
+    def _authored_input(src: Path, authored: dict[str, Any]) -> None:
+        """Stamp ``authored`` onto an existing store's root, dropping .zmetadata.
+
+        Consolidated metadata SHADOWS per-node ``.zattrs``, so a stale copy would
+        make the reader see the pre-edit attrs.
+        """
+        attrs = json.loads((src / ".zattrs").read_text())
+        attrs.update(authored)
+        (src / ".zattrs").write_text(json.dumps(attrs))
+        (src / ".zmetadata").unlink(missing_ok=True)
+
+    @pytest.mark.parametrize("recipe", ["stream", "levels", "adaptive"])
+    def test_authored_appearance_survives_the_rebuild(
+        self,
+        runner: CliRunner,
+        medium_gsplats: Path,
+        tmp_path: Path,
+        recipe: str,
+    ) -> None:
+        """Every carried attr comes back off the output ROOT, per recipe.
+
+        Parameterized across a matrix recipe (``stream``/``levels`` → the
+        ``GSplatData.save`` path) and a composed one (``adaptive`` → the
+        ``write_gsplats_tree`` path): the two write paths are separate call sites,
+        so a fix applied to only one would pass a single-recipe test.
+        """
+        self._authored_input(medium_gsplats, self.AUTHORED)
+        out = tmp_path / f"carried_{recipe}.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            ["gsplat", "lod", str(medium_gsplats), str(out), "--recipe", recipe],
+        )
+        assert result.exit_code == 0, f"failed:\n{result.stdout}"
+        got = json.loads((out / ".zattrs").read_text())
+        for key, want in self.AUTHORED.items():
+            assert key in got, f"{recipe}: dropped {key!r} (had {want!r})"
+            assert got[key] == want, f"{recipe}: {key} = {got[key]!r}, want {want!r}"
+
+    def test_carry_invents_nothing(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """The carry only ever ECHOES the input — it never invents a value.
+
+        This is what makes the round-trip test above meaningful: a writer that
+        unconditionally stamped ``blending_mode="volumetric"`` would also pass
+        that one. Here nothing is authored, so every carried key must match the
+        input's own root exactly (present with the same value, or absent).
+
+        Note a bare ``GSplatData.save()`` root is NOT attr-free: it already
+        stamps the identity values (``opacity=1.0``, ``absorption=1.0``, ...).
+        Echoing those is correct and composes to a no-op, so the assertion is
+        input-vs-output equality rather than plain absence.
+        """
+        before = json.loads((medium_gsplats / ".zattrs").read_text())
+        out = tmp_path / "bare.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            ["gsplat", "lod", str(medium_gsplats), str(out), "--recipe", "adaptive"],
+        )
+        assert result.exit_code == 0, f"failed:\n{result.stdout}"
+        got = json.loads((out / ".zattrs").read_text())
+        for key in self.AUTHORED:
+            assert (key in got) == (key in before), (
+                f"{key}: presence changed (input={key in before}, output={key in got})"
+            )
+            if key in before:
+                assert got[key] == before[key], (
+                    f"{key}: {got[key]!r} != input {before[key]!r}"
+                )
+        # blending_mode has no identity value, so nothing stamps one unasked.
+        assert "blending_mode" not in before
+        assert "blending_mode" not in got
+
+    def test_structural_attrs_win_over_a_carried_collision(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """A carried attr must never clobber a structural one.
+
+        The carry rides the writer's LOWEST-precedence channel, so even if a
+        source root somehow carried ``kind``/``type``, the rebuild's own
+        structure wins. Regression against re-introducing the
+        meta-clobbers-structural ordering bug from the other direction.
+        """
+        self._authored_input(
+            medium_gsplats, {**self.AUTHORED, "kind": "bogus", "type": "bogus"}
+        )
+        out = tmp_path / "collide.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            ["gsplat", "lod", str(medium_gsplats), str(out), "--recipe", "adaptive"],
+        )
+        assert result.exit_code == 0, f"failed:\n{result.stdout}"
+        got = json.loads((out / ".zattrs").read_text())
+        assert got["kind"] == "partition"
+        assert got["type"] == "group"
+        assert got["blending_mode"] == "volumetric"
 
 
 class TestAdditiveCommand:

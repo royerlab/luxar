@@ -47,6 +47,40 @@ def load_gsplats(
     return GSplatData.from_tree(node, stats=stats)
 
 
+def read_authored_appearance(path: str | Path) -> Dict[str, Any]:
+    """Read the authored appearance attrs off a ``.gsplats.zarr`` ROOT.
+
+    A structure-only rebuild (``gsplat lod`` and friends) constructs fresh nodes
+    that know nothing about the input's appearance, so without this the authored
+    values are silently dropped and the writer's own defaults take their place —
+    ``blending_mode`` vanishes, ``opacity``/``gamma``/``intensity``/``absorption``
+    snap back to their identity, an authored ``colormap`` reverts to gray. Feed
+    the result to ``write_gsplats_tree(root_attrs=...)`` (or
+    ``GSplatData.save(root_attrs=...)``).
+
+    Only keys actually present are returned, so an input that authored nothing
+    yields ``{}`` and the writer's defaults apply unchanged. Missing/unreadable
+    stores yield ``{}`` rather than raising: this is a best-effort carry-over
+    alongside the real load, which reports its own errors.
+
+    See :data:`~luxar.core.group.compositing.AUTHORED_APPEARANCE_ATTRS` for the
+    key set and https://github.com/royerlab/luxar/issues/1600 for the invariant.
+    """
+    from luxar.core.group.compositing import AUTHORED_APPEARANCE_ATTRS
+
+    p = Path(path)
+    try:
+        # Archives are handled by the caller's real load; peeking inside one just
+        # to read appearance would extract GBs a second time.
+        if not p.is_dir():
+            return {}
+        root = zarr.open_group(str(p), mode="r")
+        attrs = dict(root.attrs)
+    except Exception:
+        return {}
+    return {k: attrs[k] for k in sorted(AUTHORED_APPEARANCE_ATTRS) if k in attrs}
+
+
 def load_gsplat_node(
     path: str | Path,
     include_stats: bool = False,

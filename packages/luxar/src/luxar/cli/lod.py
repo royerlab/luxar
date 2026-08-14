@@ -467,6 +467,7 @@ def lod_recipe(
             --compression-factor 8
     """
     from luxar.gsplats.gsplat_data import GSplatData
+    from luxar.gsplats.io.load_gsplats import read_authored_appearance
     from luxar.gsplats.io.save_gsplats import split_fitting_info, write_gsplats_tree
     from luxar.gsplats.lod.recipes import (
         RECIPE_NAMES,
@@ -655,6 +656,15 @@ def lod_recipe(
                         f"`luxar gsplat flatten {input_path.name} flat.gsplats.zarr`."
                     ) from e
                 aprint(f"Loaded {data.n_splats:,} splats ({data.ndim}D)")
+                # A recipe rebuild owns the STRUCTURE, not the appearance: carry
+                # the source root's authored attrs across or they are silently
+                # replaced by the writer's defaults (#1600).
+                source_appearance = read_authored_appearance(input_path)
+                if source_appearance:
+                    aprint(
+                        "Carrying authored appearance: "
+                        + ", ".join(sorted(source_appearance))
+                    )
 
             # ── --refine volume: load the source volume (shared loader) ──
             target_volume: Any = None
@@ -900,6 +910,7 @@ def lod_recipe(
                         ordering=ordering,  # type: ignore[arg-type]
                         encoding_mode=encoding_obj,
                         compress=compress,  # type: ignore[arg-type]
+                        root_attrs=source_appearance,
                     )
                 else:
                     # Composed recipe — write the node tree, carrying input
@@ -918,6 +929,7 @@ def lod_recipe(
                         provenance_info=provenance_info,
                         pipeline_info=pipeline_info,
                         compress=compress,  # type: ignore[arg-type]
+                        root_attrs=source_appearance,
                     )
                 if not quiet:
                     aprint(f"Saved to {output_path}")
