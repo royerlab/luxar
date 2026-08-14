@@ -24,7 +24,7 @@ def test_incremental_build(tmp_path) -> None:
         scene.add_points("Two", p2, parent=g)
 
     # ---- reopen & inspect
-    root = zarr.open_group(store, "r")
+    root = zarr.open_group(store, mode="r")
 
     # .groups() now yields (name, group) tuples
     assert {name for name, _ in root.groups()} == {"Parent"}

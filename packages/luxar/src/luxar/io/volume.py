@@ -17,6 +17,8 @@ from typing import Any, List, Optional, Tuple
 import numpy as np
 from arbol import aprint
 
+from luxar._zarr_compat import is_zarr_path
+
 __all__ = [
     "decode_flat_channel_index",
     "load_volume",
@@ -100,11 +102,16 @@ def open_volume_lazy(path: Path, array_key: Optional[str] = None) -> Any:
     other command already read the shape of, and a different choice here would
     silently re-fit against a different (e.g. downsampled) array.
     """
-    suffix = path.suffix.lower()
-    if suffix == ".zarr" or (suffix == ".zip" and path.stem.endswith(".zarr")):
+    if is_zarr_path(path):
         import zarr
 
-        node = zarr.open(str(path), mode="r")
+        from luxar._zarr_compat import open_store
+
+        # This branch explicitly accepts `.zarr.zip`, so the store has to be
+        # dispatched explicitly: zarr 2 sniffed the suffix inside
+        # `normalize_store_arg`, zarr 3 does not, and a bare
+        # `zarr.open(str(path))` on an archive raises GroupNotFoundError.
+        node = zarr.open(store=open_store(path, mode="r"), mode="r")
         if array_key:
             try:
                 node = node[array_key]
@@ -305,7 +312,7 @@ def load_volume(
                 if len(keys) > 1:
                     aprint(f"  Using first array '{keys[0]}' (available: {keys})")
 
-    elif suffix == ".zarr" or (suffix == ".zip" and path.stem.endswith(".zarr")):
+    elif is_zarr_path(path):
         # Handles both plain .zarr directories and .zarr.zip archives.
         # zarr natively supports ZipStore so no extraction needed. With an
         # explicit --axes the raw array is loaded and sliced by _apply_axes_spec
@@ -348,8 +355,10 @@ def load_volume(
         volume = np.asarray(volume, dtype=np.float32)
     else:
         # Post-process: drop incidental size-1 dims from the positional heuristic.
+        # The second asarray is a no-op at runtime (already float32, no copy); it
+        # is there because np.squeeze is typed as returning Any.
         volume = np.asarray(volume, dtype=np.float32)
-        volume = np.squeeze(volume)
+        volume = np.asarray(np.squeeze(volume), dtype=np.float32)
 
     if volume.ndim < 2:
         raise ValueError(
@@ -391,8 +400,15 @@ def _load_zarr_volume(
     """
     import zarr
 
+    from luxar._zarr_compat import open_store
+
     aprint(f"Loading Zarr: {path.name}")
-    store = zarr.open(str(path), mode="r")
+    # `open_store`, not a bare `zarr.open(str(path))`: zarr 2 sniffed a `.zip`
+    # suffix inside `normalize_store_arg` and handed back a ZipStore, but zarr 3
+    # does not — it treats the archive as a LocalStore directory and raises
+    # GroupNotFoundError. That would break `luxar gsplat fit data.zarr.zip`, a
+    # documented entry point, so the dispatch is explicit here.
+    store = zarr.open(store=open_store(path, mode="r"), mode="r")
 
     # Navigate to the target array
     if isinstance(store, zarr.Array):

@@ -12,6 +12,8 @@ from typing import Any, Dict, Iterator, List, Optional, Union
 import numpy as np
 import zarr
 
+from luxar._zarr_compat import open_group as zc_open_group
+
 from ..core.dimensions import Dimensions
 from ..core.transforms import read_transform_from_zarr
 from ..core.viewer_config import ViewerConfig
@@ -169,7 +171,7 @@ class LuxarScene:
         if not path.exists():
             raise FileNotFoundError(f"Scene not found: {path}")
 
-        root = zarr.open_group(path, mode="r")
+        root = zc_open_group(path, mode="r")
 
         # Validate it's a Luxar scene
         node_type = root.attrs.get("type")

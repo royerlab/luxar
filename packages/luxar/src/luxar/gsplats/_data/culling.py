@@ -318,7 +318,7 @@ class CullingMixin(_GSplatDataOps):
                 )
             else:
                 cumsum_norm = cumsum_amps / total_amp
-                n_keep = np.searchsorted(cumsum_norm, retention) + 1
+                n_keep = int(np.searchsorted(cumsum_norm, retention)) + 1
                 n_keep = min(n_keep, N_original)
                 keep_indices = sorted_indices[:n_keep]
                 mask = np.zeros(N_original, dtype=bool)
