@@ -61,3 +61,52 @@ def test_authored_nodes_keep_gaia_volumetric_appearance(tmp_path: Path) -> None:
         assert marker["blending_mode"] == "volumetric"
         assert marker["opacity"] == pytest.approx(1.0)
         assert marker["absorption"] == pytest.approx(expected_marker_kappa)
+
+
+class TestDataFileResolution:
+    """The Gaia catalog is CC BY-NC, so it is not shipped with the repository.
+
+    What the demo owes a user without it is a message that names the file, the
+    place to put it, and the issue that will build it — not a ``git lfs pull``
+    for a file that is no longer in the tree.
+    """
+
+    def test_cache_wins_over_the_legacy_in_repo_copy(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        import luxar.demos.demo_gaia_milky_way_3m as demo
+
+        cache = tmp_path / "cache" / "milky_way_gaia_3m.zarr.zip"
+        repo = tmp_path / "repo" / "milky_way_gaia_3m.zarr.zip"
+        for p in (cache, repo):
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_bytes(b"stand-in")
+        monkeypatch.setattr(demo, "CACHE_FILE", cache)
+        monkeypatch.setattr(demo, "REPO_FILE", repo)
+
+        assert demo.resolve_data_file() == cache
+
+    def test_legacy_in_repo_copy_still_works(self, tmp_path: Path, monkeypatch) -> None:
+        import luxar.demos.demo_gaia_milky_way_3m as demo
+
+        repo = tmp_path / "repo" / "milky_way_gaia_3m.zarr.zip"
+        repo.parent.mkdir(parents=True)
+        repo.write_bytes(b"stand-in")
+        monkeypatch.setattr(demo, "CACHE_FILE", tmp_path / "absent.zip")
+        monkeypatch.setattr(demo, "REPO_FILE", repo)
+
+        assert demo.resolve_data_file() == repo
+
+    def test_absent_everywhere_explains_why(self, tmp_path: Path, monkeypatch) -> None:
+        import luxar.demos.demo_gaia_milky_way_3m as demo
+
+        cache = tmp_path / "cache" / "milky_way_gaia_3m.zarr.zip"
+        monkeypatch.setattr(demo, "CACHE_FILE", cache)
+        monkeypatch.setattr(demo, "REPO_FILE", tmp_path / "repo" / "absent.zip")
+
+        with pytest.raises(FileNotFoundError) as excinfo:
+            demo.resolve_data_file()
+        message = str(excinfo.value)
+        assert str(cache) in message
+        assert "1461" in message
+        assert "git lfs" not in message.lower()

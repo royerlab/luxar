@@ -131,7 +131,7 @@ The pipelines are stateless: they read only the narrow config in the `Ctx` datac
    - `validate_node_path(path)`
    - `validate_gsplat_inputs(centers, amplitudes, cholesky_factors, colors)` → `(centers, amplitudes, cholesky_factors, colors, n_splats, n_dims, cholesky_is_uniform)`
    - `validate_labels_for_writing(labels, n_splats)` — if `labels is not None`
-   - `validate_image_labels_for_writing(image_labels, n_splats)` — length (dense) / index bounds (sparse dict) + per-item type, if `image_labels is not None` (#1491). GSplats has no `substitutive_lod=` wrapper of its own (a gsplat leaf IS the coarse-level representation other geometry types lift into), so this only needs hoisting into the flat gate, not a pre-split gate too.
+   - `validate_image_labels_for_writing(image_labels, n_splats)` — length (dense) / index bounds (sparse dict) + per-item type, if `image_labels is not None` (#1491). GSplats has no `substitutive_lod=` wrapper of its own (a gsplat leaf IS the coarse-level representation other geometry types lift into), so this check does not need its own pre-split gate the way Points/Lines/Mesh's `substitutive_lod=` wrappers do. The GRAFT door (`_reject_labels_on_a_grafted_wrapper` in `core/group/gsplats_pipeline/from_io.py`) is a pre-WRAPPER gate rather than a pre-split one, but it hoists this same validator too, on its one-flat-leaf exemption (#1505) — so this call is not the only one any more.
 
 2. **Setup**: `ctx.store.require_group(path)`
 

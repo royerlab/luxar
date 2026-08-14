@@ -22,8 +22,9 @@ WHAT THIS DEMONSTRATES — ADAPTIVE DETAIL MAKES HUGE SCENES TRACTABLE
 embryo. This demo shows why that matters at scale:
 
 - **Per-object detail selection**: the viewer evaluates every embryo
-  independently each frame by its viewport-relative ``coverage_fraction``
-  (``sqrt(N_i/N_finest)``; ``lod-group-registry.ts``) — effectively how much of
+  independently each frame by its ``coverage_fraction`` thresholds
+  (``selector="screen-area"``: literal screen-area fractions by occupancy
+  halving; ``lod-group-registry.ts``) — literally how much of
   the screen it covers. A near embryo gets the finest level (green, full
   detail); a far one gets the coarsest (red, a few big splats). You never pay to
   draw detail you cannot see.
@@ -90,8 +91,11 @@ DEMO_META = {
     "requirements": {
         "download_mb": 50,  # approx
         "compute": "medium",
-        "gpu": "optional",
-        "local_data": "git-lfs",
+        # The precomputed fit is no longer shipped in-tree (the source data is
+        # not redistributable), so a first run fetches the raw source and
+        # refits — which needs a GPU. Nothing has to be placed by hand.
+        "gpu": "required",
+        "local_data": None,
     },
     "caches": ["gsplats_tribolium"],
     "outputs": ["gsplats_lod_embryo_line"],

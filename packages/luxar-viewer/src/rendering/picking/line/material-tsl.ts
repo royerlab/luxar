@@ -19,7 +19,6 @@ import * as THREE from 'three';
 import { uniform, texture } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
 import { linePickWebGPUFactory, type LinePickTSLConfig } from './pick.tsl';
-import { volumetricLinePickWebGPUFactory } from './pick-volumetric.tsl';
 import { capsuleLinePickWebGPUFactory } from './pick-capsule.tsl';
 import type { LineJoinStyle } from '../../../types/line-join';
 import { resolveLinePrimitive, type LinePrimitive } from '../../../types/line-primitive';
@@ -76,9 +75,9 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
     // same screen-space quad.
     this.userData.lineJoin = config.join;
     // Line primitive (#1352) — likewise a build-time variant, dispatching
-    // between the screen-space and volumetric pick factories on every
-    // rebuild. Stored unresolved so the ?linePrimitive= session override
-    // resolves at build time, exactly like the visual TSL material.
+    // between the pick factories on every rebuild. Stored unresolved so
+    // the ?linePrimitive= session override resolves at build time,
+    // exactly like the visual TSL material.
     this.userData.linePrimitive = config.primitive;
 
     this.uniforms = {
@@ -126,8 +125,6 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
     );
     if (primitive === 'capsule') {
       capsuleLinePickWebGPUFactory(this.tslNodes, this._currentConfig(), this);
-    } else if (primitive === 'volumetric') {
-      volumetricLinePickWebGPUFactory(this.tslNodes, this._currentConfig(), this);
     } else {
       linePickWebGPUFactory(this.tslNodes, this._currentConfig(), this);
     }

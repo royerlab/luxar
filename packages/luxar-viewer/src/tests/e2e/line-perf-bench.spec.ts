@@ -160,7 +160,7 @@ type Backend = (typeof BACKENDS)[number];
  * Line-primitive axis (#1352): comma-separated list of `?linePrimitive=`
  * values to cross with every scenario × backend, e.g.
  * `LUXAR_PERF_LINE_PRIMITIVES=default,screen-space` for the capsule-vs-quad
- * volumetric A/B. The sentinel `default` omits the URL parameter
+ * A/B. The sentinel `default` omits the URL parameter
  * entirely (today's shipping primitive), so the axis is a no-op until a
  * toggle exists — and stays harmless if one never does. Non-default
  * primitives are baked into the scenarioId (`<id>-<primitive>`) so
@@ -809,8 +809,8 @@ test('line perf bench — JS frame timing across backends', async ({ page }) => 
   // `synthetic-lines-10M` is the bandwidth-bound scenario the suite
   // exists to measure, the test must not pass when it fails on every
   // backend. Arms are checked INDEPENDENTLY: with
-  // `LUXAR_PERF_LINE_PRIMITIVES=default,volumetric`, a volumetric arm
-  // that failed everywhere is exactly the one-sided A/B this guard
+  // `LUXAR_PERF_LINE_PRIMITIVES=default,screen-space`, a screen-space
+  // arm that failed everywhere is exactly the one-sided A/B this guard
   // exists to catch, so a healthy default arm must not cover for it.
   const isUnreachable = (s: ScenarioResult): boolean =>
     s.skipped && s.skipReason === 'dataset not reachable';

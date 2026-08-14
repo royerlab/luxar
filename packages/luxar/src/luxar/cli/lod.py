@@ -13,7 +13,6 @@ it replaced the historical ``lod additive`` / ``lod substitutive`` /
 
 from __future__ import annotations
 
-import math
 import shutil
 from pathlib import Path
 from typing import Any, Optional
@@ -21,11 +20,12 @@ from typing import Any, Optional
 import typer
 from arbol import aprint, asection
 
+# Under its former private spelling, so every call site in this module is
+# untouched — the extraction is a move, not a rename.
+from luxar.cli.reveal_options import parse_reveal_knobs as _parse_reveal_knobs
 from luxar.utils.lod_methods import (
     GSPLAT_ADDITIVE_CHOICES_HELP,
     LEGACY_METHOD_FLAGS,
-    REVEAL_METHODS,
-    is_reveal_method,
 )
 
 # Shared recipe/streaming validation surface — moved to
@@ -98,7 +98,7 @@ _ALLOWED_TOKENS = {
     "stream": frozenset({"additive"}),
     "tiles": frozenset({"additive", "partition"}),
     # LOD switch thresholds are auto-derived as viewport-relative coverage
-    # fractions (sqrt(N_i/N_finest)) for every kind=lod group (the overview
+    # fractions (screen-occupancy halving) for every kind=lod group (the overview
     # cap and the levels/adaptive lod groups) — no threshold knob.
     "overview": frozenset({"additive", "partition", "substitutive"}),
     # adaptive: spatial tiles + a levels group per tile — partition +
@@ -158,109 +158,6 @@ def _reject_renamed_method_flags(*supplied: tuple[Optional[str], str]) -> None:
             f"substitutive method flags are now named symmetrically, and no "
             f"method flag is bare); use {new} {value}."
         )
-
-
-def _parse_reveal_centre(spec: Optional[str]) -> Optional["list[float]"]:
-    """Parse ``--reveal-centre`` — a comma-separated shell centre, or ``None``."""
-    if spec is None:
-        return None
-    try:
-        parsed = [float(t) for t in spec.split(",") if t.strip() != ""]
-    except ValueError as e:
-        raise typer.BadParameter(
-            f"--reveal-centre must be comma-separated numbers; got {spec!r}"
-        ) from e
-    if not parsed:
-        raise typer.BadParameter("--reveal-centre must list >=1 coordinate")
-    if not all(math.isfinite(c) for c in parsed):
-        # `float("nan")` / `float("inf")` parse happily. Every distance would then
-        # be non-finite, all comparing equal under the stable sort, so the ladder
-        # would come out in input order with nothing to say the centre was junk.
-        raise typer.BadParameter(
-            f"--reveal-centre must be finite numbers; got {spec!r}"
-        )
-    return parsed
-
-
-def _parse_reveal_spatial_dims(spec: Optional[str], ndim: int) -> Optional["list[int]"]:
-    """Parse ``--spatial-dims`` — the columns the shell distance spans, or ``None``.
-
-    Keeps the listed ORDER and rejects a repeat (see the comment below: the order
-    pairs with ``--reveal-centre``, deliberately unlike ``--coarsen-dims``), and
-    bounds-checks each index against the dataset's own ``ndim`` so a typo is
-    caught before any work.
-    """
-    if spec is None:
-        return None
-    try:
-        parsed = [int(t) for t in spec.split(",") if t.strip() != ""]
-    except ValueError as e:
-        raise typer.BadParameter(
-            f"--spatial-dims must be comma-separated integers; got {spec!r}"
-        ) from e
-    # Order is PRESERVED and duplicates REJECTED, deliberately unlike
-    # `--coarsen-dims` (which sorts, because a barrier set is order-free). Here the
-    # order is load-bearing: `--reveal-centre` supplies one coordinate per LISTED
-    # axis, so `sorted(set(...))` made `--spatial-dims 2,0 --reveal-centre 10,20`
-    # silently mean "axis 0 centred at 10" rather than the pairing the user typed.
-    if not parsed:
-        raise typer.BadParameter("--spatial-dims must list >=1 index")
-    if len(set(parsed)) != len(parsed):
-        raise typer.BadParameter(
-            f"--spatial-dims must not repeat an axis (a repeat would count it "
-            f"twice in the distance); got {parsed}"
-        )
-    for i in parsed:
-        if i < 0 or i >= ndim:
-            raise typer.BadParameter(
-                f"--spatial-dims index {i} out of range for {ndim}D data"
-            )
-    return parsed
-
-
-def _parse_reveal_knobs(
-    reveal_centre: Optional[str],
-    spatial_dims: Optional[str],
-    method_norm: Optional[str],
-    ndim: int,
-) -> "tuple[Optional[list[float]], Optional[list[int]]]":
-    """Parse and validate ``--reveal-centre`` / ``--spatial-dims``.
-
-    Extracted from :func:`lod_recipe`, which is already the most complex function
-    in this module; inlining this validation pushed it further past the C901
-    ratchet. Everything it needs is passed in, so it stays independently testable.
-
-    Both knobs apply only to the ``radial`` ordering, and passing either under
-    another method is an ERROR rather than a silent no-op: a user who types
-    ``--reveal-centre`` with the default ``auto`` wants a reveal, and would
-    otherwise get an energy-ordered ladder with nothing to indicate the flag was
-    dropped.
-    """
-    if (reveal_centre is not None or spatial_dims is not None) and not is_reveal_method(
-        str(method_norm)
-    ):
-        # Asked of the shared registry, not compared against a literal, so a
-        # second reveal ordering needs no edit here.
-        bad = "--reveal-centre" if reveal_centre is not None else "--spatial-dims"
-        listed = " / ".join(sorted(REVEAL_METHODS))
-        raise typer.BadParameter(
-            f"{bad} only applies to a reveal ordering ({listed}); pass "
-            f"-m {sorted(REVEAL_METHODS)[0]} (got -m {method_norm})."
-        )
-
-    parsed_centre = _parse_reveal_centre(reveal_centre)
-    parsed_dims = _parse_reveal_spatial_dims(spatial_dims, ndim)
-
-    # The centre carries one coordinate per axis the distance is measured over,
-    # so its length must match --spatial-dims when both are given. Checked here
-    # rather than deep in the scorer so the error names the flags the user typed.
-    if parsed_centre is not None and parsed_dims is not None:
-        if len(parsed_centre) != len(parsed_dims):
-            raise typer.BadParameter(
-                f"--reveal-centre has {len(parsed_centre)} coordinates but "
-                f"--spatial-dims lists {len(parsed_dims)} axes; they must match."
-            )
-    return parsed_centre, parsed_dims
 
 
 def register_lod_command(app: typer.Typer) -> None:

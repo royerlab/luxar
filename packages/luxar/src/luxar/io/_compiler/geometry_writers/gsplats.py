@@ -113,8 +113,12 @@ def write_gsplats(
     # validate_image_labels_for_writing for why this moved out of the CSR
     # writer itself. GSplats has no substitutive_lod wrapper OF ITS OWN (a
     # gsplat leaf IS the coarse-level representation other geometry types
-    # lift into), so unlike Points/Lines/Mesh this check only needs to be
-    # hoisted into the flat gate, not into a pre-split gate too.
+    # lift into), so this check does not need its own pre-split gate the way
+    # Points/Lines/Mesh's substitutive_lod= wrappers do. The GRAFT door
+    # (`_reject_labels_on_a_grafted_wrapper` in
+    # core/group/gsplats_pipeline/from_io.py) is a pre-WRAPPER gate rather than
+    # a pre-split one, but it hoists this same validator too, on its one-flat-
+    # leaf exemption (#1505) — so this call is not the only one any more.
     if image_labels is not None:
         validate_image_labels_for_writing(image_labels, n_splats)
 

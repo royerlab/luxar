@@ -449,31 +449,30 @@ def _maybe_add_mesh_substitutive_lod(
     C901 limit the complexity ratchet enforces (mesh now dispatches BOTH structural
     branches, so the adder body would otherwise sit over it).
 
-    Runs the CHILD's gates and throws the results away, purely to keep the
-    fail-fast pre-write gate intact. Every one of them runs again inside
-    ``child_0`` — but by then every level has been decimated and ``add_lod_group``
-    has created the zarr group, so a bad ``extend_to_all``, ``colormap`` or
-    ``blending_mode`` surfaced as a childless kind=lod group in an incomplete store
-    rather than as a clean refusal that wrote nothing. Same validators the children
-    run, so the two cannot disagree about what is accepted.
+    Runs the CHILD's ``extend_to_all`` preflight and throws the result away,
+    purely to keep the fail-fast pre-write gate intact: it runs again inside
+    ``child_0``, but by then every level has been decimated and ``add_lod_group``
+    has created the zarr group, so a bad value surfaced as a childless kind=lod
+    group in an incomplete store rather than as a clean refusal that wrote
+    nothing. Same validator the children run, so the two cannot disagree about
+    what is accepted.
+
+    The attrs gate itself (``validate_render_attrs``) no longer lives here — it
+    moved to the top of ``add_mesh_impl`` (#1534), above this dispatch, so it now
+    also outranks ``extend_to_all`` resolution on every mesh path (matching
+    Points/Lines: see the module-level `#1529`/`#1534` note in
+    ``tests/group/lod/test_source_validation.py``).
 
     ``extend_to_all`` is guarded on ``is not None`` because that branch is the one
-    that emits the advisory candidate warning, which must fire exactly once. The
-    attr gate gets a COPY, since it is the child write's job to consume the real
-    dict.
+    that emits the advisory candidate warning, which must fire exactly once.
     """
     if substitutive_lod is None:
         return None
 
-    from ....io._compiler.node_common import (
-        MESH_RESERVED_ATTRS,
-        validate_render_attrs,
-    )
     from ..lod.mesh import resolve_substitutive_axis_mesh
 
     if extend_to_all is not None:
         scene._resolve_extend_to_all(extend_to_all, vert_arr, "mesh")
-    validate_render_attrs(dict(attrs), reserved_attrs=MESH_RESERVED_ATTRS)
 
     substitutive_spec = resolve_substitutive_axis_mesh(substitutive_lod)
     if substitutive_spec is None:
@@ -917,6 +916,60 @@ def add_mesh_impl(
 
         scene._validate_data_dimensions(vert_arr, name, data_type="vertices")
 
+        # Node-attrs gate (#1534) — the Mesh peer of the Points/Lines hoist
+        # (#1529). All THREE structural branches below (substitutive_lod=,
+        # partition=, additive_lod=) forward the non-compositing remainder of
+        # ``**attrs`` to a synthesised child (a decimated ``child_0``, a
+        # re-indexed ``part_i``) or straight to the multi-LOD writer's own
+        # UNRESERVED ``validate_render_attrs`` call (additive_lod=), so a bad
+        # attr used to be refused late and, on the additive path specifically,
+        # sometimes not at all: a genuinely mesh-reserved key that is not also
+        # in ``_ALLOWED_NODE_ATTRS`` (``ordering=``) got the wrong verdict
+        # (*unknown* instead of *reserved*), while ``position_bounds=`` —
+        # reserved for mesh but ALSO generically allowed — didn't raise at
+        # all: a real ladder was written and the writer's own stamp was
+        # silently clobbered by the returned node's own construction,
+        # breaking `finalize()` later far from the actual cause (see the
+        # comment above ``TestMeshAdditiveNodeAttrsGate`` in
+        # ``tests/group/lod/test_source_validation.py`` for the measured
+        # repro). Below the colours and dimension gates above (same
+        # precedence those already keep) and above every structural branch,
+        # so nothing is written before it runs — including BEFORE
+        # `_maybe_add_mesh_substitutive_lod`'s own `extend_to_all` preflight,
+        # so an attrs fault now outranks an `extend_to_all` one on every mesh
+        # path too, matching Points/Lines. The flat writer below still
+        # validates the same dict once more inside ``write_mesh`` — the
+        # validator is read-only, so running it here on the live ``attrs``
+        # (not a copy) is safe and idempotent.
+        #
+        # MUST stay below the ``_scalar_data_range`` pop above (near the top
+        # of this function): that private key is deliberately
+        # absent from ``_ALLOWED_NODE_ATTRS`` (it never reaches a Node or a
+        # caller), and it is real, caller-supplied input on the one live path
+        # that sets it — ``luxar mesh lod`` re-authoring a scalars-carrying
+        # mesh (``cli/mesh_ops/lod_commands.py``). Popped before this gate
+        # runs, it is invisible here; moved below it, this gate would reject
+        # it as an unknown attribute and break that command.
+        #
+        # NOT byte-identical to Points/Lines in one respect worth naming: this
+        # gate sits below the FULL ``scene._validate_data_dimensions`` call
+        # just above (which also emits the per-dimension out-of-range
+        # ``UserWarning``), where Points/Lines hoist only the dimension COUNT
+        # half above their own attrs gate and leave the range warning in
+        # their flat write. A refused mesh call can therefore still emit that
+        # warning where a refused points/lines call cannot — equivalent in
+        # OUTCOME (both refuse, nothing written) but not identical in every
+        # observable side effect. Deliberately left this way: hoisting only
+        # the count half here (to make it identical) risks the #1446
+        # warning-count controls, and it is only warnings, not a state
+        # divergence.
+        from ....io._compiler.node_common import (
+            MESH_RESERVED_ATTRS,
+            validate_render_attrs,
+        )
+
+        validate_render_attrs(attrs, reserved_attrs=MESH_RESERVED_ATTRS)
+
         # Substitutive-LOD branch — coarse levels are DECIMATED meshes under a
         # kind=lod Group whose finest child is the original surface. Placed after
         # validation (so a malformed mesh fails the same way either path) and
@@ -1292,10 +1345,15 @@ def add_mesh_substitutive_lod_wrapper_impl(
                 "can be shorter than the requested `levels`."
             )
         coverage_vals = list(explicit)
+        # Explicit lists keep the legacy diagonal-metric units they were
+        # authored in (selector="coverage", the add_lod_group default).
+        lod_selector = "coverage"
     else:
-        # Viewport-relative coverage fractions ``sqrt(N_i/N_finest)`` (vertex-count
-        # ratios; the viewer anchors the finest at a quarter of the live viewport
-        # diagonal, i.e. any normal full-frame view).
+        # Screen-area fractions by occupancy halving (finest holds while the
+        # node occupies at least half the screen; one level coarser per halving
+        # of occupied area). Independent of vertex-count ratios, and stamped
+        # selector="screen-area" so the viewer reads the thresholds in the
+        # units they were derived in.
         #
         # The ANCHOR is chosen from the insertion point: ``add_mesh`` rejects
         # ``partition=`` together with ``substitutive_lod=``, so a caller who wants
@@ -1305,6 +1363,7 @@ def add_mesh_substitutive_lod_wrapper_impl(
         # automatically and logs the choice; an explicit ``coverage_fractions=[...]``
         # still wins (the branch above).
         coverage_vals = derive_coverage_fractions(counts, parent_node, name=name)
+        lod_selector = "screen-area"
 
     lod_attrs = {k: v for k, v in attrs.items() if k in COMPOSITING_ATTRS}
     child_attrs = {k: v for k, v in attrs.items() if k not in COMPOSITING_ATTRS}
@@ -1328,7 +1387,7 @@ def add_mesh_substitutive_lod_wrapper_impl(
         f"  📐 Substitutive-LOD '{name}': {len(coarse)} decimated levels + original "
         f"(vertex counts coarsest→finest={counts}, K={compression_factor})"
     )
-    lod_group_node = parent_node.add_lod_group(name, **lod_attrs)
+    lod_group_node = parent_node.add_lod_group(name, selector=lod_selector, **lod_attrs)
 
     for idx, level in enumerate(coarse):
         lod_group_node.add_mesh(

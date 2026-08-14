@@ -289,19 +289,29 @@ than as a "group".
 #### `kind: "lod"` — Level-of-Detail group
 
 Picks **one of N alternative children** at runtime based on the current
-view. Each child carries a `coverage_fraction` threshold — a dimensionless,
-viewport-relative value in `[0, 4]`. The viewer projects the LOD group's bbox
-to screen, takes the diagonal in pixels, multiplies each child's
-`coverage_fraction` by the viewport diagonal (times a fill-factor constant of
-`0.25`) to get a pixel threshold, and renders the **finest** child whose
-threshold is satisfied (with 10% asymmetric hysteresis on the downgrade
-direction to suppress flicker). Because the threshold is viewport-relative,
-the finest child (`coverage_fraction` 1.0) activates once the object's projected
-bbox diagonal reaches about a quarter of the viewport diagonal — i.e. at any
-normal full-frame view — and coarser children step in as it shrinks below that,
-identically on any monitor/viewport size. When the camera is inside or
-straddling a group's bounding box, the group is treated as filling the screen
-and its **finest** child is selected.
+view. Each child carries a `coverage_fraction` threshold; the group's
+`selector` attr names the UNITS. Under `selector: "screen-area"` (what every
+auto-derived ladder stamps) a threshold is a literal **screen-area fraction**:
+the viewer projects the LOD group's bbox to a screen-space rect, takes that
+rect's area as a fraction of the viewport area, and renders the **finest**
+child whose threshold is satisfied (with 10% asymmetric hysteresis on the
+downgrade direction to suppress flicker). The derived whole-object ladder is
+`[0, …, 1/8, 1/4, 1/2]` — full detail while the object occupies at least half
+the screen, one level coarser per halving of occupied area — identically on
+any monitor/viewport size (the metric is built from NDC fractions; the rect
+is clipped to the viewport, off-screen reads 0, and sub-pixel-thin content
+ramps to its clipped linear span — see the normative metric definition in
+`docs/specs/GSPLATS_ZARR_FORMAT.md`). Under the
+legacy `selector: "coverage"` (older stores, and explicitly authored
+`coverage_fractions=[...]` lists) the thresholds are diagonal-metric units in
+`[0, 4]`: the viewer compares them against the projected bbox diagonal over
+`FILL_FACTOR=0.5 ×` the fitted screen axis (`min(width, height)` — the extent
+the camera framing actually fits). Under a PERSPECTIVE camera, a group whose bounds
+reach the camera's near plane has no meaningful projection (the homogeneous
+divide degenerates), so both selectors saturate to the **finest** child; an
+ORTHOGRAPHIC projection never degenerates, so the ordinary clipped metric
+applies directly (a camera inside a large group still reads full coverage
+naturally — see the normative rules in `docs/specs/GSPLATS_ZARR_FORMAT.md`).
 
 `kind="lod"` is **geometry-agnostic**: children can be points, lines,
 gsplats, or themselves specialized groups (e.g. a Partition group inside an
@@ -310,7 +320,7 @@ group's `display_type`.
 
 **Standalone `.gsplats.zarr` root**: a `kind=lod` group is also a valid
 root of a standalone `.gsplats.zarr` file — the file root IS the node
-(current standalone format version: **v3.3**, see
+(current standalone format version: **v3.4**, see
 `docs/specs/GSPLATS_ZARR_FORMAT.md`). The viewer opens such a file directly
 (`?src=<file>.gsplats.zarr`) and frames on its `position_bounds`. On-disk,
 children are `child_<i>/` in **coarsest→finest** order; the writer always
@@ -326,7 +336,9 @@ default (the finest level the `.centers` accessor returns).
   "display_type": "gsplats",  // Resolved at write time from the finest
                               //   child; the layers panel uses this as
                               //   the user-facing layer type.
-  "selector": "coverage",     // Reserved; only "coverage" supported today.
+  "selector": "screen-area",  // Units of the children's coverage_fraction:
+                              //   "screen-area" (derived ladders) or
+                              //   "coverage" (legacy diagonal metric).
   "default_level": 0,         // 0-based initial active level (coarsest→finest).
                               //   Seeds the "Active level" dropdown in the
                               //   Layers panel; does not lock the runtime
@@ -349,17 +361,19 @@ default (the finest level the `.centers` accessor returns).
 - Subgroup naming is **not** enforced; Python's convenience API writes
   `child_0`, `child_1`, … in **coarsest→finest** order, and the loader
   treats insertion order as authoritative.
-- Each child's `.zattrs` MUST carry `"coverage_fraction": <float in [0, 4]>`.
+- Each child's `.zattrs` MUST carry a `"coverage_fraction"` in the group's
+  selector units (`[0, 1]` for `screen-area`; `[0, 4]` for legacy `coverage`).
   Values must be strictly monotonic increasing in coarsest→finest order, and
   the coarsest is always `coverage_fraction: 0.0` (always applicable).
-  A **whole-object** ladder (`sqrt(N_i/N_finest)`, the auto-derivation) anchors
-  its finest at `coverage_fraction: 1.0` — shown at any normal full-frame view,
-  see the fill-factor anchor above — so its values stay in `[0, 1]`.
-  Values above `1.0`, up to the `4.0` ceiling (`1 / FILL_FACTOR`, the metric a
-  screen-filling node produces), hold a level until the node is larger than a
-  quarter-viewport. That is the right anchor whenever a **spatial partition** is
-  part of the switch, because a tile's projected diagonal is intrinsically a
-  fraction of the whole object's; a ladder anchored at `1.0` there would put
+  A **whole-object** ladder (the auto-derivation: SCREEN-OCCUPANCY HALVING,
+  independent of element counts) anchors its finest at `coverage_fraction:
+  0.5` — full detail while the object occupies at least half the screen — with
+  each coarser level halving the threshold (`…, 1/8, 1/4, 1/2`).
+  The `1.0` fills-screen ceiling (the tile alone occupying the whole screen)
+  holds a level until the node is larger still.
+  That fills-screen anchor is the right one whenever a **spatial partition** is
+  part of the switch, because a tile's projected rect is intrinsically a
+  fraction of the whole object's; a whole-object-anchored ladder there would put
   every tile on its finest level while the object is merely full-frame. Every
   producer emits it automatically once it can see the binding: the `adaptive` /
   `overview` gsplat recipes; the two gsplat writers' topology-aware fallback (a
@@ -369,7 +383,7 @@ default (the finest level the `.centers` accessor returns).
   ancestor of the insertion point. An **explicitly authored**
   `coverage_fractions=[...]` list always wins over all of them. The rule assumes
   >= 2 parts. Every producer that can see the final sibling count excludes a
-  **one-part** partition and falls back to the whole-object `1.0` anchor —
+  **one-part** partition and falls back to the whole-object `0.5` anchor —
   `--recipe adaptive` and both gsplat writers do, which matters because a dataset
   below `--max-elements` yields exactly that shape. The scene-side adders are the
   one path that cannot check it (part 0's ladder is derived before part 1 exists);
@@ -380,14 +394,17 @@ default (the finest level the `.centers` accessor returns).
 
 **Builder API (Python):**
 ```python
-# Manual:
+# Manual (hand-authored thresholds default to the legacy
+# selector="coverage" diagonal units; pass selector="screen-area" to author
+# literal screen-area fractions):
 lod = scene.add_lod_group("multires")
 lod.add_gsplats_from_data("child_0", coarse_data, coverage_fraction=0.0)
 lod.add_gsplats_from_data("child_1", medium_data, coverage_fraction=0.5)
 lod.add_gsplats_from_data("child_2", fine_data, coverage_fraction=1.0)
 
-# Convenience (auto-derives coverage_fractions via sqrt(N_i / N_finest), the
-# per-level splat-count ratio — coarsest 0.0, finest 1.0):
+# Convenience (auto-derives coverage_fractions by screen-occupancy halving —
+# selector="screen-area": coarsest 0.0, halving up to the finest's
+# half-screen-area anchor 0.5):
 scene.add_gsplats_from_data(
     "multires", flat_data,
     lod_group=dict(compression_factor=4, levels=2),
@@ -516,8 +533,10 @@ the parent's `level_stats` and inside each subgroup's `lod_stats` (alongside
   for 1D splats. Legacy v3.0 files store a single packed `cholesky_factors`, read via a
   presence-detect fallback. Format **v3.2** renamed the `kind=lod` selector
   attrs to the coverage semantics described above — `selector: "coverage"` +
-  per-child `coverage_fraction`. The current format is **v3.3**, which also
-  permits the optional `luxar_delta_v1` filter on quantized code arrays; see
+  per-child `coverage_fraction`; **v3.3** added the optional `luxar_delta_v1`
+  filter on quantized code arrays. The current format is **v3.4**, which adds
+  the `selector: "screen-area"` mode (literal screen-area-fraction thresholds,
+  stamped by every derived ladder); see
   `docs/specs/GSPLATS_ZARR_FORMAT.md`, the authoritative gsplats format spec.)
 - **Lines** — per-polyline. Each subgroup contains WHOLE polylines
   (vertices + their segments). Segment indices are local to the
