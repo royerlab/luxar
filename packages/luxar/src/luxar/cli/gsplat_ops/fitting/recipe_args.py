@@ -20,6 +20,9 @@ def build_fit_recipe_params(
     levels: Optional[int],
     substitutive_method: Optional[str],
     coarsen_dims: Optional[str],
+    refine: Optional[str] = None,
+    refine_iters: Optional[int] = None,
+    volume: Any = None,
     device: Optional[str],
     volume_ndim: int,
 ) -> Any:
@@ -30,6 +33,7 @@ def build_fit_recipe_params(
         estimate_bytes_per_splat,
         parse_lod_breakpoints,
         resolve_streaming_breakpoints,
+        validate_refine,
         validate_streaming_knobs,
     )
     from luxar.gsplats.lod.recipes import (
@@ -66,6 +70,8 @@ def build_fit_recipe_params(
         "--levels": levels,
         "--subst-method": substitutive_method,
         "--coarsen-dims": coarsen_dims,
+        "--refine": refine,
+        "--refine-iters": refine_iters,
     }
     irrelevant = substitutive_only if recipe == "stream" else additive_only
     provided = [flag for flag, val in irrelevant.items() if val is not None]
@@ -116,6 +122,11 @@ def build_fit_recipe_params(
                 )
         parsed_coarsen = tuple(idxs) if len(idxs) < volume_ndim else None
 
+    # `require_volume` catches a direct API caller that forgot it; unreachable
+    # from the CLI, where the fit always has its volume in hand.
+    refine_norm = validate_refine(
+        refine, refine_iters, volume=volume, require_volume=True
+    )
     return RecipeParams(
         n_lods=n_lods if n_lods is not None else 4,
         additive_method=add_norm,  # type: ignore[arg-type]
@@ -126,5 +137,10 @@ def build_fit_recipe_params(
         levels=levels if levels is not None else 3,
         substitutive_method=sub_norm,
         coarsen_dims=parsed_coarsen,
+        refine=refine_norm,
+        refine_iters=refine_iters,
+        # Only the volume re-fit consumes it, and `make_substitutive_lod` rejects
+        # a volume passed without refine="volume", so gate it here.
+        volume=volume if refine_norm == "volume" else None,
         device=device or "auto",
     )
