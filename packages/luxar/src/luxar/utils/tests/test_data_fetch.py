@@ -146,7 +146,14 @@ def test_present_zenodo_files_have_checksums():
         if d["bucket"] != "zenodo":
             continue
         for f in _all_files(d):
-            assert f.get("sha256"), f"{name}/{f['name']}: missing sha256"
+            sha = f.get("sha256")
+            assert sha, f"{name}/{f['name']}: missing sha256"
+            # Shape-check it too: a pin transcribed by hand (truncated, or an md5
+            # pasted where the sha256 belongs) is unverifiable data that would
+            # only surface as a checksum failure on someone else's download.
+            assert len(sha) == 64 and all(c in "0123456789abcdef" for c in sha), (
+                f"{name}/{f['name']}: {sha!r} is not a lowercase hex sha256"
+            )
             assert f.get("bytes"), f"{name}/{f['name']}: missing byte size"
 
 

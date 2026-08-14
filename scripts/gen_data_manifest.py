@@ -223,7 +223,9 @@ DATASETS: dict[str, dict] = {
         source="Neuromast 2-channel light-sheet timelapse (iSIM)",
         attribution="Adrian Jacobo (CZ Biohub SF); used with permission (CC BY 4.0).",
         # Permission CONFIRMED by the author 2026-08-12; both channels uploaded to
-        # the cc-by record and pinned below (md5 verified against Zenodo).
+        # the cc-by record and pinned below (md5 verified against Zenodo). The
+        # record is still a DRAFT, so RECORDS["cc-by"] has no id/base_url yet and
+        # the fetch leg stays dormant — the pins are what publication turns on.
     ),
     "h2afva": dict(
         bucket="zenodo",
