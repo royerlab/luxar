@@ -970,6 +970,23 @@ def test_record_without_ids_builds_no_url():
     assert data_fetch.zenodo_file_url({}, "a.zip") is None
 
 
+def test_a_record_that_omits_published_is_treated_as_reachable():
+    """Only an explicit `published: false` gates the URL.
+
+    The generator always emits the flag, so every SHIPPED record carries one --
+    but a hand-rolled record (a fixture here, or a `base_url` aimed at a one-off
+    mirror during the Sandbox rehearsal) has no reason to, and must not be
+    silenced by its absence. Pinned because the audit script reads the same
+    field and the two have to agree on what a missing one means.
+    """
+    assert data_fetch.zenodo_file_url({"zenodo_record": "21912280"}, "a.zip") == (
+        "https://zenodo.org/records/21912280/files/a.zip?download=1"
+    )
+    assert data_fetch.zenodo_file_url(
+        {"base_url": "https://example.org/files"}, "a.zip"
+    ) == ("https://example.org/files/a.zip?download=1")
+
+
 def test_every_shipped_record_agrees_with_its_published_flag():
     """Each record's id is recorded, and `published` decides whether a URL exists.
 

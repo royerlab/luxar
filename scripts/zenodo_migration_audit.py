@@ -90,12 +90,15 @@ def _audit_records(records: dict) -> None:
         # (and a reserved DOI) at DEPOSITION time, and a file URL into an
         # unpublished draft 404s. `published` is what decides, so report the
         # three states separately rather than reading id-presence as LIVE.
+        # Read it exactly as `zenodo_file_url` does -- only an explicit false is
+        # a draft -- or this report would call a record dormant that the fetch
+        # leg happily downloads from.
         if not r.get("zenodo_record"):
             state = "NOT CREATED"
-        elif r.get("published"):
-            state = "LIVE"
-        else:
+        elif r.get("published") is False:
             state = "DRAFT"
+        else:
+            state = "LIVE"
         print(
             f"  {name:10s} {state:12s} {r.get('license', '?'):14s} doi={r.get('zenodo_doi')}"
         )
@@ -255,7 +258,7 @@ def _print_readiness(
     )
     print(
         f"  drafts still to publish:      "
-        f"{sum(1 for r in records.values() if r.get('zenodo_record') and not r.get('published'))}"
+        f"{sum(1 for r in records.values() if r.get('zenodo_record') and r.get('published') is False)}"
     )
     print(
         f"  datasets ready to upload now: {len(to_upload)}  "

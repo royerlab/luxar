@@ -150,6 +150,15 @@ def zenodo_file_url(record: Manifest, filename: str) -> Optional[str]:
     for everyone, and turning a clean "not hosted yet" into an HTTP error would be
     a worse story for the one caller who has no in-repo copy. ``published``
     therefore gates the URL, not the presence of an id.
+
+    Only an explicit ``published: false`` gates: a record that omits the field
+    is treated as reachable, which is what keeps a hand-rolled record (a test
+    fixture, or a ``base_url`` pointed at a one-off mirror) working without it.
+    The generator always emits the flag, so every shipped record has one --
+    ``test_every_shipped_record_agrees_with_its_published_flag`` holds that both
+    ways. Note the corollary for the sandbox.zenodo.org rehearsal in the
+    migration runbook: pointing a record's ``base_url`` at Sandbox is not enough
+    on its own, since the gate runs before ``base_url`` is read.
     """
     if record.get("published") is False:
         return None
