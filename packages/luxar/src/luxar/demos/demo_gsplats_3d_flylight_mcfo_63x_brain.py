@@ -82,8 +82,9 @@ PIPELINE (how the bundled gsplats were produced — provenance, NOT re-run here)
        BEFORE ``--rotate-*``, which would put the axial pitch on a lateral axis.
 
 KNOWN LIMITATION — RESIDUAL GHOSTING:
-    Thin neurites show some doubling where tiles overlap. This is NOT fixable by
-    better translation, and the demo ships with it knowingly.
+    Thin neurites show some doubling where tiles overlap. On five of the seven
+    overlaps that is NOT fixable by better translation (see below); the demo
+    ships with the seams knowingly.
 
     Each of the 5 tile positions is a separate acquisition and the sample
     deforms between them. Measuring the residual misalignment in four
@@ -98,11 +99,12 @@ KNOWN LIMITATION — RESIDUAL GHOSTING:
         right_optic_lobe + ventral            spread 2.8   [12.8, 10.0, 12.8, 10.0]
         left_optic_lobe  + ventral            spread 0.5   [-8.8, -8.8, -9.2, -9.2]
 
-    The five dorsal/ventral pairs have residuals that VARY by 4.2-7.5 voxels
-    across a single overlap — a rigid model predicts the same residual
-    everywhere, so no per-tile offset can align those. The two optic-lobe pairs
-    are the opposite case: nearly constant (spread 0.5 and 2.8) but offset by a
-    large 9-11 voxels, which IS rigidly correctable and is not corrected here.
+    The five pairs that include a dorsal tile have residuals that VARY by
+    4.2-7.5 voxels across a single overlap — a rigid model predicts the same
+    residual everywhere, so no per-tile offset can align those. The two
+    optic-lobe/ventral pairs are the opposite case: nearly constant (spread 0.5
+    and 2.8) but offset by a large 9-13 voxels, which IS rigidly correctable and
+    is not corrected here.
     Janelia's own pipeline advertises "stitched AND distortion corrected"
     precisely because the correction it applies is non-rigid.
 
