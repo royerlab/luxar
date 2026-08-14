@@ -959,6 +959,34 @@ def test_mismatched_grids_are_reported() -> None:
     assert "(389, 1058, 907)" in warning and "(390, 1058, 907)" in warning
 
 
+def test_mismatched_grids_skip_the_neuropil(monkeypatch) -> None:
+    """Detecting the mismatch is not enough — it has to stop the merge.
+
+    Warning and then fitting anyway spends the neuropil fit to publish a brain
+    sitting off its own neurons, which is the exact scene the warning says is
+    wrong. A mismatch degrades like a missing dependency: neurons only.
+    """
+    ref = np.zeros((389, 8, 8), dtype=np.uint8)
+    monkeypatch.setattr(_demo, "fetch_neuropil", lambda sample: ref)
+
+    assert _demo.neuropil_reference(_demo.DEFAULT_SAMPLE, (390, 8, 8)) is None
+
+
+def test_matching_grids_pass_the_reference_through(monkeypatch) -> None:
+    """The registration check must not cost the neuropil when it registers."""
+    ref = np.zeros((390, 8, 8), dtype=np.uint8)
+    monkeypatch.setattr(_demo, "fetch_neuropil", lambda sample: ref)
+
+    assert _demo.neuropil_reference(_demo.DEFAULT_SAMPLE, (390, 8, 8)) is ref
+
+
+def test_unavailable_reference_stays_none(monkeypatch) -> None:
+    """An absent reference channel must not trip the shape comparison."""
+    monkeypatch.setattr(_demo, "fetch_neuropil", lambda sample: None)
+
+    assert _demo.neuropil_reference(_demo.DEFAULT_SAMPLE, (390, 8, 8)) is None
+
+
 def test_neuropil_skipped_for_an_unmapped_sample() -> None:
     assert _demo.fetch_neuropil("SOME_UNMAPPED_SAMPLE") is None
 

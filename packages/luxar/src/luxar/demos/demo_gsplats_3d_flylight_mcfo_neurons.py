@@ -781,9 +781,28 @@ def neuropil_grid_mismatch(ref_shape, neuron_shape) -> str | None:
     return (
         f"⚠️  Reference channel is {tuple(ref_shape)} but the MCFO composite is "
         f"{tuple(neuron_shape)}: the two are on different voxel grids, so the "
-        "neuropil will be misregistered against the neurons. Check this "
-        "sample's FLYLIGHT_H5J mapping."
+        "neuropil cannot be registered against the neurons — skipping it. "
+        "Check this sample's FLYLIGHT_H5J mapping."
     )
+
+
+def neuropil_reference(sample: str, neuron_shape):
+    """Return a reference channel that registers against the neurons, or None.
+
+    The registration check has to *decide*, not just narrate: a mismatch means
+    the merged scene would be wrong, and rendering it anyway spends a
+    multi-minute fit to publish a brain sitting off its own neurons. So a
+    mismatch degrades exactly like a missing ffmpeg does — neurons only, with
+    the mapping to fix named — rather than warning and carrying on.
+    """
+    ref = fetch_neuropil(sample)
+    if ref is None:
+        return None
+    mismatch = neuropil_grid_mismatch(ref.shape, neuron_shape)
+    if mismatch:
+        aprint(mismatch)
+        return None
+    return ref
 
 
 def fetch_neuropil(sample: str):
@@ -1196,11 +1215,8 @@ def main():
     neuropil = None
     if not NO_NEUROPIL:
         with asection("Neuropil (reference channel)"):
-            ref = fetch_neuropil(SAMPLE)
+            ref = neuropil_reference(SAMPLE, combined.shape)
             if ref is not None:
-                mismatch = neuropil_grid_mismatch(ref.shape, combined.shape)
-                if mismatch:
-                    aprint(mismatch)
                 neuropil = fit_volume(
                     ref.astype(np.float32) / 255.0,
                     _fit_cache_path("neuropil", NEUROPIL_SEEDS, "auto", 0.95),
