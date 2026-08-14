@@ -11,10 +11,10 @@ full 100-timepoint light-sheet timelapse showing three things at once:
   3. **Lines**   — each cell's whole trajectory through space and time, so the
      lineage structure stays visible while the volume animates underneath
 
-Nine full timelapses is a lot of geometry (~9k splats per timepoint x 100
-timepoints x 9 crops), which is the point: each crop carries its own
-**substitutive LOD** ladder, so at the full-matrix framing every crop draws a
-coarse level and only the one you zoom into pays for full detail.
+Nine full timelapses is a lot of geometry (~43k splats per timepoint x 100
+timepoints x 9 crops, so ~39M splats), which is the point: each crop carries its
+own **substitutive LOD** ladder, so the whole matrix stays affordable and zooming
+into one tile is what pays for its finest level.
 
 ================================================================================
 DATA SOURCE & CITATIONS
@@ -55,7 +55,7 @@ Options:
                       on the smallest square grid that fits: 1 -> 1x1, 4 -> 2x2,
                       7 or 9 -> 3x3. Useful when only some crops have downloaded.
     --timepoints=N    Timepoints per crop (default: 100, the whole timelapse)
-    --seeds=K         Splats per timepoint fit (default: 12126, from `gsplat cal`)
+    --seeds=K         Splats per timepoint fit (default: 60000, keeping ~43k)
     --recompute       Re-fit from scratch, ignoring the fit cache
     --no-serve        Build the scene without launching the viewer
     --serve-only      Serve a previously built scene
@@ -65,8 +65,9 @@ REQUIREMENTS
     - A Kaggle API token (``~/.kaggle/access_token``, or ``KAGGLE_API_TOKEN``)
       and the Kaggle CLI: ``pip install kaggle``. Get a token from
       https://www.kaggle.com/settings ("API tokens").
-    - CUDA GPU strongly recommended: ~8 s per timepoint fit on an RTX PRO 6000
-      (~15 min per crop), vs ~50 s on Apple MPS.
+    - CUDA GPU strongly recommended: ~24 s per timepoint fit at the default
+      budget on an RTX PRO 6000 (~40 min per crop). Apple MPS is roughly 6x
+      slower, so a full crop there is measured in hours.
     - PyTorch (included in ``luxar[gsplats]``)
 
 Output:
@@ -144,27 +145,50 @@ DATASETS: tuple[str, ...] = (
 
 N_TIMEPOINTS = 100  # every crop is exactly 100 timepoints
 
-# Splats per timepoint. `luxar gsplat cal` on one timepoint put the held-out PSNR
-# peak at K* = 12,126 (43.9 dB against a 48.2 dB noise ceiling); the fit's own
-# culling trims that to ~9.5k kept splats.
-DEFAULT_SEEDS = 12126
+# Splats per timepoint, requested; the fit's own culling keeps ~70%.
+#
+# `gsplat cal` put the held-out PSNR peak at K* = 12,126 and that is genuinely
+# where the NOISE-masked metric turns over — but it is the wrong criterion for
+# this data. Measured on one timepoint, against a scale-invariant PSNR over the
+# nuclei mask (voxels > p90) rather than the whole mostly-dim stack:
+#
+#     K        kept splats   nuclei PSNR
+#     12,126   9,429         37.41 dB
+#     30,000   21,711        38.12 dB   (+0.71)
+#     60,000   42,596        39.29 dB   (+1.88)
+#     120,000  83,318        40.29 dB   (+2.87)
+#
+# About +1 dB per doubling with NO plateau, and it is plainly visible in a MIP:
+# at 9.4k the nuclei are smooth blobs with the gaps between them filled in, and
+# by 42k the boundaries and the dark gaps are back. A global average hides this
+# because these crops are mostly dim tissue, so the easy background dominates it.
+# 60,000 is the chosen balance — most of the visible gain for half the fit time
+# and storage of the next rung up.
+DEFAULT_SEEDS = 60000
 
 # Grid pitch as a multiple of one crop's 104 um extent — a small gap so the tiles
 # read as nine separate embryos rather than one slab.
 GRID_GAP_FACTOR = 1.14
 
-# Substitutive LOD: 3 coarser levels, each 2x smaller than the one below it.
+# Substitutive LOD: ONE coarser level, half the size.
 #
-# 2x rather than the 4x default because this ladder is 4D. A level's splats are
-# spread over all 100 timepoints, so the ~9.5k splats the time slice actually
-# shows are what each step decimates: at 4x the third level was down to ~150
-# splats per timepoint — blobs. What makes that visible rather than academic is
-# the viewer's coverage-band cross-fade, which deliberately dissolves between the
-# two levels bracketing a threshold, so a too-coarse neighbour is blended INTO the
-# view near a boundary instead of only appearing when far away. 2x keeps every
-# level recognisably the same embryo (~9.5k / 4.7k / 2.4k / 1.2k per timepoint).
+# Deliberately short, because of how the screen-area selector interacts with a
+# grid of small tiles. The ladder is stamped `selector="screen-area"` with the
+# finest level anchored at half the screen and each step down a halving, so a
+# 4-level ladder gets thresholds [0, 0.125, 0.25, 0.5]. A tile of a 3x3 matrix
+# occupies only 1/(3 x 1.14)^2 = 0.0855 of the screen area — under the lowest
+# threshold — so EVERY tile drew the coarsest level, and with 3 coarser levels
+# that was an eighth of the splats. The matrix looked blurry for that reason
+# alone, independent of the fit.
+#
+# No ladder length avoids that (0.0855 is below the coarsest threshold of any of
+# them), so the lever is how much the coarsest level keeps: 1 level -> half,
+# which is what a tile now draws. The ladder still earns its keep — it halves
+# the cost when you zoom the whole matrix away, and it is what the demo is meant
+# to exercise — it just no longer throws away the detail at the framing the demo
+# opens on. Zooming into a tile crosses 0.5 and gets the finest level.
 LOD_COMPRESSION_FACTOR = 2
-LOD_LEVELS = 3
+LOD_LEVELS = 1
 
 # Additive (progressive streaming) sub-ladders INSIDE each substitutive level are
 # on by default everywhere else, and are deliberately off here. In a 4D stacked
@@ -190,22 +214,39 @@ SCALE_MAX_PERCENTILE = 95.0
 VOLUME_OPACITY = 0.11
 VOLUME_ABSORPTION = 0.38
 
-# Display-range window, i.e. which slice of the amplitude range the colormap
-# spans. The panel exposes it as [min, max] and stores it as the shader pair
+# Display-range window: which slice of the amplitude range the colormap spans.
+# The panel exposes it as [min, max] and stores it as the shader pair
 # ``intensity = 1 / (max - min)``, ``offset = -min / (max - min)``; the viewer
 # recovers the window from them (ui/layers/layer-state.ts), so authoring the pair
-# reproduces the tuned look exactly instead of re-defaulting to the full range.
+# reproduces a tuned look instead of re-defaulting to the full range.
 #
-# The window is [0.029, 0.562]: it floors the near-zero tail and clips the top
-# ~25% of the range, which brightens the nuclei without letting the brightest
-# few clip to white. These are ABSOLUTE amplitude values, which is safe here
-# because every crop goes through the same per-timepoint normalization — the
-# measured finest-level ranges across the seven built crops span only
-# 0.029-0.063 (low) and 0.712-0.798 (high), so one window suits them all.
-VOLUME_DISPLAY_MIN = 0.029
-VOLUME_DISPLAY_MAX = 0.562
-VOLUME_INTENSITY = 1.0 / (VOLUME_DISPLAY_MAX - VOLUME_DISPLAY_MIN)
-VOLUME_OFFSET = -VOLUME_DISPLAY_MIN / (VOLUME_DISPLAY_MAX - VOLUME_DISPLAY_MIN)
+# DERIVED per crop rather than hard-coded, because the amplitude distribution
+# moves with the splat budget: the same signal split across 4.5x more splats
+# leaves each one dimmer, and the measured p99 fell from 0.550 (K=12,126) to
+# 0.400 (K=60,000). A window frozen at the old numbers would spend its top third
+# on empty amplitude and render everything darker.
+#
+# The tuned window's top (0.562) turned out to sit exactly on the finest level's
+# 99th percentile (0.5617), so that is the rule: span from the bottom of the data
+# up to p99. It reproduces the hand-tuned window to three decimals at the budget
+# it was tuned on, and follows K and per-crop content on its own.
+VOLUME_WINDOW_TOP_PERCENTILE = 99.0
+
+
+def display_window(amplitudes: np.ndarray) -> tuple[float, float]:
+    """The ``(intensity, offset)`` shader pair for this node's amplitude window.
+
+    Spans ``[min, p99]``: flooring at the data's own minimum wastes no window
+    below it, and clipping at p99 keeps the brightest few splats from taking the
+    whole top of the colormap and leaving the nuclei dim.
+    """
+    lo = float(np.min(amplitudes))
+    hi = float(np.percentile(amplitudes, VOLUME_WINDOW_TOP_PERCENTILE))
+    if not hi > lo:  # degenerate (uniform amplitudes) — identity window
+        return 1.0, 0.0
+    span = hi - lo
+    return 1.0 / span, -lo / span
+
 
 # Nuclei in these crops are ~8 um across; a marker a bit under half that reads as
 # "this cell is tracked" without hiding the splatted nucleus underneath it.
@@ -727,9 +768,10 @@ What you are looking at:
              {total_divisions:,} of the joints are cell divisions, which fork
 
 Level of detail:
-  Each crop carries a substitutive LOD ladder ({LOD_LEVELS} coarser levels,
-  {LOD_COMPRESSION_FACTOR}x apart). At this framing every crop occupies a small
-  fraction of the screen and draws a coarse level; zoom into one and it refines.
+  Each crop carries a substitutive LOD ladder ({LOD_LEVELS} coarser level(s),
+  {LOD_COMPRESSION_FACTOR}x apart). A tile of the matrix occupies a small fraction
+  of the screen and draws the coarser level; zoom into one and it refines to full
+  detail.
 
 Data Source:
   - Kaggle: Biohub - Cell Tracking During Development
@@ -770,8 +812,8 @@ Navigation:
                     extend_to_all=[],
                     opacity=VOLUME_OPACITY,
                     absorption=VOLUME_ABSORPTION,
-                    intensity=VOLUME_INTENSITY,
-                    offset=VOLUME_OFFSET,
+                    intensity=crop["intensity"],
+                    offset=crop["offset"],
                     blending_mode="volumetric",
                     colormap="bop_blue",
                 )
@@ -880,7 +922,17 @@ def main() -> None:
             aprint(f"Combined 4D: {combined.n_splats:,} splats")
             lod = build_lod(combined)
             counts = [int(lvl.n_splats_total) for lvl in lod.substitutive_levels]
-            aprint(f"LOD levels (fine->coarse): {counts}")
+            aprint(
+                f"LOD levels (fine->coarse): {counts} "
+                f"= {' / '.join(f'{c // n_timepoints:,}' for c in counts)} per timepoint"
+            )
+            # `lod.amplitudes` is the FINEST level, which is what the window is
+            # judged on; the coarser levels ride the same authored pair.
+            intensity, offset = display_window(lod.amplitudes)
+            aprint(
+                f"Display window: [{-offset / intensity:.3f}, "
+                f"{(1 - offset) / intensity:.3f}] (min..p{VOLUME_WINDOW_TOP_PERCENTILE:g})"
+            )
             tracks = track_geometry(geff_store, centre, n_timepoints)
             if tracks is None:
                 aprint("No usable annotation for this crop — volume only")
@@ -896,6 +948,8 @@ def main() -> None:
                     "name": dataset,
                     "lod": lod,
                     "n_splats": counts[0] if counts else combined.n_splats,
+                    "intensity": intensity,
+                    "offset": offset,
                     "tracks": tracks,
                     "extent_um": float(2.0 * centre.max()),
                 }
