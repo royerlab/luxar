@@ -1,0 +1,831 @@
+#!/usr/bin/env python3
+"""GSplats Demo: 4D Cell Tracking Challenge — a 3x3 matrix of zebrafish embryos
+
+Nine crops of a developing zebrafish embryo, laid out as a 3x3 matrix, each one a
+full 100-timepoint light-sheet timelapse showing three things at once:
+
+  1. **GSplats** — the image data itself, fitted per timepoint and stacked into a
+     single 4D (ZYX + time) Gaussian-splat volume
+  2. **Points**  — the annotated position of every tracked cell at the current
+     timepoint, coloured by lineage
+  3. **Lines**   — each cell's whole trajectory through space and time, so the
+     lineage structure stays visible while the volume animates underneath
+
+Nine full timelapses is a lot of geometry (~9k splats per timepoint x 100
+timepoints x 9 crops), which is the point: each crop carries its own
+**substitutive LOD** ladder, so at the full-matrix framing every crop draws a
+coarse level and only the one you zoom into pays for full detail.
+
+================================================================================
+DATA SOURCE & CITATIONS
+================================================================================
+
+Source:  Kaggle competition "Biohub - Cell Tracking During Development"
+URL:     https://www.kaggle.com/competitions/biohub-cell-tracking-during-development
+Licence: CC0 (annotations), Chan Zuckerberg Biohub San Francisco
+Imaging: Royer Group light-sheet microscopy of zebrafish embryos
+
+Each of the 199 training crops is an OME-Zarr **0.5** (zarr v3) store —
+``T=100, Z=64, Y=256, X=256`` uint16, voxel 1.625 x 0.40625 x 0.40625 um, so a
+104 um cube — paired with a **GEFF** tracking graph (``<crop>.geff``) holding the
+ground-truth cell positions and lineage edges. This demo uses the nine
+most densely annotated crops (~1,300-1,950 annotated cells each).
+
+The competition data needs Kaggle credentials, so this demo cannot download it
+unattended. See the "Requirements" section below.
+
+WORKFLOW
+========
+
+1. **Fetch** the nine crops from Kaggle (image store + GEFF graph, ~4 GB)
+2. **Fit** GSplats to every timepoint of every crop (cached per timepoint)
+3. **Combine** each crop's timepoints into one 4D GSplatData (time as a
+   coarsening barrier, so no LOD level ever blends across time)
+4. **Ladder** each crop with a substitutive LOD pyramid
+5. **Read** each crop's GEFF graph into lineage polylines + per-timepoint points
+6. **Lay out** the crops on a 3x3 grid, one group per crop
+7. **Visualise** — scrub time, watch cells move along their tracks
+
+USAGE
+=====
+    python demo_gsplats_4d_cell_tracking_challenge.py [options]
+
+Options:
+    --datasets=N      How many crops to show: 1, 4 or 9 (default: 9 -> 3x3)
+    --timepoints=N    Timepoints per crop (default: 100, the whole timelapse)
+    --seeds=K         Splats per timepoint fit (default: 12126, from `gsplat cal`)
+    --recompute       Re-fit from scratch, ignoring the fit cache
+    --no-serve        Build the scene without launching the viewer
+    --serve-only      Serve a previously built scene
+
+REQUIREMENTS
+============
+    - A Kaggle API token (``~/.kaggle/access_token``, or ``KAGGLE_API_TOKEN``)
+      and the Kaggle CLI: ``pip install kaggle``. Get a token from
+      https://www.kaggle.com/settings ("API tokens").
+    - CUDA GPU strongly recommended: ~8 s per timepoint fit on an RTX PRO 6000
+      (~15 min per crop), vs ~50 s on Apple MPS.
+    - PyTorch (included in ``luxar[gsplats]``)
+
+Output:
+    - Scene saved to: datasets/demos/gsplats_4d_cell_tracking_challenge.luxar.zarr
+    - Per-timepoint fits cached under ~/.cache/luxar/gsplats_cell_tracking/
+"""
+
+DEMO_META = {
+    "key": "gsplats_4d_cell_tracking_challenge",
+    "title": "4D Cell Tracking Challenge (3x3)",
+    "description": (
+        "Nine zebrafish embryo timelapses in a 3x3 matrix: 4D gsplat volumes "
+        "with annotated cell positions and lineage tracks."
+    ),
+    "category": "microscopy",
+    "geometry": "mixed",
+    "requirements": {
+        "download_mb": 4000,
+        "compute": "heavy",
+        "gpu": "optional",
+        "local_data": "kaggle-auth",
+    },
+    "caches": ["gsplats_cell_tracking"],
+    "outputs": ["gsplats_4d_cell_tracking_challenge"],
+}
+
+import math
+import shutil
+import subprocess
+import time
+from pathlib import Path
+
+import numpy as np
+from arbol import aprint, asection
+
+from luxar import Dimension, Dimensions, LuxarZarrCompiler, transforms
+from luxar.demos import (
+    detect_device,
+    hsv_to_rgb,
+    launch_viewer,
+    parse_demo_flags,
+    parse_int_arg,
+    require_module,
+    warn_if_no_cuda_gpu,
+)
+from luxar.encoding import EncodingMode
+from luxar.gsplats import GSplatData
+from luxar.utils.paths import get_demos_output_dir
+
+# =============================================================================
+# Configuration
+# =============================================================================
+
+COMPETITION = "biohub-cell-tracking-during-development"
+COMPETITION_URL = f"https://www.kaggle.com/competitions/{COMPETITION}"
+
+DATA_DIR = Path.home() / "data" / "kaggle-celltracking"
+CACHE_DIR = Path.home() / ".cache" / "luxar" / "gsplats_cell_tracking"
+
+# The nine most densely annotated training crops, by GEFF node count. Eight come
+# from embryo `6bba` and one from `44b6` — the two source acquisitions — so the
+# matrix shows both. Counts (annotated cells) are noted for orientation; they are
+# what makes these crops worth showing rather than the 50-node sparse ones.
+DATASETS: tuple[str, ...] = (
+    "6bba_09961292",  # 1950 nodes
+    "6bba_bb9f20c3",  # 1925
+    "6bba_784a78c9",  # 1788
+    "6bba_57b7cc1e",  # 1659
+    "6bba_cff5865f",  # 1571
+    "6bba_5dfe9ad1",  # 1542
+    "6bba_ae82a791",  # 1495
+    "6bba_786893ac",  # 1465
+    "44b6_d29c9ab2",  # 1353 — the other embryo
+)
+
+N_TIMEPOINTS = 100  # every crop is exactly 100 timepoints
+
+# Splats per timepoint. `luxar gsplat cal` on one timepoint put the held-out PSNR
+# peak at K* = 12,126 (43.9 dB against a 48.2 dB noise ceiling); the fit's own
+# culling trims that to ~9.5k kept splats.
+DEFAULT_SEEDS = 12126
+
+# Grid pitch as a multiple of one crop's 104 um extent — a small gap so the tiles
+# read as nine separate embryos rather than one slab.
+GRID_GAP_FACTOR = 1.14
+
+# Substitutive LOD: 3 coarser levels, each 2x smaller than the one below it.
+#
+# 2x rather than the 4x default because this ladder is 4D. A level's splats are
+# spread over all 100 timepoints, so the ~9.5k splats the time slice actually
+# shows are what each step decimates: at 4x the third level was down to ~150
+# splats per timepoint — blobs. What makes that visible rather than academic is
+# the viewer's coverage-band cross-fade, which deliberately dissolves between the
+# two levels bracketing a threshold, so a too-coarse neighbour is blended INTO the
+# view near a boundary instead of only appearing when far away. 2x keeps every
+# level recognisably the same embryo (~9.5k / 4.7k / 2.4k / 1.2k per timepoint).
+LOD_COMPRESSION_FACTOR = 2
+LOD_LEVELS = 3
+
+# Additive (progressive streaming) sub-ladders INSIDE each substitutive level are
+# on by default everywhere else, and are deliberately off here. In a 4D stacked
+# ladder every sub-LOD spans all 100 timepoints, so the time slice keeps only
+# ~1% of whichever prefix has arrived — a level's committed prefix therefore looks
+# almost empty to the viewer no matter how much of it has downloaded. Bare levels
+# swap cleanly instead. Flip to True to see the difference.
+ADDITIVE_LADDERS = False
+
+# Percentile of characteristic splat size above which splats are dropped as
+# diffuse background (see combine_to_4d for why this matters so much here).
+SCALE_MAX_PERCENTILE = 95.0
+
+# Volumetric absorption. Measured by sweeping the live uniform against this data:
+# at the usual 1.0 a view ray crosses ~50 densely packed nuclei and saturates, so
+# the embryo reads as one flat bright mass; by 8.0 only a thin front shell
+# survives and the volume all but disappears. 2.0 keeps the nuclei bright while
+# giving enough front-to-back occlusion to read as a solid 3D body. It is a
+# starting point, not a verdict — the Layers panel exposes the slider.
+VOLUME_ABSORPTION = 2.0
+
+# Nuclei in these crops are ~8 um across; a marker a bit under half that reads as
+# "this cell is tracked" without hiding the splatted nucleus underneath it.
+CELL_MARKER_RADIUS_UM = 2.6
+TRACK_WIDTH_UM = 0.7
+
+FLAGS = parse_demo_flags()
+N_DATASETS = parse_int_arg("datasets", len(DATASETS))
+TIMEPOINTS = parse_int_arg("timepoints", N_TIMEPOINTS)
+SEEDS = parse_int_arg("seeds", DEFAULT_SEEDS)
+
+_DEVICE: str | None = None
+
+
+# =============================================================================
+# Kaggle download
+# =============================================================================
+
+
+def _kaggle_cli() -> str:
+    """Locate the Kaggle CLI, or explain how to get it and a token."""
+    exe = shutil.which("kaggle")
+    if exe:
+        return exe
+    raise RuntimeError(
+        "The Kaggle CLI is required to download the cell-tracking competition "
+        "data and was not found on PATH.\n"
+        "  1. pip install kaggle\n"
+        "  2. create an API token at https://www.kaggle.com/settings and save it "
+        "as ~/.kaggle/access_token (or export KAGGLE_API_TOKEN)\n"
+        f"  3. accept the competition rules at {COMPETITION_URL}"
+    )
+
+
+def _crop_files(dataset: str, n_timepoints: int) -> list[str]:
+    """Every competition file making up one crop: GEFF graph + image store.
+
+    Spelled out rather than listed from the API because the full file listing is
+    ~25,000 rows (one per chunk across 199 crops) and paging it costs far more
+    requests than fetching the ~120 files we actually want.
+    """
+    geff, img = f"train/{dataset}.geff", f"train/{dataset}.zarr"
+    paths = [
+        f"{geff}/zarr.json",
+        f"{geff}/nodes/zarr.json",
+        f"{geff}/nodes/ids/zarr.json",
+        f"{geff}/nodes/ids/c/0",
+        f"{geff}/nodes/props/zarr.json",
+        f"{geff}/edges/zarr.json",
+        f"{geff}/edges/ids/zarr.json",
+        f"{geff}/edges/ids/c/0/0",
+        f"{geff}/edges/props/zarr.json",
+    ]
+    for axis in ("t", "z", "y", "x"):
+        paths += [
+            f"{geff}/nodes/props/{axis}/zarr.json",
+            f"{geff}/nodes/props/{axis}/values/zarr.json",
+            f"{geff}/nodes/props/{axis}/values/c/0",
+        ]
+    paths += [f"{img}/zarr.json", f"{img}/0/zarr.json"]
+    paths += [f"{img}/0/c/{t}/0/0/0" for t in range(n_timepoints)]
+    return paths
+
+
+def _fetch_file(exe: str, rel: str, dest_root: Path, max_tries: int = 6) -> bool:
+    """Download one competition file to ``dest_root/rel``.
+
+    ``kaggle competitions download -f`` flattens the download to the file's
+    basename, so each file goes into its own destination directory to rebuild the
+    zarr tree. Kaggle rate-limits bulk single-file fetches with HTTP 429, so a
+    429 backs off exponentially rather than failing the run.
+    """
+    target = dest_root / rel
+    if target.is_file() and target.stat().st_size > 0:
+        return True
+    target.parent.mkdir(parents=True, exist_ok=True)
+
+    wait = 8.0
+    for attempt in range(1, max_tries + 1):
+        proc = subprocess.run(
+            [
+                exe,
+                "competitions",
+                "download",
+                COMPETITION,
+                "-f",
+                rel,
+                "-p",
+                str(target.parent),
+                "-q",
+                "-o",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        if target.is_file() and target.stat().st_size > 0:
+            return True
+        blob = (proc.stdout or "") + (proc.stderr or "")
+        if attempt == max_tries:
+            aprint(f"  could not fetch {rel}: {blob.strip()[:200]}")
+            return False
+        throttled = "429" in blob or "Too Many Requests" in blob
+        if throttled:
+            aprint(f"  Kaggle throttled (429) — waiting {wait:.0f}s")
+        time.sleep(wait if throttled else 2.0)
+        wait = min(wait * 2, 300.0)
+    return False
+
+
+def fetch_dataset(dataset: str, n_timepoints: int) -> tuple[Path, Path]:
+    """Ensure one crop's image store and GEFF graph are on disk.
+
+    Returns ``(image_store, geff_store)``. Already-present files are skipped, so
+    an interrupted download resumes rather than restarting.
+    """
+    image = DATA_DIR / "train" / f"{dataset}.zarr"
+    geff = DATA_DIR / "train" / f"{dataset}.geff"
+
+    wanted = _crop_files(dataset, n_timepoints)
+    missing = [p for p in wanted if not (DATA_DIR / p).is_file()]
+    if not missing:
+        return image, geff
+
+    exe = _kaggle_cli()
+    with asection(f"Downloading {dataset} ({len(missing)} of {len(wanted)} files)"):
+        failed = 0
+        for i, rel in enumerate(missing, 1):
+            if not _fetch_file(exe, rel, DATA_DIR):
+                failed += 1
+            if i % 25 == 0:
+                aprint(f"  {i}/{len(missing)}")
+        if failed:
+            raise RuntimeError(
+                f"{dataset}: {failed} of {len(missing)} files could not be "
+                "downloaded. Kaggle rate-limits bulk single-file downloads; "
+                "re-run the demo later and it will resume where it stopped."
+            )
+    return image, geff
+
+
+# =============================================================================
+# Fitting
+# =============================================================================
+
+
+def _device() -> str:
+    global _DEVICE
+    if _DEVICE is None:
+        _DEVICE = detect_device()
+    return _DEVICE
+
+
+def voxel_size_of(image_store: Path) -> tuple[float, float, float]:
+    """Read the crop's ZYX voxel size (um) from its OME-Zarr metadata."""
+    from luxar.io.zarr_v3 import open_zarr_v3
+
+    group = open_zarr_v3(image_store)
+    scale = group.attrs["multiscales"][0]["datasets"][0]["coordinateTransformations"][
+        0
+    ]["scale"]
+    return tuple(float(s) for s in scale[1:])  # drop the time axis
+
+
+def fit_timelapse(
+    dataset: str, image_store: Path, n_timepoints: int
+) -> list[GSplatData]:
+    """Fit GSplats to each timepoint of one crop, caching per timepoint.
+
+    One 3D fit per timepoint (rather than one 4D fit over the whole movie) keeps
+    each fit small and independently cacheable, and is what lets the timepoints be
+    stacked afterwards with time as a hard coarsening barrier.
+    """
+    from luxar.io.zarr_v3 import open_zarr_v3
+
+    arr = open_zarr_v3(image_store)["0"]
+    voxel = voxel_size_of(image_store)
+    cache = CACHE_DIR / dataset
+    cache.mkdir(parents=True, exist_ok=True)
+
+    def cache_path(t: int) -> Path:
+        return cache / f"t{t:04d}_k{SEEDS}.gsplats.zarr.zip"
+
+    def is_cached(t: int) -> bool:
+        """A cache entry counts only without its in-progress marker beside it."""
+        path = cache_path(t)
+        marker = path.with_suffix(path.suffix + ".tmp")
+        return path.exists() and not marker.exists()
+
+    # Demand torch only if a fit will actually run: a warm cache must build a
+    # scene on a machine that has no fitting stack at all.
+    will_fit = FLAGS["recompute"] or any(not is_cached(t) for t in range(n_timepoints))
+    if will_fit:
+        require_module("torch", pip_name="luxar[gsplats]")
+        warn_if_no_cuda_gpu()
+    from luxar.gsplats import fit_gaussian_splats
+
+    results: list[GSplatData] = []
+    with asection(f"Fitting {dataset}: {n_timepoints} timepoints (seeds={SEEDS:,})"):
+        for t in range(n_timepoints):
+            cache_file = cache_path(t)
+            marker = cache_file.with_suffix(cache_file.suffix + ".tmp")
+            if not FLAGS["recompute"] and is_cached(t):
+                try:
+                    results.append(GSplatData.load(cache_file, include_stats=False))
+                    continue
+                except Exception as exc:  # noqa: BLE001
+                    aprint(f"  t={t} cache unreadable ({exc}); re-fitting")
+                    cache_file.unlink(missing_ok=True)
+
+            volume = np.asarray(arr[t]).astype(np.float32)
+            fitted = fit_gaussian_splats(
+                volume,
+                seeds=SEEDS,
+                device=_device(),
+                voxel_size=voxel,
+                verbose=False,
+            )
+            # Marker file: if the process dies mid-save the leftover .tmp makes
+            # the next run discard the partial cache rather than load a truncated
+            # store.
+            marker.touch()
+            fitted.save(
+                cache_file,
+                encoding_mode=EncodingMode.MEMORY,
+                include_fitting_info=True,
+                compress="zip",
+                zip_deflate=True,
+            )
+            marker.unlink(missing_ok=True)
+            results.append(fitted)
+            if (t + 1) % 10 == 0 or t == n_timepoints - 1:
+                aprint(f"  {t + 1}/{n_timepoints} fitted ({fitted.n_splats:,} splats)")
+    return results
+
+
+def crop_centre_um(image_store: Path) -> np.ndarray:
+    """The crop's geometric centre in um, ZYX.
+
+    Every crop is the same 104 um cube, so centring on the box centre — rather
+    than on each crop's own amplitude-weighted centroid — makes all nine tiles
+    occupy identical boxes and the 3x3 grid line up exactly.
+    """
+    from luxar.io.zarr_v3 import open_zarr_v3
+
+    arr = open_zarr_v3(image_store)["0"]
+    voxel = np.asarray(voxel_size_of(image_store), dtype=np.float64)
+    return 0.5 * voxel * np.asarray(arr.shape[1:], dtype=np.float64)
+
+
+def combine_to_4d(
+    per_timepoint: list[GSplatData], centre_zyx: np.ndarray
+) -> GSplatData:
+    """Stack per-timepoint 3D fits into one 4D (ZYX + time) GSplatData.
+
+    Per timepoint, in order:
+
+    1. **Recentre** on the crop's box centre, so all nine tiles share one box.
+    2. **Drop the diffuse large-scale tail.** A fit of a densely packed nuclei
+       stack puts most splats at ~1 um (median characteristic size 1.1 um, median
+       nearest-neighbour spacing 1.8 um) but leaves a tail of big low-frequency
+       splats (99th percentile 3.5 um, up to 7 um along the coarse Z axis). Under
+       volumetric blending optical depth grows with a splat's path length, so that
+       few-percent tail renders as opaque discs that bury the nuclei it sits on
+       top of. ``scale`` is the geometric-mean sigma over the SPATIAL axes only,
+       which is why it survives the zero-variance time axis added below.
+    3. **Normalise amplitude** to a fixed peak. The viewer scales a gsplats node
+       by the single maximum stored for the whole node, so without this the
+       brightness of the whole embryo would visibly jump whenever a timepoint with
+       an unusually bright nucleus went past.
+
+    Time is then added as a new dimension with ``sigma=0``: splats are
+    instantaneous, they must not smear across frames.
+    """
+    prepared: list[GSplatData] = []
+    for g in per_timepoint:
+        g = g.translate(-centre_zyx)
+        g = g.filter_by(scale_max=SCALE_MAX_PERCENTILE, scale_percentile=True)
+        amp_max = float(g.amplitudes.max()) if g.n_splats else 0.0
+        if amp_max > 0:
+            g = g.scale_intensity(1.0 / amp_max)
+        prepared.append(g)
+
+    return GSplatData.combine_as_new_dimension(
+        prepared,
+        values=list(range(len(prepared))),
+        sigma=0.0,
+    )
+
+
+def build_lod(data: GSplatData) -> GSplatData:
+    """Give a 4D crop a substitutive LOD ladder, with time as a hard barrier.
+
+    ``coarsen_dims=(0, 1, 2)`` restricts merging to the ZYX centre columns, so a
+    coarse level never merges splats from different timepoints into one — which
+    would smear the whole timelapse into a single blur.
+    """
+    from luxar.gsplats.lod import RecipeParams, build_recipe
+
+    return build_recipe(
+        data,
+        "levels",
+        RecipeParams(
+            compression_factor=LOD_COMPRESSION_FACTOR,
+            levels=LOD_LEVELS,
+            coarsen_dims=(0, 1, 2),
+            additive_ladders=ADDITIVE_LADDERS,
+        ),
+    )
+
+
+# =============================================================================
+# Tracks
+# =============================================================================
+
+
+def lineage_colors(n_lineages: int) -> np.ndarray:
+    """One saturated colour per lineage, hues spread by the golden ratio.
+
+    Golden-ratio hue stepping keeps neighbouring lineage ids visually distinct
+    (a plain linear ramp gives adjacent lineages near-identical hues). Colours are
+    authored in sRGB and linearized, because the viewer works in linear light.
+    """
+    hues = (np.arange(n_lineages, dtype=np.float32) * 0.61803399) % 1.0
+    return (hsv_to_rgb(hues, 0.85, 1.0) ** 2.2).astype(np.float32)
+
+
+def track_geometry(
+    geff_store: Path, centre_zyx: np.ndarray, n_timepoints: int
+) -> dict | None:
+    """Build point and polyline arrays for one crop's annotated cell tracks.
+
+    Returns arrays in ``(z, y, x, time)`` column order — matching the gsplats'
+    ``dim_order`` — or ``None`` when the crop has no usable annotation:
+
+    * ``point_positions`` / ``point_colors`` / ``point_radii``: one marker per
+      annotated cell per timepoint, coloured by lineage
+    * ``line_vertices`` / ``line_colors`` / ``line_widths`` / ``line_indices``:
+      the lineage forest as ``indexed`` lines — one vertex per annotated cell and
+      one edge per tracking link. Sharing vertex rows between consecutive links is
+      what keeps a track's joints continuous, and it makes a cell division render
+      as a real fork instead of two detached strands.
+
+    The whole graph is emitted as ONE indexed lines node rather than a polyline
+    node per track: the crops carry up to ~1,900 tracked cells, and one node per
+    track would mean hundreds of nodes per crop.
+    """
+    from luxar.gsplats.interop.geff import read_geff
+
+    graph = read_geff(geff_store)
+    if graph.n_nodes == 0:
+        return None
+
+    # GEFF stores voxel coordinates; scale to um and recentre exactly as the
+    # gsplats were, so markers land on the nuclei they annotate.
+    pos = graph.positions_um() - centre_zyx
+    lineage = graph.lineage_ids()
+    palette = lineage_colors(int(lineage.max()) + 1)
+    vertices = np.column_stack([pos, graph.t.astype(np.float32)]).astype(np.float32)
+    colors = palette[lineage]
+
+    # Keep only what the requested time window covers. Vertices are NOT dropped
+    # (that would invalidate every edge index); only edges with an endpoint past
+    # the window are, and the markers are filtered separately.
+    edges = graph.edge_indices()
+    if len(edges):
+        in_window = (graph.t[edges[:, 0]] < n_timepoints) & (
+            graph.t[edges[:, 1]] < n_timepoints
+        )
+        edges = edges[in_window]
+    if not len(edges):
+        return None
+
+    visible = graph.t < n_timepoints
+    return {
+        "point_positions": vertices[visible],
+        "point_colors": colors[visible],
+        "point_radii": np.full(int(visible.sum()), CELL_MARKER_RADIUS_UM, np.float32),
+        "line_vertices": vertices,
+        "line_colors": colors,
+        "line_widths": np.full(len(vertices), TRACK_WIDTH_UM, np.float32),
+        "line_indices": edges.astype(np.uint32),
+        "n_lineages": int(lineage.max()) + 1,
+        "n_cells": int(visible.sum()),
+        "n_divisions": len(graph.divisions()),
+    }
+
+
+# =============================================================================
+# Scene
+# =============================================================================
+
+
+def grid_transforms(n: int, pitch: float) -> list[np.ndarray]:
+    """Row-major square-grid placement: 1 -> 1x1, 4 -> 2x2, 9 -> 3x3.
+
+    The grid is laid out in the scene's x/y plane and centred on the origin, so
+    the default camera frames the whole matrix.
+    """
+    side = int(math.ceil(math.sqrt(n)))
+    half = (side - 1) / 2.0
+    out = []
+    for i in range(n):
+        row, col = divmod(i, side)
+        out.append(
+            transforms.translate((col - half) * pitch, (row - half) * pitch, 0.0)
+        )
+    return out
+
+
+def create_luxar_scene(
+    crops: list[dict],
+    n_timepoints: int,
+    output_path: Path,
+) -> Path:
+    """Build the 3x3 matrix scene: one group per crop, each with gsplats+points+lines."""
+    n = len(crops)
+    side = int(math.ceil(math.sqrt(n)))
+    extent = float(crops[0]["extent_um"])
+    xforms = grid_transforms(n, extent * GRID_GAP_FACTOR)
+
+    total_splats = sum(int(c["n_splats"]) for c in crops)
+    total_cells = sum(int(c["tracks"]["n_cells"]) for c in crops if c["tracks"])
+    total_divisions = sum(int(c["tracks"]["n_divisions"]) for c in crops if c["tracks"])
+
+    with asection(f"Creating scene: {side}x{side} matrix, {n} crops"):
+        aprint(f"Output: {output_path.name}")
+        aprint(f"Splats: {total_splats:,} across {n} crops (finest level)")
+        aprint(f"Tracked cell positions: {total_cells:,}")
+        aprint(f"Division events: {total_divisions:,}")
+
+        dims = Dimensions(
+            [
+                Dimension("x", unit="um", display=True),
+                Dimension("y", unit="um", display=True),
+                Dimension("z", unit="um", display=True),
+                Dimension(
+                    "time",
+                    unit="frame",
+                    display=False,
+                    discrete=True,
+                    range=(0, n_timepoints - 1),
+                    step=1.0,
+                ),
+            ]
+        )
+
+        with LuxarZarrCompiler(
+            output_path, encoding_mode=EncodingMode.PRECISION
+        ) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+
+            scene.attrs["title"] = (
+                f"GSplats: Cell Tracking Challenge — {n} zebrafish embryo timelapses"
+            )
+            scene.attrs["description"] = f"""
+4D Cell Tracking — Biohub Challenge Data
+========================================
+
+{n} crops of a developing zebrafish embryo in a {side}x{side} matrix, each a full
+{n_timepoints}-timepoint light-sheet timelapse.
+
+What you are looking at:
+  - GSplats: the image data, {total_splats:,} splats over all crops and timepoints
+  - Points:  {total_cells:,} annotated cell positions, coloured by lineage
+  - Lines:   every tracking link, so each cell's whole trajectory is visible;
+             {total_divisions:,} of the joints are cell divisions, which fork
+
+Level of detail:
+  Each crop carries a substitutive LOD ladder ({LOD_LEVELS} coarser levels,
+  {LOD_COMPRESSION_FACTOR}x apart). At this framing every crop occupies a small
+  fraction of the screen and draws a coarse level; zoom into one and it refines.
+
+Data Source:
+  - Kaggle: Biohub - Cell Tracking During Development
+  - {COMPETITION_URL}
+  - Annotations CC0, Chan Zuckerberg Biohub San Francisco
+  - Light-sheet imaging, Royer Group
+  - Each crop: 100 x 64 x 256 x 256 (TZYX) uint16,
+    voxel 1.625 x 0.40625 x 0.40625 um (a {extent:.0f} um cube)
+
+Navigation:
+  - Time slider (or the play button) scrubs through development
+  - Mouse drag to rotate, scroll to zoom, right-click drag to pan
+            """
+
+            # One `layer=True` wrapper per crop, so the Layers panel offers nine
+            # rows ("this embryo") rather than 27 ("this embryo's splats"). The
+            # wrapper restates `volumetric` because the panel falls back to a
+            # group's default (additive) when no mode is authored, which would
+            # both mislabel the row and hide the absorption slider.
+            for crop, xform in zip(crops, xforms):
+                group = scene.add_group(
+                    crop["name"],
+                    transform=xform,
+                    layer=True,
+                    blending_mode="volumetric",
+                )
+
+                # Volumetric + absorption for the image: emissive-only additive
+                # rendering makes a dense nuclei stack read as a flat glow, while
+                # volumetric occlusion keeps the embryo's depth structure.
+                group.add_gsplats_from_data(
+                    "volume",
+                    crop["lod"],
+                    lod_group=True,
+                    dim_order=["z", "y", "x", "time"],
+                    extend_to_all=[],
+                    opacity=1.0,
+                    absorption=VOLUME_ABSORPTION,
+                    blending_mode="volumetric",
+                    colormap="bop_blue",
+                )
+
+                tracks = crop["tracks"]
+                if tracks is None:
+                    continue
+
+                # Tracks stay visible at every timepoint (`extend_to_all=["time"]`)
+                # so the lineage structure reads even while the volume animates;
+                # the markers do NOT, so only the cells present right now are
+                # flagged.
+                group.add_lines(
+                    "tracks",
+                    vertices=tracks["line_vertices"],
+                    widths=tracks["line_widths"],
+                    colors=tracks["line_colors"],
+                    indices=tracks["line_indices"],
+                    line_type="indexed",
+                    dim_order=["z", "y", "x", "time"],
+                    extend_to_all=["time"],
+                    blending_mode="normal",
+                )
+                group.add_points(
+                    "cells",
+                    positions=tracks["point_positions"],
+                    colors=tracks["point_colors"],
+                    radii=tracks["point_radii"],
+                    dim_order=["z", "y", "x", "time"],
+                    extend_to_all=[],
+                    blending_mode="normal",
+                )
+
+            # --- Overlays ---
+            scene.add_text(
+                "Cell Tracking During Development",
+                position=(0.02, 0.02),
+                font_size=0.045,
+                anchor="top-left",
+                color="rgba(255,255,255,0.6)",
+                blend_mode="difference",
+            )
+            scene.add_text(
+                "Light-sheet microscopy • zebrafish • tracked lineages",
+                position=(0.98, 0.97),
+                font_size=0.015,
+                anchor="bottom-right",
+                color="rgba(200,200,200,0.45)",
+            )
+            scene.add_text(
+                f"{n} embryo crops • {n_timepoints} timepoints each\n"
+                f"{total_splats:,} splats • {total_cells:,} tracked cell positions\n"
+                "Colour = lineage. Lines are whole trajectories;\n"
+                "dots mark the cells present at the current timepoint.",
+                position=(0.02, 0.11),
+                font_size=0.018,
+                font="mono",
+                color="white",
+                width=0.46,
+                line_height=1.45,
+            )
+
+        aprint(f"Scene saved: {output_path}")
+        return output_path
+
+
+# =============================================================================
+# Main
+# =============================================================================
+
+
+def main() -> None:
+    """Build (and serve) the cell-tracking matrix scene."""
+    aprint("=" * 64)
+    aprint("4D CELL TRACKING CHALLENGE — 3x3 EMBRYO MATRIX")
+    aprint("=" * 64)
+    aprint(f"Dataset: {COMPETITION_URL}")
+
+    output_path = (
+        get_demos_output_dir() / "gsplats_4d_cell_tracking_challenge.luxar.zarr"
+    )
+
+    if FLAGS["serve_only"]:
+        if output_path.exists():
+            launch_viewer(output_path)
+        else:
+            aprint(f"No scene at {output_path}. Run without --serve-only first.")
+        return
+
+    n_datasets = max(1, min(N_DATASETS, len(DATASETS)))
+    n_timepoints = max(2, min(TIMEPOINTS, N_TIMEPOINTS))
+    chosen = DATASETS[:n_datasets]
+    aprint(f"Crops: {n_datasets} • timepoints: {n_timepoints} • seeds: {SEEDS:,}")
+
+    crops: list[dict] = []
+    for i, dataset in enumerate(chosen, 1):
+        with asection(f"[{i}/{n_datasets}] {dataset}"):
+            image_store, geff_store = fetch_dataset(dataset, n_timepoints)
+            centre = crop_centre_um(image_store)
+            per_tp = fit_timelapse(dataset, image_store, n_timepoints)
+            combined = combine_to_4d(per_tp, centre)
+            aprint(f"Combined 4D: {combined.n_splats:,} splats")
+            lod = build_lod(combined)
+            counts = [int(lvl.n_splats_total) for lvl in lod.substitutive_levels]
+            aprint(f"LOD levels (fine->coarse): {counts}")
+            tracks = track_geometry(geff_store, centre, n_timepoints)
+            if tracks is None:
+                aprint("No usable annotation for this crop — volume only")
+            else:
+                aprint(
+                    f"Tracks: {tracks['n_cells']:,} cell positions in "
+                    f"{tracks['n_lineages']:,} lineages, "
+                    f"{len(tracks['line_indices']):,} links, "
+                    f"{tracks['n_divisions']:,} divisions"
+                )
+            crops.append(
+                {
+                    "name": dataset,
+                    "lod": lod,
+                    "n_splats": counts[0] if counts else combined.n_splats,
+                    "tracks": tracks,
+                    "extent_um": float(2.0 * centre.max()),
+                }
+            )
+
+    scene_path = create_luxar_scene(crops, n_timepoints, output_path)
+
+    if not FLAGS["no_serve"]:
+        aprint("\nLaunching viewer...")
+        aprint("Scrub the time slider to watch the cells move along their tracks.")
+        launch_viewer(scene_path)
+
+    aprint("\nDone!")
+
+
+if __name__ == "__main__":
+    main()
