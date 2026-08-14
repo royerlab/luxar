@@ -74,6 +74,12 @@ def fit_tile(
         Maximum number of progressive passes (None = unlimited).
     **fit_kwargs
         All other keyword arguments forwarded to the fitting function.
+        ``seeds`` here is **per tile**: an integer is the count for THIS tile
+        alone. The CLI's ``--seeds`` is a whole-volume budget and is divided by
+        the tile count before reaching this function (see
+        ``luxar.cli.gsplat_ops.fitting.fit_utils.split_seeds_across_tiles``);
+        a direct Python caller does that division itself if it wants the same
+        semantics.
         ``floor`` (default ``"auto"``) is intercepted here: a spec string is
         resolved once against the whole ``volume`` via
         :func:`~luxar.gsplats.fitting.preprocessing.resolve_volume_floor`
@@ -293,6 +299,12 @@ def fit_tiled(
         All other keyword arguments forwarded to the per-tile fitting function
         (e.g. ``seeds``, ``n_iters``, ``preset``, ``device``,
         ``residual_pass_min_iters`` when ``progressive=True``).
+        ``seeds`` is handed to EVERY tile as-is, so an integer here is a
+        **per-tile** count, not a whole-volume budget: N tiles fit ~N x seeds
+        splats. The CLI's ``--seeds`` IS a whole-volume budget and is divided
+        by the tile count before this call (see
+        ``luxar.cli.gsplat_ops.fitting.fit_utils.split_seeds_across_tiles``);
+        a direct Python caller that wants the same semantics divides itself.
 
     Returns
     -------

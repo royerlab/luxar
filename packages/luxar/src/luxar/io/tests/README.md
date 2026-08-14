@@ -16,6 +16,7 @@ Tests for the Luxar I/O package (compiler, reader, ordering).
 - `test_progressive_writing.py` - Tests for progressive (streaming) writing and deterministic cleanup of compiler-owned temporary scenes on successful or failed finalization
 - `test_writer_parent_parameter.py` - Tests for parent parameter in writer
 - `test_io_metadata.py` - Tests for metadata consolidation and storage
+- `test_volume_lazy.py` - Tests for lazy volume access (`open_volume_lazy` array selection, `pin_volume_axes`, splat-dim → volume-axis maps)
 
 ## Running
 

@@ -1,0 +1,403 @@
+"""``--seeds`` is a whole-volume budget that a tiled fit splits across tiles.
+
+A default ``luxar gsplat cal`` reports a WHOLE-VOLUME K*, and the documented
+pipeline is ``cal`` -> ``fit --seeds K*``. Before #1556 every tile of a fit was
+handed the SAME ``--seeds K``, so the realized total was roughly ``K x n_tiles``
+(a real report: ``--seeds 256000`` auto-tiled into 21 tiles produced 2,449,962
+splats). :func:`split_seeds_across_tiles` now divides an integer budget across
+the grid.
+
+The unit tests pin the helper's arithmetic; the CLI tests pin the value actually
+handed down on both tiled entry points, by patching only the fitting boundary
+(``fit_tile`` / ``fit_tiled``) and recording its ``seeds=`` kwarg — the real
+typer command, volume load, tiling resolution and grid math all run.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+import pytest
+from typer.testing import CliRunner
+
+from luxar.cli import app
+from luxar.cli.gsplat_ops.fitting.fit_utils import split_seeds_across_tiles
+from luxar.gsplats.gsplat_data import GSplatData
+from luxar.gsplats.tiling import compute_tile_specs
+from luxar.gsplats.utils.trils import tril_size
+
+try:
+    import torch  # noqa: F401
+
+    HAS_TORCH = True
+except ImportError:
+    HAS_TORCH = False
+
+runner = CliRunner()
+
+# A 48x48 volume tiled at tile_size=24 / overlap=4 gives a 3x3 grid.
+_N_TILES = 9
+
+
+# ---------------------------------------------------------------- unit tests
+
+
+def test_int_budget_is_divided_across_tiles() -> None:
+    """The reported regression: 256,000 over 21 tiles is ~12k per tile, not 256k."""
+    assert split_seeds_across_tiles(256_000, 21) == 12_191  # ceil(256000 / 21)
+
+
+def test_int_budget_rounds_up() -> None:
+    """A non-divisible budget rounds UP rather than truncating the request."""
+    assert split_seeds_across_tiles(100, 8) == 13  # 100 / 8 == 12.5 -> ceil 13
+
+
+def test_single_tile_is_a_no_op() -> None:
+    """One tile IS the whole volume — the budget passes through untouched."""
+    assert split_seeds_across_tiles(256_000, 1) == 256_000
+
+
+@pytest.mark.parametrize("n_tiles", [0, -1])
+def test_non_positive_tile_count_is_a_no_op(n_tiles: int) -> None:
+    """Defensive: a degenerate grid count must never divide (or divide by zero)."""
+    assert split_seeds_across_tiles(5000, n_tiles) == 5000
+
+
+def test_float_ratio_passes_through_unchanged() -> None:
+    """A compression ratio is scale-free: it is a fraction of whatever voxels it
+    is applied to, so per tile it already means the same density it means
+    whole-volume. Dividing it by the tile count would be wrong."""
+    assert split_seeds_across_tiles(0.02, 21) == 0.02
+
+
+def test_auto_passes_through_unchanged() -> None:
+    """``--seeds auto`` (None) is sized per tile by the fitter itself."""
+    assert split_seeds_across_tiles(None, 21) is None
+
+
+def test_positive_budget_smaller_than_tile_count_gives_one_per_tile() -> None:
+    """A positive K < N still seeds every tile, so the total is N, not K.
+
+    ``ceil`` gives this for free — the point of the test is the SEMANTICS (never
+    zero seeds for a tile), which is what keeps the existing tiled CLI tests
+    (``--seeds 10`` across up to 16 tiles) fitting anything at all. It is also
+    the one case where the realized total *exceeds* the request.
+    """
+    assert split_seeds_across_tiles(10, 16) == 1
+    assert split_seeds_across_tiles(1, 1000) == 1
+
+
+@pytest.mark.parametrize("bad", [0, -5])
+def test_non_positive_budget_passes_through_unchanged(bad: int) -> None:
+    """An invalid K must reach the fitter intact so its own validation fires.
+
+    ``fit_gaussian_splats`` rejects a non-positive int count with "seeds as int
+    must be positive" (``gsplats/fitting/validation.py``). Rounding it up to 1
+    here would swallow that error on tiled fits only — ``--seeds 0 --tiling none``
+    would fail while ``--seeds 0 --tiling uniform`` silently fit one splat per
+    tile. See ``test_cli_zero_seeds_still_rejected_when_tiled`` for the
+    end-to-end half of this.
+    """
+    assert split_seeds_across_tiles(bad, 16) == bad
+
+
+def test_split_prints_a_notice(capsys: pytest.CaptureFixture[str]) -> None:
+    """The division is never silent — it names budget, per-tile count and grid."""
+    split_seeds_across_tiles(256_000, 21)
+    out = capsys.readouterr().out
+    assert "256,000" in out and "12,191" in out and "21 tiles" in out
+
+
+def test_no_notice_when_nothing_is_split(capsys: pytest.CaptureFixture[str]) -> None:
+    """Guard: the pass-through cases print nothing (the notice is conditional)."""
+    split_seeds_across_tiles(256_000, 1)
+    split_seeds_across_tiles(0.02, 21)
+    split_seeds_across_tiles(None, 21)
+    assert capsys.readouterr().out == ""
+
+
+# ------------------------------------------------------------------ CLI seam
+
+
+def _make_volume(path: Path) -> None:
+    """A small 2D image with a few Gaussian blobs (mirrors the tiled CLI tests)."""
+    v = np.zeros((48, 48), np.float32)
+    yy, xx = np.ogrid[:48, :48]
+    for cy, cx in [(12, 12), (36, 36), (12, 36), (36, 12)]:
+        v += np.exp(-((yy - cy) ** 2 + (xx - cx) ** 2) / 20.0).astype(np.float32)
+    np.save(path, v)
+
+
+def _one_splat_result() -> GSplatData:
+    """A minimal valid 2D leaf so the CLI's save + summary path completes."""
+    chol = np.zeros((1, tril_size(2)), dtype=np.float32)
+    chol[0, 0] = 1.0  # packed lower-triangular: [l00, l10, l11]
+    chol[0, 2] = 1.0
+    return GSplatData(
+        centers=np.full((1, 2), 1.0, dtype=np.float32),
+        amplitudes=np.ones((1,), dtype=np.float32),
+        cholesky_factors=chol,
+        stats={"time_seconds": 0.0},
+    )
+
+
+def test_grid_is_nine_tiles() -> None:
+    """Pins the grid the two CLI tests below divide against (48/24/4 -> 3x3)."""
+    assert len(compute_tile_specs((48, 48), 24, 4)) == _N_TILES
+
+
+@pytest.mark.skipif(not HAS_TORCH, reason="the fit CLI imports the torch fitter")
+def test_cli_sequential_tiled_splits_seeds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``fit --tiling uniform --seeds 90`` hands ``fit_tiled`` 10 (90 / 9 tiles).
+
+    Pre-fix this was 90 — which ``fit_tiled`` then applied to EVERY tile, for a
+    ~810-splat budget on a 90-splat request.
+    """
+    seen: dict[str, Any] = {}
+
+    def _fake_fit_tiled(volume: Any, **kwargs: Any) -> GSplatData:
+        seen.update(kwargs)
+        return _one_splat_result()
+
+    monkeypatch.setattr("luxar.gsplats.fit_tiled_gsplats.fit_tiled", _fake_fit_tiled)
+
+    vol = tmp_path / "vol.npy"
+    _make_volume(vol)
+    out = tmp_path / "seq.gsplats.zarr"
+    result = runner.invoke(
+        app,
+        [
+            "gsplat",
+            "fit",
+            str(vol),
+            str(out),
+            "--tiling",
+            "uniform",
+            "--tile-size",
+            "24",
+            "--overlap",
+            "4",
+            "--flat",
+            "--seeds",
+            "90",
+            "--device",
+            "cpu",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert seen["seeds"] == 90 // _N_TILES == 10
+
+
+@pytest.mark.skipif(not HAS_TORCH, reason="the fit CLI imports the torch fitter")
+def test_cli_single_tile_worker_splits_seeds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``fit --tile 3/16 --seeds 90`` fits ONE tile of the REAL grid, so it
+    gets 10 — not 90, and not 6.
+
+    The denominator is deliberately WRONG (16 against a 9-tile grid — the case
+    the command already prints "using actual grid count" for). Splitting by the
+    user's ``tile_total`` would give ``ceil(90/16) == 6``; only splitting by
+    ``len(specs)`` gives 10. This is the path every parallel ``-j`` worker and
+    every uniform-mode ``batch-fit`` array task re-enters, which is why the
+    whole-volume count is forwarded to them verbatim.
+    """
+    seen: dict[str, Any] = {}
+
+    def _fake_fit_tile(volume: Any, spec: Any, **kwargs: Any) -> GSplatData:
+        seen.update(kwargs)
+        return _one_splat_result()
+
+    monkeypatch.setattr("luxar.gsplats.fit_tiled_gsplats.fit_tile", _fake_fit_tile)
+
+    vol = tmp_path / "vol.npy"
+    _make_volume(vol)
+    out = tmp_path / "tile3.gsplats.zarr"
+    result = runner.invoke(
+        app,
+        [
+            "gsplat",
+            "fit",
+            str(vol),
+            str(out),
+            "--tile",
+            "3/16",  # stale denominator; the real grid is _N_TILES == 9
+            "--tile-size",
+            "24",
+            "--overlap",
+            "4",
+            "--seeds",
+            "90",
+            "--device",
+            "cpu",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "using actual grid count" in result.output.lower()
+    assert seen["seeds"] == 10  # ceil(90 / 9); a tile_total split would be 6
+
+
+@pytest.mark.skipif(not HAS_TORCH, reason="the fit CLI imports the torch fitter")
+def test_cli_whole_volume_fit_keeps_full_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Guard: an untiled fit still gets the full ``--seeds`` (no stray division)."""
+    seen: dict[str, Any] = {}
+
+    def _fake_fit(volume: Any, **kwargs: Any) -> GSplatData:
+        seen.update(kwargs)
+        return _one_splat_result()
+
+    # The command does `from luxar.gsplats import fit_gaussian_splats` at call
+    # time, so the package-level name is the binding it will resolve.
+    monkeypatch.setattr("luxar.gsplats.fit_gaussian_splats", _fake_fit)
+
+    vol = tmp_path / "vol.npy"
+    _make_volume(vol)
+    out = tmp_path / "whole.gsplats.zarr"
+    result = runner.invoke(
+        app,
+        [
+            "gsplat",
+            "fit",
+            str(vol),
+            str(out),
+            "--tiling",
+            "none",
+            "--seeds",
+            "90",
+            "--device",
+            "cpu",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert seen["seeds"] == 90
+
+
+@pytest.mark.skipif(not HAS_TORCH, reason="the fit CLI imports the torch fitter")
+def test_cli_parallel_forwards_raw_budget_and_announces_split(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``-j 2`` forwards the RAW ``--seeds 90`` to its workers and says so.
+
+    Two halves, both load-bearing:
+
+    * The worker argv must carry ``--seeds 90`` **verbatim**. Each worker
+      re-enters ``fit --tile i/M`` and divides for itself, so dividing in the
+      dispatcher too would double-divide (90 -> 10 -> 2).
+    * The parent must still ANNOUNCE the split. Workers run under
+      ``subprocess.run(capture_output=True)``, so their notice is discarded on
+      success and the user would otherwise only see the undivided "Seeds: 90".
+    """
+    captured: dict[str, Any] = {}
+
+    def _fake_parallel(**kwargs: Any) -> GSplatData:
+        captured.update(kwargs)
+        return _one_splat_result()
+
+    monkeypatch.setattr(
+        "luxar.gsplats.fit_tiled_parallel.fit_tiled_parallel", _fake_parallel
+    )
+
+    vol = tmp_path / "vol.npy"
+    _make_volume(vol)
+    out = tmp_path / "par.gsplats.zarr"
+    result = runner.invoke(
+        app,
+        [
+            "gsplat",
+            "fit",
+            str(vol),
+            str(out),
+            "--tiling",
+            "uniform",
+            "--tile-size",
+            "24",
+            "--overlap",
+            "4",
+            "-j",
+            "2",
+            "--flat",
+            "--seeds",
+            "90",
+            "--device",
+            "cpu",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert captured["num_tiles"] == _N_TILES
+
+    argv = captured["worker_cmd_builder"](0, captured["num_tiles"], tmp_path / "t0")
+    assert "--seeds" in argv
+    assert argv[argv.index("--seeds") + 1] == "90", (
+        f"worker must get the raw whole-volume budget, got {argv}"
+    )
+
+    # The parent announces the division the workers will perform.
+    assert "whole-volume budget" in result.output
+    assert "10 per tile" in result.output and f"{_N_TILES} tiles" in result.output
+
+
+@pytest.mark.skipif(not HAS_TORCH, reason="the fit CLI imports the torch fitter")
+def test_cli_zero_seeds_still_rejected_when_tiled(tmp_path: Path) -> None:
+    """``--seeds 0`` must fail on a TILED fit exactly as it does whole-volume.
+
+    Nothing is patched here — the real fitter's validation must be the thing
+    that fires. If the helper floored a non-positive budget to 1 per tile, the
+    tiled run would silently fit instead, so the two paths would disagree about
+    what valid input is.
+    """
+    vol = tmp_path / "vol.npy"
+    _make_volume(vol)
+
+    whole = runner.invoke(
+        app,
+        # fmt: off
+        [
+            "gsplat",
+            "fit",
+            str(vol),
+            str(tmp_path / "a.gsplats.zarr"),
+            "--tiling",
+            "none",
+            "--seeds",
+            "0",
+            "--device",
+            "cpu",
+        ],
+        # fmt: on
+    )
+    tiled = runner.invoke(
+        app,
+        # fmt: off
+        [
+            "gsplat",
+            "fit",
+            str(vol),
+            str(tmp_path / "b.gsplats.zarr"),
+            "--tiling",
+            "uniform",
+            "--tile-size",
+            "24",
+            "--overlap",
+            "4",
+            "--flat",
+            "--seeds",
+            "0",
+            "--device",
+            "cpu",
+        ],
+        # fmt: on
+    )
+
+    assert whole.exit_code != 0, whole.output
+    assert tiled.exit_code != 0, tiled.output
+    assert "seeds as int must be positive" in tiled.output
