@@ -143,7 +143,16 @@ def zenodo_file_url(record: Manifest, filename: str) -> Optional[str]:
     ``.../records/<id>/files/<name>?download=1`` form from ``zenodo_record``.
     Returns None when the record has neither (i.e. not uploaded yet), which keeps
     the fetch path dormant and demos on the in-repo fallback.
+
+    A record that carries ids but is not yet ``published`` also returns None. The
+    ids are reserved and final from deposition time, so they are recorded well
+    before the record goes public -- but a file URL into an unpublished draft 404s
+    for everyone, and turning a clean "not hosted yet" into an HTTP error would be
+    a worse story for the one caller who has no in-repo copy. ``published``
+    therefore gates the URL, not the presence of an id.
     """
+    if record.get("published") is False:
+        return None
     base = record.get("base_url")
     if base:
         return f"{base.rstrip('/')}/{filename}?download=1"

@@ -71,9 +71,11 @@ Each subdirectory contains pre-fitted `.gsplats.zarr.zip` files for one demo:
 > four along z, and it carries no substitutive detail levels). Its replacement is
 > built and verified but not yet uploaded, and until it is, `ensure_dataset(
 > "h2afva")` has nothing to fetch for the default variant. Note that a pin is
-> only half of a download: all three records are still drafts, so their
-> `zenodo_record`/`base_url` are null and the Zenodo leg of the fetch stays
-> dormant until the depositions are published and their IDs land here.
+> only half of a download: all three records are still unsubmitted drafts, so each
+> carries `published: false` and the Zenodo leg of the fetch builds no URL at all
+> — the record ids and reserved DOIs *are* recorded (Zenodo fixes both at
+> deposition time), but a file URL into a draft 404s for everyone. Flipping those
+> three flags once the depositions are published is what activates fetching.
 
 ### Other Data Files (top level)
 

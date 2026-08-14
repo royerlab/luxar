@@ -53,30 +53,52 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = REPO_ROOT / "packages/luxar/src/luxar/demos/data"
 MANIFEST = REPO_ROOT / "packages/luxar/src/luxar/demos/data_manifest.json"
 
-# Zenodo records, grouped by license family. IDs/DOIs/base_url are null until the
-# depositions are created and files uploaded (R17 step 2); once set, the fetch
-# helper pulls from Zenodo instead of the in-repo LFS copy.
+# Zenodo records, grouped by license family.
+#
+# The record ids and DOIs below are REAL and final: Zenodo reserves a DOI at
+# deposition time and the deposition id becomes the record id on publication, so
+# `https://zenodo.org/records/<id>/...` is already the right URL. What is not yet
+# true is that the records are PUBLIC — all three are still unsubmitted drafts,
+# and a file URL into a draft 404s for everyone.
+#
+# Hence `published`: while it is false the fetch helper builds no URL at all, so
+# the Zenodo leg stays dormant exactly as it did when the ids were null, and
+# demos keep resolving cache -> in-repo LFS. Flipping the three flags at
+# publication time is what activates fetching, and it is the only edit needed.
+# Recording the ids now (rather than at publish time) means the manifest, the
+# record descriptions and the reserved DOIs cannot drift apart in the meantime.
+#
+# Titles are kept in step with the live record titles on purpose: they are what a
+# `luxar demo` user is pointed at, and the h2afva one in particular used to
+# describe the 51tp cut as a "subset", which its own record text contradicts.
 RECORDS = {
     "cc-by": {
-        "title": "Luxar demo datasets (CC-BY / CC0 / public domain)",
+        "title": "Luxar demo datasets: permissively licensed (CC-BY, CC0, public domain)",
         "license": "cc-by-4.0",
-        "zenodo_concept_doi": None,
-        "zenodo_record": None,
+        "zenodo_concept_doi": "10.5281/zenodo.21912280",
+        "zenodo_record": "21912280",
         "base_url": None,
+        "published": False,
     },
     "cc-by-sa": {
-        "title": "Luxar demo datasets (CC-BY-SA)",
+        "title": "Luxar demo datasets: ShareAlike (CC BY-SA 4.0)",
         "license": "cc-by-sa-4.0",
-        "zenodo_concept_doi": None,
-        "zenodo_record": None,
+        "zenodo_concept_doi": "10.5281/zenodo.21912282",
+        "zenodo_record": "21912282",
         "base_url": None,
+        "published": False,
     },
     "h2afva": {
-        "title": "h2afva zebrafish histone light-sheet TIMELAPSE, full 253 timepoints (Gaussian splats; a 51-timepoint subset is included for easier download)",
+        "title": (
+            "Zebrafish embryogenesis, histone-labelled nuclei: 253-timepoint "
+            "light-sheet timelapse as Gaussian splats (with a lighter "
+            "51-timepoint fit)"
+        ),
         "license": "cc-by-4.0",
-        "zenodo_concept_doi": None,
-        "zenodo_record": None,
+        "zenodo_concept_doi": "10.5281/zenodo.21912284",
+        "zenodo_record": "21912284",
         "base_url": None,
+        "published": False,
     },
 }
 

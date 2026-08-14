@@ -3,25 +3,28 @@
   "description": "Single source of truth for Luxar demo dataset disposition (R17). bucket: zenodo=fetch-on-demand redistributable; local-compute=fetch raw + build locally (not redistributable); regenerate=cheap CPU rebuild (not hosted). See scripts/gen_data_manifest.py.",
   "records": {
     "cc-by": {
-      "title": "Luxar demo datasets (CC-BY / CC0 / public domain)",
+      "title": "Luxar demo datasets: permissively licensed (CC-BY, CC0, public domain)",
       "license": "cc-by-4.0",
-      "zenodo_concept_doi": null,
-      "zenodo_record": null,
-      "base_url": null
+      "zenodo_concept_doi": "10.5281/zenodo.21912280",
+      "zenodo_record": "21912280",
+      "base_url": null,
+      "published": false
     },
     "cc-by-sa": {
-      "title": "Luxar demo datasets (CC-BY-SA)",
+      "title": "Luxar demo datasets: ShareAlike (CC BY-SA 4.0)",
       "license": "cc-by-sa-4.0",
-      "zenodo_concept_doi": null,
-      "zenodo_record": null,
-      "base_url": null
+      "zenodo_concept_doi": "10.5281/zenodo.21912282",
+      "zenodo_record": "21912282",
+      "base_url": null,
+      "published": false
     },
     "h2afva": {
-      "title": "h2afva zebrafish histone light-sheet TIMELAPSE, full 253 timepoints (Gaussian splats; a 51-timepoint subset is included for easier download)",
+      "title": "Zebrafish embryogenesis, histone-labelled nuclei: 253-timepoint light-sheet timelapse as Gaussian splats (with a lighter 51-timepoint fit)",
       "license": "cc-by-4.0",
-      "zenodo_concept_doi": null,
-      "zenodo_record": null,
-      "base_url": null
+      "zenodo_concept_doi": "10.5281/zenodo.21912284",
+      "zenodo_record": "21912284",
+      "base_url": null,
+      "published": false
     }
   },
   "datasets": {

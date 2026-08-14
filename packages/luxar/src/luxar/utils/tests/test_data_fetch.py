@@ -926,3 +926,59 @@ def test_wrapper_repairs_a_corrupt_cache_before_loading(fake_gsplats_repo):
     assert first is not None and second is not None
     assert len(second[0].amplitudes) == len(first[0].amplitudes)
     assert find_quarantined_files(cached)
+
+
+# --------------------------------------------------------------------------- #
+# The Zenodo leg: ids are recorded long before the record is public
+# --------------------------------------------------------------------------- #
+def test_unpublished_record_builds_no_url_even_with_ids():
+    """`published: false` keeps the leg dormant, ids notwithstanding.
+
+    Zenodo reserves a DOI at deposition time and the deposition id becomes the
+    record id on publication, so both are recorded as soon as the draft exists --
+    but a file URL into an unpublished draft 404s for everyone. Returning None
+    keeps the caller on the in-repo copy and its clean "not hosted yet" message
+    instead of turning that into an HTTP error.
+    """
+    rec = {
+        "zenodo_record": "21912280",
+        "zenodo_concept_doi": "10.5281/zenodo.21912280",
+        "published": False,
+    }
+    assert data_fetch.zenodo_file_url(rec, "kidney_ch0.gsplats.zarr.zip") is None
+
+
+def test_published_record_derives_the_standard_file_url():
+    rec = {"zenodo_record": "21912280", "published": True}
+    assert data_fetch.zenodo_file_url(rec, "a.zip") == (
+        "https://zenodo.org/records/21912280/files/a.zip?download=1"
+    )
+
+
+def test_explicit_base_url_wins_over_the_derived_form():
+    rec = {
+        "zenodo_record": "21912280",
+        "base_url": "https://example.org/files/",
+        "published": True,
+    }
+    assert data_fetch.zenodo_file_url(rec, "a.zip") == (
+        "https://example.org/files/a.zip?download=1"
+    )
+
+
+def test_record_without_ids_builds_no_url():
+    assert data_fetch.zenodo_file_url({}, "a.zip") is None
+
+
+def test_every_shipped_record_is_still_unpublished():
+    """The three records are private drafts; publishing is a deliberate act.
+
+    Guards against wiring a live URL by accident: while the drafts are unpublished
+    every one of them must build no URL, so no demo can start 404ing against a
+    record that is not public yet.
+    """
+    m = load_manifest()
+    for name, rec in m["records"].items():
+        assert rec.get("zenodo_record"), f"{name}: record id should be recorded"
+        assert rec.get("published") is False, f"{name}: unexpectedly marked published"
+        assert data_fetch.zenodo_file_url(rec, "x.zip") is None, f"{name}: leg is live"
