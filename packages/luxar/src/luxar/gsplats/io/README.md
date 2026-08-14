@@ -434,6 +434,11 @@ is `luxar gsplat migrate-format`.
   a `GSplatData` bridged from the node tree. Raises on any `format_version`
   not in `SUPPORTED_FORMAT_VERSIONS` (`"3.0"`, `"3.1"`, `"3.2"`, `"3.3"`); the
   current writer emits v3.3, and earlier v3.x files are read transparently.
+  Also `read_authored_appearance(path)` — the source root's authored compositing
+  attrs (`AUTHORED_APPEARANCE_ATTRS`), for a command that rewrites a dataset to
+  hand back to `write_gsplats_tree(root_attrs=…)` / `GSplatData.save(root_attrs=…)`
+  so a structure-only rebuild does not silently reset the look. Best-effort:
+  a missing/unreadable store, or an archive input, yields `{}`.
 - **`inspect_gsplats.py`**: Metadata inspection without loading arrays
   (`inspect_gsplats_zarr`, `format_gsplats_info`).
 - **`migrate.py`**: Legacy-format migration (`migrate_format`,
