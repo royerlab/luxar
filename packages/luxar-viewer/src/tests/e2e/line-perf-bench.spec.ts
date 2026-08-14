@@ -536,6 +536,14 @@ async function measureScenario(
       const start = lastTime;
       let collectingStart: number | null = null;
       let framesSinceResolve = 0;
+      // True when the PREVIOUS sampled frame awaited a GPU timestamp
+      // resolve: that await's full latency (queue flush + mapAsync
+      // round-trip — ~90 ms at 10 M segments) lands in the NEXT frame
+      // interval, so the sample is the instrument's cost, not the
+      // scene's. Measured 2026-08-13: with resolves included the 10 M
+      // WebGPU arm reads p95=109 ms; with the same run's contaminated
+      // intervals excluded (or timestamps off entirely) p95=21 ms.
+      let skipNextDt = false;
 
       // Resolve cadence: 16 frames per resolve. Frequent enough for
       // good per-batch averages, infrequent enough that the
@@ -571,7 +579,14 @@ async function measureScenario(
           const warmupDone = frames >= cfg.warmupFrames || elapsedSinceStart > cfg.warmupMaxMs;
           if (warmupDone) {
             if (collectingStart === null) collectingStart = now;
-            dts.push(now - lastTime);
+            if (skipNextDt) {
+              // Interval contaminated by the previous frame's resolve
+              // await — drop it from the frame stats (the loop's
+              // minFrames floor keeps the sample count honest).
+              skipNextDt = false;
+            } else {
+              dts.push(now - lastTime);
+            }
 
             // Resolve GPU timestamps every N frames. The pool returns
             // the last-frame duration only (see header comment), so
@@ -597,6 +612,7 @@ async function measureScenario(
                 // batch.
               }
               framesSinceResolve = 0;
+              skipNextDt = true;
             }
           }
           lastTime = now;
