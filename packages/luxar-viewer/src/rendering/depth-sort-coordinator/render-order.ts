@@ -591,10 +591,11 @@ export function collectRenderOrderSlot(
  *    acyclic and the remaining freedom is still resolved farthest-first
  *    (a priority topological order).
  * 4. Within a group, BSP painter ranks order the parts where a stored
- *    tree exists (EXACT Fuchs–Kedem–Naylor order, any camera pose,
- *    including inside the volume — the #565 guarantee, preserved as the
- *    single-wrapper special case); otherwise members fall back to their
- *    own view-z (legacy partitions without a stored tree).
+ *    tree ranks EVERY member (EXACT Fuchs–Kedem–Naylor order, any camera
+ *    pose, including inside the volume — the #565 guarantee, preserved as
+ *    the single-wrapper special case); otherwise the whole group falls
+ *    back to member view-z (a partition with no stored tree, or one whose
+ *    tree does not name every part).
  * 5. Sequential global integers 0..M-1 are written to mesh.renderOrder.
  *
  * Transparent objects OUTSIDE the coordinator's sorted set (commutative
@@ -629,10 +630,22 @@ export function assignGlobalRenderOrder(): void {
 
   let nextRank = 0;
   for (const group of ordered) {
-    // BSP ranks where both sides have one (a ranked wrapper ranks ALL its
-    // members); view-z otherwise (rank-less legacy wrapper members).
-    group.slots.sort((a, b) =>
-      a.partRank >= 0 && b.partRank >= 0 ? a.partRank - b.partRank : a.viewZ - b.viewZ
+    // BSP ranks when EVERY member has one; view-z otherwise (a rank-less legacy
+    // wrapper, or a partition with no stored tree).
+    //
+    // The all-or-nothing choice is made once per GROUP, not per comparison, and
+    // that is load-bearing. Mixing the two keys makes the comparator
+    // NON-TRANSITIVE — ranked pairs order by rank while any pair involving an
+    // unranked member orders by depth, so a < b < c < a is representable — and
+    // `Array.sort` is free to return anything for an inconsistent comparator,
+    // including an order that violates both keys. A ranked wrapper normally ranks
+    // all its members, but `ranks.get(partIndex) ?? -1` yields -1 for a part the
+    // stored tree does not name, so the mixed case is reachable from data alone;
+    // falling the whole group back to depth keeps the result a well-defined
+    // (if approximate) order instead of an arbitrary one.
+    const everyMemberRanked = group.slots.every((slot) => slot.partRank >= 0);
+    group.slots.sort(
+      everyMemberRanked ? (a, b) => a.partRank - b.partRank : (a, b) => a.viewZ - b.viewZ
     );
     for (const slot of group.slots) {
       slot.mesh.renderOrder = nextRank++;

@@ -7,9 +7,10 @@ size scalar (a triangle's extent comes from its own vertices, not a per-element
 radius/width/covariance), and neither an LOD nor a partition path *of its own*:
 ``add_mesh(substitutive_lod=...)`` decimates and ``add_mesh(partition=...)``
 splits the surface upstream, and this writer just sees one independent leaf per
-level or per part. (There is no ADDITIVE ladder for any writer to serve — a
-prefix of an index buffer is a holed surface, not a coarse one; see
-``MESH_NODE_SPEC.md`` §9.) What remains is: encode
+level or per part. (``write_mesh_multi_lod`` routes its additive levels through
+this same writer too, one call per level — but a prefix of an index buffer is a
+holed surface, not a coarser one, so what it writes is a REVEAL ladder, not an
+LOD; see ``MESH_NODE_SPEC.md`` §9.) What remains is: encode
 ``vertices`` + ``faces``, encode the optional per-vertex channels, stamp the
 attrs.
 
@@ -422,6 +423,14 @@ def write_mesh(
     ctx.write_colormap_lut(group, attrs)
 
     # 5. Attrs. Transform / nd_transform were already normalized in the gate.
+    # POPPED BEFORE the attrs land, not after. `_skip_scene_bounds` is private
+    # plumbing between the ladder writers and this one — it says "the parent will
+    # aggregate the bbox, do not do it per level" — and popping it below the
+    # `group.attrs.update(attrs)` wrote it to disk on every sub-LOD of every
+    # ladder. Harmless to a reader that ignores unknown keys, but it is an
+    # internal flag in the on-disk format, and it round-trips: a tool that reads
+    # a level's attrs and re-writes them hands it back as a caller attr.
+    skip_scene_bounds = bool(attrs.pop("_skip_scene_bounds", False))
     apply_default_render_attrs(attrs)
     group.attrs.update(attrs)
     group.attrs["type"] = "mesh"
@@ -446,7 +455,7 @@ def write_mesh(
     group.attrs["position_bounds"] = position_bounds
     metadata["position_bounds"] = position_bounds
 
-    if not attrs.pop("_skip_scene_bounds", False):
+    if not skip_scene_bounds:
         ctx.update_scene_bounds(position_bounds)
 
     # 6. Labels (CSR). Per-vertex, like the lines writer.

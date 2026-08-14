@@ -18,6 +18,8 @@ from typing import Callable
 
 import numpy as np
 import pytest
+import typer
+import zarr
 from typer.testing import CliRunner
 
 from luxar.cli import app
@@ -36,6 +38,8 @@ runner = CliRunner()
 GT = make_ground_truth()
 
 _ANSI = re.compile(r"\x1b\[[0-9;:]*[A-Za-z]")
+#: Rich panel borders — the frame around an error, not part of its text.
+_BOX = re.compile(r"[\u2500-\u257f]")
 
 
 def _plain(text: str) -> str:
@@ -53,7 +57,13 @@ def _plain(text: str) -> str:
     the wrong reason, because the escape codes guarantee no match. Normalise
     before asserting either way.
     """
-    return re.sub(r"\s+", " ", _ANSI.sub("", text))
+    # Box-drawing characters go too, not just ANSI. Rich frames an error panel and
+    # hard-wraps inside it, so a message that wraps between two tokens arrives as
+    # `--subst-method │ │ cluster` — the substring is broken by the BORDER rather
+    # than by an escape code, and an assertion on the phrase fails for a reason
+    # that has nothing to do with the message. Dropping the frame and collapsing
+    # whitespace leaves the sentence the user actually reads.
+    return re.sub(r"\s+", " ", _BOX.sub(" ", _ANSI.sub("", text))).strip()
 
 
 @pytest.fixture(scope="module")
@@ -452,11 +462,19 @@ class TestMeshLod:
             # A bare "No such option" would also be a non-zero exit, so assert the
             # replacement AND that typer never got to reject the flag itself.
             assert "No such option" not in pointer, pointer
-            # The pointer must NOT send a mesh user to `--add-method`: that is the
-            # gsplat replacement for the bare flag, and mesh's bare `--method` was
-            # the substitutive one. Asserted on the normalised text, or Rich's
+            # The LONG form must not send a mesh user to `--add-method`: that is
+            # the gsplat replacement for the bare flag, and mesh's bare `--method`
+            # was the substitutive one. Asserted on the normalised text, or Rich's
             # escape codes make the absence unfalsifiable — see `_plain`.
-            assert "--add-method" not in pointer, pointer
+            #
+            # NARROWED for `-m` when the reveal recipe claimed that short form
+            # (#1498 reserved it for exactly that). `-m` is now a live flag naming
+            # the additive ordering, so a message about it necessarily says
+            # `--add-method`; what still must hold — and is asserted above for both
+            # spellings — is that the user is pointed at `--subst-method` WITH
+            # their value, so the pointer stays paste-able.
+            if spelling == "--method":
+                assert "--add-method" not in pointer, pointer
             assert not (tmp_path / f"{stem}.luxar.zarr").exists()
 
     def test_overwrite_DOES_replace_an_existing_output(self, tmp_path: Path) -> None:
@@ -1456,6 +1474,47 @@ class TestMeshLodOutputPaths:
         assert not (source / "nested.luxar.zarr").exists()
         assert LuxarScene.load(source).get_mesh("surf").faces.shape[0] > 0
 
+    def test_an_unrecognized_recipe_is_refused_before_the_output_is_deleted(
+        self, tmp_path: Path
+    ) -> None:
+        """`--recipe` is validated at the CLI, but `run_lod` is directly callable.
+
+        A misspelled recipe used to fall through to the substitutive arm, so
+        `recipe="reveaal"` silently wrote a DECIMATED ladder where a reveal was
+        asked for — a different product, not a near miss.
+
+        The output-preserved half is a REGRESSION pin, not a bug being fixed:
+        specs are already built ~100 lines before the `--overwrite` `rmtree`, so
+        no store was ever lost to this. It is asserted because that ordering is
+        what keeps the raise cheap, and nothing else pins it.
+        """
+        from luxar.cli.mesh_ops.lod_commands import run_lod
+
+        source = tmp_path / "src.luxar.zarr"
+        _write_source(source)
+        out = tmp_path / "out.luxar.zarr"
+        before = _run(run_lod, source, out)
+
+        with pytest.raises(ValueError, match="recipe must be one of"):
+            run_lod(
+                input_path=source,
+                output_path=out,
+                node_name=None,
+                levels=2,
+                compression_factor=4,
+                method="auto",
+                overwrite=True,
+                recipe="reveaal",
+            )
+        # Still the SUBSTITUTIVE ladder the first run wrote — not deleted, and not
+        # replaced by the reveal's shape. Asserted on the store, since a wrong
+        # product here is precisely a store with the other topology in it.
+        assert out.is_dir()
+        group = zarr.open_group(str(out), mode="r")["surf"]
+        assert group.attrs["kind"] == "lod"
+        assert "n_additive_sublods" not in group.attrs
+        assert len(before) == len([k for k in group.keys() if k.startswith("child_")])
+
 
 def test_every_method_named_in_the_help_EXAMPLES_is_a_real_method() -> None:
     """A copy-pasteable example must not name a method the command rejects.
@@ -1490,3 +1549,529 @@ def test_every_method_named_in_the_help_EXAMPLES_is_a_real_method() -> None:
         f"`luxar mesh lod --help` shows --subst-method {sorted(invalid)}, which the "
         f"command rejects (valid: {sorted(MESH_SUBSTITUTIVE_METHODS)})"
     )
+
+
+class TestMeshLodRevealRecipe:
+    """`luxar mesh lod --recipe reveal` — the additive ladder on the CLI.
+
+    The reveal was authorable only from Python until this landed: `-m/--add-method`
+    was RESERVED by the #1498 rename and never filled in. These tests are about the
+    command surface — that the knobs reach the written store, and that a knob aimed
+    at the wrong recipe is refused rather than dropped. What a reveal IS (contiguous
+    prefixes, interleaved stacked timepoints) is pinned deterministically in
+    `core/tests/test_mesh.py`, and is not re-litigated here.
+    """
+
+    @staticmethod
+    def _reveal(
+        run_lod: Callable[..., list[int]],
+        source: Path,
+        out: Path,
+        **knobs: object,
+    ) -> list[int]:
+        """`run_lod` on the reveal recipe. Returns the per-level FACE counts."""
+        return run_lod(
+            input_path=source,
+            output_path=out,
+            node_name=None,
+            levels=3,
+            compression_factor=4,
+            method="auto",
+            overwrite=False,
+            recipe="reveal",
+            **knobs,
+        )
+
+    def test_the_default_recipe_still_writes_a_substitutive_ladder(
+        self, tmp_path: Path
+    ) -> None:
+        """No `--recipe` must behave exactly as before this command grew one.
+
+        The whole design rests on `levels` being the default, so every existing
+        script and every doc example keeps working untouched. Asserted on the
+        STORE — a `kind=lod` group and no `n_additive_sublods` anywhere — rather
+        than on the return value, because the return value is the one thing a
+        recipe branch could get right while writing the wrong shape.
+        """
+        from luxar.cli.mesh_ops.lod_commands import run_lod
+
+        source = tmp_path / "src.luxar.zarr"
+        _write_source(source)
+        out = tmp_path / "out.luxar.zarr"
+        _run(run_lod, source, out)
+
+        group = zarr.open_group(str(out), mode="r")["surf"]
+        assert group.attrs["kind"] == "lod"
+        assert "n_additive_sublods" not in group.attrs
+
+    def test_reveal_writes_one_node_whose_levels_PARTITION_the_faces(
+        self, tmp_path: Path
+    ) -> None:
+        """A reveal is one node with `additive_<i>` subgroups, not N sibling nodes.
+
+        The face SUM is the load-bearing half: the levels are disjoint groups the
+        viewer concatenates, so they must sum to the source's face count exactly.
+        A ladder that duplicated faces across levels — or dropped some — would
+        still load and still look plausible at the finest level.
+        """
+        from luxar.cli.mesh_ops.lod_commands import run_lod
+
+        source = tmp_path / "src.luxar.zarr"
+        _, faces = _write_source(source)
+        out = tmp_path / "out.luxar.zarr"
+
+        level_faces = self._reveal(run_lod, source, out, n_lods=4)
+
+        group = zarr.open_group(str(out), mode="r")["surf"]
+        assert group.attrs["n_additive_sublods"] == 4
+        assert group.attrs.get("kind") is None, "a reveal lives INSIDE the leaf"
+        assert len(level_faces) == 4
+        assert sum(level_faces) == int(faces.shape[0])
+        assert all(count > 0 for count in level_faces)
+
+    def test_n_lods_reaches_the_written_ladder(self, tmp_path: Path) -> None:
+        """The knob must change the STORE, not merely be accepted.
+
+        Threading is what breaks — a flag parsed, validated and then dropped
+        before the adder is the failure this whole command surface risks — so the
+        assertion is on the level count on disk.
+        """
+        from luxar.cli.mesh_ops.lod_commands import run_lod
+
+        source = tmp_path / "src.luxar.zarr"
+        _write_source(source)
+
+        for wanted in (2, 6):
+            out = tmp_path / f"out{wanted}.luxar.zarr"
+            level_faces = self._reveal(run_lod, source, out, n_lods=wanted)
+            group = zarr.open_group(str(out), mode="r")["surf"]
+            assert group.attrs["n_additive_sublods"] == wanted
+            assert len(level_faces) == wanted
+
+    def test_counts_are_read_as_CUMULATIVE_boundaries(self, tmp_path: Path) -> None:
+        """`--counts a,b,c` gives four levels sized a, b-a, c-b, rest.
+
+        The alias for the resolver's `counts` key, which takes cumulative CUT
+        positions. Read as per-level increments instead, the same string yields
+        different level sizes and a short final level — the exact defect #1506
+        fixed one layer down. Pinned here too because the CLI is a second entry
+        point into that vocabulary.
+        """
+        from luxar.cli.mesh_ops.lod_commands import run_lod
+
+        source = tmp_path / "src.luxar.zarr"
+        _, faces = _write_source(source)
+        out = tmp_path / "out.luxar.zarr"
+        total = int(faces.shape[0])
+
+        level_faces = self._reveal(run_lod, source, out, counts="100,300,600")
+
+        assert level_faces == [100, 200, 300, total - 600]
+        assert sum(level_faces) == total
+
+    def test_reveal_centre_changes_which_faces_land_in_the_first_level(
+        self, tmp_path: Path
+    ) -> None:
+        """The centre must reach the ordering, not just the argument parser.
+
+        SENSITIVITY IS THE HARD PART HERE. The reveal grows outward from a centre,
+        so two centres only produce different ladders when the surface is
+        ASYMMETRIC about them — on a mesh symmetric between the two, the distance
+        field is a relabelling and the first level can come out identical, which
+        would make this pass against a `--reveal-centre` that was parsed and
+        thrown away. The grid spans [-1, 1]², so the two corners below are maximally
+        far apart and the first level around each is a different corner's faces.
+        """
+        from luxar.cli.mesh_ops.lod_commands import run_lod
+
+        source = tmp_path / "src.luxar.zarr"
+        _write_source(source)
+
+        def first_level_centroid(tag: str, centre: str) -> tuple[float, float]:
+            out = tmp_path / f"out_{tag}.luxar.zarr"
+            self._reveal(
+                run_lod,
+                source,
+                out,
+                n_lods=4,
+                reveal_centre=centre,
+                spatial_dims="0,1",
+            )
+            level = zarr.open_group(str(out), mode="r")["surf/additive_0"]
+            # The level's own vertex coordinates identify it; face indices are
+            # local to each level's gathered table and so cannot be compared.
+            #
+            # Its MEAN position, not its extremes: both shells reach inward to
+            # roughly the middle of the grid, so `min`/`max` over a level are
+            # nearly equal and say nothing about which corner it grew from. The
+            # centroid does.
+            verts = np.asarray(level["vertices"][:])
+            return float(verts[:, 0].mean()), float(verts[:, 1].mean())
+
+        near_min = first_level_centroid("min", "-1,-1")
+        near_max = first_level_centroid("max", "1,1")
+
+        # SENSITIVITY: the two must differ at all. If they do not, the flag is
+        # being parsed and dropped — or the fixture is symmetric about the two
+        # centres, in which case this test proves nothing and the fixture is the
+        # thing to fix.
+        assert near_min != near_max, (
+            "the two centres produced the same first level — --reveal-centre is "
+            "being parsed and dropped, or this fixture is symmetric about them"
+        )
+        # And the DIRECTION is right, not merely different: the shell grown from
+        # the (-1,-1) corner must sit further toward it on both axes than the one
+        # grown from (1,1). Difference alone would also pass for a centre that
+        # perturbed the order arbitrarily.
+        assert near_min[0] < near_max[0]
+        assert near_min[1] < near_max[1]
+
+    @pytest.mark.parametrize(
+        ("knobs", "expect_typed", "expect_instead"),
+        [
+            ({"n_lods": 4}, "--n-lods", "-L/--levels"),
+            ({"add_method": "radial"}, "-m/--add-method", "--subst-method"),
+            ({"reveal_centre": "0,0,0"}, "--reveal-centre", "no equivalent"),
+            ({"spatial_dims": "0,1,2"}, "--spatial-dims", "no equivalent"),
+            ({"counts": "10,20"}, "--counts/--breakpoints", "no equivalent"),
+        ],
+    )
+    def test_a_reveal_knob_under_recipe_levels_is_REFUSED_naming_both_flags(
+        self,
+        tmp_path: Path,
+        knobs: dict,
+        expect_typed: str,
+        expect_instead: str,
+    ) -> None:
+        """Refused, not silently dropped — and the message names both flags.
+
+        A user who passes `--n-lods` has said what they want. Dropping it and
+        writing a 3-level decimation answers a different question without saying
+        so, which is the failure mode the #1498 rename existed to remove from this
+        flag surface. Naming the equivalent flag is what makes the error
+        actionable rather than merely correct.
+        """
+        from luxar.cli.mesh_ops.lod_commands import _reject_cross_recipe_flags
+
+        with pytest.raises(typer.BadParameter) as excinfo:
+            _reject_cross_recipe_flags(
+                recipe="levels",
+                add_method=knobs.get("add_method"),
+                n_lods=knobs.get("n_lods"),
+                counts=knobs.get("counts"),
+                reveal_centre=knobs.get("reveal_centre"),
+                spatial_dims=knobs.get("spatial_dims"),
+                levels_given=False,
+                compression_given=False,
+                subst_method_given=False,
+            )
+        message = _plain(str(excinfo.value))
+        assert expect_typed in message
+        assert expect_instead in message
+
+    @pytest.mark.parametrize(
+        ("given", "expect_typed", "expect_instead"),
+        [
+            ({"levels_given": True}, "-L/--levels", "--n-lods"),
+            ({"subst_method_given": True}, "--subst-method", "-m/--add-method"),
+            ({"compression_given": True}, "-K/--compression-factor", "no equivalent"),
+        ],
+    )
+    def test_a_substitutive_knob_under_recipe_reveal_is_REFUSED(
+        self, given: dict, expect_typed: str, expect_instead: str
+    ) -> None:
+        """The mirror direction, which a one-sided gate would leave open.
+
+        `-K` is the interesting row: a reveal has NO equivalent, because its
+        levels are a face partition rather than a reduction, so there is no
+        per-level factor to give. The message says that instead of naming a flag
+        that does not exist.
+        """
+        from luxar.cli.mesh_ops.lod_commands import _reject_cross_recipe_flags
+
+        with pytest.raises(typer.BadParameter) as excinfo:
+            _reject_cross_recipe_flags(
+                recipe="reveal",
+                add_method=None,
+                n_lods=None,
+                counts=None,
+                reveal_centre=None,
+                spatial_dims=None,
+                levels_given=given.get("levels_given", False),
+                compression_given=given.get("compression_given", False),
+                subst_method_given=given.get("subst_method_given", False),
+            )
+        message = _plain(str(excinfo.value))
+        assert expect_typed in message
+        assert expect_instead in message
+
+    def test_an_unknown_recipe_is_refused_by_name(self) -> None:
+        from luxar.cli.mesh_ops.lod_commands import _reject_cross_recipe_flags
+
+        with pytest.raises(typer.BadParameter, match="--recipe must be one of"):
+            _reject_cross_recipe_flags(
+                recipe="bogus",
+                add_method=None,
+                n_lods=None,
+                counts=None,
+                reveal_centre=None,
+                spatial_dims=None,
+                levels_given=False,
+                compression_given=False,
+                subst_method_given=False,
+            )
+
+    def test_a_decimation_method_passed_to_add_method_points_at_subst_method(
+        self, tmp_path: Path
+    ) -> None:
+        """`-m cluster` — the pre-rename spelling — must still migrate the user.
+
+        `-m` was held by the hidden legacy option while it was RESERVED; claiming
+        it for `--add-method` is what the reservation was for. The pointer did not
+        disappear with it: `cluster` is a decimation method, so the recipe gate
+        catches the combination and names `--subst-method`.
+        """
+        from luxar.cli.mesh_ops.lod_commands import _reject_cross_recipe_flags
+
+        with pytest.raises(typer.BadParameter) as excinfo:
+            _reject_cross_recipe_flags(
+                recipe="levels",
+                add_method="cluster",
+                n_lods=None,
+                counts=None,
+                reveal_centre=None,
+                spatial_dims=None,
+                levels_given=False,
+                compression_given=False,
+                subst_method_given=False,
+            )
+        assert "--subst-method" in _plain(str(excinfo.value))
+
+    def test_n_lods_and_counts_together_are_refused(self) -> None:
+        """Both size the ladder, so passing both is ambiguous rather than additive."""
+        from luxar.cli.mesh_ops.lod_commands import _reject_cross_recipe_flags
+
+        with pytest.raises(typer.BadParameter, match="both size the ladder"):
+            _reject_cross_recipe_flags(
+                recipe="reveal",
+                add_method=None,
+                n_lods=4,
+                counts="10,20",
+                reveal_centre=None,
+                spatial_dims=None,
+                levels_given=False,
+                compression_given=False,
+                subst_method_given=False,
+            )
+
+    def test_an_invalid_add_method_is_refused_before_anything_is_written(
+        self, tmp_path: Path
+    ) -> None:
+        """Pre-deletion, like `--subst-method`: a bad method must not cost a store.
+
+        `run_lod` deletes the output under `--overwrite` before it writes, so a
+        method rejected only by the adder would be diagnosed with the previous
+        store already gone. The existing output below must survive.
+        """
+        from luxar.cli.mesh_ops.lod_commands import run_lod
+
+        source = tmp_path / "src.luxar.zarr"
+        _write_source(source)
+        out = tmp_path / "out.luxar.zarr"
+        out.mkdir()
+        (out / "keep.txt").write_text("the previous output")
+
+        with pytest.raises(typer.BadParameter, match="--add-method must be one of"):
+            run_lod(
+                input_path=source,
+                output_path=out,
+                node_name=None,
+                levels=3,
+                compression_factor=4,
+                method="auto",
+                overwrite=True,
+                recipe="reveal",
+                add_method="salience",
+            )
+        assert (out / "keep.txt").exists(), "the output was deleted before validation"
+
+    @pytest.mark.parametrize(
+        ("knob", "value"),
+        [
+            ("n_lods", 6),
+            ("add_method", "radial"),
+            ("counts", "100,300"),
+            ("reveal_centre", "0,0"),
+            ("spatial_dims", "0,1"),
+        ],
+    )
+    def test_a_reveal_ARGUMENT_under_recipe_levels_is_refused_by_run_lod_itself(
+        self, tmp_path: Path, knob: str, value: object
+    ) -> None:
+        """The gate one layer below the flag surface.
+
+        `run_lod` is directly callable, and the substitutive arm reads none of the
+        five reveal-only arguments — so `run_lod(recipe="levels", n_lods=6)` built
+        a 3-level decimation and said nothing, which is precisely the silent drop
+        `--recipe` exists to prevent. The CLI cannot reach this (its own gate
+        catches the combination first), so nothing else covers it.
+
+        The existing output must survive too: `--overwrite` deletes it before the
+        write, so a refusal that arrived later would cost a store.
+        """
+        from luxar.cli.mesh_ops.lod_commands import run_lod
+
+        source = tmp_path / "src.luxar.zarr"
+        _write_source(source)
+        out = tmp_path / "out.luxar.zarr"
+        out.mkdir()
+        (out / "keep.txt").write_text("the previous output")
+
+        with pytest.raises(typer.BadParameter) as excinfo:
+            run_lod(
+                input_path=source,
+                output_path=out,
+                node_name=None,
+                levels=3,
+                compression_factor=4,
+                method="auto",
+                overwrite=True,
+                recipe="levels",
+                **{knob: value},
+            )
+        assert "--recipe reveal" in _plain(str(excinfo.value))
+        assert (out / "keep.txt").exists(), "the output was deleted before validation"
+
+    def test_SENSITIVITY_recipe_levels_still_runs_with_no_reveal_arguments(
+        self, tmp_path: Path
+    ) -> None:
+        """The control for the gate above: it must refuse the arguments, not the arm.
+
+        A check that raised unconditionally would pass every row above while
+        breaking the command's whole default path.
+        """
+        from luxar.cli.mesh_ops.lod_commands import run_lod
+
+        source = tmp_path / "src.luxar.zarr"
+        _write_source(source)
+        out = tmp_path / "out.luxar.zarr"
+
+        assert len(_run(run_lod, source, out)) >= 2
+
+
+class TestMeshLodRecipeGateThroughTheRealCLI:
+    """The cross-recipe gate driven by `CliRunner`, not by synthetic booleans.
+
+    The unit tests above hand `_reject_cross_recipe_flags` its `*_given` flags
+    directly, which pins the gate's LOGIC and nothing about whether the command can
+    compute them. It could not: they were derived by comparing each value against
+    its default, so `--recipe reveal --levels 3` — a levels-only flag whose value
+    happens to BE the default — read as "not given" and was silently ignored. The
+    gate was correct and unreachable for exactly the user most likely to be
+    surprised, the one who spells out a default.
+
+    These go through the real parser so the supply signal is the real one.
+    """
+
+    @pytest.mark.parametrize(
+        ("flag", "value"),
+        [
+            ("--levels", "3"),
+            ("-L", "3"),
+            ("--compression-factor", "4"),
+            ("-K", "4"),
+            ("--subst-method", "auto"),
+        ],
+    )
+    def test_a_levels_flag_at_its_DEFAULT_value_is_still_refused_under_reveal(
+        self, tmp_path: Path, flag: str, value: str
+    ) -> None:
+        source = tmp_path / "src.luxar.zarr"
+        _write_source(source)
+        out = tmp_path / "out.luxar.zarr"
+
+        result = runner.invoke(
+            app,
+            ["mesh", "lod", str(source), str(out), "--recipe", "reveal", flag, value],
+        )
+
+        assert result.exit_code != 0, (
+            f"{flag} {value} was accepted under --recipe reveal; the gate is "
+            "inferring 'given' from the value again"
+        )
+        message = _plain(result.output)
+        assert "--recipe levels" in message, message
+        assert not out.exists(), "a refused invocation must write nothing"
+
+    @pytest.mark.parametrize(
+        ("flag", "value"),
+        [("--add-method", "radial"), ("-m", "radial"), ("--n-lods", "4")],
+    )
+    def test_a_reveal_flag_at_its_DEFAULT_value_is_still_refused_under_levels(
+        self, tmp_path: Path, flag: str, value: str
+    ) -> None:
+        """The mirror. `--n-lods 4` and `-m radial` are the reveal defaults."""
+        source = tmp_path / "src.luxar.zarr"
+        _write_source(source)
+        out = tmp_path / "out.luxar.zarr"
+
+        result = runner.invoke(app, ["mesh", "lod", str(source), str(out), flag, value])
+
+        assert result.exit_code != 0, (
+            f"{flag} {value} was accepted under the default recipe"
+        )
+        assert "--recipe reveal" in _plain(result.output) or "--subst-method" in _plain(
+            result.output
+        )
+        assert not out.exists()
+
+    def test_SENSITIVITY_neither_recipe_refuses_its_OWN_flags_at_defaults(
+        self, tmp_path: Path
+    ) -> None:
+        """The control the two above need.
+
+        A gate that treated every parameter as supplied would pass both of them
+        while refusing every legitimate invocation — including one that spells out
+        its own recipe's defaults. Both of these must SUCCEED.
+        """
+        source = tmp_path / "src.luxar.zarr"
+        _write_source(source)
+
+        levels_out = tmp_path / "levels.luxar.zarr"
+        levels = runner.invoke(
+            app,
+            ["mesh", "lod", str(source), str(levels_out), "--levels", "3", "-K", "4"],
+        )
+        assert levels.exit_code == 0, _plain(levels.output)
+
+        reveal_out = tmp_path / "reveal.luxar.zarr"
+        reveal = runner.invoke(
+            app,
+            [
+                "mesh",
+                "lod",
+                str(source),
+                str(reveal_out),
+                "--recipe",
+                "reveal",
+                "-m",
+                "radial",
+                "--n-lods",
+                "4",
+            ],
+        )
+        assert reveal.exit_code == 0, _plain(reveal.output)
+        parent = zarr.open_group(str(reveal_out), mode="r")["surf"]
+        assert parent.attrs["n_additive_sublods"] == 4
+
+    def test_the_help_summary_names_both_ladders(self) -> None:
+        """`mesh lod --help`'s one-liner is the command's docstring summary.
+
+        It said "Build a substitutive LOD ladder", which stopped being the whole
+        truth the moment `--recipe reveal` existed — and it is the first line a
+        user reads.
+        """
+        result = runner.invoke(app, ["mesh", "lod", "--help"])
+        assert result.exit_code == 0
+        summary = _plain(result.output)
+        assert "reveal" in summary, summary

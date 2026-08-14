@@ -23,7 +23,7 @@ levels (coarse + fine) so the broadcast + combined badge surface.
 The fine level's ``coverage_fraction`` is ``MAX_COVERAGE_FRACTION`` (4.0), not
 1.0, because a partition-bound ladder keeps the fills-screen switch point: each
 part projects to only a fraction of the whole ribbon, so the viewer's
-whole-object anchor (1.0, reached at ~a quarter of the viewport diagonal) would
+whole-object anchor (1.0, reached at ~half of the fitted screen axis) would
 put every part on its fine level at the opening framing. See
 ``partitioned_coverage_fractions`` — the ``adaptive`` / ``overview`` gsplat
 recipes and the scene adders' ``substitutive_lod=`` / ``lod_group=`` auto-derive
@@ -130,9 +130,10 @@ def main() -> None:
             # ladder is PARTITION-BOUND: each lod group's bbox is one part, so its
             # projected diagonal is intrinsically a fraction of the whole ribbon's.
             # The viewer's finest anchor of 1.0 is calibrated for a whole-object
-            # ladder and is reached at ~a quarter of the viewport diagonal, so at
+            # ladder and is reached at ~half of the fitted screen axis, so at
             # 1.0 BOTH parts would sit on their fine level at the opening framing —
-            # defeating the point of this example. 4.0 == 1/FILL_FACTOR keeps the
+            # defeating the point of this example. 4.0 == SCREEN_FILL_DIAGONAL_RATIO /
+            # FILL_FACTOR keeps the
             # pre-#1361 fills-screen switch point a tile needs. This is the
             # hand-built counterpart of ``partitioned_coverage_fractions``, which
             # the ``adaptive`` / ``overview`` gsplat recipes apply automatically.

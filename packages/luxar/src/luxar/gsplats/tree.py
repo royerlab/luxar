@@ -309,8 +309,9 @@ def map_leaves(
     """Rebuild the tree with ``fn`` applied to every leaf, preserving its shape.
 
     Walks the (immutable, frozen) tree depth-first and returns a NEW tree of the
-    same shape — same group kinds, ``GSplatPartition.max_elements``, and per-node
-    ``meta`` — in which each :class:`GSplatLeaf` is replaced by ``fn(leaf)``
+    same shape — same group kinds, ``GSplatPartition.max_elements`` and
+    ``bsp_tree``, and per-node ``meta`` — in which each :class:`GSplatLeaf` is
+    replaced by ``fn(leaf)``
     (``fn`` typically returns a transformed leaf). This is the write-side
     workhorse for tree-aware ops (e.g. ``gsplat transform`` on a
     ``kind=partition``) that the flat :class:`~luxar.gsplats.gsplat_data.GSplatData`
@@ -328,6 +329,14 @@ def map_leaves(
             children=[map_leaves(c, fn) for c in node.children],
             max_elements=node.max_elements,
             meta=dict(node.meta),
+            # Part count and order are preserved by construction (one mapped leaf
+            # per input leaf), so the split planes still describe this partition.
+            # CAVEAT for callers: `fn` may MOVE centers, and `split` is a
+            # coordinate in the centers' own space — a caller that transforms
+            # geometry owns re-mapping this (see `map_serialized_bsp_tree`).
+            # Dropping it here instead would silently downgrade every partition
+            # that merely gets re-laddered or intensity-scaled.
+            bsp_tree=node.bsp_tree,
         )
     raise TypeError(  # pragma: no cover - guards against an unknown node type
         f"Unknown gsplat node type: {type(node).__name__}"
@@ -359,6 +368,8 @@ def without_meta_key(node: GSplatNode, key: str) -> GSplatNode:
             children=[without_meta_key(c, key) for c in node.children],
             max_elements=node.max_elements,
             meta=new_meta,
+            # Scrubbing a meta key changes no geometry — keep the split planes.
+            bsp_tree=node.bsp_tree,
         )
     raise TypeError(  # pragma: no cover - guards against an unknown node type
         f"Unknown gsplat node type: {type(node).__name__}"
@@ -497,9 +508,72 @@ def node_from_substitutive_levels(levels: "List[SubstitutiveLevel]") -> GSplatNo
     )
 
 
+def gate_authored_selector(
+    children: "List[GSplatNode]",
+    meta_selector: "Optional[str]",
+    *,
+    source: str,
+) -> "Tuple[List[GSplatNode], str]":
+    """The SELECTOR/THRESHOLD CONSISTENCY gate both serializers share.
+
+    A ``kind=lod`` group's meta ``selector`` describes its AUTHORED per-child
+    ``coverage_fraction`` thresholds, so the two writers
+    (``io/_compiler/gsplat_tree.write_gsplat_node`` and
+    ``gsplats_pipeline/from_io.graft_gsplat_node``) must agree on when it can
+    be preserved — otherwise a store grafted into a scene would render
+    differently from the same store opened directly. Returns the (possibly
+    scrubbed) children and the selector to stamp:
+
+    * unknown ``meta_selector`` → ``ValueError`` before anything is written
+      (the READER whitelists stale spellings away; one arriving here is a
+      hand-built tree that would otherwise write an out-of-vocabulary
+      selector into a store claiming v3.4 compliance);
+    * PARTIALLY-authored ladder → the authored remnant is scrubbed (warned)
+      so the caller's fallback derivation covers every child uniformly, and
+      the stamp is ``"screen-area"`` (the units of every live derivation);
+    * fully authored + explicit selector → preserved verbatim, after
+      validating the thresholds against that selector's contract;
+    * fully authored + NO selector → legacy ``"coverage"`` (the viewer's own
+      missing-selector fallback; authored = legacy is the library-wide
+      convention), likewise validated.
+    """
+    from arbol import aprint
+
+    from luxar.typing_utils.constants import LOD_SELECTORS
+
+    if meta_selector is not None and meta_selector not in LOD_SELECTORS:
+        raise ValueError(
+            f"kind=lod group meta carries selector={meta_selector!r}; must "
+            f"be one of {sorted(LOD_SELECTORS)} (it names the units of the "
+            "children's coverage_fraction thresholds)"
+        )
+    authored = ["coverage_fraction" in (c.meta or {}) for c in children]
+    if not all(authored) and any(authored):
+        aprint(
+            f"  ⚠️  {source}: PARTIALLY-authored coverage_fraction ladder — "
+            "scrubbing the authored remnant and re-deriving the whole ladder "
+            "(screen-area units) so the written selector and thresholds agree."
+        )
+        children = [without_meta_key(c, "coverage_fraction") for c in children]
+        return children, "screen-area"
+    if not all(authored):
+        return children, "screen-area"
+    from luxar.core.group.lod.group import validate_authored_coverage_ladder
+
+    selector_out = str(meta_selector) if meta_selector is not None else "coverage"
+    validate_authored_coverage_ladder(
+        [float(c.meta["coverage_fraction"]) for c in children],
+        selector_out,
+        source=source,
+    )
+    return children, selector_out
+
+
 def tree_from_substitutive_levels(
     levels: "List[SubstitutiveLevel]",
     coverage: "Optional[Callable[[List[int]], List[float]]]" = None,
+    *,
+    selector: "Optional[str]" = None,
 ) -> GSplatNode:
     """Build a node tree from the historical 2-D matrix representation.
 
@@ -513,9 +587,9 @@ def tree_from_substitutive_levels(
       serializer), a separate concept.
 
     Each child of a multi-level lod group is back-filled with a derived
-    ``coverage_fraction`` selector threshold (``sqrt(N_i/N_finest)`` — the
-    viewport-relative fraction the viewer multiplies by a quarter of the viewport
-    diagonal), so a standalone substitutive ``.gsplats.zarr`` selects levels
+    ``coverage_fraction`` selector threshold (a SCREEN-AREA fraction by
+    occupancy halving; the group meta carries ``selector="screen-area"`` to name
+    the units), so a standalone substitutive ``.gsplats.zarr`` selects levels
     correctly in the viewer rather than being stuck at the finest level. This is the same
     single-sourced :func:`~luxar.core.group.lod.group.coverage_fractions`
     derivation the scene path uses.
@@ -525,20 +599,40 @@ def tree_from_substitutive_levels(
     ladder that is bound to a spatial partition (the ``adaptive`` recipe's
     per-tile groups) passes
     :func:`~luxar.core.group.lod.group.partitioned_coverage_fractions` instead,
-    which keeps the pre-#1361 fills-screen anchor. See that function for the rule
+    which keeps the fills-screen anchor. See that function for the rule
     and why a per-tile ladder must not take the whole-object anchor.
+
+    ``selector`` names the UNITS the produced thresholds are in (stamped onto
+    the group meta, honored by both serializers). When omitted it follows the
+    library convention — DERIVED thresholds are screen-area, custom/authored
+    ones are legacy: ``"screen-area"`` for the built-in derivation
+    (``coverage is None``), and the legacy ``"coverage"`` when a custom
+    ``coverage`` callable is supplied, so an unchanged external caller's
+    callback-produced thresholds keep the diagonal semantics they were written
+    against rather than being silently reinterpreted as area fractions. A
+    caller whose callable produces area fractions (the recipes pass the
+    built-in area derivations through this parameter) says so explicitly with
+    ``selector="screen-area"``.
 
     This is the inverse of :func:`substitutive_levels_from_tree` for any tree
     that is matrix-shaped (a leaf, or a lod group whose children are all leaves).
     """
+    from luxar.typing_utils.constants import LOD_SELECTORS
+
+    if selector is None:
+        selector = "screen-area" if coverage is None else "coverage"
+    if selector not in LOD_SELECTORS:
+        raise ValueError(
+            f"selector must be one of {sorted(LOD_SELECTORS)}, got {selector!r}"
+        )
     node = node_from_substitutive_levels(levels)
     if isinstance(node, GSplatLeaf):
         return node
 
     # Back-fill per-child coverage_fraction. The derivation is single-sourced in
-    # core (coarsest child = 0.0, finest = 1.0, ascending) and uses only per-level
-    # splat-count ratios. Children and counts are both coarsest-first — a straight
-    # 1:1 mapping.
+    # core (coarsest child = 0.0, ascending to the selector's finest anchor) and
+    # uses only per-level splat counts. Children and counts are both
+    # coarsest-first — a straight 1:1 mapping.
     from luxar.core.group.lod.group import coverage_fractions
 
     derive = coverage if coverage is not None else coverage_fractions
@@ -548,8 +642,20 @@ def tree_from_substitutive_levels(
         for lvl in levels_coarsest_first
     ]
     fractions_coarsest_first = derive(counts_coarsest_first)
+    # PLAIN assignment, deliberately not ``setdefault``: authored
+    # ``coverage_fraction`` values structurally CANNOT ride this API —
+    # ``SubstitutiveLevel`` has no such field and
+    # ``_leaf_from_substitutive_level`` rebuilds each leaf's meta from a fixed
+    # whitelist — so a conditional write would merely imply a retention path
+    # that does not exist (and, if one were ever added, would silently mix
+    # retained values with this derivation instead of going through
+    # ``gate_authored_selector``). ``test_matrix_api_always_rederives`` pins
+    # the whitelist so widening it forces that gate integration.
     for leaf, fraction in zip(node.children, fractions_coarsest_first):
-        leaf.meta.setdefault("coverage_fraction", fraction)
+        leaf.meta["coverage_fraction"] = fraction
+    # Stamp the units alongside the thresholds (the serializers honor a group's
+    # meta selector) — the group node is likewise freshly built with empty meta.
+    node.meta["selector"] = selector
 
     return node
 

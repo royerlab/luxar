@@ -186,6 +186,10 @@ def fit_planned(
     cap = int(plan.density.get("saturation_cap", 0)) if plan.density else 0
 
     regions: list[GSplatData] = []  # one core-kept GSplatData per fit box
+    # Which plan box each region came from. Boxes are skipped on three
+    # independent conditions below, so position in `regions` is NOT the box
+    # index — and the plan's split-plane tree is labelled by box index.
+    region_boxes: list[int] = []
     n = len(plan.boxes)
     n_fit = 0
     for i, b in enumerate(plan.boxes):
@@ -200,6 +204,7 @@ def fit_planned(
         n_fit += 1
         if c.shape[0] > 0:
             regions.append(GSplatData(centers=c, amplitudes=a, cholesky_factors=k))
+            region_boxes.append(i)
         if verbose:
             from arbol import aprint
 
@@ -213,7 +218,13 @@ def fit_planned(
         # spatial partition (viewer frustum-culls per part). Returns a tree node.
         # ``recipe`` gives each part its own LOD ladder/group as it is assembled.
         return GSplatData.partition_from_regions(
-            regions, recipe=recipe, recipe_params=recipe_params
+            regions,
+            recipe=recipe,
+            recipe_params=recipe_params,
+            # The planner's own split planes: core-disjoint boxes have an EXACT
+            # back-to-front order, and this is what carries it to the viewer.
+            bsp_tree=plan.bsp_tree,
+            region_labels=region_boxes,
         )
 
     merged = GSplatData(

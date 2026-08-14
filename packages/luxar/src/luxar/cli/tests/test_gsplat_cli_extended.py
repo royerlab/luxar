@@ -2250,6 +2250,116 @@ class TestTransformCommand:
         np.testing.assert_array_equal(rot_c[:, 1], orig_c[:, 1])
         np.testing.assert_array_equal(rot_c[:, 3], orig_c[:, 3])
 
+    # ── a partition's split planes across transform / additive ──────────
+    #
+    # `bsp_tree` records how the parts stack up, in the CENTERS' coordinate
+    # space. Two ways to get it wrong, both silent: drop it (ordering quietly
+    # degrades to the centroid heuristic) or keep it stale after moving the
+    # centers (the traversal still returns a valid-looking permutation, so the
+    # viewer draws confidently in the wrong order).
+
+    @staticmethod
+    def _partition_store(path: Path, n: int = 400) -> None:
+        """Write a real BSP partition, so it genuinely carries split planes."""
+        from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+
+        rng = np.random.default_rng(17)
+        chol = np.zeros((n, 6), dtype=np.float32)
+        chol[:, [0, 2, 5]] = 1.0
+        node = GSplatData(
+            centers=(rng.random((n, 3)) * 100).astype(np.float32),
+            amplitudes=rng.uniform(0.2, 1.0, size=(n,)).astype(np.float32),
+            cholesky_factors=chol,
+        ).to_spatial_partition(max_elements=n // 4)
+        assert node.bsp_tree is not None
+        write_gsplats_tree(path, node)
+
+    @staticmethod
+    def _assert_planes_match_centers(path: Path) -> None:
+        """Every stored plane must still separate the parts it claims to."""
+        from luxar.gsplats.io.load_gsplats import load_gsplat_node
+
+        node, _ = load_gsplat_node(path)
+        tree = node.bsp_tree
+        assert tree is not None, "partition lost its split planes"
+
+        def labels(nd: dict) -> list[int]:
+            if "part" in nd:
+                return [nd["part"]]
+            return labels(nd["left"]) + labels(nd["right"])
+
+        def centers(i: int) -> np.ndarray:
+            return np.concatenate(
+                [np.asarray(s.centers) for s in node.children[i].additive_sublods]
+            )
+
+        def check(nd: dict) -> None:
+            if "part" in nd:
+                return
+            axis, split = nd["axis"], nd["split"]
+            for label in labels(nd["left"]):
+                assert centers(label)[:, axis].max() < split
+            for label in labels(nd["right"]):
+                assert centers(label)[:, axis].min() >= split
+            check(nd["left"])
+            check(nd["right"])
+
+        check(tree)
+
+    @pytest.mark.parametrize(
+        "args",
+        [
+            ["--scale", "4,1,1"],
+            ["--translate", "10,-5,3"],
+            ["--center"],
+            ["--rotate-z", "90"],
+            ["--scale-intensity", "0.5"],
+            ["--scale", "2,2,2", "--translate", "5,5,5", "--center"],
+        ],
+    )
+    def test_transform_carries_partition_split_planes(
+        self, runner: CliRunner, tmp_path: Path, args: list
+    ) -> None:
+        """Axis-preserving transforms keep the planes AND move them correctly."""
+        src = tmp_path / "part.gsplats.zarr"
+        self._partition_store(src)
+        out = tmp_path / "out.gsplats.zarr"
+        result = runner.invoke(app, ["gsplat", "transform", str(src), str(out), *args])
+        assert result.exit_code == 0, f"transform failed: {result.stdout}"
+        self._assert_planes_match_centers(out)
+
+    def test_transform_drops_split_planes_on_an_arbitrary_rotation(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """A non-quarter-turn rotation shears the cells out of axis-alignment,
+        which the format cannot express — drop the tree, and say so."""
+        from luxar.gsplats.io.load_gsplats import load_gsplat_node
+
+        src = tmp_path / "part.gsplats.zarr"
+        self._partition_store(src)
+        out = tmp_path / "rot37.gsplats.zarr"
+        result = runner.invoke(
+            app, ["gsplat", "transform", str(src), str(out), "--rotate-z", "37"]
+        )
+        assert result.exit_code == 0, f"transform failed: {result.stdout}"
+        node, _ = load_gsplat_node(out)
+        assert node.bsp_tree is None
+        assert "Dropped the split planes" in result.stdout
+
+    def test_additive_preserves_partition_split_planes(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """Re-laddering leaves moves no centers, so the planes stay valid."""
+        src = tmp_path / "part.gsplats.zarr"
+        self._partition_store(src)
+        out = tmp_path / "laddered.gsplats.zarr"
+        result = runner.invoke(
+            app, ["gsplat", "additive", str(src), str(out), "--n-lods", "2"]
+        )
+        assert result.exit_code == 0, f"additive failed: {result.stdout}"
+        self._assert_planes_match_centers(out)
+
     @pytest.mark.parametrize(
         "bad_value",
         [
@@ -2712,11 +2822,17 @@ class TestTransformCommand:
 
         # multiscale-like: lod( coarse_leaf, partition[ leaf, leaf ] ); stamp a
         # deliberately-wrong coverage_fraction on the partition GROUP node.
+        # The ladder must be FULLY authored (coarse leaf too): the writer's
+        # selector/threshold consistency gate re-derives partially-authored
+        # ladders at the first write, which would erase the stale value before
+        # the transform ever saw it — the very premise this test needs.
         STALE = 0.5
         fine = GSplatPartition(
             children=[_leaf(1.0, 0), _leaf(1.0, 1)], meta={"coverage_fraction": STALE}
         )
-        root = GSplatLodGroup(children=[_leaf(0.3, 2), fine])
+        coarse = _leaf(0.3, 2)
+        coarse.meta["coverage_fraction"] = 0.0
+        root = GSplatLodGroup(children=[coarse, fine])
 
         src = tmp_path / "multiscale.gsplats.zarr"
         write_gsplats_tree(src, root)
@@ -3120,6 +3236,134 @@ class TestCalibrateCommand:
         persisted = sorted(out_fits.iterdir())
         assert len(persisted) == 2
 
+    def test_cal_auto_region_marks_k_star_region_scoped(
+        self,
+        runner: CliRunner,
+        multiblob_volume: Path,
+        fast_fit_config: Path,
+        tmp_path: Path,
+    ) -> None:
+        """``cal --auto-region`` qualifies its K* as region-scoped (#1556).
+
+        ``fit --seeds`` is a WHOLE-VOLUME budget that a tiled fit divides across
+        its tiles, so a region-scoped K* handed to it under-seeds the volume by
+        roughly the tile count. The headline must therefore say which kind of
+        number it is printing, and point at the density-transfer route instead.
+        ``--region-size 16`` on the 40^3 fixture forces a real crop (a region as
+        large as the volume short-circuits to ``strategy="whole"``, which IS
+        whole-volume and must NOT be flagged — see the sibling test).
+        """
+        import json
+
+        out_json = tmp_path / "cal.json"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "cal",
+                str(multiblob_volume),
+                str(out_json),
+                "--k-grid",
+                "30,90",
+                "--preset",
+                "draft",
+                "--config",
+                str(fast_fit_config),
+                "--device",
+                "cpu",
+                "--auto-region",
+                "--region-size",
+                "16",
+            ],
+        )
+        assert result.exit_code == 0, f"cal failed:\n{result.stdout}"
+
+        with open(out_json) as f:
+            region = json.load(f)["calibration_region"]
+        assert region is not None and region["strategy"] != "whole"
+
+        assert "region-scoped" in result.stdout
+        assert "--seeds" in result.stdout
+        assert "--tiling content" in result.stdout
+
+    def test_cal_default_k_star_is_not_flagged(
+        self,
+        runner: CliRunner,
+        multiblob_volume: Path,
+        fast_fit_config: Path,
+        tmp_path: Path,
+    ) -> None:
+        """Guard: a default (whole-volume) ``cal`` must NOT print the caveat.
+
+        Its K* is exactly the number ``fit --seeds`` wants, so flagging it would
+        steer users away from the documented ``cal`` -> ``fit --seeds`` pipeline.
+        """
+        out_json = tmp_path / "cal.json"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "cal",
+                str(multiblob_volume),
+                str(out_json),
+                "--k-grid",
+                "30,90",
+                "--preset",
+                "draft",
+                "--config",
+                str(fast_fit_config),
+                "--device",
+                "cpu",
+            ],
+        )
+        assert result.exit_code == 0, f"cal failed:\n{result.stdout}"
+        assert "Recommended K" in result.stdout
+        assert "region-scoped" not in result.stdout
+
+    def test_cal_auto_region_whole_volume_shortcircuit_is_not_flagged(
+        self,
+        runner: CliRunner,
+        multiblob_volume: Path,
+        fast_fit_config: Path,
+        tmp_path: Path,
+    ) -> None:
+        """``--auto-region`` on a volume smaller than ``--region-size`` is NOT flagged.
+
+        ``select_calibration_region`` short-circuits to ``strategy="whole"`` and
+        returns the volume untouched, so K* really is whole-volume even though
+        ``calibration_region`` is populated. Flagging on the mere presence of
+        that provenance would misdirect every user of a sub-256^3 volume.
+        """
+        import json
+
+        out_json = tmp_path / "cal.json"
+        result = runner.invoke(
+            app,
+            # fmt: off
+            [
+                "gsplat",
+                "cal",
+                str(multiblob_volume),
+                str(out_json),
+                "--k-grid",
+                "30,90",
+                "--preset",
+                "draft",
+                "--config",
+                str(fast_fit_config),
+                "--device",
+                "cpu",
+                "--auto-region",  # default --region-size 256 > 40 -> "whole"
+            ],
+            # fmt: on
+        )
+        assert result.exit_code == 0, f"cal failed:\n{result.stdout}"
+
+        with open(out_json) as f:
+            region = json.load(f)["calibration_region"]
+        assert region is not None and region["strategy"] == "whole"
+        assert "region-scoped" not in result.stdout
+
 
 # ═══════════════════════════════════════════════════════════════════════
 # LOD command tests (additive + substitutive)
@@ -3447,10 +3691,10 @@ class TestLODCommand:
         pairing the user typed. Deliberately unlike `--coarsen-dims`, where a
         barrier SET is order-free.
         """
-        from luxar.cli.lod import _parse_reveal_spatial_dims
+        from luxar.cli.reveal_options import parse_reveal_spatial_dims
 
-        assert _parse_reveal_spatial_dims("2,0", 3) == [2, 0]
-        assert _parse_reveal_spatial_dims("0,2", 3) == [0, 2]
+        assert parse_reveal_spatial_dims("2,0", 3) == [2, 0]
+        assert parse_reveal_spatial_dims("0,2", 3) == [0, 2]
 
     @pytest.mark.parametrize(
         "spec", ["nan,0,0", "inf,0,0", "0,-inf,0"], ids=["nan", "inf", "-inf"]
@@ -3462,18 +3706,18 @@ class TestLODCommand:
         equal under the stable argsort, so the ladder comes out in input order and
         the user gets no reveal and no error.
         """
-        from luxar.cli.lod import _parse_reveal_centre
+        from luxar.cli.reveal_options import parse_reveal_centre
 
         with pytest.raises(typer.BadParameter, match="finite"):
-            _parse_reveal_centre(spec)
+            parse_reveal_centre(spec)
 
     def test_spatial_dims_rejects_duplicates(self) -> None:
         """A duplicate was silently collapsed by `set()`; it now errors, because a
         repeat would count that axis twice in the distance."""
-        from luxar.cli.lod import _parse_reveal_spatial_dims
+        from luxar.cli.reveal_options import parse_reveal_spatial_dims
 
         with pytest.raises(typer.BadParameter, match="must not repeat"):
-            _parse_reveal_spatial_dims("0,0", 3)
+            parse_reveal_spatial_dims("0,0", 3)
 
     def test_coarsen_dims_rejected_for_additive(
         self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
@@ -3927,14 +4171,17 @@ class TestLODCommand:
         assert result.exit_code != 0
         assert not out.exists()
 
-    def test_refine_volume_rejected_for_adaptive_recipe(
+    def test_refine_volume_accepted_for_adaptive_recipe(
         self,
         runner: CliRunner,
         medium_gsplats: Path,
         small_volume_npy: Path,
         tmp_path: Path,
     ) -> None:
-        """Per-part levels would re-fit against the FULL volume — rejected."""
+        """Per-part levels re-fit against each tile's own CROP of the volume, so
+        the adaptive recipe now accepts ``--refine volume``. It used to be
+        rejected because a part fitted against the FULL volume is pulled out of
+        its tile to explain a neighbour's signal."""
         out = tmp_path / "x.gsplats.zarr"
         result = runner.invoke(
             app,
@@ -3947,13 +4194,126 @@ class TestLODCommand:
                 "adaptive",
                 "--refine",
                 "volume",
+                "--refine-iters",
+                "3",
                 "--target",
                 str(small_volume_npy),
             ],
         )
+        assert result.exit_code == 0, self._io(result)
+        assert out.exists()
+
+    def test_target_axes_requires_a_target(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """``--target-axes`` describes a ``--target``; alone it is a typo, not a
+        silently ignored option."""
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(tmp_path / "x.gsplats.zarr"),
+                "--recipe",
+                "levels",
+                "--target-axes",
+                "t,z,y,x",
+            ],
+        )
         assert result.exit_code != 0
-        assert "adaptive" in self._io(result)
-        assert not out.exists()
+        assert "--target-axes" in self._io(result)
+
+    def test_target_axes_excludes_the_slicing_selectors(
+        self,
+        runner: CliRunner,
+        medium_gsplats: Path,
+        small_volume_npy: Path,
+        tmp_path: Path,
+    ) -> None:
+        """``--target-axes`` KEEPS the stacked axis; ``--timepoint`` drops it.
+
+        Combined, the labels no longer describe the array the re-fit is handed —
+        and since the selectors are applied by the positional heuristic, the
+        mismatch would be silent rather than loud.
+        """
+        for flag, value in (("--timepoint", "0"), ("--channel", "0")):
+            result = runner.invoke(
+                app,
+                [
+                    "gsplat",
+                    "lod",
+                    str(medium_gsplats),
+                    str(tmp_path / "x.gsplats.zarr"),
+                    "--recipe",
+                    "levels",
+                    "--refine",
+                    "volume",
+                    "--target",
+                    str(small_volume_npy),
+                    "--target-axes",
+                    "z,y,x",
+                    flag,
+                    value,
+                ],
+            )
+            assert result.exit_code != 0, flag
+            assert "--target-axes" in self._io(result)
+
+    def test_target_axes_opens_the_target_lazily(
+        self,
+        runner: CliRunner,
+        medium_gsplats: Path,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        """A ``--target-axes`` target must not be materialised by the front door.
+
+        The re-fit only ever SLICES the target (one barrier group / one tile crop
+        at a time), which is the whole reason a stacked timelapse is workable — one
+        timepoint of a 253-timepoint 407x2048x2048 uint16 stack is 3.4 GB against
+        431 GB whole. Reading it eagerly at the CLI boundary throws that away, so
+        assert the eager loader is not on this path at all.
+        """
+        import zarr
+
+        import luxar.cli.gsplat_config as gsplat_config
+
+        volume = np.random.rand(16, 16, 16).astype(np.float32) * 0.5
+        volume[6:10, 6:10, 6:10] = 1.0
+        target = tmp_path / "target.zarr"
+        z = zarr.open(str(target), mode="w", shape=volume.shape, dtype=volume.dtype)
+        z[:] = volume
+
+        def _boom(*args, **kwargs):  # pragma: no cover - must not be reached
+            raise AssertionError("the target was loaded eagerly")
+
+        monkeypatch.setattr(gsplat_config, "load_volume", _boom)
+
+        out = tmp_path / "x.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(out),
+                "--recipe",
+                "levels",
+                "--levels",
+                "1",
+                "--refine",
+                "volume",
+                "--refine-iters",
+                "3",
+                "--target",
+                str(target),
+                "--target-axes",
+                "z,y,x",
+            ],
+        )
+        assert result.exit_code == 0, self._io(result)
+        assert out.exists()
 
     def test_recipe_levels_with_refine_volume_smoke(
         self, runner: CliRunner, small_volume_npy: Path, tmp_path: Path
@@ -4080,12 +4440,14 @@ class TestLODCommand:
     def test_recipe_substitutive_stamps_coverage_fractions(
         self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
     ) -> None:
-        """#5: `gsplat lod --recipe levels` stamps viewport-relative
-        ``coverage_fraction`` (``sqrt(N_i/N_finest)``) on the on-disk lod children:
-        coarsest = 0.0, finest = 1.0, strictly ascending."""
-        import math
-
+        """#5: `gsplat lod --recipe levels` stamps SCREEN-AREA
+        ``coverage_fraction`` (occupancy halving; group ``selector`` =
+        ``"screen-area"``) on the on-disk lod children: coarsest = 0.0, finest
+        = the half-screen anchor (0.5), one area-halving per level, strictly
+        ascending — independent of per-level counts."""
         import zarr
+
+        from luxar.core.group.lod.group import WHOLE_OBJECT_FINEST_ANCHOR
 
         out = tmp_path / "sub.gsplats.zarr"
         r = runner.invoke(
@@ -4112,12 +4474,14 @@ class TestLODCommand:
             key=lambda s: int(s.split("_")[1]),
         )
         cov = [float(g[k].attrs["coverage_fraction"]) for k in ch]
-        counts = [int(g[k].attrs["n_splats"]) for k in ch]  # child_0 = coarsest
+        assert g.attrs["selector"] == "screen-area"
         assert cov[0] == 0.0
-        assert cov[-1] == pytest.approx(1.0)
-        # coverage_i = sqrt(n_i / n_finest) for the non-coarsest children.
+        assert cov[-1] == pytest.approx(WHOLE_OBJECT_FINEST_ANCHOR)
+        # coverage_i halves per level below the finest (count-independent).
         for i in range(1, len(cov)):
-            assert cov[i] == pytest.approx(math.sqrt(counts[i] / counts[-1]))
+            assert cov[i] == pytest.approx(
+                WHOLE_OBJECT_FINEST_ANCHOR / 2 ** (len(cov) - 1 - i)
+            )
         assert all(cov[i] > cov[i - 1] for i in range(1, len(cov)))
 
     def test_recipe_pyramid(
@@ -4364,20 +4728,21 @@ class TestLODCommand:
     def test_recipe_multiscale_stamps_coverage_fractions(
         self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
     ) -> None:
-        """multiscale stamps viewport-relative ``coverage_fraction`` on the coarse
+        """multiscale stamps screen-area ``coverage_fraction`` on the coarse
         cap (0.0, always-eligible) and the fine partition wrapper (the finest rung)
         — the on-disk attrs the viewer's selector reads.
 
-        The finest rung is ``MAX_COVERAGE_FRACTION``, not 1.0: overview's fine child
-        is the whole dataset as a ``kind=partition`` and is by contract a zoom-in
+        The finest rung is ``PARTITION_FINEST_AREA`` (screen-area 1.0 —
+        fills-screen), not the whole-object 0.5: overview's fine child is the
+        whole dataset as a ``kind=partition`` and is by contract a zoom-in
         branch, so the pair keeps the fills-screen anchor rather than the
-        whole-object quarter-viewport one (``partitioned_coverage_fractions``)."""
-        from luxar.core.group.lod.group import MAX_COVERAGE_FRACTION
+        whole-object half-screen one (``partitioned_coverage_fractions``)."""
+        from luxar.core.group.lod.group import PARTITION_FINEST_AREA
 
         out = tmp_path / "ms.gsplats.zarr"
         fine_cov = self._multiscale_fine_threshold(runner, medium_gsplats, out)
-        # partitioned_coverage_fractions([N_coarse, N_fine]) = [0.0, 4.0].
-        assert fine_cov == pytest.approx(MAX_COVERAGE_FRACTION)
+        # partitioned_coverage_fractions([N_coarse, N_fine]) = [0.0, 1.0].
+        assert fine_cov == pytest.approx(PARTITION_FINEST_AREA)
 
     def test_quiet_suppresses_saved_line(
         self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path

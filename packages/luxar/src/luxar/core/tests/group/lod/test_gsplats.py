@@ -19,7 +19,8 @@ import zarr
 
 from luxar.core.dimensions import Dimensions
 from luxar.core.group.lod.group import (
-    MAX_COVERAGE_FRACTION,
+    PARTITION_FINEST_AREA,
+    WHOLE_OBJECT_FINEST_ANCHOR,
     coverage_fractions,
     partitioned_coverage_fractions,
 )
@@ -100,7 +101,8 @@ class TestResolveSubstitutiveAxisGsplats:
             )
 
     def test_dict_coverage_fractions_out_of_range_raises(self, pyramid) -> None:
-        # The ceiling is MAX_COVERAGE_FRACTION == 1/FILL_FACTOR == 4.0 (the metric
+        # The ceiling is MAX_COVERAGE_FRACTION == SCREEN_FILL_DIAGONAL_RATIO /
+        # FILL_FACTOR == 4.0 (roughly the metric
         # a screen-filling object produces), not 1.0 — see the constant's docstring.
         with pytest.raises(ValueError, match=r"\[0, 4\]"):
             resolve_substitutive_axis_gsplats(
@@ -110,7 +112,7 @@ class TestResolveSubstitutiveAxisGsplats:
     def test_dict_coverage_fractions_above_one_accepted(self, pyramid) -> None:
         # Above the auto-derived 1.0 anchor but within the ceiling: the escape
         # hatch for a level that must hold until the object is LARGER than a
-        # quarter-viewport (e.g. a spatially tiled layer). 4.0 is inclusive.
+        # half-fitted-axis (e.g. a spatially tiled layer). 4.0 is inclusive.
         _, cov = resolve_substitutive_axis_gsplats(
             pyramid, {"coverage_fractions": [0.0, 1.5]}
         )
@@ -306,10 +308,11 @@ def _lod_child_counts(lod_group) -> list:
 
 
 class TestPartitionBoundAnchorGsplats:
-    """``lod_group=`` under a hand-built ``kind=partition`` takes the tile anchor.
+    """``lod_group=`` under a hand-built ``kind=partition`` takes the tile anchor
+    (finest ``PARTITION_FINEST_AREA`` = 1.0 — the tile alone fills the screen).
 
     The dispatch used to auto-derive the WHOLE-OBJECT ladder unconditionally
-    (finest ``1.0``). Two tests here REGRESS without the fix
+    (finest = the whole-object anchor). Two tests here REGRESS without the fix
     (``test_every_partition_bound_ladder_is_fills_screen_anchored``,
     ``test_plain_group_between_partition_and_ladder_still_anchored``); the other two
     are CONTROLS that pass either way and pin what must NOT change. The fixture is
@@ -325,14 +328,20 @@ class TestPartitionBoundAnchorGsplats:
             assert cov == pytest.approx(partitioned_coverage_fractions(counts)), (
                 f"part_{i}"
             )
-            assert cov[-1] == pytest.approx(MAX_COVERAGE_FRACTION), f"part_{i}"
-        # Each ladder is derived from its OWN counts, not the wrapper's: the two
-        # parts are non-proportional (see _write_pyramid), so a wrapper-level
-        # derivation would give both the identical list.
-        assert parts[0][0] != pytest.approx(parts[1][0]), (
-            "the two parts derived identical thresholds, so this fixture cannot "
-            f"distinguish per-part from wrapper-level derivation: {parts}"
-        )
+            assert cov[-1] == pytest.approx(PARTITION_FINEST_AREA), f"part_{i}"
+        # Screen-occupancy halving is COUNT-INDEPENDENT by design, so both
+        # parts derive the same list — the old "non-proportional counts give
+        # different thresholds" sensitivity control is deliberately gone. Pin
+        # the derived shape instead: halving anchored at fills-screen (area
+        # 1.0 — the tile alone fills the screen), ×2 per finer level.
+        for i, (cov, counts) in enumerate(parts):
+            assert cov == pytest.approx(partitioned_coverage_fractions(counts)), (
+                f"part_{i}"
+            )
+            for a, b in zip(cov[1:-1], cov[2:]):
+                assert b == pytest.approx(a * 2.0), (
+                    f"part_{i}: expected ×2 area-halving spacing, got {cov}"
+                )
 
     def test_scene_root_still_gets_the_whole_object_anchor(self, tmp_path) -> None:
         """CONTROL (passes pre-fix): the over-trigger guard."""
@@ -340,7 +349,7 @@ class TestPartitionBoundAnchorGsplats:
         assert len(parts) == 2
         for i, (cov, counts) in enumerate(parts):
             assert cov == pytest.approx(coverage_fractions(counts)), f"part_{i}"
-            assert cov[-1] == 1.0, f"part_{i}"
+            assert cov[-1] == pytest.approx(WHOLE_OBJECT_FINEST_ANCHOR), f"part_{i}"
 
     def test_plain_group_between_partition_and_ladder_still_anchored(
         self, tmp_path
@@ -350,7 +359,7 @@ class TestPartitionBoundAnchorGsplats:
         )
         assert len(parts) == 2
         for i, (cov, _counts) in enumerate(parts):
-            assert cov[-1] == pytest.approx(MAX_COVERAGE_FRACTION), f"part_{i}"
+            assert cov[-1] == pytest.approx(PARTITION_FINEST_AREA), f"part_{i}"
 
     def test_explicit_coverage_fractions_still_win_under_a_partition(
         self, tmp_path
@@ -479,4 +488,4 @@ def test_hand_built_partition_matches_the_adaptive_recipe(tmp_path) -> None:
     for i, (scene_cov, recipe_cov) in enumerate(zip(scene_coverage, recipe_coverage)):
         assert scene_cov == pytest.approx(recipe_cov), f"part_{i}"
         assert scene_cov[0] == 0.0
-        assert scene_cov[-1] == pytest.approx(MAX_COVERAGE_FRACTION)
+        assert scene_cov[-1] == pytest.approx(PARTITION_FINEST_AREA)

@@ -332,11 +332,14 @@ levels, and bounds resident VRAM with an LRU eviction pass.
    level — instead of the collapsed/garbage diagonal an unguarded
    perspective divide would produce on close approach. The pixel
    diagonal is normalised to a dimensionless coverage metric
-   (`diagonalPx / (FILL_FACTOR * viewportDiagonal)`, `FILL_FACTOR = 0.25`),
-   so the comparison is viewport-relative rather than an absolute pixel
+   (`diagonalPx / (FILL_FACTOR * fittedAxisPx)`, `FILL_FACTOR = 0.5`,
+   `fittedAxisPx = min(viewport.width, viewport.height)` — the extent
+   `calculateCameraDistance` actually fits, so the metric stays
+   (near-)invariant across viewport aspect ratio, not just size), so the
+   comparison is viewport-relative rather than an absolute pixel
    count. The anchor means the finest child (`coverage_fraction` 1.0)
-   activates once the projected diagonal reaches about a quarter of the
-   viewport diagonal — any normal full-frame view — and coarser levels
+   activates once the projected diagonal reaches half of the fitted
+   screen axis — any normal full-frame view — and coarser levels
    step in as the object shrinks below that.
 5. Pick the finest child whose `coverageFraction` threshold (the
    viewport-normalised per-child value read from the zarr attr

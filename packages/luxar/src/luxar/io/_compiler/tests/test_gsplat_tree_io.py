@@ -288,23 +288,32 @@ def test_lod_group_meta_does_not_clobber_structural_attrs():
 
 
 def test_coverage_fraction_and_provenance_round_trip():
-    fine = _leaf(100, seed=0, coverage_fraction=1.0, compression_factor=1)
+    # Floor-legal authored ladder (coarsest must be exactly 0.0 — the writer's
+    # consistency gate enforces the format contract) whose FINEST (0.7) differs
+    # from the derived screen-area anchor (0.5), so preservation-vs-rederivation
+    # stays distinguishable.
+    fine = _leaf(100, seed=0, coverage_fraction=0.7, compression_factor=1)
     coarse = _leaf(
         10,
         seed=1,
-        coverage_fraction=0.4,
+        coverage_fraction=0.0,
         compression_factor=4,
         parent_method="kmeans_lloyd",
     )
     grp = GSplatLodGroup(children=[coarse, fine])  # coarsest→finest
     z, out = _round_trip(grp)
     # coarse leaf is child_0 on disk; its selector threshold + provenance persisted
-    assert z["child_0"].attrs["coverage_fraction"] == 0.4
+    assert z["child_0"].attrs["coverage_fraction"] == 0.0
     assert z["child_0"].attrs["compression_factor"] == 4
     assert z["child_0"].attrs["parent_method"] == "kmeans_lloyd"
+    # authored finest preserved verbatim (0.7 != the derived 0.5 anchor)
+    assert z["child_1"].attrs["coverage_fraction"] == 0.7
+    # fully authored + selector-less → the legacy stamp (see the writer gate)
+    assert z.attrs["selector"] == "coverage"
     # restored coarsest-first: children[0] is the coarse leaf
-    assert out.children[0].meta["coverage_fraction"] == 0.4
+    assert out.children[0].meta["coverage_fraction"] == 0.0
     assert out.children[0].meta["compression_factor"] == 4
+    assert out.children[1].meta["coverage_fraction"] == 0.7
 
 
 # ── Spatial ordering path still round-trips the splat SET ────────────────

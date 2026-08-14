@@ -216,7 +216,9 @@ def calibrate_command(
         "--auto-region/--no-auto-region",
         help=(
             "Calibrate on an auto-selected content-rich sub-region (recommended "
-            "for large/sparse volumes: calibrate at the scale you fit at)."
+            "for large/sparse volumes: calibrate at the scale you fit at). The "
+            "resulting K* is REGION-scoped, so transfer it with `fit --tiling "
+            "content --cal`, not `fit --seeds` (a whole-volume budget)."
         ),
     ),
     region_size: int = typer.Option(

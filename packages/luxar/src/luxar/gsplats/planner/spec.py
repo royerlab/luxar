@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 
 @dataclass
@@ -56,6 +56,21 @@ class FitPlan:
     max_leaf: int
     density: Dict[str, Any] = field(default_factory=dict)
     """The :class:`SplatDensity` (as dict) used to size budgets, if any."""
+    bsp_tree: Optional[Dict[str, Any]] = None
+    """Split planes of the recursion that produced :attr:`boxes`, serialized.
+
+    The planner IS a recursive BSP, so the boxes have an exact back-to-front
+    order for any camera pose — but only if the split planes survive to the
+    fitted output. Carried here (rather than recomputed downstream) and handed to
+    ``GSplatData.partition_from_regions``, which prunes it to the boxes that
+    actually produced splats and stamps it on the ``kind=partition`` node as its
+    ``bsp_tree`` attr. See
+    :func:`~luxar.core.group.partition.prune_serialized_bsp_tree`.
+
+    Leaf ``part`` labels index :attr:`boxes` directly. ``None`` for a plan that
+    did not come from one recursion (e.g. read from a pre-#1555 ``plan.json``),
+    which downstream treats as "no tree" — the viewer's centroid fallback.
+    """
     meta: Dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -106,6 +121,9 @@ class FitPlan:
             min_leaf=int(raw["min_leaf"]),
             max_leaf=int(raw["max_leaf"]),
             density=dict(raw.get("density", {})),
+            # Absent in a pre-#1555 plan.json — a batch run submitted before this
+            # landed then merges with no tree, exactly as it did before.
+            bsp_tree=raw.get("bsp_tree"),
             meta=dict(raw.get("meta", {})),
         )
 

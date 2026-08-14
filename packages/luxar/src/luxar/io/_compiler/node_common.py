@@ -187,12 +187,19 @@ _ALLOWED_NODE_ATTRS: FrozenSet[str] = frozenset(
         # ``_return_sort_order`` (see ``record_forwarded_sort_order``) is popped
         # as the writers' very first statement and is deliberately absent. Note
         # that "never needs listing" holds only for THIS (writer-internal) call
-        # site: since #1529, Points/Lines adders also run this same gate at the
-        # adder entry, before any writer ever pops such a flag, so a
-        # popped-first private flag reaching the adder would be rejected there
-        # as unknown instead — no live case does this today (`_return_sort_order`
-        # is never caller-supplied), but a future one would surface earlier and
-        # under a different message than this comment's premise suggests.
+        # site: since #1529/#1534, ALL FOUR leaf adders (Points, Lines, Mesh,
+        # GSplats) also run this same gate at the adder entry, before any
+        # writer ever pops such a flag, so a popped-first private flag
+        # reaching the adder would be rejected there as unknown instead.
+        # ``_return_sort_order`` stays a hypothetical (never caller-supplied),
+        # but ``_scalar_data_range`` is a LIVE case on Mesh: it is real,
+        # caller-supplied input on the ``luxar mesh lod`` re-authoring path
+        # (``cli/mesh_ops/lod_commands.py``), deliberately absent from
+        # ``_ALLOWED_NODE_ATTRS`` (never a Node attr), and it only works
+        # because ``add_mesh_impl`` pops it (``mesh.py``, near the top of the
+        # function) ABOVE its own entry gate — an ordering that gate's own
+        # comment now records, and that this comment must not contradict by
+        # implying no such case exists.
         "_skip_scene_bounds",
     }
 )

@@ -23,11 +23,11 @@ microscopy dataset, which is where adaptive detail actually earns its keep:
 - **Substitutive levels**: each coarser level *replaces* the finer one with a
   smaller set of synthesized representative splats (built by
   ``make_substitutive_lod``).  This is genuine geometry/memory compression, not
-  just a streaming order.  The viewer auto-picks a level by viewport-relative
-  ``coverage_fraction`` (``sqrt(N_i/N_finest)``, derived from per-level splat
-  counts) — the finest level shows at any normal full-frame view (once the
-  embryo's projected size reaches ~a quarter of the viewport diagonal) and
-  coarser levels step in as it shrinks: zoom out → coarse, zoom in → fine.
+  just a streaming order.  The viewer auto-picks a level by screen-area
+  ``coverage_fraction`` thresholds (``selector="screen-area"``, occupancy
+  halving) — the finest level shows while the embryo occupies at least half
+  the screen, and each halving of its occupied area steps one level coarser:
+  zoom out → coarse, zoom in → fine.
 - **Debug colors** make the level-switching obvious: each level is painted a
   distinct color on a green → amber → red ramp (finest → coarsest).  As you
   zoom, the embryo changes color when the active level changes.
@@ -88,8 +88,11 @@ DEMO_META = {
     "requirements": {
         "download_mb": 3,
         "compute": "medium",
-        "gpu": "optional",
-        "local_data": "git-lfs",
+        # The precomputed fit is no longer shipped in-tree (the source data is
+        # not redistributable), so a first run fetches the raw source and
+        # refits — which needs a GPU. Nothing has to be placed by hand.
+        "gpu": "required",
+        "local_data": None,
     },
     "caches": ["gsplats_tribolium"],
     "outputs": ["gsplats_lod_tribolium"],

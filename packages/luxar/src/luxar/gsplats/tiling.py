@@ -193,6 +193,85 @@ def compute_tile_specs(
     return specs
 
 
+def grid_bsp_tree(specs: Sequence[TileSpec]) -> dict | None:
+    """Split-plane tree over a uniform tile grid, in the serialized ``bsp_tree`` form.
+
+    Lets the viewer order uniform-tiled partition parts back-to-front by
+    painter's algorithm instead of by part centroid, which is not a valid order
+    and flips discretely as the camera moves (the seam popping of issue #1555).
+
+    APPROXIMATE, unlike a content plan's tree. A content box crops its splats to
+    the core box, so those parts are exactly disjoint; a uniform tile keeps every
+    splat of the *apodized* tile, overlap band included, so neighbouring tiles
+    genuinely share space and no exact part order exists.
+    :func:`compute_tile_specs` caps the halo at ``2 * overlap <= tile_size``, so
+    at most two tiles meet on any axis and the honest cut is the MIDPLANE of
+    their shared band. Misordering is then confined to that band rather than
+    whole tiles swapping — the same second-order residual as splats whose own
+    Gaussian straddles a seam.
+
+    Leaves carry ``TileSpec.index`` (the flat, row-major tile index) VERBATIM, so
+    a caller can prune with the same keep-set it uses for the fitted regions
+    (:func:`~luxar.core.group.partition.prune_serialized_bsp_tree`). The labels
+    are explicit rather than DFS-implied because the median split below does not
+    visit tiles in flat order.
+
+    Parameters
+    ----------
+    specs : sequence of TileSpec
+        A full grid as returned by :func:`compute_tile_specs`.
+
+    Returns
+    -------
+    dict or None
+        The serialized tree, or ``None`` when ``specs`` is empty or the grid
+        subdivides an axis beyond the third — the serialized format admits split
+        axes ``0``/``1``/``2`` only.
+    """
+    if not specs:
+        return None
+
+    ndim = len(specs[0].grid_index)
+    n_cells = [max(s.grid_index[d] for s in specs) + 1 for d in range(ndim)]
+    if any(n_cells[d] > 1 for d in range(3, ndim)):
+        return None
+
+    # Per-axis grid-line coordinates, and the flat index of each grid cell.
+    lo_coord: list[dict[int, float]] = [{} for _ in range(ndim)]
+    hi_coord: list[dict[int, float]] = [{} for _ in range(ndim)]
+    for spec in specs:
+        for d, k in enumerate(spec.grid_index):
+            lo_coord[d][k] = float(spec.origin[d])
+            hi_coord[d][k] = float(spec.origin[d]) + float(spec.shape[d])
+    flat_of_cell = {tuple(s.grid_index): int(s.index) for s in specs}
+
+    def build(ranges: list[tuple[int, int]]) -> dict:
+        widths = [hi - lo for lo, hi in ranges]
+        if all(w == 1 for w in widths):
+            return {"part": flat_of_cell[tuple(lo for lo, _ in ranges)]}
+        # Split the axis with the most cells left (ties -> lowest axis, so the
+        # tree is deterministic); only axes 0/1/2 are representable, and an
+        # all-widths-1 grid already returned above.
+        axis = max(range(min(3, ndim)), key=lambda d: widths[d])
+        k0, k1 = ranges[axis]
+        kmid = (k0 + k1) // 2
+        # Midplane of the band shared by cells kmid-1 and kmid. The two are
+        # adjacent by construction, so hi_coord[kmid - 1] >= lo_coord[kmid].
+        split = 0.5 * (lo_coord[axis][kmid] + hi_coord[axis][kmid - 1])
+        low = list(ranges)
+        low[axis] = (k0, kmid)
+        high = list(ranges)
+        high[axis] = (kmid, k1)
+        return {
+            "axis": axis,
+            "split": split,
+            "left": build(low),
+            "right": build(high),
+        }
+
+    return build([(0, n_cells[d]) for d in range(ndim)])
+
+
 def _cosine_ramp(length: int) -> np.ndarray:
     """Half-cosine ramp from ~0 to 1 over ``length`` samples.
 

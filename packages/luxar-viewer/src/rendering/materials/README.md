@@ -47,7 +47,7 @@ materials/
 │                 #   CameraAwareMaterial / ColormapAwareMaterial contracts,
 │                 #   camera-uniforms math, GLSL/TSL sanitisers, proxyIUniform
 ├── point/        # Point sprites — 4 files: shader-{glsl,tsl}, material-{glsl,tsl}
-├── line/         # Thick lines — 4 files (instanced quad expansion in pixel space)
+├── line/         # Thick lines — 6 files (screen-space quad + capsule primitive pairs)
 ├── gsplat/       # Gaussian splats — 4 files + math.ts (ray-integral helper)
 └── mesh/         # Triangle surfaces — 4 files + appearance.ts (defaults + mode map)
 ```

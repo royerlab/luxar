@@ -121,7 +121,10 @@ DEMO_META = {
         "download_mb": 41,
         "compute": "medium",
         "gpu": "none",
-        "local_data": "git-lfs",
+        # The catalog is CC BY-NC, so it is not shipped in-tree: it has to be
+        # placed in the cache by hand until #1461 builds it from the ESA
+        # archive on first run (see `resolve_data_file`).
+        "local_data": "manual-file",
     },
     "caches": [],
     "outputs": ["galaxy"],
@@ -145,9 +148,42 @@ from luxar import (
 from luxar.demos import launch_viewer, substitutive_lod_or_flat
 from luxar.utils.paths import get_demos_output_dir
 
-# Find the data file relative to this script
+# The Gaia catalog is CC BY-NC 3.0 IGO. NonCommercial survives derivation, so it
+# applies to this point cloud too and is incompatible with a BSD-3 repository —
+# the file is therefore NOT shipped, and is read from the local cache when a
+# machine happens to have one. Building it from the ESA archive on first run is
+# issue #1461; until that lands, a machine without the cached file cannot run
+# this demo, and `resolve_data_file` says so rather than failing obscurely.
 SCRIPT_DIR = Path(__file__).parent
-DATA_FILE = SCRIPT_DIR / "data" / "milky_way_gaia_3m.zarr.zip"
+CACHE_FILE = (
+    Path.home()
+    / ".cache"
+    / "luxar"
+    / "milky_way_gaia_3m"
+    / "milky_way_gaia_3m.zarr.zip"
+)
+#: Legacy in-repo location, kept in the search order so a checkout that still
+#: has the file (or a user who restores it by hand) keeps working.
+REPO_FILE = SCRIPT_DIR / "data" / "milky_way_gaia_3m.zarr.zip"
+
+
+def resolve_data_file() -> Path:
+    """The star catalog: local cache first, then the legacy in-repo copy."""
+    for candidate in (CACHE_FILE, REPO_FILE):
+        if candidate.exists():
+            return candidate
+    raise FileNotFoundError(
+        "Gaia star catalog not found.\n\n"
+        "This dataset is CC BY-NC 3.0 IGO (NonCommercial), which the derived "
+        "point cloud inherits, so it is deliberately not distributed with "
+        "Luxar.\n"
+        f"Place `milky_way_gaia_3m.zarr.zip` at {CACHE_FILE} to run this demo, "
+        "or follow royerlab/luxar#1461, which builds it from the ESA Gaia "
+        "archive on first run.\n"
+        "Required acknowledgement when using Gaia data: this work has made use "
+        "of data from the ESA mission Gaia, processed by the Gaia Data "
+        "Processing and Analysis Consortium (DPAC)."
+    )
 
 
 def compute_colors(bp_rp: np.ndarray, phot_g_mean_mag: np.ndarray) -> np.ndarray:
@@ -265,8 +301,8 @@ def load_and_convert_gaia_data(data_zarr_path: Path, output_path: Path) -> int:
         # The second half of the original rationale — "closer start = the
         # coverage-fraction LOD immediately shows a finer level" — was a
         # workaround for #1361, where the finest level only engaged once the
-        # object OVERFILLED the screen. The viewer's anchor now sits at a quarter
-        # of the viewport diagonal, so a plain fit already selects the finest
+        # object OVERFILLED the screen. The viewer's anchor now sits at half
+        # of the fitted screen axis, so a plain fit already selects the finest
         # level and that part is redundant. The tighter framing is KEPT purely as
         # a composition choice (the galaxy fills the view); revisiting it is a
         # visual change, out of scope for the anchor fix.
@@ -534,7 +570,7 @@ def main() -> None:
             import zipfile
 
             with tempfile.TemporaryDirectory(prefix="luxar_demo_gaia_") as tmpdir:
-                with zipfile.ZipFile(DATA_FILE, "r") as zf:
+                with zipfile.ZipFile(resolve_data_file(), "r") as zf:
                     zf.extractall(tmpdir)
                 load_and_convert_gaia_data(
                     Path(tmpdir) / "milky_way_gaia_3m.zarr", output_path
@@ -550,7 +586,7 @@ def main() -> None:
         tmp_path = Path(tmpdir)
 
         # Load from zip and convert to Luxar format (extracts to temp_dir)
-        zarr_path = load_and_convert_from_zip(DATA_FILE, tmp_path)
+        zarr_path = load_and_convert_from_zip(resolve_data_file(), tmp_path)
 
         aprint("")
         aprint("=" * 70)

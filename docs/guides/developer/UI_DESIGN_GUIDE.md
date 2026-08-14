@@ -92,8 +92,13 @@ Two CSS entry points (see `src/styles/README.md`):
 All colors, spacing, and effects are CSS custom properties with the
 `--luxar-` prefix, injected at runtime by `ThemeManager` as **inline styles on
 `document.documentElement`** (not a `:root {}` stylesheet rule — they carry
-inline-style specificity). Component CSS must reference tokens, never
-hardcoded values (sanctioned exceptions are registered in §15.6).
+inline-style specificity) — with one sanctioned exception registered in
+§15.6: `--luxar-glass-tint` is the only `--luxar-` property declared in a
+stylesheet rather than by `ThemeManager` (a separate, unregistered case,
+`--luxar-overlay-transition-duration`, is a per-element runtime value
+`overlay-manager.ts` sets directly on an element, not a theme token at all).
+Component CSS must reference tokens, never hardcoded values (sanctioned
+exceptions are registered in §15.6).
 
 The full vocabulary is **87 variables** (count them with
 `grep -c "'--luxar" src/themes/theme-manager.ts` — that reports 88, one of
@@ -178,7 +183,7 @@ exist). This is the single most common authoring mistake.
 
 | Token | Value | Layer |
 | --- | --- | --- |
-| `--luxar-z-base` | 100 | Baseline layer — in-canvas widgets and frameless overlays. Both prescribed migrations are still pending, so today it holds the opposite: the data monitor and the dimension sliders, which belong a tier up (§15.4), while the widgets that belong here sit on `tooltip` (§15.1) |
+| `--luxar-z-base` | 100 | Baseline layer — in-canvas widgets and frameless overlays. The prescribed migrations are still pending, so today it holds the opposite: the data monitor, which belongs a tier up (§15.4), while the widgets that belong here sit on `tooltip` (§15.1) |
 | `--luxar-z-dropdown` | 1000 | Docked panels, the rail |
 | `--luxar-z-modal` | 2000 | Modal dialogs (+ scrim at `calc(var(--luxar-z-modal) - 1)`) |
 | `--luxar-z-popover` | 3000 | Rail popovers/flyouts, first-run hint |
@@ -193,7 +198,7 @@ shipped uses: the modal scrim at `calc(var(--luxar-z-modal) - 1)`
 (`dataset-browser.css:18`), the debug console at
 `calc(var(--luxar-z-base) + 50)` (`debug-console.css:31` — just above the
 baseline layer, deliberately below every panel), and the toast at
-`calc(var(--luxar-z-tooltip) + 1000)` (`toast.css:22` — deliberately above
+`calc(var(--luxar-z-tooltip) + 1000)` (`toast.css:28` — deliberately above
 *every* tier in the table, because a transient notice must not be occluded).
 Keep the offset readable as an intent ("just above/below tier X"); if you need
 a whole new band, that is a token, not a `calc`. All three are registered in
@@ -209,7 +214,7 @@ and `performance-monitor.ts:87`, which writes `statsMonitor`, *not* the
 
 | `config.ui.zIndex` key | Value | Nearest token tier |
 | --- | --- | --- |
-| `dimensionSliders`, `performanceMonitor` | 100 | `base` (100) |
+| `dimensionSliders`, `performanceMonitor` | 100 | `base` (100) — `dimensionSliders` is one of the unread keys; its stylesheet is on `--luxar-z-dropdown` (#1483), so this row does not describe where the panel paints |
 | `debugConsole` | 150 | just above `base` |
 | `datasetBrowser`, `loading`, `error` | 1000 | `dropdown` (1000) |
 | `help` | 1001 | just above `dropdown` |
@@ -265,7 +270,7 @@ Key color differences:
 
 | | dark | light | frosted-glass | liquid-glass |
 | --- | --- | --- | --- | --- |
-| `bg.secondary` (panel) | `rgba(30,30,30,0.95)` | `rgba(250,250,250,0.95)` | `rgba(28,30,36,0.65)` — a **dark frost** (contrast floor, see below) | `rgba(255,255,255,0.15)` + a dark `::after` |
+| `bg.secondary` (panel) | `rgba(30,30,30,0.95)` | `rgba(250,250,250,0.95)` | `rgba(28,30,36,0.75)` — a **dark frost** (contrast floor, see below) | `rgba(255,255,255,0.15)` + a dark `::after` |
 | `highlight` | `#00a0ff` (blue) | `#0277bd` (blue) | `rgba(0,160,255,1)` (= `#00a0ff`) | `rgba(0,160,255,1)` (= `#00a0ff`) |
 | `border.focus` | green `rgba(76,175,80,0.5)` | green | **blue** `rgba(0,122,255,0.6)` | **blue** `rgba(0,122,255,0.5)` |
 | `interactive.*` base | white alpha | black alpha | white alpha | bluish-gray `rgba(120,120,128,…)` |
@@ -286,22 +291,42 @@ Design consequences:
 - Anything using `box-shadow: var(--luxar-shadow-lg)` silently gains an inner
   glow in liquid-glass; that is intended.
 - **Frosted-glass panels are a dark frost, and that is a contrast floor.** The
-  panel tint must keep text legible over ANY scene, so `bg.secondary` is a ~65%
+  panel tint must keep text legible over ANY scene, so `bg.secondary` is a 75%
   dark layer under the blur — the same contrast-protection role liquid-glass's
-  dark `::after` plays. Composited over the worst case (a pure-white scene) the
-  panel lands near `#6b6d71`, which gives roughly **4.9:1 against
-  `text-primary`** (clears WCAG AA 4.5:1 for the 13px body text), **~3.7:1
-  against `text-secondary`** and **~2.5:1 against `text-muted`**. So: body copy
-  and any load-bearing value go in `text-primary` — that is the only rank that
-  clears AA against the worst-case backdrop. The `secondary`/`muted` ranks are
-  the quiet-instrument micro-voice (§8.3) and are still in use for labels,
-  hints and idle icons, but be clear-eyed about what they are: below AA for
-  normal-size text (1.4.3), and `muted` is below the 3:1 non-text floor
-  (1.4.11) for a meaning-bearing icon. Pairing them with a second signal
-  satisfies "color is not the only cue" (1.4.1) — a *different* criterion; it
-  does not exempt text from 1.4.3. Treat the gap as tracked debt (§15.2), not
-  as a licence to push more meaning down a rank. Never lighten a glass panel
-  tint without re-running that worst-case composite.
+  dark `::after` plays (liquid-glass paints its tint via the
+  `--luxar-glass-tint` CSS custom property, `rgba(0, 0, 0, 0.68)`, not a theme
+  token — see §15.6 for why it lives in the stylesheet rather than as a
+  `ThemeManager` token). Composited over the worst case (a pure-white scene),
+  frosted-glass measures **6.8:1 / 5.8:1 / 4.7:1** for `text-primary` /
+  `text-secondary` / `text-muted`, and liquid-glass measures **7.3:1 / 6.2:1 /
+  5.0:1** for the same three ranks — all six clear WCAG AA (4.5:1) **for a bare
+  panel surface at full opacity, on those three ranks**; a `bg.tertiary` inset
+  lift and a surface-level `opacity` are two exceptions this claim does not
+  cover — a third, unrelated gap affects `text-disabled`, which sits outside
+  the three ranks asserted here (§15.2).
+  (Issue #1513: pre-fix, frosted-glass's panel composited to `#6b6d71`, giving
+  secondary/muted 3.73:1 / 2.56:1 — both below AA, and muted also below the
+  3:1 non-text floor for a meaning-bearing icon. Liquid-glass's `::after`
+  layer additionally carried a stray `opacity: 0.7` multiplier on top of its
+  own 0.55 tint — an effective 0.385 alpha that composited to `rgb(157)` and
+  gave primary/secondary/muted 2.61:1 / 2.19:1 / 1.73:1, all three below AA,
+  not only secondary/muted; deleting that multiplier is as much a part of
+  this fix as the alpha bumps.) With all three ranks clearing AA on a bare
+  panel, the `secondary`/`muted` split is now a pure typographic hierarchy
+  (§8.3's quiet-instrument micro-voice) rather than a contrast cliff — on a
+  bare panel, pick a rank for visual weight, not to dodge a legibility floor
+  (an inset still has one — §15.2). **Never lighten a
+  glass panel tint, shrink a glass text alpha, or add an `opacity` to the
+  `::after` tint layer, without re-running the worst-case composite** —
+  `tests/unit/themes/glass-contrast.test.ts` pins these six numbers and (for
+  liquid-glass) the tint's own effective alpha, and fails if any regresses
+  below 4.5:1 or an opacity multiplier reappears. Its dark-scene `describe`
+  blocks document the numbers in a comment (frosted-glass **16.3:1 / 13.1:1 /
+  9.7:1**, liquid-glass **18.8:1 / 14.8:1 / 10.5:1**) but can't independently
+  guard that direction: for white-ish text over a darker panel the
+  bright-scene case above is the stricter one for any text alpha in use
+  here, so those checks only assert the rank order stays
+  `primary > secondary > muted`.
 - Blur tokens differ radically per theme by design: frosted-glass IS its blur;
   liquid-glass barely blurs because refraction + tint do the work.
 
@@ -334,12 +359,29 @@ refraction injector in `glass-filters.ts` all read the same class.
 
 - **Opt in**: self-contained bordered panels (rail, GUI panels, help overlay,
   layers panel, monitor, dataset browser, debug console, dimension sliders,
-  toast, resolution indicator, error overlay, scene-identity banner, rail
+  resolution indicator, error overlay, scene-identity banner, rail
   flyout/popover).
-- **Opt out**, two kinds: frameless in-canvas widgets (scale bar, colormap
+- **Opt out**, three kinds: frameless in-canvas widgets (scale bar, colormap
   legend) are deliberately NOT glass — they use drop-shadows instead of a
-  panel material; and transient cursor popovers (context menus, §7.8) are
-  *framed* but still not glassed, because they live and die with the cursor.
+  panel material; transient cursor popovers (context menus, §7.8) are
+  *framed* but still not glassed, because they live and die with the cursor;
+  and two over-canvas badges — the toast and the REC pill — are framed on the
+  badge variant of the recipe (§7.1) but likewise not glassed. **Being a badge
+  is not the criterion**, and the two have different-strength reasons. For the
+  toast, un-glassing is *mandatory*: its dismiss animation is an `opacity` fade
+  on its own root, which §5.1.3 forbids on a glass surface. The REC pill's reason
+  is weaker — it is simply not put on the panel material
+  (`recording-panel.css:85-97`, a hairline-bordered pill in the untokenised 9999
+  band that must beat unknown host chrome, §15.6); it does not fade its root
+  (only `transition: border-color`, with the pulse on its inner `__dot`), so it
+  *could* be glassed. The resolution indicator shows why the toast's reason is
+  the load-bearing one: a badge that IS glassed (opt-in list above) and ramps
+  `opacity` on its root anyway — drift (§15.4), not a member of this kind.
+  These last two kinds take the liquid-glass
+  dark tint explicitly — `background: var(--luxar-glass-tint)` in
+  `liquid-glass.css`, never a hardcoded `rgba()` of their own (§15.6) — since
+  without the glass `::after` layer they would paint that theme's
+  translucent-white `--luxar-bg-secondary` under white text.
 - **Nested surfaces must de-glass**: a GUI mounted inside an already-glass
   rail popover removes the class (`rail-panels/popover-gui.ts`) — never
   double-glass.
@@ -352,8 +394,11 @@ Recipes (do not re-implement; shown for understanding):
   `.luxar-glass-refraction` div (z:-3, gradient source pixels), `::before`
   (z:-2, `backdrop-filter: blur(2px) saturate(180%)` +
   `filter: url(#luxar-liquid-refraction)` SVG displacement/chromatic
-  aberration), `::after` (z:-1, dark tint `rgba(0,0,0,0.55)` + four inset
-  bevel shadows).
+  aberration), `::after` (z:-1, dark tint `var(--luxar-glass-tint)` =
+  `rgba(0, 0, 0, 0.68)` + four inset bevel shadows). The `::after` layer
+  carries **no `opacity` multiplier, and must not gain one** — the tint's own
+  alpha IS the theme's contrast floor (§4), and an element-level `opacity`
+  would silently divide it back down (issue #1513's root cause).
 
 ### 5.1 Hard constraints on every glass surface
 
@@ -443,10 +488,11 @@ font-family:     var(--luxar-font-base);
 font-size:       var(--luxar-text-base);                 /* 13px */
 ```
 
-…plus `luxar-glass-surface` on the root element in TS — except for §5's two
-opt-outs (frameless in-canvas widgets, and transient cursor popovers such as
-context menus, §7.8), which take the recipe without the glass class. Do NOT
-add per-theme `box-shadow` rings on top (removed deliberately in PR #447).
+…plus `luxar-glass-surface` on the root element in TS — except for §5's three
+opt-outs (frameless in-canvas widgets, transient cursor popovers such as
+context menus, §7.8, and the two un-glassed over-canvas badges, toast and REC
+pill), which take the recipe without the glass class. Do NOT add per-theme
+`box-shadow` rings on top (removed deliberately in PR #447).
 
 **Tier variants:**
 
@@ -527,6 +573,30 @@ in an inner wrapper:
   border-radius: var(--luxar-radius-full);
 }
 ```
+
+**Shipped variant — bound on the root.** Three panels put the height bound on
+the root instead and make it a flex column (`max-height` +
+`display: flex; flex-direction: column`), driving the scrolling child with
+`flex: 1; min-height: 0` so it caps against that bound: the help overlay
+(`help-overlay.css:19-21` root, `:51-61` wrapper), the dimension sliders
+(`dimension-sliders.css`, #1483), and the data monitor (`overflow: visible` root
+at `data-loading-monitor.css:24`, the `--expanded` bound at `:62-67`, capped by
+`.luxar-monitor-detailed` `:88-89` and `.luxar-data-monitor__content`
+`:139-144`). The point is that the root owns the panel's single height bound and
+the scroller caps against it, so the glass root stays `overflow: visible`
+without the bound being duplicated on two boxes. It also lets a panel pin
+content *outside* the scroll area — the help overlay keeps its header and filter
+row there, and the monitor its header and tabs; the dimension sliders put
+everything, header included, inside the wrapper.
+
+Two consequences. The root's `display` must not be overwritten inline or the cap
+is lost (see `ui/dimension-sliders.ts::setVisible`). And the panel's padding must
+be *inside* the scrollport whenever a focusable descendant sits flush with that
+scrollport's edge: a scroll container clips ink overflow at its padding edge, so
+a focus ring on a flush child is cut off if the slack is on the root instead —
+which is why the sliders moved their padding onto the wrapper (#1483) while the
+monitor, whose scrollers have no flush focusable edge, keeps its padding on the
+root (`:65`).
 
 ### 7.5 The control rail and its satellites
 
@@ -778,11 +848,13 @@ ease`) over `all` in hot paths (long lists).
   channel, which would yank it out of position for a frame; give it a
   composed keyframe in its own CSS (`translate…(-50%) scale(…)`) instead.
 - Scrims and genuinely **non-glass** transients (badges, frameless in-canvas
-  widgets): opacity fades are fine. **The toast is not one of them** — it
-  carries `luxar-glass-surface` (`ui/toast.ts:17`), so §5.1.3 governs its
-  root: a new transient of that shape fades an inner wrapper or moves with
-  transform. The shipped toast fades its own root; that is drift (§15.4), not
-  the pattern to copy.
+  widgets): opacity fades are fine. The toast is one of them — it is
+  deliberately un-glassed for exactly this reason (§5's third opt-out), so its
+  `transition: opacity 0.3s ease` root fade is legal. The rule it illustrates
+  is the constraint's boundary, not an exemption from it: a *glass* surface
+  still must not fade its own root — fade an inner wrapper or move with
+  transform, or drop the glass class as the toast does and take the theme tint
+  instead.
 - The rail collapse/expand animates `opacity 0.3s ease` alongside
   `transform 0.28s cubic-bezier(0.2, 0.7, 0.2, 1)`. The rail is the sanctioned
   steady-translucency exception to §5.1.3: its resting state is already
@@ -881,9 +953,14 @@ Further requirements:
   must first check the user hasn't focused something else.
 - Reduced motion per §10.4. Color is never the only signal (pair with dimming,
   ticks, text) — and note that satisfying *that* rule says nothing about
-  contrast: text still needs its own ratio (§4, §15.2). Load-bearing copy goes
-  in `text-primary`, the only rank that clears AA against a worst-case
-  backdrop.
+  contrast: text still needs its own ratio (§4, §15.2). On a bare glass panel
+  all three text ranks now clear AA against a worst-case backdrop (§4); two
+  things sit outside that guarantee: a `bg.tertiary` inset surface, where
+  only `text-muted` falls short of AA (`text-primary`/`text-secondary` still
+  clear it there) (§15.2), and a surface-level `opacity` (e.g. the control
+  rail idling at 0.55), which multiplies text and panel together and drops
+  even `text-primary` well below AA — a case the token-level guarantee never
+  covered in the first place (§4).
 
 ---
 
@@ -921,7 +998,12 @@ Further requirements:
 ## 14. Checklist for a new UI surface
 
 1. Root: surface recipe (§7.1) + `luxar-glass-surface` (unless it is one of
-   §5's opt-outs — frameless by design, or a transient cursor popover, §7.8)
+   §5's three opt-outs — frameless by design, a transient cursor popover, §7.8,
+   or one of the two un-glassed over-canvas badges, the toast and the REC pill).
+   Being a badge is not itself the criterion: a badge that ramps `opacity` on
+   its own root MUST be un-glassed (§5.1.3, the toast); one that does not may go
+   either way (the REC pill is not glassed, the resolution indicator is — and
+   ramps anyway, which is why §15.4 logs it as drift).
    + `overflow: visible` + inner `__scroll` wrapper if it scrolls.
 2. Correct tier: panel / modal (+scrim) / popover / badge (§7.1 table) with
    token z-index — and if it docks beside the rail, it joins the exclusive
@@ -1089,16 +1171,40 @@ that will close it where one exists, and the entry goes away as that PR merges
   `reset.css` and `control-rail.css` spell the fallback correctly and are the
   pattern. All four shipped themes define the token, so nothing is broken
   today.
-- **Sub-AA micro-label contrast on the glass themes.** Measured against the
-  worst-case backdrop (§4), `text-secondary` lands at ~3.7:1 and `text-muted`
-  at ~2.5:1 on a frosted-glass panel; WCAG 1.4.3 wants 4.5:1 for text this
-  size and 1.4.11 wants 3:1 for a meaning-bearing icon. Only `text-primary`
-  (~4.9:1) clears. This is the whole quiet-instrument label hierarchy (§8.3
-  ranks 2–3), so it is a design-level gap rather than a one-file fix: closing
-  it means lifting the `text.secondary`/`text.muted` alphas in the two glass
-  themes (and re-checking them against a dark scene, where the same tokens
-  must not glare), or darkening `bg.secondary` further. Until then, no new
-  surface may put load-bearing copy below `text-primary`.
+- **`bg.tertiary` inset surfaces on the glass themes are still below AA for
+  `text-muted`.** #1513 closed the panel-level gap (§4) by darkening the glass
+  tints and lifting `text.secondary`/`text.muted`, but a `bg.tertiary` inset
+  lift is painted ON TOP of the panel and is *lighter* than it, which erodes
+  some of that margin back. Frosted-glass: `rgba(255, 255, 255, 0.07)` over
+  the worst-case 0.75-tint panel lands near `rgb(97, 98, 102)`, giving
+  `text-muted` ~4.1:1 — still under 4.5:1. Liquid-glass: `rgba(255, 255, 255,
+  0.1)` over the worst-case (now 0.68-alpha) `--luxar-glass-tint` panel lands
+  near `rgb(99, 99, 99)`, giving `text-muted` ~4.0:1. Closing this too would
+  need a markedly darker frost/tint than #1513's numbers, trading away
+  headroom the panel-level fix deliberately kept modest. Until then,
+  `text-muted` is the one rank that should not carry load-bearing copy on a
+  `bg.tertiary` inset surface.
+- **`text-disabled` is used as a live rank-3 label, not only for disabled
+  controls.** `.luxar-text-disabled` (`base/utilities.css:173`) and direct
+  `--luxar-text-disabled` uses total ~16 sites: 13 in
+  `data-loading-monitor.css` (e.g. `.luxar-metric-card__subtitle` at `:288`
+  and `.luxar-progress-bar__label` at `:330`, both live metric captions, not
+  disabled state) and 2 in `debug-console.css` (`:181`, `:203`), plus the
+  class definition itself. Over the new worst-case panels this token measures
+  ~2.09:1 (frosted) / ~2.15:1 (liquid) — well under AA. WCAG 1.4.3 exempts
+  genuinely disabled controls, but these are not disabled controls. Either
+  those sites move up a rank, or §8.3 stops listing a disabled-named token as
+  a live text rank — recorded here; the token itself is not raised, since
+  that would blur the actual disabled affordance.
+- **Element `opacity` on a whole surface multiplies text and panel together,
+  and is invisible to a token-level contrast check.** `.luxar-control-rail`
+  idles at `opacity: 0.55` (`control-rail.css:29`), which drops even
+  `text-primary` to ~2.45:1 (frosted-glass) / ~2.52:1 (liquid-glass) over a
+  worst-case white scene until hover / `.is-awake` restores full opacity.
+  This is sanctioned by §5.1's
+  steady-translucency exception (§5.1.3, §10.2), but §4's "all six clear AA"
+  claim must not be read as covering it — this is the same blind spot that
+  hid #1513's liquid-glass `opacity: 0.7` bug on the `::after` tint layer.
 
 (#1476 closed the ring/reduced-motion gaps — the embed-safe
 `.luxar-glass-surface :focus-visible` baseline (§12.4), the GUI slider's missing
@@ -1122,19 +1228,20 @@ last stylesheet that lacked one.)
 
 ### 15.4 Glass-constraint (§5.1) and layer-tier violations
 
-- The toast fades `opacity` on its own `luxar-glass-surface` root
-  (`toast.css` `transition: opacity 0.3s ease`, driven by
-  `ui/toast.ts:19,24`) — the one surface still doing what §5.1.3 forbids, so
-  under liquid-glass its refraction layers ride the fade with it. Fix by
-  moving the fade to an inner wrapper (or dropping the glass class); until
-  then, do not cite it as precedent (§10.2).
-- `.luxar-dimension-sliders` is a glass surface whose root sets
-  `overflow-y: auto` instead of delegating to an inner `__scroll` wrapper
-  (§5.1.2/§7.4).
-- Two standing panels sit on the baseline tier rather than the `dropdown`
-  layer their placement implies (§3.5): `dimension-sliders.css:31` and
-  `data-loading-monitor.css:12`, both `--luxar-z-base`. They are the only two
-  component stylesheets on that token, which is why §3.5's table names them.
+- The resolution indicator ramps `opacity` on its own `luxar-glass-surface`
+  root — the class is added at `ui/resolution-indicator.ts:48`, and
+  `resolution-indicator.css:70` runs `animation: luxar-resolution-fade-in 0.3s
+  ease-out forwards` on that root, with the `--hidden` modifier (`:78`) swapping
+  in `luxar-resolution-fade-out`; both keyframes (`:12-32`) ramp `opacity` 0→1 /
+  1→0. It is the remaining §5.1.3 violation, so under liquid-glass its
+  refraction layers ride the ramp with it. Fix by moving the ramp to an inner
+  wrapper, or by dropping the glass class as the toast did (#1483) and taking
+  the theme's dark tint explicitly. Until then, do not cite it as precedent
+  (§10.2).
+- One standing panel sits on the baseline tier rather than the `dropdown`
+  layer its placement implies (§3.5): `data-loading-monitor.css:12`,
+  `--luxar-z-base`. It is the only component stylesheet left on that token,
+  which is why §3.5's table names it.
 
 ### 15.5 Private context menu predating the shared widget
 
@@ -1180,12 +1287,33 @@ migrated.
 - Off-tier z-indexes via `calc()` (§3.5): the modal scrim at
   `calc(var(--luxar-z-modal) - 1)` (`dataset-browser.css:18`), the debug
   console at `calc(var(--luxar-z-base) + 50)` (`debug-console.css:31`), the
-  toast at `calc(var(--luxar-z-tooltip) + 1000)` (`toast.css:22`).
+  toast at `calc(var(--luxar-z-tooltip) + 1000)` (`toast.css:28`).
 - Untokenized z-index magnitudes with a stated reason: the recording panel's
   `9999/10000/100000` (`recording-panel.css:80,132,225`), whose whole point is
   to beat unknown third-party host UI (documented in that file's header). Small
   local stacking indexes (`1/2/10` inside a positioned parent) are not layer
   values at all and need no entry.
+- **A stylesheet-declared custom property, not a `ThemeManager` token** (§3):
+  `--luxar-glass-tint` (`styles/themes/liquid-glass.css`, under the
+  `[data-theme='liquid-glass']` selector) is the dark tint painted by
+  `.luxar-glass-surface::after` — liquid-glass's own internal implementation
+  detail, with every consumer living in that same file: the `::after` rule
+  itself, and every non-`.luxar-glass-surface` surface that would otherwise
+  paint white text over too-light a background on a bright scene (currently
+  the recording indicator, cursor-anchored context menus, control-rail
+  tooltips, the control-rail first-run hint, and the toast (#1483) — all
+  white-on-white over the bare canvas — plus the recording confirmation
+  dialog and the offline capture overlay, which sit over the
+  `--luxar-bg-overlay` scrim and so are merely too-light rather than literally
+  white-on-white). A new member of that list spells
+  `var(--luxar-glass-tint)`, not a fresh `rgba()` literal: the old duplicated
+  `rgba(0, 0, 0, 0.55)` is 4.48:1 against `text-primary` over a white scene,
+  which is what #1513 was. It stays a plain
+  stylesheet declaration rather
+  than moving into `ThemeManager`'s `themeToCSSVariables()` because it is
+  this one theme's CSS-layer implementation detail — a tint painted by a
+  pseudo-element — not a member of the `Theme` interface, so it does not
+  belong in the token vocabulary.
 
 ---
 

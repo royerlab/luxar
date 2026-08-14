@@ -17,12 +17,7 @@
 import * as THREE from 'three';
 import { LINE_VERTEX_SHADER, LINE_FRAGMENT_SHADER } from './shader-glsl';
 import { CAPSULE_LINE_VERTEX_SHADER, CAPSULE_LINE_FRAGMENT_SHADER } from './shader-glsl-capsule';
-import {
-  VOLUMETRIC_LINE_VERTEX_SHADER,
-  VOLUMETRIC_LINE_FRAGMENT_SHADER,
-} from './shader-glsl-volumetric';
 import { getPlaceholderElementTexture } from '../../element-texture-layout';
-import { getLineRadialLUTTexture } from '../_shared/line-integral-lut';
 import type { CameraAwareMaterial } from '../_shared/camera-aware-material';
 import type { ColormapAwareMaterial } from '../_shared/colormap-aware-material';
 import { clampGamma, isGammaOne, isNoGOG } from '../_shared/uniform-helpers';
@@ -35,7 +30,6 @@ import {
   getCompleteBlendingState,
   isVolumetricMode,
   normalModeDepthWrite,
-  usesPeakProjection,
   type CompleteBlendingState,
 } from '../../blending-state';
 import type { BlendingMode } from '../../../types/blending';
@@ -147,7 +141,6 @@ export class LineMaterial
     // source selection in the codebase (every other variation is a define
     // or a uniform). Resolved once at construction; see LineMaterialConfig.
     const primitive = resolveLinePrimitive(materialConfig.primitive);
-    const isVolumetricPrimitive = primitive === 'volumetric';
     const isCapsulePrimitive = primitive === 'capsule';
 
     // Determine THREE.js blending mode
@@ -211,23 +204,10 @@ export class LineMaterial
               ...scalarRangeUniformEntries(materialConfig.scalarRange),
             }
           : {}),
-        // Sharpness radial LUT (#1352 PR-4): the volumetric sum lanes
-        // sample it unconditionally. Bound only for the volumetric
-        // primitive — building the singleton costs real CPU, so
-        // screen-space materials must never trigger it.
-        ...(isVolumetricPrimitive ? { uLineRadialLUT: { value: getLineRadialLUTTexture() } } : {}),
       },
 
-      vertexShader: isCapsulePrimitive
-        ? CAPSULE_LINE_VERTEX_SHADER
-        : isVolumetricPrimitive
-          ? VOLUMETRIC_LINE_VERTEX_SHADER
-          : LINE_VERTEX_SHADER,
-      fragmentShader: isCapsulePrimitive
-        ? CAPSULE_LINE_FRAGMENT_SHADER
-        : isVolumetricPrimitive
-          ? VOLUMETRIC_LINE_FRAGMENT_SHADER
-          : LINE_FRAGMENT_SHADER,
+      vertexShader: isCapsulePrimitive ? CAPSULE_LINE_VERTEX_SHADER : LINE_VERTEX_SHADER,
+      fragmentShader: isCapsulePrimitive ? CAPSULE_LINE_FRAGMENT_SHADER : LINE_FRAGMENT_SHADER,
 
       // Preprocessor defines. Variant `#define`s (e.g.
       // `LUXAR_GAMMA_ONE`) gate fragment-stage fast paths and are
@@ -238,14 +218,6 @@ export class LineMaterial
         ...(isGammaOne(gammaValue) ? { LUXAR_GAMMA_ONE: '' } : {}),
         ...(isNoGOG(materialConfig.intensity ?? 1.0, materialConfig.offset ?? 0.0)
           ? { LUXAR_NO_GOG: '' }
-          : {}),
-        // Volumetric primitive only: peak (max/normal/opaque) vs sum
-        // (additive/luminous/volumetric) ray projection. Managed by
-        // applyBlendingMode alongside the other blending defines; the
-        // screen-space fragment has no such split, so the define is never
-        // stamped there (keeps its program cache keys unchanged).
-        ...(isVolumetricPrimitive && usesPeakProjection(blendingMode)
-          ? { LUXAR_PEAK_PROJECTION: '' }
           : {}),
       },
 
@@ -567,20 +539,6 @@ export class LineMaterial
     } else if (!wantsVolumetric && hasVolumetric) {
       delete this.defines.LUXAR_VOLUMETRIC;
       definesChanged = true;
-    }
-    // Volumetric PRIMITIVE only (#1352): peak vs sum ray projection. The
-    // screen-space fragment has no such split — never stamp it there, so
-    // its program cache keys stay unchanged with the flag off.
-    if (this.userData.linePrimitive === 'volumetric') {
-      const wantsPeak = usesPeakProjection(mode);
-      const hasPeak = 'LUXAR_PEAK_PROJECTION' in this.defines;
-      if (wantsPeak && !hasPeak) {
-        this.defines.LUXAR_PEAK_PROJECTION = '';
-        definesChanged = true;
-      } else if (!wantsPeak && hasPeak) {
-        delete this.defines.LUXAR_PEAK_PROJECTION;
-        definesChanged = true;
-      }
     }
     this.userData.blendingMode = mode;
     this.userData.depthTest = state.depthTest;

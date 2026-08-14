@@ -24,14 +24,18 @@ import {
   FILL_FACTOR,
   LODGroupRegistry,
   pickChildWithHysteresis,
+  projectBoxAreaFraction,
   projectBoxDiagonalPx,
+  SCREEN_FILL_DIAGONAL_RATIO,
   type LODGroupChild,
   type LODGroupEntry,
 } from '../../../scene/lod-group-registry';
+import { DEGENERATE_RECT_HALF_EXTENT } from '../../../scene/lod-selector-math';
 import {
   calculateCameraDistance,
   type BoundingBox,
 } from '../../../scene/scene-manager/clipping/bounds-math';
+import { updateCameraAspect } from '../../../utils/camera-utils';
 
 // ────────────────────────────────────────────────────────────────────────
 // pickChildWithHysteresis — pure selector math
@@ -40,7 +44,7 @@ import {
 describe('pickChildWithHysteresis', () => {
   // Coverage-fraction thresholds (dimensionless, in [0,1], coarsest→finest).
   // The `metric` argument is the coverage metric (projected diagonal ÷
-  // FILL_FACTOR·viewportDiagonal), also in fraction space.
+  // FILL_FACTOR·fittedAxisPx), also in fraction space.
   const thresholds = [0, 0.1, 0.5];
 
   it('picks the coarsest child below the first threshold', () => {
@@ -265,6 +269,145 @@ describe('projectBoxDiagonalPx', () => {
     // AND the manual column-major NDC computation is correct for ortho.
     expect(diagonal).toBeCloseTo(500, 1);
   });
+
+  // ── projectBoxAreaFraction — the selector='screen-area' metric ──────────
+  describe('projectBoxAreaFraction', () => {
+    it('returns 1.0 for a screen-filling box (full NDC extent)', () => {
+      const box: BoundingBox = { min: { x: -1, y: -1, z: 0 }, max: { x: 1, y: 1, z: 0 } };
+      expect(projectBoxAreaFraction(box, identityCamera())).toBeCloseTo(1.0, 6);
+    });
+
+    it('returns the covered AREA fraction, not an extent: half-NDC box → 1/4', () => {
+      // Half the screen along EACH axis covers a quarter of its area — the
+      // property the whole selector is named for. An extent-shaped mutant
+      // (returning halfW, or hypot-like math) would give 0.5/0.7 here.
+      const box: BoundingBox = { min: { x: -0.5, y: -0.5, z: 0 }, max: { x: 0.5, y: 0.5, z: 0 } };
+      expect(projectBoxAreaFraction(box, identityCamera())).toBeCloseTo(0.25, 6);
+    });
+
+    it('multiplies the two axis fractions (asymmetric rect)', () => {
+      // x spans the full screen (fraction 1), y a quarter of it (0.25) → 0.25.
+      // Pins the PRODUCT against a max/min/hypot-of-axes mutant.
+      const box: BoundingBox = { min: { x: -1, y: -0.25, z: 0 }, max: { x: 1, y: 0.25, z: 0 } };
+      expect(projectBoxAreaFraction(box, identityCamera())).toBeCloseTo(0.25, 6);
+    });
+
+    it('clips to the viewport: past full-screen the metric tops out at exactly 1.0', () => {
+      // NDC extent 4 per axis, but only the [-1,1]² viewport is VISIBLE →
+      // occupancy 1.0 exactly. The natural pick uses `threshold <= metric`,
+      // so the fills-screen partition threshold (1.0) is satisfied the moment
+      // coverage is complete and stays satisfied while zoomed past it.
+      const box: BoundingBox = { min: { x: -2, y: -2, z: 0 }, max: { x: 2, y: 2, z: 0 } };
+      expect(projectBoxAreaFraction(box, identityCamera())).toBeCloseTo(1.0, 6);
+    });
+
+    it('clips to the viewport: a huge rect intersecting only a screen corner reads its small VISIBLE fraction', () => {
+      // Rect spans NDC [0.5, 10] on both axes — enormous unclipped (~22.5 area
+      // units) but only the [0.5, 1]² corner is on screen: visible fraction =
+      // (0.25)·(0.25) = 0.0625. The review-caught failure: unclipped, this
+      // read arbitrarily large occupancy and pinned the finest level while
+      // panning across partition tiles.
+      const box: BoundingBox = { min: { x: 0.5, y: 0.5, z: 0 }, max: { x: 10, y: 10, z: 0 } };
+      expect(projectBoxAreaFraction(box, identityCamera())).toBeCloseTo(0.0625, 6);
+    });
+
+    it('saturates to +Infinity when the camera is inside the box (perspective)', () => {
+      const box: BoundingBox = { min: { x: -5, y: -5, z: -5 }, max: { x: 5, y: 5, z: 5 } };
+      expect(projectBoxAreaFraction(box, perspectiveAtOrigin())).toBe(Number.POSITIVE_INFINITY);
+    });
+
+    it('a fully off-screen DEGENERATE rect reads 0, not the other axis span', () => {
+      // The review-caught interaction bug between clipping and the degenerate
+      // ramp: after clamping, "no viewport overlap on Y" and "zero-thickness
+      // visible line" both produced a zero clipped half-extent, so this
+      // full-width rect entirely above the viewport (y in [2, 3]) returned
+      // 1.0 (finest) instead of 0 — selecting expensive levels for geometry
+      // not on screen at all whenever the conservative frustum gate let it
+      // through near a corner.
+      const box: BoundingBox = { min: { x: -1, y: 2, z: 0 }, max: { x: 1, y: 3, z: 0 } };
+      expect(projectBoxAreaFraction(box, identityCamera())).toBe(0);
+      // Off-screen zero-thickness line (raw-degenerate AND off-screen) too.
+      const line: BoundingBox = { min: { x: -1, y: 2, z: 0 }, max: { x: 1, y: 2, z: 0 } };
+      expect(projectBoxAreaFraction(line, identityCamera())).toBe(0);
+      // And plain off-screen non-degenerate.
+      const sq: BoundingBox = { min: { x: 2, y: 2, z: 0 }, max: { x: 4, y: 4, z: 0 } };
+      expect(projectBoxAreaFraction(sq, identityCamera())).toBe(0);
+    });
+
+    it('a wide 2D node panned to a thin visible sliver reads its tiny area, not a linear span', () => {
+      // The ramp is gated on RAW (pre-clip) thinness: this square is 2 NDC
+      // units tall (not thin content) but only a 0.001-half sliver remains on
+      // screen — the honest visible occupancy is ~0.001, and inflating it to
+      // the full-width linear span (1.0 → finest) would resurrect the
+      // unclipped-corner cost while panning.
+      const box: BoundingBox = { min: { x: -1, y: 0.998, z: 0 }, max: { x: 1, y: 3, z: 0 } };
+      expect(projectBoxAreaFraction(box, identityCamera())).toBeCloseTo(0.001, 5);
+    });
+
+    it('degenerate rect (zero thickness) falls back to the LINEAR span, not area 0', () => {
+      // An axis-aligned straight polyline: full-width, zero-height projected
+      // bounds. The raw area product is exactly 0, which would pin the node to
+      // the coarsest level forever no matter how much screen it spans (the
+      // review-caught regression: the legacy diagonal metric read the long
+      // extent for these shapes). The metric must instead read the linear
+      // span: full width → 1.0.
+      const line: BoundingBox = { min: { x: -1, y: 0, z: 0 }, max: { x: 1, y: 0, z: 0 } };
+      expect(projectBoxAreaFraction(line, identityCamera())).toBeCloseTo(1.0, 6);
+      // Same for the vertical orientation (branch must take max, not halfW).
+      const vline: BoundingBox = { min: { x: 0, y: -0.5, z: 0 }, max: { x: 0, y: 0.5, z: 0 } };
+      expect(projectBoxAreaFraction(vline, identityCamera())).toBeCloseTo(0.5, 6);
+    });
+
+    it('a point (both axes degenerate) still reads ~0 → coarsest', () => {
+      const point: BoundingBox = { min: { x: 0.2, y: 0.2, z: 0 }, max: { x: 0.2, y: 0.2, z: 0 } };
+      expect(projectBoxAreaFraction(point, identityCamera())).toBeCloseTo(0, 6);
+    });
+
+    it('barely-non-degenerate rects stay on the area product (no early fallback)', () => {
+      // Thickness just ABOVE the sub-pixel degeneracy floor must NOT take the
+      // linear-span ramp — otherwise every thin-but-real object would jump
+      // to a wildly finer level. halfH = 0.01 (≈10px on 1080p) → area path:
+      // 1.0 × 0.01 = 0.01, NOT the linear 1.0.
+      const thin: BoundingBox = { min: { x: -1, y: -0.01, z: 0 }, max: { x: 1, y: 0.01, z: 0 } };
+      expect(projectBoxAreaFraction(thin, identityCamera())).toBeCloseTo(0.01, 6);
+    });
+
+    it('the degenerate fallback is a CONTINUOUS ramp, not a cliff at the floor', () => {
+      // Review-caught oscillation hazard: a hard cutover at the degeneracy
+      // floor meant halfH=0.001 → 1.0 (finest) vs halfH=0.001001 → ~0.001
+      // (coarsest) — a three-orders jump no hysteresis can absorb when an
+      // edge-on plane rotates across it. The metric is now
+      // max(area, span·(1 − thin/floor)):
+      //   thin = floor/2 (0.0005): max(0.0005, 1·0.5) = 0.5 — midway;
+      //   thin = floor exactly:    max(0.001, 1·0)   = 0.001 — meets the
+      //     area product with NO jump (the ramp has decayed to zero);
+      //   and values sampled across the floor differ smoothly.
+      const floor = DEGENERATE_RECT_HALF_EXTENT;
+      const mk = (halfH: number): BoundingBox => ({
+        min: { x: -1, y: -halfH, z: 0 },
+        max: { x: 1, y: halfH, z: 0 },
+      });
+      expect(projectBoxAreaFraction(mk(floor / 2), identityCamera())).toBeCloseTo(0.5, 6);
+      expect(projectBoxAreaFraction(mk(floor), identityCamera())).toBeCloseTo(floor, 6);
+      // Just below vs just above the floor: both ~the area product — smooth.
+      const below = projectBoxAreaFraction(mk(floor * 0.99), identityCamera());
+      const above = projectBoxAreaFraction(mk(floor * 1.01), identityCamera());
+      expect(Math.abs(below - above)).toBeLessThan(0.02);
+    });
+
+    it('never saturates for an orthographic camera (w stays 1) — the projection stays well-defined', () => {
+      // INTENDED, and identical to the legacy diagonal metric's contract (the
+      // ortho pin above): saturation is the PERSPECTIVE near-plane guard,
+      // where the homogeneous divide degenerates. Ortho never degenerates, so
+      // the plain clipped metric applies — here the camera is inside the box
+      // and the box's rect covers NDC ±0.5 per axis → 0.5 × 0.5 = 0.25 (a
+      // camera inside a LARGE node reads full coverage naturally instead;
+      // this box simply doesn't span the viewport). See the v3.4 spec's
+      // normative metric rules.
+      const box: BoundingBox = { min: { x: -5, y: -5, z: -5 }, max: { x: 5, y: 5, z: 5 } };
+      expect(projectBoxAreaFraction(box, orthoAtOrigin())).toBeCloseTo(0.25, 6);
+    });
+  });
 });
 
 // ────────────────────────────────────────────────────────────────────────
@@ -473,9 +616,9 @@ describe('LODGroupRegistry — selector mode', () => {
 describe('LODGroupRegistry — auto evaluation', () => {
   it('picks the finest child whose coverage_fraction is satisfied by the projected diagonal', () => {
     // bbox spans the full NDC cube → identity camera projects to a 1000 px
-    // diagonal on an 800x600 viewport, whose own diagonal is hypot(800,600)=1000
-    // → coverage metric = 1000/(FILL_FACTOR·1000) = 1000/250 = 4.0 (the group
-    // fills the screen, well past the quarter-viewport anchor). With
+    // diagonal on an 800x600 viewport, whose fitted axis is min(800,600)=600
+    // → coverage metric = 1000/(FILL_FACTOR·600) = 1000/300 ≈ 3.33 (the group
+    // fills the screen, well past the half-fitted-axis anchor). With
     // coverage_fraction thresholds [0, 0.5, 1.0], the finest applicable (1.0) is
     // child 2.
     const reg = makeRegistry();
@@ -492,10 +635,14 @@ describe('LODGroupRegistry — auto evaluation', () => {
   });
 
   it('normalizes coverage by viewport size: a full-viewport box picks the finest (coverage=1.0) child on ANY viewport', () => {
-    // The coverage metric is diagonalPx / (FILL_FACTOR·viewportDiagonal), so a
-    // box that fills the NDC cube projects to a diagonal equal to the viewport
-    // diagonal on ANY viewport size → coverage metric == 1/FILL_FACTOR == 4.0
-    // regardless. Both a small and a large viewport must therefore pick the
+    // The coverage metric is diagonalPx / (FILL_FACTOR·fittedAxisPx). A box that
+    // fills the NDC cube projects to a diagonal of hypot(width,height) on ANY
+    // viewport, so the metric is hypot(width,height)/(FILL_FACTOR·min(width,height))
+    // — no longer a single aspect-independent constant (unlike the old diagonal
+    // normalization, where numerator and denominator were both the viewport
+    // diagonal and cancelled exactly), but it comfortably clears 1.0 on both a
+    // small 4:3 viewport (measured metric ≈3.33) and a large 16:9 one (≈4.08).
+    // Both a small and a large viewport must therefore pick the
     // finest coverage=1.0 child. This pins the viewport-relative normalization
     // (the whole point of switching from absolute pixels to a coverage fraction).
     const fullBox = { min: [-1, -1, -1], max: [1, 1, 1] };
@@ -527,18 +674,96 @@ describe('LODGroupRegistry — auto evaluation', () => {
     }
   });
 
-  it('divides by the viewport diagonal: an EIGHTH-viewport box picks the middle child, not the finest, on ANY viewport', () => {
+  it('divides by the fitted screen axis: a small box picks the middle child, not the finest, on same-aspect viewports of any size', () => {
     // Discriminating test for the normalization (the full-viewport test above
-    // can't: it gives metric 1/FILL_FACTOR whether or not you divide). A box
-    // spanning NDC [-0.125, 0.125] projects to a diagonal of 0.125·hypot(w,h) →
-    // coverage metric = 0.125·hypot / (FILL_FACTOR·hypot) = 0.125/0.25 = 0.5 on
-    // ANY viewport. With thresholds [0, 0.5, 1.0] the finest applicable to 0.5 is
+    // can't: it clears 1.0 whether or not you divide). A box spanning NDC
+    // [-0.15, 0.15] on a 4:3 viewport projects to widthPx = 0.15·width,
+    // heightPx = 0.15·height, so diagonalPx = 0.15·hypot(width,height); the
+    // fitted axis is height (min for a 4:3, aspect >= 1, viewport), and
+    // hypot(width,height)/height = hypot(4,3)/3 = 5/3 for ANY 4:3 viewport
+    // (scale-invariant — depends only on aspect, not absolute size). So the
+    // coverage metric = 0.15·(5/3) / FILL_FACTOR = 0.25/0.5 = 0.5 on a 4:3
+    // viewport of any size (measured via projectBoxDiagonalPx below, not just
+    // asserted). With thresholds [0, 0.5, 1.0] the finest applicable to 0.5 is
     // the MIDDLE child (index 1).
-    // A buggy selector that skipped the ÷viewportDiagonal step would compare the
-    // raw pixel diagonal (62.5 px on 400×300, 551 px on 4K — both ≫ 1.0) and
-    // wrongly pick the finest (index 2) on both. So this pins the division AND
-    // its viewport-independence.
-    const eighthBox = { min: [-0.125, -0.125, -0.125], max: [0.125, 0.125, 0.125] };
+    // A buggy selector that skipped the ÷fittedAxisPx step would compare the
+    // raw pixel diagonal (75 px on 400×300, 750 px on 4000×3000 — both ≫ 1.0)
+    // and wrongly pick the finest (index 2) on both. So this pins the division
+    // AND its independence from absolute viewport size (aspect-independence at
+    // a FIXED aspect is exact for a fixed NDC box; independence ACROSS aspect
+    // ratios is a property of real camera framing, not of an arbitrary NDC box,
+    // and is pinned separately by the opening-framing invariance test below).
+    const smallBox = { min: [-0.15, -0.15, -0.15], max: [0.15, 0.15, 0.15] };
+    for (const viewport of [
+      { width: 400, height: 300 }, // 4:3, small
+      { width: 4000, height: 3000 }, // 4:3, 10x larger
+    ]) {
+      const camera = new THREE.Camera();
+      camera.matrixWorldInverse.identity();
+      camera.projectionMatrix.identity();
+      const reg = new LODGroupRegistry({
+        getCamera: () => camera,
+        getViewportSize: () => viewport,
+        getDisplayDims: () => [0, 1, 2],
+      });
+      const children = [
+        { ...makeChild(0), positionBounds: smallBox },
+        { ...makeChild(0.5), positionBounds: smallBox },
+        { ...makeChild(1.0), positionBounds: smallBox },
+      ];
+      reg.register(makeEntry(children, 0, '/g'));
+      reg.evaluatePerFrame();
+      expect(children[1].object.visible, `middle at ${viewport.width}x${viewport.height}`).toBe(
+        true
+      );
+      expect(children[2].object.visible, `NOT finest at ${viewport.width}x${viewport.height}`).toBe(
+        false
+      );
+      expect(children[0].object.visible).toBe(false);
+    }
+  });
+
+  it("selector='screen-area': picks by the fraction of the viewport AREA occupied", () => {
+    // Derived screen-area ladder [0, 1/8, 1/4, 1/2]. A box spanning NDC
+    // [-0.74, 0.74] × [-0.5, 0.5] covers 0.74 × 0.5 = 37% of the screen — the
+    // measured zebrahub "clearly zoomed out" pose that motivated this selector
+    // (the legacy diagonal metric still read 2.37/4 there and held the finest
+    // level, i.e. index 3 under these thresholds). Under screen-area, 1/4 ≤
+    // 0.37 < 1/2 → level 2 of 4: one step coarser, as the user expects.
+    const zebraBox = { min: [-0.74, -0.5, -0.5], max: [0.74, 0.5, 0.5] };
+    const reg = makeRegistry();
+    const children = [0, 0.125, 0.25, 0.5].map((t) => ({
+      ...makeChild(t),
+      positionBounds: zebraBox,
+    }));
+    const entry = makeEntry(children, 0, '/g');
+    entry.selector = 'screen-area';
+    reg.register(entry);
+    reg.evaluatePerFrame();
+    expect(children[2].object.visible).toBe(true);
+    expect(children[3].object.visible, 'finest must NOT hold at 37% occupancy').toBe(false);
+  });
+
+  it("selector='screen-area': the finest level holds while the node occupies at least half the screen", () => {
+    // Area = 0.8 × 0.8 = 64% ≥ 1/2 → finest. The literal statement of the
+    // occupancy-halving rule's anchor.
+    const bigBox = { min: [-0.8, -0.8, -0.5], max: [0.8, 0.8, 0.5] };
+    const reg = makeRegistry();
+    const children = [0, 0.125, 0.25, 0.5].map((t) => ({
+      ...makeChild(t),
+      positionBounds: bigBox,
+    }));
+    const entry = makeEntry(children, 0, '/g');
+    entry.selector = 'screen-area';
+    reg.register(entry);
+    reg.evaluatePerFrame();
+    expect(children[3].object.visible).toBe(true);
+  });
+
+  it("selector='screen-area' is viewport-size independent (same pick on any monitor)", () => {
+    // The metric is built from NDC fractions, so pixel dimensions must not
+    // matter. Same 37%-occupancy box, tiny and 4K viewports → same level.
+    const zebraBox = { min: [-0.74, -0.5, -0.5], max: [0.74, 0.5, 0.5] };
     for (const viewport of [
       { width: 400, height: 300 },
       { width: 3840, height: 2160 },
@@ -551,21 +776,99 @@ describe('LODGroupRegistry — auto evaluation', () => {
         getViewportSize: () => viewport,
         getDisplayDims: () => [0, 1, 2],
       });
-      const children = [
-        { ...makeChild(0), positionBounds: eighthBox },
-        { ...makeChild(0.5), positionBounds: eighthBox },
-        { ...makeChild(1.0), positionBounds: eighthBox },
-      ];
-      reg.register(makeEntry(children, 0, '/g'));
+      const children = [0, 0.125, 0.25, 0.5].map((t) => ({
+        ...makeChild(t),
+        positionBounds: zebraBox,
+      }));
+      const entry = makeEntry(children, 0, '/g');
+      entry.selector = 'screen-area';
+      reg.register(entry);
       reg.evaluatePerFrame();
-      expect(children[1].object.visible, `middle at ${viewport.width}x${viewport.height}`).toBe(
+      expect(children[2].object.visible, `level 2 at ${viewport.width}x${viewport.height}`).toBe(
         true
       );
-      expect(children[2].object.visible, `NOT finest at ${viewport.width}x${viewport.height}`).toBe(
-        false
-      );
-      expect(children[0].object.visible).toBe(false);
     }
+  });
+
+  it("selector='screen-area': a degenerate (zero-thickness) node spanning the screen picks the finest, not the coarsest", () => {
+    // Regression for the review-caught failure: an axis-aligned straight
+    // polyline projects to a zero-height rect, whose raw area product is 0 —
+    // permanently coarsest under a naive area metric even at full screen
+    // width. The degenerate fallback reads the linear span (1.0 here ≥ the
+    // 0.5 finest threshold) → finest.
+    const lineBox = { min: [-1, 0, 0], max: [1, 0, 0] };
+    const reg = makeRegistry();
+    const children = [0, 0.125, 0.25, 0.5].map((t) => ({
+      ...makeChild(t),
+      positionBounds: lineBox,
+    }));
+    const entry = makeEntry(children, 0, '/g');
+    entry.selector = 'screen-area';
+    reg.register(entry);
+    reg.evaluatePerFrame();
+    expect(children[3].object.visible).toBe(true);
+    expect(children[0].object.visible, 'must NOT be pinned to the coarsest').toBe(false);
+  });
+
+  it("selector='screen-area': a fitted high-aspect object reads its literal occupancy (one level below finest) — BY DESIGN", () => {
+    // The occupancy rule applied verbatim, pinning the DELIBERATE revision of
+    // the old diagonal-anchored opening-framing guarantee: a fitted full-width
+    // but quarter-height object occupies 25% of the screen, so on the standard
+    // 4-level derived ladder [0, ⅛, ¼, ½] it opens at the SECOND-FINEST level
+    // (0.25 sits exactly on that threshold — thresholds are inclusive) with
+    // full detail one modest zoom away. Under the retired diagonal metric the
+    // same rod read ≈ its LENGTH and pinned the finest level — exactly how
+    // dense sub-pixel elongated content rendered its most expensive level
+    // across the whole zoom range. NOT the degenerate ramp's territory: the
+    // rod is 0.25 half-extents thick, far above the sub-pixel floor.
+    const rodBox = { min: [-1, -0.25, -0.1], max: [1, 0.25, 0.1] };
+    const reg = makeRegistry();
+    const children = [0, 0.125, 0.25, 0.5].map((t) => ({
+      ...makeChild(t),
+      positionBounds: rodBox,
+    }));
+    const entry = makeEntry(children, 0, '/g');
+    entry.selector = 'screen-area';
+    reg.register(entry);
+    reg.evaluatePerFrame();
+    expect(children[2].object.visible, 'second-finest at 25% occupancy').toBe(true);
+    expect(children[3].object.visible, 'finest requires ≥ half-screen occupancy').toBe(false);
+    expect(children[0].object.visible, 'NOT pinned to the coarsest').toBe(false);
+  });
+
+  it("selector='screen-area': a two-level ladder holds the coarsest for a fitted 25%-occupancy object (the documented degenerate-config case)", () => {
+    // With only [0, 0.5] there is no intermediate level for the rod's 25%
+    // occupancy to land on — it stays coarse until half-screen. Pinned as
+    // INTENDED: two-level ladders trade granularity away everywhere, and the
+    // per-level halving that would catch this needs levels to halve onto.
+    const rodBox = { min: [-1, -0.25, -0.1], max: [1, 0.25, 0.1] };
+    const reg = makeRegistry();
+    const children = [0, 0.5].map((t) => ({ ...makeChild(t), positionBounds: rodBox }));
+    const entry = makeEntry(children, 0, '/g');
+    entry.selector = 'screen-area';
+    reg.register(entry);
+    reg.evaluatePerFrame();
+    expect(children[0].object.visible).toBe(true);
+  });
+
+  it('an entry WITHOUT a selector keeps the legacy diagonal metric', () => {
+    // The zebrahub-pose box under the LEGACY metric: projected diagonal =
+    // hypot(0.74·800, 0.5·600) = hypot(592, 300) ≈ 663.7 px on 800×600
+    // (viewport diagonal 1000) → metric ≈ 663.7/250 ≈ 2.65 ≥ threshold 0.5·…
+    // — with the same [0, 0.125, 0.25, 0.5] thresholds every level qualifies,
+    // so the FINEST is picked. This is exactly the mis-selection the
+    // screen-area selector fixes; pinning it here proves the two entries
+    // genuinely take different code paths (a selector-ignoring mutant would
+    // make this and the 37% test disagree).
+    const zebraBox = { min: [-0.74, -0.5, -0.5], max: [0.74, 0.5, 0.5] };
+    const reg = makeRegistry();
+    const children = [0, 0.125, 0.25, 0.5].map((t) => ({
+      ...makeChild(t),
+      positionBounds: zebraBox,
+    }));
+    reg.register(makeEntry(children, 0, '/g')); // no entry.selector
+    reg.evaluatePerFrame();
+    expect(children[3].object.visible).toBe(true);
   });
 
   it('skips evaluation when the viewport has zero size', () => {
@@ -586,20 +889,25 @@ describe('LODGroupRegistry — auto evaluation', () => {
 });
 
 // ────────────────────────────────────────────────────────────────────────
-// Opening-framing anchor (FILL_FACTOR) — issue #1361
+// Opening-framing anchor (FILL_FACTOR) — issues #1361 and #1410
 //
 // The finest level must already be selected at the DEFAULT opening framing,
-// not only once the object overfills the screen. These tests drive the real
-// fit math end to end — `calculateCameraDistance` (fitRatio 0.75, +20% margin)
-// at the default fov 47, then the real `projectBoxDiagonalPx` — instead of
-// hard-coding a metric, so they pin the anchor against the framing code that
-// actually produces it.
+// not only once the object overfills the screen (#1361), and that must hold at
+// EVERY viewport aspect ratio, not just near-square ones (#1410). These tests
+// drive the real fit math end to end — `calculateCameraDistance` (fitRatio
+// 0.75, +20% margin) at the default fov 47, then the real
+// `projectBoxDiagonalPx` — instead of hard-coding a metric, so they pin the
+// anchor against the framing code that actually produces it.
 //
-// Every "finest at the opening framing" assertion below FAILS at the old
-// FILL_FACTOR of 1.0: the raw `diagonalPx / viewportDiagonal` ratio of a
-// default framing is only 0.31–0.86 (asserted explicitly, which is also the
-// guard that the projection is NOT saturating to +Infinity), so the finest
-// child's threshold of 1.0 was never reached.
+// Every "finest at the opening framing" assertion below FAILS at FILL_FACTOR
+// 1.0: the raw `diagonalPx / fittedAxisPx` ratio of a default framing is only
+// 0.626–1.214 across `SHAPES` × `VIEWPORTS` (asserted explicitly, which is also
+// the guard that the projection is NOT saturating to +Infinity), so the
+// WORST-case shape's finest threshold of 1.0 is not reached without the ÷0.5.
+// It would ALSO fail under the pre-#1410 diagonal normalisation at aspect
+// ratios beyond 16:9-ish (measured there: 0.31–0.86 near 1:1/16:9/9:16, but
+// falling toward 0 as the canvas widens — see the invariance test below for
+// why the fitted-axis denominator fixes that).
 // ────────────────────────────────────────────────────────────────────────
 
 describe('LODGroupRegistry — opening-framing anchor (FILL_FACTOR)', () => {
@@ -607,10 +915,12 @@ describe('LODGroupRegistry — opening-framing anchor (FILL_FACTOR)', () => {
   const DEFAULT_FOV = 47;
 
   /**
-   * The auto-derived `sqrt(N_i / N_finest)` ladder of a K=8 / 3-level
-   * substitutive LOD (what the `arxiv_papers` demo writes): counts
-   * N/512, N/64, N/8, N → coverage fractions sqrt(1/512), sqrt(1/64),
-   * sqrt(1/8), 1.
+   * A stamped 4-level substitutive ladder (values as a pre-halving LEGACY
+   * store wrote them, consumed under `selector: 'coverage'` — the registry
+   * uses whatever thresholds are stamped, so this fixture stays valid for
+   * old datasets; new stores derive the screen-area occupancy-halving
+   * whole-object ladder [0, 0.125, 0.25, 0.5] under `selector:
+   * 'screen-area'`).
    */
   const SUBSTITUTIVE_LADDER = [0, 0.125, 0.35355, 1.0];
 
@@ -667,14 +977,19 @@ describe('LODGroupRegistry — opening-framing anchor (FILL_FACTOR)', () => {
     return SUBSTITUTIVE_LADDER.map((cf) => ({ ...makeChild(cf), positionBounds: bounds }));
   }
 
-  /** `diagonalPx / viewportDiagonal` — the coverage metric at FILL_FACTOR 1.0. */
+  /**
+   * `diagonalPx / fittedAxisPx` — the coverage metric at FILL_FACTOR 1.0.
+   * `fittedAxisPx` is `min(viewport.width, viewport.height)`, the extent
+   * `calculateCameraDistance` actually fits (see the `FILL_FACTOR` doc in
+   * `lod-group-registry.ts`) — the #1410 fix's normalisation.
+   */
   function rawCoverageRatio(
     bounds: { min: number[]; max: number[] },
     camera: THREE.Camera,
     viewport: { width: number; height: number }
   ): number {
     const diagonalPx = projectBoxDiagonalPx(toBox(bounds), camera, viewport);
-    return diagonalPx / Math.hypot(viewport.width, viewport.height);
+    return diagonalPx / Math.min(viewport.width, viewport.height);
   }
 
   // Shapes that bracket what real scenes look like: an isotropic cloud, a flat
@@ -688,42 +1003,28 @@ describe('LODGroupRegistry — opening-framing anchor (FILL_FACTOR)', () => {
     { name: 'umap-ish 100×80×60', bounds: centredBounds(100, 80, 60) },
   ];
 
+  // The full aspect matrix from issue #1410: 1:1, 16:9, 9:16, 21:9 and 32:9.
+  // Under the OLD (viewport-diagonal) normalisation these last two ("ultrawide")
+  // aspects used to live in a separate table because the anchor drifted there
+  // (a shape's raw ratio fell as `raw(1)·√2 / hypot(aspect, 1)` for aspect >= 1)
+  // — see the invariance test below for the fix's root-cause pin. They are
+  // folded into the same matrix here because the fitted-axis normalisation no
+  // longer treats them specially: every shape reaches the finest level at every
+  // aspect below.
   const VIEWPORTS: ReadonlyArray<{ name: string; width: number; height: number }> = [
-    { name: 'landscape 1600×900', width: 1600, height: 900 },
-    { name: 'portrait 900×1600', width: 900, height: 1600 },
-  ];
-
-  /**
-   * Super-wide canvases, where the anchor DRIFTS (see the `FILL_FACTOR` doc):
-   * `calculateCameraDistance` fits the vertical fov while the metric normalises by
-   * the diagonal, so for aspect ≥ 1 the raw fraction falls as
-   * `raw(1)·√2 / hypot(aspect, 1)`. These rows assert the CURRENT measured
-   * behaviour, including the shapes that no longer reach the finest level — a
-   * known limitation, pinned so a future fix (or regression) is visible.
-   */
-  const ULTRAWIDE: ReadonlyArray<{
-    name: string;
-    width: number;
-    height: number;
-    /** Shape names that DO still reach the finest level at this aspect. */
-    reachesFinest: readonly string[];
-  }> = [
-    {
-      // 21:9, aspect 2.370. Measured metrics: cube 1.89, pancake 1.38,
-      // umap-ish 1.49, rod 0.97 (the rod's crossover aspect is ≈ 2.30).
-      name: 'ultrawide 2560×1080',
-      width: 2560,
-      height: 1080,
-      reachesFinest: ['cube 100×100×100', 'pancake 100×100×1', 'umap-ish 100×80×60'],
-    },
-    {
-      // 32:9, aspect 3.556. Measured metrics: cube 1.31, umap-ish 1.04,
-      // pancake 0.96, rod 0.68 — pancake and rod now MISS the finest level.
-      name: 'super-ultrawide 3840×1080',
-      width: 3840,
-      height: 1080,
-      reachesFinest: ['cube 100×100×100', 'umap-ish 100×80×60'],
-    },
+    { name: 'square 1:1 1200×1200', width: 1200, height: 1200 },
+    { name: 'landscape 16:9 1600×900', width: 1600, height: 900 },
+    { name: 'portrait 9:16 900×1600', width: 900, height: 1600 },
+    { name: 'ultrawide 21:9 2560×1080', width: 2560, height: 1080 },
+    { name: 'super-ultrawide 32:9 3840×1080', width: 3840, height: 1080 },
+    // Extreme-portrait rows (aspect < 1). The aspect < 1 branch is only
+    // APPROXIMATELY invariant across aspect (see the invariance test below),
+    // and the deviation grows with how far the aspect is from 1 — these two
+    // are deliberately more extreme than any real browser window to prove the
+    // asserted bound isn't just "wide enough to clear whatever the matrix
+    // happens to contain".
+    { name: 'extreme-portrait 9:32 900×3200', width: 900, height: 3200 },
+    { name: 'extreme-portrait 1:4 800×3200', width: 800, height: 3200 },
   ];
 
   for (const shape of SHAPES) {
@@ -749,27 +1050,36 @@ describe('LODGroupRegistry — opening-framing anchor (FILL_FACTOR)', () => {
     // Guard against passing for the wrong reason: `projectBoxDiagonalPx` returns
     // +Infinity when the camera is inside/straddling the box, which would select
     // the finest level at ANY fill factor. The fit distance always puts the
-    // camera outside, so every raw ratio here is finite AND strictly below 1 —
-    // which is exactly why the old FILL_FACTOR of 1.0 never reached the finest
-    // child's threshold. Measured range at these aspects: 0.31 (elongated,
-    // portrait) … 0.60 (cube, landscape).
+    // camera outside, so every raw ratio here is finite. Unlike the OLD
+    // diagonal-normalised ratio (always < 1 by construction, since a sub-viewport
+    // box can never project past the viewport's own diagonal), the fitted-axis
+    // ratio can itself exceed 1 for a shape whose cross-section isn't much
+    // smaller than the fitted axis — measured range across all 4 shapes and all
+    // 7 aspects in `VIEWPORTS` (including the two extreme-portrait rows):
+    // 0.625 (in-plane rod at 1:4, worst case) … 1.214 (cube, best case,
+    // unchanged by the extra rows). The finest-level anchor (FILL_FACTOR)
+    // still does real work for the worst case — see the next test.
     for (const shape of SHAPES) {
       for (const viewport of VIEWPORTS) {
         const camera = framedCamera(shape.bounds, viewport);
         const ratio = rawCoverageRatio(shape.bounds, camera, viewport);
         const label = `${shape.name} on ${viewport.name}`;
         expect(Number.isFinite(ratio), `finite for ${label}`).toBe(true);
-        expect(ratio, `below a full viewport for ${label}`).toBeLessThan(1);
-        expect(ratio, `at least the measured worst case for ${label}`).toBeGreaterThan(0.3);
+        expect(ratio, `at least the measured worst case for ${label}`).toBeGreaterThan(0.6);
+        expect(ratio, `at most the measured best case for ${label}`).toBeLessThan(1.25);
       }
     }
   });
 
   it('FILL_FACTOR is exactly what turns those sub-viewport ratios into a finest-level metric', () => {
-    // Reads the REAL exported constant rather than hard-coding 0.25, so this
-    // fails if the anchor moves: at 1.0 (the pre-#1361 value) or 0.5, the
-    // measured opening ratios do not reach the finest threshold of 1.0.
+    // Reads the REAL exported constant rather than hard-coding 0.5, so this
+    // fails if the anchor moves: at 1.0, the measured opening ratios (see above)
+    // would leave the WORST case (the in-plane rod, ratio ~0.626) short of the
+    // finest threshold of 1.0 — reproducing #1361's blur. FILL_FACTOR = 0.5 is
+    // what turns that same worst-case ratio into a metric of ~1.25, clearing the
+    // rung with ~25% headroom.
     const finestThreshold = SUBSTITUTIVE_LADDER[SUBSTITUTIVE_LADDER.length - 1];
+    let worstCaseRatio = Infinity;
     for (const shape of SHAPES) {
       for (const viewport of VIEWPORTS) {
         const camera = framedCamera(shape.bounds, viewport);
@@ -778,66 +1088,183 @@ describe('LODGroupRegistry — opening-framing anchor (FILL_FACTOR)', () => {
         expect(ratio / FILL_FACTOR, `metric clears the finest rung for ${label}`).toBeGreaterThan(
           finestThreshold
         );
-        // The ratio itself is below the finest rung, so the division is doing
-        // the work — this is the assertion the old FILL_FACTOR of 1.0 fails.
-        expect(ratio, `raw ratio alone is short of the rung for ${label}`).toBeLessThan(
-          finestThreshold
-        );
+        worstCaseRatio = Math.min(worstCaseRatio, ratio);
       }
     }
+    // The division is doing real work for the worst case specifically — at
+    // FILL_FACTOR 1.0 the worst-case ratio alone would be short of the rung
+    // (this is the assertion FILL_FACTOR = 1.0 fails, unlike the metric above).
+    expect(worstCaseRatio, 'the worst-case raw ratio alone is short of the rung').toBeLessThan(
+      finestThreshold
+    );
   });
 
-  it('MAX_COVERAGE_FRACTION (Python) equals 1/FILL_FACTOR — the screen-filling metric', () => {
+  it('MAX_COVERAGE_FRACTION (Python) equals SCREEN_FILL_DIAGONAL_RATIO / FILL_FACTOR — the screen-filling metric', () => {
     // The cross-language coupling, pinned from this side too (a Python test reads
-    // this file and asserts the same reciprocal). A screen-filling object has a
-    // raw ratio of 1.0 by definition, so its metric is 1/FILL_FACTOR.
-    expect(1 / FILL_FACTOR).toBeCloseTo(4.0, 10);
+    // this file and asserts the same relation). Unlike the pre-#1410 scheme, a
+    // screen-filling object's raw ratio is no longer exactly 1.0 (that identity
+    // only held for the old diagonal normalisation) — SCREEN_FILL_DIAGONAL_RATIO
+    // is the multiple of the fitted axis a screen-filling diagonal actually
+    // measures. That multiple is aspect-dependent (1.41 at 1:1, 2.57 at 21:9);
+    // the constant is anchored at 16:9, where it is 2.04. See the
+    // `FILL_FACTOR` doc.
+    expect(SCREEN_FILL_DIAGONAL_RATIO / FILL_FACTOR).toBeCloseTo(4.0, 10);
   });
 
-  for (const viewport of ULTRAWIDE) {
-    it(`anchor drift on ${viewport.name}: only the wider shapes still reach the finest`, () => {
-      // KNOWN LIMITATION, not an aspiration: the framing fits the vertical fov
-      // while the metric divides by the diagonal, so the raw fraction shrinks as
-      // the canvas widens. Each shape has its own crossover aspect (≈2.30 rod,
-      // ≈3.40 pancake, ≈3.69 umap-ish, ≈4.75 cube) beyond which #1361's symptom
-      // returns. Asserted per shape so a future fix flips these deliberately.
-      for (const shape of SHAPES) {
-        const camera = framedCamera(shape.bounds, viewport);
-        const reg = registryFor(camera, viewport);
-        const children = ladderChildren(shape.bounds);
-        reg.register(makeEntry(children, 0, '/g'));
-        reg.evaluatePerFrame();
-        const finestShown = children[children.length - 1].object.visible;
-        const expected = viewport.reachesFinest.includes(shape.name);
-        expect(finestShown, `${shape.name} on ${viewport.name} reaches finest`).toBe(expected);
+  it('the raw fitted-axis ratio is (near-)invariant across viewport aspect ratio — the #1410 root-cause pin', () => {
+    // THE root-cause fix. Under the OLD (viewport-diagonal) normalisation a
+    // shape's raw ratio fell off sharply with aspect
+    // (`raw(aspect) = raw(1)·√2 / hypot(aspect, 1)` for aspect >= 1), so a shape
+    // could drop below the finest threshold on a sufficiently wide monitor
+    // (#1361's blur, returning at wide aspects). The fitted-axis ratio does not
+    // have that problem:
+    //
+    // EXACT for aspect >= 1 (proven, not just measured — see the `FILL_FACTOR`
+    // doc): `calculateCameraDistance` has NO aspect dependence in this regime,
+    // so the box's camera-relative geometry — and therefore the projected pixel
+    // diagonal — is IDENTICAL for every aspect >= 1. Checked here across 1:1,
+    // 16:9, 21:9 and 32:9 to 9 decimal digits, for every shape.
+    //
+    // APPROXIMATE for aspect < 1: `calculateCameraDistance` scales distance as
+    // 1/aspect in this regime, so the ratio is exactly invariant to viewport
+    // SIZE at a fixed aspect but only approximately invariant ACROSS aspect <
+    // 1 values — the camera distance itself changes there, and interacts with
+    // the box's own depth (extent along the view axis) in a way that does not
+    // cancel as cleanly as the aspect >= 1 case, and the deviation GROWS the
+    // further the aspect gets from 1. Measured deviation from the (exact)
+    // aspect >= 1 value, across the matrix's aspect < 1 rows (9:16, then the
+    // two deliberately-extreme 9:32 / 1:4 rows): the two THIN shapes (in-plane
+    // rod, flat pancake) stay off by ~0.1-0.2% throughout; "umap-ish"
+    // 100×80×60 grows from ~7.9% (9:16) to ~12.3% (9:32) to ~12.7% (1:4); a
+    // cube (depth == width, the worst case here) grows from ~14.0% (9:16) to
+    // ~21.1% (9:32) to ~21.9% (1:4) — the largest measured deviation anywhere
+    // in this matrix. The bound below (25%) is set from that measured worst
+    // case (21.9%) with a ~3-point margin, not from the old (and, per issue
+    // #1410 review finding 4, dishonest) 20% bound that only "passed" because
+    // the matrix stopped at 9:16 — it would fail at either extreme-portrait
+    // row above. All of this remains dramatically smaller than the OLD
+    // scheme's multi-fold drift (e.g. a cube's OLD metric fell from 3.43 at
+    // 1:1 to 1.31 at 32:9 — a ~62% drop), and the #1410 fix's ~25% headroom
+    // (see the `FILL_FACTOR` doc and the worst-case-ratio test above) holds at
+    // every aspect measured here, extreme-portrait included — see the
+    // "selects the FINEST level" matrix above, which already covers these two
+    // rows for every shape.
+    const aspectGe1 = VIEWPORTS.filter((v) => v.width >= v.height);
+    const aspectLt1 = VIEWPORTS.filter((v) => v.width < v.height);
+    expect(aspectGe1.length).toBeGreaterThanOrEqual(2); // guard: the matrix above must stay non-trivial
+    expect(aspectLt1.length).toBeGreaterThanOrEqual(3); // 9:16 plus the two extreme-portrait rows
+    for (const shape of SHAPES) {
+      const ratios = aspectGe1.map((viewport) =>
+        rawCoverageRatio(shape.bounds, framedCamera(shape.bounds, viewport), viewport)
+      );
+      const reference = ratios[0];
+      for (let i = 1; i < ratios.length; i++) {
+        expect(
+          ratios[i],
+          `${shape.name}: ${aspectGe1[i].name} vs ${aspectGe1[0].name} (both aspect >= 1)`
+        ).toBeCloseTo(reference, 9);
       }
-    });
-
-    it(`raw coverage on ${viewport.name} follows raw(1)·√2 / hypot(aspect, 1)`, () => {
-      // The closed form behind the drift, pinned against a 1:1 reference so the
-      // root cause (vertical-fit framing vs diagonal normalisation) is testable
-      // and not just prose. Holds for aspect >= 1; portrait is governed by the
-      // horizontal fit instead, so it is excluded.
-      const aspect = viewport.width / viewport.height;
-      const square = { width: 1000, height: 1000 };
-      for (const shape of SHAPES) {
-        const refRatio = rawCoverageRatio(shape.bounds, framedCamera(shape.bounds, square), square);
+      for (const viewport of aspectLt1) {
         const ratio = rawCoverageRatio(
           shape.bounds,
           framedCamera(shape.bounds, viewport),
           viewport
         );
-        const predicted = (refRatio * Math.SQRT2) / Math.hypot(aspect, 1);
-        expect(ratio, `${shape.name} at aspect ${aspect.toFixed(3)}`).toBeCloseTo(predicted, 6);
+        const relativeDeviation = Math.abs(ratio - reference) / reference;
+        expect(
+          relativeDeviation,
+          `${shape.name} on ${viewport.name} within 25% of the aspect >= 1 value`
+        ).toBeLessThan(0.25);
       }
+    }
+  });
+
+  it('pins the resize-without-a-re-fit asymmetry documented on FILL_FACTOR', () => {
+    // The flip side of the fix, and the one case where the new denominator can
+    // move MORE than the old one. `updateCameraAspect` (utils/camera-utils.ts)
+    // only touches `camera.aspect` on a window resize — it preserves the
+    // vertical fov and never re-fits the distance — so with HEIGHT held fixed
+    // the projected pixel diagonal is completely unchanged (the viewport-width
+    // term cancels out of the NDC→pixel conversion), while the denominator
+    // keeps shrinking once width < height.
+    //
+    // This test exists so those claims in the `FILL_FACTOR` doc stay honest:
+    // adding a camera re-fit on resize (the real fix, deliberately out of scope
+    // here) is supposed to break it, at which point the doc gets updated too.
+    const height = 900;
+    const baseline = { width: 1600, height };
+    const bounds = centredBounds(100, 100, 100);
+    // ONE camera, framed for the baseline viewport, reused at every width —
+    // this is a resize, not a re-fit.
+    const camera = framedCamera(bounds, baseline);
+    const box = toBox(bounds);
+
+    /** What the viewer itself does on a resize — and all it does. */
+    const diagonalAt = (width: number) => {
+      updateCameraAspect(camera, width, height);
+      return projectBoxDiagonalPx(box, camera, { width, height });
+    };
+    const newMetric = (width: number) =>
+      diagonalAt(width) / (FILL_FACTOR * Math.min(width, height));
+    // The pre-#1410 denominator, for the comparison the doc block records.
+    const oldMetric = (width: number) => diagonalAt(width) / (0.25 * Math.hypot(width, height));
+
+    const baseDiagonal = diagonalAt(baseline.width);
+    const inflation = (width: number) => ({
+      now: newMetric(width) / newMetric(baseline.width),
+      before: oldMetric(width) / oldMetric(baseline.width),
     });
-  }
+
+    // (1) Narrowing the window does not change the projected diagonal at all.
+    for (const width of [900, 506, 500, 200]) {
+      expect(diagonalAt(width), `diagonal unchanged at ${width}×${height}`).toBeCloseTo(
+        baseDiagonal,
+        9
+      );
+    }
+
+    // (2) Down to the crossover at `height² / width0` (506px here, aspect
+    // ≈0.56) the NEW normalisation is the better-behaved of the two: while the
+    // viewport is still landscape the metric does not move at all, where the
+    // diagonal denominator already inflated it.
+    expect(inflation(900).now).toBeCloseTo(1.0, 9); // square: exactly stable now…
+    expect(inflation(900).before).toBeCloseTo(1.442, 3); // …but ×1.44 before
+    const crossover = inflation(506);
+    expect(crossover.now).toBeCloseTo(crossover.before, 2);
+
+    // (3) Past it, narrowing inflates faster than it used to — `min(w, h)` is
+    // unbounded below where `hypot(w, h)` floors at `height`.
+    expect(inflation(500).now).toBeCloseTo(1.8, 3);
+    expect(inflation(500).before).toBeCloseTo(1.783, 3);
+    expect(inflation(200).now).toBeCloseTo(4.5, 3);
+    expect(inflation(200).before).toBeCloseTo(1.991, 3);
+
+    // (4) …and what that means through the real selector, not just the
+    // arithmetic above: a zoomed-out cube sitting on level 2 at the baseline
+    // (metric ≈0.47) is pushed onto the finest level by an extreme narrowing
+    // alone (≈2.13), with the camera never moving.
+    const zoomedOut = framedCamera(bounds, baseline, 4);
+    for (const [viewport, expected] of [
+      [baseline, 2],
+      [{ width: 200, height }, 3],
+    ] as const) {
+      updateCameraAspect(zoomedOut, viewport.width, viewport.height);
+      const reg = registryFor(zoomedOut, viewport);
+      const children = ladderChildren(bounds);
+      reg.register(makeEntry(children, 3, '/g'));
+      reg.evaluatePerFrame();
+      expect(
+        children[expected].object.visible,
+        `level ${expected} at ${viewport.width}×${viewport.height}`
+      ).toBe(true);
+    }
+  });
 
   it('a substantially zoomed-out view falls back to a coarser level', () => {
     // Cube at 4× the opening distance. Projected diagonal shrinks roughly as
-    // 1/distance, so the raw ratio drops 0.595 → 0.116 and the coverage metric
-    // 2.38 → ≈0.465: past level 3's downgrade band (hysteresis edge at
-    // 1.0 − 0.1·(1.0 − 0.354) = 0.935, so ≈0.465 is comfortably clear) and into
+    // 1/distance, so the raw ratio drops 1.214 → ≈0.237 and the coverage metric
+    // 2.43 → ≈0.474: past level 3's downgrade band (hysteresis edge at
+    // 1.0 − 0.1·(1.0 − 0.354) = 0.935, so ≈0.474 is comfortably clear) and into
     // level 2's range [0.354, 1.0).
     const viewport = { width: 1600, height: 900 };
     const bounds = centredBounds(100, 100, 100);
@@ -854,7 +1281,7 @@ describe('LODGroupRegistry — opening-framing anchor (FILL_FACTOR)', () => {
   });
 
   it('a far-away view falls all the way back to the coarsest level', () => {
-    // 40× the opening distance → metric ≈ 0.0436, below every threshold but 0.
+    // 40× the opening distance → metric ≈ 0.0445, below every threshold but 0.
     const viewport = { width: 1600, height: 900 };
     const bounds = centredBounds(100, 100, 100);
     const camera = framedCamera(bounds, viewport, 40);
@@ -872,9 +1299,11 @@ describe('LODGroupRegistry — opening-framing anchor (FILL_FACTOR)', () => {
 // ────────────────────────────────────────────────────────────────────────
 // coverage_fraction thresholds ABOVE 1.0 (the tiled-layer escape hatch)
 //
-// 1.0 is only the AUTO-DERIVED ladder's finest anchor (a quarter-viewport
-// diagonal). An explicitly authored ladder may go up to `1/FILL_FACTOR` == 4.0
-// — the metric a screen-filling object produces — so a spatially tiled layer,
+// 1.0 is only the AUTO-DERIVED ladder's finest anchor (half the fitted screen
+// axis). An explicitly authored ladder may go up to
+// `SCREEN_FILL_DIAGONAL_RATIO / FILL_FACTOR` == 4.0
+// — roughly the metric a screen-filling object produces (exactly so only near
+// aspect ratio √3) — so a spatially tiled layer,
 // whose tiles each project to a fraction of the viewport, can still hold a
 // coarse level at whole-scene framing. Python's `MAX_COVERAGE_FRACTION` bounds
 // the authored list; the viewer deliberately enforces NO upper bound, and these
@@ -884,14 +1313,19 @@ describe('LODGroupRegistry — opening-framing anchor (FILL_FACTOR)', () => {
 // ────────────────────────────────────────────────────────────────────────
 
 describe('LODGroupRegistry — coverage_fraction thresholds above 1.0', () => {
-  // The demo's authored ladder, in coverage-METRIC space (raw fraction ÷ 0.25).
+  // The demo's authored ladder, in coverage-METRIC space: its diagonal-era raw
+  // fractions 0.0/0.88/0.96/1.0 taken ×4 (÷ the 0.25 `FILL_FACTOR` of the day).
+  // Today's two-step conversion of the same fractions is ×2.0398/0.5 = ×4.08,
+  // so these still land within ~2% of their intended switch points.
   const TILED_LADDER = [0.0, 3.52, 3.84, 4.0];
 
   /**
    * Identity-NDC camera (as in the other registry tests) plus a box spanning
    * NDC ±`half`. On an 800×600 viewport the projected diagonal is
-   * `2·half·hypot(800,600)/2 = half·1000` px and the viewport diagonal is 1000,
-   * so the RAW fraction is exactly `half` and the coverage metric is `half/0.25`.
+   * `2·half·hypot(800,600)/2 = half·1000` px and the fitted axis is
+   * `min(800,600) = 600`, so the RAW fraction is `half·1000/600 = half·(5/3)`
+   * and the coverage metric is `half·(5/3)/FILL_FACTOR = half·(10/3)` (verified
+   * against the real `projectBoxDiagonalPx`, not just hand-derived).
    */
   function registryAtRawFraction(half: number, children: LODGroupChild[]) {
     const camera = new THREE.Camera();
@@ -907,10 +1341,19 @@ describe('LODGroupRegistry — coverage_fraction thresholds above 1.0', () => {
   }
 
   it('holds a tiled layer at its coarsest level when the tile is only ~0.6 of the viewport', () => {
-    // The demo's measured whole-globe framing: raw fraction 0.60 → metric 2.40,
-    // which is below the 3.52 threshold, so the coarsest level renders. Under
-    // the old [0, 1] ceiling the ladder could not have expressed this and every
-    // tile would have jumped to its finest level (the 18.1M-resident blow-up).
+    // NOT a re-derivation of the demo's own measurement — `half` here is a
+    // synthetic NDC half-extent on THIS test's 800×600 (4:3) viewport (see
+    // `registryAtRawFraction`'s docstring), unrelated in units to the demo's
+    // raw diagonal fraction. half=0.6 → RAW fraction 0.6·(5/3) = 1.0 → metric
+    // 0.6·(10/3) = 2.0, comfortably below the 3.52 threshold, so the coarsest
+    // level renders — pinning the >1.0-ceiling machinery in isolation. (For
+    // scale, not equivalence: the demo's own measured whole-globe framing was
+    // ~0.60 OF THE VIEWPORT DIAGONAL — pre-#1410 units — which converts to a
+    // metric of ~2.45 at a 16:9 viewport, a different number on a different
+    // viewport shape than this synthetic test's 2.0.) Under the old [0, 1]
+    // ceiling the ladder could not have expressed values above 1.0 at all,
+    // and every tile would have jumped to its finest level (the
+    // 18.1M-resident blow-up).
     const children = TILED_LADDER.map((cf) => makeChild(cf));
     const reg = registryAtRawFraction(0.6, children);
     reg.register(makeEntry(children, 3, '/tile')); // start on the finest
@@ -921,11 +1364,18 @@ describe('LODGroupRegistry — coverage_fraction thresholds above 1.0', () => {
     }
   });
 
-  it('still reaches the finest level once the tile itself fills the viewport', () => {
-    // The >1 thresholds must be reachable, not dead: raw fraction 1.05 → metric
-    // 4.20 ≥ the finest threshold of 4.0.
+  it('still reaches the finest level once the tile substantially overfills the viewport', () => {
+    // On THIS 800×600 (4:3) viewport, half=1.0 is what actually "fills the
+    // viewport" (the box spans NDC ±1, matching the screen edges exactly):
+    // metric = 1.0·(10/3) ≈ 3.33 — matching the real 4:3 screen-fill metric
+    // `2·hypot(4/3, 1)/min(4/3, 1)` ≈ 3.33 computed independently in the
+    // `FILL_FACTOR` doc — which only reaches TILED_LADDER's level 2 (3.84
+    // threshold), not the top. half=1.2 here is a further 20% LINEAR
+    // OVERFILL beyond that: metric 1.2·(10/3) = 4.0, exactly the finest
+    // threshold (inclusive — the natural pick uses `threshold <= metric`).
+    // The >1 thresholds must be reachable, not dead weight.
     const children = TILED_LADDER.map((cf) => makeChild(cf));
-    const reg = registryAtRawFraction(1.05, children);
+    const reg = registryAtRawFraction(1.2, children);
     reg.register(makeEntry(children, 0, '/tile'));
     reg.evaluatePerFrame();
     expect(children[3].object.visible).toBe(true);
@@ -933,9 +1383,9 @@ describe('LODGroupRegistry — coverage_fraction thresholds above 1.0', () => {
   });
 
   it('walks the intermediate levels of an above-1.0 ladder', () => {
-    // raw 0.90 → metric 3.60: past 3.52, short of 3.84 → level 1.
+    // half=1.1 → metric 1.1·(10/3) ≈ 3.667: past 3.52, short of 3.84 → level 1.
     const children = TILED_LADDER.map((cf) => makeChild(cf));
-    const reg = registryAtRawFraction(0.9, children);
+    const reg = registryAtRawFraction(1.1, children);
     reg.register(makeEntry(children, 0, '/tile'));
     reg.evaluatePerFrame();
     expect(children[1].object.visible).toBe(true);
@@ -2338,9 +2788,10 @@ describe('LODGroupRegistry — never-downgrade display gate', () => {
 // blendable (additive/luminous/volumetric) levels
 // render with complementary opacity as the DISTANCE (coverage metric) crosses
 // their boundary. Distance-driven, independent of streaming. Off / non-blendable
-// / off-screen ⇒ the byte-identical hard swap. A quarter-cube tile
-// ([0,0,0]–[0.25,0.25,0.25]) under the identity test camera projects to a
-// coverage metric of exactly 0.5 (125 px diagonal ÷ FILL_FACTOR·1000), so placing
+// / off-screen ⇒ the byte-identical hard swap. A small tile
+// ([0,0,0]–[0.3,0.3,0.3]) under the identity test camera (800×600 viewport,
+// fitted axis 600) projects to a coverage metric of exactly 0.5
+// (150 px diagonal ÷ (FILL_FACTOR·600) = 150/300), so placing
 // the finer level's threshold at/near 0.5 lands the metric in its blend band.
 // ────────────────────────────────────────────────────────────────────────
 
@@ -2368,7 +2819,8 @@ describe('LODGroupRegistry — coverage-band cross-fade', () => {
     };
   }
   // A gsplats leaf whose object is a real Mesh (so .material / .traverse work),
-  // with QUARTER-CUBE position bounds → projects to coverage metric 0.5.
+  // with position bounds [0,0,0]-[0.3,0.3,0.3] → projects to coverage metric 0.5
+  // on the 800×600 test viewport below (fitted axis 600, FILL_FACTOR 0.5).
   function fadeChild(
     coverageFraction: number,
     opts: { mode?: string; ready?: boolean } = {}
@@ -2384,7 +2836,7 @@ describe('LODGroupRegistry — coverage-band cross-fade', () => {
     return {
       object: mesh,
       coverageFraction,
-      positionBounds: { min: [0, 0, 0], max: [0.25, 0.25, 0.25] },
+      positionBounds: { min: [0, 0, 0], max: [0.3, 0.3, 0.3] },
       ready: opts.ready ?? true,
     };
   }
@@ -2548,8 +3000,8 @@ describe('LODGroupRegistry — coverage-band cross-fade', () => {
     const relFine = vi.fn(() => {
       fine.ready = false;
     });
-    // Quarter-cube bounds → coverage metric 0.5 = the 1↔2 boundary of thresholds
-    // [0, 0.25, 0.5] (gap 0.25 → band [0.4, 0.6]) → exact 50/50 blend.
+    // fadeChild's 0.3-box bounds → coverage metric 0.5 = the 1↔2 boundary of
+    // thresholds [0, 0.25, 0.5] (gap 0.25 → band [0.4, 0.6]) → exact 50/50 blend.
     const coarse = fadeChild(0); // eager fallback: no release, never evictable
     const mid = fadeChild(0.25);
     mid.release = relMid as () => void;
@@ -2596,7 +3048,7 @@ describe('LODGroupRegistry — coverage-band cross-fade', () => {
       getCrossFadeEnabled: () => crossFade,
     });
     const coarse = fadeChild(0);
-    const fine = fadeChild(0.5); // boundary at the quarter-cube metric 0.5 → 50/50
+    const fine = fadeChild(0.5); // boundary at fadeChild's metric 0.5 → 50/50
     reg.register(makeEntry([coarse, fine], 0, '/g'));
     reg.evaluatePerFrame();
     expect(liveOpacity(fine)).toBeCloseTo(0.5, 6); // mid-fade
@@ -2642,7 +3094,7 @@ describe('LODGroupRegistry — streaming energy compensation', () => {
       },
     };
   }
-  // A gsplats leaf (quarter-cube bounds → coverage metric 0.5). `energy` stamps the
+  // A gsplats leaf (0.3-box bounds → coverage metric 0.5). `energy` stamps the
   // committed prefix's energy fraction e(k); omitted ⇒ unstamped (no field).
   // `committedLadderComplete: true` keeps the never-downgrade gate out of the way
   // so these tests isolate the opacity math from the (orthogonal) hold logic.
@@ -2662,7 +3114,7 @@ describe('LODGroupRegistry — streaming energy compensation', () => {
     return {
       object: mesh,
       coverageFraction,
-      positionBounds: { min: [0, 0, 0], max: [0.25, 0.25, 0.25] },
+      positionBounds: { min: [0, 0, 0], max: [0.3, 0.3, 0.3] },
       ready: true,
     };
   }

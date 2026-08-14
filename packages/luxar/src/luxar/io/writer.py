@@ -169,7 +169,9 @@ class ZarrWriterProtocol(Protocol):
 
         The surface geometry type: nD ``vertices`` plus a ``faces`` triangle-index
         array. It carries no per-element size — a triangle's extent comes from its
-        own vertices — and has no spatial index or LOD in v1.
+        own vertices — and has no spatial index: the loader is whole-node. This call
+        writes one leaf; LOD is layered on by the caller, not by this method — see
+        ``write_mesh_multi_lod`` (additive reveal levels) below.
 
         Args:
             path: Path within the Zarr store for this mesh node

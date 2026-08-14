@@ -1153,3 +1153,33 @@ class TestRevealSpatialDimsFromSceneLines:
         first = np.concatenate([verts[m] for m in levels[0]])
         assert np.abs(first[:, 1]).max() > 1.0
         assert sorted(set(np.round(first[:, 0]).tolist())) != list(self._TIMES)
+
+
+def test_no_sub_LOD_carries_the_private_skip_scene_bounds_flag(tmp_path) -> None:
+    """`_skip_scene_bounds` is plumbing between writers, not part of the format.
+
+    The Points-side test of the same name states the full reasoning; this is the
+    Lines half of the same three-writer fix. The flag was popped BELOW
+    `group.attrs.update(attrs)`, so every sub-LOD carried it on disk.
+    """
+    output = tmp_path / "t.luxar.zarr"
+    verts = np.random.RandomState(0).rand(200, 3).astype(np.float32)
+    widths = np.full(len(verts), 0.5, np.float32)
+    with LuxarZarrCompiler(output) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        scene.add_lines(
+            "ln",
+            verts,
+            widths=widths,
+            line_type="segments",
+            additive_lod=dict(n_lods=3, method="random"),
+        )
+
+    parent = zarr.open_group(str(output), mode="r")["ln"]
+    assert "_skip_scene_bounds" not in parent.attrs
+    for i in range(int(parent.attrs["n_additive_sublods"])):
+        assert "_skip_scene_bounds" not in parent[f"additive_{i}"].attrs, (
+            f"additive_{i} carries the private flag; it is popped after "
+            "`group.attrs.update(attrs)` again"
+        )
+    assert "position_bounds" in parent.attrs
