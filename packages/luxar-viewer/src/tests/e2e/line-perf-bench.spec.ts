@@ -15,7 +15,10 @@
  *
  * Per scenario we record:
  *   - JS frame time stats (median, p95, p99, mean) over a fixed
- *     sample window
+ *     sample window, with the intervals contaminated by a GPU-timestamp
+ *     resolve excluded (see `skipNextDt`) — a row that excluded any
+ *     carries a note saying so, because its p95/p99 are not comparable
+ *     to a JSON captured before that exclusion existed
  *   - A warmed post-settle one-shot frame interval (`postSettleFrameMs`,
  *     measured separately) — NOT a cold first render; see the field's
  *     doc comment
@@ -544,6 +547,12 @@ async function measureScenario(
       // WebGPU arm reads p95=109 ms; with the same run's contaminated
       // intervals excluded (or timestamps off entirely) p95=21 ms.
       let skipNextDt = false;
+      // How many intervals the flag above actually dropped. Reported so
+      // the exclusion is visible in the JSON rather than silent: it
+      // explains why `frameMs.count` sits below the frames drawn, and
+      // it marks the row as non-comparable to an archived baseline
+      // measured before the exclusion existed.
+      let excludedDts = 0;
 
       // Resolve cadence: 16 frames per resolve. Frequent enough for
       // good per-batch averages, infrequent enough that the
@@ -558,6 +567,7 @@ async function measureScenario(
         gpuPerFrameMs: number[];
         totalMs: number;
         supportsTimestamp: boolean;
+        excludedDts: number;
       }>((resolve) => {
         const watchdog = window.setTimeout(
           () =>
@@ -566,6 +576,7 @@ async function measureScenario(
               gpuPerFrameMs,
               totalMs: performance.now() - start,
               supportsTimestamp,
+              excludedDts,
             }),
           // Cap at 30s even for very slow scenes; better to bail than
           // hang the run indefinitely.
@@ -584,6 +595,7 @@ async function measureScenario(
               // await — drop it from the frame stats (the loop's
               // minFrames floor keeps the sample count honest).
               skipNextDt = false;
+              excludedDts++;
             } else {
               dts.push(now - lastTime);
             }
@@ -628,6 +640,7 @@ async function measureScenario(
               gpuPerFrameMs,
               totalMs: elapsedSinceStart,
               supportsTimestamp,
+              excludedDts,
             });
           }
         };
@@ -665,6 +678,13 @@ async function measureScenario(
         medianMs: null,
         p95Ms: null,
       };
+  if (timing.excludedDts > 0) {
+    notes.push(
+      `${timing.excludedDts} frame interval(s) excluded as GPU-timestamp resolve latency — ` +
+        "frameMs.count sits below the frames drawn, and this row's p95/p99 are not " +
+        'comparable to a baseline JSON captured without the exclusion'
+    );
+  }
   if (!timing.supportsTimestamp) {
     notes.push('GPU timestamp-query unavailable (WebGL backend or missing feature)');
   } else if (timing.gpuPerFrameMs.length === 0) {
