@@ -106,7 +106,8 @@ describe('GSplatsSpatialIndexLoader', () => {
     });
 
     it('add + remove of a listener leaves no leak after dispose', () => {
-      // data.md W2 fix [P2]: parallel to W1 fix in lines-spatial-index-loader.
+      // data.md W2 fix [P2]: parallel to the W1 fix in
+      // `tests/unit/data/lines/spatial-index-loader.test.ts`.
       // Replaces `expect(true).toBe(true)` with observable Set-size transitions
       // through the private `events: LoaderEventEmitter` whose `size` getter
       // is part of the emitter's documented test-only surface
