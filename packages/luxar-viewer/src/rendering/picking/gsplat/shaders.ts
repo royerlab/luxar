@@ -96,7 +96,7 @@ export const GSPLAT_PICK_VERTEX_SHADER = /* glsl */ `
         // === Splat-texture fetch prologue (visual-shader parity) ===
         // Width is a multiple of 4, so a splat's texels share one row.
         int splatBase = int(luxarSortedIndex()) * 4;
-        int splatTexW = textureSize(uSplatTex, 0).x;
+        int splatTexW = LUXAR_SPLAT_TEX_W;
         ivec2 texel0 = ivec2(splatBase % splatTexW, splatBase / splatTexW);
         vec4 splatT0 = texelFetch(uSplatTex, texel0, 0);
         vec4 splatT1 = texelFetch(uSplatTex, ivec2(texel0.x + 1, texel0.y), 0);

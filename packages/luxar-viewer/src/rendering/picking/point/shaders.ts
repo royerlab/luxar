@@ -70,7 +70,7 @@ export const POINT_PICK_VERTEX_SHADER = /* glsl */ `
       // === Point-texture fetch prologue (visual-shader parity) ===
       // Width is a multiple of 3, so a point's texels share one row.
       int pointBase = int(luxarSortedIndex()) * 3;
-      int pointTexW = textureSize(uPointTex, 0).x;
+      int pointTexW = LUXAR_POINT_TEX_W;
       ivec2 texel0 = ivec2(pointBase % pointTexW, pointBase / pointTexW);
       vec4 pointT0 = texelFetch(uPointTex, texel0, 0);
       vec4 pointT1 = texelFetch(uPointTex, ivec2(texel0.x + 1, texel0.y), 0);

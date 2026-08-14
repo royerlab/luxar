@@ -379,7 +379,14 @@ the draw-slot → storage-slot mapping the depth-sort worker permutes).
 The texel fetch prologue reconstructs the historical local names
 (`aStartPos`, `aEndWidth`, …), so the expansion math below is unchanged
 from the interleaved era. See `../../line-geometry.ts` for the storage
-construction and the fused texel writer.
+construction and the fused texel writer. The texture width used by the
+prologue's `%`/int-div addressing is a **baked compile-time constant**
+(`LUXAR_LINE_TEX_W` define / TSL literal from `getElementTextureWidth`),
+not a per-vertex `textureSize` query — the constant lets the shader
+compiler strength-reduce the integer division, measured −7% on the
+quad's whole GPU pass at 4 M segments (a uniform recovered almost none
+of it; the width is a session constant capped at 4096, so baking is
+safe).
 
 Texel5 carries the colormap scalars in `.xy` and the **per-endpoint
 opacity alphas** in `.zw` — the alpha column of an RGBA color dataset
