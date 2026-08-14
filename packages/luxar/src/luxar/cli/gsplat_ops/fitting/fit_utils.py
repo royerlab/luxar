@@ -96,6 +96,8 @@ class FitPipelineCtx:
     recipe_levels: Optional[int]
     recipe_substitutive_method: Optional[str]
     recipe_coarsen_dims: Optional[str]
+    recipe_refine: Optional[str]
+    recipe_refine_iters: Optional[int]
     cal: Optional[Path]
     k_star_ref: Optional[int]
     n_features_ref: Optional[int]
@@ -182,7 +184,9 @@ def resolve_tiling(
     return "content" if has_density else "uniform"
 
 
-def validate_and_build_recipe(ctx: FitPipelineCtx, volume_ndim: int) -> "Any":
+def validate_and_build_recipe(
+    ctx: FitPipelineCtx, volume_ndim: int, volume: "Any" = None
+) -> "Any":
     """Validate per-part ``--recipe`` usage and build its ``RecipeParams``.
 
     Returns ``None`` when no ``--recipe`` was given. Raises
@@ -225,6 +229,13 @@ def validate_and_build_recipe(ctx: FitPipelineCtx, volume_ndim: int) -> "Any":
         levels=ctx.recipe_levels,
         substitutive_method=ctx.recipe_substitutive_method,
         coarsen_dims=ctx.recipe_coarsen_dims,
+        refine=ctx.recipe_refine,
+        refine_iters=ctx.recipe_refine_iters,
+        # `refine="volume"` re-fits against the array being fitted. Unlike
+        # `gsplat lod --target`, no path and no axis map are needed: the volume is
+        # already in hand and the fit emits splats in its own voxel frame, so the
+        # identity map is correct by construction.
+        volume=volume,
         device=ctx.device,
         volume_ndim=volume_ndim,
     )
@@ -398,6 +409,38 @@ def assemble_fit_config(ctx: FitPipelineCtx, is_tiled: bool) -> "tuple[dict, Any
         parsed_downscale if parsed_downscale is not None else fc_downscale
     )
     return fit_config, parsed_seeds, effective_downscale
+
+
+def reject_downscaled_volume_refit(
+    recipe_params: "Any", effective_downscale: "Any"
+) -> None:
+    """Refuse ``--refine volume`` under ``--downscale`` — different frames.
+
+    A per-part volume re-fit crops the source to the part's own tile, which only
+    holds while the tile grid and the splats share a coordinate frame. Under
+    ``--downscale`` they do not: the grid is computed on the DOWNSCALED shape (so
+    the parent and its workers agree on the tile count) while every worker
+    rescales its splats back to full resolution. Each crop would then be a factor
+    too small and in the wrong place, and the never-worse guard could not tell —
+    it compares against that same wrong crop. Checked before any fitting, since
+    the alternative is discovering it after the whole fit.
+
+    Called with the resolved downscale, so a factor coming from ``--config`` /
+    ``--preset`` is caught as well as the flag. The sequential tiled path refuses
+    ``--recipe`` outright under ``--downscale`` (it writes a flat leaf there), so
+    ``-j>1`` is what makes this combination otherwise reachable.
+    """
+    if (
+        recipe_params is not None
+        and getattr(recipe_params, "refine", "none") == "volume"
+        and effective_downscale is not None
+    ):
+        raise typer.BadParameter(
+            "--refine volume cannot be combined with --downscale: the tile grid "
+            "is computed on the downscaled shape while the fitted splats are "
+            "rescaled back to full resolution, so each tile's crop of the volume "
+            "would land in the wrong place. Drop --downscale, or use --refine l2."
+        )
 
 
 def dispatch_parallel_tiled(
@@ -787,6 +830,9 @@ def build_fit_recipe_params(
     levels: Optional[int],
     substitutive_method: Optional[str],
     coarsen_dims: Optional[str],
+    refine: Optional[str],
+    refine_iters: Optional[int],
+    volume: "Any",
     device: Optional[str],
     volume_ndim: int,
 ) -> "Any":
@@ -803,6 +849,9 @@ def build_fit_recipe_params(
         levels=levels,
         substitutive_method=substitutive_method,
         coarsen_dims=coarsen_dims,
+        refine=refine,
+        refine_iters=refine_iters,
+        volume=volume,
         device=device,
         volume_ndim=volume_ndim,
     )
