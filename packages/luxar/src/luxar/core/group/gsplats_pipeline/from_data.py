@@ -157,9 +157,8 @@ ABSENT_WHEN_NONE_ATTRS = GATE_FORWARDED_LEAF_PARAMS + (
 # All FOUR of them: the flat route's ``group.add_gsplats`` call passes
 # ``centers=result.centers`` alongside the other three, so ``centers`` meets this
 # tuple's criterion exactly like they do — it was missed in the first cut of
-# #1496 and was the one member still able to strand a childless wrapper (see
-# :func:`reject_data_owned_channels`).
-# Asked in THIS order (see :func:`reject_data_owned_channels`).
+# #1496 and was the one member still able to strand a childless wrapper. Asked in
+# THIS order (see :func:`reject_data_owned_channels`).
 DATA_OWNED_CHANNELS = ("colors", "centers", "amplitudes", "cholesky_factors")
 
 

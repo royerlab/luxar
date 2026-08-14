@@ -183,7 +183,7 @@ Both functions produce a `GSplatData` and hand it to
   unknown attr to `validate_render_attrs` (which matches by name, never by
   value), so the idiomatic `labels=maybe_labels` used to strand a wrapper.
   Since #1496 the graft entry also runs the same two `**attrs` calls the
-  `from_data` entry does — see *An explicit `None` means absent* below — so
+  `from_data` entry does — see *An explicit `None` means absent* above — so
   `graft_gsplat_node(..., colors=None)` behaves identically to the other doors
   and a non-`None` `colors=` is refused before any wrapper exists.
 - `add_gsplats_from_volume_impl` — fits in one step. With

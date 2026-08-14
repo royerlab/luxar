@@ -757,8 +757,7 @@ class Group(Node):
             **attrs: Additional node attributes — the :meth:`add_gsplats`
                 vocabulary (including ``absorption``) MINUS the four channels
                 the file supplies, which are refused; see the rules above. On a
-                nested
-                tree, compositing attributes (``blending_mode``, ``absorption``,
+                nested tree, compositing attributes (``blending_mode``, ``absorption``,
                 ``opacity``, ...) land on the wrapper node ONLY — the viewer
                 resolves them down the ancestry — while the rest (e.g.
                 ``colormap``) are copied onto each leaf. Stamping
