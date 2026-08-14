@@ -191,12 +191,17 @@ def open_group(path: str | Path, *, mode: str = "r", **kwargs: Any) -> zarr.Grou
     # The cost is real and worth stating rather than waving away: per-node reads
     # instead of one. Measured on local directory stores it is ~0.44 ms per array
     # (a ~7.8x ratio, linear in array count) — so ~23 ms for a 52-array scene,
-    # but ~0.5 s at 1200 arrays and seconds for a large partition. Correctness
-    # wins for the readers that GUARD on a missing array (the gsplats loader, the
-    # scene reader, migrate), which is why those route through here. Purely
-    # informational CLI paths (`luxar info`, `get_zarr_info`) deliberately still
-    # use zarr's default: they do not check for missing arrays, so they gain no
-    # correctness from the strict read and would only get slower.
+    # but ~0.5 s at 1200 arrays and seconds for a large partition.
+    #
+    # EVERY reader pays it, including the merely informational ones, and that is
+    # deliberate. An earlier version of this comment argued the opposite — that
+    # `luxar info` / `get_zarr_info` "gain no correctness" because they do not
+    # guard on a missing array — which was wrong. They REPORT COUNTS, and on a
+    # consolidated store whose `pts/positions` never landed, `get_zarr_info`
+    # cheerfully reported the full 1000 points and no error, where zarr 2 reported
+    # zero. For a command whose entire job is to say what is on disk, an
+    # interrupted write being indistinguishable from a finished one IS the
+    # correctness bug; half a second on a large store is the cheaper problem.
     #
     # The VIEWER — which is what consolidated metadata is really for, over HTTP —
     # is untouched either way: it fetches `.zmetadata` itself.
