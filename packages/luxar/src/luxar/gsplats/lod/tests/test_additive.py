@@ -1044,3 +1044,214 @@ def test_radial_reveal_centre_length_checked_against_selected_dims() -> None:
         compute_additive_order(
             data, method="radial", spatial_dims=[0], reveal_centre=[0.0, 0.0, 0.0]
         )
+
+
+# ── truncation support comes from the DATA, not a hardcoded 3.0 (#1180) ──────
+
+
+def _gsplat_at_radius(radius: float, n: int = 40, seed: int = 11) -> GSplatData:
+    """A random overlapping dataset fitted/rendered at ``radius`` sigmas."""
+    base = _make_random_gsplat(n=n, ndim=3, seed=seed)
+    return GSplatData(
+        centers=base.centers,
+        amplitudes=base.amplitudes,
+        cholesky_factors=base.cholesky_factors,
+        truncation_radius=radius,
+    )
+
+
+def _sigmas_seen_by_gram(monkeypatch, call) -> list[float]:
+    """Record the ``sigmas`` every ``_build_sparse_gram`` call receives."""
+    import luxar.gsplats.lod.additive as additive_mod
+
+    seen: list[float] = []
+    real = additive_mod._build_sparse_gram
+
+    def _spy(data, *, sigmas):
+        seen.append(float(sigmas))
+        return real(data, sigmas=sigmas)
+
+    monkeypatch.setattr(additive_mod, "_build_sparse_gram", _spy)
+    call()
+    return seen
+
+
+def test_resolve_truncation_sigmas_reads_the_dataset() -> None:
+    """``None`` resolves to the dataset's own radius; an explicit value wins.
+
+    The radius here is deliberately NOT ``DEFAULT_TRUNCATION_RADIUS``: asserting
+    on a 2.75 dataset would also pass for a resolver that never looked at ``data``
+    and just returned the constant, so it would not test the "reads the dataset"
+    claim at all.
+    """
+    from luxar.gsplats.lod.additive import resolve_truncation_sigmas
+    from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
+
+    data = _gsplat_at_radius(1.5, n=4)
+    assert data.truncation_radius != pytest.approx(DEFAULT_TRUNCATION_RADIUS)
+    assert resolve_truncation_sigmas(None, data) == pytest.approx(1.5)
+    assert resolve_truncation_sigmas(3.0, data) == pytest.approx(3.0)
+
+
+def test_resolve_truncation_sigmas_falls_back_without_a_radius() -> None:
+    """A data-like object exposing no ``truncation_radius`` falls back to the
+    canonical default rather than crashing (mirrors ``principal_radii``)."""
+    from luxar.gsplats.lod.additive import resolve_truncation_sigmas
+    from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
+
+    class _NoRadius:
+        pass
+
+    assert resolve_truncation_sigmas(None, _NoRadius()) == pytest.approx(  # type: ignore[arg-type]
+        DEFAULT_TRUNCATION_RADIUS
+    )
+
+
+@pytest.mark.parametrize("bad", [0.0, -1.0, float("nan"), float("inf")])
+def test_resolve_truncation_sigmas_rejects_a_degenerate_value(bad: float) -> None:
+    """An explicit non-positive/non-finite σ empties the Gram silently; reject."""
+    from luxar.gsplats.lod.additive import resolve_truncation_sigmas
+
+    data = _gsplat_at_radius(2.75, n=4)
+    # The message must be about the PRUNING σ (not the render pipeline's GPU
+    # uniforms) and must name the offending value.
+    with pytest.raises(ValueError, match="pruning"):
+        resolve_truncation_sigmas(bad, data)
+
+
+@pytest.mark.parametrize("radius", [1.0, 2.75])
+def test_compute_additive_order_prunes_at_the_dataset_radius(
+    monkeypatch, radius: float
+) -> None:
+    """#1180: the greedy Gram was pruned at a hardcoded 3.0 regardless of the
+    radius the data was fitted at. It must use the dataset's own radius."""
+    data = _gsplat_at_radius(radius)
+    seen = _sigmas_seen_by_gram(
+        monkeypatch, lambda: compute_additive_order(data, method="greedy")
+    )
+    assert seen == [pytest.approx(radius)]
+
+
+def test_compute_additive_order_explicit_sigmas_still_override(monkeypatch) -> None:
+    """An explicit ``truncation_sigmas=`` beats the dataset's radius."""
+    data = _gsplat_at_radius(1.0)
+    seen = _sigmas_seen_by_gram(
+        monkeypatch,
+        lambda: compute_additive_order(data, method="greedy", truncation_sigmas=3.0),
+    )
+    assert seen == [pytest.approx(3.0)]
+
+
+@pytest.mark.parametrize("radius", [1.0, 2.75])
+def test_make_additive_lod_prunes_at_the_dataset_radius(
+    monkeypatch, radius: float
+) -> None:
+    """Same contract through the ladder builder (and its internal reuse of the
+    single Gram): every build sees the dataset's radius."""
+    data = _gsplat_at_radius(radius)
+    seen = _sigmas_seen_by_gram(
+        monkeypatch, lambda: make_additive_lod(data, n_lods=2, method="greedy")
+    )
+    assert seen and all(s == pytest.approx(radius) for s in seen)
+
+
+def test_make_additive_lod_explicit_sigmas_still_override(monkeypatch) -> None:
+    data = _gsplat_at_radius(1.0)
+    seen = _sigmas_seen_by_gram(
+        monkeypatch,
+        lambda: make_additive_lod(
+            data, n_lods=2, method="greedy", truncation_sigmas=3.0
+        ),
+    )
+    assert seen and all(s == pytest.approx(3.0) for s in seen)
+
+
+def test_smaller_radius_prunes_more_pairs() -> None:
+    """Grounding the spy assertions: the σ really is the pruning knob, so a
+    tighter support keeps strictly fewer off-diagonal Gram entries."""
+    data = _gsplat_at_radius(2.75)
+    tight = _build_sparse_gram(data, sigmas=1.0)
+    wide = _build_sparse_gram(data, sigmas=3.0)
+    assert tight.nnz < wide.nnz
+
+
+def test_make_lod_pyramid_resolves_the_radius_once(monkeypatch) -> None:
+    """``make_lod_pyramid`` resolves ``None`` from the INPUT dataset and hands
+    every per-level ladder the concrete value (never a hardcoded 3.0)."""
+    import luxar.gsplats.lod.pyramid as pyramid_mod
+
+    seen: list[float | None] = []
+    real = pyramid_mod.make_additive_lod
+
+    def _spy(*args, **kwargs):
+        seen.append(kwargs.get("truncation_sigmas"))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(pyramid_mod, "make_additive_lod", _spy)
+    data = _gsplat_at_radius(1.0, n=32, seed=12)
+    pyramid_mod.make_lod_pyramid(
+        data, compression_factor=4, levels=1, n_additive_lods=2, device="cpu"
+    )
+    assert seen and all(s == pytest.approx(1.0) for s in seen)
+
+
+def test_make_additive_lod_prunes_at_the_TARGET_levels_radius(monkeypatch) -> None:
+    """#1180 follow-up: the σ must come from the substitutive level being pruned.
+
+    Per-sub-LOD truncation radii are independent and really round-trip (see
+    ``TestTruncationRadiusRoundtrip::test_per_level_truncation_radius_roundtrip``
+    in ``gsplats/io/tests/test_save_load.py``),
+    so resolving from ``data`` — whose radius is the FINEST leaf's — prunes the
+    selected level at a support it does not claim. Here the finest level is 1.0
+    and level 1 is 4.0; ``substitutive_level=1`` must prune at 4.0.
+    """
+    from luxar.gsplats.gsplat_data import AdditiveSubLOD, SubstitutiveLevel
+
+    def _sublod(n: int, seed: int, radius: float) -> AdditiveSubLOD:
+        base = _make_random_gsplat(n=n, ndim=3, seed=seed)
+        return AdditiveSubLOD(
+            centers=base.centers,
+            amplitudes=base.amplitudes,
+            cholesky_factors=base.cholesky_factors,
+            truncation_radius=radius,
+        )
+
+    data = GSplatData.from_substitutive_levels(
+        [
+            SubstitutiveLevel(
+                additive_sublods=[_sublod(30, 1, 1.0)],
+                compression_factor=1,
+                level_index=0,
+            ),
+            SubstitutiveLevel(
+                additive_sublods=[_sublod(12, 2, 4.0)],
+                compression_factor=4,
+                level_index=1,
+            ),
+        ]
+    )
+    # Precondition: the radii really are heterogeneous, and `data`'s own radius
+    # (what the buggy resolution reads) is the finest level's, not the target's.
+    assert data.truncation_radius == pytest.approx(1.0)
+    assert data.at_substitutive(1).flattened().truncation_radius == pytest.approx(4.0)
+
+    seen = _sigmas_seen_by_gram(
+        monkeypatch,
+        lambda: make_additive_lod(
+            data, n_lods=2, method="greedy", substitutive_level=1
+        ),
+    )
+    assert seen and all(s == pytest.approx(4.0) for s in seen)
+
+
+def test_resolve_truncation_sigmas_accepts_a_tiny_positive_value() -> None:
+    """A pruning σ is a CPU knob, not a render uniform: it carries no float32
+    shader bounds, so a very small positive cutoff (which the render-domain
+    ``validate_truncation_radius`` rejects) must still be accepted here."""
+    from luxar.gsplats.lod.additive import resolve_truncation_sigmas
+
+    data = _gsplat_at_radius(2.75, n=4)
+    assert resolve_truncation_sigmas(1e-5, data) == pytest.approx(1e-5)
+    # Numpy scalars and ints round-trip through the same coercion.
+    assert resolve_truncation_sigmas(np.float32(2.5), data) == pytest.approx(2.5)
+    assert resolve_truncation_sigmas(4, data) == pytest.approx(4.0)
