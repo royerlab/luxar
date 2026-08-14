@@ -42,7 +42,7 @@ group/
 ├── __init__.py          # re-exports Group
 ├── group.py             # Group class: public add_* API (delegates to adders/ + gsplats_pipeline/)
 ├── auto_partition.py     # resolve_auto_partition — compiler-level opt-in auto-partition
-├── compositing.py        # COMPOSITING_ATTRS, slice_optional_array, is_broadcast_color, validate_*_before_split, position_bounds_from_array
+├── compositing.py        # COMPOSITING_ATTRS, AUTHORED_APPEARANCE_ATTRS, slice_optional_array, is_broadcast_color, validate_*_before_split, position_bounds_from_array
 ├── dim_order.py          # apply_dim_order_positions / apply_dim_order_cholesky
 ├── partition.py          # BSP splitters + PartitionSpec + validate_partition_group
 ├── adders/               # per-leaf add_<type> bodies (Points / Lines / GSplats)
@@ -148,6 +148,13 @@ LOD wrapper builders:
   at render time. `colormap` and `truncation_radius` are deliberately excluded —
   they are auto-defaulted per leaf and would otherwise shadow a parent under
   nearest-ancestor-wins.
+- `AUTHORED_APPEARANCE_ATTRS` — the subset a structure-only rebuild (`gsplat lod`
+  and the rest of the rewriting family) carries from the source root to the
+  output root, so re-laddering a dataset does not silently reset the look
+  (#1600). `COMPOSITING_ATTRS` minus `transform`, which is excluded because the
+  stored matrix is already column-major and the writer would transpose it a
+  second time. Read with
+  `luxar.gsplats.io.load_gsplats.read_authored_appearance`.
 - `slice_optional_array(value, indices, n_elements)` — slice a per-element leaf
   parameter by index; pass scalars / `None` / mis-sized inputs through unchanged.
 - `validate_labels_before_split(labels, n_elements)` — its companion guard: reject

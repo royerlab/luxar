@@ -34,6 +34,7 @@ class IOAdapterMixin(_GSplatDataOps):
         compressor: Any = _USE_DEFAULT_COMPRESSOR,
         zip_deflate: bool = False,
         barrier_dims: Optional[Sequence[int]] = None,
+        root_attrs: Optional[dict] = None,
     ) -> None:
         """Save splats to .gsplats.zarr format.
 
@@ -51,6 +52,10 @@ class IOAdapterMixin(_GSplatDataOps):
                 ordering (e.g. a stacked-time axis). ``None`` (default) derives
                 the barrier from the ``coarsen_dims`` complement in stats, else
                 per-leaf auto-detect — see ``write_gsplats_tree``.
+            root_attrs: Extra attrs seeded onto the root at LOWEST precedence
+                (structural attrs still win). A structure-only rebuild passes the
+                SOURCE root's authored appearance here so it is not dropped — see
+                ``luxar.gsplats.io.load_gsplats.read_authored_appearance``.
 
         For a multi-substitutive dataset the per-level ``coverage_fraction`` LOD
         switch thresholds are derived automatically as screen-area fractions
@@ -114,6 +119,7 @@ class IOAdapterMixin(_GSplatDataOps):
             compressor=compressor,
             zip_deflate=zip_deflate,
             barrier_dims=barrier_dims,
+            root_attrs=root_attrs,
         )
 
     @classmethod
