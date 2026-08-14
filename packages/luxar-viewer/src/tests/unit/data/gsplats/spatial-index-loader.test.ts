@@ -2,7 +2,7 @@
  * Tests for GSplatsSpatialIndexLoader.
  *
  * Mirrors the describe-block structure of
- * `points-spatial-index-loader.test.ts` per the three-geometry
+ * `data/points/spatial-index-loader.test.ts` per the three-geometry
  * symmetry rule (Points / Lines / GSplats keep mirrored coverage).
  * Shared mocking boilerplate lives in
  * `tests/builders/spatial-loader-fixtures.ts`.

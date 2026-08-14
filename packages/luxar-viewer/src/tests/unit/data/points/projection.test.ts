@@ -3,7 +3,7 @@
  *
  * The full projection paths (effective-radius compaction, worker
  * fallback) are exercised by the integration tests in
- * `points-spatial-index-loader.test.ts`; the cases below pin the small
+ * `data/points/spatial-index-loader.test.ts`; the cases below pin the small
  * pure-helper contracts so the loader can rely on them:
  *   - `createEmptyPointsData` returns the right shape with the right
  *     dtype passthrough and the right `ndim` fallback (chunkIndex → 3).
