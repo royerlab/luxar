@@ -83,7 +83,7 @@ export const POINT_VERTEX_SHADER = /* glsl */ `
       // read under USE_COLORMAP) and the per-point alpha (.y, written
       // unconditionally by the texel writer — 1.0 for RGB data).
       int pointBase = int(luxarSortedIndex()) * 3;
-      int pointTexW = textureSize(uPointTex, 0).x;
+      int pointTexW = LUXAR_POINT_TEX_W;
       ivec2 texel0 = ivec2(pointBase % pointTexW, pointBase / pointTexW);
       vec4 pointT0 = texelFetch(uPointTex, texel0, 0);
       vec4 pointT1 = texelFetch(uPointTex, ivec2(texel0.x + 1, texel0.y), 0);
