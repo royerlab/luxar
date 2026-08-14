@@ -15,7 +15,9 @@ import {
   CAPSULE_JOINT_PACKET_MIN_RADIUS_PX,
   CAPSULE_MIN_RADIUS_PX,
   type CapsuleJointLeg,
+  CAPSULE_STENCIL_APRON_PX,
   capsuleJointCompositionError,
+  capsuleJointStencilReach,
   capsuleLegField,
   capsuleLegWidthScale,
   CAPSULE_RADIUS_PER_QUAD_HALFWIDTH,
@@ -32,7 +34,11 @@ import {
   CAPSULE_LINE_PICK_VERTEX_SHADER,
 } from '../../../../rendering/picking/line/shaders-capsule';
 
-/** Drop `//` and block comments so prose can never satisfy — or break — a match. */
+/**
+ * Drop `//` and block comments so prose can never satisfy — or break — a match.
+ * The WRITE-COUNT pin below needs it most: a comment mentioning `extA =` reads
+ * as a second assignment and would fail that branch spuriously.
+ */
 function stripComments(source: string): string {
   return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
 }
@@ -61,6 +67,76 @@ const SRC_ROOT = path.resolve(HERE, '../../../..');
 function readSource(relativeToSrc: string): string {
   return readFileSync(path.join(SRC_ROOT, relativeToSrc), 'utf8');
 }
+
+/**
+ * The BODY of one vertex surface's `needPacket<end>` branch, brace-matched from
+ * the branch header, in BOTH matching forms:
+ *
+ * - `squashed` — whitespace-FREE ({@link squash}), for the reach-form literals,
+ *   so a behaviour-identical prettier rewrap of a TSL assign cannot red the pin
+ *   (the same reason the sibling locks match whitespace-free).
+ * - `spaced` — whitespace-COLLAPSED, for the write-count regexes. They are
+ *   whitespace-insensitive already, and they need the token boundary their
+ *   `(?<![\w$])` lookbehind rests on: squashed, `else extA = …` becomes
+ *   `elseextA=`, the lookbehind fails, and a second write goes UNCOUNTED.
+ *
+ * A slice, not a whole-source grep: the half-disc reach appears twice per end
+ * (the `Else` arm and the width-gated arm) and is CORRECT in both, so only a
+ * scoped assertion can say which arm assigns what — a whole-source
+ * `not.toContain` would forbid the right answer everywhere. Fails loudly when
+ * the header is missing or the braces never balance: a locator that silently
+ * returned an empty slice would go vacuous under exactly the refactor this pin
+ * exists to survive.
+ *
+ * The header lookup runs ONCE, on squashed text (a rewrapped header still
+ * matches); a squashed→stripped index map then re-cuts the same span with its
+ * spacing intact, so the two forms cannot drift apart.
+ */
+function packetBranchBody(
+  label: string,
+  source: string,
+  header: string
+): { squashed: string; spaced: string } {
+  const stripped = stripComments(source);
+  const toStripped: number[] = [];
+  let squashed = '';
+  for (let i = 0; i < stripped.length; i++) {
+    if (/\s/.test(stripped[i])) continue;
+    squashed += stripped[i];
+    toStripped.push(i);
+  }
+  const headerAt = squashed.indexOf(squash(header));
+  if (headerAt < 0) throw new Error(`${label}: packet branch header '${header}' not found`);
+  const open = squashed.indexOf('{', headerAt);
+  if (open < 0) throw new Error(`${label}: no '{' after '${header}'`);
+  let depth = 0;
+  for (let i = open; i < squashed.length; i++) {
+    if (squashed[i] === '{') depth += 1;
+    else if (squashed[i] === '}' && --depth === 0) {
+      return {
+        squashed: squashed.slice(open + 1, i),
+        spaced: stripped.slice(toStripped[open] + 1, toStripped[i]).replace(/\s+/g, ' '),
+      };
+    }
+  }
+  throw new Error(`${label}: unbalanced braces after '${header}'`);
+}
+
+/** The two GLSL vertex stages, as compiled source strings. */
+const GLSL_VERTEX_SURFACES: ReadonlyArray<readonly [string, string]> = [
+  ['visual GLSL', CAPSULE_LINE_VERTEX_SHADER],
+  ['pick GLSL', CAPSULE_LINE_PICK_VERTEX_SHADER],
+];
+
+/**
+ * The two TSL vertex stages, read from disk: their graphs only build against a
+ * real GPU backend, so — as in `line/join-width-tsl.test.ts` — the module text
+ * is the only thing an always-running unit test can inspect.
+ */
+const TSL_VERTEX_SURFACES: ReadonlyArray<readonly [string, string]> = [
+  ['visual TSL', 'rendering/materials/line/shader-tsl-capsule.ts'],
+  ['pick TSL', 'rendering/picking/line/pick-capsule.tsl.ts'],
+];
 
 describe('capsule constants', () => {
   it('the radius factor is the 2σ fraction of the quad half-width', () => {
@@ -132,6 +208,160 @@ describe('capsule constants', () => {
       expect(src).toMatch(/cut[AB]\.z = \(rpFar[AB] - r[AB]\) \/ ql;/);
       expect(src).toMatch(/cut[AB]\.w = ql;/);
     }
+  });
+
+  it('the packet branch of all four vertex surfaces assigns the FULL disc once (#1488)', () => {
+    // WHAT THIS GUARANTEES, exactly: inside each `needPacket<end>` branch
+    // there is exactly ONE write to `ext<end>` and it is the full-disc form.
+    // Worth having because the two TSL factories are pinned by nothing else
+    // that runs in CI — `.github/workflows/ci.yml` sets `e2e-tests` to
+    // `if: false`, so the codegen snapshots and the parity suite are not
+    // merge-gating and a TSL-only revert to the half-disc reach would ship
+    // green, chopping the deficit rule's light on WebGPU alone.
+    //
+    // WHAT IS MATCHED AGAINST WHAT. The reach-form literals run on
+    // {@link squash}ed text — comment-stripped AND whitespace-free on both
+    // sides — so a behaviour-identical prettier rewrap
+    // (`extA.assign(\n  rMax.add(APRON)\n);`) cannot red them, while an
+    // operand, order or spelling change still must. The write COUNT runs on
+    // whitespace-COLLAPSED text instead, and that difference is load-bearing:
+    // the regexes are whitespace-insensitive anyway, but squashed they lose the
+    // token boundary their `(?<![\w$])` lookbehind needs — `else extA = …`
+    // becomes `elseextA=`, the lookbehind fails, and a second write inside an
+    // `if`/`else` (the shape a real build-flag edit takes) goes UNCOUNTED while
+    // both `toContain` arms stay green by design.
+    //
+    // MEASURED SCOPE — every case below was run as a mutant against this test.
+    // CAUGHT: the literal half-disc revert; a `min()` wrapper around the
+    // full-disc operand (all three spellings tried, including swapped
+    // operands, because each one displaces the `extA=rMax+` prefix); a
+    // SECOND write inside the branch, whether plain (`extA = …`), compound
+    // (`extA *= …`), from the TSL assign family (`extA.mulAssign(…)`) or
+    // guarded by an inline `if`/`else` in either language; a renamed branch
+    // header (fails closed, by throw).
+    // EVADES: a write placed AFTER the branch; an alias bound inside it that
+    // also avoids the literal half-disc spelling (`const eA = extA;
+    // eA.assign(nLoc.y.abs().mul(rMax)…)` — with the literal spelling the
+    // `not.toContain` still reds it); and any algebraically equivalent single
+    // expression (`extA = rMax + APRON - rMax * (1.0 - abs(nLoc.y));`).
+    // So: a tripwire on the edits a reverting change actually makes, not a
+    // proof. What backs the rule is the negative control over the CPU model
+    // further down.
+    //
+    // Sliced per branch rather than grepped whole-source because the
+    // half-disc form is CORRECT in the `Else` and width-gated arms, so only a
+    // scoped assertion can say which arm assigns what.
+    const assignmentsTo = (body: string, pattern: RegExp): number =>
+      (body.match(pattern) ?? []).length;
+    for (const [label, source] of GLSL_VERTEX_SURFACES) {
+      for (const end of ['A', 'B'] as const) {
+        const body = packetBranchBody(`${label} ${end}`, source, `if (needPacket${end}) {`);
+        expect(body.squashed, `${label} ${end}: full-disc reach`).toContain(
+          squash(`ext${end} = rMax + `)
+        );
+        expect(body.squashed, `${label} ${end}: half-disc reach`).not.toContain(
+          squash('abs(nLoc.y) * rMax')
+        );
+        // Compound forms included (`*=`, `+=`, …): a bare `=` counter reads
+        // `extA *= abs(nLoc.y);` as no write at all. Same rule #1494 landed
+        // for `rEnd`.
+        expect(
+          assignmentsTo(body.spaced, new RegExp(`(?<![\\w$])ext${end}\\s*[-+*/]?=(?!=)`, 'g')),
+          `${label} ${end}: the packet branch must write ext${end} exactly once`
+        ).toBe(1);
+      }
+    }
+    for (const [label, relativeToSrc] of TSL_VERTEX_SURFACES) {
+      const source = readSource(relativeToSrc);
+      for (const end of ['A', 'B'] as const) {
+        const body = packetBranchBody(`${label} ${end}`, source, `If(needPacket${end}, () => {`);
+        expect(body.squashed, `${label} ${end}: full-disc reach`).toContain(
+          squash(`ext${end}.assign(rMax.add(`)
+        );
+        expect(body.squashed, `${label} ${end}: half-disc reach`).not.toContain(
+          squash('abs(nLoc.y).mul(rMax)')
+        );
+        // The whole TSL assign family, not just `.assign(`: `.mulAssign(`,
+        // `.addAssign(` and friends all write the var in place.
+        expect(
+          assignmentsTo(body.spaced, new RegExp(`(?<![\\w$])ext${end}\\.\\w*[Aa]ssign\\(`, 'g')),
+          `${label} ${end}: the packet branch must write ext${end} exactly once`
+        ).toBe(1);
+      }
+    }
+  });
+
+  it('the CPU model mirrors that reach rule (#1488)', () => {
+    // The rule the model clips its own contribution by. A packet turns the
+    // kept half-disc's |ny|·rMax axial extent into the whole disc; without
+    // one the shorter reach is correct (and is why a joint costs less fill
+    // than a cap). The apron rides on both.
+    const rMax = 10;
+    expect(capsuleJointStencilReach(rMax, 0.3, true)).toBe(rMax + CAPSULE_STENCIL_APRON_PX);
+    expect(capsuleJointStencilReach(rMax, -0.3, true)).toBe(rMax + CAPSULE_STENCIL_APRON_PX);
+    expect(capsuleJointStencilReach(rMax, 0.3, false)).toBeCloseTo(
+      3 + CAPSULE_STENCIL_APRON_PX,
+      12
+    );
+    // Sign-blind, as `abs(nLoc.y)` is: the two legs of a joint carry exactly
+    // negated normals, and both must reserve the same footprint.
+    expect(capsuleJointStencilReach(rMax, -0.3, false)).toBe(
+      capsuleJointStencilReach(rMax, 0.3, false)
+    );
+  });
+
+  it('a gentle hairline joint builds NO packet, so it reserves no full disc (#1488)', () => {
+    // The width half of the packet gate, asserted on the MODEL's boolean rather
+    // than on shader text: below `CAPSULE_JOINT_PACKET_MIN_RADIUS_PX` (and with
+    // #1495's sharp-turn escape shut) not one of the four clauses can fire, so
+    // a hairline joint gets neither a deficit term NOR the full-disc reach that
+    // term needs. The sibling row 'every surface gates the packet by width OR a
+    // floored sharp turn (#1495)' pins the same rule as SOURCE TEXT on the four
+    // shader surfaces; this one pins that the CPU model agrees, and it reads the
+    // decision where it actually matters, through the reach seam.
+    //
+    // Why the boolean and not a sweep bound: on this geometry, at the step 0.5
+    // used below, gated measures −0.051291 and ungated −0.038773 — the faithful
+    // model scores WORSE, so any bound tight enough to notice the gate would be
+    // rewarding its removal. And the reach itself is not what moves: with the
+    // gate in place, forcing the full rule and forcing the half rule both
+    // measure −0.051291, bit-identical, since below 4 px the two reaches differ
+    // by under 2 px of near-zero profile. That is precisely WHY the shaders gate
+    // there — the deficit is sub-pixel — and precisely why only the boolean is
+    // worth pinning. (Both figures re-measured on this build.)
+    const hairline = 1.5; // the AA radius floor ⇒ rMax 2.0, under the 4 px gate
+    const fat = 10; // ⇒ rMax 10.5, over it
+    const packetFlags = (r: number): boolean[] => {
+      const seen: boolean[] = [];
+      const spy = (rMax: number, ny: number, hasPacket: boolean): number => {
+        seen.push(hasPacket);
+        return capsuleJointStencilReach(rMax, ny, hasPacket);
+      };
+      // A partner shorter than 2·rJoint holds the LENGTH clause wide open on
+      // the leg under test (the partner leg's own clauses are all shut — its
+      // length clause reads 8r < 2r — so its gate needs no width gate at all),
+      // so the WIDTH comparison is the only thing that can shut the
+      // gate — provided #1495's escape stays shut, which is why the turn is
+      // gentle: the legs meet 60° from straight, so both ends measure
+      // qx = −0.5 exactly against the `qx > 0.5` sharp test. The escape's other
+      // conjunct IS satisfied here (both raw radii sit exactly on the AA floor),
+      // so the turn is the only thing holding it: loosen that test past −0.5
+      // (`qx > −0.6`) and the packet opens on the hairline pair, reddening this
+      // row.
+      const own: CapsuleJointLeg = { dir: [-1, 0], rJoint: r, rFar: r, length: 8 * r };
+      const partner: CapsuleJointLeg = {
+        dir: [0.5, -Math.sqrt(3) / 2],
+        rJoint: r,
+        rFar: r,
+        length: r,
+      };
+      capsuleJointCompositionError(own, partner, undefined, 0.5, spy);
+      return seen;
+    };
+    const thin = packetFlags(hairline);
+    expect(thin.length, 'the sweep must actually reach the clip').toBeGreaterThan(0);
+    expect(thin.some(Boolean), 'a gentle hairline joint must never build a packet').toBe(false);
+    expect(packetFlags(fat).some(Boolean), 'the same joint, fat, must build one').toBe(true);
   });
 
   it('the joint partition is never width-gated (a hairline joint would double)', () => {
@@ -285,9 +515,11 @@ describe('capsuleProfile (CPU reference)', () => {
 describe('joint composition — the rendered pair tracks max(mine, partner)', () => {
   // The numeric sweep the #1487 review asked for: all three of #1494
   // (wrong vertex radius), #1488 (reach shortfall) and #1490 (missing far
-  // cap) blow these bounds. #1494 additionally has a source lock over the
-  // four shader surfaces now (`line/capsule-partner-radius.test.ts`);
-  // #1488 and #1490 have no comparable one, so this sweep binds them.
+  // cap) blow these bounds. All three additionally have source locks over the
+  // four shader surfaces now — #1494 in `line/capsule-partner-radius.test.ts`,
+  // #1490 in `line/capsule-joint-packet-source-lock.test.ts`, #1488 in the
+  // packet-branch pin above — but those bind TEXT. The sweep still binds all
+  // three in the CPU model by VALUE, which no text pin can.
   const leg = (
     angleDeg: number,
     rJoint: number,
@@ -459,7 +691,19 @@ describe('joint composition — the rendered pair tracks max(mine, partner)', ()
     // chop reached −0.306 and the excess +0.859 at ql = 2 px. Measured
     // now: minErr −0.0009 (ql2) down to −0.0046 (ql40), maxErr zero to
     // float noise (3.3e-16 … 5.3e-16) at every ql; tightened to
-    // (−0.01, 0.005).
+    // (−0.01, 0.005) from the pre-fix ±(0.13, 0.06) these rows were first
+    // written with. That slack was the reason the rows only half-caught
+    // #1488: with the model now clipped by the stencil, a revert to the
+    // half-disc reach measures −0.4096 / −0.3666 / −0.1131 / −0.0325
+    // (ql 2/4/8/15), and −0.13 let the ql 8 and ql 15 rows through — the
+    // shallow end of the very gradient the reach rule controls.
+    // The floor is tuned to THESE FIVE ROWS, not to the AA ramp in general:
+    // the ramp's honest cost grows with turn angle and with the share of the
+    // rod the cut crosses, so defect-free configurations in the same family
+    // sit BELOW this floor — `leg(180, 10, 10, 60)` vs `leg(-120, 10, 5, 120)`
+    // measures −0.0106, and `leg(180, 5, 5, 60)` vs `leg(-120, 5, 5, 30)`
+    // measures −0.0318. A new row added to this group may legitimately need
+    // its own bound; widen for it specifically rather than reopening this one.
     for (const ql of [2, 4, 8, 15, 40]) {
       const { minErr, maxErr } = capsuleJointCompositionError(
         leg(180, 10, 10, 60),
@@ -468,6 +712,49 @@ describe('joint composition — the rendered pair tracks max(mine, partner)', ()
       expect(minErr, `ql ${ql} min`).toBeGreaterThan(-0.01);
       expect(maxErr, `ql ${ql} max`).toBeLessThan(0.005);
     }
+  });
+
+  it('NEGATIVE CONTROL: the pre-#1488 half-disc reach makes those rows chop', () => {
+    // The rows above are the coverage for #1488 — but only because the model
+    // clips each leg by its stencil, and under the SHIPPED rule that clip is
+    // exactly inert (every row measures bit-identically with and without it).
+    // So deleting the clip leaves the whole file green and it reads as dead
+    // code. This test is what makes it observable: feed the pre-fix rule in
+    // and require the sweep to CHOP.
+    //
+    // These bounds are a NEGATIVE control, not a target — nothing should ever
+    // be tuned to satisfy them. They are deliberately loose against the
+    // measured chop (−0.4096 at ql 2, −0.1131 at ql 8, i.e. 479x and 48.7x
+    // the defect-free −0.0009 / −0.0023 the same rows give under the real
+    // rule) so they survive a change to the sweep's step or window; as
+    // asserted, the chop floor sits 350x (ql 2) and 21.5x (ql 8) above the
+    // defect-free measurement. If a wired-up clip is ever removed, both
+    // halves collapse to the same number and this reds.
+    const halfDiscReach = (rMax: number, ny: number): number =>
+      Math.abs(ny) * rMax + CAPSULE_STENCIL_APRON_PX;
+    const short = (ql: number): CapsuleJointLeg[] => [leg(180, 10, 10, 60), leg(-60, 10, 5, ql)];
+    for (const [ql, chopFloor] of [
+      [2, -0.3],
+      [8, -0.05],
+    ] as const) {
+      const [a, b] = short(ql);
+      // Both sweeps take the DEFAULT step: passing it explicitly on one side
+      // only would let a change to that default silently unweld the pair.
+      const chopped = capsuleJointCompositionError(a, b, undefined, undefined, halfDiscReach);
+      expect(chopped.minErr, `ql ${ql}: half-disc reach must chop`).toBeLessThan(chopFloor);
+      const shipped = capsuleJointCompositionError(a, b);
+      expect(shipped.minErr, `ql ${ql}: full-disc reach must not`).toBeGreaterThan(-0.01);
+    }
+  });
+
+  it('the sweep is NaN-FATAL: a degenerate row cannot score a vacuous 0', () => {
+    // A zero projected partner length makes the packet's radius gradient
+    // non-finite (671 NaN fragments on this geometry), and `<`/`>` are both
+    // false for NaN — so without the guard the sweep reports a PERFECT
+    // {0, 0} and any future degenerate row passes while measuring nothing.
+    expect(() => capsuleJointCompositionError(leg(180, 10, 10, 60), leg(-60, 10, 10, 0))).toThrow(
+      /non-finite/
+    );
   });
 
   it('hairline joints keep the packet at a sharp turn (#1495)', () => {
