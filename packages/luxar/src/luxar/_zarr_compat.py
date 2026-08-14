@@ -15,8 +15,8 @@ equivalent — 75 production modules imported ``zarr`` directly — so a format
 change meant sweeping all of them. Routing through here means a future move to
 format 3 edits *this* file, not that whole surface.
 
-Two zarr-3 behaviours are actively dangerous here, and both are neutralised
-below rather than left to call sites:
+Five zarr-3 behaviours are actively dangerous here, and all five are neutralised
+below rather than left to call sites. Each one fails SILENTLY — none raises:
 
 1. **An omitted compressor is not "no compressor".** zarr's ``compressors="auto"``
    silently applies Blosc/lz4/clevel-5, whereas Luxar has arrays that must be
@@ -32,6 +32,22 @@ below rather than left to call sites:
    ``create_dataset`` accepted both, and several Luxar writers passed both.
    Passing both to zarr 3 raises. :func:`create_array` accepts both, casts
    ``data`` to ``dtype`` when given, and forwards only what zarr 3 allows.
+3. **``chunks=True``/``False`` are rejected.** zarr 2 spelled "choose for me" and
+   "one chunk for everything" that way, ``ChunkSpec`` still carries both, and
+   ``create_resizable_dataset`` defaults to ``True`` — so every resizable array
+   would have failed. See :func:`_translate_chunks`.
+4. **Creation defaults to format 3.** A bare ``zarr.group()`` emits ``zarr.json``
+   and ``c/`` chunk keys. Every creating helper here pins :data:`ZARR_FORMAT`
+   explicitly rather than leaning on ``zarr.config``, so correctness does not
+   depend on import order or on nobody else touching the ambient default.
+5. **Reads trust consolidated metadata.** zarr 2 consulted ``.zmetadata`` only
+   through the separate ``open_consolidated``; zarr 3 reversed that default, which
+   makes a deleted array still read as PRESENT and silently disables Luxar's
+   detection of a partially written store. :func:`open_group` opts reads out.
+
+A sixth hazard is specific to ``mode="a"``: because it is create-or-open, pinning
+the format unconditionally would assert it against a store that already exists —
+and on a v3 store that SHADOWS it rather than failing. See :func:`open_group`.
 
 Everything here is deliberately thin. It is a compatibility seam, not an
 abstraction layer: callers still hold real :class:`zarr.Group` and
@@ -87,26 +103,51 @@ ZARR_FORMAT = 2
 _ZIP_SUFFIXES = (".zip",)
 
 
+def _metadata_docs_exist(path: Path) -> bool:
+    """Is there already a zarr node at ``path``, of EITHER format?
+
+    A zipped store is one file, so its existence is the answer. A directory store
+    is identified by its root metadata document — v2's ``.zgroup``/``.zarray`` or
+    v3's ``zarr.json`` — rather than by the directory merely existing, because a
+    caller may well have created an empty output directory first.
+    """
+    if path.suffix.lower() in _ZIP_SUFFIXES:
+        return path.is_file()
+    return any(
+        (path / name).exists() for name in (".zgroup", ".zarray", "zarr.json")
+    )
+
+
 def open_store(path: str | Path, *, mode: str = "r") -> Any:
     """Open the right store class for ``path``.
 
     ``.zarr.zip`` gets a :class:`zarr.storage.ZipStore`; anything else gets a
     :class:`zarr.storage.LocalStore`. In zarr 2 this dispatch happened inside
     ``zarr.open`` via ``normalize_store_arg``; it is explicit in zarr 3.
+
+    ``mode`` is honoured for both branches: a ZipStore takes it directly, and a
+    LocalStore is marked ``read_only`` for ``"r"``. Handing back a writable store
+    for a declared read would make the argument a decoration rather than a
+    constraint, and a read path that acquired a write by accident would not be
+    caught.
     """
     p = Path(path)
     if p.suffix.lower() in _ZIP_SUFFIXES:
         return zarr.storage.ZipStore(str(p), mode=mode)
-    return zarr.storage.LocalStore(str(p))
+    return zarr.storage.LocalStore(str(p), read_only=(mode == "r"))
 
 
 def open_group(path: str | Path, *, mode: str = "r", **kwargs: Any) -> zarr.Group:
     """Open (or create) a group, writing :data:`ZARR_FORMAT` when creating.
 
-    ``zarr_format`` is only meaningful when the group is being CREATED. Passing
-    it for a read of an existing store would assert the format rather than
-    detect it, which would defeat the "read v2 and v3 alike" property, so it is
-    supplied only for the creating modes.
+    ``zarr_format`` is only meaningful when the group is actually being CREATED.
+    Asserting it against an existing store would defeat the "read v2 and v3
+    alike" property, so it is supplied only for the creating modes — and for
+    ``"a"``, only when there is nothing there yet (see below).
+
+    Reads deliberately ignore consolidated metadata; see the comment in the body.
+    That is a behavioural choice, not an optimisation: it is what keeps Luxar's
+    detection of a partially written store working.
     """
     store: Any = path
     p = Path(path)
@@ -116,7 +157,17 @@ def open_group(path: str | Path, *, mode: str = "r", **kwargs: Any) -> zarr.Grou
         store = str(p)
 
     if mode in ("w", "w-", "a") and "zarr_format" not in kwargs:
-        kwargs["zarr_format"] = ZARR_FORMAT
+        # `"a"` is create-OR-open, so pinning the format unconditionally would
+        # assert it against a store that already exists. On a zarr-v3 store that
+        # does not fail — it SHADOWS it: zarr writes a second, v2 root beside the
+        # v3 one, leaving `zarr.json` and `.zgroup` side by side. Everything
+        # written afterwards lands in the v2 view, while an auto-detecting reader
+        # resolves the v3 one and cannot see it. A successful write that readers
+        # miss is worse than an error, and this migration makes foreign v3 stores
+        # reachable for the first time, so `"a"` pins the format only when it is
+        # genuinely creating. `"w"`/`"w-"` always create, so they always pin.
+        if mode != "a" or not _metadata_docs_exist(p):
+            kwargs["zarr_format"] = ZARR_FORMAT
 
     # Do NOT trust consolidated metadata on read. This restores zarr 2 semantics:
     # there, `.zmetadata` was only consulted via the separate
@@ -133,10 +184,18 @@ def open_group(path: str | Path, *, mode: str = "r", **kwargs: Any) -> zarr.Grou
     # complete), and the readers' "this required array is missing" guards are the
     # backstop. Those guards must see the filesystem, not a snapshot of it.
     #
-    # The cost is per-node metadata reads instead of one — irrelevant for the
-    # local directory stores this reader path handles, and the VIEWER (which is
-    # what consolidated metadata is really for, over HTTP) is untouched by this:
-    # it fetches `.zmetadata` itself and is unaffected.
+    # The cost is real and worth stating rather than waving away: per-node reads
+    # instead of one. Measured on local directory stores it is ~0.44 ms per array
+    # (a ~7.8x ratio, linear in array count) — so ~23 ms for a 52-array scene,
+    # but ~0.5 s at 1200 arrays and seconds for a large partition. Correctness
+    # wins for the readers that GUARD on a missing array (the gsplats loader, the
+    # scene reader, migrate), which is why those route through here. Purely
+    # informational CLI paths (`luxar info`, `get_zarr_info`) deliberately still
+    # use zarr's default: they do not check for missing arrays, so they gain no
+    # correctness from the strict read and would only get slower.
+    #
+    # The VIEWER — which is what consolidated metadata is really for, over HTTP —
+    # is untouched either way: it fetches `.zmetadata` itself.
     if mode in ("r", "r+", "a") and "use_consolidated" not in kwargs:
         kwargs["use_consolidated"] = False
     return zarr.open_group(store, mode=mode, **kwargs)

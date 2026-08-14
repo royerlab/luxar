@@ -271,6 +271,62 @@ def test_consolidate_writes_zmetadata_indexing_arrays(tmp_path: Path) -> None:
     assert suffixes <= {".zgroup", ".zattrs", ".zarray"}, suffixes
 
 
+def test_append_to_an_existing_v3_store_does_not_shadow_it(tmp_path: Path) -> None:
+    """``mode="a"`` must NOT pin the format against a store that already exists.
+
+    ``"a"`` is create-or-open. Pinning `zarr_format=2` unconditionally does not
+    fail on a v3 store — it writes a SECOND, v2 root beside the v3 one, leaving
+    `zarr.json` and `.zgroup` side by side. Everything written afterwards lands in
+    the v2 view while an auto-detecting reader resolves the v3 one, so the write
+    succeeds and readers cannot see it. Worse than an error, and reachable now
+    that Luxar can be pointed at foreign v3 stores at all —
+    `denoise_workers.py` opens its output with `mode="a"`.
+    """
+    p = tmp_path / "foreign_v3.zarr"
+    zarr.create_group(store=str(p), zarr_format=3).attrs["origin"] = "other-tool"
+
+    g = zc.open_group(p, mode="a")
+    zc.create_array(g, "added", data=np.arange(3, dtype=np.float32), compressor=None)
+
+    assert not (p / ".zgroup").exists(), "wrote a v2 shadow root beside the v3 one"
+    reader = zarr.open_group(str(p), mode="r")  # auto-detect, as a consumer would
+    assert reader.metadata.zarr_format == 3
+    assert "added" in reader, "the append is invisible to an auto-detecting reader"
+    assert reader.attrs["origin"] == "other-tool", "clobbered the foreign attrs"
+
+
+def test_append_still_creates_format_2_when_there_is_nothing_there(
+    tmp_path: Path,
+) -> None:
+    """The other half of the `mode="a"` rule: creating still pins the format.
+
+    Guards against "fixing" the shadowing bug by dropping `zarr_format` from `"a"`
+    altogether, which would silently start emitting format-3 stores whenever a
+    writer used create-or-open. Includes the pre-made-empty-directory case, since
+    a caller making its output dir first must not change the format.
+    """
+    fresh = tmp_path / "fresh.zarr"
+    zc.open_group(fresh, mode="a")
+    assert json.loads((fresh / ".zgroup").read_text())["zarr_format"] == 2
+
+    premade = tmp_path / "premade.zarr"
+    premade.mkdir()
+    zc.open_group(premade, mode="a")
+    assert json.loads((premade / ".zgroup").read_text())["zarr_format"] == 2
+
+
+def test_open_store_honours_mode(tmp_path: Path) -> None:
+    """A declared read must yield a READ-ONLY store, not merely a readable one.
+
+    Handing back a writable store for `mode="r"` makes the argument a decoration:
+    a read path that acquired a write by accident would not be caught anywhere.
+    """
+    assert zc.open_store(tmp_path / "ro.zarr", mode="r").read_only is True
+    assert zc.open_store(tmp_path / "rw.zarr", mode="w").read_only is False
+    with pytest.raises(Exception):  # noqa: B017 - zarr's own refusal, type is its business
+        zarr.create_group(store=zc.open_store(tmp_path / "refuse.zarr", mode="r"))
+
+
 def test_reads_do_not_trust_stale_consolidated_metadata(tmp_path: Path) -> None:
     """A deleted array must read as ABSENT, not as present-per-the-stale-index.
 
@@ -419,20 +475,56 @@ def _is_read_only_call(call: ast.Call) -> bool:
     )
 
 
+def _zarr_import_names(tree: ast.AST) -> tuple[set[str], set[str]]:
+    """``(module names bound to zarr, creating names imported FROM zarr)``.
+
+    Matching only the literal identifier ``zarr`` would let two entirely ordinary
+    spellings through — ``import zarr as z`` and ``from zarr import open_group`` —
+    so the aliases are resolved instead of assumed. Names imported from
+    ``luxar._zarr_compat`` deliberately do NOT count: that module IS the fix.
+    """
+    modules, direct = {"zarr"}, set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "zarr" or alias.name.startswith("zarr."):
+                    modules.add(alias.asname or alias.name.split(".")[0])
+        elif isinstance(node, ast.ImportFrom):
+            mod = node.module or ""
+            if mod == "zarr" or mod.startswith("zarr."):
+                for alias in node.names:
+                    if alias.name in _ZARR_CREATING_CALLS:
+                        direct.add(alias.asname or alias.name)
+    return modules, direct
+
+
+def _root_name(node: ast.expr) -> str | None:
+    """Leftmost identifier of an attribute chain — ``zarr`` in ``zarr.api.open``."""
+    while isinstance(node, ast.Attribute):
+        node = node.value
+    return node.id if isinstance(node, ast.Name) else None
+
+
 def _format_unpinned_zarr_writes(source: str) -> list[int]:
-    """Line numbers of ``zarr.<create>(...)`` calls that pin no format."""
+    """Line numbers of zarr node-creating calls that pin no format."""
     try:
         tree = ast.parse(source)
     except SyntaxError:  # pragma: no cover - defensive
         return []
+    modules, direct = _zarr_import_names(tree)
     hits = []
     for node in ast.walk(tree):
-        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+        if not isinstance(node, ast.Call):
             continue
-        mod = node.func.value
-        if not isinstance(mod, ast.Name) or mod.id != "zarr":
-            continue
-        if node.func.attr not in _ZARR_CREATING_CALLS:
+        func = node.func
+        if isinstance(func, ast.Attribute):
+            # Resolve the chain root so `zarr.api.synchronous.open` is caught too.
+            if _root_name(func) not in modules or func.attr not in _ZARR_CREATING_CALLS:
+                continue
+        elif isinstance(func, ast.Name):
+            if func.id not in direct:
+                continue
+        else:
             continue
         if _is_read_only_call(node):
             continue
@@ -451,13 +543,18 @@ def test_no_writer_creates_a_store_without_pinning_the_format() -> None:
     ``.zarray`` + dot-separated chunks. Neither raises; the store is simply the
     wrong format, which is why this is a lint and not a runtime check.
 
-    Scope is every writer that ships or produces a published artifact: the
-    package, the repo scripts, and the viewer's fixture generators. Go through
+    Scope is every writer that ships or produces a consumed artifact: the
+    package, the repo scripts, the viewer's fixture generators, AND the example
+    scripts — those write the `datasets/examples/` scenes that `make run-examples`
+    produces and the E2E suite loads, so a v3 store there would surface as a
+    baffling viewer failure rather than as a format complaint. Go through
     :mod:`luxar._zarr_compat`, or pass ``zarr_format=ZARR_FORMAT`` explicitly.
     """
     repo_root = PROD_ROOT.parents[3]
     extra_dirs = [
         repo_root / "scripts",
+        repo_root / "stats",
+        repo_root / "packages" / "luxar" / "examples",
         repo_root / "packages" / "luxar-viewer" / "tests" / "fixtures",
     ]
     files = list(_production_files())
@@ -491,6 +588,39 @@ def test_the_format_lint_can_actually_fail() -> None:
         "zarr.consolidate_metadata(s)\n"
         "zarr.storage.ZipStore(p, mode='w')\n"
     ) == [1, 2]
+
+
+def test_the_format_lint_resists_the_obvious_evasions() -> None:
+    """Aliasing or from-importing zarr must not slip a creating call past the lint.
+
+    ``import zarr as z`` and ``from zarr import open_group`` are not adversarial
+    tricks, they are two ordinary spellings — and matching the literal identifier
+    ``zarr`` misses both. Nothing in the repo writes them today, which is exactly
+    why this is pinned now rather than after one appears.
+    """
+    # Aliased module, and a nested module path.
+    assert _format_unpinned_zarr_writes("import zarr as z\nz.open(p, mode='w')\n") == [2]
+    assert _format_unpinned_zarr_writes(
+        "import zarr\nzarr.api.synchronous.open(p, mode='w')\n"
+    ) == [2]
+    # From-imported creating name, bare and aliased.
+    assert _format_unpinned_zarr_writes(
+        "from zarr import open_group\nopen_group(p, mode='w')\n"
+    ) == [2]
+    assert _format_unpinned_zarr_writes(
+        "from zarr import create_group as cg\ncg(store=s)\n"
+    ) == [2]
+    # ...and the same spellings stay quiet when they DO pin, or only read.
+    assert _format_unpinned_zarr_writes(
+        "import zarr as z\nz.open(p, mode='w', zarr_format=2)\nz.open(p, mode='r')\n"
+    ) == []
+    # The facade's own names must never be flagged — that module is the fix, and
+    # `luxar._zarr_compat` must not be mistaken for the `zarr` package.
+    assert _format_unpinned_zarr_writes(
+        "from luxar._zarr_compat import open_group, create_root_group\n"
+        "open_group(p, mode='w')\n"
+        "create_root_group(store)\n"
+    ) == []
 
 
 def test_the_lint_can_actually_fail(tmp_path: Path) -> None:
