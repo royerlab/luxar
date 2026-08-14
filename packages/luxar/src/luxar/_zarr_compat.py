@@ -160,6 +160,58 @@ def memory_group() -> zarr.Group:
     return zarr.create_group(store=zarr.storage.MemoryStore(), zarr_format=ZARR_FORMAT)
 
 
+def _translate_chunks(
+    chunks: bool | int | tuple[int, ...],
+    shape: tuple[int, ...] | None,
+    data: np.ndarray | None,
+) -> Any:
+    """Map a zarr-2 ``ChunkSpec`` onto something zarr 3 accepts.
+
+    zarr 2 spelled "choose chunks for me" as ``chunks=True`` and "one chunk for
+    the whole array" as ``chunks=False``; :data:`luxar.typing_utils.ChunkSpec`
+    still carries both and ``create_resizable_dataset`` DEFAULTS to ``True``.
+    zarr 3 rejects a bool outright ("True is not a valid chunk input"), so the
+    translation happens here rather than at ~20 call sites.
+
+    Returns ``None`` for the un-inferable ``False`` case (neither shape nor data
+    supplied); the caller's own "needs data or shape" error is the useful one to
+    raise there, rather than silently auto-chunking.
+    """
+    if chunks is True:
+        return "auto"
+    if chunks is not False:
+        return chunks
+    if shape is not None:
+        return tuple(shape)
+    if data is not None:
+        return tuple(np.asarray(data).shape)
+    return None
+
+
+def _as_stored(
+    data: np.ndarray,
+    dtype: Any,
+    shape: tuple[int, ...] | None,
+    name: str,
+) -> np.ndarray:
+    """Coerce ``data`` to what should land on disk, checking any declared shape.
+
+    zarr 3 derives both shape and dtype from ``data`` and rejects being given
+    either alongside it, so an explicit ``dtype=`` has to be applied by casting
+    up front — otherwise a caller asking for float32 would silently store the
+    float64 it passed in.
+    """
+    arr = np.asarray(data)
+    if dtype is not None:
+        arr = arr.astype(dtype, copy=False)
+    if shape is not None and tuple(shape) != tuple(arr.shape):
+        raise ValueError(
+            f"create_array({name!r}): shape={tuple(shape)} contradicts the "
+            f"supplied data's shape {tuple(arr.shape)}"
+        )
+    return arr
+
+
 def create_array(
     group: zarr.Group,
     name: str,
@@ -195,37 +247,14 @@ def create_array(
         **kwargs,
     }
     if chunks is not None:
-        # zarr 2 spelled "choose chunks for me" as `chunks=True` (and `False` as
-        # "one chunk for the whole array"); `luxar.typing_utils.ChunkSpec` still
-        # carries those, and `create_resizable_dataset` defaults to True. zarr 3
-        # rejects a bool outright — "True is not a valid chunk input" — so it is
-        # translated here rather than at ~20 call sites.
-        if chunks is True:
-            call["chunks"] = "auto"
-        elif chunks is False:
-            # One chunk spanning the array. Whichever of shape/data was given
-            # supplies it; if neither was, the ValueError below is the right
-            # error to surface rather than a silently auto-chunked array.
-            if shape is not None:
-                call["chunks"] = tuple(shape)
-            elif data is not None:
-                call["chunks"] = tuple(np.asarray(data).shape)
-        else:
-            call["chunks"] = chunks
+        translated = _translate_chunks(chunks, shape, data)
+        if translated is not None:
+            call["chunks"] = translated
 
     if data is not None:
-        # zarr 3 rejects `data=` together with `shape=`/`dtype=`, deriving both
-        # from the array instead. Cast first so an explicit `dtype=` still wins,
-        # then let zarr read the shape off the (possibly cast) array.
-        arr = np.asarray(data)
-        if dtype is not None:
-            arr = arr.astype(dtype, copy=False)
-        if shape is not None and tuple(shape) != tuple(arr.shape):
-            raise ValueError(
-                f"create_array({name!r}): shape={tuple(shape)} contradicts the "
-                f"supplied data's shape {tuple(arr.shape)}"
-            )
-        return group.create_array(name, data=arr, **call)
+        return group.create_array(
+            name, data=_as_stored(data, dtype, shape, name), **call
+        )
 
     if shape is None:
         raise ValueError(f"create_array({name!r}): needs either `data` or `shape`")
