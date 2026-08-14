@@ -38,8 +38,12 @@ class TestSceneMethods:
             # Finalize is called automatically by context manager
 
         # Check the zarr was properly finalized
+        # Assert on the FILE, not `".zmetadata" in store.store`: zarr 3's store is
+        # an async Store rather than a MutableMapping, so `in` raises TypeError.
+        # Checking the path is also a truer statement of the invariant — the
+        # consolidated document must be on disk for the viewer to fetch it.
+        assert (tmp_path / "test.luxar.zarr" / ".zmetadata").is_file()
         store = zarr.open_group(tmp_path / "test.luxar.zarr", mode="r")
-        assert ".zmetadata" in store.store
         assert "points" in store
 
     def test_scene_dimensions_always_set(self, tmp_path) -> None:

@@ -117,6 +117,28 @@ def open_group(path: str | Path, *, mode: str = "r", **kwargs: Any) -> zarr.Grou
 
     if mode in ("w", "w-", "a") and "zarr_format" not in kwargs:
         kwargs["zarr_format"] = ZARR_FORMAT
+
+    # Do NOT trust consolidated metadata on read. This restores zarr 2 semantics:
+    # there, `.zmetadata` was only consulted via the separate
+    # `zarr.open_consolidated`, so `open_group` always saw the arrays that were
+    # actually ON DISK. zarr 3 reversed the default and consults it automatically.
+    #
+    # That difference is not cosmetic — it silently disables Luxar's detection of
+    # a PARTIALLY WRITTEN store. Delete an array directory from a consolidated
+    # store and zarr 3 still reports the array as present (`"x" in group` is True,
+    # `array_keys()` still lists it), because it is answering from the stale
+    # index. Luxar's writers carry deliberate crash-safety machinery precisely
+    # because half-written stores happen (a killed merge used to leave a partial
+    # store that the existence-gated batch-merge resume then treated as
+    # complete), and the readers' "this required array is missing" guards are the
+    # backstop. Those guards must see the filesystem, not a snapshot of it.
+    #
+    # The cost is per-node metadata reads instead of one — irrelevant for the
+    # local directory stores this reader path handles, and the VIEWER (which is
+    # what consolidated metadata is really for, over HTTP) is untouched by this:
+    # it fetches `.zmetadata` itself and is unaffected.
+    if mode in ("r", "r+", "a") and "use_consolidated" not in kwargs:
+        kwargs["use_consolidated"] = False
     return zarr.open_group(store, mode=mode, **kwargs)
 
 
@@ -173,7 +195,23 @@ def create_array(
         **kwargs,
     }
     if chunks is not None:
-        call["chunks"] = chunks
+        # zarr 2 spelled "choose chunks for me" as `chunks=True` (and `False` as
+        # "one chunk for the whole array"); `luxar.typing_utils.ChunkSpec` still
+        # carries those, and `create_resizable_dataset` defaults to True. zarr 3
+        # rejects a bool outright — "True is not a valid chunk input" — so it is
+        # translated here rather than at ~20 call sites.
+        if chunks is True:
+            call["chunks"] = "auto"
+        elif chunks is False:
+            # One chunk spanning the array. Whichever of shape/data was given
+            # supplies it; if neither was, the ValueError below is the right
+            # error to surface rather than a silently auto-chunked array.
+            if shape is not None:
+                call["chunks"] = tuple(shape)
+            elif data is not None:
+                call["chunks"] = tuple(np.asarray(data).shape)
+        else:
+            call["chunks"] = chunks
 
     if data is not None:
         # zarr 3 rejects `data=` together with `shape=`/`dtype=`, deriving both

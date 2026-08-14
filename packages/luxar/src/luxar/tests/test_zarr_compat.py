@@ -271,6 +271,38 @@ def test_consolidate_writes_zmetadata_indexing_arrays(tmp_path: Path) -> None:
     assert suffixes <= {".zgroup", ".zattrs", ".zarray"}, suffixes
 
 
+def test_reads_do_not_trust_stale_consolidated_metadata(tmp_path: Path) -> None:
+    """A deleted array must read as ABSENT, not as present-per-the-stale-index.
+
+    zarr 2 only consulted ``.zmetadata`` through the separate
+    ``open_consolidated``, so ``open_group`` always saw what was on disk. zarr 3
+    reversed that default. The difference silently disables Luxar's detection of a
+    partially written store: the writers have crash-safety machinery precisely
+    because half-written stores happen, and the readers' "required array is
+    missing" guards are the backstop — they have to see the filesystem.
+    """
+    import shutil
+
+    p = tmp_path / "partial.zarr"
+    g = zc.open_group(p, mode="w")
+    zc.create_array(g, "keep", data=np.arange(4, dtype=np.float32), compressor=None)
+    zc.create_array(g, "doomed", data=np.arange(4, dtype=np.float32), compressor=None)
+    zc.consolidate(g)
+
+    shutil.rmtree(p / "doomed")  # simulate a partial/interrupted write
+    assert (p / ".zmetadata").is_file(), "the stale index must still be present"
+
+    reopened = zc.open_group(p, mode="r")
+    assert "doomed" not in reopened, "read answered from the stale consolidated index"
+    assert sorted(reopened.array_keys()) == ["keep"]
+
+    # And prove the hazard is real rather than hypothetical: zarr's own default
+    # still reports the deleted array. If a future zarr changes that, this line
+    # fails and the workaround above can go.
+    trusting = zarr.open_group(str(p), mode="r")
+    assert "doomed" in trusting
+
+
 def test_open_store_dispatches_zip_by_suffix(tmp_path: Path) -> None:
     """zarr 2 sniffed ``.zip`` inside ``zarr.open``; zarr 3 needs it explicit."""
     assert isinstance(zc.open_store(tmp_path / "d.zarr"), zarr.storage.LocalStore)
