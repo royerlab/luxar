@@ -1,5 +1,8 @@
+import json
+
 import zarr
 
+from luxar._zarr_compat import ZARR_FORMAT
 from luxar.typing_utils.config import DEFAULT_COMP
 from luxar.utils.demos import create_lorenz_attractor
 
@@ -8,8 +11,15 @@ def test_compressor_and_format(tmp_path) -> None:
     store = tmp_path / "meta.luxar.zarr"
     create_lorenz_attractor(store, n_points=100)
 
-    root = zarr.open_group(store, "r")
-    assert root._version == 2
+    root = zarr.open_group(store, mode="r")
+    # Public API, and cross-checked on disk. `root._version` was a zarr-2 private
+    # attribute that zarr 3 does not have; `metadata.zarr_format` is the supported
+    # spelling. The `.zgroup` check is the stronger half of the pair — it asserts
+    # what actually LANDED, which is what the viewer reads, rather than what the
+    # in-memory handle believes.
+    assert root.metadata.zarr_format == ZARR_FORMAT == 2
+    assert json.loads((store / ".zgroup").read_text())["zarr_format"] == 2
+    assert not (store / "zarr.json").exists()
 
     comp = root["LorenzAttractor"]["positions"].compressor
     from numcodecs import Blosc
@@ -66,7 +76,7 @@ def test_every_geometry_writer_stamps_ndim(tmp_path) -> None:
             faces=np.arange(n - (n % 3), dtype=np.uint32).reshape(-1, 3),
         )
 
-    root = zarr.open_group(store, "r")
+    root = zarr.open_group(store, mode="r")
     stamped = {
         name: dict(root[name].attrs).get("ndim")
         for name in ("pts", "lns", "spl", "msh")

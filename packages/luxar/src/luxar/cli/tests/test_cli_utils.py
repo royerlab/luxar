@@ -21,6 +21,7 @@ import numpy as np
 import pytest
 import zarr
 
+from luxar._zarr_compat import create_array
 from luxar.cli.utils import (
     check_port_available,
     check_viewer_built,
@@ -464,7 +465,8 @@ class TestGetZarrInfo:
             root.attrs["version"] = "0.3"
 
             # Create positions array (simulates points)
-            root.create_dataset(
+            create_array(
+                root,
                 "positions",
                 data=np.random.rand(100, 3).astype(np.float32),
             )
@@ -482,11 +484,13 @@ class TestGetZarrInfo:
             # Create zarr store with points structure (type attr required)
             root = zarr.open_group(store_path, mode="w")
             root.attrs["type"] = "points"
-            root.create_dataset(
+            create_array(
+                root,
                 "positions",
                 data=np.random.rand(50, 3).astype(np.float32),
             )
-            root.create_dataset(
+            create_array(
+                root,
                 "colors",
                 data=np.random.randint(0, 255, (50, 3), dtype=np.uint8),
             )
@@ -505,7 +509,8 @@ class TestGetZarrInfo:
             root = zarr.open_group(store_path, mode="w")
             child = root.create_group("child")
             child.attrs["type"] = "points"
-            child.create_dataset(
+            create_array(
+                child,
                 "positions",
                 data=np.random.rand(25, 3).astype(np.float32),
             )
@@ -513,6 +518,40 @@ class TestGetZarrInfo:
             result = get_zarr_info(store_path)
             assert result["n_groups"] >= 2  # root + child
             assert result["n_points_total"] == 25
+
+    def test_a_partially_written_store_is_not_reported_as_complete(self) -> None:
+        """An array whose directory never landed must count as absent.
+
+        ``luxar info`` reports what is ON DISK, so it has to read past
+        ``.zmetadata``. zarr 3 trusts consolidated metadata by default (zarr 2
+        only did so through ``open_consolidated``), and under that default an
+        interrupted write is indistinguishable from a finished one: membership
+        and shape both come from the stale index, so this store would report its
+        full 1000 points with no error at all.
+        """
+        import shutil
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store_path = Path(tmpdir) / "partial.luxar.zarr"
+
+            root = zarr.open_group(store_path, mode="w")
+            child = root.create_group("pts")
+            child.attrs["type"] = "points"
+            create_array(
+                child,
+                "positions",
+                data=np.zeros((1000, 3), dtype=np.float32),
+                compressor=None,
+            )
+            zarr.consolidate_metadata(root.store)
+
+            shutil.rmtree(store_path / "pts" / "positions")
+            assert (store_path / ".zmetadata").is_file(), "stale index must remain"
+
+            result = get_zarr_info(store_path, detailed=True)
+            assert result["n_points_total"] == 0
+            assert result["points_objects"] == []
+            assert result["n_arrays"] == 0
 
 
 class TestValidateZarrStore:
@@ -887,8 +926,8 @@ def test_info_tree_shows_mesh_face_count_and_icon(capsys) -> None:
     child.attrs["type"] = "mesh"
     child.attrs["n_vertices"] = 5
     child.attrs["n_faces"] = 7
-    child.create_dataset("vertices", data=np.zeros((5, 3), dtype=np.float32))
-    child.create_dataset("faces", data=np.zeros((7, 3), dtype=np.uint32))
+    create_array(child, "vertices", data=np.zeros((5, 3), dtype=np.float32))
+    create_array(child, "faces", data=np.zeros((7, 3), dtype=np.uint32))
 
     _print_tree(store)
     line = next(ln for ln in capsys.readouterr().out.splitlines() if "child" in ln)
