@@ -411,6 +411,38 @@ def assemble_fit_config(ctx: FitPipelineCtx, is_tiled: bool) -> "tuple[dict, Any
     return fit_config, parsed_seeds, effective_downscale
 
 
+def reject_downscaled_volume_refit(
+    recipe_params: "Any", effective_downscale: "Any"
+) -> None:
+    """Refuse ``--refine volume`` under ``--downscale`` — different frames.
+
+    A per-part volume re-fit crops the source to the part's own tile, which only
+    holds while the tile grid and the splats share a coordinate frame. Under
+    ``--downscale`` they do not: the grid is computed on the DOWNSCALED shape (so
+    the parent and its workers agree on the tile count) while every worker
+    rescales its splats back to full resolution. Each crop would then be a factor
+    too small and in the wrong place, and the never-worse guard could not tell —
+    it compares against that same wrong crop. Checked before any fitting, since
+    the alternative is discovering it after the whole fit.
+
+    Called with the resolved downscale, so a factor coming from ``--config`` /
+    ``--preset`` is caught as well as the flag. The sequential tiled path refuses
+    ``--recipe`` outright under ``--downscale`` (it writes a flat leaf there), so
+    ``-j>1`` is what makes this combination otherwise reachable.
+    """
+    if (
+        recipe_params is not None
+        and getattr(recipe_params, "refine", "none") == "volume"
+        and effective_downscale is not None
+    ):
+        raise typer.BadParameter(
+            "--refine volume cannot be combined with --downscale: the tile grid "
+            "is computed on the downscaled shape while the fitted splats are "
+            "rescaled back to full resolution, so each tile's crop of the volume "
+            "would land in the wrong place. Drop --downscale, or use --refine l2."
+        )
+
+
 def dispatch_parallel_tiled(
     ctx: FitPipelineCtx,
     volume: "Any",

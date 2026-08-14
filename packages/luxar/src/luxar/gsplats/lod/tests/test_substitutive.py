@@ -1446,6 +1446,13 @@ class TestVolumeRefit:
             np.testing.assert_allclose(
                 np.sort(got[:, 3, 3]), np.sort(ref[:, 3, 3]), rtol=1e-4, atol=1e-8
             )
+            # ...and so are its cross terms with the free dims. The lift
+            # substitutes only the free block `A` of `L = [[A, 0], [B, C]]`, so
+            # `B` is what makes the barrier row exact: a genuine barrier has
+            # none, and a nonzero one would instead ride the re-fitted `A` into
+            # the restored cross-covariance.
+            np.testing.assert_allclose(got[:, 3, :3], 0.0, atol=1e-7)
+            np.testing.assert_allclose(ref[:, 3, :3], 0.0, atol=1e-7)
 
     def test_refine_volume_uses_each_groups_own_slice(self):
         """The decisive per-group check. Every timepoint starts from IDENTICAL

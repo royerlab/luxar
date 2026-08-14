@@ -202,8 +202,12 @@ def _validate_merge_refine_source(
     merge job runs only after every tile has been fitted — discovering it there
     costs the whole fit. (The merge front door re-checks the same rule: a manifest
     can predate this, or be written by hand.)
+
+    Reads the NORMALISED mode, the way ``_record_merge_refine`` records it —
+    ``--merge-refine " volume "`` is stored as ``volume`` and must not slip past
+    this check on the strength of its whitespace.
     """
-    if merge.refine != "volume":
+    if (merge.refine or "").strip() != "volume":
         return
     from luxar.gsplats.batch.merge_orchestrator import volume_refit_source_error
 

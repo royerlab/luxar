@@ -2775,7 +2775,7 @@ class TestMergeRefineSourceValidatedAtPlanTime:
         z = zarr.open(str(source), mode="w", shape=(3, 8, 8, 8), dtype="u2")
         z[:] = np.zeros((3, 8, 8, 8), np.uint16)
 
-        def _plan(axes_list):
+        def _plan(axes_list, refine="volume"):
             return plan_batch(
                 input_path=source,
                 output_dir=tmp_path / "out",
@@ -2789,11 +2789,17 @@ class TestMergeRefineSourceValidatedAtPlanTime:
                 fit=FitConfig(),
                 denoise=DenoiseConfig(),
                 content=ContentKnobs(),
-                merge=MergeConfig(recipe="levels", levels=1, refine="volume"),
+                merge=MergeConfig(recipe="levels", levels=1, refine=refine),
             )
 
         with pytest.raises(typer.BadParameter, match="axis labels"):
             _plan(None)
+        # The mode is NORMALISED before it is recorded, so the source check has to
+        # read it the same way — otherwise a padded value is stored as "volume"
+        # while skipping validation, and the failure resurfaces at merge time,
+        # after every tile has been fitted.
+        with pytest.raises(typer.BadParameter, match="axis labels"):
+            _plan(None, refine=" volume ")
         # With labels the plan goes through, and records the knob for the merge.
         result = _plan(["t", "z", "y", "x"])
         assert result.manifest.merge_recipe_args["refine"] == "volume"

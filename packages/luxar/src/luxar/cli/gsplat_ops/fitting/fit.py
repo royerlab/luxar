@@ -18,6 +18,7 @@ from .fit_utils import (
     fit_sequential_tiled,
     fit_single_tile,
     maybe_denoise_full_volume,
+    reject_downscaled_volume_refit,
     rescale_and_save,
     resolve_denoise_h,
     validate_and_build_recipe,
@@ -672,6 +673,10 @@ def run_fit_volume(
             fit_config, parsed_seeds, effective_downscale = assemble_fit_config(
                 ctx, is_tiled
             )
+
+            # A per-tile volume re-fit needs the tile grid and the splats in ONE
+            # coordinate frame, which --downscale breaks (see the helper).
+            reject_downscaled_volume_refit(recipe_params, effective_downscale)
 
             # 5b. Parallel tiled fitting: spawn one subprocess per tile (branch
             # BEFORE the in-memory downscale below — see dispatch_parallel_tiled).

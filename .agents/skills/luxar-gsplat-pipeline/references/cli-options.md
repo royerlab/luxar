@@ -67,8 +67,12 @@ Inputs: `.npy`, `.npz`, `.tiff`/`.tif`, `.zarr`, `.zarr.zip` (TIFF/other need `p
 Knobs mirror `lod`: `--n-lods`, `--add-method`/`-m`, `--breakpoints`/`-b`,
 `--target-ms`, `--bandwidth-mbps` (default 25), `--bytes-per-splat`,
 `--compression-factor`/`-K`, `--levels`/`-L`, `--subst-method`,
-`--coarsen-dims`. LOD switch thresholds are auto-derived (`coverage_fraction`,
-no knob — see "LOD switch tuning" below).
+`--coarsen-dims`, `--refine`, `--refine-iters`. LOD switch thresholds are
+auto-derived (`coverage_fraction`, no knob — see "LOD switch tuning" below).
+`--refine volume` needs no `--target` here (the volume being fitted is already
+in hand) and re-fits each tile against its own crop of it; incompatible with
+`--downscale` (the tile grid and the rescaled splats would be in different
+coordinate frames).
 
 ### Progressive fitting
 | Flag | Default | Meaning |
