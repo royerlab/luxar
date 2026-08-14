@@ -76,8 +76,10 @@ PIPELINE (how the bundled gsplats were produced — provenance, NOT re-run here)
        which fills the brain silhouette and saturates in every blending mode.
     7. Colour each splat by sampling the three channels at its own centre.
     8. ``gsplat lod --recipe stream --target-ms 200`` -> progressive ladder.
-    9. ``gsplat transform --rotate-y 90 --scale 0.1883,0.1883,0.38 --center``
-       -> face-on default view, physical micrometres.
+    9. ``gsplat transform --rotate-y 90`` -> face-on default view, then a second
+       ``gsplat transform --scale 0.1883,0.1883,0.38 --center`` -> physical
+       micrometres. Two calls, not one: a single invocation applies ``--scale``
+       BEFORE ``--rotate-*``, which would put the axial pitch on a lateral axis.
 
 KNOWN LIMITATION — RESIDUAL GHOSTING:
     Thin neurites show some doubling where tiles overlap. This is NOT fixable by
@@ -301,12 +303,16 @@ def main() -> None:
     """
     output_path = get_demos_output_dir() / SCENE_NAME
 
-    if not SERVE_ONLY:
+    if SERVE_ONLY:
+        if not output_path.exists():
+            aprint(f"No scene at {output_path}. Run without --serve-only first.")
+            return
+    else:
         data_path = resolve_data()
         create_luxar_scene(data_path, output_path)
 
     if not NO_SERVE:
-        launch_viewer(output_path, title="FlyLight MCFO 63x Brain")
+        launch_viewer(output_path)
 
 
 if __name__ == "__main__":
