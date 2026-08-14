@@ -894,3 +894,153 @@ def test_wrapper_repairs_a_corrupt_cache_before_loading(fake_gsplats_repo):
     assert first is not None and second is not None
     assert len(second[0].amplitudes) == len(first[0].amplitudes)
     assert find_quarantined_files(cached)
+
+
+# --------------------------------------------------------------------------- #
+# load_dataset_bundle: the manifest-driven bundle path
+# --------------------------------------------------------------------------- #
+def _write_bundle(path: Path, members: dict[str, bytes]) -> None:
+    import zipfile
+
+    with zipfile.ZipFile(path, "w") as zf:
+        for name, blob in members.items():
+            zf.writestr(name, blob)
+
+
+def test_load_dataset_bundle_verifies_the_outer_zip_then_extracts(
+    tmp_path, monkeypatch
+):
+    """The bundle is checksum-verified, then its members are extracted and loaded.
+
+    The point of routing bundles through the manifest is that the OUTER zip -- the
+    unit that is actually downloaded -- gets verified. Members are covered by
+    verifying the container, so they are not pinned individually.
+    """
+    from luxar.utils import demos as demos_utils
+
+    inner = {
+        "frame0.gsplats.zarr.zip": b"PK-not-really",
+        "frame1.gsplats.zarr.zip": b"x",
+    }
+    lfs_dir = tmp_path / "repo" / "bundle_ds"
+    lfs_dir.mkdir(parents=True)
+    bundle = lfs_dir / "b.gsplats.zarr.zip"
+    _write_bundle(bundle, inner)
+    sha = hashlib.sha256(bundle.read_bytes()).hexdigest()
+
+    manifest = {
+        "schema_version": 1,
+        "records": {"r": {"published": False}},
+        "datasets": {
+            "bundle_ds": {
+                "bucket": "zenodo",
+                "record": "r",
+                "license": "cc0-1.0",
+                "dir": "bundle_ds",
+                "files": [
+                    {
+                        "name": "b.gsplats.zarr.zip",
+                        "sha256": sha,
+                        "bytes": bundle.stat().st_size,
+                    }
+                ],
+            }
+        },
+    }
+    monkeypatch.setattr(data_fetch, "_DEMOS_DATA_DIR", tmp_path / "repo")
+    loaded: list[Path] = []
+    monkeypatch.setattr(
+        demos_utils,
+        "_extract_bundle_and_load",
+        lambda bp, bn, cd, fn, *, validate_lfs: (loaded.append(bp), list(fn))[1],
+    )
+
+    out = demos_utils.load_dataset_bundle(
+        "bundle_ds",
+        "b.gsplats.zarr.zip",
+        list(inner),
+        cache_root=tmp_path / "cache",
+        manifest=manifest,
+        verbose=False,
+    )
+    assert out == list(inner)
+    # Resolved through ensure_dataset, so it is the verified CACHE copy that gets
+    # extracted, not the working-tree file.
+    assert loaded and loaded[0].parent == tmp_path / "cache" / "bundle_ds"
+    assert loaded[0].read_bytes() == bundle.read_bytes()
+
+
+def test_load_dataset_bundle_rejects_a_bundle_that_is_not_a_manifest_file(
+    tmp_path, monkeypatch
+):
+    """Naming a bundle the manifest does not list must raise, not fetch something else."""
+    from luxar.utils import demos as demos_utils
+
+    lfs_dir = tmp_path / "repo" / "bundle_ds"
+    lfs_dir.mkdir(parents=True)
+    bundle = lfs_dir / "b.gsplats.zarr.zip"
+    _write_bundle(bundle, {"f.gsplats.zarr.zip": b"x"})
+    manifest = {
+        "schema_version": 1,
+        "records": {"r": {"published": False}},
+        "datasets": {
+            "bundle_ds": {
+                "bucket": "zenodo",
+                "record": "r",
+                "license": "cc0-1.0",
+                "dir": "bundle_ds",
+                "files": [
+                    {
+                        "name": "b.gsplats.zarr.zip",
+                        "sha256": hashlib.sha256(bundle.read_bytes()).hexdigest(),
+                        "bytes": bundle.stat().st_size,
+                    }
+                ],
+            }
+        },
+    }
+    monkeypatch.setattr(data_fetch, "_DEMOS_DATA_DIR", tmp_path / "repo")
+    with pytest.raises(FileNotFoundError, match="not a manifest file"):
+        demos_utils.load_dataset_bundle(
+            "bundle_ds",
+            "wrong.zip",
+            ["f.gsplats.zarr.zip"],
+            cache_root=tmp_path / "cache",
+            manifest=manifest,
+            verbose=False,
+        )
+
+
+def test_load_dataset_bundle_returns_none_for_a_local_compute_dataset():
+    """A non-hosted dataset hands control back so the demo builds it itself."""
+    from luxar.utils import demos as demos_utils
+
+    manifest = {
+        "schema_version": 1,
+        "records": {},
+        "datasets": {
+            "lc": {
+                "bucket": "local-compute",
+                "license": "none",
+                "reason": "not redistributable",
+                "files": [],
+            }
+        },
+    }
+    assert (
+        demos_utils.load_dataset_bundle(
+            "lc", "b.zip", ["f.zip"], manifest=manifest, verbose=False
+        )
+        is None
+    )
+
+
+def test_load_dataset_bundle_honours_recompute():
+    from luxar.utils import demos as demos_utils
+
+    assert (
+        demos_utils.load_dataset_bundle(
+            "anything", "b.zip", ["f.zip"], recompute=True, verbose=False
+        )
+        is None
+    )

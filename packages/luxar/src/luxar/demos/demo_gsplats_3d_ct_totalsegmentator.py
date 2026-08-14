@@ -82,7 +82,7 @@ from luxar.demos import (
     detect_device,
     is_lfs_pointer,
     launch_viewer,
-    load_precomputed_gsplats,
+    load_dataset_gsplats,
     parse_demo_flags,
     require_module,
     warn_if_no_cuda_gpu,
@@ -607,9 +607,7 @@ def load_or_build() -> tuple[GSplatData, np.ndarray]:
     """Return (fit, per-splat labels), self-contained on a fresh system."""
     if not RECOMPUTE:
         if CACHE_FIT.exists() and CACHE_LABELS.exists():
-            precomputed = load_precomputed_gsplats(
-                DEMO_NAME, [FIT_FILE], recompute=False
-            )
+            precomputed = load_dataset_gsplats(DEMO_NAME, [FIT_FILE], recompute=False)
             if precomputed is not None:
                 return precomputed[0], _load_labels(CACHE_LABELS)
         if (

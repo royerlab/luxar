@@ -98,7 +98,7 @@ from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.demos import (
     cached_download,
     launch_viewer,
-    load_precomputed_gsplats,
+    load_dataset_gsplats,
     parse_demo_flags,
     require_module,
     warn_if_no_cuda_gpu,
@@ -438,8 +438,8 @@ def main():
             aprint(f"No scene found at {output_path}. Run without --serve-only first.")
         return
 
-    # Try loading precomputed data (from Git LFS / local cache)
-    precomputed = load_precomputed_gsplats(
+    # Try the manifest-driven fetch (checksum-verified cache -> in-repo -> Zenodo)
+    precomputed = load_dataset_gsplats(
         "gsplats_opencell_map4",
         [
             "opencell_map4_ch0.gsplats.zarr.zip",

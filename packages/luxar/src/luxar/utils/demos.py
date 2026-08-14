@@ -13,6 +13,7 @@ import shutil
 import sys
 import zipfile
 import zlib
+from contextlib import nullcontext
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable, NamedTuple, Optional, Union, overload
 
@@ -734,8 +735,6 @@ def load_precomputed_bundle(
     Returns:
         List of :class:`GSplatData`, or ``None`` when the caller should recompute.
     """
-    from ..gsplats.gsplat_data import GSplatData
-
     if recompute:
         return None
 
@@ -743,73 +742,171 @@ def load_precomputed_bundle(
     bundle_path = _DEMOS_DATA_DIR / demo_name / bundle_name
 
     with asection(f"Loading precomputed GSplats bundle ({demo_name})"):
-        cache_dir.mkdir(parents=True, exist_ok=True)
-
-        # Re-extract when a frame is missing OR the bundle source changed
-        # (e.g. a v2.0 -> v3.0 re-migration). A (size, mtime) stamp keyed on the
-        # bundle makes the extracted cache self-healing instead of pinning the
-        # first-seen extraction — otherwise demos load stale frames that fail
-        # against the v3.0-only reader.
-        stamp_file = cache_dir / f".{bundle_name}.stamp"
-        bundle_stamp = ""
-        if bundle_path.exists():
-            bs = bundle_path.stat()
-            bundle_stamp = f"{bs.st_size}:{int(bs.st_mtime)}"
-        stamp_ok = (
-            bundle_stamp != ""
-            and stamp_file.exists()
-            and stamp_file.read_text() == bundle_stamp
+        return _extract_bundle_and_load(
+            bundle_path, bundle_name, cache_dir, file_names, validate_lfs=True
         )
 
-        missing = [f for f in file_names if not (cache_dir / f).exists()]
-        if not stamp_ok and bundle_stamp:
-            # Bundle differs from the cached extraction → re-extract all frames.
-            missing = list(file_names)
 
-        if missing:
-            # Extract from bundle
+def load_dataset_bundle(
+    name: str,
+    bundle_name: str,
+    file_names: list[str],
+    *,
+    recompute: bool = False,
+    cache_root: Optional[Path] = None,
+    manifest: Optional[dict] = None,
+    verbose: bool = True,
+) -> list | None:
+    """Manifest-driven counterpart of :func:`load_precomputed_bundle`.
+
+    Same contract -- a list of ``GSplatData`` in the requested order, or ``None``
+    when the caller must build the data itself -- but the OUTER bundle is resolved
+    through :func:`luxar.utils.data_fetch.ensure_dataset`, so it is checksum-
+    verified against the manifest (cache -> in-repo git-LFS -> Zenodo) instead of
+    copied unverified out of the working tree.
+
+    Bundle members are deliberately NOT pinned individually: the manifest
+    addresses the bundle, which is the unit that is downloaded, and verifying it
+    covers everything inside. Extraction then reuses the same safe-member and
+    staleness logic as the in-repo path, so a re-migrated bundle still refreshes
+    its extracted frames rather than pinning the first extraction.
+
+    Args:
+        name: Manifest dataset key (e.g. ``"gsplats_zebrafish"``).
+        bundle_name: Basename of the outer bundle zip, a manifest file entry.
+        file_names: Basenames of per-frame files *inside* the bundle, in order.
+        recompute: Return ``None`` immediately (mirrors ``--recompute``).
+        cache_root: Override the cache root (tests).
+        manifest: Pre-loaded manifest (tests).
+        verbose: Print progress.
+
+    Returns:
+        ``list[GSplatData]``, or ``None`` when the caller should build the data.
+    """
+    if recompute:
+        return None
+
+    # Lazy, like `_unshippable_reason`'s: data_fetch reads this module's cache
+    # root, so a module-level import here would close the loop.
+    from .data_fetch import LocalComputeDataset, ensure_dataset
+
+    ctx = asection(f"Loading GSplats bundle ({name})") if verbose else nullcontext()
+    with ctx:
+        try:
+            paths = ensure_dataset(
+                name,
+                recompute=False,
+                cache_root=cache_root,
+                manifest=manifest,
+                verbose=verbose,
+            )
+        except LocalComputeDataset as exc:
+            aprint(f"⚠️  {exc}")
+            return None
+
+        by_name = {p.name: p for p in paths}
+        if bundle_name not in by_name:
+            raise FileNotFoundError(
+                f"{bundle_name!r} is not a manifest file of dataset {name!r}; "
+                f"it lists {sorted(by_name)}"
+            )
+        bundle_path = by_name[bundle_name]
+        # ensure_dataset already verified the sha256, so an LFS-pointer check
+        # would be checking the wrong thing about an already-trusted file.
+        return _extract_bundle_and_load(
+            bundle_path,
+            bundle_name,
+            bundle_path.parent,
+            file_names,
+            validate_lfs=False,
+        )
+
+
+def _extract_bundle_and_load(
+    bundle_path: Path,
+    bundle_name: str,
+    cache_dir: Path,
+    file_names: list[str],
+    *,
+    validate_lfs: bool,
+) -> list:
+    """Extract the requested members of *bundle_path* into *cache_dir* and load them.
+
+    Shared by the in-repo and manifest-driven bundle loaders: the member matching
+    is security-sensitive (an archive may name ``../``) and the staleness stamp is
+    what stops a re-migrated bundle serving stale frames, so both paths must use
+    the same copy rather than a lookalike.
+    """
+    from ..gsplats.gsplat_data import GSplatData
+
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
+    # Re-extract when a frame is missing OR the bundle source changed
+    # (e.g. a v2.0 -> v3.0 re-migration). A (size, mtime) stamp keyed on the
+    # bundle makes the extracted cache self-healing instead of pinning the
+    # first-seen extraction — otherwise demos load stale frames that fail
+    # against the v3.0-only reader.
+    stamp_file = cache_dir / f".{bundle_name}.stamp"
+    bundle_stamp = ""
+    if bundle_path.exists():
+        bs = bundle_path.stat()
+        bundle_stamp = f"{bs.st_size}:{int(bs.st_mtime)}"
+    stamp_ok = (
+        bundle_stamp != ""
+        and stamp_file.exists()
+        and stamp_file.read_text() == bundle_stamp
+    )
+
+    missing = [f for f in file_names if not (cache_dir / f).exists()]
+    if not stamp_ok and bundle_stamp:
+        # Bundle differs from the cached extraction → re-extract all frames.
+        missing = list(file_names)
+
+    if missing:
+        # Extract from bundle
+        if validate_lfs:
             _validate_lfs_files([bundle_path])
-            aprint(f"Extracting {len(missing)} files from {bundle_name}")
-            with zipfile.ZipFile(bundle_path, "r") as zf:
-                safe_members = [m for m in zf.namelist() if not zf.getinfo(m).is_dir()]
-                for fname in missing:
-                    requested_path = _validate_zip_member_path(fname)
-                    # Files may be at top level or inside a directory in the zip.
-                    # Match by basename for the documented bundle format while
-                    # ignoring unsafe archive members.
-                    matching = []
-                    for member in safe_members:
-                        try:
-                            member_path = _validate_zip_member_path(member)
-                        except ValueError:
-                            continue
-                        if member_path.name == requested_path.name:
-                            matching.append(member)
-                    if not matching:
-                        raise FileNotFoundError(
-                            f"{fname} not found in bundle {bundle_name}. "
-                            f"Available: {safe_members[:5]}..."
-                        )
-                    _safe_extract_zip_member(
-                        zf,
-                        matching[0],
-                        cache_dir,
-                        target_name=requested_path.as_posix(),
+        aprint(f"Extracting {len(missing)} files from {bundle_name}")
+        with zipfile.ZipFile(bundle_path, "r") as zf:
+            safe_members = [m for m in zf.namelist() if not zf.getinfo(m).is_dir()]
+            for fname in missing:
+                requested_path = _validate_zip_member_path(fname)
+                # Files may be at top level or inside a directory in the zip.
+                # Match by basename for the documented bundle format while
+                # ignoring unsafe archive members.
+                matching = []
+                for member in safe_members:
+                    try:
+                        member_path = _validate_zip_member_path(member)
+                    except ValueError:
+                        continue
+                    if member_path.name == requested_path.name:
+                        matching.append(member)
+                if not matching:
+                    raise FileNotFoundError(
+                        f"{fname} not found in bundle {bundle_name}. "
+                        f"Available: {safe_members[:5]}..."
                     )
-            # Record the bundle stamp so a later run with the SAME bundle skips
-            # re-extraction, but a re-migrated bundle (new size/mtime) refreshes.
-            if bundle_stamp:
-                stamp_file.write_text(bundle_stamp)
+                _safe_extract_zip_member(
+                    zf,
+                    matching[0],
+                    cache_dir,
+                    target_name=requested_path.as_posix(),
+                )
+        # Record the bundle stamp so a later run with the SAME bundle skips
+        # re-extraction, but a re-migrated bundle (new size/mtime) refreshes.
+        if bundle_stamp:
+            stamp_file.write_text(bundle_stamp)
 
-        # Load all
-        results = []
-        for fname in file_names:
-            cache_file = cache_dir / fname
-            gsplats = GSplatData.load(cache_file, include_stats=False)
-            aprint(f"Loaded {fname}: {len(gsplats.amplitudes):,} splats")
-            results.append(gsplats)
+    # Load all
+    results = []
+    for fname in file_names:
+        cache_file = cache_dir / fname
+        gsplats = GSplatData.load(cache_file, include_stats=False)
+        aprint(f"Loaded {fname}: {len(gsplats.amplitudes):,} splats")
+        results.append(gsplats)
 
-        return results
+    return results
 
 
 # Derived demo port ranges. Deliberately DISJOINT from the bare `luxar serve`
