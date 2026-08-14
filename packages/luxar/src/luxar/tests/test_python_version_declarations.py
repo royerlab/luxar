@@ -118,5 +118,5 @@ def test_no_bootstrap_scan_offers_a_sub_floor_interpreter() -> None:
     for rel in ("Makefile", "scripts/check_hpc_setup.py"):
         text = (REPO / rel).read_text(encoding="utf-8")
         found = {int(m) for m in re.findall(r"python3\.(\d+)", text)}
-        below = sorted(v for v in found if v < floor_minor)
-        assert not below, f"{rel} scans for sub-floor interpreters: 3.{below}"
+        below = [f"3.{v}" for v in sorted(v for v in found if v < floor_minor)]
+        assert not below, f"{rel} scans for sub-floor interpreters: {below}"

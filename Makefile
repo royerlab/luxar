@@ -442,6 +442,11 @@ install-hatch:  ## Install Hatch for Python environment management
 			fi; \
 		fi; \
 	done; \
+	if [ -z "$$PYTHON_CMD" ]; then \
+		echo "⚠️  No Python 3.12+ on PATH (the project floor is 3.12)."; \
+		echo "   Hatch installs on an older interpreter, but it will not be able"; \
+		echo "   to create the project environment until a 3.12+ one exists."; \
+	fi; \
 	if command -v hatch >/dev/null 2>&1; then \
 		echo "✅ Hatch already installed: $$(hatch --version)"; \
 	elif [ -x "$$HOME/.local/bin/hatch" ]; then \
@@ -1187,6 +1192,13 @@ setup-dev:  ## Complete development setup (auto-installs missing dependencies)
 			fi; \
 		fi; \
 	done; \
+	if [ -z "$$PYTHON_CMD" ]; then \
+		echo "⚠️  No Python 3.12+ on PATH — the project floor is 3.12, and the"; \
+		echo "   version printed above is below it. Hatch installs anyway (pipx"; \
+		echo "   can use an older interpreter for Hatch itself), but Step 3 will"; \
+		echo "   NOT be able to create the project environment. Install Python"; \
+		echo "   3.12+ (or 'hatch python install 3.12'), then re-run this target."; \
+	fi; \
 	if command -v hatch >/dev/null 2>&1; then \
 		echo "✅ Hatch: $$(hatch --version)"; \
 	elif [ -x "$$HOME/.local/bin/hatch" ]; then \

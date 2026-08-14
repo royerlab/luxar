@@ -18,11 +18,12 @@ spatial hash, an unnarrowed `np.squeeze` result in `load_volume`, and a
 
 The CI Python matrix is rebased on the new floor rather than shrunk: a pull request
 runs 3.12 (the floor, and the required status context), while push-to-main and the
-nightly run 3.12 plus 3.14. `requires-python = ">=3.12"` has no ceiling — 3.13 and
-3.14 are supported, `install-hatch` prefers them, and a developer's Hatch
+nightly run 3.12, 3.13 and 3.14. `requires-python = ">=3.12"` has no ceiling — 3.13
+and 3.14 are supported, `install-hatch` prefers them, and a developer's Hatch
 environment picks the newest interpreter on the box — so the version most people
-actually run is exercised too, within 24 h rather than on every PR. The published
-classifiers list 3.12–3.14 to match. The `tomli` backport is dropped from the dev
+actually run is exercised too, within 24 h rather than on every PR. The off-PR set
+is exactly what the published classifiers advertise (3.12–3.14), so "declared" and
+"tested" cannot drift apart; the `test` Hatch matrix carries the same three legs. The `tomli` backport is dropped from the dev
 extra now that `tomllib` is always stdlib.
 
 Reworking the matrix exposed a second, older bug: the `test` extra never declared
