@@ -70,7 +70,7 @@ DEMO_META = {
         "gpu": "none",
         "local_data": None,
     },
-    "caches": [],
+    "caches": ["gsplats_interop_sog"],
     "outputs": ["gsplats_interop_sog_matrixcity"],
 }
 

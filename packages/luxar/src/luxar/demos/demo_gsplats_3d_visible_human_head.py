@@ -64,7 +64,7 @@ DEMO_META = {
         "gpu": "optional",
         "local_data": "git-lfs",
     },
-    "caches": [],
+    "caches": ["gsplats_visible_human_head"],
     "outputs": ["gsplats_3d_visible_human_head"],
 }
 
