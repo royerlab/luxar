@@ -7,10 +7,11 @@
  * E2E coverage via `basic-rendering.spec.ts` is the safety net there.
  *
  * `selectBackend` is the pure-fn precedence ladder.
- * `createWebGPURenderer` has 4 logical branches worth pinning:
+ * `createWebGPURenderer` has 5 logical branches worth pinning:
  *   - forceWebGL diagnostic mode bypasses navigator.gpu;
  *   - adapter sufficiency fallback when maxVertexBuffers < spec minimum;
  *   - rendererOverride='webgpu' forces through a degenerate adapter;
+ *   - the requiredLimits descriptor handed to requestDevice;
  *   - requestDevice failure recovers silently (no `device` option).
  */
 
@@ -47,6 +48,7 @@ vi.mock('../../../../../utils/hdr/hdr-detection', () => ({
 // Imports MUST come after vi.mock to honour the mocks.
 import {
   createWebGPURenderer,
+  forwardedAdapterLimits,
   selectBackend,
 } from '../../../../../scene/scene-manager/render-pipeline/renderer-setup';
 
@@ -108,6 +110,39 @@ describe('selectBackend', () => {
   });
 });
 
+describe('forwardedAdapterLimits', () => {
+  it('forwards each advertised numeric limit into requiredLimits', () => {
+    // The maxTextureDimension2D forwarding is the per-node element
+    // ceiling: without it the device falls back to the 8192-row spec
+    // default and a lines node silently clamps at 5,586,944 segments.
+    // Via a variable: the adapter's real limits object carries many more
+    // keys than the forwarded trio, and only object LITERALS get
+    // excess-property checking — this mirrors the production call shape.
+    const adapterLimits = {
+      maxBufferSize: 1024,
+      maxStorageBufferBindingSize: 512,
+      maxTextureDimension2D: 16384,
+      maxVertexBuffers: 30, // handled separately (clamped) — never forwarded here
+    };
+    expect(forwardedAdapterLimits(adapterLimits)).toEqual({
+      maxBufferSize: 1024,
+      maxStorageBufferBindingSize: 512,
+      maxTextureDimension2D: 16384,
+    });
+  });
+
+  it('omits absent or non-numeric limits so the device keeps spec defaults', () => {
+    expect(forwardedAdapterLimits(undefined)).toEqual({});
+    expect(forwardedAdapterLimits({})).toEqual({});
+    expect(
+      forwardedAdapterLimits({
+        maxBufferSize: undefined,
+        maxTextureDimension2D: 'huge' as unknown as number,
+      })
+    ).toEqual({});
+  });
+});
+
 describe('createWebGPURenderer', () => {
   // Each test stubs navigator.gpu separately. The shared helpers below
   // build adapters/canvases with the minimum surface the helper reads.
@@ -149,6 +184,7 @@ describe('createWebGPURenderer', () => {
         maxVertexBuffers: opts.maxVertexBuffers,
         maxBufferSize: 4 * 1024 * 1024 * 1024,
         maxStorageBufferBindingSize: 1 * 1024 * 1024 * 1024,
+        maxTextureDimension2D: 16384,
       },
       requestDevice,
     };
@@ -191,6 +227,27 @@ describe('createWebGPURenderer', () => {
     expect(result).toMatchObject({ fallback: false });
     expect(adapter.requestDevice).toHaveBeenCalledTimes(1);
     expect(webgpuConstructorArgs).toHaveLength(1);
+  });
+
+  it('requests the adapter limits on the device, with maxVertexBuffers clamped to 16', async () => {
+    // The descriptor is the whole point of the helper: a device that
+    // does not ask for maxTextureDimension2D keeps the 8192-row spec
+    // default, which clamps a lines node to 5,586,944 segments.
+    const adapter = makeAdapter({ maxVertexBuffers: 32 });
+    stubNavigatorGpu(vi.fn().mockResolvedValue(adapter));
+
+    await createWebGPURenderer(makeCanvas(), {});
+
+    expect(adapter.requestDevice).toHaveBeenCalledTimes(1);
+    const descriptor = adapter.requestDevice.mock.calls[0][0] as {
+      requiredLimits: Record<string, number>;
+    };
+    expect(descriptor.requiredLimits).toEqual({
+      maxBufferSize: 4 * 1024 * 1024 * 1024,
+      maxStorageBufferBindingSize: 1 * 1024 * 1024 * 1024,
+      maxTextureDimension2D: 16384,
+      maxVertexBuffers: 16,
+    });
   });
 
   it('requestDevice failure recovers silently: renderer constructed without device option', async () => {
