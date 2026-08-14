@@ -4043,14 +4043,17 @@ class TestLODCommand:
         assert result.exit_code != 0
         assert not out.exists()
 
-    def test_refine_volume_rejected_for_adaptive_recipe(
+    def test_refine_volume_accepted_for_adaptive_recipe(
         self,
         runner: CliRunner,
         medium_gsplats: Path,
         small_volume_npy: Path,
         tmp_path: Path,
     ) -> None:
-        """Per-part levels would re-fit against the FULL volume — rejected."""
+        """Per-part levels re-fit against each tile's own CROP of the volume, so
+        the adaptive recipe now accepts ``--refine volume``. It used to be
+        rejected because a part fitted against the FULL volume is pulled out of
+        its tile to explain a neighbour's signal."""
         out = tmp_path / "x.gsplats.zarr"
         result = runner.invoke(
             app,
@@ -4063,13 +4066,126 @@ class TestLODCommand:
                 "adaptive",
                 "--refine",
                 "volume",
+                "--refine-iters",
+                "3",
                 "--target",
                 str(small_volume_npy),
             ],
         )
+        assert result.exit_code == 0, self._io(result)
+        assert out.exists()
+
+    def test_target_axes_requires_a_target(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """``--target-axes`` describes a ``--target``; alone it is a typo, not a
+        silently ignored option."""
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(tmp_path / "x.gsplats.zarr"),
+                "--recipe",
+                "levels",
+                "--target-axes",
+                "t,z,y,x",
+            ],
+        )
         assert result.exit_code != 0
-        assert "adaptive" in self._io(result)
-        assert not out.exists()
+        assert "--target-axes" in self._io(result)
+
+    def test_target_axes_excludes_the_slicing_selectors(
+        self,
+        runner: CliRunner,
+        medium_gsplats: Path,
+        small_volume_npy: Path,
+        tmp_path: Path,
+    ) -> None:
+        """``--target-axes`` KEEPS the stacked axis; ``--timepoint`` drops it.
+
+        Combined, the labels no longer describe the array the re-fit is handed —
+        and since the selectors are applied by the positional heuristic, the
+        mismatch would be silent rather than loud.
+        """
+        for flag, value in (("--timepoint", "0"), ("--channel", "0")):
+            result = runner.invoke(
+                app,
+                [
+                    "gsplat",
+                    "lod",
+                    str(medium_gsplats),
+                    str(tmp_path / "x.gsplats.zarr"),
+                    "--recipe",
+                    "levels",
+                    "--refine",
+                    "volume",
+                    "--target",
+                    str(small_volume_npy),
+                    "--target-axes",
+                    "z,y,x",
+                    flag,
+                    value,
+                ],
+            )
+            assert result.exit_code != 0, flag
+            assert "--target-axes" in self._io(result)
+
+    def test_target_axes_opens_the_target_lazily(
+        self,
+        runner: CliRunner,
+        medium_gsplats: Path,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        """A ``--target-axes`` target must not be materialised by the front door.
+
+        The re-fit only ever SLICES the target (one barrier group / one tile crop
+        at a time), which is the whole reason a stacked timelapse is workable — one
+        timepoint of a 253-timepoint 407x2048x2048 uint16 stack is 3.4 GB against
+        431 GB whole. Reading it eagerly at the CLI boundary throws that away, so
+        assert the eager loader is not on this path at all.
+        """
+        import zarr
+
+        import luxar.cli.gsplat_config as gsplat_config
+
+        volume = np.random.rand(16, 16, 16).astype(np.float32) * 0.5
+        volume[6:10, 6:10, 6:10] = 1.0
+        target = tmp_path / "target.zarr"
+        z = zarr.open(str(target), mode="w", shape=volume.shape, dtype=volume.dtype)
+        z[:] = volume
+
+        def _boom(*args, **kwargs):  # pragma: no cover - must not be reached
+            raise AssertionError("the target was loaded eagerly")
+
+        monkeypatch.setattr(gsplat_config, "load_volume", _boom)
+
+        out = tmp_path / "x.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(out),
+                "--recipe",
+                "levels",
+                "--levels",
+                "1",
+                "--refine",
+                "volume",
+                "--refine-iters",
+                "3",
+                "--target",
+                str(target),
+                "--target-axes",
+                "z,y,x",
+            ],
+        )
+        assert result.exit_code == 0, self._io(result)
+        assert out.exists()
 
     def test_recipe_levels_with_refine_volume_smoke(
         self, runner: CliRunner, small_volume_npy: Path, tmp_path: Path

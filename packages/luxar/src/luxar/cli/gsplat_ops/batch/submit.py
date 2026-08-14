@@ -363,6 +363,22 @@ def run_batch_submit(
         help="Substitutive level count for --merge-recipe.",
         rich_help_panel="Merge LOD",
     ),
+    merge_refine: Optional[str] = typer.Option(
+        None,
+        "--merge-refine",
+        help="[--merge-recipe levels] refine each per-tile coarse level at merge: "
+        "none (default) | l2 (against its fine input) | volume (re-open THIS "
+        "input and re-fit each tile against its own crop of it — highest "
+        "fidelity). 'volume' needs --axes recorded and a single channel.",
+        rich_help_panel="Merge LOD",
+    ),
+    merge_refine_iters: Optional[int] = typer.Option(
+        None,
+        "--merge-refine-iters",
+        help="[--merge-recipe levels] refinement steps per level (default 120 "
+        "for l2, 300 for volume).",
+        rich_help_panel="Merge LOD",
+    ),
     merge_substitutive_method: Optional[str] = typer.Option(
         None,
         "--merge-subst-method",
@@ -528,6 +544,8 @@ def run_batch_submit(
             merge_bytes_per_splat=merge_bytes_per_splat,
             merge_compression_factor=merge_compression_factor,
             merge_levels=merge_levels,
+            merge_refine=merge_refine,
+            merge_refine_iters=merge_refine_iters,
             merge_substitutive_method=merge_substitutive_method,
             merge_coarsen_dims=merge_coarsen_dims,
         )

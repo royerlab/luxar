@@ -41,6 +41,7 @@ from .gsplat_ops.recipe_shared import (
     parse_lod_breakpoints,
     reject_irrelevant_recipe_options,
     resolve_streaming_breakpoints,
+    validate_refine,
     validate_streaming_knobs,
 )
 
@@ -84,6 +85,7 @@ _OPTION_TOKENS = {
     "--refine": "substitutive",
     "--refine-iters": "substitutive",
     "--target": "substitutive",
+    "--target-axes": "substitutive",
     "--channel": "substitutive",
     "--timepoint": "substitutive",
     "--array-key": "substitutive",
@@ -354,6 +356,15 @@ def lod_recipe(
         "--timepoint",
         help="Timepoint to extract from a time-series --target volume.",
     ),
+    target_axes: Optional[str] = typer.Option(
+        None,
+        "--target-axes",
+        help="Per-dimension labels for a --target that KEEPS its stacked axis "
+        "(e.g. 'time,z,y,x'), so a --refine volume of a stacked timelapse can "
+        "walk that axis one slice per timepoint. Without this a >3D target is "
+        "assumed to be in the splats' own dim order. Contrast --timepoint, "
+        "which slices a single timepoint out instead.",
+    ),
     target_array_key: Optional[str] = typer.Option(
         None,
         "--array-key",
@@ -519,6 +530,7 @@ def lod_recipe(
             "--channel": target_channel,
             "--timepoint": target_timepoint,
             "--array-key": target_array_key,
+            "--target-axes": target_axes,
             "--reveal-centre": reveal_centre,
             "--spatial-dims": spatial_dims,
             "--coarsen-dims": coarsen_dims,
@@ -565,15 +577,9 @@ def lod_recipe(
                 f"--no-additive contradicts --recipe {recipe}: its additive "
                 "ladder is the recipe's definition."
             )
-        refine_norm = (refine or "none").strip()
-        if refine_norm not in ("none", "l2", "volume"):
-            raise typer.BadParameter(
-                f"--refine must be 'none', 'l2', or 'volume'; got {refine!r}"
-            )
-        if refine_iters is not None and refine_norm == "none":
-            raise typer.BadParameter(
-                "--refine-iters only applies with --refine l2|volume."
-            )
+        # Same mode vocabulary and orphan-option rule as `fit --recipe` and the
+        # batch merge — one validator, so the three spellings cannot drift.
+        refine_norm = validate_refine(refine, refine_iters)
         if refine_norm == "volume" and target_path is None:
             raise typer.BadParameter(
                 "--refine volume needs the source volume: pass --target <volume>."
@@ -589,6 +595,7 @@ def lod_recipe(
                 ("--channel", target_channel),
                 ("--timepoint", target_timepoint),
                 ("--array-key", target_array_key),
+                ("--target-axes", target_axes),
             )
             if value is not None
         ]
@@ -597,12 +604,14 @@ def lod_recipe(
                 f"option(s) {', '.join(orphan_selectors)} select a sub-volume "
                 "of --target, but no --target was given."
             )
-        if refine_norm == "volume" and recipe == "adaptive":
+        if target_axes is not None and (
+            target_channel is not None or target_timepoint is not None
+        ):
             raise typer.BadParameter(
-                "--refine volume is not supported for --recipe adaptive: each "
-                "tile's levels would re-fit against the full volume, pulling "
-                "splats out of their tile. Use --recipe levels/overview, or "
-                "--refine l2."
+                "--target-axes KEEPS the target's stacked axis so --refine volume "
+                "can walk it one barrier group at a time, while --channel/"
+                "--timepoint slice one index out and drop it — the labels would "
+                "no longer describe the array. Use one or the other."
             )
         rule = partition_rule or "median"
         if rule not in _VALID_PARTITION_RULES:
@@ -648,23 +657,51 @@ def lod_recipe(
                 aprint(f"Loaded {data.n_splats:,} splats ({data.ndim}D)")
 
             # ── --refine volume: load the source volume (shared loader) ──
-            target_volume = None
+            target_volume: Any = None
+            target_volume_axes = None
             if target_path is not None:
                 from luxar.cli.gsplat_config import load_volume
 
+                # A --target-axes target keeps its stacked axis, and the re-fit
+                # then only ever SLICES it (one barrier group at a time). Open it
+                # lazily so that stays true on disk as well as in principle: a
+                # 253-timepoint 407x2048x2048 uint16 timelapse is 431 GB while one
+                # timepoint is 3.4 GB. The selector flags are the eager case by
+                # definition (they reduce the array before the fit sees it), and
+                # they cannot be combined with --target-axes anyway.
+                lazy = (
+                    target_axes is not None
+                    and target_channel is None
+                    and target_timepoint is None
+                )
                 with asection(f"Loading target volume: {target_path.name}"):
-                    target_volume = load_volume(
-                        target_path,
-                        channel=target_channel,
-                        timepoint=target_timepoint,
-                        array_key=target_array_key,
-                    )
+                    if lazy:
+                        from luxar.io.volume import open_volume_lazy
+
+                        target_volume = open_volume_lazy(
+                            target_path, array_key=target_array_key
+                        )
+                    else:
+                        target_volume = load_volume(
+                            target_path,
+                            channel=target_channel,
+                            timepoint=target_timepoint,
+                            array_key=target_array_key,
+                        )
                     aprint(f"Volume shape: {target_volume.shape}")
                 if len(target_volume.shape) != data.ndim:
                     raise typer.BadParameter(
                         f"--target volume is {len(target_volume.shape)}D but the "
                         f"splats are {data.ndim}D; select a matching sub-volume "
                         f"with --channel/--timepoint/--array-key."
+                    )
+                if target_axes is not None:
+                    from luxar.io.volume import volume_axes_from_spec
+
+                    target_volume_axes = volume_axes_from_spec(target_axes, data.ndim)
+                    aprint(
+                        f"Target axis map (center dim -> volume axis): "
+                        f"{target_volume_axes}"
                     )
 
             # ── streaming breakpoints from --target-ms (measured B/splat) ──
@@ -823,6 +860,7 @@ def lod_recipe(
                 # own default (l2: 120, volume: 300) — single source of truth.
                 refine_iters=refine_iters,
                 volume=target_volume,
+                volume_axes=target_volume_axes,
                 coarsen_dims=parsed_coarsen,
                 quality_stamps=quality_stamps if quality_stamps is not None else True,
                 quality_max_pair_splats=(
