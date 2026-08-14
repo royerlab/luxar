@@ -151,9 +151,10 @@ async function main() {
   // inside `page.evaluate` is what let #1579 read a non-existent
   // `state.performance` sub-object and report every scene as empty.
   // The probe is a DIAGNOSTIC; the screenshot is the product. A `getState()`
-  // that throws in the page (or a closed context) must not cost us the render
-  // we already waited for, so a failed probe degrades to `ok: false` with the
-  // error as its reason instead of rejecting out to `main().catch`.
+  // that throws on a live page must not cost us the render we already waited
+  // for, so a failed probe degrades to `ok: false` with the error as its reason
+  // instead of rejecting out to `main().catch`. (A page that is genuinely gone
+  // still fails at `page.screenshot()` below — nothing can rescue that.)
   let state;
   try {
     const rawState = await page.evaluate(() => (window as any).__luxarDebug?.getState?.() ?? null);

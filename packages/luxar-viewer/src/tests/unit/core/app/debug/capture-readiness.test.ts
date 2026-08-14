@@ -247,8 +247,27 @@ describe('summarizeCaptureReadiness', () => {
     expect(summary.reason).toBeDefined();
     expect(summary.reason).toMatch(/not finite/);
     expect(summary.reason).toMatch(/totalGSplats/);
+    // The caveat names only the PER-TYPE fields it had to zero. `totalElements`
+    // is re-derived from them, and it prints as 100 right below — saying it was
+    // "counted as zero" would contradict the number in the same object.
+    expect(summary.reason).not.toMatch(/totalElements/);
     expect(summary.totalGSplats).toBe(0);
     expect(summary.totalPoints).toBe(100);
+    expect(summary.totalElements).toBe(100);
+    expectNoNaN(summary);
+  });
+
+  it('says totalElements was RE-DERIVED when only that field is non-finite', () => {
+    // Nothing per-type was lost here, so the caveat must not claim an
+    // under-stated count: the per-type totals are intact and `totalElements`
+    // came from their sum.
+    const summary = summarizeCaptureReadiness(
+      makeState({ totalPoints: 100, totalElements: Infinity })
+    );
+
+    expect(summary.ok).toBe(true);
+    expect(summary.reason).toMatch(/re-derived/);
+    expect(summary.reason).not.toMatch(/under-state/);
     expect(summary.totalElements).toBe(100);
     expectNoNaN(summary);
   });

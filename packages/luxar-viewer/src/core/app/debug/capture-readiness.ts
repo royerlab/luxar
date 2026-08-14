@@ -30,8 +30,10 @@
  *
  * Every field is read defensively (finite-number / `Array.isArray` guards)
  * because the input crosses a `page.evaluate` serialisation boundary and may
- * come from an older viewer build: a partial snapshot must yield `ok: false`
- * with a `reason`, never a leaked `NaN` or `undefined`.
+ * come from an older viewer build. A missing per-type total is simply not
+ * counted; a snapshot carrying NO recognisable total at all is reported as a
+ * shape mismatch rather than as an empty scene. Either way the summary never
+ * leaks a `NaN` or an `undefined`.
  *
  * @module core/app/debug/capture-readiness
  */
@@ -101,10 +103,11 @@ export interface CaptureReadinessSummary {
  * Finite-number coercion, clamped at zero: anything that is not a finite number
  * (undefined, NaN, Infinity, a string) reads as 0, and so does a NEGATIVE one.
  *
- * The clamp is not cosmetic. An element count cannot be negative, and an
- * unclamped one both prints as a nonsense measurement and can CANCEL a real
- * positive in the sum — `{totalPoints: -1200, totalTriangles: 1200}` summed to
- * exactly 0 and reported "nothing loaded" over a populated mesh scene.
+ * An element count cannot be negative, and an unclamped one would both print as
+ * a nonsense measurement and be able to CANCEL a real positive in the sum
+ * (`{totalPoints: -1200, totalTriangles: 1200}` would sum to exactly 0 and read
+ * as "nothing loaded" over a populated mesh scene). No producer emits one; this
+ * is a boundary guard, not a fix for something observed.
  */
 function finiteOrZero(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, value) : 0;
@@ -225,13 +228,28 @@ export function summarizeCaptureReadiness(
   if (totalElements > 0) {
     // Ready, but a total we could not read is still worth saying out loud: it is
     // reported as 0 above, and an unannounced 0 is indistinguishable from a
-    // genuinely empty geometry type.
+    // genuinely empty geometry type. Name only the PER-TYPE fields here —
+    // `totalElements` is re-derived from them (`Math.max` above), so saying it
+    // was "counted as zero" next to a positive printed value would be a lie. In
+    // practice both go non-finite together, since the viewer computes the field
+    // as the sum.
+    const understated = nonFiniteFields.filter((field) => field !== 'totalElements');
+    if (understated.length > 0) {
+      return {
+        ok: true,
+        reason:
+          `${understated.join(', ')} present but not finite (Infinity/NaN) — ` +
+          'counted as zero, so the reported counts under-state the scene',
+        ...totals,
+        ...counts,
+      };
+    }
     if (nonFiniteFields.length > 0) {
       return {
         ok: true,
         reason:
-          `${nonFiniteFields.join(', ')} present but not finite (Infinity/NaN) — ` +
-          'counted as zero, so the reported counts under-state the scene',
+          'totalElements present but not finite (Infinity/NaN) — re-derived from ' +
+          'the per-type totals',
         ...totals,
         ...counts,
       };
