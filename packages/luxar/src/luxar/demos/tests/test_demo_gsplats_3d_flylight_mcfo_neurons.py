@@ -556,3 +556,83 @@ def test_bad_sample_argument_is_rejected_at_parse_time() -> None:
 def test_good_sample_argument_is_accepted_at_parse_time() -> None:
     mod = _import_demo_with_argv(["demo", "--sample=R14A02-20180905_65_A6"])
     assert mod.SAMPLE == "R14A02-20180905_65_A6"
+
+
+# ---------------------------------------------------------------------------
+# Cache durability: never lose the last good copy
+# ---------------------------------------------------------------------------
+
+
+def test_failed_install_restores_the_previous_sample(tmp_path, monkeypatch) -> None:
+    """If installing the new store fails, the old one must survive.
+
+    Deleting the moved-aside copy in a `finally` would lose BOTH the new
+    (incomplete) and the old (working) store, leaving no usable sample.
+    """
+    import zipfile
+
+    sample = "SAMPLE_Y"
+    cache = tmp_path / "cache"
+    cache.mkdir()
+
+    target = cache / f"{sample}.zarr"
+    (target / "volumes").mkdir(parents=True)
+    (target / "volumes" / "precious").write_bytes(b"the only good copy")
+
+    archive = tmp_path / "a.zip"
+    prefix = f"{_demo.SAMPLE_MEMBER_PREFIX}/{sample}.zarr/"
+    with zipfile.ZipFile(archive, "w") as zf:
+        zf.writestr(f"{prefix}volumes/raw/.zarray", b"{}")
+
+    monkeypatch.setattr(_demo, "CACHE_DIR", cache)
+    monkeypatch.setattr(_demo, "RECOMPUTE", True)
+    monkeypatch.setattr(
+        _demo, "_open_remote_zip", lambda url: (zipfile.ZipFile(archive), None)
+    )
+
+    real_rename = Path.rename
+
+    def _fail_installing_new(self, dest):
+        # Fail only the final install; the move-aside must still work.
+        if str(self).endswith(".zarr.partial"):
+            raise OSError("simulated failure installing the new store")
+        return real_rename(self, dest)
+
+    monkeypatch.setattr(Path, "rename", _fail_installing_new)
+
+    with pytest.raises(OSError, match="simulated failure"):
+        _demo.fetch_sample(sample)
+
+    assert target.exists(), "the previous sample was destroyed"
+    assert (target / "volumes" / "precious").read_bytes() == b"the only good copy"
+    assert not target.with_suffix(".zarr.stale").exists()
+
+
+def test_h5j_and_npy_caches_are_published_atomically(tmp_path) -> None:
+    """Caches land via a temporary sibling, so no partial file is ever trusted."""
+    payload = b"x" * 1024
+    dest = tmp_path / "thing.h5j"
+    _demo._atomic_write(dest, payload)
+    assert dest.read_bytes() == payload
+    assert not dest.with_suffix(".h5j.part").exists()
+
+    arr = np.arange(24, dtype=np.uint8).reshape(2, 3, 4)
+    npy = tmp_path / "vol.npy"
+    _demo._atomic_save_npy(npy, arr)
+    assert np.array_equal(np.load(npy), arr)
+    assert not npy.with_suffix(".npy.part").exists()
+
+
+def test_atomic_write_leaves_no_partial_on_failure(tmp_path, monkeypatch) -> None:
+    """A failed write must not publish anything at the destination."""
+    dest = tmp_path / "broken.h5j"
+
+    def _boom(self, data):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(Path, "write_bytes", _boom)
+
+    with pytest.raises(OSError, match="disk full"):
+        _demo._atomic_write(dest, b"payload")
+
+    assert not dest.exists()

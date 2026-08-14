@@ -500,8 +500,14 @@ def fetch_sample(sample: str) -> Path:
                 target.rename(stale)
                 try:
                     tmp.rename(target)
-                finally:
-                    shutil.rmtree(stale, ignore_errors=True)
+                except BaseException:
+                    # Put the old store back before re-raising. Deleting it in
+                    # a `finally` would lose BOTH copies whenever installing
+                    # the new one failed, leaving no usable sample at all.
+                    if not target.exists():
+                        stale.rename(target)
+                    raise
+                shutil.rmtree(stale, ignore_errors=True)
             else:
                 tmp.rename(target)
         finally:
@@ -580,6 +586,27 @@ def decode_h5j_channel(h5j_path: Path, channel: int) -> np.ndarray:
     return vol
 
 
+def _atomic_write(path: Path, payload: bytes) -> None:
+    """Write ``payload`` to ``path`` via a temporary sibling + rename."""
+    tmp = path.with_suffix(path.suffix + ".part")
+    tmp.write_bytes(payload)
+    tmp.replace(path)
+
+
+def _atomic_save_npy(path: Path, array: np.ndarray) -> None:
+    """``np.save`` to a temporary sibling, then rename into place.
+
+    Saving through an open handle rather than a path: ``np.save`` appends
+    ``.npy`` to any *name* that does not already end in it, so a temporary
+    called ``vol.npy.part`` would silently be written as ``vol.npy.part.npy``
+    and the rename would then fail on a missing file.
+    """
+    tmp = path.with_suffix(path.suffix + ".part")
+    with open(tmp, "wb") as fh:
+        np.save(fh, array)
+    tmp.replace(path)
+
+
 def fetch_neuropil(sample: str):
     """Fetch and decode the reference channel, or return None if unavailable.
 
@@ -611,12 +638,15 @@ def fetch_neuropil(sample: str):
             aprint(url)
             resp = requests.get(url, timeout=300)
             resp.raise_for_status()
-            h5j.write_bytes(resp.content)
+            # Publish atomically: an interrupted write would otherwise leave a
+            # truncated file that every later run trusts and fails to decode,
+            # recoverable only by knowing to pass --recompute.
+            _atomic_write(h5j, resp.content)
             aprint(f"  {len(resp.content) / 1e6:.0f} MB")
 
     # ``channel_spec`` is 'sssr': three signal channels then the reference.
     vol = decode_h5j_channel(h5j, 3)
-    np.save(cached, vol)
+    _atomic_save_npy(cached, vol)
     return vol
 
 
