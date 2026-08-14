@@ -305,7 +305,7 @@ def test_generator_rejects_a_corrupt_lfs_pointer(tmp_path):
 # The manifest must remain shippable
 # --------------------------------------------------------------------------- #
 def test_manifest_lives_outside_the_lfs_data_tree():
-    """Dependency-free companion guard — runs everywhere, including Python 3.10.
+    """Dependency-free companion guard — runs in any env, tooling or not.
 
     demos/data/ is ~450 MB of git-LFS payload excluded from BOTH the wheel and
     the sdist. The manifest must never drift back inside it.

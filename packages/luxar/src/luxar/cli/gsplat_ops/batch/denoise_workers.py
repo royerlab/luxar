@@ -7,7 +7,7 @@ from pathlib import Path
 import typer
 from arbol import aprint, asection
 
-from luxar._zarr_compat import create_array
+from luxar._zarr_compat import create_array, open_group
 from luxar.encoding.compression import WIDTH_AWARE_DEFAULT, resolve_compressor
 
 
@@ -79,8 +79,6 @@ def run_batch_denoise_preprocess_cmd(
     try:
         import json
 
-        import zarr
-
         from luxar.cli.gsplat_config import load_volume
         from luxar.gsplats.batch.manifest import load_manifest
         from luxar.gsplats.preprocessing.denoise_pipeline import denoise_volume_array
@@ -129,7 +127,11 @@ def run_batch_denoise_preprocess_cmd(
 
             # Write to denoised.zarr
             zarr_path = output_dir / "denoised.zarr"
-            store = zarr.open(str(zarr_path), mode="a")
+            # Through the facade: this is the store's CREATING open (the first
+            # task to arrive makes it), and a bare `zarr.open` would create it at
+            # zarr 3's default format 3 — which the `data` array below then
+            # inherits from its parent, whatever `create_array` is told.
+            store = open_group(zarr_path, mode="a")
 
             spatial = denoised.shape
             full_shape = (len(t_indices), len(c_indices), *spatial)

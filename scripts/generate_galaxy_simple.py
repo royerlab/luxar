@@ -44,7 +44,7 @@ import numpy as np
 import pandas as pd
 from arbol import aprint
 
-from luxar._zarr_compat import create_array
+from luxar._zarr_compat import create_array, open_group
 
 try:
     import astropy.units as u
@@ -127,15 +127,16 @@ def transform_to_galactocentric(df: pd.DataFrame, rmax_kpc: float) -> pd.DataFra
 
 def create_zarr(df: pd.DataFrame, output_path: Path):
     """Save raw Gaia data as zarr table (NOT Luxar format)."""
-    import zarr
-
     aprint(f"\nSaving raw data to zarr: {output_path}")
 
     if output_path.exists():
         shutil.rmtree(output_path)
 
-    # Create zarr store with raw table data
-    store = zarr.open(str(output_path), mode="w")
+    # Create zarr store with raw table data. Through the facade, not a bare
+    # `zarr.open(mode="w")`: the root group decides the format its arrays get,
+    # so an unpinned open here would emit a format-3 store no matter what
+    # `create_array` is asked for.
+    store = open_group(output_path, mode="w")
 
     # Save positions
     create_array(

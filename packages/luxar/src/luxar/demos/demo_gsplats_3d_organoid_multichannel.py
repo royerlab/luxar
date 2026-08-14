@@ -343,8 +343,6 @@ def view_with_napari(volumes, gsplats_list, channel_configs):
         import napari
     except ImportError:
         aprint("napari not installed, skipping napari view")
-        # Keep the <0.8 cap: napari 0.8 requires zarr>=3, which is unsatisfiable
-        # against Luxar's zarr<3.0 pin (see the note in pyproject.toml).
         aprint("Install with: pip install 'napari[all]>=0.8'")
         return
 

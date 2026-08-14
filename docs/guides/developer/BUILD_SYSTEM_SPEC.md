@@ -51,7 +51,7 @@ pipx ensurepath
 # Python 3 comes with macOS or install via:
 xcode-select --install  # Command line tools
 # or
-brew install python@3.11
+brew install python@3.12
 ```
 
 ## Quick Start
@@ -421,9 +421,10 @@ a local pass:
 hatch run python -V     # the interpreter your tests actually used
 ```
 
-The project supports a single Python version (`requires-python = ">=3.12"`, and
-3.12 is the newest release), so the `test` matrix has one leg. Run it explicitly
-with:
+The `test` matrix has one leg — the floor, 3.12 (`requires-python = ">=3.12"`).
+Newer interpreters resolve and are expected to work, but nothing tests them; add
+a leg here and to the CI matrix if that stops being an acceptable trade. Run the
+one leg explicitly with:
 
 ```bash
 hatch run test.py3.12:cov
@@ -826,7 +827,7 @@ runs everything. The same trade as the per-PR Python matrix below: found on
 
 ### Which Python versions CI runs
 
-`python-tests` is a matrix, but not the same matrix on every event:
+`python-tests` is a matrix, but it currently has a single leg on every event:
 
 | Event | Python legs |
 |-------|-------------|
@@ -834,11 +835,14 @@ runs everything. The same trade as the per-PR Python matrix below: found on
 | `push` to `main` | `3.12` |
 | nightly `schedule` (09:17 UTC) | `3.12` |
 
-The supported floor is 3.12 (`requires-python = ">=3.12"`) and 3.12 is the
-newest release, so there is only one interpreter to test and every event runs
-the same single leg. The nightly and push runs still differ from a PR run in
-*scope* rather than in Python version: neither has a PR base, so the `changes`
-job cannot path-filter and selects the whole suite plus the documentation gate.
+That leg is the FLOOR (`requires-python = ">=3.12"`), which is what the required
+`python-tests (3.12)` status context names. `>=3.12` also admits newer
+interpreters and nothing here exercises them — a deliberate trade on a box with
+five self-hosted slots, and the reason the version-equality assertion in the job
+matters (it proves the leg really ran 3.12, not whatever pipx picked). The
+nightly and push runs differ from a PR run in *scope* rather than in Python
+version: neither has a PR base, so the `changes` job cannot path-filter and
+selects the whole suite plus the documentation gate.
 
 Scheduled runs sit in their own `concurrency` group: they share
 `refs/heads/main` with merge-triggered runs, so under one shared group

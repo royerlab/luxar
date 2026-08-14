@@ -155,11 +155,11 @@ demos = [
     # demo_gsplats_4d_nexrad_supercell. The >=1.6.3 floor is LOAD-BEARING:
     # metpy declares only `numpy>=1.20.0`, so a resolver would happily pair
     # metpy 1.5.x with Luxar's core `numpy>=2.0` and break at runtime;
-    # 1.6.3 is the release that added NumPy 2.0 support. Verified NOT to
-    # threaten the `zarr>=2.16,<3.0` pin: metpy pulls xarray, but only
-    # xarray's CORE requirements (numpy/packaging/pandas) — `zarr>=3.0` lives
-    # in the `xarray[io]` extra, which nothing here requests. A clean install
-    # resolves to metpy 1.7.1 + numpy 2.5.1 + xarray with no zarr at all.
+    # 1.6.3 is the release that added NumPy 2.0 support. It does not drag zarr
+    # in either: metpy pulls xarray, but only xarray's CORE requirements
+    # (numpy/packaging/pandas) — zarr lives in the `xarray[io]` extra, which
+    # nothing here requests. A clean install resolves to metpy 1.7.1 + numpy
+    # 2.5.1 + xarray with no extra zarr constraint at all.
     # Mirrored by INSTALL_SPECS in luxar.demos._dependencies.
     "metpy>=1.6.3,<2.0",
 ]

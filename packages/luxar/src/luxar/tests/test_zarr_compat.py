@@ -388,6 +388,111 @@ def test_no_zarr_2_create_dataset_calls_remain() -> None:
     )
 
 
+#: zarr entry points that CREATE a node, and therefore decide a format. Reading
+#: is version-agnostic and needs no pin; creating does. ``consolidate_metadata``
+#: is absent on purpose — it follows the format already on the store.
+_ZARR_CREATING_CALLS = frozenset(
+    {
+        "array",
+        "create",
+        "create_array",
+        "create_group",
+        "empty",
+        "full",
+        "group",
+        "ones",
+        "open",
+        "open_array",
+        "open_group",
+        "save",
+        "save_array",
+        "zeros",
+    }
+)
+
+
+def _is_read_only_call(call: ast.Call) -> bool:
+    """Does the call pass a literal ``mode="r"``? Then it creates nothing."""
+    return any(
+        k.arg == "mode" and isinstance(k.value, ast.Constant) and k.value.value == "r"
+        for k in call.keywords
+    )
+
+
+def _format_unpinned_zarr_writes(source: str) -> list[int]:
+    """Line numbers of ``zarr.<create>(...)`` calls that pin no format."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:  # pragma: no cover - defensive
+        return []
+    hits = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+            continue
+        mod = node.func.value
+        if not isinstance(mod, ast.Name) or mod.id != "zarr":
+            continue
+        if node.func.attr not in _ZARR_CREATING_CALLS:
+            continue
+        if _is_read_only_call(node):
+            continue
+        if "zarr_format" not in {k.arg for k in node.keywords}:
+            hits.append(node.lineno)
+    return hits
+
+
+def test_no_writer_creates_a_store_without_pinning_the_format() -> None:
+    """A writer that skips the facade silently emits format 3.
+
+    zarr 3's default is format 3, and the default applies at the node that gets
+    CREATED — so a bare ``zarr.open(mode="a")`` root makes every array under it
+    v3 no matter what :func:`create_array` is told, and a bare ``zarr.save``
+    writes a ``zarr.json`` + ``c/`` array where the rest of Luxar writes
+    ``.zarray`` + dot-separated chunks. Neither raises; the store is simply the
+    wrong format, which is why this is a lint and not a runtime check.
+
+    Scope is every writer that ships or produces a published artifact: the
+    package, the repo scripts, and the viewer's fixture generators. Go through
+    :mod:`luxar._zarr_compat`, or pass ``zarr_format=ZARR_FORMAT`` explicitly.
+    """
+    repo_root = PROD_ROOT.parents[3]
+    extra_dirs = [
+        repo_root / "scripts",
+        repo_root / "packages" / "luxar-viewer" / "tests" / "fixtures",
+    ]
+    files = list(_production_files())
+    for d in extra_dirs:
+        if d.is_dir():  # absent when the package is tested outside the repo
+            files.extend(sorted(d.rglob("*.py")))
+
+    offenders = [
+        f"{path.relative_to(repo_root)}:{lineno}"
+        for path in files
+        for lineno in _format_unpinned_zarr_writes(path.read_text(encoding="utf-8"))
+    ]
+    assert not offenders, (
+        "zarr calls that create a node without pinning the format (they would "
+        f"silently write format 3): {offenders}"
+    )
+
+
+def test_the_format_lint_can_actually_fail() -> None:
+    """Guard the guard: the walk must flag the two real shapes and spare the rest.
+
+    Lines 1-2 are the exact regressions this lint exists for (a bare ``save``,
+    and the creating ``mode="a"`` open whose children inherit the format). The
+    rest must stay quiet, or the lint would be unusable noise on read paths.
+    """
+    assert _format_unpinned_zarr_writes(
+        "zarr.save(p, a)\n"
+        "zarr.open(p, mode='a')\n"
+        "zarr.open(p, mode='r')\n"
+        "zarr.save(p, a, zarr_format=2)\n"
+        "zarr.consolidate_metadata(s)\n"
+        "zarr.storage.ZipStore(p, mode='w')\n"
+    ) == [1, 2]
+
+
 def test_the_lint_can_actually_fail(tmp_path: Path) -> None:
     """Guard the guard: prove the AST walk detects a missing compressor.
 
