@@ -410,6 +410,29 @@ class TestDataFileResolution:
 
         assert demo.resolve_data_file() == repo
 
+    def test_a_directory_at_the_catalog_path_is_not_a_catalog(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """Only a regular file counts — a directory there must reach the advice.
+
+        Giving the rebuild script the ``.zip`` path instead of the load-bearing
+        stem writes the raw zarr *directory* under that exact name, and
+        ``exists()`` cannot tell the two apart. Resolving it would hand a
+        directory to ``zipfile``, whose ``IsADirectoryError`` is an ``OSError``
+        rather than a ``FileNotFoundError`` — so neither entry point's handler
+        catches it and the whole message below is replaced by a traceback.
+        """
+        import luxar.demos.demo_gaia_milky_way_3m as demo
+
+        cache = tmp_path / "cache" / "milky_way_gaia_3m.zarr.zip"
+        cache.mkdir(parents=True)
+        monkeypatch.setattr(demo, "CACHE_FILE", cache)
+        monkeypatch.setattr(demo, "REPO_FILE", tmp_path / "repo" / "absent.zip")
+
+        with pytest.raises(FileNotFoundError) as excinfo:
+            demo.resolve_data_file()
+        assert "scripts/generate_galaxy_simple.py" in str(excinfo.value)
+
     def test_absent_everywhere_explains_why(self, tmp_path: Path, monkeypatch) -> None:
         import luxar.demos.demo_gaia_milky_way_3m as demo
 

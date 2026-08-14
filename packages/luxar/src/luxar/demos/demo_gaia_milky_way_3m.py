@@ -197,9 +197,20 @@ class CatalogUnusable(FileNotFoundError):
 
 
 def resolve_data_file() -> Path:
-    """The star catalog: local cache first, then the legacy in-repo copy."""
+    """The star catalog: local cache first, then the legacy in-repo copy.
+
+    ``is_file()``, not ``exists()``: a *directory* at the catalog path is an easy
+    way to end up here, because the load-bearing ``--output`` stem is the cache
+    file minus ``.zip`` — hand the rebuild script the ``.zip`` path instead and it
+    writes the raw zarr *directory* under that name (its zip lands beside it as
+    ``.zarr.zarr.zip``). ``exists()`` accepts that, and ``zipfile`` then raises
+    ``IsADirectoryError`` — an ``OSError``, not a ``FileNotFoundError``, so no
+    handler on the way out catches it and the advice below never prints. Anything
+    that is not a regular file (a directory, a broken symlink, a FIFO ``ZipFile``
+    would block on) is simply not a candidate.
+    """
     for candidate in (CACHE_FILE, REPO_FILE):
-        if candidate.exists():
+        if candidate.is_file():
             return candidate
     raise CatalogUnusable(
         "Gaia star catalog not found.\n\n"
