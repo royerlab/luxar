@@ -487,8 +487,10 @@ export class LineMaterial
 
     cloned.uniforms.uResolution.value.copy(this.uniforms.uResolution.value);
     // Preserve the line data texture binding (per-node — the clone
-    // serves the same node).
-    cloned.uniforms.uLineTex.value = this.uniforms.uLineTex.value;
+    // serves the same node). Routed through the rebind chokepoint so
+    // the clone's width define is re-stamped from that texture rather
+    // than left on the constructor's session-width pre-stamp.
+    cloned.updateLineTexture(this.uniforms.uLineTex.value as THREE.DataTexture | null);
     // Preserve orthographic state, near-plane / max-pixel-width clamp,
     // and the precomputed pixel-width scales.
     cloned.uniforms.uIsOrtho.value = this.uniforms.uIsOrtho.value;

@@ -507,8 +507,11 @@ export class PointMaterial
     // Copy current uniform values. The point-texture binding must ride
     // along (mirrors GSplatMaterial.clone copying uSplatTex): the layers
     // panel clones on first interaction, and a clone left on the
-    // placeholder would render nothing.
-    cloned.uniforms.uPointTex.value = this.uniforms.uPointTex.value;
+    // placeholder would render nothing. Routed through the rebind
+    // chokepoint so the clone's width define is re-stamped from that
+    // texture rather than left on the constructor's session-width
+    // pre-stamp.
+    cloned.updatePointTexture(this.uniforms.uPointTex.value as THREE.DataTexture | null);
     cloned.uniforms.pointSizeFactor.value = this.uniforms.pointSizeFactor.value;
     cloned.uniforms.maxPointSize.value = this.uniforms.maxPointSize.value;
     cloned.uniforms.uInvGamma.value = this.uniforms.uInvGamma.value;

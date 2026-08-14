@@ -89,7 +89,10 @@ export class PointPickingMaterial extends THREE.ShaderMaterial implements Camera
       nodeId: this.uniforms.uNodeId.value,
       radiusScale: this.uniforms.radiusScale.value,
     });
-    cloned.uniforms.uPointTex.value = this.uniforms.uPointTex.value;
+    // Via the rebind chokepoint so the clone's width define is stamped
+    // from the texture it actually binds (not the constructor's
+    // session-width pre-stamp).
+    cloned.updatePointTexture(this.uniforms.uPointTex.value as THREE.DataTexture | null);
     cloned.uniforms.pointSizeFactor.value = this.uniforms.pointSizeFactor.value;
     cloned.uniforms.maxPointSize.value = this.uniforms.maxPointSize.value;
     cloned.uniforms.uIsOrtho.value = this.uniforms.uIsOrtho.value;

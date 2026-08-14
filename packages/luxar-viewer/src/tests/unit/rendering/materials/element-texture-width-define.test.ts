@@ -68,7 +68,8 @@ describe('element-texture width define', () => {
   it('binding a different-width texture re-stamps the define and flags a rebuild', () => {
     const material = new LineMaterial();
     const before = material.defines?.[LINE_TEXTURE_LAYOUT.widthDefine];
-    // A 12-texel-wide texture (2 segments/row) — the multirow-fixture shape.
+    // 12 texels wide (2 segments/row) — a multiple of 6, so the
+    // row-straddle invariant holds, but not the session width.
     const tiny = new THREE.DataTexture(new Float32Array(12 * 4), 12, 1, THREE.RGBAFormat);
     // three's needsUpdate is a setter that bumps `version` — assert on that.
     const versionBefore = material.version;
@@ -76,6 +77,21 @@ describe('element-texture width define', () => {
     expect(material.defines?.[LINE_TEXTURE_LAYOUT.widthDefine]).toBe('12');
     expect(material.defines?.[LINE_TEXTURE_LAYOUT.widthDefine]).not.toBe(before);
     expect(material.version).toBe(versionBefore + 1);
+    tiny.dispose();
+  });
+
+  it('a clone carries the width of the texture it binds, not the session pre-stamp', () => {
+    // `clone()` builds a fresh material through the constructor (which
+    // pre-stamps the session width) and copies the texture binding over,
+    // so it has to re-stamp too — otherwise a clone taken while a
+    // non-session-width texture is bound (renderer swap straggler)
+    // addresses with the wrong row stride.
+    const material = new LineMaterial();
+    const tiny = new THREE.DataTexture(new Float32Array(12 * 4), 12, 1, THREE.RGBAFormat);
+    material.updateLineTexture(tiny);
+    const cloned = material.clone();
+    expect(cloned.getLineTexture()).toBe(tiny);
+    expect(cloned.defines?.[LINE_TEXTURE_LAYOUT.widthDefine]).toBe('12');
     tiny.dispose();
   });
 

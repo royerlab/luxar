@@ -115,7 +115,10 @@ export class LinePickingMaterial extends THREE.ShaderMaterial implements CameraA
       nodeId: this.uniforms.uNodeId.value,
       primitive: this.userData.linePrimitive as LinePrimitive | undefined,
     });
-    cloned.uniforms.uLineTex.value = this.uniforms.uLineTex.value;
+    // Via the rebind chokepoint so the clone's width define is stamped
+    // from the texture it actually binds (not the constructor's
+    // session-width pre-stamp).
+    cloned.updateLineTexture(this.uniforms.uLineTex.value as THREE.DataTexture | null);
     cloned.uniforms.uResolution.value.copy(this.uniforms.uResolution.value);
     cloned.uniforms.uIsOrtho.value = this.uniforms.uIsOrtho.value;
     cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;

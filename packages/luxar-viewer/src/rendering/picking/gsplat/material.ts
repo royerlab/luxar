@@ -148,7 +148,10 @@ export class GSplatPickingMaterial
    */
   clone(): this {
     const cloned = new GSplatPickingMaterial({ nodeId: this.uniforms.uNodeId.value });
-    cloned.uniforms.uSplatTex.value = this.uniforms.uSplatTex.value;
+    // Via the rebind chokepoint so the clone's width define is stamped
+    // from the texture it actually binds (not the constructor's
+    // session-width pre-stamp).
+    cloned.updateSplatTexture(this.uniforms.uSplatTex.value as THREE.DataTexture | null);
     cloned.uniforms.uResolution.value.copy(this.uniforms.uResolution.value);
     cloned.uniforms.uFx.value = this.uniforms.uFx.value;
     cloned.uniforms.uFy.value = this.uniforms.uFy.value;

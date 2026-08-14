@@ -41,9 +41,10 @@ export function renderGLSL(shaderName: string): Uint8Array {
   // for any shader currently in the registry).
   const glsl = requireWebGLSources(entry.source);
   const uniforms = entry.buildUniforms();
-  // Build the ShaderMaterial. We pass `defines` only when the
-  // registry entry supplies it — Three.js warns "parameter 'defines'
-  // has value of undefined" otherwise.
+  // Build the ShaderMaterial. `defines` is always an object (never
+  // undefined — Three.js warns "parameter 'defines' has value of
+  // undefined"); it is assembled below from the element-texture width
+  // defines plus whatever the registry entry supplies.
   const materialParams: THREE.ShaderMaterialParameters = {
     vertexShader: glsl.vertex,
     fragmentShader: glsl.fragment,
