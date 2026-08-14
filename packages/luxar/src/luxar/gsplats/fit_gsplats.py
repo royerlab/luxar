@@ -564,8 +564,9 @@ def fit_gaussian_splats(
         Which intensity convention the amplitudes of a ``seeds=GSplatData``
         carry. Ignored for every other kind of ``seeds``.
 
-        - False (default): RAW-IMAGE-SAMPLED — the amplitudes were read off the
-          original volume, background pedestal included. This is what
+        - False (default): RAW-IMAGE-SAMPLED — the amplitudes were sampled off the
+          original volume (up to a fixed seeding scale factor), background
+          pedestal included. This is what
           ``generate_seeds()`` returns, i.e. the explicit-seeding workflow
           (``fit_gaussian_splats(V, seeds=generate_seeds(V))``). They are
           rescaled as ``(a - image_min) / intensity_range``, so an active

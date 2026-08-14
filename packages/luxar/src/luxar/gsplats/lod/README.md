@@ -376,7 +376,9 @@ render-fidelity objective at the coarse budget. Benchmarked on real microscopy
 (skimage cells3d nuclei): **+5–6 dB** full-res and
 **+10–12 dB** at viewing scale over the merge, with unchanged splat count, and
 the warm start beats a cold fit while drifting ~2× less across levels (less
-LOD popping). Fitting a blurred/downscaled volume proxy was benchmarked and
+LOD popping). (Those figures were measured before the #1172 amplitude-convention
+fix, which the never-worse guard means can only help the warm start — read them
+as a floor.) Fitting a blurred/downscaled volume proxy was benchmarked and
 rejected — it discards positional detail the merge inherits from the sharp
 fine fit.
 

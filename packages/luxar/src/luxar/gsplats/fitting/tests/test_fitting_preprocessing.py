@@ -675,6 +675,113 @@ class TestInitAmpsProvenance:
             f"{int(positive.sum())} positive warm-start amplitudes were zeroed"
         )
 
+    def test_public_api_threads_the_declaration_into_fitconfig(self) -> None:
+        """The declaration must survive the WHOLE plumbing chain —
+        ``fit_gaussian_splats`` -> ``GaussianSplatFitter.fit`` ->
+        ``prepare_fit_config`` -> ``FitConfig`` -> ``preprocess_data`` — not just
+        the last hop.
+
+        Every other test in this class either sets the flag on a ``FitConfig``
+        instance directly or intercepts ``fit_gaussian_splats`` itself, so all of
+        them stay green if an intermediate hop silently drops the kwarg (which
+        would put #1172 fully back for ``lod --refine volume``). This one drives
+        the real public entry point with a single iteration and a near-zero
+        learning rate, so the fit is effectively frozen at its initialization and
+        the output amplitudes must come back as the seed amplitudes (through
+        softplus/inverse-softplus and an ``intensity_range`` round trip, hence a
+        tolerance rather than exact equality).
+        """
+        from luxar.gsplats.fit_gsplats import fit_gaussian_splats
+
+        V = _pedestal_volume()
+        seed_amps = np.array([1.0, 5.0, 30.0], dtype=np.float32)  # all < floor 100
+        centers = np.array([[12.0, 12.0], [20.0, 20.0], [26.0, 26.0]], np.float32)
+
+        declared = fit_gaussian_splats(
+            V,
+            seeds=_gsplatdata_seeds(centers, seed_amps),
+            seed_amps_background_relative=True,
+            floor=100.0,
+            n_iters=1,
+            lr=1e-8,  # effectively frozen: the output IS the initialization
+            device="cpu",
+            verbose=False,
+            enable_dynamic_ops=False,
+            cull_retention=None,
+            sort_splats_enabled=False,
+        )
+
+        np.testing.assert_allclose(declared.amplitudes, seed_amps, rtol=1e-6)
+
+        # Negative control, with the argument OMITTED so the DEFAULT is pinned
+        # too (nothing else guards the raw ``generate_seeds()`` workflow against a
+        # future default flip): the amplitudes are taken as raw-image-sampled,
+        # the pedestal is subtracted from already-background-relative values and
+        # all three sub-floor seeds collapse toward 0 (~4e-4 as measured).
+        default = fit_gaussian_splats(
+            V,
+            seeds=_gsplatdata_seeds(centers, seed_amps),
+            floor=100.0,
+            n_iters=1,
+            lr=1e-8,
+            device="cpu",
+            verbose=False,
+            enable_dynamic_ops=False,
+            cull_retention=None,
+            sort_splats_enabled=False,
+        )
+
+        assert np.all(default.amplitudes < 0.01), (
+            f"expected the default convention to collapse sub-floor seeds, "
+            f"got {default.amplitudes}"
+        )
+
+    def test_verbose_amplitude_report_handles_empty_seeds(
+        self, mock_config_2d, capsys
+    ) -> None:
+        """The ``verbose`` rescaling report must run on both of its branches.
+
+        Every other config in this module uses ``verbose=False``, so neither is
+        otherwise exercised. Without the ``init_amps.size == 0`` guard the report
+        raises ``ValueError: zero-size array to reduction operation minimum which
+        has no identity`` on an empty seed set — and nothing upstream rejects one
+        (``prepare_fit_config`` only shape-checks a NON-empty ``GSplatData``).
+        """
+        V = _pedestal_volume()
+        centers = np.array([[12.0, 12.0], [20.0, 20.0], [26.0, 26.0]], np.float32)
+        seed_amps = np.array([1.0, 5.0, 30.0], dtype=np.float32)
+
+        mock_config_2d.V = V
+        mock_config_2d.norm_percentile = 0.0
+        mock_config_2d.floor = 100.0
+        mock_config_2d.verbose = True
+        mock_config_2d.seeds = _gsplatdata_seeds(centers, seed_amps)
+        mock_config_2d.seed_amps_background_relative = True
+
+        result = preprocess_data(mock_config_2d)
+
+        assert result.init_amps is not None
+        expected = np.clip(seed_amps / result.intensity_range, 0.0, 1.0)
+        assert np.allclose(result.init_amps, expected, atol=1e-6)
+        reported = capsys.readouterr().out
+        assert "Rescaled init_amps to normalized range" in reported
+        assert f"{float(expected.max()):.4f}" in reported
+
+        # Empty seed set: the guard reports a count instead of reducing over an
+        # empty array.
+        mock_config_2d.seeds = _gsplatdata_seeds(
+            np.zeros((0, 2), np.float32), np.zeros((0,), np.float32)
+        )
+
+        empty_result = preprocess_data(mock_config_2d)
+
+        assert empty_result.N == 0
+        assert empty_result.init_amps is not None
+        assert empty_result.init_amps.size == 0
+        assert "Rescaled init_amps to normalized range: 0 seeds" in (
+            capsys.readouterr().out
+        )
+
     def test_volume_refit_declares_background_relative_seeds(self) -> None:
         """``volume_refine_splats`` re-fits a previous fit's output, so it must
         declare ``seed_amps_background_relative=True``.
@@ -726,8 +833,13 @@ class TestInitAmpsProvenance:
         """``fit_progressive_gaussian_splats`` subtracts the floor from the volume
         itself and must therefore run every per-pass fit with ``floor='none'``.
 
-        That is what makes the progressive path immune to the double-subtraction
-        this class guards; pinned here so a refactor cannot quietly drop it.
+        Re-estimating a floor on the already background-relative volume (or on its
+        residuals) would eat signal, so this is a real invariant of the
+        progressive path and is otherwise unguarded. It is NOT, however, what
+        makes that path immune to the double subtraction this class guards:
+        progressive pops any caller-supplied ``seeds`` and passes an int count per
+        pass, so ``isinstance(seeds, GSplatData)`` is never true there and the
+        warm-start door is unreachable whatever the floor.
         """
         import luxar.gsplats.fit_gsplats as fit_gsplats_mod
         from luxar.gsplats.fit_progressive_gsplats import (
