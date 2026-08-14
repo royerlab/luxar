@@ -253,6 +253,7 @@ class _HttpRangeFile(io.RawIOBase):
     """
 
     def __init__(self, url: str, size: int, session, chunk_size: int = 1 << 20):
+        """Wrap ``url`` as a seekable file of ``size`` bytes served by ranges."""
         self._url = url
         self._size = size
         self._session = session
@@ -265,15 +266,19 @@ class _HttpRangeFile(io.RawIOBase):
         self._cache = b""
 
     def readable(self) -> bool:
+        """This file is read-only, and readable."""
         return True
 
     def seekable(self) -> bool:
+        """Seeking is what makes remote zip access possible."""
         return True
 
     def tell(self) -> int:
+        """Return the current byte offset."""
         return self._pos
 
     def seek(self, offset: int, whence: int = io.SEEK_SET) -> int:
+        """Move the read position, clamping to the bounds of the resource."""
         if whence == io.SEEK_SET:
             self._pos = offset
         elif whence == io.SEEK_CUR:
@@ -286,6 +291,7 @@ class _HttpRangeFile(io.RawIOBase):
         return self._pos
 
     def read(self, size: int = -1) -> bytes:
+        """Read ``size`` bytes (or to EOF), fetching blocks as needed."""
         if size is None or size < 0:
             size = self._size - self._pos
         size = min(size, self._size - self._pos)
@@ -304,12 +310,14 @@ class _HttpRangeFile(io.RawIOBase):
             size -= take
         return bytes(out)
 
-    def readinto(self, b) -> int:  # noqa: D102 - RawIOBase contract
+    def readinto(self, b) -> int:
+        """Read into a pre-allocated buffer (the ``RawIOBase`` contract)."""
         data = self.read(len(b))
         b[: len(data)] = data
         return len(data)
 
     def _block_for(self, pos: int) -> bytes:
+        """Return the cached block covering ``pos``, range-fetching it if needed."""
         if self._cache and self._cache_start <= pos < self._cache_start + len(
             self._cache
         ):
