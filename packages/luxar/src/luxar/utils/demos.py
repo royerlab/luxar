@@ -769,7 +769,10 @@ def load_dataset_bundle(
     addresses the bundle, which is the unit that is downloaded, and verifying it
     covers everything inside. Extraction then reuses the same safe-member and
     staleness logic as the in-repo path, so a re-migrated bundle still refreshes
-    its extracted frames rather than pinning the first extraction.
+    its extracted frames rather than pinning the first extraction — and here the
+    staleness key is the manifest **digest** rather than the in-repo path's
+    ``(size, mtime)`` guess, since a re-upload that happened to preserve both
+    would otherwise keep serving the previous extraction.
 
     Args:
         name: Manifest dataset key (e.g. ``"gsplats_zebrafish"``).
@@ -788,7 +791,12 @@ def load_dataset_bundle(
 
     # Lazy, like `_unshippable_reason`'s: data_fetch reads this module's cache
     # root, so a module-level import here would close the loop.
-    from .data_fetch import LocalComputeDataset, ensure_dataset
+    from .data_fetch import (
+        LocalComputeDataset,
+        dataset_spec,
+        ensure_dataset,
+        resolve_variant,
+    )
 
     ctx = asection(f"Loading GSplats bundle ({name})") if verbose else nullcontext()
     with ctx:
@@ -811,6 +819,13 @@ def load_dataset_bundle(
                 f"it lists {sorted(by_name)}"
             )
         bundle_path = by_name[bundle_name]
+        # The digest ensure_dataset just verified is the exact staleness key for
+        # the extracted frames. None when the manifest entry carries no sha256
+        # (a pending-upload row), which falls back to the (size, mtime) stamp.
+        files, _ = resolve_variant(name, dataset_spec(name, manifest), None)
+        sha = next(
+            (e.get("sha256") for e in files if e.get("name") == bundle_name), None
+        )
         # ensure_dataset already verified the sha256, so an LFS-pointer check
         # would be checking the wrong thing about an already-trusted file.
         return _extract_bundle_and_load(
@@ -819,6 +834,8 @@ def load_dataset_bundle(
             bundle_path.parent,
             file_names,
             validate_lfs=False,
+            stamp=f"sha256:{sha}" if sha else None,
+            verbose=verbose,
         )
 
 
@@ -844,8 +861,9 @@ def _frames_needing_extraction(
     """Which of *file_names* must be (re-)extracted from the bundle.
 
     Re-extract when a frame is simply absent OR when the bundle source changed
-    (e.g. a v2.0 -> v3.0 re-migration). Keying the stamp on the bundle's
-    (size, mtime) makes the extracted cache self-healing instead of pinning the
+    (e.g. a v2.0 -> v3.0 re-migration). Keying the stamp on the bundle's identity
+    (its manifest digest, or failing that its (size, mtime)) makes the extracted
+    cache self-healing instead of pinning the
     first-seen extraction — otherwise demos keep loading stale frames that fail
     against the v3.0-only reader.
     """
@@ -891,6 +909,8 @@ def _extract_bundle_and_load(
     file_names: list[str],
     *,
     validate_lfs: bool,
+    stamp: Optional[str] = None,
+    verbose: bool = True,
 ) -> list:
     """Extract the requested members of *bundle_path* into *cache_dir* and load them.
 
@@ -898,13 +918,17 @@ def _extract_bundle_and_load(
     is security-sensitive (an archive may name ``../``) and the staleness stamp is
     what stops a re-migrated bundle serving stale frames, so both paths must use
     the same copy rather than a lookalike.
+
+    *stamp* overrides the staleness key. The manifest-driven caller passes the
+    verified sha256, which identifies the bundle exactly; without one the key
+    falls back to the bundle's ``(size, mtime)``.
     """
     from ..gsplats.gsplat_data import GSplatData
 
     cache_dir.mkdir(parents=True, exist_ok=True)
 
     stamp_file = cache_dir / f".{bundle_name}.stamp"
-    bundle_stamp = _bundle_stamp(bundle_path)
+    bundle_stamp = stamp if stamp is not None else _bundle_stamp(bundle_path)
     missing = _frames_needing_extraction(
         bundle_stamp, stamp_file, cache_dir, file_names
     )
@@ -912,7 +936,8 @@ def _extract_bundle_and_load(
     if missing:
         if validate_lfs:
             _validate_lfs_files([bundle_path])
-        aprint(f"Extracting {len(missing)} files from {bundle_name}")
+        if verbose:
+            aprint(f"Extracting {len(missing)} files from {bundle_name}")
         with zipfile.ZipFile(bundle_path, "r") as zf:
             safe_members = [m for m in zf.namelist() if not zf.getinfo(m).is_dir()]
             for fname in missing:
@@ -923,14 +948,15 @@ def _extract_bundle_and_load(
                     zf, member, cache_dir, target_name=requested_path.as_posix()
                 )
         # Record the bundle stamp so a later run with the SAME bundle skips
-        # re-extraction, but a re-migrated bundle (new size/mtime) refreshes.
+        # re-extraction, but a re-migrated bundle (new digest) refreshes.
         if bundle_stamp:
             stamp_file.write_text(bundle_stamp)
 
     results = []
     for fname in file_names:
         gsplats = GSplatData.load(cache_dir / fname, include_stats=False)
-        aprint(f"Loaded {fname}: {len(gsplats.amplitudes):,} splats")
+        if verbose:
+            aprint(f"Loaded {fname}: {len(gsplats.amplitudes):,} splats")
         results.append(gsplats)
 
     return results

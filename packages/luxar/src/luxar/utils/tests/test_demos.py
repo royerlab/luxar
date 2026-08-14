@@ -719,6 +719,51 @@ class TestExtractBundleAndLoad:
         )
         assert out == [b"v2-longer-payload"]
 
+    def test_an_explicit_stamp_sees_a_swap_that_size_and_mtime_cannot(
+        self, tmp_path, monkeypatch
+    ):
+        """The manifest-driven path keys staleness on the verified digest.
+
+        A replacement bundle of the same byte length, written back with the
+        previous mtime, is indistinguishable to the ``(size, mtime)`` fallback —
+        it would keep serving the earlier extraction. The digest the manifest
+        already carries settles it exactly.
+        """
+        import os
+
+        from luxar.utils import demos as du
+
+        self._load_stub(monkeypatch)
+
+        def _swap_in_place(path: Path, payload: bytes) -> None:
+            """Rewrite the bundle with an equal-length payload, mtime restored."""
+            before = path.stat()
+            self._bundle(path, {"f0.zip": payload})
+            assert path.stat().st_size == before.st_size
+            os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
+
+        # Control: with the (size, mtime) key the swap is invisible.
+        ctl, ctl_cache = tmp_path / "ctl.zip", tmp_path / "ctl-cache"
+        self._bundle(ctl, {"f0.zip": b"v1"})
+        du._extract_bundle_and_load(
+            ctl, "ctl.zip", ctl_cache, ["f0.zip"], validate_lfs=False
+        )
+        _swap_in_place(ctl, b"v2")
+        assert du._extract_bundle_and_load(
+            ctl, "ctl.zip", ctl_cache, ["f0.zip"], validate_lfs=False
+        ) == [b"v1"]
+
+        # With the digest it is not.
+        b, cache = tmp_path / "b.zip", tmp_path / "cache"
+        self._bundle(b, {"f0.zip": b"v1"})
+        du._extract_bundle_and_load(
+            b, "b.zip", cache, ["f0.zip"], validate_lfs=False, stamp="sha256:aaa"
+        )
+        _swap_in_place(b, b"v2")
+        assert du._extract_bundle_and_load(
+            b, "b.zip", cache, ["f0.zip"], validate_lfs=False, stamp="sha256:bbb"
+        ) == [b"v2"]
+
     def test_a_member_absent_from_the_bundle_raises(self, tmp_path, monkeypatch):
         from luxar.utils import demos as du
 

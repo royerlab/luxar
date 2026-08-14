@@ -26,6 +26,7 @@ so they keep the in-repo loader until their bucket changes.
 from __future__ import annotations
 
 import ast
+import importlib
 import json
 from pathlib import Path
 
@@ -99,6 +100,35 @@ def test_hosted_datasets_are_fetched_through_the_manifest(path: Path) -> None:
             )
 
 
+@pytest.mark.parametrize("path", DEMO_PATHS, ids=lambda p: p.stem)
+def test_manifest_driven_loaders_only_name_hosted_datasets(path: Path) -> None:
+    """The other direction, which fails silently rather than loudly.
+
+    A manifest-driven loader returns ``None`` for a ``local-compute`` dataset by
+    design, and every caller reads that as "build it yourself" — so pointing one
+    at a non-hosted dataset does not raise, it quietly sends the demo into a
+    from-scratch GPU refit while the file sits unread in ``demos/data/``.
+    """
+    ds = _manifest()
+    for helper, names in _fetch_calls(path).items():
+        if helper not in MANIFEST_DRIVEN:
+            continue
+        for name in names:
+            if name == "<unresolved>":
+                continue
+            spec = ds.get(name)
+            assert spec is not None, (
+                f"{path.name}: {helper}({name!r}) names no manifest dataset"
+            )
+            assert spec["bucket"] == "zenodo", (
+                f"{path.name}: {name!r} is a {spec['bucket']!r} dataset but is "
+                f"loaded via {helper}, which returns None for anything not "
+                f"hosted — the demo would refit from scratch instead of loading "
+                f"the in-repo file. Use load_precomputed_gsplats / "
+                f"load_precomputed_bundle until its bucket changes."
+            )
+
+
 def test_the_exception_list_is_exactly_the_local_compute_datasets() -> None:
     """Spell out who is still on the in-repo loader, so the set cannot grow quietly.
 
@@ -125,3 +155,41 @@ def test_the_exception_list_is_exactly_the_local_compute_datasets() -> None:
             f"{name} is no longer local-compute — migrate its demos to "
             f"load_dataset_gsplats and drop them from this list"
         )
+
+
+def test_ct_atlas_reaches_the_manifest_on_a_cold_cache(tmp_path, monkeypatch) -> None:
+    """A cold cache is exactly when the fetch is needed, so it must not gate it.
+
+    ``ct_totalsegmentator`` is the one migrated demo whose loader sits next to a
+    cache-existence check, and hanging the call off that check would make the
+    cache -> in-repo -> Zenodo path reachable only for someone who had already
+    obtained the data by other means. The dataset lists its labels sidecar as a
+    manifest file, so resolving the fit brings the labels down with it.
+    """
+    demo = importlib.import_module("luxar.demos.demo_gsplats_3d_ct_totalsegmentator")
+    labels = tmp_path / "ct_atlas_labels.npz"
+    calls: list[tuple] = []
+
+    def _fake_fetch(*args, **kwargs):
+        calls.append(args)
+        labels.write_bytes(b"the sidecar rides along")  # what ensure_dataset does
+        return ["the fit"]
+
+    monkeypatch.setattr(demo, "RECOMPUTE", False)
+    monkeypatch.setattr(demo, "CACHE_FIT", tmp_path / "absent.gsplats.zarr.zip")
+    monkeypatch.setattr(demo, "CACHE_LABELS", labels)
+    monkeypatch.setattr(demo, "LFS_FIT", tmp_path / "absent-lfs.gsplats.zarr.zip")
+    monkeypatch.setattr(demo, "LFS_LABELS", tmp_path / "absent-lfs.npz")
+    monkeypatch.setattr(demo, "load_dataset_gsplats", _fake_fetch)
+    monkeypatch.setattr(demo, "_load_labels", lambda p: p.read_bytes())
+
+    def _refit_is_a_failure():
+        raise AssertionError("fell through to the download-and-refit path")
+
+    monkeypatch.setattr(demo, "load_ct_and_labels", _refit_is_a_failure)
+
+    fit, got_labels = demo.load_or_build()
+
+    assert calls, "the manifest fetch was never reached on a cold cache"
+    assert fit == "the fit"
+    assert got_labels == b"the sidecar rides along"

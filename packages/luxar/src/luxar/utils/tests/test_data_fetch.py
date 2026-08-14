@@ -980,12 +980,13 @@ def test_load_dataset_bundle_verifies_the_outer_zip_then_extracts(
         },
     }
     monkeypatch.setattr(data_fetch, "_DEMOS_DATA_DIR", tmp_path / "repo")
-    loaded: list[Path] = []
-    monkeypatch.setattr(
-        demos_utils,
-        "_extract_bundle_and_load",
-        lambda bp, bn, cd, fn, *, validate_lfs: (loaded.append(bp), list(fn))[1],
-    )
+    loaded: list[tuple[Path, dict]] = []
+
+    def _spy(bp, bn, cd, fn, **kwargs):
+        loaded.append((bp, kwargs))
+        return list(fn)
+
+    monkeypatch.setattr(demos_utils, "_extract_bundle_and_load", _spy)
 
     out = demos_utils.load_dataset_bundle(
         "bundle_ds",
@@ -998,8 +999,11 @@ def test_load_dataset_bundle_verifies_the_outer_zip_then_extracts(
     assert out == list(inner)
     # Resolved through ensure_dataset, so it is the verified CACHE copy that gets
     # extracted, not the working-tree file.
-    assert loaded and loaded[0].parent == tmp_path / "cache" / "bundle_ds"
-    assert loaded[0].read_bytes() == bundle.read_bytes()
+    assert loaded and loaded[0][0].parent == tmp_path / "cache" / "bundle_ds"
+    assert loaded[0][0].read_bytes() == bundle.read_bytes()
+    # The extracted frames are keyed on the digest that was just verified, not on
+    # a (size, mtime) guess a same-size re-upload could reproduce.
+    assert loaded[0][1]["stamp"] == f"sha256:{sha}"
 
 
 def test_load_dataset_bundle_rejects_a_bundle_that_is_not_a_manifest_file(

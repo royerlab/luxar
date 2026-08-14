@@ -19,7 +19,9 @@ bundle, which is the unit that gets downloaded and therefore the thing worth
 checksumming, then reuses the existing extraction path rather than growing a second
 copy of it — that logic has to reject archive members that name `../` and has to
 re-extract when the bundle itself changes, and neither property survives being
-reimplemented alongside.
+reimplemented alongside. On the manifest-driven path the "has it changed" question
+is answered with the sha256 that was just verified rather than the in-repo path's
+`(size, mtime)` guess, so a re-upload cannot leave stale frames extracted behind it.
 
 Six demos deliberately stay on the in-repo loader: `gsplats_tribolium`,
 `gsplats_acto3d_heart` and `gsplats_tng_cosmic_web` are `local-compute`, so the
