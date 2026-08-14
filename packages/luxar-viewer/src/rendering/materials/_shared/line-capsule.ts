@@ -52,11 +52,14 @@
  * radius gradient + projected length and the shared-vertex radius
  * (the packed `vPack.z` lane, unpacked as `pkR`, #1494), with the far cap
  * closing the rod (#1490); the stencil reserves the full disc when a
- * packet exists, the deficit being bounded by my own profile (#1488).
- * The partner's far endpoint is
+ * packet exists, the deficit being bounded by my own profile, so a
+ * half-disc reach there would leave the rasterizer chopping the very light
+ * the deficit rule adds back (#1488). The partner's far endpoint is
  * near-plane-clipped toward the joint vertex before projecting (a
  * behind-eye projection flips and poisons the cut normal). A CPU model of
- * this composition lives at the bottom of this file; the unit sweep
+ * this composition — the joint-end STENCIL REACH included, since a
+ * shortfall there is invisible to a model that evaluates the profile
+ * everywhere — lives at the bottom of this file; the unit sweep
  * asserts the rendered pair tracks max(mine, partner).
  *
  * @module rendering/materials/_shared/line-capsule
@@ -165,14 +168,17 @@ export function capsuleProfile(p: number, sharpKnob = 0.5): number {
  * CPU reference of the JOINT COMPOSITION — mirrors the fragment
  * shaders' joint math exactly (vR's whole-stencil interpolation, the
  * 1 px AA ramp, the deficit rule with the packed gradient/length and
- * the shared-vertex radius). Exists for the numeric composition test:
+ * the shared-vertex radius) AND the vertex stage's joint-end stencil reach,
+ * which bounds where any of it can run. Exists for the numeric composition test:
  * the two legs' rendered sum must track max(mine, partner) — the three
  * #1487-review defects (#1494/#1488/#1490) were all visible to this
- * sweep. #1494 now also has a source lock over the four shader surfaces
- * (`tests/unit/rendering/materials/line/capsule-partner-radius.test.ts`),
- * which this model cannot provide: it binds only itself. #1488/#1490 have
- * no comparable cross-surface lock (#1488 has a single GLSL-only reach pin
- * in `line-capsule.test.ts` itself), so for them this sweep is it.
+ * sweep. All three now ALSO have source locks over the four shader surfaces,
+ * which this model cannot provide (it binds only itself): #1494 in
+ * `tests/unit/rendering/materials/line/capsule-partner-radius.test.ts`, #1490
+ * in `tests/unit/rendering/materials/line/capsule-joint-packet-source-lock.test.ts`,
+ * and #1488 over the packet branch of all four vertex surfaces, in
+ * `line-capsule.test.ts` itself. Those bind the shader TEXT; this sweep is
+ * still the only thing that binds any of the three by VALUE.
  *
  * `vFade` is modelled by HALF: its `widthScale` factor
  * (`capsuleLegWidthScale`) is carried, because a leg thinner than the AA
@@ -204,13 +210,16 @@ export function capsuleProfile(p: number, sharpKnob = 0.5): number {
  * The model clamps them to `CAPSULE_MIN_RADIUS_PX` for the profile geometry
  * and dims the leg by `capsuleLegWidthScale`, exactly as the vertex stage
  * does, so a sub-floor leg is a representable (floored, dimmed) leg rather
- * than an illegal one.
+ * than an illegal one. It mirrors the FLOOR of the shaders'
+ * `clamp(raw, MIN, uMaxLinePixelWidth)` only, never the ceiling: that is a
+ * uniform, so there is no value to fold in here — pass radii already inside
+ * whatever cap the scene uses, or the model reads wider than the shader draws.
  *
  * INVARIANT: the two legs of a pair must share `rJoint`. They meet at one
  * vertex whose width is one number, and the deficit rebuild reads MY
- * shared-vertex radius as the partner's starting radius (`vREnd`, #1494) — a
- * pair that disagrees there measures nonsense (−0.83 on a row that is
- * otherwise exact).
+ * shared-vertex radius as the partner's starting radius (the packed
+ * `vPack.z` lane, unpacked as `pkR`, #1494) — a pair that disagrees there
+ * measures nonsense (−0.83 on a row that is otherwise exact).
  */
 export interface CapsuleJointLeg {
   /** Unit direction from the joint vertex toward the leg's far end. */
@@ -280,15 +289,85 @@ export function capsuleLegField(leg: CapsuleJointLeg, px: number, py: number): n
 }
 
 /**
+ * Axial stencil reach beyond a CUT joint end, px — TWO of the vertex stage's
+ * four `ext` arms (`ny` = the cut normal's PERPENDICULAR component in the
+ * leg's own local frame).
+ *
+ * Without a packet the fragment renders only the kept half-disc, whose axial
+ * extent is |ny|·rMax — a genuinely cheaper stencil than a cap, which is the
+ * whole reason joints cost less fill than free ends. With one, the deficit
+ * term reaches wherever MY OWN profile does (it renders max(mine − partner,
+ * 0) ≤ mine), so the end must reserve the FULL disc or the rasterizer chops
+ * the light the deficit rule draws (#1488). Both carry the AA apron.
+ *
+ * `rMax` is the vertex stage's OWN `rMax` — `max(rA, rB) + apron`, the same
+ * value the width gate compares and the quad's half-width uses — so both arms
+ * add the apron a second time, exactly as the four `ext` writes do
+ * (`extA = rMax + APRON` / `abs(nLoc.y) * rMax + APRON`). Passing the bare
+ * drawn radius instead would make this model reserve 0.5 px LESS than the
+ * shader: faithful-looking, and quietly able to chop what the shader draws.
+ *
+ * The two arms it does NOT model: the bare-apron BUTT an interior end keeps
+ * when there is no partner-far texel, the joint vertex is behind the near
+ * plane, the projected partner length degenerates (the shaders' `ql > 1e-4`
+ * guard, `shader-glsl-capsule.ts` — this model divides by that length
+ * instead: a tiny-but-finite one is modelled as an extreme taper rather than
+ * a butt, and a ZERO one goes non-finite WHERE THE PACKET IS LIVE, which the
+ * sweep throws on rather than scoring as a vacuous 0 — gated off, the gradient
+ * is never read and the row scores finitely), or `nLoc.x` fails its sign test;
+ * and the free-end/hairpin `rMax`, which the model hardcodes at its own call
+ * sites and so cannot be reached through an injected rule. The first two of
+ * those are unproducible here (the model has no texels and no near plane), but
+ * the `nLoc.x` one merely goes unexercised: with θ the angle between q̂ and m̂,
+ * `nl = 2|sin(θ/2)|` and `nLoc.x = −|sin(θ/2)|`, so the window
+ * `nl > 1e-3 ∧ nLoc.x > −1e-3` holds for θ in (0.057°, 0.115°) — a sliver just
+ * above the hairpin fallback, which `leg(180, …)` vs `leg(180.08, …)` would
+ * enter. No row in the sweep does.
+ */
+export function capsuleJointStencilReach(rMax: number, ny: number, hasPacket: boolean): number {
+  return (hasPacket ? rMax : Math.abs(ny) * rMax) + CAPSULE_STENCIL_APRON_PX;
+}
+
+/**
+ * A joint-end reach rule, injectable purely so a test can substitute a WRONG
+ * one. Under the shipped rule the clip is exactly inert — every sweep row
+ * measures identically with and without it — so deleting the clip leaves the
+ * suite green and the line reads as dead code to the next reader. The
+ * negative control (`line-capsule.test.ts`) feeds the pre-#1488 half-disc
+ * rule through here and asserts the sweep CHOPS, which is what makes the
+ * clip's presence observable.
+ *
+ * Exported deliberately, despite having one in-repo caller: the docstrings
+ * above `{@link}` it, and a link to a non-exported symbol trips the TypeDoc
+ * warning ratchet (86/86 with the export). Do not un-export it as cleanup.
+ */
+export type CapsuleJointReachRule = (rMax: number, ny: number, hasPacket: boolean) => number;
+
+/**
  * One leg's RENDERED contribution at a point, joint machinery and the
  * `widthScale` dimming included — the mirror of the fragment shader (default
- * sharpness knob, `fade` omitted; see the block comment above).
+ * sharpness knob, `fade` omitted; see the block comment above), CLIPPED to the
+ * stencil the vertex stage builds for it. The clip is not decoration: a
+ * fragment outside the stencil is never rasterized, so a reach shortfall
+ * chops the profile to zero instead of dimming it, and a model that
+ * evaluated the profile over the whole plane would be structurally blind to
+ * the entire #1488 defect class.
+ *
+ * That load-bearing part is the JOINT-END reach, and only it — the arm the
+ * negative control exercises. The other two clips here, the perpendicular /
+ * free-far-end box and the hairpin fallback's `rMax`, mirror the vertex stage
+ * for completeness and are provably non-binding while the shipped reaches
+ * hold (`profile > 0` already implies a point inside both). Deleting either
+ * leaves the suite green, by construction rather than by oversight.
+ *
+ * @param reach - the joint-end reach rule; see {@link CapsuleJointReachRule}.
  */
 export function capsuleJointRenderLeg(
   leg: CapsuleJointLeg,
   partner: CapsuleJointLeg,
   px: number,
-  py: number
+  py: number,
+  reach: CapsuleJointReachRule = capsuleJointStencilReach
 ): number {
   const [x, y] = legLocal(leg, px, py);
   let profile = capsuleLegField(leg, px, py);
@@ -297,11 +376,27 @@ export function capsuleJointRenderLeg(
   // included — while the deficit cancels the partner's UNSCALED profile.
   const ws = capsuleLegWidthScale(leg, x);
 
+  // DRAWN radii from here on — every radius the vertex stage feeds the joint
+  // (rA, rB, rpFar) is the clamped one.
+  const rJoint = Math.max(leg.rJoint, CAPSULE_MIN_RADIUS_PX);
+  const rFar = Math.max(leg.rFar, CAPSULE_MIN_RADIUS_PX);
+  const rpFar = Math.max(partner.rFar, CAPSULE_MIN_RADIUS_PX);
+
+  // Stencil, in the leg's own frame (x from the joint end at 0 toward the
+  // far end at `length`). Its half-width and its FREE far end are known
+  // before the cut normal is; the joint end's reach needs `ny` and the
+  // packet decision, so it is applied once those exist, below. The same
+  // `rMax` is what the width gate below compares against, as in the vertex
+  // stage — one definition, drawn radii plus the apron.
+  const rMax = Math.max(rJoint, rFar) + CAPSULE_STENCIL_APRON_PX;
+  if (Math.abs(y) > rMax || x > leg.length + rMax) return 0;
+
   // Cut normal: n ∝ q̂ − m̂ in MY local frame (m̂ = +x̂ at the joint end).
   const [qx, qy] = legLocal(leg, partner.dir[0], partner.dir[1]);
   const nRaw: [number, number] = [qx - 1, qy];
   const nl = Math.hypot(nRaw[0], nRaw[1]);
-  if (nl <= 1e-3) return profile * ws; // hairpin fallback: plain cap
+  // Hairpin fallback: plain cap, and with it the free end's full-disc reach.
+  if (nl <= 1e-3) return x < -rMax ? 0 : profile * ws;
   // No quantisation of the normal (#1502): each leg would snap in its
   // OWN (u, v) basis, so the rounding does not cancel — it injects
   // ~7e-4 rad of disagreement between two planes that must be exact
@@ -313,15 +408,9 @@ export function capsuleJointRenderLeg(
   const nx = nRaw[0] / nl;
   const ny = nRaw[1] / nl;
 
-  // DRAWN radii from here on — every radius the vertex stage feeds the joint
-  // (rA, rB, rpFar) is the clamped one.
-  const rJoint = Math.max(leg.rJoint, CAPSULE_MIN_RADIUS_PX);
-  const rFar = Math.max(leg.rFar, CAPSULE_MIN_RADIUS_PX);
-  const rpFar = Math.max(partner.rFar, CAPSULE_MIN_RADIUS_PX);
   // Width gate as the vertex stage applies it: the packet is skipped for a
   // hairline joint UNLESS the turn is sharp AND my own RAW radii both reach
   // the AA floor, so my widthScale is 1 (#1495) — see the constant.
-  const rMax = Math.max(rJoint, rFar) + CAPSULE_STENCIL_APRON_PX;
   const sharpTurn = qx > 0.5;
   const packetAllowed =
     rMax > CAPSULE_JOINT_PACKET_MIN_RADIUS_PX ||
@@ -336,13 +425,17 @@ export function capsuleJointRenderLeg(
   // −0.92 of peak without this clause. Each leg's gate stands alone (the
   // partner may be width-gated off), hence the own-widening clause too;
   // the row isolating THAT clause lives with the clause-coverage work, not
-  // in this file's sweep.
+  // in this file's sweep. The gate also decides the joint end's STENCIL: a
+  // packet-less end reserves only the kept half-disc, so modelling the
+  // clauses without `packetAllowed` would reserve a disc the shader never
+  // builds (#1488).
   const hasPacket =
     packetAllowed &&
     (Math.abs(1 - rpFar / Math.max(rJoint, 1e-4)) > CAPSULE_JOINT_DEFICIT_GATE ||
       rFar > rJoint * (1 + CAPSULE_JOINT_DEFICIT_GATE) ||
       partner.length < 2 * rJoint ||
       sharpTurn);
+  if (x < -reach(rMax, ny, hasPacket)) return 0;
   const g = (rpFar - rJoint) / partner.length;
 
   const side = nx * x + ny * y;
@@ -369,12 +462,16 @@ export function capsuleJointRenderLeg(
  * Sweep the joint neighbourhood and return the worst signed deviations of
  * (leg1 + leg2 rendered) − max(widthScale1·field1, widthScale2·field2), in
  * units of peak profile.
+ *
+ * @param reach - the joint-end reach rule handed to BOTH legs; see
+ * {@link CapsuleJointReachRule}.
  */
 export function capsuleJointCompositionError(
   leg1: CapsuleJointLeg,
   leg2: CapsuleJointLeg,
   extent?: number,
-  step = 0.5
+  step = 0.5,
+  reach: CapsuleJointReachRule = capsuleJointStencilReach
 ): { minErr: number; maxErr: number } {
   // The window must cover BOTH rods end to end: a hairpin cut splits a
   // rod lengthwise, so its damage can sit anywhere along the LONGER leg
@@ -390,7 +487,8 @@ export function capsuleJointCompositionError(
   for (let px = -ext; px <= ext; px += step) {
     for (let py = -ext; py <= ext; py += step) {
       const sum =
-        capsuleJointRenderLeg(leg1, leg2, px, py) + capsuleJointRenderLeg(leg2, leg1, px, py);
+        capsuleJointRenderLeg(leg1, leg2, px, py, reach) +
+        capsuleJointRenderLeg(leg2, leg1, px, py, reach);
       // The ideal each leg is dimmed toward: max over the pair of
       // widthScale·field (a sub-floor leg's own target is dimmed too).
       const ref = Math.max(
@@ -398,6 +496,24 @@ export function capsuleJointCompositionError(
         capsuleLegField(leg2, px, py) * capsuleLegWidthScale(leg2, legLocal(leg2, px, py)[0])
       );
       const err = sum - ref;
+      // NaN-FATAL, deliberately. Both comparisons below are FALSE for NaN, so a
+      // degenerate row — a ZERO (or overflow-small) `partner.length` makes the
+      // packet's radius gradient non-finite, and 671 fragments of one measured
+      // sweep NaN — would sail through as a PERFECT {0, 0} score, the one
+      // failure mode this sweep must never have, since its whole job is to be
+      // the detector. Fail loudly instead. (A tiny but FINITE length is not
+      // this case: it is modelled as an extreme taper, where the shaders would
+      // butt-cut at `ql <= 1e-4`. Nor is a degenerate leg whose PACKET is gated
+      // off — the gradient is never read there, so the row scores finitely. See
+      // `capsuleJointStencilReach`.)
+      if (!Number.isFinite(err)) {
+        throw new Error(
+          `capsuleJointCompositionError: non-finite error at (${px}, ${py}) — ` +
+            'a degenerate leg (zero projected partner length, where the shaders ' +
+            "take the bare-apron butt arm this model doesn't have) would " +
+            'otherwise score a vacuous perfect 0'
+        );
+      }
       if (err < minErr) minErr = err;
       if (err > maxErr) maxErr = err;
     }
