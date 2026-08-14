@@ -378,9 +378,10 @@ refraction injector in `glass-filters.ts` all read the same class.
   the load-bearing one: a badge that IS glassed (opt-in list above) and ramps
   `opacity` on its root anyway — drift (§15.4), not a member of this kind.
   These last two kinds take the liquid-glass
-  dark tint explicitly (`liquid-glass.css`), since without the glass `::after`
-  layer they would paint that theme's translucent-white `--luxar-bg-secondary`
-  under white text.
+  dark tint explicitly — `background: var(--luxar-glass-tint)` in
+  `liquid-glass.css`, never a hardcoded `rgba()` of their own (§15.6) — since
+  without the glass `::after` layer they would paint that theme's
+  translucent-white `--luxar-bg-secondary` under white text.
 - **Nested surfaces must de-glass**: a GUI mounted inside an already-glass
   rail popover removes the class (`rail-panels/popover-gui.ts`) — never
   double-glass.
@@ -1300,10 +1301,14 @@ migrated.
   itself, and every non-`.luxar-glass-surface` surface that would otherwise
   paint white text over too-light a background on a bright scene (currently
   the recording indicator, cursor-anchored context menus, control-rail
-  tooltips, and the control-rail first-run hint — all white-on-white over the
-  bare canvas — plus the recording confirmation dialog and the offline
-  capture overlay, which sit over the `--luxar-bg-overlay` scrim and so are
-  merely too-light rather than literally white-on-white). It stays a plain
+  tooltips, the control-rail first-run hint, and the toast (#1483) — all
+  white-on-white over the bare canvas — plus the recording confirmation
+  dialog and the offline capture overlay, which sit over the
+  `--luxar-bg-overlay` scrim and so are merely too-light rather than literally
+  white-on-white). A new member of that list spells
+  `var(--luxar-glass-tint)`, not a fresh `rgba()` literal: the old duplicated
+  `rgba(0, 0, 0, 0.55)` is 4.48:1 against `text-primary` over a white scene,
+  which is what #1513 was. It stays a plain
   stylesheet declaration rather
   than moving into `ThemeManager`'s `themeToCSSVariables()` because it is
   this one theme's CSS-layer implementation detail — a tint painted by a

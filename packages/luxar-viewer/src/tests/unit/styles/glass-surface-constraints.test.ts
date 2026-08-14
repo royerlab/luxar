@@ -125,11 +125,17 @@ describe('toast.css — §5.1.3 root fade is legal because the toast is not glas
 describe('liquid-glass.css — the un-glassed toast needs the dark tint', () => {
   const css = loadCss('themes/liquid-glass.css');
 
-  it('paints .luxar-toast a dark background under liquid-glass', () => {
+  it('paints .luxar-toast the shared glass tint under liquid-glass', () => {
     // Without the glass ::after tint, white text would land on this theme's
-    // translucent-WHITE --luxar-bg-secondary over a bright render.
+    // translucent-WHITE --luxar-bg-secondary over a bright render. It has to be
+    // `--luxar-glass-tint` specifically, not just any dark rgba(): that
+    // variable is the theme's single AA-verified contrast floor (0.68, pinned
+    // by tests/unit/themes/glass-contrast.test.ts). The literal every surface
+    // in this class used to carry, rgba(0, 0, 0, 0.55), composites to rgb(115)
+    // over a white scene and puts text-primary at 4.48:1 — under AA, and the
+    // exact drift #1513 introduced the variable to remove.
     const body = ruleBody(css, "[data-theme='liquid-glass'] .luxar-toast");
     expect(body).not.toBe('');
-    expect(body).toMatch(/background:\s*rgba\(\s*0\s*,\s*0\s*,\s*0\s*,/);
+    expect(body).toMatch(/background:\s*var\(--luxar-glass-tint\)/);
   });
 });
