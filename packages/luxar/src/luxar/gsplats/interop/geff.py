@@ -13,9 +13,10 @@ challenge ships its ground truth in. A GEFF store is a **zarr v3** group::
       edges/ids                     # (E, 2) (source_id, target_id) pairs
       edges/props/...
 
-This module reads that into a plain-NumPy :class:`TrackingGraph` — no zarr 3, no
-``geff`` package, no ``networkx``. Luxar pins ``zarr>=2.16,<3.0``, so the read
-goes through :mod:`luxar.io.zarr_v3`.
+This module reads that into a plain-NumPy :class:`TrackingGraph` — no ``geff``
+package, no ``networkx``, just the ``zarr`` Luxar already depends on (v3 support
+is why the project moved to ``zarr>=3.2``; 2.18 could not open such a store at
+all).
 
 Beyond reading, :class:`TrackingGraph` does the graph work a visualisation
 actually needs: physical-unit positions, connected-component **lineage ids** for
@@ -194,22 +195,30 @@ def read_geff(path: Union[str, Path]) -> TrackingGraph:
         If the store is not a GEFF group, or lacks the ``t``/``z``/``y``/``x``
         node properties this reader needs.
     """
-    from luxar.io.zarr_v3 import Zarr3Group, open_zarr_v3
+    import zarr
 
     root = Path(path)
-    group = open_zarr_v3(root)
-    if not isinstance(group, Zarr3Group):
-        raise ValueError(f"{root} is a zarr array, not a GEFF group.")
+    try:
+        group = zarr.open_group(str(root), mode="r")
+    except Exception as exc:  # noqa: BLE001 - zarr raises several types here
+        raise ValueError(f"{root} is not a readable zarr group: {exc}") from exc
 
-    meta = group.attrs.get("geff")
+    meta = dict(group.attrs).get("geff")
     if meta is None:
         raise ValueError(
             f"{root} has no 'geff' attribute — not a GEFF store. "
-            f"Attributes present: {sorted(group.attrs)}"
+            f"Attributes present: {sorted(dict(group.attrs))}"
         )
 
+    def _has(path_in_store: str) -> bool:
+        try:
+            group[path_in_store]
+        except KeyError:
+            return False
+        return True
+
     missing = [
-        name for name in ("t",) + _SPATIAL if f"nodes/props/{name}/values" not in group
+        name for name in ("t",) + _SPATIAL if not _has(f"nodes/props/{name}/values")
     ]
     if missing:
         raise ValueError(
@@ -224,7 +233,7 @@ def read_geff(path: Union[str, Path]) -> TrackingGraph:
 
     edges = (
         np.asarray(group["edges/ids"]).reshape(-1, 2)
-        if "edges/ids" in group
+        if _has("edges/ids")
         else np.zeros((0, 2), dtype=node_ids.dtype)
     )
 

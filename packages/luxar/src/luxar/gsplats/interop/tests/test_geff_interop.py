@@ -1,7 +1,7 @@
 """Tests for the GEFF (cell-lineage graph) reader.
 
-Fixtures write GEFF stores by hand, on top of the zarr-v3 writers in the io test
-suite, because the installed zarr is pinned below 3 and cannot emit a v3 store.
+Fixtures write real zarr **v3** stores with zarr itself — a GEFF store is v3, and
+reading one is a large part of why Luxar moved to ``zarr>=3.2``.
 """
 
 from __future__ import annotations
@@ -12,9 +12,35 @@ from typing import Optional, Sequence
 
 import numpy as np
 import pytest
+import zarr
 
 from luxar.gsplats.interop.geff import TrackingGraph, read_geff
-from luxar.io.tests.test_zarr_v3 import write_v3_array, write_v3_group
+
+
+def write_v3_group(path: Path, attributes: Optional[dict] = None) -> Path:
+    """Create a zarr v3 group with attributes; return its PATH.
+
+    Returning the path (not the ``Group``) keeps the fixtures composing store
+    locations with ``/``, which is how a GEFF tree is spelled.
+    """
+    group = zarr.create_group(store=str(path), overwrite=True, zarr_format=3)
+    for key, value in (attributes or {}).items():
+        group.attrs[key] = value
+    return path
+
+
+def write_v3_array(path: Path, data: np.ndarray, chunks) -> Path:
+    """Create a zarr v3 array holding ``data``."""
+    arr = zarr.create_array(
+        store=str(path),
+        shape=data.shape,
+        dtype=data.dtype,
+        chunks=tuple(chunks),
+        overwrite=True,
+        zarr_format=3,
+    )
+    arr[...] = data
+    return path
 
 
 def write_geff(
@@ -280,8 +306,14 @@ def test_missing_coordinate_property_is_rejected(tmp_path: Path) -> None:
 
 
 def test_pointing_at_an_array_is_rejected(tmp_path: Path) -> None:
+    """An array where a GEFF group belongs must fail clearly, not half-read.
+
+    Matched on "not a readable zarr group" rather than zarr's own wording, which
+    is an implementation detail of the version installed ("An array already
+    exists in store ..." on zarr 3).
+    """
     array = write_v3_array(tmp_path / "a", np.zeros((2,), np.uint8), (2,))
-    with pytest.raises(ValueError, match="not a GEFF group"):
+    with pytest.raises(ValueError, match="not a readable zarr group"):
         read_geff(array)
 
 

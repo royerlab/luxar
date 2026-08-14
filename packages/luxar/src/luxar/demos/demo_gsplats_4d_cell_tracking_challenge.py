@@ -595,9 +595,9 @@ def _device() -> str:
 
 def voxel_size_of(image_store: Path) -> tuple[float, float, float]:
     """Read the crop's ZYX voxel size (um) from its OME-Zarr metadata."""
-    from luxar.io.zarr_v3 import open_zarr_v3
+    import zarr
 
-    group = open_zarr_v3(image_store)
+    group = zarr.open_group(str(image_store), mode="r")
     scale = group.attrs["multiscales"][0]["datasets"][0]["coordinateTransformations"][
         0
     ]["scale"]
@@ -641,7 +641,7 @@ def fit_timelapse(
     each fit small and independently cacheable, and is what lets the timepoints be
     stacked afterwards with time as a hard coarsening barrier.
     """
-    from luxar.io.zarr_v3 import open_zarr_v3
+    import zarr
 
     will_fit = needs_fitting(dataset, n_timepoints)
     voxel = voxel_size_of(image_store)
@@ -656,7 +656,7 @@ def fit_timelapse(
 
     # The image array is only opened when a fit will actually read pixels from it —
     # a warm cache must not need the chunks on disk at all.
-    arr = open_zarr_v3(image_store)["0"] if will_fit else None
+    arr = zarr.open_group(str(image_store), mode="r")["0"] if will_fit else None
     if will_fit:
         require_module("torch", pip_name="luxar[gsplats]")
         warn_if_no_cuda_gpu()
@@ -717,9 +717,9 @@ def crop_centre_um(image_store: Path) -> np.ndarray:
     than on each crop's own amplitude-weighted centroid — makes all nine tiles
     occupy identical boxes and the 3x3 grid line up exactly.
     """
-    from luxar.io.zarr_v3 import open_zarr_v3
+    import zarr
 
-    arr = open_zarr_v3(image_store)["0"]
+    arr = zarr.open_group(str(image_store), mode="r")["0"]
     voxel = np.asarray(voxel_size_of(image_store), dtype=np.float64)
     return 0.5 * voxel * np.asarray(arr.shape[1:], dtype=np.float64)
 

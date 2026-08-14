@@ -130,8 +130,8 @@ truth in. A GEFF store is a **zarr v3** group:
 ```
 
 `geff.py` reads that into a plain-NumPy `TrackingGraph` — no `zarr` 3, no `geff`
-package, no `networkx` (the read goes through `luxar.io.zarr_v3`, since the
-project pins `zarr<3`).
+package, no `networkx` — just the `zarr` Luxar already depends on (reading a
+store like this is a large part of why the project moved to `zarr>=3.2`).
 
 | Function / method | Description |
 |---|---|
