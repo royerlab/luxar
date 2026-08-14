@@ -224,4 +224,4 @@ Internal:
 External:
 - `numpy`: Array type definitions
 - `typing`/`typing_extensions`: Type system features
-- Python 3.10+ compatibility layer
+- Python 3.12+ compatibility layer

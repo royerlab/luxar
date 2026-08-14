@@ -43,9 +43,12 @@ def _iter_arrays(group: zarr.Group, prefix: str = "") -> list[str]:
     for key in sorted(group.keys()):
         path = f"{prefix}/{key}" if prefix else key
         item = group[key]
-        if isinstance(item, zarr.core.Array):
+        # `zarr.Array` / `zarr.Group`, not `zarr.core.Array` / `zarr.hierarchy.Group`:
+        # zarr 3 removed `zarr.hierarchy` entirely and repurposed `zarr.core`, so the
+        # old spellings raise AttributeError. The top-level names work in both.
+        if isinstance(item, zarr.Array):
             paths.append(path)
-        elif isinstance(item, zarr.hierarchy.Group):
+        elif isinstance(item, zarr.Group):
             paths.extend(_iter_arrays(item, path))
     return paths
 

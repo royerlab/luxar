@@ -19,6 +19,7 @@ from typer.testing import CliRunner
 if TYPE_CHECKING:
     from luxar.gsplats.gsplat_data import GSplatData
 
+from luxar._zarr_compat import create_array
 from luxar.cli import app
 from luxar.cli.gsplat_config import (
     PRESETS,
@@ -297,7 +298,7 @@ class TestLoadVolume:
         vol = np.random.rand(2, 3, 4, 4, 4).astype(np.float32)
         path = tmp_path / "test.luxar.zarr"
         root = zarr.open_group(str(path), mode="w")
-        root.create_dataset("0", data=vol)
+        create_array(root, "0", data=vol)
         loaded = load_volume(path, channel=1, timepoint=0)
         assert loaded.shape == (4, 4, 4)
 
@@ -329,8 +330,8 @@ class TestLoadVolume:
         vol = np.random.rand(4, 4, 4).astype(np.float32)
         path = tmp_path / "test.luxar.zarr"
         root = zarr.open_group(str(path), mode="w")
-        root.create_dataset("my_volume", data=vol)
-        root.create_dataset("other_data", data=np.zeros(10))
+        create_array(root, "my_volume", data=vol)
+        create_array(root, "other_data", data=np.zeros(10))
         loaded = load_volume(path, array_key="my_volume")
         assert loaded.shape == (4, 4, 4)
 
@@ -6051,7 +6052,7 @@ class TestMigrateFormatCommand:
         import numpy as np
         import zarr
 
-        store = zarr.DirectoryStore(str(path))
+        store = zarr.storage.LocalStore(str(path))
         root = zarr.group(store=store, overwrite=True)
         root.attrs.update(
             {
@@ -6073,19 +6074,19 @@ class TestMigrateFormatCommand:
             }
         )
         rng = np.random.default_rng(0)
-        splats.create_dataset(
-            "centers", data=(rng.random((n, 3)) * 10).astype("float32")
+        create_array(
+            splats, "centers", data=(rng.random((n, 3)) * 10).astype("float32")
         )
-        splats.create_dataset("amplitudes", data=rng.random(n).astype("float32"))
-        splats.create_dataset("cholesky_factors", data=self._identity_chol(n))
-        splats.create_dataset("chunk_bounds", data=np.zeros((1, 3, 2), dtype="float32"))
+        create_array(splats, "amplitudes", data=rng.random(n).astype("float32"))
+        create_array(splats, "cholesky_factors", data=self._identity_chol(n))
+        create_array(splats, "chunk_bounds", data=np.zeros((1, 3, 2), dtype="float32"))
         zarr.consolidate_metadata(store)
 
     def _make_v1_1(self, path: Path, lod_sizes=(6, 3)) -> None:
         import numpy as np
         import zarr
 
-        store = zarr.DirectoryStore(str(path))
+        store = zarr.storage.LocalStore(str(path))
         root = zarr.group(store=store, overwrite=True)
         root.attrs.update(
             {
@@ -6108,14 +6109,12 @@ class TestMigrateFormatCommand:
         for i, n in enumerate(lod_sizes):
             lod = splats.create_group(f"lod_{i}")
             lod.attrs.update({"n_splats": n, "ndim": 3, "ordering": "none"})
-            lod.create_dataset(
-                "centers", data=(rng.random((n, 3)) * 10).astype("float32")
+            create_array(
+                lod, "centers", data=(rng.random((n, 3)) * 10).astype("float32")
             )
-            lod.create_dataset("amplitudes", data=rng.random(n).astype("float32"))
-            lod.create_dataset("cholesky_factors", data=self._identity_chol(n))
-            lod.create_dataset(
-                "chunk_bounds", data=np.zeros((1, 3, 2), dtype="float32")
-            )
+            create_array(lod, "amplitudes", data=rng.random(n).astype("float32"))
+            create_array(lod, "cholesky_factors", data=self._identity_chol(n))
+            create_array(lod, "chunk_bounds", data=np.zeros((1, 3, 2), dtype="float32"))
         zarr.consolidate_metadata(store)
 
     def _make_sub_dir(self, dir_path: Path, level_sizes=(16, 4, 1)) -> None:

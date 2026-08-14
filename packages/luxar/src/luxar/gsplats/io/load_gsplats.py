@@ -6,8 +6,7 @@ import shutil
 from pathlib import Path
 from typing import Any, Dict
 
-import zarr
-
+from luxar._zarr_compat import open_group as zc_open_group
 from luxar.gsplats import GSplatData
 from luxar.gsplats.io._archive import extract_compressed_zarr
 
@@ -129,7 +128,7 @@ def load_gsplat_node(
 
     try:
         # Open zarr store
-        root = zarr.open_group(str(zarr_path), mode="r")
+        root = zc_open_group(str(zarr_path), mode="r")
 
         # Validate format
         format_type = root.attrs.get("format_type")

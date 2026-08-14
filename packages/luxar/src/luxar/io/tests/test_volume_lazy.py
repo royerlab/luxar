@@ -14,6 +14,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from luxar._zarr_compat import create_array
 from luxar.io.volume import (
     load_volume,
     open_volume_lazy,
@@ -55,8 +56,8 @@ class TestOpenVolumeLazy:
         path = tmp_path / "ome.zarr"
         root = zarr.open_group(str(path), mode="w")
         full = np.arange(8 * 8 * 8, dtype=np.uint16).reshape(8, 8, 8)
-        root.create_dataset("0", data=full)
-        root.create_dataset("1", data=full[::2, ::2, ::2])
+        create_array(root, "0", data=full)
+        create_array(root, "1", data=full[::2, ::2, ::2])
 
         node = open_volume_lazy(path)
         assert tuple(node.shape) == (8, 8, 8)
@@ -70,8 +71,8 @@ class TestOpenVolumeLazy:
         path = tmp_path / "nested.zarr"
         root = zarr.open_group(str(path), mode="w")
         big = np.zeros((4, 5, 6), dtype=np.uint16)
-        root.create_group("h2afva").create_dataset("fused", data=big)
-        root.create_dataset("thumb", data=np.zeros((2, 2, 2), np.uint16))
+        create_array(root.create_group("h2afva"), "fused", data=big)
+        create_array(root, "thumb", data=np.zeros((2, 2, 2), np.uint16))
 
         assert tuple(open_volume_lazy(path).shape) == (4, 5, 6)
         # An explicit key still wins over the heuristic.
@@ -81,8 +82,10 @@ class TestOpenVolumeLazy:
         import zarr
 
         path = tmp_path / "g.zarr"
-        zarr.open_group(str(path), mode="w").create_dataset(
-            "a", data=np.zeros((2, 2, 2), np.uint16)
+        create_array(
+            zarr.open_group(str(path), mode="w"),
+            "a",
+            data=np.zeros((2, 2, 2), np.uint16),
         )
         with pytest.raises(ValueError, match="nope"):
             open_volume_lazy(path, "nope")

@@ -16,6 +16,7 @@ import typer
 import zarr
 from arbol import aprint
 
+from .._zarr_compat import open_group as zarr_open_group
 from ..typing_utils._format_contract import GEOMETRY_TYPES
 from .utils import (
     format_memory_size,
@@ -70,7 +71,7 @@ def register_info_command(app: typer.Typer) -> None:
                 return
 
             # Text format output
-            root = zarr.open_group(path, mode="r")
+            root = zarr_open_group(path, mode="r")
 
             # Header
             aprint(f"\n📁 Zarr Store: {path}")
