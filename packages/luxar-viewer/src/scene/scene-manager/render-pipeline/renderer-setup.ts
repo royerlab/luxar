@@ -60,31 +60,6 @@ export interface BackendSelection {
  *   3. `VITE_LUXAR_USE_LEGACY_WEBGL=1` env var (no-op alias for the default).
  *   4. Default: WebGL.
  */
-/**
- * Adapter limits forwarded verbatim into the device's `requiredLimits`
- * when the adapter advertises them as numbers (absent / non-numeric
- * entries are omitted so the device keeps the spec default).
- *
- * `maxTextureDimension2D` is the per-node element-data ceiling:
- * element textures (points/lines/gsplats) grow DOWNWARD in rows, and
- * `renderer-capabilities` reads the LIVE DEVICE limit to derive every
- * capacity clamp. The WebGPU default is 8192 rows — for lines
- * (6 texels/segment, 682 segments/row at width 4096) that caps a node
- * at 5,586,944 segments while the same GPU's WebGL context exposes
- * 16384 rows = 11.2 M. Same forward-the-adapter policy as the buffer
- * limits.
- */
-export function forwardedAdapterLimits(
-  limits: Record<string, number | undefined> | undefined
-): Record<string, number> {
-  const out: Record<string, number> = {};
-  for (const key of ['maxBufferSize', 'maxStorageBufferBindingSize', 'maxTextureDimension2D']) {
-    const value = limits?.[key];
-    if (typeof value === 'number') out[key] = value;
-  }
-  return out;
-}
-
 export function selectBackend(rendererOverride: 'webgl' | 'webgpu' | undefined): BackendSelection {
   if (rendererOverride === 'webgl') return { backend: 'webgl', source: 'url-param' };
   if (rendererOverride === 'webgpu') return { backend: 'webgpu', source: 'url-param' };
@@ -98,6 +73,34 @@ export function selectBackend(rendererOverride: 'webgl' | 'webgpu' | undefined):
     return { backend: 'webgl', source: 'env-var' };
   }
   return { backend: 'webgl', source: 'default' };
+}
+
+/**
+ * Adapter limits forwarded verbatim into the device's `requiredLimits`
+ * when the adapter advertises them as numbers (absent / non-numeric
+ * entries are omitted so the device keeps the spec default).
+ *
+ * `maxTextureDimension2D` is the per-node element-data ceiling:
+ * element textures (points/lines/gsplats) grow DOWNWARD in rows, and
+ * `renderer-capabilities` reads the LIVE DEVICE limit to derive every
+ * capacity clamp. The WebGPU default is 8192 rows — for lines
+ * (6 texels/segment, 682 segments/row at width 4096) that caps a node
+ * at 5,586,944 segments while the same GPU's WebGL context exposes
+ * 16384 rows = 11.2 M. Same forward-the-adapter policy as the buffer
+ * limits.
+ *
+ * `maxVertexBuffers` is deliberately NOT here — it is clamped to 16
+ * rather than forwarded verbatim (see `createWebGPURenderer`).
+ */
+export function forwardedAdapterLimits(
+  limits: Record<string, number | undefined> | undefined
+): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const key of ['maxBufferSize', 'maxStorageBufferBindingSize', 'maxTextureDimension2D']) {
+    const value = limits?.[key];
+    if (typeof value === 'number') out[key] = value;
+  }
+  return out;
 }
 
 /** Result of a successful renderer construction. */
@@ -199,9 +202,10 @@ export type CreateWebGPUResult = (CreatedRenderer & { fallback: false }) | { fal
 
 /**
  * Construct a `WebGPURenderer`. Negotiates a "core" adapter with
- * raised vertex-buffer / buffer-size limits to bypass r184's
- * compat-mode defaults. Performs `await renderer.init()` before
- * returning.
+ * raised vertex-buffer / buffer-size / texture-dimension limits to
+ * bypass r184's compat-mode defaults (see
+ * {@link forwardedAdapterLimits}). Performs `await renderer.init()`
+ * before returning.
  *
  * When the adapter advertises `maxVertexBuffers < 8` (WebGPU spec
  * minimum) and `rendererOverride !== 'webgpu'`, returns

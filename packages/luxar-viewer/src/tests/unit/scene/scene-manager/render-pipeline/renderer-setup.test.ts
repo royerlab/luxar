@@ -7,10 +7,11 @@
  * E2E coverage via `basic-rendering.spec.ts` is the safety net there.
  *
  * `selectBackend` is the pure-fn precedence ladder.
- * `createWebGPURenderer` has 4 logical branches worth pinning:
+ * `createWebGPURenderer` has 5 logical branches worth pinning:
  *   - forceWebGL diagnostic mode bypasses navigator.gpu;
  *   - adapter sufficiency fallback when maxVertexBuffers < spec minimum;
  *   - rendererOverride='webgpu' forces through a degenerate adapter;
+ *   - the requiredLimits descriptor handed to requestDevice;
  *   - requestDevice failure recovers silently (no `device` option).
  */
 
@@ -181,6 +182,7 @@ describe('createWebGPURenderer', () => {
         maxVertexBuffers: opts.maxVertexBuffers,
         maxBufferSize: 4 * 1024 * 1024 * 1024,
         maxStorageBufferBindingSize: 1 * 1024 * 1024 * 1024,
+        maxTextureDimension2D: 16384,
       },
       requestDevice,
     };
@@ -223,6 +225,27 @@ describe('createWebGPURenderer', () => {
     expect(result).toMatchObject({ fallback: false });
     expect(adapter.requestDevice).toHaveBeenCalledTimes(1);
     expect(webgpuConstructorArgs).toHaveLength(1);
+  });
+
+  it('requests the adapter limits on the device, with maxVertexBuffers clamped to 16', async () => {
+    // The descriptor is the whole point of the helper: a device that
+    // does not ask for maxTextureDimension2D keeps the 8192-row spec
+    // default, which clamps a lines node to 5,586,944 segments.
+    const adapter = makeAdapter({ maxVertexBuffers: 32 });
+    stubNavigatorGpu(vi.fn().mockResolvedValue(adapter));
+
+    await createWebGPURenderer(makeCanvas(), {});
+
+    expect(adapter.requestDevice).toHaveBeenCalledTimes(1);
+    const descriptor = adapter.requestDevice.mock.calls[0][0] as {
+      requiredLimits: Record<string, number>;
+    };
+    expect(descriptor.requiredLimits).toEqual({
+      maxBufferSize: 4 * 1024 * 1024 * 1024,
+      maxStorageBufferBindingSize: 1 * 1024 * 1024 * 1024,
+      maxTextureDimension2D: 16384,
+      maxVertexBuffers: 16,
+    });
   });
 
   it('requestDevice failure recovers silently: renderer constructed without device option', async () => {
