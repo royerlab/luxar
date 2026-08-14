@@ -199,35 +199,42 @@ def _root_zattrs_rank(name: str) -> Optional[int]:
     return 0 if parts[0].endswith(".gsplats.zarr") else 1
 
 
-def _top_level_dir(name: str, is_dir: bool) -> Optional[str]:
-    """Top-level directory a member lies in/under; ``None`` for a loose file.
+def _top_level_dir(name: str) -> Optional[str]:
+    """Top-level directory a member lies in/under; ``None`` for a loose member.
 
-    Must be inferable from the member NAME, because the two formats disagree
-    about directories: a zip written by ``_compress_zarr`` carries no directory
-    entries at all (only files), while a tar carries explicit ones. So any name
-    with more than one path component implies its first component is a top-level
-    directory, and an explicit directory entry contributes its own first
-    component too — making both formats agree on the same set.
+    Inferred from the member NAME alone: any name with more than one path
+    component implies its first component is a top-level directory. That is what
+    makes the two formats agree on the same set even though they disagree about
+    directories — a zip written by ``_compress_zarr`` carries no directory entries
+    at all (only files), while a tar carries explicit ones, and a tar's
+    ``mystore/`` entry adds nothing its ``mystore/.zattrs`` member does not.
+
+    A top-level directory with no descendants of any kind therefore contributes
+    nothing, deliberately: it holds no store (``zarr.open_group`` on an empty
+    directory raises), so counting it could only manufacture false ambiguity and
+    suppress a perfectly good carry (``zip -r out.gsplats.zarr.zip mystore notes``
+    with an empty ``notes/``).
     """
     parts = PurePosixPath(name).parts
-    if not parts:
-        return None
     if len(parts) > 1:
         return parts[0]
-    return parts[0] if is_dir else None
+    return None
 
 
 def _fallback_is_unambiguous(rank: int, top_dirs: set[str]) -> bool:
     """Whether a winning candidate of ``rank`` may actually be used as the root.
 
-    Rank 0 always may: it is the extractor's own first preference, so the two
-    agree by construction. Rank 1 stands in for the extractor's *fallback*, which
-    is the SOLE top-level directory — with two of them the extractor picks by
-    ``iterdir()`` order, which no archive index can predict, so the peek cannot
-    agree with it and must not guess. Carrying nothing is the safe outcome (the
-    appearance simply is not carried, as before the carry existed); carrying a
-    sibling directory's attrs would author an appearance from something that is
-    not the dataset.
+    Rank 0 always may. It is the extractor's own first preference, so the two
+    agree on the KIND of node — and for an archive holding ONE store, which is
+    every archive ``_compress_zarr`` writes, on the same node. They need not agree
+    on WHICH when an archive holds several ``*.gsplats.zarr`` directories: that is
+    not one dataset, the extractor picks among them arbitrarily (``iterdir()``
+    order), and the peek picks the first in archive-index order. Rank 1 stands in
+    for the extractor's *fallback*, the SOLE top-level directory, and there
+    refusing costs nothing — so with two of them the peek refuses rather than
+    guessing. Carrying nothing is the safe outcome (the appearance simply is not
+    carried, as before the carry existed); carrying a sibling directory's attrs
+    would author an appearance from something that is not the dataset.
     """
     if rank == _BEST_ROOT_RANK:
         return True
@@ -255,7 +262,7 @@ def _read_zip_root_attrs(path: Path) -> Dict[str, Any]:
         # decompressed by this scan.
         for info in zip_ref.infolist():
             is_dir = info.is_dir()
-            top = _top_level_dir(info.filename, is_dir)
+            top = _top_level_dir(info.filename)
             if top is not None:
                 top_dirs.add(top)
             if is_dir or _zip_member_is_symlink(info):
@@ -313,7 +320,7 @@ def _read_targz_root_attrs(path: Path) -> Dict[str, Any]:
         best_rank = 0
         top_dirs: set[str] = set()
         for member in tar_ref:
-            top = _top_level_dir(member.name, member.isdir())
+            top = _top_level_dir(member.name)
             if top is not None:
                 top_dirs.add(top)
             # Only regular files: a symlink named `.zattrs` is never followed
@@ -349,12 +356,16 @@ def read_archive_root_attrs(path: str | Path) -> Dict[str, Any]:
     index at all — see :data:`_BEST_ROOT_RANK` for when that walk stops early.
 
     Which member counts as the root follows :func:`_root_zattrs_rank` and
-    :func:`_fallback_is_unambiguous`, mirroring :func:`extract_compressed_zarr`'s
-    own choice of store root: the top-level ``*.gsplats.zarr`` directory that
-    ``_compress_zarr`` writes, else — only when it is the archive's SOLE
-    top-level directory — that directory whatever it is named. So a child group's
-    attrs (``<top>/fitting/.zattrs``) is never read as the root's, and neither is
-    a stray ``.zattrs`` loose at the archive root.
+    :func:`_fallback_is_unambiguous`, which pick the same KIND of node
+    :func:`extract_compressed_zarr` does: a top-level ``*.gsplats.zarr``
+    directory, as ``_compress_zarr`` writes, else — only when it is the archive's
+    SOLE top-level directory — that directory whatever it is named. For an archive
+    holding ONE store, which is every archive ``_compress_zarr`` writes, that is
+    the same node the extractor loads. An archive holding SEVERAL
+    ``*.gsplats.zarr`` directories is not a single dataset; the extractor picks
+    one of them arbitrarily (``iterdir()`` order) and the peek may pick another.
+    Either way a child group's attrs (``<top>/fitting/.zattrs``) is never read as
+    the root's, and neither is a stray ``.zattrs`` loose at the archive root.
 
     An archive with several top-level directories and no ``*.gsplats.zarr``-named
     one is ambiguous and yields ``{}``: the extractor resolves that case by
@@ -368,10 +379,13 @@ def read_archive_root_attrs(path: str | Path) -> Dict[str, Any]:
     attrs can be reached either way), and the early stop is worth keeping.
 
     Reading ``.zattrs`` directly — not consolidated ``.zmetadata`` — is the
-    correct source: this repo pins zarr 2.18.x, where ``zarr.open_group`` reads
-    per-node ``.zattrs`` and ignores ``.zmetadata`` unless opened via
-    ``open_consolidated``. So this matches exactly what the directory-store path
-    sees, and preferring ``.zmetadata`` would introduce a divergence, not fix one.
+    correct source, for an invariant rather than a version: the peek must see
+    exactly what the loader's own group-open sees, and the loader never opens a
+    store with consolidated metadata (under zarr 2 that takes an explicit
+    ``open_consolidated``; the zarr 3 path disables it deliberately). So per-node
+    ``.zattrs`` is authoritative even for a store that also carries a
+    ``.zmetadata``, and preferring ``.zmetadata`` would introduce a divergence
+    from the directory-store path, not fix one.
 
     Args:
         path: Path to a ``.gsplats.zarr.zip`` or ``.gsplats.zarr.tar.gz``.

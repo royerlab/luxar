@@ -1229,6 +1229,59 @@ class TestArchiveRootAttrsPeek:
         )
         assert read_archive_root_attrs(archive) == {}
 
+    @staticmethod
+    def _write_with_empty_dir(
+        path: Path, fmt: str, dir_name: str, files: list[tuple[str, str]]
+    ) -> None:
+        """Write an archive with an EMPTY explicit directory entry, plus files.
+
+        A tar spells a directory as its own ``DIRTYPE`` header; a zip spells one
+        as a member name ending in ``/``. Both are written here so the rule is
+        exercised through each spelling.
+        """
+        import io
+        import tarfile
+        import zipfile
+
+        bare = dir_name.rstrip("/")
+        if fmt == "zip":
+            with zipfile.ZipFile(path, "w") as zip_ref:
+                zip_ref.writestr(zipfile.ZipInfo(f"{bare}/"), "")
+                for name, text in files:
+                    zip_ref.writestr(name, text)
+        else:
+            with tarfile.open(path, "w:gz") as tar_ref:
+                dir_info = tarfile.TarInfo(bare)
+                dir_info.type = tarfile.DIRTYPE
+                tar_ref.addfile(dir_info)
+                for name, text in files:
+                    payload = text.encode("utf-8")
+                    member = tarfile.TarInfo(name)
+                    member.size = len(payload)
+                    tar_ref.addfile(member, io.BytesIO(payload))
+
+    @pytest.mark.parametrize("fmt", ["zip", "tar.gz"])
+    def test_an_empty_stray_directory_does_not_suppress_the_carry(
+        self, tmp_path: Path, fmt: str
+    ) -> None:
+        """An EMPTY top-level directory beside the store is not a rival store.
+
+        ``zip -r out.gsplats.zarr.zip mystore notes`` with an empty ``notes/`` has
+        exactly one store in it. An empty directory can never be the node a
+        SUCCESSFUL load read — ``zarr.open_group`` on one raises, so if the
+        extractor lands there the whole load fails and no rebuild (hence no carry)
+        happens at all. Counting it as a top-level directory could therefore never
+        prevent a wrong carry, only manufacture false ambiguity and silently drop
+        a correct one that the directory-store path keeps.
+        """
+        from luxar.gsplats.io._archive import read_archive_root_attrs
+
+        archive = tmp_path / f"empty_stray.gsplats.zarr.{fmt}"
+        self._write_with_empty_dir(
+            archive, fmt, "notes", [("mystore/.zattrs", '{"whose": "store"}')]
+        )
+        assert read_archive_root_attrs(archive) == {"whose": "store"}
+
     @pytest.mark.parametrize("fmt", ["zip", "tar.gz"])
     def test_a_named_store_still_wins_over_a_junk_sibling(
         self, tmp_path: Path, fmt: str
