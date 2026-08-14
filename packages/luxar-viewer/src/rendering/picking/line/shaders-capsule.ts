@@ -9,7 +9,7 @@
  * adds the `uNodeId` uniform and `vNodeId` / `vElementId` varyings,
  * emitting `(nodeId, elementId-low16, brightness, elementId-high16)` with
  * brightness-as-depth (`gl_FragDepth = 1 − brightness`), identical to the
- * screen-space and volumetric pick variants. Like those, the pick pass
+ * screen-space pick variant. Like it, the pick pass
  * ignores per-element alpha and node opacity — faint-but-hoverable stays
  * consistent across primitives.
  *
@@ -377,8 +377,9 @@ export const CAPSULE_LINE_PICK_FRAGMENT_SHADER = /* glsl */ `
     // The PARTNER leg's tapered-capsule field at a pixel offset rel from
     // the shared vertex (my local frame). Its axis is my inward axis
     // reflected across the cut plane (q = m − 2(m·n)n — exact); its
-    // radius starts at the SHARED-VERTEX radius rEnd (a flat varying,
-    // #1494), tapers by the packed gradient, freezes past its far end,
+    // radius starts at rEnd, the SHARED-VERTEX radius handed in by the
+    // caller from the packed vPack.z lane (#1494); it tapers by the
+    // packed gradient, freezes past its far end,
     // and the far cap term closes the rod there (#1490). Sharpness is
     // taken from OUR fragment — the joint region is local.
     float luxarPartnerProfile(vec4 cut, vec2 rel, float mSign, float rEnd, float sharp) {

@@ -2,8 +2,11 @@
 
 > Thick-line material stack — instanced-quad geometry, shifted-truncated super-Gaussian soft falloff, and continuous polyline joints — paired across the GLSL `ShaderMaterial` and TSL `NodeMaterial` backends.
 
-This folder holds the four-file material stack that renders one of Luxar's
-four first-class geometry types. Each line segment is drawn as an instanced
+This folder holds the six-file material stack that renders one of Luxar's
+four first-class geometry types, with two selectable primitives: the
+classic screen-space quad described in the next sections, and the capsule
+(the default since the #1352 flip — see its own section below). Under the
+quad, each line segment is drawn as an instanced
 screen-space quad expanded perpendicular to its pixel-space direction; the
 fragment stage shades a shifted-truncated super-Gaussian perpendicular
 cross-section, with a per-endpoint joint code keeping interior polyline joints
@@ -14,17 +17,14 @@ semantics — `MaterialManager.getLineMaterial` dispatches on
 
 ## Module map
 
-| File                        | Role                                                                                                                                                                                                                                   |
-| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `material-glsl.ts`          | `LineMaterial extends THREE.ShaderMaterial` — wraps the GLSL3 vertex/fragment pair, owns `uniforms`, manages variant `defines`, applies the canonical blending state. WebGL2 path.                                                     |
-| `material-tsl.ts`           | `LineTSLMaterial extends NodeMaterial` — same constructor + update API, but owns persistent `UniformNode`s and rebuilds its TSL graph (`rebuildGraph`) when graph-specialized defines or projection mode flip. WebGPU path.            |
-| `shader-glsl.ts`            | `LINE_VERTEX_SHADER` + `LINE_FRAGMENT_SHADER` GLSL3 source strings and the `LINE_SOURCE: ShaderSource` registry entry. The `webgpu` field re-enters `lineWebGPUFactory` so the parity harness can drive both backends from one symbol. |
-| `shader-tsl.ts`             | `lineWebGPUFactory(nodes, config, outMaterial?)` — TSL counterpart to the GLSL strings. Reads pre-created `UniformNode`s from a `LineTSLNodes` table and emits the NodeMaterial graph.                                                 |
-| `shader-glsl-volumetric.ts` | `VOLUMETRIC_LINE_VERTEX_SHADER` + `VOLUMETRIC_LINE_FRAGMENT_SHADER` + `VOLUMETRIC_LINE_SOURCE` — the volumetric primitive's GLSL pair (see the section below).                                                                         |
-| `shader-tsl-volumetric.ts`  | `volumetricLineWebGPUFactory(nodes, config, outMaterial?)` — TSL twin of the volumetric pair; same `LineTSLNodes`/`LineTSLConfig` contract as the screen-space factory.                                                                |
-| `shader-glsl-capsule.ts`    | `CAPSULE_LINE_VERTEX_SHADER` + `CAPSULE_LINE_FRAGMENT_SHADER` + `CAPSULE_LINE_SOURCE` — the capsule primitive's GLSL pair (see the section below).                                                                                     |
-| `shader-tsl-capsule.ts`     | `capsuleLineWebGPUFactory(nodes, config, outMaterial?)` — TSL twin of the capsule pair; same `LineTSLNodes`/`LineTSLConfig` contract as the other two factories.                                                                       |
-| `ray-integral.ts`           | The #1352 volumetric-line ray integral (`lineRayIntegralRef` / `lineRayIntegralPoly`), the peak-mode capsule profile, the CPU ray/segment geometry, and their GLSL/TSL twins. Pure math — no shader consumes it yet                    |
+| File                     | Role                                                                                                                                                                                                                                   |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `material-glsl.ts`       | `LineMaterial extends THREE.ShaderMaterial` — wraps the GLSL3 vertex/fragment pair, owns `uniforms`, manages variant `defines`, applies the canonical blending state. WebGL2 path.                                                     |
+| `material-tsl.ts`        | `LineTSLMaterial extends NodeMaterial` — same constructor + update API, but owns persistent `UniformNode`s and rebuilds its TSL graph (`rebuildGraph`) when graph-specialized defines or projection mode flip. WebGPU path.            |
+| `shader-glsl.ts`         | `LINE_VERTEX_SHADER` + `LINE_FRAGMENT_SHADER` GLSL3 source strings and the `LINE_SOURCE: ShaderSource` registry entry. The `webgpu` field re-enters `lineWebGPUFactory` so the parity harness can drive both backends from one symbol. |
+| `shader-tsl.ts`          | `lineWebGPUFactory(nodes, config, outMaterial?)` — TSL counterpart to the GLSL strings. Reads pre-created `UniformNode`s from a `LineTSLNodes` table and emits the NodeMaterial graph.                                                 |
+| `shader-glsl-capsule.ts` | `CAPSULE_LINE_VERTEX_SHADER` + `CAPSULE_LINE_FRAGMENT_SHADER` + `CAPSULE_LINE_SOURCE` — the capsule primitive's GLSL pair (see the section below).                                                                                     |
+| `shader-tsl-capsule.ts`  | `capsuleLineWebGPUFactory(nodes, config, outMaterial?)` — TSL twin of the capsule pair; same `LineTSLNodes`/`LineTSLConfig` contract as the screen-space factory.                                                                      |
 
 ## Rendering model in one paragraph
 
@@ -258,128 +258,31 @@ only 0.076% — and why the zigzag is gated on its flux profile instead.
 2026-08-07, the unmitred one via `&lineJoin=none`. The E2E job is not part of the
 per-PR CI run; the spec runs under `make test-e2e`.)
 
-## Volumetric primitive (`?linePrimitive=volumetric`, #1352)
+## The deleted volumetric primitive (#1352, historical)
 
-An alternative rendering model for the whole session, selected by the
-`?linePrimitive=` URL parameter (see `types/line-primitive.ts`; default
-remains `screen-space`). Instead of shading a screen-space cross-section,
-each segment is treated as a true 3D density — the segment convolved with an
-isotropic 3D Gaussian, σ calibrated so the side-on appearance matches the
-quad by construction (`σ = drawnHalfWidth / T`, `_shared/line-volumetric.ts`).
-The quad becomes a pure rasterization stencil (a "stadium" extended axially
-per end), and the fragment solves against the TRUE camera-space segment:
-
-- **Sum-family blending** (additive, luminous, volumetric) integrates the
-  density along the view ray in closed form (Gaussian×erf identity). Interior
-  polyline joints are **bisector cuts** — the rod density clipped by the
-  plane between the segment and its partner (fetched via the joint-code
-  partner slot), which partitions exactly at any bend angle. Free ends keep
-  the erf cap; chain-end segments (one cut, one cap) use a sign-selected
-  inclusion–exclusion closed-form family (bracket-primary, cap-primary, a
-  saturated-cap bracket-only shortcut, and — under a binding near clip —
-  cap-as-plane / constant-cap product forms). The perspective
-  **near plane is one more plane clip** where it stays closed-form — an
-  s-bound in the structural-parallel lane, a ξ-bound in the general plane
-  lane — so a segment straddling the eye no longer contributes light from
-  behind the camera (the soft/soft oblique lane keeps the documented
-  full-line + near-fade convention). Four fragment lanes (structural
-  parallel / soft-soft / hard-hard / mixed), all quadrature-validated
-  against the CPU reference in `_shared/line-volumetric.ts` — **edit the
-  lanes there first, prove them in `line-volumetric-integral.test.ts`,
-  then mirror into both shader twins.**
-- **Peak-family blending** (max, normal, opaque) takes the ray maximum:
-  today's profile at the ray→segment distance, exact for any sharpness β.
-  The bisector cut applies here too, as a ray-DOMAIN interval — a cut end is
-  the unbounded rod restricted to its own half-space, so face-on (the view
-  direction lies in the bisector plane) exactly one cell of a joint shades
-  each ray. That single coverage is what `normal`/`opaque` need, their
-  compositing not being idempotent the way `gl.MAX` is; obliquely one ray can
-  still pierce both cells and those two modes composite it twice, which no
-  per-segment surface model avoids without a depth pre-pass. The peak/sum
-  split is the `LUXAR_PEAK_PROJECTION` define (GLSL) / a graph variant (TSL),
-  managed by `applyBlendingMode` beside the other blending defines.
-
-### What "exact at any bend angle" does and does not cover
-
-The bisector CUT MATH is exact at any bend — reflection across the plane
-swaps the two rod axes, so the pair partitions the rod with no overlap and
-no gap. Two things around it are approximations, both measured, both left
-for the G1 gate:
-
-- **The rasterized stencil, not the math, is what truncates.** A cut end's
-  oblique overhang needs `R·tan(θ/2)` of axial reach at radius `R`, and the
-  vertex stage clamps it at `min(R·tan(θ/2), R)` for fill control, so a turn
-  past 90° drops the tip of the outer wedge and leaves a hard stencil edge
-  there instead of a Gaussian falloff. It is bounded: the dropped material
-  starts at radius `R/tan(θ/2)`, so at a 120° turn the edge carries ~0.2 of
-  peak and less beyond. For scale, `GLSL_LINE_JOIN`'s own miter limit gives
-  up at 120° and reverts to a round cap, so over the range where the
-  screen-space primitive miters at all the two are close; past that the
-  volumetric primitive's truncated miter is still the better of the two.
-- **Shading attributes are per-segment.** `width` (hence σ), `sharpness`,
-  `alpha` and `colour` are evaluated from each segment's OWN clamped
-  closest-approach coordinate. On the outer side of the cut both sides clamp
-  to the shared vertex's value and agree exactly; on the inner side they can
-  step by `O(3σ·tan(θ/2)/L)` of the attribute span, because the two legs
-  interpolate toward different far endpoints. Invisible for `L ≫ σ`, small
-  but real for a strongly tapered short segment. The C0 guarantee is
-  therefore on COVERAGE; attribute continuity holds exactly only for
-  constant-attribute polylines.
-
-The "no light from behind the camera" claim has one exempt lane, also left
-for the G1 gate: the soft/soft general lane keeps the full-line closed form
-plus the near FADE (the gsplat convention), because clipping a
-Gaussian×erf-window product at an arbitrary ray bound is the same
-Owen-T-class integral the mixed lane needs four splits for. Its retained
-behind-eye fraction is exactly `½erfc(sin(ray, axis)·(d − nearCull)/(σ√2))`
-in the closest approach's depth `d` — pinned against quadrature in
-`line-volumetric-integral.test.ts`. Read that as a bound on CLEARANCE, not
-on angle: broadside is the best case rather than an exempt one, and
-near-axial rays leak more, not less (they are the ones the
-structural-parallel lane takes over and clips exactly). With `nearCull` at
-1e-3·scene diagonal it takes the camera inside the tube to matter, and the
-near fade is already ramping there.
-
-End-on viewing is exact (the screen-space quad degenerates there), and the
-sum output is normalized by σ√2π so a long segment's side-on core matches
-the quad's core intensity exactly — the calibration that makes the session
-A/B meaningful. Sharpness: peak modes honour β exactly (pointwise profile);
-sum modes sample the general-β RADIAL from the shared Abel LUT
-(`_shared/line-integral-lut.ts`, #1352 PR-4 — the β=2 row is identically the
-old analytic radial, so the LUT is sampled unconditionally with no seam)
-while the AXIAL erf window stays β=2 (Gaussian-only closed form; cap-local
-approximation, exact for an infinite rod).
-Picking follows the toggle too (#1352 PR-3): with the flag on, the pick
-materials build the volumetric pick shaders — the same stadium stencil with
-the peak capsule lane used unconditionally (see
-`../../picking/line/README.md`). The primitive is BUILD-time: it selects the
-GLSL source pair / TSL factory at material construction and never changes on
-a live material.
-
-### `ray-integral.ts` — the same integral, a second time
-
-`ray-integral.ts` (#1352 part 1) landed on its own, ahead of this wiring, as
-a staged shared-math module in the `_shared/erf.ts` mould: CPU reference,
-float64 shader mirror, GLSL block, TSL builders, a `tsl-harness` parity entry
-and a codegen snapshot. The lanes the fragment shaders above actually run
-came from the other direction and live in `_shared/line-volumetric.ts`, which
-grew the cut/cap/near-clip families this primitive needs and carries no
-shader builders of its own.
-
-So the folder now states the ray integral twice, and **nothing consumes
-`ray-integral.ts`**. That is a bookkeeping debt of the series order, not a
-disagreement: where the two overlap (the soft/soft closed form and the σ
-calibration) they agree. Consolidating them — one module, one CPU reference,
-one set of shader builders — belongs to the next slice of #1352, not here,
-because folding it in now would rewrite lanes that have already been
-quadrature-pinned against `line-volumetric-integral.test.ts`.
+A third primitive, `volumetric` (`?linePrimitive=volumetric`), shipped
+during the #1352 campaign: each segment drawn as its true 3D density —
+the segment convolved with an isotropic 3D Gaussian, solved per fragment
+against the camera-space segment in closed form (Gaussian×erf identity),
+with bisector-cut joints whose CUT MATH was exact at any bend angle. The
+core model and cut algebra were exact; the shipped implementation carried
+documented bounded approximations around them (sign-selected mixed-lane
+splits at chain ends, a soft/soft near-clip exemption, a Gaussian-only
+axial window under non-Gaussian sharpness, stencil truncation past sharp
+bends). It measured 2.7–5× the quad's frame cost, and after the capsule
+flip a visual A/B found the capsule matched or beat it — including
+near-axial, its signature case — so it was deleted rather than maintained
+as a third parity surface. The full implementation (GLSL + TSL twins, the
+quadrature-validated CPU reference, the Abel-transform sharpness LUT, the
+ray-integral shared-math module, and the pick pair) lives in git history
+at the deletion's branch point, `1481995d9`.
 
 ## Capsule primitive (the DEFAULT since the #1352 flip)
 
 THE default line primitive (flipped from `screen-space` after the #1352
-re-gate), built after the G1 gate measured the volumetric primitive
-2.7–5× the quad's frame cost: a deliberately relaxed model that
-keeps the volumetric primitive's two behavioural wins — direction-stable
+re-gate), built after the G1 gate measured the exact volumetric primitive
+(the deleted one, section above) at 2.7–5× the quad's frame cost: a
+deliberately relaxed model that keeps its two behavioural wins — direction-stable
 near-axial rendering (an end-on segment is a round disc, never a flickering
 sliver) and seamless bisector-cut joins — at quad-class cost (measured
 1.04–1.11× the quad on the 10M-segment worst case, parity at vsync
@@ -406,16 +309,16 @@ profile; approximate math fine"):
    integral and no per-fragment camera-space solve. End-on stability comes
    from the distance field itself (a point's field is radial).
 2. **One profile for all blending modes.** The capsule is peak-shaped by
-   construction; there is no peak/sum lane split and
-   `LUXAR_PEAK_PROJECTION` is never stamped. The blending-mode tails
-   (volumetric τ map, max premultiply, colormap, NO_GOG, gamma) are cribbed
-   from the quad fragment unchanged.
+   construction; there is no peak/sum lane split (the deleted volumetric
+   primitive's `LUXAR_PEAK_PROJECTION` define went with it). The
+   blending-mode tails (volumetric τ map, max premultiply, colormap,
+   NO_GOG, gamma) are cribbed from the quad fragment unchanged.
 3. **Compact support.** The quartic hits exact zero at the rim (the 2σ
    trim), so there is no truncation constant and no shifted-Gaussian
    renormalization.
 
-Interior polyline joints reuse the volumetric primitive's partner machinery
-(the joint-code partner slot; `compute_joint_codes` stays load-bearing),
+Interior polyline joints reuse the joint-code partner machinery
+(the per-endpoint partner slot; `compute_joint_codes` stays load-bearing),
 including its cap rule: which ends cut at all comes from the shared
 `luxarLineJointCapSuppression` / `tslLineJointCapSuppression`, so a free end
 (code `0`) and a degree-≥3 hub (code `-2`) keep the whole round cap — a hub
@@ -434,11 +337,14 @@ unquantised on purpose: each leg builds it in its own local basis, so any
 per-leg rounding never cancels, and the disagreement grows with distance
 from the joint (#1502). Congruent legs turning 120° or less (the common case)
 gate to an exact zero-double-count partition — the same domain partition the
-volumetric primitive integrates per ray — while tapered or perspective-diverged
+deleted volumetric primitive integrated per ray — while tapered or perspective-diverged
 partners get exactly the light a pure partition would chop (a fat vertex's disc
 keeps the half a thin neighbour cannot render; the numeric composition sweep in
 `line-capsule.test.ts` pins the three reconstruction errors of
-#1494/#1488/#1490). Two documented exceptions to that last sentence, both in
+#1494/#1488/#1490, and
+`tests/unit/rendering/materials/line/capsule-partner-radius.test.ts`
+additionally locks the shared-vertex base radius of #1494 across all four
+shader surfaces). Two documented exceptions to that last sentence, both in
 `CAPSULE_JOINT_PACKET_MIN_RADIUS_PX`: the deficit packet is skipped below a
 4 px stencil half-width, so a GENTLE joint thinner than that keeps the plain
 cut — within 0.03 of peak of what a congruent joint at the same angle and
@@ -454,10 +360,10 @@ plane keeping the perpendicular butt. The per-fragment radius is computed EXACTL
 endpoint radii (`mix(rA, rB, clamp(x/L, 0, 1))` — a linear varying cannot
 represent this, since its interpolation spans the cap extensions).
 
-Picking follows the toggle (same dispatch as volumetric): the capsule pick
+Picking follows the toggle: the capsule pick
 shaders run the same stencil and joint partition as the visual pair so the
 pick footprint tracks the pixels exactly (see `../../picking/line/README.md`).
-The primitive is BUILD-time, like the other two: it selects the source pair /
+The primitive is BUILD-time, like the screen-space quad: it selects the source pair /
 TSL factory at material construction and never changes on a live material.
 
 ## Geometry and storage layout
@@ -577,9 +483,9 @@ fast-path on WebGPU.
 The GLSL strings are the authoritative spec for the rendering math; the
 TSL factory must produce a graph that emits the same per-pixel result.
 `tsl-shader-parity.spec.ts` (e2e) renders identical scenes through both
-backends and pixel-compares. GLSL3 sources are **never** deleted from
-this folder (see `feedback_keep_glsl_reference.md` in project memory) —
-they remain the readable reference even after the TSL path stabilises.
+backends and pixel-compares. GLSL3 sources of the shipping primitives are
+**never** deleted from this folder — they remain the readable reference
+even after the TSL path stabilises.
 
 ## See Also
 
@@ -587,6 +493,6 @@ they remain the readable reference even after the TSL path stabilises.
 - `../../README.md` — Rendering package overview and where line materials sit in the pipeline
 - `../../line-geometry.ts` — `InstancedBufferGeometry` builder, the 6-texel layout, and the fused texel writer this shader reads
 - `../../material-manager.ts` — creates the per-node line materials and owns the camera-broadcast loop
-- `../../picking/line/material.ts` / `material-tsl.ts` — picking counterparts; share the vertex-stage expansion math of whichever primitive the session resolves (screen-space quad or volumetric stadium)
+- `../../picking/line/material.ts` / `material-tsl.ts` — picking counterparts; share the vertex-stage expansion math of whichever primitive the session resolves (screen-space quad or capsule)
 - `../../../tests/e2e/tsl-shader-parity.spec.ts` — GLSL ↔ TSL parity harness
 - `../../../tests/e2e/line-join-artifact.spec.ts` / `../../../tests/helpers/line-join-metrics.ts` — the joint-artifact acceptance measurement described above (#780 / #785 / #790)
