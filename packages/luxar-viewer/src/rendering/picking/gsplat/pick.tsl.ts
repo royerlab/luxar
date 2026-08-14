@@ -26,7 +26,6 @@ import {
   attribute,
   varying,
   texture,
-  textureSize,
   vec2 as _vec2,
   vec3 as _vec3,
   vec4 as _vec4,
@@ -50,6 +49,7 @@ import {
   screenSize,
 } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
+import { resolveElementTextureWidth, SPLAT_TEXTURE_LAYOUT } from '../../element-texture-layout';
 import {
   perspectiveNearFadeTSL,
   invalidFloatTSL,
@@ -166,13 +166,17 @@ export function gsplatPickWebGPUFactory(
     // is not fetched. Every value is a `.toVar()` STATEMENT (Fn house
     // rule). Width is a multiple of 4 -> one row per splat.
     const splatBase: TSLNode = int(aSortedIndex).mul(int(4)).toVar();
-    // int() wrap is LOAD-BEARING: TSL types textureSize() as uint (the
-    // WGSL textureDimensions convention), but the WebGL2 fallback emits
-    // GLSL textureSize() which returns int -- without the explicit
-    // conversion the generated `uint nodeVar = textureSize(...).x;`
-    // fails to compile on the forceWebGL backend.
+    // The width is baked as a LITERAL, not read via textureSize(): a
+    // compile-time constant lets the shader compiler strength-reduce
+    // the per-vertex %/int-div addressing below (measured -7% on the
+    // quad's whole GPU pass; a uniform recovered almost none of it).
+    // Safe because the width is a per-layout session constant, capped
+    // at 4096 on every device (element-texture-layout.ts).
     const splatTexW: TSLNode = int(
-      (textureSize(uSplatTex, int(0)) as unknown as TSLNode).x
+      resolveElementTextureWidth(
+        SPLAT_TEXTURE_LAYOUT,
+        (nodes.uSplatTex as unknown as { value?: { image?: { width?: number } } }).value ?? null
+      )
     ).toVar();
     const texelX: TSLNode = splatBase.mod(splatTexW).toVar();
     const texelY: TSLNode = splatBase.div(splatTexW).toVar();

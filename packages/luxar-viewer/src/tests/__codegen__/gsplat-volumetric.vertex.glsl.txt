@@ -213,7 +213,7 @@ void main() {
 	nodeVar7 = vec3( 0.0, 0.0, 0.0 );
 	nodeVarying0 = nodeVar7;
 	nodeVar11 = ( ( ( int( aSortedIndex ) * ( 1 - int( nodeUniform13 ) ) ) + ( int( aSortedIndexB ) * int( nodeUniform13 ) ) ) * 4 );
-	nodeVar12 = int( textureSize( nodeUniform14, 0 ).x );
+	nodeVar12 = 4;
 	nodeVar13 = ( nodeVar11 % nodeVar12 );
 	nodeVar14 = ( nodeVar11 / nodeVar12 );
 	nodeVar15 = ( nodeUniform15 * vec3( vec2( ivec2( nodeVar13, nodeVar14 ) ), 1.0 ) ).xy;

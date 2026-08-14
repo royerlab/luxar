@@ -30,7 +30,6 @@ import {
   modelViewMatrix,
   packHalf2x16,
   pow,
-  textureSize,
   unpackHalf2x16,
   uvec4,
   varying,
@@ -40,6 +39,7 @@ import {
 } from 'three/tsl';
 import * as THREE from 'three';
 import { NodeMaterial } from 'three/webgpu';
+import { resolveElementTextureWidth, LINE_TEXTURE_LAYOUT } from '../../element-texture-layout';
 import {
   CAPSULE_JOINT_DEFICIT_GATE,
   CAPSULE_JOINT_PACKET_MIN_RADIUS_PX,
@@ -107,7 +107,12 @@ export function capsuleLinePickWebGPUFactory(
 
   const vertexBody = Fn(() => {
     const lineBase: TSLNode = int(aSortedIndex).mul(int(6)).toVar();
-    const lineTexW: TSLNode = int((textureSize(uLineTex, int(0)) as unknown as TSLNode).x).toVar();
+    const lineTexW: TSLNode = int(
+      resolveElementTextureWidth(
+        LINE_TEXTURE_LAYOUT,
+        (nodes.uLineTex as unknown as { value?: { image?: { width?: number } } }).value ?? null
+      )
+    ).toVar();
     const texelX: TSLNode = lineBase.mod(lineTexW).toVar();
     const texelY: TSLNode = lineBase.div(lineTexW).toVar();
     const lineT0: TSLNode = uLineTex.load(ivec2(texelX, texelY)).toVar();
