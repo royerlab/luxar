@@ -196,6 +196,7 @@ DEMO_META = {
 
 import io
 import ntpath
+import re
 import shutil
 import subprocess
 import sys
@@ -263,10 +264,30 @@ SERVE_ONLY = FLAGS["serve_only"]
 RECOMPUTE = FLAGS["recompute"]
 NO_NEUROPIL = "--no-neuropil" in sys.argv
 
+# FISBe sample names are plain basenames (``VT047848-20171020_66_I3``,
+# ``JRC_SS04989-20160318_24_B1``). Pinning that shape keeps --sample out of the
+# path-traversal business: the value lands in cache paths, the archive member
+# prefix and the output filename, so a ``../`` or an absolute path would let it
+# read and write outside the demo's directories — and --serve-only would then
+# happily serve whatever .luxar.zarr it pointed at.
+_SAMPLE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
+
+
+def validate_sample_name(sample: str) -> str:
+    """Return ``sample`` if it is a bare FISBe sample name, else raise."""
+    if not _SAMPLE_RE.match(sample):
+        raise ValueError(
+            f"Invalid --sample {sample!r}: expected a bare FISBe sample name "
+            "matching [A-Za-z0-9][A-Za-z0-9_-]* (no path separators, no '..'). "
+            f"See {SAMPLE_LIST_URL} for valid names."
+        )
+    return sample
+
+
 SAMPLE = DEFAULT_SAMPLE
 for _arg in sys.argv:
     if _arg.startswith("--sample="):
-        SAMPLE = _arg.split("=", 1)[1]
+        SAMPLE = validate_sample_name(_arg.split("=", 1)[1])
 
 Arbol.max_depth = 6
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -541,9 +562,21 @@ def decode_h5j_channel(h5j_path: Path, channel: int) -> np.ndarray:
     finally:
         stream.unlink(missing_ok=True)
 
-    got = raw.size // (ew * eh)
-    vol = raw[: got * ew * eh].reshape(got, eh, ew)[:n, :h, :w]
-    aprint(f"  decoded {got} frames -> {vol.shape}, mean={vol.mean():.2f}")
+    # Refuse a short or ragged decode rather than silently returning a
+    # thinner volume: the neuropil would then span a different physical extent
+    # from the neurons and the merged scene would be misregistered — a much
+    # harder thing to notice than an exception here.
+    expected = n * ew * eh
+    if raw.size != expected:
+        raise RuntimeError(
+            f"H5J channel {channel} decoded to {raw.size} bytes, expected "
+            f"{expected} ({n} frames of {ew}x{eh}). The stream is truncated or "
+            "ffmpeg dropped frames; the neuropil would be misregistered "
+            "against the neurons."
+        )
+
+    vol = raw.reshape(n, eh, ew)[:, :h, :w]
+    aprint(f"  decoded {n} frames -> {vol.shape}, mean={vol.mean():.2f}")
     return vol
 
 

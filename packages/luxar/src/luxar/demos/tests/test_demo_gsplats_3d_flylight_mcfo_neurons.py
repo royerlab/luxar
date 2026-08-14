@@ -393,3 +393,166 @@ def test_merge_outputs_are_float32() -> None:
 
     for arr in merge_for_render(neurons, rgb, neuropil):
         assert arr.dtype == np.float32
+
+
+# ---------------------------------------------------------------------------
+# --sample validation and H5J decode integrity
+# ---------------------------------------------------------------------------
+
+validate_sample_name = _demo.validate_sample_name
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "VT047848-20171020_66_I3",
+        "JRC_SS04989-20160318_24_B1",
+        "R14A02-20180905_65_A6",
+    ],
+)
+def test_real_sample_names_are_accepted(name: str) -> None:
+    assert validate_sample_name(name) == name
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "../escape",
+        "a/../../etc/passwd",
+        "/absolute/path",
+        "back\\slash",
+        "..",
+        "",
+        "has space",
+        "semi;colon",
+    ],
+)
+def test_path_bearing_sample_names_are_rejected(name: str) -> None:
+    """--sample lands in cache paths and the output filename, so it must be a
+    bare basename: otherwise reads and writes escape the demo's directories."""
+    with pytest.raises(ValueError, match="Invalid --sample"):
+        validate_sample_name(name)
+
+
+class _FakeH5Group:
+    """Stands in for the ``Channels`` group of an H5J file."""
+
+    def __init__(self, attrs, payload_len=8):
+        self.attrs = attrs
+        self._payload_len = payload_len
+
+    def __getitem__(self, key):
+        return np.zeros(self._payload_len, dtype=np.uint8)
+
+
+class _FakeH5File:
+    def __init__(self, attrs, channel_attrs):
+        self.attrs = attrs
+        self._grp = _FakeH5Group(channel_attrs)
+
+    def __getitem__(self, key):
+        assert key == "Channels"
+        return self._grp
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def _fake_h5py(n, h, w, pr, pb):
+    """A minimal h5py stand-in, so these tests run without h5py installed."""
+    import types
+
+    mod = types.SimpleNamespace()
+    mod.File = lambda path, mode: _FakeH5File(
+        {"channel_spec": b"sssr"},
+        {
+            "width": np.array([w]),
+            "height": np.array([h]),
+            "frames": np.array([n]),
+            "pad_right": np.array([pr]),
+            "pad_bottom": np.array([pb]),
+        },
+    )
+    return mod
+
+
+def _stub_decode_env(monkeypatch, n, h, w, pr, pb, stdout, returncode=0):
+    monkeypatch.setattr(
+        _demo, "require_module", lambda name: _fake_h5py(n, h, w, pr, pb)
+    )
+
+    class _Proc:
+        pass
+
+    _Proc.returncode = returncode
+    _Proc.stdout = stdout
+    _Proc.stderr = b""
+    monkeypatch.setattr(_demo.subprocess, "run", lambda *a, **k: _Proc())
+
+
+def test_decode_rejects_a_truncated_stream(tmp_path, monkeypatch) -> None:
+    """A short decode must raise, not yield a thinner (misregistered) volume."""
+    n, h, w = 4, 6, 5
+    # One frame short of the declared four.
+    _stub_decode_env(monkeypatch, n, h, w, 0, 0, bytes((n - 1) * h * w))
+
+    with pytest.raises(RuntimeError, match="decoded .* expected"):
+        _demo.decode_h5j_channel(tmp_path / "fake.h5j", 3)
+
+
+def test_decode_rejects_a_ragged_stream(tmp_path, monkeypatch) -> None:
+    """Trailing partial-frame bytes must not be silently discarded either."""
+    n, h, w = 3, 4, 4
+    _stub_decode_env(monkeypatch, n, h, w, 0, 0, bytes(n * h * w + 7))
+
+    with pytest.raises(RuntimeError, match="decoded .* expected"):
+        _demo.decode_h5j_channel(tmp_path / "ragged.h5j", 3)
+
+
+def test_decode_returns_cropped_volume_on_a_complete_stream(
+    tmp_path, monkeypatch
+) -> None:
+    """Codec padding is cropped off; a complete stream returns (n, h, w)."""
+    n, h, w, pr, pb = 3, 5, 4, 2, 1
+    ew, eh = w + pr, h + pb
+    payload = np.arange(n * eh * ew, dtype=np.uint8).tobytes()
+    _stub_decode_env(monkeypatch, n, h, w, pr, pb, payload)
+
+    vol = _demo.decode_h5j_channel(tmp_path / "ok.h5j", 3)
+
+    assert vol.shape == (n, h, w)
+    expected = np.frombuffer(payload, dtype=np.uint8).reshape(n, eh, ew)[:, :h, :w]
+    assert np.array_equal(vol, expected)
+
+
+def _import_demo_with_argv(argv):
+    """Import a fresh copy of the demo under a given argv.
+
+    ``SAMPLE`` is parsed at module scope, so proving the validation is actually
+    *wired* to ``--sample`` (rather than merely existing as a helper) means
+    re-importing the module with that argv in place.
+    """
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("_flylight_argv_probe", _DEMO_PATH)
+    module = importlib.util.module_from_spec(spec)
+    old = sys.argv
+    sys.argv = argv
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.argv = old
+    return module
+
+
+def test_bad_sample_argument_is_rejected_at_parse_time() -> None:
+    with pytest.raises(ValueError, match="Invalid --sample"):
+        _import_demo_with_argv(["demo", "--sample=../../escape"])
+
+
+def test_good_sample_argument_is_accepted_at_parse_time() -> None:
+    mod = _import_demo_with_argv(["demo", "--sample=R14A02-20180905_65_A6"])
+    assert mod.SAMPLE == "R14A02-20180905_65_A6"

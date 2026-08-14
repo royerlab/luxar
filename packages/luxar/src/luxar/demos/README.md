@@ -1035,6 +1035,7 @@ interop demos do with `_interop_common.py`.
 ```python
 from luxar.demos import hsv_to_rgb  # shared plumbing — fine
 
+
 def generate_my_data(output_path):
     # The interesting part is right here
     x = np.linspace(0, 10, 1000)
@@ -1050,6 +1051,7 @@ def generate_my_data(output_path):
 def generate_my_data(output_path):
     # The demo's whole point now lives somewhere else
     from my_utils import create_positions
+
     positions = create_positions()  # ← nothing left to read here
 ```
 
@@ -1118,19 +1120,21 @@ with asection("Writing to Zarr"):
 
 ```python
 from luxar.demos import (
-    launch_viewer,       # serve + open viewer (serve_args=[...] to pass e.g. --profile)
-    cached_download,     # download once into ~/.cache/luxar/<name>/, skip-if-present
-    cache_computed,      # cache an expensive result (UMAP, field) — versioned, param-keyed
+    launch_viewer,  # serve + open viewer (serve_args=[...] to pass e.g. --profile)
+    cached_download,  # download once into ~/.cache/luxar/<name>/, skip-if-present
+    cache_computed,  # cache an expensive result (UMAP, field) — versioned, param-keyed
     require_local_data,  # gate LFS-tracked local data (clear "git lfs pull" message)
-    require_module,      # gate an OPTIONAL dependency at its point of use (see #7)
-    parse_demo_flags,    # --recompute / --no-serve / --serve-only
-    parse_int_arg,       # --points=N / --sample N integer flags
-    parse_path_arg,      # --cache-dir PATH / --data=PATH path flags (expands ~)
-    hsv_to_rgb,          # vectorized rainbow / hue-ramp colouring
-    is_lfs_pointer,      # is this LFS-tracked file a pointer stub, not the data?
+    require_module,  # gate an OPTIONAL dependency at its point of use (see #7)
+    parse_demo_flags,  # --recompute / --no-serve / --serve-only
+    parse_int_arg,  # --points=N / --sample N integer flags
+    parse_path_arg,  # --cache-dir PATH / --data=PATH path flags (expands ~)
+    hsv_to_rgb,  # vectorized rainbow / hue-ramp colouring
+    is_lfs_pointer,  # is this LFS-tracked file a pointer stub, not the data?
     print_data_provenance,  # source/licence notice before a third-party download
-    detect_device, warn_if_no_cuda_gpu,          # GPU/MPS/CPU
-    load_precomputed_gsplats, load_precomputed_bundle,  # LFS-shipped gsplat data
+    detect_device,
+    warn_if_no_cuda_gpu,  # GPU/MPS/CPU
+    load_precomputed_gsplats,
+    load_precomputed_bundle,  # LFS-shipped gsplat data
 )
 
 # Download once, reused on every later run:
@@ -1179,6 +1183,7 @@ needs them**:
 
 ```python
 from luxar.demos import require_module
+
 
 def _compute_umap3d(features):
     # Gated here, not in main(): a warm cache never needs UMAP.
@@ -1235,7 +1240,7 @@ composite row that fans its controls down to every descendant:
 ```python
 trees = scene.add_group("trees", layer=True)
 for i, tree in enumerate(trees_to_write):
-    trees.add_lines(f"tree_{i:04d}", ...)   # no per-node layer=
+    trees.add_lines(f"tree_{i:04d}", ...)  # no per-node layer=
 ```
 
 When the descendants render with a non-default mode, spell that same
@@ -1275,22 +1280,24 @@ with LuxarZarrCompiler(output) as compiler:
 
     # Write in batches, under one composite group layer (see §8) rather than
     # one Layers-panel row per batch
-    batches = scene.add_group('batches', layer=True)
+    batches = scene.add_group("batches", layer=True)
     for i in range(num_batches):
         batch = generate_batch(i)
-        batches.add_points(f'batch_{i}', batch)
+        batches.add_points(f"batch_{i}", batch)
 ```
 
 ### For nD Demos
 Specify dimensions with proper display flags:
 
 ```python
-dims = Dimensions([
-    Dimension('x', unit='um', display=True),
-    Dimension('y', unit='um', display=True),
-    Dimension('z', unit='um', display=True),
-    Dimension('time', unit='s', display=False, discrete=True, range=(0, 99))
-])
+dims = Dimensions(
+    [
+        Dimension("x", unit="um", display=True),
+        Dimension("y", unit="um", display=True),
+        Dimension("z", unit="um", display=True),
+        Dimension("time", unit="s", display=False, discrete=True, range=(0, 99)),
+    ]
+)
 ```
 
 ### For Complex Math
@@ -1302,7 +1309,7 @@ Add comments explaining the mathematics:
 # x = r sin(θ) cos(φ)
 # y = r sin(θ) sin(φ)
 # z = r cos(θ)
-phi = np.random.uniform(0, 2*np.pi, n)
+phi = np.random.uniform(0, 2 * np.pi, n)
 theta = np.arccos(np.random.uniform(-1, 1, n))
 ...
 ```
