@@ -1314,8 +1314,14 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         Args:
             path: Path for the dataset
             dtype: Data type
+            maxshape: ACCEPTED AND IGNORED. An h5py-compatibility argument that
+                zarr has never enforced — a zarr array has no pre-declared
+                ceiling, `.resize()` simply works — so this has always been
+                inert. zarr 2 accepted and dropped it; zarr 3 removed the kwarg
+                outright, so it is no longer forwarded at all. Kept on the
+                signature because callers pass it and removing it would be a
+                gratuitous break, but it constrains nothing.
             shape: Initial shape
-            maxshape: Maximum shape (None for unlimited)
             chunks: Chunking configuration
 
         Returns:
