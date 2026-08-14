@@ -67,6 +67,9 @@ three shapes — an inline literal call keyword, a signature default, and a plai
 resolved in the scope they are USED in: a function-local or class-body binding
 shadows a module-level one of the same name, as do the parameters of a ``def``
 or a ``lambda``, so a name never reports a value from a scope it cannot see.
+A local binding the scan cannot READ (a conditional, a call, a loop variable,
+an import) shadows just as hard — it hides the outer value rather than letting
+it leak in, so such a name reports nothing at all.
 (A class body is read the permissive way round — its attributes stay visible to
 its own methods, which the interpreter would not do. That over-reports rather
 than misses, which is the direction this guard errs in everywhere.) Within
@@ -231,13 +234,70 @@ def _without_params(
     return scope
 
 
+def _bound_names(body: list[ast.stmt]) -> set[str]:
+    """Every name ``body`` binds in a scope of its OWN, whatever shape the value has.
+
+    :func:`_string_constants` reads only the bindings it can resolve to a
+    string, so on its own it cannot say "this name is local and I cannot see
+    its value". Without that, an unreadable local — ``TONE = "Neutral" if hdr
+    else "ACES"``, ``TONE = pick()``, ``for TONE in ...``, ``from x import
+    TONE``, a ``case TONE:`` capture — would leave the module's ``TONE``
+    visible and the scan
+    would report a value this scope never sees. That is wrong in both
+    directions: it hides a stray pin behind a compliant module constant, and it
+    fails a module for a ``"Neutral"`` the call never receives. So every name
+    bound in a body is dropped from the inherited scope first, and only the
+    readable ones are put back.
+
+    The walk stops at nested ``def``/``class``/``lambda`` bodies and at
+    comprehensions, which bind in scopes of their own (a nested definition's
+    own NAME is still bound here).
+    """
+    names: set[str] = set()
+
+    def visit(node: ast.AST) -> None:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(node.name)
+            return
+        if isinstance(
+            node,
+            (ast.Lambda, ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp),
+        ):
+            return
+        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            names.add(node.id)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                names.add((alias.asname or alias.name).split(".")[0])
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            names.add(node.name)
+        elif isinstance(node, (ast.MatchAs, ast.MatchStar)) and node.name:
+            names.add(node.name)
+        elif isinstance(node, ast.MatchMapping) and node.rest:
+            names.add(node.rest)
+        for child in ast.iter_child_nodes(node):
+            visit(child)
+
+    for stmt in body:
+        visit(stmt)
+    return names
+
+
+def _body_scope(
+    body: list[ast.stmt], consts: dict[str, tuple[str, ...]]
+) -> dict[str, tuple[str, ...]]:
+    """``consts`` as seen from inside ``body``: its own bindings win."""
+    bound = _bound_names(body)
+    scope = {name: values for name, values in consts.items() if name not in bound}
+    scope.update(_string_constants(body))
+    return scope
+
+
 def _function_scope(
     node: ast.FunctionDef | ast.AsyncFunctionDef, consts: dict[str, tuple[str, ...]]
 ) -> dict[str, tuple[str, ...]]:
     """``consts`` as seen from inside ``node``'s body: own constants win."""
-    scope = _without_params(node.args, consts)
-    scope.update(_string_constants(node.body))
-    return scope
+    return _body_scope(node.body, _without_params(node.args, consts))
 
 
 def _keyword_values(node: ast.Call, consts: dict[str, tuple[str, ...]]) -> list[str]:
@@ -293,8 +353,7 @@ def _collect(
         # rather than misses, which is the safe direction for this guard.
         for outer in [*node.bases, *node.keywords, *node.decorator_list]:
             _collect(outer, consts, found)
-        scope = dict(consts)
-        scope.update(_string_constants(node.body))
+        scope = _body_scope(node.body, consts)
         for stmt in node.body:
             _collect(stmt, scope, found)
         return
@@ -455,6 +514,87 @@ def test_the_guard_detects_a_stray_neutral(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     assert _tone_mappings(param) == []
+
+
+def test_an_unreadable_local_hides_the_outer_constant(tmp_path: Path) -> None:
+    """A local binding the scan cannot read still shadows the module constant.
+
+    Shadowing must not depend on whether the scan happens to understand the
+    local VALUE. If it did, ``TONE = "Neutral" if hdr else "ACES"`` inside a
+    function would leave the module's own ``TONE`` visible, and the scan would
+    report a value that call never receives — a spurious failure where the
+    module constant is non-ACES, and a hidden pin where it is ACES.
+    """
+    conditional = tmp_path / "demo_conditional_local.py"
+    conditional.write_text(
+        'TONE = "Neutral"\n'
+        "def build(hdr):\n"
+        '    TONE = "Neutral" if hdr else "ACES"\n'
+        "    return ViewerConfig(tone_mapping=TONE)\n",
+        encoding="utf-8",
+    )
+    assert _tone_mappings(conditional) == []
+
+    # Same for the other shapes a local binding takes: a call, a loop variable,
+    # an import, a string bound inside an `if:` (which `_string_constants` does
+    # not descend into), a `match` capture, and a class attribute.
+    for name, source in {
+        "demo_local_call.py": (
+            'TONE = "Neutral"\n'
+            "def build():\n"
+            "    TONE = pick()\n"
+            "    return ViewerConfig(tone_mapping=TONE)\n"
+        ),
+        "demo_local_loop.py": (
+            'TONE = "Neutral"\n'
+            "def build():\n"
+            "    for TONE in options():\n"
+            "        ViewerConfig(tone_mapping=TONE)\n"
+        ),
+        "demo_local_import.py": (
+            'TONE = "Neutral"\n'
+            "def build():\n"
+            "    from ._palette import TONE\n"
+            "    return ViewerConfig(tone_mapping=TONE)\n"
+        ),
+        "demo_local_branch.py": (
+            'TONE = "Neutral"\n'
+            "def build(hdr):\n"
+            "    if hdr:\n"
+            '        TONE = "ACES"\n'
+            "    return ViewerConfig(tone_mapping=TONE)\n"
+        ),
+        "demo_local_match.py": (
+            'TONE = "Neutral"\n'
+            "def build(request):\n"
+            "    match request:\n"
+            "        case {'tone': TONE}:\n"
+            "            return ViewerConfig(tone_mapping=TONE)\n"
+        ),
+        "demo_class_dynamic.py": (
+            'TONE = "Neutral"\n'
+            "class Scene:\n"
+            "    TONE = pick()\n"
+            "    config = ViewerConfig(tone_mapping=TONE)\n"
+        ),
+    }.items():
+        path = tmp_path / name
+        path.write_text(source, encoding="utf-8")
+        assert _tone_mappings(path) == [], name
+
+    # But a nested scope is not this one: a `def` or a comprehension binding
+    # that name inside the function must not blind the function's own pin.
+    nested = tmp_path / "demo_nested_binding.py"
+    nested.write_text(
+        'TONE = "Neutral"\n'
+        "def build():\n"
+        "    def inner(TONE):\n"
+        "        return TONE\n"
+        "    rest = [TONE for TONE in options()]\n"
+        "    return ViewerConfig(tone_mapping=TONE), inner, rest\n",
+        encoding="utf-8",
+    )
+    assert _tone_mappings(nested) == ["Neutral"]
 
 
 def test_a_rebound_constant_cannot_mask_a_stray_neutral(tmp_path: Path) -> None:
