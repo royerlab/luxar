@@ -324,7 +324,8 @@ NEURON_ALPHA_HI_AMP_PCT = 99.5
 # deleting it. 0.01 is optical depth −ln(1 − a) ≈ 0.01: ~600x thinner than an
 # opaque neurite and ~12x thinner than a neuropil splat, so the haze is
 # invisible at the default display range and comes back when the range is
-# widened.
+# NARROWED. (Narrowed, not widened: the viewer's gain is 1/(max - min), so a
+# tighter window is a brighter one — see `display-range.ts::computeUniforms`.)
 NEURON_ALPHA_MIN = 0.01
 
 COLOR_BALANCE_PERCENTILE = 99.99
