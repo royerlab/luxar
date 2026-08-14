@@ -30,10 +30,12 @@
  *
  * Every field is read defensively (finite-number / `Array.isArray` guards)
  * because the input crosses a `page.evaluate` serialisation boundary and may
- * come from an older viewer build. A missing per-type total is simply not
- * counted; a snapshot carrying NO recognisable total at all is reported as a
- * shape mismatch rather than as an empty scene. Either way the summary never
- * leaks a `NaN` or an `undefined`.
+ * come from an older viewer build. A per-type total that is missing — or
+ * present but unusable — reads as 0 AND is named in `reason`, because an
+ * unannounced 0 is indistinguishable from a genuinely empty geometry type; a
+ * snapshot carrying NO recognisable total at all is reported as a shape
+ * mismatch rather than as an empty scene. Either way the summary never leaks a
+ * `NaN` or an `undefined`.
  *
  * @module core/app/debug/capture-readiness
  */
@@ -48,9 +50,10 @@ import type { DebugState } from './debug-state';
  *
  * `reason` is NOT exclusive to `ok: false`. A scene can be ready AND carry a
  * caveat about the numbers printed alongside it (a total that was present but
- * `Infinity`/`NaN` is counted as 0, so the counts under-state the scene). A
- * count the tool could not read must never print as a bare `0` with nothing
- * said about it — that silent zero is the class of bug #1579 was.
+ * `Infinity`/`NaN`, or absent from the snapshot altogether, is counted as 0, so
+ * the counts under-state the scene). A count the tool could not read must never
+ * print as a bare `0` with nothing said about it — that silent zero is the class
+ * of bug #1579 was.
  */
 export interface CaptureReadinessSummary {
   /**
@@ -62,9 +65,9 @@ export interface CaptureReadinessSummary {
   ok: boolean;
   /**
    * Why the verdict is not ok — or, on an otherwise-ready verdict, a caveat
-   * about the reported numbers (currently: a present-but-non-finite total that
-   * had to be counted as 0). Absent when the scene is ready and every total
-   * read cleanly.
+   * about the reported numbers (a total that had to be counted as 0 because it
+   * was non-finite, or because the snapshot did not carry it at all). Absent
+   * when the scene is ready and every total read cleanly.
    */
   reason?: string;
   /** Drawn points summed over all point-cloud nodes. */
@@ -148,7 +151,8 @@ function lengthOrZero(value: unknown): number {
  * @returns A plain summary; `ok` is false with a `reason` for every
  *   not-ready case (no state, no totals at all, non-finite totals, empty
  *   scene). A READY verdict can carry a `reason` too — as a caveat, when some
- *   total was present but non-finite and therefore counted as 0. Note that
+ *   per-type total was counted as 0 because it was non-finite or absent from
+ *   the snapshot rather than because the scene has none of that type. Note that
  *   `ok: true` means the scene graph carries elements, not that they are
  *   visible — see the module doc.
  */
@@ -208,6 +212,16 @@ export function summarizeCaptureReadiness(
   const nonFiniteFields = totalFields.filter(
     (field) => isNumber(state[field]) && !Number.isFinite(state[field])
   );
+  // A per-type total the snapshot never carried is exactly as unreadable as a
+  // non-finite one — it prints as 0 all the same — so it earns the same caveat
+  // rather than a silent zero. Only reachable through the version skew the
+  // `Math.max` above already hedges against: the current viewer emits all five
+  // totals unconditionally, so this list is empty on a live snapshot.
+  // `totalElements` is excluded: it is re-derived from the per-type totals, so
+  // its absence costs nothing and is not a count anyone lost.
+  const absentFields = totalFields.filter(
+    (field) => field !== 'totalElements' && !isNumber(state[field])
+  );
   if (!hasAnyTotal) {
     return {
       ok: false,
@@ -225,21 +239,37 @@ export function summarizeCaptureReadiness(
     totalElements,
   };
 
+  /**
+   * The counts this call had to give up on, named: `<fields> present but not
+   * finite (Infinity/NaN); <fields> absent from the snapshot`, or `undefined`
+   * when every total read cleanly. Each caller appends its own consequence
+   * clause, since "counted as zero" means something different either side of
+   * the readiness verdict.
+   */
+  const unreadable = (nonFinite: readonly string[]): string | undefined => {
+    const parts: string[] = [];
+    if (nonFinite.length > 0) {
+      parts.push(`${nonFinite.join(', ')} present but not finite (Infinity/NaN)`);
+    }
+    if (absentFields.length > 0) {
+      parts.push(`${absentFields.join(', ')} absent from the snapshot`);
+    }
+    return parts.length > 0 ? parts.join('; ') : undefined;
+  };
+
   if (totalElements > 0) {
     // Ready, but a total we could not read is still worth saying out loud: it is
     // reported as 0 above, and an unannounced 0 is indistinguishable from a
     // genuinely empty geometry type. Name only the PER-TYPE fields here —
     // `totalElements` is re-derived from them (`Math.max` above), so saying it
     // was "counted as zero" next to a positive printed value would be a lie. In
-    // practice both go non-finite together, since the viewer computes the field
-    // as the sum.
-    const understated = nonFiniteFields.filter((field) => field !== 'totalElements');
-    if (understated.length > 0) {
+    // practice the per-type and the aggregate go non-finite together, since the
+    // viewer computes the field as the sum.
+    const understated = unreadable(nonFiniteFields.filter((field) => field !== 'totalElements'));
+    if (understated) {
       return {
         ok: true,
-        reason:
-          `${understated.join(', ')} present but not finite (Infinity/NaN) — ` +
-          'counted as zero, so the reported counts under-state the scene',
+        reason: `${understated} — counted as zero, so the reported counts under-state the scene`,
         ...totals,
         ...counts,
       };
@@ -257,13 +287,12 @@ export function summarizeCaptureReadiness(
     return { ok: true, ...totals, ...counts };
   }
 
+  const lost = unreadable(nonFiniteFields);
   return {
     ok: false,
-    reason:
-      nonFiniteFields.length > 0
-        ? `${nonFiniteFields.join(', ')} present but not finite (Infinity/NaN) — ` +
-          'counted as zero, nothing usable to capture'
-        : 'zero points, gsplats, lines and triangles — nothing loaded',
+    reason: lost
+      ? `${lost} — counted as zero, nothing usable to capture`
+      : 'zero points, gsplats, lines and triangles — nothing loaded',
     ...totals,
     ...counts,
   };

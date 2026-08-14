@@ -165,7 +165,52 @@ describe('summarizeCaptureReadiness', () => {
     const summary = summarizeCaptureReadiness(partial);
     expect(summary.ok).toBe(true);
     expect(summary.totalElements).toBe(42);
+    // An absent `totalElements` costs nothing — it is re-derived from the
+    // per-type totals — so it must NOT be named as a count that was lost.
+    expect(summary.reason).not.toMatch(/totalElements/);
     expectNoNaN(summary);
+  });
+
+  it('names the per-type totals a PARTIAL snapshot never carried', () => {
+    // The version-skew case the `Math.max` exists for: a snapshot from another
+    // viewer build that carries the aggregate but not (all of) the per-type
+    // breakdown. Those three print as 0 like any other unreadable count, and an
+    // unannounced 0 is indistinguishable from a genuinely empty geometry type —
+    // the silent-zero failure #1579 was. So they get named, and the verdict
+    // stays `ok` because there are 100 elements to capture.
+    const summary = summarizeCaptureReadiness({ totalElements: 100 } as Partial<DebugState>);
+
+    expect(summary.ok).toBe(true);
+    expect(summary.totalElements).toBe(100);
+    expect(summary.reason).toMatch(/absent from the snapshot/);
+    expect(summary.reason).toMatch(/totalPoints/);
+    expect(summary.reason).toMatch(/totalGSplats/);
+    expect(summary.reason).toMatch(/totalLines/);
+    expect(summary.reason).toMatch(/totalTriangles/);
+    expect(summary.reason).toMatch(/under-state the scene/);
+    expectNoNaN(summary);
+
+    // A snapshot missing only ONE of them names only that one, and says nothing
+    // about the four counts it did read.
+    const oneMissing = summarizeCaptureReadiness(
+      makeState({ totalPoints: 100, totalElements: 100, totalTriangles: undefined })
+    );
+    expect(oneMissing.ok).toBe(true);
+    expect(oneMissing.reason).toMatch(/^totalTriangles absent from the snapshot/);
+    expect(oneMissing.reason).not.toMatch(/totalPoints/);
+    expectNoNaN(oneMissing);
+
+    // Both flavours of unreadable at once are reported together, not one
+    // silently shadowing the other.
+    const both = summarizeCaptureReadiness({
+      totalPoints: 100,
+      totalGSplats: Infinity,
+      totalElements: 100,
+    } as Partial<DebugState>);
+    expect(both.ok).toBe(true);
+    expect(both.reason).toMatch(/totalGSplats present but not finite/);
+    expect(both.reason).toMatch(/totalLines, totalTriangles absent from the snapshot/);
+    expectNoNaN(both);
   });
 
   it('does not let a STALE totalElements contradict the per-type totals', () => {

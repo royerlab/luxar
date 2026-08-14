@@ -140,7 +140,8 @@ Every not-ready path (no state, an unexpected snapshot shape,
 present-but-non-finite totals, an empty scene) carries a human-readable `reason`
 instead of leaking `NaN`/`undefined`. `reason` is not exclusive to `ok: false`:
 it doubles as a CAVEAT channel, so an otherwise-ready verdict that had to count a
-present-but-non-finite total as 0 still names the affected field rather than
+total as 0 — because it was non-finite, or because a partial (version-skewed)
+snapshot did not carry it at all — still names the affected fields rather than
 printing a silent zero. Negative totals are clamped at 0 for the same reason — an
 element count cannot be negative, and an unclamped one could cancel a real
 positive in the sum.

@@ -115,9 +115,10 @@ screenshotting. If the scene is not ready it warns
 parentheses; the wording stays vague about WHY on purpose, because the
 reason may be that there was no debug state, an unexpected `getState()`
 shape or a probe that threw, in which case those counts are placeholders
-rather than measurements. A ready verdict that still carries a caveat (a
-total that was present but `Infinity`/`NaN`, hence counted as 0) prints
-as `Note: <reason>` instead of being swallowed.
+rather than measurements. A ready verdict that still carries a caveat —
+a total that was counted as 0 because it was `Infinity`/`NaN`, or
+because a partial snapshot never carried it — prints as `Note: <reason>`,
+naming the fields, instead of being swallowed.
 
 All four geometry types are reported — `totalPoints`, `totalGSplats`,
 `totalLines`, `totalTriangles`, plus `totalElements`, which is the
@@ -162,5 +163,7 @@ install chromium` if first-time setup).
   `window.__luxarDebug` object (`scene`, `camera`, `renderer`,
   `controls`, `sceneDimsManager`, `getState()`, `renderOnce()`).
 - `../src/core/app/debug/debug-state.ts` — the pure scene-walking
-  computer behind `__luxarDebug.getState()` (point / gsplat / line
-  counts + camera + dim reporting).
+  computer behind `__luxarDebug.getState()` (point / gsplat / line /
+  triangle counts + camera + dim reporting).
+- `../src/core/app/debug/capture-readiness.ts` — the pure readiness
+  verdict `capture-hires.ts` runs over that snapshot.
