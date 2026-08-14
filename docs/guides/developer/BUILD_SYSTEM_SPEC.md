@@ -421,19 +421,21 @@ a local pass:
 hatch run python -V     # the interpreter your tests actually used
 ```
 
-The `test` matrix has one leg — the floor, 3.12 (`requires-python = ">=3.12"`).
-Newer interpreters resolve and are expected to work, but nothing tests them; add
-a leg here and to the CI matrix if that stops being an acceptable trade. Run the
-one leg explicitly with:
+The `test` matrix has two legs: the floor, 3.12 (`requires-python = ">=3.12"`,
+which is what zarr 3.2+ requires), and the newest supported interpreter, 3.14.
+Both matter — `>=3.12` has no ceiling, `install-hatch` prefers the newest
+interpreter it can find, and a developer's `hatch env` therefore usually runs
+something newer than the floor. Run either explicitly:
 
 ```bash
-hatch run test.py3.12:cov
+hatch run test.py3.12:cov   # the floor, and the required CI context
+hatch run test.py3.14:cov   # the newest supported
 ```
 
 CI runs each version it tests as its own parallel job and asserts the interpreter
 matches the matrix leg, so a mismatch fails loudly rather than silently testing
 one version three times (see issue #839). Which versions that is depends on the
-event — a pull request runs 3.12 alone; see "Which Python versions CI runs"
+event — a pull request runs the floor alone; see "Which Python versions CI runs"
 below.
 
 ### pnpm for TypeScript
@@ -827,22 +829,32 @@ runs everything. The same trade as the per-PR Python matrix below: found on
 
 ### Which Python versions CI runs
 
-`python-tests` is a matrix, but it currently has a single leg on every event:
+`python-tests` is a matrix whose legs depend on the event:
 
 | Event | Python legs |
 |-------|-------------|
-| `pull_request` | `3.12` — the one required status context |
-| `push` to `main` | `3.12` |
-| nightly `schedule` (09:17 UTC) | `3.12` |
+| `pull_request` | `3.12` — the floor, and the one required status context |
+| `push` to `main` | `3.12`, `3.14` |
+| nightly `schedule` (09:17 UTC) | `3.12`, `3.14` |
 
-That leg is the FLOOR (`requires-python = ">=3.12"`), which is what the required
-`python-tests (3.12)` status context names. `>=3.12` also admits newer
-interpreters and nothing here exercises them — a deliberate trade on a box with
-five self-hosted slots, and the reason the version-equality assertion in the job
-matters (it proves the leg really ran 3.12, not whatever pipx picked). The
-nightly and push runs differ from a PR run in *scope* rather than in Python
-version: neither has a PR base, so the `changes` job cannot path-filter and
-selects the whole suite plus the documentation gate.
+3.12 is the FLOOR (`requires-python = ">=3.12"`, what zarr 3.2+ requires) and is
+what the required `python-tests (3.12)` status context names, so it runs on every
+event. `>=3.12` has no ceiling, though: 3.13 and 3.14 are supported, `install-hatch`
+explicitly prefers them, and a developer's `hatch env` picks the newest interpreter
+on the box — so the newest supported version is exercised on the events that
+already run the whole suite, rather than left untested. Finding a break there
+within 24h is the trade against spending a second leg on every PR, on a box with
+five self-hosted slots. (If newer interpreters ever become deliberately
+unsupported, the honest fix is a `requires-python` upper bound, not a quiet
+single-leg matrix.)
+
+This is also why the version-equality assertion in the job matters: it proves each
+leg really ran the interpreter it claims, rather than whatever pipx picked — the
+defect behind issue #839, where all three legs silently ran the same version.
+
+The nightly and push runs differ from a PR run in *scope* as well: neither has a PR
+base, so the `changes` job cannot path-filter and selects the whole suite plus the
+documentation gate.
 
 Scheduled runs sit in their own `concurrency` group: they share
 `refs/heads/main` with merge-triggered runs, so under one shared group

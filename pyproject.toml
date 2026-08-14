@@ -48,7 +48,7 @@ requires-python = ">=3.12"
 dependencies = [
     "numpy>=2.0",
     # zarr-python 3. Luxar still WRITES zarr format 2 on disk (see
-    # `luxar.io._zarr_compat.ZARR_FORMAT`) — the store layout is unchanged and
+    # `luxar._zarr_compat.ZARR_FORMAT`) — the store layout is unchanged and
     # the viewer is untouched. What the 3.x library buys is the ability to READ
     # zarr v3 stores, which 2.18 cannot do at all, and it lifts the transitive
     # caps the old pin forced on anndata and napari.
@@ -374,7 +374,10 @@ dependencies = [
 ]
 
 [[tool.hatch.envs.test.matrix]]
-python = ["3.12"]
+# Floor and newest supported, mirroring the CI matrix: `requires-python = ">=3.12"`
+# has no ceiling, so the version most developers actually run (their newest
+# interpreter) has to be testable too — `hatch run test.py3.14:cov`.
+python = ["3.12", "3.14"]
 
 [tool.hatch.envs.test.scripts]
 # `run` = full suite (local gate); `cov` deselects `slow` to match CI (fast,

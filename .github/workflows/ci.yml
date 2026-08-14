@@ -6,14 +6,14 @@ on:
   pull_request:
     branches: [main]
   schedule:
-    # Nightly full-suite run. This began as a multi-version Python matrix; since
-    # the floor moved to 3.12 there is only one interpreter, so that is no longer
-    # the reason it exists.
+    # Nightly full-suite run, and still the multi-version Python matrix: per-PR CI
+    # runs the FLOOR (3.12) only, so this is where the newest supported
+    # interpreter (3.14) gets exercised — within 24h rather than on every PR.
     #
-    # What it still buys: a schedule event has no PR base, so the `changes` job
-    # below cannot path-filter anything and selects the WHOLE suite plus the
-    # documentation gate. That catches a break in a job every recent PR happened
-    # to skip. Budget it as one whole CI run a day on the self-hosted box.
+    # It buys a second thing too: a schedule event has no PR base, so the
+    # `changes` job below cannot path-filter anything and selects the WHOLE suite
+    # plus the documentation gate, catching a break in a job every recent PR
+    # happened to skip. Budget it as one whole CI run a day on the self-hosted box.
     - cron: '17 9 * * *'
 
 concurrency:
@@ -384,13 +384,19 @@ jobs:
       # you need when the legs genuinely differ.
       fail-fast: false
       matrix:
-        # One leg. The project floor is 3.12 (`requires-python = ">=3.12"`), which
-        # is also the newest release, so "the matrix" and "the required gate" are
-        # the same single version — there is no second interpreter to spread over.
-        # This stays a matrix so the job context keeps the name branch protection
-        # requires (`python-tests (3.12)`), and so a future floor/ceiling split is
-        # a one-line change rather than a job rewrite.
-        python-version: ["3.12"]
+        # FLOOR on every PR, floor + NEWEST on push-to-main and the nightly.
+        #
+        # 3.12 is the floor (`requires-python = ">=3.12"`, what zarr 3.2+ needs)
+        # and is the required status context under branch protection, so it runs
+        # everywhere. But `>=3.12` has no ceiling: 3.13 and 3.14 are supported, the
+        # `install-hatch` bootstrap explicitly prefers them, and a developer's
+        # `hatch env` picks the newest interpreter on the box — so testing only the
+        # floor would leave the version most people actually run unexercised.
+        # Hence 3.14 on the events that already run the whole suite.
+        #
+        # If newer interpreters are ever deliberately unsupported, the honest fix
+        # is a `requires-python` upper bound, not a quiet single-leg matrix.
+        python-version: ${{ (github.event_name == 'pull_request') && fromJSON('["3.12"]') || fromJSON('["3.12", "3.14"]') }}
     env:
       # Pin BLAS/OpenMP to one thread per leg. This suite runs SERIALLY, yet each
       # leg burned ~316% CPU on the self-hosted box -- numpy spawning threads to
