@@ -48,13 +48,19 @@
  *     family's generic divide-by-zero floor, recurring several times in each
  *     surface's fragment stage, where `luxarPartnerProfile` lives, and in the
  *     vertex stage too; it is not part of the #1494 contract);
- * (d) `pkR` and `rp` are each written EXACTLY once, and `rEnd` NEVER. Every pin
+ * (d) `pkR` and `rp` are each written EXACTLY once, and `rEnd` NEVER — and
+ *     neither `pkR` nor the varying `vPack` is written PER COMPONENT. Every pin
  *     above is satisfied by a later write, because the last one wins:
  *     `pkR = vec2(pkR.y, pkR.x);` after the unpack, a second `rp = ...`, or — the
  *     subtlest — a write to `rEnd` itself at the top of the reconstruction, which
  *     reinstates the exact #1494 defect while the pinned `rp` line and every call
  *     site stay byte-identical. A GLSL function parameter is a writable local and
- *     the TSL `rEnd` is a plain JS binding, so both backends allow it;
+ *     the TSL `rEnd` is a plain JS binding, so both backends allow it. A
+ *     component write is the same edit spelled through a swizzle and needs its own
+ *     clause in every pattern: `pkR.x = rPx; pkR.y = rPx;` in the fragment (or
+ *     `pkR.x.assign(rPx)` in TSL) hands both ends the per-fragment radius, and
+ *     `vPack.z = packHalf2x16(vec2(rA, rA));` after the pinned pack re-parks the
+ *     lane — all three measured green before those clauses existed;
  * (e) TSL only: the `partnerProfile` closure body mentions no `rPx`. That closure
  *     is defined in the same scope as the fragment's per-pixel radius, so a
  *     regression could read `rPx` inside it and ignore its `rEnd` parameter while
@@ -72,11 +78,15 @@
  * fragment (it is unpacked outside the closure). For GLSL the counts are
  * STAGE-WIDE, which is exact only because `rp` and `rEnd` exist nowhere else in
  * the fragment source; a legitimate second write — an `#ifdef` variant of the `rp`
- * line, say — means scoping this guard to the function, not deleting it.
+ * line, say — means scoping this guard to the function, not deleting it. The
+ * `vPack` clause is counted over the VERTEX stage, and forbids only the per-lane
+ * form: writing the varying whole is the legitimate spelling, and how many whole
+ * writes there are (an early-out pack, the real one) is not this lock's business —
+ * (a) already checks that every one of them agrees on the lane.
  *
  * What a text pin does NOT reach: these guards catch the direct edits — an
- * argument swap, a lane move, a re-bind (plain, compound or via a TSL assign
- * method), an `rPx` read inside the closure. A determined rewrite of the
+ * argument swap, a lane move, a re-bind (plain, compound, per-component, or via a
+ * TSL assign method), an `rPx` read inside the closure. A determined rewrite of the
  * surrounding arithmetic stays green — four such shapes were checked and do:
  * redefining `rA` / `rB` just above the pinned pack, dividing by a re-derived
  * radius in the UNPINNED `qp` line instead of the pinned `rp` line, renaming the
@@ -158,7 +168,9 @@ interface WriteRule {
    * The assignment patterns cover plain `=` and the arithmetic compound forms
    * `+= -= *= /= %=` (never `==`), plus — for TSL nodes, where assignment is a
    * method call — `.assign()` and `.addAssign()` / `.subAssign()` /
-   * `.mulAssign()` / `.divAssign()`.
+   * `.mulAssign()` / `.divAssign()`. Vector targets also admit a SWIZZLE
+   * (`pkR.x = …`, `pkR.x.assign(…)`), which is the same write with one more token,
+   * so `SWIZZLE` rides along in front of every `=` / assign method.
    */
   readonly pattern: RegExp;
   /** Permitted match count — 1 for a single declaration, 0 for a forbidden form. */
@@ -188,6 +200,11 @@ interface CapsuleSurface {
    */
   readonly fragmentWrites: readonly WriteRule[];
   /**
+   * Write rules counted over the stage that packs the lane. Empty for TSL, whose
+   * single module is already covered by `fragmentWrites`.
+   */
+  readonly vertexWrites: readonly WriteRule[];
+  /**
    * Write rules counted inside the partner reconstruction only. Empty for GLSL,
    * whose `rp` / `rEnd` exist nowhere else in the stage (see the header note);
    * used for TSL, whose module also carries the vertex stage.
@@ -209,8 +226,22 @@ const GLSL_CALL_B =
 const GLSL_BASE_RADIUS = 'float rp = max(rEnd + cut.z * clamp(xp, 0.0, cut.w)';
 /** `vec2 pkR = unpackHalf2x16(vPack.z)` squashed — the lane letter is captured. */
 const GLSL_LANE_READ = /pkR=unpackHalf2x16\(vPack\.([xyzw])\)/g;
+/**
+ * An optional component selector, in any of GLSL's three interchangeable spellings
+ * (`.xy` / `.rg` / `.st`), tolerating a break before the dot so prettier splitting a
+ * TSL member chain does not read as a missing write. Only vector targets need it —
+ * `rp` and `rEnd` are scalars, which GLSL cannot swizzle at all.
+ */
+const SWIZZLE = String.raw`(?:\s*\.[xyzwrgbastpq]+)?`;
+
 const GLSL_FRAGMENT_WRITES: readonly WriteRule[] = [
-  { what: 'pkR (the unpacked endpoint-radius pair)', pattern: /\bpkR\s*[-+*/%]?=(?!=)/g, times: 1 },
+  // `pkR.x = rPx;` is the #1494 defect with every pin byte-identical, so the
+  // swizzle counts as a write to the pair.
+  {
+    what: 'pkR (the unpacked endpoint-radius pair, component writes included)',
+    pattern: new RegExp(String.raw`\bpkR${SWIZZLE}\s*[-+*/%]?=(?!=)`, 'g'),
+    times: 1,
+  },
   { what: 'rp (the rebuilt partner radius)', pattern: /\brp\s*[-+*/%]?=(?!=)/g, times: 1 },
   // A GLSL parameter is a writable local, and the varyings are global inside the
   // function: `rEnd = max(mix(pkR.x, pkR.y, …), 1e-4);` on the first line of the
@@ -220,6 +251,19 @@ const GLSL_FRAGMENT_WRITES: readonly WriteRule[] = [
   {
     what: 'rEnd (the shared-vertex radius parameter)',
     pattern: /\brEnd\s*[-+*/%]?=(?!=)/g,
+    times: 0,
+  },
+];
+
+/**
+ * The pinned pack writes the varying WHOLE; a per-lane write afterwards
+ * (`vPack.z = packHalf2x16(vec2(rA, rA));`) re-parks the radius lane with the
+ * pinned `uvec4(...)` untouched, and no whole-varying count can see it.
+ */
+const GLSL_VERTEX_WRITES: readonly WriteRule[] = [
+  {
+    what: 'vPack per lane (the pack must write the varying whole)',
+    pattern: new RegExp(String.raw`\bvPack\s*\.[xyzwrgbastpq]+\s*[-+*/%]?=(?!=)`, 'g'),
     times: 0,
   },
 ];
@@ -236,11 +280,22 @@ const TSL_FRAGMENT_WRITES: readonly WriteRule[] = [
   { what: 'pkR (the unpacked endpoint-radius pair)', pattern: /\bconst\s+pkR\b/g, times: 1 },
   // A TSL node is re-bound by `.assign()` — or by a compound-assign method, which
   // is an in-repo idiom (`materials/gsplat/shader-tsl.ts` uses `addAssign`) — and
-  // no `const` count can see either.
-  { what: 'pkR via .assign()', pattern: /\bpkR\s*\.assign\(/g, times: 0 },
+  // no `const` count can see either. `pkR` is a `.toVar()`, so a LANE of it takes
+  // `.assign()` too: `pkR.x.assign(rPx)` is the GLSL swizzle write in TSL spelling.
   {
-    what: 'pkR via a compound-assign method',
-    pattern: /\bpkR\s*\.(?:add|sub|mul|div)Assign\(/g,
+    what: 'pkR via .assign() (per-lane included)',
+    pattern: new RegExp(String.raw`\bpkR${SWIZZLE}\s*\.assign\(`, 'g'),
+    times: 0,
+  },
+  {
+    what: 'pkR via a compound-assign method (per-lane included)',
+    pattern: new RegExp(String.raw`\bpkR${SWIZZLE}\s*\.(?:add|sub|mul|div)Assign\(`, 'g'),
+    times: 0,
+  },
+  // The vertex stage shares this module, so the whole-varying rule lands here.
+  {
+    what: 'vPack per lane (the pack must write the varying whole)',
+    pattern: /\bvPack\s*\.[xyzw]+\s*\.(?:assign|(?:add|sub|mul|div)Assign)\(/g,
     times: 0,
   },
 ];
@@ -282,6 +337,7 @@ const SURFACES: readonly CapsuleSurface[] = [
     callEndB: GLSL_CALL_B,
     baseRadius: GLSL_BASE_RADIUS,
     fragmentWrites: GLSL_FRAGMENT_WRITES,
+    vertexWrites: GLSL_VERTEX_WRITES,
     reconstructionWrites: [],
   },
   {
@@ -294,6 +350,7 @@ const SURFACES: readonly CapsuleSurface[] = [
     callEndB: GLSL_CALL_B,
     baseRadius: GLSL_BASE_RADIUS,
     fragmentWrites: GLSL_FRAGMENT_WRITES,
+    vertexWrites: GLSL_VERTEX_WRITES,
     reconstructionWrites: [],
   },
   {
@@ -309,6 +366,7 @@ const SURFACES: readonly CapsuleSurface[] = [
     callEndB: TSL_CALL_B,
     baseRadius: TSL_BASE_RADIUS,
     fragmentWrites: TSL_FRAGMENT_WRITES,
+    vertexWrites: [],
     reconstructionWrites: TSL_RECONSTRUCTION_WRITES,
     closure: TSL_VISUAL,
   },
@@ -322,6 +380,7 @@ const SURFACES: readonly CapsuleSurface[] = [
     callEndB: TSL_CALL_B,
     baseRadius: TSL_BASE_RADIUS,
     fragmentWrites: TSL_FRAGMENT_WRITES,
+    vertexWrites: [],
     reconstructionWrites: TSL_RECONSTRUCTION_WRITES,
     closure: TSL_PICK,
   },
@@ -526,6 +585,9 @@ describe('capsule joint partner radius is the SHARED VERTEX radius (#1494)', () 
         const scopes: Array<[string, string, readonly WriteRule[]]> = [
           ['fragment', stripComments(surface.fragment), surface.fragmentWrites],
         ];
+        if (surface.vertexWrites.length > 0) {
+          scopes.push(['vertex', stripComments(surface.vertex), surface.vertexWrites]);
+        }
         if (surface.reconstructionWrites.length > 0) {
           const closureSource = surface.closure;
           expect(
