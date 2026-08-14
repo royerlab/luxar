@@ -208,6 +208,22 @@ DATASETS: dict[str, dict] = {
         source="OpenCell (CZ Biohub) MAP4",
         attribution="OpenCell / CZ Biohub — Cho et al., Science 2022, doi:10.1126/science.abi6983 (CC BY-SA 4.0).",
     ),
+    "gsplats_flylight_mcfo_63x": dict(
+        bucket="zenodo",
+        record="cc-by",
+        license="cc-by-4.0",
+        source=(
+            "Janelia FlyLight Gen1 MCFO, line VT019012, slide 20140423_20_D5, "
+            "63x confocal"
+        ),
+        attribution=(
+            "Janelia FlyLight Project Team, HHMI Janelia Research Campus — "
+            "Meissner et al., eLife 12:e80660 (2023), doi:10.7554/eLife.80660; "
+            "MCFO method: Nern, Pfeiffer & Rubin, PNAS 112(22) (2015), "
+            "doi:10.1073/pnas.1506763112; VT driver lines: Tirian & Dickson, "
+            "bioRxiv 198648 (2017), doi:10.1101/198648. Imagery CC BY 4.0."
+        ),
+    ),
     "gsplats_zebrafish": dict(
         bucket="zenodo",
         record="cc-by-sa",
