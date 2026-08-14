@@ -138,6 +138,46 @@ def _metadata_docs_exist(path: Path) -> bool:
     return any((path / name).exists() for name in (".zgroup", ".zarray", "zarr.json"))
 
 
+#: zarr group modes that map straight onto a ``ZipStore`` mode. ``"w-"`` is
+#: handled separately because it needs a guard rather than a translation; see
+#: :func:`_zip_mode`.
+_ZIP_MODES = {"r": "r", "r+": "a", "a": "a", "w": "w"}
+
+
+def _zip_mode(path: Path, mode: str) -> str:
+    """Translate a zarr group mode into one zarr's ``ZipStore`` accepts.
+
+    ``ZipStore`` speaks only zipfile's ``r``/``w``/``a``, while the vocabulary of
+    :func:`open_group` is zarr's — which also has ``"r+"`` (read-write, must
+    already exist) and ``"w-"`` (create, must NOT already exist). Passing either
+    through unchanged raises zipfile's own ``ValueError: ZipFile requires mode
+    'r', 'w', 'x', or 'a'``, from a layer with no idea what the caller asked for.
+
+    ``"r+"`` becomes ``"a"``: zipfile has no read-write-must-exist mode, and the
+    "must exist" half is enforced a level up by ``zarr.open_group``, which will
+    not create a root under ``"r+"``.
+
+    ``"w-"`` becomes ``"w"`` plus OUR OWN existence check. It cannot lean on
+    zarr's, because a ZipStore opened for ``"w"`` TRUNCATES the archive the first
+    time it is touched — before ``zarr.open_group`` ever looks for the root it
+    would have refused to overwrite. Exclusive creation would then destroy
+    precisely the file it exists to protect.
+    """
+    if mode == "w-":
+        if path.is_file():
+            raise FileExistsError(
+                f"open_store({str(path)!r}, mode='w-'): the archive already exists"
+            )
+        return "w"
+    try:
+        return _ZIP_MODES[mode]
+    except KeyError:
+        raise ValueError(
+            f"open_store({str(path)!r}): mode {mode!r} is not supported for a "
+            f"zipped store; expected one of 'r', 'r+', 'w', 'w-', 'a'"
+        ) from None
+
+
 def open_store(path: str | Path, *, mode: str = "r") -> Any:
     """Open the right store class for ``path``.
 
@@ -145,15 +185,16 @@ def open_store(path: str | Path, *, mode: str = "r") -> Any:
     :class:`zarr.storage.LocalStore`. In zarr 2 this dispatch happened inside
     ``zarr.open`` via ``normalize_store_arg``; it is explicit in zarr 3.
 
-    ``mode`` is honoured for both branches: a ZipStore takes it directly, and a
-    LocalStore is marked ``read_only`` for ``"r"``. Handing back a writable store
-    for a declared read would make the argument a decoration rather than a
+    ``mode`` is honoured for both branches: a ZipStore is given the equivalent
+    zipfile mode (see :func:`_zip_mode` — the two vocabularies are not the same),
+    and a LocalStore is marked ``read_only`` for ``"r"``. Handing back a writable
+    store for a declared read would make the argument a decoration rather than a
     constraint, and a read path that acquired a write by accident would not be
     caught.
     """
     p = Path(path)
     if p.suffix.lower() in _ZIP_SUFFIXES:
-        return zarr.storage.ZipStore(str(p), mode=mode)
+        return zarr.storage.ZipStore(str(p), mode=_zip_mode(p, mode))
     return zarr.storage.LocalStore(str(p), read_only=(mode == "r"))
 
 

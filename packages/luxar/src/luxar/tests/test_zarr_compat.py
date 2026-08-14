@@ -438,6 +438,68 @@ def test_open_store_dispatches_zip_by_suffix(tmp_path: Path) -> None:
     zs.close()
 
 
+def _write_zipped_store(path: Path) -> None:
+    g = zc.open_group(path, mode="w")
+    g.attrs["marker"] = "original"
+    zc.create_array(g, "a", data=np.arange(4, dtype=np.float32), compressor=None)
+    zc.close(g)
+
+
+def test_zipped_store_accepts_read_write_reopen(tmp_path: Path) -> None:
+    """``mode="r+"`` must work on an archive, not die inside zipfile.
+
+    ``ZipStore`` speaks only zipfile's r/w/a, while ``open_group`` speaks zarr's —
+    which also has ``"r+"``. Passed through unchanged it raised ``ValueError:
+    ZipFile requires mode 'r', 'w', 'x', or 'a'`` from a layer that cannot say
+    what the caller did wrong.
+    """
+    p = tmp_path / "rw.zarr.zip"
+    _write_zipped_store(p)
+
+    g = zc.open_group(p, mode="r+")
+    g.attrs["added"] = 1
+    zc.close(g)
+
+    reopened = zc.open_group(p, mode="r")
+    assert reopened.attrs["added"] == 1
+    assert reopened.attrs["marker"] == "original"
+    assert list(reopened.array_keys()) == ["a"]
+    zc.close(reopened)
+
+
+def test_zipped_store_exclusive_create_refuses_without_truncating(
+    tmp_path: Path,
+) -> None:
+    """``mode="w-"`` must refuse an existing archive and leave it INTACT.
+
+    It cannot lean on zarr's own refusal: a ZipStore opened for ``"w"`` truncates
+    the archive the first time it is touched, which is before ``open_group`` looks
+    for the root it would have declined to overwrite. Exclusive creation would
+    destroy exactly the file it exists to protect.
+    """
+    p = tmp_path / "keep.zarr.zip"
+    _write_zipped_store(p)
+
+    with pytest.raises(FileExistsError):
+        zc.open_group(p, mode="w-")
+
+    survivor = zc.open_group(p, mode="r")
+    assert survivor.attrs["marker"] == "original"
+    assert list(survivor.array_keys()) == ["a"]
+    zc.close(survivor)
+
+    fresh = tmp_path / "fresh.zarr.zip"
+    created = zc.open_group(fresh, mode="w-")
+    assert created.metadata.zarr_format == zc.ZARR_FORMAT
+    zc.close(created)
+
+
+def test_open_store_rejects_an_unknown_zip_mode(tmp_path: Path) -> None:
+    """An unsupported mode names itself rather than surfacing as a zipfile error."""
+    with pytest.raises(ValueError, match="not supported for a zipped store"):
+        zc.open_store(tmp_path / "x.zarr.zip", mode="x")
+
+
 # ---------------------------------------------------------------------------
 # The production-explicitness lint
 # ---------------------------------------------------------------------------
