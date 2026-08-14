@@ -978,6 +978,8 @@ then eliminates seam artifacts.
 - `verbose`: Print per-tile progress (default: True).
 - `**fit_kwargs`: All parameters from `fit_gaussian_splats` (seeds, n_iters, device, etc.)
 
+`seeds` is handed to **every** tile as-is, so an integer here is a *per-tile* count, not a whole-volume budget: N tiles fit ~N × `seeds` splats. This differs from the CLI, where `--seeds` **is** a whole-volume budget that `luxar gsplat fit` divides by the tile count before calling this function (`cli.gsplat_ops.fitting.fit_utils.split_seeds_across_tiles`). If you are fitting at a K\* from `gsplat cal` (see the calibration sections above), divide it yourself — or pass a float compression ratio, which is scale-free and needs no adjustment.
+
 **Returns:** `GSplatData` with all splats in global coordinates. Hilbert curve resorting happens automatically on `save()`.
 
 #### `fit_tile(volume, spec, **fit_kwargs)`

@@ -144,6 +144,8 @@ def _make_denoise_ctx(volume, denoise_h):
         recipe_levels=None,
         recipe_substitutive_method=None,
         recipe_coarsen_dims=None,
+        recipe_refine=None,
+        recipe_refine_iters=None,
         cal=None,
         k_star_ref=None,
         n_features_ref=None,

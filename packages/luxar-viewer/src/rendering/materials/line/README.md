@@ -341,7 +341,10 @@ deleted volumetric primitive integrated per ray — while tapered or perspective
 partners get exactly the light a pure partition would chop (a fat vertex's disc
 keeps the half a thin neighbour cannot render; the numeric composition sweep in
 `line-capsule.test.ts` pins the three reconstruction errors of
-#1494/#1488/#1490). Two documented exceptions to that last sentence, both in
+#1494/#1488/#1490, and
+`tests/unit/rendering/materials/line/capsule-partner-radius.test.ts`
+additionally locks the shared-vertex base radius of #1494 across all four
+shader surfaces). Two documented exceptions to that last sentence, both in
 `CAPSULE_JOINT_PACKET_MIN_RADIUS_PX`: the deficit packet is skipped below a
 4 px stencil half-width, so a GENTLE joint thinner than that keeps the plain
 cut — within 0.03 of peak of what a congruent joint at the same angle and
