@@ -681,12 +681,19 @@ def fit_gaussian_splats(
         from arbol import aprint
 
         with asection("Optimization Complete"):
-            aprint(f"Time: {result.stats['time_seconds']:.2f} seconds")
-            aprint(f"Iterations: {result.stats['iterations']}/{n_iters}")
-            if result.stats["converged"]:
-                aprint(
-                    f"✓ Converged (saved {n_iters - result.stats['iterations']} iterations)"
-                )
+            if not result.stats:
+                # No seed candidates: GaussianSplatFitter.fit returns an empty
+                # result with an empty stats dict before any optimization runs
+                # (a signal-free tile, or an empty GSplatData warm start), so
+                # there is no timing/iteration/convergence record to report.
+                aprint("No seed candidates — returned an empty result")
+            else:
+                aprint(f"Time: {result.stats['time_seconds']:.2f} seconds")
+                aprint(f"Iterations: {result.stats['iterations']}/{n_iters}")
+                if result.stats["converged"]:
+                    aprint(
+                        f"✓ Converged (saved {n_iters - result.stats['iterations']} iterations)"
+                    )
 
         # Calculate and display compression ratio
         from luxar.gsplats.fitting.visualization import display_compression_analysis

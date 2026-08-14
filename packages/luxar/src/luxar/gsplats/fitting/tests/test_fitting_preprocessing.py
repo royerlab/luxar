@@ -876,6 +876,39 @@ class TestInitAmpsProvenance:
 
         assert recorded.get("floor") == "none"
 
+    def test_empty_seed_set_survives_the_verbose_summary(self) -> None:
+        """An empty seed set must come back as an empty result, not a KeyError.
+
+        ``GaussianSplatFitter.fit`` deliberately short-circuits ``N == 0`` and
+        returns an empty ``GSplatData`` with an empty ``stats`` dict, so the
+        ``verbose`` summary in ``fit_gaussian_splats`` (verbose defaults to True)
+        has no timing/iteration record to print. It used to index them anyway and
+        died with ``KeyError: 'time_seconds'`` — right after the rescaling report
+        the empty-array guard above keeps alive.
+        """
+        from luxar.gsplats.fit_gsplats import fit_gaussian_splats
+
+        empty = _gsplatdata_seeds(
+            np.zeros((0, 2), np.float32), np.zeros((0,), np.float32)
+        )
+
+        result = fit_gaussian_splats(
+            _pedestal_volume(),
+            seeds=empty,
+            seed_amps_background_relative=True,
+            floor=100.0,
+            n_iters=1,
+            device="cpu",
+            verbose=True,
+            enable_dynamic_ops=False,
+            cull_retention=None,
+            sort_splats_enabled=False,
+        )
+
+        assert result.n_splats == 0
+        assert result.centers.shape == (0, 2)
+        assert result.stats == {}
+
 
 class TestCompressionRatio:
     """Tests for compression ratio helper functions."""
