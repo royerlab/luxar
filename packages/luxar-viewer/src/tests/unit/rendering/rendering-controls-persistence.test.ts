@@ -15,6 +15,7 @@ import {
   stripDynamicClippingPlanes,
 } from '../../../ui/rendering-controls/settings-persistence';
 import { config } from '../../../config';
+import { buildCinematicValues } from '../../../config/cinematic-preset';
 import { StorageKeys } from '../../../utils/storage-keys';
 
 describe('settings-persistence — buildBaseDefaults', () => {
@@ -53,6 +54,30 @@ describe('settings-persistence — buildResetDefaults', () => {
     expect(defaults.fov).toBe(99);
     // Untouched defaults still come from config.
     expect(defaults.flyMovementSpeed).toBe(config.controls.fly.movement.speed.default);
+  });
+
+  it('expands viewer_config.cinematic_mode into the preset, surviving the clamp', () => {
+    // The cinematic preset is expanded inside extractRenderingOverrides, so
+    // this consumer gets it for free — including through the
+    // validateRenderingSettings clamp buildResetDefaults applies afterwards.
+    const preset = buildCinematicValues();
+    const defaults = buildResetDefaults({ cinematic_mode: true });
+
+    expect(defaults.toneMapping).toBe(preset.toneMapping); // 'ACES'
+    expect(defaults.vignetteEnabled).toBe(preset.vignetteEnabled);
+    expect(defaults.detectorNoiseEnabled).toBe(preset.detectorNoiseEnabled);
+    expect(defaults.chromaticLensDistortionEnabled).toBe(preset.chromaticLensDistortionEnabled);
+    expect(defaults.fov).toBe(preset.fov);
+    expect(defaults.fovPreset).toBe(preset.fovPreset);
+  });
+
+  it('an author-set key still beats the expanded preset through buildResetDefaults', () => {
+    const preset = buildCinematicValues();
+    const defaults = buildResetDefaults({ cinematic_mode: true, bloom_strength: 0.9 });
+
+    expect(defaults.bloomStrength).toBe(0.9);
+    // Neighbouring preset keys are still expanded around the author's value.
+    expect(defaults.bloomThreshold).toBe(preset.bloomThreshold);
   });
 });
 

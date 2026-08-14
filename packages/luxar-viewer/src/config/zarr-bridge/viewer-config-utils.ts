@@ -101,7 +101,7 @@ export const REVERSE_SETTINGS_MAP: Record<string, string> = Object.fromEntries(
  * Extract RenderingSettings overrides from zarr viewer_config.
  * Returns only the fields that are set (partial object), plus — when the
  * scene asks for cinematic mode — the cinematic preset expanded into the
- * fields the scene left unset (see {@link expandCinematicPreset}).
+ * fields the scene left unset (see `expandCinematicPreset` below).
  *
  * @param zarrConfig - Viewer config from zarr root attributes
  * @returns Partial RenderingSettings with the fields set in zarr
@@ -118,21 +118,27 @@ export function extractRenderingOverrides(
     }
   }
 
+  // The camera block uses `!= null` deliberately (not `!== undefined`): it must
+  // reject null exactly as the map walk above does, so "present in `overrides`"
+  // stays a single uniform author-set test. A null that slipped through would
+  // both suppress the cinematic preset for that key and reach consumers whose
+  // own guards only test `!== undefined`.
+
   // camera.fov maps to RenderingSettings.fov
-  if (zarrConfig.camera?.fov !== undefined) {
+  if (zarrConfig.camera?.fov != null) {
     overrides.fov = zarrConfig.camera.fov;
   }
 
   // camera.fov_preset maps to RenderingSettings.fovPreset
-  if (zarrConfig.camera?.fov_preset !== undefined) {
+  if (zarrConfig.camera?.fov_preset != null) {
     overrides.fovPreset = zarrConfig.camera.fov_preset as RenderingSettings['fovPreset'];
   }
 
   // camera.near/far map to RenderingSettings.near/far
-  if (zarrConfig.camera?.near !== undefined) {
+  if (zarrConfig.camera?.near != null) {
     overrides.near = zarrConfig.camera.near;
   }
-  if (zarrConfig.camera?.far !== undefined) {
+  if (zarrConfig.camera?.far != null) {
     overrides.far = zarrConfig.camera.far;
   }
 
@@ -159,7 +165,8 @@ export function extractRenderingOverrides(
  * single uniform test for both routes into this object: the
  * `RENDERING_SETTINGS_MAP` walk above only adds a key when its snake_case
  * spelling was present and non-null in the zarr config, and the camera block
- * only adds `fov` / `fovPreset` when `camera.fov` / `camera.fov_preset` were.
+ * only adds `fov` / `fovPreset` when `camera.fov` / `camera.fov_preset` were
+ * likewise present and non-null.
  * So `{cinematic_mode: true, bloom_strength: 0.9}` yields the full preset with
  * `bloomStrength = 0.9`.
  *

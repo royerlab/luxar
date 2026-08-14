@@ -250,6 +250,29 @@ describe('extractRenderingOverrides — cinematic_mode preset expansion', () => 
     expect(overrides.fov).toBe(90);
     // fov_preset was NOT set, so it still comes from the preset.
     expect(overrides.fovPreset).toBe(preset.fovPreset);
+
+    // ...and the mirror case: fov_preset author-set, fov left to the preset.
+    const presetOnly = extractRenderingOverrides({
+      cinematic_mode: true,
+      camera: { fov_preset: '85mm Portrait' },
+    });
+    expect(presetOnly.fovPreset).toBe('85mm Portrait');
+    expect(presetOnly.fov).toBe(preset.fov);
+  });
+
+  it('treats a null camera value as unset, not as author-set', () => {
+    // The map walk skips null; the camera block must agree, otherwise a null
+    // both blocks the preset key and leaks downstream to guards that only
+    // test `!== undefined`.
+    const overrides = extractRenderingOverrides({
+      cinematic_mode: true,
+      camera: { fov: null as unknown as number, fov_preset: null as unknown as string },
+    });
+    const preset = buildCinematicValues();
+
+    expect(overrides.fov).toBe(preset.fov);
+    expect(overrides.fovPreset).toBe(preset.fovPreset);
+    expect('near' in overrides).toBe(false);
   });
 
   it('does not expand for cinematic_mode false, absent, or non-boolean truthy', () => {
