@@ -17,6 +17,8 @@ import zarr
 from arbol import aprint
 from numpy.typing import NDArray
 
+from luxar._zarr_compat import create_array
+
 from ...core.dimensions import Dimensions
 from ...encoding import SemanticType
 from ...encoding.compression import resolve_compressor
@@ -407,7 +409,8 @@ def write_gsplat_arrays(
     if ordering_data is not None:
         chunk_bounds = ordering_data["chunk_bounds"]
         if len(chunk_bounds) > 0:
-            group.create_dataset(
+            create_array(
+                group,
                 "chunk_bounds",
                 data=chunk_bounds,
                 chunks=(chunk_bounds.shape[0], n_dims, 2),

@@ -47,7 +47,7 @@ class TestZarrNDChunking:
             compiler.write_points("Points4D", positions)
 
         # Verify chunking by opening the zarr store
-        root = zarr.open_group(store, "r")
+        root = zarr.open_group(store, mode="r")
         positions_array = root["Points4D"]["positions"]
 
         # Check that chunks are reasonable for temporal slicing
@@ -75,7 +75,7 @@ class TestZarrNDChunking:
             compiler.write_points("Points5D", positions_5d)
 
         # Verify it saved correctly
-        root = zarr.open_group(store, "r")
+        root = zarr.open_group(store, mode="r")
         loaded_positions = ArrayDecoder().decode(root["Points5D"]["positions"], root)
 
         assert loaded_positions.shape == (n_points, 5)
@@ -95,7 +95,7 @@ class TestZarrNDChunking:
             compiler.create_scene(dimensions=Dimensions.default_3d())
             compiler.write_points("Points", positions)
 
-        root = zarr.open_group(store, "r")
+        root = zarr.open_group(store, mode="r")
         positions_array = root["Points"]["positions"]
 
         # Verify chunks exist and cover all data
@@ -132,7 +132,7 @@ class TestZarrNDChunking:
             compiler.write_points("Points", positions)
 
         # Test that we can efficiently load a single slice
-        root = zarr.open_group(store, "r")
+        root = zarr.open_group(store, mode="r")
         positions_array = root["Points"]["positions"]
 
         # Load just one slice
@@ -164,7 +164,7 @@ class TestZarrNDChunking:
                 compiler.write_points("Points", positions)
 
             # Verify it loads correctly
-            root = zarr.open_group(dim_store, "r")
+            root = zarr.open_group(dim_store, mode="r")
             loaded = ArrayDecoder().decode(root["Points"]["positions"], root)
 
             assert loaded.shape == (n_points, n_dims)
@@ -183,7 +183,7 @@ class TestZarrNDChunking:
             compiler.create_scene(dimensions=Dimensions.default_3d())
             compiler.write_points("Points", positions)
 
-        root = zarr.open_group(store, "r")
+        root = zarr.open_group(store, mode="r")
         positions_array = root["Points"]["positions"]
 
         # Calculate chunk size in bytes
@@ -221,7 +221,7 @@ class TestZarrNDChunking:
             compiler.create_scene(dimensions=Dimensions.default_3d())
             compiler.write_points("Points", positions)
 
-        root = zarr.open_group(store, "r")
+        root = zarr.open_group(store, mode="r")
         positions_array = root["Points"]["positions"]
 
         # Verify sparse data is stored efficiently

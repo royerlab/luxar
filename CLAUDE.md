@@ -119,7 +119,7 @@ make help         # Show all available commands
 The build system is designed to work on **fresh Linux/macOS machines** with minimal pre-installed tools, including **HPC/Slurm login nodes** (no sudo, no GPU on login node).
 
 **Prerequisites:**
-- Python 3.10+ (usually pre-installed; `python3.12` or `python3.11` work on HPC)
+- Python 3.12+ (usually pre-installed; `python3.12` is the usual HPC module)
 - Git and curl
 - **Git LFS** (optional, required for demo data files): `brew install git-lfs` (macOS) or `sudo apt-get install git-lfs` (Ubuntu)
 - **Ubuntu/Debian only**: `sudo apt-get install -y pipx && pipx ensurepath`
@@ -222,7 +222,7 @@ See `docs/guides/developer/BUILD_SYSTEM_SPEC.md` for complete documentation.
 
 ### Luxar CLI
 ```bash
-luxar demo                       # List the 83 bundled demos (table)
+luxar demo                       # List the 84 bundled demos (table)
 luxar demo run lorenz            # Run a demo by key/index (forwards -- args)
 luxar demo stop                  # Stop running demos and free their ports (--dry-run lists)
 luxar demo cache list            # Inventory / clear demo caches (cache clear …)
@@ -974,6 +974,32 @@ pnpm agent:debug
 ---
 
 ## Critical Gotchas
+
+### zarr library version vs zarr on-disk FORMAT (two separate axes)
+Luxar runs on **zarr-python 3** (`zarr>=3.2,<4`) but writes **zarr format 2** on
+disk. Never conflate the two. Both are pinned in one place —
+`packages/luxar/src/luxar/_zarr_compat.py` (`ZARR_FORMAT = 2`) — and all writing
+goes through its helpers rather than `zarr.*` directly:
+
+```python
+from luxar._zarr_compat import open_group, create_array, consolidate, memory_group
+```
+
+Why it matters, concretely:
+- **zarr 3 defaults to format 3.** A bare `zarr.group()` / `zarr.open_group(mode="w")`
+  produces a v3 store: one `zarr.json` per node, `c/0/0` chunk keys, and
+  `consolidate` writing `consolidated_metadata` *inside* `zarr.json` instead of a
+  `.zmetadata` document. Luxar's readers, the `.zmetadata`-means-save-complete
+  sentinel, and the whole TypeScript viewer all expect v2. Tests get format 2 from
+  an autouse session fixture in `luxar/conftest.py`; production is explicit.
+- **An omitted compressor is not "no compressor".** zarr 3's `compressors`
+  defaults to `"auto"` = Blosc/lz4/clevel-5. Some Luxar arrays must be RAW and the
+  rest carry a measured zstd-9 policy, so `create_array` takes `compressor`
+  explicitly; an AST test fails the build if a production call site omits it.
+- **`data=` and `shape=` are mutually exclusive in zarr 3** (zarr 2 allowed both).
+  `create_array` accepts both and forwards only what zarr 3 permits.
+- Reading is version-agnostic: zarr-python 3 opens v2 *and* v3, which is the point
+  of being on 3.x — 2.18 could not open a v3 store at all.
 
 ### Matrix Storage: NumPy vs THREE.js
 NumPy uses row-major, THREE.js uses column-major. **Always transpose when serializing**:

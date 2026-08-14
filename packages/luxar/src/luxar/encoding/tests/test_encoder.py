@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 import zarr
 
+from luxar._zarr_compat import memory_group
 from luxar.encoding import ArrayDecoder, ArrayEncoder, EncodingMode, SemanticType
 
 
@@ -287,7 +288,7 @@ class TestLUTUint16Tier:
         # 300 unique HDR float colors at N=100,000 clears the byte-modeled
         # break-even (JSON ~36 KB vs savings/2 = 50 KB).
         colors = _tiled_palette_colors(300, 100_000)
-        group = zarr.group(store=zarr.MemoryStore())
+        group = memory_group()
         arr, enc = self._encode(colors, SemanticType.COLOR, group, color_mode="hdr")
         assert enc["name"] == "lut_uint16"
         assert enc["lut_mode"] == "row"
@@ -300,7 +301,7 @@ class TestLUTUint16Tier:
         # Same N, K exactly 256: the u8 tier must keep winning (byte-identical
         # legacy behavior).
         colors = _tiled_palette_colors(256, 100_000)
-        group = zarr.group(store=zarr.MemoryStore())
+        group = memory_group()
         arr, enc = self._encode(colors, SemanticType.COLOR, group, color_mode="hdr")
         assert enc["name"] == "lut_uint8"
         assert arr.dtype == np.uint8
@@ -321,14 +322,14 @@ class TestLUTUint16Tier:
         # K=257 at N=1,000: the doubled LUT JSON dwarfs any index savings —
         # must fall through to the quantized color path.
         colors = _tiled_palette_colors(257, 1_000)
-        group = zarr.group(store=zarr.MemoryStore())
+        group = memory_group()
         arr, enc = self._encode(colors, SemanticType.COLOR, group, color_mode="hdr")
         assert enc["name"] == "geolog_perchannel_u16"
 
     def test_json_cap_rejection(self):
         # Same data as the accepting test, but a tiny metadata cap: rejected.
         colors = _tiled_palette_colors(300, 100_000)
-        group = zarr.group(store=zarr.MemoryStore())
+        group = memory_group()
         arr, enc = self._encode(
             colors,
             SemanticType.COLOR,
@@ -344,7 +345,7 @@ class TestLUTUint16Tier:
         # (the deep-check measured a ~2x store regression before this rule).
         vals = np.linspace(0.5, 42.0, 300).astype(np.float32)
         data = np.tile(vals, 1000)  # E = 300,000: passed the OLD (flawed) rule
-        group = zarr.group(store=zarr.MemoryStore())
+        group = memory_group()
         arr, enc = self._encode(
             data,
             SemanticType.POSITIVE_SCALAR,
@@ -363,7 +364,7 @@ class TestLUTUint16Tier:
                 (np.arange(2000, dtype=np.uint32) + 1) % 200,
             ]
         )
-        group = zarr.group(store=zarr.MemoryStore())
+        group = memory_group()
         arr, enc = self._encode(segs, SemanticType.INDEX, group)
         assert enc["name"] not in ("lut_uint8", "lut_uint16")
         decoded = np.asarray(ArrayDecoder().decode(arr, group))
@@ -380,14 +381,14 @@ class TestLUTUint16Tier:
         probe = _tiled_palette_colors(300, 301)
         lut_json = 2 * len(_json.dumps(np.unique(probe, axis=0).tolist()))
         n_break = 2 * lut_json
-        g1 = zarr.group(store=zarr.MemoryStore())
+        g1 = memory_group()
         _, enc_above = self._encode(
             _tiled_palette_colors(300, n_break + 600),
             SemanticType.COLOR,
             g1,
             color_mode="hdr",
         )
-        g2 = zarr.group(store=zarr.MemoryStore())
+        g2 = memory_group()
         _, enc_below = self._encode(
             _tiled_palette_colors(300, max(n_break - 600, 301)),
             SemanticType.COLOR,
@@ -401,10 +402,10 @@ class TestLUTUint16Tier:
         # decode -> re-encode reproduces identical attrs and indices (LUT is
         # exact, so nothing can drift across save/load cycles).
         colors = _tiled_palette_colors(300, 100_000)
-        g1 = zarr.group(store=zarr.MemoryStore())
+        g1 = memory_group()
         arr1, enc1 = self._encode(colors, SemanticType.COLOR, g1, color_mode="hdr")
         decoded = np.asarray(ArrayDecoder().decode(arr1, g1)).astype(np.float32)
-        g2 = zarr.group(store=zarr.MemoryStore())
+        g2 = memory_group()
         arr2, enc2 = self._encode(decoded, SemanticType.COLOR, g2, color_mode="hdr")
         assert enc1 == enc2
         np.testing.assert_array_equal(np.asarray(arr1), np.asarray(arr2))

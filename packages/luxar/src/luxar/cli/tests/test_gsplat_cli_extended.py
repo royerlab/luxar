@@ -19,6 +19,7 @@ from typer.testing import CliRunner
 if TYPE_CHECKING:
     from luxar.gsplats.gsplat_data import GSplatData
 
+from luxar._zarr_compat import create_array
 from luxar.cli import app
 from luxar.cli.gsplat_config import (
     PRESETS,
@@ -297,7 +298,7 @@ class TestLoadVolume:
         vol = np.random.rand(2, 3, 4, 4, 4).astype(np.float32)
         path = tmp_path / "test.luxar.zarr"
         root = zarr.open_group(str(path), mode="w")
-        root.create_dataset("0", data=vol)
+        create_array(root, "0", data=vol)
         loaded = load_volume(path, channel=1, timepoint=0)
         assert loaded.shape == (4, 4, 4)
 
@@ -329,8 +330,8 @@ class TestLoadVolume:
         vol = np.random.rand(4, 4, 4).astype(np.float32)
         path = tmp_path / "test.luxar.zarr"
         root = zarr.open_group(str(path), mode="w")
-        root.create_dataset("my_volume", data=vol)
-        root.create_dataset("other_data", data=np.zeros(10))
+        create_array(root, "my_volume", data=vol)
+        create_array(root, "other_data", data=np.zeros(10))
         loaded = load_volume(path, array_key="my_volume")
         assert loaded.shape == (4, 4, 4)
 
@@ -5435,6 +5436,7 @@ class TestLODCarriesAuthoredAppearance:
         "offset": 0.125,
         "layer": False,
         "visible": False,
+        "nd_transform": {"time": {"scale": 2.0, "offset": 1.0}},
     }
 
     #: Carried by the registry but not exercised here, each for a stated reason.
@@ -5442,9 +5444,6 @@ class TestLODCarriesAuthoredAppearance:
     #: unnoticed — it lands in neither dict and the coverage test fails.
     NOT_EXERCISED = {
         "join": "lines-only; a gsplats node rejects it",
-        "transform": "rewritten to column-major by prepare_transform_for_zarr, "
-        "so it is not attr-equal by construction",
-        "nd_transform": "needs scene Dimensions to validate against",
     }
 
     def test_authored_table_covers_the_registry(self) -> None:
@@ -5462,48 +5461,114 @@ class TestLODCarriesAuthoredAppearance:
             f"stale={sorted(accounted - set(AUTHORED_APPEARANCE_ATTRS))}"
         )
 
+    def test_transform_is_not_carried(self) -> None:
+        """``transform`` is compositing but deliberately NOT carried.
+
+        The stored value is column-major; the leaf writer hands whatever it gets
+        to ``prepare_transform_for_zarr``, which reads row-major and transposes.
+        See :func:`test_an_authored_transform_does_not_break_the_rebuild` for
+        what carrying it actually did.
+        """
+        from luxar.core.group.compositing import (
+            AUTHORED_APPEARANCE_ATTRS,
+            COMPOSITING_ATTRS,
+        )
+
+        assert "transform" in COMPOSITING_ATTRS
+        assert "transform" not in AUTHORED_APPEARANCE_ATTRS
+
+    def test_an_authored_transform_does_not_break_the_rebuild(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """A source root transform must not be fed back through the writer.
+
+        The negative control for the exclusion above, on the LEAF-rooted path
+        (``stream`` → ``GSplatData.save``), which is where a carried transform is
+        transposed a second time: a translation lands in the bottom row and the
+        command dies on ``validate_transform`` ("bottom row must be [0, 0, 0,
+        1]"), and a rotation is silently inverted. Re-adding ``transform`` to the
+        carried set turns this exit 0 into exit 1.
+        """
+        from luxar.core.transforms import prepare_transform_for_zarr, translate
+
+        stored = prepare_transform_for_zarr(translate(5.0, 0.0, 0.0))
+        self._authored_input(medium_gsplats, {**self.AUTHORED, "transform": stored})
+        out = tmp_path / "with_transform.gsplats.zarr"
+        result = runner.invoke(
+            app, ["gsplat", "lod", str(medium_gsplats), str(out), "--recipe", "stream"]
+        )
+        assert result.exit_code == 0, f"failed:\n{result.stdout}"
+        got = json.loads((out / ".zattrs").read_text())
+        # Not carried at all — the rebuild leaves the attr alone rather than
+        # writing a re-transposed (wrong) one.
+        assert "transform" not in got
+        # ...and the rest of the appearance still travels.
+        assert got["blending_mode"] == "volumetric"
+
     @staticmethod
     def _authored_input(src: Path, authored: dict[str, Any]) -> None:
         """Stamp ``authored`` onto an existing store's root, dropping .zmetadata.
 
-        The reader is unaffected either way — on the pinned zarr 2.18.x
-        ``zarr.open_group`` reads per-node ``.zattrs`` and ignores ``.zmetadata``
-        (only ``open_consolidated`` would see the stale copy) — but leaving a
-        consolidated copy that disagrees with the edit would make the fixture
-        store self-inconsistent for any consumer that DOES open it consolidated.
-        Dropping it keeps the one authored value as the single source of truth.
+        The reader is unaffected either way — it goes through
+        ``luxar._zarr_compat.open_group``, which deliberately ignores
+        consolidated metadata and so reads the per-node ``.zattrs`` this edits —
+        but leaving a consolidated copy that disagrees with the edit would make
+        the fixture store self-inconsistent for any consumer that DOES open it
+        consolidated. Dropping it keeps the one authored value as the single
+        source of truth.
         """
         attrs = json.loads((src / ".zattrs").read_text())
         attrs.update(authored)
         (src / ".zattrs").write_text(json.dumps(attrs))
         (src / ".zmetadata").unlink(missing_ok=True)
 
-    @pytest.mark.parametrize("recipe", ["stream", "levels", "adaptive"])
+    #: Rewriting commands that must pass appearance through, as
+    #: ``label -> extra argv after (input, output)``.
+    #:
+    #: Keyed by COMMAND rather than by recipe because #1600 is a property of every
+    #: in->out command, not of `lod` alone: `additive` was found dropping the same
+    #: eight attrs by the same missing propagation. Auditing another command
+    #: (`flatten`, `decimate`, `reencode`, ...) should be one row here.
+    #:
+    #: Both write paths are represented on purpose. `lod --recipe stream|levels`
+    #: goes through ``GSplatData.save``; `--recipe adaptive` and `additive` go
+    #: through ``write_gsplats_tree``. A fix applied to only one would pass a
+    #: single-row test.
+    REWRITERS: dict[str, list[str]] = {
+        "lod:stream": ["gsplat", "lod", "--recipe", "stream"],
+        "lod:levels": ["gsplat", "lod", "--recipe", "levels"],
+        "lod:adaptive": ["gsplat", "lod", "--recipe", "adaptive"],
+        "additive": ["gsplat", "additive", "--n-lods", "4"],
+        "flatten": ["gsplat", "flatten"],
+        "partition": ["gsplat", "partition", "--parts", "2"],
+        "decimate": ["gsplat", "decimate", "-f", "0.5"],
+        "reencode": ["gsplat", "reencode", "-e", "memory"],
+        "cull": ["gsplat", "cull", "-m", "cumulative", "-r", "0.9"],
+        "filter": ["gsplat", "filter", "--amplitude-min", "0.05"],
+        "slice": ["gsplat", "slice", "0:80, :, :"],
+        "transform": ["gsplat", "transform", "--scale", "2,1,1"],
+    }
+
+    @pytest.mark.parametrize("label", sorted(REWRITERS))
     def test_authored_appearance_survives_the_rebuild(
         self,
         runner: CliRunner,
         medium_gsplats: Path,
         tmp_path: Path,
-        recipe: str,
+        label: str,
     ) -> None:
-        """Every carried attr comes back off the output ROOT, per recipe.
-
-        Parameterized across a matrix recipe (``stream``/``levels`` → the
-        ``GSplatData.save`` path) and a composed one (``adaptive`` → the
-        ``write_gsplats_tree`` path): the two write paths are separate call sites,
-        so a fix applied to only one would pass a single-recipe test.
-        """
+        """Every carried attr comes back off the output ROOT, per command."""
+        argv = self.REWRITERS[label]
         self._authored_input(medium_gsplats, self.AUTHORED)
-        out = tmp_path / f"carried_{recipe}.gsplats.zarr"
+        out = tmp_path / f"carried_{label.replace(':', '_')}.gsplats.zarr"
         result = runner.invoke(
-            app,
-            ["gsplat", "lod", str(medium_gsplats), str(out), "--recipe", recipe],
+            app, [argv[0], argv[1], str(medium_gsplats), str(out), *argv[2:]]
         )
-        assert result.exit_code == 0, f"failed:\n{result.stdout}"
+        assert result.exit_code == 0, f"{label} failed:\n{result.stdout}"
         got = json.loads((out / ".zattrs").read_text())
         for key, want in self.AUTHORED.items():
-            assert key in got, f"{recipe}: dropped {key!r} (had {want!r})"
-            assert got[key] == want, f"{recipe}: {key} = {got[key]!r}, want {want!r}"
+            assert key in got, f"{label}: dropped {key!r} (had {want!r})"
+            assert got[key] == want, f"{label}: {key} = {got[key]!r}, want {want!r}"
 
     @staticmethod
     def _authored_archive(src: Path, out: Path, authored: dict[str, Any]) -> None:
@@ -5610,26 +5675,38 @@ class TestLODCarriesAuthoredAppearance:
         assert "blending_mode" not in got
 
     def test_structural_attrs_win_over_a_carried_collision(
-        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+        self, medium_gsplats: Path, tmp_path: Path
     ) -> None:
         """A carried attr must never clobber a structural one.
 
-        The carry rides the writer's LOWEST-precedence channel, so even if a
-        source root somehow carried ``kind``/``type``, the rebuild's own
-        structure wins. Regression against re-introducing the
-        meta-clobbers-structural ordering bug from the other direction.
+        ``root_attrs`` rides the writer's LOWEST-precedence channel, so a
+        colliding ``kind``/``type`` loses to the tree's own structure.
+        Regression against re-introducing the meta-clobbers-structural ordering
+        bug from the other direction.
+
+        Driven at the writer rather than through the CLI on purpose:
+        ``read_authored_appearance`` filters to the appearance keys, so a
+        colliding ``kind`` can never reach ``root_attrs`` from a source root —
+        a CLI-level version of this test would pass with the precedence
+        reversed, which is exactly what it is meant to catch.
         """
-        self._authored_input(
-            medium_gsplats, {**self.AUTHORED, "kind": "bogus", "type": "bogus"}
-        )
+        from luxar.gsplats.io.load_gsplats import load_gsplat_node
+        from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+        from luxar.gsplats.tree import GSplatLodGroup
+
+        leaf, _ = load_gsplat_node(medium_gsplats)
         out = tmp_path / "collide.gsplats.zarr"
-        result = runner.invoke(
-            app,
-            ["gsplat", "lod", str(medium_gsplats), str(out), "--recipe", "adaptive"],
+        write_gsplats_tree(
+            out,
+            GSplatLodGroup(children=[leaf, leaf]),
+            root_attrs={
+                "kind": "bogus",
+                "type": "bogus",
+                "blending_mode": "volumetric",
+            },
         )
-        assert result.exit_code == 0, f"failed:\n{result.stdout}"
         got = json.loads((out / ".zattrs").read_text())
-        assert got["kind"] == "partition"
+        assert got["kind"] == "lod"
         assert got["type"] == "group"
         assert got["blending_mode"] == "volumetric"
 
@@ -6049,7 +6126,7 @@ class TestMigrateFormatCommand:
         import numpy as np
         import zarr
 
-        store = zarr.DirectoryStore(str(path))
+        store = zarr.storage.LocalStore(str(path))
         root = zarr.group(store=store, overwrite=True)
         root.attrs.update(
             {
@@ -6071,19 +6148,19 @@ class TestMigrateFormatCommand:
             }
         )
         rng = np.random.default_rng(0)
-        splats.create_dataset(
-            "centers", data=(rng.random((n, 3)) * 10).astype("float32")
+        create_array(
+            splats, "centers", data=(rng.random((n, 3)) * 10).astype("float32")
         )
-        splats.create_dataset("amplitudes", data=rng.random(n).astype("float32"))
-        splats.create_dataset("cholesky_factors", data=self._identity_chol(n))
-        splats.create_dataset("chunk_bounds", data=np.zeros((1, 3, 2), dtype="float32"))
+        create_array(splats, "amplitudes", data=rng.random(n).astype("float32"))
+        create_array(splats, "cholesky_factors", data=self._identity_chol(n))
+        create_array(splats, "chunk_bounds", data=np.zeros((1, 3, 2), dtype="float32"))
         zarr.consolidate_metadata(store)
 
     def _make_v1_1(self, path: Path, lod_sizes=(6, 3)) -> None:
         import numpy as np
         import zarr
 
-        store = zarr.DirectoryStore(str(path))
+        store = zarr.storage.LocalStore(str(path))
         root = zarr.group(store=store, overwrite=True)
         root.attrs.update(
             {
@@ -6106,14 +6183,12 @@ class TestMigrateFormatCommand:
         for i, n in enumerate(lod_sizes):
             lod = splats.create_group(f"lod_{i}")
             lod.attrs.update({"n_splats": n, "ndim": 3, "ordering": "none"})
-            lod.create_dataset(
-                "centers", data=(rng.random((n, 3)) * 10).astype("float32")
+            create_array(
+                lod, "centers", data=(rng.random((n, 3)) * 10).astype("float32")
             )
-            lod.create_dataset("amplitudes", data=rng.random(n).astype("float32"))
-            lod.create_dataset("cholesky_factors", data=self._identity_chol(n))
-            lod.create_dataset(
-                "chunk_bounds", data=np.zeros((1, 3, 2), dtype="float32")
-            )
+            create_array(lod, "amplitudes", data=rng.random(n).astype("float32"))
+            create_array(lod, "cholesky_factors", data=self._identity_chol(n))
+            create_array(lod, "chunk_bounds", data=np.zeros((1, 3, 2), dtype="float32"))
         zarr.consolidate_metadata(store)
 
     def _make_sub_dir(self, dir_path: Path, level_sizes=(16, 4, 1)) -> None:

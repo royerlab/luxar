@@ -76,12 +76,15 @@ def run_decimate_dataset(
                 verbose=True,
             )
 
+            from luxar.gsplats.io.load_gsplats import read_authored_appearance
+
             with asection(f"Saving to {output_path.name}"):
                 write_gsplats_tree(
                     output_path,
                     reduced.tree,
                     encoding_mode=encoding_mode_obj,
                     compress=compress,
+                    root_attrs=read_authored_appearance(input_path),
                 )
                 kept = 100.0 * reduced.n_splats / max(data.n_splats, 1)
                 aprint(

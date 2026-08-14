@@ -6,8 +6,7 @@ import shutil
 from pathlib import Path
 from typing import Any, Dict
 
-import zarr
-
+from luxar._zarr_compat import open_group as zc_open_group
 from luxar.gsplats import GSplatData
 from luxar.gsplats.io._archive import extract_compressed_zarr, read_archive_root_attrs
 
@@ -61,6 +60,11 @@ def read_authored_appearance(path: str | Path) -> Dict[str, Any]:
     ``.gsplats.zarr.tar.gz`` archive alike — both are first-class inputs to the
     rebuild commands, so appearance must survive both (#1604).
 
+    Not every dropped attr is fixed by this: an authored ``colormap`` still
+    reverts to gray, and the 4x4 ``transform`` is deliberately left behind
+    because feeding a stored (column-major) matrix back through the writer
+    transposes it a second time. Both are documented on the key set below.
+
     Only keys actually present are returned, so an input that authored nothing
     yields ``{}`` and the writer's defaults apply unchanged. Missing/unreadable
     stores yield ``{}`` rather than raising: this is a best-effort carry-over
@@ -74,7 +78,12 @@ def read_authored_appearance(path: str | Path) -> Dict[str, Any]:
     p = Path(path)
     try:
         if p.is_dir():
-            root = zarr.open_group(str(p), mode="r")
+            # The facade, not a bare ``zarr.open_group``: it ignores consolidated
+            # metadata, so a directory store is read from the same per-node
+            # ``.zattrs`` the archive peek below reads. Bare zarr 3 would answer
+            # from a stale ``.zmetadata`` instead, and the two inputs would then
+            # disagree about the same hand-edited store.
+            root = zc_open_group(p, mode="r")
             attrs = dict(root.attrs)
         else:
             # An archive is peeked, not extracted: only the root `.zattrs`
@@ -123,7 +132,7 @@ def load_gsplat_node(
 
     try:
         # Open zarr store
-        root = zarr.open_group(str(zarr_path), mode="r")
+        root = zc_open_group(str(zarr_path), mode="r")
 
         # Validate format
         format_type = root.attrs.get("format_type")

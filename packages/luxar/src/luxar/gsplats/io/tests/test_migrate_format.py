@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 import zarr
 
+from luxar._zarr_compat import create_array
 from luxar.gsplats.io import load_gsplats
 from luxar.gsplats.io.migrate import (
     _read_substitutive_directory,
@@ -32,7 +33,7 @@ def _identity_chol(n: int) -> np.ndarray:
 
 def _make_v1_0(path: Path, n: int, *, with_fitting: bool = False) -> None:
     """Build a v1.0 `.gsplats.zarr` (single flat splat set)."""
-    store = zarr.DirectoryStore(str(path))
+    store = zarr.storage.LocalStore(str(path))
     root = zarr.group(store=store, overwrite=True)
     root.attrs.update(
         {
@@ -55,10 +56,10 @@ def _make_v1_0(path: Path, n: int, *, with_fitting: bool = False) -> None:
         }
     )
     rng = np.random.default_rng(0)
-    splats.create_dataset("centers", data=(rng.random((n, 3)) * 10).astype(np.float32))
-    splats.create_dataset("amplitudes", data=rng.random(n).astype(np.float32))
-    splats.create_dataset("cholesky_factors", data=_identity_chol(n))
-    splats.create_dataset("chunk_bounds", data=np.zeros((1, 3, 2), dtype=np.float32))
+    create_array(splats, "centers", data=(rng.random((n, 3)) * 10).astype(np.float32))
+    create_array(splats, "amplitudes", data=rng.random(n).astype(np.float32))
+    create_array(splats, "cholesky_factors", data=_identity_chol(n))
+    create_array(splats, "chunk_bounds", data=np.zeros((1, 3, 2), dtype=np.float32))
     if with_fitting:
         fitting = root.create_group("fitting")
         fitting.attrs.update(
@@ -85,7 +86,7 @@ def _make_v1_0(path: Path, n: int, *, with_fitting: bool = False) -> None:
 
 def _make_v1_1(path: Path, lod_sizes: list[int]) -> None:
     """Build a v1.1 `.gsplats.zarr` (multi-LOD additive)."""
-    store = zarr.DirectoryStore(str(path))
+    store = zarr.storage.LocalStore(str(path))
     root = zarr.group(store=store, overwrite=True)
     n_lods = len(lod_sizes)
     root.attrs.update(
@@ -120,16 +121,16 @@ def _make_v1_1(path: Path, lod_sizes: list[int]) -> None:
                 },
             }
         )
-        lod.create_dataset("centers", data=(rng.random((n, 3)) * 10).astype(np.float32))
-        lod.create_dataset("amplitudes", data=rng.random(n).astype(np.float32))
-        lod.create_dataset("cholesky_factors", data=_identity_chol(n))
-        lod.create_dataset("chunk_bounds", data=np.zeros((1, 3, 2), dtype=np.float32))
+        create_array(lod, "centers", data=(rng.random((n, 3)) * 10).astype(np.float32))
+        create_array(lod, "amplitudes", data=rng.random(n).astype(np.float32))
+        create_array(lod, "cholesky_factors", data=_identity_chol(n))
+        create_array(lod, "chunk_bounds", data=np.zeros((1, 3, 2), dtype=np.float32))
     zarr.consolidate_metadata(store)
 
 
 def _make_v2_0(path: Path, n: int) -> None:
     """Build a v2.0 `.gsplats.zarr` (substitutive_0/additive_0 matrix, [1, 1])."""
-    store = zarr.DirectoryStore(str(path))
+    store = zarr.storage.LocalStore(str(path))
     root = zarr.group(store=store, overwrite=True)
     root.attrs.update(
         {
@@ -164,10 +165,10 @@ def _make_v2_0(path: Path, n: int) -> None:
         {"n_splats": n, "ndim": 3, "has_colors": False, "ordering": "none"}
     )
     rng = np.random.default_rng(0)
-    add.create_dataset("centers", data=(rng.random((n, 3)) * 10).astype(np.float32))
-    add.create_dataset("amplitudes", data=rng.random(n).astype(np.float32))
-    add.create_dataset("cholesky_factors", data=_identity_chol(n))
-    add.create_dataset("chunk_bounds", data=np.zeros((1, 3, 2), dtype=np.float32))
+    create_array(add, "centers", data=(rng.random((n, 3)) * 10).astype(np.float32))
+    create_array(add, "amplitudes", data=rng.random(n).astype(np.float32))
+    create_array(add, "cholesky_factors", data=_identity_chol(n))
+    create_array(add, "chunk_bounds", data=np.zeros((1, 3, 2), dtype=np.float32))
     zarr.consolidate_metadata(store)
 
 
@@ -176,7 +177,7 @@ def _make_v2_0_multi(path: Path, level_sizes: list[int]) -> None:
 
     Level 0 is finest (largest); coarser levels follow — the v2.0 convention.
     """
-    store = zarr.DirectoryStore(str(path))
+    store = zarr.storage.LocalStore(str(path))
     root = zarr.group(store=store, overwrite=True)
     n_sub = len(level_sizes)
     root.attrs.update(
@@ -211,9 +212,9 @@ def _make_v2_0_multi(path: Path, level_sizes: list[int]) -> None:
         add.attrs.update(
             {"n_splats": n, "ndim": 3, "has_colors": False, "ordering": "none"}
         )
-        add.create_dataset("centers", data=(rng.random((n, 3)) * 10).astype(np.float32))
-        add.create_dataset("amplitudes", data=rng.random(n).astype(np.float32))
-        add.create_dataset("cholesky_factors", data=_identity_chol(n))
+        create_array(add, "centers", data=(rng.random((n, 3)) * 10).astype(np.float32))
+        create_array(add, "amplitudes", data=rng.random(n).astype(np.float32))
+        create_array(add, "cholesky_factors", data=_identity_chol(n))
     zarr.consolidate_metadata(store)
 
 
@@ -671,7 +672,7 @@ class TestMigrateFormat:
         rng = np.random.default_rng(42)
         colors = rng.integers(0, 256, size=(n, 3), dtype=np.uint8)
 
-        store = zarr.DirectoryStore(str(legacy))
+        store = zarr.storage.LocalStore(str(legacy))
         root = zarr.group(store=store, overwrite=True)
         root.attrs.update(
             {
@@ -692,15 +693,13 @@ class TestMigrateFormat:
                 "truncation_radius": 3.0,
             }
         )
-        splats.create_dataset(
-            "centers", data=(rng.random((n, 3)) * 10).astype(np.float32)
+        create_array(
+            splats, "centers", data=(rng.random((n, 3)) * 10).astype(np.float32)
         )
-        splats.create_dataset("amplitudes", data=rng.random(n).astype(np.float32))
-        splats.create_dataset("cholesky_factors", data=_identity_chol(n))
-        splats.create_dataset(
-            "chunk_bounds", data=np.zeros((1, 3, 2), dtype=np.float32)
-        )
-        splats.create_dataset("colors", data=colors)
+        create_array(splats, "amplitudes", data=rng.random(n).astype(np.float32))
+        create_array(splats, "cholesky_factors", data=_identity_chol(n))
+        create_array(splats, "chunk_bounds", data=np.zeros((1, 3, 2), dtype=np.float32))
+        create_array(splats, "colors", data=colors)
         zarr.consolidate_metadata(store)
 
         out = tmp_path / "out.gsplats.zarr"
@@ -841,6 +840,35 @@ class TestMigrateV3LegacyLodAttrs:
         data = load_gsplats(out)
         assert data.n_substitutive == 3
         assert data.n_splats == 16  # default view = finest
+
+    def test_migrate_keeps_the_authored_appearance(self, tmp_path: Path) -> None:
+        """A migration rewrites the LAYOUT and must leave the look alone (#1600).
+
+        The rewrite goes through the same node-tree writer as the rest of the
+        rewriting family (`lod`, `flatten`, `reencode`, ...), so without the
+        carry the writer's defaults take over: ``blending_mode`` disappears and
+        the multiplicative attrs snap back to 1.0. Every authored value here is
+        non-default on purpose — an identity would coincide with the stamped
+        default and hide the drop.
+        """
+        legacy = tmp_path / "legacy_lod.gsplats.zarr"
+        _make_v3_lod_pixel_size(legacy, [2, 8])
+        authored = {"blending_mode": "volumetric", "opacity": 0.75, "gamma": 1.3}
+        src = zarr.open_group(str(legacy), mode="r+")
+        for key, value in authored.items():
+            src.attrs[key] = value
+        zarr.consolidate_metadata(src.store)
+
+        out = tmp_path / "out.gsplats.zarr"
+        migrate_format(legacy, out)
+
+        got = dict(zarr.open_group(str(out), mode="r").attrs)
+        for key, want in authored.items():
+            assert got.get(key) == want, f"dropped {key!r} (had {want!r})"
+        # The layout upgrade itself still happened — the carry rides the
+        # writer's lowest-precedence channel, so it cannot shadow structure.
+        assert got["selector"] == "screen-area"
+        assert got["format_version"] == GSPLATS_FORMAT_VERSION
 
     def test_detect_nested_legacy_lod_inside_partition(self, tmp_path: Path) -> None:
         """The legacy-attr scan recurses: a kind=partition root whose part is a

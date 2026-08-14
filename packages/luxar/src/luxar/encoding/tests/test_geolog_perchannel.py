@@ -9,8 +9,8 @@ at every measured dynamic range (2..12.6 decades, 6 datasets).
 
 import numpy as np
 import pytest
-import zarr
 
+from luxar._zarr_compat import memory_group
 from luxar.encoding.decoder import ArrayDecoder
 from luxar.encoding.encoder import ArrayEncoder
 from luxar.encoding.modes import EncodingMode
@@ -28,7 +28,7 @@ def _hdr_colors(n=8000, decades=6.0, seed=0):
 
 
 def _encode_color(colors, mode):
-    g = zarr.group(store=zarr.MemoryStore())
+    g = memory_group()
     ArrayEncoder().encode(
         data=colors,
         zarr_group=g,
@@ -63,7 +63,7 @@ class TestHdrColorPolicy:
         # The per-channel encoding needs (N, C); a 1-D HDR color-ish array
         # (defensive path) must fall back to plain float32, not crash.
         flat = np.linspace(0.0, 10.0, 30, dtype=np.float32)
-        g = zarr.group(store=zarr.MemoryStore())
+        g = memory_group()
         ArrayEncoder().encode(
             data=flat,
             zarr_group=g,
@@ -80,7 +80,7 @@ class TestHdrColorPolicy:
     def test_sdr_colors_unaffected(self):
         rng = np.random.default_rng(1)
         sdr = rng.random((500, 3)).astype(np.float32)
-        g = zarr.group(store=zarr.MemoryStore())
+        g = memory_group()
         ArrayEncoder().encode(
             data=sdr,
             zarr_group=g,
@@ -147,7 +147,7 @@ class TestGeologPerchannelRoundtrip:
     def test_constant_column(self):
         colors = np.full((100, 3), 2.5, np.float32)
         colors[:, 1] = 7.0
-        g = zarr.group(store=zarr.MemoryStore())
+        g = memory_group()
         ArrayEncoder()._encode_geolog_perchannel(g, "c", colors, 16)
         dec = np.asarray(ArrayDecoder().decode(g["c"], g))
         np.testing.assert_allclose(dec[:, 0], 2.5, rtol=1e-6)
@@ -164,7 +164,7 @@ class TestGeologPerchannelRoundtrip:
 class TestDecoderValidation:
     def _corrupt(self, patch):
         colors = _hdr_colors(n=100)
-        g = zarr.group(store=zarr.MemoryStore())
+        g = memory_group()
         ArrayEncoder()._encode_geolog_perchannel(g, "c", colors, 8)
         attrs = dict(g["c"].attrs["encoding"])
         attrs.update(patch)
@@ -183,7 +183,7 @@ class TestDecoderValidation:
 
     def test_rejects_missing_scales(self):
         colors = _hdr_colors(n=50)
-        g = zarr.group(store=zarr.MemoryStore())
+        g = memory_group()
         ArrayEncoder()._encode_geolog_perchannel(g, "c", colors, 8)
         attrs = dict(g["c"].attrs["encoding"])
         del attrs["col_lo"]
