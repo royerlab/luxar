@@ -107,11 +107,15 @@ EXCEPTIONS: dict[str, tuple[tuple[str, ...], str]] = {
         "hue/shade recipe palette comes from colorsys in [0, 1]; the geometry "
         "is six volumetric gsplat nodes (one per RECIPES entry), and that mode "
         "emits color*(1-exp(-tau))/absorption with tau = absorption*opacity*"
-        "intensity, so opacity cancels identically and it is absorption=1.0 "
-        "that bounds each node at 1 — their One/OneMinusSrcAlpha composition "
+        "intensity. opacity does not drop out of that — the opacity*intensity "
+        "ray mass cancels against the tau under the S(tau) self-screening, and "
+        "what is left, (1-exp(-tau)), is below 1 for ANY tau >= 0 — so it is "
+        "absorption=1.0 that bounds each node at 1, whatever opacity and "
+        "intensity do. Their One/OneMinusSrcAlpha composition "
         "keeps the sum bounded too, and the text is a DOM overlay outside the "
-        "HDR pass. kappa is a live Layers-panel slider, so dropping it below 1 "
-        "pushes a node over range where the 'None' pin clips flat",
+        "HDR pass. kappa is a live Layers-panel slider, and dropping it below "
+        "1 raises that bound to 1/kappa, so a node can go over range where the "
+        "'None' pin clips flat",
     ),
     # --- over range (Neutral is hue-exact there), or range unproven ------
     "_interop_common.py": (
