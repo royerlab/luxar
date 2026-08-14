@@ -296,6 +296,10 @@ describe('installDebugInterface', () => {
         generateSyntheticLines: () => {
           throw new Error('simulated bundle-load failure');
         },
+        // The injector destructures this alongside the generator (it
+        // sizes the line primitive from the generation volume), and
+        // vitest throws on an export a mock factory omits.
+        syntheticLinesBoundsDiagonal: () => 1,
       }));
 
       installDebugInterface(makePorts());
@@ -321,6 +325,33 @@ describe('installDebugInterface', () => {
       );
 
       vi.doUnmock('../../../../../scene/synthetic-scene');
+    });
+  });
+
+  // The injected node is the perf bench's `default`-arm subject, so it
+  // must be sized by the SAME auto rule (#1352) a compiled node is:
+  // authored count × a rendered-width factor normalized by the node's
+  // extent. Count-only sizing would let a wide swept arm benchmark the
+  // capsule where production builds the quad.
+  describe('injectSyntheticScene line-primitive sizing', () => {
+    /** A wide-lines spec whose WIDTH alone carries it over the threshold. */
+    const wide = { type: 'lines' as const, count: 40_000, bounds: 10, width: 3 };
+
+    it('crosses the auto threshold on rendered width, far below the count threshold', async () => {
+      installDebugInterface(makePorts());
+      const result = await window.__luxarDebug!.injectSyntheticScene!(wide);
+      const material = (result.mesh as THREE.Mesh).material as THREE.Material;
+      expect(material.userData.linePrimitive).toBe('screen-space');
+    });
+
+    it('keeps the capsule for the same count at a sub-clamp width', async () => {
+      // Same 40 k count, width far below the shader's 1.5 px floor — the
+      // negative control, without which "reads the width" would also be
+      // satisfied by flipping every injected node to the quad.
+      installDebugInterface(makePorts());
+      const result = await window.__luxarDebug!.injectSyntheticScene!({ ...wide, width: 0.02 });
+      const material = (result.mesh as THREE.Mesh).material as THREE.Material;
+      expect(material.userData.linePrimitive).toBe('capsule');
     });
   });
 });

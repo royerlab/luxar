@@ -236,9 +236,10 @@ const LINE_PRIMITIVES = ((): string[] => {
  * keeps the bare scenario id so its rows stay comparable across runs —
  * NOTE that "default" changed meaning at the #1352 flip (screen-space →
  * capsule), and AGAIN when the auto policy landed: a default arm now
- * builds whatever production would for that scenario's segment count
- * (capsule below the auto threshold, screen-space at/above it — the 10 M
- * and thick 2 M scenarios resolve to screen-space). That is the point of
+ * builds whatever production would for that scenario's SIZE — segment
+ * count scaled by the rendered-width factor, so a wide scenario flips to
+ * screen-space well below the 2 M count (the 10 M and both thick 2 M
+ * scenarios resolve to screen-space). That is the point of
  * the default arm — it measures shipping behavior — but it means bare-id
  * rows are only comparable between runs of the SAME policy era; compare
  * across either boundary only via explicit `-screen-space` / `-capsule`

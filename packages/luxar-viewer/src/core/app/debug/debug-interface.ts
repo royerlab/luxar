@@ -224,24 +224,34 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
               : 'normal';
 
         if (spec.type === 'lines') {
-          const { generateSyntheticLines } = await import('../../../scene/synthetic-scene');
+          const { generateSyntheticLines, syntheticLinesBoundsDiagonal } =
+            await import('../../../scene/synthetic-scene');
           const cfg = generateSyntheticLines(spec);
+          const maxWidth = spec.width ?? 1.0;
           // Build the visual material directly through the
           // material-manager so the same blending / dispatch logic
           // production uses applies. Picking material is intentionally
           // skipped — the synthetic scenarios don't exercise picking.
           // Mirror createLinesNode's per-node auto-policy sizing so the
           // synthetic path builds the same primitive production would for
-          // a node of this count (count-only: synthetic walks author no
-          // extent metadata). An explicit ?linePrimitive= arm still wins
-          // inside the resolver, so bench A/B arms are unaffected.
+          // a node of this size — count AND the rendered-width factor,
+          // normalized by the generation volume the walk fills (a wide
+          // scene crosses the auto threshold well below 2 M segments,
+          // exactly as an authored wide node does, so a count-swept bench
+          // arm can't measure a primitive production wouldn't build). An
+          // explicit ?linePrimitive= arm still wins inside the resolver,
+          // so bench A/B arms are unaffected.
           const material = materialManager.getLineMaterial({
             blendingMode,
             opacity: 1.0,
             gamma: 1.0,
             intensity: 1.0,
             offset: 0.0,
-            primitive: resolveLinePrimitiveForNode({ nSegments: cfg.segmentCount }),
+            primitive: resolveLinePrimitiveForNode({
+              nSegments: cfg.segmentCount,
+              maxWidth,
+              bboxDiagonal: syntheticLinesBoundsDiagonal(spec),
+            }),
           });
           const mesh = createInstancedLinesMesh(cfg, material);
           const clamped = clampLineCapacity(cfg.segmentCount);
@@ -256,7 +266,7 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
             // Mirrors createLinesNode's `attrs.max_width`: the widest
             // authored width, which `spec.width` now controls (the
             // thick perf scenarios inject 3.0, not the 1.0 default).
-            maxWidth: spec.width ?? 1.0,
+            maxWidth,
             visibleSegmentCount: clamped,
             synthetic: true,
           };
