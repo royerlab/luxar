@@ -55,14 +55,17 @@ import {
   smoothstep,
   exp,
   texture,
-  textureSize,
   modelViewMatrix,
   cameraProjectionMatrix,
   Discard,
 } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
 import { FALLOFF_FLOOR, FALLOFF_K, INV_ONE_MINUS_FALLOFF_FLOOR } from '../_shared/falloff';
-import { getPlaceholderElementTexture } from '../../element-texture-layout';
+import {
+  getPlaceholderElementTexture,
+  resolveElementTextureWidth,
+  LINE_TEXTURE_LAYOUT,
+} from '../../element-texture-layout';
 import {
   perspectiveNearFadeStaticTSL,
   sanitizeAlpha,
@@ -318,12 +321,18 @@ export function lineWebGPUFactory(
     // loads per culled vertex (accepted asymmetry, output-identical;
     // same trade as the point factory).
     const lineBase: TSLNode = int(aSortedIndex).mul(int(6)).toVar();
-    // int() wrap is LOAD-BEARING: TSL types textureSize() as uint (the
-    // WGSL textureDimensions convention), but the WebGL2 fallback emits
-    // GLSL textureSize() which returns int -- without the explicit
-    // conversion the generated `uint nodeVar = textureSize(...).x;`
-    // fails to compile on the forceWebGL backend.
-    const lineTexW: TSLNode = int((textureSize(uLineTex, int(0)) as unknown as TSLNode).x).toVar();
+    // The width is baked as a LITERAL, not read via textureSize(): a
+    // compile-time constant lets the shader compiler strength-reduce
+    // the per-vertex %/int-div addressing below (measured -7% on the
+    // quad's whole GPU pass; a uniform recovered almost none of it).
+    // Safe because the width is a per-layout session constant, capped
+    // at 4096 on every device (element-texture-layout.ts).
+    const lineTexW: TSLNode = int(
+      resolveElementTextureWidth(
+        LINE_TEXTURE_LAYOUT,
+        (nodes.uLineTex as unknown as { value?: { image?: { width?: number } } }).value ?? null
+      )
+    ).toVar();
     const texelX: TSLNode = lineBase.mod(lineTexW).toVar();
     const texelY: TSLNode = lineBase.div(lineTexW).toVar();
     const lineT0: TSLNode = uLineTex.load(ivec2(texelX, texelY)).toVar();
