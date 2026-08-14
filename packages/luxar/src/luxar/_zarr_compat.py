@@ -29,13 +29,16 @@ Five zarr-3 behaviours are actively dangerous here, and all five are neutralised
 below rather than left to call sites. Each one fails SILENTLY — none raises:
 
 1. **An omitted compressor is not "no compressor".** zarr's ``compressors="auto"``
-   silently applies Blosc/lz4/clevel-5, whereas Luxar has arrays that must be
+   silently applies a real compressor, whereas Luxar has arrays that must be
    stored RAW (the packed label byte-blobs) and others that must carry the
    measured zstd-9 policy. ``None`` is therefore mapped to an explicit
-   ``compressors=None`` rather than being confused with "unspecified". The
-   ``"auto"`` default here reproduces zarr 2's implicit default exactly, so test
-   fixtures that never named a compressor keep their old bytes; production code
-   is held to naming one by
+   ``compressors=None`` rather than being confused with "unspecified".
+
+   ``"auto"`` is NOT the same compressor in both formats — it is whatever zarr
+   would have chosen for that format, which is Blosc/lz4/clevel-5 at format 2
+   and ``zstd`` level 0 at format 3. It exists for test fixtures that never
+   named a compressor and do not care; nothing whose bytes matter may rely on
+   it. Production code is held to naming one by
    ``test_zarr_compat.py::test_production_create_array_calls_pass_a_compressor``,
    which walks the AST rather than trusting review.
 2. **``data=`` and ``shape=`` are mutually exclusive.** zarr 2's
