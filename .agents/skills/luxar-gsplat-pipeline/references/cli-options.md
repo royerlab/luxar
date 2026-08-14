@@ -67,8 +67,12 @@ Inputs: `.npy`, `.npz`, `.tiff`/`.tif`, `.zarr`, `.zarr.zip` (TIFF/other need `p
 Knobs mirror `lod`: `--n-lods`, `--add-method`/`-m`, `--breakpoints`/`-b`,
 `--target-ms`, `--bandwidth-mbps` (default 25), `--bytes-per-splat`,
 `--compression-factor`/`-K`, `--levels`/`-L`, `--subst-method`,
-`--coarsen-dims`. LOD switch thresholds are auto-derived (`coverage_fraction`,
-no knob — see "LOD switch tuning" below).
+`--coarsen-dims`, `--refine`, `--refine-iters`. LOD switch thresholds are
+auto-derived (`coverage_fraction`, no knob — see "LOD switch tuning" below).
+`--refine volume` needs no `--target` here (the volume being fitted is already
+in hand) and re-fits each tile against its own crop of it; incompatible with
+`--downscale` (the tile grid and the rescaled splats would be in different
+coordinate frames).
 
 ### Progressive fitting
 | Flag | Default | Meaning |
@@ -197,23 +201,29 @@ luxar gsplat additive sub.gsplats.zarr pyr.gsplats.zarr --target-ms 200   # ~200
 | `--coverage-inflation` | 3.0 | widen merged reps' inter-center spread (mass-preserving) so coarse splats sum flat — suppresses the grid ripple; 1.0 = pure moment match |
 | `--additive` / `--no-additive` | on | additive ladder in every substitutive level / adaptive tile / overview cap (streaming first paint); `--no-additive` = bare leaves |
 | `--conserve-mass` / `--no-conserve-mass` | on | pin each level's mass over coarsened dims to its fine input (per barrier group) — kills the LOD brightness pop |
-| `--refine` | none | `l2` = post-merge L2 refit of each level against its fine input (slower, higher fidelity, peak-preserving; mass pinned); `volume` = warm-start re-fit against the source volume given via `--target` (highest fidelity; never worse than the merge; levels/overview only, no barrier dims) |
+| `--refine` | none | `l2` = post-merge L2 refit of each level against its fine input (slower, higher fidelity, peak-preserving; mass pinned); `volume` = warm-start re-fit against the source volume given via `--target` (highest fidelity; never worse than the merge; works on levels/overview and per-tile `adaptive`, with or without barrier dims — each re-fit gets the sub-volume it owns, and a per-tile re-fit that leaves its tile is discarded) |
 | `--refine-iters` | 120 / 300 | steps per refined level (120 for `l2`, 300 for `volume`; requires `--refine l2\|volume`) |
 | `--target` | — | source volume for `--refine volume` (.npy/.npz/.tiff/.zarr[.zip]; with `--channel`/`--timepoint`/`--array-key` selectors) |
+| `--target-axes` | — | per-dimension labels for a `--target` that KEEPS its stacked axis (e.g. `time,z,y,x`), so `--refine volume` walks it one slice per barrier group; the target is then opened lazily (only the slice is read). Contrast `--timepoint`, which slices a single timepoint out and drops the axis — mutually exclusive with this. |
 | `--coarsen-dims` | all | center-column indices coarsening may merge over (rest = hard barriers) |
 
 ### LOD switch tuning (any kind=lod group)
 Auto-derived, no knob: each child's `coverage_fraction` = `sqrt(N_i / N_finest)`
 (a viewport-relative value; coarsest 0.0, finest 1.0). The viewer multiplies it by
-a quarter of the live viewport diagonal, so the finest level shows at any normal
-full-frame view (projected size ≳ a quarter of the viewport diagonal) and coarser
-levels step in as it shrinks below that — self-calibrating on any monitor.
+half of the live viewport's fitted screen axis (the smaller of its width/height),
+so the finest level shows at any normal full-frame view (projected size ≳ half
+the fitted screen axis) and coarser levels step in as it shrinks below that —
+self-calibrating on any monitor or aspect ratio.
 
 The `adaptive` and `overview` recipes are the exception: their ladders are bound
 to a spatial partition (a tile projects to a fraction of the whole object), so
-they are scaled to anchor the finest at `4.0` = 1/FILL_FACTOR — the switch point
-a tile needs, and what `overview`'s "coarse overview, fine tiles on zoom" means.
-An explicit `coverage_fractions=[...]` list may use the same `[0, 4]` range. The former `extent`/`count` methods and the
+they are scaled to anchor the finest at `4.0` = `SCREEN_FILL_DIAGONAL_RATIO /
+FILL_FACTOR` — approximately the switch point a screen-filling tile needs (exact
+only near aspect ratio sqrt(3) ~= 1.73; the real screen-filling metric ranges
+~2.8 at 1:1 to ~7.4 at an ultrawide 32:9 — see `lod-group-registry.ts`'s
+`FILL_FACTOR` doc) — and what `overview`'s "coarse overview, fine tiles on zoom"
+means. An explicit `coverage_fractions=[...]` list may use the same `[0, 4]`
+range. The former `extent`/`count` methods and the
 `--lod-method` / `--extent-percentile` / `--extent-anisotropy` /
 `--base-pixel-size` flags have been removed.
 

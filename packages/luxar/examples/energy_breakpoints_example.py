@@ -19,7 +19,7 @@ Demonstrates the LOD refinements landed in PR #321:
 3. **``coverage_fraction=``** — a hand-built ``add_lod_group`` where each
    child sets its own viewport-relative switch threshold (0.0 coarsest →
    1.0 finest); the finest child shows at any normal full-frame view (once the
-   object's projected size reaches ~a quarter of the viewport diagonal).
+   object's projected size reaches ~half of the fitted screen axis).
 
 4. **Compiler-side ``display_type`` back-fill** — explicit-builder
    lod_groups without an authored ``display_type`` get one filled in
@@ -134,8 +134,8 @@ def main() -> None:
         # === 3. Hand-built lod_group with explicit coverage_fraction thresholds ===
         # Each child sets its own viewport-relative switch threshold: the coarse
         # subset is the always-eligible floor (0.0) and the fine level (1.0) takes
-        # over once the object's projected size reaches ~a quarter of the viewport
-        # diagonal, i.e. at any normal full-frame view. Also exercises
+        # over once the object's projected size reaches ~half of the fitted
+        # screen axis, i.e. at any normal full-frame view. Also exercises
         # the display_type back-fill: we never set `display_type=`, but the layers
         # panel still reads "points" because the compiler fills it from the finest
         # child.

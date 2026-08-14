@@ -143,11 +143,10 @@ def add_points_impl(
         # Node-attrs gate — same validator the flat writer runs as its own first
         # step (write_points' step 0a), hoisted here for the same reason as the
         # dimension-count check just above (#1446 is the model for placement;
-        # the nearest precedent for this validator itself is mesh's own
-        # _maybe_add_mesh_substitutive_lod, mesh.py:401-403 — the substitutive
-        # branch's dispatcher, called before the wrapper — whose dict(attrs)
-        # copy is unnecessary for the same read-only reason ours doesn't
-        # copy), and covering all three split paths below, not just
+        # Mesh and GSplats followed with the identical entry gate in #1534 —
+        # ``add_mesh_impl`` / ``add_gsplats_impl``, likewise run once above
+        # every structural branch and likewise on the live ``attrs`` rather
+        # than a copy), and covering all three split paths below, not just
         # substitutive: substitutive_lod= forwards the non-compositing
         # remainder of `**attrs` to a synthesised gsplats `child_0`;
         # partition= forwards it to each `part_i`; additive_lod= goes straight
@@ -901,11 +900,15 @@ def add_points_substitutive_lod_wrapper_impl(
                 f"has {len(counts)} levels ({len(coarse_first)} gsplat + 1 points)"
             )
         coverage_vals = list(explicit)
+        # Explicit lists keep the legacy diagonal-metric units they were
+        # authored in (selector="coverage", the add_lod_group default).
+        lod_selector = "coverage"
     else:
-        # Viewport-relative coverage fractions ``sqrt(N_i/N_finest)`` (count ratios;
-        # the viewer anchors the finest at a quarter of the live viewport diagonal,
-        # i.e. any normal full-frame view). No per-level radius or world-extent
-        # needed.
+        # Screen-area fractions by occupancy halving (finest holds while the
+        # node occupies at least half the screen; one level coarser per halving
+        # of occupied area). Count-independent — no per-level radius or
+        # world-extent needed — and stamped selector="screen-area" so the
+        # viewer reads the thresholds in the units they were derived in.
         #
         # The ANCHOR is chosen from the insertion point: ``add_points`` rejects
         # ``partition=`` together with ``substitutive_lod=``, but a caller CAN
@@ -915,6 +918,7 @@ def add_points_substitutive_lod_wrapper_impl(
         # ancestor automatically and logs the choice; an explicit
         # ``coverage_fractions=[...]`` still wins (the branch above).
         coverage_vals = derive_coverage_fractions(counts, parent_node, name=name)
+        lod_selector = "screen-area"
 
     # Compositing attrs ride on the kind=lod Group; everything else (colormap,
     # truncation_radius, ...) rides onto each child.
@@ -931,7 +935,7 @@ def add_points_substitutive_lod_wrapper_impl(
         f"  📐 Substitutive-LOD '{name}': {len(coarse_first)} gsplat levels + points "
         f"(counts coarsest→finest={counts}, K={spec['compression_factor']})"
     )
-    lod_group_node = parent_node.add_lod_group(name, **lod_attrs)
+    lod_group_node = parent_node.add_lod_group(name, selector=lod_selector, **lod_attrs)
 
     # Coarse gsplat children (coarsest first). pos_arr is already
     # dim_order-transformed, so children use dim_order=None/fill=None.

@@ -13,7 +13,6 @@ it replaced the historical ``lod additive`` / ``lod substitutive`` /
 
 from __future__ import annotations
 
-import math
 import shutil
 from pathlib import Path
 from typing import Any, Optional
@@ -21,11 +20,12 @@ from typing import Any, Optional
 import typer
 from arbol import aprint, asection
 
+# Under its former private spelling, so every call site in this module is
+# untouched — the extraction is a move, not a rename.
+from luxar.cli.reveal_options import parse_reveal_knobs as _parse_reveal_knobs
 from luxar.utils.lod_methods import (
     GSPLAT_ADDITIVE_CHOICES_HELP,
     LEGACY_METHOD_FLAGS,
-    REVEAL_METHODS,
-    is_reveal_method,
 )
 
 # Shared recipe/streaming validation surface — moved to
@@ -41,6 +41,7 @@ from .gsplat_ops.recipe_shared import (
     parse_lod_breakpoints,
     reject_irrelevant_recipe_options,
     resolve_streaming_breakpoints,
+    validate_refine,
     validate_streaming_knobs,
 )
 
@@ -84,6 +85,7 @@ _OPTION_TOKENS = {
     "--refine": "substitutive",
     "--refine-iters": "substitutive",
     "--target": "substitutive",
+    "--target-axes": "substitutive",
     "--channel": "substitutive",
     "--timepoint": "substitutive",
     "--array-key": "substitutive",
@@ -98,7 +100,7 @@ _ALLOWED_TOKENS = {
     "stream": frozenset({"additive"}),
     "tiles": frozenset({"additive", "partition"}),
     # LOD switch thresholds are auto-derived as viewport-relative coverage
-    # fractions (sqrt(N_i/N_finest)) for every kind=lod group (the overview
+    # fractions (screen-occupancy halving) for every kind=lod group (the overview
     # cap and the levels/adaptive lod groups) — no threshold knob.
     "overview": frozenset({"additive", "partition", "substitutive"}),
     # adaptive: spatial tiles + a levels group per tile — partition +
@@ -158,109 +160,6 @@ def _reject_renamed_method_flags(*supplied: tuple[Optional[str], str]) -> None:
             f"substitutive method flags are now named symmetrically, and no "
             f"method flag is bare); use {new} {value}."
         )
-
-
-def _parse_reveal_centre(spec: Optional[str]) -> Optional["list[float]"]:
-    """Parse ``--reveal-centre`` — a comma-separated shell centre, or ``None``."""
-    if spec is None:
-        return None
-    try:
-        parsed = [float(t) for t in spec.split(",") if t.strip() != ""]
-    except ValueError as e:
-        raise typer.BadParameter(
-            f"--reveal-centre must be comma-separated numbers; got {spec!r}"
-        ) from e
-    if not parsed:
-        raise typer.BadParameter("--reveal-centre must list >=1 coordinate")
-    if not all(math.isfinite(c) for c in parsed):
-        # `float("nan")` / `float("inf")` parse happily. Every distance would then
-        # be non-finite, all comparing equal under the stable sort, so the ladder
-        # would come out in input order with nothing to say the centre was junk.
-        raise typer.BadParameter(
-            f"--reveal-centre must be finite numbers; got {spec!r}"
-        )
-    return parsed
-
-
-def _parse_reveal_spatial_dims(spec: Optional[str], ndim: int) -> Optional["list[int]"]:
-    """Parse ``--spatial-dims`` — the columns the shell distance spans, or ``None``.
-
-    Keeps the listed ORDER and rejects a repeat (see the comment below: the order
-    pairs with ``--reveal-centre``, deliberately unlike ``--coarsen-dims``), and
-    bounds-checks each index against the dataset's own ``ndim`` so a typo is
-    caught before any work.
-    """
-    if spec is None:
-        return None
-    try:
-        parsed = [int(t) for t in spec.split(",") if t.strip() != ""]
-    except ValueError as e:
-        raise typer.BadParameter(
-            f"--spatial-dims must be comma-separated integers; got {spec!r}"
-        ) from e
-    # Order is PRESERVED and duplicates REJECTED, deliberately unlike
-    # `--coarsen-dims` (which sorts, because a barrier set is order-free). Here the
-    # order is load-bearing: `--reveal-centre` supplies one coordinate per LISTED
-    # axis, so `sorted(set(...))` made `--spatial-dims 2,0 --reveal-centre 10,20`
-    # silently mean "axis 0 centred at 10" rather than the pairing the user typed.
-    if not parsed:
-        raise typer.BadParameter("--spatial-dims must list >=1 index")
-    if len(set(parsed)) != len(parsed):
-        raise typer.BadParameter(
-            f"--spatial-dims must not repeat an axis (a repeat would count it "
-            f"twice in the distance); got {parsed}"
-        )
-    for i in parsed:
-        if i < 0 or i >= ndim:
-            raise typer.BadParameter(
-                f"--spatial-dims index {i} out of range for {ndim}D data"
-            )
-    return parsed
-
-
-def _parse_reveal_knobs(
-    reveal_centre: Optional[str],
-    spatial_dims: Optional[str],
-    method_norm: Optional[str],
-    ndim: int,
-) -> "tuple[Optional[list[float]], Optional[list[int]]]":
-    """Parse and validate ``--reveal-centre`` / ``--spatial-dims``.
-
-    Extracted from :func:`lod_recipe`, which is already the most complex function
-    in this module; inlining this validation pushed it further past the C901
-    ratchet. Everything it needs is passed in, so it stays independently testable.
-
-    Both knobs apply only to the ``radial`` ordering, and passing either under
-    another method is an ERROR rather than a silent no-op: a user who types
-    ``--reveal-centre`` with the default ``auto`` wants a reveal, and would
-    otherwise get an energy-ordered ladder with nothing to indicate the flag was
-    dropped.
-    """
-    if (reveal_centre is not None or spatial_dims is not None) and not is_reveal_method(
-        str(method_norm)
-    ):
-        # Asked of the shared registry, not compared against a literal, so a
-        # second reveal ordering needs no edit here.
-        bad = "--reveal-centre" if reveal_centre is not None else "--spatial-dims"
-        listed = " / ".join(sorted(REVEAL_METHODS))
-        raise typer.BadParameter(
-            f"{bad} only applies to a reveal ordering ({listed}); pass "
-            f"-m {sorted(REVEAL_METHODS)[0]} (got -m {method_norm})."
-        )
-
-    parsed_centre = _parse_reveal_centre(reveal_centre)
-    parsed_dims = _parse_reveal_spatial_dims(spatial_dims, ndim)
-
-    # The centre carries one coordinate per axis the distance is measured over,
-    # so its length must match --spatial-dims when both are given. Checked here
-    # rather than deep in the scorer so the error names the flags the user typed.
-    if parsed_centre is not None and parsed_dims is not None:
-        if len(parsed_centre) != len(parsed_dims):
-            raise typer.BadParameter(
-                f"--reveal-centre has {len(parsed_centre)} coordinates but "
-                f"--spatial-dims lists {len(parsed_dims)} axes; they must match."
-            )
-    return parsed_centre, parsed_dims
 
 
 def register_lod_command(app: typer.Typer) -> None:
@@ -457,6 +356,15 @@ def lod_recipe(
         "--timepoint",
         help="Timepoint to extract from a time-series --target volume.",
     ),
+    target_axes: Optional[str] = typer.Option(
+        None,
+        "--target-axes",
+        help="Per-dimension labels for a --target that KEEPS its stacked axis "
+        "(e.g. 'time,z,y,x'), so a --refine volume of a stacked timelapse can "
+        "walk that axis one slice per timepoint. Without this a >3D target is "
+        "assumed to be in the splats' own dim order. Contrast --timepoint, "
+        "which slices a single timepoint out instead.",
+    ),
     target_array_key: Optional[str] = typer.Option(
         None,
         "--array-key",
@@ -622,6 +530,7 @@ def lod_recipe(
             "--channel": target_channel,
             "--timepoint": target_timepoint,
             "--array-key": target_array_key,
+            "--target-axes": target_axes,
             "--reveal-centre": reveal_centre,
             "--spatial-dims": spatial_dims,
             "--coarsen-dims": coarsen_dims,
@@ -668,15 +577,9 @@ def lod_recipe(
                 f"--no-additive contradicts --recipe {recipe}: its additive "
                 "ladder is the recipe's definition."
             )
-        refine_norm = (refine or "none").strip()
-        if refine_norm not in ("none", "l2", "volume"):
-            raise typer.BadParameter(
-                f"--refine must be 'none', 'l2', or 'volume'; got {refine!r}"
-            )
-        if refine_iters is not None and refine_norm == "none":
-            raise typer.BadParameter(
-                "--refine-iters only applies with --refine l2|volume."
-            )
+        # Same mode vocabulary and orphan-option rule as `fit --recipe` and the
+        # batch merge — one validator, so the three spellings cannot drift.
+        refine_norm = validate_refine(refine, refine_iters)
         if refine_norm == "volume" and target_path is None:
             raise typer.BadParameter(
                 "--refine volume needs the source volume: pass --target <volume>."
@@ -692,6 +595,7 @@ def lod_recipe(
                 ("--channel", target_channel),
                 ("--timepoint", target_timepoint),
                 ("--array-key", target_array_key),
+                ("--target-axes", target_axes),
             )
             if value is not None
         ]
@@ -700,12 +604,14 @@ def lod_recipe(
                 f"option(s) {', '.join(orphan_selectors)} select a sub-volume "
                 "of --target, but no --target was given."
             )
-        if refine_norm == "volume" and recipe == "adaptive":
+        if target_axes is not None and (
+            target_channel is not None or target_timepoint is not None
+        ):
             raise typer.BadParameter(
-                "--refine volume is not supported for --recipe adaptive: each "
-                "tile's levels would re-fit against the full volume, pulling "
-                "splats out of their tile. Use --recipe levels/overview, or "
-                "--refine l2."
+                "--target-axes KEEPS the target's stacked axis so --refine volume "
+                "can walk it one barrier group at a time, while --channel/"
+                "--timepoint slice one index out and drop it — the labels would "
+                "no longer describe the array. Use one or the other."
             )
         rule = partition_rule or "median"
         if rule not in _VALID_PARTITION_RULES:
@@ -751,23 +657,51 @@ def lod_recipe(
                 aprint(f"Loaded {data.n_splats:,} splats ({data.ndim}D)")
 
             # ── --refine volume: load the source volume (shared loader) ──
-            target_volume = None
+            target_volume: Any = None
+            target_volume_axes = None
             if target_path is not None:
                 from luxar.cli.gsplat_config import load_volume
 
+                # A --target-axes target keeps its stacked axis, and the re-fit
+                # then only ever SLICES it (one barrier group at a time). Open it
+                # lazily so that stays true on disk as well as in principle: a
+                # 253-timepoint 407x2048x2048 uint16 timelapse is 431 GB while one
+                # timepoint is 3.4 GB. The selector flags are the eager case by
+                # definition (they reduce the array before the fit sees it), and
+                # they cannot be combined with --target-axes anyway.
+                lazy = (
+                    target_axes is not None
+                    and target_channel is None
+                    and target_timepoint is None
+                )
                 with asection(f"Loading target volume: {target_path.name}"):
-                    target_volume = load_volume(
-                        target_path,
-                        channel=target_channel,
-                        timepoint=target_timepoint,
-                        array_key=target_array_key,
-                    )
+                    if lazy:
+                        from luxar.io.volume import open_volume_lazy
+
+                        target_volume = open_volume_lazy(
+                            target_path, array_key=target_array_key
+                        )
+                    else:
+                        target_volume = load_volume(
+                            target_path,
+                            channel=target_channel,
+                            timepoint=target_timepoint,
+                            array_key=target_array_key,
+                        )
                     aprint(f"Volume shape: {target_volume.shape}")
                 if len(target_volume.shape) != data.ndim:
                     raise typer.BadParameter(
                         f"--target volume is {len(target_volume.shape)}D but the "
                         f"splats are {data.ndim}D; select a matching sub-volume "
                         f"with --channel/--timepoint/--array-key."
+                    )
+                if target_axes is not None:
+                    from luxar.io.volume import volume_axes_from_spec
+
+                    target_volume_axes = volume_axes_from_spec(target_axes, data.ndim)
+                    aprint(
+                        f"Target axis map (center dim -> volume axis): "
+                        f"{target_volume_axes}"
                     )
 
             # ── streaming breakpoints from --target-ms (measured B/splat) ──
@@ -926,6 +860,7 @@ def lod_recipe(
                 # own default (l2: 120, volume: 300) — single source of truth.
                 refine_iters=refine_iters,
                 volume=target_volume,
+                volume_axes=target_volume_axes,
                 coarsen_dims=parsed_coarsen,
                 quality_stamps=quality_stamps if quality_stamps is not None else True,
                 quality_max_pair_splats=(

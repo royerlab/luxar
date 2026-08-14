@@ -45,7 +45,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Callable, List, Literal, Optional, Union, get_args
+from typing import Callable, List, Literal, Optional, Tuple, Union, get_args
 
 import numpy as np
 
@@ -163,15 +163,18 @@ class RecipeParams:
     # Source volume for refine="volume" (full-res, splat coordinate frame).
     # Excluded from eq/repr: a large ndarray is payload, not identity.
     volume: Optional[np.ndarray] = field(default=None, compare=False, repr=False)
+    # ``volume_axes[i]`` is the volume axis holding center dim ``i``; None means
+    # the identity. A stacked timelapse needs it: Luxar puts spatial dims first
+    # and the stacked axis LAST, while the source array is usually time-FIRST.
+    volume_axes: Optional[tuple] = None
     # Center-column indices substitutive coarsening may merge over; the
     # complement become hard grouping barriers. None == coarsen all dims.
     coarsen_dims: Optional[tuple] = None
-    # LOD switch thresholds are auto-derived as viewport-relative
-    # ``coverage_fraction`` (``sqrt(N_i/N_finest)``) — see
-    # ``core.group.lod.group.coverage_fractions``. No method selector or
-    # per-dataset anchor knob: the fraction is a count ratio (immune to
-    # non-displayed-dimension multiplicity) and the viewer anchors the finest at
-    # a quarter of the live viewport diagonal (any normal full-frame view).
+    # LOD switch thresholds are auto-derived as SCREEN-AREA fractions
+    # (``selector="screen-area"``, occupancy halving: full detail while the
+    # node occupies at least half the screen, one level coarser per halving of
+    # occupied area) — see ``core.group.lod.group.coverage_fractions``. No
+    # per-dataset anchor knob.
     # Q·e quality stamps: measure each coarse substitutive level's mixture-L²
     # quality Q vs its group's finest content and stamp it (with the
     # reference_energy weight w) into level_stats — the build-time half of the
@@ -237,6 +240,7 @@ def build_levels(data: GSplatData, params: RecipeParams) -> GSplatData:
         refine=params.refine,  # type: ignore[arg-type]
         refine_iters=params.refine_iters,
         volume=params.volume,
+        volume_axes=params.volume_axes,
         device=params.device,
         seed=params.seed,
         coarsen_dims=params.coarsen_dims,
@@ -259,6 +263,7 @@ def build_levels_matrix(data: GSplatData, params: RecipeParams) -> GSplatData:
         refine=params.refine,
         refine_iters=params.refine_iters,
         volume=params.volume,
+        volume_axes=params.volume_axes,
         device=params.device,
         coarsen_dims=params.coarsen_dims,
         n_additive_lods=params.n_lods,
@@ -311,11 +316,77 @@ def build_tiles(
     )
 
 
+def _part_cells(
+    partition: GSplatPartition, ndim: int
+) -> Optional[List[List[Tuple[float, float]]]]:
+    """Each part's tile, per center dim, indexed by child position.
+
+    Read from the partition's own ``bsp_tree`` so the bounds are the real split
+    planes rather than the hull of the splats a part happens to hold — a hull is
+    strictly tighter than the cell and would crop away signal the tile owns.
+    Falls back to each part's center bounds when no tree was stored (an older
+    artifact, or a producer that never built one), and to ``None`` when neither
+    is available, which turns the per-part volume re-fit off rather than
+    silently cropping to the wrong box.
+    """
+    from luxar.core.group.partition import serialized_bsp_leaf_cells
+    from luxar.gsplats.tree import center_bounds
+
+    n = len(partition.children)
+    tree = getattr(partition, "bsp_tree", None)
+    if tree:
+        try:
+            by_label = serialized_bsp_leaf_cells(tree, ndim)
+        except (KeyError, TypeError, ValueError):
+            by_label = {}
+        if len(by_label) >= n:
+            return (
+                [by_label[i] for i in range(n)]
+                if all(i in by_label for i in range(n))
+                else None
+            )
+    cells: List[List[Tuple[float, float]]] = []
+    for child in partition.children:
+        bounds = center_bounds(child)
+        if bounds is None:
+            return None
+        lo, hi = bounds
+        cells.append([(float(lo[d]), float(hi[d])) for d in range(ndim)])
+    return cells
+
+
+def _cell_for_coarsened_dims(
+    cell: Optional[List[Tuple[float, float]]],
+    params: RecipeParams,
+    ndim: int,
+) -> Optional[List[Tuple[float, float]]]:
+    """Reduce a per-center-dim tile cell to the dims the re-fit actually spans.
+
+    The sub-volume drops the barrier dims, so its box is indexed by the
+    COARSENED dims only. Returns ``None`` when there is nothing to crop to, or
+    when the re-fit is not volume-based (the box would be dead weight).
+
+    Sorted and de-duplicated the same way ``make_substitutive_lod`` normalises
+    ``coarsen_dims``: the sub-volume's retained dims come back in ASCENDING order,
+    so a box built in the order the caller happened to spell them (``2,1,0``)
+    would crop each axis to another axis's bounds.
+    """
+    if cell is None or params.refine != "volume":
+        return None
+    free = (
+        tuple(range(ndim))
+        if params.coarsen_dims is None
+        else tuple(sorted({int(d) for d in params.coarsen_dims}))
+    )
+    return [cell[d] for d in free]
+
+
 def _substitutive_for_part(
     part: GSplatNode,
     params: RecipeParams,
     *,
     coverage: Callable[[List[int]], List[float]] = partitioned_coverage_fractions,
+    cell: Optional[List[Tuple[float, float]]] = None,
 ) -> GSplatNode:
     """Rebuild one partition child as its own substitutive lod group (coarse↔fine
     swap), the per-part analogue of :func:`_ladder_for_part`.
@@ -323,17 +394,22 @@ def _substitutive_for_part(
     ``coverage`` is the selector-threshold derivation, defaulting to the
     partition-bound (fills-screen) anchor — see the note below the ladder build
     and :func:`~luxar.core.group.lod.group.partitioned_coverage_fractions`.
+
+    ``cell`` is this part's own tile, per center dim, and is what makes
+    ``refine="volume"`` sound here: the re-fit sees only that tile's CROP of the
+    volume, so it is not tempted to pull splats out of the tile to explain signal
+    that belongs to a neighbour. A re-fit that moves a centre out of the cell
+    anyway is discarded in favour of the merge. Without a ``cell`` the re-fit
+    would target the full volume, which is exactly the unsound case.
     """
     import math
 
-    if params.refine == "volume":
-        # A part's splats cover only its spatial tile; a fit against the FULL
-        # volume would pull them out of the tile to explain the rest of the
-        # signal (silently breaking partition/frustum-culling semantics — the
-        # never-worse MSE guard cannot see that). Needs per-part volume crops.
+    if params.refine == "volume" and cell is None:
         raise ValueError(
-            "refine='volume' is not supported for per-part levels (the "
-            "adaptive recipe); use --recipe levels/overview, or refine='l2'."
+            "refine='volume' on per-part levels needs the part's own cell to "
+            "crop the volume to; a fit against the FULL volume would pull "
+            "splats out of their tile (breaking partition/frustum-culling "
+            "semantics, which the never-worse MSE guard cannot see)."
         )
     part_data = GSplatData.from_tree(part)
     # Clamp the substitutive depth so a small part doesn't synthesise degenerate
@@ -354,6 +430,9 @@ def _substitutive_for_part(
         conserve_mass=params.conserve_mass,
         refine=params.refine,  # type: ignore[arg-type]
         refine_iters=params.refine_iters,
+        volume=params.volume,
+        volume_axes=params.volume_axes,
+        volume_box=_cell_for_coarsened_dims(cell, params, part_data.ndim),
         device=params.device,
         seed=params.seed,
         coarsen_dims=params.coarsen_dims,
@@ -386,18 +465,25 @@ def _substitutive_for_part(
                 reveal_centre=params.reveal_centre,
                 spatial_dims=params.spatial_dims,
             )
-    # Build each part's lod group with viewport-relative coverage_fraction
+    # Build each part's lod group with screen-area coverage_fraction
     # thresholds. These are PARTITIONED ladders, and here the reason is GEOMETRIC:
     # the switching group's bbox is one BSP tile, intrinsically a fraction of the
     # whole object's, so its metric reads systematically low. They therefore keep
-    # the fills-screen anchor (finest = MAX_COVERAGE_FRACTION) instead of the
-    # whole-object quarter-viewport one — see partitioned_coverage_fractions.
+    # the fills-screen anchor (finest = PARTITION_FINEST_AREA = 1.0) instead of
+    # the whole-object half-screen one — see partitioned_coverage_fractions.
     # Without this every tile would sit on its FINEST level while the object is
     # merely full-frame (~16x the resident geometry for a K=4/L=2 ladder). The
     # caller overrides it when the "partition" turns out to hold a single part.
     from luxar.gsplats.tree import tree_from_substitutive_levels
 
-    return tree_from_substitutive_levels(sub.substitutive_levels, coverage=coverage)
+    # Explicit selector: both callables this recipe threads through `coverage`
+    # (coverage_fractions / partitioned_coverage_fractions) produce SCREEN-AREA
+    # fractions — without this, a custom-callable default of "coverage" would
+    # mislabel them (that default exists for EXTERNAL callables written in the
+    # legacy diagonal units).
+    return tree_from_substitutive_levels(
+        sub.substitutive_levels, coverage=coverage, selector="screen-area"
+    )
 
 
 def build_adaptive(data: GSplatData, params: RecipeParams) -> GSplatPartition:
@@ -430,9 +516,12 @@ def build_adaptive(data: GSplatData, params: RecipeParams) -> GSplatPartition:
         if len(partition.children) > 1
         else coverage_fractions
     )
+    cells = _part_cells(partition, base.ndim)
     children: List[GSplatNode] = [
-        _substitutive_for_part(part, params, coverage=coverage)
-        for part in partition.children
+        _substitutive_for_part(
+            part, params, coverage=coverage, cell=cells[i] if cells else None
+        )
+        for i, part in enumerate(partition.children)
     ]
     return GSplatPartition(
         children=children,
@@ -451,13 +540,13 @@ def build_overview(data: GSplatData, params: RecipeParams) -> GSplatLodGroup:
     (``[coarse_leaf, fine_partition]``, matching the on-disk order). Each child's
     ``coverage_fraction`` selector threshold is stamped onto its ``meta`` (honored
     by both the standalone writer and the scene graft) via
-    ``partitioned_coverage_fractions`` (``sqrt(N_i/N_finest)`` re-anchored at
+    ``partitioned_coverage_fractions`` (occupancy halving re-anchored at
     fills-screen): the coarse cap gets a fraction below the fine branch's
-    ``MAX_COVERAGE_FRACTION``, so the coarse overview shows at the opening framing
-    and the fine partition takes over once you zoom the node up to filling the
-    viewport. The fills-screen anchor is deliberate here — see
+    ``PARTITION_FINEST_AREA`` (screen-area 1.0), so the coarse overview shows at
+    the opening framing and the fine partition takes over once you zoom the node
+    up to filling the viewport. The fills-screen anchor is deliberate here — see
     ``partitioned_coverage_fractions`` for why a partition-bound ladder does not
-    take the whole-object quarter-viewport anchor (no per-dataset tuning; see
+    take the whole-object half-screen anchor (no per-dataset tuning; see
     ``RecipeParams``).
     """
     from luxar.gsplats.tree import total_splats
@@ -484,6 +573,7 @@ def build_overview(data: GSplatData, params: RecipeParams) -> GSplatLodGroup:
         refine=params.refine,  # type: ignore[arg-type]
         refine_iters=params.refine_iters,
         volume=params.volume,
+        volume_axes=params.volume_axes,
         device=params.device,
         seed=params.seed,
         coarsen_dims=params.coarsen_dims,
@@ -542,6 +632,8 @@ def build_overview(data: GSplatData, params: RecipeParams) -> GSplatLodGroup:
     )
     coarse_leaf.meta["coverage_fraction"] = coarse_cov
     fine_partition.meta["coverage_fraction"] = fine_cov
+    # Derived thresholds are screen-area fractions — stamp the units with them.
+    group.meta["selector"] = "screen-area"
     return group
 
 
@@ -649,7 +741,13 @@ def uniform_per_part_lod_warning(
     )
 
 
-def build_part_lod(part: GSplatNode, recipe: str, params: RecipeParams) -> GSplatNode:
+def build_part_lod(
+    part: GSplatNode,
+    recipe: str,
+    params: RecipeParams,
+    *,
+    cell: Optional[List[Tuple[float, float]]] = None,
+) -> GSplatNode:
     """Give ONE partition child its own per-part LOD, with depth clamped to the
     part's splat count (so a small part never synthesises degenerate levels).
 
@@ -659,12 +757,19 @@ def build_part_lod(part: GSplatNode, recipe: str, params: RecipeParams) -> GSpla
     without materialising the whole partition. Returns the per-part node:
     a leaf-with-ladder (``stream``) or a substitutive ``GSplatLodGroup``
     (``levels``). Legacy spellings translate via :func:`canonical_recipe_name`.
+
+    ``cell`` is this part's own tile, per center dim, and is required by
+    ``refine="volume"``: the re-fit crops the volume to the tile so it is not
+    tempted to pull splats out of it to explain a neighbour's signal. Callers
+    that know the decomposition (the fit-time assembler, the batch merge) should
+    pass it; without it a volume re-fit refuses rather than targeting the whole
+    volume.
     """
     recipe = canonical_recipe_name(recipe)
     if recipe == "stream":
         return _ladder_for_part(part, params)
     if recipe == "levels":
-        return _substitutive_for_part(part, params)
+        return _substitutive_for_part(part, params, cell=cell)
     raise ValueError(
         f"build_part_lod: {recipe!r} has no per-part form; "
         f"choose from {', '.join(PER_PART_RECIPES)}"

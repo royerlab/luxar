@@ -239,11 +239,11 @@ export interface UrlParams {
 
   /**
    * Select the line rendering primitive for the session
-   * (`?linePrimitive=screen-space|volumetric|capsule`, issue #1352).
+   * (`?linePrimitive=screen-space|capsule`, issue #1352).
    *
-   * `volumetric` draws each segment as its true 3D density (segment ⊛
-   * isotropic Gaussian) solved per fragment — exact end-on, bisector-cut
-   * joints — instead of the screen-space quad. Session-wide by design (a
+   * `capsule` (the default) profiles the 2D point-to-segment distance in
+   * pixel space — direction-stable end-on, bisector-cut joins;
+   * `screen-space` is the classic flat quad. Session-wide by design (a
    * renderer implementation choice, not scene content — there is no
    * authored per-node attribute). `null` (missing or unrecognised) means
    * the built-in default. See `types/line-primitive.ts`.

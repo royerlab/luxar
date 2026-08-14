@@ -60,7 +60,12 @@ DC-offset (clip at 0) before normalization, so amplitudes are background-relativ
 `--merge-recipe` (`stream` → tiles topology; `levels` → adaptive; default
 bare-leaf parts) + `--merge-n-lods`, `--merge-add-method`, `--merge-breakpoints`,
 `--merge-compression-factor`, `--merge-levels`, `--merge-subst-method`,
-`--merge-coarsen-dims` (default spatial only; stacked-timepoint axis stays a barrier).
+`--merge-coarsen-dims` (default spatial only; stacked-timepoint axis stays a barrier),
+`--merge-refine` (`none`/`l2`/`volume`) + `--merge-refine-iters`. `volume` re-opens
+THIS input at merge time and re-fits each tile against its own crop (one slice per
+stacked timepoint) — the highest-fidelity coarse levels; it needs `--axes` recorded
+and a single channel, both checked at PLAN time so a typo costs nothing.
+On `batch-fit merge` the same pair is spelled `--refine` / `--refine-iters`.
 `--channel-colors "#ff0080,#00ff00"` for per-channel merge. LOD switch thresholds
 are auto-derived (`coverage_fraction`, no knob — the `--merge-lod-method` flag
 has been removed).

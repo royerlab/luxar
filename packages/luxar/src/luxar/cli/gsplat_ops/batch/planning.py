@@ -25,6 +25,7 @@ from typing import Any, List, Optional, Tuple
 import typer
 from arbol import aprint, asection
 
+from luxar.core.group.partition import prune_serialized_bsp_tree
 from luxar.gsplats.batch.manifest import BatchJob, BatchManifest, output_filename
 
 # ---------------------------------------------------------------------------
@@ -100,6 +101,11 @@ class MergeConfig:
     levels: Optional[int] = None
     substitutive_method: Optional[str] = None
     coarsen_dims: Optional[str] = None
+    # Post-merge refinement of each per-tile coarse level. "volume" re-opens the
+    # source this plan records and crops it per tile at merge time, so it is only
+    # meaningful for a `levels` merge.
+    refine: Optional[str] = None
+    refine_iters: Optional[int] = None
 
 
 @dataclass
@@ -159,6 +165,59 @@ def _parse_slice(s: str, max_val: int) -> list[int]:
     return list(range(start, stop, step))
 
 
+def _record_merge_refine(args: dict, merge: MergeConfig) -> None:
+    """Record the refine knobs into the stored manifest args, validated here.
+
+    Plan time is the right place: the merge job would otherwise only discover a
+    typo after every tile had been fitted. The stored KEYS ("refine",
+    "refine-iters") are what the Slurm emitter turns back into CLI flags, so they
+    must match `batch-fit merge`'s option names.
+    """
+    if merge.refine is None and merge.refine_iters is None:
+        return
+    from luxar.cli.gsplat_ops.recipe_shared import validate_refine
+
+    norm = validate_refine(
+        merge.refine,
+        merge.refine_iters,
+        flag="--merge-refine",
+        iters_flag="--merge-refine-iters",
+    )
+    if merge.refine is not None:
+        args["refine"] = norm
+    if merge.refine_iters is not None:
+        args["refine-iters"] = str(merge.refine_iters)
+
+
+def _validate_merge_refine_source(
+    merge: MergeConfig,
+    axes_list: Optional[List[str]],
+    n_timepoints: int,
+    n_channels: int,
+) -> None:
+    """Refuse a planned merge-time volume re-fit this source cannot serve.
+
+    The re-fit re-opens THIS input at merge time and pins or walks its non-spatial
+    axes, which needs axis labels and a single channel. Checked HERE because the
+    merge job runs only after every tile has been fitted — discovering it there
+    costs the whole fit. (The merge front door re-checks the same rule: a manifest
+    can predate this, or be written by hand.)
+
+    Reads the NORMALISED mode, the way ``_record_merge_refine`` records it —
+    ``--merge-refine " volume "`` is stored as ``volume`` and must not slip past
+    this check on the strength of its whitespace.
+    """
+    if (merge.refine or "").strip() != "volume":
+        return
+    from luxar.gsplats.batch.merge_orchestrator import volume_refit_source_error
+
+    problem = volume_refit_source_error(
+        ",".join(axes_list) if axes_list else None, n_timepoints, n_channels
+    )
+    if problem:
+        raise typer.BadParameter(f"--merge-refine volume: {problem}")
+
+
 def resolve_merge_recipe_args(
     merge: MergeConfig, *, merged_ndim: int = 4, merged_has_colors: bool = False
 ) -> dict:
@@ -194,6 +253,8 @@ def resolve_merge_recipe_args(
                 "--merge-compression-factor": merge.compression_factor,
                 "--merge-levels": merge.levels,
                 "--merge-subst-method": merge.substitutive_method,
+                "--merge-refine": merge.refine,
+                "--merge-refine-iters": merge.refine_iters,
                 "--merge-coarsen-dims": merge.coarsen_dims,
             }.items()
             if val is not None
@@ -234,6 +295,8 @@ def resolve_merge_recipe_args(
         "--merge-compression-factor": merge.compression_factor,
         "--merge-levels": merge.levels,
         "--merge-subst-method": merge.substitutive_method,
+        "--merge-refine": merge.refine,
+        "--merge-refine-iters": merge.refine_iters,
         "--merge-coarsen-dims": merge.coarsen_dims,
     }
     irrelevant = substitutive_only if merge.recipe == "stream" else additive_only
@@ -295,6 +358,7 @@ def resolve_merge_recipe_args(
         args["compression-factor"] = str(merge.compression_factor)
     if merge.levels is not None:
         args["levels"] = str(merge.levels)
+    _record_merge_refine(args, merge)
     if merge.substitutive_method is not None:
         from luxar.cli.gsplat_ops.recipe_shared import VALID_SUBSTITUTIVE_METHODS
 
@@ -512,6 +576,8 @@ def plan_batch(
             merged_has_colors=bool(merge.channel_colors) and n_c > 1,
         )
 
+    _validate_merge_refine_source(merge, axes_list, n_t, n_c)
+
     # 3. Decompose the spatial volume into the slots fanned across (t, c).
     mode = "content" if tiling == "content" else "uniform"
     content_plan = None
@@ -593,10 +659,19 @@ def plan_batch(
                 max_leaf=content.max_leaf,
                 overlap=tile_overlap,
             )
-            kept_boxes = [b for b in content_plan.boxes if b.budget > 0]
+            kept_indices = [i for i, b in enumerate(content_plan.boxes) if b.budget > 0]
+            kept_boxes = [content_plan.boxes[i] for i in kept_indices]
             if not kept_boxes:
                 raise typer.BadParameter("content plan has no boxes with budget > 0")
-            content_plan = dataclasses.replace(content_plan, boxes=kept_boxes)
+            # Dropping zero-budget boxes RE-INDEXES the plan, and the split-plane
+            # tree's leaf labels index the pre-drop list — renumber them in the
+            # same step or every downstream consumer (each array task's
+            # `--plan-box k`, and the merge's part order) reads the wrong box.
+            content_plan = dataclasses.replace(
+                content_plan,
+                boxes=kept_boxes,
+                bsp_tree=prune_serialized_bsp_tree(content_plan.bsp_tree, kept_indices),
+            )
             output_dir.mkdir(parents=True, exist_ok=True)
             plan_path_obj = output_dir.resolve() / "plan.json"
             content_plan.to_json(plan_path_obj)

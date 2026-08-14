@@ -555,32 +555,39 @@ class TestBuildScene:
             # Interior joints share an index; only the two ends have degree 1.
             assert int((degree == 1).sum()) == 2 * self.PER_BUNDLE
 
-    def test_the_labelled_level_is_gated_at_full_viewport_coverage(
+    def test_the_labelled_level_is_gated_at_half_screen_occupancy(
         self, tmp_path: Path
     ) -> None:
         # The premise the whole "get close before hover says anything" note
-        # rests on. If a future default made the Lines level selectable below
-        # full coverage, hover would start working at the opening pose and the
-        # docstring's headline caveat would silently become wrong.
+        # rests on. The derived ladder uses selector="screen-area" with the
+        # finest (labelled Lines) level anchored at half the screen AREA
+        # (WHOLE_OBJECT_FINEST_ANCHOR) — no individual bundle occupies that
+        # much at the whole-brain opening pose. If a future default made the
+        # Lines level selectable well below it, hover would start working at
+        # the opening pose and the docstring's headline caveat would silently
+        # become wrong.
+        from luxar.core.group.lod.group import WHOLE_OBJECT_FINEST_ANCHOR
+
         output = tmp_path / "tractography.luxar.zarr"
         _demo.build_scene(self._bundles(), output, points=self.POINTS)
 
         root = zarr.open_group(output, mode="r")
         for name, division in zip(self.NAMES, _demo.DIVISIONS, strict=True):
             tract = root[f"{division.replace(' ', '_')}/{name}"]
-            assert tract.attrs["selector"] == "coverage"
+            assert tract.attrs["selector"] == "screen-area"
 
             children = sorted(
                 (child for _, child in tract.groups()),
                 key=lambda c: int(c.attrs["child_index"]),
             )
             fractions = [float(c.attrs["coverage_fraction"]) for c in children]
-            # Coarsest to finest, ascending, with the finest anchored at 1.0 —
-            # i.e. only a node filling the viewport selects it.
+            # Coarsest to finest, ascending, with the finest anchored at the
+            # half-screen area — a bundle must occupy at least half the screen
+            # before its labelled level selects.
             assert fractions == sorted(fractions)
-            assert fractions[-1] == 1.0
+            assert fractions[-1] == WHOLE_OBJECT_FINEST_ANCHOR
             assert "original_line_type" in children[-1].attrs, (
-                "the level gated at 1.0 must be the labelled Lines level"
+                "the half-screen-gated level must be the labelled Lines level"
             )
 
     def test_hover_labels_reach_the_finest_lines_level(self, tmp_path: Path) -> None:
