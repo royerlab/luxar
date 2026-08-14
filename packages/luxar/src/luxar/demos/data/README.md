@@ -61,14 +61,16 @@ Each subdirectory contains pre-fitted `.gsplats.zarr.zip` files for one demo:
 | `gsplats_nexrad_supercell/` | 4D NEXRAD Oklahoma convective evening incl. the El Reno tornadic supercell (KTLX, 2013-05-31 21Z - 06-01 03Z) | 1 bundle zip with 82 volume scans (~9.6 MB) |
 | _(not bundled)_ `gsplats_neuromast_2ch` | 4D two-channel neuromast timelapse | 2 channel `.gsplats.zarr` (~220 MB) — **local-only, not in Git LFS yet** |
 
-> **Note — pending uploads.** `gsplats_4d_neuromast_2ch` (~220 MB) and `h2afva`
-> are marked `pending_upload` in the manifest: computed elsewhere, not yet in the
-> repo, so their file lists are empty until the Zenodo records exist. h2afva
+> **Note — uploads.** `gsplats_4d_neuromast_2ch` (both channels, 133 MB) is
+> uploaded to the `cc-by` record and pinned by SHA-256 in the manifest. h2afva
 > carries two size variants — a light 51-timepoint default and an opt-in
-> 253-timepoint full cut (~16 GB) — so the demo never triggers the large download
-> by accident. The neuromast channels currently live in a local store on the
-> author's machine (`~/luxar_demo_data/gsplats_neuromast_2ch/`, override with
-> `$LUXAR_NEUROMAST_DATA_DIR`).
+> 253-timepoint full cut (11.4 GB) — so the demo never triggers the large
+> download by accident. Only the 253-timepoint variant is pinned; h2afva stays
+> `pending_upload` because the 51-timepoint file in the record is a superseded
+> build (it predates the isotropic correction, so it would render squashed by
+> four along z, and it carries no substitutive detail levels). Its replacement is
+> built and verified but not yet uploaded, and until it is, `ensure_dataset(
+> "h2afva")` has nothing to fetch for the default variant.
 
 ### Other Data Files (top level)
 

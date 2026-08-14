@@ -331,9 +331,19 @@
       "license": "cc-by-4.0",
       "source": "Neuromast 2-channel light-sheet timelapse (iSIM)",
       "attribution": "Adrian Jacobo (CZ Biohub SF); used with permission (CC BY 4.0).",
-      "pending_upload": true,
       "dir": "gsplats_4d_neuromast_2ch",
-      "files": []
+      "files": [
+        {
+          "name": "neuromast_membranes.gsplats.zarr.zip",
+          "sha256": "160f19215921c0dff8728477f8a8fd3a433ae5cce50735e7c5c11113e9a2ec31",
+          "bytes": 72926598
+        },
+        {
+          "name": "neuromast_nuclei.gsplats.zarr.zip",
+          "sha256": "726c580619288a227bb02ad5c12a5ae52ee16ededd335f0be4407307bba0a5f1",
+          "bytes": 66778833
+        }
+      ]
     },
     "h2afva": {
       "bucket": "zenodo",
@@ -346,15 +356,21 @@
       "variants": {
         "51tp": {
           "default": true,
-          "approx_bytes": 2900000000,
-          "note": "51-timepoint refit \u2014 lighter default for the demo.",
+          "approx_bytes": 2134212223,
+          "note": "51-timepoint fit (every 5th frame) \u2014 lighter default for the demo.",
           "files": []
         },
         "253tp": {
           "default": false,
-          "approx_bytes": 16000000000,
+          "approx_bytes": 11428060091,
           "note": "Full 253-timepoint timelapse \u2014 opt-in (large download).",
-          "files": []
+          "files": [
+            {
+              "name": "h2afva_253tp.gsplats.zarr.zip",
+              "sha256": "46621b393d4a49421987ee400ce0be08b73d4da03441230bc6f59ff31917214e",
+              "bytes": 11428060091
+            }
+          ]
         }
       }
     },
@@ -364,7 +380,6 @@
       "license": "cc-by-4.0",
       "source": "Drosophila His2Av::mRFP1 embryo, SiMView light-sheet (Royer/Keller)",
       "attribution": "Royer & Keller labs \u2014 Royer et al., Nat. Biotechnol. 34, 1267-1278 (2016), doi:10.1038/nbt.3708 (CC BY 4.0).",
-      "pending_upload": true,
       "dir": "gsplats_3d_drosophila_gastrulation",
       "files": [
         {
@@ -380,7 +395,6 @@
       "license": "cc-by-4.0",
       "source": "h2afva zebrafish histone light-sheet, single stack (Royer lab)",
       "attribution": "Royer lab, CZ Biohub SF (CC BY 4.0).",
-      "pending_upload": true,
       "dir": "gsplats_3d_h2afva_stack",
       "files": [
         {
@@ -396,7 +410,6 @@
       "license": "cc-by-4.0",
       "source": "h2afva single stack at four decimation levels (Royer lab)",
       "attribution": "Royer lab, CZ Biohub SF (CC BY 4.0).",
-      "pending_upload": true,
       "dir": "gsplats_3d_h2afva_decimation",
       "files": [
         {

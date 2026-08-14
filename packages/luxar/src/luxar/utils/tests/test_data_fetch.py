@@ -150,16 +150,41 @@ def test_present_zenodo_files_have_checksums():
             assert f.get("bytes"), f"{name}/{f['name']}: missing byte size"
 
 
-def test_pending_upload_datasets_are_declared_and_empty():
+def _file_lists(dataset: dict) -> list[tuple[str, list[dict]]]:
+    """``(label, files)`` per variant, or one entry for a flat dataset."""
+    if "variants" in dataset:
+        return [(vn, v.get("files", [])) for vn, v in dataset["variants"].items()]
+    return [("files", dataset.get("files", []))]
+
+
+def test_pending_upload_flag_matches_the_file_lists():
+    """The flag and the file lists must agree, in BOTH directions.
+
+    A zenodo dataset with an empty file list cannot be fetched at all, so leaving
+    one unflagged hides a broken demo. A dataset whose files are all pinned no
+    longer needs the flag, and a flag left behind is how four datasets came to
+    claim they were still awaiting upload after their files were live in the
+    records: nothing checked the two against each other.
+    """
     m = load_manifest()
-    # neuromast + h2afva are computed on obsidian; not yet in the repo.
-    for name in ("gsplats_4d_neuromast_2ch", "h2afva"):
-        assert name in m["datasets"], f"{name} should be listed as a pending upload"
-        assert _all_files(m["datasets"][name]) == [], f"{name} should have no files yet"
+    for name, d in m["datasets"].items():
+        if d["bucket"] != "zenodo":
+            continue
+        empty = [label for label, files in _file_lists(d) if not files]
+        if d.get("pending_upload"):
+            assert empty, (
+                f"{name}: flagged pending_upload, but every file list is "
+                f"populated — the flag is stale and should be removed"
+            )
+        else:
+            assert not empty, (
+                f"{name}: not flagged pending_upload, but {empty} file list(s) "
+                f"are empty, so the demo cannot fetch it"
+            )
 
 
 def test_h2afva_has_light_default_and_full_variant():
-    """The 16 GB timelapse ships as an opt-in; the demo default is the light cut."""
+    """The 11.4 GB timelapse ships as an opt-in; the demo default is the light cut."""
     variants = load_manifest()["datasets"]["h2afva"]["variants"]
     assert set(variants) == {"51tp", "253tp"}
     assert variants["51tp"]["default"] is True
