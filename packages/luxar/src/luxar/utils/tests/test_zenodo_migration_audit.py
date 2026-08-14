@@ -64,7 +64,7 @@ def _write_manifest(repo: Path, datasets: dict) -> Path:
                     "cc-by": {
                         "license": "cc-by-4.0",
                         "zenodo_record": None,
-                        "zenodo_concept_doi": None,
+                        "zenodo_doi": None,
                     }
                 },
                 "datasets": datasets,
@@ -144,6 +144,45 @@ def test_partial_dataset_is_not_ready(
     assert "INCOMPLETE: 1 of 2 files have bytes here" in out
     assert "datasets ready to upload now: 0" in out
     assert "incomplete here (NOT ready):  1" in out
+
+
+def test_variant_files_are_looked_for_in_their_variant_subdir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """A variant's bytes live one level deeper, and the audit must look there.
+
+    ``ensure_dataset`` resolves a variant under ``<dir>/<variant>/`` in-repo and
+    ``<name>/<variant>/`` in the cache (h2afva's 51tp vs 253tp). Probing the
+    dataset directory instead reports "BYTES NOT ON THIS MACHINE" for a file that
+    is sitting right there, and counts the same file as UNDECLARED on disk.
+    """
+    repo, cache = tmp_path / "repo", tmp_path / "cache"
+    data = _write_manifest(
+        repo,
+        {
+            "ds": {
+                "bucket": "zenodo",
+                "record": "cc-by",
+                "license": "cc-by-4.0",
+                "dir": "ds",
+                "variants": {
+                    "big": {
+                        "default": True,
+                        "files": [{"name": "a.zip", "sha256": "aa", "bytes": 1024}],
+                    }
+                },
+            }
+        },
+    )
+    (data / "ds" / "big").mkdir(parents=True)
+    (data / "ds" / "big" / "a.zip").write_bytes(b"real bytes")
+
+    audit = _load(repo, cache, monkeypatch)
+    assert audit.main() == 0
+    out = capsys.readouterr().out
+    assert "datasets ready to upload now: 1" in out
+    assert "BYTES NOT ON THIS MACHINE" not in out
+    assert "UNDECLARED (must be 0): 0" in out
 
 
 def test_unpulled_lfs_pointer_counts_as_absent(
