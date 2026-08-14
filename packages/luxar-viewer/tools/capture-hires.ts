@@ -168,12 +168,23 @@ async function main() {
   }
   console.log('[CAPTURE] State:', JSON.stringify(state));
 
+  const counts =
+    `(points=${state.totalPoints} gsplats=${state.totalGSplats} ` +
+    `lines=${state.totalLines} triangles=${state.totalTriangles})`;
   if (!state.ok) {
+    // "scene not ready", not "no elements loaded": the reason may be that there
+    // was no debug state at all, an unexpected `getState()` shape, or a probe
+    // that threw — in which case the four counts below are placeholders, not
+    // measurements, and claiming they were measured is a lie the tool cannot
+    // back up.
     console.error(
-      `[CAPTURE] Warning: no elements loaded — ${state.reason ?? 'unknown reason'} ` +
-        `(points=${state.totalPoints} gsplats=${state.totalGSplats} ` +
-        `lines=${state.totalLines} triangles=${state.totalTriangles})`
+      `[CAPTURE] Warning: scene not ready — ${state.reason ?? 'unknown reason'} ${counts}`
     );
+  } else if (state.reason) {
+    // A ready verdict with a reason is a CAVEAT (e.g. a non-finite total counted
+    // as zero). Printing it keeps a count we could not read from masquerading as
+    // a measured 0 — the silent-zero failure mode of #1579.
+    console.log(`[CAPTURE] Note: ${state.reason}`);
   }
 
   // Take high-res screenshot

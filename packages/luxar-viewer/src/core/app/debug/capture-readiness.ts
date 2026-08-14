@@ -43,6 +43,12 @@ import type { DebugState } from './debug-state';
  * on. Reports all FOUR geometry types: a mesh-only or lines-only scene is as
  * legitimately "loaded" as a points one, and naming only points/gsplats (as the
  * old inline read did) makes a fully-populated mesh scene read as empty.
+ *
+ * `reason` is NOT exclusive to `ok: false`. A scene can be ready AND carry a
+ * caveat about the numbers printed alongside it (a total that was present but
+ * `Infinity`/`NaN` is counted as 0, so the counts under-state the scene). A
+ * count the tool could not read must never print as a bare `0` with nothing
+ * said about it — that silent zero is the class of bug #1579 was.
  */
 export interface CaptureReadinessSummary {
   /**
@@ -52,7 +58,12 @@ export interface CaptureReadinessSummary {
    * `ok: true` does not guarantee a non-blank screenshot.
    */
   ok: boolean;
-  /** Why the scene is not ready. Present only when `ok` is false. */
+  /**
+   * Why the verdict is not ok — or, on an otherwise-ready verdict, a caveat
+   * about the reported numbers (currently: a present-but-non-finite total that
+   * had to be counted as 0). Absent when the scene is ready and every total
+   * read cleanly.
+   */
   reason?: string;
   /** Drawn points summed over all point-cloud nodes. */
   totalPoints: number;
@@ -62,7 +73,19 @@ export interface CaptureReadinessSummary {
   totalLines: number;
   /** Drawn triangles (current draw range) summed over all mesh nodes. */
   totalTriangles: number;
-  /** Sum of the four totals above — the readiness number. */
+  /**
+   * The readiness number: the maximum of the snapshot's own reported
+   * `totalElements` field and the sum of the four per-type totals above.
+   *
+   * The `max` is a VERSION-SKEW hedge, not arithmetic. The tool talks to
+   * whatever viewer build happens to be served at `APP_URL`, so the snapshot
+   * may be stale or partial; taking the max means such a snapshot's own
+   * `totalElements` can only under-claim relative to itself, never under-claim
+   * against the per-type totals it is carrying (which is exactly how #1579
+   * printed 1200 triangles next to "nothing loaded"). The current viewer sets
+   * the field to precisely that sum (`debug-state.ts`), so on a live snapshot
+   * the max is inert and this is simply the sum.
+   */
   totalElements: number;
   /** Number of point-cloud nodes in the scene. */
   pointCloudCount: number;
@@ -74,9 +97,17 @@ export interface CaptureReadinessSummary {
   meshNodeCount: number;
 }
 
-/** Finite-number coercion: anything else (undefined, NaN, a string) reads as 0. */
+/**
+ * Finite-number coercion, clamped at zero: anything that is not a finite number
+ * (undefined, NaN, Infinity, a string) reads as 0, and so does a NEGATIVE one.
+ *
+ * The clamp is not cosmetic. An element count cannot be negative, and an
+ * unclamped one both prints as a nonsense measurement and can CANCEL a real
+ * positive in the sum — `{totalPoints: -1200, totalTriangles: 1200}` summed to
+ * exactly 0 and reported "nothing loaded" over a populated mesh scene.
+ */
 function finiteOrZero(value: unknown): number {
-  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+  return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, value) : 0;
 }
 
 /**
@@ -99,8 +130,11 @@ function lengthOrZero(value: unknown): number {
  * Reads the totals from the FLAT {@link DebugState} shape — `state.totalPoints`,
  * not `state.performance.totalPoints`. `totalElements` is
  * `max(snapshot total, sum of the four per-type totals)`: a missing total is
- * re-derived from the per-type ones, and a present-but-stale total can only
- * under-claim relative to itself, never contradict them. (Trusting the
+ * re-derived from the per-type ones, and a present-but-stale total (the tool
+ * captures against whatever viewer build is served, so skew is possible) can
+ * only under-claim relative to itself, never contradict them. On a current
+ * viewer `debug-state.ts` sets the field to exactly that sum, so the `max` is
+ * inert and this is just the sum. (Trusting the
  * snapshot's own field outright let a snapshot carrying
  * `totalTriangles: 1200, totalElements: 0` report a fully-loaded mesh scene as
  * empty — the very symptom of royerlab/luxar#1579.)
@@ -110,8 +144,10 @@ function lengthOrZero(value: unknown): number {
  *   lacked `?debug`).
  * @returns A plain summary; `ok` is false with a `reason` for every
  *   not-ready case (no state, no totals at all, non-finite totals, empty
- *   scene). Note that `ok: true` means the scene graph carries elements, not
- *   that they are visible — see the module doc.
+ *   scene). A READY verdict can carry a `reason` too — as a caveat, when some
+ *   total was present but non-finite and therefore counted as 0. Note that
+ *   `ok: true` means the scene graph carries elements, not that they are
+ *   visible — see the module doc.
  */
 export function summarizeCaptureReadiness(
   state: Partial<DebugState> | null | undefined
@@ -155,15 +191,20 @@ export function summarizeCaptureReadiness(
   // PRESENCE, not usability, is the test: a total that is present but
   // non-finite (`Infinity` / `NaN`) is not a shape mismatch and must not be
   // diagnosed as one — it falls through to the not-ready reason below.
-  const rawTotals = [
-    state.totalElements,
-    state.totalPoints,
-    state.totalGSplats,
-    state.totalLines,
-    state.totalTriangles,
-  ];
-  const hasAnyTotal = rawTotals.some(isNumber);
-  const hasNonFiniteTotal = rawTotals.some((value) => isNumber(value) && !Number.isFinite(value));
+  const totalFields = [
+    'totalElements',
+    'totalPoints',
+    'totalGSplats',
+    'totalLines',
+    'totalTriangles',
+  ] as const;
+  const hasAnyTotal = totalFields.some((field) => isNumber(state[field]));
+  // Names, not just a boolean: the caveat below has to say WHICH count it could
+  // not read, or the caller is back to guessing which of the printed zeros is
+  // real. Kept in declaration order so the message is stable.
+  const nonFiniteFields = totalFields.filter(
+    (field) => isNumber(state[field]) && !Number.isFinite(state[field])
+  );
   if (!hasAnyTotal) {
     return {
       ok: false,
@@ -182,14 +223,29 @@ export function summarizeCaptureReadiness(
   };
 
   if (totalElements > 0) {
+    // Ready, but a total we could not read is still worth saying out loud: it is
+    // reported as 0 above, and an unannounced 0 is indistinguishable from a
+    // genuinely empty geometry type.
+    if (nonFiniteFields.length > 0) {
+      return {
+        ok: true,
+        reason:
+          `${nonFiniteFields.join(', ')} present but not finite (Infinity/NaN) — ` +
+          'counted as zero, so the reported counts under-state the scene',
+        ...totals,
+        ...counts,
+      };
+    }
     return { ok: true, ...totals, ...counts };
   }
 
   return {
     ok: false,
-    reason: hasNonFiniteTotal
-      ? 'element totals are present but not finite (Infinity/NaN) — counted as zero, nothing usable to capture'
-      : 'zero points, gsplats, lines and triangles — nothing loaded',
+    reason:
+      nonFiniteFields.length > 0
+        ? `${nonFiniteFields.join(', ')} present but not finite (Infinity/NaN) — ` +
+          'counted as zero, nothing usable to capture'
+        : 'zero points, gsplats, lines and triangles — nothing loaded',
     ...totals,
     ...counts,
   };

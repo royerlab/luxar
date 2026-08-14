@@ -218,6 +218,111 @@ describe('summarizeCaptureReadiness', () => {
     expectNoNaN(mixed);
   });
 
+  it('flags a non-finite total as a CAVEAT even when the scene is otherwise ready', () => {
+    // The mixed case: real points AND an unreadable gsplat total. The verdict is
+    // legitimately `ok: true` (100 points are there to capture), but
+    // `totalGSplats` prints as 0 — a count we could NOT read, indistinguishable
+    // from a genuinely splat-free scene unless the summary says so. A silent 0
+    // on the ready path is the same failure class as #1579; `reason` therefore
+    // doubles as a caveat channel and must name the offending field.
+    const summary = summarizeCaptureReadiness(
+      makeState({
+        totalPoints: 100,
+        totalGSplats: Infinity,
+        totalElements: Infinity,
+        pointClouds: [
+          {
+            name: 'cloud',
+            pointCount: 100,
+            visible: true,
+            hasColors: true,
+            hasRadii: false,
+            hasSharpness: false,
+          },
+        ],
+      })
+    );
+
+    expect(summary.ok).toBe(true);
+    expect(summary.reason).toBeDefined();
+    expect(summary.reason).toMatch(/not finite/);
+    expect(summary.reason).toMatch(/totalGSplats/);
+    expect(summary.totalGSplats).toBe(0);
+    expect(summary.totalPoints).toBe(100);
+    expect(summary.totalElements).toBe(100);
+    expectNoNaN(summary);
+  });
+
+  it('clamps NEGATIVE totals at zero so they cannot cancel a real positive', () => {
+    // An element count cannot be negative. Unclamped, this sums to exactly 0 and
+    // reports "nothing loaded" over a scene that carries 1200 triangles.
+    const cancelling = summarizeCaptureReadiness(
+      makeState({
+        totalPoints: -1200,
+        totalTriangles: 1200,
+        meshNodes: [meshNode('surface', 1200)],
+      })
+    );
+
+    expect(cancelling.ok).toBe(true);
+    expect(cancelling.totalPoints).toBe(0);
+    expect(cancelling.totalTriangles).toBe(1200);
+    expect(cancelling.totalElements).toBe(1200);
+    expectNoNaN(cancelling);
+
+    // And a lone negative must not be PRINTED, next to a reason that says every
+    // total is zero.
+    const lone = summarizeCaptureReadiness(makeState({ totalPoints: -5 }));
+    expect(lone.ok).toBe(false);
+    expect(lone.reason).toMatch(/zero points, gsplats, lines and triangles/);
+    expect(lone.totalPoints).toBe(0);
+    expect(lone.totalElements).toBe(0);
+    expectNoNaN(lone);
+  });
+
+  it('survives a non-object and an array crossing the page.evaluate boundary', () => {
+    // Both guards on the input boundary are pinned here, because a serialisation
+    // boundary can hand back anything and neither guard is otherwise exercised.
+    //
+    // A non-object is truthy, so only the `typeof state !== 'object'` half of
+    // the null guard catches it — without that half these fall through and get
+    // mis-diagnosed as a shape mismatch instead of "no debug state".
+    for (const input of ['not a state', 42, true] as unknown as Partial<DebugState>[]) {
+      const summary = summarizeCaptureReadiness(input);
+      expect(summary.ok).toBe(false);
+      expect(summary.reason).toMatch(/no debug state/);
+      expect(summary.totalElements).toBe(0);
+      expectNoNaN(summary);
+    }
+
+    // An ARRAY is truthy and `typeof 'object'`, so it passes the null guard and
+    // reaches the field reads with every field absent — the array-length helper
+    // must return 0 for a non-array (here `undefined`) rather than dereferencing
+    // `.length` on it and throwing.
+    const asArray = summarizeCaptureReadiness([] as unknown as Partial<DebugState>);
+    expect(asArray.ok).toBe(false);
+    expect(asArray.reason).toMatch(/no element totals/);
+    expect(asArray.pointCloudCount).toBe(0);
+    expect(asArray.meshNodeCount).toBe(0);
+    expect(asArray.totalElements).toBe(0);
+    expectNoNaN(asArray);
+
+    // ...and a non-array that HAS a `length` must read as 0 nodes rather than as
+    // its character count, which is why the helper tests `Array.isArray` instead
+    // of just reaching for `?.length ?? 0`.
+    const bogusArrays = {
+      totalTriangles: 5,
+      pointClouds: 'three',
+      meshNodes: { length: 9 },
+    } as unknown as Partial<DebugState>;
+
+    const bogus = summarizeCaptureReadiness(bogusArrays);
+    expect(bogus.ok).toBe(true);
+    expect(bogus.pointCloudCount).toBe(0);
+    expect(bogus.meshNodeCount).toBe(0);
+    expectNoNaN(bogus);
+  });
+
   it('KNOWN AND INTENDED: an all-hidden scene still reports ok (graph, not pixels)', () => {
     // The verdict deliberately mirrors `debug-state.ts`'s aggregate contract,
     // where hidden nodes still count towards the totals (and every level of a

@@ -124,14 +124,26 @@ Pure verdict over a `getState()` snapshot: exports
 its `CaptureReadinessSummary` result shape. Answers the one question a
 screenshot/capture driver asks — "does this scene graph carry drawable
 elements?" — as `ok` plus all four per-type totals (`totalPoints`,
-`totalGSplats`, `totalLines`, `totalTriangles`), their sum `totalElements`, and
-the four per-node counts (`pointCloudCount`, `gsplatCount`, `lineCount`,
+`totalGSplats`, `totalLines`, `totalTriangles`), a `totalElements`, and the four
+per-node counts (`pointCloudCount`, `gsplatCount`, `lineCount`,
 `meshNodeCount`). `ok` is true iff `totalElements > 0`, where `totalElements` is
-`max(snapshot field, sum of the four per-type totals)` — so a missing total is
-re-derived and a stale one can only under-claim, never contradict the per-type
-totals. Every not-ready path (no state, an unexpected snapshot shape,
+`max(the snapshot's own totalElements field, sum of the four per-type totals)`.
+That max is a version-skew hedge, not arithmetic: the capture tool talks to
+whatever viewer build is served at `APP_URL`, so a missing total is re-derived
+from the per-type ones and a stale or partial snapshot's own field can only
+under-claim relative to itself — never under-claim against the per-type totals it
+is carrying. The current viewer sets the field to exactly that sum
+(`debug-state.ts`), so on a live snapshot the max is inert and it is simply the
+sum.
+
+Every not-ready path (no state, an unexpected snapshot shape,
 present-but-non-finite totals, an empty scene) carries a human-readable `reason`
-instead of leaking `NaN`/`undefined`.
+instead of leaking `NaN`/`undefined`. `reason` is not exclusive to `ok: false`:
+it doubles as a CAVEAT channel, so an otherwise-ready verdict that had to count a
+present-but-non-finite total as 0 still names the affected field rather than
+printing a silent zero. Negative totals are clamped at 0 for the same reason — an
+element count cannot be negative, and an unclamped one could cancel a real
+positive in the sum.
 
 It measures the scene GRAPH, not the framebuffer: like the `debug-state.ts`
 aggregates it mirrors, the totals include HIDDEN nodes and sum every level of a

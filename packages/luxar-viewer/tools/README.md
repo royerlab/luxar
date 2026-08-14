@@ -110,16 +110,29 @@ SLICE="time:240,channel:0" CAMERA_ZOOM=1.5 \
 ```
 
 The script logs a readiness summary of the `getState()` snapshot before
-screenshotting and warns, with the reason, if nothing loaded. All four
-geometry types are reported — `totalPoints`, `totalGSplats`,
-`totalLines`, `totalTriangles`, their sum `totalElements`, plus the
-per-node counts `pointCloudCount`, `gsplatCount`, `lineCount` and
-`meshNodeCount` — so a mesh-only or lines-only scene is recognised as
-loaded rather than reading as empty. A warning almost always means the
-slice position is wrong or the dataset URL is stale. The converse does
-not hold: the verdict measures the scene graph (hidden nodes and all LOD
-levels included), so an all-hidden scene passes and can still capture
-blank.
+screenshotting. If the scene is not ready it warns
+`Warning: scene not ready — <reason>` followed by the four counts in
+parentheses; the wording stays vague about WHY on purpose, because the
+reason may be that there was no debug state, an unexpected `getState()`
+shape or a probe that threw, in which case those counts are placeholders
+rather than measurements. A ready verdict that still carries a caveat (a
+total that was present but `Infinity`/`NaN`, hence counted as 0) prints
+as `Note: <reason>` instead of being swallowed.
+
+All four geometry types are reported — `totalPoints`, `totalGSplats`,
+`totalLines`, `totalTriangles`, plus `totalElements`, which is the
+**maximum** of the snapshot's own `totalElements` field and the sum of
+those four (a version-skew hedge: the tool captures against whatever
+viewer build is served at `APP_URL`, and a stale or partial snapshot must
+never under-claim against the per-type totals it is carrying — the
+current viewer sets the field to exactly that sum, so the max is inert on
+a live snapshot). The per-node counts `pointCloudCount`, `gsplatCount`,
+`lineCount` and `meshNodeCount` come along too, so a mesh-only or
+lines-only scene is recognised as loaded rather than reading as empty. A
+warning almost always means the slice position is wrong or the dataset
+URL is stale. The converse does not hold: the verdict measures the scene
+graph (hidden nodes and all LOD levels included), so an all-hidden scene
+passes and can still capture blank.
 
 The verdict itself is computed in Node by
 `summarizeCaptureReadiness()` (`../src/core/app/debug/capture-readiness.ts`);
