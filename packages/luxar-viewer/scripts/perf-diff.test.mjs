@@ -289,6 +289,10 @@ describe('buildPerfDiff — GPU-timestamp exclusion straddle warning', () => {
     const md = buildPerfDiff(base, next);
     expect(md).toContain(WARN);
     expect(md).toContain('line1/webgl');
+    // The listing is presence-only, so an arm that never resolved gets
+    // named too. The message has to keep admitting that, or it asserts
+    // readback latency in stats that cannot contain it — pin the clause.
+    expect(md).toMatch(/listed conservatively and is in fact comparable/);
   });
 
   it('warns when only the baseline carries it (inputs given in either order)', () => {
