@@ -14,8 +14,9 @@ that names a zarr format. Writers go through its helpers — `open_group`,
 `create_array`, `create_root_group`, `consolidate`, `close`, `open_store`,
 `memory_group`, `is_missing_error` — instead of calling `zarr.*` directly. That
 mirrors the viewer's `src/data/zarr.ts`, whose single-import design is why the
-TypeScript side needed almost no work here; the Python side had 75 modules
-importing `zarr`, which is what made this worth doing as its own step.
+TypeScript side needed almost no work here; the Python side had 53 production
+modules importing `zarr` (171 counting tests), which is what made this worth doing
+as its own step.
 
 What the upgrade buys, and why it was worth doing now: zarr-python 2.18 cannot open
 a zarr **v3** store at all, so any v3 input — a GEFF graph from the tracking

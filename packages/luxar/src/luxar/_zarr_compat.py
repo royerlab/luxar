@@ -11,9 +11,9 @@ Why a facade at all
 The TypeScript viewer has exactly one module that imports zarrita
 (``src/data/zarr.ts``); everything else speaks in Luxar concepts. That design
 made the viewer nearly version-agnostic for free. The Python side had no
-equivalent — 75 production modules imported ``zarr`` directly — so a format
-change meant sweeping all of them. Routing through here means a future move to
-format 3 edits *this* file, not that whole surface.
+equivalent — 53 production modules imported ``zarr`` directly (171 counting
+tests) — so a format change meant sweeping all of them. Routing through here
+means a future move to format 3 edits *this* file, not that whole surface.
 
 Five zarr-3 behaviours are actively dangerous here, and all five are neutralised
 below rather than left to call sites. Each one fails SILENTLY — none raises:
@@ -110,12 +110,16 @@ def _metadata_docs_exist(path: Path) -> bool:
     is identified by its root metadata document — v2's ``.zgroup``/``.zarray`` or
     v3's ``zarr.json`` — rather than by the directory merely existing, because a
     caller may well have created an empty output directory first.
+
+    ORDERING NOTE: :func:`open_group` builds its store before calling this, so for
+    a zip this answer is only correct while zarr's ``ZipStore`` stays LAZY —
+    constructing one must not create the archive, or a fresh store would look like
+    an existing one and skip the format pin. Guarded by
+    ``test_creating_a_fresh_zipped_store_still_pins_the_format``.
     """
     if path.suffix.lower() in _ZIP_SUFFIXES:
         return path.is_file()
-    return any(
-        (path / name).exists() for name in (".zgroup", ".zarray", "zarr.json")
-    )
+    return any((path / name).exists() for name in (".zgroup", ".zarray", "zarr.json"))
 
 
 def open_store(path: str | Path, *, mode: str = "r") -> Any:

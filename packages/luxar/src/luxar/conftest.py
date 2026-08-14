@@ -45,6 +45,16 @@ def _zarr_format_2_by_default() -> Iterator[None]:
     ``tests/test_zarr_compat.py::test_open_group_writes_v2_even_when_the_global_default_is_3``
     pins exactly that independence by flipping the default to 3 and asserting the
     facade still writes 2.
+
+    KNOWN LIMIT — it covers this PROCESS only. Anything that writes a store from a
+    subprocess, or from a script run outside pytest, gets zarr's own default
+    instead. That is not hypothetical: it is exactly how
+    ``packages/luxar-viewer/tests/fixtures/generate_test_data.py`` came to emit
+    two format-3 fixtures, since it is a standalone script rather than a test. Any
+    such writer must go through :mod:`luxar._zarr_compat` or pass ``zarr_format=``
+    itself, which
+    ``test_zarr_compat.py::test_no_writer_creates_a_store_without_pinning_the_format``
+    enforces across the package, the scripts, the examples and the generators.
     """
     with zarr.config.set({"default_zarr_format": 2}):
         yield

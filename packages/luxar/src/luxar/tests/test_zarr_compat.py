@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import ast
 import json
+import zipfile
 from pathlib import Path
 
 import numpy as np
@@ -138,6 +139,49 @@ def test_compressor_auto_matches_zarr2s_implicit_default(tmp_path: Path) -> None
     c = _zarray(g, p, "x")["compressor"]
     assert c is not None and c["id"] == "blosc"
     assert (c["cname"], c["clevel"]) == ("lz4", 5)
+
+
+def test_the_compressor_DEFAULT_is_auto_not_raw(tmp_path: Path) -> None:
+    """Omitting ``compressor`` must behave like zarr 2's implicit default.
+
+    Distinct from the ``compressor="auto"`` test above, which passes the value
+    explicitly and so cannot notice the DEFAULT changing. Mutation testing found
+    that gap: flipping the default to ``None`` left the whole suite green while
+    silently turning ~79 test fixtures from Blosc to RAW — a byte change with no
+    failing test anywhere.
+    """
+    p = tmp_path / "default.zarr"
+    g = zc.open_group(p, mode="w")
+    zc.create_array(g, "d", data=np.arange(8, dtype=np.float32), chunks=(8,))
+    c = _zarray(g, p, "d")["compressor"]
+    assert c is not None, "the default must not be RAW"
+    assert (c["id"], c["cname"], c["clevel"]) == ("blosc", "lz4", 5)
+
+
+def test_chunks_true_is_translated_and_never_reaches_zarr(tmp_path: Path) -> None:
+    """``chunks=True`` must be translated, not forwarded.
+
+    zarr 3 rejects a bool outright, and `ChunkSpec` defaults to ``True``, so a
+    broken translation breaks every resizable array. Mutation testing found this
+    unpinned in the facade's own suite: the only coverage lived in a different
+    test file, via a helper that only tests exercise.
+    """
+    g = zc.memory_group()
+    a = zc.create_array(
+        g, "auto", shape=(64, 3), dtype=np.float32, chunks=True, compressor=None
+    )
+    assert isinstance(a.chunks, tuple) and all(isinstance(c, int) for c in a.chunks)
+    # `False` means one chunk spanning the array, and must not become "auto".
+    b = zc.create_array(
+        g, "whole", shape=(64, 3), dtype=np.float32, chunks=False, compressor=None
+    )
+    assert b.chunks == (64, 3)
+    # An int is a real chunk size and must survive as one — bool subclasses int,
+    # so an equality-based check here would conflate `True` with `1`.
+    c = zc.create_array(
+        g, "sized", shape=(64,), dtype=np.float32, chunks=8, compressor=None
+    )
+    assert c.chunks == (8,)
 
 
 def test_a_numcodecs_filter_lands_in_the_v2_filters_field(tmp_path: Path) -> None:
@@ -313,6 +357,33 @@ def test_append_still_creates_format_2_when_there_is_nothing_there(
     premade.mkdir()
     zc.open_group(premade, mode="a")
     assert json.loads((premade / ".zgroup").read_text())["zarr_format"] == 2
+
+
+@pytest.mark.parametrize("mode", ["w", "a"])
+def test_creating_a_fresh_zipped_store_still_pins_the_format(
+    tmp_path: Path, mode: str
+) -> None:
+    """A brand-new ``.zarr.zip`` must come out format 2 in both creating modes.
+
+    This guards an ORDERING dependency inside :func:`open_group`: it constructs the
+    store before consulting :func:`_metadata_docs_exist`, and for a zip that helper
+    treats "the file exists" as "the store exists". It works today only because
+    zarr's ``ZipStore`` is LAZY — constructing one does not create the archive — so
+    the helper still sees nothing and the format is pinned. If a future zarr made
+    ZipStore eager, the pin would be skipped and a fresh archive would silently
+    come out format 3. That is not a hypothesis worth leaving unguarded.
+    """
+    p = tmp_path / f"fresh_{mode}.zarr.zip"
+    g = zc.open_group(p, mode=mode)
+    zc.create_array(g, "a", data=np.arange(4, dtype=np.float32), compressor=None)
+    zc.close(g)  # ZipStore must be closed to flush the archive
+
+    with zipfile.ZipFile(p) as zf:
+        names = zf.namelist()
+    assert any(n.endswith(".zgroup") for n in names), (
+        f"fresh zipped store is not format 2; archive holds {names[:5]}"
+    )
+    assert not any(n.endswith("zarr.json") for n in names)
 
 
 def test_open_store_honours_mode(tmp_path: Path) -> None:
@@ -599,7 +670,9 @@ def test_the_format_lint_resists_the_obvious_evasions() -> None:
     why this is pinned now rather than after one appears.
     """
     # Aliased module, and a nested module path.
-    assert _format_unpinned_zarr_writes("import zarr as z\nz.open(p, mode='w')\n") == [2]
+    assert _format_unpinned_zarr_writes("import zarr as z\nz.open(p, mode='w')\n") == [
+        2
+    ]
     assert _format_unpinned_zarr_writes(
         "import zarr\nzarr.api.synchronous.open(p, mode='w')\n"
     ) == [2]
@@ -611,16 +684,22 @@ def test_the_format_lint_resists_the_obvious_evasions() -> None:
         "from zarr import create_group as cg\ncg(store=s)\n"
     ) == [2]
     # ...and the same spellings stay quiet when they DO pin, or only read.
-    assert _format_unpinned_zarr_writes(
-        "import zarr as z\nz.open(p, mode='w', zarr_format=2)\nz.open(p, mode='r')\n"
-    ) == []
+    assert (
+        _format_unpinned_zarr_writes(
+            "import zarr as z\nz.open(p, mode='w', zarr_format=2)\nz.open(p, mode='r')\n"
+        )
+        == []
+    )
     # The facade's own names must never be flagged — that module is the fix, and
     # `luxar._zarr_compat` must not be mistaken for the `zarr` package.
-    assert _format_unpinned_zarr_writes(
-        "from luxar._zarr_compat import open_group, create_root_group\n"
-        "open_group(p, mode='w')\n"
-        "create_root_group(store)\n"
-    ) == []
+    assert (
+        _format_unpinned_zarr_writes(
+            "from luxar._zarr_compat import open_group, create_root_group\n"
+            "open_group(p, mode='w')\n"
+            "create_root_group(store)\n"
+        )
+        == []
+    )
 
 
 def test_the_lint_can_actually_fail(tmp_path: Path) -> None:
