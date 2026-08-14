@@ -22,6 +22,27 @@ from luxar.encoding._encoders.delta_codec import (
 from luxar.encoding.compression import WIDTH_AWARE_DEFAULT, resolve_compressor
 
 
+def filter_names(arr: zarr.Array) -> list[str]:
+    """The names of ``arr``'s filters, in either zarr format.
+
+    The two formats introspect differently — a v2 numcodecs filter answers
+    ``get_config()["id"]``, a v3 array-to-array codec answers
+    ``to_dict()["name"]`` — while the NAME itself is deliberately identical, so
+    assertions can be written once. Without this, a test asserting the v2 shape
+    fails with ``AttributeError: 'LuxarDeltaV3' object has no attribute
+    'get_config'`` the moment the write format moves, which says nothing about
+    whether the filter was applied.
+    """
+    names: list[str] = []
+    for flt in arr.filters or []:
+        get_config = getattr(flt, "get_config", None)
+        if callable(get_config):
+            names.append(str(get_config()["id"]))
+        else:
+            names.append(str(flt.to_dict()["name"]))
+    return names
+
+
 def _smooth_codes(n: int, cols: int, dtype: np.dtype, seed: int = 7) -> np.ndarray:
     """Hilbert-like smooth random walk quantized to the full code range."""
     rng = np.random.default_rng(seed)
@@ -113,9 +134,13 @@ class TestRoundTrip:
             filters=[LuxarDelta(cols=3, bits=16)],
         )
         np.testing.assert_array_equal(g["codes"][:], codes)
-        # Metadata carries the filter for the viewer's zarrita to resolve.
+        # Metadata carries the filter for the viewer's zarrita to resolve, with
+        # its parameters — a name alone would not prove `cols`/`bits` survived
+        # the round trip through the store, and a wrong `cols` decodes to
+        # plausible garbage rather than failing.
         (flt,) = g["codes"].filters
-        assert flt.get_config() == {"id": "luxar_delta_v1", "cols": 3, "bits": 16}
+        assert filter_names(g["codes"]) == ["luxar_delta_v1"]
+        assert (flt.cols, flt.bits) == (3, 16)
 
     def test_registry_lookup(self):
         codec = numcodecs.get_codec({"id": "luxar_delta_v1", "cols": 4, "bits": 8})
@@ -340,8 +365,7 @@ class TestEncoderIntegration:
         g = self._encode(pos, SemanticType.COORDINATE, chunks=(4096, 3))
         arr = g["a"]
         assert arr.attrs["encoding"]["name"] == "linear_perchannel_u16"
-        assert arr.filters is not None and len(arr.filters) == 1
-        assert arr.filters[0].get_config()["id"] == "luxar_delta_v1"
+        assert filter_names(arr) == ["luxar_delta_v1"]
         # Delta is a pure storage transform: decode must be bit-identical to
         # an unfiltered encode of the same data.
         g_ref = memory_group()
@@ -376,8 +400,7 @@ class TestEncoderIntegration:
             arr = g[nm]
             enc_name = arr.attrs["encoding"]["name"]
             assert "perchannel" in enc_name
-            filts = arr.filters or []
-            got = [f.get_config()["id"] for f in filts]
+            got = filter_names(arr)
             # Smooth coherent codes: delta must win on at least the diag; when
             # present it must round-trip decode exactly like the codes say.
             if got:
@@ -407,9 +430,7 @@ class TestEncoderIntegration:
         )
         arr = g["a"]
         assert arr.attrs["encoding"]["name"].startswith("geolog_scalar")
-        assert (arr.filters or []) and arr.filters[0].get_config()[
-            "id"
-        ] == "luxar_delta_v1"
+        assert filter_names(arr) == ["luxar_delta_v1"]
         dec = ArrayDecoder().decode(arr, g)
         np.testing.assert_allclose(dec, amp, rtol=2e-3)
 
@@ -425,9 +446,7 @@ class TestEncoderIntegration:
         g = self._encode(colors, SemanticType.COLOR, chunks=(8192, 3), color_mode="sdr")
         arr = g["a"]
         assert arr.attrs["encoding"]["name"] == "rgb_uint8"
-        assert (arr.filters or []) and arr.filters[0].get_config()[
-            "id"
-        ] == "luxar_delta_v1"
+        assert filter_names(arr) == ["luxar_delta_v1"]
         dec = ArrayDecoder().decode(arr, g)
         np.testing.assert_allclose(dec, colors, atol=1.5 / 255)
 
@@ -441,9 +460,7 @@ class TestEncoderIntegration:
         g = self._encode(hdr, SemanticType.COLOR, chunks=(8192, 3), color_mode="hdr")
         arr = g["a"]
         assert arr.attrs["encoding"]["name"] == "geolog_perchannel_u16"
-        assert (arr.filters or []) and arr.filters[0].get_config()[
-            "id"
-        ] == "luxar_delta_v1"
+        assert filter_names(arr) == ["luxar_delta_v1"]
         dec = ArrayDecoder().decode(arr, g)
         np.testing.assert_allclose(dec, hdr, rtol=2e-3)
 

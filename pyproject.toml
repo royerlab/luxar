@@ -197,6 +197,16 @@ luxar = "luxar.cli:app"
 [project.entry-points."numcodecs.codecs"]
 luxar_delta_v1 = "luxar.encoding._encoders.delta_codec:LuxarDelta"
 
+# The format-3 twin of the entry point above, for the same reason: a vanilla
+# `zarr.open(...)` on a format-3 delta store resolves the codec without any
+# `import luxar`. zarr 3 has its OWN registry and its own entry-point group
+# ("zarr.codecs"), so being registered with numcodecs buys nothing here —
+# and `numcodecs.zarr3`, the wrapper that would have bridged them, is
+# deprecated. Same codec NAME under both groups: one wire format, one
+# TypeScript twin, two plumbings.
+[project.entry-points."zarr.codecs"]
+luxar_delta_v1 = "luxar.encoding._encoders.delta_codec:LuxarDeltaV3"
+
 # ---------------------------------------------
 # Hatch Configuration
 # ---------------------------------------------
