@@ -636,3 +636,65 @@ def test_atomic_write_leaves_no_partial_on_failure(tmp_path, monkeypatch) -> Non
         _demo._atomic_write(dest, b"payload")
 
     assert not dest.exists()
+
+
+# ---------------------------------------------------------------------------
+# Optional-dependency fallback and parameter-keyed fit caches
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("missing", ["ffmpeg", "h5py"])
+def test_neuropil_degrades_when_an_optional_dep_is_missing(
+    monkeypatch, missing: str
+) -> None:
+    """Both neuropil dependencies must degrade to a neurons-only scene.
+
+    The demo documents that fallback, so a missing optional dependency has to
+    return None rather than raise out of the run.
+    """
+    monkeypatch.setattr(
+        _demo.shutil, "which", lambda name: None if name == "ffmpeg" else "/bin/x"
+    )
+    real_find_spec = _demo.importlib.util.find_spec
+    monkeypatch.setattr(
+        _demo.importlib.util,
+        "find_spec",
+        lambda name: None if name == "h5py" else real_find_spec(name),
+    )
+    if missing == "ffmpeg":
+        monkeypatch.setattr(_demo.importlib.util, "find_spec", lambda name: object())
+    else:
+        monkeypatch.setattr(_demo.shutil, "which", lambda name: "/usr/bin/ffmpeg")
+
+    assert _demo.fetch_neuropil(_demo.DEFAULT_SAMPLE) is None
+
+
+def test_neuropil_skipped_for_an_unmapped_sample() -> None:
+    assert _demo.fetch_neuropil("SOME_UNMAPPED_SAMPLE") is None
+
+
+def test_fit_cache_key_changes_with_every_fit_parameter() -> None:
+    """Editing a tuning constant must not silently reuse the old fit."""
+    base = _demo.fit_cache_key(1_200_000, "p99", 0.999)
+
+    assert _demo.fit_cache_key(600_000, "p99", 0.999) != base, "seeds ignored"
+    assert _demo.fit_cache_key(1_200_000, "p98", 0.999) != base, "floor ignored"
+    assert _demo.fit_cache_key(1_200_000, "p99", 0.95) != base, "retention ignored"
+    assert _demo.fit_cache_key(1_200_000, "auto", 0.999) != base
+
+
+def test_fit_cache_key_is_stable_for_identical_parameters() -> None:
+    assert _demo.fit_cache_key(1_200_000, "p99", 0.999) == _demo.fit_cache_key(
+        1_200_000, "p99", 0.999
+    )
+
+
+def test_fit_cache_paths_differ_between_components_and_settings() -> None:
+    neurons = _demo._fit_cache_path("neurons", 1_200_000, "p99", 0.999)
+    neuropil = _demo._fit_cache_path("neuropil", 600_000, "auto", 0.95)
+    retuned = _demo._fit_cache_path("neurons", 1_200_000, "p99", 0.95)
+
+    assert neurons != neuropil
+    assert neurons != retuned, "a retuned fit must not reuse the old cache file"
+    assert neurons.name.startswith(f"{_demo.SAMPLE}_neurons_")
+    assert neurons.suffixes[-2:] == [".zarr", ".zip"]

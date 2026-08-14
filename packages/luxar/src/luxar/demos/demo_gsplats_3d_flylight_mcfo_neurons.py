@@ -194,6 +194,8 @@ DEMO_META = {
     "outputs": ["gsplats_3d_flylight_mcfo_neurons"],
 }
 
+import hashlib
+import importlib.util
 import io
 import ntpath
 import re
@@ -628,11 +630,19 @@ def fetch_neuropil(sample: str):
     if key is None:
         aprint(f"No FlyLight H5J mapped for {sample}; skipping the neuropil.")
         return None
+    # Both of the neuropil's dependencies are optional, and BOTH must degrade
+    # the same way: the documented fallback is a neurons-only scene, so a
+    # missing one must not raise out of a demo that promises to keep going.
+    missing = []
     if shutil.which("ffmpeg") is None:
+        missing.append("ffmpeg (H5J stores the channel as HEVC)")
+    if importlib.util.find_spec("h5py") is None:
+        missing.append("h5py (pip install 'luxar[demos]')")
+    if missing:
         aprint(
-            "ffmpeg not found — skipping the neuropil channel (H5J stores it as "
-            "HEVC). Install ffmpeg for the volume-rendered brain; the neurons "
-            "render fine without it."
+            f"Skipping the neuropil channel — missing {', '.join(missing)}. "
+            "The neurons render fine without it; install the above for the "
+            "volume-rendered brain."
         )
         return None
 
@@ -691,6 +701,25 @@ def load_fisbe_sample(sample: str):
 # =============================================================================
 # Fitting and colouring
 # =============================================================================
+
+
+def fit_cache_key(seeds: int, floor, retention: float) -> str:
+    """Short digest of everything that changes a fit's result.
+
+    Cache filenames keyed only by sample would silently reuse an incompatible
+    fit whenever one of the tuning constants above is edited — and those
+    constants are exactly what this demo invites you to tune. Folding them into
+    the name means changing one produces a different file, so the refit is
+    automatic rather than dependent on remembering ``--recompute``.
+    """
+    payload = f"v1|{seeds}|{floor}|{retention}|{tuple(VOXEL_SIZE_ZYX)}"
+    return hashlib.sha256(payload.encode()).hexdigest()[:10]
+
+
+def _fit_cache_path(component: str, seeds: int, floor, retention: float) -> Path:
+    """Cache path for one fitted component, keyed by its fit parameters."""
+    key = fit_cache_key(seeds, floor, retention)
+    return CACHE_DIR / f"{SAMPLE}_{component}_{key}.gsplats.zarr.zip"
 
 
 def _device():
@@ -953,7 +982,7 @@ def main():
     with asection("Fitting neurons"):
         neurons = fit_volume(
             combined,
-            CACHE_DIR / f"{SAMPLE}_neurons.gsplats.zarr.zip",
+            _fit_cache_path("neurons", SEEDS, FLOOR, CULL_RETENTION),
             SEEDS,
             FLOOR,
             CULL_RETENTION,
@@ -967,7 +996,7 @@ def main():
             if ref is not None:
                 neuropil = fit_volume(
                     ref.astype(np.float32) / 255.0,
-                    CACHE_DIR / f"{SAMPLE}_neuropil.gsplats.zarr.zip",
+                    _fit_cache_path("neuropil", NEUROPIL_SEEDS, "auto", 0.95),
                     NEUROPIL_SEEDS,
                     "auto",
                     0.95,
