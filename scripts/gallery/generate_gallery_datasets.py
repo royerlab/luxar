@@ -22,8 +22,9 @@ bucket instead of ``failed``.
 
 Two limits of that rule, both deliberate. A genuine bug inside one of those demos
 also lands in the soft bucket rather than returning 1 — its error tail is still
-printed, so it stays visible. And a ``timeout`` or a ``no-output`` (exit 0 having
-written nothing) stays HARD even for them, which leaves one real case unrescued:
+printed, so it stays visible. And a ``timeout``, a ``no-output`` (exit 0 having
+written nothing) or a death by signal (a negative return code: the OOM killer, a
+segfault) stays HARD even for them, which leaves one real case unrescued:
 ``arxiv_papers_kaggle`` needs no credentials to start and declares a ~30 GB
 download, so on a cold machine it can exhaust ``GEN_TIMEOUT_S`` and land in
 ``timeout`` — a non-zero exit for the whole run. Fixing that by skipping large
@@ -113,8 +114,8 @@ def generate_one(entry: dict[str, Any]) -> tuple[str, str]:
     A non-zero exit is ``failed`` — except for a demo whose input this machine
     may simply not have (:func:`needs_local_input`), which is demoted to the soft
     ``manual-data`` bucket. The demotion is decided only AFTER the run, so the
-    tile is still regenerated wherever the input is present; a ``timeout`` or a
-    ``no-output`` stays hard even then.
+    tile is still regenerated wherever the input is present; a ``timeout``, a
+    ``no-output`` or a death by SIGNAL stays hard even then.
     """
     script = entry.get("script")
     if not script:
@@ -145,7 +146,14 @@ def generate_one(entry: dict[str, Any]) -> tuple[str, str]:
             # The tail is printed either way: a demoted failure is soft, not
             # silent, since the same exit code covers "no input here" and a real
             # bug in the demo.
-            mode = needs_local_input(entry)
+            #
+            # `> 0`, not `!= 0`: on POSIX a NEGATIVE returncode means the child
+            # was killed by a signal (-9 = the OOM killer, -11 = a segfault in a
+            # native dependency), which is never how a demo reports a missing
+            # input — it is a real failure of a run that got far enough to
+            # allocate, so it stays hard rather than being filed under "this
+            # machine doesn't have the file".
+            mode = needs_local_input(entry) if proc.returncode > 0 else None
             if mode is not None:
                 return (
                     "manual-data",

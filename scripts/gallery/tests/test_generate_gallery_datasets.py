@@ -13,8 +13,8 @@ hard failure and return 1 — on a fresh clone that meant ``make generate-galler
 aborted. Such an entry is now still RUN (so the machine that has the input keeps
 regenerating its tile, ``--force`` included) and only demoted to the soft
 ``manual-data`` bucket if it actually fails. The scoping is the delicate part: a
-``git-lfs`` demo must keep failing hard, and a ``timeout`` / ``no-output`` stays
-hard even for a demoted mode.
+``git-lfs`` demo must keep failing hard, and a ``timeout`` / ``no-output`` / death
+by signal stays hard even for a demoted mode.
 
 Everything runs against a synthetic manifest + synthetic demo files: the subject
 is the rule, not today's contents of ``scripts/gallery/manifest.json``.
@@ -86,7 +86,8 @@ def _fake_run(repo: Path, calls: _Recorder, outcomes: dict[str, str]):
 
     ``fail`` = the real "input not on this machine" shape (exit 1 with the demo's
     own message on stderr); ``ok`` writes the dataset the harness then looks for;
-    ``silent`` exits 0 writing nothing (the ``no-output`` bug shape); ``timeout``
+    ``silent`` exits 0 writing nothing (the ``no-output`` bug shape); ``signal``
+    is a child killed by a signal (POSIX: a NEGATIVE return code); ``timeout``
     raises like the real call does.
 
     Faithful to ``check=``: with it set, the real ``subprocess.run`` RAISES on a
@@ -109,6 +110,13 @@ def _fake_run(repo: Path, calls: _Recorder, outcomes: dict[str, str]):
                 returncode=1,
                 stdout="",
                 stderr="Gaia star catalog not found.\nPlace it in the cache by hand.",
+            )
+        if outcome == "signal":
+            # SIGKILL, as `subprocess` reports it on POSIX.
+            return SimpleNamespace(
+                returncode=-9,
+                stdout="",
+                stderr="Fitting 3M splats...",
             )
         if outcome == "ok":
             key = script.removeprefix("demo_").removesuffix(".py")
@@ -279,6 +287,28 @@ def test_timeout_and_no_output_stay_hard_for_a_local_input_demo(
     assert code == 1
     assert bucket in out
     assert "manual-data" not in out
+
+
+@pytest.mark.parametrize("mode", ["manual-file", "kaggle-auth"])
+def test_a_signal_killed_local_input_demo_stays_hard(
+    tmp_path, monkeypatch, capsys, mode
+) -> None:
+    # A negative return code is POSIX for "killed by a signal" — the OOM killer
+    # on the ~30 GB Kaggle download, a segfault in a native dependency. That is
+    # not how a demo reports a missing input (it exits 1 with a message), and it
+    # only happens to a run that got far enough to allocate, i.e. one that HAD
+    # its input. Demoting it would report a real failure as "this machine
+    # appears not to have the input" and return 0.
+    calls = _setup(tmp_path, monkeypatch, [("needs_input", mode, "signal")])
+
+    code = _run_main(monkeypatch)
+    out = capsys.readouterr().out
+
+    assert calls == ["demo_needs_input.py"]
+    assert code == 1
+    assert "failed" in out
+    assert "manual-data" not in out
+    assert "appears not to have" not in out
 
 
 def test_a_present_local_input_entry_reports_already_present(
