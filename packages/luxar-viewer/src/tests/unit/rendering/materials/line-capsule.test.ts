@@ -515,10 +515,11 @@ describe('capsuleProfile (CPU reference)', () => {
 describe('joint composition — the rendered pair tracks max(mine, partner)', () => {
   // The numeric sweep the #1487 review asked for: all three of #1494
   // (wrong vertex radius), #1488 (reach shortfall) and #1490 (missing far
-  // cap) blow these bounds. #1494 additionally has a source lock over the
-  // four shader surfaces now (`line/capsule-partner-radius.test.ts`), and so
-  // does #1488 (the packet-branch pin above); #1490 has no comparable one, so
-  // for it this sweep is the whole coverage.
+  // cap) blow these bounds. All three additionally have source locks over the
+  // four shader surfaces now — #1494 in `line/capsule-partner-radius.test.ts`,
+  // #1490 in `line/capsule-joint-packet-source-lock.test.ts`, #1488 in the
+  // packet-branch pin above — but those bind TEXT. The sweep still binds all
+  // three in the CPU model by VALUE, which no text pin can.
   const leg = (
     angleDeg: number,
     rJoint: number,
