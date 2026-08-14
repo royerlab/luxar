@@ -408,18 +408,28 @@ class _HttpRangeFile(io.RawIOBase):
             return self._cache
         start = pos
         end = min(start + self._chunk_size, self._size) - 1
+        # ``stream=True`` so the status is checked BEFORE the body is read. A
+        # host that ignores the Range header answers 200 with the WHOLE 7.1 GB
+        # archive, and a non-streaming ``get`` buffers all of it in memory
+        # before this function can refuse it — the refusal has to be cheap.
         resp = self._session.get(
-            self._url, headers={"Range": f"bytes={start}-{end}"}, timeout=60
+            self._url,
+            headers={"Range": f"bytes={start}-{end}"},
+            timeout=60,
+            stream=True,
         )
-        if resp.status_code != 206:
-            raise RuntimeError(
-                f"Expected HTTP 206 (partial content) from {self._url}, got "
-                f"{resp.status_code}. The host has stopped honouring range "
-                "requests, so a single sample can no longer be extracted "
-                "without downloading the whole archive."
-            )
-        self._cache_start = start
-        self._cache = resp.content
+        try:
+            if resp.status_code != 206:
+                raise RuntimeError(
+                    f"Expected HTTP 206 (partial content) from {self._url}, got "
+                    f"{resp.status_code}. The host has stopped honouring range "
+                    "requests, so a single sample can no longer be extracted "
+                    "without downloading the whole archive."
+                )
+            self._cache_start = start
+            self._cache = resp.content
+        finally:
+            resp.close()
         return self._cache
 
 
@@ -434,26 +444,40 @@ def _open_remote_zip(url: str):
     # honoured, so a HEAD-based check would refuse a host that works fine. The
     # 206 also carries the total size in ``Content-Range``, so this is one
     # request instead of two.
+    # ``stream=True`` because the whole point of the probe is to find out
+    # whether the body is one byte or 7.1 GB: a host that ignores the Range
+    # header answers 200 with the entire archive, and a non-streaming ``get``
+    # downloads all of it into memory before the check below can refuse it.
+    # Headers (status, Content-Range, resolved URL) are available without
+    # touching the body, so nothing is transferred on the refusal path.
     probe = session.get(
-        url, headers={"Range": "bytes=0-0"}, allow_redirects=True, timeout=60
+        url,
+        headers={"Range": "bytes=0-0"},
+        allow_redirects=True,
+        timeout=60,
+        stream=True,
     )
-    probe.raise_for_status()
-    content_range = probe.headers.get("Content-Range", "")
-    # A 206 may legally report an unknown total (``bytes 0-0/*``), which is no
-    # more usable here than a refused range: without the size there is nothing
-    # to seek against. Insist on a digit total so an odd host produces the
-    # explanation below instead of a bare ValueError from int().
-    total = content_range.rsplit("/", 1)[-1].strip()
-    if probe.status_code != 206 or not total.isdigit():
-        raise RuntimeError(
-            f"{url} did not honour a byte-range request (status "
-            f"{probe.status_code}), so extracting one sample would require "
-            "downloading the full 7.1 GB archive. Download it manually and "
-            f"extract the sample into {CACHE_DIR} as <sample>.zarr instead."
-        )
+    try:
+        probe.raise_for_status()
+        content_range = probe.headers.get("Content-Range", "")
+        # A 206 may legally report an unknown total (``bytes 0-0/*``), which is
+        # no more usable here than a refused range: without the size there is
+        # nothing to seek against. Insist on a digit total so an odd host
+        # produces the explanation below instead of a bare ValueError from int().
+        total = content_range.rsplit("/", 1)[-1].strip()
+        if probe.status_code != 206 or not total.isdigit():
+            raise RuntimeError(
+                f"{url} did not honour a byte-range request (status "
+                f"{probe.status_code}), so extracting one sample would require "
+                "downloading the full 7.1 GB archive. Download it manually and "
+                f"extract the sample into {CACHE_DIR} as <sample>.zarr instead."
+            )
+        probe_url = probe.url
+    finally:
+        probe.close()
     size = int(total)
 
-    handle = _HttpRangeFile(probe.url, size, session)
+    handle = _HttpRangeFile(probe_url, size, session)
     return zipfile.ZipFile(io.BufferedReader(handle, buffer_size=1 << 20)), handle
 
 
@@ -493,8 +517,11 @@ def _extract_members(zf, members, member_prefix: str, tmp: Path) -> None:
             dest.mkdir(parents=True, exist_ok=True)
             continue
         dest.parent.mkdir(parents=True, exist_ok=True)
-        with zf.open(name) as src:
-            dest.write_bytes(src.read())
+        # Copy in chunks rather than materialising the member: a zarr chunk is
+        # usually small, but nothing here bounds it, and the whole point of the
+        # range extraction is to stay well under the archive's size in memory.
+        with zf.open(name) as src, open(dest, "wb") as out:
+            shutil.copyfileobj(src, out)
         if i % 200 == 0:
             aprint(f"  {i}/{len(members)} members")
 

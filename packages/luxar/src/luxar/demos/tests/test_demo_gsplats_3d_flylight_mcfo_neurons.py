@@ -169,6 +169,10 @@ class _FakeResponse:
     def __init__(self, content: bytes, status_code: int = 206):
         self.content = content
         self.status_code = status_code
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
 
 
 class _FakeSession:
@@ -178,12 +182,17 @@ class _FakeSession:
         self.blob = blob
         self.status_code = status_code
         self.requests: list[tuple[int, int]] = []
+        self.streamed: list[bool] = []
+        self.responses: list[_FakeResponse] = []
 
-    def get(self, url, headers=None, timeout=None):  # noqa: D102
+    def get(self, url, headers=None, timeout=None, stream=None):  # noqa: D102
         rng = (headers or {})["Range"].split("=", 1)[1]
         start, end = (int(x) for x in rng.split("-"))
         self.requests.append((start, end))
-        return _FakeResponse(self.blob[start : end + 1], self.status_code)
+        self.streamed.append(bool(stream))
+        resp = _FakeResponse(self.blob[start : end + 1], self.status_code)
+        self.responses.append(resp)
+        return resp
 
 
 def _blob(n: int = 4096) -> bytes:
@@ -247,15 +256,38 @@ def test_non_206_response_is_a_clear_error() -> None:
         f.read(10)
 
 
+def test_range_fetches_are_streamed_and_released() -> None:
+    """Every range fetch must ask for a streamed body and close it.
+
+    Failing loudly on a non-206 is only cheap if the body was not already
+    read: a host that ignores ``Range`` answers 200 with the WHOLE 7.1 GB
+    archive, and a non-streaming ``get`` buffers all of it in memory before the
+    status check can refuse it. So the request has to carry ``stream=True`` —
+    and then be closed, or the connection is never returned to the pool.
+    """
+    blob = _blob(512)
+    session = _FakeSession(blob)
+    f = _HttpRangeFile("http://x", len(blob), session, chunk_size=128)
+
+    f.read(200)
+
+    assert session.streamed and all(session.streamed), session.streamed
+    assert all(r.closed for r in session.responses)
+
+
 class _ProbeResponse:
     def __init__(self, status_code: int, headers: dict, url: str = "http://x/a.zip"):
         self.status_code = status_code
         self.headers = headers
         self.url = url
         self.content = b"\x00"
+        self.closed = False
 
     def raise_for_status(self) -> None:
         pass
+
+    def close(self) -> None:
+        self.closed = True
 
 
 class _ProbeSession:
@@ -264,15 +296,22 @@ class _ProbeSession:
     def __init__(self, status_code: int, headers: dict):
         self._status_code = status_code
         self._headers = headers
+        self.streamed: list[bool] = []
+        self.responses: list[_ProbeResponse] = []
 
-    def get(self, url, headers=None, allow_redirects=None, timeout=None):  # noqa: D102
-        return _ProbeResponse(self._status_code, self._headers, url)
+    def get(  # noqa: D102
+        self, url, headers=None, allow_redirects=None, timeout=None, stream=None
+    ):
+        self.streamed.append(bool(stream))
+        resp = _ProbeResponse(self._status_code, self._headers, url)
+        self.responses.append(resp)
+        return resp
 
 
-def _probe_with(monkeypatch, status_code: int, headers: dict) -> None:
-    monkeypatch.setattr(
-        _demo.requests, "Session", lambda: _ProbeSession(status_code, headers)
-    )
+def _probe_with(monkeypatch, status_code: int, headers: dict) -> _ProbeSession:
+    session = _ProbeSession(status_code, headers)
+    monkeypatch.setattr(_demo.requests, "Session", lambda: session)
+    return session
 
 
 @pytest.mark.parametrize("headers", [{"Content-Range": "bytes 0-0/*"}, {}])
@@ -293,10 +332,17 @@ def test_unknown_total_size_is_refused_with_the_range_explanation(
 
 def test_non_206_probe_is_refused(monkeypatch) -> None:
     """A host answering 200 to a ranged GET would mean a 7.1 GB download."""
-    _probe_with(monkeypatch, 200, {"Content-Range": "bytes 0-0/4096"})
+    session = _probe_with(monkeypatch, 200, {"Content-Range": "bytes 0-0/4096"})
 
     with pytest.raises(RuntimeError, match="did not honour a byte-range"):
         _demo._open_remote_zip("http://x/a.zip")
+
+    # The refusal must be free: a 200 to this request carries the ENTIRE
+    # archive, so the probe has to stream (headers only) and then release it.
+    # Without ``stream=True`` requests would have buffered 7.1 GB before the
+    # check above ever ran.
+    assert session.streamed == [True]
+    assert all(r.closed for r in session.responses)
 
 
 def test_read_spanning_multiple_blocks() -> None:
