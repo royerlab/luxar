@@ -60,6 +60,31 @@ export interface BackendSelection {
  *   3. `VITE_LUXAR_USE_LEGACY_WEBGL=1` env var (no-op alias for the default).
  *   4. Default: WebGL.
  */
+/**
+ * Adapter limits forwarded verbatim into the device's `requiredLimits`
+ * when the adapter advertises them as numbers (absent / non-numeric
+ * entries are omitted so the device keeps the spec default).
+ *
+ * `maxTextureDimension2D` is the per-node element-data ceiling:
+ * element textures (points/lines/gsplats) grow DOWNWARD in rows, and
+ * `renderer-capabilities` reads the LIVE DEVICE limit to derive every
+ * capacity clamp. The WebGPU default is 8192 rows — for lines
+ * (6 texels/segment, 682 segments/row at width 4096) that caps a node
+ * at 5,586,944 segments while the same GPU's WebGL context exposes
+ * 16384 rows = 11.2 M. Same forward-the-adapter policy as the buffer
+ * limits.
+ */
+export function forwardedAdapterLimits(
+  limits: Record<string, number | undefined> | undefined
+): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const key of ['maxBufferSize', 'maxStorageBufferBindingSize', 'maxTextureDimension2D']) {
+    const value = limits?.[key];
+    if (typeof value === 'number') out[key] = value;
+  }
+  return out;
+}
+
 export function selectBackend(rendererOverride: 'webgl' | 'webgpu' | undefined): BackendSelection {
   if (rendererOverride === 'webgl') return { backend: 'webgl', source: 'url-param' };
   if (rendererOverride === 'webgpu') return { backend: 'webgpu', source: 'url-param' };
@@ -260,40 +285,21 @@ export async function createWebGPURenderer(
     }
 
     const requestedMax = typeof adapterMax === 'number' ? Math.min(adapterMax, 16) : undefined;
-    const adapterMaxBufferSize = adapter.limits?.maxBufferSize;
-    const adapterMaxStorageBuffer = adapter.limits?.maxStorageBufferBindingSize;
-    const adapterMaxTexture2D = adapter.limits?.maxTextureDimension2D;
 
     const requiredFeatures: string[] = [];
     for (const name of adapter.features) {
       requiredFeatures.push(name);
     }
-    const requiredLimits: Record<string, number> = {};
+    // Buffer + element-texture ceilings forwarded from the adapter —
+    // see forwardedAdapterLimits for the row-ceiling rationale.
+    const requiredLimits: Record<string, number> = forwardedAdapterLimits(adapter.limits);
     if (requestedMax !== undefined) requiredLimits.maxVertexBuffers = requestedMax;
-    if (typeof adapterMaxBufferSize === 'number') {
-      requiredLimits.maxBufferSize = adapterMaxBufferSize;
-    }
-    if (typeof adapterMaxStorageBuffer === 'number') {
-      requiredLimits.maxStorageBufferBindingSize = adapterMaxStorageBuffer;
-    }
-    // Element-data textures (points/lines/gsplats) grow DOWNWARD in rows,
-    // so the device's maxTextureDimension2D is the per-node element
-    // ceiling (renderer-capabilities reads it off the live device and
-    // element-texture-layout derives every clamp from it). The WebGPU
-    // default is 8192 rows — for lines (6 texels/segment, 682
-    // segments/row at width 4096) that caps a node at 5,586,944
-    // segments while the same GPU's WebGL context exposes 16384 rows =
-    // 11.2 M. Request the adapter's full limit, same policy as the
-    // buffer sizes above.
-    if (typeof adapterMaxTexture2D === 'number') {
-      requiredLimits.maxTextureDimension2D = adapterMaxTexture2D;
-    }
     log.info(
       Modules.RENDERER,
       `WebGPU adapter advertises maxVertexBuffers=${adapterMax}, ` +
-        `maxBufferSize=${adapterMaxBufferSize}, ` +
-        `maxStorageBufferBindingSize=${adapterMaxStorageBuffer}, ` +
-        `maxTextureDimension2D=${adapterMaxTexture2D}; ` +
+        `maxBufferSize=${adapter.limits?.maxBufferSize}, ` +
+        `maxStorageBufferBindingSize=${adapter.limits?.maxStorageBufferBindingSize}, ` +
+        `maxTextureDimension2D=${adapter.limits?.maxTextureDimension2D}; ` +
         `requesting maxVertexBuffers=${requestedMax}, ` +
         `maxBufferSize=${requiredLimits.maxBufferSize ?? 'default'}, ` +
         `maxStorageBufferBindingSize=${requiredLimits.maxStorageBufferBindingSize ?? 'default'}, ` +

@@ -47,6 +47,7 @@ vi.mock('../../../../../utils/hdr/hdr-detection', () => ({
 // Imports MUST come after vi.mock to honour the mocks.
 import {
   createWebGPURenderer,
+  forwardedAdapterLimits,
   selectBackend,
 } from '../../../../../scene/scene-manager/render-pipeline/renderer-setup';
 
@@ -105,6 +106,37 @@ describe('selectBackend', () => {
   it('defaults to webgl when neither URL nor env vars are set', () => {
     const r = selectBackend(undefined);
     expect(r).toEqual({ backend: 'webgl', source: 'default' });
+  });
+});
+
+describe('forwardedAdapterLimits', () => {
+  it('forwards each advertised numeric limit into requiredLimits', () => {
+    // The maxTextureDimension2D forwarding is the per-node element
+    // ceiling: without it the device falls back to the 8192-row spec
+    // default and a lines node silently clamps at 5,586,944 segments.
+    expect(
+      forwardedAdapterLimits({
+        maxBufferSize: 1024,
+        maxStorageBufferBindingSize: 512,
+        maxTextureDimension2D: 16384,
+        maxVertexBuffers: 30, // handled separately (clamped) — never forwarded here
+      })
+    ).toEqual({
+      maxBufferSize: 1024,
+      maxStorageBufferBindingSize: 512,
+      maxTextureDimension2D: 16384,
+    });
+  });
+
+  it('omits absent or non-numeric limits so the device keeps spec defaults', () => {
+    expect(forwardedAdapterLimits(undefined)).toEqual({});
+    expect(forwardedAdapterLimits({})).toEqual({});
+    expect(
+      forwardedAdapterLimits({
+        maxBufferSize: undefined,
+        maxTextureDimension2D: 'huge' as unknown as number,
+      })
+    ).toEqual({});
   });
 });
 
