@@ -297,8 +297,10 @@ profile is the compact quartic bump `(1 − p²)^n` with `p = distance/radius`
 and the sharpness map `n = 2^(3 − 4·sharpness)` (smaller exponent = boxier);
 the drawn radius is the 2σ support of the quad's Gaussian-equivalent σ
 (`CAPSULE_RADIUS_PER_QUAD_HALFWIDTH` — all constants single-sourced in
-`_shared/line-capsule.ts`, which also carries the CPU reference profile the
-unit tests pin).
+`_shared/line-capsule.ts`, which also carries the CPU reference profile and
+the joint-composition model the unit tests pin — the latter mirrors the
+vertex stage's STENCIL as well as the fragment math, so a reach shortfall
+chops the model exactly as it would chop the rasterized image, #1488).
 
 Three exactness relaxations are deliberate, licensed by the #1352 relaxed
 spec ("not physics-exact; no pathological near-axial drawing; gaussian-like
@@ -357,6 +359,10 @@ radius costs anyway, though in absolute terms that reaches −0.09 at 90° and
 stops at the AA radius floor, because below it the two legs' `widthScale`
 factors disagree, so the PAIR no longer composes to `max` even though each
 deficit stays bounded by its own unscaled profile (#1495).
+Note also the one exception to "keeps its HALF" above: the STENCIL a cut end
+reserves is the full disc, not the half, whenever a deficit packet exists —
+the deficit term is bounded by the leg's own profile, so nothing shorter
+covers what it draws (#1488).
 The partner's far endpoint is near-plane-clipped
 toward the joint vertex before projecting (a behind-eye projection flips
 and would poison the cut normal), with a joint vertex behind the near
