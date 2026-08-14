@@ -14,6 +14,7 @@ from luxar.demos._dependencies import SUBSTITUTIVE_LOD_MODULES, is_installed
 from luxar.demos.demo_gaia_milky_way_3m import (
     CACHE_FILE,
     DEMO_META,
+    RAW_TABLE_FIELDS,
     RAW_ZARR_NAME,
     _extract_raw_zarr,
     compute_radii,
@@ -45,6 +46,26 @@ def _catalog_zip(tmp_path: Path, member_name: str) -> Path:
     """
     raw = tmp_path / member_name
     _write_tiny_gaia_table(raw)
+    zip_path = tmp_path / "catalog.zarr.zip"
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        for f in raw.rglob("*"):
+            if f.is_file():
+                zf.write(f, f.relative_to(tmp_path))
+    return zip_path
+
+
+def _foreign_table_catalog_zip(tmp_path: Path) -> Path:
+    """A correctly-named zip holding a store that is NOT the raw star table.
+
+    What a user who assembles their own Gaia query ends up with: the directory is
+    where the demo looks and opens as a zarr group, but the columns are spelled
+    differently, so the converter would fail on a bare ``KeyError``.
+    """
+    raw = tmp_path / RAW_ZARR_NAME
+    root = zarr.open(str(raw), mode="w")
+    for name in ("x", "y", "z", "mag", "colour"):
+        values = np.linspace(0.0, 1.0, 8, dtype=np.float32)
+        root.create_dataset(name, data=values, shape=values.shape, dtype=values.dtype)
     zip_path = tmp_path / "catalog.zarr.zip"
     with zipfile.ZipFile(zip_path, "w") as zf:
         for f in raw.rglob("*"):
@@ -257,13 +278,14 @@ def test_declared_cache_namespace_is_where_the_catalog_is_read() -> None:
 
 
 class TestRawZarrExtraction:
-    """A catalog zip is only usable if it reads AND holds the directory read.
+    """A catalog zip is usable only if it reads, holds, AND contains the table.
 
     The rebuild script's default ``--output`` is ``galaxy.zarr``, so the wrong
     stem is the easy mistake to make — and it extracts *successfully*, failing
-    only later inside ``zarr.open``. A truncated copy is the other way a
-    hand-placed file passes ``resolve_data_file``'s ``exists()`` and is still not
-    a catalog. These pin the guards that turn both into an error naming the
+    only later inside ``zarr.open``. A truncated copy is the second way a
+    hand-placed file passes ``resolve_data_file``'s file check and is still not a
+    catalog, and a store with other column names (a query someone ran themselves)
+    is the third. These pin the guards that turn each into an error naming the
     problem and the rebuild command, and the CLI paths that print them.
     """
 
@@ -295,6 +317,66 @@ class TestRawZarrExtraction:
         assert "scripts/generate_galaxy_simple.py" in message
         assert "--output" in message
 
+    def test_a_foreign_table_names_the_columns_the_demo_reads(
+        self, tmp_path: Path
+    ) -> None:
+        """The right directory name is not the same as the right table.
+
+        A hand-assembled Gaia query lands here: the zip opens, the directory is
+        where the demo looks, and the columns are spelled differently — which the
+        converter meets as a bare ``KeyError`` on the second read, naming one
+        column and nothing about what the demo wanted.
+        """
+        zip_path = _foreign_table_catalog_zip(tmp_path)
+
+        with pytest.raises(FileNotFoundError) as excinfo:
+            _extract_raw_zarr(zip_path, tmp_path / "unpacked")
+
+        message = str(excinfo.value)
+        # Every column it needs, not just the first one missing: the reader is
+        # holding a table with other names and has to map all five.
+        for field in RAW_TABLE_FIELDS:
+            assert field in message
+        assert "scripts/generate_galaxy_simple.py" in message
+
+    def test_a_directory_that_is_not_a_zarr_store_names_the_rebuild(
+        self, tmp_path: Path
+    ) -> None:
+        """...and the right directory name is not even necessarily a zarr store.
+
+        ``zarr.open`` answers this one with ``PathNotFoundError`` — a
+        ``ValueError``, so as invisible to the entry points' handlers as the
+        ``KeyError`` above.
+        """
+        raw = tmp_path / RAW_ZARR_NAME
+        raw.mkdir()
+        (raw / "notes.txt").write_text("not a zarr store")
+        zip_path = tmp_path / "catalog.zarr.zip"
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            zf.write(raw / "notes.txt", Path(RAW_ZARR_NAME) / "notes.txt")
+
+        with pytest.raises(FileNotFoundError) as excinfo:
+            _extract_raw_zarr(zip_path, tmp_path / "unpacked")
+
+        message = str(excinfo.value)
+        assert "not a zarr store" in message
+        assert "scripts/generate_galaxy_simple.py" in message
+
+    def test_the_checked_columns_are_the_ones_the_converter_reads(
+        self, tmp_path: Path
+    ) -> None:
+        """The guard's column list must not drift from the converter's reads.
+
+        Pinned from both sides: the fixture writes exactly ``RAW_TABLE_FIELDS``,
+        and the happy-path test above converts that fixture — so a converter that
+        starts reading a sixth column fails there rather than passing this guard
+        and dying later on real data.
+        """
+        raw = tmp_path / "gaia.zarr"
+        _write_tiny_gaia_table(raw)
+
+        assert set(zarr.open(str(raw), mode="r").array_keys()) == set(RAW_TABLE_FIELDS)
+
     def test_a_truncated_archive_names_the_rebuild(self, tmp_path: Path) -> None:
         """``exists()`` cannot tell a catalog from half of one — reading it can.
 
@@ -314,25 +396,39 @@ class TestRawZarrExtraction:
         assert "scripts/generate_galaxy_simple.py" in message
 
     @pytest.mark.parametrize("extra_argv", [[], ["--no-serve"]], ids=["serve", "build"])
-    @pytest.mark.parametrize("broken", ["wrong-stem", "truncated"])
+    @pytest.mark.parametrize(
+        "broken,expected",
+        [
+            ("wrong-stem", RAW_ZARR_NAME),
+            ("truncated", "truncated"),
+            ("foreign-table", "x_kpc"),
+        ],
+    )
     def test_both_entry_points_report_it_as_a_cli_error(
-        self, tmp_path: Path, monkeypatch, capsys, extra_argv: list[str], broken: str
+        self,
+        tmp_path: Path,
+        monkeypatch,
+        capsys,
+        extra_argv: list[str],
+        broken: str,
+        expected: str,
     ) -> None:
         """Not a traceback: the message is advice, and it has to be readable.
 
         Both invocations extract, in two different places (``main`` directly for
         ``--no-serve``, ``load_and_convert_from_zip`` when serving), so both are
-        checked — a guard raised past one of them would bury the advice. Both
-        unusable-catalog kinds are checked at both, because they are raised from
-        two different points inside ``_extract_raw_zarr``.
+        checked — a guard raised past one of them would bury the advice. Every
+        unusable-catalog kind is checked at both, because each is raised from a
+        different point inside ``_extract_raw_zarr``.
         """
         import luxar.demos.demo_gaia_milky_way_3m as demo
 
-        catalog = (
-            _truncated_catalog_zip(tmp_path)
-            if broken == "truncated"
-            else _catalog_zip(tmp_path, "galaxy.zarr")
-        )
+        builders = {
+            "wrong-stem": lambda p: _catalog_zip(p, "galaxy.zarr"),
+            "truncated": _truncated_catalog_zip,
+            "foreign-table": _foreign_table_catalog_zip,
+        }
+        catalog = builders[broken](tmp_path)
         monkeypatch.setattr(demo, "CACHE_FILE", catalog)
         monkeypatch.setattr(demo, "REPO_FILE", tmp_path / "absent.zip")
         monkeypatch.setattr(demo, "get_demos_output_dir", lambda: tmp_path / "out")
@@ -344,8 +440,9 @@ class TestRawZarrExtraction:
         assert excinfo.value.code == 1
         out = capsys.readouterr().out
         # What went wrong, in the reader's terms — the missing directory for a
-        # wrong stem, the unreadable file for a partial copy.
-        assert (RAW_ZARR_NAME if broken == "wrong-stem" else "truncated") in out
+        # wrong stem, the unreadable file for a partial copy, the columns the demo
+        # reads for a table that is not this one.
+        assert expected in out
         assert "scripts/generate_galaxy_simple.py" in out
         assert "Traceback" not in out
 

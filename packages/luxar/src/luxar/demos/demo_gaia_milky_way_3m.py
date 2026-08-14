@@ -183,6 +183,17 @@ REPO_FILE = SCRIPT_DIR / "data" / "milky_way_gaia_3m.zarr.zip"
 #: CACHE_FILE rather than restated, because what names that member is exactly the
 #: `--output` stem the rebuild command is given (= the cache file without .zip).
 RAW_ZARR_NAME = CACHE_FILE.with_suffix("").name
+#: The raw table columns `load_and_convert_gaia_data` reads. Checked once at
+#: extraction so a store that is not this table says which columns are missing,
+#: instead of the converter dying on a bare `KeyError` half-way through the read.
+RAW_TABLE_FIELDS = ("x_kpc", "y_kpc", "z_kpc", "phot_g_mean_mag", "bp_rp")
+#: The rebuild command every unusable-catalog message below ends with. One
+#: spelling, because the `--count`/`--output` pair is the load-bearing part and
+#: five copies of it drift.
+REBUILD_COMMAND = (
+    "  hatch run python scripts/generate_galaxy_simple.py --count 3000000 "
+    f"--output {CACHE_FILE.with_suffix('')}"
+)
 
 
 class CatalogUnusable(FileNotFoundError):
@@ -219,8 +230,7 @@ def resolve_data_file() -> Path:
         "Luxar.\n"
         f"Put a copy of the catalog at exactly {CACHE_FILE} (that full path, "
         "filename included), or rebuild it from the ESA Gaia archive with\n"
-        "  hatch run python scripts/generate_galaxy_simple.py --count 3000000 "
-        f"--output {CACHE_FILE.with_suffix('')}\n"
+        f"{REBUILD_COMMAND}\n"
         "That rebuild runs from a source checkout only (the script is not in the "
         "wheel), needs `astroquery` + `astropy` (no Luxar extra provides "
         "astroquery, so `luxar demo deps --install` cannot supply it), and takes "
@@ -249,17 +259,22 @@ def _exit_with_advice(exc: CatalogUnusable) -> NoReturn:
 def _extract_raw_zarr(data_zip_path: Path, dest: Path) -> Path:
     """Unpack the catalog zip into ``dest`` and return the raw zarr inside it.
 
-    The expected member is checked here, at the extraction, because a zip built
-    with the wrong ``--output`` stem extracts *successfully* and only fails later
-    in ``zarr.open`` with ``GroupNotFoundError`` — a ``ValueError``, which no
-    ``except CatalogUnusable`` on the way out catches, so the advice
-    :func:`resolve_data_file` prints would never reach the reader who needs it.
+    Everything that makes an archive readable *as this demo's catalog* is checked
+    here, at the extraction, because none of it is checkable earlier and each
+    failure mode otherwise escapes as a traceback that buries the advice: the zip
+    has to open (a truncated copy raises ``BadZipFile``), it has to hold a
+    top-level ``RAW_ZARR_NAME`` directory (a wrong ``--output`` stem extracts
+    *successfully*, and only ``zarr.open`` later notices), and that directory has
+    to be the raw star table (a store built by hand with other column names reads
+    fine and dies on a bare ``KeyError`` mid-conversion). ``zarr``'s
+    ``PathNotFoundError`` and ``KeyError`` are no more a ``FileNotFoundError``
+    than ``BadZipFile`` is, so no ``except CatalogUnusable`` on the way out
+    catches them.
 
-    An unreadable zip is the same class of problem and gets the same treatment:
-    the catalog is placed (or rebuilt) by hand, so a truncated copy — an
-    interrupted ``scp``, a rebuild killed part-way, a browser download that
-    stopped — is an ordinary way to end up with a file that ``exists()`` and is
-    not a catalog. ``resolve_data_file`` cannot tell, since reading the archive
+    The catalog is placed (or rebuilt) by hand, which is what makes all three
+    ordinary rather than exotic — an interrupted ``scp``, the rebuild script's
+    default ``--output``, a table assembled from one's own Gaia query.
+    ``resolve_data_file`` cannot tell any of them apart, since reading the archive
     IS the check.
     """
     import zipfile
@@ -272,8 +287,7 @@ def _extract_raw_zarr(data_zip_path: Path, dest: Path) -> Path:
             f"{data_zip_path} is not a readable zip archive ({exc}) — most "
             "likely a truncated or partial copy.\n"
             "Delete it and put a complete copy back, or rebuild it with\n"
-            "  hatch run python scripts/generate_galaxy_simple.py --count "
-            f"3000000 --output {CACHE_FILE.with_suffix('')}"
+            f"{REBUILD_COMMAND}"
         ) from exc
     raw_zarr_path = dest / RAW_ZARR_NAME
     if not raw_zarr_path.is_dir():
@@ -282,8 +296,25 @@ def _extract_raw_zarr(data_zip_path: Path, dest: Path) -> Path:
             f"`{RAW_ZARR_NAME}/` directory — so the raw catalog is not where "
             "this demo reads it.\n"
             "The --output stem is load-bearing: rebuild with\n"
-            "  hatch run python scripts/generate_galaxy_simple.py --count "
-            f"3000000 --output {CACHE_FILE.with_suffix('')}"
+            f"{REBUILD_COMMAND}"
+        )
+    try:
+        raw_table = zarr.open(str(raw_zarr_path), mode="r")
+        missing = [name for name in RAW_TABLE_FIELDS if name not in raw_table]
+    except (zarr.errors.PathNotFoundError, zarr.errors.GroupNotFoundError) as exc:
+        raise CatalogUnusable(
+            f"{data_zip_path} holds a `{RAW_ZARR_NAME}/` directory, but it is not "
+            f"a zarr store ({exc}).\n"
+            "Delete it and put a complete copy back, or rebuild it with\n"
+            f"{REBUILD_COMMAND}"
+        ) from exc
+    if missing:
+        raise CatalogUnusable(
+            f"{data_zip_path} holds `{RAW_ZARR_NAME}/`, but it is missing the raw "
+            f"Gaia column(s) {', '.join(missing)} — this demo reads a flat table "
+            f"of {', '.join(RAW_TABLE_FIELDS)}, one value per star.\n"
+            "Rebuild it (which writes exactly those columns) with\n"
+            f"{REBUILD_COMMAND}"
         )
     return raw_zarr_path
 

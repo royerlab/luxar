@@ -395,8 +395,10 @@ to ship after). Sequencing is at the bottom.
   - **Scope note:** only *heavy processed datasets* move. Small README/doc images
     (`docs/images/**`) must stay in-repo so GitHub renders them (see R19).
   - **Status check 2026-08-11: the Zenodo leg is still dormant** — 0 of 24
-    manifest datasets carry a record ID, so every demo still runs off in-repo
-    LFS. Nothing has regressed, but nothing has moved either: the Gaia demo now
+    manifest datasets carry a record ID, so no demo fetches from Zenodo yet: the
+    ones that still ship data run off in-repo LFS, and the `local-compute` four
+    (whose in-repo copies were removed) rebuild or read a placed file instead.
+    Nothing has regressed, but nothing has moved either: the Gaia demo now
     reads `~/.cache/luxar/` instead of a committed `milky_way_gaia_3m.zarr.zip`
     (the TAP query is executable as `scripts/generate_galaxy_simple.py`, just not
     wired up as an automatic first-run build; the appearance-tuning ask #1461 put
