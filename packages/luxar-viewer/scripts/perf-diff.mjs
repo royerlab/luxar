@@ -192,6 +192,13 @@ export function buildPerfDiff(base, next) {
   // rendering change. Warn rather than let a −86% p95 read as a win.
   // Only measured rows are considered — a skipped row has no timing to
   // compare and omits the field on purpose.
+  //
+  // The test is presence-only, and deliberately conservative: whether the
+  // OLDER side resolved timestamps at all is not recoverable from its
+  // JSON (a run with the feature enabled but no usable samples reports
+  // `gpu.supported: false` all the same), so an arm that never resolved —
+  // every WebGL row — gets flagged too. The message says so rather than
+  // asserting readback latency in stats that cannot contain it.
   const straddling = sortedKeys.filter((k) => {
     const b = baseByKey.get(k);
     const n = nextByKey.get(k);
@@ -199,7 +206,7 @@ export function buildPerfDiff(base, next) {
     return 'excludedResolveIntervals' in b !== 'excludedResolveIntervals' in n;
   });
   if (straddling.length > 0) {
-    md += `\n⚠️ JS frame timing not comparable for ${straddling.join(', ')}: one side predates the bench's exclusion of GPU-timestamp resolve intervals, so its frame stats include readback latency (p95/p99 worst). Re-measure that side before reading these deltas.\n`;
+    md += `\n⚠️ JS frame timing not comparable for ${straddling.join(', ')}: one side predates the bench's exclusion of GPU-timestamp resolve intervals, so its frame stats still include readback latency wherever that run resolved timestamps (p95/p99 worst; an arm that never resolved — any WebGL row — is listed conservatively and is in fact comparable). Re-measure that side before reading these deltas.\n`;
   }
 
   // GPU-time section. Only emitted when at least one row has a real
