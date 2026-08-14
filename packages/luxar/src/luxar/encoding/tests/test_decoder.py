@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 import zarr
 
+from luxar._zarr_compat import create_array
 from luxar.encoding import ArrayDecoder, ArrayEncoder, SemanticType
 
 
@@ -81,7 +82,7 @@ class TestLUTDecoding:
             decoder = ArrayDecoder()
 
             indices = np.array([0, 1, 2, 1, 0], dtype=np.uint16)
-            group.create_dataset("test", data=indices)
+            create_array(group, "test", data=indices)
             group["test"].attrs["encoding"] = {
                 "name": "lut_uint16",
                 "lut": [10.0, 20.0, 30.0],
@@ -249,7 +250,7 @@ class TestPassthroughDecoding:
 
             # Write directly without encoding metadata
             data = np.random.rand(100, 3).astype(np.float32)
-            group.create_dataset("test", data=data)
+            create_array(group, "test", data=data)
 
             # Decode should return data as-is
             decoded = decoder.decode(group["test"])
@@ -263,7 +264,7 @@ class TestPassthroughDecoding:
 
             # Write with explicit 'none' encoding
             data = np.random.rand(100).astype(np.float32)
-            group.create_dataset("test", data=data)
+            create_array(group, "test", data=data)
             group["test"].attrs["encoding"] = {"name": "none"}
 
             # Decode should return data as-is
@@ -280,7 +281,7 @@ class TestErrorHandling:
             group = zarr.open_group(tmpdir, mode="w")
             decoder = ArrayDecoder()
 
-            group.create_dataset("test", data=np.array([1, 2, 3], dtype=np.uint8))
+            create_array(group, "test", data=np.array([1, 2, 3], dtype=np.uint8))
             group["test"].attrs["encoding"] = {"bounds": [0, 1]}
 
             with pytest.raises(ValueError, match="encoding.name is required"):
@@ -292,7 +293,7 @@ class TestErrorHandling:
             group = zarr.open_group(tmpdir, mode="w")
             decoder = ArrayDecoder()
 
-            group.create_dataset("test", data=np.array([1, 2, 3], dtype=np.uint8))
+            create_array(group, "test", data=np.array([1, 2, 3], dtype=np.uint8))
             group["test"].attrs["encoding"] = {"name": "quantized_uint8"}
 
             with pytest.raises(ValueError, match="Unknown encoding name"):
@@ -304,7 +305,7 @@ class TestErrorHandling:
             group = zarr.open_group(tmpdir, mode="w")
             decoder = ArrayDecoder()
 
-            group.create_dataset("test", data=np.array([1, 2, 3], dtype=np.uint8))
+            create_array(group, "test", data=np.array([1, 2, 3], dtype=np.uint8))
             group["test"].attrs["encoding"] = {"name": "uint8", "target": "other"}
 
             with pytest.raises(ValueError, match="target is only valid for array_ref"):
@@ -316,7 +317,7 @@ class TestErrorHandling:
             group = zarr.open_group(tmpdir, mode="w")
             decoder = ArrayDecoder()
 
-            group.create_dataset("test", data=np.array([], dtype=np.float32))
+            create_array(group, "test", data=np.array([], dtype=np.float32))
             group["test"].attrs["encoding"] = {
                 "name": "array_ref",
                 "hash": "xxh64:abc123",
@@ -335,7 +336,7 @@ class TestErrorHandling:
 
             # Create array_ref with invalid target
             empty = np.array([], dtype=np.float32)
-            group.create_dataset("test", data=empty)
+            create_array(group, "test", data=empty)
             group["test"].attrs["encoding"] = {
                 "name": "array_ref",
                 "target": "nonexistent/path",
@@ -356,7 +357,7 @@ class TestErrorHandling:
 
             # Create array_ref
             empty = np.array([], dtype=np.float32)
-            group.create_dataset("test", data=empty)
+            create_array(group, "test", data=empty)
             group["test"].attrs["encoding"] = {
                 "name": "array_ref",
                 "target": "other/path",
@@ -374,7 +375,7 @@ class TestErrorHandling:
         with tempfile.TemporaryDirectory() as tmpdir:
             group = zarr.open_group(tmpdir, mode="w")
             decoder = ArrayDecoder()
-            group.create_dataset("test", data=np.array([0, 128, 255], dtype=np.uint8))
+            create_array(group, "test", data=np.array([0, 128, 255], dtype=np.uint8))
             group["test"].attrs["encoding"] = {
                 "name": "bounded_scalar_uint8",
                 "min": float("nan"),
@@ -390,7 +391,7 @@ class TestErrorHandling:
         with tempfile.TemporaryDirectory() as tmpdir:
             group = zarr.open_group(tmpdir, mode="w")
             decoder = ArrayDecoder()
-            group.create_dataset("test", data=np.array([0, 128, 255], dtype=np.uint8))
+            create_array(group, "test", data=np.array([0, 128, 255], dtype=np.uint8))
             group["test"].attrs["encoding"] = {
                 "name": "bounded_scalar_uint8",
                 "min": 5.0,
@@ -406,7 +407,7 @@ class TestErrorHandling:
         with tempfile.TemporaryDirectory() as tmpdir:
             group = zarr.open_group(tmpdir, mode="w")
             decoder = ArrayDecoder()
-            group.create_dataset("test", data=np.array([0, 128, 255], dtype=np.uint8))
+            create_array(group, "test", data=np.array([0, 128, 255], dtype=np.uint8))
             group["test"].attrs["encoding"] = {
                 "name": "bounded_scalar_uint8",
                 "min": 0.0,
@@ -422,7 +423,7 @@ class TestErrorHandling:
         with tempfile.TemporaryDirectory() as tmpdir:
             group = zarr.open_group(tmpdir, mode="w")
             decoder = ArrayDecoder()
-            group.create_dataset("test", data=np.array([0, 128, 255], dtype=np.uint8))
+            create_array(group, "test", data=np.array([0, 128, 255], dtype=np.uint8))
             group["test"].attrs["encoding"] = {
                 "name": "log_scalar_uint8",
                 "max_log": -1.0,
@@ -437,7 +438,7 @@ class TestErrorHandling:
         with tempfile.TemporaryDirectory() as tmpdir:
             group = zarr.open_group(tmpdir, mode="w")
             decoder = ArrayDecoder()
-            group.create_dataset("test", data=np.array([0, 128, 255], dtype=np.uint8))
+            create_array(group, "test", data=np.array([0, 128, 255], dtype=np.uint8))
             group["test"].attrs["encoding"] = {
                 "name": "log_scalar_uint8",
                 "max_log": float("inf"),

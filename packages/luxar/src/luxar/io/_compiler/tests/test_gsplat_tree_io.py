@@ -53,7 +53,7 @@ def _leaf(n: int, seed: int = 0, base: float = 0.0, **meta) -> GSplatLeaf:
 def _round_trip(node, ordering: str = "none"):
     """Write ``node`` to a temp zarr and read it back; return the read node."""
     tmp = Path(tempfile.mkdtemp(prefix="luxar_tree_io_"))
-    store = zarr.DirectoryStore(str(tmp / "t.gsplats.zarr"))
+    store = zarr.storage.LocalStore(str(tmp / "t.gsplats.zarr"))
     root = zarr.group(store=store, overwrite=True)
     write_gsplat_node(
         root,
@@ -206,7 +206,7 @@ def test_quantized_cholesky_not_deduplicated_across_identical_leaves():
 
     part = GSplatPartition(children=[_mk(), _mk()])
     tmp = Path(tempfile.mkdtemp(prefix="luxar_dedup_"))
-    store = zarr.DirectoryStore(str(tmp / "t.gsplats.zarr"))
+    store = zarr.storage.LocalStore(str(tmp / "t.gsplats.zarr"))
     root = zarr.group(store=store, overwrite=True)
     write_gsplat_node(
         root,

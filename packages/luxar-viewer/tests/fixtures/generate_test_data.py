@@ -20,6 +20,8 @@ import zarr
 from arbol import aprint, asection
 
 from luxar import CameraConfig, Dimension, Dimensions, LuxarZarrCompiler, ViewerConfig
+from luxar._zarr_compat import create_array
+from luxar._zarr_compat import open_group as zarr_open_group
 from luxar.encoding import ArrayEncoder, EncodingMode, SemanticType
 
 # Output directory
@@ -439,7 +441,7 @@ def generate_encoding_edge_cases_test() -> None:
         if output.exists():
             shutil.rmtree(output)
 
-        root = zarr.open_group(str(output), mode="w")
+        root = zarr_open_group(output, mode="w")
         encoder = ArrayEncoder(float16_allowed=False)
 
         # Empty passthrough array. Scene validation disallows empty geometries,
@@ -633,7 +635,7 @@ def generate_encoding_contract_matrix_test() -> None:
         if output.exists():
             shutil.rmtree(output)
 
-        root = zarr.open_group(str(output), mode="w")
+        root = zarr_open_group(output, mode="w")
 
         def encode_case(
             case_id: str,
@@ -929,9 +931,7 @@ def generate_encoding_contract_matrix_test() -> None:
                 )
                 indices = np.arange(unique_count * 2, dtype=np.uint32) % unique_count
                 indices = indices.astype(dtype)
-                root.create_dataset(
-                    case_id, data=indices, chunks=(17,), compressor=None
-                )
+                create_array(root, case_id, data=indices, chunks=(17,), compressor=None)
                 root[case_id].attrs["encoding"] = {
                     "name": name,
                     "lut": lut.tolist(),
@@ -945,9 +945,7 @@ def generate_encoding_contract_matrix_test() -> None:
                 lut = np.linspace(-1.0, 1.0, unique_count, dtype=np.float32)
                 indices = np.arange(unique_count * 2, dtype=np.uint32) % unique_count
                 indices = indices.astype(dtype)
-                root.create_dataset(
-                    case_id, data=indices, chunks=(17,), compressor=None
-                )
+                create_array(root, case_id, data=indices, chunks=(17,), compressor=None)
                 root[case_id].attrs["encoding"] = {
                     "name": name,
                     "lut": lut.tolist(),

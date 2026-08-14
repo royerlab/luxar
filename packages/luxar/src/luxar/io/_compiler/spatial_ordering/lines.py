@@ -9,6 +9,8 @@ import zarr
 from arbol import aprint
 from numpy.typing import NDArray
 
+from luxar._zarr_compat import create_array
+
 from ....encoding.compression import resolve_compressor
 from ..context import OrderingCtx
 
@@ -157,7 +159,8 @@ def write_lines_ordering_to_zarr(
     vertex_chunk_bounds = ordering_data["vertex_chunk_bounds"]
     if len(vertex_chunk_bounds) > 0:
         n_dims = vertex_chunk_bounds.shape[1]
-        group.create_dataset(
+        create_array(
+            group,
             "vertex_chunk_bounds",
             data=vertex_chunk_bounds,
             shape=vertex_chunk_bounds.shape,
@@ -170,7 +173,8 @@ def write_lines_ordering_to_zarr(
     segment_chunk_bounds = ordering_data["segment_chunk_bounds"]
     if len(segment_chunk_bounds) > 0:
         n_dims = segment_chunk_bounds.shape[1]
-        group.create_dataset(
+        create_array(
+            group,
             "segment_chunk_bounds",
             data=segment_chunk_bounds,
             shape=segment_chunk_bounds.shape,
