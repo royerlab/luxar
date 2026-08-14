@@ -755,7 +755,7 @@ class TestCompression:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "test.gsplats.zarr"
             save_gsplats(path=path, **create_test_splats_3d(100))
-            centers = zarr.open(str(path), "r")["centers"]
+            centers = zarr.open(str(path), mode="r")["centers"]
             assert isinstance(centers.compressor, Blosc)
             assert centers.compressor.cname == "zstd"
 
@@ -763,13 +763,13 @@ class TestCompression:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "test.gsplats.zarr"
             save_gsplats(path=path, compressor=None, **create_test_splats_3d(100))
-            assert zarr.open(str(path), "r")["centers"].compressor is None
+            assert zarr.open(str(path), mode="r")["centers"].compressor is None
 
     def test_chunk_capping_small_array(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "test.gsplats.zarr"
             save_gsplats(path=path, **create_test_splats_3d(50))
-            root = zarr.open(str(path), "r")
+            root = zarr.open(str(path), mode="r")
             assert root["centers"].chunks[0] <= 50
             assert root["amplitudes"].chunks[0] <= 50
             # Both Cholesky halves share the same row-chunk size as centers.
@@ -786,7 +786,7 @@ class TestCompression:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "test.gsplats.zarr"
             GSplatData(**create_test_splats_3d(100)).save(path)
-            assert isinstance(zarr.open(str(path), "r")["centers"].compressor, Blosc)
+            assert isinstance(zarr.open(str(path), mode="r")["centers"].compressor, Blosc)
 
     def test_multi_lod_compression(self):
         from numcodecs import Blosc
@@ -807,7 +807,7 @@ class TestCompression:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "test.gsplats.zarr"
             GSplatData(additive_sublods=lods).save(path)
-            root = zarr.open(str(path), "r")
+            root = zarr.open(str(path), mode="r")
             # Additive ladder → additive_<i>/ subgroups under the leaf root.
             assert isinstance(root["additive_0/centers"].compressor, Blosc)
             assert isinstance(root["additive_1/centers"].compressor, Blosc)
@@ -936,14 +936,14 @@ class TestTruncationRadiusRoundtrip:
             path = Path(tmp) / "test.gsplats.zarr"
             g.save(path, ordering="none", encoding_mode=EncodingMode.PRECISION)
             # v3.0: single leaf at root → truncation_radius on the root attrs.
-            assert zarr.open(str(path), "r").attrs["truncation_radius"] == 2.0
+            assert zarr.open(str(path), mode="r").attrs["truncation_radius"] == 2.0
 
     def test_backward_compat_missing_truncation_radius(self):
         g = GSplatData(**create_test_splats_3d(50))
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "test.gsplats.zarr"
             g.save(path, ordering="none", encoding_mode=EncodingMode.PRECISION)
-            root = zarr.open(str(path), "r+")
+            root = zarr.open(str(path), mode="r+")
             attrs = dict(root.attrs)
             del attrs["truncation_radius"]
             root.attrs.put(attrs)

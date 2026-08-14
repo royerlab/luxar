@@ -373,6 +373,51 @@ def test_recipe_rejects_cross_recipe_knobs(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif(not HAS_TORCH, reason="fitting requires torch")
+def test_refine_volume_rejects_downscale(tmp_path: Path) -> None:
+    """`--refine volume` crops the volume to each tile, which only holds while the
+    tile grid and the splats share a coordinate frame.
+
+    Under ``--downscale`` they do not: the grid is computed on the DOWNSCALED
+    shape (so the parent and the workers agree on the tile count) while every
+    worker rescales its splats back to full resolution. Each tile's crop would
+    then be a factor too small and in the wrong place, so the re-fit would target
+    the wrong data — silently, since the never-worse guard compares against that
+    same wrong crop. Rejected before any fitting. (The sequential tiled path
+    refuses ``--recipe`` outright under ``--downscale``, so ``-j`` is what makes
+    this combination otherwise reachable.)
+    """
+    vol = tmp_path / "vol.npy"
+    _make_volume(vol)
+    out = tmp_path / "x.gsplats.zarr"
+    res = runner.invoke(
+        app,
+        [
+            "gsplat",
+            "fit",
+            str(vol),
+            str(out),
+            "--tiling",
+            "uniform",
+            "--tile-size",
+            "24",
+            "--downscale",
+            "2",
+            "--recipe",
+            "levels",
+            "--refine",
+            "volume",
+            "-j",
+            "2",
+            "--device",
+            "cpu",
+        ],
+    )
+    assert res.exit_code != 0
+    assert "--downscale" in res.output and "--refine volume" in res.output
+    assert not out.exists()
+
+
+@pytest.mark.skipif(not HAS_TORCH, reason="fitting requires torch")
 def test_recipe_short_flags_parse(tmp_path: Path) -> None:
     """fit --recipe gains lod's short flags (-r/-K/-L/-m/-b). Drive them into the
     cross-recipe rejection (validation runs before any fit): `-r additive -K 8`

@@ -250,7 +250,7 @@ void main() {
 	nodeVar6 = vec2( float( ( nodeVar4 - ( nodeVar5 * 65536 ) ) ), float( nodeVar5 ) );
 	nodeVarying10 = nodeVar6;
 	nodeVar8 = ( nodeVar4 * 6 );
-	nodeVar9 = int( textureSize( nodeUniform5, 0 ).x );
+	nodeVar9 = 6;
 	nodeVar10 = ( nodeVar8 % nodeVar9 );
 	nodeVar11 = ( nodeVar8 / nodeVar9 );
 	nodeVar12 = ( nodeUniform6 * vec3( vec2( ivec2( nodeVar10, nodeVar11 ) ), 1.0 ) ).xy;

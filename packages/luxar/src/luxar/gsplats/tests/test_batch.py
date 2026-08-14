@@ -9,6 +9,8 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 
+from luxar._zarr_compat import create_array
+
 
 class TestSelectPlanTimepoints:
     """The shared content-plan timepoint sampler (`--plan-timepoint`/`--plan-samples`)."""
@@ -558,7 +560,7 @@ class TestOMEZarrDiscovery:
 
         store_path = tmp_path / "test.zarr"
         root = zarr.open(str(store_path), mode="w")
-        root.create_dataset("0", data=np.zeros((64, 128, 128), dtype=np.float32))
+        create_array(root, "0", data=np.zeros((64, 128, 128), dtype=np.float32))
 
         info = discover_ome_zarr_shape(store_path)
         assert info.n_timepoints == 1
@@ -572,7 +574,7 @@ class TestOMEZarrDiscovery:
 
         store_path = tmp_path / "test.zarr"
         root = zarr.open(str(store_path), mode="w")
-        root.create_dataset("0", data=np.zeros((10, 3, 64, 128, 128), dtype=np.float32))
+        create_array(root, "0", data=np.zeros((10, 3, 64, 128, 128), dtype=np.float32))
 
         info = discover_ome_zarr_shape(store_path)
         assert info.n_timepoints == 10
@@ -586,7 +588,7 @@ class TestOMEZarrDiscovery:
 
         store_path = tmp_path / "ome.zarr"
         root = zarr.open(str(store_path), mode="w")
-        root.create_dataset("0", data=np.zeros((5, 2, 32, 64, 64), dtype=np.float32))
+        create_array(root, "0", data=np.zeros((5, 2, 32, 64, 64), dtype=np.float32))
         root.attrs["multiscales"] = [
             {
                 "axes": [
@@ -682,7 +684,7 @@ class TestBatchPlanRegression:
 
         path = tmp_path / "test.zarr"
         z = zarr.open(str(path), mode="w")
-        z.create_dataset("data", data=np.zeros((5, 10, 20), dtype=np.float32))
+        create_array(z, "data", data=np.zeros((5, 10, 20), dtype=np.float32))
         z.attrs["axes"] = ["z", "y", "x"]
 
         info = discover_ome_zarr_shape(path, axes_override=["time", "y", "x"])
@@ -700,8 +702,8 @@ class TestBatchPlanRegression:
 
         path = tmp_path / "test.zarr"
         z = zarr.open(str(path), mode="w")
-        z.create_dataset("session1", data=np.ones((3, 10, 10), dtype=np.float32))
-        z.create_dataset("session2", data=np.ones((100, 20, 20), dtype=np.float32) * 2)
+        create_array(z, "session1", data=np.ones((3, 10, 10), dtype=np.float32))
+        create_array(z, "session2", data=np.ones((100, 20, 20), dtype=np.float32) * 2)
 
         info = discover_ome_zarr_shape(path)
         assert info.shape == (100, 20, 20)
@@ -748,7 +750,7 @@ class TestBatchPlanRegression:
             3, 2, 4, 2, 3, 5
         )
         root = zarr.open(str(path), mode="w")
-        root.create_dataset("0", data=data)
+        create_array(root, "0", data=data)
 
         loaded = _load_zarr_volume(path, channel=5, timepoint=2, array_key=None)
         np.testing.assert_array_equal(loaded, data[2, 1, 1])
@@ -2642,3 +2644,164 @@ class TestStatusPackedSacctMapping:
         assert st.failed == 3
         assert st.running == 1
         assert st.unknown == 0
+
+
+class TestMergeRefineReachesEveryConsumer:
+    """`--merge-refine` must survive plan time and reach BOTH merge consumers.
+
+    There are three ways to merge a batch, and they read the recipe knobs from
+    different places: the explicit `batch-fit merge` command takes CLI options,
+    the local auto-merge (`batch-fit run`) reads ONLY the stored
+    `manifest.merge_recipe_args`, and the Slurm merge job gets those same stored
+    args re-emitted as CLI flags. A knob wired into just one of them is silently
+    dropped by the others — which is exactly what happened first time round, with
+    only the explicit command wired.
+    """
+
+    @staticmethod
+    def _args(**kw):
+        from luxar.cli.gsplat_ops.batch.planning import (
+            MergeConfig,
+            resolve_merge_recipe_args,
+        )
+
+        return resolve_merge_recipe_args(MergeConfig(**kw))
+
+    def test_recorded_at_plan_time(self) -> None:
+        args = self._args(recipe="levels", levels=1, refine="volume", refine_iters=7)
+        assert args["refine"] == "volume"
+        assert args["refine-iters"] == "7"
+
+    def test_reaches_the_local_auto_merge(self) -> None:
+        """`batch-fit run` builds its params from the stored dict alone."""
+        from luxar.cli.gsplat_ops.batch.recipe_args import build_merge_recipe_params
+
+        params = build_merge_recipe_params(
+            self._args(recipe="levels", refine="volume", refine_iters=7)
+        )
+        assert params.refine == "volume"
+        assert params.refine_iters == 7
+
+    def test_reaches_the_slurm_merge_job(self) -> None:
+        """The Slurm emitter turns each stored arg into ``--<key> <value>`` for the
+        merge command, so the stored KEY has to match that command's option name."""
+        args = self._args(recipe="levels", refine="volume", refine_iters=7)
+        emitted = " ".join(f"--{k} {v}" for k, v in args.items())
+        assert "--refine volume" in emitted
+        assert "--refine-iters 7" in emitted
+
+    def test_plan_time_validation_bites(self) -> None:
+        """A typo must cost nothing: caught before any tile is fitted, not after."""
+        import typer
+
+        with pytest.raises(typer.BadParameter, match="must be one of"):
+            self._args(recipe="levels", refine="bogus")
+        with pytest.raises(typer.BadParameter, match="only applies with"):
+            self._args(recipe="levels", refine_iters=5)
+        # A knob with no recipe used to be silently dropped.
+        with pytest.raises(typer.BadParameter, match="require a --merge-recipe"):
+            self._args(refine="volume")
+        # `stream` has no coarse levels to refine.
+        with pytest.raises(typer.BadParameter, match="not used by --merge-recipe"):
+            self._args(recipe="stream", refine="volume")
+
+    def test_absent_when_not_requested(self) -> None:
+        """Unset must stay unset, so a plan made before these knobs existed merges
+        byte-identically."""
+        args = self._args(recipe="levels", levels=1)
+        assert "refine" not in args and "refine-iters" not in args
+
+    def test_orphan_iters_still_bites_at_merge_time(self) -> None:
+        """`batch-fit merge --refine-iters N` with no --refine is an orphan too.
+
+        Plan time rejects it; the merge-time builder must agree rather than
+        recording an iteration count against a `refine` of "none" that never reads
+        it. Its `refine` may also come from the stored plan, so the resolved PAIR
+        is what gets validated.
+        """
+        import typer
+
+        from luxar.cli.gsplat_ops.batch.recipe_args import build_merge_recipe_params
+
+        with pytest.raises(typer.BadParameter, match="only applies with"):
+            build_merge_recipe_params({}, refine_iters=5)
+        # Resolved against a stored refine, the same pair is legal.
+        params = build_merge_recipe_params({"refine": "volume"}, refine_iters=5)
+        assert params.refine == "volume" and params.refine_iters == 5
+
+
+class TestMergeRefineSourceValidatedAtPlanTime:
+    """`--merge-refine volume` re-opens THIS input at merge time, which is AFTER
+    every tile has been fitted. Anything that makes the source unmappable has to
+    be caught while planning, or a mistake costs the whole fit."""
+
+    @staticmethod
+    def _error(axes, n_t=1, n_c=1):
+        from luxar.gsplats.batch.merge_orchestrator import volume_refit_source_error
+
+        return volume_refit_source_error(axes, n_t, n_c)
+
+    def test_the_mappable_shapes_pass(self) -> None:
+        # Stacked timelapse: the time axis is the one the re-fit walks.
+        assert self._error("t,z,y,x", n_t=3) is None
+        # Canonical OME-Zarr: the channel axis is pinned to the fitted channel.
+        assert self._error("t,c,z,y,x", n_t=3, n_c=1) is None
+        # Single timepoint: nothing is stacked, so the time axis is pinned too.
+        assert self._error("t,c,z,y,x", n_t=1, n_c=1) is None
+        assert self._error("z,y,x") is None
+
+    def test_the_unmappable_shapes_are_named(self) -> None:
+        assert "axis labels" in (self._error(None) or "")
+        assert "not recognised" in (self._error("q,y,x") or "")
+        assert "no spatial axis" in (self._error("t,c") or "")
+        assert "several channels" in (self._error("t,c,z,y,x", n_t=2, n_c=3) or "")
+        # A flat channel index folded over two axes has no single axis to pin.
+        assert "more than one axis" in (self._error("c,cam,z,y,x") or "")
+        # Timepoints stacked but no time axis to map them onto.
+        assert "no time axis" in (self._error("z,y,x", n_t=4) or "")
+
+    def test_the_planner_refuses_before_submitting(self, tmp_path) -> None:
+        """End-to-end: the guard is wired into plan_batch, not just available."""
+        import typer
+        import zarr
+
+        from luxar.cli.gsplat_ops.batch.planning import (
+            ContentKnobs,
+            DenoiseConfig,
+            FitConfig,
+            MergeConfig,
+            plan_batch,
+        )
+
+        source = tmp_path / "movie.zarr"
+        z = zarr.open(str(source), mode="w", shape=(3, 8, 8, 8), dtype="u2")
+        z[:] = np.zeros((3, 8, 8, 8), np.uint16)
+
+        def _plan(axes_list, refine="volume"):
+            return plan_batch(
+                input_path=source,
+                output_dir=tmp_path / "out",
+                tiling="uniform",
+                tile_size=8,
+                tile_overlap=0,
+                axes_list=axes_list,
+                array_key=None,
+                timepoints_slice=None,
+                channels_slice=None,
+                fit=FitConfig(),
+                denoise=DenoiseConfig(),
+                content=ContentKnobs(),
+                merge=MergeConfig(recipe="levels", levels=1, refine=refine),
+            )
+
+        with pytest.raises(typer.BadParameter, match="axis labels"):
+            _plan(None)
+        # The mode is NORMALISED before it is recorded, so the source check has to
+        # read it the same way — otherwise a padded value is stored as "volume"
+        # while skipping validation, and the failure resurfaces at merge time,
+        # after every tile has been fitted.
+        with pytest.raises(typer.BadParameter, match="axis labels"):
+            _plan(None, refine=" volume ")
+        # With labels the plan goes through, and records the knob for the merge.
+        result = _plan(["t", "z", "y", "x"])
+        assert result.manifest.merge_recipe_args["refine"] == "volume"

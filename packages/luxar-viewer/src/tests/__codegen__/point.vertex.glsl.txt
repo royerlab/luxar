@@ -125,7 +125,7 @@ vec4 nodeVar45;
 void main() {
 
 	// transforms
-	
+
 
 	// flow
 	// code
@@ -141,7 +141,7 @@ void main() {
 	nodeVarying5 = 1.0;
 	nodeVarying6 = 1.0;
 	nodeVar8 = ( ( ( int( aSortedIndex ) * ( 1 - int( nodeUniform7 ) ) ) + ( int( aSortedIndexB ) * int( nodeUniform7 ) ) ) * 3 );
-	nodeVar9 = int( textureSize( nodeUniform8, 0 ).x );
+	nodeVar9 = 3;
 	nodeVar10 = ( nodeVar8 % nodeVar9 );
 	nodeVar11 = ( nodeVar8 / nodeVar9 );
 	nodeVar12 = ( nodeUniform9 * vec3( vec2( ivec2( nodeVar10, nodeVar11 ) ), 1.0 ) ).xy;

@@ -10,11 +10,11 @@ to within float32 tolerance for *any* input.
 from __future__ import annotations
 
 import numpy as np
-import zarr
 from hypothesis import given
 from hypothesis import strategies as st
 from hypothesis.extra import numpy as hnp
 
+from luxar._zarr_compat import memory_group
 from luxar.encoding.decoder import ArrayDecoder
 from luxar.encoding.encoder import ArrayEncoder
 from luxar.encoding.modes import EncodingMode
@@ -23,7 +23,7 @@ from luxar.encoding.semantic_types import SemanticType
 
 def _roundtrip(data: np.ndarray, semantic_type: SemanticType) -> np.ndarray:
     enc = ArrayEncoder()
-    g = zarr.group(store=zarr.MemoryStore())
+    g = memory_group()
     enc.encode(
         data=data,
         zarr_group=g,
@@ -39,9 +39,7 @@ def _roundtrip(data: np.ndarray, semantic_type: SemanticType) -> np.ndarray:
     d=st.integers(min_value=1, max_value=5),
     data=st.data(),
 )
-def test_cholesky_diag_precision_roundtrip(
-    n: int, d: int, data: st.DataObject
-) -> None:
+def test_cholesky_diag_precision_roundtrip(n: int, d: int, data: st.DataObject) -> None:
     """Positive per-column diagonals round-trip losslessly in PRECISION mode."""
     diag = data.draw(
         hnp.arrays(

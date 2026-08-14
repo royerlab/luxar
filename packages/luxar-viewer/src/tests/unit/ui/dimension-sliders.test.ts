@@ -728,3 +728,105 @@ describe('DimensionSliders — wheel stepping + Step context-menu section', () =
     sliders.dispose();
   });
 });
+
+// #1483: the panel root is a glass surface, so it must stay
+// `overflow: visible` and delegate scrolling to an inner `__scroll` wrapper
+// (UI_DESIGN_GUIDE §5.1.2/§7.4). Two invariants keep that working, and neither
+// was pinned before: all content lives in the wrapper, and the root's `display`
+// is never forced inline (the stylesheet's `display: flex` is what lets the
+// wrapper's `flex: 1; min-height: 0` cap content at the panel's max-height —
+// with an inline `display: block` the wrapper stops clipping and, since the
+// root is `overflow: visible`, the slider rows paint outside the panel).
+describe('DimensionSliders — glass-root scroll delegation and visibility (#1483)', () => {
+  const createDims = (): SimpleDims => ({
+    ndim: 6,
+    displayed: [0, 1, 2],
+    currentStep: [0, 0, 0, 1, 2, 3],
+    metadata: [
+      { name: 'X', unit: 'μm', scale: 1.0, discrete: false, step: 0.1 },
+      { name: 'Y', unit: 'μm', scale: 1.0, discrete: false, step: 0.1 },
+      { name: 'Z', unit: 'μm', scale: 1.0, discrete: false, step: 0.1 },
+      { name: 'T', unit: 's', scale: 1.0, discrete: true, step: 1 },
+      { name: 'U', unit: '', scale: 1.0, discrete: true, step: 1 },
+      { name: 'V', unit: '', scale: 1.0, discrete: true, step: 1 },
+    ],
+  });
+
+  function buildSliders() {
+    return new DimensionSliders({
+      container: document.getElementById('test-container')!,
+      dims: createDims(),
+      dimensionRanges: [
+        [0, 100],
+        [0, 100],
+        [0, 100],
+        [0, 10],
+        [0, 10],
+        [0, 10],
+      ],
+      dimensionNames: ['X', 'Y', 'Z', 'T', 'U', 'V'],
+    });
+  }
+
+  const root = (): HTMLElement => document.getElementById('luxar-dimension-sliders')!;
+
+  it('routes every piece of panel content into the __scroll wrapper', () => {
+    const sliders = buildSliders();
+
+    const scroll = root().querySelector('.luxar-dimension-sliders__scroll');
+    expect(scroll).not.toBeNull();
+
+    const header = document.querySelector('.luxar-dimension-sliders__header')!;
+    expect(scroll!.contains(header)).toBe(true);
+
+    const rows = document.querySelectorAll('.luxar-dimension-slider');
+    expect(rows.length).toBe(3); // T, U, V — the non-displayed dims
+    rows.forEach((row) => expect(scroll!.contains(row)).toBe(true));
+
+    sliders.dispose();
+  });
+
+  it('leaves the glass root with no content children of its own', () => {
+    const sliders = buildSliders();
+
+    // Only the wrapper — plus, if the liquid-glass theme has injected it, the
+    // `.luxar-glass-refraction` layer, which the theme owns.
+    const unexpected = Array.from(root().children).filter(
+      (el) =>
+        !el.classList.contains('luxar-dimension-sliders__scroll') &&
+        !el.classList.contains('luxar-glass-refraction')
+    );
+    expect(unexpected).toEqual([]);
+
+    sliders.dispose();
+  });
+
+  it('shows by CLEARING inline display, never by writing block', () => {
+    const sliders = buildSliders();
+
+    // An inline `display: block` would override the stylesheet's flex column
+    // and un-cap the wrapper, spilling slider rows out of the panel.
+    sliders.setVisible(true);
+    expect(root().style.display).toBe('');
+    expect(sliders.getIsVisible()).toBe(true);
+
+    sliders.setVisible(false);
+    expect(root().style.display).toBe('none');
+    expect(sliders.getIsVisible()).toBe(false);
+
+    // toggle() back to visible must clear the property too, not write 'block'.
+    sliders.toggle();
+    expect(root().style.display).toBe('');
+    expect(sliders.getIsVisible()).toBe(true);
+
+    sliders.toggle();
+    expect(root().style.display).toBe('none');
+    expect(sliders.getIsVisible()).toBe(false);
+
+    sliders.hide();
+    expect(root().style.display).toBe('none');
+    expect(sliders.getIsVisible()).toBe(false);
+
+    sliders.dispose();
+  });
+});

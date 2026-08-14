@@ -625,15 +625,32 @@ class Group(Node):
         representative splats with its own count, so no single list has a
         per-element correspondence to carry. Pass ``lod_group=False`` to label
         the collapsed finest level, or build the ``kind="lod"`` group yourself
-        with :meth:`add_lod_group` and give each child its own labels. An
-        explicit ``labels=None`` means "no labels" and is accepted everywhere.
+        with :meth:`add_lod_group` and give each child its own labels.
+
+        **An explicit ``None`` in ``**attrs`` means "absent".** For ``labels``,
+        ``image_labels``, ``partition``, ``colors``, ``truncation_radius``,
+        ``colormap`` and ``coverage_fraction``, passing ``None`` is exactly
+        equivalent to omitting the key — so the idiomatic
+        ``partition=maybe_partition`` / ``colormap=maybe_colormap`` call form is
+        safe. Every OTHER attribute (``opacity``, ``blending_mode``, ``layer``,
+        ``visible``, ``gamma``, ``intensity``, ``absorption``, ...) rejects a
+        ``None`` as an invalid value, so a typo is not silently swallowed.
+
+        **The data's own channels may not be passed as attributes.** ``centers``,
+        ``amplitudes``, ``cholesky_factors`` and a non-``None`` ``colors`` each
+        raise ``ValueError``: this method supplies all four from ``result``
+        itself, so a keyword of the same name collides with the value already
+        being passed, and on a multi-child result it could not be split per child
+        anyway. Set them on the ``GSplatData`` before calling, or use
+        ``colormap=`` for appearance.
 
         ``coverage_fraction`` may only be passed in ``**attrs`` when the
         result is single-substitutive AND the parent is itself a
         ``kind="lod"`` ``Group`` (the child is a leaf of an enclosing
         LOD group). Passing it on a multi-substitutive path raises
         ``ValueError`` — use ``lod_group=dict(coverage_fractions=[...])`` to
-        override the auto-derived thresholds.
+        override the auto-derived thresholds. (``coverage_fraction=None`` is
+        "absent" per the rule above, so it is accepted on any path.)
 
         Args:
             name: Name of the gsplats (or kind=lod group) node.
@@ -653,8 +670,10 @@ class Group(Node):
             additive_lod: Additive-axis control, uniform across substitutive
                 levels. Same value vocabulary as ``lod_group``; ``dict(...)``
                 routes to :func:`make_additive_lod`.
-            **attrs: Additional node attributes (same vocabulary as
-                :meth:`add_gsplats`, including ``absorption``). On a nested
+            **attrs: Additional node attributes — the :meth:`add_gsplats`
+                vocabulary (including ``absorption``) MINUS the four channels
+                this method supplies from ``result``, which are refused; see the
+                two rules above for that and for ``None`` handling. On a nested
                 ``kind=lod`` tree, compositing attributes (e.g. ``absorption``)
                 land on the wrapper node while the rest (e.g. ``colormap``)
                 are copied onto each leaf.
@@ -718,6 +737,15 @@ class Group(Node):
         fine) is refused too, because the additive writer has no labels channel —
         ``gsplat flatten`` collapses the ladder if you need the labels.
 
+        The two ``**attrs`` rules of :meth:`add_gsplats_from_data` apply here
+        identically, and identically on BOTH of this method's branches (a
+        matrix-shaped file and a grafted nested one): an explicit ``None`` for
+        ``labels`` / ``image_labels`` / ``partition`` / ``colors`` /
+        ``truncation_radius`` / ``colormap`` / ``coverage_fraction`` means
+        "absent", while ``centers`` / ``amplitudes`` / ``cholesky_factors`` and a
+        non-``None`` ``colors`` raise ``ValueError`` (they come from the file
+        itself). Nothing is written when either rule refuses.
+
         Args:
             name: Name of the gsplats node
             path: Path to .gsplats.zarr file
@@ -726,9 +754,10 @@ class Group(Node):
             dim_order: Map data columns to scene dimensions by name
             fill: Fixed coordinate values for unmapped dimensions
             fill_sigma: Standard deviations for unmapped dims in Cholesky embedding
-            **attrs: Additional node attributes (same vocabulary as
-                :meth:`add_gsplats`, including ``absorption``). On a nested
-                tree, compositing attributes (``blending_mode``, ``absorption``,
+            **attrs: Additional node attributes — the :meth:`add_gsplats`
+                vocabulary (including ``absorption``) MINUS the four channels
+                the file supplies, which are refused; see the rules above. On a
+                nested tree, compositing attributes (``blending_mode``, ``absorption``,
                 ``opacity``, ...) land on the wrapper node ONLY — the viewer
                 resolves them down the ancestry — while the rest (e.g.
                 ``colormap``) are copied onto each leaf. Stamping

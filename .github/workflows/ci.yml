@@ -6,14 +6,14 @@ on:
   pull_request:
     branches: [main]
   schedule:
-    # Nightly full Python matrix. Per-PR CI runs 3.12 only (see the python-tests
-    # matrix below); this keeps 3.10/3.11 exercised every day, so a version-specific
-    # regression is caught within 24h rather than on every PR.
+    # Nightly full-suite run, and still the multi-version Python matrix: per-PR CI
+    # runs the FLOOR (3.12) only, so this is where the newest supported
+    # interpreter (3.14) gets exercised — within 24h rather than on every PR.
     #
-    # The Python matrix is the REASON for the cron, not its scope: a schedule
-    # event has no PR base, so the `changes` job below selects the full suite and
-    # the documentation gate too. Budget it as one whole CI run a day on the
-    # self-hosted box, not as three extra Python legs.
+    # It buys a second thing too: a schedule event has no PR base, so the
+    # `changes` job below cannot path-filter anything and selects the WHOLE suite
+    # plus the documentation gate, catching a break in a job every recent PR
+    # happened to skip. Budget it as one whole CI run a day on the self-hosted box.
     - cron: '17 9 * * *'
 
 concurrency:
@@ -24,12 +24,12 @@ concurrency:
   # written a merge landed inside the nightly's ~30min window on 17 days, and
   # inside the half hour before it on 12.
   #
-  # The expensive direction is the cron killing a merge's push run: that run is
-  # the only place the new `main` commit gets the full matrix at all, now that
-  # per-PR CI is 3.12-only (see the python-tests matrix below), and a cron has no
+  # The expensive direction is the cron killing a merge's push run: a push run
+  # has no PR base either, so like the nightly it selects the WHOLE suite, and it
+  # is the only place the new `main` commit gets that treatment. A cron has no
   # business discarding it. The reverse is milder -- a merge that cancels the
-  # nightly runs the full matrix itself -- but it still leaves "did 3.10/3.11
-  # pass today?" unanswerable at a glance.
+  # nightly runs the full suite itself -- but it still leaves "did every job pass
+  # today?" unanswerable at a glance.
   #
   # Nothing else changes -- PR runs already carry `refs/pull/N/merge` and so
   # were never in the same group as a push, and two runs of the same PR still
@@ -384,11 +384,25 @@ jobs:
       # you need when the legs genuinely differ.
       fail-fast: false
       matrix:
-        # Per-PR runs 3.12 ONLY (the required gate under branch protection); the
-        # full 3.10/3.11/3.12 matrix runs on push-to-main and the nightly schedule
-        # above. Cuts per-PR Python CI ~3x (5 self-hosted runners were the ceiling)
-        # while still catching version-specific breaks daily.
-        python-version: ${{ (github.event_name == 'pull_request') && fromJSON('["3.12"]') || fromJSON('["3.10", "3.11", "3.12"]') }}
+        # FLOOR on every PR, floor + NEWEST on push-to-main and the nightly.
+        #
+        # 3.12 is the floor (`requires-python = ">=3.12"`, what zarr 3.2+ needs)
+        # and is the required status context under branch protection, so it runs
+        # everywhere. But `>=3.12` has no ceiling: 3.13 and 3.14 are supported, the
+        # `install-hatch` bootstrap explicitly prefers them, and a developer's
+        # `hatch env` picks the newest interpreter on the box — so testing only the
+        # floor would leave the version most people actually run unexercised.
+        # Hence 3.14 on the events that already run the whole suite.
+        #
+        # If newer interpreters are ever deliberately unsupported, the honest fix
+        # is a `requires-python` upper bound, not a quiet single-leg matrix.
+        #
+        # The non-PR set is EVERY version the wheel's classifiers advertise, so
+        # "declared" and "tested" cannot drift apart: 3.13 was claimed but never
+        # exercised, which is the same species of lie as an untested 3.10 claim.
+        # Three legs off-PR is also what this job carried before the floor moved
+        # (3.10/3.11/3.12), so it costs the runner pool nothing new.
+        python-version: ${{ (github.event_name == 'pull_request') && fromJSON('["3.12"]') || fromJSON('["3.12", "3.13", "3.14"]') }}
     env:
       # Pin BLAS/OpenMP to one thread per leg. This suite runs SERIALLY, yet each
       # leg burned ~316% CPU on the self-hosted box -- numpy spawning threads to
@@ -457,10 +471,11 @@ jobs:
 
       - name: Assert hatch uses the matrix interpreter
         if: needs.changes.outputs.dom_py != 'false'
-        # The guard that #839 was missing. It must compare for EQUALITY: the
-        # pre-existing floor check (`>= 3.10`, scripts/test_hpc_setup.py) passed
-        # happily while every leg ran 3.12, which is how the matrix stayed
-        # decorative for so long.
+        # The guard that #839 was missing. It must compare for EQUALITY: a floor
+        # check (`>= 3.12`, scripts/check_hpc_setup.py) passes happily on ANY
+        # newer interpreter, which is how the matrix stayed decorative for so
+        # long. Still load-bearing with one leg: it proves the hatch env really
+        # runs the version this job claims, rather than whatever pipx picked.
         #
         # NB: no braces in the -c snippet. `hatch run` expands `{...}` as its own
         # template context, so an f-string like f"{sys.version_info.major}" dies
@@ -482,7 +497,7 @@ jobs:
         continue-on-error: true
 
       # The gates below judge the SOURCE, not the runtime (ruff target-version
-      # py310, mypy python_version 3.10), so they run once — on the 3.12 leg —
+      # py312, mypy python_version 3.12), so they run once — on the 3.12 leg —
       # while staying under the required `python-tests (3.12)` context.
       - name: Lint (ruff)
         if: matrix.python-version == '3.12' && needs.changes.outputs.dom_py != 'false'
@@ -572,7 +587,7 @@ jobs:
 
       - name: Cache cargo build
         if: (needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        uses: Swatinem/rust-cache@258712b0b7b1ddf8bddc9fc3b0faca682b2736c3 # v2
         with:
           workspaces: packages/luxar-viewer/src/wasm/rust
 
@@ -681,7 +696,7 @@ jobs:
 
       - name: Cache cargo build
         if: (needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        uses: Swatinem/rust-cache@258712b0b7b1ddf8bddc9fc3b0faca682b2736c3 # v2
         with:
           workspaces: packages/luxar-viewer/src/wasm/rust
 
@@ -772,7 +787,7 @@ jobs:
 
       - name: Cache cargo build
         if: (needs.changes.outputs.dom_py != 'false' || needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        uses: Swatinem/rust-cache@258712b0b7b1ddf8bddc9fc3b0faca682b2736c3 # v2
         with:
           workspaces: packages/luxar-viewer/src/wasm/rust
 
