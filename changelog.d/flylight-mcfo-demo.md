@@ -30,8 +30,9 @@ Workstation stitching and distortion correction scrub it even though values stay
 12-bit. Sweeps report `signal_limited` / `still_climbing` with sigma_hat ~1e-10,
 so the reported "K*" is just the top of the supplied grid.
 
-Global PSNR is the wrong number to steer by. Only ~0.2% of the raw volume's
-energy sits inside the annotated neurons, so at K=30,000 a fit reads 42 dB
+Global PSNR is the wrong number to steer by. Only ~1.5% of the raw volume's
+energy sits inside the annotated neurons — 41% once the floor is suppressed,
+measured against the same mask — so at K=30,000 a fit reads 42 dB
 globally while dropping *half* the neurite brightness, and the neurites visibly
 break into disconnected beads on a MIP. Scoring against the ground-truth
 instance masks exposes a ~17 dB gap.

@@ -40,9 +40,11 @@ noise even though values remain 12-bit. A sweep returns
 2. GLOBAL PSNR IS THE WRONG NUMBER — score the foreground
 --------------------------------------------------------------------------------
 
-Only ~0.2% of the raw volume's energy lies inside the annotated neurons (41%
-after floor suppression), so global PSNR mostly scores empty space. Measured on
-the default sample, ``fg`` restricted to the ground-truth instance mask:
+Only ~1.5% of the raw composite's energy lies inside the annotated neurons —
+41% once the floor is suppressed — so global PSNR mostly scores empty space.
+(Both figures use the same mask, the union of the ground-truth instances;
+quoting one against a single-instance mask would flatter the gap.) Measured on
+the default sample, ``fg`` restricted to that mask:
 
         K   global     fg   energy
    30,000   42.29   24.70    0.51x   <- neurites break into beads
@@ -88,7 +90,8 @@ distinguishable: the neuropil gets a low per-splat alpha, the neurons a high
 one.
 
 Under volumetric compositing alpha is *optical depth*, and it accumulates: with
-~356K neuropil splats spanning ~350 um, alpha 0.12 makes the brain effectively
+~356K neuropil splats across a specimen 172 x 466 x 399 um, alpha 0.12 makes the
+brain effectively
 opaque and buries interior neurites. That is the intended look here — a solid
 body with neurons emerging from it. Lower ``NEUROPIL_ALPHA`` toward ~0.01 for a
 translucent haze with every neurite visible; both are one constant apart and
@@ -169,7 +172,7 @@ WORKFLOW:
 
 1. **Fetch** one FISBe sample (~415 MB) from the 7.1 GB Zenodo archive by HTTP
    range request -- the archive is never downloaded whole
-2. **Fetch + decode** the reference channel from the FlyLight H5J (~58 MB;
+2. **Fetch + decode** the reference channel from the FlyLight H5J (~60 MB;
    HEVC streams inside HDF5, needs ffmpeg -- skipped gracefully if absent)
 3. **Fit** the MCFO composite (neurons) and the reference channel (neuropil)
 4. **Colour** each neuron splat from the three channels at its own centre
@@ -199,8 +202,8 @@ DEMO_META = {
     "geometry": "gsplats",
     "requirements": {
         # ~415 MB range-extracted from the FISBe archive (never fetched whole)
-        # plus a ~58 MB H5J for the reference channel.
-        "download_mb": 473,
+        # plus a ~60 MB H5J for the reference channel.
+        "download_mb": 475,
         "compute": "heavy",
         # Redistributable (CC BY 4.0) but not hosted by us yet, so a first run
         # fetches and refits — which needs a GPU.
@@ -248,7 +251,12 @@ ARCHIVE_NAME = "fisbe_v1.0_completely.zip"
 SAMPLE_LIST_URL = f"{ZENODO_BASE}/sample_list_per_split.txt?download=1"
 
 DEFAULT_SAMPLE = "VT047848-20171020_66_I3"
-SAMPLE_MEMBER_PREFIX = "completely/train"
+# The archive splits the 30 completely-labelled samples across train/val/test
+# (18/5/7). Which split a sample sits in is a machine-learning detail with no
+# bearing on rendering it, so the demo locates a sample in ANY of them rather
+# than pinning one — hardcoding ``completely/train`` silently made 12 of the 30
+# unreachable.
+SAMPLE_MEMBER_ROOT = "completely"
 
 # The FlyLight H5J carrying the reference (neuropil) channel FISBe drops.
 FLYLIGHT_BUCKET = "https://janelia-flylight-imagery.s3.amazonaws.com"
@@ -454,6 +462,12 @@ def _safe_extract_path(root: Path, rel: str, member: str) -> Path:
     """
     if PurePosixPath(rel).is_absolute() or ntpath.isabs(rel):
         raise RuntimeError(f"Refusing absolute path in archive member: {member!r}")
+    # ZIP names are specified to use forward slashes, so a backslash is both
+    # non-conformant and a traversal on Windows (``..\..\x`` is one harmless
+    # filename on POSIX and an escape there). Refuse it everywhere rather than
+    # let the guard's behaviour depend on the host OS.
+    if "\\" in rel:
+        raise RuntimeError(f"Refusing backslash in archive member: {member!r}")
     dest = (root / rel).resolve()
     if dest != root and root not in dest.parents:
         raise RuntimeError(
@@ -505,6 +519,22 @@ def _install_store(tmp: Path, target: Path) -> None:
     shutil.rmtree(stale, ignore_errors=True)
 
 
+def find_member_prefix(names, sample: str) -> str | None:
+    """Locate ``<sample>.zarr/`` under any split of the archive.
+
+    Returns the member prefix (including the trailing slash), or None if the
+    sample is not in this archive.
+    """
+    pattern = re.compile(
+        rf"^{re.escape(SAMPLE_MEMBER_ROOT)}/[^/]+/{re.escape(sample)}\.zarr/"
+    )
+    for name in names:
+        m = pattern.match(name)
+        if m:
+            return m.group(0)
+    return None
+
+
 def fetch_sample(sample: str) -> Path:
     """Range-extract one FISBe sample's zarr store into the demo cache."""
     target = CACHE_DIR / f"{sample}.zarr"
@@ -515,19 +545,21 @@ def fetch_sample(sample: str) -> Path:
         return target
 
     url = f"{ZENODO_BASE}/{ARCHIVE_NAME}?download=1"
-    member_prefix = f"{SAMPLE_MEMBER_PREFIX}/{sample}.zarr/"
 
     with asection(f"Range-extracting {sample} from {ARCHIVE_NAME}"):
         aprint("The 7.1 GB archive is NOT downloaded whole — only this sample.")
         zf, _handle = _open_remote_zip(url)
         try:
-            members = [n for n in zf.namelist() if n.startswith(member_prefix)]
-            if not members:
+            names = zf.namelist()
+            member_prefix = find_member_prefix(names, sample)
+            if member_prefix is None:
                 raise RuntimeError(
-                    f"Sample {sample!r} not found in {ARCHIVE_NAME}. "
-                    f"See {SAMPLE_LIST_URL} for valid names (this demo reads "
-                    "the 'completely' split)."
+                    f"Sample {sample!r} not found in {ARCHIVE_NAME} (searched "
+                    f"every split under {SAMPLE_MEMBER_ROOT}/). See "
+                    f"{SAMPLE_LIST_URL} for valid names — note this archive "
+                    "holds the 'completely' labelled samples only."
                 )
+            members = [n for n in names if n.startswith(member_prefix)]
             payload = sum(zf.getinfo(n).compress_size for n in members)
             aprint(f"{len(members)} members, {payload / 1e6:.0f} MB compressed")
 
@@ -549,6 +581,25 @@ def fetch_sample(sample: str) -> Path:
 # =============================================================================
 # Reference (neuropil) channel — FlyLight H5J
 # =============================================================================
+
+
+def reference_channel_index(h5j_path: Path) -> int:
+    """Index of the reference channel, read from the file's own ``channel_spec``.
+
+    Do not hard-code this. ``channel_spec`` is a per-sample string like
+    ``sssr`` (three signal channels then the reference); other releases carry
+    different counts, and assuming index 3 would silently decode a *signal*
+    channel as if it were the neuropil — a plausible-looking but wrong scene.
+    """
+    h5py = require_module("h5py")
+    with h5py.File(h5j_path, "r") as f:
+        spec = f.attrs["channel_spec"].decode()
+    if "r" not in spec:
+        raise RuntimeError(
+            f"{h5j_path.name} has channel_spec {spec!r} with no reference "
+            "channel, so there is no neuropil to render."
+        )
+    return spec.index("r")
 
 
 def decode_h5j_channel(h5j_path: Path, channel: int) -> np.ndarray:
@@ -684,8 +735,8 @@ def fetch_neuropil(sample: str):
             _atomic_write(h5j, resp.content)
             aprint(f"  {len(resp.content) / 1e6:.0f} MB")
 
-    # ``channel_spec`` is 'sssr': three signal channels then the reference.
-    vol = decode_h5j_channel(h5j, 3)
+    # The reference channel's position comes from the file, not a constant.
+    vol = decode_h5j_channel(h5j, reference_channel_index(h5j))
     _atomic_save_npy(cached, vol)
     return vol
 
@@ -707,11 +758,20 @@ def load_fisbe_sample(sample: str):
 
         channels = [np.asarray(raw[c]).astype(np.float32) for c in range(3)]
         shared_max = max(float(v.max()) for v in channels) or 1.0
-        channels = [v / shared_max for v in channels]
+        # Scale IN PLACE. Each channel is 1.5 GB here, and
+        # ``[v / shared_max for v in channels]`` would hold the old and the new
+        # list simultaneously — 4.5 GB of avoidable peak on a demo people are
+        # expected to run on a laptop.
+        for v in channels:
+            v /= shared_max
         for c, v in enumerate(channels):
             aprint(f"  ch{c}: mean={v.mean():.6f} p99.9={np.percentile(v, 99.9):.5f}")
 
-        combined = np.maximum(np.maximum(channels[0], channels[1]), channels[2])
+        # Likewise accumulate the composite into one buffer rather than letting
+        # the nested np.maximum allocate an intermediate.
+        combined = channels[0].copy()
+        np.maximum(combined, channels[1], out=combined)
+        np.maximum(combined, channels[2], out=combined)
         extent = tuple(round(n * s, 1) for n, s in zip(combined.shape, VOXEL_SIZE_ZYX))
         aprint(f"  composite mean={combined.mean():.6f}")
         aprint(f"  physical extent (Z, Y, X): {extent} um")
@@ -824,11 +884,12 @@ def splat_colors(centers, channels, voxel_size=VOXEL_SIZE_ZYX):
     rgb = np.clip(
         np.divide(triplet, peak, out=np.zeros_like(triplet), where=peak > 0), 0.0, 1.0
     )
-    dominant = triplet.argmax(axis=1)
-    aprint(
-        "  dominant channel: "
-        + ", ".join(f"ch{c}={100 * (dominant == c).mean():.1f}%" for c in range(3))
-    )
+    if len(triplet):
+        dominant = triplet.argmax(axis=1)
+        aprint(
+            "  dominant channel: "
+            + ", ".join(f"ch{c}={100 * (dominant == c).mean():.1f}%" for c in range(3))
+        )
     return rgb
 
 

@@ -85,31 +85,56 @@ def test_centers_are_interpreted_as_physical_units() -> None:
 
 
 def test_channels_are_balanced_before_compositing() -> None:
-    """A dim channel must still be able to win a splat it dominates."""
-    shape = (4, 4, 4)
-    chans = [np.zeros(shape, dtype=np.float32) for _ in range(3)]
-    # ch0 is bright everywhere; ch2 is 100x dimmer but is the only channel
-    # present at the sampled voxel.
-    chans[0][:] = 0.5
-    chans[0][1, 1, 1] = 0.0
-    chans[2][1, 1, 1] = 0.005
+    """Balancing must flip which channel wins, not merely rescale it.
 
-    centers = np.array([[1.0, 1.0, 1.0]], dtype=np.float32)
+    Constructed so the UNBALANCED winner and the BALANCED winner differ: ch0 is
+    the larger raw value at the sampled voxel but has a far higher gain, so
+    after dividing by each channel's own robust maximum ch2 must win. A test
+    whose winner is the same either way passes even if balancing is deleted.
+    """
+    shape = (8, 8, 8)
+    chans = [np.zeros(shape, dtype=np.float32) for _ in range(3)]
+    # Gains: ch0 is a bright channel (p99.99 ~ 1.0), ch2 a faint one (~0.01).
+    chans[0][:] = 1.0
+    chans[2][:] = 0.01
+    # At the sampled voxel ch0 is numerically larger...
+    chans[0][2, 2, 2] = 0.50
+    chans[2][2, 2, 2] = 0.01
+    centers = np.array([[2.0, 2.0, 2.0]], dtype=np.float32)
+
+    raw_winner = int(np.argmax([0.50, 0.0, 0.01]))
+    assert raw_winner == 0, "fixture must have ch0 winning before balancing"
+
     rgb = splat_colors(centers, chans, voxel_size=(1.0, 1.0, 1.0))
 
-    assert rgb[0].argmax() == 2, "dim-but-dominant channel should win the splat"
+    # ...but after balancing ch2 uses all of its dynamic range and ch0 half.
+    assert rgb[0].argmax() == 2, "balancing did not change the winning channel"
 
 
 def test_hue_is_normalised_per_splat() -> None:
-    """Each splat's strongest channel saturates; brightness lives in amplitude."""
-    chans = _channels()
-    centers = np.array(
-        [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
-        dtype=np.float32,
-    )
+    """Each splat's strongest channel saturates; brightness lives in amplitude.
+
+    The balanced triplet here is deliberately well below 1.0, so returning it
+    un-normalised would fail — a fixture whose triplet already peaks at 1.0
+    cannot tell the two apart.
+    """
+    shape = (6, 6, 6)
+    chans = [np.zeros(shape, dtype=np.float32) for _ in range(3)]
+    # Each channel's gain is set by a bright voxel elsewhere; the sampled voxel
+    # sits at a fraction of it, so balanced values are ~0.25/0.10/0.05.
+    # A whole plane carries the gain value so p99.99 lands exactly on it —
+    # with a single bright voxel the percentile interpolates and the expected
+    # ratios below would be approximate rather than exact.
+    for c, here in enumerate((0.25, 0.10, 0.05)):
+        chans[c][0] = 1.0
+        chans[c][3, 3, 3] = here
+    centers = np.array([[3.0, 3.0, 3.0]], dtype=np.float32)
+
     rgb = splat_colors(centers, chans, voxel_size=(1.0, 1.0, 1.0))
 
-    assert np.allclose(rgb.max(axis=1), 1.0)
+    assert np.isclose(rgb[0].max(), 1.0), "strongest channel must saturate"
+    # Ratios survive normalisation: 0.10/0.25 and 0.05/0.25.
+    assert np.allclose(rgb[0], [1.0, 0.4, 0.2], atol=1e-5)
     assert rgb.min() >= 0.0 and rgb.max() <= 1.0
 
 
@@ -262,7 +287,19 @@ def test_safe_extract_path_rejects_traversal(tmp_path, rel: str) -> None:
 @pytest.mark.parametrize("rel", ["/etc/passwd", "C:\\\\windows\\\\system32\\\\x"])
 def test_safe_extract_path_rejects_absolute(tmp_path, rel: str) -> None:
     root = (tmp_path / "store").resolve()
-    with pytest.raises(RuntimeError, match="absolute path"):
+    with pytest.raises(RuntimeError, match="absolute path|backslash"):
+        _safe_extract_path(root, rel, f"member:{rel}")
+
+
+@pytest.mark.parametrize("rel", ["..\\\\..\\\\pwned.txt", "a\\\\..\\\\..\\\\b"])
+def test_safe_extract_path_rejects_backslash_traversal(tmp_path, rel: str) -> None:
+    """Backslash members traverse on Windows but not POSIX — refuse everywhere.
+
+    Without this the guard's behaviour depends on the host OS: the same archive
+    is inert on Linux and an escape on Windows.
+    """
+    root = (tmp_path / "store").resolve()
+    with pytest.raises(RuntimeError, match="backslash"):
         _safe_extract_path(root, rel, f"member:{rel}")
 
 
@@ -284,7 +321,7 @@ def test_recompute_replaces_a_populated_target(tmp_path, monkeypatch) -> None:
     (target / "volumes" / "stale").write_bytes(b"old")
 
     archive = tmp_path / "a.zip"
-    prefix = f"{_demo.SAMPLE_MEMBER_PREFIX}/{sample}.zarr/"
+    prefix = f"{_demo.SAMPLE_MEMBER_ROOT}/train/{sample}.zarr/"
     with zipfile.ZipFile(archive, "w") as zf:
         zf.writestr(f"{prefix}volumes/raw/.zarray", b"{}")
         zf.writestr(f"{prefix}volumes/raw/0.0.0.0", b"new")
@@ -316,7 +353,7 @@ def test_extraction_loop_rejects_a_traversing_member(tmp_path, monkeypatch) -> N
     cache = tmp_path / "cache"
     cache.mkdir()
     archive = tmp_path / "evil.zip"
-    prefix = f"{_demo.SAMPLE_MEMBER_PREFIX}/{sample}.zarr/"
+    prefix = f"{_demo.SAMPLE_MEMBER_ROOT}/train/{sample}.zarr/"
     with zipfile.ZipFile(archive, "w") as zf:
         zf.writestr(f"{prefix}volumes/raw/.zarray", b"{}")
         zf.writestr(f"{prefix}../../../pwned.txt", b"escaped")
@@ -461,13 +498,13 @@ class _FakeH5File:
         return False
 
 
-def _fake_h5py(n, h, w, pr, pb):
+def _fake_h5py(n, h, w, pr, pb, spec=b"sssr"):
     """A minimal h5py stand-in, so these tests run without h5py installed."""
     import types
 
     mod = types.SimpleNamespace()
     mod.File = lambda path, mode: _FakeH5File(
-        {"channel_spec": b"sssr"},
+        {"channel_spec": spec if isinstance(spec, bytes) else spec.encode()},
         {
             "width": np.array([w]),
             "height": np.array([h]),
@@ -580,7 +617,7 @@ def test_failed_install_restores_the_previous_sample(tmp_path, monkeypatch) -> N
     (target / "volumes" / "precious").write_bytes(b"the only good copy")
 
     archive = tmp_path / "a.zip"
-    prefix = f"{_demo.SAMPLE_MEMBER_PREFIX}/{sample}.zarr/"
+    prefix = f"{_demo.SAMPLE_MEMBER_ROOT}/train/{sample}.zarr/"
     with zipfile.ZipFile(archive, "w") as zf:
         zf.writestr(f"{prefix}volumes/raw/.zarray", b"{}")
 
@@ -739,3 +776,57 @@ def test_recompute_still_needs_the_dependencies(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(_demo.importlib.util, "find_spec", lambda name: None)
 
     assert _demo.fetch_neuropil(sample) is None
+
+
+@pytest.mark.parametrize(
+    "spec,expected", [("sssr", 3), ("ssr", 2), ("sr", 1), ("rsss", 0)]
+)
+def test_reference_channel_index_is_read_from_the_file(
+    tmp_path, monkeypatch, spec: str, expected: int
+) -> None:
+    """The neuropil channel must be located by channel_spec, not hard-coded.
+
+    A sample whose spec is not 'sssr' would otherwise have a *signal* channel
+    decoded as the neuropil — a plausible-looking but wrong scene.
+    """
+    monkeypatch.setattr(
+        _demo, "require_module", lambda name: _fake_h5py(1, 1, 1, 0, 0, spec=spec)
+    )
+    assert _demo.reference_channel_index(tmp_path / "x.h5j") == expected
+
+
+def test_reference_channel_index_rejects_a_spec_without_one(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        _demo, "require_module", lambda name: _fake_h5py(1, 1, 1, 0, 0, spec="sss")
+    )
+    with pytest.raises(RuntimeError, match="no reference"):
+        _demo.reference_channel_index(tmp_path / "x.h5j")
+
+
+@pytest.mark.parametrize("split", ["train", "val", "test"])
+def test_sample_is_found_in_any_split(split: str) -> None:
+    """All 30 completely-labelled samples must be reachable, not just train's.
+
+    The archive splits them 18/5/7 across train/val/test; pinning one split
+    silently made 12 of the 30 unusable via --sample.
+    """
+    names = [
+        f"{_demo.SAMPLE_MEMBER_ROOT}/{split}/SAMPLE_A.zarr/volumes/raw/.zarray",
+        f"{_demo.SAMPLE_MEMBER_ROOT}/{split}/SAMPLE_A.zarr/volumes/raw/0.0.0.0",
+    ]
+    got = _demo.find_member_prefix(names, "SAMPLE_A")
+    assert got == f"{_demo.SAMPLE_MEMBER_ROOT}/{split}/SAMPLE_A.zarr/"
+
+
+def test_sample_lookup_does_not_match_a_longer_name() -> None:
+    """`ABC` must not match `XYZ_ABC.zarr` — the prefix is anchored."""
+    names = [f"{_demo.SAMPLE_MEMBER_ROOT}/train/XYZ_ABC.zarr/volumes/raw/.zarray"]
+    assert _demo.find_member_prefix(names, "ABC") is None
+    assert _demo.find_member_prefix(names, "XYZ_ABC") is not None
+
+
+def test_sample_lookup_returns_none_when_absent() -> None:
+    names = [f"{_demo.SAMPLE_MEMBER_ROOT}/train/OTHER.zarr/volumes/raw/.zarray"]
+    assert _demo.find_member_prefix(names, "MISSING") is None
