@@ -53,10 +53,9 @@ def read_authored_appearance(path: str | Path) -> Dict[str, Any]:
     A structure-only rebuild (``gsplat lod`` and friends) constructs fresh nodes
     that know nothing about the input's appearance, so without this the authored
     values are silently dropped and the writer's own defaults take their place —
-    ``blending_mode`` vanishes, ``opacity``/``gamma``/``intensity``/``absorption``
-    snap back to their identity, an authored ``colormap`` reverts to gray. Feed
-    the result to ``write_gsplats_tree(root_attrs=...)`` (or
-    ``GSplatData.save(root_attrs=...)``).
+    ``blending_mode`` vanishes and ``opacity``/``gamma``/``intensity``/
+    ``absorption`` snap back to their identity. Feed the result to
+    ``write_gsplats_tree(root_attrs=...)`` (or ``GSplatData.save(root_attrs=...)``).
 
     Works on a ``.gsplats.zarr`` directory and on a ``.gsplats.zarr.zip`` /
     ``.gsplats.zarr.tar.gz`` archive alike — both are first-class inputs to the
@@ -78,8 +77,8 @@ def read_authored_appearance(path: str | Path) -> Dict[str, Any]:
             root = zarr.open_group(str(p), mode="r")
             attrs = dict(root.attrs)
         else:
-            # An archive is peeked, not extracted: the root `.zattrs` is ONE
-            # member, so this costs a directory lookup plus a small JSON blob.
+            # An archive is peeked, not extracted: only the root `.zattrs`
+            # member's bytes are read, and nothing is written to disk.
             # A regular file that is not an archive yields {} from the helper.
             attrs = read_archive_root_attrs(p)
     except Exception:

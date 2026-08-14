@@ -48,6 +48,8 @@ save_gsplats(
 
 Transparently handles compressed formats (`.gsplats.zarr.zip`, `.gsplats.zarr.tar.gz`) by extracting to a temporary directory automatically (via the shared, hardened `_archive.extract_compressed_zarr` — it rejects links/devices, validates every member before extracting, and caps member count / total size to guard against path-traversal and archive-bomb attacks). Arrays are decoded from their stored encoding (quantization, broadcasting, etc.) to float32.
 
+Its read-only sibling `_archive.read_archive_root_attrs` extracts *nothing*: it scans the archive index (zip central directory / tar headers) for the store root's `.zattrs`, reads that one member's bytes, and returns the parsed attrs (`{}` for anything it cannot read). The store root is resolved exactly as `extract_compressed_zarr` resolves it — the top-level `*.gsplats.zarr` directory, else the sole top-level directory — so a child group's attrs is never mistaken for the root's, and no link is ever followed. Used by `load_gsplats.read_authored_appearance`, which carries a source root's authored compositing attrs across a structure-only rebuild (`gsplat lod`) for archive inputs as well as directories.
+
 ```python
 from luxar.gsplats.io import load_gsplats
 

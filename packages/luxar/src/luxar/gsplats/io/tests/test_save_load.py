@@ -1126,16 +1126,23 @@ class TestArchiveRootAttrsPeek:
         assert attrs["opacity"] == 0.75
         assert attrs["gamma"] == 1.3
 
+    #: The two store layouts ``extract_compressed_zarr`` accepts, as the archive
+    #: member path of each one's ROOT ``.zattrs``: the ``*.gsplats.zarr``-named
+    #: top-level directory ``_compress_zarr`` writes, and the extractor's fallback
+    #: — the sole top-level directory, whatever it is called (what you get from
+    #: ``tar czf x.gsplats.zarr.tar.gz mystore``).
+    ROOT_LAYOUTS = ["x.gsplats.zarr/.zattrs", "mystore/.zattrs"]
+
     @pytest.mark.parametrize("fmt", ["zip", "tar.gz"])
-    @pytest.mark.parametrize("root", ["x.gsplats.zarr/.zattrs", ".zattrs"])
+    @pytest.mark.parametrize("root", ROOT_LAYOUTS)
     def test_a_deeper_zattrs_never_wins(
         self, tmp_path: Path, fmt: str, root: str
     ) -> None:
         """A child group's ``.zattrs`` is not read as the root's, even listed first.
 
-        Both root layouts are exercised: the nested one production writes, and the
-        depth-0 one a zarr-native ZipStore would. The child member is deliberately
-        written BEFORE the root so a first-match-wins implementation fails here.
+        Run for both store layouts the extractor accepts. The child member is
+        deliberately written BEFORE the root so a first-match-wins implementation
+        fails here.
         """
         from luxar.gsplats.io._archive import read_archive_root_attrs
 
@@ -1152,17 +1159,20 @@ class TestArchiveRootAttrsPeek:
         assert read_archive_root_attrs(archive) == {"whose": "root"}
 
     @pytest.mark.parametrize("fmt", ["zip", "tar.gz"])
+    @pytest.mark.parametrize("root", ROOT_LAYOUTS)
     def test_the_stores_root_wins_over_a_shallower_stray(
-        self, tmp_path: Path, fmt: str
+        self, tmp_path: Path, fmt: str, root: str
     ) -> None:
         """A stray top-level ``.zattrs`` does not outrank the store's own root.
 
-        ``extract_compressed_zarr`` defines the store as the top-level
-        ``*.gsplats.zarr`` directory, so its ``.zattrs`` is the root even though a
-        loose member sits one level shallower. Reading the stray instead would
-        author an appearance from something that is not the dataset — and it is
-        also what lets the tar walk stop at the real root instead of inflating the
-        whole stream looking for something shallower.
+        ``extract_compressed_zarr`` defines the store as a top-level DIRECTORY, so
+        that directory's ``.zattrs`` is the root even though a loose member sits
+        one level shallower; reading the stray instead would author an appearance
+        from something that is not the dataset. Both layouts matter, and the
+        unnamed fallback is the sharp one: a ranking that merely preferred the
+        ``*.gsplats.zarr`` name and then went shallowest-first hands back the
+        stray's attrs there, while the real load succeeds with the store's. The
+        stray is written FIRST so first-match-wins fails too.
         """
         from luxar.gsplats.io._archive import read_archive_root_attrs
 
@@ -1171,11 +1181,58 @@ class TestArchiveRootAttrsPeek:
             archive,
             fmt,
             [
-                ("x.gsplats.zarr/.zattrs", '{"whose": "store"}'),
                 (".zattrs", '{"whose": "stray"}'),
+                (root, '{"whose": "store"}'),
             ],
         )
         assert read_archive_root_attrs(archive) == {"whose": "store"}
+
+    @pytest.mark.parametrize("fmt", ["zip", "tar.gz"])
+    def test_a_depth_zero_only_archive_is_empty(self, tmp_path: Path, fmt: str) -> None:
+        """A flat archive whose only ``.zattrs`` is at the root yields ``{}``.
+
+        Not a regression in disguise: such an archive is unreachable through the
+        loader — ``extract_compressed_zarr`` raises "No .gsplats.zarr directory
+        found" for it, and the peek only ever runs alongside a load that
+        succeeded. Treating a depth-0 member as a store root is what would let a
+        stray outrank a real one (see the test above), so it is refused outright.
+        """
+        from luxar.gsplats.io._archive import read_archive_root_attrs
+
+        archive = tmp_path / f"flat.gsplats.zarr.{fmt}"
+        self._write(archive, fmt, [(".zattrs", '{"whose": "stray"}')])
+        assert read_archive_root_attrs(archive) == {}
+
+    def test_a_symlinked_zattrs_member_is_never_read(self, tmp_path: Path) -> None:
+        """A zip ``.zattrs`` carrying a symlink mode is skipped, not followed.
+
+        The module's whole threat model is that no link is ever followed, and a
+        symlink member's payload is its TARGET PATH — so following one both leaks
+        an arbitrary file's location into the attrs and hands the reader a path
+        where a JSON object belongs. Two archives: one where the link is the only
+        candidate (nothing to read → ``{}``) and one where a regular root also
+        exists (the real root wins regardless of listing order).
+        """
+        import stat
+        import zipfile
+
+        from luxar.gsplats.io._archive import read_archive_root_attrs
+
+        def _write_with_symlink(path: Path, extra: list[tuple[str, str]]) -> None:
+            with zipfile.ZipFile(path, "w") as zip_ref:
+                info = zipfile.ZipInfo("x.gsplats.zarr/.zattrs")
+                info.external_attr = (stat.S_IFLNK | 0o777) << 16
+                zip_ref.writestr(info, "/etc/passwd")
+                for name, text in extra:
+                    zip_ref.writestr(name, text)
+
+        only_link = tmp_path / "link.gsplats.zarr.zip"
+        _write_with_symlink(only_link, [])
+        assert read_archive_root_attrs(only_link) == {}
+
+        with_real = tmp_path / "link_plus_real.gsplats.zarr.zip"
+        _write_with_symlink(with_real, [("mystore/.zattrs", '{"whose": "store"}')])
+        assert read_archive_root_attrs(with_real) == {"whose": "store"}
 
     def test_non_archive_and_missing_paths_are_empty(self, tmp_path: Path) -> None:
         """A plain file, a directory and a missing path all yield ``{}``.

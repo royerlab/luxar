@@ -5527,6 +5527,7 @@ class TestLODCarriesAuthoredAppearance:
         finally:
             shutil.rmtree(extracted.parent, ignore_errors=True)
 
+    @pytest.mark.parametrize("recipe", ["levels", "stream"])
     @pytest.mark.parametrize("suffix", ["zip", "tar.gz"])
     def test_authored_appearance_survives_an_archive_input(
         self,
@@ -5534,6 +5535,7 @@ class TestLODCarriesAuthoredAppearance:
         medium_gsplats: Path,
         tmp_path: Path,
         suffix: str,
+        recipe: str,
     ) -> None:
         """An ARCHIVE input carries its appearance across too (#1604).
 
@@ -5541,7 +5543,10 @@ class TestLODCarriesAuthoredAppearance:
         loader extracts them transparently — but the appearance read bailed on
         anything that was not a directory, so an archived dataset lost every
         authored value on a rebuild while the identical directory kept them. Both
-        suffixes run because they take separate extraction paths.
+        suffixes run because they take separate extraction paths, and both a
+        GROUP-rooted recipe (``levels``, whose caller attrs are copied onto the
+        root verbatim) and a LEAF-rooted one (``stream``, whose attrs go through
+        ``apply_gsplat_group_attrs``) because those are two different write paths.
         """
         archive = tmp_path / f"authored.gsplats.zarr.{suffix}"
         self._authored_archive(medium_gsplats, archive, self.AUTHORED)
@@ -5553,16 +5558,17 @@ class TestLODCarriesAuthoredAppearance:
                 f"want {want!r} — the test would pass vacuously"
             )
 
-        out = tmp_path / f"carried_{suffix.replace('.', '_')}.gsplats.zarr"
+        tag = f"{suffix.replace('.', '_')}_{recipe}"
+        out = tmp_path / f"carried_{tag}.gsplats.zarr"
         result = runner.invoke(
             app,
-            ["gsplat", "lod", str(archive), str(out), "--recipe", "levels"],
+            ["gsplat", "lod", str(archive), str(out), "--recipe", recipe],
         )
         assert result.exit_code == 0, f"failed:\n{result.stdout}"
         got = json.loads((out / ".zattrs").read_text())
         for key, want in self.AUTHORED.items():
-            assert key in got, f"{suffix}: dropped {key!r} (had {want!r})"
-            assert got[key] == want, f"{suffix}: {key} = {got[key]!r}, want {want!r}"
+            assert key in got, f"{tag}: dropped {key!r} (had {want!r})"
+            assert got[key] == want, f"{tag}: {key} = {got[key]!r}, want {want!r}"
 
     def test_carry_invents_nothing(
         self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
