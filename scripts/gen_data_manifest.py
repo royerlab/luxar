@@ -255,32 +255,19 @@ DATASETS: dict[str, dict] = {
             "group, CZ Biohub SF. Derived product: per-crop 4D Gaussian-splat "
             "fits with substitutive LOD."
         ),
-        # Computed on obsidian, awaiting upload. Redistributable as a DERIVED
-        # product because the source is CC0 — and since the raw competition data
-        # is behind an authenticated endpoint, hosting the fits is what makes the
-        # demo runnable with no Kaggle credentials and no GPU at all.
+        # Computed on obsidian, awaiting upload to the cc-by record. Redistributable
+        # as a DERIVED product because the source is CC0 — and since the raw
+        # competition data is behind an authenticated endpoint, hosting the fits is
+        # what makes the demo runnable with no Kaggle credentials and no GPU at all.
         #
-        # Sizes are MEASURED from a built crop (77.3 MB full / 19.2 MB light,
-        # x9 crops), not estimated: the derived product is far more compact than
-        # the ~4 GB of raw crops or the ~450 MB of per-timepoint fit cache it
-        # comes from, because a fitted splat is ~12 bytes once encoded and zipped.
+        # ONE file set, at the full 100 timepoints: ~700 MB (measured — 77.3 MB per
+        # crop x 9). No lighter variant, deliberately. The demo exists to show the
+        # whole timelapse, a decimated one would undercut that, and 700 MB is modest
+        # for this catalogue (the celegans demo pulls 26 GB). The derived product is
+        # far smaller than either the ~4 GB of raw crops or the ~450 MB of
+        # per-timepoint fit cache it is built from, because a fitted splat costs
+        # about 12 bytes once encoded and zipped.
         pending_upload=True,
-        variants={
-            "light": dict(
-                default=True,
-                approx_bytes=175_000_000,
-                note=(
-                    "Every 4th timepoint (25 of 100) for all nine crops — keeps "
-                    "the 3x3 matrix and the animation at a quarter of the "
-                    "download."
-                ),
-            ),
-            "full": dict(
-                default=False,
-                approx_bytes=700_000_000,
-                note="All nine crops at all 100 timepoints — opt-in.",
-            ),
-        },
     ),
     "h2afva": dict(
         bucket="zenodo",

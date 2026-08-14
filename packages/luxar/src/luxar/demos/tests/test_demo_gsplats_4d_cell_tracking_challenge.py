@@ -320,7 +320,7 @@ class TestPrecomputedRoundTrip:
             "extent_um": 104.0,
         }
 
-    def _manifest(self, files: list, variant: str = "light") -> dict:
+    def _manifest(self, files: list) -> dict:
         return {
             "records": {"cc-by": {}},
             "datasets": {
@@ -328,15 +328,9 @@ class TestPrecomputedRoundTrip:
                     "bucket": "zenodo",
                     "record": "cc-by",
                     "dir": "",
-                    "variants": {
-                        variant: {
-                            "default": True,
-                            "files": [
-                                {"name": p.name, "bytes": p.stat().st_size}
-                                for p in files
-                            ],
-                        }
-                    },
+                    "files": [
+                        {"name": p.name, "bytes": p.stat().st_size} for p in files
+                    ],
                 }
             },
         }
@@ -348,7 +342,7 @@ class TestPrecomputedRoundTrip:
         nothing is downloaded or verified — the test exercises the FORMAT.
         """
         cache_root = tmp_path / "cache"
-        staged = cache_root / _demo.PRECOMPUTED_DATASET / "light"
+        staged = cache_root / _demo.PRECOMPUTED_DATASET
         written = _demo.save_precomputed_crop(crop, staged, n_timepoints)
         return cache_root, written
 
@@ -403,7 +397,7 @@ class TestPrecomputedRoundTrip:
                     "record": "cc-by",
                     "dir": "",
                     "pending_upload": True,
-                    "variants": {"light": {"default": True, "files": []}},
+                    "files": [],
                 }
             },
         }
@@ -442,11 +436,18 @@ class TestManifestRegistration:
         """Otherwise the fetched bytes land in a directory no demo claims."""
         assert _demo.PRECOMPUTED_DATASET in _demo.DEMO_META["caches"]
 
-    def test_variants_cover_a_light_default_and_a_full_opt_in(self) -> None:
+    def test_one_file_set_at_full_timepoints_no_variants(self) -> None:
+        """One hosted set, deliberately: a decimated variant would undercut the
+        demo's whole subject (the 100-timepoint timelapse), and ~700 MB is modest
+        for this catalogue."""
         from luxar.demos import dataset_spec
 
-        variants = dataset_spec(_demo.PRECOMPUTED_DATASET)["variants"]
-        assert set(variants) == {"light", "full"}
-        assert variants["light"]["default"] is True
-        assert variants["full"]["default"] is False
-        assert variants["full"]["approx_bytes"] > variants["light"]["approx_bytes"]
+        spec = dataset_spec(_demo.PRECOMPUTED_DATASET)
+        assert "variants" not in spec, "hosting one full set — no size variants"
+        assert isinstance(spec["files"], list)
+
+    def test_hosted_pair_names_are_stable_per_crop(self) -> None:
+        """The manifest addresses these names, so they are part of the contract."""
+        volume, tracks = _demo.precomputed_file_names("crop_x")
+        assert volume == "crop_x.gsplats.zarr.zip"
+        assert tracks == "crop_x_tracks.npz"

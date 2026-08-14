@@ -11,15 +11,15 @@ LOD → tracks pipeline, and writes one pair of files per crop, plus the
 ``files`` block to paste into ``scripts/gen_data_manifest.py`` (name + sha256 +
 bytes, which is what makes a fetched copy verifiable).
 
-    # every crop the fit cache holds, at the manifest's `light` cadence
-    python scripts/build_cell_tracking_bundle.py --variant light
+    # every crop the fit cache holds, at all 100 timepoints (what is hosted)
+    python scripts/build_cell_tracking_bundle.py
 
-    # the full 100-timepoint variant
-    python scripts/build_cell_tracking_bundle.py --variant full
+    # a decimated set, for a local experiment
+    python scripts/build_cell_tracking_bundle.py --stride 4
 
-Output lands in ``--out`` (default ``delme/cell_tracking_bundle/<variant>/``),
-which is deliberately NOT under ``demos/data/``: at ~2 GB these files are for
-Zenodo, and the in-repo tree is what R17 exists to empty.
+Output lands in ``--out`` (default ``delme/cell_tracking_bundle/``), deliberately
+NOT under ``demos/data/``: these files are for Zenodo, and the in-repo tree is
+what R17 exists to empty.
 """
 
 from __future__ import annotations
@@ -36,10 +36,6 @@ DEMO_PATH = (
     REPO_ROOT
     / "packages/luxar/src/luxar/demos/demo_gsplats_4d_cell_tracking_challenge.py"
 )
-
-# Timepoint stride per manifest variant. `light` keeps the 3x3 matrix and the
-# animation while quartering the download; `full` is every timepoint.
-VARIANT_STRIDE = {"light": 4, "full": 1}
 
 
 def _load_demo():
@@ -63,7 +59,12 @@ def _sha256(path: Path) -> str:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--variant", choices=sorted(VARIANT_STRIDE), default="light")
+    ap.add_argument(
+        "--stride",
+        type=int,
+        default=1,
+        help="Keep every Nth timepoint (1 = all 100, which is what is hosted).",
+    )
     ap.add_argument("--out", type=Path, default=None)
     ap.add_argument(
         "--crops",
@@ -73,8 +74,8 @@ def main() -> int:
     args = ap.parse_args()
 
     demo = _load_demo()
-    stride = VARIANT_STRIDE[args.variant]
-    out_dir = args.out or (REPO_ROOT / "delme" / "cell_tracking_bundle" / args.variant)
+    stride = max(1, int(args.stride))
+    out_dir = args.out or (REPO_ROOT / "delme" / "cell_tracking_bundle")
 
     if args.crops:
         crops = [c.strip() for c in args.crops.split(",") if c.strip()]
@@ -92,7 +93,7 @@ def main() -> int:
 
     timepoints = list(range(0, demo.N_TIMEPOINTS, stride))
     print(
-        f"variant={args.variant} stride={stride} "
+        f"stride={stride} "
         f"({len(timepoints)} of {demo.N_TIMEPOINTS} timepoints) "
         f"crops={len(crops)} -> {out_dir}"
     )
@@ -145,9 +146,12 @@ def main() -> int:
     listing.write_text(json.dumps(files, indent=2) + "\n")
     print(f"manifest `files` block written to {listing}")
     print(
-        "\nNext: upload these to the Zenodo record, then paste the block into the "
-        f"`{args.variant}` variant of `gsplats_cell_tracking` in "
-        "scripts/gen_data_manifest.py and re-run it."
+        "\nNext: upload these to the cc-by Zenodo record, paste the block into "
+        "`gsplats_cell_tracking` in scripts/gen_data_manifest.py, drop its "
+        "`pending_upload` flag, and re-run the generator.\n"
+        "NOTE: the demo can only FETCH them once that record is PUBLISHED — an "
+        "unpublished draft's files are not publicly downloadable, so the record's "
+        "base_url stays null until then."
     )
     return 0
 

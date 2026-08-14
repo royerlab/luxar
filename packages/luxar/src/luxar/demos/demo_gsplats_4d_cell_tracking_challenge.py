@@ -141,11 +141,6 @@ CACHE_DIR = DEMO_CACHE_ROOT / PRECOMPUTED_DATASET
 DATA_DIR = CACHE_DIR / "kaggle"  # raw competition downloads
 FITS_DIR = CACHE_DIR / "fits"  # per-timepoint gsplat fits
 
-# Which size variant of the hosted derived product to fetch. None takes the
-# manifest's own default (the lighter one), which is the documented behaviour and
-# keeps the choice in the manifest rather than duplicated here.
-PRECOMPUTED_VARIANT: Optional[str] = None
-
 # The nine most densely annotated training crops, by GEFF node count. Eight come
 # from embryo `6bba` and one from `44b6` — the two source acquisitions — so the
 # matrix shows both. Counts (annotated cells) are noted for orientation; they are
@@ -361,7 +356,6 @@ def load_precomputed_crops(
     try:
         paths = ensure_dataset(
             PRECOMPUTED_DATASET,
-            variant=PRECOMPUTED_VARIANT,
             recompute=FLAGS["recompute"],
             manifest=manifest,
             cache_root=cache_root,
