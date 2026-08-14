@@ -32,9 +32,12 @@ Neutral costs over range is CHROMA, not hue: it holds the HSV hue angle exactly
 (in the shader's linear working space — the sRGB encode that follows can still
 move a measured hue reading by a degree or two) and takes ``(100, 0, 0)`` to
 saturation 0.06 — essentially white. A hard clamp
-fails the other way round: ``(100, 0, 0)`` clamps to ``(1, 0, 0)`` at full
-saturation, but ``(2, 1, 0)`` clamps to ``(1, 1, 0)`` and moves from hue 30° to
-hue 60°, and every structure above 1.0 goes flat. ACES shifts hue by design. So
+is not the clean opposite it looks like: it holds full saturation only where
+the darkest channel is already 0 (``(100, 0, 0)`` clamps to ``(1, 0, 0)``,
+while ``(2, 0.5, 0.5)`` clamps to ``(1, 0.5, 0.5)`` and drops from saturation
+0.75 to 0.5), and ``(2, 1, 0)`` clamps to ``(1, 1, 0)`` and moves from hue 30°
+to hue 60°, with every structure above 1.0 going flat. ACES shifts hue by
+design. So
 no operator is faithful over range, and the choice is which distortion the scene
 can afford: where colour is a hue encoding, Neutral is the hue-exact option and
 the chroma of the brightest peaks is what it costs.
@@ -61,9 +64,12 @@ scope: the viewer's own default is ACES, so silence already complies.
 "Statically known" is a real boundary, not a hedge. The scan resolves exactly
 three shapes — an inline literal call keyword, a signature default, and a plain
 ``NAME = "..."`` string constant — and reads nothing else. Constants are
-resolved in the scope they are USED in: a function-local binding shadows a
-module-level one of the same name, as do the parameters of a ``def`` or a
-``lambda``, so a name never reports a value from a scope it cannot see. Within
+resolved in the scope they are USED in: a function-local or class-body binding
+shadows a module-level one of the same name, as do the parameters of a ``def``
+or a ``lambda``, so a name never reports a value from a scope it cannot see.
+(A class body is read the permissive way round — its attributes stay visible to
+its own methods, which the interpreter would not do. That over-reports rather
+than misses, which is the direction this guard errs in everywhere.) Within
 one scope the scan does not track statement ORDER; a name rebound to a second
 string reports both values, so a later compliant binding cannot mask an earlier
 stray one. A conditional expression
@@ -163,9 +169,9 @@ def _string_constants(body: list[ast.stmt]) -> dict[str, tuple[str, ...]]:
     ``TONE: Final = "Neutral"`` at module level, then
     ``ViewerConfig(tone_mapping=TONE)``, is a spelling this package's
     ``Final``-constant convention makes likely; without this it would read as
-    a non-literal and slip past the policy entirely. A function body is read
-    the same way, so a local ``TONE = "Neutral"`` is caught in its own right
-    (and shadows a module constant of the same name — see
+    a non-literal and slip past the policy entirely. A function or class body is
+    read the same way, so a local ``TONE = "Neutral"`` is caught in its own
+    right (and shadows a module constant of the same name — see
     :func:`_function_scope`).
 
     A name bound more than once keeps EVERY distinct value it is bound to. The
@@ -264,7 +270,8 @@ def _collect(
     """Walk ``node``, appending every statically known ``tone_mapping`` value.
 
     ``consts`` is the name → string bindings visible AT ``node``: module-level
-    constants, overridden by those of each enclosing function body. Descending
+    constants, overridden by those of each enclosing function or class body.
+    Descending
     with a per-scope map (rather than walking the whole tree against one
     module-level map) is what makes a name resolve to the value the interpreter
     would see, instead of to a same-named module constant it shadows.
@@ -276,6 +283,18 @@ def _collect(
         for outer in [node.args, *node.decorator_list]:
             _collect(outer, consts, found)
         scope = _function_scope(node, consts)
+        for stmt in node.body:
+            _collect(stmt, scope, found)
+        return
+    if isinstance(node, ast.ClassDef):
+        # Bases, keywords and decorators are evaluated in the ENCLOSING scope;
+        # the body binds its own names on top of it. Methods do not really see
+        # those class attributes, but descending with them visible over-reports
+        # rather than misses, which is the safe direction for this guard.
+        for outer in [*node.bases, *node.keywords, *node.decorator_list]:
+            _collect(outer, consts, found)
+        scope = dict(consts)
+        scope.update(_string_constants(node.body))
         for stmt in node.body:
             _collect(stmt, scope, found)
         return
@@ -411,6 +430,18 @@ def test_the_guard_detects_a_stray_neutral(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     assert _tone_mappings(shadowed) == ["Neutral"]
+
+    # A class body is a scope of its own: a constant bound there is resolved
+    # for the pins inside it, rather than reading as a non-literal.
+    class_scoped = tmp_path / "demo_class_constant.py"
+    class_scoped.write_text(
+        'TONE = "ACES"\n'
+        "class Scene:\n"
+        '    TONE = "Neutral"\n'
+        "    config = ViewerConfig(tone_mapping=TONE)\n",
+        encoding="utf-8",
+    )
+    assert _tone_mappings(class_scoped) == ["Neutral"]
 
     # A parameter shadows an outer constant too, so a forwarded value stays
     # policy-free even when the module binds that very name — for a lambda's

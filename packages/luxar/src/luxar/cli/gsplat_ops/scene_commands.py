@@ -89,8 +89,9 @@ def convert_to_scene(
     passthrough — even below its knee it subtracts an offset taken from the
     channel minimum, so anything but a fully saturated colour moves. Over range
     nothing is faithful: ``Neutral`` keeps the HSV hue angle exactly but sheds
-    chroma (essentially white by peak 100), while a ``None`` clamp keeps chroma
-    yet shifts hue when several channels clip unequally. So either bring the
+    chroma (essentially white by peak 100), while a ``None`` clamp flattens
+    everything above 1.0 and shifts hue when channels clip unequally, losing
+    saturation too wherever the darkest channel is not already 0. So bring the
     scene back into [0, 1] with ``--intensity`` and use ``None``, or accept
     ACES's filmic rolloff (#1459).
 

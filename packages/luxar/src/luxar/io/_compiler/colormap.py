@@ -54,7 +54,7 @@ def write_colormap_lut_if_needed(
     # passthrough ("Neutral" is not one: even below its knee it subtracts an
     # offset taken from the channel minimum, so anything but a fully saturated
     # colour moves, and over range it keeps the hue angle but sheds chroma,
-    # while a "None" clamp keeps chroma and can shift hue).
+    # while a "None" clamp flattens everything above 1.0 and can shift hue).
     #
     # Fires ONLY when the author set no tone_mapping. An explicit value —
     # including "ACES" — is a deliberate decision and must not be second-

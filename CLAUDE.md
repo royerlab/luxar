@@ -406,8 +406,10 @@ luxar gsplat convert splats.gsplats.zarr scene.luxar.zarr --colormap plasma --to
 luxar gsplat convert splats.gsplats.zarr scene.luxar.zarr --colormap plasma --tone-mapping None
 # Over range NO operator is faithful, and they fail differently: Neutral keeps
 # the HSV hue angle exactly but sheds chroma (at peak 100 a saturated colour
-# comes out at saturation 0.06, essentially white), while a `None` clamp keeps
-# full chroma yet SHIFTS hue when several channels clip unequally ((2, 1, 0)
+# comes out at saturation 0.06, essentially white), while a `None` clamp
+# distorts BOTH — it holds full saturation only where the darkest channel is
+# already 0 ((100, 0, 0) -> (1, 0, 0); (2, 0.5, 0.5) -> (1, 0.5, 0.5) drops
+# saturation 0.75 -> 0.5), SHIFTS hue when channels clip unequally ((2, 1, 0)
 # goes hue 30deg -> 60deg) and flattens everything above 1.0. Bring the scene
 # back into [0, 1] with --intensity/exposure and use `None`, or accept ACES's
 # filmic rolloff. Decide with an actual render, not from first principles.

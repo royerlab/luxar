@@ -322,8 +322,8 @@ class ViewerConfig:
     # inside [0, 1]. "Neutral" is not a passthrough: even below its knee it
     # subtracts an offset taken from the channel minimum, so anything but a
     # fully saturated colour moves, and over range it keeps the hue angle but
-    # sheds chroma (a `None` clamp does the reverse) — a gentle rolloff rather
-    # than a fidelity choice.
+    # sheds chroma (a `None` clamp distorts both and flattens everything above
+    # 1.0) — a gentle rolloff rather than a fidelity choice.
     # Setting this explicitly — to "ACES" as much
     # as to anything else — silences the compiler's LUT tone-mapping notice,
     # which only fires when no choice was made at all.

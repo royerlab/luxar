@@ -103,7 +103,7 @@ Appearance is baked in here:
   long as the scene stays inside [0, 1]. `Neutral` is not a passthrough: even
   below its knee it subtracts a channel-minimum offset, so anything but a fully
   saturated colour moves, and over range it keeps the hue angle but sheds chroma
-  (a `None` clamp keeps chroma and can shift hue).
+  (a `None` clamp flattens everything above 1.0 and can shift hue).
 - `--gamma` (1.0) — display gamma.
 - `--intensity` (1.0) — display intensity multiplier.
 - `--layer`/`--no-layer` (default `layer`) — list the gsplats node in the viewer Layers panel.

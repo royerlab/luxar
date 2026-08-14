@@ -110,7 +110,7 @@ an exact scientific color encoding — ACES shifts hues — reach for `None`, an
 exact passthrough, provided the scene stays inside [0, 1]; `Neutral` is not one
 (even below its knee it subtracts a channel-minimum offset, so anything but a
 fully saturated colour moves, and over range it keeps hue but sheds chroma,
-while a `None` clamp keeps chroma and can shift hue instead).
+while a `None` clamp flattens everything above 1.0 and can shift hue instead).
 
 ## Refactor invariants
 

@@ -325,9 +325,12 @@ console.log('Float support:', !!gl.getExtension('EXT_color_buffer_float'));
   degree or two) and destroys chroma instead —
   `(8, 0.5, 8)` → `(0.992, 0.535, 0.992)` (hue 300°, saturation 0.46) and
   `(100, 0, 0)` → `(0.999, 0.936, 0.936)` (hue 0°, saturation 0.06, essentially
-  white). `None` hard-clips per channel, which keeps full saturation when only
-  one channel is over range but *shifts* hue when several clip unequally
-  (`(2, 1, 0)` goes from hue 30° to hue 60°), and flattens everything above 1.0.
+  white). `None` hard-clips per channel, which distorts *both*: it holds full
+  saturation only where the darkest channel is already 0
+  (`(100, 0, 0)` → `(1, 0, 0)`) and sheds saturation as soon as it is not
+  (`(2, 0.5, 0.5)` → `(1, 0.5, 0.5)`, saturation 0.75 → 0.5), it *shifts* hue
+  when channels clip unequally (`(2, 1, 0)` goes from hue 30° to hue 60°), and
+  it flattens everything above 1.0.
   Bring the scene back into [0, 1] with exposure or intensity and use `None`, or
   accept ACES's filmic rolloff; choose with an actual render
 - Remember that a scene pinned to `None` has no headroom left, so switching
