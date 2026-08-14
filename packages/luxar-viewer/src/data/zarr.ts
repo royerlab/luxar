@@ -68,12 +68,27 @@ export const codecRegistry: Map<string, () => Promise<unknown>> = zarrita.regist
 // delta+zigzag on quantized codes — see `./codecs/luxar-delta.ts`). Module
 // scope, not bootstrap: any context that opens zarr arrays imports this
 // facade, so main thread AND workers get the codec before any array open.
-// zarrita maps a v2 `.zarray` filter `{id: "luxar_delta_v1"}` to the codec
-// name `numcodecs.luxar_delta_v1`. The typeof guard only matters under unit
-// tests that vi.mock('zarrita') with a registry stub lacking `.set` — in
-// every real context the registry is zarrita's live Map.
+//
+// BOTH names are required, because zarrita's registry has two namespaces and a
+// store's format decides which one is consulted:
+//   • format 2 — a `.zarray` filter `{id: "luxar_delta_v1"}` is looked up as
+//     `numcodecs.luxar_delta_v1` (zarrita prefixes v2 filter ids, the same way
+//     it registers `numcodecs.blosc`, `numcodecs.zstd`, …);
+//   • format 3 — a codec-chain entry `{name: "luxar_delta_v1"}` is looked up
+//     VERBATIM, alongside zarrita's own bare `blosc` / `zstd` / `bytes`.
+// Registering only the prefixed name — which is all that was needed while Luxar
+// wrote format 2 — makes every delta-filtered format-3 array throw
+// `UnknownCodecError` at first chunk decode. Luxar now writes format 3 and
+// existing stores stay format 2, so both are live simultaneously and neither
+// can be dropped.
+//
+// The typeof guard only matters under unit tests that vi.mock('zarrita') with a
+// registry stub lacking `.set` — in every real context the registry is
+// zarrita's live Map.
 if (typeof codecRegistry?.set === 'function') {
-  codecRegistry.set('numcodecs.luxar_delta_v1', () => Promise.resolve(LuxarDeltaCodec));
+  const luxarDelta = () => Promise.resolve(LuxarDeltaCodec);
+  codecRegistry.set('numcodecs.luxar_delta_v1', luxarDelta); // format 2
+  codecRegistry.set('luxar_delta_v1', luxarDelta); // format 3
 }
 
 /** Create the default HTTP-backed store for browser/network datasets.
