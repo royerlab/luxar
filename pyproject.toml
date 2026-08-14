@@ -42,10 +42,10 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Typing :: Typed"
 ]
-# 3.12 floor: zarr 3 requires >=3.11 in every release and >=3.12 from 3.2 on, and
-# the project is moving to zarr 3 (the `zarr>=2.16,<3.0` pin below transitively
-# caps anndata and napari, and blocks reading any zarr-v3 store outright). Raising
-# the floor here first keeps that migration a separate, reviewable change.
+# 3.12 floor: this is what `zarr>=3.2` below requires — zarr 3 needs Python
+# >=3.11 in every release and >=3.12 from 3.2 on. The two move together, so
+# lowering this floor means lowering the zarr pin with it. No ceiling: 3.13 and
+# 3.14 are supported too (see the classifiers above and the CI matrix).
 requires-python = ">=3.12"
 dependencies = [
     "numpy>=2.0",

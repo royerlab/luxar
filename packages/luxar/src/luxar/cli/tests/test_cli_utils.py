@@ -519,6 +519,40 @@ class TestGetZarrInfo:
             assert result["n_groups"] >= 2  # root + child
             assert result["n_points_total"] == 25
 
+    def test_a_partially_written_store_is_not_reported_as_complete(self) -> None:
+        """An array whose directory never landed must count as absent.
+
+        ``luxar info`` reports what is ON DISK, so it has to read past
+        ``.zmetadata``. zarr 3 trusts consolidated metadata by default (zarr 2
+        only did so through ``open_consolidated``), and under that default an
+        interrupted write is indistinguishable from a finished one: membership
+        and shape both come from the stale index, so this store would report its
+        full 1000 points with no error at all.
+        """
+        import shutil
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store_path = Path(tmpdir) / "partial.luxar.zarr"
+
+            root = zarr.open_group(store_path, mode="w")
+            child = root.create_group("pts")
+            child.attrs["type"] = "points"
+            create_array(
+                child,
+                "positions",
+                data=np.zeros((1000, 3), dtype=np.float32),
+                compressor=None,
+            )
+            zarr.consolidate_metadata(root.store)
+
+            shutil.rmtree(store_path / "pts" / "positions")
+            assert (store_path / ".zmetadata").is_file(), "stale index must remain"
+
+            result = get_zarr_info(store_path, detailed=True)
+            assert result["n_points_total"] == 0
+            assert result["points_objects"] == []
+            assert result["n_arrays"] == 0
+
 
 class TestValidateZarrStore:
     """Tests for validate_zarr_store function."""
