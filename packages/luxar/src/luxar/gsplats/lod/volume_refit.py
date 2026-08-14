@@ -225,10 +225,15 @@ def volume_refine_splats(
     refit = fit_gaussian_splats(
         volume,
         seeds=seed,
-        # The seed is a previous fit's output, so its amplitudes are already
-        # background-relative. Without this the "auto" floor the re-fit inherits
-        # would be subtracted a SECOND time and every seed dimmer than the floor
-        # would start at exactly 0 (#1172).
+        # The seed is TREATED AS a fit's output, i.e. its amplitudes are already
+        # background-relative — the recipe's contract, since the seed is a merged
+        # level of the input fit. Without this the "auto" floor the re-fit
+        # inherits would be subtracted a SECOND time and every seed dimmer than
+        # the floor would start at exactly 0 (#1172). An imported or
+        # intensity-rescaled input carries neither convention exactly, so its
+        # warm start is approximate either way — but never worse than the old
+        # double-subtraction, and the never-worse MSE guard below bounds the
+        # outcome regardless.
         seed_amps_background_relative=True,
         n_iters=config.iters,
         lr=config.lr,

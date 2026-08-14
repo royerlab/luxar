@@ -119,6 +119,50 @@ class _InitContext:
     init_amps_background_relative: bool = False
 
 
+def _rescale_init_amps(
+    init_ctx: _InitContext,
+    image_min: float,
+    intensity_range: float,
+    verbose: bool,
+) -> None:
+    """Rescale pre-initialized amplitudes to the normalized image scale, in place.
+
+    Optimization works on the normalized [0, 1] image; without this rescaling
+    ``amp_max`` constraints would be on the wrong scale. WHICH rescaling applies
+    depends on the amplitude convention (see
+    ``_InitContext.init_amps_background_relative``): a warm start from a previous
+    fit already has the pedestal removed, so subtracting ``image_min`` again
+    would remove the floor twice and zero every sub-floor seed (#1172); a
+    raw-image-sampled array still carries it.
+
+    Residual approximation (out of scope): a re-fit resolves its OWN
+    ``intensity_range``, which need not be byte-identical to the one the seed was
+    produced under, so the warm start is exact only when both fits resolve the
+    same normalization.
+
+    A no-op when there are no pre-initialized amplitudes.
+    """
+    if init_ctx.init_amps is None:
+        return
+
+    if init_ctx.init_amps_background_relative:
+        init_ctx.init_amps = np.clip(init_ctx.init_amps / intensity_range, 0.0, 1.0)
+    else:
+        init_ctx.init_amps = np.clip(
+            (init_ctx.init_amps - image_min) / intensity_range, 0.0, 1.0
+        )
+
+    if verbose:
+        # min()/max() have no identity on an empty array, so report the count.
+        if init_ctx.init_amps.size == 0:
+            aprint("Rescaled init_amps to normalized range: 0 seeds")
+        else:
+            aprint(
+                f"Rescaled init_amps to normalized range: "
+                f"[{init_ctx.init_amps.min():.4f}, {init_ctx.init_amps.max():.4f}]"
+            )
+
+
 def preprocess_data(config: FitConfig) -> PreprocessedData:
     """
     Preprocess input data for optimization.
@@ -277,29 +321,9 @@ def preprocess_data(config: FitConfig) -> PreprocessedData:
             _normalize_data(V, config.norm_percentile, config.verbose, config.floor)
         )
 
-    # Rescale pre-initialized amplitudes to match normalized image scale.
-    # Optimization works on the normalized [0, 1] image; without this rescaling
-    # amp_max constraints would be on the wrong scale. WHICH rescaling depends on
-    # the amplitude convention (see _InitContext.init_amps_background_relative):
-    # a warm start from a previous fit already has the pedestal removed, so
-    # subtracting image_min again would remove the floor twice and zero every
-    # sub-floor seed (#1172); a raw-image-sampled array still carries it.
-    # Residual approximation (out of scope): a re-fit resolves its OWN
-    # intensity_range, which need not be byte-identical to the one the seed was
-    # produced under, so the warm start is exact only when both fits resolve the
-    # same normalization.
-    if init_ctx.init_amps is not None:
-        if init_ctx.init_amps_background_relative:
-            init_ctx.init_amps = np.clip(init_ctx.init_amps / intensity_range, 0.0, 1.0)
-        else:
-            init_ctx.init_amps = np.clip(
-                (init_ctx.init_amps - image_min) / intensity_range, 0.0, 1.0
-            )
-        if config.verbose:
-            aprint(
-                f"Rescaled init_amps to normalized range: "
-                f"[{init_ctx.init_amps.min():.4f}, {init_ctx.init_amps.max():.4f}]"
-            )
+    # Rescale pre-initialized amplitudes to match normalized image scale
+    # (convention-dependent — see _rescale_init_amps).
+    _rescale_init_amps(init_ctx, image_min, intensity_range, config.verbose)
 
     # Set auto-convergence threshold
     max_abs_error = _set_convergence_threshold(config.max_abs_error, config.verbose)

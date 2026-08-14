@@ -107,7 +107,6 @@ class GaussianSplatFitter:
         self,
         V: np.ndarray,
         seeds: Optional[np.ndarray | int | float | GSplatData] = None,
-        seed_amps_background_relative: bool = False,
         norm_percentile: float = 0.0,
         floor: "str | float | None" = "auto",
         downscale: Optional[int | Sequence[int]] = None,
@@ -145,6 +144,7 @@ class GaussianSplatFitter:
         sort_splats_interval: int = 1000,
         iter_callback: Optional[Any] = None,
         iter_callback_every: int = 25,
+        seed_amps_background_relative: bool = False,
         **seed_kwargs: Any,
     ) -> GSplatData:
         """
@@ -154,10 +154,6 @@ class GaussianSplatFitter:
 
         Parameters
         ----------
-        seed_amps_background_relative : bool, default=False
-            Amplitude convention of a ``seeds=GSplatData`` warm start — False for
-            ``generate_seeds()`` output (raw), True for a previous fit's output
-            (background-relative). See fit_gaussian_splats().
         seed_method : str, default="auto" (RECOMMENDED)
             Method for generating seeds when seeds=None:
 
@@ -174,6 +170,10 @@ class GaussianSplatFitter:
             - Comma-separated combinations (e.g., "decomposition,edges,grid").
 
             This parameter is only used when seeds=None.
+        seed_amps_background_relative : bool, default=False
+            Amplitude convention of a ``seeds=GSplatData`` warm start — False for
+            ``generate_seeds()`` output (raw), True for a previous fit's output
+            (background-relative). See fit_gaussian_splats().
         **seed_kwargs
             Additional keyword arguments for seed generation (e.g., num_scales,
             percentile_thresh, etc.). Only used when seeds=None.
@@ -266,7 +266,6 @@ class GaussianSplatFitter:
 def fit_gaussian_splats(
     V: np.ndarray,
     seeds: Optional[np.ndarray | int | float | GSplatData] = None,
-    seed_amps_background_relative: bool = False,
     norm_percentile: float = 0.0,
     floor: "str | float | None" = "auto",
     downscale: Optional[int | Sequence[int]] = None,
@@ -321,6 +320,7 @@ def fit_gaussian_splats(
     # Per-iteration callback (e.g. validation-set scoring during fitting)
     iter_callback: Optional[Any] = None,
     iter_callback_every: int = 25,
+    seed_amps_background_relative: bool = False,
     **seed_kwargs: Any,
 ) -> GSplatData:
     """
@@ -362,27 +362,6 @@ def fit_gaussian_splats(
           * Universal scales: (0.5, 1.0, 2.0, 4.0, 8.0, 16.0) for comprehensive detection
           * Volume-proportional density: ~1% of voxels as seeds
           * Inclusive threshold: percentile_thresh=70 for broad feature coverage
-    seed_amps_background_relative : bool, default=False
-        Which intensity convention the amplitudes of a ``seeds=GSplatData``
-        carry. Ignored for every other kind of ``seeds``.
-
-        - False (default): RAW-IMAGE-SAMPLED — the amplitudes were read off the
-          original volume, background pedestal included. This is what
-          ``generate_seeds()`` returns, i.e. the explicit-seeding workflow
-          (``fit_gaussian_splats(V, seeds=generate_seeds(V))``). They are
-          rescaled as ``(a - image_min) / intensity_range``, so an active
-          ``floor`` is subtracted exactly once.
-        - True: BACKGROUND-RELATIVE — the amplitudes already have the pedestal
-          removed. This is what a previous fit returns (the fit's output
-          amplitudes are the normalized ones times ``intensity_range``, with
-          ``image_min`` never added back), and therefore also what a
-          ``.gsplats.zarr`` loaded off disk carries. They are rescaled as
-          ``a / intensity_range``.
-
-        Getting this wrong is silent: declaring False on a fit's output makes an
-        active ``floor`` be subtracted twice, initializing every seed dimmer than
-        the floor to exactly 0; declaring True on raw amplitudes starts every
-        seed too bright by ``floor / intensity_range`` (#1172).
     norm_percentile : float, default=0.0
         Normalization method for handling outliers and noise:
         - 0.0: Full min-max range (maximum dynamic range, sensitive to outliers)
@@ -581,6 +560,32 @@ def fit_gaussian_splats(
         - ``"real"``: Physical coordinates (centers and Cholesky scaled by voxel_size).
           When voxel_size is None, identical to ``"voxel"``.
         - ``"voxel"``: Raw voxel indices (no conversion).
+    seed_amps_background_relative : bool, default=False
+        Which intensity convention the amplitudes of a ``seeds=GSplatData``
+        carry. Ignored for every other kind of ``seeds``.
+
+        - False (default): RAW-IMAGE-SAMPLED — the amplitudes were read off the
+          original volume, background pedestal included. This is what
+          ``generate_seeds()`` returns, i.e. the explicit-seeding workflow
+          (``fit_gaussian_splats(V, seeds=generate_seeds(V))``). They are
+          rescaled as ``(a - image_min) / intensity_range``, so an active
+          ``floor`` is subtracted exactly once.
+        - True: BACKGROUND-RELATIVE — the amplitudes already have the pedestal
+          removed. This is what a previous fit returns (the fit's output
+          amplitudes are the normalized ones times ``intensity_range``, with
+          ``image_min`` never added back), hence also what a ``.gsplats.zarr``
+          WRITTEN BY a fit (``gsplat fit`` / ``gsplat lod``) carries. They are
+          rescaled as ``a / intensity_range``.
+
+        A store that was IMPORTED (``gsplat import`` maps PLY/SPZ opacity into
+        roughly [0, 1]) or intensity-rescaled (``gsplat transform
+        --normalize-intensity`` / ``--scale-intensity``) carries neither
+        convention exactly, so its warm start is approximate either way.
+
+        Getting this wrong is silent: declaring False on a fit's output makes an
+        active ``floor`` be subtracted twice, initializing every seed dimmer than
+        the floor to exactly 0; declaring True on raw amplitudes starts every
+        seed too bright by ``floor / intensity_range`` (#1172).
 
     Returns
     -------

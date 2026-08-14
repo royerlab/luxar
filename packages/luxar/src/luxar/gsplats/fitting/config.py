@@ -189,10 +189,16 @@ class FitConfig:
     #   original volume, pedestal included. Rescaled as
     #   ``(a - image_min) / intensity_range``.
     # * True — BACKGROUND-RELATIVE, e.g. a previous fit's output or a
-    #   ``.gsplats.zarr`` loaded off disk: ``finalize_results`` scales by
-    #   ``intensity_range`` and never adds ``image_min`` back. Rescaled as
-    #   ``a / intensity_range``; subtracting ``image_min`` again would remove
-    #   the floor twice and zero every sub-floor seed.
+    #   ``.gsplats.zarr`` WRITTEN BY a fit (``gsplat fit`` / ``gsplat lod``):
+    #   ``finalize_results`` scales by ``intensity_range`` and never adds
+    #   ``image_min`` back. Rescaled as ``a / intensity_range``; subtracting
+    #   ``image_min`` again would remove the floor twice and zero every
+    #   sub-floor seed.
+    #
+    # An IMPORTED store (``gsplat import``, opacity mapped into ~[0, 1]) or an
+    # intensity-rescaled one (``gsplat transform --normalize-intensity`` /
+    # ``--scale-intensity``) carries neither convention exactly, so its warm
+    # start is approximate whichever value is declared.
     #
     # Only consulted when ``seeds`` is a GSplatData.
     seed_amps_background_relative: bool = False
