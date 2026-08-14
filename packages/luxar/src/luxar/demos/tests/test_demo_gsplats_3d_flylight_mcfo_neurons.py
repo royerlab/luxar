@@ -166,10 +166,19 @@ def test_zero_signal_splat_gets_black_not_nan() -> None:
 
 
 class _FakeResponse:
-    def __init__(self, content: bytes, status_code: int = 206):
+    def __init__(self, content: bytes, status_code: int = 206, headers=None):
         self.content = content
         self.status_code = status_code
+        self.headers = headers or {}
         self.closed = False
+        self.consumed = 0
+
+    def iter_content(self, chunk_size: int = 1):
+        """Yield the body in chunks, recording how much was actually read."""
+        for i in range(0, len(self.content), chunk_size):
+            part = self.content[i : i + chunk_size]
+            self.consumed += len(part)
+            yield part
 
     def close(self) -> None:
         self.closed = True
@@ -178,9 +187,12 @@ class _FakeResponse:
 class _FakeSession:
     """Serves byte ranges out of an in-memory blob and counts requests."""
 
-    def __init__(self, blob: bytes, status_code: int = 206):
+    def __init__(self, blob: bytes, status_code: int = 206, served=None):
         self.blob = blob
         self.status_code = status_code
+        # ``served(start, end)`` overrides what the host answers with, as
+        # ``(body, Content-Range)``; the default is the honest range.
+        self.served = served
         self.requests: list[tuple[int, int]] = []
         self.streamed: list[bool] = []
         self.responses: list[_FakeResponse] = []
@@ -191,7 +203,12 @@ class _FakeSession:
         start, end = (int(x) for x in rng.split("-"))
         self.requests.append((start, end))
         self.streamed.append(bool(stream))
-        resp = _FakeResponse(self.blob[start : end + 1], self.status_code)
+        if self.served is None:
+            body = self.blob[start : end + 1]
+            crange = f"bytes {start}-{start + len(body) - 1}/{len(self.blob)}"
+        else:
+            body, crange = self.served(start, end)
+        resp = _FakeResponse(body, self.status_code, {"Content-Range": crange})
         self.responses.append(resp)
         return resp
 
@@ -277,6 +294,78 @@ def test_range_fetches_are_streamed_and_released() -> None:
 
     assert session.streamed and all(session.streamed), session.streamed
     assert all(r.closed for r in session.responses)
+
+
+def test_a_206_for_the_wrong_range_is_refused() -> None:
+    """A 206 is only usable if it answers the interval that was asked for.
+
+    The block is cached at the offset that was REQUESTED, so a host answering
+    from somewhere else (a caching proxy serving a stale range, say) would have
+    its bytes filed at the wrong place and the archive assembled out of the
+    wrong data — surfacing much later as an unreadable zip rather than as this.
+    """
+    blob = _blob(512)
+    session = _FakeSession(
+        blob, served=lambda s, e: (blob[:128], f"bytes 0-127/{len(blob)}")
+    )
+    f = _HttpRangeFile("http://x", len(blob), session, chunk_size=128)
+    f.seek(256)
+
+    with pytest.raises(RuntimeError, match="wrong offset"):
+        f.read(16)
+
+
+@pytest.mark.parametrize("crange", ["", "bytes */4096", "kilobytes 0-127/4096"])
+def test_a_206_without_a_usable_content_range_is_refused(crange: str) -> None:
+    """No parseable range means no way to know where the bytes belong."""
+    blob = _blob(256)
+    session = _FakeSession(blob, served=lambda s, e: (blob[s : e + 1], crange))
+    f = _HttpRangeFile("http://x", len(blob), session, chunk_size=128)
+
+    with pytest.raises(RuntimeError, match="Content-Range"):
+        f.read(16)
+
+
+def test_a_body_longer_than_the_advertised_range_is_refused_early() -> None:
+    """The body is bounded, not trusted: a 206 can carry the whole archive.
+
+    ``resp.content`` would buffer whatever arrives, which is the 7.1 GB
+    download the range access exists to avoid — a status check alone does not
+    prevent it. So the read has to stop as soon as the body runs past the range
+    the response itself advertised.
+    """
+    blob = _blob(200_000)
+    session = _FakeSession(
+        blob, served=lambda s, e: (blob, f"bytes {s}-{e}/{len(blob)}")
+    )
+    f = _HttpRangeFile("http://x", len(blob), session, chunk_size=128)
+
+    with pytest.raises(RuntimeError, match="more than the 128 bytes"):
+        f.read(16)
+    # Refused part-way through rather than after buffering all of it, which is
+    # the whole point — the real body here is the archive, not 200 KB.
+    assert 0 < session.responses[0].consumed < len(blob)
+
+
+def test_a_short_but_honest_range_is_completed_by_a_refetch() -> None:
+    """A host may legally answer with LESS than was asked for.
+
+    That is not a misbehaving host and must not be refused: the read loop just
+    fetches the remainder from where the short block ended.
+    """
+    blob = _blob(512)
+    half = 64
+    session = _FakeSession(
+        blob,
+        served=lambda s, e: (
+            blob[s : s + half],
+            f"bytes {s}-{s + half - 1}/{len(blob)}",
+        ),
+    )
+    f = _HttpRangeFile("http://x", len(blob), session, chunk_size=128)
+
+    assert f.read(200) == blob[:200]
+    assert len(session.requests) == 4, session.requests
 
 
 def test_closing_the_range_file_releases_the_session() -> None:

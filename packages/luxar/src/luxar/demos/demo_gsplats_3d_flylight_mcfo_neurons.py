@@ -379,6 +379,48 @@ DEVICE = None
 # =============================================================================
 
 
+_CONTENT_RANGE_RE = re.compile(r"^bytes\s+(\d+)-(\d+)/")
+
+
+def _served_range_span(content_range: str, start: int, end: int, url: str) -> int:
+    """Length of the range a 206 says it carries, refusing anything else.
+
+    A 206 is only usable here if it answers the interval that was asked for:
+    the block is cached at ``start`` regardless of what arrived, so bytes from
+    some other offset would be assembled into the archive at the wrong place.
+    A range ENDING short of ``end`` is accepted — :meth:`_HttpRangeFile.read`
+    simply fetches the remainder — but one starting elsewhere, or running past
+    ``end``, is refused.
+    """
+    m = _CONTENT_RANGE_RE.match(content_range.strip())
+    if m is None or int(m.group(1)) != start or not start <= int(m.group(2)) <= end:
+        raise RuntimeError(
+            f"{url} answered a byte-range request for bytes {start}-{end} with "
+            f"Content-Range {content_range!r}. The bytes would be cached at the "
+            "wrong offset and the archive assembled out of the wrong data."
+        )
+    return int(m.group(2)) - start + 1
+
+
+def _read_at_most(resp, span: int, url: str) -> bytes:
+    """Read a streamed body, refusing one longer than ``span`` bytes.
+
+    ``resp.content`` would buffer whatever the host chose to send, which for a
+    host that answers a range with the whole 7.1 GB archive is exactly the
+    download this class exists to avoid. Reading in chunks bounds it.
+    """
+    body = bytearray()
+    for part in resp.iter_content(chunk_size=1 << 16):
+        body += part
+        if len(body) > span:
+            raise RuntimeError(
+                f"{url} sent more than the {span} bytes its Content-Range "
+                "advertised, so it is not honouring range requests as claimed; "
+                "refusing before the whole archive is buffered."
+            )
+    return bytes(body)
+
+
 class _HttpRangeFile(io.RawIOBase):
     """A minimal seekable read-only file over an HTTP resource.
 
@@ -493,8 +535,18 @@ class _HttpRangeFile(io.RawIOBase):
                     "requests, so a single sample can no longer be extracted "
                     "without downloading the whole archive."
                 )
+            # A 206 alone is not enough: the block is filed at ``start``
+            # whatever the host actually sent, so a response covering a
+            # DIFFERENT interval would have the archive assembled out of the
+            # wrong bytes — an offset error surfacing much later as a corrupt
+            # zip. Read the interval back out of ``Content-Range`` and bound
+            # the body to it, because a 206 carrying more than it advertises is
+            # the same multi-gigabyte buffer the status check above refuses.
+            span = _served_range_span(
+                resp.headers.get("Content-Range", ""), start, end, self._url
+            )
             self._cache_start = start
-            self._cache = resp.content
+            self._cache = _read_at_most(resp, span, self._url)
         finally:
             resp.close()
         return self._cache
