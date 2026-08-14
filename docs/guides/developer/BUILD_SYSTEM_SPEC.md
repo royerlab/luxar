@@ -341,12 +341,12 @@ MIN_NODE_MINOR := 22
 | Command | Description |
 |---------|-------------|
 | `make help` | Show all available commands |
-| `make clean-all` | Clean all artifacts (Python, TypeScript, WASM, CUDA, launchers, datasets, and the `~/.cache/luxar` user cache via `clean-launchers` + `clean-cache`) |
+| `make clean-all` | Clean all artifacts: Python, TypeScript, WASM, CUDA, launcher binaries (`clean-launchers`), generated datasets (`clean-examples`) and the `~/.cache/luxar` user cache (`clean-cache`, which keeps hand-placed demo inputs — see its row) |
 | `make clean-examples` | Clean generated example datasets |
 | `make clean-python` | Clean Python build artifacts and caches |
 | `make clean-viewer` | Clean viewer build artifacts (node_modules, dist, `.vite`, coverage, playwright-report, test-results) |
 | `make clean-launchers` | Clean native launcher binaries |
-| `make clean-cache` | Clear the Luxar user cache (`~/.cache/luxar`) |
+| `make clean-cache` | Clear the Luxar user cache (`~/.cache/luxar`), except the hand-placed demo inputs listed in `luxar.demos.registry.PROTECTED_INPUT_DIRS` (`milky_way_gaia_3m/` — a CC BY-NC catalog with no download path, so it is kept) |
 | `make stats` | Generate project statistics report |
 | `make stats-fast` | Generate project statistics without running tests (file counts only) |
 | `make shell` | Enter Hatch development shell |
