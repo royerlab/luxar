@@ -131,21 +131,38 @@ Optics:  Zeiss LSM 710/780 confocal, Plan-Apochromat 40x/1.3 Oil DIC M27
 Genotype: VT047848 BJD_118E08_AE_01 (female)
 License: CC BY 4.0 (both sources)
 
+Where the data comes from (both downloads are automatic):
+
+  FISBe dataset page   https://kainmueller-lab.github.io/fisbe
+  FISBe archive        https://doi.org/10.5281/zenodo.10875063
+  FlyLight Gen1 MCFO   https://gen1mcfo.janelia.org
+  FlyLight imagery     s3://janelia-flylight-imagery  (anonymous HTTP works)
+  FlyLight project     https://www.janelia.org/project-team/flylight
+
 How to Cite:
 ------------
-  Mais, Hirsch, Managan, Kandarpa, Rumberger, Reinke, Maier-Hein, Ihrke,
-  Kainmueller. "FISBe: A real-world benchmark dataset for instance
-  segmentation of long-range thin filamentous structures." CVPR 2024.
-  arXiv:2404.00130
+If you use this data, cite all three. The first covers the benchmark and its
+annotations; the second the imagery; the third the driver line.
 
-  Meissner et al. "A searchable image resource of Drosophila GAL4 driver
-  expression patterns with single neuron resolution." eLife (2023) 12:e80660
+  Mais L, Hirsch P, Managan C, Kandarpa R, Rumberger JL, Reinke A,
+  Maier-Hein L, Ihrke G, Kainmueller D. "FISBe: A real-world benchmark
+  dataset for instance segmentation of long-range thin filamentous
+  structures." CVPR 2024.
+  https://arxiv.org/abs/2404.00130
 
-  Tirian & Dickson. "The VT GAL4, LexA, and split-GAL4 driver line
+  Meissner GW, et al. "A searchable image resource of Drosophila GAL4
+  driver expression patterns with single neuron resolution."
+  eLife (2023) 12:e80660.
+  https://doi.org/10.7554/eLife.80660
+
+  Tirian L, Dickson BJ. "The VT GAL4, LexA, and split-GAL4 driver line
   collections for targeted expression in the Drosophila nervous system."
-  bioRxiv (2017) doi:10.1101/198648
+  bioRxiv (2017).
+  https://doi.org/10.1101/198648
 
-Credit the FlyLight Project Team, Janelia Research Campus, HHMI.
+Credit the FlyLight Project Team, Janelia Research Campus, HHMI. Both
+sources are CC BY 4.0, which requires attribution and that changes be
+indicated — this demo fits splats to the imagery, which is a change.
 
 WORKFLOW:
 =========
@@ -877,7 +894,18 @@ def create_luxar_scene(centers, amplitudes, cholesky, rgba, output_path=None):
         ) as compiler:
             scene = compiler.create_scene(
                 dimensions=dims,
-                viewer_config=ViewerConfig(tone_mapping="ACES"),
+                # Cinematic mode (ACES + a subtle wide bloom, detector noise,
+                # vignette, chromatic lens distortion, 35mm FOV) suits this
+                # scene: it IS a microscope image, so film-grain and lens
+                # character read as photographic rather than as decoration, and
+                # the bloom gives the bright neurites the glow they have in the
+                # raw data. ACES is set explicitly too — cinematic mode selects
+                # it, but stating it keeps the intent legible if the preset ever
+                # changes.
+                viewer_config=ViewerConfig(
+                    tone_mapping="ACES",
+                    cinematic_mode=True,
+                ),
             )
 
             scene.attrs["title"] = "GSplats: MCFO Fly Brain Neurons"
