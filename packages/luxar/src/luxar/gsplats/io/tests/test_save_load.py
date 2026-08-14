@@ -12,6 +12,8 @@ import numpy as np
 import pytest
 import zarr
 
+from luxar._zarr_compat import read_consolidated_attrs
+from luxar.conftest import array_compressor
 from luxar.encoding import EncodingMode
 from luxar.gsplats import GSplatData
 from luxar.gsplats.io import (
@@ -79,12 +81,10 @@ class TestSaveGsplats:
             root = zarr.open_group(str(path), mode="r")
             content_hash = root.attrs["content_hash"]
             assert isinstance(content_hash, str) and len(content_hash) > 0
-            # The hash must also land in consolidated metadata (the viewer
-            # reads .zmetadata for structure and .zattrs for validation).
-            import json
-
-            zmeta = json.loads((path / ".zmetadata").read_text())
-            assert zmeta["metadata"][".zattrs"]["content_hash"] == content_hash
+            # The hash must also land in consolidated metadata: the viewer
+            # builds its scene graph from that index, so a hash present only on
+            # the node itself would never be seen.
+            assert read_consolidated_attrs(path)["/"]["content_hash"] == content_hash
 
     def test_resave_changes_content_hash(self) -> None:
         # Identical data re-saved must yield a DIFFERENT hash (the timestamp
@@ -750,20 +750,19 @@ class TestCompression:
     """Blosc compression + chunk sizing (v3.0 leaf-root paths)."""
 
     def test_default_compression_applied(self):
-        from numcodecs import Blosc
 
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "test.gsplats.zarr"
             save_gsplats(path=path, **create_test_splats_3d(100))
             centers = zarr.open(str(path), mode="r")["centers"]
-            assert isinstance(centers.compressor, Blosc)
-            assert centers.compressor.cname == "zstd"
+            comp = array_compressor(centers)
+            assert comp is not None and comp.cname == "zstd"
 
     def test_compression_disabled(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "test.gsplats.zarr"
             save_gsplats(path=path, compressor=None, **create_test_splats_3d(100))
-            assert zarr.open(str(path), mode="r")["centers"].compressor is None
+            assert array_compressor(zarr.open(str(path), mode="r")["centers"]) is None
 
     def test_chunk_capping_small_array(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -781,15 +780,15 @@ class TestCompression:
             )
 
     def test_gsplatdata_save_default_compression(self):
-        from numcodecs import Blosc
 
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "test.gsplats.zarr"
             GSplatData(**create_test_splats_3d(100)).save(path)
-            assert isinstance(zarr.open(str(path), mode="r")["centers"].compressor, Blosc)
+            assert (
+                array_compressor(zarr.open(str(path), mode="r")["centers"]) is not None
+            )
 
     def test_multi_lod_compression(self):
-        from numcodecs import Blosc
 
         from luxar.gsplats.gsplat_data import AdditiveSubLOD
 
@@ -809,8 +808,8 @@ class TestCompression:
             GSplatData(additive_sublods=lods).save(path)
             root = zarr.open(str(path), mode="r")
             # Additive ladder → additive_<i>/ subgroups under the leaf root.
-            assert isinstance(root["additive_0/centers"].compressor, Blosc)
-            assert isinstance(root["additive_1/centers"].compressor, Blosc)
+            assert array_compressor(root["additive_0/centers"]) is not None
+            assert array_compressor(root["additive_1/centers"]) is not None
             assert root["additive_0/centers"].chunks[0] <= 50
             assert root["additive_1/centers"].chunks[0] <= 80
 
@@ -967,12 +966,15 @@ def test_save_explicit_none_compressor_disables_compression():
         # Explicit None → no compression.
         raw = Path(tmp) / "raw.gsplats.zarr"
         data.save(raw, ordering="none", compressor=None)
-        assert zarr.open_group(str(raw), mode="r")["centers"].compressor is None
+        assert array_compressor(zarr.open_group(str(raw), mode="r")["centers"]) is None
 
         # Unspecified → default Blosc (compression still on by default).
         comp = Path(tmp) / "comp.gsplats.zarr"
         data.save(comp, ordering="none")
-        assert zarr.open_group(str(comp), mode="r")["centers"].compressor is not None
+        assert (
+            array_compressor(zarr.open_group(str(comp), mode="r")["centers"])
+            is not None
+        )
 
 
 class TestCompressedLoadSecurity:
