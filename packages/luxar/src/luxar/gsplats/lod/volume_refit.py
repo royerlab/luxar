@@ -7,7 +7,10 @@ target is the *fine mixture* and therefore inherits the fine fit's own error —
 this optimizes the true render-fidelity objective at the coarse budget.
 Benchmarked on real microscopy (skimage cells3d nuclei): +5–6 dB
 full-res and +10–12 dB at viewing scale over the merge, with unchanged splat
-count and lower cross-level drift than a cold fit.
+count and lower cross-level drift than a cold fit. (Measured before the #1172
+amplitude-convention fix; the never-worse guard below bounds the outcome at the
+merge, so the sign of the gain is safe, but the magnitudes have not been
+re-measured.)
 
 This module is a thin orchestration layer at ``GSplatData`` altitude: the heavy
 lifting (rasterizer, Adam, schedulers) is entirely
