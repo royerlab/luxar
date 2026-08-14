@@ -1,15 +1,16 @@
 /**
  * Unit tests for the point-loader projection helpers.
  *
- * The full projection paths (effective-radius compaction, worker
- * fallback) are exercised by the integration tests in
- * `tests/unit/data/points/spatial-index-loader.test.ts`; the cases below
- * pin the small pure-helper contracts so the loader can rely on them:
+ * `tests/unit/data/points/spatial-index-loader.test.ts` drives these
+ * helpers through the real load path; the cases below pin their
+ * contracts directly so the loader can rely on them:
  *   - `createEmptyPointsData` returns the right shape with the right
  *     dtype passthrough and the right `ndim` fallback (chunkIndex → 3).
  *   - `projectPointsTo3D` extracts displayed dims into the first 3
  *     position slots, fills the rest with zero, throws on missing
  *     positions, and recomputes ndim from the actual buffer length.
+ *   - the compaction paths behind it: effective radii, RGBA colors,
+ *     non-Float32 sharpness/scalars, and the no-accumulator fallback.
  */
 
 import { describe, it, expect } from 'vitest';
