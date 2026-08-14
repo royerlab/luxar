@@ -5474,32 +5474,53 @@ class TestLODCarriesAuthoredAppearance:
         (src / ".zattrs").write_text(json.dumps(attrs))
         (src / ".zmetadata").unlink(missing_ok=True)
 
-    @pytest.mark.parametrize("recipe", ["stream", "levels", "adaptive"])
+    #: Rewriting commands that must pass appearance through, as
+    #: ``label -> extra argv after (input, output)``.
+    #:
+    #: Keyed by COMMAND rather than by recipe because #1600 is a property of every
+    #: in->out command, not of `lod` alone: `additive` was found dropping the same
+    #: eight attrs by the same missing propagation. Auditing another command
+    #: (`flatten`, `decimate`, `reencode`, ...) should be one row here.
+    #:
+    #: Both write paths are represented on purpose. `lod --recipe stream|levels`
+    #: goes through ``GSplatData.save``; `--recipe adaptive` and `additive` go
+    #: through ``write_gsplats_tree``. A fix applied to only one would pass a
+    #: single-row test.
+    REWRITERS: dict[str, list[str]] = {
+        "lod:stream": ["gsplat", "lod", "--recipe", "stream"],
+        "lod:levels": ["gsplat", "lod", "--recipe", "levels"],
+        "lod:adaptive": ["gsplat", "lod", "--recipe", "adaptive"],
+        "additive": ["gsplat", "additive", "--n-lods", "4"],
+        "flatten": ["gsplat", "flatten"],
+        "partition": ["gsplat", "partition", "--parts", "2"],
+        "decimate": ["gsplat", "decimate", "-f", "0.5"],
+        "reencode": ["gsplat", "reencode", "-e", "memory"],
+        "cull": ["gsplat", "cull", "-m", "cumulative", "-r", "0.9"],
+        "filter": ["gsplat", "filter", "--amplitude-min", "0.05"],
+        "slice": ["gsplat", "slice", "0:80, :, :"],
+        "transform": ["gsplat", "transform", "--scale", "2,1,1"],
+    }
+
+    @pytest.mark.parametrize("label", sorted(REWRITERS))
     def test_authored_appearance_survives_the_rebuild(
         self,
         runner: CliRunner,
         medium_gsplats: Path,
         tmp_path: Path,
-        recipe: str,
+        label: str,
     ) -> None:
-        """Every carried attr comes back off the output ROOT, per recipe.
-
-        Parameterized across a matrix recipe (``stream``/``levels`` → the
-        ``GSplatData.save`` path) and a composed one (``adaptive`` → the
-        ``write_gsplats_tree`` path): the two write paths are separate call sites,
-        so a fix applied to only one would pass a single-recipe test.
-        """
+        """Every carried attr comes back off the output ROOT, per command."""
+        argv = self.REWRITERS[label]
         self._authored_input(medium_gsplats, self.AUTHORED)
-        out = tmp_path / f"carried_{recipe}.gsplats.zarr"
+        out = tmp_path / f"carried_{label.replace(':', '_')}.gsplats.zarr"
         result = runner.invoke(
-            app,
-            ["gsplat", "lod", str(medium_gsplats), str(out), "--recipe", recipe],
+            app, [argv[0], argv[1], str(medium_gsplats), str(out), *argv[2:]]
         )
-        assert result.exit_code == 0, f"failed:\n{result.stdout}"
+        assert result.exit_code == 0, f"{label} failed:\n{result.stdout}"
         got = json.loads((out / ".zattrs").read_text())
         for key, want in self.AUTHORED.items():
-            assert key in got, f"{recipe}: dropped {key!r} (had {want!r})"
-            assert got[key] == want, f"{recipe}: {key} = {got[key]!r}, want {want!r}"
+            assert key in got, f"{label}: dropped {key!r} (had {want!r})"
+            assert got[key] == want, f"{label}: {key} = {got[key]!r}, want {want!r}"
 
     def test_carry_invents_nothing(
         self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
