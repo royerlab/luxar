@@ -128,7 +128,14 @@ def prepare_fit_config(
     ValueError
         If any parameters are invalid
     """
-    # Input validation
+    # Input validation.
+    # Capture the caller's dtype BEFORE the cast: the fitter works in float32, so
+    # after this line the original element size is gone. It is the denominator of
+    # any compression ratio quoted about the result, and a uint16 volume recorded
+    # as float32 would overstate compression by 2x.
+    _src = np.asarray(V)
+    source_dtype = str(_src.dtype)
+    source_itemsize = int(_src.dtype.itemsize)
     V = np.asarray(V, dtype=np.float32)
     if V.size == 0:
         raise ValueError("Input image V cannot be empty")
@@ -306,6 +313,8 @@ def prepare_fit_config(
 
     return FitConfig(
         V=V,
+        source_dtype=source_dtype,
+        source_itemsize=source_itemsize,
         seeds=seeds,
         seed_method=seed_method,
         seed_kwargs=seed_kwargs,

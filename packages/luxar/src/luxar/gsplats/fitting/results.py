@@ -188,6 +188,64 @@ def _clip_to_bounds(
     return clipped
 
 
+def _source_grid_stats(
+    config: FitConfig, preprocessed_data: PreprocessedData, n_splats: int
+) -> dict[str, Any]:
+    """Record the volume the splats represent, so compression is computable later.
+
+    A fitted ``.gsplats.zarr`` records its own byte size but nothing about what it
+    is a representation of, which makes "how much did this compress?" unanswerable
+    from the artifact. It is not answerable from the producing script either: the
+    fitted grid is derived at run time from downscale factors and from isotropic
+    resampling of the voxel spacing, so it is not a constant anyone can read off.
+
+    Two grids are kept separate on purpose:
+
+    ``source_*``
+        the array handed to the fitter, in its original dtype -- the honest
+        denominator for a compression ratio.
+    ``fitted_*``
+        the grid actually optimised against, after any downscaling. Equal to the
+        source grid when no downscaling happened.
+
+    ``occupancy`` is the fraction of fitted voxels above the subtracted background
+    floor. Sparse microscopy volumes are typically >99% empty, and a compression
+    ratio means something quite different at 0.03% occupancy than at 50%, so the
+    ratio should never be quoted without it.
+    """
+    out: dict[str, Any] = {}
+    V = getattr(config, "V", None)
+    if V is not None and hasattr(V, "shape"):
+        out["source_shape"] = [int(x) for x in V.shape]
+        voxels = int(np.prod(V.shape)) if V.ndim else 0
+        out["source_voxels"] = voxels
+        # `config.V` has already been cast to float32, so its own dtype/nbytes
+        # would describe the fitter's working copy rather than the caller's
+        # array. Use what validation captured before the cast, and fall back to
+        # the cast array only when that is unavailable.
+        dtype = getattr(config, "source_dtype", None) or str(getattr(V, "dtype", ""))
+        itemsize = getattr(config, "source_itemsize", None)
+        out["source_dtype"] = dtype
+        if itemsize:
+            out["source_bytes"] = voxels * int(itemsize)
+        elif getattr(V, "nbytes", None) is not None:
+            out["source_bytes"] = int(V.nbytes)
+
+    Vn = getattr(preprocessed_data, "V_normalized", None)
+    if Vn is not None and hasattr(Vn, "shape"):
+        out["fitted_shape"] = [int(x) for x in Vn.shape]
+        fitted_voxels = int(np.prod(Vn.shape)) if Vn.ndim else 0
+        out["fitted_voxels"] = fitted_voxels
+        if fitted_voxels:
+            # V_normalized is already floor-subtracted and clipped at 0, so
+            # "> 0" is exactly "above the background floor" -- no second pass
+            # over the raw volume, and no separate threshold to keep in sync.
+            out["occupancy"] = float(np.count_nonzero(Vn > 0) / fitted_voxels)
+        if n_splats:
+            out["voxels_per_splat"] = float(fitted_voxels / n_splats)
+    return out
+
+
 def finalize_results(
     optimization_results: OptimizationResults,
     config: FitConfig,
@@ -311,6 +369,14 @@ def finalize_results(
         "image_max": preprocessed_data.image_max,
         "intensity_range": preprocessed_data.intensity_range,
         "floor": preprocessed_data.floor,
+        # What the splats are a representation OF. Without this, a stored
+        # .gsplats.zarr cannot say how much it compressed: the source grid is
+        # nowhere on disk, and it is not recoverable from the demo either,
+        # because the fitted grid is computed at run time (downscale factors,
+        # isotropic resampling from voxel spacing). Two grids, kept apart on
+        # purpose -- `source_*` is the array handed to the fitter, `fitted_*` is
+        # what it actually optimised against after any downscaling.
+        **_source_grid_stats(config, preprocessed_data, len(amps_np)),
     }
 
     # Store movie frames in stats for later display (don't show here to avoid timing issues)

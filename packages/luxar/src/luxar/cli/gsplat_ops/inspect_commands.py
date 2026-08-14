@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 import typer
 from arbol import aprint, asection
@@ -183,6 +183,7 @@ def info_dataset(
         aprint(f"\nSplats: {n_splats:,}")
         aprint(f"Dimensions: {ndim}D")
         aprint(f"Has Colors: {'Yes' if data.colors is not None else 'No'}")
+        _print_source_grid(data, path)
 
         # ================================================================
         # Bounding Box
@@ -1031,3 +1032,51 @@ def register_inspect_commands(app: typer.Typer) -> None:
     app.command("view")(quick_view)
     app.command("compare")(compare_quality)
     app.command("annotate-quality")(annotate_quality)
+
+
+def _print_source_grid(data: Any, path: Path) -> None:
+    """Report what the splats are a representation of, when the fit recorded it.
+
+    Silent for a dataset fitted before these stamps existed: the source grid is
+    genuinely unknown there, and a compression ratio invented from the bounding
+    box would be a guess presented as a measurement.
+    """
+    stats = getattr(data, "stats", None) or {}
+    shape = stats.get("source_shape")
+    if not shape:
+        return
+    voxels = stats.get("source_voxels")
+    dtype = stats.get("source_dtype")
+    aprint(
+        f"Source volume: {' x '.join(str(int(s)) for s in shape)}"
+        + (f" {dtype}" if dtype else "")
+        + (f" ({voxels:,} voxels)" if voxels else "")
+    )
+    fitted = stats.get("fitted_shape")
+    if fitted and list(fitted) != list(shape):
+        aprint(
+            "  fitted at:   "
+            + " x ".join(str(int(s)) for s in fitted)
+            + " (downscaled before fitting)"
+        )
+    occ = stats.get("occupancy")
+    if occ is not None:
+        aprint(f"  occupancy:   {100 * float(occ):.3f}% of voxels above the floor")
+    vps = stats.get("voxels_per_splat")
+    if vps:
+        aprint(f"  voxels/splat: {float(vps):,.0f}")
+    src_bytes = stats.get("source_bytes")
+    if src_bytes:
+        try:
+            stored = (
+                path.stat().st_size
+                if path.is_file()
+                else sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
+            )
+        except OSError:
+            stored = 0
+        if stored:
+            aprint(
+                f"  compression: {src_bytes / stored:,.0f}:1 "
+                f"({format_memory_size(src_bytes)} -> {format_memory_size(stored)})"
+            )
