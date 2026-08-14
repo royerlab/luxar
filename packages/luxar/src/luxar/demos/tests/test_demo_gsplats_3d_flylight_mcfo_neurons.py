@@ -332,3 +332,64 @@ def test_extraction_loop_rejects_a_traversing_member(tmp_path, monkeypatch) -> N
 
     assert not (tmp_path / "pwned.txt").exists()
     assert not (cache.parent / "pwned.txt").exists()
+
+
+# ---------------------------------------------------------------------------
+# merge_for_render — one node, per-splat RGBA
+# ---------------------------------------------------------------------------
+
+merge_for_render = _demo.merge_for_render
+
+
+class _Splats:
+    """Minimal stand-in for GSplatData (only the fields merging touches)."""
+
+    def __init__(self, n: int, seed: int = 0):
+        rng = np.random.default_rng(seed)
+        self.centers = rng.uniform(0, 10, (n, 3)).astype(np.float32)
+        self.amplitudes = rng.uniform(0.2, 1.0, n).astype(np.float32)
+        self.cholesky_factors = np.tile([1, 0, 1, 0, 0, 1], (n, 1)).astype(np.float32)
+
+
+def test_merge_without_neuropil_is_neurons_only() -> None:
+    neurons = _Splats(5)
+    rgb = np.tile([1.0, 0.5, 0.0], (5, 1)).astype(np.float32)
+
+    centers, amps, chol, rgba = merge_for_render(neurons, rgb, None)
+
+    assert len(centers) == len(amps) == len(chol) == len(rgba) == 5
+    assert rgba.shape[1] == 4
+    assert np.allclose(rgba[:, 3], 1.0), "neurons must be fully opaque"
+
+
+def test_merge_concatenates_and_tags_alpha() -> None:
+    neurons, neuropil = _Splats(4, 1), _Splats(7, 2)
+    rgb = np.tile([1.0, 1.0, 1.0], (4, 1)).astype(np.float32)
+
+    centers, amps, chol, rgba = merge_for_render(neurons, rgb, neuropil)
+
+    assert len(centers) == len(amps) == len(chol) == len(rgba) == 11
+    # Neuropil is emitted first, so the split is at len(neuropil).
+    assert np.allclose(rgba[:7, 3], _demo.NEUROPIL_ALPHA)
+    assert np.allclose(rgba[7:, 3], 1.0)
+    assert np.allclose(rgba[:7, :3], np.asarray(_demo.NEUROPIL_RGB, dtype=np.float32))
+
+
+def test_merge_scales_neuropil_amplitude_only() -> None:
+    """The dimming multiplier must not touch the neuron amplitudes."""
+    neurons, neuropil = _Splats(3, 3), _Splats(3, 4)
+    rgb = np.zeros((3, 3), dtype=np.float32)
+
+    _, amps, _, _ = merge_for_render(neurons, rgb, neuropil)
+
+    assert np.allclose(amps[:3], neuropil.amplitudes * _demo.NEUROPIL_AMP)
+    assert np.allclose(amps[3:], neurons.amplitudes)
+
+
+def test_merge_outputs_are_float32() -> None:
+    """Mixed dtypes here would silently upcast the whole scene to float64."""
+    neurons, neuropil = _Splats(2, 5), _Splats(2, 6)
+    rgb = np.zeros((2, 3), dtype=np.float32)
+
+    for arr in merge_for_render(neurons, rgb, neuropil):
+        assert arr.dtype == np.float32

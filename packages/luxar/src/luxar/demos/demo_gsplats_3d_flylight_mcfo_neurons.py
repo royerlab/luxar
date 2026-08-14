@@ -1,114 +1,145 @@
 #!/usr/bin/env python3
-"""GSplats Demo: 3-Colour MCFO Fly Brain Neurons (FlyLight / FISBe)
+"""GSplats Demo: MCFO Fly Brain Neurons in a Volume-Rendered Neuropil
 
-Visualises a three-channel MCFO (MultiColor FlpOut) confocal volume of a
-*Drosophila* central brain as Gaussian splats — long, thin, widely branching
-neurons traced through a whole brain.
+Labelled *Drosophila* neurons — long, thin, widely branching — threaded through
+the brain they live in, as a single volume-rendered Gaussian splat cloud.
 
 ================================================================================
-LONG-RANGE THIN FILAMENTS — THE HARD CASE FOR A GAUSSIAN BASIS
+WHAT THIS DEMO IS FOR
 ================================================================================
 
-Most microscopy gsplat demos in this repo fit *blobby* content: nuclei, cells,
-tissue. This one is deliberately the opposite. MCFO neurons are:
+Two things, and they pull in opposite directions:
 
-  - **Thin** — single neurites approach the optical resolution limit
-  - **Long-range** — a single arbor spans the entire brain
-  - **Sparse** — roughly 0.1% of voxels carry signal
-  - **Interwoven** — several neurons pass through the same neuropil
+1. **Thin filaments are the hard case for a Gaussian basis.** Most microscopy
+   gsplat demos here fit *blobby* content — nuclei, cells, tissue. MCFO neurons
+   are thin (single neurites approach the resolution limit), long-range (one
+   arbor spans the brain), sparse (~0.1% of voxels), and interwoven. That is
+   what makes FISBe a benchmark dataset.
 
-That combination is what makes FISBe a benchmark dataset, and it makes an
-honest stress test for an anisotropic Gaussian basis: a Gaussian elongated
-along a neurite is a very good local model of a filament, so the fit
-compresses hard — but only if the splats land on neurons rather than on the
-neuropil haze they float in.
-
-Three things about this dataset are easy to get wrong, and all three were
-measured rather than assumed. They are worth reading before adapting this
-demo to other MCFO data.
+2. **The neuropil is the showcase for volume rendering.** The counterstained
+   brain is a dense, semi-transparent medium. Under ``blending_mode=
+   "volumetric"`` (emission-absorption, Max 1995) it composites front-to-back
+   with real occlusion: the brain reads as a solid body, and neurites genuinely
+   pass behind it and are dimmed by it, rather than glowing through as they
+   would under additive. Sparse filaments inside a dense medium, in one node,
+   is exactly the case that separates volumetric from additive compositing.
 
 --------------------------------------------------------------------------------
 1. ``gsplat cal`` CANNOT calibrate K here — the data is noise-free
 --------------------------------------------------------------------------------
 
-The blind-spot cross-validation protocol behind ``luxar gsplat cal`` needs
-image noise to locate a held-out peak. FISBe's raw has effectively none: the
-Janelia Workstation stitches and distortion-corrects the tiles, which scrubs
-the pixel noise even though values remain 12-bit. A sweep on this data returns
-``curve_type=signal_limited``, ``still_climbing=True`` and sigma_hat ~1e-10, so
-its "K*" is simply the top of whatever grid you supplied. Luxar warns about
-this and points at ``--k-star-metric gain``; we drove K off a measured quality
-curve instead.
+The blind-spot cross-validation behind ``luxar gsplat cal`` needs image noise
+to locate a held-out peak. FISBe's raw has effectively none: the Janelia
+Workstation stitches and distortion-corrects the tiles, which scrubs the pixel
+noise even though values remain 12-bit. A sweep returns
+``curve_type=signal_limited``, ``still_climbing=True``, sigma_hat ~1e-10 — its
+"K*" is just the top of whatever grid you supplied. Luxar warns and points at
+``--k-star-metric gain``; we drove K off a measured quality curve instead.
 
 --------------------------------------------------------------------------------
 2. GLOBAL PSNR IS THE WRONG NUMBER — score the foreground
 --------------------------------------------------------------------------------
 
-Only ~0.2% of this volume's energy lies inside the annotated neurons, so global
-PSNR mostly scores how well the fit reproduces empty space. Measured on
-channel 0 (390x1058x907, RTX PRO 6000), where ``fg`` is PSNR restricted to the
-ground-truth instance mask and ``energy`` is the share of foreground brightness
-the reconstruction reproduces:
+Only ~0.2% of the raw volume's energy lies inside the annotated neurons (41%
+after floor suppression), so global PSNR mostly scores empty space. Measured on
+the default sample, ``fg`` restricted to the ground-truth instance mask:
 
-        K   global     fg   energy    fit
-   30,000   42.29   24.70    0.51x   104s   <- neurites break into beads
-  100,000   43.58   27.33    0.69x    84s
-  300,000   45.53   28.54    0.76x   120s
-  600,000   46.37   28.91    0.78x   181s   <- continuity recovers
-1,200,000   47.10   29.63    0.81x   240s
-2,400,000   47.49   30.46    0.84x   345s
+        K   global     fg   energy
+   30,000   42.29   24.70    0.51x   <- neurites break into beads
+  100,000   43.58   27.33    0.69x
+  300,000   45.53   28.54    0.76x
+  600,000   46.37   28.91    0.78x   <- continuity recovers
+1,200,000   47.10   29.63    0.81x
 
-A ~17 dB global-to-foreground gap. At K=30,000 the fit still reads 42 dB
-globally while dropping *half* the neurite brightness, and the failure is
-qualitative rather than a smooth loss of dB: on a MIP the neurites break into
-disconnected beads where the original is a continuous process. No global
-metric flags that; only looking does.
+A ~17 dB global-to-foreground gap. At K=30,000 the fit reads 42 dB globally
+while dropping *half* the neurite brightness, and the failure is qualitative:
+on a MIP the neurites break into disconnected beads where the original is a
+continuous process. No global metric flags that; only looking does.
 
 --------------------------------------------------------------------------------
-3. FIT THE COMPOSITE ONCE, THEN COLOUR — do not fit three channels separately
+3. SEEDS ARE NOT THE SPLAT COUNT — ``cull_retention`` is
+--------------------------------------------------------------------------------
+
+``fit_gaussian_splats`` optimises a fixed pool of ``seeds`` splats, then culls
+by cumulative amplitude mass at the end (``cull_retention``, default 0.95). On
+floor-suppressed data a handful of splats carry most of the mass, so the
+default throws away nearly everything: 1.2M seeds settle at ~19K splats.
+
+The trap is fixing that by *lowering seeds*. Measured, same floor and volume:
+
+  1.2M seeds, retention 0.95   ->   18,623 splats   fg 27.60   energy 0.81x
+  128K seeds, retention 1.0    ->  128,000 splats   fg 25.97   energy 0.78x  (!)
+  1.2M seeds, retention 0.99   ->   26,238 splats   fg 26.79   energy 0.81x
+  1.2M seeds, retention 0.999  ->   32,709 splats   fg 27.80   energy 0.84x  <- used
+
+**128,000 splats scored worse than 18,623**, and its axon was visibly *more*
+beaded. Seeds set the optimiser's search pool; retention sets the output size.
+Shrinking seeds to hit a target count throws away the search that makes the
+surviving splats good. Keep seeds high, raise retention.
+
+--------------------------------------------------------------------------------
+4. ONE NODE, and alpha is OPTICAL DEPTH
+--------------------------------------------------------------------------------
+
+Neurons and neuropil occupy the same volume. As two nodes there is no correct
+draw order — whichever draws first occludes the other — so they are merged into
+a single node with per-splat RGBA and depth-sorted together. Alpha keeps them
+distinguishable: the neuropil gets a low per-splat alpha, the neurons a high
+one.
+
+Under volumetric compositing alpha is *optical depth*, and it accumulates: with
+~356K neuropil splats spanning ~350 um, alpha 0.12 makes the brain effectively
+opaque and buries interior neurites. That is the intended look here — a solid
+body with neurons emerging from it. Lower ``NEUROPIL_ALPHA`` toward ~0.01 for a
+translucent haze with every neurite visible; both are one constant apart and
+worth trying.
+
+The cost of one node: the Layers panel can no longer fade the neuropil
+independently, because there is no second layer. That trade is deliberate.
+
+--------------------------------------------------------------------------------
+5. FIT THE COMPOSITE ONCE, THEN COLOUR
 --------------------------------------------------------------------------------
 
 MCFO is a *stochastic* multicolour label: a neuron's colour is a fixed ratio of
-the three channels **at the same voxels**. Fitting each channel independently
-produces three splat sets that do not co-locate, and the composite becomes
+the three signal channels **at the same voxels**. Fitting each channel
+separately produces splat sets that do not co-locate, and the composite becomes
 candy-stripe — adjacent red, green and blue splats along a single axon that
-should be one uniform hue. (This is a real thing that happened; it is visible
-the moment you zoom to a single neurite.)
-
-So: fit the per-voxel channel maximum once, which makes co-location structural,
-then read each splat's colour from the three channels at its own centre. The
-channels are balanced by their own robust maxima first — they are different
-fluorophores with several-fold different gains, and compositing them raw makes
-the brightest channel win 96% of splats and the whole brain read red.
+should be one hue. So: fit the per-voxel channel maximum once, then read each
+splat's colour from the channels at its own centre, balancing the channels by
+their own robust maxima first (unbalanced, the brightest channel wins 96% of
+splats and the whole brain reads red).
 
 DATA SOURCE & CITATIONS:
 ========================
 
-Dataset:
---------
-Source:  FISBe (FlyLight Instance Segmentation Benchmark)
-         Zenodo record 10875063 -- https://doi.org/10.5281/zenodo.10875063
-Sample:  VT047848-20171020_66_I3  (``completely`` split, train)
-Origin:  Janelia FlyLight Gen1 MCFO collection
-Shape:   (3, 390, 1058, 907) -- (C, Z, Y, X), uint16 (12-bit valued)
-Voxel:   0.44 um isotropic  (the "40x Gen1" subset; FISBe paper Sec. 3)
-Extent:  ~172 x 466 x 399 um  (Z x Y x X)
+Neurons: FISBe (FlyLight Instance Segmentation Benchmark)
+         Zenodo 10875063 -- https://doi.org/10.5281/zenodo.10875063
+         Sample VT047848-20171020_66_I3 (``completely`` split, train)
+         (C, Z, Y, X) = (3, 390, 1058, 907), uint16, 12-bit valued
+
+Neuropil: Janelia FlyLight Gen1 MCFO, ``janelia-flylight-imagery`` on S3.
+         FISBe distributes only the three signal channels; this sample's
+         ``channel_spec`` is ``sssr`` -- three **s**ignal plus one
+         **r**eference channel. That reference (neuropil counterstain) is what
+         makes the image read as neurons *inside a brain*, and it exists only
+         in the FlyLight release.
+
+Voxel:   0.44 um isotropic, confirmed two ways -- FISBe paper Sec. 3, and the
+         H5J's own root attrs (``voxel_size``, ``unit='micron'``)
 Optics:  Zeiss LSM 710/780 confocal, Plan-Apochromat 40x/1.3 Oil DIC M27
-Genotype: VT047848  BJD_118E08_AE_01  (female)
-License: CC BY 4.0
+Genotype: VT047848 BJD_118E08_AE_01 (female)
+License: CC BY 4.0 (both sources)
 
 How to Cite:
 ------------
-If you use this dataset, please cite all three:
-
   Mais, Hirsch, Managan, Kandarpa, Rumberger, Reinke, Maier-Hein, Ihrke,
   Kainmueller. "FISBe: A real-world benchmark dataset for instance
   segmentation of long-range thin filamentous structures." CVPR 2024.
   arXiv:2404.00130
 
   Meissner et al. "A searchable image resource of Drosophila GAL4 driver
-  expression patterns with single neuron resolution."
-  eLife (2023) 12:e80660
+  expression patterns with single neuron resolution." eLife (2023) 12:e80660
 
   Tirian & Dickson. "The VT GAL4, LexA, and split-GAL4 driver line
   collections for targeted expression in the Drosophila nervous system."
@@ -119,22 +150,24 @@ Credit the FlyLight Project Team, Janelia Research Campus, HHMI.
 WORKFLOW:
 =========
 
-1. **Fetch** one sample (~415 MB) out of the 7.1 GB Zenodo archive using HTTP
-   range requests -- the archive is never downloaded whole
-2. **Combine** the three channels by per-voxel maximum (geometry)
-3. **Fit** one splat set to the composite, with aggressive floor suppression
-4. **Colour** each splat from the three channels at its own centre
-5. **Visualise** in the Luxar web viewer
+1. **Fetch** one FISBe sample (~415 MB) from the 7.1 GB Zenodo archive by HTTP
+   range request -- the archive is never downloaded whole
+2. **Fetch + decode** the reference channel from the FlyLight H5J (~58 MB;
+   HEVC streams inside HDF5, needs ffmpeg -- skipped gracefully if absent)
+3. **Fit** the MCFO composite (neurons) and the reference channel (neuropil)
+4. **Colour** each neuron splat from the three channels at its own centre
+5. **Merge** into one node with per-splat RGBA and render volumetrically
 
 USAGE:
 ======
     python demo_gsplats_3d_flylight_mcfo_neurons.py [--recompute] [--no-serve] [--serve-only]
 
 Options:
-    --recompute:      Force re-fitting from scratch (fetch + GPU fitting)
+    --recompute:      Force re-fetch and re-fit from scratch
     --no-serve:       Generate scene without launching viewer
     --serve-only:     Just serve a previously generated scene
     --sample=NAME:    Fit a different FISBe sample from the 'completely' split
+    --no-neuropil:    Skip the reference channel (neurons on black)
 
 Output:
     - Scene saved to: datasets/demos/gsplats_3d_flylight_mcfo_neurons.luxar.zarr
@@ -144,16 +177,16 @@ Output:
 DEMO_META = {
     "key": "gsplats_3d_flylight_mcfo_neurons",
     "title": "3D FlyLight MCFO Neurons",
-    "description": "3-colour MCFO fly brain neurons — long thin filaments as Gaussian splats.",
+    "description": "MCFO fly brain neurons in a volume-rendered neuropil, as Gaussian splats.",
     "category": "microscopy",
     "geometry": "gsplats",
     "requirements": {
-        # One FISBe sample is range-extracted from the Zenodo archive; the
-        # 7.1 GB archive itself is never downloaded whole.
-        "download_mb": 415,
+        # ~415 MB range-extracted from the FISBe archive (never fetched whole)
+        # plus a ~58 MB H5J for the reference channel.
+        "download_mb": 473,
         "compute": "heavy",
-        # The source is redistributable (CC BY 4.0) but is not hosted by us
-        # yet, so a first run fetches and refits — which needs a GPU.
+        # Redistributable (CC BY 4.0) but not hosted by us yet, so a first run
+        # fetches and refits — which needs a GPU.
         "gpu": "required",
         "local_data": None,
     },
@@ -164,6 +197,7 @@ DEMO_META = {
 import io
 import ntpath
 import shutil
+import subprocess
 import sys
 from pathlib import Path, PurePosixPath
 
@@ -177,6 +211,7 @@ from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import (
     launch_viewer,
     parse_demo_flags,
+    require_module,
     warn_if_no_cuda_gpu,
 )
 from luxar.encoding import EncodingMode
@@ -192,34 +227,32 @@ ZENODO_BASE = f"https://zenodo.org/records/{ZENODO_RECORD}/files"
 ARCHIVE_NAME = "fisbe_v1.0_completely.zip"
 SAMPLE_LIST_URL = f"{ZENODO_BASE}/sample_list_per_split.txt?download=1"
 
-# The hero sample: several neurons whose arbors span the whole central brain.
 DEFAULT_SAMPLE = "VT047848-20171020_66_I3"
 SAMPLE_MEMBER_PREFIX = "completely/train"
 
-# Voxel spacing (Z, Y, X) in micrometres; FISBe "40x Gen1" is isotropic 0.44 um.
+# The FlyLight H5J carrying the reference (neuropil) channel FISBe drops.
+FLYLIGHT_BUCKET = "https://janelia-flylight-imagery.s3.amazonaws.com"
+FLYLIGHT_H5J = {
+    DEFAULT_SAMPLE: (
+        "Gen1 MCFO/VT047848/"
+        "VT047848-20171020_66_I3-f-40x-brain-GAL4-unaligned_stack.h5j"
+    ),
+}
+
 VOXEL_SIZE_ZYX = (0.44, 0.44, 0.44)
 
-# Seed count for the single composite fit. This is a SEED count, not the final
-# splat count: the optimiser prunes splats that end up carrying no mass, and
-# with FLOOR below the great majority do. 1.2M seeds settles at ~19K splats on
-# the default sample — the neurons, and almost nothing else.
+# Neurons. SEEDS is the optimiser's pool, CULL_RETENTION decides how much of it
+# survives — see finding 3. Do NOT lower SEEDS to shrink the output.
 SEEDS = 1_200_000
-
-# Aggressive floor suppression is what makes this demo work at all.
-#
-# The default "auto" floor estimates a background level of ~0.0012 here, which
-# is correct for a *pedestal* but leaves the neuropil autofluorescence intact —
-# and that haze fills the brain silhouette. Fitting it produces ~1.1M splats
-# that are overwhelmingly background, and the render is a solid saturated blob
-# with the neurons buried inside it, in every blending mode (additive sums the
-# haze along each ray; peak projection keeps it because it is genuinely bright).
-#
-# Signal here occupies ~0.1-0.25% of voxels, so subtracting the 99th percentile
-# (~0.0337 on the default sample) cuts the haze and leaves the neurons.
+CULL_RETENTION = 0.999
 FLOOR = "p99"
 
-# Percentile used to balance the three detection channels before compositing
-# colour. They are different fluorophores with several-fold different gains.
+# Neuropil. Fewer splats than the neurons need, because it is a smooth medium.
+NEUROPIL_SEEDS = 600_000
+NEUROPIL_ALPHA = 0.12  # optical depth per splat — see finding 4
+NEUROPIL_AMP = 0.6
+NEUROPIL_RGB = (0.15, 0.25, 1.0)
+
 COLOR_BALANCE_PERCENTILE = 99.99
 
 CACHE_DIR = Path.home() / ".cache" / "luxar" / "gsplats_flylight_mcfo"
@@ -228,6 +261,7 @@ FLAGS = parse_demo_flags()
 NO_SERVE = FLAGS["no_serve"]
 SERVE_ONLY = FLAGS["serve_only"]
 RECOMPUTE = FLAGS["recompute"]
+NO_NEUROPIL = "--no-neuropil" in sys.argv
 
 SAMPLE = DEFAULT_SAMPLE
 for _arg in sys.argv:
@@ -457,18 +491,109 @@ def fetch_sample(sample: str) -> Path:
 
 
 # =============================================================================
+# Reference (neuropil) channel — FlyLight H5J
+# =============================================================================
+
+
+def decode_h5j_channel(h5j_path: Path, channel: int) -> np.ndarray:
+    """Decode one channel of an H5J stack to a (Z, Y, X) uint8 volume.
+
+    H5J stores each channel as an HEVC video stream inside a 1-D uint8 HDF5
+    dataset. Frames are padded up to the codec's block size (``pad_right`` /
+    ``pad_bottom``), so decoded frames must be cropped back to the stated size.
+    """
+    h5py = require_module("h5py")
+
+    with h5py.File(h5j_path, "r") as f:
+        grp = f["Channels"]
+        w = int(grp.attrs["width"][0])
+        h = int(grp.attrs["height"][0])
+        n = int(grp.attrs["frames"][0])
+        pad_r = int(grp.attrs["pad_right"][0])
+        pad_b = int(grp.attrs["pad_bottom"][0])
+        spec = f.attrs["channel_spec"].decode()
+        blob = grp[f"Channel_{channel}"][:].tobytes()
+
+    ew, eh = w + pad_r, h + pad_b
+    aprint(f"channel {channel} of spec {spec!r}: {w}x{h}x{n} (encoded {ew}x{eh})")
+
+    stream = h5j_path.with_suffix(f".ch{channel}.hevc")
+    stream.write_bytes(blob)
+    try:
+        proc = subprocess.run(  # noqa: S603 - fixed argv, path from our cache
+            [
+                "ffmpeg",
+                "-v",
+                "error",
+                "-i",
+                str(stream),
+                "-f",
+                "rawvideo",
+                "-pix_fmt",
+                "gray",
+                "-",
+            ],
+            capture_output=True,
+        )
+        if proc.returncode != 0:
+            raise RuntimeError(f"ffmpeg failed: {proc.stderr.decode()[:500]}")
+        raw = np.frombuffer(proc.stdout, dtype=np.uint8)
+    finally:
+        stream.unlink(missing_ok=True)
+
+    got = raw.size // (ew * eh)
+    vol = raw[: got * ew * eh].reshape(got, eh, ew)[:n, :h, :w]
+    aprint(f"  decoded {got} frames -> {vol.shape}, mean={vol.mean():.2f}")
+    return vol
+
+
+def fetch_neuropil(sample: str):
+    """Fetch and decode the reference channel, or return None if unavailable.
+
+    Missing ffmpeg (or an unmapped sample) degrades to a neurons-only scene
+    rather than failing: the demo is still worth running without the neuropil,
+    it just loses the volume-rendered context.
+    """
+    key = FLYLIGHT_H5J.get(sample)
+    if key is None:
+        aprint(f"No FlyLight H5J mapped for {sample}; skipping the neuropil.")
+        return None
+    if shutil.which("ffmpeg") is None:
+        aprint(
+            "ffmpeg not found — skipping the neuropil channel (H5J stores it as "
+            "HEVC). Install ffmpeg for the volume-rendered brain; the neurons "
+            "render fine without it."
+        )
+        return None
+
+    cached = CACHE_DIR / f"{sample}_neuropil.npy"
+    if cached.exists() and not RECOMPUTE:
+        aprint(f"Neuropil already decoded: {cached.name}")
+        return np.load(cached)
+
+    h5j = CACHE_DIR / f"{sample}.h5j"
+    if not h5j.exists() or RECOMPUTE:
+        url = f"{FLYLIGHT_BUCKET}/{requests.utils.quote(key)}"
+        with asection("Fetching FlyLight H5J (reference channel)"):
+            aprint(url)
+            resp = requests.get(url, timeout=300)
+            resp.raise_for_status()
+            h5j.write_bytes(resp.content)
+            aprint(f"  {len(resp.content) / 1e6:.0f} MB")
+
+    # ``channel_spec`` is 'sssr': three signal channels then the reference.
+    vol = decode_h5j_channel(h5j, 3)
+    np.save(cached, vol)
+    return vol
+
+
+# =============================================================================
 # Data Loading
 # =============================================================================
 
 
 def load_fisbe_sample(sample: str):
-    """Load the three MCFO signal channels of one FISBe sample.
-
-    Returns:
-        tuple: ``(channels, combined)`` where ``channels`` is a list of three
-        (Z, Y, X) float32 volumes scaled to [0, 1] by a shared maximum, and
-        ``combined`` is their per-voxel maximum (the fit target).
-    """
+    """Load the three MCFO signal channels and their per-voxel maximum."""
     store_path = fetch_sample(sample)
 
     with asection(f"Loading {sample}"):
@@ -480,7 +605,6 @@ def load_fisbe_sample(sample: str):
         channels = [np.asarray(raw[c]).astype(np.float32) for c in range(3)]
         shared_max = max(float(v.max()) for v in channels) or 1.0
         channels = [v / shared_max for v in channels]
-
         for c, v in enumerate(channels):
             aprint(f"  ch{c}: mean={v.mean():.6f} p99.9={np.percentile(v, 99.9):.5f}")
 
@@ -496,10 +620,22 @@ def load_fisbe_sample(sample: str):
 # =============================================================================
 
 
-def fit_composite(combined, cache_file: Path):
-    """Fit one splat set to the composite volume, using the cache when present."""
+def _device():
+    """Resolve (and memoise) the fitting device."""
+    global DEVICE
+    if DEVICE is None:
+        from luxar.demos import detect_device
+
+        DEVICE = detect_device()
+    return DEVICE
+
+
+def fit_volume(
+    volume, cache_file: Path, seeds: int, floor, retention: float, label: str
+):
+    """Fit one volume to splats, using the cache when present."""
     if cache_file.exists() and not RECOMPUTE:
-        aprint("Loading cached composite fit")
+        aprint(f"Loading cached {label} fit")
         try:
             result = GSplatData.load(cache_file, include_stats=False)
             aprint(f"  Loaded {len(result.amplitudes):,} cached splats")
@@ -507,24 +643,19 @@ def fit_composite(combined, cache_file: Path):
         except Exception as exc:
             aprint(f"  Cache load failed: {exc}, re-fitting...")
 
-    global DEVICE
-    if DEVICE is None:
-        from luxar.demos import detect_device
-
-        DEVICE = detect_device()
-
     from luxar.gsplats import fit_gaussian_splats
 
-    aprint(f"Fitting composite (seeds={SEEDS:,}, floor={FLOOR})...")
+    aprint(f"Fitting {label} (seeds={seeds:,}, floor={floor}, retention={retention})")
     result = fit_gaussian_splats(
-        combined,
-        seeds=SEEDS,
-        floor=FLOOR,
-        device=DEVICE,
+        volume,
+        seeds=seeds,
+        floor=floor,
+        cull_retention=retention,
+        device=_device(),
         verbose=True,
         voxel_size=VOXEL_SIZE_ZYX,
     )
-    aprint(f"  Fitted {len(result.amplitudes):,} splats (from {SEEDS:,} seeds)")
+    aprint(f"  Fitted {len(result.amplitudes):,} splats (from {seeds:,} seeds)")
 
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     result.save(
@@ -559,18 +690,18 @@ def splat_colors(centers, channels, voxel_size=VOXEL_SIZE_ZYX):
 
     triplet = np.empty((len(centers), 3), dtype=np.float32)
     for c, vol in enumerate(channels):
-        # Balance channels before compositing — see the module docstring.
+        # Balance channels before compositing — see finding 5.
         gain = float(np.percentile(vol, COLOR_BALANCE_PERCENTILE)) or 1.0
         triplet[:, c] = vol[idx[:, 0], idx[:, 1], idx[:, 2]] / gain
         aprint(f"  ch{c} balance gain (p{COLOR_BALANCE_PERCENTILE}) = {gain:.5f}")
 
-    # Hue only: brightness is already carried by the splat amplitude, so
-    # normalising each splat by its own strongest channel keeps the MCFO colour
-    # ratio without double-counting intensity.
+    # Hue only: brightness is carried by the splat amplitude, so normalising
+    # each splat by its own strongest channel keeps the MCFO colour ratio
+    # without double-counting intensity.
     peak = triplet.max(axis=1, keepdims=True)
-    rgb = np.divide(triplet, peak, out=np.zeros_like(triplet), where=peak > 0)
-    rgb = np.clip(rgb, 0.0, 1.0)
-
+    rgb = np.clip(
+        np.divide(triplet, peak, out=np.zeros_like(triplet), where=peak > 0), 0.0, 1.0
+    )
     dominant = triplet.argmax(axis=1)
     aprint(
         "  dominant channel: "
@@ -579,13 +710,49 @@ def splat_colors(centers, channels, voxel_size=VOXEL_SIZE_ZYX):
     return rgb
 
 
+def merge_for_render(neurons, neuron_rgb, neuropil):
+    """Merge neurons and neuropil into one splat set with per-splat RGBA.
+
+    Returns ``(centers, amplitudes, cholesky, rgba)``. The neuropil is emitted
+    first purely for readability; ordering within a node is resolved by the
+    renderer's depth sort, which is the whole reason for using one node.
+    """
+    n = len(neurons.amplitudes)
+    neuron_rgba = np.concatenate(
+        [neuron_rgb, np.ones((n, 1), dtype=np.float32)], axis=1
+    ).astype(np.float32)
+    if neuropil is None:
+        return (
+            neurons.centers,
+            neurons.amplitudes,
+            neurons.cholesky_factors,
+            neuron_rgba,
+        )
+
+    p = len(neuropil.amplitudes)
+    neuropil_rgba = np.empty((p, 4), dtype=np.float32)
+    neuropil_rgba[:, :3] = np.asarray(NEUROPIL_RGB, dtype=np.float32)
+    neuropil_rgba[:, 3] = NEUROPIL_ALPHA
+
+    return (
+        np.concatenate([neuropil.centers, neurons.centers]).astype(np.float32),
+        np.concatenate([neuropil.amplitudes * NEUROPIL_AMP, neurons.amplitudes]).astype(
+            np.float32
+        ),
+        np.concatenate([neuropil.cholesky_factors, neurons.cholesky_factors]).astype(
+            np.float32
+        ),
+        np.concatenate([neuropil_rgba, neuron_rgba]).astype(np.float32),
+    )
+
+
 # =============================================================================
 # Scene Creation
 # =============================================================================
 
 
-def create_luxar_scene(gsplats, rgb, output_path=None):
-    """Create the 3D scene: one splat set carrying per-splat MCFO colour."""
+def create_luxar_scene(centers, amplitudes, cholesky, rgba, output_path=None):
+    """Create the 3D scene: one volume-rendered node with per-splat RGBA."""
     if output_path is None:
         output_path = (
             get_demos_output_dir() / "gsplats_3d_flylight_mcfo_neurons.luxar.zarr"
@@ -608,26 +775,26 @@ def create_luxar_scene(gsplats, rgb, output_path=None):
                 viewer_config=ViewerConfig(tone_mapping="ACES"),
             )
 
-            scene.attrs["title"] = "GSplats: 3-Colour MCFO Fly Brain Neurons"
+            scene.attrs["title"] = "GSplats: MCFO Fly Brain Neurons"
             scene.attrs["sample"] = SAMPLE
             scene.attrs["description"] = f"""
-3-Colour MCFO Fly Brain Neurons (FlyLight / FISBe)
-==================================================
+MCFO Fly Brain Neurons in a Volume-Rendered Neuropil
+====================================================
 
-Long-range, thin, widely branching Drosophila neurons fitted as anisotropic
-Gaussian splats — the hard case for a Gaussian basis, and the reason FISBe
-exists as a benchmark.
+Labelled Drosophila neurons — long, thin, widely branching — threaded through
+the brain they live in, as one volume-rendered Gaussian splat cloud.
 
-One splat set is fitted to the per-voxel maximum of the three MCFO detection
-channels, then each splat is coloured from those channels at its own centre.
-MCFO is a stochastic label, so a neuron's colour is a ratio of the three
-channels at the same voxels — fitting the channels separately would break that
-co-location and stripe each axon.
+The neuropil counterstain is a dense semi-transparent medium; under volumetric
+(emission-absorption) compositing it occludes front-to-back, so the brain reads
+as a solid body and neurites genuinely pass behind it. Neurons and neuropil
+share ONE node with per-splat RGBA — as two nodes covering the same volume
+there would be no correct draw order.
 
 Data Source:
-  - FISBe v1.0, Zenodo 10.5281/zenodo.10875063 (CC BY 4.0)
-  - Sample {SAMPLE}, 'completely' split
-  - Janelia FlyLight Gen1 MCFO collection
+  - Neurons: FISBe v1.0, Zenodo 10.5281/zenodo.10875063 (CC BY 4.0)
+    Sample {SAMPLE}, 'completely' split
+  - Neuropil: Janelia FlyLight Gen1 MCFO reference channel (CC BY 4.0),
+    which FISBe does not distribute
   - Zeiss LSM 710/780 confocal, 40x/1.3 Oil, 0.44 um isotropic
 
 Cite: Mais et al. (FISBe, CVPR 2024); Meissner et al. (eLife 2023
@@ -636,30 +803,24 @@ Janelia Research Campus, HHMI.
 
 Controls:
   - Mouse drag to rotate, scroll to zoom, right-click drag to pan
-  - Press L for the Layers panel
             """
 
-            centroid = (gsplats.centers.T @ gsplats.amplitudes) / max(
-                float(gsplats.amplitudes.sum()), 1e-9
-            )
+            centroid = (centers.T @ amplitudes) / max(float(amplitudes.sum()), 1e-9)
             aprint(f"Centroid: {centroid}")
 
             scene.add_gsplats(
                 name="gsplats_mcfo",
-                centers=gsplats.centers - centroid,
-                amplitudes=gsplats.amplitudes,
-                cholesky_factors=gsplats.cholesky_factors,
-                colors=rgb,
+                centers=centers - centroid,
+                amplitudes=amplitudes,
+                cholesky_factors=cholesky,
+                colors=rgba,
                 dim_order=["z", "y", "x"],
                 opacity=1.0,
-                # Additive: with the neuropil haze removed by FLOOR the scene is
-                # a sparse set of bright filaments on black, which is exactly
-                # the case additive compositing is for. (It is NOT safe before
-                # floor suppression — see the FLOOR comment.)
-                blending_mode="additive",
+                absorption=1.0,
+                blending_mode="volumetric",
                 layer=True,
             )
-            aprint(f"Added {len(gsplats.amplitudes):,} splats with per-splat colour")
+            aprint(f"Added {len(amplitudes):,} splats with per-splat RGBA")
 
             scene.add_text(
                 "MCFO Fly Brain Neurons",
@@ -689,10 +850,10 @@ Controls:
 def main():
     """Main demo execution."""
     aprint("=" * 70)
-    aprint("GSplats Demo: 3-Colour MCFO Fly Brain Neurons (FlyLight / FISBe)")
+    aprint("GSplats Demo: MCFO Fly Brain Neurons (FlyLight / FISBe)")
     aprint("=" * 70)
     aprint(f"Sample: {SAMPLE}")
-    aprint("Long-range thin filamentous neurons as anisotropic Gaussian splats")
+    aprint("Thin filaments + a volume-rendered neuropil, in one splat cloud")
     aprint("")
 
     # A non-default --sample writes beside the default scene rather than
@@ -712,26 +873,50 @@ def main():
 
     warn_if_no_cuda_gpu()
 
-    # Colouring needs the individual channels, so the sample is loaded even when
-    # the fit itself is cached.
+    # Colouring needs the individual channels, so the sample is loaded even
+    # when the fit itself is cached.
     channels, combined = load_fisbe_sample(SAMPLE)
 
-    cache_file = CACHE_DIR / f"{SAMPLE}_composite.gsplats.zarr.zip"
-    with asection("Fitting composite"):
-        gsplats = fit_composite(combined, cache_file)
+    with asection("Fitting neurons"):
+        neurons = fit_volume(
+            combined,
+            CACHE_DIR / f"{SAMPLE}_neurons.gsplats.zarr.zip",
+            SEEDS,
+            FLOOR,
+            CULL_RETENTION,
+            "neurons",
+        )
 
-    with asection("Colouring splats from MCFO channels"):
-        rgb = splat_colors(gsplats.centers, channels)
+    neuropil = None
+    if not NO_NEUROPIL:
+        with asection("Neuropil (reference channel)"):
+            ref = fetch_neuropil(SAMPLE)
+            if ref is not None:
+                neuropil = fit_volume(
+                    ref.astype(np.float32) / 255.0,
+                    CACHE_DIR / f"{SAMPLE}_neuropil.gsplats.zarr.zip",
+                    NEUROPIL_SEEDS,
+                    "auto",
+                    0.95,
+                    "neuropil",
+                )
+
+    with asection("Colouring neurons from MCFO channels"):
+        neuron_rgb = splat_colors(neurons.centers, channels)
+
+    centers, amps, chol, rgba = merge_for_render(neurons, neuron_rgb, neuropil)
 
     with asection("Summary"):
-        n = len(gsplats.amplitudes)
-        voxels = combined.size
-        aprint(f"  Splats: {n:,} (from {SEEDS:,} seeds, floor={FLOOR})")
-        aprint(f"  Voxels: {voxels:,}")
+        aprint(f"  Neurons:  {len(neurons.amplitudes):,} splats")
+        if neuropil is not None:
+            aprint(f"  Neuropil: {len(neuropil.amplitudes):,} splats")
+        else:
+            aprint("  Neuropil: skipped")
+        aprint(f"  Total:    {len(amps):,} splats")
         # 11 floats per splat: 3 centers + 6 Cholesky + amplitude + pad.
-        aprint(f"  Compression: {(voxels * 4) / (n * 11 * 4):.0f}:1")
+        aprint(f"  Compression: {(combined.size * 4) / (len(amps) * 11 * 4):.0f}:1")
 
-    scene_path = create_luxar_scene(gsplats, rgb, output_path)
+    scene_path = create_luxar_scene(centers, amps, chol, rgba, output_path)
 
     if NO_SERVE:
         aprint(f"Dataset generated at {scene_path}")
