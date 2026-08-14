@@ -336,3 +336,36 @@ def resolve_streaming_breakpoints(
         f"~{c * bps / 1024:.0f} KB)"
     )
     return f"stream:{c}"
+
+
+#: The post-merge refinement modes, in the order they trade time for fidelity.
+VALID_REFINE_MODES = ("none", "l2", "volume")
+
+
+def validate_refine(
+    refine: "Optional[str]",
+    refine_iters: "Optional[int]",
+    *,
+    flag: str = "--refine",
+    iters_flag: str = "--refine-iters",
+    volume: "Any" = None,
+    require_volume: bool = False,
+) -> str:
+    """Normalise a ``--refine`` value and reject an orphan iteration count.
+
+    Shared by `gsplat fit --recipe`, `batch-fit merge` and `gsplat lod`, which
+    each expose the same pair under their own flag spellings — hence ``flag`` /
+    ``iters_flag``, so the message names what the user actually typed.
+    """
+    norm = (refine or "none").strip()
+    if norm not in VALID_REFINE_MODES:
+        raise typer.BadParameter(
+            f"{flag} must be one of {list(VALID_REFINE_MODES)}; got {refine!r}"
+        )
+    if refine_iters is not None and norm == "none":
+        raise typer.BadParameter(f"{iters_flag} only applies with {flag} l2|volume.")
+    if require_volume and norm == "volume" and volume is None:
+        raise typer.BadParameter(
+            f"{flag} volume needs the source volume; none was supplied."
+        )
+    return norm

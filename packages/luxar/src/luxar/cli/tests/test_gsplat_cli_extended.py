@@ -3237,6 +3237,134 @@ class TestCalibrateCommand:
         persisted = sorted(out_fits.iterdir())
         assert len(persisted) == 2
 
+    def test_cal_auto_region_marks_k_star_region_scoped(
+        self,
+        runner: CliRunner,
+        multiblob_volume: Path,
+        fast_fit_config: Path,
+        tmp_path: Path,
+    ) -> None:
+        """``cal --auto-region`` qualifies its K* as region-scoped (#1556).
+
+        ``fit --seeds`` is a WHOLE-VOLUME budget that a tiled fit divides across
+        its tiles, so a region-scoped K* handed to it under-seeds the volume by
+        roughly the tile count. The headline must therefore say which kind of
+        number it is printing, and point at the density-transfer route instead.
+        ``--region-size 16`` on the 40^3 fixture forces a real crop (a region as
+        large as the volume short-circuits to ``strategy="whole"``, which IS
+        whole-volume and must NOT be flagged — see the sibling test).
+        """
+        import json
+
+        out_json = tmp_path / "cal.json"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "cal",
+                str(multiblob_volume),
+                str(out_json),
+                "--k-grid",
+                "30,90",
+                "--preset",
+                "draft",
+                "--config",
+                str(fast_fit_config),
+                "--device",
+                "cpu",
+                "--auto-region",
+                "--region-size",
+                "16",
+            ],
+        )
+        assert result.exit_code == 0, f"cal failed:\n{result.stdout}"
+
+        with open(out_json) as f:
+            region = json.load(f)["calibration_region"]
+        assert region is not None and region["strategy"] != "whole"
+
+        assert "region-scoped" in result.stdout
+        assert "--seeds" in result.stdout
+        assert "--tiling content" in result.stdout
+
+    def test_cal_default_k_star_is_not_flagged(
+        self,
+        runner: CliRunner,
+        multiblob_volume: Path,
+        fast_fit_config: Path,
+        tmp_path: Path,
+    ) -> None:
+        """Guard: a default (whole-volume) ``cal`` must NOT print the caveat.
+
+        Its K* is exactly the number ``fit --seeds`` wants, so flagging it would
+        steer users away from the documented ``cal`` -> ``fit --seeds`` pipeline.
+        """
+        out_json = tmp_path / "cal.json"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "cal",
+                str(multiblob_volume),
+                str(out_json),
+                "--k-grid",
+                "30,90",
+                "--preset",
+                "draft",
+                "--config",
+                str(fast_fit_config),
+                "--device",
+                "cpu",
+            ],
+        )
+        assert result.exit_code == 0, f"cal failed:\n{result.stdout}"
+        assert "Recommended K" in result.stdout
+        assert "region-scoped" not in result.stdout
+
+    def test_cal_auto_region_whole_volume_shortcircuit_is_not_flagged(
+        self,
+        runner: CliRunner,
+        multiblob_volume: Path,
+        fast_fit_config: Path,
+        tmp_path: Path,
+    ) -> None:
+        """``--auto-region`` on a volume smaller than ``--region-size`` is NOT flagged.
+
+        ``select_calibration_region`` short-circuits to ``strategy="whole"`` and
+        returns the volume untouched, so K* really is whole-volume even though
+        ``calibration_region`` is populated. Flagging on the mere presence of
+        that provenance would misdirect every user of a sub-256^3 volume.
+        """
+        import json
+
+        out_json = tmp_path / "cal.json"
+        result = runner.invoke(
+            app,
+            # fmt: off
+            [
+                "gsplat",
+                "cal",
+                str(multiblob_volume),
+                str(out_json),
+                "--k-grid",
+                "30,90",
+                "--preset",
+                "draft",
+                "--config",
+                str(fast_fit_config),
+                "--device",
+                "cpu",
+                "--auto-region",  # default --region-size 256 > 40 -> "whole"
+            ],
+            # fmt: on
+        )
+        assert result.exit_code == 0, f"cal failed:\n{result.stdout}"
+
+        with open(out_json) as f:
+            region = json.load(f)["calibration_region"]
+        assert region is not None and region["strategy"] == "whole"
+        assert "region-scoped" not in result.stdout
+
 
 # ═══════════════════════════════════════════════════════════════════════
 # LOD command tests (additive + substitutive)
@@ -4044,14 +4172,17 @@ class TestLODCommand:
         assert result.exit_code != 0
         assert not out.exists()
 
-    def test_refine_volume_rejected_for_adaptive_recipe(
+    def test_refine_volume_accepted_for_adaptive_recipe(
         self,
         runner: CliRunner,
         medium_gsplats: Path,
         small_volume_npy: Path,
         tmp_path: Path,
     ) -> None:
-        """Per-part levels would re-fit against the FULL volume — rejected."""
+        """Per-part levels re-fit against each tile's own CROP of the volume, so
+        the adaptive recipe now accepts ``--refine volume``. It used to be
+        rejected because a part fitted against the FULL volume is pulled out of
+        its tile to explain a neighbour's signal."""
         out = tmp_path / "x.gsplats.zarr"
         result = runner.invoke(
             app,
@@ -4064,13 +4195,126 @@ class TestLODCommand:
                 "adaptive",
                 "--refine",
                 "volume",
+                "--refine-iters",
+                "3",
                 "--target",
                 str(small_volume_npy),
             ],
         )
+        assert result.exit_code == 0, self._io(result)
+        assert out.exists()
+
+    def test_target_axes_requires_a_target(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """``--target-axes`` describes a ``--target``; alone it is a typo, not a
+        silently ignored option."""
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(tmp_path / "x.gsplats.zarr"),
+                "--recipe",
+                "levels",
+                "--target-axes",
+                "t,z,y,x",
+            ],
+        )
         assert result.exit_code != 0
-        assert "adaptive" in self._io(result)
-        assert not out.exists()
+        assert "--target-axes" in self._io(result)
+
+    def test_target_axes_excludes_the_slicing_selectors(
+        self,
+        runner: CliRunner,
+        medium_gsplats: Path,
+        small_volume_npy: Path,
+        tmp_path: Path,
+    ) -> None:
+        """``--target-axes`` KEEPS the stacked axis; ``--timepoint`` drops it.
+
+        Combined, the labels no longer describe the array the re-fit is handed —
+        and since the selectors are applied by the positional heuristic, the
+        mismatch would be silent rather than loud.
+        """
+        for flag, value in (("--timepoint", "0"), ("--channel", "0")):
+            result = runner.invoke(
+                app,
+                [
+                    "gsplat",
+                    "lod",
+                    str(medium_gsplats),
+                    str(tmp_path / "x.gsplats.zarr"),
+                    "--recipe",
+                    "levels",
+                    "--refine",
+                    "volume",
+                    "--target",
+                    str(small_volume_npy),
+                    "--target-axes",
+                    "z,y,x",
+                    flag,
+                    value,
+                ],
+            )
+            assert result.exit_code != 0, flag
+            assert "--target-axes" in self._io(result)
+
+    def test_target_axes_opens_the_target_lazily(
+        self,
+        runner: CliRunner,
+        medium_gsplats: Path,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        """A ``--target-axes`` target must not be materialised by the front door.
+
+        The re-fit only ever SLICES the target (one barrier group / one tile crop
+        at a time), which is the whole reason a stacked timelapse is workable — one
+        timepoint of a 253-timepoint 407x2048x2048 uint16 stack is 3.4 GB against
+        431 GB whole. Reading it eagerly at the CLI boundary throws that away, so
+        assert the eager loader is not on this path at all.
+        """
+        import zarr
+
+        import luxar.cli.gsplat_config as gsplat_config
+
+        volume = np.random.rand(16, 16, 16).astype(np.float32) * 0.5
+        volume[6:10, 6:10, 6:10] = 1.0
+        target = tmp_path / "target.zarr"
+        z = zarr.open(str(target), mode="w", shape=volume.shape, dtype=volume.dtype)
+        z[:] = volume
+
+        def _boom(*args, **kwargs):  # pragma: no cover - must not be reached
+            raise AssertionError("the target was loaded eagerly")
+
+        monkeypatch.setattr(gsplat_config, "load_volume", _boom)
+
+        out = tmp_path / "x.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(out),
+                "--recipe",
+                "levels",
+                "--levels",
+                "1",
+                "--refine",
+                "volume",
+                "--refine-iters",
+                "3",
+                "--target",
+                str(target),
+                "--target-axes",
+                "z,y,x",
+            ],
+        )
+        assert result.exit_code == 0, self._io(result)
+        assert out.exists()
 
     def test_recipe_levels_with_refine_volume_smoke(
         self, runner: CliRunner, small_volume_npy: Path, tmp_path: Path

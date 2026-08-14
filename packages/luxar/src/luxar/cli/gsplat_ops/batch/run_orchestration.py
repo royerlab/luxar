@@ -63,6 +63,8 @@ def run_batch_local_orchestration(
     merge_bytes_per_splat: Optional[float],
     merge_compression_factor: Optional[int],
     merge_levels: Optional[int],
+    merge_refine: Optional[str],
+    merge_refine_iters: Optional[int],
     merge_substitutive_method: Optional[str],
     merge_coarsen_dims: Optional[str],
 ) -> None:
@@ -152,6 +154,8 @@ def run_batch_local_orchestration(
         bytes_per_splat=merge_bytes_per_splat,
         compression_factor=merge_compression_factor,
         levels=merge_levels,
+        refine=merge_refine,
+        refine_iters=merge_refine_iters,
         substitutive_method=merge_substitutive_method,
         coarsen_dims=merge_coarsen_dims,
     )
