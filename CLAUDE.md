@@ -274,6 +274,10 @@ luxar gsplat fit volume.tiff splats.gsplats.zarr --floor none    # disable (hard
 # `kind=partition` by default (one part per tile/box, for viewer frustum
 # culling); pass `--flat` for a single flat leaf. Whole-volume fits
 # (`--tiling none`/small auto) stay a single leaf.
+# An integer `--seeds K` is a WHOLE-VOLUME budget (what a default `cal`
+# reports): a tiled fit DIVIDES it across its tiles instead of giving each
+# tile the full count. Not an exact count — signal-free tiles are skipped
+# (sparse volumes realize less) and K below the tile count gives 1 per tile.
 
 # Uniform tiled fitting for large volumes (Hann cosine apodization, seamless stitching)
 luxar gsplat fit large.zarr splats.gsplats.zarr --tiling uniform --tile-size 256 --overlap 32

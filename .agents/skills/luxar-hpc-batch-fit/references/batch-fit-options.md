@@ -30,6 +30,15 @@ timepoint instead. Tuning: `--saturation-exponent` (0.44), `--saturation-cap`,
 `--splats-per-pass`, `--psnr-patience`, `--max-passes`, `--cull-retention`
 (default 0.95 uniform / 0.999 content; 0 keeps all).
 
+Under **uniform** tiling an integer `--seeds K` is a **whole-volume budget per
+(t, c) volume**: every task is a `--tile k/M` fit, which divides K across that
+volume's M tiles (`ceil(K/M)`, floored at 1) instead of fitting K per tile, so
+each timepoint/channel tracks K rather than K x M. Not an exact count — tiles
+windowing to near-zero signal are skipped, and `K < M` gives M. A float ratio is
+scale-free and applied per tile unchanged. Under **content** tiling `--seeds` is
+ignored: tasks are emitted as `--tiling content --plan … --plan-box k` and each
+box takes its budget from the shared density plan.
+
 `--floor` (default `auto`, same as `fit`/`cal`): subtract a background floor /
 DC-offset (clip at 0) before normalization, so amplitudes are background-relative.
 `auto` = histogram-mode estimate (capped at median; no-op on clean data);
