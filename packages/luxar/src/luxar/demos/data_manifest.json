@@ -479,6 +479,17 @@
         }
       ]
     },
+    "gsplats_flylight_mcfo": {
+      "bucket": "local-compute",
+      "redistribute": true,
+      "license": "cc-by-4.0",
+      "source": "FISBe v1.0 (Zenodo 10875063) / Janelia FlyLight Gen1 MCFO",
+      "attribution": "FISBe (Mais et al., CVPR 2024; doi:10.5281/zenodo.10875063, CC BY 4.0). Imagery from the FlyLight Project Team, Janelia Research Campus, HHMI; cite Meissner et al. eLife 2023 12:e80660 and Tirian & Dickson 2017 for the VT line.",
+      "reason": "CC BY 4.0 and redistributable, but no Zenodo record is published yet.",
+      "strategy": "Range-extract one sample (~415 MB) from the 7.1 GB Zenodo archive + fit locally (GPU). The archive is never fetched whole.",
+      "dir": "gsplats_flylight_mcfo",
+      "files": []
+    },
     "gsplats_tribolium": {
       "bucket": "local-compute",
       "redistribute": false,

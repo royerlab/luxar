@@ -304,6 +304,27 @@ DATASETS: dict[str, dict] = {
         reason="Repo MIT covers software only; sample data unlicensed (all rights reserved).",
         strategy="Fetch raw from the Acto3D source + fit locally (GPU).",
     ),
+    "gsplats_flylight_mcfo": dict(
+        bucket="local-compute",
+        # Unlike the other local-compute rows this one IS redistributable —
+        # it is local-compute only because the cc-by Zenodo record does not
+        # exist yet. Promote it to bucket="zenodo", record="cc-by" once it
+        # does; nothing else about the demo has to change.
+        redistribute=True,
+        license="cc-by-4.0",
+        source="FISBe v1.0 (Zenodo 10875063) / Janelia FlyLight Gen1 MCFO",
+        attribution=(
+            "FISBe (Mais et al., CVPR 2024; doi:10.5281/zenodo.10875063, "
+            "CC BY 4.0). Imagery from the FlyLight Project Team, Janelia "
+            "Research Campus, HHMI; cite Meissner et al. eLife 2023 "
+            "12:e80660 and Tirian & Dickson 2017 for the VT line."
+        ),
+        reason="CC BY 4.0 and redistributable, but no Zenodo record is published yet.",
+        strategy=(
+            "Range-extract one sample (~415 MB) from the 7.1 GB Zenodo "
+            "archive + fit locally (GPU). The archive is never fetched whole."
+        ),
+    ),
     "gsplats_tribolium": dict(
         bucket="local-compute",
         redistribute=False,
