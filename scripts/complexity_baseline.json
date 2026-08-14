@@ -35,7 +35,7 @@
       32
     ],
     "packages/luxar/src/luxar/cli/gsplat_ops/fitting/fit.py::run_fit_volume": [
-      16
+      17
     ],
     "packages/luxar/src/luxar/cli/gsplat_ops/fitting/recipe_args.py::build_fit_recipe_params": [
       12

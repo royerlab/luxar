@@ -109,7 +109,10 @@ def run_fit_volume(
         "(default: auto). auto = histogram-mode estimate (capped at median; "
         "no-op on clean data) | pN = Nth percentile (e.g. p10) | <float> = "
         "fixed value | none = disable (hard-min normalization). Unset lets a "
-        "`floor:` in --config/preset apply, else defaults to auto.",
+        "`floor:` in --config/preset apply, else defaults to auto. Under any "
+        "--tiling the spec is resolved against the WHOLE volume — never a tile "
+        "or box crop — so every tile/box works from the same level (no "
+        "brightness steps at tile boundaries).",
     ),
     seed_method: Optional[str] = typer.Option(
         None, "--seed-method", help="Seed generation method"
@@ -751,6 +754,11 @@ def run_fit_volume(
         aprint(f"\nDone: {n_splats:,} splats in {time_s:.1f}s")
 
     except typer.Exit:
+        raise
+    except typer.BadParameter:
+        # A usage error (e.g. an invalid --floor spec, rejected before anything
+        # is read): let Typer render it as one instead of burying it under a
+        # traceback from this generic handler.
         raise
     except Exception as e:
         aprint(f"Error: {e}")

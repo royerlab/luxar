@@ -134,13 +134,20 @@ def run_batch_submit(
         None,
         "--floor",
         help="Background floor / DC-offset suppression (default: auto): "
-        "auto | pN | <float> | none. With --tiling uniform the spec is "
-        "resolved against each task's whole (timepoint, channel) sub-volume "
-        "— never per tile; the deterministic sampler makes every tile of "
-        "that sub-volume resolve the identical level — and subtracted from "
-        "the raw tile before apodization. With --tiling content each box "
-        "still estimates the floor on its own crop. Unset lets a `floor:` "
-        "in --config apply, else defaults to auto. See `gsplat fit --help`.",
+        "auto | pN | <float> | none. Resolved to ONE GLOBAL LEVEL at plan "
+        "time — the MINIMUM of the levels measured on a bounded set of evenly "
+        "spaced (t, c) slices spanning the whole store (up to 4 timepoints, "
+        "always including t=0 and t=T-1 when T > 1, x up to 4 channel-like "
+        "coordinates) — recorded in the manifest, and subtracted by every "
+        "(timepoint, channel) task and every tile/box. It is deliberately NOT "
+        "re-estimated per timepoint: that would be a time-varying pedestal, "
+        "i.e. brightness flicker across the merged partition. A minimum cannot "
+        "clip a SAMPLED slice to zero (which would drop it silently from the "
+        "merge); a dimmer NON-sampled slice still can, since bounded sampling "
+        "bounds only what it samples — pass --floor none or an explicit "
+        "numeric --floor N if a particular slice must survive. Unset lets a "
+        "`floor:` in --config "
+        "apply, else defaults to auto. See `gsplat fit --help`.",
     ),
     seeds: Optional[str] = typer.Option(
         None,

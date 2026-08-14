@@ -80,6 +80,27 @@ class BatchManifest:
     preset: Optional[str] = None
     fit_args: Dict[str, Any] = field(default_factory=dict)
 
+    floor_level: Optional[float] = None
+    """The ONE background floor level resolved at plan time, subtracted by every
+    ``(t, c)`` task. ``batch-fit`` deliberately uses a single global level for the
+    whole timelapse rather than letting each task re-estimate on its own
+    sub-volume, which would be a time-varying pedestal (brightness flicker) across
+    the merged partition. It is the MINIMUM of the levels resolved on a bounded set
+    of evenly spaced ``(t, c)`` slices spanning the store's full extent (see
+    :func:`luxar.cli.gsplat_ops.batch.planning.resolve_batch_floor`): a minimum is
+    a lower bound on every SAMPLED slice's pedestal, so it cannot clip a sampled
+    sub-volume to zero (which would drop that slice silently from the merge) — a
+    dimmer non-sampled slice still can, bounded sampling being bounded — and it
+    does not depend on the ``--timepoints``/``--channels`` selection. The level
+    that actually drives the fits is the concrete number in ``fit_args["floor"]``;
+    this field RECORDS it for inspection (nothing reads it back — notably the
+    merge-time ``refine='volume'`` re-fit does not, so its coarse levels
+    re-estimate their own ``auto`` floor per crop). ``None`` means "no level is
+    pinned": suppression is disabled, or the resolved level was negative so the
+    SPEC was forwarded and each task resolves it itself, or the manifest predates
+    this field — in the last two cases the run keeps its recorded ``fit_args``
+    floor SPEC, so a resumed old batch behaves exactly as it did when planned."""
+
     # GPU + time
     gpu_name: str = ""
     estimated_seconds_per_task: float = 0.0

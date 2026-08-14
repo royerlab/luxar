@@ -1266,8 +1266,15 @@ def _single_tile_ctx(tile: str, tile_size: int = 48, overlap: int = 16):
 
 @pytest.mark.skipif(not HAS_TORCH, reason="torch not available")
 class TestSingleTileWorkerFloor:
-    """The standalone ``--tile k/M`` worker resolves the user's floor spec
-    itself, guarded — it is that worker's own user-spec entry point."""
+    """The standalone ``--tile k/M`` worker resolves the floor spec itself.
+
+    A volume-derived spec (``auto``/``pNN``) becomes a level here for the first
+    time, so it is resolved against the WHOLE volume and guarded. A CONCRETE
+    numeric is applied unvetoed (#1174): it is normally a level a parent already
+    resolved and guarded for all the workers, and re-guarding it per sub-volume is
+    the pedestal disagreement the shared resolution removes — a too-high one is
+    announced loudly instead of being silently dropped.
+    """
 
     def _pedestal_volume(self) -> np.ndarray:
         rng = np.random.RandomState(11)
@@ -1291,10 +1298,18 @@ class TestSingleTileWorkerFloor:
         )
         assert result.stats["applied_floor"] == pytest.approx(expected)
 
-    def test_too_high_numeric_floor_is_guarded(self, monkeypatch) -> None:
-        """A numeric floor above the volume max is refused HERE (the guard),
-        not taken at face value by fit_tile — which would silently clip the
-        whole tile to zero and skip the fit."""
+    def test_too_high_numeric_floor_is_applied_but_announced(
+        self, monkeypatch, capsys
+    ) -> None:
+        """A numeric floor above this worker's max is APPLIED, loudly (#1174).
+
+        Behaviour change: this used to be guarded here and reported-and-IGNORED,
+        so two uniform sub-paths disagreed about the same flag — the sequential
+        in-process fit applied its one resolved level while a ``--tile k/M`` / ``-j
+        N`` worker quietly dropped it. The number now wins (no worker may disagree
+        with its siblings about the pedestal), and the resulting all-zero tile is
+        explained up front instead of surfacing as a bare "empty store".
+        """
         import luxar.gsplats.fit_tiled_gsplats as ftg
         from luxar.cli.gsplat_ops.fitting.fit_utils import fit_single_tile
 
@@ -1304,14 +1319,15 @@ class TestSingleTileWorkerFloor:
         result = fit_single_tile(
             _single_tile_ctx("0/4"), volume, {"floor": 10_000.0}, None
         )
-        # Refused level -> the tile is fitted on unmodified (windowed) data.
-        assert len(records) == 1
-        assert result.stats["applied_floor"] is None
-        specs = compute_tile_specs(volume.shape, 48, 16)
-        w = cosine_window(specs[0])
-        np.testing.assert_allclose(
-            records[0]["data"], volume[specs[0].slices] * w, rtol=1e-5
-        )
+        assert result.stats["applied_floor"] == pytest.approx(10_000.0)
+        # Subtracting it clips the whole tile to zero, so the fit is skipped
+        # outright and the tile yields 0 splats — exactly the outcome the warning
+        # has to name up front (level, sampled max, consequence).
+        assert records == []
+        assert result.centers.shape[0] == 0
+        out = capsys.readouterr().out
+        assert "⚠" in out and "10000" in out
+        assert "0 SPLATS" in out and "skipped by the merge" in out
 
     def test_null_floor_config_means_disabled(self, monkeypatch) -> None:
         """``floor: null`` in a --config YAML disables the floor on the
