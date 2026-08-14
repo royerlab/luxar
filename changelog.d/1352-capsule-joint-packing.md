@@ -12,6 +12,6 @@ dividing per fragment: the two are the same number by spec identity.
 Together these cut the worst-case (10 M hairline segments) overhead over
 the legacy quad from ~1.32× to ~1.23×; fill-bound wide-line scenes are
 unchanged. No joint, cap or profile behaviour changes at any width: the
-two backends stay in value parity across all 18 capsule fixtures, and the
-only numeric difference is the endpoint radii rounding to half precision
-(≤0.2% of profile, invisible).
+two backends stay in value parity across the capsule parity fixtures, and
+the only numeric difference is the endpoint radii rounding to half
+precision (≤0.2% of profile, invisible).
