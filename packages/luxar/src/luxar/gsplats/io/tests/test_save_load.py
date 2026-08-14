@@ -1203,35 +1203,162 @@ class TestArchiveRootAttrsPeek:
         self._write(archive, fmt, [(".zattrs", '{"whose": "stray"}')])
         assert read_archive_root_attrs(archive) == {}
 
-    def test_a_symlinked_zattrs_member_is_never_read(self, tmp_path: Path) -> None:
-        """A zip ``.zattrs`` carrying a symlink mode is skipped, not followed.
+    @pytest.mark.parametrize("fmt", ["zip", "tar.gz"])
+    def test_a_junk_sibling_directory_makes_the_unnamed_fallback_ambiguous(
+        self, tmp_path: Path, fmt: str
+    ) -> None:
+        """Two top-level directories and no ``*.gsplats.zarr`` name → ``{}``.
 
-        The module's whole threat model is that no link is ever followed, and a
-        symlink member's payload is its TARGET PATH — so following one both leaks
-        an arbitrary file's location into the attrs and hands the reader a path
-        where a JSON object belongs. Two archives: one where the link is the only
-        candidate (nothing to read → ``{}``) and one where a regular root also
-        exists (the real root wins regardless of listing order).
+        The extractor's fallback is the SOLE top-level directory; with two of
+        them it picks by ``iterdir()`` order, which no archive index can predict.
+        A junk sibling listed first (``tar czf b.gsplats.zarr.tar.gz notes
+        mystore``) would otherwise hand back ``notes``'s attrs while the load
+        really read ``mystore`` — authoring an appearance from a node that is not
+        the dataset. Carrying nothing is the status quo; guessing is not.
         """
-        import stat
-        import zipfile
-
         from luxar.gsplats.io._archive import read_archive_root_attrs
 
-        def _write_with_symlink(path: Path, extra: list[tuple[str, str]]) -> None:
-            with zipfile.ZipFile(path, "w") as zip_ref:
-                info = zipfile.ZipInfo("x.gsplats.zarr/.zattrs")
-                info.external_attr = (stat.S_IFLNK | 0o777) << 16
-                zip_ref.writestr(info, "/etc/passwd")
-                for name, text in extra:
-                    zip_ref.writestr(name, text)
+        archive = tmp_path / f"siblings.gsplats.zarr.{fmt}"
+        self._write(
+            archive,
+            fmt,
+            [
+                ("notes/.zattrs", '{"whose": "junk"}'),
+                ("mystore/.zattrs", '{"whose": "store"}'),
+            ],
+        )
+        assert read_archive_root_attrs(archive) == {}
 
-        only_link = tmp_path / "link.gsplats.zarr.zip"
-        _write_with_symlink(only_link, [])
+    @pytest.mark.parametrize("fmt", ["zip", "tar.gz"])
+    def test_a_named_store_still_wins_over_a_junk_sibling(
+        self, tmp_path: Path, fmt: str
+    ) -> None:
+        """The uniqueness rule constrains the FALLBACK tier only.
+
+        A top-level ``*.gsplats.zarr`` directory is the extractor's own first
+        preference, so peek and extraction agree on it no matter what else the
+        archive contains — the junk sibling must not suppress it.
+        """
+        from luxar.gsplats.io._archive import read_archive_root_attrs
+
+        archive = tmp_path / f"named_siblings.gsplats.zarr.{fmt}"
+        self._write(
+            archive,
+            fmt,
+            [
+                ("notes/.zattrs", '{"whose": "junk"}'),
+                ("x.gsplats.zarr/.zattrs", '{"whose": "store"}'),
+            ],
+        )
+        assert read_archive_root_attrs(archive) == {"whose": "store"}
+
+    @pytest.mark.parametrize("fmt", ["zip", "tar.gz"])
+    def test_a_flat_dump_of_a_tree_stores_contents_is_empty(
+        self, tmp_path: Path, fmt: str
+    ) -> None:
+        """An archive of a tree store's CONTENTS never yields a child's attrs.
+
+        ``tar czf b.gsplats.zarr.tar.gz -C store .`` puts the store root's own
+        ``.zattrs``/``.zgroup`` at depth 0 (where the extractor cannot see a store
+        at all) and its ``child_<i>/`` groups at depth 1 — so every depth-1
+        candidate is a CHILD group, exactly what the ranking exists to keep out of
+        the authored appearance. What refuses it is the several-top-level-
+        directories rule, which is why a real tree shape (a ``kind=lod`` /
+        ``kind=partition`` group always has at least two children) is used here.
+        """
+        from luxar.gsplats.io._archive import read_archive_root_attrs
+
+        archive = tmp_path / f"contents.gsplats.zarr.{fmt}"
+        self._write(
+            archive,
+            fmt,
+            [
+                (".zattrs", '{"whose": "root"}'),
+                (".zgroup", '{"zarr_format": 2}'),
+                ("child_0/.zattrs", '{"whose": "child_0"}'),
+                ("child_1/.zattrs", '{"whose": "child_1"}'),
+            ],
+        )
+        assert read_archive_root_attrs(archive) == {}
+
+    @staticmethod
+    def _write_with_symlink(
+        path: Path,
+        fmt: str,
+        link: tuple[str, str],
+        extra: list[tuple[str, str]],
+    ) -> None:
+        """Write an archive whose ``link`` member is a real SYMLINK, plus files.
+
+        Both formats spell a symlink differently — a unix mode in the zip's
+        external attrs, a ``SYMTYPE`` header in the tar — so the guard has to be
+        exercised through each spelling separately.
+        """
+        import io
+        import stat
+        import tarfile
+        import zipfile
+
+        name, target = link
+        if fmt == "zip":
+            with zipfile.ZipFile(path, "w") as zip_ref:
+                info = zipfile.ZipInfo(name)
+                info.external_attr = (stat.S_IFLNK | 0o777) << 16
+                zip_ref.writestr(info, target)
+                for member_name, text in extra:
+                    zip_ref.writestr(member_name, text)
+        else:
+            with tarfile.open(path, "w:gz") as tar_ref:
+                info_tar = tarfile.TarInfo(name)
+                info_tar.type = tarfile.SYMTYPE
+                info_tar.linkname = target
+                tar_ref.addfile(info_tar)
+                for member_name, text in extra:
+                    payload = text.encode("utf-8")
+                    member = tarfile.TarInfo(member_name)
+                    member.size = len(payload)
+                    tar_ref.addfile(member, io.BytesIO(payload))
+
+    @pytest.mark.parametrize("fmt", ["zip", "tar.gz"])
+    def test_a_symlinked_zattrs_member_is_never_read(
+        self, tmp_path: Path, fmt: str
+    ) -> None:
+        """A ``.zattrs`` member that is a SYMLINK is skipped, not followed.
+
+        The module's whole threat model is that no link is ever followed, for
+        BOTH formats. An in-archive link is the sharp case: ``extractfile``
+        happily resolves ``x.gsplats.zarr/.zattrs -> child/.zattrs`` inside the
+        tar, so dropping the regular-file check silently promotes a CHILD group's
+        attrs to the root's. An out-of-archive link is the other half: a symlink
+        member's payload is its TARGET PATH, so following one leaks an arbitrary
+        file's location into the attrs and hands the reader a path where a JSON
+        object belongs. Third archive: a real ``*.gsplats.zarr`` root still wins
+        even with a link listed before it.
+        """
+        from luxar.gsplats.io._archive import read_archive_root_attrs
+
+        shadows_child = tmp_path / f"shadow.gsplats.zarr.{fmt}"
+        self._write_with_symlink(
+            shadows_child,
+            fmt,
+            ("x.gsplats.zarr/.zattrs", "child/.zattrs"),
+            [("x.gsplats.zarr/child/.zattrs", '{"whose": "child"}')],
+        )
+        assert read_archive_root_attrs(shadows_child) == {}
+
+        only_link = tmp_path / f"link.gsplats.zarr.{fmt}"
+        self._write_with_symlink(
+            only_link, fmt, ("x.gsplats.zarr/.zattrs", "/etc/passwd"), []
+        )
         assert read_archive_root_attrs(only_link) == {}
 
-        with_real = tmp_path / "link_plus_real.gsplats.zarr.zip"
-        _write_with_symlink(with_real, [("mystore/.zattrs", '{"whose": "store"}')])
+        with_real = tmp_path / f"link_plus_real.gsplats.zarr.{fmt}"
+        self._write_with_symlink(
+            with_real,
+            fmt,
+            ("notes/.zattrs", "/etc/passwd"),
+            [("x.gsplats.zarr/.zattrs", '{"whose": "store"}')],
+        )
         assert read_archive_root_attrs(with_real) == {"whose": "store"}
 
     def test_non_archive_and_missing_paths_are_empty(self, tmp_path: Path) -> None:

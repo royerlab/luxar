@@ -5466,8 +5466,12 @@ class TestLODCarriesAuthoredAppearance:
     def _authored_input(src: Path, authored: dict[str, Any]) -> None:
         """Stamp ``authored`` onto an existing store's root, dropping .zmetadata.
 
-        Consolidated metadata SHADOWS per-node ``.zattrs``, so a stale copy would
-        make the reader see the pre-edit attrs.
+        The reader is unaffected either way — on the pinned zarr 2.18.x
+        ``zarr.open_group`` reads per-node ``.zattrs`` and ignores ``.zmetadata``
+        (only ``open_consolidated`` would see the stale copy) — but leaving a
+        consolidated copy that disagrees with the edit would make the fixture
+        store self-inconsistent for any consumer that DOES open it consolidated.
+        Dropping it keeps the one authored value as the single source of truth.
         """
         attrs = json.loads((src / ".zattrs").read_text())
         attrs.update(authored)

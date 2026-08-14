@@ -168,16 +168,19 @@ def _root_zattrs_rank(name: str) -> Optional[int]:
     """How root-like a ``.zattrs`` member is; ``None`` if it cannot be the root.
 
     Lower sorts better. The two ranks mirror, one for one, the two rules
-    :func:`extract_compressed_zarr` uses to locate the store inside an archive,
-    so the peek and a real extraction can never disagree about which node's attrs
-    they are looking at:
+    :func:`extract_compressed_zarr` uses to locate the store inside an archive:
 
     * ``0`` — ``<name>.gsplats.zarr/.zattrs``: the top-level directory whose name
       ends in ``.gsplats.zarr``. The extractor prefers it, and it is what
-      ``_compress_zarr`` always writes.
-    * ``1`` — ``<anything-else>/.zattrs``: the extractor's fallback, the sole
-      top-level directory whatever it happens to be called (what you get from
-      ``tar czf x.gsplats.zarr.tar.gz mystore``).
+      ``_compress_zarr`` always writes. Nothing else can outrank it, so it needs
+      no further qualification.
+    * ``1`` — ``<anything-else>/.zattrs``: a candidate for the extractor's
+      fallback, the *sole* top-level directory whatever it happens to be called
+      (what you get from ``tar czf x.gsplats.zarr.tar.gz mystore``). The rank
+      alone does NOT establish that: only :func:`_fallback_is_unambiguous`, which
+      needs the whole member list, can — a rank-1 member in an archive with
+      several top-level directories is just one candidate among several and is
+      refused.
 
     Every other member is not a candidate at all. A deeper one is a child group's
     attrs (``<top>/lod_0/.zattrs``) — a different object, and authoring an
@@ -196,6 +199,41 @@ def _root_zattrs_rank(name: str) -> Optional[int]:
     return 0 if parts[0].endswith(".gsplats.zarr") else 1
 
 
+def _top_level_dir(name: str, is_dir: bool) -> Optional[str]:
+    """Top-level directory a member lies in/under; ``None`` for a loose file.
+
+    Must be inferable from the member NAME, because the two formats disagree
+    about directories: a zip written by ``_compress_zarr`` carries no directory
+    entries at all (only files), while a tar carries explicit ones. So any name
+    with more than one path component implies its first component is a top-level
+    directory, and an explicit directory entry contributes its own first
+    component too — making both formats agree on the same set.
+    """
+    parts = PurePosixPath(name).parts
+    if not parts:
+        return None
+    if len(parts) > 1:
+        return parts[0]
+    return parts[0] if is_dir else None
+
+
+def _fallback_is_unambiguous(rank: int, top_dirs: set[str]) -> bool:
+    """Whether a winning candidate of ``rank`` may actually be used as the root.
+
+    Rank 0 always may: it is the extractor's own first preference, so the two
+    agree by construction. Rank 1 stands in for the extractor's *fallback*, which
+    is the SOLE top-level directory — with two of them the extractor picks by
+    ``iterdir()`` order, which no archive index can predict, so the peek cannot
+    agree with it and must not guess. Carrying nothing is the safe outcome (the
+    appearance simply is not carried, as before the carry existed); carrying a
+    sibling directory's attrs would author an appearance from something that is
+    not the dataset.
+    """
+    if rank == _BEST_ROOT_RANK:
+        return True
+    return len(top_dirs) == 1
+
+
 def _zip_member_is_symlink(info: zipfile.ZipInfo) -> bool:
     """Whether a zip member carries a unix symlink mode (never follow one)."""
     return stat.S_ISLNK(info.external_attr >> 16)
@@ -212,17 +250,24 @@ def _read_zip_root_attrs(path: Path) -> Dict[str, Any]:
     with zipfile.ZipFile(path, "r") as zip_ref:
         best: Optional[zipfile.ZipInfo] = None
         best_rank = 0
+        top_dirs: set[str] = set()
         # infolist() parses the central directory only — no member payload is
         # decompressed by this scan.
         for info in zip_ref.infolist():
-            if info.is_dir() or _zip_member_is_symlink(info):
+            is_dir = info.is_dir()
+            top = _top_level_dir(info.filename, is_dir)
+            if top is not None:
+                top_dirs.add(top)
+            if is_dir or _zip_member_is_symlink(info):
                 continue
             rank = _root_zattrs_rank(info.filename)
             if rank is None:
                 continue
             if best is None or rank < best_rank:
                 best, best_rank = info, rank
-        if best is None or best.file_size > _MAX_ATTRS_BYTES:
+        if best is None or not _fallback_is_unambiguous(best_rank, top_dirs):
+            return {}
+        if best.file_size > _MAX_ATTRS_BYTES:
             return {}
         with zip_ref.open(best, "r") as handle:
             # Bound the read itself rather than trusting the size check above.
@@ -237,15 +282,17 @@ def _read_zip_root_attrs(path: Path) -> Dict[str, Any]:
 
 
 #: The best possible ``_root_zattrs_rank``: the ``.zattrs`` of a top-level
-#: ``*.gsplats.zarr`` directory. Nothing can outrank it, so the tar walk can stop
-#: the moment it sees one — which is what keeps the peek cheap on the layout
-#: ``_compress_zarr`` always writes, where the member turns up within the first
-#: couple of headers (``tarfile.add`` walks a directory in sorted order, so
-#: dotfiles come first). The unnamed fallback layout gets no such stop: a rank-1
-#: member can still be superseded by a rank-0 one later in the stream, so the walk
-#: has to reach the end of the header stream — and a gzipped tar has no index, so
-#: that means inflating the whole file (measured ~0.2 s for a 315 MB archive,
-#: ~35% on top of the extraction the caller performs anyway).
+#: ``*.gsplats.zarr`` directory. Nothing can outrank it and it needs no
+#: whole-archive context to be usable, so the tar walk can stop the moment it
+#: sees one — which is what keeps the peek cheap on the layout ``_compress_zarr``
+#: always writes, where the member turns up within the first couple of headers
+#: (``tarfile.add`` walks a directory in sorted order, so dotfiles come first).
+#: The unnamed fallback layout gets no such stop, twice over: a rank-1 member can
+#: still be superseded by a rank-0 one later in the stream, and whether it may be
+#: used at all depends on the archive's full set of top-level directories
+#: (:func:`_fallback_is_unambiguous`). So that walk has to reach the end of the
+#: header stream — and a gzipped tar has no index, so reaching the end means
+#: inflating the whole file.
 _BEST_ROOT_RANK = 0
 
 
@@ -256,15 +303,22 @@ def _read_targz_root_attrs(path: Path) -> Dict[str, Any]:
     the whole archive), and only the winning member's payload is read. The walk
     stops as soon as a member reaches :data:`_BEST_ROOT_RANK`; failing that it
     runs to the end of the header stream (see :data:`_BEST_ROOT_RANK` for what
-    that costs), because a better-ranked ``.zattrs`` may appear after a worse one
-    and reading the wrong node's attrs as the root's would silently author an
-    appearance nobody asked for.
+    that costs), because a better-ranked ``.zattrs`` may appear after a worse one,
+    the fallback tier cannot be settled before the archive's top-level
+    directories are all known, and reading the wrong node's attrs as the root's
+    would silently author an appearance nobody asked for.
     """
     with tarfile.open(path, "r:gz") as tar_ref:
         best: Optional[tarfile.TarInfo] = None
         best_rank = 0
+        top_dirs: set[str] = set()
         for member in tar_ref:
-            # Only regular files: a symlink named `.zattrs` is never followed.
+            top = _top_level_dir(member.name, member.isdir())
+            if top is not None:
+                top_dirs.add(top)
+            # Only regular files: a symlink named `.zattrs` is never followed
+            # (`extractfile` resolves an in-archive link target, so dropping this
+            # check would hand back whatever node the link points at).
             if not member.isfile():
                 continue
             rank = _root_zattrs_rank(member.name)
@@ -274,7 +328,9 @@ def _read_targz_root_attrs(path: Path) -> Dict[str, Any]:
                 best, best_rank = member, rank
                 if best_rank == _BEST_ROOT_RANK:
                     break
-        if best is None or best.size > _MAX_ATTRS_BYTES:
+        if best is None or not _fallback_is_unambiguous(best_rank, top_dirs):
+            return {}
+        if best.size > _MAX_ATTRS_BYTES:
             return {}
         handle = tar_ref.extractfile(best)
         if handle is None:
@@ -292,12 +348,24 @@ def read_archive_root_attrs(path: str | Path) -> Dict[str, Any]:
     Scanning the index is free for a zip but not for a gzipped tar, which has no
     index at all — see :data:`_BEST_ROOT_RANK` for when that walk stops early.
 
-    Which member counts as the root follows :func:`_root_zattrs_rank`, which
-    mirrors :func:`extract_compressed_zarr`'s own choice of store root: the
-    top-level ``*.gsplats.zarr`` directory that ``_compress_zarr`` writes, else
-    the sole top-level directory whatever it is named. So a child group's attrs
-    (``<top>/fitting/.zattrs``) is never read as the root's, and neither is a
-    stray ``.zattrs`` loose at the archive root.
+    Which member counts as the root follows :func:`_root_zattrs_rank` and
+    :func:`_fallback_is_unambiguous`, mirroring :func:`extract_compressed_zarr`'s
+    own choice of store root: the top-level ``*.gsplats.zarr`` directory that
+    ``_compress_zarr`` writes, else — only when it is the archive's SOLE
+    top-level directory — that directory whatever it is named. So a child group's
+    attrs (``<top>/fitting/.zattrs``) is never read as the root's, and neither is
+    a stray ``.zattrs`` loose at the archive root.
+
+    An archive with several top-level directories and no ``*.gsplats.zarr``-named
+    one is ambiguous and yields ``{}``: the extractor resolves that case by
+    ``iterdir()`` order, which an archive index cannot predict, so the peek would
+    have to guess — and carrying nothing is merely the status quo, while carrying
+    a sibling directory's attrs would author an appearance from the wrong node.
+
+    Where a member name occurs twice, the FIRST occurrence wins here while
+    ``extractall`` keeps the last; such an archive is malformed (both occurrences
+    are the same PATH — the store root's own ``.zattrs`` — so no foreign node's
+    attrs can be reached either way), and the early stop is worth keeping.
 
     Reading ``.zattrs`` directly — not consolidated ``.zmetadata`` — is the
     correct source: this repo pins zarr 2.18.x, where ``zarr.open_group`` reads
@@ -310,8 +378,9 @@ def read_archive_root_attrs(path: str | Path) -> Dict[str, Any]:
 
     Returns:
         The root attrs as a dict. ``{}`` when the path is missing or is not one of
-        the two supported archive formats, when no ``.zattrs`` member exists, or
-        when the payload is oversized or not a JSON object.
+        the two supported archive formats, when no root ``.zattrs`` member exists,
+        when the store root is ambiguous (above), or when the payload is oversized
+        or not a JSON object.
 
     Raises:
         OSError, zipfile.BadZipFile, tarfile.TarError, UnicodeDecodeError,
