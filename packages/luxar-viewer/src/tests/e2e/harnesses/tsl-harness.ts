@@ -9,13 +9,12 @@
  * The harness internals live in `./tsl-harness/`, split by shader family:
  * - `types.ts` — the `RegistryEntry` registry contract
  * - `shared.ts` — cross-family camera / colormap-LUT helpers
- * - `post-processing.ts` — const-rgb, fxaa, bloom-threshold, mega* (8 entries)
- * - `points.ts` — point + point-pick variants (18 entries)
- * - `lines.ts` — line + line-pick variants (32 entries)
- * - `gsplats.ts` — gsplat + gsplat-pick variants (18 entries)
- * - `mesh.ts` — mesh + mesh-pick variants (13 entries)
- * - `erf.ts` — shared-math erf polynomial (1 entry)
- * - `line-ray-integral.ts` — shared-math #1352 ray integral (1 entry)
+ * - `post-processing.ts` — const-rgb, fxaa, bloom-threshold, mega*
+ * - `points.ts` — point + point-pick variants
+ * - `lines.ts` — line + line-pick variants (both primitives)
+ * - `gsplats.ts` — gsplat + gsplat-pick variants
+ * - `mesh.ts` — mesh + mesh-pick variants
+ * - `erf.ts` — shared-math erf polynomial
  * - `render.ts` — the `renderGLSL` / `renderTSL` executors
  * - `index.ts` — merges the families into `SHADER_REGISTRY` (use
  *   `listShaders()` for the live entry count — hardcoded totals drift)

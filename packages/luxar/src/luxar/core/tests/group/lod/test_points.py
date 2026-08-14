@@ -995,3 +995,32 @@ def _decoded_positions(sub: zarr.Group, root: zarr.Group | None = None) -> np.nd
     from luxar.encoding import ArrayDecoder
 
     return np.asarray(ArrayDecoder().decode(sub["positions"], root), dtype=np.float64)
+
+
+def test_no_sub_LOD_carries_the_private_skip_scene_bounds_flag(tmp_path) -> None:
+    """`_skip_scene_bounds` is plumbing between writers, not part of the format.
+
+    The ladder writer passes it to each per-level `write_points` to say "the parent
+    will aggregate the bbox, do not do it per level". It was popped BELOW
+    `group.attrs.update(attrs)`, so every sub-LOD carried it on disk — an internal
+    flag in the on-disk format, and one that round-trips: a tool that reads a
+    level's attrs and re-writes them hands it straight back as a caller attribute.
+
+    The Lines and Mesh writers had the identical ordering; each is pinned in its
+    own suite.
+    """
+    output = tmp_path / "t.luxar.zarr"
+    positions = np.random.RandomState(0).rand(200, 3).astype(np.float32)
+    with LuxarZarrCompiler(output) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        scene.add_points("pts", positions, additive_lod=dict(n_lods=3, method="random"))
+
+    parent = zarr.open_group(str(output), mode="r")["pts"]
+    assert "_skip_scene_bounds" not in parent.attrs
+    for i in range(int(parent.attrs["n_additive_sublods"])):
+        assert "_skip_scene_bounds" not in parent[f"additive_{i}"].attrs, (
+            f"additive_{i} carries the private flag; it is popped after "
+            "`group.attrs.update(attrs)` again"
+        )
+    # The flag must still DO its job: the parent describes the whole ladder.
+    assert "position_bounds" in parent.attrs

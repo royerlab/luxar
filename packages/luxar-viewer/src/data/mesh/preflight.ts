@@ -143,6 +143,17 @@ export const MESH_ARRAY_NAMES: Record<keyof MeshArrayHandles, string> = {
  *   and does not hold a preflight.
  *
  * So: read these two in tests, not in production code.
+ *
+ * `accountedBytes` is different — unlike the two above, it HAS a production
+ * consumer. It is the same `peakBytes` figure this function's own byte-budget
+ * check compares against `MESH_DECODE_BUDGET_BYTES` (stored bytes, decoded
+ * bytes and the largest single chunk buffer, summed), returned so a caller
+ * charging several preflights against ONE ceiling — `mesh-progressive-loader.ts`'s
+ * `MeshProgressiveLoader.assertWithinByteBudget`, for a reveal ladder's levels —
+ * never has to re-derive the accounting itself. Re-deriving it is exactly how the
+ * budget was bypassed four times before (see `ENCODING_BUDGET_KIND`'s docstring);
+ * returning the number this function already computed keeps there being exactly
+ * one place that does the arithmetic.
  */
 export interface MeshPreflightResult {
   /** Vertex count, `<= MAX_MESH_VERTICES` */
@@ -155,6 +166,15 @@ export interface MeshPreflightResult {
   colorComponents?: 3 | 4;
   /** The validated `normal_dims`, when `normals` is present. Observation only — see above. */
   normalDims?: number[];
+  /**
+   * The node's total accounted bytes (stored + decoded + largest chunk) — the
+   * exact quantity this function compares against `MESH_DECODE_BUDGET_BYTES`.
+   * HAS a production consumer, unlike `colorComponents`/`normalDims` above: the
+   * mesh reveal ladder sums this across every level to charge the ladder once
+   * against one budget, IN ADDITION TO each level's own per-level check here
+   * against that same budget — not instead of it.
+   */
+  accountedBytes: number;
 }
 
 /**
@@ -673,7 +693,13 @@ export async function preflightMesh(
   // that fits, while an external int64 store costs 8 bytes per index — so a
   // canonical 4 would be wrong in both directions.
   const DECODED_BYTES_PER_VALUE = 4;
-  let accountedBytes = 0;
+  // The running sum over arrays, WITHOUT the max-chunk term — that term is folded
+  // in once, below, to produce `peakBytes` (the quantity actually compared against
+  // the budget and returned as `accountedBytes`). Named distinctly from the
+  // returned field on purpose: the two used to share the name `accountedBytes`,
+  // which made "the sum without the chunk term" and "the sum with it" look like
+  // the same quantity at every read site.
+  let arraysBytes = 0;
   // The largest single chunk buffer, folded into the total below rather than only
   // checked on its own. A chunk buffer exists DURING decode, alongside the arrays,
   // so checking it independently lets a store sit just under budget on both terms
@@ -750,7 +776,7 @@ export async function preflightMesh(
       }
       decodedValues = Math.max(decodedValues, targetDecoded);
     }
-    accountedBytes += stored * parsed.itemSize + decodedValues * DECODED_BYTES_PER_VALUE;
+    arraysBytes += stored * parsed.itemSize + decodedValues * DECODED_BYTES_PER_VALUE;
 
     // Per-chunk term. Not redundant with the sum: zarr v2 does not require
     // `chunks <= shape`, so a `"shape": [100, 3]` array declaring
@@ -774,7 +800,7 @@ export async function preflightMesh(
       );
     }
   }
-  const peakBytes = accountedBytes + maxChunkBytes;
+  const peakBytes = arraysBytes + maxChunkBytes;
   if (peakBytes > MESH_DECODE_BUDGET_BYTES) {
     rejectMesh(
       path,
@@ -910,5 +936,5 @@ export async function preflightMesh(
     normalDims = [...dims];
   }
 
-  return { nVertices, nFaces, ndim, colorComponents, normalDims };
+  return { nVertices, nFaces, ndim, colorComponents, normalDims, accountedBytes: peakBytes };
 }

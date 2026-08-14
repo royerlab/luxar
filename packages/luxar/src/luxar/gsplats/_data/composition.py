@@ -295,6 +295,8 @@ class CompositionMixin(_GSplatDataOps):
         *,
         recipe: "Optional[str]" = None,
         recipe_params: "Optional[Any]" = None,
+        bsp_tree: "Optional[Dict[str, Any]]" = None,
+        region_labels: "Optional[Sequence[int]]" = None,
     ) -> "GSplatNode":
         """Assemble a ``kind=partition`` tree from pre-decomposed spatial regions.
 
@@ -319,11 +321,43 @@ class CompositionMixin(_GSplatDataOps):
         bare part node is returned (no 1-part partition wrapper); with none,
         raises. Returns a tree node (write with ``write_gsplats_tree`` or embed
         in a scene) — a partition has no flat-matrix ``GSplatData`` equivalent.
+
+        ``bsp_tree`` is the decomposition's serialized split planes — the
+        producer's, since this method is handed a decomposition rather than
+        computing one (contrast :meth:`to_spatial_partition`, which splits and so
+        knows its own planes). Supplying it is what lets the viewer order the
+        parts back-to-front EXACTLY instead of guessing from part centroids, which
+        is not a valid painter's order and pops at the seams as the camera orbits
+        (#1555). Its leaf labels are read in ``region_labels`` space (default: the
+        positions of ``regions``), and it is pruned to the regions that survived
+        the empty filter — so a caller passes the labels of the regions it is
+        handing over and does not have to pre-compensate for drops itself.
         """
+        from luxar.core.group.partition import prune_serialized_bsp_tree
         from luxar.gsplats.tree import GSplatPartition
 
-        nonempty = [r for r in regions if r.n_splats > 0]
-        if not nonempty:
+        labels = (
+            list(range(len(regions)))
+            if region_labels is None
+            else [int(label) for label in region_labels]
+        )
+        if len(labels) != len(regions):
+            raise ValueError(
+                f"partition_from_regions: region_labels has {len(labels)} entries "
+                f"for {len(regions)} regions"
+            )
+        if any(b <= a for a, b in zip(labels, labels[1:])):
+            # Children are written in the order given, but the tree's leaves are
+            # renumbered by ASCENDING label — the two only agree when the labels
+            # ascend. Out of order (or duplicated) they would silently attach each
+            # leaf to the wrong part.
+            raise ValueError(
+                "partition_from_regions: region_labels must be strictly "
+                f"increasing (children keep the order given, while the split-plane "
+                f"tree is renumbered by ascending label); got {labels}"
+            )
+        kept = [(label, r) for label, r in zip(labels, regions) if r.n_splats > 0]
+        if not kept:
             raise ValueError("partition_from_regions: all regions are empty")
 
         def _part_node(region: "GSplatData") -> "GSplatNode":
@@ -334,9 +368,14 @@ class CompositionMixin(_GSplatDataOps):
             params = recipe_params if recipe_params is not None else RecipeParams()
             return build_part_lod(region.tree, recipe, params)
 
-        if len(nonempty) == 1:
-            return _part_node(nonempty[0])  # single part -> bare part node
-        return GSplatPartition(children=[_part_node(r) for r in nonempty])
+        if len(kept) == 1:
+            # Single part -> bare part node. Nothing to order, so the tree (which
+            # would prune to a lone leaf) is deliberately dropped with the wrapper.
+            return _part_node(kept[0][1])
+        return GSplatPartition(
+            children=[_part_node(r) for _, r in kept],
+            bsp_tree=prune_serialized_bsp_tree(bsp_tree, [label for label, _ in kept]),
+        )
 
     def embed_dimension(
         self,

@@ -174,10 +174,24 @@ def finalize_lod_display_types(store: zarr.Group) -> None:
     walk(store)
 
 
-#: How close a child's ``coverage_fraction`` must be to ``MAX_COVERAGE_FRACTION``
-#: to read as the per-tile, fills-screen anchor. The derived value is an exact
-#: power-of-two rescale (``1.0 × 4.0``), so this only absorbs JSON round-tripping.
+#: How close a child's ``coverage_fraction`` must be to the fills-screen anchor
+#: to read as the per-tile one. The derived value is an exact power-of-two
+#: rescale, so this only absorbs JSON round-tripping.
 _ANCHOR_TOLERANCE: float = 1e-9
+
+
+def _tile_anchor(group_attrs: dict) -> float:
+    """The fills-screen (per-tile) anchor in this group's OWN selector units.
+
+    ``selector="screen-area"`` thresholds are literal screen-area fractions, so
+    a tile anchors at area 1.0 (``PARTITION_FINEST_AREA``); the legacy
+    ``"coverage"`` diagonal metric anchors at ``MAX_COVERAGE_FRACTION`` = 4.0.
+    """
+    from luxar.core.group.lod.group import PARTITION_FINEST_AREA
+
+    if group_attrs.get("selector") == "screen-area":
+        return PARTITION_FINEST_AREA
+    return MAX_COVERAGE_FRACTION
 
 
 def _is_tile_anchored(group: "zarr.Group") -> bool:
@@ -185,12 +199,14 @@ def _is_tile_anchored(group: "zarr.Group") -> bool:
 
     Reads every child group's ``coverage_fraction`` rather than trusting insertion
     order: the ladder is written coarsest→finest, but a hand-built group need not
-    be, and the question here is only whether the ladder REACHES the ceiling.
+    be, and the question here is only whether the ladder REACHES the ceiling —
+    the ceiling being selector-dependent (see :func:`_tile_anchor`).
     """
+    anchor = _tile_anchor(dict(group.attrs))
     for child_name in group.group_keys():
         raw = dict(group[child_name].attrs).get("coverage_fraction")
         if isinstance(raw, (int, float)) and not isinstance(raw, bool):
-            if float(raw) >= MAX_COVERAGE_FRACTION - _ANCHOR_TOLERANCE:
+            if float(raw) >= anchor - _ANCHOR_TOLERANCE:
                 return True
     return False
 
@@ -245,14 +261,15 @@ def warn_one_part_partition_anchors(store: zarr.Group) -> None:
         ):
             aprint(
                 f"  ⚠️  kind=lod group '{group.path or '/'}' is anchored at "
-                f"coverage_fraction={MAX_COVERAGE_FRACTION:g} — the per-TILE, "
+                f"coverage_fraction={_tile_anchor(attrs):g} — the per-TILE, "
                 f"fills-screen anchor — but its enclosing kind=partition group "
                 f"'{lone_partition}' holds only ONE part. A one-part partition is "
                 "not a tiling: that part's bbox IS the whole object, so this "
                 "ladder will hold its finest level back until the object "
                 "OVERFILLS the viewport instead of showing it at a normal "
                 "full-frame view. Drop the partition wrapper, or pass an "
-                "explicit coverage_fractions=[...] ending at 1.0."
+                "explicit coverage_fractions=[...] ending at the whole-object "
+                "anchor (0.5 under selector='screen-area'; 1.0 legacy)."
             )
         if kind == "partition":
             if len(child_names) > 1:

@@ -295,6 +295,51 @@ describe('loadLodGroupNode — registry registration', () => {
     });
     expect(entry.activeChildIndex).toBe(0);
     expect(entry.selectorMode).toBe('auto');
+    // makeLodGroupNode stamps the legacy attr; the entry must carry it so the
+    // registry keeps the diagonal metric for this group.
+    expect(entry.selector).toBe('coverage');
+  });
+
+  it("passes selector='screen-area' through to the registry entry", async () => {
+    attachStubChildren();
+    const reg = new LODGroupRegistry({
+      getCamera: () => new THREE.Camera(),
+      getViewportSize: () => ({ width: 100, height: 100 }),
+      getDisplayDims: () => [0, 1, 2],
+    });
+    const ctx = makeCtx(reg);
+    const node = makeLodGroupNode(
+      [
+        makeChildNode('/lod/child_0', 0, { min: [0, 0, 0], max: [1, 1, 1] }),
+        makeChildNode('/lod/child_1', 0.5, { min: [0, 0, 0], max: [1, 1, 1] }),
+      ],
+      { selector: 'screen-area' }
+    );
+    await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
+    expect(reg.get('/lod')!.selector).toBe('screen-area');
+  });
+
+  it('whitelists unknown selector spellings to the legacy diagonal metric', async () => {
+    // A stale pre-v3.2 'pixel_size' (or any future/unknown value) must not
+    // switch the metric: those groups' thresholds are in diagonal units
+    // (min_pixel_size adaptation included), so anything but the literal
+    // 'screen-area' falls back to 'coverage'.
+    attachStubChildren();
+    const reg = new LODGroupRegistry({
+      getCamera: () => new THREE.Camera(),
+      getViewportSize: () => ({ width: 100, height: 100 }),
+      getDisplayDims: () => [0, 1, 2],
+    });
+    const ctx = makeCtx(reg);
+    const node = makeLodGroupNode(
+      [
+        makeChildNode('/lod/child_0', 0, { min: [0, 0, 0], max: [1, 1, 1] }),
+        makeChildNode('/lod/child_1', 0.5, { min: [0, 0, 0], max: [1, 1, 1] }),
+      ],
+      { selector: 'pixel_size' }
+    );
+    await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
+    expect(reg.get('/lod')!.selector).toBe('coverage');
   });
 
   it('clamps default_level out of range to the nearest valid index', async () => {

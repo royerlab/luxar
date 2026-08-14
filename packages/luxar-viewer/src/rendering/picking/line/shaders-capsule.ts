@@ -9,7 +9,7 @@
  * adds the `uNodeId` uniform and `vNodeId` / `vElementId` varyings,
  * emitting `(nodeId, elementId-low16, brightness, elementId-high16)` with
  * brightness-as-depth (`gl_FragDepth = 1 − brightness`), identical to the
- * screen-space and volumetric pick variants. Like those, the pick pass
+ * screen-space pick variant. Like it, the pick pass
  * ignores per-element alpha and node opacity — faint-but-hoverable stays
  * consistent across primitives.
  *
@@ -201,11 +201,17 @@ export const CAPSULE_LINE_PICK_VERTEX_SHADER = /* glsl */ `
             vec2 nRaw = qq / ql - u;   // q − m, m = +u at A
             float nl = length(nRaw);
             if (nl > 1e-3) {
+              // Cut normal: keep full precision — no per-leg quantisation
+              // (see _shared/line-capsule.ts's note; #1502).
               vec2 n2 = nRaw / nl;
               vec2 nLoc = vec2(dot(n2, u), dot(n2, v));
               if (nLoc.x < -1e-3) {
                 cutA = vec4(nLoc, 0.0, 0.0);
-                if (rMax > ${G.PACKET_MIN_R}) {
+                // Width gate + its floored sharp-turn exception (#1495),
+                // exactly as the visual twin (or hover desyncs from pixels;
+                // the floor conjunct is why — see that note).
+                if (rMax > ${G.PACKET_MIN_R} ||
+                    (dot(qq / ql, u) > 0.5 && min(rawA, rawB) >= ${G.MIN_RADIUS})) {
                   float wFarA = farA.w;
                   float rpFarA;
                   if (uIsOrtho == 1) {
@@ -273,7 +279,9 @@ export const CAPSULE_LINE_PICK_VERTEX_SHADER = /* glsl */ `
               vec2 nLoc = vec2(dot(n2, u), dot(n2, v));
               if (nLoc.x > 1e-3) {
                 cutB = vec4(nLoc, 0.0, 0.0);
-                if (rMax > ${G.PACKET_MIN_R}) {
+                // Width gate + its floored sharp-turn exception (see end A).
+                if (rMax > ${G.PACKET_MIN_R} ||
+                    (dot(qq / ql, u) < -0.5 && min(rawA, rawB) >= ${G.MIN_RADIUS})) {
                   float wFarB = farB.w;
                   float rpFarB;
                   if (uIsOrtho == 1) {

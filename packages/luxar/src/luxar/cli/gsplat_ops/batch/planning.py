@@ -25,6 +25,7 @@ from typing import Any, List, Optional, Tuple
 import typer
 from arbol import aprint, asection
 
+from luxar.core.group.partition import prune_serialized_bsp_tree
 from luxar.gsplats.batch.manifest import BatchJob, BatchManifest, output_filename
 
 # ---------------------------------------------------------------------------
@@ -566,10 +567,19 @@ def plan_batch(
                 max_leaf=content.max_leaf,
                 overlap=tile_overlap,
             )
-            kept_boxes = [b for b in content_plan.boxes if b.budget > 0]
+            kept_indices = [i for i, b in enumerate(content_plan.boxes) if b.budget > 0]
+            kept_boxes = [content_plan.boxes[i] for i in kept_indices]
             if not kept_boxes:
                 raise typer.BadParameter("content plan has no boxes with budget > 0")
-            content_plan = dataclasses.replace(content_plan, boxes=kept_boxes)
+            # Dropping zero-budget boxes RE-INDEXES the plan, and the split-plane
+            # tree's leaf labels index the pre-drop list — renumber them in the
+            # same step or every downstream consumer (each array task's
+            # `--plan-box k`, and the merge's part order) reads the wrong box.
+            content_plan = dataclasses.replace(
+                content_plan,
+                boxes=kept_boxes,
+                bsp_tree=prune_serialized_bsp_tree(content_plan.bsp_tree, kept_indices),
+            )
             output_dir.mkdir(parents=True, exist_ok=True)
             plan_path_obj = output_dir.resolve() / "plan.json"
             content_plan.to_json(plan_path_obj)

@@ -1987,6 +1987,142 @@ class TestContentMerge:
         assert node.n_children == 2  # the empty box was skipped
         assert total_splats(node) == 70
 
+    def test_content_merge_carries_plan_split_planes_renumbered(
+        self, tmp_path: Path
+    ) -> None:
+        """The merge stamps the plan's split planes, RENUMBERED past skipped boxes.
+
+        Slot indices and written part indices diverge the moment a box is empty, so
+        a tree carried over verbatim would name parts that do not exist (or, worse,
+        the wrong ones — still a valid permutation, so it fails silently). Here box
+        1 is empty: the 3-leaf plan tree must arrive as a 2-leaf tree labelled
+        ``0``/``1``, and its plane must still separate the two surviving parts.
+        """
+        from luxar.gsplats.batch.manifest import output_filename
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+        from luxar.gsplats.io.load_gsplats import load_gsplat_node
+        from luxar.gsplats.planner.spec import FitPlan, PlanBox
+        from luxar.gsplats.tree import GSplatPartition
+
+        out = tmp_path / "batch"
+        tiles = out / "tiles"
+        tiles.mkdir(parents=True)
+
+        n_boxes = 3
+        # Boxes 0 and 2 hold splats (near 0 and near 100); box 1 is empty.
+        self._write_box(
+            tiles / output_filename(0, 0, 0, 1, 1, n_boxes, label="box"), 30, 0.0
+        )
+        (
+            tiles / (output_filename(0, 0, 1, 1, 1, n_boxes, label="box") + ".empty")
+        ).write_text("")
+        self._write_box(
+            tiles / output_filename(0, 0, 2, 1, 1, n_boxes, label="box"), 40, 100.0
+        )
+
+        # A plan whose tree splits box 0 off below 50, then 1 from 2 above it.
+        plan = FitPlan(
+            volume_shape=[128, 128, 128],
+            boxes=[
+                PlanBox(box=[0, 50, 0, 128, 0, 128], n_features=1, budget=1),
+                PlanBox(box=[50, 75, 0, 128, 0, 128], n_features=1, budget=1),
+                PlanBox(box=[75, 128, 0, 128, 0, 128], n_features=1, budget=1),
+            ],
+            overlap=0,
+            feature_method="peaks",
+            min_leaf=16,
+            max_leaf=64,
+            bsp_tree={
+                "axis": 0,
+                "split": 50.0,
+                "left": {"part": 0},
+                "right": {
+                    "axis": 0,
+                    "split": 75.0,
+                    "left": {"part": 1},
+                    "right": {"part": 2},
+                },
+            },
+        )
+        out.mkdir(parents=True, exist_ok=True)
+        plan.to_json(out / "plan.json")
+
+        manifest = self._content_manifest(out, n_boxes)
+        final = merge_batch_results(manifest, out, verbose=False)
+
+        node, _ = load_gsplat_node(final)
+        assert isinstance(node, GSplatPartition)
+        assert node.n_children == 2
+        tree = node.bsp_tree
+        assert tree is not None, "merged partition lost the plan's split planes"
+        # The subtree that held boxes 1 and 2 collapsed to the one survivor, so the
+        # 75.0 plane is gone and part 2 has been renumbered to child_index 1.
+        assert tree == {
+            "axis": 0,
+            "split": 50.0,
+            "left": {"part": 0},
+            "right": {"part": 1},
+        }
+        # ...and that plane really does separate the two written parts.
+        lo = np.concatenate(
+            [np.asarray(s.centers) for s in node.children[0].additive_sublods]
+        )
+        hi = np.concatenate(
+            [np.asarray(s.centers) for s in node.children[1].additive_sublods]
+        )
+        assert lo[:, 0].max() < 50.0 <= hi[:, 0].min()
+
+    def test_content_merge_skips_split_planes_when_plan_disagrees(
+        self, tmp_path: Path
+    ) -> None:
+        """A plan whose box count contradicts the manifest yields NO tree.
+
+        Mislabelled planes are worse than absent ones: the traversal still returns
+        a valid permutation, so the ordering silently points at the wrong parts
+        instead of falling back to the centroid heuristic.
+        """
+        from luxar.gsplats.batch.manifest import output_filename
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+        from luxar.gsplats.io.load_gsplats import load_gsplat_node
+        from luxar.gsplats.planner.spec import FitPlan, PlanBox
+
+        out = tmp_path / "batch"
+        tiles = out / "tiles"
+        tiles.mkdir(parents=True)
+        n_boxes = 2
+        for k, off in enumerate((0.0, 100.0)):
+            self._write_box(
+                tiles / output_filename(0, 0, k, 1, 1, n_boxes, label="box"), 20, off
+            )
+        # One box too many vs the manifest's n_tiles=2.
+        FitPlan(
+            volume_shape=[128, 128, 128],
+            boxes=[
+                PlanBox(box=[0, 43, 0, 128, 0, 128], n_features=1, budget=1),
+                PlanBox(box=[43, 86, 0, 128, 0, 128], n_features=1, budget=1),
+                PlanBox(box=[86, 128, 0, 128, 0, 128], n_features=1, budget=1),
+            ],
+            overlap=0,
+            feature_method="peaks",
+            min_leaf=16,
+            max_leaf=64,
+            bsp_tree={
+                "axis": 0,
+                "split": 43.0,
+                "left": {"part": 0},
+                "right": {
+                    "axis": 0,
+                    "split": 86.0,
+                    "left": {"part": 1},
+                    "right": {"part": 2},
+                },
+            },
+        ).to_json(out / "plan.json")
+
+        manifest = self._content_manifest(out, n_boxes)
+        node, _ = load_gsplat_node(merge_batch_results(manifest, out, verbose=False))
+        assert node.bsp_tree is None
+
     def test_content_merge_missing_box_raises(self, tmp_path: Path) -> None:
         """A box with neither a store nor an `.empty` marker (the task never ran)
         still raises — distinct from a legitimately-empty box."""
