@@ -16,9 +16,10 @@
  * Per scenario we record:
  *   - JS frame time stats (median, p95, p99, mean) over a fixed
  *     sample window, with the intervals contaminated by a GPU-timestamp
- *     resolve excluded (see `skipNextDt`) — a row that excluded any
- *     carries a note saying so, because its p95/p99 are not comparable
- *     to a JSON captured before that exclusion existed
+ *     resolve excluded (see `skipNextDt`) — every measured row carries
+ *     the drop count in `excludedResolveIntervals` (and a note when it
+ *     is non-zero), because its frame stats are not comparable to a
+ *     JSON captured before that exclusion existed
  *   - A warmed post-settle one-shot frame interval (`postSettleFrameMs`,
  *     measured separately) — NOT a cold first render; see the field's
  *     doc comment
@@ -261,6 +262,19 @@ interface ScenarioResult {
    *  completed draws, so only the WebGL surface's monotonic
    *  `info.render.frame` is honest evidence here. */
   renderedFramesBefore?: number | null;
+  /**
+   * How many frame intervals `frameMs` dropped as GPU-timestamp resolve
+   * latency (0 when timestamps are unsupported or nothing was dropped).
+   * Present on every MEASURED row, absent on a skipped one — and absent
+   * entirely from a JSON captured before the exclusion existed, which is
+   * how `scripts/perf-diff.mjs` detects a diff that straddles the change
+   * and warns instead of printing the instrument's own delta as a win.
+   * Deliberately per-row and not run-level: the per-SHA `results.json` is
+   * merge-written by both perf benches, and the gsplat bench rebuilds the
+   * run header from its own known keys, so a run-level flag would vanish
+   * when it writes second.
+   */
+  excludedResolveIntervals?: number;
   gpu: GpuStats;
   notes: string[];
   skipped: boolean;
@@ -681,8 +695,9 @@ async function measureScenario(
   if (timing.excludedDts > 0) {
     notes.push(
       `${timing.excludedDts} frame interval(s) excluded as GPU-timestamp resolve latency — ` +
-        "frameMs.count sits below the frames drawn, and this row's p95/p99 are not " +
-        'comparable to a baseline JSON captured without the exclusion'
+        "frameMs.count sits below the frames drawn, and this row's frame stats (p95/p99 " +
+        'especially, but median and mean too) are not comparable to a baseline JSON ' +
+        'captured without the exclusion'
     );
   }
   if (!timing.supportsTimestamp) {
@@ -703,6 +718,7 @@ async function measureScenario(
     frameMs,
     postSettleFrameMs: postSettle.ms,
     renderedFramesBefore: postSettle.renderedFramesBefore,
+    excludedResolveIntervals: timing.excludedDts,
     gpu,
     notes,
     skipped: false,

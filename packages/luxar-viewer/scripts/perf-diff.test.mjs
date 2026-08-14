@@ -278,6 +278,51 @@ describe('buildPerfDiff — ladder load', () => {
   });
 });
 
+describe('buildPerfDiff — GPU-timestamp exclusion straddle warning', () => {
+  const WARN = '⚠️ JS frame timing not comparable';
+
+  it('warns when only the new side carries excludedResolveIntervals', () => {
+    // The archetypal case: a baseline archived before the line bench
+    // started dropping resolve intervals, diffed against a run after.
+    const base = run([lineScn()]);
+    const next = run([lineScn({ excludedResolveIntervals: 11 })]);
+    const md = buildPerfDiff(base, next);
+    expect(md).toContain(WARN);
+    expect(md).toContain('line1/webgl');
+  });
+
+  it('warns when only the baseline carries it (inputs given in either order)', () => {
+    const md = buildPerfDiff(run([lineScn({ excludedResolveIntervals: 11 })]), run([lineScn()]));
+    expect(md).toContain(WARN);
+  });
+
+  it('stays quiet when both sides carry it — including a zero drop count', () => {
+    // Zero is a MEASUREMENT (timestamps unsupported, or nothing dropped),
+    // not a missing field: two such runs are comparable.
+    const md = buildPerfDiff(
+      run([lineScn({ excludedResolveIntervals: 0 })]),
+      run([lineScn({ excludedResolveIntervals: 9 })])
+    );
+    expect(md).not.toContain(WARN);
+  });
+
+  it('stays quiet when neither side carries it (gsplat bench rows)', () => {
+    expect(buildPerfDiff(run([scn()]), run([scn()]))).not.toContain(WARN);
+  });
+
+  it('stays quiet for a skipped row, which omits the field by design', () => {
+    const base = run([lineScn({ skipped: true, frameMs: null })]);
+    const next = run([lineScn({ excludedResolveIntervals: 4 })]);
+    expect(buildPerfDiff(base, next)).not.toContain(WARN);
+  });
+
+  it('stays quiet when the row exists on only one side (already NEW/DROPPED)', () => {
+    const md = buildPerfDiff(run([]), run([lineScn({ excludedResolveIntervals: 4 })]));
+    expect(md).not.toContain(WARN);
+    expect(md).toContain('NEW');
+  });
+});
+
 describe('buildPerfDiff — missing side handling', () => {
   it('renders — in the Δ cell for an absent metric on either side', () => {
     const base = run([scn({ depthSort: { kernelMsMedian: 2 }, sortAdjacentP99Ms: 3 })]);

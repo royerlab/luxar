@@ -172,6 +172,15 @@ The `api` column appends ` (webgl-bk)` when a WebGPURenderer run fell
 back to its internal WebGL2 backend — otherwise that fallback would look
 like a clean `webgpu` row.
 
+A `⚠️ JS frame timing not comparable` line follows the frame-timing table
+when a measured row's two sides disagree on whether they carry
+`excludedResolveIntervals`. The line bench drops the frame interval after
+each GPU-timestamp resolve (readback latency, not scene work) and records
+the count in that field; because the field postdates the exclusion, its
+one-sided absence means the older side's frame stats still include that
+latency, and the row's deltas are instrument drift rather than a
+rendering change.
+
 ```bash
 node scripts/perf-diff.mjs baseline.json new.json > diff.md
 ```
