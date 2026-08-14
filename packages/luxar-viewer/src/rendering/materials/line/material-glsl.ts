@@ -17,7 +17,12 @@
 import * as THREE from 'three';
 import { LINE_VERTEX_SHADER, LINE_FRAGMENT_SHADER } from './shader-glsl';
 import { CAPSULE_LINE_VERTEX_SHADER, CAPSULE_LINE_FRAGMENT_SHADER } from './shader-glsl-capsule';
-import { getPlaceholderElementTexture } from '../../element-texture-layout';
+import {
+  getPlaceholderElementTexture,
+  getElementTextureWidth,
+  applyElementTextureWidthDefine,
+  LINE_TEXTURE_LAYOUT,
+} from '../../element-texture-layout';
 import type { CameraAwareMaterial } from '../_shared/camera-aware-material';
 import type { ColormapAwareMaterial } from '../_shared/colormap-aware-material';
 import { clampGamma, isGammaOne, isNoGOG } from '../_shared/uniform-helpers';
@@ -214,6 +219,12 @@ export class LineMaterial
       // toggled by the wrapper's update methods when the underlying
       // value crosses the relevant threshold.
       defines: {
+        // Element-texture width, baked as a compile-time constant so
+        // the per-vertex %/int-div addressing strength-reduces (see
+        // element-texture-layout.ts). Pre-stamped with the session
+        // width; the texture-update method re-stamps from the actually
+        // bound texture (a no-op recompile-wise in the common path).
+        [LINE_TEXTURE_LAYOUT.widthDefine]: String(getElementTextureWidth(LINE_TEXTURE_LAYOUT)),
         ...(materialConfig.colormapTexture ? { USE_COLORMAP: '' } : {}),
         ...(isGammaOne(gammaValue) ? { LUXAR_GAMMA_ONE: '' } : {}),
         ...(isNoGOG(materialConfig.intensity ?? 1.0, materialConfig.offset ?? 0.0)
@@ -313,6 +324,13 @@ export class LineMaterial
    */
   updateLineTexture(texture: THREE.DataTexture | null): void {
     this.uniforms.uLineTex.value = texture ?? getPlaceholderElementTexture();
+    // Re-stamp the width define from the texture actually bound
+    // (bind-time authority — see applyElementTextureWidthDefine).
+    applyElementTextureWidthDefine(
+      this,
+      LINE_TEXTURE_LAYOUT,
+      this.uniforms.uLineTex.value as THREE.Texture | null
+    );
   }
 
   /** The currently bound line data texture. */
@@ -469,8 +487,10 @@ export class LineMaterial
 
     cloned.uniforms.uResolution.value.copy(this.uniforms.uResolution.value);
     // Preserve the line data texture binding (per-node — the clone
-    // serves the same node).
-    cloned.uniforms.uLineTex.value = this.uniforms.uLineTex.value;
+    // serves the same node). Routed through the rebind chokepoint so
+    // the clone's width define is re-stamped from that texture rather
+    // than left on the constructor's session-width pre-stamp.
+    cloned.updateLineTexture(this.uniforms.uLineTex.value as THREE.DataTexture | null);
     // Preserve orthographic state, near-plane / max-pixel-width clamp,
     // and the precomputed pixel-width scales.
     cloned.uniforms.uIsOrtho.value = this.uniforms.uIsOrtho.value;

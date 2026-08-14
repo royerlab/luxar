@@ -7,6 +7,8 @@ from typing import Any, Dict
 
 import zarr
 
+from luxar._zarr_compat import open_group as zc_open_group
+
 
 def inspect_gsplats_zarr(path: str | Path) -> Dict[str, Any]:
     """Inspect .gsplats.zarr metadata without loading arrays.
@@ -26,7 +28,7 @@ def inspect_gsplats_zarr(path: str | Path) -> Dict[str, Any]:
         raise FileNotFoundError(f"GSplats zarr not found: {path}")
 
     # Open zarr store (read-only)
-    root = zarr.open_group(str(path), mode="r")
+    root = zc_open_group(str(path), mode="r")
 
     # Validate format
     format_type = root.attrs.get("format_type")
