@@ -126,6 +126,13 @@ export const AUTO_QUAD_EFFECTIVE_SEGMENTS = 2_000_000;
  * slack above absorbs the first two octaves of that), a scaled-down one
  * keeps the capsule longer. Order-of-magnitude, as stated.
  *
+ * The width term is the node's MAXIMUM authored width, and that is the
+ * one deviation biased the other way: a node of a million hairlines
+ * carrying one fat line reads as a million fat lines and can flip to the
+ * quad on fill cost it never pays. Deliberate — `.zattrs` records
+ * `max_width` and no width distribution — and the cost of being wrong
+ * here is the cheaper primitive on an unusual scene, never a broken one.
+ *
  * Floored at 1 because the shader clamps thin lines to `minPixelWidth`
  * (1.5 px in shader-glsl.ts) — below the clamp, fill cost stops
  * shrinking with width. With the 4× above, the floor in fact holds until
