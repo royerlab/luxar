@@ -92,11 +92,24 @@ export function selectBackend(rendererOverride: 'webgl' | 'webgpu' | undefined):
  * `maxVertexBuffers` is deliberately NOT here — it is clamped to 16
  * rather than forwarded verbatim (see `createWebGPURenderer`).
  */
+export const FORWARDED_ADAPTER_LIMIT_NAMES = [
+  'maxBufferSize',
+  'maxStorageBufferBindingSize',
+  'maxTextureDimension2D',
+] as const;
+
+/** One of the adapter limits forwarded verbatim into `requiredLimits`. */
+export type ForwardedAdapterLimitName = (typeof FORWARDED_ADAPTER_LIMIT_NAMES)[number];
+
 export function forwardedAdapterLimits(
-  limits: Record<string, number | undefined> | undefined
+  // Structural over the three explicit names only — a real
+  // `GPUSupportedLimits` (no string index signature) satisfies this,
+  // so the signature survives a future move off the file-local
+  // `GPUAdapterLike` shim onto @webgpu/types.
+  limits: Partial<Record<ForwardedAdapterLimitName, number>> | undefined
 ): Record<string, number> {
   const out: Record<string, number> = {};
-  for (const key of ['maxBufferSize', 'maxStorageBufferBindingSize', 'maxTextureDimension2D']) {
+  for (const key of FORWARDED_ADAPTER_LIMIT_NAMES) {
     const value = limits?.[key];
     if (typeof value === 'number') out[key] = value;
   }

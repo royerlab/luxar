@@ -115,14 +115,16 @@ describe('forwardedAdapterLimits', () => {
     // The maxTextureDimension2D forwarding is the per-node element
     // ceiling: without it the device falls back to the 8192-row spec
     // default and a lines node silently clamps at 5,586,944 segments.
-    expect(
-      forwardedAdapterLimits({
-        maxBufferSize: 1024,
-        maxStorageBufferBindingSize: 512,
-        maxTextureDimension2D: 16384,
-        maxVertexBuffers: 30, // handled separately (clamped) — never forwarded here
-      })
-    ).toEqual({
+    // Via a variable: the adapter's real limits object carries many more
+    // keys than the forwarded trio, and only object LITERALS get
+    // excess-property checking — this mirrors the production call shape.
+    const adapterLimits = {
+      maxBufferSize: 1024,
+      maxStorageBufferBindingSize: 512,
+      maxTextureDimension2D: 16384,
+      maxVertexBuffers: 30, // handled separately (clamped) — never forwarded here
+    };
+    expect(forwardedAdapterLimits(adapterLimits)).toEqual({
       maxBufferSize: 1024,
       maxStorageBufferBindingSize: 512,
       maxTextureDimension2D: 16384,
