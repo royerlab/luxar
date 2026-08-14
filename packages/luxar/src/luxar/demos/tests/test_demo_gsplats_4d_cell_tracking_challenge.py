@@ -263,3 +263,190 @@ class TestCuratedCrops:
             f"a tile would draw only {coarsest_fraction:.3f} of the fitted splats; "
             "shorten the ladder or lower the compression factor"
         )
+
+
+class TestPrecomputedRoundTrip:
+    """The hosted derived product: what `save_` writes, `load_` must rebuild.
+
+    Both halves of the format live in the demo module precisely so they cannot
+    drift; these tests are what proves it. No network — the manifest and cache
+    root are injected, which is what `ensure_dataset` exposes them for.
+    """
+
+    @staticmethod
+    def _tiny_gsplats(n: int = 32, n_timepoints: int = 4):
+        """A minimal 4D (ZYX + time) GSplatData, cheap enough for a unit test."""
+        from luxar.gsplats import GSplatData
+
+        rng = np.random.default_rng(0)
+        centers = np.zeros((n, 4), dtype=np.float32)
+        centers[:, :3] = rng.uniform(-10.0, 10.0, size=(n, 3))
+        centers[:, 3] = rng.integers(0, n_timepoints, size=n)
+        # Packed lower-triangular Cholesky for 4 dims = 10 entries; a diagonal
+        # factor keeps it positive-definite. The time column gets a tiny sigma:
+        # the splats are instantaneous.
+        chol = np.zeros((n, 10), dtype=np.float32)
+        for col, idx in enumerate((0, 2, 5, 9)):
+            chol[:, idx] = 1.0 if col < 3 else 1e-3
+        return GSplatData(
+            centers=centers,
+            amplitudes=rng.uniform(0.05, 1.0, size=n).astype(np.float32),
+            cholesky_factors=chol,
+        )
+
+    def _crop(self, name: str = "crop_x", n_timepoints: int = 4) -> dict:
+        n_pts, n_verts, n_edges = 6, 10, 7
+        rng = np.random.default_rng(1)
+        return {
+            "name": name,
+            "lod": self._tiny_gsplats(n_timepoints=n_timepoints),
+            "n_splats": 32,
+            "intensity": 1.5,
+            "offset": -0.25,
+            "tracks": {
+                "point_positions": rng.uniform(size=(n_pts, 4)).astype(np.float32),
+                "point_colors": rng.uniform(size=(n_pts, 3)).astype(np.float32),
+                "point_radii": np.full(n_pts, 2.6, np.float32),
+                "line_vertices": rng.uniform(size=(n_verts, 4)).astype(np.float32),
+                "line_colors": rng.uniform(size=(n_verts, 3)).astype(np.float32),
+                "line_widths": np.full(n_verts, 0.7, np.float32),
+                "line_indices": rng.integers(
+                    0, n_verts, size=(n_edges, 2), dtype=np.uint32
+                ),
+                "n_lineages": 3,
+                "n_cells": n_pts,
+                "n_divisions": 1,
+            },
+            "extent_um": 104.0,
+        }
+
+    def _manifest(self, files: list, variant: str = "light") -> dict:
+        return {
+            "records": {"cc-by": {}},
+            "datasets": {
+                _demo.PRECOMPUTED_DATASET: {
+                    "bucket": "zenodo",
+                    "record": "cc-by",
+                    "dir": "",
+                    "variants": {
+                        variant: {
+                            "default": True,
+                            "files": [
+                                {"name": p.name, "bytes": p.stat().st_size}
+                                for p in files
+                            ],
+                        }
+                    },
+                }
+            },
+        }
+
+    def _stage(self, crop: dict, tmp_path, n_timepoints: int = 4):
+        """Write a crop straight into the cache location ensure_dataset resolves.
+
+        With no sha256 in the synthetic manifest and the bytes already cached,
+        nothing is downloaded or verified — the test exercises the FORMAT.
+        """
+        cache_root = tmp_path / "cache"
+        staged = cache_root / _demo.PRECOMPUTED_DATASET / "light"
+        written = _demo.save_precomputed_crop(crop, staged, n_timepoints)
+        return cache_root, written
+
+    def test_saved_crop_is_reloaded_faithfully(self, tmp_path) -> None:
+        original = self._crop(n_timepoints=4)
+        cache_root, written = self._stage(original, tmp_path)
+        assert [p.name for p in written] == list(_demo.precomputed_file_names("crop_x"))
+
+        crops = _demo.load_precomputed_crops(
+            ["crop_x"], manifest=self._manifest(written), cache_root=cache_root
+        )
+        assert crops is not None and len(crops) == 1
+        got = crops[0]
+
+        assert got["name"] == "crop_x"
+        assert got["extent_um"] == pytest.approx(104.0)
+        assert got["n_timepoints"] == 4
+        assert got["lod"].n_splats == original["lod"].n_splats
+        for key, want in original["tracks"].items():
+            if isinstance(want, int):
+                assert got["tracks"][key] == want, key
+            else:
+                np.testing.assert_allclose(got["tracks"][key], want, err_msg=key)
+
+    def test_window_is_rederived_not_stored(self, tmp_path) -> None:
+        """The display window follows the hosted amplitudes, per display_window."""
+        cache_root, written = self._stage(self._crop(), tmp_path)
+        (got,) = _demo.load_precomputed_crops(
+            ["crop_x"], manifest=self._manifest(written), cache_root=cache_root
+        )
+        expected = _demo.display_window(got["lod"].amplitudes)
+        assert got["intensity"] == pytest.approx(expected[0])
+        assert got["offset"] == pytest.approx(expected[1])
+
+    def test_recompute_forces_the_local_path(self, tmp_path, monkeypatch) -> None:
+        cache_root, written = self._stage(self._crop(), tmp_path)
+        monkeypatch.setitem(_demo.FLAGS, "recompute", True)
+        assert (
+            _demo.load_precomputed_crops(
+                ["crop_x"], manifest=self._manifest(written), cache_root=cache_root
+            )
+            is None
+        )
+
+    def test_pending_upload_falls_back_instead_of_raising(self, tmp_path) -> None:
+        """The real manifest state today: registered, hosted nowhere yet."""
+        manifest = {
+            "records": {"cc-by": {}},
+            "datasets": {
+                _demo.PRECOMPUTED_DATASET: {
+                    "bucket": "zenodo",
+                    "record": "cc-by",
+                    "dir": "",
+                    "pending_upload": True,
+                    "variants": {"light": {"default": True, "files": []}},
+                }
+            },
+        }
+        assert (
+            _demo.load_precomputed_crops(
+                ["crop_x"], manifest=manifest, cache_root=tmp_path
+            )
+            is None
+        )
+
+    def test_a_missing_crop_falls_back_rather_than_half_building(
+        self, tmp_path
+    ) -> None:
+        cache_root, written = self._stage(self._crop(name="crop_a"), tmp_path)
+        got = _demo.load_precomputed_crops(
+            ["crop_a", "crop_b"],
+            manifest=self._manifest(written),
+            cache_root=cache_root,
+        )
+        assert got is None, "a partially hosted set must not build a partial matrix"
+
+
+class TestManifestRegistration:
+    """The demo's hosted dataset must be registered the way the standard expects."""
+
+    def test_dataset_is_registered_as_a_zenodo_bucket(self) -> None:
+        from luxar.demos import dataset_spec
+
+        spec = dataset_spec(_demo.PRECOMPUTED_DATASET)
+        assert spec["bucket"] == "zenodo"
+        assert spec["record"] in {"cc-by", "cc-by-sa", "h2afva"}
+        assert spec["license"], "a redistributed derived product needs a license"
+        assert spec["attribution"]
+
+    def test_manifest_key_matches_the_declared_cache(self) -> None:
+        """Otherwise the fetched bytes land in a directory no demo claims."""
+        assert _demo.PRECOMPUTED_DATASET in _demo.DEMO_META["caches"]
+
+    def test_variants_cover_a_light_default_and_a_full_opt_in(self) -> None:
+        from luxar.demos import dataset_spec
+
+        variants = dataset_spec(_demo.PRECOMPUTED_DATASET)["variants"]
+        assert set(variants) == {"light", "full"}
+        assert variants["light"]["default"] is True
+        assert variants["full"]["default"] is False
+        assert variants["full"]["approx_bytes"] > variants["light"]["approx_bytes"]

@@ -103,6 +103,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Optional, Sequence
 
 import numpy as np
 from arbol import aprint, asection
@@ -135,9 +136,15 @@ COMPETITION_URL = f"https://www.kaggle.com/competitions/{COMPETITION}"
 # `luxar demo cache clear` actually reclaim it — a path outside the managed root
 # (registry.DEMO_CACHE_ROOT) would be invisible to both, and would be reported as
 # an unclaimed orphan if it happened to land inside.
-CACHE_DIR = DEMO_CACHE_ROOT / "gsplats_cell_tracking"
+PRECOMPUTED_DATASET = "gsplats_cell_tracking"
+CACHE_DIR = DEMO_CACHE_ROOT / PRECOMPUTED_DATASET
 DATA_DIR = CACHE_DIR / "kaggle"  # raw competition downloads
 FITS_DIR = CACHE_DIR / "fits"  # per-timepoint gsplat fits
+
+# Which size variant of the hosted derived product to fetch. None takes the
+# manifest's own default (the lighter one), which is the documented behaviour and
+# keeps the choice in the manifest rather than duplicated here.
+PRECOMPUTED_VARIANT: Optional[str] = None
 
 # The nine most densely annotated training crops, by GEFF node count. Eight come
 # from embryo `6bba` and one from `44b6` — the two source acquisitions — so the
@@ -308,6 +315,151 @@ def _kaggle_cmd() -> list[str]:
             "A warm fit cache needs none of this — see the module docstring."
         )
     return [sys.executable, "-m", "kaggle"]
+
+
+# =============================================================================
+# Precomputed crops (the hosted fast path)
+# =============================================================================
+
+
+def precomputed_file_names(dataset: str) -> tuple[str, str]:
+    """The two hosted files for one crop: its LOD'd volume, and its tracks."""
+    return f"{dataset}.gsplats.zarr.zip", f"{dataset}_tracks.npz"
+
+
+def load_precomputed_crops(
+    chosen: Sequence[str],
+    *,
+    manifest: Optional[dict] = None,
+    cache_root: Optional[Path] = None,
+) -> Optional[list[dict]]:
+    """Build the crop list from the hosted derived product, or None to compute.
+
+    This is the path that makes the demo runnable with **no Kaggle credentials
+    and no GPU**: the manifest dataset holds, per crop, the finished 4D
+    Gaussian-splat volume (LOD ladder included) plus the track geometry, so
+    nothing has to be downloaded from the authenticated competition endpoint and
+    nothing has to be fitted.
+
+    Returns ``None`` — meaning "take the local fetch-and-fit path" — when:
+
+    * ``--recompute`` was passed (:func:`ensure_dataset` raises
+      :class:`LocalComputeDataset` for any dataset in that case), or
+    * the dataset is not hosted yet. The manifest carries it as
+      ``pending_upload``, so until the bytes are on Zenodo there is nothing to
+      resolve; that is an expected state during the migration rather than a
+      fault, and it is reported rather than swallowed.
+
+    Anything else — a checksum that will not verify, a half-listed dataset —
+    raises, because those are faults a demo must not route around.
+
+    ``manifest`` / ``cache_root`` exist for tests, mirroring
+    :func:`~luxar.utils.data_fetch.ensure_dataset`.
+    """
+    from luxar.demos import DatasetNotFound, LocalComputeDataset, ensure_dataset
+
+    try:
+        paths = ensure_dataset(
+            PRECOMPUTED_DATASET,
+            variant=PRECOMPUTED_VARIANT,
+            recompute=FLAGS["recompute"],
+            manifest=manifest,
+            cache_root=cache_root,
+        )
+    except LocalComputeDataset:
+        return None
+    except (FileNotFoundError, DatasetNotFound) as exc:
+        aprint(f"Precomputed crops unavailable ({exc}); fitting locally instead.")
+        return None
+
+    by_name = {p.name: p for p in paths}
+    crops: list[dict] = []
+    for dataset in chosen:
+        volume_name, tracks_name = precomputed_file_names(dataset)
+        if volume_name not in by_name or tracks_name not in by_name:
+            aprint(
+                f"Hosted dataset has no entry for {dataset}; fitting locally instead."
+            )
+            return None
+        crops.append(
+            _crop_from_precomputed(dataset, by_name[volume_name], by_name[tracks_name])
+        )
+    return crops
+
+
+def _crop_from_precomputed(dataset: str, volume: Path, tracks: Path) -> dict:
+    """Rehydrate one crop dict from its two hosted files."""
+    lod = GSplatData.load(volume, include_stats=False)
+    with np.load(tracks) as npz:
+        payload = {k: npz[k] for k in npz.files}
+
+    n_timepoints = int(payload["n_timepoints"][0])
+    intensity, offset = display_window(lod.amplitudes)
+    return {
+        "name": dataset,
+        "lod": lod,
+        "n_splats": int(lod.n_splats),
+        "intensity": intensity,
+        "offset": offset,
+        "tracks": {
+            "point_positions": payload["point_positions"],
+            "point_colors": payload["point_colors"],
+            "point_radii": payload["point_radii"],
+            "line_vertices": payload["line_vertices"],
+            "line_colors": payload["line_colors"],
+            "line_widths": payload["line_widths"],
+            "line_indices": payload["line_indices"],
+            "n_lineages": int(payload["n_lineages"][0]),
+            "n_cells": int(payload["n_cells"][0]),
+            "n_divisions": int(payload["n_divisions"][0]),
+        },
+        "extent_um": float(payload["extent_um"][0]),
+        "n_timepoints": n_timepoints,
+    }
+
+
+def save_precomputed_crop(crop: dict, out_dir: Path, n_timepoints: int) -> list[Path]:
+    """Write one crop's hosted pair — used by ``scripts/build_cell_tracking_bundle.py``.
+
+    Kept beside the loader so the two halves of the format cannot drift.
+    """
+    out_dir.mkdir(parents=True, exist_ok=True)
+    volume_name, tracks_name = precomputed_file_names(crop["name"])
+    volume_path = out_dir / volume_name
+    crop["lod"].save(
+        volume_path,
+        encoding_mode=EncodingMode.MEMORY,
+        include_fitting_info=True,
+        compress="zip",
+        zip_deflate=True,
+    )
+
+    tracks = crop["tracks"] or {}
+    payload = {
+        "extent_um": np.asarray([crop["extent_um"]], dtype=np.float64),
+        "n_timepoints": np.asarray([n_timepoints], dtype=np.int64),
+    }
+    for key in (
+        "point_positions",
+        "point_colors",
+        "point_radii",
+        "line_vertices",
+        "line_colors",
+        "line_widths",
+        "line_indices",
+    ):
+        payload[key] = np.asarray(tracks.get(key, np.zeros((0,), np.float32)))
+    for key in ("n_lineages", "n_cells", "n_divisions"):
+        payload[key] = np.asarray([int(tracks.get(key, 0))], dtype=np.int64)
+
+    tracks_path = out_dir / tracks_name
+    np.savez_compressed(tracks_path, **payload)
+    return [volume_path, tracks_path]
+
+
+# =============================================================================
+# Kaggle download
+# =============================================================================
 
 
 def _crop_metadata_files(dataset: str) -> list[str]:
@@ -937,7 +1089,25 @@ def main() -> None:
     chosen = DATASETS[:n_datasets]
     aprint(f"Crops: {n_datasets} • timepoints: {n_timepoints} • seeds: {SEEDS:,}")
 
-    crops: list[dict] = []
+    # Preferred path: the hosted derived product — no Kaggle credentials, no GPU.
+    # Falls through to fetch-and-fit when it is unavailable or --recompute is set.
+    crops = load_precomputed_crops(chosen)
+    if crops is not None:
+        hosted_tps = {c.get("n_timepoints") for c in crops}
+        aprint(
+            f"Using precomputed crops from the '{PRECOMPUTED_DATASET}' dataset "
+            f"({', '.join(str(t) for t in sorted(hosted_tps))} timepoints each)"
+        )
+        scene_path = create_luxar_scene(
+            crops, max(hosted_tps) if hosted_tps else n_timepoints, output_path
+        )
+        if not FLAGS["no_serve"]:
+            aprint("\nLaunching viewer...")
+            launch_viewer(scene_path)
+        aprint("\nDone!")
+        return
+
+    crops = []
     for i, dataset in enumerate(chosen, 1):
         with asection(f"[{i}/{n_datasets}] {dataset}"):
             image_store, geff_store = fetch_dataset(

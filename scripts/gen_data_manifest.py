@@ -242,6 +242,41 @@ DATASETS: dict[str, dict] = {
         # bytes are on obsidian (~250 MB) awaiting upload to the cc-by record.
         pending_upload=True,
     ),
+    "gsplats_cell_tracking": dict(
+        bucket="zenodo",
+        record="cc-by",
+        license="cc0-1.0",
+        source=(
+            "Kaggle competition 'Biohub - Cell Tracking During Development' "
+            "(zebrafish light-sheet crops + GEFF ground-truth lineages)"
+        ),
+        attribution=(
+            "Biohub cell-tracking challenge data (CC0); imaging by the Royer "
+            "group, CZ Biohub SF. Derived product: per-crop 4D Gaussian-splat "
+            "fits with substitutive LOD."
+        ),
+        # Computed on obsidian, ~2 GB, awaiting upload. Redistributable as a
+        # DERIVED product because the source is CC0 — but the raw competition
+        # data is behind an authenticated endpoint, so hosting the fits is what
+        # makes the demo runnable without Kaggle credentials at all.
+        pending_upload=True,
+        variants={
+            "light": dict(
+                default=True,
+                approx_bytes=500_000_000,
+                note=(
+                    "Every 4th timepoint (25 of 100) for all nine crops — keeps "
+                    "the 3x3 matrix and the animation at a quarter of the "
+                    "download."
+                ),
+            ),
+            "full": dict(
+                default=False,
+                approx_bytes=2_000_000_000,
+                note="All nine crops at all 100 timepoints — opt-in.",
+            ),
+        },
+    ),
     "h2afva": dict(
         bucket="zenodo",
         record="h2afva",
