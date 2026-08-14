@@ -3236,6 +3236,134 @@ class TestCalibrateCommand:
         persisted = sorted(out_fits.iterdir())
         assert len(persisted) == 2
 
+    def test_cal_auto_region_marks_k_star_region_scoped(
+        self,
+        runner: CliRunner,
+        multiblob_volume: Path,
+        fast_fit_config: Path,
+        tmp_path: Path,
+    ) -> None:
+        """``cal --auto-region`` qualifies its K* as region-scoped (#1556).
+
+        ``fit --seeds`` is a WHOLE-VOLUME budget that a tiled fit divides across
+        its tiles, so a region-scoped K* handed to it under-seeds the volume by
+        roughly the tile count. The headline must therefore say which kind of
+        number it is printing, and point at the density-transfer route instead.
+        ``--region-size 16`` on the 40^3 fixture forces a real crop (a region as
+        large as the volume short-circuits to ``strategy="whole"``, which IS
+        whole-volume and must NOT be flagged — see the sibling test).
+        """
+        import json
+
+        out_json = tmp_path / "cal.json"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "cal",
+                str(multiblob_volume),
+                str(out_json),
+                "--k-grid",
+                "30,90",
+                "--preset",
+                "draft",
+                "--config",
+                str(fast_fit_config),
+                "--device",
+                "cpu",
+                "--auto-region",
+                "--region-size",
+                "16",
+            ],
+        )
+        assert result.exit_code == 0, f"cal failed:\n{result.stdout}"
+
+        with open(out_json) as f:
+            region = json.load(f)["calibration_region"]
+        assert region is not None and region["strategy"] != "whole"
+
+        assert "region-scoped" in result.stdout
+        assert "--seeds" in result.stdout
+        assert "--tiling content" in result.stdout
+
+    def test_cal_default_k_star_is_not_flagged(
+        self,
+        runner: CliRunner,
+        multiblob_volume: Path,
+        fast_fit_config: Path,
+        tmp_path: Path,
+    ) -> None:
+        """Guard: a default (whole-volume) ``cal`` must NOT print the caveat.
+
+        Its K* is exactly the number ``fit --seeds`` wants, so flagging it would
+        steer users away from the documented ``cal`` -> ``fit --seeds`` pipeline.
+        """
+        out_json = tmp_path / "cal.json"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "cal",
+                str(multiblob_volume),
+                str(out_json),
+                "--k-grid",
+                "30,90",
+                "--preset",
+                "draft",
+                "--config",
+                str(fast_fit_config),
+                "--device",
+                "cpu",
+            ],
+        )
+        assert result.exit_code == 0, f"cal failed:\n{result.stdout}"
+        assert "Recommended K" in result.stdout
+        assert "region-scoped" not in result.stdout
+
+    def test_cal_auto_region_whole_volume_shortcircuit_is_not_flagged(
+        self,
+        runner: CliRunner,
+        multiblob_volume: Path,
+        fast_fit_config: Path,
+        tmp_path: Path,
+    ) -> None:
+        """``--auto-region`` on a volume smaller than ``--region-size`` is NOT flagged.
+
+        ``select_calibration_region`` short-circuits to ``strategy="whole"`` and
+        returns the volume untouched, so K* really is whole-volume even though
+        ``calibration_region`` is populated. Flagging on the mere presence of
+        that provenance would misdirect every user of a sub-256^3 volume.
+        """
+        import json
+
+        out_json = tmp_path / "cal.json"
+        result = runner.invoke(
+            app,
+            # fmt: off
+            [
+                "gsplat",
+                "cal",
+                str(multiblob_volume),
+                str(out_json),
+                "--k-grid",
+                "30,90",
+                "--preset",
+                "draft",
+                "--config",
+                str(fast_fit_config),
+                "--device",
+                "cpu",
+                "--auto-region",  # default --region-size 256 > 40 -> "whole"
+            ],
+            # fmt: on
+        )
+        assert result.exit_code == 0, f"cal failed:\n{result.stdout}"
+
+        with open(out_json) as f:
+            region = json.load(f)["calibration_region"]
+        assert region is not None and region["strategy"] == "whole"
+        assert "region-scoped" not in result.stdout
+
 
 # ═══════════════════════════════════════════════════════════════════════
 # LOD command tests (additive + substitutive)
