@@ -630,9 +630,17 @@ def fetch_neuropil(sample: str):
     if key is None:
         aprint(f"No FlyLight H5J mapped for {sample}; skipping the neuropil.")
         return None
-    # Both of the neuropil's dependencies are optional, and BOTH must degrade
-    # the same way: the documented fallback is a neurons-only scene, so a
-    # missing one must not raise out of a demo that promises to keep going.
+    # Check the decoded cache FIRST: loading it needs neither ffmpeg nor h5py,
+    # so gating on those beforehand would throw away a perfectly good warm
+    # cache and silently drop to a neurons-only scene.
+    cached = CACHE_DIR / f"{sample}_neuropil.npy"
+    if cached.exists() and not RECOMPUTE:
+        aprint(f"Neuropil already decoded: {cached.name}")
+        return np.load(cached)
+
+    # Both remaining dependencies are optional, and BOTH must degrade the same
+    # way: the documented fallback is a neurons-only scene, so a missing one
+    # must not raise out of a demo that promises to keep going.
     missing = []
     if shutil.which("ffmpeg") is None:
         missing.append("ffmpeg (H5J stores the channel as HEVC)")
@@ -645,11 +653,6 @@ def fetch_neuropil(sample: str):
             "volume-rendered brain."
         )
         return None
-
-    cached = CACHE_DIR / f"{sample}_neuropil.npy"
-    if cached.exists() and not RECOMPUTE:
-        aprint(f"Neuropil already decoded: {cached.name}")
-        return np.load(cached)
 
     h5j = CACHE_DIR / f"{sample}.h5j"
     if not h5j.exists() or RECOMPUTE:

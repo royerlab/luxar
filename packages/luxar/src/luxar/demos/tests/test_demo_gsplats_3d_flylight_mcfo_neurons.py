@@ -698,3 +698,44 @@ def test_fit_cache_paths_differ_between_components_and_settings() -> None:
     assert neurons != retuned, "a retuned fit must not reuse the old cache file"
     assert neurons.name.startswith(f"{_demo.SAMPLE}_neurons_")
     assert neurons.suffixes[-2:] == [".zarr", ".zip"]
+
+
+def test_warm_neuropil_cache_is_used_without_either_dependency(
+    tmp_path, monkeypatch
+) -> None:
+    """A decoded .npy needs neither ffmpeg nor h5py, so it must still load.
+
+    Gating the dependencies first would discard a perfectly good warm cache and
+    silently drop the scene to neurons-only.
+    """
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    sample = _demo.DEFAULT_SAMPLE
+    vol = np.arange(2 * 3 * 4, dtype=np.uint8).reshape(2, 3, 4)
+    np.save(cache / f"{sample}_neuropil.npy", vol)
+
+    monkeypatch.setattr(_demo, "CACHE_DIR", cache)
+    monkeypatch.setattr(_demo, "RECOMPUTE", False)
+    # Both decoding dependencies absent.
+    monkeypatch.setattr(_demo.shutil, "which", lambda name: None)
+    monkeypatch.setattr(_demo.importlib.util, "find_spec", lambda name: None)
+
+    got = _demo.fetch_neuropil(sample)
+
+    assert got is not None, "warm cache ignored when dependencies are missing"
+    assert np.array_equal(got, vol)
+
+
+def test_recompute_still_needs_the_dependencies(tmp_path, monkeypatch) -> None:
+    """--recompute must re-decode, so it degrades when the deps are missing."""
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    sample = _demo.DEFAULT_SAMPLE
+    np.save(cache / f"{sample}_neuropil.npy", np.zeros((2, 2, 2), dtype=np.uint8))
+
+    monkeypatch.setattr(_demo, "CACHE_DIR", cache)
+    monkeypatch.setattr(_demo, "RECOMPUTE", True)
+    monkeypatch.setattr(_demo.shutil, "which", lambda name: None)
+    monkeypatch.setattr(_demo.importlib.util, "find_spec", lambda name: None)
+
+    assert _demo.fetch_neuropil(sample) is None
