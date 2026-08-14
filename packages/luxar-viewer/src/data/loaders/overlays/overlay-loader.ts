@@ -215,11 +215,22 @@ export async function loadOverlayConfigs(
 }
 
 /**
+ * Zarr's own metadata documents, which are store KEYS but not child nodes.
+ *
+ * Only the `list()` fallback below needs these: it enumerates raw keys, so a
+ * document sitting beside the real children would be reported as an overlay
+ * named after it. Both formats are covered — naming only the format-2 pair
+ * (the previous filter) lets a format-3 store's `zarr.json` through as a
+ * phantom overlay. The `contents()` path lists nodes, not keys, and is unaffected.
+ */
+const METADATA_DOCS = new Set(['zarr.json', '.zgroup', '.zattrs', '.zarray', '.zmetadata']);
+
+/**
  * List immediate child group names under a given path in the store.
  *
- * Uses the consolidated metadata (.zmetadata) `contents()` method — the same
- * approach used by SceneLoader.enumerateStore(). This reliably finds all
- * overlay names including custom-named overlays (not just auto-generated ones).
+ * Uses the consolidated metadata `contents()` method — the same approach used
+ * by SceneLoader.enumerateStore(). This reliably finds all overlay names
+ * including custom-named overlays (not just auto-generated ones).
  */
 async function listGroupChildren(store: zarr.Readable, parentPath: string): Promise<string[]> {
   const prefix = parentPath + '/';
@@ -262,12 +273,7 @@ async function listGroupChildren(store: zarr.Readable, parentPath: string): Prom
               '');
         const relative = key.startsWith(prefix) ? key.slice(prefix.length) : key;
         const childName = relative.split('/')[0];
-        if (
-          childName &&
-          childName !== '.zgroup' &&
-          childName !== '.zattrs' &&
-          !seen.has(childName)
-        ) {
+        if (childName && !METADATA_DOCS.has(childName) && !seen.has(childName)) {
           seen.add(childName);
           children.push(childName);
         }

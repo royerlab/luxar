@@ -421,6 +421,53 @@ describe('getRemoteContentHash', () => {
     }
   });
 
+  it('releases the listeners of a REJECTED candidate, not just the accepted one', async () => {
+    // A format-2 dataset 404s `zarr.json` on every poll, so the rejected
+    // attempt is the COMMON case, not an edge one. `dispose()` cancels an
+    // unread body as well as removing listeners, so an undisposed 404 holds
+    // its connection open once per validation. Measured before the fix: the
+    // loop overwrote the first scope and only ever disposed the last.
+    const restore = forceAbortSignalAnyFallback();
+    const caller = new AbortController();
+    try {
+      const disposedBodies: string[] = [];
+      global.fetch = vi.fn(async (url: string) => {
+        if (String(url).endsWith('/zarr.json')) return mockResponse(404);
+        disposedBodies.push(String(url));
+        return mockResponse(200, JSON.stringify({ content_hash: 'v2hash' }));
+      }) as unknown as typeof fetch;
+
+      const token = await getRemoteContentHash('https://example.com/d.zarr', {
+        signal: caller.signal,
+      });
+
+      // It fell back to the format-2 document...
+      expect(token).toEqual({ hash: 'v2hash', mode: 'content-hash' });
+      expect(disposedBodies).toEqual(['https://example.com/d.zarr/.zattrs']);
+      // ...and BOTH attempts released their listeners. One leaked pair per
+      // poll is what this asserts against.
+      expect(getEventListeners(caller.signal, 'abort')).toHaveLength(0);
+    } finally {
+      restore();
+    }
+  });
+
+  it('releases listeners when NEITHER document is available', async () => {
+    // The both-404 path returned before the try/finally, so the last attempt
+    // was never disposed either.
+    const restore = forceAbortSignalAnyFallback();
+    const caller = new AbortController();
+    try {
+      global.fetch = vi.fn(async () => mockResponse(404)) as unknown as typeof fetch;
+      expect(
+        await getRemoteContentHash('https://example.com/d.zarr', { signal: caller.signal })
+      ).toBeNull();
+      expect(getEventListeners(caller.signal, 'abort')).toHaveLength(0);
+    } finally {
+      restore();
+    }
+  });
+
   it('falls back to an implicit zattrs-hash token when the attr is absent', async () => {
     // Standalone .gsplats.zarr / external datasets carry no content_hash;
     // the SHA-256 of the raw .zattrs bytes serves as the validation token

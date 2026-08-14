@@ -1,5 +1,6 @@
 import { buildUrl, fetchWithRetry } from './fetch-retry';
 import { sha256Hex } from './sha256';
+import type { FetchResponseScope } from './fetch-retry';
 
 /**
  * Cross-instance validation serializer.
@@ -169,22 +170,29 @@ export async function getRemoteContentHash(
   options: { signal?: AbortSignal; timeoutMsOverride?: number }
 ): Promise<RemoteValidationToken | null> {
   try {
-    let fetched = null;
-    let response: Response | null = null;
+    // Each rejected attempt is disposed IMMEDIATELY. `dispose()` is not just
+    // listener cleanup — it also cancels a body the caller never read, so an
+    // undisposed 404 holds its connection open. Probing two documents means the
+    // miss is now the common case (a format-2 store 404s `zarr.json` on every
+    // poll), so letting the loop overwrite the previous scope would leak one
+    // connection and two abort listeners per validation.
+    let scope: FetchResponseScope | null = null;
     for (const doc of ROOT_ATTR_DOCS) {
-      fetched = await fetchWithRetry(buildUrl(baseUrl, doc), {
+      const attempt = await fetchWithRetry(buildUrl(baseUrl, doc), {
         timeoutMsOverride: options.timeoutMsOverride,
         signal: options.signal,
       });
-      if (fetched && fetched.response.ok) {
-        response = fetched.response;
+      if (!attempt) continue;
+      if (attempt.response.ok) {
+        scope = attempt;
         break;
       }
+      attempt.dispose();
     }
-    if (!fetched || response === null) return null;
+    if (!scope) return null;
 
     try {
-      const data = await response.arrayBuffer();
+      const data = await scope.response.arrayBuffer();
       const attrs = rootAttributes(JSON.parse(new TextDecoder().decode(data)));
       const stamped = attrs?.content_hash;
       if (typeof stamped === 'string' && stamped.length > 0) {
@@ -199,7 +207,7 @@ export async function getRemoteContentHash(
       const digest = await sha256Hex(new Uint8Array(data));
       return { hash: `zattrs:${digest}`, mode: 'zattrs-hash' };
     } finally {
-      fetched.dispose();
+      scope.dispose();
     }
   } catch {
     return null;

@@ -18,7 +18,9 @@ from typer.testing import CliRunner
 if TYPE_CHECKING:
     from luxar.gsplats.gsplat_data import GSplatData
 
-from luxar._zarr_compat import create_array
+import zarr
+
+from luxar._zarr_compat import create_array, read_array_meta
 from luxar.cli import app
 from luxar.cli.gsplat_config import (
     PRESETS,
@@ -5289,6 +5291,44 @@ class TestLODCommand:
             assert detect_store_encoding(out) == expected, mode
         assert detect_store_encoding(tmp_path / "nope.gsplats.zarr") is None
 
+    @pytest.mark.parametrize("fmt", [2, 3])
+    def test_detect_store_encoding_reads_both_on_disk_formats(
+        self, tmp_path: Path, fmt: int
+    ) -> None:
+        """The classifier must read a store written in EITHER on-disk format.
+
+        Its first implementation globbed for the format-2 ``.zattrs`` document by
+        name, which matches nothing in a format-3 store — and the miss was
+        invisible, because "found no encoding attrs" is spelled ``None``, the
+        same perfectly ordinary value a zip archive returns. Callers read that as
+        "unclassifiable, don't assume a mode" and carried on. Pinning BOTH
+        formats is what makes the failure loud; the default-format test above
+        only ever exercises whichever format is current.
+        """
+        import luxar._zarr_compat as zc
+        from luxar.cli.gsplat_ops.recipe_shared import detect_store_encoding
+        from luxar.encoding import EncodingMode
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        rng = np.random.default_rng(1)
+        n = 16
+        data = GSplatData(
+            centers=(rng.random((n, 3)) * 10).astype(np.float32),
+            amplitudes=rng.random(n).astype(np.float32),
+            cholesky_factors=(rng.random((n, 6)) * 0.5 + 0.5).astype(np.float32),
+        )
+        original = zc.ZARR_FORMAT
+        zc.set_zarr_format(fmt)
+        try:
+            out = tmp_path / "store.gsplats.zarr"
+            data.save(out, encoding_mode=EncodingMode.MEMORY)
+            # The store really is in the format under test — otherwise this
+            # would pass for the wrong reason.
+            assert (out / "zarr.json").exists() == (fmt == 3)
+            assert detect_store_encoding(out) == "memory"
+        finally:
+            zc.set_zarr_format(original)
+
     def test_detect_store_encoding_escalated_legacy_and_certified_f32(
         self, tmp_path: Path
     ) -> None:
@@ -5296,7 +5336,6 @@ class TestLODCommand:
         certificate) and a LEGACY pre-certificate AUTO store (bare u16) both
         classify as "auto"; a certified-float32 store (the f32 rung) is "auto"
         while bare float32 stays "precision"."""
-        import json
 
         from luxar.cli.gsplat_ops.recipe_shared import detect_store_encoding
         from luxar.gsplats.gsplat_data import GSplatData
@@ -5313,20 +5352,27 @@ class TestLODCommand:
         out = tmp_path / "escalated.gsplats.zarr"
         with pytest.warns(UserWarning, match="escalating to uint16"):
             data.save(out)
-        zattrs = next(out.rglob("cholesky_factors_diag/.zattrs"))
-        enc = json.loads(zattrs.read_text())["encoding"]
+        # Locate the array by DIRECTORY and mutate through zarr's own attrs
+        # writer: the two formats keep attributes in different places
+        # (`.zattrs` vs inside `zarr.json`), so hand-editing one of them only
+        # edits the store that happens to be in that format.
+        chol_dir = next(
+            d
+            for d in out.rglob("cholesky_factors_diag")
+            if read_array_meta(d) is not None
+        )
+        chol = zarr.open_array(str(chol_dir), mode="r+")
+        enc = dict(chol.attrs["encoding"])
         assert enc["name"] == "log_perchannel_u16"  # really escalated
         assert detect_store_encoding(out) == "auto"  # u16 (certified) → auto
 
         # Legacy pre-certificate AUTO store: bare u16, no certificate key.
-        attrs = json.loads(zattrs.read_text())
-        del attrs["encoding"]["certificate"]
-        zattrs.write_text(json.dumps(attrs))
+        chol.attrs["encoding"] = {k: v for k, v in enc.items() if k != "certificate"}
         assert detect_store_encoding(out) == "auto"  # bare u16 (legacy) → auto
 
         # Certified float32 (the practically-unreachable f32 rung): auto, not
         # precision — the certificate key is the discriminator.
-        attrs["encoding"] = {
+        chol.attrs["encoding"] = {
             "name": "float32",
             "original_dtype": "float32",
             "certificate": {
@@ -5336,7 +5382,6 @@ class TestLODCommand:
                 "tier": "float32",
             },
         }
-        zattrs.write_text(json.dumps(attrs))
         assert detect_store_encoding(out) == "auto"
 
     def test_lod_target_ms_and_breakpoints_mutually_exclusive(
@@ -6177,16 +6222,20 @@ class TestAxesThreadingAndSqueeze:
 def _chol_base(path: Path) -> Path:
     """Return the group holding the Cholesky arrays (leaf root or child_0)."""
     for base in (path, path / "child_0"):
-        if (base / "cholesky_factors_diag" / ".zarray").exists():
+        if read_array_meta(base / "cholesky_factors_diag") is not None:
             return base
     raise AssertionError(f"no split-Cholesky arrays under {path}")
 
 
 def _diag_dtype(path: Path) -> str:
-    import json
+    """The diag array's dtype as a NUMPY name (``uint8``, ``float32``).
 
+    Read through zarr rather than off the metadata document: the two formats
+    spell the field differently (`dtype: "|u1"` vs `data_type: "uint8"`), and
+    the numpy name is what the assertions actually mean.
+    """
     base = _chol_base(path)
-    return json.load(open(base / "cholesky_factors_diag" / ".zarray"))["dtype"]
+    return str(zarr.open_array(str(base / "cholesky_factors_diag"), mode="r").dtype)
 
 
 def _varying_gsplats(path: Path, n: int = 300, d: int = 3) -> Path:
@@ -6216,18 +6265,18 @@ class TestReencode:
     def test_memory_encoding_yields_uint8(
         self, runner: CliRunner, tmp_path: Path
     ) -> None:
-        # memory encoding must store the Cholesky diag as uint8 (|u1). The
-        # source is saved PRECISION (float32), so the encoding demonstrably
-        # changes regardless of what the adaptive AUTO ladder would pick.
+        # memory encoding must store the Cholesky diag as uint8. The source is
+        # saved PRECISION (float32), so the encoding demonstrably changes
+        # regardless of what the adaptive AUTO ladder would pick.
         src = _varying_gsplats(tmp_path / "src.gsplats.zarr")
         src_dtype = _diag_dtype(src)
-        assert src_dtype == "<f4"
+        assert src_dtype == "float32"
         out = tmp_path / "u8.gsplats.zarr"
         result = runner.invoke(
             app, ["gsplat", "reencode", str(src), str(out), "-e", "memory"]
         )
         assert result.exit_code == 0, result.output
-        assert _diag_dtype(out) == "|u1"
+        assert _diag_dtype(out) == "uint8"
         assert _diag_dtype(out) != src_dtype  # the encoding actually changed
 
     def test_precision_encoding_yields_float32(
@@ -6239,7 +6288,7 @@ class TestReencode:
             ["gsplat", "reencode", str(sample_gsplats), str(out), "-e", "precision"],
         )
         assert result.exit_code == 0, result.output
-        assert _diag_dtype(out) == "<f4"
+        assert _diag_dtype(out) == "float32"
 
     def test_reencode_preserves_splat_count_and_geometry(
         self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path

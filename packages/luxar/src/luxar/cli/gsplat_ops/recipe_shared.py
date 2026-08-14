@@ -228,19 +228,28 @@ def detect_store_encoding(path: Path) -> Optional[str]:
     modes (u8 in both auto and memory, hence not discriminative). Returns
     ``None`` when the store cannot be classified (zip archive, legacy layout,
     broadcast-only quantized store) — callers should then not assume a mode.
+
+    Attributes are read through :func:`luxar._zarr_compat.read_node_attrs`, so
+    both on-disk formats are classified. Globbing for the format-2 ``.zattrs``
+    document by name (the previous implementation) matched nothing in a format-3
+    store and returned the perfectly ordinary ``None``, which callers read as
+    "unclassifiable" rather than as the failure it was.
     """
-    import json
     from typing import Iterator
+
+    from luxar._zarr_compat import read_node_attrs
 
     if not path.is_dir():
         return None
 
     def _encodings(array: str) -> Iterator[dict]:
-        for zattrs in sorted(path.rglob(f"{array}/.zattrs")):
-            try:
-                enc = json.loads(zattrs.read_text()).get("encoding", {})
-            except (OSError, json.JSONDecodeError, AttributeError):
+        # Glob the array DIRECTORY, not its metadata document: the document is
+        # named differently per format, the directory is not.
+        for node in sorted(path.rglob(array)):
+            if not node.is_dir():
                 continue
+            attrs = read_node_attrs(node)
+            enc = (attrs or {}).get("encoding", {})
             if isinstance(enc, dict) and enc.get("name"):
                 yield enc
 
