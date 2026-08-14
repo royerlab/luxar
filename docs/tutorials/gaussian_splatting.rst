@@ -361,6 +361,35 @@ After calibration, re-run the fit at the recommended budget:
 
    luxar gsplat fit volume.zarr out.gsplats.zarr --seeds <K*>
 
+A default ``cal`` measures :math:`K^{\star}` over the **whole volume**, and an
+integer ``--seeds`` is read as a whole-volume budget to match: when the fit is
+tiled (``--tiling uniform``, a large ``--tiling auto`` volume, a ``--tile k/M``
+worker, or a uniform-mode ``batch-fit`` task) the budget is *divided* across
+that volume's tiles instead of being handed to each tile in full, so the total
+tracks the number you asked for rather than the tile count. It is not an exact
+count: tiles that window to near-zero signal are skipped, and a
+:math:`K^{\star}` smaller than the tile count floors at one seed per tile. A
+*ratio* ``--seeds`` (a float in ``(0, 1]``) is scale-free and is applied to
+each tile unchanged. Under ``--tiling content`` ``--seeds`` is ignored entirely
+— per-box budgets come from the density plan.
+
+.. warning::
+
+   ``luxar gsplat cal --auto-region`` calibrates on an auto-selected
+   content-rich sub-volume (a cube of ``--region-size`` voxels on a side, 256
+   by default), so its :math:`K^{\star}` is **region-scoped**, roughly
+   tile-scale — not a whole-volume budget. Do not pass that number to
+   ``fit --seeds``; it would under-seed the volume.
+   Transfer it through the density instead — ``cal --auto-region``
+   writes ``splat_density`` (``k_star_reference`` / ``n_features_reference``)
+   into the JSON, which ``fit --tiling content --cal cal.json`` reads to size
+   each box. A default (``--no-auto-region``) ``cal`` is the one whose
+   :math:`K^{\star}` belongs on ``--seeds``. If you want to keep *uniform*
+   tiles, multiply a region-scoped :math:`K^{\star}` by the tile count before
+   passing it to ``--seeds`` (the fit prints that count) — a rough transfer that
+   assumes the region is representative, not a calibration; content tiling is
+   the principled route.
+
 Building Streaming LOD Ladders
 -------------------------------
 

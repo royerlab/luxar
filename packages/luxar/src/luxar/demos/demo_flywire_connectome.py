@@ -596,13 +596,13 @@ def build_scene(
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(
                 dimensions=dims,
-                # Deliberate exception to the house ACES recommendation: this
-                # demo was tuned to Neutral (together with the low intensities
-                # below) precisely because ACES lifts mid-tones and blew the
-                # 300K-line luminous connection glow out into a white wash.
-                # Only move it to ACES alongside a re-tuned exposure and an
-                # actual A/B render.
-                viewer_config=ViewerConfig(tone_mapping="Neutral"),
+                # ACES (the house recommendation), now that the A/B render the
+                # old Neutral exception asked for has been done (#1459): with
+                # the connection glow left faint (see below), ACES costs about
+                # half a stop — the gallery still goes from 1.9% of its lit
+                # pixels blown to 5.4% at the same exposure, and back to 0.9%
+                # at the manifest's re-tuned -1.5 stops.
+                viewer_config=ViewerConfig(tone_mapping="ACES"),
             )
 
             # One toggleable Points layer per super_class — optic, central,
@@ -619,8 +619,9 @@ def build_scene(
                     colors=sc_palette[sc_name],
                     radii=radii,
                     sharpness=np.full(len(pos), 0.55, dtype=np.float32),
-                    opacity=0.95,
+                    opacity=0.79,
                     intensity=0.1,
+                    blending_mode="luminous",
                     labels=labels,
                     layer=True,
                 )
@@ -645,10 +646,17 @@ def build_scene(
                     sharpness=np.full(len(nt_verts), 0.85, dtype=np.float32),
                     line_type="segments",
                     blending_mode="luminous",
-                    # Very faint: 300K luminous connection lines otherwise
+                    # Very faint, and measured: 300K luminous connection lines
                     # accumulate into a white wash that hides the (beautifully
-                    # colored) neuron cell bodies. Keep them as a subtle
-                    # connective glow so the neurons dominate the view.
+                    # colored) neuron cell bodies. #1459 asked for 0.79 here to
+                    # match the other layers; the A/B render refused it — at
+                    # 0.79 the gallery still blows 78% of its lit pixels
+                    # against 1.9% here, and even handing the harness 2.5 extra
+                    # stops of headroom leaves 17% blown and the super-class
+                    # palette gone. 0.24 already pales the optic lobes. So the
+                    # connections stay a subtle connective glow and the neurons
+                    # dominate the view; a brighter one needs fewer edges or a
+                    # per-layer intensity rebalance, not an exposure knob.
                     opacity=0.08,
                     intensity=0.08,
                     labels=nt_labels,

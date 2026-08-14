@@ -69,8 +69,16 @@ export class DimensionSliders {
   /** Root DOM container for the slider UI */
   private container: HTMLElement;
 
-  /** Container for all individual dimension sliders */
+  /** Glass-surface root of the panel (positioning, sizing, visibility) */
   private slidersContainer: HTMLElement;
+
+  /**
+   * Inner scroll wrapper that holds all panel content. Scrolling must not
+   * live on the glass root (its glass layers paint at `inset: 0` behind it
+   * and a scroll container clips them) — see UI_DESIGN_GUIDE §5.1.2/§7.4.
+   * Created once, so clearing the content never destroys it.
+   */
+  private scrollBody: HTMLElement;
 
   /** Status bar displaying current slice position */
   private statusBar: HTMLElement;
@@ -198,7 +206,9 @@ export class DimensionSliders {
     this.dimensionUnits = config.dimensionUnits || [];
 
     // Build the UI hierarchy
-    this.slidersContainer = this.createSlidersContainer();
+    const { root, scroll } = this.createSlidersContainer();
+    this.slidersContainer = root;
+    this.scrollBody = scroll;
     // Status bar removed - status now shown in title
     this.statusBar = document.createElement('div'); // Keep for compatibility but hidden
 
@@ -241,18 +251,23 @@ export class DimensionSliders {
    * - Semi-transparent dark background with blur
    * - Rounded corners and subtle shadow
    * - Responsive width (80% of viewport, max 800px, min 400px)
-   * - Scroll support if many dimensions
+   * - Scroll support if many dimensions, delegated to an inner wrapper so the
+   *   glass root can stay `overflow: visible` (§5.1.2/§7.4)
    *
-   * @returns Container element ready to receive slider controls
+   * @returns The glass root and the inner scroll wrapper that receives content
    * @private
    */
-  private createSlidersContainer(): HTMLElement {
+  private createSlidersContainer(): { root: HTMLElement; scroll: HTMLElement } {
     const container = document.createElement('div');
     container.id = 'luxar-dimension-sliders';
     container.className = 'luxar-dimension-sliders luxar-glass-surface';
 
+    const scroll = document.createElement('div');
+    scroll.className = 'luxar-dimension-sliders__scroll';
+    container.appendChild(scroll);
+
     this.container.appendChild(container);
-    return container;
+    return { root: container, scroll };
   }
 
   // Status bar method removed - status now shown in title
@@ -277,8 +292,12 @@ export class DimensionSliders {
     this.sliderEvents.dispose();
     this.sliderEvents = new EventGroup();
 
-    // Clear any existing slider UI to prevent duplicates
-    this.slidersContainer.innerHTML = '';
+    // Defensive clear against duplicate slider UI (there is one call site
+    // today, from the constructor). It must target the scroll wrapper rather
+    // than the root so that it can never destroy the wrapper itself — nor
+    // anything the theme injects into the root, such as the
+    // `.luxar-glass-refraction` layer.
+    this.scrollBody.innerHTML = '';
     this.sliders.clear();
     this.dropdowns.clear();
     this.toggles.clear();
@@ -297,7 +316,7 @@ export class DimensionSliders {
 
     titleContainer.appendChild(title);
     titleContainer.appendChild(this.statusText);
-    this.slidersContainer.appendChild(titleContainer);
+    this.scrollBody.appendChild(titleContainer);
 
     // Separate dimensions by type: toggles (binary categorical) vs dropdowns
     // (3-9 categories) vs sliders (everything else, incl. all discrete-numeric)
@@ -354,7 +373,7 @@ export class DimensionSliders {
         this.createDropdownInGrid(dimIndex, dropdownGrid);
       }
 
-      this.slidersContainer.appendChild(dropdownGrid);
+      this.scrollBody.appendChild(dropdownGrid);
     }
 
     // Handle edge case: no dimensions are navigable
@@ -362,7 +381,7 @@ export class DimensionSliders {
       const message = document.createElement('div');
       message.className = 'luxar-dimension-sliders__empty';
       message.textContent = 'All dimensions are displayed';
-      this.slidersContainer.appendChild(message);
+      this.scrollBody.appendChild(message);
     }
   }
 
@@ -797,7 +816,7 @@ export class DimensionSliders {
     sliderGroup.appendChild(label);
     sliderGroup.appendChild(sliderContainer);
 
-    this.slidersContainer.appendChild(sliderGroup);
+    this.scrollBody.appendChild(sliderGroup);
     this.sliders.set(dimIndex, slider);
   }
 
@@ -898,7 +917,11 @@ export class DimensionSliders {
    */
   public toggle(): void {
     const isVisible = this.slidersContainer.style.display !== 'none';
-    this.slidersContainer.style.display = isVisible ? 'none' : 'block';
+    // Show by CLEARING the inline value, not writing 'block': the stylesheet
+    // makes the root a flex column so the __scroll wrapper's `flex: 1;
+    // min-height: 0` can cap content at the panel's max-height. An inline
+    // 'block' would override that and let content spill out of the panel.
+    this.slidersContainer.style.display = isVisible ? 'none' : '';
   }
 
   /**
@@ -1446,7 +1469,9 @@ export class DimensionSliders {
    * ```
    */
   public setVisible(visible: boolean): void {
-    this.slidersContainer.style.display = visible ? 'block' : 'none';
+    // '' rather than 'block' when shown — the stylesheet's `display: flex`
+    // must win (see toggle()).
+    this.slidersContainer.style.display = visible ? '' : 'none';
     this.statusBar.style.display = visible ? 'block' : 'none';
   }
 

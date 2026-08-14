@@ -774,8 +774,13 @@ function scheduleSort(mesh: THREE.Mesh, nodeId: string): void {
           // Ordering upload: 4 bytes/splat through the attribute
           // update-range machinery (the architecture's headline number) on
           // the instanced path. The indexed path uploads THREE index
-          // entries per face instead, at the index buffer's own width
-          // (Uint16 under 65536 vertices — see `createMeshIndexAttribute`).
+          // entries per face instead, at the index buffer's own width —
+          // Uint16 under 65536 vertices on either WebGL path (see
+          // `createMeshIndexAttribute`), but the NATIVE WebGPU backend widens
+          // that same buffer to Uint32 in place at first upload and it stays
+          // widened from then on (see `applyMeshIndices`), so this reads
+          // Uint32 there. Hence the live `BYTES_PER_ELEMENT` rather than a
+          // width assumed from the vertex count.
           const bytes = triangleSource
             ? result.ordering.length * 3 * (geometry.index?.array.BYTES_PER_ELEMENT ?? 4)
             : result.ordering.length * 4;

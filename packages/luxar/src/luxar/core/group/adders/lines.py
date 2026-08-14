@@ -1175,11 +1175,15 @@ def add_lines_substitutive_lod_wrapper_impl(
                 f"has {len(counts)} levels ({len(coarse_first)} gsplat + 1 lines)"
             )
         coverage_vals = list(explicit)
+        # Explicit lists keep the legacy diagonal-metric units they were
+        # authored in (selector="coverage", the add_lod_group default).
+        lod_selector = "coverage"
     else:
-        # Viewport-relative coverage fractions ``sqrt(N_i/N_finest)`` (count ratios;
-        # the viewer anchors the finest at a quarter of the live viewport diagonal,
-        # i.e. any normal full-frame view). No per-level radius or world-extent
-        # needed.
+        # Screen-area fractions by occupancy halving (finest holds while the
+        # node occupies at least half the screen; one level coarser per halving
+        # of occupied area). Count-independent — no per-level radius or
+        # world-extent needed — and stamped selector="screen-area" so the
+        # viewer reads the thresholds in the units they were derived in.
         #
         # The ANCHOR is chosen from the insertion point: ``add_lines`` rejects
         # ``partition=`` together with ``substitutive_lod=``, but a caller CAN
@@ -1191,6 +1195,7 @@ def add_lines_substitutive_lod_wrapper_impl(
         # automatically and logs the choice, and an explicit
         # ``coverage_fractions=[...]`` still wins (the branch above).
         coverage_vals = derive_coverage_fractions(counts, parent_node, name=name)
+        lod_selector = "screen-area"
 
     lod_attrs = {k: v for k, v in attrs.items() if k in COMPOSITING_ATTRS}
     child_attrs = {k: v for k, v in attrs.items() if k not in COMPOSITING_ATTRS}
@@ -1205,7 +1210,7 @@ def add_lines_substitutive_lod_wrapper_impl(
         f"  📐 Substitutive-LOD '{name}': {len(coarse_first)} gsplat levels + lines "
         f"(counts coarsest→finest={counts}, K={spec['compression_factor']})"
     )
-    lod_group_node = parent_node.add_lod_group(name, **lod_attrs)
+    lod_group_node = parent_node.add_lod_group(name, selector=lod_selector, **lod_attrs)
 
     # Coarse gsplat children (coarsest first). vert_arr already dim_order-applied.
     for idx, lvl_data in enumerate(coarse_first):

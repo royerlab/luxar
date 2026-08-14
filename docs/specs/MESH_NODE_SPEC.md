@@ -349,7 +349,13 @@ transient around 2 GiB, comfortably inside a 64-bit tab — which is also why th
 raised toward "what a tab survives"; the tab has to survive the *multiple*, not the ceiling. The ceiling
 is **per node** —
 N nodes can still sum to N×budget, so the "one node lost, not the scene" guarantee is per-node; v1
-imposes no aggregate cap. Any failure fails the node with a `LoaderError` (one node lost, not the scene)
+imposes no aggregate cap. A §9.1 reveal ladder is a single node for this purpose: its levels are summed
+and charged once against the same ceiling, on the ladder's first load — before any level's chunks are
+fetched, and at the same point a leaf's own budget is enforced, so a refusal gets the same failure
+containment (recorded, banner entry, siblings unaffected) as a leaf's — retryable for a level's own
+preflight rejection, while the aggregate over-budget verdict is cached and re-thrown rather than
+re-derived, no retry being able to make the sum fit. Any failure fails
+the node with a `LoaderError` (one node lost, not the scene)
 **without fetching a single chunk**, preserving the blast radius before allocation.
 
 The `n_vertices <= 2^27` cap belongs at this preflight because mesh's pick `elementId` is `gl_VertexID`
@@ -1668,6 +1674,14 @@ Authoring landed with `add_mesh(additive_lod=…)` and `write_mesh_multi_lod`; t
 second half landed with it — `createProgressiveMeshLoader` opens a mesh node declaring
 `n_additive_sublods > 1` and `MeshProgressiveLoader` fetches its levels in order,
 concatenating each revealed prefix into the buffers the node was sized for.
+
+The **CLI** reaches it through `luxar mesh lod --recipe reveal`, whose `-m/--add-method`,
+`--n-lods`, `--counts`, `--reveal-centre` and `--spatial-dims` map onto the `additive_lod=`
+keys above. `--recipe` selects rather than the knobs composing, because `add_mesh` refuses
+an additive ladder alongside a substitutive one — a mesh has no coarse prefix, so the two
+are different products rather than two axes of one. `--reveal-centre` / `--spatial-dims`
+share their parser with `gsplat lod` (`cli/reveal_options.py`), so the two commands cannot
+drift on what a centre or an axis order means.
 Labels are cleared on a laddered mesh — one source vertex maps into every level that touches
 it, so a union CSR spanning levels has no well-defined index space; `substitutive_lod=` and
 `partition=` both keep theirs.

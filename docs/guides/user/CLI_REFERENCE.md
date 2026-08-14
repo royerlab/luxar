@@ -119,11 +119,27 @@ in [Formats & migration](./FORMAT_AND_MIGRATION.md).
 
 ```bash
 luxar gsplat info              # Dataset statistics (splat count, dimensions, bounds, LOD structure)
+luxar gsplat doctor           # Diagnose known problems (--fix repairs what is recoverable, in place)
 luxar gsplat napari           # Open a dataset in napari for visual inspection
 luxar gsplat view             # Open a .gsplats.zarr directly in the web viewer
 luxar gsplat compare          # Compare reconstruction quality vs a reference volume (PSNR/SSIM/MSE)
 luxar gsplat annotate-quality # Retrofit Q·e quality stamps onto an existing dataset, in place
 ```
+
+`doctor` is for the problems you cannot see: a dataset written by an older Luxar
+loads and renders fine while missing something a later version learned to record,
+or carrying metadata that went stale under an edit. Given a dataset path it prints
+the `info` report (suppress with `--no-info`), then a diagnosis, and exits non-zero
+while a problem is still standing — so it can gate a pipeline. Pass `--fix` to
+repair in place (an uncompressed `.gsplats.zarr` directory; unpack a `.zip` first),
+or `--json` to write the findings out for a machine.
+
+It currently diagnoses a `kind=partition` whose split planes (`bsp_tree`) are
+missing, or are present but disagree with where the parts actually sit. Without
+them the viewer orders parts by centroid, which is not a valid painter's order and
+pops at the seams under `normal`/`volumetric` blending; where the parts are
+disjoint the planes are recovered exactly from the part boxes. What cannot be
+repaired is reported with a remedy rather than guessed at.
 
 ### Editing & selection
 
@@ -131,6 +147,7 @@ luxar gsplat annotate-quality # Retrofit Q·e quality stamps onto an existing da
 luxar gsplat transform  # Apply spatial / intensity transforms (scale, rotate, translate, center)
 luxar gsplat merge      # Merge datasets (concatenation, new dimension, or channel colors)
 luxar gsplat cull       # Remove low-contribution splats while preserving visual quality
+luxar gsplat decimate   # Reduce to a TARGET SPLAT COUNT (one flat leaf): merge or prefix
 luxar gsplat filter     # Filter splats by multiple criteria (AND logic; percentile thresholds)
 luxar gsplat slice      # Slice splats by coordinate ranges (numpy-style syntax)
 luxar gsplat partition  # Partition into a single kind=partition file via spatial BSP
@@ -158,7 +175,7 @@ stdlib only, so they work on a bare `pip install luxar` with no extras.
 
 ```bash
 luxar mesh import            # Import a classical mesh file (PLY / OBJ / STL / glTF / GLB) → a .luxar.zarr scene
-luxar mesh lod               # Build a substitutive LOD ladder for a mesh scene
+luxar mesh lod               # Build a LOD ladder for a mesh scene (levels, or a reveal)
 ```
 
 Vertices are welded and polygons fan-triangulated on the way in, because STL is always
@@ -174,13 +191,26 @@ file through `gltf-transform` first.
 
 ### `luxar mesh lod`
 
-Writes a `kind=lod` group whose coarse children are progressively **decimated** copies
-of the surface and whose finest child is the original. The viewer shows exactly one at a
-time, chosen by how much of the screen the object covers.
+Builds one of **two** ladders, selected by `--recipe`:
 
-Takes an input scene and an output scene, plus `-L/--levels` (default 3),
-`-K/--compression-factor` (default 4 — level *i* targets `V / K**i` vertices),
-`--node`, `--subst-method` and `--overwrite`. The output path is normalized to the
+- **`--recipe levels`** (the default) writes a `kind=lod` group whose coarse children are
+  progressively **decimated** copies of the surface and whose finest child is the
+  original. The viewer shows exactly one at a time, chosen by how much of the screen the
+  object covers.
+- **`--recipe reveal`** writes an **additive** ladder *inside* the leaf — `additive_<i>`
+  subgroups holding disjoint groups of faces that the viewer concatenates as they arrive,
+  so a partial load is a partial surface that grows rather than a coarse one.
+
+They are separate recipes rather than composable flags because a mesh has no coarse
+prefix: a prefix of an arbitrary index buffer is a surface with holes, not a simpler
+surface. `add_mesh` refuses the two ladders together, so one `--recipe` selects, and a
+knob aimed at the other recipe is refused by name rather than silently dropped.
+
+Takes an input scene and an output scene, plus `--node` and `--overwrite`, and then the
+knobs of the chosen recipe — `-L/--levels` (default 3), `-K/--compression-factor`
+(default 4 — level *i* targets `V / K**i` vertices) and `--subst-method` for `levels`;
+`-m/--add-method`, `--n-lods`, `--counts`, `--reveal-centre` and `--spatial-dims` for
+`reveal`. The output path is normalized to the
 canonical `<stem>.luxar.zarr`, so an output argument of `out` writes `out.luxar.zarr`; that
 normalized path is what `--overwrite` replaces and what the same-path guard
 compares against.
@@ -195,10 +225,40 @@ the substitutive, level-replacing reduction — but **not its values**: this one
 or `cluster`, because a mesh is decimated where a gsplat level reduces a Gaussian mixture,
 which a surface is not. `auto` resolves to `cluster` today.
 
-The flag was called `--method` before August 2026, and `-m` was its short form. Both are
-gone: `-m` is reserved for the additive ordering it already names on `gsplat lod`. Either
-old spelling exits with a pointer naming the replacement and carrying your value, rather
-than silently doing something else.
+The flag was called `--method` before August 2026, and `-m` was its short form. `--method`
+is gone, and `-m` has since been **claimed** by `--add-method` — the additive ordering it
+already names on `gsplat lod`, which is what it was reserved for. Either old spelling still
+exits with a pointer naming `--subst-method` and carrying your value, rather than silently
+doing something else.
+
+#### The reveal knobs
+
+`-m/--add-method` takes `radial` and nothing else. That is the restriction the whole
+recipe rests on: only an ordering whose **every prefix is one connected patch** is
+admitted, which is what makes a partial load a growing surface rather than lace.
+
+`--n-lods` (default 4) asks for N equal-count levels; `--counts` gives the boundaries
+explicitly as **cumulative** face counts (`--counts 500,2000,10000` → four levels of 500,
+1500, 8000 and the remainder), or a streaming ladder as `stream:<c>`. Pass one or the
+other, not both.
+
+`--reveal-centre` and `--spatial-dims` are the same flags, with the same meanings and the
+same shared parser, as on `luxar gsplat lod`. The centre defaults to the mesh's own
+bounding-box centre, so a surface far from the origin still grows from its middle. The
+**order** of `--spatial-dims` is significant: it pairs one-for-one with the centre's
+coordinates, which is why it is not sorted the way a coarsen-dims barrier set is (there
+the order carries nothing, so sorting is free). Use it to keep a
+stacked time or channel column out of the distance, so shells do not expand through time.
+
+So, given an input and an output scene: `--recipe reveal --n-lods 4` for an
+equal-count ladder, `--recipe reveal --counts 500,2000,10000` for explicit boundaries,
+and `--recipe reveal --reveal-centre 0,0 --spatial-dims 0,1` to grow the shells from a
+chosen point on a chosen pair of axes.
+
+(Written as prose rather than a fenced block on purpose: `test_docs_command_coverage`
+reads every `luxar …` line in a fenced block as a command path, stopping at the first
+flag, so an example carrying positional arguments would register `mesh lod
+in.luxar.zarr out.luxar.zarr` as a command that does not exist.)
 
 Levels that cannot reduce the surface are dropped, so a small mesh may come back with
 fewer than `--levels`; one that cannot be reduced at all comes back as a plain leaf

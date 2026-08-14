@@ -472,7 +472,7 @@ def graft_gsplat_node(
         # wants and the on-disk child_<i> layout uses — no reversal.
         on_disk = list(node.children)
         # Per-child coverage_fraction selector thresholds: prefer each child's
-        # authored ``meta`` value, else derive — ``sqrt(N_i/N_finest)`` (count
+        # authored ``meta`` value, else derive — screen-occupancy halving (count-
         # ratios), so a meta-less grafted tree still gets ascending thresholds the
         # selector accepts (never all-zero).
         #
@@ -511,12 +511,27 @@ def graft_gsplat_node(
         derive_cov = (
             partitioned_coverage_fractions if partition_bound else coverage_fractions
         )
+        # SELECTOR/THRESHOLD CONSISTENCY — the shared all-or-none gate (see
+        # ``gsplats.tree.gate_authored_selector``), the same one the standalone
+        # writer runs, so a store grafted into a scene renders identically to
+        # the same store opened directly.
+        from luxar.gsplats.tree import gate_authored_selector
+
+        on_disk, selector_out = gate_authored_selector(
+            on_disk,
+            (node.meta or {}).get("selector"),
+            source="kind=lod group (scene graft)",
+        )
         derived_cov = derive_cov([total_splats(c) for c in on_disk])
         # default_level = 0 = the COARSEST child (child_0): the viewer's initial
         # progressive-load level, decoupled from the data-model default (see
         # gsplat_tree.write_gsplat_node / add_gsplats_as_lod_group_impl). Loading
         # the finest by default would render "backwards".
-        wrapper = parent_node.add_lod_group(name, **wrapper_attrs)
+        wrapper = parent_node.add_lod_group(
+            name,
+            selector=selector_out,
+            **wrapper_attrs,
+        )
         for i, child in enumerate(on_disk):
             cov = float((child.meta or {}).get("coverage_fraction", derived_cov[i]))
             graft_gsplat_node(
@@ -533,16 +548,34 @@ def graft_gsplat_node(
         return wrapper
 
     if isinstance(node, GSplatPartition):
+        # Local import: the sibling `GSplatLodGroup` branch above imports this
+        # too, but that branch does not run on this path.
+        from luxar.gsplats.tree import total_splats
+
         partition_attrs = dict(wrapper_attrs)
         # Carry the BSP split planes into the scene so the viewer keeps its
         # exact back-to-front part ordering (the standalone file has it; the
         # graft must not drop it). Absent for non-BSP (streamed) partitions.
         if node.bsp_tree is not None:
             partition_attrs["bsp_tree"] = node.bsp_tree
+        # `max_elements` is a per-part CAP, so only a capped splitter sets it
+        # (uniform tiling, BSP `--parts`/`--max-elements`). A CONTENT-tiled fit
+        # balances its boxes by feature density instead and leaves the field at
+        # the `GSplatPartition` default of 0 — which `add_partition_group`
+        # rejects, since it requires >= 1. Derive the honest value in that case:
+        # the largest part IS this partition's effective per-part cap. The
+        # attribute is descriptive downstream (the viewer logs it and does not
+        # branch on it), so deriving cannot change rendering — whereas failing
+        # here made every `fit --tiling content` result ungraftable.
+        cap = int(node.max_elements)
+        if cap < 1:
+            # Floored at 1: an all-empty partition would otherwise derive a cap
+            # of 0 and trip the very validator this branch exists to satisfy.
+            cap = max(1, max(total_splats(child) for child in node.children))
         wrapper = parent_node.add_partition_group(
             name=name,
             display_type="gsplats",
-            max_elements=int(node.max_elements),
+            max_elements=cap,
             **partition_attrs,
         )
         # Everything under a kind=partition is partition-bound — EXCEPT when the
