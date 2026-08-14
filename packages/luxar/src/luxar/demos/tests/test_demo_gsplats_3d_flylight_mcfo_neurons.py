@@ -184,6 +184,7 @@ class _FakeSession:
         self.requests: list[tuple[int, int]] = []
         self.streamed: list[bool] = []
         self.responses: list[_FakeResponse] = []
+        self.closed = False
 
     def get(self, url, headers=None, timeout=None, stream=None):  # noqa: D102
         rng = (headers or {})["Range"].split("=", 1)[1]
@@ -193,6 +194,9 @@ class _FakeSession:
         resp = _FakeResponse(self.blob[start : end + 1], self.status_code)
         self.responses.append(resp)
         return resp
+
+    def close(self) -> None:  # noqa: D102
+        self.closed = True
 
 
 def _blob(n: int = 4096) -> bytes:
@@ -275,6 +279,27 @@ def test_range_fetches_are_streamed_and_released() -> None:
     assert all(r.closed for r in session.responses)
 
 
+def test_closing_the_range_file_releases_the_session() -> None:
+    """``ZipFile`` never closes a file it was handed, so the handle must.
+
+    Nothing else in the chain owns the session: without this the pooled
+    connection stays open for the whole run (a fit lasting minutes) and is
+    reclaimed only whenever the collector gets round to it.
+    """
+    blob = _blob(256)
+    session = _FakeSession(blob)
+    f = _HttpRangeFile("http://x", len(blob), session, chunk_size=64)
+    f.read(10)
+
+    f.close()
+
+    assert session.closed, "the HTTP session outlived the file over it"
+    assert f.closed
+    # Idempotent: ``fetch_sample`` closes it explicitly and the finaliser may
+    # run again later.
+    f.close()
+
+
 class _ProbeResponse:
     def __init__(self, status_code: int, headers: dict, url: str = "http://x/a.zip"):
         self.status_code = status_code
@@ -298,6 +323,7 @@ class _ProbeSession:
         self._headers = headers
         self.streamed: list[bool] = []
         self.responses: list[_ProbeResponse] = []
+        self.closed = False
 
     def get(  # noqa: D102
         self, url, headers=None, allow_redirects=None, timeout=None, stream=None
@@ -306,6 +332,9 @@ class _ProbeSession:
         resp = _ProbeResponse(self._status_code, self._headers, url)
         self.responses.append(resp)
         return resp
+
+    def close(self) -> None:  # noqa: D102
+        self.closed = True
 
 
 def _probe_with(monkeypatch, status_code: int, headers: dict) -> _ProbeSession:
@@ -343,6 +372,9 @@ def test_non_206_probe_is_refused(monkeypatch) -> None:
     # check above ever ran.
     assert session.streamed == [True]
     assert all(r.closed for r in session.responses)
+    # A refusal returns no handle, so nothing downstream can close the session
+    # for us — the failure path has to do it itself.
+    assert session.closed, "the refused probe left its session open"
 
 
 def test_read_spanning_multiple_blocks() -> None:
@@ -359,6 +391,28 @@ def test_read_spanning_multiple_blocks() -> None:
 # ---------------------------------------------------------------------------
 
 _safe_extract_path = _demo._safe_extract_path
+
+
+class _RecordingHandle:
+    """Stands in for the HTTP-backed file ``_open_remote_zip`` hands back."""
+
+    def __init__(self) -> None:
+        self.closed = False
+
+    def close(self) -> None:
+        """Record that the caller released the handle (and its session)."""
+        self.closed = True
+
+
+def _stub_remote_zip(monkeypatch, archive: Path) -> _RecordingHandle:
+    """Serve ``fetch_sample`` from a local archive, tracking handle closure."""
+    import zipfile
+
+    handle = _RecordingHandle()
+    monkeypatch.setattr(
+        _demo, "_open_remote_zip", lambda url: (zipfile.ZipFile(archive), handle)
+    )
+    return handle
 
 
 def test_safe_extract_path_accepts_normal_members(tmp_path) -> None:
@@ -426,9 +480,7 @@ def test_recompute_replaces_a_populated_target(tmp_path, monkeypatch) -> None:
 
     monkeypatch.setattr(_demo, "CACHE_DIR", cache)
     monkeypatch.setattr(_demo, "RECOMPUTE", True)
-    monkeypatch.setattr(
-        _demo, "_open_remote_zip", lambda url: (zipfile.ZipFile(archive), None)
-    )
+    handle = _stub_remote_zip(monkeypatch, archive)
 
     out = _demo.fetch_sample(sample)
 
@@ -437,6 +489,7 @@ def test_recompute_replaces_a_populated_target(tmp_path, monkeypatch) -> None:
     assert not (target / "volumes" / "stale").exists(), "old store was not replaced"
     assert not target.with_suffix(".zarr.partial").exists()
     assert not target.with_suffix(".zarr.stale").exists()
+    assert handle.closed, "the remote handle (and its session) was left open"
 
 
 def test_extraction_loop_rejects_a_traversing_member(tmp_path, monkeypatch) -> None:
@@ -458,15 +511,14 @@ def test_extraction_loop_rejects_a_traversing_member(tmp_path, monkeypatch) -> N
 
     monkeypatch.setattr(_demo, "CACHE_DIR", cache)
     monkeypatch.setattr(_demo, "RECOMPUTE", False)
-    monkeypatch.setattr(
-        _demo, "_open_remote_zip", lambda url: (zipfile.ZipFile(archive), None)
-    )
+    handle = _stub_remote_zip(monkeypatch, archive)
 
     with pytest.raises(RuntimeError, match="escapes the extraction root"):
         _demo.fetch_sample(sample)
 
     assert not (tmp_path / "pwned.txt").exists()
     assert not (cache.parent / "pwned.txt").exists()
+    assert handle.closed, "an aborted extraction left the remote handle open"
 
 
 # ---------------------------------------------------------------------------
@@ -779,9 +831,7 @@ def test_failed_install_restores_the_previous_sample(tmp_path, monkeypatch) -> N
 
     monkeypatch.setattr(_demo, "CACHE_DIR", cache)
     monkeypatch.setattr(_demo, "RECOMPUTE", True)
-    monkeypatch.setattr(
-        _demo, "_open_remote_zip", lambda url: (zipfile.ZipFile(archive), None)
-    )
+    _stub_remote_zip(monkeypatch, archive)
 
     real_rename = Path.rename
 

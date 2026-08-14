@@ -353,6 +353,21 @@ class _HttpRangeFile(io.RawIOBase):
         """This file is read-only, and readable."""
         return True
 
+    def close(self) -> None:
+        """Close the file *and* the HTTP session that served its ranges.
+
+        ``zipfile.ZipFile`` never closes a file object it was handed, so
+        nothing else in the chain releases the session — its pooled
+        connection would stay open for the rest of the run (a fit that takes
+        minutes) and only be reclaimed whenever the collector got round to it.
+        """
+        session, self._session = self._session, None
+        try:
+            if session is not None:
+                session.close()
+        finally:
+            super().close()
+
     def seekable(self) -> bool:
         """Seeking is what makes remote zip access possible."""
         return True
@@ -434,51 +449,64 @@ class _HttpRangeFile(io.RawIOBase):
 
 
 def _open_remote_zip(url: str):
-    """Open a remote zip for partial extraction. Returns ``(ZipFile, handle)``."""
+    """Open a remote zip for partial extraction. Returns ``(ZipFile, handle)``.
+
+    The caller owns both: closing the ``ZipFile`` is not enough, because it was
+    handed a file object and so leaves it open. Close the handle too (see
+    :meth:`_HttpRangeFile.close`).
+    """
     import zipfile
 
     session = requests.Session()
-
-    # Probe with a one-byte ranged GET rather than trusting HEAD: Zenodo's HEAD
-    # answers 200 with no ``Accept-Ranges`` header even though ranged GETs are
-    # honoured, so a HEAD-based check would refuse a host that works fine. The
-    # 206 also carries the total size in ``Content-Range``, so this is one
-    # request instead of two.
-    # ``stream=True`` because the whole point of the probe is to find out
-    # whether the body is one byte or 7.1 GB: a host that ignores the Range
-    # header answers 200 with the entire archive, and a non-streaming ``get``
-    # downloads all of it into memory before the check below can refuse it.
-    # Headers (status, Content-Range, resolved URL) are available without
-    # touching the body, so nothing is transferred on the refusal path.
-    probe = session.get(
-        url,
-        headers={"Range": "bytes=0-0"},
-        allow_redirects=True,
-        timeout=60,
-        stream=True,
-    )
+    # Any failure below — a refused range, a body that is not a zip — has to
+    # take the session with it, or a fetch that never got off the ground
+    # strands an open connection for the rest of the run.
     try:
-        probe.raise_for_status()
-        content_range = probe.headers.get("Content-Range", "")
-        # A 206 may legally report an unknown total (``bytes 0-0/*``), which is
-        # no more usable here than a refused range: without the size there is
-        # nothing to seek against. Insist on a digit total so an odd host
-        # produces the explanation below instead of a bare ValueError from int().
-        total = content_range.rsplit("/", 1)[-1].strip()
-        if probe.status_code != 206 or not total.isdigit():
-            raise RuntimeError(
-                f"{url} did not honour a byte-range request (status "
-                f"{probe.status_code}), so extracting one sample would require "
-                "downloading the full 7.1 GB archive. Download it manually and "
-                f"extract the sample into {CACHE_DIR} as <sample>.zarr instead."
-            )
-        probe_url = probe.url
-    finally:
-        probe.close()
-    size = int(total)
+        # Probe with a one-byte ranged GET rather than trusting HEAD: Zenodo's
+        # HEAD answers 200 with no ``Accept-Ranges`` header even though ranged
+        # GETs are honoured, so a HEAD-based check would refuse a host that
+        # works fine. The 206 also carries the total size in ``Content-Range``,
+        # so this is one request instead of two.
+        # ``stream=True`` because the whole point of the probe is to find out
+        # whether the body is one byte or 7.1 GB: a host that ignores the Range
+        # header answers 200 with the entire archive, and a non-streaming
+        # ``get`` downloads all of it into memory before the check below can
+        # refuse it. Headers (status, Content-Range, resolved URL) are
+        # available without touching the body, so nothing is transferred on
+        # the refusal path.
+        probe = session.get(
+            url,
+            headers={"Range": "bytes=0-0"},
+            allow_redirects=True,
+            timeout=60,
+            stream=True,
+        )
+        try:
+            probe.raise_for_status()
+            content_range = probe.headers.get("Content-Range", "")
+            # A 206 may legally report an unknown total (``bytes 0-0/*``),
+            # which is no more usable here than a refused range: without the
+            # size there is nothing to seek against. Insist on a digit total so
+            # an odd host produces the explanation below instead of a bare
+            # ValueError from int().
+            total = content_range.rsplit("/", 1)[-1].strip()
+            if probe.status_code != 206 or not total.isdigit():
+                raise RuntimeError(
+                    f"{url} did not honour a byte-range request (status "
+                    f"{probe.status_code}), so extracting one sample would "
+                    "require downloading the full 7.1 GB archive. Download it "
+                    f"manually and extract the sample into {CACHE_DIR} as "
+                    "<sample>.zarr instead."
+                )
+            probe_url = probe.url
+        finally:
+            probe.close()
 
-    handle = _HttpRangeFile(probe_url, size, session)
-    return zipfile.ZipFile(io.BufferedReader(handle, buffer_size=1 << 20)), handle
+        handle = _HttpRangeFile(probe_url, int(total), session)
+        return zipfile.ZipFile(io.BufferedReader(handle, buffer_size=1 << 20)), handle
+    except BaseException:
+        session.close()
+        raise
 
 
 def _safe_extract_path(root: Path, rel: str, member: str) -> Path:
@@ -580,7 +608,7 @@ def fetch_sample(sample: str) -> Path:
 
     with asection(f"Range-extracting {sample} from {ARCHIVE_NAME}"):
         aprint("The 7.1 GB archive is NOT downloaded whole — only this sample.")
-        zf, _handle = _open_remote_zip(url)
+        zf, handle = _open_remote_zip(url)
         try:
             names = zf.namelist()
             member_prefix = find_member_prefix(names, sample)
@@ -604,7 +632,10 @@ def fetch_sample(sample: str) -> Path:
             _extract_members(zf, members, member_prefix, tmp)
             _install_store(tmp, target)
         finally:
+            # Both, in this order: the ZipFile leaves the file object it was
+            # handed open, so the handle is what releases the HTTP session.
             zf.close()
+            handle.close()
 
     aprint(f"Extracted to {target}")
     return target
