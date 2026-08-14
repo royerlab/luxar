@@ -53,7 +53,8 @@ uniform selects the buffer the shaders read. Consequences (mirroring the gsplat 
 - **Baked texture width (no per-vertex `textureSize`).** The element-texture
   width is a per-layout session constant (`getElementTextureWidth`, capped at
   4096 on every device), so the GLSL material stamps it as the
-  `LUXAR_ELEM_TEX_W` define and the TSL graph bakes it as a literal int
+  `LUXAR_POINT_TEX_W` define (the layout's `widthDefine`) and the TSL
+  graph bakes it as a literal int
   node. A compile-time constant lets the shader compiler strength-reduce the
   per-vertex `%`/int-div addressing — measured −7% on the quad line
   primitive's whole GPU pass, where a uniform recovered almost none of it.

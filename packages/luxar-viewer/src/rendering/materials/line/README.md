@@ -378,7 +378,7 @@ The texel fetch prologue reconstructs the historical local names
 from the interleaved era. See `../../line-geometry.ts` for the storage
 construction and the fused texel writer. The texture width used by the
 prologue's `%`/int-div addressing is a **baked compile-time constant**
-(`LUXAR_ELEM_TEX_W` define / TSL literal from `getElementTextureWidth`),
+(`LUXAR_LINE_TEX_W` define / TSL literal from `getElementTextureWidth`),
 not a per-vertex `textureSize` query — the constant lets the shader
 compiler strength-reduce the integer division, measured −7% on the
 quad's whole GPU pass at 4 M segments (a uniform recovered almost none

@@ -4,7 +4,8 @@ The Points / Lines / GSplats vertex stages (visual and picking, both
 backends) indexed their per-node element texture with `base % W` /
 `base / W`, reading `W` per vertex via `textureSize()`. The width is a
 per-layout session constant (capped at 4096 on every device), so it is
-now baked at material construction — a `LUXAR_ELEM_TEX_W` define on the
+now baked at material construction — per-layout defines
+(`LUXAR_LINE_TEX_W` / `LUXAR_POINT_TEX_W` / `LUXAR_SPLAT_TEX_W`) on the
 GLSL materials, a literal int node in the TSL graphs. A compile-time
 constant lets the shader compiler strength-reduce the per-vertex integer
 division: measured −7% on the quad line primitive's whole GPU pass at
