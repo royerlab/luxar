@@ -30,9 +30,9 @@ def run(cmd: list[str], **kwargs) -> subprocess.CompletedProcess:
 # ---------------------------------------------------------------------------
 
 
-def find_python_310_plus() -> str | None:
-    """Replicate the for-loop in install-hatch: find first Python >= 3.10."""
-    candidates = ["python3.13", "python3.12", "python3.11", "python3.10", "python3"]
+def find_python_312_plus() -> str | None:
+    """Replicate the for-loop in install-hatch: find first Python >= 3.12."""
+    candidates = ["python3.14", "python3.13", "python3.12", "python3"]
     for py in candidates:
         exe = shutil.which(py)
         if exe is None:
@@ -49,7 +49,7 @@ def find_python_310_plus() -> str | None:
         parts = result.stdout.strip().split()
         if len(parts) == 2:
             major, minor = int(parts[0]), int(parts[1])
-            if major == 3 and minor >= 10:
+            if major == 3 and minor >= 12:
                 return exe
     return None
 
@@ -81,15 +81,15 @@ def pnpm_cmd() -> str | None:
 # ---------------------------------------------------------------------------
 
 
-def test_python_310_available():
-    """A Python 3.10+ interpreter must be reachable (needed by install-hatch fallback)."""
-    py = find_python_310_plus()
+def test_python_312_available():
+    """A Python 3.12+ interpreter must be reachable (needed by install-hatch fallback)."""
+    py = find_python_312_plus()
     assert py is not None, (
-        "No Python 3.10+ found in PATH. "
+        "No Python 3.12+ found in PATH. "
         "install-hatch's pip/venv fallback will silently skip."
     )
     result = run([py, "--version"])
-    print(f"PASS: Python 3.10+ found: {py} → {result.stdout.strip()}")
+    print(f"PASS: Python 3.12+ found: {py} → {result.stdout.strip()}")
 
 
 def test_hatch_installed_and_functional():
@@ -117,8 +117,8 @@ def test_hatch_can_list_envs():
     print("PASS: hatch env show succeeded")
 
 
-def test_hatch_uses_python_310_plus():
-    """The hatch default env must use Python 3.10+ (project requires-python = >=3.10)."""
+def test_hatch_uses_python_312_plus():
+    """The hatch default env must use Python 3.12+ (project requires-python = >=3.12)."""
     h = hatch_cmd()
     if h is None:
         print("SKIP: hatch not installed")
@@ -133,8 +133,8 @@ def test_hatch_uses_python_310_plus():
     import ast
 
     major, minor = ast.literal_eval(version_str)
-    assert major == 3 and minor >= 10, (
-        f"hatch env Python is {major}.{minor}, need >=3.10. "
+    assert major == 3 and minor >= 12, (
+        f"hatch env Python is {major}.{minor}, need >=3.12. "
         "hatch may be using the system Python 3.6."
     )
     print(f"PASS: hatch env uses Python {major}.{minor}")
@@ -186,7 +186,7 @@ def test_npm_prefix_fallback_works():
 def test_hatch_env_venv_uses_correct_python():
     """
     When hatch was installed via venv (the HPC fallback), its internal env
-    should still create project envs using a Python >= 3.10.
+    should still create project envs using a Python >= 3.12.
     Guards against hatch accidentally using the system Python 3.6.8.
     """
     h = hatch_cmd()
@@ -199,14 +199,14 @@ def test_hatch_env_venv_uses_correct_python():
             "run",
             "python",
             "-c",
-            "import sys; v=sys.version_info; assert (v.major,v.minor)>=(3,10), 'Python '+str(v[:2])+' < 3.10'",
+            "import sys; v=sys.version_info; assert (v.major,v.minor)>=(3,12), 'Python '+str(v[:2])+' < 3.12'",
         ],
         cwd=str(Path(__file__).parent.parent),
     )
     assert result.returncode == 0, (
         f"hatch env Python version check failed:\n{result.stderr}\n{result.stdout}"
     )
-    print("PASS: hatch venv env uses Python >= 3.10")
+    print("PASS: hatch venv env uses Python >= 3.12")
 
 
 # ---------------------------------------------------------------------------
@@ -215,10 +215,10 @@ def test_hatch_env_venv_uses_correct_python():
 
 if __name__ == "__main__":
     tests = [
-        test_python_310_available,
+        test_python_312_available,
         test_hatch_installed_and_functional,
         test_hatch_can_list_envs,
-        test_hatch_uses_python_310_plus,
+        test_hatch_uses_python_312_plus,
         test_pnpm_installed_and_functional,
         test_local_bin_in_path,
         test_npm_prefix_fallback_works,

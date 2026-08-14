@@ -305,7 +305,7 @@ def test_generator_rejects_a_corrupt_lfs_pointer(tmp_path):
 # The manifest must remain shippable
 # --------------------------------------------------------------------------- #
 def test_manifest_lives_outside_the_lfs_data_tree():
-    """Dependency-free companion guard — runs everywhere, including Python 3.10.
+    """Dependency-free companion guard — runs in any env, tooling or not.
 
     demos/data/ is ~450 MB of git-LFS payload excluded from BOTH the wheel and
     the sdist. The manifest must never drift back inside it.
@@ -325,7 +325,8 @@ def test_manifest_is_shippable_in_the_wheel_and_sdist():
     list (hatchling/builders/config.py), so the spec is built the same way here —
     per-pattern matching would misjudge gitignore negation precedence.
     """
-    tomllib = pytest.importorskip("tomllib")  # stdlib >= 3.11
+    import tomllib  # stdlib (the project floor is 3.12)
+
     # pathspec rides in via mypy, i.e. the `dev` feature CI's test env uses.
     pathspec = pytest.importorskip("pathspec")
 

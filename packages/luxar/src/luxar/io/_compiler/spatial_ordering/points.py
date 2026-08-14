@@ -9,6 +9,8 @@ import zarr
 from arbol import aprint
 from numpy.typing import NDArray
 
+from luxar._zarr_compat import create_array
+
 from ....encoding.compression import resolve_compressor
 from ..context import OrderingCtx
 
@@ -142,7 +144,8 @@ def write_points_ordering_to_zarr(
     # Write chunk_bounds array directly to group
     chunk_bounds = ordering_data["chunk_bounds"]
     if len(chunk_bounds) > 0:
-        group.create_dataset(
+        create_array(
+            group,
             "chunk_bounds",
             data=chunk_bounds,
             shape=chunk_bounds.shape,

@@ -190,7 +190,7 @@ void main() {
 	nodeVar6 = vec3( 0.0, 0.0, 0.0 );
 	nodeVarying0 = nodeVar6;
 	nodeVar9 = ( ( ( int( aSortedIndex ) * ( 1 - int( nodeUniform11 ) ) ) + ( int( aSortedIndexB ) * int( nodeUniform11 ) ) ) * 4 );
-	nodeVar10 = int( textureSize( nodeUniform12, 0 ).x );
+	nodeVar10 = 4;
 	nodeVar11 = ( nodeVar9 % nodeVar10 );
 	nodeVar12 = ( nodeVar9 / nodeVar10 );
 	nodeVar13 = ( nodeUniform13 * vec3( vec2( ivec2( nodeVar11, nodeVar12 ) ), 1.0 ) ).xy;
