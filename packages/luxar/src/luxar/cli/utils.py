@@ -16,6 +16,8 @@ from urllib.parse import quote
 import zarr
 from arbol import aprint
 
+from .._zarr_compat import open_group as zarr_open_group
+
 # CORS configuration shared across the CLI. Lives here (not in main.py)
 # so subcommand modules like gsplat_commands.py can import it without
 # creating a cycle through main.py — main.py also imports gsplat_commands
@@ -538,8 +540,12 @@ def get_zarr_info(store_path: Path, detailed: bool = False) -> dict[str, Any]:
                 f.stat().st_size for f in store_path.rglob("*") if f.is_file()
             )
 
-        # Open and analyze store
-        root = zarr.open_group(store_path, mode="r")
+        # Open and analyze store. Through the compat facade, not `zarr.open_group`
+        # directly: zarr 3 answers membership and shapes from `.zmetadata` by
+        # default, so an interrupted write whose array directory never landed
+        # would still be reported here with its full element count. This command
+        # exists to tell the truth about what is on disk.
+        root = zarr_open_group(store_path, mode="r")
 
         def analyze_group(group: zarr.Group, path: str = "") -> None:
             """Recursively analyze a Zarr group."""
@@ -625,7 +631,7 @@ def validate_zarr_store(store_path: Path) -> tuple[bool, Optional[str]]:
         return False, "Path is not a directory"
 
     try:
-        zarr.open_group(store_path, mode="r")
+        zarr_open_group(store_path, mode="r")
         return True, None
     except Exception as e:
         return False, f"Not a valid Zarr store: {e}"

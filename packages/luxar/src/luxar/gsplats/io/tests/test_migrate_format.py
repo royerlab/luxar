@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 import zarr
 
+from luxar._zarr_compat import create_array
 from luxar.gsplats.io import load_gsplats
 from luxar.gsplats.io.migrate import (
     _read_substitutive_directory,
@@ -32,7 +33,7 @@ def _identity_chol(n: int) -> np.ndarray:
 
 def _make_v1_0(path: Path, n: int, *, with_fitting: bool = False) -> None:
     """Build a v1.0 `.gsplats.zarr` (single flat splat set)."""
-    store = zarr.DirectoryStore(str(path))
+    store = zarr.storage.LocalStore(str(path))
     root = zarr.group(store=store, overwrite=True)
     root.attrs.update(
         {
@@ -55,10 +56,10 @@ def _make_v1_0(path: Path, n: int, *, with_fitting: bool = False) -> None:
         }
     )
     rng = np.random.default_rng(0)
-    splats.create_dataset("centers", data=(rng.random((n, 3)) * 10).astype(np.float32))
-    splats.create_dataset("amplitudes", data=rng.random(n).astype(np.float32))
-    splats.create_dataset("cholesky_factors", data=_identity_chol(n))
-    splats.create_dataset("chunk_bounds", data=np.zeros((1, 3, 2), dtype=np.float32))
+    create_array(splats, "centers", data=(rng.random((n, 3)) * 10).astype(np.float32))
+    create_array(splats, "amplitudes", data=rng.random(n).astype(np.float32))
+    create_array(splats, "cholesky_factors", data=_identity_chol(n))
+    create_array(splats, "chunk_bounds", data=np.zeros((1, 3, 2), dtype=np.float32))
     if with_fitting:
         fitting = root.create_group("fitting")
         fitting.attrs.update(
@@ -85,7 +86,7 @@ def _make_v1_0(path: Path, n: int, *, with_fitting: bool = False) -> None:
 
 def _make_v1_1(path: Path, lod_sizes: list[int]) -> None:
     """Build a v1.1 `.gsplats.zarr` (multi-LOD additive)."""
-    store = zarr.DirectoryStore(str(path))
+    store = zarr.storage.LocalStore(str(path))
     root = zarr.group(store=store, overwrite=True)
     n_lods = len(lod_sizes)
     root.attrs.update(
@@ -120,16 +121,16 @@ def _make_v1_1(path: Path, lod_sizes: list[int]) -> None:
                 },
             }
         )
-        lod.create_dataset("centers", data=(rng.random((n, 3)) * 10).astype(np.float32))
-        lod.create_dataset("amplitudes", data=rng.random(n).astype(np.float32))
-        lod.create_dataset("cholesky_factors", data=_identity_chol(n))
-        lod.create_dataset("chunk_bounds", data=np.zeros((1, 3, 2), dtype=np.float32))
+        create_array(lod, "centers", data=(rng.random((n, 3)) * 10).astype(np.float32))
+        create_array(lod, "amplitudes", data=rng.random(n).astype(np.float32))
+        create_array(lod, "cholesky_factors", data=_identity_chol(n))
+        create_array(lod, "chunk_bounds", data=np.zeros((1, 3, 2), dtype=np.float32))
     zarr.consolidate_metadata(store)
 
 
 def _make_v2_0(path: Path, n: int) -> None:
     """Build a v2.0 `.gsplats.zarr` (substitutive_0/additive_0 matrix, [1, 1])."""
-    store = zarr.DirectoryStore(str(path))
+    store = zarr.storage.LocalStore(str(path))
     root = zarr.group(store=store, overwrite=True)
     root.attrs.update(
         {
@@ -164,10 +165,10 @@ def _make_v2_0(path: Path, n: int) -> None:
         {"n_splats": n, "ndim": 3, "has_colors": False, "ordering": "none"}
     )
     rng = np.random.default_rng(0)
-    add.create_dataset("centers", data=(rng.random((n, 3)) * 10).astype(np.float32))
-    add.create_dataset("amplitudes", data=rng.random(n).astype(np.float32))
-    add.create_dataset("cholesky_factors", data=_identity_chol(n))
-    add.create_dataset("chunk_bounds", data=np.zeros((1, 3, 2), dtype=np.float32))
+    create_array(add, "centers", data=(rng.random((n, 3)) * 10).astype(np.float32))
+    create_array(add, "amplitudes", data=rng.random(n).astype(np.float32))
+    create_array(add, "cholesky_factors", data=_identity_chol(n))
+    create_array(add, "chunk_bounds", data=np.zeros((1, 3, 2), dtype=np.float32))
     zarr.consolidate_metadata(store)
 
 
@@ -176,7 +177,7 @@ def _make_v2_0_multi(path: Path, level_sizes: list[int]) -> None:
 
     Level 0 is finest (largest); coarser levels follow — the v2.0 convention.
     """
-    store = zarr.DirectoryStore(str(path))
+    store = zarr.storage.LocalStore(str(path))
     root = zarr.group(store=store, overwrite=True)
     n_sub = len(level_sizes)
     root.attrs.update(
@@ -211,9 +212,9 @@ def _make_v2_0_multi(path: Path, level_sizes: list[int]) -> None:
         add.attrs.update(
             {"n_splats": n, "ndim": 3, "has_colors": False, "ordering": "none"}
         )
-        add.create_dataset("centers", data=(rng.random((n, 3)) * 10).astype(np.float32))
-        add.create_dataset("amplitudes", data=rng.random(n).astype(np.float32))
-        add.create_dataset("cholesky_factors", data=_identity_chol(n))
+        create_array(add, "centers", data=(rng.random((n, 3)) * 10).astype(np.float32))
+        create_array(add, "amplitudes", data=rng.random(n).astype(np.float32))
+        create_array(add, "cholesky_factors", data=_identity_chol(n))
     zarr.consolidate_metadata(store)
 
 
@@ -671,7 +672,7 @@ class TestMigrateFormat:
         rng = np.random.default_rng(42)
         colors = rng.integers(0, 256, size=(n, 3), dtype=np.uint8)
 
-        store = zarr.DirectoryStore(str(legacy))
+        store = zarr.storage.LocalStore(str(legacy))
         root = zarr.group(store=store, overwrite=True)
         root.attrs.update(
             {
@@ -692,15 +693,13 @@ class TestMigrateFormat:
                 "truncation_radius": 3.0,
             }
         )
-        splats.create_dataset(
-            "centers", data=(rng.random((n, 3)) * 10).astype(np.float32)
+        create_array(
+            splats, "centers", data=(rng.random((n, 3)) * 10).astype(np.float32)
         )
-        splats.create_dataset("amplitudes", data=rng.random(n).astype(np.float32))
-        splats.create_dataset("cholesky_factors", data=_identity_chol(n))
-        splats.create_dataset(
-            "chunk_bounds", data=np.zeros((1, 3, 2), dtype=np.float32)
-        )
-        splats.create_dataset("colors", data=colors)
+        create_array(splats, "amplitudes", data=rng.random(n).astype(np.float32))
+        create_array(splats, "cholesky_factors", data=_identity_chol(n))
+        create_array(splats, "chunk_bounds", data=np.zeros((1, 3, 2), dtype=np.float32))
+        create_array(splats, "colors", data=colors)
         zarr.consolidate_metadata(store)
 
         out = tmp_path / "out.gsplats.zarr"

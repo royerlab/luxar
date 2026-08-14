@@ -44,6 +44,8 @@ import numpy as np
 import pandas as pd
 from arbol import aprint
 
+from luxar._zarr_compat import create_array, open_group
+
 try:
     import astropy.units as u
     from astropy.coordinates import Galactocentric, SkyCoord
@@ -125,35 +127,37 @@ def transform_to_galactocentric(df: pd.DataFrame, rmax_kpc: float) -> pd.DataFra
 
 def create_zarr(df: pd.DataFrame, output_path: Path):
     """Save raw Gaia data as zarr table (NOT Luxar format)."""
-    import zarr
-
     aprint(f"\nSaving raw data to zarr: {output_path}")
 
     if output_path.exists():
         shutil.rmtree(output_path)
 
-    # Create zarr store with raw table data
-    store = zarr.open(str(output_path), mode="w")
+    # Create zarr store with raw table data. Through the facade, not a bare
+    # `zarr.open(mode="w")`: the root group decides the format its arrays get,
+    # so an unpinned open here would emit a format-3 store no matter what
+    # `create_array` is asked for.
+    store = open_group(output_path, mode="w")
 
     # Save positions
-    store.create_dataset(
-        "x_kpc", data=df["x_kpc"].values.astype(np.float32), chunks=(100000,)
+    create_array(
+        store, "x_kpc", data=df["x_kpc"].values.astype(np.float32), chunks=(100000,)
     )
-    store.create_dataset(
-        "y_kpc", data=df["y_kpc"].values.astype(np.float32), chunks=(100000,)
+    create_array(
+        store, "y_kpc", data=df["y_kpc"].values.astype(np.float32), chunks=(100000,)
     )
-    store.create_dataset(
-        "z_kpc", data=df["z_kpc"].values.astype(np.float32), chunks=(100000,)
+    create_array(
+        store, "z_kpc", data=df["z_kpc"].values.astype(np.float32), chunks=(100000,)
     )
 
     # Save Gaia photometry
-    store.create_dataset(
+    create_array(
+        store,
         "phot_g_mean_mag",
         data=df["phot_g_mean_mag"].values.astype(np.float32),
         chunks=(100000,),
     )
-    store.create_dataset(
-        "bp_rp", data=df["bp_rp"].values.astype(np.float32), chunks=(100000,)
+    create_array(
+        store, "bp_rp", data=df["bp_rp"].values.astype(np.float32), chunks=(100000,)
     )
 
     # Save metadata

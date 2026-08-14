@@ -320,7 +320,9 @@ class ZarrWriterProtocol(Protocol):
             path: Path for the dataset within the Zarr store
             dtype: Data type for the dataset (numpy dtype)
             shape: Initial shape of the dataset
-            maxshape: Maximum shape (None for unlimited dimensions)
+            maxshape: Accepted and ignored — see
+                :meth:`LuxarZarrCompiler.create_resizable_dataset`. zarr has
+                never enforced a maximum shape; the argument is h5py heritage.
             chunks: Chunk configuration for the dataset
 
         Returns:
