@@ -185,12 +185,23 @@ REPO_FILE = SCRIPT_DIR / "data" / "milky_way_gaia_3m.zarr.zip"
 RAW_ZARR_NAME = CACHE_FILE.with_suffix("").name
 
 
+class CatalogUnusable(FileNotFoundError):
+    """The catalog is missing, or is not the one this demo can read.
+
+    A distinct type, because the entry points below turn it into a terse
+    ``❌ Error: …`` + exit 1 — right for a message that IS the advice, wrong for
+    any other ``FileNotFoundError`` raised while converting or writing the scene,
+    which is a bug and wants its traceback. Subclasses ``FileNotFoundError`` so
+    callers that only care that the file is absent keep working.
+    """
+
+
 def resolve_data_file() -> Path:
     """The star catalog: local cache first, then the legacy in-repo copy."""
     for candidate in (CACHE_FILE, REPO_FILE):
         if candidate.exists():
             return candidate
-    raise FileNotFoundError(
+    raise CatalogUnusable(
         "Gaia star catalog not found.\n\n"
         "This dataset is CC BY-NC 3.0 IGO (NonCommercial), which the derived "
         "point cloud inherits, so it is deliberately not distributed with "
@@ -212,7 +223,7 @@ def resolve_data_file() -> Path:
     )
 
 
-def _exit_with_advice(exc: FileNotFoundError) -> NoReturn:
+def _exit_with_advice(exc: CatalogUnusable) -> NoReturn:
     """Report a catalog problem as a CLI error and exit non-zero.
 
     Both :func:`resolve_data_file` and :func:`_extract_raw_zarr` raise messages
@@ -230,7 +241,7 @@ def _extract_raw_zarr(data_zip_path: Path, dest: Path) -> Path:
     The expected member is checked here, at the extraction, because a zip built
     with the wrong ``--output`` stem extracts *successfully* and only fails later
     in ``zarr.open`` with ``GroupNotFoundError`` — a ``ValueError``, which no
-    ``except FileNotFoundError`` on the way out catches, so the advice
+    ``except CatalogUnusable`` on the way out catches, so the advice
     :func:`resolve_data_file` prints would never reach the reader who needs it.
     """
     import zipfile
@@ -239,7 +250,7 @@ def _extract_raw_zarr(data_zip_path: Path, dest: Path) -> Path:
         zip_ref.extractall(dest)
     raw_zarr_path = dest / RAW_ZARR_NAME
     if not raw_zarr_path.is_dir():
-        raise FileNotFoundError(
+        raise CatalogUnusable(
             f"{data_zip_path} extracted, but holds no top-level "
             f"`{RAW_ZARR_NAME}/` directory — so the raw catalog is not where "
             "this demo reads it.\n"
@@ -658,7 +669,7 @@ def main() -> None:
     # raw traceback on the default (serve) invocation either.
     try:
         data_file = resolve_data_file()
-    except FileNotFoundError as e:
+    except CatalogUnusable as e:
         _exit_with_advice(e)
 
     # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
@@ -672,7 +683,7 @@ def main() -> None:
         with tempfile.TemporaryDirectory(prefix="luxar_demo_gaia_") as tmpdir:
             try:
                 raw_zarr_path = _extract_raw_zarr(data_file, Path(tmpdir))
-            except FileNotFoundError as e:
+            except CatalogUnusable as e:
                 _exit_with_advice(e)
             load_and_convert_gaia_data(raw_zarr_path, output_path)
         aprint(f"Dataset generated at {output_path}")
@@ -684,10 +695,13 @@ def main() -> None:
 
         # Load from zip and convert to Luxar format (extracts to temp_dir).
         # Same clean-error exit as above: the extraction inside is where a
-        # wrong-stem catalog is caught.
+        # wrong-stem catalog is caught. This try wraps the CONVERSION too, so it
+        # catches `CatalogUnusable` and not `FileNotFoundError` — a missing file
+        # met while writing the scene is a bug, and swallowing its traceback into
+        # "❌ Error" would report it as a catalog problem it is not.
         try:
             zarr_path = load_and_convert_from_zip(data_file, tmp_path)
-        except FileNotFoundError as e:
+        except CatalogUnusable as e:
             _exit_with_advice(e)
 
         aprint("")

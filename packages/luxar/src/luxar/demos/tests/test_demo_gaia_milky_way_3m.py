@@ -307,6 +307,31 @@ class TestRawZarrExtraction:
         assert "scripts/generate_galaxy_simple.py" in out
         assert "Traceback" not in out
 
+    def test_an_unrelated_missing_file_keeps_its_traceback(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """The clean exit is for advice only — a bug must not borrow it.
+
+        The serve branch's handler wraps the whole conversion, not just the
+        extraction, so a plain ``FileNotFoundError`` raised while building or
+        writing the scene would be reported as a catalog problem and exit 1 with
+        its traceback swallowed. Catching ``CatalogUnusable`` is what keeps the
+        two apart; this fails (as ``SystemExit``) if the handler widens again.
+        """
+        import luxar.demos.demo_gaia_milky_way_3m as demo
+
+        monkeypatch.setattr(demo, "CACHE_FILE", _catalog_zip(tmp_path, RAW_ZARR_NAME))
+        monkeypatch.setattr(demo, "REPO_FILE", tmp_path / "absent.zip")
+        monkeypatch.setattr(sys, "argv", ["demo_gaia_milky_way_3m.py"])
+
+        def _boom(*_args: object, **_kwargs: object) -> int:
+            raise FileNotFoundError("a bug in the writer, not the catalog")
+
+        monkeypatch.setattr(demo, "load_and_convert_gaia_data", _boom)
+
+        with pytest.raises(FileNotFoundError, match="a bug in the writer"):
+            demo.main()
+
 
 class TestDataFileResolution:
     """The Gaia catalog is CC BY-NC, so it is not shipped with the repository.
