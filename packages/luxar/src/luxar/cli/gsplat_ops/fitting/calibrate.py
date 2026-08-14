@@ -10,6 +10,26 @@ import typer
 from arbol import aprint, asection
 
 
+def _print_k_star_scope_caveat(calibration_region: Optional[dict]) -> None:
+    """Qualify the ``★ Recommended K*`` headline when it is region-scoped.
+
+    Under ``--auto-region`` K* was measured on the crop, so it is a REGION
+    budget (roughly tile-scale) — feeding it to ``fit --seeds`` (a whole-volume
+    budget, divided across tiles) would under-seed the volume. Point at the
+    density transfer instead. Prints nothing for a whole-volume calibration,
+    including ``strategy="whole"``: that means the volume was no bigger than
+    ``--region-size`` on every axis, so the "crop" IS the whole volume and its
+    K* is exactly what ``--seeds`` wants.
+    """
+    if calibration_region is None or calibration_region.get("strategy") == "whole":
+        return
+    aprint(
+        "    ⚠ region-scoped (measured on the crop above), NOT a "
+        "whole-volume budget: do not pass it to `fit --seeds`; "
+        "transfer it with `fit --tiling content --cal <this json>`."
+    )
+
+
 def run_calibrate_command(
     *,
     input_path: Path,
@@ -341,21 +361,7 @@ def run_calibrate_command(
                 f"(metric: {result.k_star_metric}, type: {selected_peak.type}, "
                 f"confidence: {selected_peak.confidence_db:.2f} dB)"
             )
-            # Scope the headline. Under --auto-region K* was measured on the crop,
-            # so it is a REGION budget (roughly tile-scale) — feeding it to
-            # `fit --seeds` (a whole-volume budget, divided across tiles) would
-            # under-seed the volume. Point at the density transfer instead.
-            # ("whole" = the volume was no bigger than --region-size on every
-            # axis, so the "crop" IS the whole volume and K* is whole-volume.)
-            if (
-                result.calibration_region is not None
-                and result.calibration_region.get("strategy") != "whole"
-            ):
-                aprint(
-                    "    ⚠ region-scoped (measured on the crop above), NOT a "
-                    "whole-volume budget: do not pass it to `fit --seeds`; "
-                    "transfer it with `fit --tiling content --cal <this json>`."
-                )
+            _print_k_star_scope_caveat(result.calibration_region)
             # Operating point (point of diminishing returns) — equals K* for peak/
             # plateau; for a signal-limited curve it is the earlier knee (K* stays
             # the max-K budget anchor).

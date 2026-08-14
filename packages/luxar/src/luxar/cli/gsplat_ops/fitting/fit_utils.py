@@ -437,7 +437,10 @@ def split_seeds_across_tiles(
         return parsed_seeds
     if n_tiles <= 1 or parsed_seeds <= 0:
         return parsed_seeds
-    per_tile = math.ceil(parsed_seeds / n_tiles)
+    # Integer ceiling division (not math.ceil on a quotient): a budget is an
+    # arbitrary-precision Python int, and going through a float would round
+    # wrong above 2**53 (and raise OverflowError on an absurdly large one).
+    per_tile = -(-parsed_seeds // n_tiles)
     aprint(
         f"Seeds: {parsed_seeds:,} whole-volume budget -> {per_tile:,} per tile "
         f"across {n_tiles} tiles"
