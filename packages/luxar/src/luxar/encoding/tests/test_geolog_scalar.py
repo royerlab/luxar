@@ -8,8 +8,8 @@ nonzero input can decode to zero, by construction.
 
 import numpy as np
 import pytest
-import zarr
 
+from luxar._zarr_compat import memory_group
 from luxar.encoding.decoder import ArrayDecoder
 from luxar.encoding.encoder import ArrayEncoder
 from luxar.encoding.modes import EncodingMode
@@ -18,7 +18,7 @@ from luxar.encoding.semantic_types import SemanticType
 
 def _roundtrip(data, mode=EncodingMode.AUTO, **kw):
     enc = ArrayEncoder()
-    g = zarr.group(store=zarr.MemoryStore())
+    g = memory_group()
     enc.encode(
         data=data,
         zarr_group=g,
@@ -134,7 +134,7 @@ class TestGeologDecoderValidation:
     def _encode_then_corrupt(self, patch):
         data = _wide(n=500)
         enc = ArrayEncoder()
-        g = zarr.group(store=zarr.MemoryStore())
+        g = memory_group()
         enc.encode(
             data=data,
             zarr_group=g,
@@ -168,7 +168,7 @@ class TestGeologDecoderValidation:
     def test_decode_matches_hand_computed(self):
         data = _wide(n=400)
         enc = ArrayEncoder()
-        g = zarr.group(store=zarr.MemoryStore())
+        g = memory_group()
         enc.encode(
             data=data,
             zarr_group=g,

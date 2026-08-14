@@ -37,6 +37,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import zarr
 
+from luxar._zarr_compat import consolidate, open_group
 from luxar.utils.lod_methods import is_reveal_method
 
 __all__ = [
@@ -560,7 +561,7 @@ def annotate_quality_store(
             f"annotation of a compressed archive is impossible)"
         )
 
-    root = zarr.open_group(str(path), mode="r" if dry_run else "r+")
+    root = open_group(path, mode="r" if dry_run else "r+")
     fmt = root.attrs.get("format_type")
     if fmt != "gsplats_zarr":
         raise ValueError(
@@ -586,6 +587,6 @@ def annotate_quality_store(
         # hash lands inside .zmetadata too and the viewer's OPFS cache
         # invalidates on the changed attrs.
         _stamp_content_hash(root)
-        zarr.consolidate_metadata(root.store)
+        consolidate(root)
 
     return report

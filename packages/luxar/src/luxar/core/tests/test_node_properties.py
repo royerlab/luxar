@@ -926,7 +926,7 @@ class TestGeometryMetadataParity:
             }
             in_memory = {name: node.ordering for name, node in nodes.items()}
 
-        root = zarr.open_group(store, "r")
+        root = zarr.open_group(store, mode="r")
         for name, reported in in_memory.items():
             # Absent on disk is how an unordered node is spelled; the viewer
             # treats a missing attr as "none" (chunk-index-loader.ts).

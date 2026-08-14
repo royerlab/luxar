@@ -369,7 +369,10 @@ deleted volumetric primitive integrated per ray — while tapered or perspective
 partners get exactly the light a pure partition would chop (a fat vertex's disc
 keeps the half a thin neighbour cannot render; the numeric composition sweep in
 `line-capsule.test.ts` pins the three reconstruction errors of
-#1494/#1488/#1490). Two documented exceptions to that last sentence, both in
+#1494/#1488/#1490, and
+`tests/unit/rendering/materials/line/capsule-partner-radius.test.ts`
+additionally locks the shared-vertex base radius of #1494 across all four
+shader surfaces). Two documented exceptions to that last sentence, both in
 `CAPSULE_JOINT_PACKET_MIN_RADIUS_PX`: the deficit packet is skipped below a
 4 px stencil half-width, so a GENTLE joint thinner than that keeps the plain
 cut — within 0.03 of peak of what a congruent joint at the same angle and
@@ -404,7 +407,14 @@ the draw-slot → storage-slot mapping the depth-sort worker permutes).
 The texel fetch prologue reconstructs the historical local names
 (`aStartPos`, `aEndWidth`, …), so the expansion math below is unchanged
 from the interleaved era. See `../../line-geometry.ts` for the storage
-construction and the fused texel writer.
+construction and the fused texel writer. The texture width used by the
+prologue's `%`/int-div addressing is a **baked compile-time constant**
+(`LUXAR_LINE_TEX_W` define / TSL literal from `getElementTextureWidth`),
+not a per-vertex `textureSize` query — the constant lets the shader
+compiler strength-reduce the integer division, measured −7% on the
+quad's whole GPU pass at 4 M segments (a uniform recovered almost none
+of it; the width is a session constant capped at 4096, so baking is
+safe).
 
 Texel5 carries the colormap scalars in `.xy` and the **per-endpoint
 opacity alphas** in `.zw` — the alpha column of an RGBA color dataset

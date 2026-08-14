@@ -322,15 +322,17 @@ def read_gltf(path: Path) -> dict[str, object]:
             # Affine transform into world space.
             pos = (world[:3, :3] @ pos.T).T + world[:3, 3]
 
-            nrm = None
+            nrm: NDArray[np.float32] | None = None
             if "NORMAL" in attrs:
                 n = _read_accessor(doc, buffers, attrs["NORMAL"]).astype(np.float64)
                 # Normals transform by the inverse-transpose, or a non-uniform scale
-                # tilts them off the surface.
-                nrm = (np.linalg.inv(world[:3, :3]).T @ n.T).T
-                lengths = np.linalg.norm(nrm, axis=1, keepdims=True)
-                nrm = np.divide(nrm, lengths, out=np.zeros_like(nrm), where=lengths > 0)
-                nrm = nrm.astype(np.float32)
+                # tilts them off the surface. Kept in float64 through the
+                # normalization and narrowed to float32 only on the way out, so
+                # `nrm` never holds the wider intermediate.
+                n64 = (np.linalg.inv(world[:3, :3]).T @ n.T).T
+                lengths = np.linalg.norm(n64, axis=1, keepdims=True)
+                n64 = np.divide(n64, lengths, out=np.zeros_like(n64), where=lengths > 0)
+                nrm = n64.astype(np.float32)
 
             col = None
             if "COLOR_0" in attrs:

@@ -196,6 +196,8 @@ luxar gsplat fit --dump-config --preset hifi > config.yaml  # Generate config te
 
 `--floor` (default `auto`) subtracts a background pedestal (clip at 0) before normalization, so output amplitudes are background-relative. `auto` = histogram-mode estimate (a no-op on clean data); `pNN` subtracts that percentile, a plain number a fixed value, `none` disables it (legacy hard-min).
 
+An integer `--seeds K` is a **whole-volume** budget (what a default `gsplat cal` reports as K\*): a tiled fit — `--tiling uniform`, a large `--tiling auto` volume, a `--tile k/M` worker — divides it across its tiles rather than giving each tile the full count. It is not an exact count: tiles with no signal are skipped (so a sparse volume realizes less than K), and a K below the tile count gives one seed per tile. A float ratio in `(0, 1]` is scale-free and applied per tile unchanged; `--tiling content` ignores `--seeds` entirely (per-box budgets come from the density plan).
+
 #### `luxar gsplat convert`
 Convert .gsplats.zarr to a Luxar scene for the web viewer.
 ```bash

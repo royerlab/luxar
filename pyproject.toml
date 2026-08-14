@@ -35,22 +35,26 @@ classifiers = [
     "Intended Audience :: Science/Research",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Scientific/Engineering :: Visualization",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Typing :: Typed"
 ]
-requires-python = ">=3.10"
+# 3.12 floor: this is what `zarr>=3.2` below requires — zarr 3 needs Python
+# >=3.11 in every release and >=3.12 from 3.2 on. The two move together, so
+# lowering this floor means lowering the zarr pin with it. No ceiling: 3.13 and
+# 3.14 are supported too (see the classifiers above and the CI matrix).
+requires-python = ">=3.12"
 dependencies = [
-    # numpy 2.5.0 rewrote its type stubs to PEP 695 `type` statements, which mypy
-    # rejects under our target python_version=3.10 ("Type statement is only supported
-    # in Python 3.12 and greater") — aborting the type-check step and turning main +
-    # every PR red. Cap below 2.5 (newest clean stubs = 2.4.6) until the mypy target
-    # moves to 3.12 or numpy/mypy reconcile.
-    "numpy>=2.0,<2.5",
-    "zarr>=2.16,<3.0",
+    "numpy>=2.0",
+    # zarr-python 3. Luxar still WRITES zarr format 2 on disk (see
+    # `luxar._zarr_compat.ZARR_FORMAT`) — the store layout is unchanged and
+    # the viewer is untouched. What the 3.x library buys is the ability to READ
+    # zarr v3 stores, which 2.18 cannot do at all, and it lifts the transitive
+    # caps the old pin forced on anndata and napari.
+    "zarr>=3.2,<4",
     "typer>=0.19,<1.0",
     "fastapi>=0.111,<1.0",
     "uvicorn[standard]>=0.27,<1.0",
@@ -92,7 +96,15 @@ test = [
     "pytest-xdist>=3.5.0",
     # Exercise the custom root-level hatch_build.py hook directly in tests.
     "hatchling>=1.27",
-    "hypothesis>=6.0"
+    "hypothesis>=6.0",
+    # `fastapi.testclient` (test_cli_integration.py) is a re-export of
+    # starlette's TestClient, which refuses to import without httpx. It reached
+    # the DEFAULT env transitively via a `dev` dependency, so the omission was
+    # invisible there — but the `test` matrix envs got no httpx at all and died
+    # during collection ("Interrupted: 1 error during collection", which pytest
+    # then reports with a ZERO exit status). Declared here, next to the pytest
+    # deps it belongs with, rather than left to a transitive.
+    "httpx>=0.27"
 ]
 dev = [
     "luxar[test]",
@@ -102,9 +114,6 @@ dev = [
     "pre-commit>=3.3.0",
     "bandit[toml]>=1.7.5",
     "import-linter>=2.0",
-    # `make stats` parses pyproject/Cargo TOML. stdlib tomllib only exists from
-    # 3.11, so the 3.10 floor needs the backport; a no-op on 3.11+.
-    "tomli>=2.0; python_version < '3.11'"
 ]
 io = [
     "tifffile>=2023.1.0",
@@ -121,13 +130,11 @@ demos = [
     "imagecodecs>=2023.1.0",
     "sentence-transformers>=2.2.0",
     "Pillow>=9.0.0",
-    # <0.13: anndata 0.13 requires zarr>=3.1, unsatisfiable against our
-    # zarr>=2.16,<3.0 pin (installing it would silently upgrade zarr and break
-    # every Luxar store). 0.10/0.11 declare no zarr dependency; 0.12 asks for
-    # zarr>=2.18.7,!=3.0.* which zarr 2.18.7 satisfies. Lift when the project
-    # migrates to zarr 3. Mirrored by INSTALL_SPECS in
-    # luxar.demos._dependencies.
-    "anndata>=0.10.0,<0.13",
+    # The `<0.13` ceiling is GONE: it existed only because anndata 0.13 requires
+    # zarr>=3.1, which was unsatisfiable under the old `zarr>=2.16,<3.0` pin.
+    # Luxar is on zarr 3 now, so 0.13+ resolves cleanly. Mirrored by
+    # INSTALL_SPECS in luxar.demos._dependencies.
+    "anndata>=0.10.0",
     "cellxgene-census>=1.0.0",
     "esm>=3.0.0",
     "h5py>=3.0.0",
@@ -149,12 +156,12 @@ demos = [
     # Pure-Python NEXRAD Level II decoder (metpy.io.Level2File) for
     # demo_gsplats_4d_nexrad_supercell. The >=1.6.3 floor is LOAD-BEARING:
     # metpy declares only `numpy>=1.20.0`, so a resolver would happily pair
-    # metpy 1.5.x with Luxar's core `numpy>=2.0,<3.0` and break at runtime;
-    # 1.6.3 is the release that added NumPy 2.0 support. Verified NOT to
-    # threaten the `zarr>=2.16,<3.0` pin: metpy pulls xarray, but only
-    # xarray's CORE requirements (numpy/packaging/pandas) — `zarr>=3.0` lives
-    # in the `xarray[io]` extra, which nothing here requests. A clean install
-    # resolves to metpy 1.7.1 + numpy 2.5.1 + xarray with no zarr at all.
+    # metpy 1.5.x with Luxar's core `numpy>=2.0` and break at runtime;
+    # 1.6.3 is the release that added NumPy 2.0 support. It does not drag zarr
+    # in either: metpy pulls xarray, but only xarray's CORE requirements
+    # (numpy/packaging/pandas) — zarr lives in the `xarray[io]` extra, which
+    # nothing here requests. A clean install resolves to metpy 1.7.1 + numpy
+    # 2.5.1 + xarray with no extra zarr constraint at all.
     # Mirrored by INSTALL_SPECS in luxar.demos._dependencies.
     "metpy>=1.6.3,<2.0",
 ]
@@ -169,12 +176,13 @@ docs = [
 # the optional demo viewer. Keep this publish-safe: no git/direct references.
 tracksdata = [
     "tracksdata>=0.1.0rc5",
-    # <0.8: napari 0.8.0's optional-base extra requires zarr>=3.0.8, which is
-    # unsatisfiable with our zarr<3.0 pin — the resolver then backtracks napari
-    # into 2018-era sdist-only releases whose setup.py imports the long-removed
-    # setuptools.Feature (broke every CI env-create on 2026-07-14). Lift when
-    # the project migrates to zarr 3.
-    "napari[pyqt6]>=0.4.18,<0.8",
+    # The `<0.8` ceiling is GONE. napari 0.8's optional-base extra requires
+    # zarr>=3.0.8, which the old `zarr<3.0` pin could not satisfy; the resolver
+    # then backtracked napari into 2018-era sdist-only releases whose setup.py
+    # imports the long-removed setuptools.Feature, and every CI env-create failed
+    # (2026-07-14). On zarr 3 that conflict is gone, so the floor moves up to the
+    # release that wanted zarr 3 in the first place.
+    "napari[pyqt6]>=0.8",
 ]
 
 # CLI entry point
@@ -273,9 +281,8 @@ dependencies = [
     "scikit-image>=0.19.0",
     "tifffile>=2023.1.0",
     "imagecodecs>=2023.1.0",
-    # <0.8: napari 0.8 requires zarr>=3 (conflicts with our zarr<3 pin); see
-    # the tracksdata group note. Lift when the project migrates to zarr 3.
-    "napari[all]>=0.4.18,<0.8",
+    # Ceiling lifted with the zarr 3 migration; see the tracksdata group note.
+    "napari[all]>=0.8",
     "pandas>=1.5.0",
     "pyarrow>=12.0.0",
     "networkx>=3.0",
@@ -369,7 +376,11 @@ dependencies = [
 ]
 
 [[tool.hatch.envs.test.matrix]]
-python = ["3.10", "3.11", "3.12"]
+# Every version the classifiers advertise, mirroring the CI matrix's non-PR set:
+# `requires-python = ">=3.12"` has no ceiling, so the version most developers
+# actually run (their newest interpreter) has to be testable too —
+# `hatch run test.py3.14:cov`.
+python = ["3.12", "3.13", "3.14"]
 
 [tool.hatch.envs.test.scripts]
 # `run` = full suite (local gate); `cov` deselects `slow` to match CI (fast,
@@ -378,11 +389,9 @@ python = ["3.10", "3.11", "3.12"]
 # These stay LIBRARY-ONLY on purpose — they do not pick up the `examples/tests`
 # and `stats` paths the default env's `test`/`test-cov` scripts run (nor
 # `testpaths`, which the explicit args below override). This env has
-# `features = ["test"]`, and `stats/generate_stats.py` needs the `tomli`
-# backport on 3.10, which lives in the `dev` extra; adding `stats` here would
-# break the 3.10 leg on import. The default env (`features = ["dev"]`) has it,
-# which is why `hatch run test-cov` — what CI runs on every matrix leg — can
-# collect it.
+# `features = ["test"]`, which omits the `dev`-only tooling those paths import.
+# The default env (`features = ["dev"]`) has it, which is why `hatch run
+# test-cov` — what CI runs on every matrix leg — can collect them.
 run = "pytest {args:packages/luxar/src/luxar}"
 cov = "pytest -m 'not slow' --cov=luxar --cov-report=term-missing {args:packages/luxar/src/luxar}"
 
@@ -402,7 +411,7 @@ disable = true
 # Black and isort configuration removed - using ruff instead
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.12"
 
 # Strict mode settings
 strict = true
@@ -446,10 +455,29 @@ disallow_untyped_decorators = true
 no_implicit_optional = true
 strict_optional = true
 
+# zarr 3 SHIPS type stubs, where 2.18 shipped none. That is a welcome change but
+# not a free one: `Group.__getitem__` is typed as a wide union
+# (`Array | Group | int | float | str | bytes | generic | NDArrayLike`), because a
+# key may address either kind of node. So idiomatic Luxar chains like
+# `root["fitting"]["config"].attrs` no longer type-check — 415 errors appear, 359
+# of them in just `gsplats/io/migrate.py` and `io/reader.py`, essentially all of
+# the shape "union member has no attribute .attrs" or "str is not a valid index".
+#
+# Adopting those stubs properly means narrowing at every access, which is a real
+# improvement (a wrong node type would become a clear error instead of an
+# AttributeError deep in a walk) but a substantial, independently-reviewable piece
+# of work. It is deliberately NOT bundled into the format-neutral library upgrade.
+# `follow_imports = "skip"` keeps zarr's types as `Any`, exactly as they were under
+# 2.18's `ignore_missing_imports`, so this preserves the previous status quo rather
+# than relaxing anything. Remove the `follow_imports` line to pick the work up.
+[[tool.mypy.overrides]]
+module = ["zarr.*"]
+ignore_missing_imports = true
+follow_imports = "skip"
+
 # Per-module options for external dependencies
 [[tool.mypy.overrides]]
 module = [
-    "zarr.*",
     "arbol.*",
     "numcodecs.*",
     "typer.*",
@@ -631,7 +659,7 @@ skips = ["B101"]  # Skip assert_used test
 [tool.ruff]
 # Ruff replaces black, isort, flake8, and more
 line-length = 88
-target-version = "py310"
+target-version = "py312"
 
 # Exclude directories
 exclude = [

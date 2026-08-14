@@ -152,10 +152,16 @@ class TestMergePipelineProvenance:
         )
         assert _recipe_pipeline_info("levels", RecipeParams())["refine_iters"] is None
 
-    def test_merge_rejects_refine_volume_front_door(self, tmp_path) -> None:
-        """refine='volume' must be rejected BEFORE the streaming merge writes
-        anything (the deep per-part rejection would fire mid-stream, leaving a
-        half-written store). Fails pre-fix (error surfaced only mid-merge)."""
+    def test_merge_validates_refine_volume_front_door(self, tmp_path) -> None:
+        """A merge-time volume re-fit re-opens the source and crops it per tile, so
+        anything making the source unusable must be caught BEFORE the streaming
+        merge writes a single part — the deep per-part guard would fire mid-stream
+        and leave a half-written store.
+
+        This replaces a test asserting the combination was refused outright. The
+        refusal is now specific: it names what is missing instead of declaring the
+        merge volume-free.
+        """
         import numpy as np
         import pytest
 
@@ -163,21 +169,153 @@ class TestMergePipelineProvenance:
         from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
         from luxar.gsplats.lod.recipes import RecipeParams
 
-        manifest = BatchManifest(n_timepoints=1, n_channels=1, n_tiles=1)
         out_dir = tmp_path / "batch"
         (out_dir / "tiles").mkdir(parents=True)
-        with pytest.raises(ValueError, match="volume-free by design"):
-            merge_batch_results(
+        params = RecipeParams(refine="volume", volume=np.zeros((4, 4, 4), np.float32))
+
+        def _merge(manifest):
+            return merge_batch_results(
                 manifest,
                 out_dir,
                 verbose=False,
                 recipe="levels",
-                recipe_params=RecipeParams(
-                    refine="volume", volume=np.zeros((4, 4, 4), np.float32)
-                ),
+                recipe_params=params,
             )
-        # Nothing was written before the rejection.
+
+        # No source recorded at all.
+        with pytest.raises(ValueError, match="records no input path"):
+            _merge(BatchManifest(n_timepoints=1, n_channels=1, n_tiles=1))
+
+        # A source that has since moved or been deleted.
+        with pytest.raises(ValueError, match="no longer exists"):
+            _merge(
+                BatchManifest(
+                    n_timepoints=1,
+                    n_channels=1,
+                    n_tiles=1,
+                    input_path=str(tmp_path / "gone.zarr"),
+                )
+            )
+
+        # Present, but planned without --axes: the stacked axis cannot be mapped,
+        # and guessing it wrong sends every re-fit at the wrong axis.
+        source = tmp_path / "src.npy"
+        np.save(source, np.zeros((4, 4, 4), np.float32))
+        with pytest.raises(ValueError, match="axis labels"):
+            _merge(
+                BatchManifest(
+                    n_timepoints=1, n_channels=1, n_tiles=1, input_path=str(source)
+                )
+            )
+
+        # An unrecognised axis label, named by the front door rather than
+        # surfacing from the loader further down.
+        with pytest.raises(ValueError, match="not recognised"):
+            _merge(
+                BatchManifest(
+                    n_timepoints=1,
+                    n_channels=1,
+                    n_tiles=1,
+                    input_path=str(source),
+                    axes="q,z,y",
+                )
+            )
+
+        # SEVERAL channels selected: a merged part carries ONE stacked axis (the
+        # timepoints), and there is no single channel index to pin either.
+        with pytest.raises(ValueError, match="several channels were selected"):
+            _merge(
+                BatchManifest(
+                    n_timepoints=2,
+                    n_channels=3,
+                    n_tiles=1,
+                    input_path=str(source),
+                    axes="t,c,z,y,x",
+                )
+            )
+
+        # Every rejection happened before anything was written.
         assert not (out_dir / "merged").exists()
+
+    def test_merge_refit_source_pins_the_axes_a_part_does_not_carry(
+        self, tmp_path
+    ) -> None:
+        """The re-opened source is the FULL array — a merged part is not.
+
+        The fit tasks sliced one channel (and, with a single timepoint, one
+        timepoint) away, so those axes survive on the source but have no center
+        column on the part. They must be PINNED to the index the fit used;
+        left in, the axis map is the wrong length and every re-fit is aimed at
+        the wrong axis. Pinning stays lazy — pre-slicing a zarr array
+        materialises it, which is what opening it lazily exists to avoid.
+        """
+        import numpy as np
+        import zarr
+
+        from luxar.gsplats.batch.manifest import BatchManifest
+        from luxar.gsplats.batch.merge_orchestrator import _merge_refit_volume
+
+        # The canonical OME-Zarr shape: (t, c, z, y, x).
+        arr = np.arange(3 * 2 * 4 * 5 * 6, dtype=np.uint16).reshape(3, 2, 4, 5, 6)
+        source = tmp_path / "tczyx.zarr"
+        z = zarr.open(str(source), mode="w", shape=arr.shape, dtype=arr.dtype)
+        z[:] = arr
+
+        # Three timepoints stacked, channel 1 selected: the time axis is WALKED
+        # (one slice per barrier group), the channel axis is pinned.
+        volume, axes = _merge_refit_volume(
+            BatchManifest(
+                input_path=str(source),
+                axes="t,c,z,y,x",
+                n_timepoints=3,
+                n_channels=1,
+                channel_indices=[1],
+            )
+        )
+        assert not isinstance(volume, np.ndarray)  # still lazy
+        assert tuple(volume.shape) == (3, 4, 5, 6)
+        # Center dims are spatial-first with the stacked axis LAST.
+        assert axes == (1, 2, 3, 0)
+        np.testing.assert_array_equal(np.asarray(volume[2]), arr[2, 1])
+
+        # One timepoint selected: the merge stacks nothing, so the TIME axis is
+        # pinned too and the part is purely spatial.
+        volume, axes = _merge_refit_volume(
+            BatchManifest(
+                input_path=str(source),
+                axes="t,c,z,y,x",
+                n_timepoints=1,
+                n_channels=1,
+                timepoint_indices=[2],
+                channel_indices=[0],
+            )
+        )
+        assert tuple(volume.shape) == (4, 5, 6)
+        assert axes == (0, 1, 2)
+        np.testing.assert_array_equal(np.asarray(volume[:]), arr[2, 0])
+
+    def test_merge_refit_rejects_axes_that_do_not_describe_the_array(
+        self, tmp_path
+    ) -> None:
+        """Label count vs the resolved array — a mismatch would mis-pin silently."""
+        import numpy as np
+        import zarr
+
+        from luxar.gsplats.batch.manifest import BatchManifest
+        from luxar.gsplats.batch.merge_orchestrator import _merge_refit_volume
+
+        source = tmp_path / "zyx.zarr"
+        z = zarr.open(str(source), mode="w", shape=(4, 4, 4), dtype="u2")
+        z[:] = np.zeros((4, 4, 4), np.uint16)
+        with pytest.raises(ValueError, match="labels but .* resolved to a 3D array"):
+            _merge_refit_volume(
+                BatchManifest(
+                    input_path=str(source),
+                    axes="t,z,y,x",
+                    n_timepoints=2,
+                    n_channels=1,
+                )
+            )
 
     def test_legacy_manifest_recipe_translates_in_provenance(self) -> None:
         from luxar.gsplats.batch.merge_orchestrator import _recipe_pipeline_info
@@ -323,6 +461,39 @@ class TestBatchMergeCliValidation:
         assert "recipe-specific but no recipe is in effect" in io
         # No --no-recipe/--flat here, so the hint should steer to --recipe.
         assert "Pass --recipe" in io
+
+    def test_refine_knobs_are_recipe_gated_like_every_other(
+        self, tmp_path: Path
+    ) -> None:
+        """--refine/--refine-iters must join the knob-relevance gate.
+
+        `stream` has no coarse levels to refine and a recipe-less merge writes bare
+        leaves, so in both cases the knob does nothing. Plan time already rejects
+        `--merge-refine` there; left out of the merge CLI's gate, the same request
+        was accepted and then silently dropped — and for `volume` that is an
+        expensive re-fit the user believes ran.
+        """
+        _write_manifest(tmp_path, merge_recipe=None)
+        res = runner.invoke(
+            app_gsplat, ["batch-fit", "merge", str(tmp_path), "--refine", "volume"]
+        )
+        assert res.exit_code != 0
+        assert "recipe-specific but no recipe is in effect" in _io(res)
+
+        res = runner.invoke(
+            app_gsplat,
+            [
+                "batch-fit",
+                "merge",
+                str(tmp_path),
+                "--recipe",
+                "stream",
+                "--refine-iters",
+                "5",
+            ],
+        )
+        assert res.exit_code != 0
+        assert "not used by --recipe stream" in _io(res)
 
     def test_unknown_recipe_name_reported_even_with_a_knob(
         self, tmp_path: Path

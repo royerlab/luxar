@@ -33,6 +33,10 @@ import zarr
 from arbol import aprint
 from numpy.typing import NDArray
 
+from luxar._zarr_compat import close as zarr_close
+from luxar._zarr_compat import consolidate, create_array
+from luxar._zarr_compat import open_group as zarr_open_group
+
 from ..core.dimensions import Dimensions
 from ..encoding import (
     ArrayEncoder,
@@ -211,7 +215,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         self._float16_allowed = float16_allowed
 
         # Create root Zarr group
-        self.store = zarr.open_group(self._store_path, mode="w")
+        self.store = zarr_open_group(self._store_path, mode="w")
         self.store.attrs.update(
             {
                 "luxar_version": version,
@@ -1310,8 +1314,14 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         Args:
             path: Path for the dataset
             dtype: Data type
+            maxshape: ACCEPTED AND IGNORED. An h5py-compatibility argument that
+                zarr has never enforced — a zarr array has no pre-declared
+                ceiling, `.resize()` simply works — so this has always been
+                inert. zarr 2 accepted and dropped it; zarr 3 removed the kwarg
+                outright, so it is no longer forwarded at all. Kept on the
+                signature because callers pass it and removing it would be a
+                gratuitous break, but it constrains nothing.
             shape: Initial shape
-            maxshape: Maximum shape (None for unlimited)
             chunks: Chunking configuration
 
         Returns:
@@ -1333,14 +1343,21 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             dataset_name = path
             group = self.store
 
-        # Create resizable dataset
-        dataset = group.create_dataset(
+        # Create resizable dataset.
+        #
+        # `maxshape` is deliberately NOT forwarded. It was an h5py-compatibility
+        # kwarg on zarr 2's `create_dataset` that zarr ignored — zarr arrays are
+        # always resizable via `.resize()`, with no pre-declared ceiling — and
+        # zarr 3 removed it along with `create_dataset` itself. It stays on THIS
+        # function's signature because it is part of Luxar's own documented API
+        # and callers pass it, but it has never constrained anything.
+        dataset = create_array(
+            group,
             dataset_name,
             shape=shape,
             chunks=chunks,
             dtype=dtype,
             compressor=resolve_compressor(self.compressor, dtype),
-            maxshape=maxshape,
             overwrite=True,
         )
 
@@ -1480,12 +1497,11 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             aprint("🔧 Finalizing Zarr store...")
 
             # Close the store to ensure all data is written
-            if hasattr(self.store, "close"):
-                self.store.close()
+            zarr_close(self.store)
 
             # Re-open the store to consolidate metadata
             # This ensures all groups and datasets are properly written to disk
-            store = zarr.open_group(self._store_path, mode="r+")
+            store = zarr_open_group(self._store_path, mode="r+")
 
             # Store scene-level position bounds (union of all node bounds)
             if self._scene_bounds is not None:
@@ -1526,17 +1542,16 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             self._warn_one_part_partition_anchors(store)
 
             # Now consolidate metadata with all data present
-            zarr.consolidate_metadata(store.store)
+            consolidate(store)
 
             # Compute content hashes (post-order: children before parents)
             self._compute_content_hashes(store)
 
             # Re-consolidate to include hashes in .zmetadata
-            zarr.consolidate_metadata(store.store)
+            consolidate(store)
 
             # Close the store again
-            if hasattr(store, "close"):
-                store.close()
+            zarr_close(store)
 
         except BaseException as e:
             # ANY failure (marker clearing, hover injection, or a finalize

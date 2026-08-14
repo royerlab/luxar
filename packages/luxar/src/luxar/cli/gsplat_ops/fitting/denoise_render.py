@@ -87,7 +87,12 @@ def run_denoise_volume_cmd(
             elif suffix in (".zarr",):
                 import zarr
 
-                zarr.save(str(output_path), denoised)
+                from luxar._zarr_compat import ZARR_FORMAT
+
+                # `zarr_format` is NOT optional here: zarr 3 defaults to format
+                # 3, so an unpinned `save` writes a `zarr.json` + `c/` store
+                # while everything else Luxar emits is format 2.
+                zarr.save(str(output_path), denoised, zarr_format=ZARR_FORMAT)
             else:
                 np.save(output_path, denoised)
             aprint("Done")

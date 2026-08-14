@@ -85,7 +85,7 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
       // Colors (texels 2/3 .rgb) and scalars (texel 5) are not needed
       // for picking; only the .w sharpness of texels 2/3 is read.
       int lineBase = int(luxarSortedIndex()) * 6;
-      int lineTexW = textureSize(uLineTex, 0).x;
+      int lineTexW = LUXAR_LINE_TEX_W;
       ivec2 texel0 = ivec2(lineBase % lineTexW, lineBase / lineTexW);
       vec4 lineT0 = texelFetch(uLineTex, texel0, 0);
       vec4 lineT1 = texelFetch(uLineTex, ivec2(texel0.x + 1, texel0.y), 0);

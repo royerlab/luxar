@@ -14,6 +14,7 @@ import numpy as np
 import pytest
 import zarr
 
+from luxar._zarr_compat import create_array, memory_group
 from luxar.encoding._encoders.delta_codec import (
     LuxarDelta,
     probe_delta_filter,
@@ -103,7 +104,8 @@ class TestRoundTrip:
     def test_zarr_array_round_trip_with_partial_last_chunk(self):
         codes = _smooth_codes(1000, 3, np.uint16)
         g = zarr.group()
-        g.create_dataset(
+        create_array(
+            g,
             "codes",
             data=codes,
             chunks=(256, 3),  # last chunk is partial (232 rows)
@@ -317,7 +319,7 @@ class TestEncoderIntegration:
         from luxar.encoding.modes import EncodingMode
         from luxar.encoding.semantic_types import SemanticType  # noqa: F401
 
-        g = zarr.group(store=zarr.MemoryStore())
+        g = memory_group()
         ArrayEncoder().encode(
             data=data,
             zarr_group=g,
@@ -342,8 +344,8 @@ class TestEncoderIntegration:
         assert arr.filters[0].get_config()["id"] == "luxar_delta_v1"
         # Delta is a pure storage transform: decode must be bit-identical to
         # an unfiltered encode of the same data.
-        g_ref = zarr.group(store=zarr.MemoryStore())
-        g_ref.create_dataset("a", data=np.asarray(arr), chunks=(4096, 3))
+        g_ref = memory_group()
+        create_array(g_ref, "a", data=np.asarray(arr), chunks=(4096, 3))
         np.testing.assert_array_equal(np.asarray(arr), np.asarray(g_ref["a"]))
         dec = ArrayDecoder().decode(arr, g)
         atol = float(np.ptp(pos, axis=0).max()) / 65535 * 2
@@ -359,7 +361,7 @@ class TestEncoderIntegration:
         base = np.cumsum(rng.normal(0, 0.01, size=(n, 3)), axis=0)
         diag = np.exp(base) + 0.5
         offd = np.cumsum(rng.normal(0, 0.005, size=(n, 3)), axis=0)
-        g = zarr.group(store=zarr.MemoryStore())
+        g = memory_group()
         ArrayEncoder().encode_cholesky_split(
             g,
             diag,
