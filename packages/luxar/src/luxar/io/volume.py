@@ -263,8 +263,15 @@ def _load_zarr_volume(
     """
     import zarr
 
+    from luxar._zarr_compat import open_store
+
     aprint(f"Loading Zarr: {path.name}")
-    store = zarr.open(str(path), mode="r")
+    # `open_store`, not a bare `zarr.open(str(path))`: zarr 2 sniffed a `.zip`
+    # suffix inside `normalize_store_arg` and handed back a ZipStore, but zarr 3
+    # does not — it treats the archive as a LocalStore directory and raises
+    # GroupNotFoundError. That would break `luxar gsplat fit data.zarr.zip`, a
+    # documented entry point, so the dispatch is explicit here.
+    store = zarr.open(store=open_store(path, mode="r"), mode="r")
 
     # Navigate to the target array
     if isinstance(store, zarr.Array):
