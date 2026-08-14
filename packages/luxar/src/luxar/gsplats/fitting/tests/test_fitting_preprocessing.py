@@ -713,9 +713,10 @@ class TestInitAmpsProvenance:
 
         np.testing.assert_allclose(declared.amplitudes, seed_amps, rtol=1e-6)
 
-        # Negative control, with the argument OMITTED so the DEFAULT is pinned
-        # too (nothing else guards the raw ``generate_seeds()`` workflow against a
-        # future default flip): the amplitudes are taken as raw-image-sampled,
+        # Negative control, with the argument OMITTED so the PUBLIC signature's
+        # default is pinned too — the complement of
+        # test_gsplatdata_seeds_default_to_raw_sampled, which pins the FitConfig
+        # dataclass default: the amplitudes are taken as raw-image-sampled,
         # the pedestal is subtracted from already-background-relative values and
         # all three sub-floor seeds collapse toward 0 (~4e-4 as measured).
         default = fit_gaussian_splats(
@@ -835,7 +836,9 @@ class TestInitAmpsProvenance:
 
         Re-estimating a floor on the already background-relative volume (or on its
         residuals) would eat signal, so this is a real invariant of the
-        progressive path and is otherwise unguarded. It is NOT, however, what
+        progressive path; ``test_progressive_floor_suppresses_background`` covers
+        it behaviourally, and this pins it at the call site. It is NOT, however,
+        what
         makes that path immune to the double subtraction this class guards:
         progressive pops any caller-supplied ``seeds`` and passes an int count per
         pass, so ``isinstance(seeds, GSplatData)`` is never true there and the
