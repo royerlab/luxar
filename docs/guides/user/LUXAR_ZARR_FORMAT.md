@@ -1801,27 +1801,38 @@ with LuxarZarrCompiler("output.luxar.zarr", enable_spatial_index=True) as compil
 
 ## Compatibility Notes
 
-- **Zarr format on disk:** **2**. Every store described above is a zarr *format 2*
-  store — `.zgroup` / `.zattrs` / `.zarray` documents, dot-separated chunk keys
-  (`positions/0.0`), and a consolidated `.zmetadata`. This is a property of the
-  FORMAT, independent of the library version.
-- **Zarr library:** **zarr-python 3** (`zarr>=3.2,<4`). Writing format 2 from a
-  3.x library is deliberate, and the two axes are pinned in exactly one place:
-  `luxar._zarr_compat.ZARR_FORMAT`. Being on 3.x is what lets Luxar *read* zarr
-  v3 stores produced by other tools (2.18 could not open one at all); it changes
-  nothing about what Luxar writes. The historical note here said "Format 2 (for
-  JavaScript compatibility)" — that reason is obsolete, since zarrita reads v3
-  natively; the live reasons are that no published store needs rewriting and that
-  consolidated metadata is not part of the v3 spec (see below).
+- **Zarr format on disk:** **3 for new stores, 2 for existing ones — both are
+  readable and neither is being rewritten.** A format-3 store carries one
+  `zarr.json` per node and slash-separated chunk keys under a `c/` prefix
+  (`positions/c/0/0`); a format-2 store carries `.zgroup` / `.zattrs` /
+  `.zarray` documents, dot-separated chunk keys (`positions/0.0`) and a
+  consolidated `.zmetadata`. Everything described above applies to both: the
+  attributes, the encodings and the node structure are identical, and only the
+  container differs. A tree holding both is the expected steady state, not a
+  migration window.
+- **Choosing the format you write:** the two axes are pinned in exactly one
+  place, `luxar._zarr_compat.ZARR_FORMAT`. Set `LUXAR_ZARR_FORMAT=2` to produce
+  format 2 for a tool that cannot read 3. It is an environment variable rather
+  than a flag because the process that writes is often not the one you invoked
+  (batch-fit workers, Slurm array tasks, parallel tile fits).
+- **Zarr library:** **zarr-python 3** (`zarr>=3.2,<4`). Being on 3.x is what lets
+  Luxar read zarr v3 stores produced by other tools — 2.18 could not open one at
+  all — and reading is version-agnostic regardless of what is being written.
 - **NumCodecs:** Required for compression support. The Luxar-owned
-  `luxar_delta_v1` filter is a zarr *v2 filter* — an entry in the `.zarray`
-  `filters` list — which the viewer resolves through zarrita's
-  `numcodecs.<id>` naming.
+  `luxar_delta_v1` filter exists once per format and produces **byte-identical**
+  chunks either way: at format 2 it is a numcodecs filter in the `.zarray`
+  `filters` list, resolved by the viewer through zarrita's `numcodecs.<id>`
+  naming; at format 3 it is an array-to-array codec in the `zarr.json` `codecs`
+  chain, resolved under the bare `luxar_delta_v1`. The viewer registers both
+  names because both formats are live.
 - **Consolidated Metadata:** **Required in practice**, not merely recommended.
   The viewer's scene loader builds its entire node graph from the store's
-  consolidated listing and has no directory-walking fallback. Note this is also
-  an argument for staying on format 2: consolidated metadata is a standard part
-  of the v2 spec, whereas for v3 it is an experimental zarr-python extension.
+  consolidated listing and has no directory-walking fallback. Format 2 writes a
+  separate `.zmetadata`; format 3 embeds `consolidated_metadata` in the root
+  `zarr.json`. For v3 this is a zarr-python extension rather than part of the
+  spec — zarr says so with a warning on every write — but zarrita implements it,
+  so it remains load-bearing for the viewer in both formats. A third-party v3
+  reader that does NOT implement it will see the arrays but not the fast listing.
 - **Browser Support:** Via zarrita.js library
 
 ## Future Extensions (Planned)

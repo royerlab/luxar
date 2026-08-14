@@ -433,10 +433,15 @@ Compression gains from:
 
 **External**:
 - `zarr>=3.2,<4`: Storage backend. Note the library version and the on-disk
-  format are separate axes — Luxar writes zarr **format 2** from zarr-python 3.
-  Both are pinned in `luxar._zarr_compat`, which is the only module that names a
-  zarr format; go through its helpers (`open_group`, `create_array`,
-  `consolidate`, ...) rather than calling `zarr.*` directly.
+  format are separate axes — Luxar writes zarr **format 3** by default
+  (`LUXAR_ZARR_FORMAT=2` still produces format 2) and READS both, so existing
+  format-2 stores keep working untouched. Both axes are pinned in
+  `luxar._zarr_compat`, the only module that names a zarr format; go through its
+  helpers (`open_group`, `create_array`, `consolidate`, ...) rather than calling
+  `zarr.*` directly. Code that inspects a store on disk should use its
+  bi-format readers (`read_array_meta`, `read_node_attrs`, `is_consolidated`)
+  instead of naming `.zarray` / `.zattrs` / `.zmetadata`, which exist in only
+  one of the two formats.
 - `numpy>=2.0`: Array operations
 - `numcodecs`: Blosc compressor (`DEFAULT_COMP`)
 - `arbol>=0.3.5`: Progress logging
