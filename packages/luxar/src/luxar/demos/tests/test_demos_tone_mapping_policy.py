@@ -44,9 +44,9 @@ blind flip.
 
 This guard pins that policy so a new demo cannot copy-paste a ``"Neutral"``
 into the tree without stating a reason: every statically known ``tone_mapping``
-in the demo package — a literal, a signature default, or a module-level string
-constant — must be ``"ACES"`` unless its module is in :data:`EXCEPTIONS` below,
-which carries the justification with it.
+in the demo package — a literal, a signature default, or a string constant —
+must be ``"ACES"`` unless its module is in :data:`EXCEPTIONS` below, which
+carries the justification with it.
 
 Scope and method mirror the other AST lints in this directory: the module set
 comes from ``_scanned_modules`` (a denylist, so a new demo joins automatically),
@@ -56,13 +56,15 @@ the demo modules are heavy. A module that sets no tone mapping at all is out of
 scope: the viewer's own default is ACES, so silence already complies.
 
 "Statically known" is a real boundary, not a hedge. The scan resolves exactly
-three shapes — an inline literal call keyword, a signature default, and a
-module-level string constant — and reads nothing else. A conditional expression
+three shapes — an inline literal call keyword, a signature default, and a plain
+``NAME = "..."`` string constant — and reads nothing else. Constants are
+resolved in the scope they are USED in: a function-local binding shadows a
+module-level one of the same name, as do the function's own parameters, so a
+name never reports a value from a scope it cannot see. A conditional expression
 (``tone_mapping="Neutral" if hdr else "ACES"``), a ``**{...}`` splat, a
-tuple-unpacked constant, a constant bound inside an ``if:``/``try:`` block and
-``+=`` string building all read as nothing or as a partial string, and a
-function-LOCAL rebinding of a module-level name resolves to the MODULE value
-(so it can report the wrong one). That is by design — the guard reads a static
+tuple-unpacked constant, a constant bound inside an ``if:``/``try:`` block,
+``+=`` string building and a name bound by a ``lambda`` parameter all read as
+nothing or as a partial string. That is by design — the guard reads a static
 tree, it does not evaluate one — and none of those spellings occur in the demo
 package today.
 """
@@ -137,14 +139,6 @@ EXCEPTIONS: dict[str, tuple[tuple[str, ...], str]] = {
         "the pin was verified against this volume and Neutral rolls the peaks "
         "off instead of clipping them flat",
     ),
-    # --- in flight -------------------------------------------------------
-    # #1459's own half of the sweep (PR #1527) moves this demo from "Neutral"
-    # to a re-tuned ACES. Both values are accepted until that lands; delete
-    # this row once it has, so the demo rejoins the plain ACES rule.
-    "demo_flywire_connectome.py": (
-        ("Neutral", "ACES"),
-        "PR #1527 re-tunes its appearance and flips it to ACES",
-    ),
 }
 
 #: A floor, not a count: ~34 demo modules pin a tone mapping today. Well below
@@ -154,16 +148,19 @@ EXCEPTIONS: dict[str, tuple[tuple[str, ...], str]] = {
 MIN_MODULES_WITH_PINS = 25
 
 
-def _module_string_constants(tree: ast.Module) -> dict[str, str]:
-    """Module-level ``NAME = "..."`` bindings, annotated ones included.
+def _string_constants(body: list[ast.stmt]) -> dict[str, str]:
+    """``NAME = "..."`` bindings directly in ``body``, annotated ones included.
 
     ``TONE: Final = "Neutral"`` at module level, then
     ``ViewerConfig(tone_mapping=TONE)``, is a spelling this package's
     ``Final``-constant convention makes likely; without this it would read as
-    a non-literal and slip past the policy entirely.
+    a non-literal and slip past the policy entirely. A function body is read
+    the same way, so a local ``TONE = "Neutral"`` is caught in its own right
+    (and shadows a module constant of the same name — see
+    :func:`_function_scope`).
     """
     consts: dict[str, str] = {}
-    for stmt in tree.body:
+    for stmt in body:
         if isinstance(stmt, ast.Assign):
             targets: list[ast.expr] = list(stmt.targets)
             value = stmt.value
@@ -189,41 +186,90 @@ def _as_string(node: ast.expr, consts: dict[str, str]) -> str | None:
     return None
 
 
+def _function_scope(
+    node: ast.FunctionDef | ast.AsyncFunctionDef, consts: dict[str, str]
+) -> dict[str, str]:
+    """``consts`` as seen from inside ``node``'s body.
+
+    Its own string constants win, and its parameters shadow an outer constant of
+    the same name — a parameter carries no policy of its own, which is what
+    keeps ``tone_mapping=tone_mapping`` (a forwarded value) from being read as
+    whatever a module happens to bind that name to.
+    """
+    args = node.args
+    params = [*args.posonlyargs, *args.args, *args.kwonlyargs]
+    params += [a for a in (args.vararg, args.kwarg) if a is not None]
+    scope = dict(consts)
+    for param in params:
+        scope.pop(param.arg, None)
+    scope.update(_string_constants(node.body))
+    return scope
+
+
+def _keyword_values(node: ast.Call, consts: dict[str, str]) -> list[str]:
+    """``tone_mapping=`` values passed to one call."""
+    values: list[str] = []
+    for kw in node.keywords:
+        if kw.arg == "tone_mapping":
+            value = _as_string(kw.value, consts)
+            if value is not None:
+                values.append(value)
+    return values
+
+
+def _default_values(args: ast.arguments, consts: dict[str, str]) -> list[str]:
+    """``tone_mapping`` signature defaults of one function."""
+    positional = args.posonlyargs + args.args
+    pairs = list(
+        zip(positional[len(positional) - len(args.defaults) :], args.defaults)
+    ) + [(a, d) for a, d in zip(args.kwonlyargs, args.kw_defaults) if d is not None]
+    values: list[str] = []
+    for arg, default in pairs:
+        if arg.arg == "tone_mapping":
+            value = _as_string(default, consts)
+            if value is not None:
+                values.append(value)
+    return values
+
+
+def _collect(node: ast.AST, consts: dict[str, str], found: list[str]) -> None:
+    """Walk ``node``, appending every statically known ``tone_mapping`` value.
+
+    ``consts`` is the name → string binding visible AT ``node``: module-level
+    constants, overridden by those of each enclosing function body. Descending
+    with a per-scope map (rather than walking the whole tree against one
+    module-level map) is what makes a name resolve to the value the interpreter
+    would see, instead of to a same-named module constant it shadows.
+    """
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        # Defaults and decorators are evaluated in the ENCLOSING scope; only the
+        # body sees the function's own names.
+        found.extend(_default_values(node.args, consts))
+        for outer in [node.args, *node.decorator_list]:
+            _collect(outer, consts, found)
+        scope = _function_scope(node, consts)
+        for stmt in node.body:
+            _collect(stmt, scope, found)
+        return
+    if isinstance(node, ast.Call):
+        found.extend(_keyword_values(node, consts))
+    for child in ast.iter_child_nodes(node):
+        _collect(child, consts, found)
+
+
 def _tone_mappings(path: Path) -> list[str]:
     """Every statically known ``tone_mapping`` value written in ``path``.
 
     Covers both spellings the demo package uses: a call keyword
     (``ViewerConfig(tone_mapping="ACES")``) and a function-signature default
     (``_interop_common.build_interop_scene(..., tone_mapping: str = "Neutral")``),
-    each either as a literal or as a module-level string constant. A value that
-    is neither (``tone_mapping=tone_mapping``, a forwarded parameter) carries no
-    policy of its own and is skipped.
+    each either as a literal or as a string constant resolved in its own scope.
+    A value that is neither (``tone_mapping=tone_mapping``, a forwarded
+    parameter) carries no policy of its own and is skipped.
     """
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    consts = _module_string_constants(tree)
     found: list[str] = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Call):
-            for kw in node.keywords:
-                if kw.arg == "tone_mapping":
-                    value = _as_string(kw.value, consts)
-                    if value is not None:
-                        found.append(value)
-        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            args = node.args
-            positional = args.posonlyargs + args.args
-            pairs = list(
-                zip(positional[len(positional) - len(args.defaults) :], args.defaults)
-            ) + [
-                (a, d)
-                for a, d in zip(args.kwonlyargs, args.kw_defaults)
-                if d is not None
-            ]
-            for arg, default in pairs:
-                if arg.arg == "tone_mapping":
-                    value = _as_string(default, consts)
-                    if value is not None:
-                        found.append(value)
+    _collect(tree, _string_constants(tree.body), found)
     return found
 
 
@@ -265,21 +311,14 @@ def test_every_exception_is_real_and_justified() -> None:
         assert name in scanned, f"EXCEPTIONS names {name}, which is not scanned"
         assert reason.strip(), f"EXCEPTIONS row for {name} carries no reason"
         values = _tone_mappings(scanned[name])
-        if "ACES" not in allowed:
-            # Only rows that FORBID ACES must still carry a pin. An
-            # ACES-allowing row is an in-flight flip (PR #1527), which may land
-            # either by pinning "ACES" or by dropping the pin and taking the
-            # viewer's ACES default — which this guard's own docstring calls
-            # compliant. Demanding a pin here would turn main red on that
-            # landing; the row is deleted by hand once the PR is in.
-            assert values, (
-                f"EXCEPTIONS names {name}, but it pins no tone mapping at all — "
-                f"delete the row; silence already means the viewer's ACES default"
-            )
+        assert values, (
+            f"EXCEPTIONS names {name}, but it pins no tone mapping at all — "
+            f"delete the row; silence already means the viewer's ACES default"
+        )
         assert set(values) <= set(allowed), (
             f"{name} pins {sorted(set(values))}, not {sorted(allowed)}"
         )
-        assert "ACES" not in values or len(allowed) > 1, (
+        assert "ACES" not in values, (
             f"{name} pins ACES, so its EXCEPTIONS row is dead — delete it"
         )
 
@@ -288,11 +327,11 @@ def test_the_guard_detects_a_stray_neutral(tmp_path: Path) -> None:
     """The three spellings the scan claims to cover really are covered.
 
     Those three and no more: an inline literal call keyword, a signature
-    default, and a module-level string constant (plus the forwarded-parameter
-    case, which correctly carries no policy). The dynamic spellings listed in
-    this module's docstring stay out of reach on purpose, so this is a
-    completeness check on the documented surface, not on every way a string can
-    reach ``tone_mapping``.
+    default, and a string constant — the last one resolved in the scope it is
+    used in (plus the forwarded-parameter case, which correctly carries no
+    policy). The dynamic spellings listed in this module's docstring stay out of
+    reach on purpose, so this is a completeness check on the documented surface,
+    not on every way a string can reach ``tone_mapping``.
     """
     call = tmp_path / "demo_stray_call.py"
     call.write_text('ViewerConfig(tone_mapping="Neutral")\n', encoding="utf-8")
@@ -323,3 +362,27 @@ def test_the_guard_detects_a_stray_neutral(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     assert _tone_mappings(forwarded) == []
+
+    # A constant is read in the scope it is USED in: a function-local binding
+    # is caught in its own right and shadows the module-level one, rather than
+    # the scan reporting the module's value for a pin that never uses it.
+    shadowed = tmp_path / "demo_shadowed_constant.py"
+    shadowed.write_text(
+        'TONE = "ACES"\n'
+        "def build():\n"
+        '    TONE = "Neutral"\n'
+        "    return ViewerConfig(tone_mapping=TONE)\n",
+        encoding="utf-8",
+    )
+    assert _tone_mappings(shadowed) == ["Neutral"]
+
+    # A parameter shadows an outer constant too, so a forwarded value stays
+    # policy-free even when the module binds that very name.
+    param = tmp_path / "demo_param_shadow.py"
+    param.write_text(
+        'tone_mapping = "Neutral"\n'
+        "def build(tone_mapping):\n"
+        "    return ViewerConfig(tone_mapping=tone_mapping)\n",
+        encoding="utf-8",
+    )
+    assert _tone_mappings(param) == []
