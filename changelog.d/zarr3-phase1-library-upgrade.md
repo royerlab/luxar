@@ -25,8 +25,23 @@ ceilings the old pin forced: `anndata<0.13` and `napari<0.8` (in two places), th
 latter having broken every CI environment build once already when the resolver
 backtracked napari into 2018-era sdists.
 
-Three zarr-3 behaviour changes were neutralised in the facade rather than left to
-call sites, because each fails *silently*:
+The most consequential behaviour change is one that has nothing to do with the
+format: **zarr 3 trusts consolidated metadata on read, and zarr 2 did not.** zarr 2
+only consulted `.zmetadata` through the separate `zarr.open_consolidated`, so a
+plain `open_group` always reported the arrays that were actually on disk. Under
+zarr 3's default, deleting an array directory from a consolidated store leaves it
+still *appearing* present — `"x" in group` is True and `array_keys()` still lists
+it — because the answer comes from a stale index. That silently disables Luxar's
+detection of a partially written store, which is precisely the failure mode the
+writers' crash-safety machinery exists to bound: a killed merge used to leave a
+partial store that the existence-gated batch-merge resume then treated as
+complete, and the readers' "this required array is missing" guards are the
+backstop. Reads therefore pass `use_consolidated=False`, restoring zarr-2
+semantics. The viewer is unaffected — it fetches `.zmetadata` itself over HTTP,
+which is what consolidated metadata is actually for.
+
+Four more zarr-3 behaviour changes were neutralised in the facade rather than left
+to call sites, because each fails *silently* or breaks a default:
 
 - **An omitted compressor is not "no compressor".** zarr 3 defaults `compressors`
   to `"auto"`, which is Blosc/lz4/clevel-5. Luxar stores its packed label blobs
@@ -44,6 +59,11 @@ call sites, because each fails *silently*:
   a production regression — the facade passes `zarr_format` explicitly and never
   reads that config, and a test flips the global default to 3 and asserts the
   facade still writes 2.
+- **`chunks=True` is rejected outright** ("True is not a valid chunk input"). zarr 2
+  spelled "choose chunks for me" that way; `luxar.typing_utils.ChunkSpec` still
+  carries it and `create_resizable_dataset` *defaults* to it, so every resizable
+  dataset would have failed. Mapped to `"auto"` (and `False` to a single chunk
+  spanning the array).
 
 Mechanical API churn along the way: `create_dataset` → `create_array` (109 call
 sites; `create_dataset` was removed in zarr 3), `DirectoryStore` →
