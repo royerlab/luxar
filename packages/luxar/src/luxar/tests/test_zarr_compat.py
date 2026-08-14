@@ -576,6 +576,42 @@ def _root_name(node: ast.expr) -> str | None:
     return node.id if isinstance(node, ast.Name) else None
 
 
+def _getattr_creating_call(func: ast.expr, modules: set[str]) -> bool:
+    """Is ``func`` a ``getattr(zarr, "open")``-style lookup of a creating call?
+
+    Reflection is a thin disguise, and closing it costs six lines. Only the
+    literal-string form is resolvable — a name computed at runtime is beyond any
+    static check, and a lint that pretended otherwise would be worse than one
+    with a stated limit.
+    """
+    if not (isinstance(func, ast.Call) and isinstance(func.func, ast.Name)):
+        return False
+    if func.func.id != "getattr" or len(func.args) < 2:
+        return False
+    target, attr = func.args[0], func.args[1]
+    return (
+        _root_name(target) in modules
+        and isinstance(attr, ast.Constant)
+        and attr.value in _ZARR_CREATING_CALLS
+    )
+
+
+def _is_zarr_creating_callee(
+    func: ast.expr, modules: set[str], direct: set[str]
+) -> bool:
+    """Does ``func`` name a zarr call that CREATES a node, in any of its spellings?
+
+    Three shapes reach a creating call: an attribute on a module bound to zarr
+    (including a chain like ``zarr.api.synchronous.open``), a bare name imported
+    from zarr, and a literal ``getattr`` lookup.
+    """
+    if isinstance(func, ast.Attribute):
+        return _root_name(func) in modules and func.attr in _ZARR_CREATING_CALLS
+    if isinstance(func, ast.Name):
+        return func.id in direct
+    return _getattr_creating_call(func, modules)
+
+
 def _format_unpinned_zarr_writes(source: str) -> list[int]:
     """Line numbers of zarr node-creating calls that pin no format."""
     try:
@@ -587,15 +623,7 @@ def _format_unpinned_zarr_writes(source: str) -> list[int]:
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
-        func = node.func
-        if isinstance(func, ast.Attribute):
-            # Resolve the chain root so `zarr.api.synchronous.open` is caught too.
-            if _root_name(func) not in modules or func.attr not in _ZARR_CREATING_CALLS:
-                continue
-        elif isinstance(func, ast.Name):
-            if func.id not in direct:
-                continue
-        else:
+        if not _is_zarr_creating_callee(node.func, modules, direct):
             continue
         if _is_read_only_call(node):
             continue
@@ -697,6 +725,32 @@ def test_the_format_lint_resists_the_obvious_evasions() -> None:
             "from luxar._zarr_compat import open_group, create_root_group\n"
             "open_group(p, mode='w')\n"
             "create_root_group(store)\n"
+        )
+        == []
+    )
+    # Reflection is a thin disguise, so the literal-string form is resolved.
+    assert _format_unpinned_zarr_writes(
+        "import zarr\ngetattr(zarr, 'open')(p, mode='w')\n"
+    ) == [2]
+    assert _format_unpinned_zarr_writes(
+        "import zarr as z\ngetattr(z, 'create_group')(store=s)\n"
+    ) == [2]
+    # ...but it must not fire on an unrelated object, on a non-creating call, or
+    # when the reflective call DOES pin the format.
+    assert (
+        _format_unpinned_zarr_writes(
+            "import zarr\n"
+            "getattr(zarr, 'open')(p, mode='w', zarr_format=2)\n"
+            "getattr(obj, 'open')(p, mode='w')\n"
+            "getattr(zarr, 'consolidate_metadata')(s)\n"
+        )
+        == []
+    )
+    # A name computed at runtime is beyond any static check. Pinned so the limit
+    # is a stated one rather than a surprise.
+    assert (
+        _format_unpinned_zarr_writes(
+            "import zarr\nname = 'open'\ngetattr(zarr, name)(p, mode='w')\n"
         )
         == []
     )

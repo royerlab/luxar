@@ -17,6 +17,8 @@ from typing import Any, List, Optional, Tuple
 import numpy as np
 from arbol import aprint
 
+from luxar._zarr_compat import is_zarr_path
+
 __all__ = [
     "decode_flat_channel_index",
     "load_volume",
@@ -100,8 +102,7 @@ def open_volume_lazy(path: Path, array_key: Optional[str] = None) -> Any:
     other command already read the shape of, and a different choice here would
     silently re-fit against a different (e.g. downsampled) array.
     """
-    suffix = path.suffix.lower()
-    if suffix == ".zarr" or (suffix == ".zip" and path.stem.endswith(".zarr")):
+    if is_zarr_path(path):
         import zarr
 
         from luxar._zarr_compat import open_store
@@ -311,7 +312,7 @@ def load_volume(
                 if len(keys) > 1:
                     aprint(f"  Using first array '{keys[0]}' (available: {keys})")
 
-    elif suffix == ".zarr" or (suffix == ".zip" and path.stem.endswith(".zarr")):
+    elif is_zarr_path(path):
         # Handles both plain .zarr directories and .zarr.zip archives.
         # zarr natively supports ZipStore so no extraction needed. With an
         # explicit --axes the raw array is loaded and sliced by _apply_axes_spec

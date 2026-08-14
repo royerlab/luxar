@@ -81,6 +81,7 @@ __all__ = [
     "create_array",
     "create_root_group",
     "is_missing_error",
+    "is_zarr_path",
     "memory_group",
     "open_group",
     "open_store",
@@ -101,6 +102,21 @@ ZARR_FORMAT = 2
 # sniffed these inside `zarr.open`; zarr 3 requires the store to be chosen
 # explicitly, so the sniffing lives here now.
 _ZIP_SUFFIXES = (".zip",)
+
+
+def is_zarr_path(path: str | Path) -> bool:
+    """Does ``path`` name a zarr store — a ``.zarr`` directory or a zipped one?
+
+    Input routing rather than store construction, but it lives here because it
+    needs exactly the same suffix knowledge as :func:`open_store`, and keeping
+    ``.zip`` awareness in one module is the point of that function existing.
+    Recognises the compound spellings Luxar actually produces, so
+    ``scene.luxar.zarr`` and ``fit.gsplats.zarr.zip`` both answer True.
+    """
+    p = Path(path)
+    if p.suffix.lower() == ".zarr":
+        return True
+    return p.suffix.lower() in _ZIP_SUFFIXES and p.stem.lower().endswith(".zarr")
 
 
 def _metadata_docs_exist(path: Path) -> bool:

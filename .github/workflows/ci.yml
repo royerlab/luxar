@@ -396,7 +396,13 @@ jobs:
         #
         # If newer interpreters are ever deliberately unsupported, the honest fix
         # is a `requires-python` upper bound, not a quiet single-leg matrix.
-        python-version: ${{ (github.event_name == 'pull_request') && fromJSON('["3.12"]') || fromJSON('["3.12", "3.14"]') }}
+        #
+        # The non-PR set is EVERY version the wheel's classifiers advertise, so
+        # "declared" and "tested" cannot drift apart: 3.13 was claimed but never
+        # exercised, which is the same species of lie as an untested 3.10 claim.
+        # Three legs off-PR is also what this job carried before the floor moved
+        # (3.10/3.11/3.12), so it costs the runner pool nothing new.
+        python-version: ${{ (github.event_name == 'pull_request') && fromJSON('["3.12"]') || fromJSON('["3.12", "3.13", "3.14"]') }}
     env:
       # Pin BLAS/OpenMP to one thread per leg. This suite runs SERIALLY, yet each
       # leg burned ~316% CPU on the self-hosted box -- numpy spawning threads to

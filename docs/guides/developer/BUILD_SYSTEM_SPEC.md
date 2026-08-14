@@ -421,14 +421,16 @@ a local pass:
 hatch run python -V     # the interpreter your tests actually used
 ```
 
-The `test` matrix has two legs: the floor, 3.12 (`requires-python = ">=3.12"`,
-which is what zarr 3.2+ requires), and the newest supported interpreter, 3.14.
-Both matter — `>=3.12` has no ceiling, `install-hatch` prefers the newest
-interpreter it can find, and a developer's `hatch env` therefore usually runs
-something newer than the floor. Run either explicitly:
+The `test` matrix carries one leg per version the wheel's classifiers advertise —
+3.12 (the floor, `requires-python = ">=3.12"`, which is what zarr 3.2+ requires),
+3.13, and 3.14 (the newest). All three matter: `>=3.12` has no ceiling,
+`install-hatch` prefers the newest interpreter it can find, and a developer's
+`hatch env` therefore usually runs something newer than the floor. Run any of them
+explicitly:
 
 ```bash
 hatch run test.py3.12:cov   # the floor, and the required CI context
+hatch run test.py3.13:cov
 hatch run test.py3.14:cov   # the newest supported
 ```
 
@@ -834,19 +836,20 @@ runs everything. The same trade as the per-PR Python matrix below: found on
 | Event | Python legs |
 |-------|-------------|
 | `pull_request` | `3.12` — the floor, and the one required status context |
-| `push` to `main` | `3.12`, `3.14` |
-| nightly `schedule` (09:17 UTC) | `3.12`, `3.14` |
+| `push` to `main` | `3.12`, `3.13`, `3.14` |
+| nightly `schedule` (09:17 UTC) | `3.12`, `3.13`, `3.14` |
 
 3.12 is the FLOOR (`requires-python = ">=3.12"`, what zarr 3.2+ requires) and is
 what the required `python-tests (3.12)` status context names, so it runs on every
 event. `>=3.12` has no ceiling, though: 3.13 and 3.14 are supported, `install-hatch`
 explicitly prefers them, and a developer's `hatch env` picks the newest interpreter
-on the box — so the newest supported version is exercised on the events that
-already run the whole suite, rather than left untested. Finding a break there
-within 24h is the trade against spending a second leg on every PR, on a box with
-five self-hosted slots. (If newer interpreters ever become deliberately
-unsupported, the honest fix is a `requires-python` upper bound, not a quiet
-single-leg matrix.)
+on the box. So the off-PR set is exactly the set of versions the wheel's
+classifiers advertise — "declared" and "tested" are kept identical by
+construction, because a claimed-but-never-exercised version is the same species of
+lie as an untested 3.10 claim would be. Finding a break within 24h is the trade
+against spending three legs on every PR, on a box with five self-hosted slots. (If
+newer interpreters ever become deliberately unsupported, the honest fix is a
+`requires-python` upper bound, not a quiet single-leg matrix.)
 
 This is also why the version-equality assertion in the job matters: it proves each
 leg really ran the interpreter it claims, rather than whatever pipx picked — the

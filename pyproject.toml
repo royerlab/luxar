@@ -376,10 +376,11 @@ dependencies = [
 ]
 
 [[tool.hatch.envs.test.matrix]]
-# Floor and newest supported, mirroring the CI matrix: `requires-python = ">=3.12"`
-# has no ceiling, so the version most developers actually run (their newest
-# interpreter) has to be testable too — `hatch run test.py3.14:cov`.
-python = ["3.12", "3.14"]
+# Every version the classifiers advertise, mirroring the CI matrix's non-PR set:
+# `requires-python = ">=3.12"` has no ceiling, so the version most developers
+# actually run (their newest interpreter) has to be testable too —
+# `hatch run test.py3.14:cov`.
+python = ["3.12", "3.13", "3.14"]
 
 [tool.hatch.envs.test.scripts]
 # `run` = full suite (local gate); `cov` deselects `slow` to match CI (fast,
