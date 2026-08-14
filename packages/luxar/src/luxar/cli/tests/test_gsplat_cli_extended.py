@@ -5410,6 +5410,59 @@ class TestLODCommand:
         assert result.exit_code == 0, f"failed:\n{result.stdout}"
         assert out.exists()
 
+    def test_truncation_sigmas_passes_through_as_none_by_default(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path, monkeypatch
+    ) -> None:
+        """#1180: an absent ``--truncation-sigmas`` must reach ``RecipeParams``
+        as ``None`` — the sentinel the additive builders resolve to the dataset's
+        own ``truncation_radius``. Substituting a float here (the historical
+        ``else 3.0``) re-hardcodes the 3σ pruning bug, invisibly: the build still
+        succeeds, just at a support the data never had. An explicit value is
+        forwarded verbatim.
+        """
+        import luxar.gsplats.lod.recipes as recipes_mod
+
+        seen: list[object] = []
+        real = recipes_mod.build_recipe
+
+        def _spy(data, recipe, params):
+            seen.append(params.truncation_sigmas)
+            return real(data, recipe, params)
+
+        monkeypatch.setattr(recipes_mod, "build_recipe", _spy)
+
+        default_out = tmp_path / "default.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(default_out),
+                "--recipe",
+                "stream",
+            ],
+        )
+        assert result.exit_code == 0, f"failed:\n{self._io(result)}"
+        assert seen == [None], seen
+
+        explicit_out = tmp_path / "explicit.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(explicit_out),
+                "--recipe",
+                "stream",
+                "--truncation-sigmas",
+                "2.0",
+            ],
+        )
+        assert result.exit_code == 0, f"failed:\n{self._io(result)}"
+        assert seen[-1] == pytest.approx(2.0), seen
+
 
 class TestAdditiveCommand:
     """`gsplat additive` gives every leaf of an existing tree an additive
@@ -6404,6 +6457,56 @@ class TestInfoVolumeTruncation:
         out = tmp_path / f"r{radius}.gsplats.zarr"
         data.save(out)
         return out
+
+    @staticmethod
+    def _volume_stat(stdout: str, row: str) -> float:
+        """The number printed on one row of the VOLUME statistics table.
+
+        Scoped to the volume table: ``_print_statistics_table`` renders the same
+        row names for the amplitude distribution just above it. Not line-anchored
+        — arbol prefixes each line with its own tree glyph.
+        """
+        table = stdout.split("Volume Statistics:", 1)[1]
+        match = re.search(rf"\b{row}\s*:\s*(\S+)", table)
+        assert match is not None, f"no {row!r} row in:\n{table}"
+        return float(match.group(1))
+
+    def test_printed_volumes_are_computed_at_the_dataset_radius(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """The volume NUMBERS — not only the labels — come from the dataset's σ.
+
+        Labels and computation are two separate reads of ``truncation_radius``,
+        so the headers can correctly say "1-Sigma" while ``_compute_splat_volumes``
+        is still called with the old hardcoded 3.0. That is exactly the #1180
+        mis-measurement, and a label-only assertion cannot see it. These splats
+        are unit-sigma (identity Cholesky), so their volume is ``T**ndim``: at
+        radius 1.0 the table must print 1.0, where a 3σ computation prints 27.
+        """
+        from luxar.cli.gsplat_ops.inspect_commands import _compute_splat_volumes
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        path = self._gsplats_at_radius(tmp_path, 1.0)
+        data = GSplatData.load(path)
+        expected = _compute_splat_volumes(
+            data.cholesky_factors, data.ndim, data.truncation_radius
+        )
+        at_3 = _compute_splat_volumes(data.cholesky_factors, data.ndim, 3.0)
+        # Precondition: the two candidate computations are 3**ndim apart, so the
+        # printed 6-decimal / 4-significant-digit forms cannot coincide.
+        assert float(np.mean(at_3)) == pytest.approx(27.0 * float(np.mean(expected)))
+
+        r = runner.invoke(app, ["gsplat", "info", str(path), "--no-histograms"])
+        assert r.exit_code == 0, f"failed:\n{r.stdout}"
+        out = _plain(r.stdout)
+
+        for row, reduce in (("Min", np.min), ("Mean", np.mean), ("Max", np.max)):
+            printed = self._volume_stat(out, row)
+            assert printed == pytest.approx(float(reduce(expected)), rel=1e-6), row
+            assert printed != pytest.approx(float(reduce(at_3)), rel=1e-3), row
+        # The SUMMARY line reports the same array through a different formatter.
+        assert f"Mean splat volume (1σ): {float(np.mean(expected)):.4e}" in out
+        assert f"{float(np.mean(at_3)):.4e}" not in out
 
     @pytest.mark.parametrize("ndim", [2, 3, 4])
     def test_volumes_scale_as_truncate_to_the_ndim(self, ndim: int) -> None:

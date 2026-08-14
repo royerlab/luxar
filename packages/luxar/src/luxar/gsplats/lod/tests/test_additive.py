@@ -1077,11 +1077,19 @@ def _sigmas_seen_by_gram(monkeypatch, call) -> list[float]:
 
 
 def test_resolve_truncation_sigmas_reads_the_dataset() -> None:
-    """``None`` resolves to the dataset's own radius; an explicit value wins."""
-    from luxar.gsplats.lod.additive import resolve_truncation_sigmas
+    """``None`` resolves to the dataset's own radius; an explicit value wins.
 
-    data = _gsplat_at_radius(2.75, n=4)
-    assert resolve_truncation_sigmas(None, data) == pytest.approx(2.75)
+    The radius here is deliberately NOT ``DEFAULT_TRUNCATION_RADIUS``: asserting
+    on a 2.75 dataset would also pass for a resolver that never looked at ``data``
+    and just returned the constant, so it would not test the "reads the dataset"
+    claim at all.
+    """
+    from luxar.gsplats.lod.additive import resolve_truncation_sigmas
+    from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
+
+    data = _gsplat_at_radius(1.5, n=4)
+    assert data.truncation_radius != pytest.approx(DEFAULT_TRUNCATION_RADIUS)
+    assert resolve_truncation_sigmas(None, data) == pytest.approx(1.5)
     assert resolve_truncation_sigmas(3.0, data) == pytest.approx(3.0)
 
 
@@ -1191,7 +1199,8 @@ def test_make_additive_lod_prunes_at_the_TARGET_levels_radius(monkeypatch) -> No
     """#1180 follow-up: the σ must come from the substitutive level being pruned.
 
     Per-sub-LOD truncation radii are independent and really round-trip (see
-    ``gsplats/io/tests/test_save_load.py::test_per_level_truncation_radius_roundtrip``),
+    ``TestTruncationRadiusRoundtrip::test_per_level_truncation_radius_roundtrip``
+    in ``gsplats/io/tests/test_save_load.py``),
     so resolving from ``data`` — whose radius is the FINEST leaf's — prunes the
     selected level at a support it does not claim. Here the finest level is 1.0
     and level 1 is 4.0; ``substitutive_level=1`` must prune at 4.0.

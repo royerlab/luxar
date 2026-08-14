@@ -119,15 +119,20 @@ def resolve_truncation_sigmas(
     canonical :data:`~luxar.typing_utils.constants.DEFAULT_TRUNCATION_RADIUS`
     (2.75) was pruned at a support it never had. ``getattr`` with that same
     constant as fallback mirrors the defensive read in
-    ``GSplatData.principal_radii`` (``gsplats/_data/metrics.py``) for the
-    (structural) case of a data-like object that exposes no radius at all.
+    ``GSplatData.principal_radii`` (``gsplats/_data/metrics.py``): it covers the
+    (structural) case of a data-like object that exposes no radius at all, and —
+    since ``getattr`` swallows any ``AttributeError``, including one raised
+    *inside* the property (``truncation_radius`` → ``additive_sublods[0]``) — a
+    mis-wired object too, which prunes at the constant rather than failing.
 
     An explicit value is checked here, locally: this σ is a *CPU pruning* cutoff
     (which pairs enter the sparse Gram), not a render uniform, so it carries no
     float32/shader bounds — any finite positive value is meaningful. Only a
-    non-positive or non-finite cutoff is rejected, because it would prune every
-    off-diagonal pair (or poison every radius) instead of emptying the Gram
-    silently.
+    *degenerate* cutoff is rejected, because it poisons the per-splat truncation
+    radii that feed the k-d-tree pair search and the Gram entries (``0`` → all
+    zero, negative → negative, NaN/inf → NaN/inf radii). A legitimately tiny σ
+    is accepted on purpose: it merely yields a diagonal-only Gram, degrading the
+    greedy ordering toward the score-only one rather than being an error.
     """
     if truncation_sigmas is None:
         return float(getattr(data, "truncation_radius", DEFAULT_TRUNCATION_RADIUS))
@@ -136,7 +141,8 @@ def resolve_truncation_sigmas(
         raise ValueError(
             "truncation_sigmas must be a finite value > 0 (it is the Mahalanobis "
             "cutoff for sparse-Gram pruning; a non-positive or non-finite cutoff "
-            f"prunes every off-diagonal pair), got {truncation_sigmas!r}"
+            "poisons every per-splat truncation radius, which is what the pair "
+            f"search and the Gram entries are built from), got {truncation_sigmas!r}"
         )
     return sigmas
 
