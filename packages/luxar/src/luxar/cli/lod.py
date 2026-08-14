@@ -35,6 +35,7 @@ from luxar.utils.lod_methods import (
 from .gsplat_ops.recipe_shared import (
     VALID_ADDITIVE_METHODS,
     VALID_SUBSTITUTIVE_METHODS,
+    carried_appearance,
     detect_store_encoding,
     estimate_bytes_per_splat,
     measure_store_bytes,
@@ -467,7 +468,6 @@ def lod_recipe(
             --compression-factor 8
     """
     from luxar.gsplats.gsplat_data import GSplatData
-    from luxar.gsplats.io.load_gsplats import read_authored_appearance
     from luxar.gsplats.io.save_gsplats import split_fitting_info, write_gsplats_tree
     from luxar.gsplats.lod.recipes import (
         RECIPE_NAMES,
@@ -659,12 +659,7 @@ def lod_recipe(
                 # A recipe rebuild owns the STRUCTURE, not the appearance: carry
                 # the source root's authored attrs across or they are silently
                 # replaced by the writer's defaults (#1600).
-                source_appearance = read_authored_appearance(input_path)
-                if source_appearance:
-                    aprint(
-                        "Carrying authored appearance: "
-                        + ", ".join(sorted(source_appearance))
-                    )
+                source_appearance = carried_appearance(input_path)
 
             # ── --refine volume: load the source volume (shared loader) ──
             target_volume: Any = None

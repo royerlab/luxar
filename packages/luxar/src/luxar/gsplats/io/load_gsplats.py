@@ -53,10 +53,14 @@ def read_authored_appearance(path: str | Path) -> Dict[str, Any]:
     A structure-only rebuild (``gsplat lod`` and friends) constructs fresh nodes
     that know nothing about the input's appearance, so without this the authored
     values are silently dropped and the writer's own defaults take their place —
-    ``blending_mode`` vanishes, ``opacity``/``gamma``/``intensity``/``absorption``
-    snap back to their identity, an authored ``colormap`` reverts to gray. Feed
-    the result to ``write_gsplats_tree(root_attrs=...)`` (or
-    ``GSplatData.save(root_attrs=...)``).
+    ``blending_mode`` vanishes and ``opacity``/``gamma``/``intensity``/
+    ``absorption`` snap back to their identity. Feed the result to
+    ``write_gsplats_tree(root_attrs=...)`` (or ``GSplatData.save(root_attrs=...)``).
+
+    Not every dropped attr is fixed by this: an authored ``colormap`` still
+    reverts to gray, and the 4x4 ``transform`` is deliberately left behind
+    because feeding a stored (column-major) matrix back through the writer
+    transposes it a second time. Both are documented on the key set below.
 
     Only keys actually present are returned, so an input that authored nothing
     yields ``{}`` and the writer's defaults apply unchanged. Missing/unreadable
@@ -66,6 +70,13 @@ def read_authored_appearance(path: str | Path) -> Dict[str, Any]:
     See :data:`~luxar.core.group.compositing.AUTHORED_APPEARANCE_ATTRS` for the
     key set and https://github.com/royerlab/luxar/issues/1600 for the invariant.
     """
+    # Imported here rather than leaning on the module-level name: this module's
+    # zarr access is moving to the format facade (``luxar._zarr_compat``), and a
+    # rewrite that drops the module-level import would leave this call raising
+    # NameError straight into the best-effort ``except`` below — i.e. the carry
+    # would go quietly back to doing nothing.
+    import zarr
+
     from luxar.core.group.compositing import AUTHORED_APPEARANCE_ATTRS
 
     p = Path(path)

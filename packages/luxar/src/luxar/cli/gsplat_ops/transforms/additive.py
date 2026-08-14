@@ -61,6 +61,7 @@ def run_additive_dataset(
 
         from luxar.cli.gsplat_ops.recipe_shared import (
             VALID_ADDITIVE_METHODS,
+            carried_appearance,
             detect_store_encoding,
             estimate_bytes_per_splat,
             measure_store_bytes,
@@ -69,10 +70,7 @@ def run_additive_dataset(
             validate_streaming_knobs,
         )
         from luxar.gsplats.gsplat_data import GSplatData
-        from luxar.gsplats.io.load_gsplats import (
-            load_gsplat_node,
-            read_authored_appearance,
-        )
+        from luxar.gsplats.io.load_gsplats import load_gsplat_node
         from luxar.gsplats.io.save_gsplats import split_fitting_info, write_gsplats_tree
         from luxar.gsplats.lod.additive import (
             clamp_counts_breakpoints,
@@ -112,12 +110,7 @@ def run_additive_dataset(
                 # know nothing about the input, so without this the writer's own
                 # defaults take over and every authored appearance value is lost
                 # (issue #1600) — the same missing propagation `gsplat lod` had.
-                source_appearance = read_authored_appearance(input_path)
-                if source_appearance:
-                    aprint(
-                        "Carrying authored appearance: "
-                        + ", ".join(sorted(source_appearance))
-                    )
+                source_appearance = carried_appearance(input_path)
             leaves = list(iter_leaves(node))
             n_leaves = len(leaves)
             total_stored = sum(leaf.n_splats for leaf in leaves)

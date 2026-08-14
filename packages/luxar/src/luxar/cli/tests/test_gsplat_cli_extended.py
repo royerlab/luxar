@@ -5435,6 +5435,7 @@ class TestLODCarriesAuthoredAppearance:
         "offset": 0.125,
         "layer": False,
         "visible": False,
+        "nd_transform": {"time": {"scale": 2.0, "offset": 1.0}},
     }
 
     #: Carried by the registry but not exercised here, each for a stated reason.
@@ -5442,9 +5443,6 @@ class TestLODCarriesAuthoredAppearance:
     #: unnoticed — it lands in neither dict and the coverage test fails.
     NOT_EXERCISED = {
         "join": "lines-only; a gsplats node rejects it",
-        "transform": "rewritten to column-major by prepare_transform_for_zarr, "
-        "so it is not attr-equal by construction",
-        "nd_transform": "needs scene Dimensions to validate against",
     }
 
     def test_authored_table_covers_the_registry(self) -> None:
@@ -5461,6 +5459,50 @@ class TestLODCarriesAuthoredAppearance:
             f"unaccounted={sorted(set(AUTHORED_APPEARANCE_ATTRS) - accounted)}, "
             f"stale={sorted(accounted - set(AUTHORED_APPEARANCE_ATTRS))}"
         )
+
+    def test_transform_is_not_carried(self) -> None:
+        """``transform`` is compositing but deliberately NOT carried.
+
+        The stored value is column-major; the leaf writer hands whatever it gets
+        to ``prepare_transform_for_zarr``, which reads row-major and transposes.
+        See :func:`test_an_authored_transform_does_not_break_the_rebuild` for
+        what carrying it actually did.
+        """
+        from luxar.core.group.compositing import (
+            AUTHORED_APPEARANCE_ATTRS,
+            COMPOSITING_ATTRS,
+        )
+
+        assert "transform" in COMPOSITING_ATTRS
+        assert "transform" not in AUTHORED_APPEARANCE_ATTRS
+
+    def test_an_authored_transform_does_not_break_the_rebuild(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """A source root transform must not be fed back through the writer.
+
+        The negative control for the exclusion above, on the LEAF-rooted path
+        (``stream`` → ``GSplatData.save``), which is where a carried transform is
+        transposed a second time: a translation lands in the bottom row and the
+        command dies on ``validate_transform`` ("bottom row must be [0, 0, 0,
+        1]"), and a rotation is silently inverted. Re-adding ``transform`` to the
+        carried set turns this exit 0 into exit 1.
+        """
+        from luxar.core.transforms import prepare_transform_for_zarr, translate
+
+        stored = prepare_transform_for_zarr(translate(5.0, 0.0, 0.0))
+        self._authored_input(medium_gsplats, {**self.AUTHORED, "transform": stored})
+        out = tmp_path / "with_transform.gsplats.zarr"
+        result = runner.invoke(
+            app, ["gsplat", "lod", str(medium_gsplats), str(out), "--recipe", "stream"]
+        )
+        assert result.exit_code == 0, f"failed:\n{result.stdout}"
+        got = json.loads((out / ".zattrs").read_text())
+        # Not carried at all — the rebuild leaves the attr alone rather than
+        # writing a re-transposed (wrong) one.
+        assert "transform" not in got
+        # ...and the rest of the appearance still travels.
+        assert got["blending_mode"] == "volumetric"
 
     @staticmethod
     def _authored_input(src: Path, authored: dict[str, Any]) -> None:
@@ -5558,26 +5600,38 @@ class TestLODCarriesAuthoredAppearance:
         assert "blending_mode" not in got
 
     def test_structural_attrs_win_over_a_carried_collision(
-        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+        self, medium_gsplats: Path, tmp_path: Path
     ) -> None:
         """A carried attr must never clobber a structural one.
 
-        The carry rides the writer's LOWEST-precedence channel, so even if a
-        source root somehow carried ``kind``/``type``, the rebuild's own
-        structure wins. Regression against re-introducing the
-        meta-clobbers-structural ordering bug from the other direction.
+        ``root_attrs`` rides the writer's LOWEST-precedence channel, so a
+        colliding ``kind``/``type`` loses to the tree's own structure.
+        Regression against re-introducing the meta-clobbers-structural ordering
+        bug from the other direction.
+
+        Driven at the writer rather than through the CLI on purpose:
+        ``read_authored_appearance`` filters to the appearance keys, so a
+        colliding ``kind`` can never reach ``root_attrs`` from a source root —
+        a CLI-level version of this test would pass with the precedence
+        reversed, which is exactly what it is meant to catch.
         """
-        self._authored_input(
-            medium_gsplats, {**self.AUTHORED, "kind": "bogus", "type": "bogus"}
-        )
+        from luxar.gsplats.io.load_gsplats import load_gsplat_node
+        from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+        from luxar.gsplats.tree import GSplatLodGroup
+
+        leaf, _ = load_gsplat_node(medium_gsplats)
         out = tmp_path / "collide.gsplats.zarr"
-        result = runner.invoke(
-            app,
-            ["gsplat", "lod", str(medium_gsplats), str(out), "--recipe", "adaptive"],
+        write_gsplats_tree(
+            out,
+            GSplatLodGroup(children=[leaf, leaf]),
+            root_attrs={
+                "kind": "bogus",
+                "type": "bogus",
+                "blending_mode": "volumetric",
+            },
         )
-        assert result.exit_code == 0, f"failed:\n{result.stdout}"
         got = json.loads((out / ".zattrs").read_text())
-        assert got["kind"] == "partition"
+        assert got["kind"] == "lod"
         assert got["type"] == "group"
         assert got["blending_mode"] == "volumetric"
 
