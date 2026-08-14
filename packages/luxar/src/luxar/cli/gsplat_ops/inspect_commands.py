@@ -787,8 +787,7 @@ def _print_gsplat_tree_summary(path: Path) -> None:
     """
     import shutil
 
-    import zarr
-
+    from luxar._zarr_compat import open_group as zarr_open_group
     from luxar.gsplats.io._archive import extract_compressed_zarr
     from luxar.gsplats.tree import (
         GSplatLodGroup,
@@ -805,7 +804,7 @@ def _print_gsplat_tree_summary(path: Path) -> None:
         if path.is_file():  # compressed archive
             zarr_path = extract_compressed_zarr(path)
             tmp = zarr_path.parent
-        root = zarr.open_group(str(zarr_path), mode="r")
+        root = zarr_open_group(str(zarr_path), mode="r")
         node = read_gsplat_node(root, root)
 
         aprint("\n" + "═" * 70)

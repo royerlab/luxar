@@ -60,7 +60,7 @@ with asection("3D DAPI Multi-Scale Decomposition Demo"):
             try:
                 store = zarr.open_group(mapper, mode="r")
                 aprint("Zarr group opened successfully")
-            except (zarr.errors.PathNotFoundError, zarr.errors.GroupNotFoundError):
+            except FileNotFoundError:
                 # Try as direct array
                 store = zarr.open_array(mapper, mode="r")
                 aprint("Zarr array opened successfully")

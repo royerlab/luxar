@@ -30,7 +30,7 @@ repository. There are two install stories, then per-machine additions:
 
 ## Common base (all profiles)
 
-Prerequisites: **Python 3.10+**, git, curl, `make`. Then:
+Prerequisites: **Python 3.12+**, git, curl, `make`. Then:
 
 ```bash
 git clone https://github.com/royerlab/luxar
@@ -141,7 +141,7 @@ owns the Python env here, so skip the Common-base `.venv` (or `deactivate` it
 now) — the build/verify steps below all route through `hatch run`.
 
 ```bash
-# 1. Bootstrap on the LOGIN node (python3.11/3.12 usually available)
+# 1. Bootstrap on the LOGIN node (python3.12 usually available)
 make setup-dev
 
 # 2. Tools land in ~/.local/bin — put it on PATH permanently

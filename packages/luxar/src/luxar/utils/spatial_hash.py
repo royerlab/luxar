@@ -841,11 +841,13 @@ class BatchedSpatialHashGrid:
 
         if cpu_indices.size > 0:
             # Fallback path for the heaviest queries — tiny in practice.
-            for qi in cpu_indices:
-                cand = per_q_cand[qi]
-                diff = self._points_np[cand] - query_np[qi][None, :]
+            # `ci`, not `qi`: `qi` is already bound above by an `enumerate`, so
+            # rebinding it to a numpy integer here would contradict that type.
+            for ci in cpu_indices:
+                cand = per_q_cand[ci]
+                diff = self._points_np[cand] - query_np[ci][None, :]
                 dist_sq = np.einsum("ij,ij->i", diff, diff)
-                self._fill_topk_row(out_dist[qi], out_idx[qi], cand, dist_sq, k)
+                self._fill_topk_row(out_dist[ci], out_idx[ci], cand, dist_sq, k)
 
         return out_dist, out_idx
 

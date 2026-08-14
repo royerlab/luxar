@@ -38,7 +38,9 @@ class TestProgressiveWriting:
             assert output_path.exists()
             store = zarr.open_group(output_path, mode="r")
             assert store.attrs["type"] == "scene"
-            assert ".zmetadata" in store.store
+            # See test_scene_methods: zarr 3's store is not a mapping, so check
+            # the consolidated document on disk directly.
+            assert (Path(output_path) / ".zmetadata").is_file()
 
     def test_progressive_points_writing(self) -> None:
         """Test that points are written immediately without keeping in memory."""
