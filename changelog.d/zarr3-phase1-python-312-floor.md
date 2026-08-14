@@ -23,8 +23,16 @@ and 3.14 are supported, `install-hatch` prefers them, and a developer's Hatch
 environment picks the newest interpreter on the box — so the version most people
 actually run is exercised too, within 24 h rather than on every PR. The off-PR set
 is exactly what the published classifiers advertise (3.12–3.14), so "declared" and
-"tested" cannot drift apart; the `test` Hatch matrix carries the same three legs. The `tomli` backport is dropped from the dev
-extra now that `tomllib` is always stdlib.
+"tested" cannot drift apart; the `test` Hatch matrix carries the same three legs.
+The `tomli` backport is dropped from the dev extra now that `tomllib` is always
+stdlib.
+
+`make setup-dev` now says so when it cannot find a supported interpreter. Both it
+and `install-hatch` scan newest-first for 3.12+, but the pipx branch is tried first
+and does not need one, so on a 3.11-only box with pipx both installed Hatch and
+moved on — and `setup-dev`'s environment step swallows the resulting failure with
+`|| true`, leaving a run that looks fine and never mentions the floor. The
+interpreter that later fails to appear is the useful thing to say.
 
 Reworking the matrix exposed a second, older bug: the `test` extra never declared
 `httpx`, which `fastapi.testclient` needs. It reached the default environment
