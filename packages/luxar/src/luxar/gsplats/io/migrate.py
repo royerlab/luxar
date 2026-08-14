@@ -427,6 +427,11 @@ def migrate_format(
     ``encoding_mode=EncodingMode.PRECISION`` for a lossless float32 migration of
     archival data. Other arrays (centers, etc.) follow the same per-array policy.
 
+    **Appearance is preserved.** The source root's authored compositing attrs
+    (``blending_mode``, ``opacity``, ``gamma``, ...) are carried onto the output
+    root — a layout upgrade must not restyle the dataset. See
+    :func:`~luxar.gsplats.io.load_gsplats.read_authored_appearance`.
+
     Returns the detected legacy format identifier (``"v1.0"``, ``"v1.1"``,
     ``"v2.0"``, ``"substitutive_dir"``, ``"v3.0-lod-pixel-size"``, or
     ``"v3.1-lod-pixel-size"``).
@@ -438,6 +443,7 @@ def migrate_format(
             unrecognised.
         FileNotFoundError: If ``input_path`` doesn't exist.
     """
+    from luxar.gsplats.io.load_gsplats import read_authored_appearance
     from luxar.gsplats.io.save_gsplats import write_gsplats_tree
 
     input_path = Path(input_path)
@@ -451,6 +457,14 @@ def migrate_format(
         )
 
     detected = detect_legacy_format(input_path)
+
+    # A migration owns the LAYOUT, not the look: the rewrite goes through the
+    # same node-tree writer as the rest of the rewriting family, so without this
+    # the writer's own defaults replace whatever the source root authored
+    # (#1600) — `blending_mode` vanishes, the multiplicative attrs snap back to
+    # their identity. Read before the overwrite branch below, which may remove
+    # the input when it IS the output.
+    source_appearance = read_authored_appearance(input_path)
 
     fitting_info: Dict[str, Any] = {}
     fitting_config: Dict[str, Any] = {}
@@ -525,6 +539,7 @@ def migrate_format(
         description=f"Migrated from legacy format {detected}",
         compress=compress,
         zip_deflate=zip_deflate,
+        root_attrs=source_appearance,
     )
 
     return detected

@@ -57,7 +57,7 @@ DEMO_META = {
         "gpu": "none",
         "local_data": None,
     },
-    "caches": [],
+    "caches": ["gsplats_interop_inria"],
     "outputs": ["gsplats_interop_inria_garden"],
 }
 

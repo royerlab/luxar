@@ -35,13 +35,16 @@ by this demo):
        SSIM-flat) → ~11% lighter with imperceptible quality loss.
 
 DATA STORAGE (important):
-    These fitted gsplats are ~220 MB and are **not bundled with the repo** and
-    **not yet hosted** for download. For now they live in a local store on this
-    machine (see ``DATA_DIR`` below). This is the outstanding follow-up: upload
-    the two ``.gsplats.zarr`` to the demo data host (as the other gsplat demos
-    do via ``load_precomputed_gsplats``) and switch ``load_neuromast_gsplats``
-    to fetch from there. Until then the demo runs only where ``DATA_DIR`` is
-    populated.
+    These fitted gsplats are ~220 MB unzipped and are **not bundled with the
+    repo**. Both channels are uploaded to the ``cc-by`` Zenodo record and pinned
+    by SHA-256 in ``demos/data_manifest.json`` (as the 133 MB
+    ``.gsplats.zarr.zip`` pair), but that record is still an unsubmitted draft —
+    it carries ``published: false``, so the fetch leg builds no URL and nothing
+    is downloadable yet. For now the data lives in a local store on this machine
+    (see ``DATA_DIR`` below), so the demo runs only where ``DATA_DIR`` is
+    populated. Once the record is published, switch ``resolve_channel_paths`` to
+    ``ensure_dataset("gsplats_4d_neuromast_2ch")`` (as the other gsplat demos do
+    via ``load_precomputed_gsplats``) and drop the local store.
 
 USAGE:
     python demo_gsplats_4d_neuromast_2ch.py [--no-serve] [--serve-only]
@@ -132,8 +135,9 @@ def resolve_channel_paths() -> list[Path]:
     """Resolve the per-channel gsplat paths in the local store.
 
     Returns the list of existing ``.gsplats.zarr`` paths (channel order), or
-    raises with an actionable message if the local store isn't populated —
-    since the data is not yet hosted for automatic download.
+    raises with an actionable message if the local store isn't populated — the
+    files are pinned in the manifest but their Zenodo record is still an
+    unpublished draft, so there is nothing to download yet.
     """
     paths = [DATA_DIR / ch["file"] for ch in CHANNELS]
     missing = [p for p in paths if not p.exists()]
@@ -142,7 +146,8 @@ def resolve_channel_paths() -> list[Path]:
             "Neuromast gsplat data not found in the local store:\n"
             + "\n".join(f"  - {p}" for p in missing)
             + f"\n\nThis demo's fitted gsplats (~220 MB) are not bundled with the "
-            f"repo and not yet hosted for download.\nPopulate {DATA_DIR} with the two "
+            f"repo, and their Zenodo record is still an unpublished draft, so "
+            f"they cannot be fetched yet.\nPopulate {DATA_DIR} with the two "
             "`.gsplats.zarr` (or set $LUXAR_NEUROMAST_DATA_DIR to their location).\n"
             "See the module docstring's PIPELINE / DATA STORAGE notes."
         )

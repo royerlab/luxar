@@ -32,6 +32,22 @@ DEMO_CACHE_ROOT = Path.home() / ".cache" / "luxar"
 # is still running. A unit test pins the name against DEMO_RUNS_DIR.
 NON_CACHE_DIRS = frozenset({"running"})
 
+# Cache-root directories that hold a hand-placed demo INPUT: bytes the user (or
+# a licence) had to put there by hand, with no download path to get them back.
+# That is a third classification, alongside a cache (re-downloadable, clearable)
+# and NON_CACHE_DIRS live state (not cached bytes at all). Unlike NON_CACHE_DIRS
+# these ARE inventoried — the user should see the bytes they are holding — but
+# they count as claimed by definition (never reported as an orphan) and `demo
+# cache clear` never deletes them: not by key, not under `--all`, not under
+# `--orphans`. `milky_way_gaia_3m` is the Gaia DR3 star catalog: CC BY-NC, so it
+# is not shipped, and recovering a deleted copy means a ~90-minute ESA TAP
+# re-query (see demo_gaia_milky_way_3m.CACHE_FILE; a unit test pins the name).
+# Deliberately INDEPENDENT of DEMO_META: a demo declaring the name in its
+# `caches` (which is how `luxar demo` reports it as cached) must not thereby
+# make it clearable, and no later edit to a demo file can quietly disarm the
+# guard.
+PROTECTED_INPUT_DIRS = frozenset({"milky_way_gaia_3m"})
+
 # Closed vocabularies for DEMO_META fields. The enforcement test in
 # tests/test_demo_meta.py validates every demo file against these.
 # category/geometry mirror scripts/gallery/manifest.json's vocabulary
@@ -121,7 +137,11 @@ class CacheEntry:
 
     path: Path
     size_bytes: int
-    demo_keys: tuple[str, ...]  # empty = orphan (claimed by no DEMO_META)
+    demo_keys: tuple[str, ...]  # claimed by these demos' DEMO_META (empty = none)
+    # A hand-placed demo input (:data:`PROTECTED_INPUT_DIRS`): claimed by
+    # definition, so an empty ``demo_keys`` here is NOT an orphan, and never
+    # deletable by `demo cache clear`.
+    protected: bool = False
 
 
 def validate_meta(meta: Any, path: Path) -> None:
@@ -351,7 +371,9 @@ def inventory_caches(cache_root: Optional[Path] = None) -> list[CacheEntry]:
     """Every cache directory under the cache root, mapped to the demos claiming it.
 
     Directories claimed by no demo's ``caches`` list are reported with an
-    empty ``demo_keys`` tuple (orphans — e.g. leftovers from renamed demos).
+    empty ``demo_keys`` tuple (orphans — e.g. leftovers from renamed demos),
+    except a :data:`PROTECTED_INPUT_DIRS` directory, which is flagged
+    ``protected`` and is claimed by definition however empty its ``demo_keys``.
     :data:`NON_CACHE_DIRS` is skipped entirely: those hold live state, not
     cached bytes.
     """
@@ -369,6 +391,7 @@ def inventory_caches(cache_root: Optional[Path] = None) -> list[CacheEntry]:
             path=subdir,
             size_bytes=dir_size_bytes(subdir),
             demo_keys=tuple(sorted(claims.get(subdir.name, ()))),
+            protected=subdir.name in PROTECTED_INPUT_DIRS,
         )
         for subdir in sorted(root.iterdir())
         if subdir.is_dir() and subdir.name not in NON_CACHE_DIRS

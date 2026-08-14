@@ -15,7 +15,11 @@
  *
  * Per scenario we record:
  *   - JS frame time stats (median, p95, p99, mean) over a fixed
- *     sample window
+ *     sample window, with the intervals contaminated by a GPU-timestamp
+ *     resolve excluded (see `skipNextDt`) — every measured row carries
+ *     the drop count in `excludedResolveIntervals` (and a note when it
+ *     is non-zero), because its frame stats are not comparable to a
+ *     JSON captured before that exclusion existed
  *   - A warmed post-settle one-shot frame interval (`postSettleFrameMs`,
  *     measured separately) — NOT a cold first render; see the field's
  *     doc comment
@@ -258,6 +262,19 @@ interface ScenarioResult {
    *  completed draws, so only the WebGL surface's monotonic
    *  `info.render.frame` is honest evidence here. */
   renderedFramesBefore?: number | null;
+  /**
+   * How many frame intervals `frameMs` dropped as GPU-timestamp resolve
+   * latency (0 when timestamps are unsupported or nothing was dropped).
+   * Present on every MEASURED row, absent on a skipped one — and absent
+   * entirely from a JSON captured before the exclusion existed, which is
+   * how `scripts/perf-diff.mjs` detects a diff that straddles the change
+   * and warns instead of printing the instrument's own delta as a win.
+   * Deliberately per-row and not run-level: the per-SHA `results.json` is
+   * merge-written by both perf benches, and the gsplat bench rebuilds the
+   * run header from its own known keys, so a run-level flag would vanish
+   * when it writes second.
+   */
+  excludedResolveIntervals?: number;
   gpu: GpuStats;
   notes: string[];
   skipped: boolean;
@@ -536,6 +553,20 @@ async function measureScenario(
       const start = lastTime;
       let collectingStart: number | null = null;
       let framesSinceResolve = 0;
+      // True when the PREVIOUS sampled frame awaited a GPU timestamp
+      // resolve: that await's full latency (queue flush + mapAsync
+      // round-trip — ~90 ms at 10 M segments) lands in the NEXT frame
+      // interval, so the sample is the instrument's cost, not the
+      // scene's. Measured 2026-08-13: with resolves included the 10 M
+      // WebGPU arm reads p95=109 ms; with the same run's contaminated
+      // intervals excluded (or timestamps off entirely) p95=21 ms.
+      let skipNextDt = false;
+      // How many intervals the flag above actually dropped. Reported so
+      // the exclusion is visible in the JSON rather than silent: it
+      // explains why `frameMs.count` sits below the frames drawn, and
+      // it marks the row as non-comparable to an archived baseline
+      // measured before the exclusion existed.
+      let excludedDts = 0;
 
       // Resolve cadence: 16 frames per resolve. Frequent enough for
       // good per-batch averages, infrequent enough that the
@@ -550,6 +581,7 @@ async function measureScenario(
         gpuPerFrameMs: number[];
         totalMs: number;
         supportsTimestamp: boolean;
+        excludedDts: number;
       }>((resolve) => {
         const watchdog = window.setTimeout(
           () =>
@@ -558,6 +590,7 @@ async function measureScenario(
               gpuPerFrameMs,
               totalMs: performance.now() - start,
               supportsTimestamp,
+              excludedDts,
             }),
           // Cap at 30s even for very slow scenes; better to bail than
           // hang the run indefinitely.
@@ -571,7 +604,15 @@ async function measureScenario(
           const warmupDone = frames >= cfg.warmupFrames || elapsedSinceStart > cfg.warmupMaxMs;
           if (warmupDone) {
             if (collectingStart === null) collectingStart = now;
-            dts.push(now - lastTime);
+            if (skipNextDt) {
+              // Interval contaminated by the previous frame's resolve
+              // await — drop it from the frame stats (the loop's
+              // minFrames floor keeps the sample count honest).
+              skipNextDt = false;
+              excludedDts++;
+            } else {
+              dts.push(now - lastTime);
+            }
 
             // Resolve GPU timestamps every N frames. The pool returns
             // the last-frame duration only (see header comment), so
@@ -597,6 +638,7 @@ async function measureScenario(
                 // batch.
               }
               framesSinceResolve = 0;
+              skipNextDt = true;
             }
           }
           lastTime = now;
@@ -612,6 +654,7 @@ async function measureScenario(
               gpuPerFrameMs,
               totalMs: elapsedSinceStart,
               supportsTimestamp,
+              excludedDts,
             });
           }
         };
@@ -649,6 +692,14 @@ async function measureScenario(
         medianMs: null,
         p95Ms: null,
       };
+  if (timing.excludedDts > 0) {
+    notes.push(
+      `${timing.excludedDts} frame interval(s) excluded as GPU-timestamp resolve latency — ` +
+        "frameMs.count sits below the frames drawn, and this row's frame stats (p95/p99 " +
+        'especially, but median and mean too) are not comparable to a baseline JSON ' +
+        'captured without the exclusion'
+    );
+  }
   if (!timing.supportsTimestamp) {
     notes.push('GPU timestamp-query unavailable (WebGL backend or missing feature)');
   } else if (timing.gpuPerFrameMs.length === 0) {
@@ -667,6 +718,7 @@ async function measureScenario(
     frameMs,
     postSettleFrameMs: postSettle.ms,
     renderedFramesBefore: postSettle.renderedFramesBefore,
+    excludedResolveIntervals: timing.excludedDts,
     gpu,
     notes,
     skipped: false,

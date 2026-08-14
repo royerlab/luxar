@@ -195,6 +195,28 @@ def estimate_bytes_per_splat(
     )
 
 
+def carried_appearance(input_path: Path) -> dict:
+    """The source root's authored appearance, announced as it is picked up.
+
+    A rebuilding command owns the STRUCTURE, not the look: the builders make
+    fresh nodes that know nothing about the input, so without this the writer's
+    own defaults take over and every authored value is lost (#1600). Pass the
+    result to ``write_gsplats_tree(root_attrs=...)`` /
+    ``GSplatData.save(root_attrs=...)``, which seeds the output root at LOWEST
+    precedence so the command's own structural attrs still win.
+
+    The announcement lives here rather than at each call site so a command reads
+    as one statement (and so ``lod_recipe`` stays under the complexity ratchet).
+    Quiet when the input authored nothing.
+    """
+    from luxar.gsplats.io.load_gsplats import read_authored_appearance
+
+    carried = read_authored_appearance(input_path)
+    if carried:
+        aprint("Carrying authored appearance: " + ", ".join(sorted(carried)))
+    return carried
+
+
 def measure_store_bytes(path: Path) -> int:
     """Total on-disk bytes of a ``.gsplats.zarr`` store (dir walk; ≈ wire cost).
 

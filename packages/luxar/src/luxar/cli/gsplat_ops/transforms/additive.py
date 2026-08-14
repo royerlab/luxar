@@ -61,6 +61,7 @@ def run_additive_dataset(
 
         from luxar.cli.gsplat_ops.recipe_shared import (
             VALID_ADDITIVE_METHODS,
+            carried_appearance,
             detect_store_encoding,
             estimate_bytes_per_splat,
             measure_store_bytes,
@@ -105,6 +106,11 @@ def run_additive_dataset(
         with asection(f"Additive laddering: {input_path.name}"):
             with asection("Loading tree"):
                 node, stats = load_gsplat_node(input_path, include_stats=True)
+                # This command owns the LADDER, not the look. The rebuilt nodes
+                # know nothing about the input, so without this the writer's own
+                # defaults take over and every authored appearance value is lost
+                # (issue #1600) — the same missing propagation `gsplat lod` had.
+                source_appearance = carried_appearance(input_path)
             leaves = list(iter_leaves(node))
             n_leaves = len(leaves)
             total_stored = sum(leaf.n_splats for leaf in leaves)
@@ -203,6 +209,7 @@ def run_additive_dataset(
                     fitting_config=fitting_config,
                     provenance_info=provenance_info,
                     pipeline_info=pipeline_info,
+                    root_attrs=source_appearance,
                 )
                 aprint(
                     f"  Saved laddered tree: {output_path} "
