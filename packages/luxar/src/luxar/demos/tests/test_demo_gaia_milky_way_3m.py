@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sys
+import zipfile
 from pathlib import Path
 
 import numpy as np
@@ -12,6 +14,8 @@ from luxar.demos._dependencies import SUBSTITUTIVE_LOD_MODULES, is_installed
 from luxar.demos.demo_gaia_milky_way_3m import (
     CACHE_FILE,
     DEMO_META,
+    RAW_ZARR_NAME,
+    _extract_raw_zarr,
     compute_radii,
     load_and_convert_gaia_data,
 )
@@ -30,6 +34,23 @@ def _write_tiny_gaia_table(path: Path, n_stars: int = 16) -> None:
     }
     for name, data in values.items():
         root.create_dataset(name, data=data, shape=data.shape, dtype=data.dtype)
+
+
+def _catalog_zip(tmp_path: Path, member_name: str) -> Path:
+    """Build a catalog zip whose one top-level directory is ``member_name``.
+
+    Mirrors ``scripts/generate_galaxy_simple.py``: the raw zarr is written next
+    to the zip and its files are stored relative to the PARENT, so the zip's
+    top-level directory name is exactly the ``--output`` stem.
+    """
+    raw = tmp_path / member_name
+    _write_tiny_gaia_table(raw)
+    zip_path = tmp_path / "catalog.zarr.zip"
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        for f in raw.rglob("*"):
+            if f.is_file():
+                zf.write(f, f.relative_to(tmp_path))
+    return zip_path
 
 
 def _marker_label(node: zarr.Group) -> str:
@@ -221,6 +242,70 @@ def test_declared_cache_namespace_is_where_the_catalog_is_read() -> None:
     # ...and that name resolves under the cache root, which is how
     # `registry.demo_cache_dirs` turns a claim into the directory it clears.
     assert DEMO_CACHE_ROOT / CACHE_FILE.parent.name == CACHE_FILE.parent
+
+
+class TestRawZarrExtraction:
+    """A catalog zip is only usable if its top-level directory is the one read.
+
+    The rebuild script's default ``--output`` is ``galaxy.zarr``, so the wrong
+    stem is the easy mistake to make — and it extracts *successfully*, failing
+    only later inside ``zarr.open``. These pin the guard that turns that into an
+    error naming the directory and the command, and the CLI paths that print it.
+    """
+
+    def test_the_expected_stem_extracts_to_a_readable_raw_table(
+        self, tmp_path: Path
+    ) -> None:
+        zip_path = _catalog_zip(tmp_path, RAW_ZARR_NAME)
+        dest = tmp_path / "unpacked"
+
+        raw_zarr_path = _extract_raw_zarr(zip_path, dest)
+
+        assert raw_zarr_path == dest / RAW_ZARR_NAME
+        # Readable by the converter, not merely present: the guard exists to
+        # protect that read, so the happy path asserts the read itself.
+        assert (
+            load_and_convert_gaia_data(raw_zarr_path, tmp_path / "s.luxar.zarr") == 16
+        )
+
+    def test_a_wrong_stem_names_the_directory_and_the_rebuild(
+        self, tmp_path: Path
+    ) -> None:
+        zip_path = _catalog_zip(tmp_path, "galaxy.zarr")  # the script's default
+
+        with pytest.raises(FileNotFoundError) as excinfo:
+            _extract_raw_zarr(zip_path, tmp_path / "unpacked")
+
+        message = str(excinfo.value)
+        assert RAW_ZARR_NAME in message
+        assert "scripts/generate_galaxy_simple.py" in message
+        assert "--output" in message
+
+    @pytest.mark.parametrize("extra_argv", [[], ["--no-serve"]], ids=["serve", "build"])
+    def test_both_entry_points_report_it_as_a_cli_error(
+        self, tmp_path: Path, monkeypatch, capsys, extra_argv: list[str]
+    ) -> None:
+        """Not a traceback: the message is advice, and it has to be readable.
+
+        Both invocations extract, in two different places (``main`` directly for
+        ``--no-serve``, ``load_and_convert_from_zip`` when serving), so both are
+        checked — a guard raised past one of them would bury the advice.
+        """
+        import luxar.demos.demo_gaia_milky_way_3m as demo
+
+        monkeypatch.setattr(demo, "CACHE_FILE", _catalog_zip(tmp_path, "galaxy.zarr"))
+        monkeypatch.setattr(demo, "REPO_FILE", tmp_path / "absent.zip")
+        monkeypatch.setattr(demo, "get_demos_output_dir", lambda: tmp_path / "out")
+        monkeypatch.setattr(sys, "argv", ["demo_gaia_milky_way_3m.py", *extra_argv])
+
+        with pytest.raises(SystemExit) as excinfo:
+            demo.main()
+
+        assert excinfo.value.code == 1
+        out = capsys.readouterr().out
+        assert RAW_ZARR_NAME in out
+        assert "scripts/generate_galaxy_simple.py" in out
+        assert "Traceback" not in out
 
 
 class TestDataFileResolution:

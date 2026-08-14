@@ -144,6 +144,7 @@ DEMO_META = {
 import sys
 import tempfile
 from pathlib import Path
+from typing import NoReturn
 
 import numpy as np
 import zarr
@@ -209,6 +210,18 @@ def resolve_data_file() -> Path:
         "of data from the ESA mission Gaia, processed by the Gaia Data "
         "Processing and Analysis Consortium (DPAC)."
     )
+
+
+def _exit_with_advice(exc: FileNotFoundError) -> NoReturn:
+    """Report a catalog problem as a CLI error and exit non-zero.
+
+    Both :func:`resolve_data_file` and :func:`_extract_raw_zarr` raise messages
+    written to be READ — where the file belongs, the command that rebuilds it —
+    so every entry point prints them the same way instead of letting one of them
+    surface as a traceback with the advice buried in it.
+    """
+    aprint(f"\n❌ Error: {exc}")
+    sys.exit(1)
 
 
 def _extract_raw_zarr(data_zip_path: Path, dest: Path) -> Path:
@@ -646,8 +659,7 @@ def main() -> None:
     try:
         data_file = resolve_data_file()
     except FileNotFoundError as e:
-        aprint(f"\n❌ Error: {e}")
-        sys.exit(1)
+        _exit_with_advice(e)
 
     # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
     if "--no-serve" in sys.argv:
@@ -655,8 +667,13 @@ def main() -> None:
         # Extract the raw .zarr from the zip to a temp dir, then convert to the
         # persistent output_path (same extraction the serve path uses — reading
         # the zip in place via a zip:// store is unreliable across zarr versions).
+        # A catalog built with the wrong `--output` stem fails HERE rather than at
+        # resolution, so this call needs the same clean-error exit.
         with tempfile.TemporaryDirectory(prefix="luxar_demo_gaia_") as tmpdir:
-            raw_zarr_path = _extract_raw_zarr(data_file, Path(tmpdir))
+            try:
+                raw_zarr_path = _extract_raw_zarr(data_file, Path(tmpdir))
+            except FileNotFoundError as e:
+                _exit_with_advice(e)
             load_and_convert_gaia_data(raw_zarr_path, output_path)
         aprint(f"Dataset generated at {output_path}")
         return
@@ -665,8 +682,13 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix="luxar_demo_gaia_") as tmpdir:
         tmp_path = Path(tmpdir)
 
-        # Load from zip and convert to Luxar format (extracts to temp_dir)
-        zarr_path = load_and_convert_from_zip(data_file, tmp_path)
+        # Load from zip and convert to Luxar format (extracts to temp_dir).
+        # Same clean-error exit as above: the extraction inside is where a
+        # wrong-stem catalog is caught.
+        try:
+            zarr_path = load_and_convert_from_zip(data_file, tmp_path)
+        except FileNotFoundError as e:
+            _exit_with_advice(e)
 
         aprint("")
         aprint("=" * 70)
