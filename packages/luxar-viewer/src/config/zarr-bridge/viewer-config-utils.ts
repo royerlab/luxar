@@ -8,7 +8,11 @@
 
 import type { ZarrViewerConfig } from '../../types/zarr';
 import type { RenderingSettings } from '../types';
-import { buildCinematicValues, CINEMATIC_SNAPSHOT_KEYS } from '../cinematic-preset';
+import {
+  buildCinematicValues,
+  CINEMATIC_SNAPSHOT_KEYS,
+  type CinematicSnapshotKeys,
+} from '../cinematic-preset';
 import { log, Modules } from '../../utils/log';
 
 /**
@@ -148,6 +152,22 @@ export function extractRenderingOverrides(
 }
 
 /**
+ * The two preset keys that describe the camera's framing. They are expanded as
+ * ONE unit: if the author set EITHER `camera.fov` or `camera.fov_preset`,
+ * NEITHER is filled from the preset.
+ *
+ * Why coupled — a framing is a unit, and half a pair is worse than neither
+ * half. Filling only the missing half makes the slider and the dropdown
+ * describe different lenses: an authored `fov_preset: '85mm Portrait'` beside
+ * the preset's 35 mm `fov` would actively drive the camera to 63° while the
+ * dropdown reads "85mm Portrait" (and the first panel open would rewrite the
+ * author's choice to '35mm' from the live FOV). Skipping both keeps exact
+ * parity with a non-cinematic scene in either direction: the author's camera
+ * authority wins whole, and the base default supplies the other half.
+ */
+const CINEMATIC_FOV_PAIR: readonly CinematicSnapshotKeys[] = ['fov', 'fovPreset'];
+
+/**
  * Expand `viewer_config.cinematic_mode = true` into the actual preset values
  * (ACES, subtle wide bloom, detector noise, vignette, 35 mm chromatic lens +
  * FOV).
@@ -170,11 +190,15 @@ export function extractRenderingOverrides(
  * So `{cinematic_mode: true, bloom_strength: 0.9}` yields the full preset with
  * `bloomStrength = 0.9`.
  *
+ * The one exception to the per-key rule is `CINEMATIC_FOV_PAIR` (declared just
+ * above) — see there for why `fov` and `fovPreset` are expanded (or skipped)
+ * together.
+ *
  * Strictly `=== true`: a `false`, `null`, absent, or non-boolean truthy value
  * expands nothing (a corrupt config must not silently restyle the scene).
  *
- * `cinematicMode: true` itself stays in the overrides, so the panel checkbox
- * still reads as on.
+ * `cinematicMode: true` itself stays in the overrides, so the control-rail
+ * "Cinematic mode" item still reads as active.
  *
  * @param zarrConfig - Viewer config from zarr root attributes
  * @param overrides - Overrides built so far; mutated in place
@@ -186,8 +210,10 @@ function expandCinematicPreset(
   if (zarrConfig.cinematic_mode !== true) return;
 
   const preset = buildCinematicValues();
+  const authorSetFraming = CINEMATIC_FOV_PAIR.some((key) => key in overrides);
   for (const key of CINEMATIC_SNAPSHOT_KEYS) {
     if (key in overrides) continue; // author-set — leave it alone
+    if (authorSetFraming && CINEMATIC_FOV_PAIR.includes(key)) continue;
     (overrides as Record<string, unknown>)[key] = preset[key];
   }
 }

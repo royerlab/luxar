@@ -240,24 +240,39 @@ describe('extractRenderingOverrides — cinematic_mode preset expansion', () => 
     expect(overrides.chromaticLensDispersion).toBe(preset.chromaticLensDispersion);
   });
 
-  it('keeps an author-set camera.fov / camera.fov_preset', () => {
+  // `fov` and `fovPreset` are a COUPLED pair: an author who set either half
+  // owns the framing, so neither half is filled from the preset. Filling only
+  // the missing half would make the slider and the dropdown name different
+  // lenses (and the first panel open would rewrite the author's preset name).
+  it('leaves BOTH fov keys alone when the author set camera.fov', () => {
     const overrides = extractRenderingOverrides({
       cinematic_mode: true,
       camera: { fov: 90 },
     });
-    const preset = buildCinematicValues();
 
     expect(overrides.fov).toBe(90);
-    // fov_preset was NOT set, so it still comes from the preset.
-    expect(overrides.fovPreset).toBe(preset.fovPreset);
+    expect('fovPreset' in overrides).toBe(false);
+    // The rest of the preset still expands around the untouched pair.
+    expect(overrides.toneMapping).toBe(buildCinematicValues().toneMapping);
+  });
 
-    // ...and the mirror case: fov_preset author-set, fov left to the preset.
-    const presetOnly = extractRenderingOverrides({
+  it('leaves BOTH fov keys alone when the author set camera.fov_preset', () => {
+    const overrides = extractRenderingOverrides({
       cinematic_mode: true,
       camera: { fov_preset: '85mm Portrait' },
     });
-    expect(presetOnly.fovPreset).toBe('85mm Portrait');
-    expect(presetOnly.fov).toBe(preset.fov);
+
+    expect(overrides.fovPreset).toBe('85mm Portrait');
+    expect('fov' in overrides).toBe(false);
+    expect(overrides.toneMapping).toBe(buildCinematicValues().toneMapping);
+  });
+
+  it('expands both fov keys when the scene authors no camera framing', () => {
+    const overrides = extractRenderingOverrides({ cinematic_mode: true });
+    const preset = buildCinematicValues();
+
+    expect(overrides.fov).toBe(preset.fov);
+    expect(overrides.fovPreset).toBe(preset.fovPreset);
   });
 
   it('treats a null camera value as unset, not as author-set', () => {
