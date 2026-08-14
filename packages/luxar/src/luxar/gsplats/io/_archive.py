@@ -5,6 +5,10 @@ or ``.gsplats.zarr.tar.gz`` (the live loader, the format migrator, and the CLI
 inspect/serve commands). Consolidated here so the security-critical extraction
 logic exists in exactly one place and cannot drift between call sites.
 
+Also home to :func:`read_archive_root_attrs`, a read-only *peek* that pulls the
+root ``.zattrs`` out of such an archive without extracting it — same layout and
+same threat model, so it belongs beside the extractor rather than in a caller.
+
 Threat model (CVE-2007-4559 and symlink-escape): a ``.gsplats.zarr`` archive
 legitimately contains only regular files and directories. Every member is
 validated *before* a single byte is extracted; symlinks, hardlinks, devices and
@@ -17,18 +21,25 @@ malicious archive leaves nothing behind.
 
 from __future__ import annotations
 
+import json
 import shutil
+import stat
 import tarfile
 import tempfile
 import zipfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+from typing import Any, Dict, Optional
 
-__all__ = ["extract_compressed_zarr"]
+__all__ = ["extract_compressed_zarr", "read_archive_root_attrs"]
 
 #: Reject archives with more members than this (archive-bomb guard).
 _MAX_MEMBERS = 5_000_000
 #: Reject archives whose declared total uncompressed size exceeds this (256 GiB).
 _MAX_TOTAL_UNCOMPRESSED_BYTES = 256 * 1024**3
+#: Refuse a ``.zattrs`` bigger than this (4 MiB). A zarr group's attrs are a
+#: small JSON object; anything this large is not attrs, and reading it into
+#: memory during a best-effort peek is not a cost worth paying.
+_MAX_ATTRS_BYTES = 4 * 1024**2
 
 
 def _is_zip(path: Path) -> bool:
@@ -151,3 +162,150 @@ def extract_compressed_zarr(compressed_path: Path) -> Path:
     except BaseException:
         shutil.rmtree(temp_dir, ignore_errors=True)
         raise
+
+
+def _root_zattrs_rank(name: str) -> Optional[tuple[int, int]]:
+    """How root-like a ``.zattrs`` member is; ``None`` if it is not one at all.
+
+    Lower sorts better. The key is ``(rank, depth)`` where depth counts the
+    directory components ABOVE the file:
+
+    * ``(0, 1)`` — ``<name>.gsplats.zarr/.zattrs``, the store root of every
+      archive :func:`_compress_zarr` writes. It ranks FIRST rather than by depth
+      alone because that is the same choice :func:`extract_compressed_zarr`
+      makes: it prefers a top-level ``.gsplats.zarr`` directory, so a loose
+      ``.zattrs`` sitting one level shallower is not the store's.
+    * ``(1, depth)`` — anything else, shallowest first: a zarr-native ZipStore
+      keeps its root attrs at depth 0, and a child group's attrs
+      (``<top>/lod_0/.zattrs``) is deeper and so never outranks a root.
+    """
+    parts = PurePosixPath(name).parts
+    if not parts or parts[-1] != ".zattrs":
+        return None
+    depth = len(parts) - 1
+    if depth == 1 and parts[0].endswith(".gsplats.zarr"):
+        return (0, depth)
+    return (1, depth)
+
+
+def _zip_member_is_symlink(info: zipfile.ZipInfo) -> bool:
+    """Whether a zip member carries a unix symlink mode (never follow one)."""
+    return stat.S_ISLNK(info.external_attr >> 16)
+
+
+def _parse_attrs(raw: bytes) -> Dict[str, Any]:
+    """Decode a ``.zattrs`` payload; anything but a JSON object yields ``{}``."""
+    parsed = json.loads(raw.decode("utf-8"))
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _read_zip_root_attrs(path: Path) -> Dict[str, Any]:
+    """Root ``.zattrs`` of a zip archive, reading that one member's bytes only."""
+    with zipfile.ZipFile(path, "r") as zip_ref:
+        best: Optional[zipfile.ZipInfo] = None
+        best_rank = (0, 0)
+        # infolist() parses the central directory only — no member payload is
+        # decompressed by this scan.
+        for info in zip_ref.infolist():
+            if info.is_dir() or _zip_member_is_symlink(info):
+                continue
+            rank = _root_zattrs_rank(info.filename)
+            if rank is None:
+                continue
+            if best is None or rank < best_rank:
+                best, best_rank = info, rank
+        if best is None or best.file_size > _MAX_ATTRS_BYTES:
+            return {}
+        with zip_ref.open(best, "r") as handle:
+            # Read one byte past the cap so a member that under-declares its
+            # size in the central directory is caught rather than trusted.
+            raw = handle.read(_MAX_ATTRS_BYTES + 1)
+        if len(raw) > _MAX_ATTRS_BYTES:
+            return {}
+        return _parse_attrs(raw)
+
+
+#: The best possible ``_root_zattrs_rank``: a ``<name>.gsplats.zarr/.zattrs``.
+#: Nothing can outrank it, so the tar walk stops as soon as it sees one — and a
+#: gzipped tar has no index, so "walk every header" means inflating the whole
+#: stream, the very cost this peek exists to avoid. Every archive
+#: ``_compress_zarr`` writes hits this case, within the first couple of headers
+#: (``tarfile.add`` walks a directory in sorted order, so dotfiles come first).
+_BEST_ROOT_RANK = (0, 1)
+
+
+def _read_targz_root_attrs(path: Path) -> Dict[str, Any]:
+    """Root ``.zattrs`` of a tar.gz archive, reading that one member's bytes only.
+
+    Member HEADERS are walked lazily (never ``getmembers()``, which materializes
+    the whole archive), and only the winning member's payload is read. The walk
+    stops as soon as a member reaches :data:`_BEST_ROOT_RANK`; failing that it
+    runs to the end of the header stream, because a better-ranked ``.zattrs`` may
+    appear after a worse one and returning a child group's attrs as the root's
+    would silently author an appearance nobody asked for.
+    """
+    with tarfile.open(path, "r:gz") as tar_ref:
+        best: Optional[tarfile.TarInfo] = None
+        best_rank = (0, 0)
+        for member in tar_ref:
+            # Only regular files: a symlink named `.zattrs` is never followed.
+            if not member.isfile():
+                continue
+            rank = _root_zattrs_rank(member.name)
+            if rank is None:
+                continue
+            if best is None or rank < best_rank:
+                best, best_rank = member, rank
+                if best_rank == _BEST_ROOT_RANK:
+                    break
+        if best is None or best.size > _MAX_ATTRS_BYTES:
+            return {}
+        handle = tar_ref.extractfile(best)
+        if handle is None:
+            return {}
+        with handle:
+            return _parse_attrs(handle.read())
+
+
+def read_archive_root_attrs(path: str | Path) -> Dict[str, Any]:
+    """Read the ROOT ``.zattrs`` of a compressed ``.gsplats.zarr``, no extraction.
+
+    Costs ONE member: the archive index (zip central directory / tar headers) is
+    scanned for the root ``.zattrs``, and only that member's bytes are read.
+    Nothing is ever written to disk and no link is ever followed.
+
+    Both layouts are supported: ``_compress_zarr`` nests everything under one
+    top-level directory (``<name>.gsplats.zarr/.zattrs``), while a zarr-native
+    ZipStore puts ``.zattrs`` at the archive root. Which member counts as the root
+    follows :func:`_root_zattrs_rank`, i.e. the same choice
+    :func:`extract_compressed_zarr` makes — so a child group's attrs
+    (``<top>/fitting/.zattrs``) is never read as the root's.
+
+    Reading ``.zattrs`` directly — not consolidated ``.zmetadata`` — is the
+    correct source: this repo pins zarr 2.18.x, where ``zarr.open_group`` reads
+    per-node ``.zattrs`` and ignores ``.zmetadata`` unless opened via
+    ``open_consolidated``. So this matches exactly what the directory-store path
+    sees, and preferring ``.zmetadata`` would introduce a divergence, not fix one.
+
+    Args:
+        path: Path to a ``.gsplats.zarr.zip`` or ``.gsplats.zarr.tar.gz``.
+
+    Returns:
+        The root attrs as a dict. ``{}`` when the path is missing or is not one of
+        the two supported archive formats, when no ``.zattrs`` member exists, or
+        when the payload is oversized or not a JSON object.
+
+    Raises:
+        OSError, zipfile.BadZipFile, tarfile.TarError, UnicodeDecodeError,
+        json.JSONDecodeError: A corrupt or unreadable archive propagates; callers
+        peeking best-effort (see
+        ``luxar.gsplats.io.load_gsplats.read_authored_appearance``) catch it.
+    """
+    p = Path(path)
+    if not p.is_file():
+        return {}
+    if _is_zip(p):
+        return _read_zip_root_attrs(p)
+    if _is_targz(p):
+        return _read_targz_root_attrs(p)
+    return {}

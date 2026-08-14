@@ -9,7 +9,7 @@ from typing import Any, Dict
 import zarr
 
 from luxar.gsplats import GSplatData
-from luxar.gsplats.io._archive import extract_compressed_zarr
+from luxar.gsplats.io._archive import extract_compressed_zarr, read_archive_root_attrs
 
 
 def load_gsplats(
@@ -58,6 +58,10 @@ def read_authored_appearance(path: str | Path) -> Dict[str, Any]:
     the result to ``write_gsplats_tree(root_attrs=...)`` (or
     ``GSplatData.save(root_attrs=...)``).
 
+    Works on a ``.gsplats.zarr`` directory and on a ``.gsplats.zarr.zip`` /
+    ``.gsplats.zarr.tar.gz`` archive alike — both are first-class inputs to the
+    rebuild commands, so appearance must survive both (#1604).
+
     Only keys actually present are returned, so an input that authored nothing
     yields ``{}`` and the writer's defaults apply unchanged. Missing/unreadable
     stores yield ``{}`` rather than raising: this is a best-effort carry-over
@@ -70,12 +74,14 @@ def read_authored_appearance(path: str | Path) -> Dict[str, Any]:
 
     p = Path(path)
     try:
-        # Archives are handled by the caller's real load; peeking inside one just
-        # to read appearance would extract GBs a second time.
-        if not p.is_dir():
-            return {}
-        root = zarr.open_group(str(p), mode="r")
-        attrs = dict(root.attrs)
+        if p.is_dir():
+            root = zarr.open_group(str(p), mode="r")
+            attrs = dict(root.attrs)
+        else:
+            # An archive is peeked, not extracted: the root `.zattrs` is ONE
+            # member, so this costs a directory lookup plus a small JSON blob.
+            # A regular file that is not an archive yields {} from the helper.
+            attrs = read_archive_root_attrs(p)
     except Exception:
         return {}
     return {k: attrs[k] for k in sorted(AUTHORED_APPEARANCE_ATTRS) if k in attrs}
