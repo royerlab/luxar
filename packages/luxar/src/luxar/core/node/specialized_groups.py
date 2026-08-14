@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 from arbol import aprint
 
+from ...typing_utils.constants import LOD_SELECTORS
 from ...typing_utils.geometry_capabilities import (
     partition_capable_types,
     require_lod_display_type,
@@ -31,10 +32,12 @@ def add_lod_group_impl(
     **attrs: Any,
 ) -> "Group":
     """Body of :meth:`Node.add_lod_group`."""
-    if selector != "coverage":
+    if selector not in LOD_SELECTORS:
         raise ValueError(
-            f"selector must be 'coverage' (other modes reserved for "
-            f"future use), got {selector!r}"
+            f"selector must be one of {sorted(LOD_SELECTORS)} — it names the "
+            f"UNITS of the children's coverage_fraction thresholds "
+            f"(screen-area fraction vs the legacy diagonal metric) — got "
+            f"{selector!r}"
         )
     if default_level < 0:
         raise ValueError(f"default_level must be >= 0, got {default_level}")

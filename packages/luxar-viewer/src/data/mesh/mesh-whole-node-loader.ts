@@ -95,6 +95,22 @@ export class MeshWholeNodeLoader implements MeshDataLoader {
   private preflight: MeshPreflightResult | null = null;
 
   /**
+   * Serializes concurrent calls into {@link initialize} onto one metadata open.
+   *
+   * `initialize()` used to guard only with `if (this.handles) return` before its
+   * awaits — the exact "async initialization race" pattern the repo's own
+   * CLAUDE.md calls out. `fetch()`/`load()` were the only caller before
+   * {@link runPreflight} made `initialize` reachable from a second, independent
+   * entry point, so a concurrent `runPreflight()` + `loadMesh()` opens every
+   * `.zarray`/`.zattrs` twice and runs `preflightMesh` twice. Mirrors the
+   * `inFlight` latch on {@link load}: cleared once the attempt settles, and only
+   * if it is still OURS — a later call may already have installed a fresh
+   * attempt after this one settled — so a transient failure is retried rather
+   * than cached forever.
+   */
+  private initInFlight: Promise<void> | null = null;
+
+  /**
    * The decoded mesh, cached for the loader's lifetime.
    *
    * This is the whole point of the whole-node design: one fetch per node, and
@@ -164,14 +180,41 @@ export class MeshWholeNodeLoader implements MeshDataLoader {
   /**
    * Open metadata handles for every array the attrs declare, then run Stage 1.
    *
+   * Single-flight: a concurrent second call joins the first attempt rather than
+   * opening the same metadata again (see {@link initInFlight}).
+   */
+  private async initialize(): Promise<void> {
+    if (this.handles) return;
+    if (this.initInFlight) return this.initInFlight;
+
+    const mine = this.doInitialize();
+    this.initInFlight = mine;
+    try {
+      await mine;
+    } finally {
+      if (this.initInFlight === mine) this.initInFlight = null;
+    }
+  }
+
+  /**
+   * Open metadata handles for every array the attrs declare, then run Stage 1.
+   *
    * Opening is metadata-only — `zarr.open(..., { kind: 'array' })` reads
    * `.zarray` and `.zattrs` and nothing else — which is what makes it safe to do
    * for *all* declared arrays, including the label CSR pair v1 never fetches.
    * The budget has to see them to be a budget.
+   *
+   * Captures `generation` up front and guards BOTH publishes below with it,
+   * mirroring {@link load}'s own generation guard. Without this, a `dispose()`
+   * racing an in-flight `doInitialize()` — reachable with no `load()` in
+   * flight at all, since {@link runPreflight} calls this too, including during
+   * a dataset switch — would still let the metadata open complete and publish
+   * `this.preflight` / `this.handles` onto a torn-down loader, making the
+   * `dispose()` docstring's "a subsequent `loadMesh` re-initializes" false in
+   * that window: the stale, non-null handles would look already-initialized.
    */
-  private async initialize(): Promise<void> {
-    if (this.handles) return;
-
+  private async doInitialize(): Promise<void> {
+    const generation = this.generation;
     const open = async (name: string) => zarr.open(this.location.resolve(name), { kind: 'array' });
 
     let vertices: zarr.Array<zarr.DataType, zarr.Readable>;
@@ -211,8 +254,44 @@ export class MeshWholeNodeLoader implements MeshDataLoader {
     // `storeRoot` is passed so the preflight can follow an `array_ref` to the array
     // whose bytes are actually fetched — the referring array is a `(0, k)` stub, so
     // budgeting the handle alone charges ~48 bytes for a read that can pull gigabytes.
-    this.preflight = await preflightMesh(this.path, this.attrs, handles, zarr.root(this.zarrStore));
-    this.handles = handles;
+    const preflight = await preflightMesh(
+      this.path,
+      this.attrs,
+      handles,
+      zarr.root(this.zarrStore)
+    );
+
+    // Only publish if this loader has not been disposed since this attempt began —
+    // otherwise a dispose()-then-settle would resurrect `handles`/`preflight` on a
+    // torn-down loader (see this method's docstring).
+    if (generation === this.generation) {
+      this.preflight = preflight;
+      this.handles = handles;
+    }
+  }
+
+  /**
+   * Run Stage 1 (the metadata-only preflight) eagerly, and return what it
+   * established.
+   *
+   * Exists for one caller: `MeshProgressiveLoader.assertWithinByteBudget`
+   * (`./mesh-progressive-loader.ts`), which needs to charge every level of a
+   * reveal ladder against ONE byte budget before any level's chunk data is
+   * fetched — each level's own preflight only ever sees its own
+   * `MESH_DECODE_BUDGET_BYTES` ceiling, so nothing else adds them up. This is
+   * just {@link initialize} (idempotent — a `load()` that runs later reuses the
+   * SAME cached `handles`/`preflight`, so calling this first duplicates no
+   * request) with its result surfaced instead of stashed on a private field.
+   *
+   * Fetches no chunk data, same as the preflight it wraps.
+   */
+  async runPreflight(): Promise<MeshPreflightResult> {
+    await this.initialize();
+    const pre = this.preflight;
+    if (!pre) {
+      throw new LoaderError('Unexpected', this.path, new Error('mesh loader not initialized'));
+    }
+    return pre;
   }
 
   /**
@@ -466,5 +545,6 @@ export class MeshWholeNodeLoader implements MeshDataLoader {
     this.preflight = null;
     this.data = null;
     this.inFlight = null;
+    this.initInFlight = null;
   }
 }

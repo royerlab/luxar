@@ -433,8 +433,11 @@ def pop_reveal_knobs(
     # once it runs — which under a substitutive ladder is AFTER the wrapper
     # kind=lod group and its coarse children are on disk, leaving a partial group
     # that a corrected retry then trips over with "duplicate child name". Same
-    # cross-check the CLI does in `_parse_reveal_knobs`, so the two entry points
-    # agree. Only checkable when both are explicit: a derived `spatial_dims`
+    # cross-check the CLI does in `cli/reveal_options.py::parse_reveal_knobs`, so
+    # the two entry points agree — and since that module is now shared by
+    # `gsplat lod` and `mesh lod`, all three surfaces agree by construction rather
+    # than by three copies staying in step.
+    # Only checkable when both are explicit: a derived `spatial_dims`
     # (displayed dims / non-zero extent) is not known until the data is in hand.
     if (
         reveal_centre is not None

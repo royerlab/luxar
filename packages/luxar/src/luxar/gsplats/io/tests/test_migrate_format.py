@@ -529,7 +529,7 @@ class TestMigrateFormat:
             centers=np.zeros((3, 3), dtype=np.float32),
             amplitudes=np.ones(3, dtype=np.float32),
             cholesky_factors=_identity_chol(3),
-        ).save(current)  # writes the current (v3.3) node-tree
+        ).save(current)  # writes the current (v3.4) node-tree
         out = tmp_path / "out.gsplats.zarr"
         with pytest.raises(ValueError, match="already format v3"):
             migrate_format(current, out)
@@ -770,8 +770,9 @@ def _make_v3_lod_pixel_size(
 
 class TestMigrateV3LegacyLodAttrs:
     """v3.0/v3.1 stores whose kind=lod groups still carry the pre-v3.2
-    'pixel_size' selector attrs are detected and rewritten to the current v3.3 format
-    (selector='coverage' + derived coverage_fraction)."""
+    'pixel_size' selector attrs are detected and rewritten to the current format
+    (selector='screen-area' + re-derived screen-area coverage_fraction
+    thresholds — occupancy halving)."""
 
     def test_detect_v3_1_legacy_lod(self, tmp_path: Path) -> None:
         legacy = tmp_path / "legacy_lod.gsplats.zarr"
@@ -817,16 +818,21 @@ class TestMigrateV3LegacyLodAttrs:
         root = zarr.open_group(str(out), mode="r")
         assert root.attrs["format_version"] == GSPLATS_FORMAT_VERSION
         assert root.attrs["kind"] == "lod"
-        assert root.attrs["selector"] == "coverage"
+        # Migration re-derives SCREEN-AREA thresholds (occupancy halving).
+        assert root.attrs["selector"] == "screen-area"
         fractions = []
         for i in range(3):
             child_attrs = dict(root[f"child_{i}"].attrs)
             assert "min_pixel_size" not in child_attrs
             fractions.append(float(child_attrs["coverage_fraction"]))
-        # Derived sqrt(N_i/N_finest): strictly ascending, finest == 1.0.
+        # Derived occupancy halving (whole-object): [0, 0.25, 0.5] — strictly
+        # ascending, finest at the half-screen-area anchor.
+        from luxar.core.group.lod.group import WHOLE_OBJECT_FINEST_ANCHOR
+
         assert fractions == sorted(fractions)
         assert all(a < b for a, b in zip(fractions, fractions[1:]))
-        assert fractions[-1] == pytest.approx(1.0)
+        assert fractions == pytest.approx([0.0, 0.25, 0.5])
+        assert fractions[-1] == pytest.approx(WHOLE_OBJECT_FINEST_ANCHOR)
         # Carry-along groups survive the rewrite.
         assert root["fitting"].attrs["fitter_name"] == "test-fitter"
         assert root["pipeline"].attrs["lod_kind"] == "substitutive"
@@ -878,6 +884,7 @@ class TestMigrateV3LegacyLodAttrs:
         assert migrate_format(legacy, out) == "v3.1-lod-pixel-size"
         out_root = zarr.open_group(str(out), mode="r")
         assert out_root.attrs["format_version"] == GSPLATS_FORMAT_VERSION
-        assert out_root["part_0"].attrs["selector"] == "coverage"
+        # The re-derived nested ladder carries the screen-area selector too.
+        assert out_root["part_0"].attrs["selector"] == "screen-area"
         assert "coverage_fraction" in out_root["part_0"]["child_0"].attrs
         assert "min_pixel_size" not in out_root["part_0"]["child_0"].attrs

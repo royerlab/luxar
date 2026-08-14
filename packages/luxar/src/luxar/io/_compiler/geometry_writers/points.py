@@ -331,6 +331,14 @@ def write_points(
     # 7. Set default rendering attributes if not provided
     apply_default_render_attrs(attrs)
 
+    # POPPED BEFORE the attrs land, not after. `_skip_scene_bounds` is private
+    # plumbing between the ladder writers and this one — "the parent aggregates
+    # the bbox, do not do it per level" — and popping it below the
+    # `group.attrs.update(attrs)` wrote it to disk on every sub-LOD of every
+    # ladder. Harmless to a reader that ignores unknown keys, but it is an
+    # internal flag in the on-disk format, and it round-trips: a tool that reads a
+    # level's attrs and re-writes them hands it back as a caller attr.
+    skip_scene_bounds = bool(attrs.pop("_skip_scene_bounds", False))
     # 8. Store attributes
     group.attrs.update(attrs)
     group.attrs["type"] = "points"
@@ -355,7 +363,7 @@ def write_points(
     # when ``write_points_multi_lod`` is the caller — the parent
     # multi-LOD writer aggregates the global bounds once instead of
     # accumulating each subgroup's contribution separately.
-    if not attrs.pop("_skip_scene_bounds", False):
+    if not skip_scene_bounds:
         ctx.update_scene_bounds(position_bounds)
 
     # 10. Write spatial ordering metadata if built

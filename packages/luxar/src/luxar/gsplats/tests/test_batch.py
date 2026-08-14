@@ -1987,6 +1987,142 @@ class TestContentMerge:
         assert node.n_children == 2  # the empty box was skipped
         assert total_splats(node) == 70
 
+    def test_content_merge_carries_plan_split_planes_renumbered(
+        self, tmp_path: Path
+    ) -> None:
+        """The merge stamps the plan's split planes, RENUMBERED past skipped boxes.
+
+        Slot indices and written part indices diverge the moment a box is empty, so
+        a tree carried over verbatim would name parts that do not exist (or, worse,
+        the wrong ones — still a valid permutation, so it fails silently). Here box
+        1 is empty: the 3-leaf plan tree must arrive as a 2-leaf tree labelled
+        ``0``/``1``, and its plane must still separate the two surviving parts.
+        """
+        from luxar.gsplats.batch.manifest import output_filename
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+        from luxar.gsplats.io.load_gsplats import load_gsplat_node
+        from luxar.gsplats.planner.spec import FitPlan, PlanBox
+        from luxar.gsplats.tree import GSplatPartition
+
+        out = tmp_path / "batch"
+        tiles = out / "tiles"
+        tiles.mkdir(parents=True)
+
+        n_boxes = 3
+        # Boxes 0 and 2 hold splats (near 0 and near 100); box 1 is empty.
+        self._write_box(
+            tiles / output_filename(0, 0, 0, 1, 1, n_boxes, label="box"), 30, 0.0
+        )
+        (
+            tiles / (output_filename(0, 0, 1, 1, 1, n_boxes, label="box") + ".empty")
+        ).write_text("")
+        self._write_box(
+            tiles / output_filename(0, 0, 2, 1, 1, n_boxes, label="box"), 40, 100.0
+        )
+
+        # A plan whose tree splits box 0 off below 50, then 1 from 2 above it.
+        plan = FitPlan(
+            volume_shape=[128, 128, 128],
+            boxes=[
+                PlanBox(box=[0, 50, 0, 128, 0, 128], n_features=1, budget=1),
+                PlanBox(box=[50, 75, 0, 128, 0, 128], n_features=1, budget=1),
+                PlanBox(box=[75, 128, 0, 128, 0, 128], n_features=1, budget=1),
+            ],
+            overlap=0,
+            feature_method="peaks",
+            min_leaf=16,
+            max_leaf=64,
+            bsp_tree={
+                "axis": 0,
+                "split": 50.0,
+                "left": {"part": 0},
+                "right": {
+                    "axis": 0,
+                    "split": 75.0,
+                    "left": {"part": 1},
+                    "right": {"part": 2},
+                },
+            },
+        )
+        out.mkdir(parents=True, exist_ok=True)
+        plan.to_json(out / "plan.json")
+
+        manifest = self._content_manifest(out, n_boxes)
+        final = merge_batch_results(manifest, out, verbose=False)
+
+        node, _ = load_gsplat_node(final)
+        assert isinstance(node, GSplatPartition)
+        assert node.n_children == 2
+        tree = node.bsp_tree
+        assert tree is not None, "merged partition lost the plan's split planes"
+        # The subtree that held boxes 1 and 2 collapsed to the one survivor, so the
+        # 75.0 plane is gone and part 2 has been renumbered to child_index 1.
+        assert tree == {
+            "axis": 0,
+            "split": 50.0,
+            "left": {"part": 0},
+            "right": {"part": 1},
+        }
+        # ...and that plane really does separate the two written parts.
+        lo = np.concatenate(
+            [np.asarray(s.centers) for s in node.children[0].additive_sublods]
+        )
+        hi = np.concatenate(
+            [np.asarray(s.centers) for s in node.children[1].additive_sublods]
+        )
+        assert lo[:, 0].max() < 50.0 <= hi[:, 0].min()
+
+    def test_content_merge_skips_split_planes_when_plan_disagrees(
+        self, tmp_path: Path
+    ) -> None:
+        """A plan whose box count contradicts the manifest yields NO tree.
+
+        Mislabelled planes are worse than absent ones: the traversal still returns
+        a valid permutation, so the ordering silently points at the wrong parts
+        instead of falling back to the centroid heuristic.
+        """
+        from luxar.gsplats.batch.manifest import output_filename
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+        from luxar.gsplats.io.load_gsplats import load_gsplat_node
+        from luxar.gsplats.planner.spec import FitPlan, PlanBox
+
+        out = tmp_path / "batch"
+        tiles = out / "tiles"
+        tiles.mkdir(parents=True)
+        n_boxes = 2
+        for k, off in enumerate((0.0, 100.0)):
+            self._write_box(
+                tiles / output_filename(0, 0, k, 1, 1, n_boxes, label="box"), 20, off
+            )
+        # One box too many vs the manifest's n_tiles=2.
+        FitPlan(
+            volume_shape=[128, 128, 128],
+            boxes=[
+                PlanBox(box=[0, 43, 0, 128, 0, 128], n_features=1, budget=1),
+                PlanBox(box=[43, 86, 0, 128, 0, 128], n_features=1, budget=1),
+                PlanBox(box=[86, 128, 0, 128, 0, 128], n_features=1, budget=1),
+            ],
+            overlap=0,
+            feature_method="peaks",
+            min_leaf=16,
+            max_leaf=64,
+            bsp_tree={
+                "axis": 0,
+                "split": 43.0,
+                "left": {"part": 0},
+                "right": {
+                    "axis": 0,
+                    "split": 86.0,
+                    "left": {"part": 1},
+                    "right": {"part": 2},
+                },
+            },
+        ).to_json(out / "plan.json")
+
+        manifest = self._content_manifest(out, n_boxes)
+        node, _ = load_gsplat_node(merge_batch_results(manifest, out, verbose=False))
+        assert node.bsp_tree is None
+
     def test_content_merge_missing_box_raises(self, tmp_path: Path) -> None:
         """A box with neither a store nor an `.empty` marker (the task never ran)
         still raises — distinct from a legitimately-empty box."""
@@ -2506,3 +2642,164 @@ class TestStatusPackedSacctMapping:
         assert st.failed == 3
         assert st.running == 1
         assert st.unknown == 0
+
+
+class TestMergeRefineReachesEveryConsumer:
+    """`--merge-refine` must survive plan time and reach BOTH merge consumers.
+
+    There are three ways to merge a batch, and they read the recipe knobs from
+    different places: the explicit `batch-fit merge` command takes CLI options,
+    the local auto-merge (`batch-fit run`) reads ONLY the stored
+    `manifest.merge_recipe_args`, and the Slurm merge job gets those same stored
+    args re-emitted as CLI flags. A knob wired into just one of them is silently
+    dropped by the others — which is exactly what happened first time round, with
+    only the explicit command wired.
+    """
+
+    @staticmethod
+    def _args(**kw):
+        from luxar.cli.gsplat_ops.batch.planning import (
+            MergeConfig,
+            resolve_merge_recipe_args,
+        )
+
+        return resolve_merge_recipe_args(MergeConfig(**kw))
+
+    def test_recorded_at_plan_time(self) -> None:
+        args = self._args(recipe="levels", levels=1, refine="volume", refine_iters=7)
+        assert args["refine"] == "volume"
+        assert args["refine-iters"] == "7"
+
+    def test_reaches_the_local_auto_merge(self) -> None:
+        """`batch-fit run` builds its params from the stored dict alone."""
+        from luxar.cli.gsplat_ops.batch.recipe_args import build_merge_recipe_params
+
+        params = build_merge_recipe_params(
+            self._args(recipe="levels", refine="volume", refine_iters=7)
+        )
+        assert params.refine == "volume"
+        assert params.refine_iters == 7
+
+    def test_reaches_the_slurm_merge_job(self) -> None:
+        """The Slurm emitter turns each stored arg into ``--<key> <value>`` for the
+        merge command, so the stored KEY has to match that command's option name."""
+        args = self._args(recipe="levels", refine="volume", refine_iters=7)
+        emitted = " ".join(f"--{k} {v}" for k, v in args.items())
+        assert "--refine volume" in emitted
+        assert "--refine-iters 7" in emitted
+
+    def test_plan_time_validation_bites(self) -> None:
+        """A typo must cost nothing: caught before any tile is fitted, not after."""
+        import typer
+
+        with pytest.raises(typer.BadParameter, match="must be one of"):
+            self._args(recipe="levels", refine="bogus")
+        with pytest.raises(typer.BadParameter, match="only applies with"):
+            self._args(recipe="levels", refine_iters=5)
+        # A knob with no recipe used to be silently dropped.
+        with pytest.raises(typer.BadParameter, match="require a --merge-recipe"):
+            self._args(refine="volume")
+        # `stream` has no coarse levels to refine.
+        with pytest.raises(typer.BadParameter, match="not used by --merge-recipe"):
+            self._args(recipe="stream", refine="volume")
+
+    def test_absent_when_not_requested(self) -> None:
+        """Unset must stay unset, so a plan made before these knobs existed merges
+        byte-identically."""
+        args = self._args(recipe="levels", levels=1)
+        assert "refine" not in args and "refine-iters" not in args
+
+    def test_orphan_iters_still_bites_at_merge_time(self) -> None:
+        """`batch-fit merge --refine-iters N` with no --refine is an orphan too.
+
+        Plan time rejects it; the merge-time builder must agree rather than
+        recording an iteration count against a `refine` of "none" that never reads
+        it. Its `refine` may also come from the stored plan, so the resolved PAIR
+        is what gets validated.
+        """
+        import typer
+
+        from luxar.cli.gsplat_ops.batch.recipe_args import build_merge_recipe_params
+
+        with pytest.raises(typer.BadParameter, match="only applies with"):
+            build_merge_recipe_params({}, refine_iters=5)
+        # Resolved against a stored refine, the same pair is legal.
+        params = build_merge_recipe_params({"refine": "volume"}, refine_iters=5)
+        assert params.refine == "volume" and params.refine_iters == 5
+
+
+class TestMergeRefineSourceValidatedAtPlanTime:
+    """`--merge-refine volume` re-opens THIS input at merge time, which is AFTER
+    every tile has been fitted. Anything that makes the source unmappable has to
+    be caught while planning, or a mistake costs the whole fit."""
+
+    @staticmethod
+    def _error(axes, n_t=1, n_c=1):
+        from luxar.gsplats.batch.merge_orchestrator import volume_refit_source_error
+
+        return volume_refit_source_error(axes, n_t, n_c)
+
+    def test_the_mappable_shapes_pass(self) -> None:
+        # Stacked timelapse: the time axis is the one the re-fit walks.
+        assert self._error("t,z,y,x", n_t=3) is None
+        # Canonical OME-Zarr: the channel axis is pinned to the fitted channel.
+        assert self._error("t,c,z,y,x", n_t=3, n_c=1) is None
+        # Single timepoint: nothing is stacked, so the time axis is pinned too.
+        assert self._error("t,c,z,y,x", n_t=1, n_c=1) is None
+        assert self._error("z,y,x") is None
+
+    def test_the_unmappable_shapes_are_named(self) -> None:
+        assert "axis labels" in (self._error(None) or "")
+        assert "not recognised" in (self._error("q,y,x") or "")
+        assert "no spatial axis" in (self._error("t,c") or "")
+        assert "several channels" in (self._error("t,c,z,y,x", n_t=2, n_c=3) or "")
+        # A flat channel index folded over two axes has no single axis to pin.
+        assert "more than one axis" in (self._error("c,cam,z,y,x") or "")
+        # Timepoints stacked but no time axis to map them onto.
+        assert "no time axis" in (self._error("z,y,x", n_t=4) or "")
+
+    def test_the_planner_refuses_before_submitting(self, tmp_path) -> None:
+        """End-to-end: the guard is wired into plan_batch, not just available."""
+        import typer
+        import zarr
+
+        from luxar.cli.gsplat_ops.batch.planning import (
+            ContentKnobs,
+            DenoiseConfig,
+            FitConfig,
+            MergeConfig,
+            plan_batch,
+        )
+
+        source = tmp_path / "movie.zarr"
+        z = zarr.open(str(source), mode="w", shape=(3, 8, 8, 8), dtype="u2")
+        z[:] = np.zeros((3, 8, 8, 8), np.uint16)
+
+        def _plan(axes_list, refine="volume"):
+            return plan_batch(
+                input_path=source,
+                output_dir=tmp_path / "out",
+                tiling="uniform",
+                tile_size=8,
+                tile_overlap=0,
+                axes_list=axes_list,
+                array_key=None,
+                timepoints_slice=None,
+                channels_slice=None,
+                fit=FitConfig(),
+                denoise=DenoiseConfig(),
+                content=ContentKnobs(),
+                merge=MergeConfig(recipe="levels", levels=1, refine=refine),
+            )
+
+        with pytest.raises(typer.BadParameter, match="axis labels"):
+            _plan(None)
+        # The mode is NORMALISED before it is recorded, so the source check has to
+        # read it the same way — otherwise a padded value is stored as "volume"
+        # while skipping validation, and the failure resurfaces at merge time,
+        # after every tile has been fitted.
+        with pytest.raises(typer.BadParameter, match="axis labels"):
+            _plan(None, refine=" volume ")
+        # With labels the plan goes through, and records the knob for the merge.
+        result = _plan(["t", "z", "y", "x"])
+        assert result.manifest.merge_recipe_args["refine"] == "volume"

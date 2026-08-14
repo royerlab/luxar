@@ -806,8 +806,20 @@ def write_scene(
     flow: FlowField,
     streamlines: StreamlineGeometry,
     preset: StreamlinePreset,
+    streamline_lod: dict | None = None,
 ) -> None:
-    """Write the final Luxar scene."""
+    """Write the final Luxar scene.
+
+    ``streamline_lod`` is a ``substitutive_lod=`` spec dict for the
+    streamlines layer (``--streamline-lod``): the coarse levels are
+    synthesised gsplat impressions of the line field, swapped in by
+    screen-area occupancy (``selector="screen-area"``), so zoomed-out
+    framings render a cheap glow instead of all the polylines. The finest
+    level (the full lines) renders while the embryo occupies at least HALF
+    the screen — which the opening framing satisfies for this roughly
+    isotropic field — and each halving of occupied area steps one level
+    coarser.
+    """
     n_classes = len(data.anatomy_categories)
     palette = categorical_palette(n_classes)
 
@@ -931,6 +943,7 @@ def write_scene(
                     opacity=0.95,
                     intensity=LINE_INTENSITY,
                     layer=True,
+                    substitutive_lod=streamline_lod,
                 )
 
             add_reference_cube_to_scene(
@@ -995,6 +1008,7 @@ def generate_zebrahub_scene(
     h5ad_override: Path | None,
     recompute_field: bool,
     recompute_streamlines: bool,
+    streamline_lod: dict | None = None,
 ) -> tuple[ZebrahubData, FlowField, StreamlineGeometry]:
     """Run the full pipeline and write the Luxar scene."""
     h5ad_path = resolve_h5ad(cache_dir, h5ad_override)
@@ -1021,7 +1035,7 @@ def generate_zebrahub_scene(
         positions, valid, seed_indices, data.anatomy_codes, palette
     )
 
-    write_scene(output_path, data, flow, streamlines, preset)
+    write_scene(output_path, data, flow, streamlines, preset, streamline_lod)
     return data, flow, streamlines
 
 
@@ -1062,6 +1076,22 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         type=Path,
         default=None,
         help="Path to a local .h5ad file (skips Drive download).",
+    )
+    parser.add_argument(
+        "--streamline-lod",
+        action="store_true",
+        help=(
+            "Give the streamlines layer a substitutive LOD ladder: coarse "
+            "levels are synthesised gsplat impressions swapped in by "
+            "projected coverage, so zoomed-out framings render a cheap glow "
+            "instead of every polyline. Reuses the preset's field/streamline "
+            "caches; the output name gains a '_lod' suffix."
+        ),
+    )
+    parser.add_argument(
+        "--lod-device",
+        default="auto",
+        help="Device for the gsplat level synthesis (auto / cpu / cuda / mps).",
     )
     parser.add_argument("--recompute-field", action="store_true")
     parser.add_argument("--recompute-streamlines", action="store_true")
@@ -1154,6 +1184,23 @@ def main() -> None:
 
     cache_dir = args.cache_dir.expanduser()
 
+    # Thresholds come from the auto-derivation (screen-area occupancy halving:
+    # full lines while the embryo occupies at least half the screen, one level
+    # coarser per halving of occupied area). Routed through
+    # substitutive_lod_or_flat: building a ladder needs torch + scipy (not core
+    # deps), and the helper degrades to a flat leaf with a notice instead of a
+    # mid-build ModuleNotFoundError (the class-wide gate in
+    # tests/test_substitutive_lod_gated.py enforces this shape).
+    from luxar.demos import substitutive_lod_or_flat
+
+    streamline_lod = None
+    if args.streamline_lod:
+        streamline_lod = substitutive_lod_or_flat(
+            dict(compression_factor=4, levels=3, device=args.lod_device),
+            geometry="Lines",
+        )
+    lod_suffix = "_lod" if args.streamline_lod else ""
+
     if args.output is not None:
         output_path = args.output.expanduser()
         data, _flow, streamlines = generate_zebrahub_scene(
@@ -1163,6 +1210,7 @@ def main() -> None:
             args.h5ad,
             recompute_field,
             recompute_streamlines,
+            streamline_lod=streamline_lod,
         )
         aprint(
             f"Generated {len(data.positions):,} cells, "
@@ -1175,7 +1223,7 @@ def main() -> None:
     if args.no_serve:
         output_path = (
             get_demos_output_dir()
-            / f"zebrahub_velocity_streamlines_{preset.name}.luxar.zarr"
+            / f"zebrahub_velocity_streamlines_{preset.name}{lod_suffix}.luxar.zarr"
         )
         data, _flow, streamlines = generate_zebrahub_scene(
             output_path,
@@ -1184,6 +1232,7 @@ def main() -> None:
             args.h5ad,
             recompute_field,
             recompute_streamlines,
+            streamline_lod=streamline_lod,
         )
         aprint(
             f"Dataset generated at {output_path} "
@@ -1193,7 +1242,8 @@ def main() -> None:
 
     with tempfile.TemporaryDirectory(prefix="luxar_zebrahub_velocity_") as tmpdir:
         output_path = (
-            Path(tmpdir) / f"zebrahub_velocity_streamlines_{preset.name}.luxar.zarr"
+            Path(tmpdir)
+            / f"zebrahub_velocity_streamlines_{preset.name}{lod_suffix}.luxar.zarr"
         )
         data, _flow, streamlines = generate_zebrahub_scene(
             output_path,
@@ -1202,6 +1252,7 @@ def main() -> None:
             args.h5ad,
             recompute_field,
             recompute_streamlines,
+            streamline_lod=streamline_lod,
         )
 
         aprint("")

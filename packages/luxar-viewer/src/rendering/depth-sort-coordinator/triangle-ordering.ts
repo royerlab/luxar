@@ -27,10 +27,10 @@
  * two attributes. `geometry.index` is BOUND state, not sampled state: a shader
  * cannot choose between two index buffers, so the only way to swap would be to
  * reassign `geometry.index` — which is precisely the rebind of a drawn
- * geometry's index that `applyMeshIndices` exists to avoid (three caches the
- * attribute→GPU-buffer mapping in a `WeakMap` and frees it only from
- * `WebGLAttributes.remove()`, and the WebGPU backend caches a `RenderObject`
- * keyed on the geometry's bound attributes).
+ * geometry's index that `applyMeshIndices` exists to avoid (every backend caches
+ * the attribute→GPU-buffer mapping per attribute OBJECT and frees it only on
+ * geometry disposal, for whichever index is bound at that moment, so a replaced
+ * index's buffer is never freed at all).
  *
  * So the ordering is written into the ONE index buffer, and it is written
  * **atomically**: the whole visible prefix in one `set` + one update range, never

@@ -214,33 +214,17 @@ const SHADERS = [
   'mesh-flat-normal',
   'mesh-colormap',
   'mesh-pick',
-  // Shared math. These pin the LITERALS the TSL code generator emits —
-  // the textual half of each module's value-level parity contract (the
+  // Shared math. This pins the LITERALS the TSL code generator emits —
+  // the textual half of the module's value-level parity contract (the
   // pixel half is the parity spec's same-named test):
   //   'erf'               materials/_shared/erf.ts, the polynomial coefficients
-  //   'line-ray-integral' materials/line/ray-integral.ts, the #1352 volumetric
-  //                       line primitive: both numerical lanes, the lane
-  //                       select, all three float32 finiteness guards, and the
-  //                       capsule profile.
-  // THESE MUST STAY AHEAD OF ANY FUTURE GEOMETRY ENTRY (their order
-  // relative to each other does not matter — neither adds a `render`-group
-  // member, which is also why the volumetric-line entries below are
-  // unaffected by them): the shared `render` std140 uniform group
+  // IT MUST STAY AHEAD OF ANY FUTURE GEOMETRY ENTRY (it adds no
+  // `render`-group member): the shared `render` std140 uniform group
   // accumulates members in first-encounter order across the whole run,
   // so an entry built BEFORE the geometry shaders reorders
   // `cameraViewMatrix` / `cameraProjectionMatrix` in every subsequent
   // snapshot (49 files of spurious churn when 'erf' briefly led this list).
   'erf',
-  'line-ray-integral',
-  // Volumetric line PRIMITIVE (#1352, ?linePrimitive=volumetric) — one
-  // entry per distinct GRAPH: ortho sum (sideon; endon-ortho/joint/taper
-  // share its code, differing only in uniforms), perspective sum
-  // (adds the perspective ray + near-fade branches), peak family, and
-  // the colormap fragment-stage LUT sampling.
-  'line-volprim-sideon',
-  'line-volprim-endon-persp',
-  'line-volprim-peak',
-  'line-volprim-colormap',
   // Capsule line primitive (#1352, ?linePrimitive=capsule) — one entry per
   // distinct GRAPH: ortho additive (sideon; joint/fold/taper/fat share its
   // code), perspective (near-clip + fade branches), the max and volumetric

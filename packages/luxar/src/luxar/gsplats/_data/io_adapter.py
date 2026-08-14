@@ -53,9 +53,10 @@ class IOAdapterMixin(_GSplatDataOps):
                 per-leaf auto-detect — see ``write_gsplats_tree``.
 
         For a multi-substitutive dataset the per-level ``coverage_fraction`` LOD
-        switch thresholds (``sqrt(N_i/N_finest)``) are derived automatically — the
-        viewer anchors the finest at a quarter of the live viewport diagonal (any
-        normal full-frame view), so there is no per-dataset threshold knob. See
+        switch thresholds are derived automatically as screen-area fractions
+        (``selector="screen-area"``): full detail while the object occupies at
+        least half the screen, one level coarser per halving of occupied area —
+        so there is no per-dataset threshold knob. See
         ``core.group.lod.group.coverage_fractions``.
 
         Colors are written via the shared COLOR helper, which auto-detects SDR vs
@@ -91,10 +92,11 @@ class IOAdapterMixin(_GSplatDataOps):
         )
 
         # One authoring path: serialize this dataset's node tree to the current
-        # format (v3.3) via the shared walker (the same machinery the scene
+        # format (v3.4) via the shared walker (the same machinery the scene
         # compiler uses for leaves).
-        # Multi-substitutive → a kind=lod group whose per-level coverage_fraction is
-        # derived here (sqrt(N_i/N_finest)); a single level is a bare leaf.
+        # Multi-substitutive → a kind=lod group whose per-level coverage_fraction
+        # is derived here (screen-area occupancy halving); a single level is a
+        # bare leaf.
         from luxar.gsplats.tree import tree_from_substitutive_levels
 
         tree = tree_from_substitutive_levels(self.substitutive_levels)

@@ -17,6 +17,7 @@ import { describe, it, expect } from 'vitest';
 import * as zarr from '../../../../data/zarr';
 import { ArrayRefRegistry } from '../../../../data/array-decoder/decoder';
 import { MeshWholeNodeLoader } from '../../../../data/mesh/mesh-whole-node-loader';
+import { preflightMesh } from '../../../../data/mesh/preflight';
 import { LoaderError } from '../../../../data/scene-loader/nodes/load-leaf-error-dispatch';
 import { MESH_DECODE_BUDGET_BYTES } from '../../../../config/constants';
 import type { MeshMetadata, MeshViewState } from '../../../../types/mesh';
@@ -82,6 +83,27 @@ class RecordingStore {
   /** Reject any `get` for a key containing this substring, with this error. */
   rejectKeyContaining: { needle: string; error: Error } | null = null;
 
+  /**
+   * Parks EVERY request for this exact key, queuing each one's settler in
+   * request order — the `initialize()` counterpart of `parkFacesRead`,
+   * generalized so more than one metadata open can be held in flight
+   * SIMULTANEOUSLY. That is exactly what the `initInFlight` ownership race
+   * needs: an ORIGINAL attempt still open when a REPLACEMENT attempt starts
+   * its own, so the two can be released in either order — and, since the
+   * race only matters when the STALE attempt does NOT publish `handles`
+   * (only a successful `doInitialize()` does that), released as either a
+   * success or a failure.
+   */
+  parkKeyAlways: string | null = null;
+  /** Queued settlers for `parkKeyAlways` hits, oldest first. */
+  readonly parkedKeyResolvers: Array<(error?: Error) => void> = [];
+
+  /** Release the OLDEST still-pending `parkKeyAlways` request, if any. */
+  releaseNextParkedKeyRequest(error?: Error): void {
+    const settle = this.parkedKeyResolvers.shift();
+    if (settle) settle(error);
+  }
+
   get(key: string, opts?: { signal?: AbortSignal }): Promise<Uint8Array | undefined> {
     this.requested.push(key);
     this.signals.set(key, opts?.signal);
@@ -101,6 +123,14 @@ class RecordingStore {
           this.releaseParkedFacesRead = () => resolve(this.entries.get(key));
         });
       }
+    }
+    if (this.parkKeyAlways !== null && key === this.parkKeyAlways) {
+      return new Promise((resolve, reject) => {
+        this.parkedKeyResolvers.push((error) => {
+          if (error) reject(error);
+          else resolve(this.entries.get(key));
+        });
+      });
     }
     if (this.rejectKeyContaining && key.includes(this.rejectKeyContaining.needle)) {
       return Promise.reject(this.rejectKeyContaining.error);
@@ -544,6 +574,214 @@ describe('MeshWholeNodeLoader — whole-node residency', () => {
     loader.dispose();
     expect(signal!.aborted).toBe(true);
     void inFlight.catch(() => {}); // parked forever; keep it from surfacing
+  });
+});
+
+describe('MeshWholeNodeLoader — runPreflight()', () => {
+  // `runPreflight()` is `MeshProgressiveLoader.assertWithinByteBudget`'s door into
+  // charging a mesh reveal ladder's levels against ONE byte budget (#1517) — before
+  // this file, the only caller of `initialize()` was `fetch()`/`load()`. These pin
+  // the two things that make it safe to add as a second public entry point: it
+  // reports the exact number the ladder sums (not a re-derivation that could drift
+  // from it), fetches no chunk data, and does not cost a later `loadMesh()` a
+  // second metadata round trip.
+
+  it('reports the same accountedBytes as calling preflightMesh directly on the same handles', async () => {
+    const attrs = meshAttrs();
+    const store = buildStore(attrs, tetArrays());
+    const loc = zarr.root(store).resolve('mesh');
+    const vertices = await zarr.open(loc.resolve('vertices'), { kind: 'array' });
+    const faces = await zarr.open(loc.resolve('faces'), { kind: 'array' });
+    const direct = await preflightMesh('/mesh', attrs, { vertices, faces }, zarr.root(store));
+
+    const pre = await makeLoader(store, attrs).runPreflight();
+
+    // The exact quantity `MeshProgressiveLoader.assertWithinByteBudget` sums
+    // across every level — if `runPreflight()` ever computed this
+    // independently instead of returning `preflightMesh`'s own result, the two
+    // could silently drift apart.
+    expect(pre.accountedBytes).toBe(direct.accountedBytes);
+    expect(pre.nVertices).toBe(direct.nVertices);
+    expect(pre.nFaces).toBe(direct.nFaces);
+  });
+
+  it('fetches metadata only — no chunk is read', async () => {
+    const store = buildStore(meshAttrs(), tetArrays());
+    const result = await makeLoader(store, meshAttrs()).runPreflight();
+
+    expect(result.nVertices).toBe(4);
+    expect(result.nFaces).toBe(4);
+    // The same property `nofetch-invariant.test.ts` pins for the loadMesh() entry
+    // point: only `.zarray`/`.zattrs` metadata, never a chunk.
+    expect(store.chunkRequests()).toEqual([]);
+    expect(store.requested.length).toBeGreaterThan(0);
+  });
+
+  it('costs loadMesh() no duplicate metadata read, and still returns correct data', async () => {
+    const store = buildStore(meshAttrs(), tetArrays());
+    const loader = makeLoader(store, meshAttrs());
+
+    await loader.runPreflight();
+    const metaRequestsAfterPreflight = store.requested.length;
+
+    const data = await loader.loadMesh(VIEW);
+
+    // Only the chunk reads are new — `initialize()` is idempotent, so `loadMesh()`
+    // reuses the handles/preflight `runPreflight()` already opened rather than
+    // re-opening `.zarray`/`.zattrs`.
+    const metaRequestsAfterLoad = store.requested.filter((k) =>
+      META_KEYS.has(k.slice(k.lastIndexOf('/') + 1))
+    ).length;
+    expect(metaRequestsAfterLoad).toBe(metaRequestsAfterPreflight);
+    expect(store.chunkRequests().length).toBeGreaterThan(0);
+
+    expect(data.vertexCount).toBe(4);
+    expect(data.faceCount).toBe(4);
+    expect(Array.from(data.vertices)).toEqual(TET_VERTICES);
+    expect(Array.from(data.faces)).toEqual(TET_FACES);
+  });
+
+  it('a CONCURRENT runPreflight() + loadMesh() reads each metadata key exactly once', async () => {
+    // Without a single-flight latch on `initialize()`, a concurrent call from each
+    // entry point opens every `.zarray`/`.zattrs` TWICE and runs `preflightMesh`
+    // twice — the exact "async initialization race" the repo's CLAUDE.md calls
+    // out, now reachable because `runPreflight()` makes `initialize()` public.
+    const store = buildStore(meshAttrs(), tetArrays());
+    const loader = makeLoader(store, meshAttrs());
+
+    const [pre, data] = await Promise.all([loader.runPreflight(), loader.loadMesh(VIEW)]);
+
+    const metaKeys = store.requested.filter((k) => META_KEYS.has(k.slice(k.lastIndexOf('/') + 1)));
+    const counts = new Map<string, number>();
+    for (const key of metaKeys) counts.set(key, (counts.get(key) ?? 0) + 1);
+    for (const [key, count] of counts) {
+      expect(count, `metadata key ${key} was requested ${count} times, expected 1`).toBe(1);
+    }
+    expect(pre.nVertices).toBe(4);
+    expect(data.vertexCount).toBe(4);
+  });
+
+  it('clears initInFlight on FAILURE too, so a transient error is retried rather than cached forever', async () => {
+    // `initialize()`'s `try { await mine; } finally { if (this.initInFlight ===
+    // mine) this.initInFlight = null; }` clears the latch on EVERY settle, not
+    // just success. Without the `finally`, a failed first attempt's rejected
+    // promise stays latched forever: `this.handles` never gets set (so the
+    // `if (this.handles) return;` short-circuit never applies either), and
+    // every later call replays the SAME rejection instead of genuinely
+    // retrying — even once the underlying blip has cleared.
+    const store = buildStore(meshAttrs(), tetArrays());
+    store.rejectKeyContaining = { needle: 'vertices', error: new Error('network request failed') };
+    const loader = makeLoader(store, meshAttrs());
+
+    await expect(loader.runPreflight()).rejects.toThrow(LoaderError);
+
+    // The blip clears.
+    store.rejectKeyContaining = null;
+
+    // A later call must re-attempt `initialize()` from scratch — not re-await
+    // the cached rejected promise — and this time it succeeds.
+    const pre = await loader.runPreflight();
+    expect(pre.nVertices).toBe(4);
+  });
+
+  it('a stale metadata FAILURE must not erase a REPLACEMENT initialize()’s in-flight latch', async () => {
+    // The `initInFlight` counterpart of the `load()`/`inFlight` race pinned
+    // above ("a stale completion must not erase the REPLACEMENT load's
+    // in-flight latch"), one layer up. Metadata opens carry no abort signal,
+    // so `dispose()` mid-flight cannot make the ORIGINAL attempt settle — it
+    // genuinely keeps running. The race needs its eventual settlement to be a
+    // FAILURE (not a success): only a successful `doInitialize()` publishes
+    // `handles`, and `handles` is what SHORT-CIRCUITS every later call before
+    // `initInFlight` is ever consulted — so a successful stale completion
+    // would mask the ownership question entirely. If the failing stale
+    // attempt's `finally` clears `initInFlight` UNCONDITIONALLY rather than
+    // only when it still owns the latch, it erases the REPLACEMENT attempt's
+    // latch while THAT one is still genuinely pending — and a third caller
+    // arriving in that window sees a falsely-empty latch and starts a
+    // redundant FOURTH metadata round trip instead of joining the
+    // replacement.
+    const store = buildStore(meshAttrs(), tetArrays());
+    store.parkKeyAlways = '/mesh/vertices/.zarray';
+    const loader = makeLoader(store, meshAttrs());
+
+    const first = loader.runPreflight(); // opens vertices — parks (queued #1)
+    await new Promise<void>((resolve) => {
+      const poll = (): void => {
+        if (store.parkedKeyResolvers.length >= 1) resolve();
+        else setTimeout(poll, 0);
+      };
+      poll();
+    });
+
+    loader.dispose(); // mid-flight — nulls `initInFlight`; the original open keeps running
+
+    const replacement = loader.runPreflight(); // fresh initialize() attempt — parks again (#2)
+    await new Promise<void>((resolve) => {
+      const poll = (): void => {
+        if (store.parkedKeyResolvers.length >= 2) resolve();
+        else setTimeout(poll, 0);
+      };
+      poll();
+    });
+
+    // The ORIGINAL's parked open (queued first) FAILS while the
+    // REPLACEMENT's own open is STILL parked — the exact ordering the
+    // ownership guard exists for.
+    store.releaseNextParkedKeyRequest(new Error('simulated transient network failure'));
+    await expect(first).rejects.toThrow();
+
+    // A third call made now must JOIN the still-in-flight replacement — no
+    // NEW metadata round trip — rather than see a wrongly-nulled latch and
+    // start one.
+    const beforeThird = store.parkedKeyResolvers.length;
+    const third = loader.runPreflight();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(store.parkedKeyResolvers.length).toBe(beforeThird);
+
+    store.releaseNextParkedKeyRequest(); // the replacement's own open, successfully
+    await expect(replacement).resolves.toBeDefined();
+    await expect(third).resolves.toBeDefined();
+  });
+});
+
+describe('MeshWholeNodeLoader — dispose() races doInitialize()', () => {
+  it('does not resurrect handles/preflight — a later loadMesh() re-opens metadata and returns correct data', async () => {
+    // `doInitialize()` used to publish `this.preflight` then `this.handles`
+    // unconditionally, with no generation guard (unlike `load()`'s own publish).
+    // `runPreflight()` makes this reachable with NO `load()` in flight at all —
+    // the ladder's aggregate byte-budget gate (#1517) preflights every level,
+    // including during a dataset switch — so a `dispose()` racing a bare
+    // `runPreflight()` could leave the loader holding non-null `handles`, making
+    // `dispose()`'s own "a subsequent loadMesh re-initializes" docstring false.
+    const store = buildStore(meshAttrs(), tetArrays());
+    store.parkKeyAlways = '/mesh/vertices/.zarray';
+    const loader = makeLoader(store, meshAttrs());
+
+    const stalePreflight = loader.runPreflight(); // opens vertices — parks
+    await new Promise<void>((resolve) => {
+      const poll = (): void => {
+        if (store.parkedKeyResolvers.length >= 1) resolve();
+        else setTimeout(poll, 0);
+      };
+      poll();
+    });
+
+    loader.dispose(); // mid-flight — bumps generation; the parked open keeps running
+    store.releaseNextParkedKeyRequest(); // let the stale doInitialize() finish successfully
+    store.parkKeyAlways = null; // don't park the loader's NEXT (post-dispose) attempt too
+
+    // The stale attempt's own `runPreflight()` call must not observe a resurrected
+    // `this.preflight` — with the generation guard skipping the publish, `this.preflight`
+    // stays null and `runPreflight()`'s own null-check rejects it.
+    await expect(stalePreflight).rejects.toThrow(LoaderError);
+
+    // A fresh `loadMesh()` must re-open metadata from scratch — not see stale non-null
+    // `handles` and skip straight to a (missing) chunk fetch — and still load correctly.
+    const before = store.requested.length;
+    const data = await loader.loadMesh(VIEW);
+    expect(store.requested.length).toBeGreaterThan(before);
+    expect(data.vertexCount).toBe(4);
+    expect(Array.from(data.vertices)).toEqual(TET_VERTICES);
   });
 });
 

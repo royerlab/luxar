@@ -274,6 +274,10 @@ luxar gsplat fit volume.tiff splats.gsplats.zarr --floor none    # disable (hard
 # `kind=partition` by default (one part per tile/box, for viewer frustum
 # culling); pass `--flat` for a single flat leaf. Whole-volume fits
 # (`--tiling none`/small auto) stay a single leaf.
+# An integer `--seeds K` is a WHOLE-VOLUME budget (what a default `cal`
+# reports): a tiled fit DIVIDES it across its tiles instead of giving each
+# tile the full count. Not an exact count — signal-free tiles are skipped
+# (sparse volumes realize less) and K below the tile count gives 1 per tile.
 
 # Uniform tiled fitting for large volumes (Hann cosine apodization, seamless stitching)
 luxar gsplat fit large.zarr splats.gsplats.zarr --tiling uniform --tile-size 256 --overlap 32
@@ -321,6 +325,14 @@ luxar gsplat fit vol.zarr out.gsplats.zarr --tiling content --cal cal.json --rec
 luxar gsplat batch-fit run vol.zarr out/ --gpus all --tile-size 256            # uniform, all GPUs
 luxar gsplat batch-fit run vol.zarr out/ --tiling content --cal cal.json --gpus auto   # content plan
 luxar gsplat batch-fit run vol.zarr out/ --gpus auto --merge-recipe stream --merge-n-lods 4  # per-part LOD at merge
+# `--merge-refine volume` re-opens THIS input at merge time and re-fits each tile
+# against its own crop (and each stacked timepoint against its own slice) — the
+# highest-fidelity coarse levels. Needs --axes recorded and a single channel; both
+# are validated at PLAN time, so a typo costs nothing rather than surfacing after
+# every tile has been fitted. Also on `batch-fit submit` (baked into the Slurm
+# merge job) and on `batch-fit merge` itself as plain `--refine`.
+luxar gsplat batch-fit run vol.zarr out/ --gpus auto --axes time,z,y,x \
+    --merge-recipe levels --merge-levels 1 --merge-refine volume --merge-refine-iters 300
 luxar gsplat batch-fit run vol.zarr out/ --gpus 0,1 --jobs-per-gpu 2 --timepoints ::10   # subset, 2 workers/GPU
 luxar gsplat batch-fit run vol.zarr out/ --gpus cpu                            # CPU fallback
 luxar gsplat batch-fit run vol.zarr out/ --tiling content --cal cal.json --dry-run  # plan only
@@ -356,6 +368,8 @@ luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu \
     --iters 8000 --seeds 100000                                         # Override fit params
 luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu \
     --merge-recipe levels --merge-compression-factor 4 --merge-levels 3   # per-part LOD at merge
+luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu --axes time,z,y,x \
+    --merge-recipe levels --merge-refine volume        # + per-tile volume re-fit at merge
 luxar gsplat batch-fit status output/                                       # Check job status
 luxar gsplat batch-fit merge output/                                        # Merge completed tiles → kind=partition
 luxar gsplat batch-fit merge output/ --recipe stream --n-lods 6           # + per-part additive ladder (tiles)
@@ -545,9 +559,23 @@ luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe overview --refine l2 
 # <vol>` warm-start re-fits each merged level against the SOURCE VOLUME itself
 # (full fit seeded by the merge; +5-12 dB over the merge on real microscopy;
 # each level keeps whichever of merge/re-fit renders closer — never worse).
-# Needs the volume in hand: lod --target only (fit-time/batch are follow-ups);
-# levels/overview recipes, no barrier dims. `--refine-iters` default 300 here.
+# Needs the volume in hand, and is available at all three entry points:
+#   lod --target … | fit --recipe levels --refine volume (no --target: the volume
+#   being fitted is already in hand) | batch-fit merge --recipe levels --refine
+#   volume (re-opens the source the manifest recorded, cropping per tile).
+# Works on levels/overview AND per-tile `adaptive`, with or without barrier dims:
+# each re-fit is handed the sub-volume it is responsible for (a barrier group gets
+# its own timepoint slice, a tile its own crop), and a per-tile re-fit that leaves
+# its tile is discarded in favour of the merge. The volume is only SLICED, never
+# read whole, so a lazy zarr target stays lazy. `--refine-iters` default 300 here.
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe levels --target vol.tiff --refine volume
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe adaptive --target vol.tiff --refine volume
+# A STACKED target needs --target-axes: fitted splats put spatial dims first and
+# the stacked axis LAST, while the source array is usually time-FIRST, so the
+# identity map would target the wrong axis. (Contrast --timepoint, which slices
+# ONE timepoint out; --target-axes keeps the axis so the re-fit walks it.)
+luxar gsplat lod tl.gsplats.zarr out.gsplats.zarr --recipe levels --refine volume \
+    --target movie.zarr --array-key h2afva/fused --target-axes time,z,y,x --coarsen-dims 0,1,2
 # Barrier-aware coarsening (levels/overview/adaptive): --coarsen-dims
 # lists the center-column indices coarsening may merge over; the rest become hard
 # barriers (a categorical/time/channel axis), so coarse splats never blend across
@@ -556,14 +584,17 @@ luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe levels --target vol.t
 # so the CLI takes explicit indices and warns on >3D input without the flag.)
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe levels --coarsen-dims 1,2,3
 # LOD switch thresholds (ANY recipe with a kind=lod group — overview,
-# levels, adaptive) are auto-derived as viewport-relative
-# `coverage_fraction` = sqrt(N_i/N_finest). For `levels` (a WHOLE-OBJECT ladder) the
-# finest level shows once the object's
-# projected size reaches ~a quarter of the viewport diagonal (any normal full-frame
-# view) and coarser levels step in as it shrinks below that (the viewer anchors to
-# the live viewport, so it self-calibrates on any monitor — no threshold knob).
-# EXCEPTION — `adaptive` and `overview` are PARTITION-BOUND and keep the older
-# fills-screen anchor (finest = 4.0 = 1/FILL_FACTOR), via
+# levels, adaptive) are auto-derived by SCREEN-OCCUPANCY HALVING (count-
+# independent), stamped as selector="screen-area": each coverage_fraction is a
+# literal screen-area fraction (projected bbox rect area / viewport area). For
+# `levels` (a WHOLE-OBJECT ladder) the finest level shows while the object
+# occupies at least HALF THE SCREEN (finest anchor 0.5) and each halving of
+# occupied area steps one level coarser (NDC-fraction metric → identical on
+# any monitor — no threshold knob). Legacy stores / explicit
+# coverage_fractions=[...] lists keep selector="coverage" (diagonal metric,
+# thresholds in [0,4]); the viewer supports both.
+# EXCEPTION — `adaptive` and `overview` are PARTITION-BOUND and keep the
+# fills-screen anchor (finest = area 1.0 = the tile alone fills the screen), via
 # `partitioned_coverage_fractions`. For `adaptive` that is geometry (each lod
 # group's bbox is one BSP tile, so it projects to a fraction of the whole object);
 # for `overview` it is the recipe's contract — the coarse cap is what you see at
@@ -652,6 +683,25 @@ luxar gsplat napari splats.gsplats.zarr
 luxar gsplat annotate-quality splats.gsplats.zarr                # e(k) + w only (fast)
 luxar gsplat annotate-quality splats.gsplats.zarr --with-quality # + measured Q per level
 luxar gsplat annotate-quality splats.gsplats.zarr --dry-run      # print stamps, write nothing
+
+# Reduce a dataset to a TARGET SPLAT COUNT (one flat result) — the "this fit is
+# bigger than I need" tool, distinct from `cull` (removes by a quality threshold)
+# and `lod` (builds a multi-level structure). Two families:
+#   merge   cluster neighbours into representatives carrying their combined mass
+#   prefix  keep the first N of an additive ordering (discards splats, dims)
+# `auto` follows the MEASURED crossover: merge below 50% kept, prefix at/above.
+# Foreground PSNR on a 1.65M-splat light-sheet fit (global PSNR flatters
+# everything on a 97.8%-empty stack, so it is not the number to steer by):
+#   kept  50%: merge 44.5 / prefix 45.5 dB   <- prefix wins, little to summarise
+#   kept  25%: merge 41.7 / prefix 39.1 dB
+#   kept  10%: merge 38.3 / prefix 34.5 dB   <- ~10x smaller, recommended point
+#   kept   1%: merge 33.1 / prefix 29.6 dB   <- merge wins by 3.5 dB
+# Quality falls ~3-4 dB per halving with NO knee, so pick from the curve.
+# A partition must be `flatten`ed first (decimate returns a single flat leaf).
+luxar gsplat decimate in.gsplats.zarr out.gsplats.zarr --target 165000   # absolute count
+luxar gsplat decimate in.gsplats.zarr out.gsplats.zarr -f 0.1            # share of input
+luxar gsplat decimate in.gsplats.zarr out.gsplats.zarr -f 0.1 -m merge   # force a family
+# Python: `from luxar.gsplats.lod import decimate` (target=int count | float fraction)
 
 # Inspect, cull, and filter
 luxar gsplat info splats.gsplats.zarr          # Dataset statistics
@@ -1110,7 +1160,7 @@ Support: nm, um, mm, cm, m, meter, metre, km, inch, foot, px, au
 - **Points**: positions (Float32, nD, required), colors (Uint8/Float32 HDR), radii (Float32), sharpness (Float32)
 - **Lines**: vertices (Float32, nD, required), widths (Float32, required), segments (Uint32, auto-generated), colors (Uint8/Float32), sharpness (Float32)
 - **GSplats**: centers (Float32, nD, required), amplitudes (Float32, required), cholesky_factors (Float32, required), colors (Uint8/Float32, RGB or RGBA — the optional alpha is per-splat opacity, consumed by every blending mode; mapped to optical depth in `volumetric`)
-- **Mesh** (renderable, shaded): vertices (Float32, nD, required), faces (Uint32 `(F,3)`, required), normals (Float32 `(V,3)`) + a required `normal_dims` companion attr naming which three dimensions they describe, colors (Uint8/Float32, RGB or RGBA), scalars (Float32). No per-element size — a triangle's extent comes from its own vertices, so a mesh adds zero extent padding to scene bounds. Both structural paths are supported: `kind=partition` (`add_mesh(partition=…)`, spec §9.2) and *substitutive* LOD (`add_mesh(substitutive_lod=…)`, decimated by `luxar.mesh.decimate`) — though not in the same call. No *additive* (prefix) LOD ladder — a prefix of an index buffer is a holed surface, not a coarser one — and no `volumetric` blending; both refused with an explanation rather than silently degraded. No spatial index (`ordering="none"`): a mesh loads whole.
+- **Mesh** (renderable, shaded): vertices (Float32, nD, required), faces (Uint32 `(F,3)`, required), normals (Float32 `(V,3)`) + a required `normal_dims` companion attr naming which three dimensions they describe, colors (Uint8/Float32, RGB or RGBA), scalars (Float32). No per-element size — a triangle's extent comes from its own vertices, so a mesh adds zero extent padding to scene bounds. Three structural paths are supported: `kind=partition` (`add_mesh(partition=…)`, spec §9.2), *substitutive* LOD (`add_mesh(substitutive_lod=…)`, decimated by `luxar.mesh.decimate`), and a spatially coherent *reveal* additive ladder (`add_mesh(additive_lod={"method": "radial"})`) — though no two of them in the same call. No additive (prefix) LOD ladder over an *arbitrary* order — a prefix of an arbitrarily ordered index buffer is a holed surface, not a coarser one — so a non-reveal method and `volumetric` blending are both still refused with an explanation rather than silently degraded. No spatial index (`ordering="none"`): a mesh loads whole.
 
 ### Transforms
 - 4x4 matrices stored as 16-element lists

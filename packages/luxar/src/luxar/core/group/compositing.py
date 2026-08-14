@@ -341,24 +341,38 @@ def validate_labels_before_split(labels: Any, n_elements: int) -> None:
     because a level's own length may coincidentally match. So the full-count check
     has to happen upstream of the split.
 
-    No wrapper impl calls this directly any more: it is reached from
-    :func:`validate_gsplats_channels_before_split`, which is the one geometry
-    whose channel validator does not cover labels. Points and Lines get the
+    Two callers reach this directly now. :func:`validate_gsplats_channels_before_split`
+    is the one geometry whose channel validator does not cover labels — no OTHER
+    wrapper impl calls this on its own account; Points and Lines get the
     equivalent check from the writer sweeps their gates delegate to
-    (``validate_labels_for_writing``, last in the flat order). Whichever door, the
-    call belongs to a wrapper's pre-split gate — entering a wrapper is exactly "a
-    split is about to happen" — and deliberately NOT to the top of a leaf adder:
-    the plain-leaf path validates in the writer, and hoisting the check above the
-    adder's positions/attr gates (and above the range half of
-    ``_validate_data_dimensions``, which still runs only in the single-leaf write)
-    would change which error a multi-fault call reports. The count half of that
-    validator is one acknowledged exception — #1446 moved it to the top of every
-    leaf adder, so a wrong column count outranks this gate on both paths, by
-    design. Since #1529, the Points/Lines node-attrs gate
-    (``validate_render_attrs``) is a second: it too now runs at the adder
-    entry, above this gate, so an attrs fault outranks it on those two paths
-    as well (GSplats, which has no such entry gate, is unaffected). Same
-    reasoning, and the same house rule, as
+    (``validate_labels_for_writing``, last in the flat order). The second is
+    ``gsplats_pipeline.from_io._validate_labelled_leaf_length``, called from the
+    graft door's ``_reject_labels_on_a_grafted_wrapper`` (#1505) — a genuine
+    EXCEPTION to the rule below, not another instance of it: that call site is a
+    pre-WRAPPER gate, not a pre-split one (a bare-leaf graft builds no wrapper and
+    triggers no split at all), and it DELIBERATELY changes which fault a
+    multi-fault call reports — pinned by
+    ``test_a_wrong_length_label_outranks_an_unknown_attr_here`` — for the same
+    trade :func:`validate_points_channels_before_split` already sanctions below
+    for "a NaN position, an unknown attr".
+
+    Every OTHER caller's check belongs to a wrapper's pre-split gate — entering a
+    wrapper is exactly "a split is about to happen" — and deliberately NOT to the
+    top of a leaf adder: the plain-leaf path validates in the writer, and
+    hoisting the check above the adder's positions/attr gates (and above the
+    range half of ``_validate_data_dimensions``, which still runs only in the
+    single-leaf write) would change which error a multi-fault call reports. The
+    count half of that validator is one acknowledged exception — #1446 moved it
+    to the top of every leaf adder, so a wrong column count outranks this gate on
+    both paths, by design. The node-attrs gate (``validate_render_attrs``) is a
+    second: since #1529 it runs at the Points/Lines adder entry, above THEIR OWN
+    channel gates, so an attrs fault outranks a channel one on those two paths
+    too. GSplats — the one geometry that actually reaches THIS function, via
+    :func:`validate_gsplats_channels_before_split` — gained the identical entry
+    gate later, in #1534: before that it had no such gate and an attrs fault on
+    ``add_gsplats(partition=..., labels=<wrong length>, ...)`` was reported from
+    behind this label check instead of ahead of it; now it outranks this gate
+    too, matching Points/Lines. Same reasoning, and the same house rule, as
     ``adders/mesh.py::_validate_partition_sources``.
 
     No-op when ``labels`` is ``None``.
