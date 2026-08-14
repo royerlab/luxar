@@ -962,6 +962,20 @@ A radar does not sample a volume — it spins a 0.95° beam at 14 discrete eleva
 
 **Demonstrates**: Weather/atmosphere as gsplats + lines, polar→Cartesian objective analysis (Barnes on a `cKDTree`, scipy only — no Py-ART), the 4/3-effective-earth beam-propagation model, geometric coverage masking instead of threshold-tuning, `combine_as_new_dimension` for a stacked 4D time axis (streaming ladder only — coarse substitutive levels average the merged amplitudes down and muddy the hail core, so they are deliberately not used), an *adaptive* splat budget (constant occupied-voxels-per-splat, since the system grows ~6x across the window), a *global* rather than per-frame intensity scale so the storm's intensification and decay survive, a baked `CameraConfig(up=(0,0,1))` because a geographic scene on the viewer's default up-vector renders altitude sideways, and a baked appearance (turbo over the full amplitude window at low opacity with moderate volumetric absorption) so colour still corresponds to conventional dBZ bands. Options: `--recompute`, `--no-serve`, `--serve-only`, `--max-timepoints=N`, `--grid-m=N`, `--grid-z-m=N`, `--splats=N`, `--dbz-floor=N`, `--vert-exag=N`, `--relist`.
 
+---
+
+#### demo_gsplats_4d_cell_tracking_challenge.py - 4D Cell Tracking Challenge (3x3 matrix)
+
+Nine crops of a developing zebrafish embryo from the public [**Biohub Cell Tracking During Development**](https://www.kaggle.com/competitions/biohub-cell-tracking-during-development) competition, laid out as a **3x3 matrix** where every tile is an independent 100-timepoint light-sheet timelapse. Each tile carries all three things at once: the image data as a 4D (ZYX + time) Gaussian-splat volume, the ground-truth position of every tracked cell as points that appear **only** at the timepoint they belong to, and every tracking link as one `indexed` Lines node. Colour is **lineage** throughout, so a founder cell and all of its descendants share a hue; scrub the Time slider and the markers walk along their own tracks while the volume animates beneath them. Cell **divisions** render as real forks, because consecutive links share a vertex row. The crops differ in a scientifically visible way — some show a coherent parallel migration, others a tangle — which is much of why the matrix reads well.
+
+Each of the 199 training crops is an OME-Zarr **0.5** (zarr **v3**) store, `T=100, Z=64, Y=256, X=256` uint16 at 1.625 x 0.40625 x 0.40625 um (a 104 um cube), paired with a **GEFF** tracking graph. The demo uses the nine most densely annotated (~1,300-1,950 cells each; the median crop has only 659 and the sparsest 50, so the choice matters).
+
+**Run**: `luxar demo run gsplats_4d_cell_tracking_challenge`
+
+**Requires**: A Kaggle API token (`~/.kaggle/access_token` or `$KAGGLE_API_TOKEN`) plus the `kaggle` package — the competition endpoint is authenticated, so this demo cannot fetch its data unattended. ~4 GB of download and a CUDA GPU for the fitting pass (~24 s per timepoint, ~40 min per crop); a warm fit cache then rebuilds the scene with no GPU and no raw data at all.
+
+**Demonstrates**: Reading **zarr v3 / OME-Zarr 0.5** despite the project's `zarr<3` pin (`luxar.io.zarr_v3`), reading **GEFF** cell-lineage graphs (`luxar.gsplats.interop.geff`), all three geometry types in one scene per tile, `combine_as_new_dimension` for a stacked 4D time axis with `coarsen_dims` making time a hard LOD barrier, one `layer=True` group per crop so the Layers panel offers nine rows rather than 27, `line_type="indexed"` for a lineage forest with shared joints, and two appearance lessons that are measured rather than guessed: dropping the top 5% of splats by characteristic size (a diffuse tail that otherwise renders as opaque discs burying the nuclei under volumetric blending), and a **deliberately short** LOD ladder — the `screen-area` selector anchors its finest level at half the screen, so a tile of a 3x3 grid occupies 0.0855 of the screen area and draws the *coarsest* level no matter how long the ladder is, which makes the ladder's depth the thing that decides how much detail the opening framing throws away. Options: `--datasets=N`, `--timepoints=N`, `--seeds=K`, `--recompute`, `--no-serve`, `--serve-only`.
+
 ## Demo Pattern
 
 Each demo follows this self-contained pattern:
@@ -1401,6 +1415,7 @@ hatch run python packages/luxar/src/luxar/demos/demo_gsplats_4d_zebrafish_timela
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_4d_neuromast_2ch.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_4d_celegans_tracking.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_4d_nexrad_supercell.py
+hatch run python packages/luxar/src/luxar/demos/demo_gsplats_4d_cell_tracking_challenge.py
 ```
 
 ## Troubleshooting

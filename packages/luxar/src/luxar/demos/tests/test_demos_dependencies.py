@@ -37,7 +37,7 @@ from luxar.demos.registry import iter_demos
 from ._scanned_modules import EXCLUDED, REQUIRED_SHARED_HELPERS, scanned_demo_modules
 
 # Requirement names that intentionally live outside every Luxar extra.
-NOT_IN_ANY_EXTRA = {"gdown"}
+NOT_IN_ANY_EXTRA = {"gdown", "kaggle"}
 
 
 def _pyproject() -> Path:

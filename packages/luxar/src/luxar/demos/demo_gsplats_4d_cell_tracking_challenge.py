@@ -62,9 +62,12 @@ Options:
 
 REQUIREMENTS
 ============
-    - A Kaggle API token (``~/.kaggle/access_token``, or ``KAGGLE_API_TOKEN``)
-      and the Kaggle CLI: ``pip install kaggle``. Get a token from
-      https://www.kaggle.com/settings ("API tokens").
+    - The Kaggle client: ``luxar demo deps --only kaggle --install`` (it is
+      declared in ``luxar.demos.INSTALL_SPECS`` but in no extra, since only this
+      demo needs it), PLUS an API token, which no install can supply: create one
+      at https://www.kaggle.com/settings ("API tokens") and save it as
+      ``~/.kaggle/access_token`` or export ``KAGGLE_API_TOKEN``.
+      Neither is needed once the fit cache is warm.
     - CUDA GPU strongly recommended: ~24 s per timepoint fit at the default
       budget on an RTX PRO 6000 (~40 min per crop). Apple MPS is roughly 6x
       slower, so a full crop there is measured in hours.
@@ -95,8 +98,9 @@ DEMO_META = {
 }
 
 import math
-import shutil
+import os
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -113,6 +117,7 @@ from luxar.demos import (
     require_module,
     warn_if_no_cuda_gpu,
 )
+from luxar.demos.registry import DEMO_CACHE_ROOT
 from luxar.encoding import EncodingMode
 from luxar.gsplats import GSplatData
 from luxar.utils.paths import get_demos_output_dir
@@ -124,8 +129,15 @@ from luxar.utils.paths import get_demos_output_dir
 COMPETITION = "biohub-cell-tracking-during-development"
 COMPETITION_URL = f"https://www.kaggle.com/competitions/{COMPETITION}"
 
-DATA_DIR = Path.home() / "data" / "kaggle-celltracking"
-CACHE_DIR = Path.home() / ".cache" / "luxar" / "gsplats_cell_tracking"
+# Everything this demo caches lives under the ONE directory it declares in
+# DEMO_META["caches"], i.e. `~/.cache/luxar/gsplats_cell_tracking/`. That is what
+# makes `luxar demo cache list` account for the ~4 GB of downloaded crops and
+# `luxar demo cache clear` actually reclaim it — a path outside the managed root
+# (registry.DEMO_CACHE_ROOT) would be invisible to both, and would be reported as
+# an unclaimed orphan if it happened to land inside.
+CACHE_DIR = DEMO_CACHE_ROOT / "gsplats_cell_tracking"
+DATA_DIR = CACHE_DIR / "kaggle"  # raw competition downloads
+FITS_DIR = CACHE_DIR / "fits"  # per-timepoint gsplat fits
 
 # The nine most densely annotated training crops, by GEFF node count. Eight come
 # from embryo `6bba` and one from `44b6` — the two source acquisitions — so the
@@ -266,19 +278,36 @@ _DEVICE: str | None = None
 # =============================================================================
 
 
-def _kaggle_cli() -> str:
-    """Locate the Kaggle CLI, or explain how to get it and a token."""
-    exe = shutil.which("kaggle")
-    if exe:
-        return exe
-    raise RuntimeError(
-        "The Kaggle CLI is required to download the cell-tracking competition "
-        "data and was not found on PATH.\n"
-        "  1. pip install kaggle\n"
-        "  2. create an API token at https://www.kaggle.com/settings and save it "
-        "as ~/.kaggle/access_token (or export KAGGLE_API_TOKEN)\n"
-        f"  3. accept the competition rules at {COMPETITION_URL}"
+def _kaggle_cmd() -> list[str]:
+    """The Kaggle client invocation, plus a token check.
+
+    Invoked as ``<this interpreter> -m kaggle`` rather than by looking for a
+    ``kaggle`` binary on PATH: the console script lands in whichever environment
+    pip installed it into, which is routinely not the one running the demo.
+
+    ``require_module`` is what makes ``luxar demo deps`` report and install the
+    client. The token is checked separately because no install can supply it —
+    importing kaggle without one succeeds, and the failure would otherwise
+    surface as an opaque 401 on the first download.
+    """
+    require_module("kaggle")
+
+    has_token = bool(os.environ.get("KAGGLE_API_TOKEN")) or any(
+        (
+            Path(os.environ.get("KAGGLE_CONFIG_DIR", Path.home() / ".kaggle")) / name
+        ).is_file()
+        for name in ("access_token", "kaggle.json")
     )
+    if not has_token:
+        raise RuntimeError(
+            "The Biohub cell-tracking competition data is behind an "
+            "authenticated endpoint, so this demo needs a Kaggle API token.\n"
+            "  1. create one at https://www.kaggle.com/settings ('API tokens')\n"
+            "  2. save it as ~/.kaggle/access_token, or export KAGGLE_API_TOKEN\n"
+            f"  3. accept the competition rules at {COMPETITION_URL}\n"
+            "A warm fit cache needs none of this — see the module docstring."
+        )
+    return [sys.executable, "-m", "kaggle"]
 
 
 def _crop_metadata_files(dataset: str) -> list[str]:
@@ -320,7 +349,7 @@ def _crop_chunk_files(dataset: str, n_timepoints: int) -> list[str]:
     return [f"train/{dataset}.zarr/0/c/{t}/0/0/0" for t in range(n_timepoints)]
 
 
-def _fetch_file(exe: str, rel: str, dest_root: Path, max_tries: int = 6) -> bool:
+def _fetch_file(cmd: list[str], rel: str, dest_root: Path, max_tries: int = 6) -> bool:
     """Download one competition file to ``dest_root/rel``.
 
     ``kaggle competitions download -f`` flattens the download to the file's
@@ -337,7 +366,7 @@ def _fetch_file(exe: str, rel: str, dest_root: Path, max_tries: int = 6) -> bool
     for attempt in range(1, max_tries + 1):
         proc = subprocess.run(
             [
-                exe,
+                *cmd,
                 "competitions",
                 "download",
                 COMPETITION,
@@ -389,11 +418,11 @@ def fetch_dataset(
     if not missing:
         return image, geff
 
-    exe = _kaggle_cli()
+    cmd = _kaggle_cmd()
     with asection(f"Downloading {dataset} ({len(missing)} of {len(wanted)} files)"):
         failed = 0
         for i, rel in enumerate(missing, 1):
-            if not _fetch_file(exe, rel, DATA_DIR):
+            if not _fetch_file(cmd, rel, DATA_DIR):
                 failed += 1
             if i % 25 == 0:
                 aprint(f"  {i}/{len(missing)}")
@@ -430,7 +459,7 @@ def voxel_size_of(image_store: Path) -> tuple[float, float, float]:
 
 
 def _fit_cache_path(dataset: str, t: int) -> Path:
-    return CACHE_DIR / dataset / f"t{t:04d}_k{SEEDS}.gsplats.zarr.zip"
+    return FITS_DIR / dataset / f"t{t:04d}_k{SEEDS}.gsplats.zarr.zip"
 
 
 def is_fit_cached(dataset: str, t: int) -> bool:
@@ -470,7 +499,7 @@ def fit_timelapse(
 
     will_fit = needs_fitting(dataset, n_timepoints)
     voxel = voxel_size_of(image_store)
-    cache = CACHE_DIR / dataset
+    cache = FITS_DIR / dataset
     cache.mkdir(parents=True, exist_ok=True)
 
     def cache_path(t: int) -> Path:
