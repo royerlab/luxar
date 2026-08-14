@@ -18,8 +18,9 @@ Algorithms (additive_lod §3-4)
   at every prefix simultaneously (Nemhauser--Wolsey--Fisher 1978); empirically
   $\\geq 99.9\\%$ of the exhaustive optimum on dense-overlap instances.
 
-The greedy path uses a sparse Gram matrix built via $3\\sigma$ Mahalanobis
-truncation + k-d-tree pruning (Algorithm 4.4 in the supp doc), keeping
+The greedy path uses a sparse Gram matrix built via Mahalanobis truncation at
+the dataset's own ``truncation_radius`` (the support it was fitted and is
+rendered at) + k-d-tree pruning (Algorithm 4.4 in the supp doc), keeping
 memory at $O(\\mathrm{nnz}(\\mathbf{G}))$.  At $N \\leq 2000$ a dense Gram
 + scan-greedy is faster than the heap-based lazy greedy due to Python
 overhead (supp doc §4.3); we switch automatically.
@@ -48,6 +49,7 @@ from luxar.gsplats.lod._kernels import (
 )
 from luxar.gsplats.utils.alpha import effective_amplitudes
 from luxar.gsplats.utils.trils import unpack_tril
+from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
 from luxar.utils.lod_breakpoints import DEFAULT_BANDWIDTH_MBPS as DEFAULT_BANDWIDTH_MBPS
 from luxar.utils.lod_breakpoints import (
     DEFAULT_STREAM_MAX_LEVELS as DEFAULT_STREAM_MAX_LEVELS,
@@ -104,6 +106,39 @@ def resolve_additive_method(method: AutoOrMethod, n: int) -> MethodName:
     if method != "auto":
         return method
     return "greedy" if n <= _AUTO_ADDITIVE_MAX_N else "self_energy"
+
+
+def resolve_truncation_sigmas(
+    truncation_sigmas: float | None, data: GSplatData
+) -> float:
+    """Resolve the σ multiplier used for Gaussian truncation, honouring the data.
+
+    ``None`` (the default everywhere on the LOD path) means "use the dataset's
+    own ``truncation_radius``" — the support the splats were *fitted* at and are
+    *rendered* at. The ladder used to hard-code 3.0, so a dataset fitted at the
+    canonical :data:`~luxar.typing_utils.constants.DEFAULT_TRUNCATION_RADIUS`
+    (2.75) was pruned at a support it never had. ``getattr`` with that same
+    constant as fallback mirrors the defensive read in
+    ``GSplatData.principal_radii`` (``gsplats/_data/metrics.py``) for the
+    (structural) case of a data-like object that exposes no radius at all.
+
+    An explicit value is checked here, locally: this σ is a *CPU pruning* cutoff
+    (which pairs enter the sparse Gram), not a render uniform, so it carries no
+    float32/shader bounds — any finite positive value is meaningful. Only a
+    non-positive or non-finite cutoff is rejected, because it would prune every
+    off-diagonal pair (or poison every radius) instead of emptying the Gram
+    silently.
+    """
+    if truncation_sigmas is None:
+        return float(getattr(data, "truncation_radius", DEFAULT_TRUNCATION_RADIUS))
+    sigmas = float(truncation_sigmas)
+    if not math.isfinite(sigmas) or sigmas <= 0.0:
+        raise ValueError(
+            "truncation_sigmas must be a finite value > 0 (it is the Mahalanobis "
+            "cutoff for sparse-Gram pruning; a non-positive or non-finite cutoff "
+            f"prunes every off-diagonal pair), got {truncation_sigmas!r}"
+        )
+    return sigmas
 
 
 #: Breakpoint specification for the additive ladder. String forms:
@@ -212,8 +247,13 @@ def _mass_score(data: GSplatData) -> np.ndarray:
     return out
 
 
-def _truncation_radii(data: GSplatData, sigmas: float = 3.0) -> np.ndarray:
-    """Per-splat truncation radius $r_i = \\sigma\\,\\sqrt{\\lambda_{\\max}(\\Sigma_i)}$."""
+def _truncation_radii(data: GSplatData, *, sigmas: float) -> np.ndarray:
+    """Per-splat truncation radius $r_i = \\sigma\\,\\sqrt{\\lambda_{\\max}(\\Sigma_i)}$.
+
+    ``sigmas`` is REQUIRED (no default): a default here is what let the ladder
+    prune at 3.0 while the dataset was fitted at its own ``truncation_radius``.
+    Callers resolve it with :func:`resolve_truncation_sigmas`.
+    """
     if data.n_splats == 0:
         return np.empty(0, dtype=np.float64)
     L = unpack_tril(np.asarray(data.cholesky_factors, dtype=np.float64), data.ndim)
@@ -221,14 +261,17 @@ def _truncation_radii(data: GSplatData, sigmas: float = 3.0) -> np.ndarray:
 
 
 # ─────────────────────────────────────────────────────────────────────
-# Sparse Gram (3σ Mahalanobis pruning + k-d tree, supp doc Algo 4.4)
+# Sparse Gram (σ-truncation Mahalanobis pruning + k-d tree, supp doc Algo 4.4)
 # ─────────────────────────────────────────────────────────────────────
 
 
-def _build_sparse_gram(data: GSplatData, sigmas: float = 3.0) -> sparse.csr_matrix:
-    """Build a sparse symmetric Gram matrix via $3\\sigma$ pruning.
+def _build_sparse_gram(data: GSplatData, *, sigmas: float) -> sparse.csr_matrix:
+    """Build a sparse symmetric Gram matrix via $\\sigma$-truncation pruning.
 
-    Two splats whose $3\\sigma$ ellipsoids do not overlap have an
+    ``sigmas`` is REQUIRED (see :func:`_truncation_radii`); resolve it from the
+    dataset with :func:`resolve_truncation_sigmas`.
+
+    Two splats whose $\\sigma$-truncation ellipsoids do not overlap have an
     inner product $K_{ij}$ negligibly small (and exactly zero under the
     truncation convention used at render time); we treat those entries
     as structural zeros.  The remaining entries are the closed-form
@@ -527,7 +570,7 @@ def compute_additive_order(
     data: GSplatData,
     method: AutoOrMethod = "auto",
     *,
-    truncation_sigmas: float = 3.0,
+    truncation_sigmas: float | None = None,
     max_n_dense: int = 2_000,
     seed: int | None = None,
     reveal_centre: Sequence[float] | None = None,
@@ -546,9 +589,11 @@ def compute_additive_order(
         resolves to ``greedy`` at small N and ``self_energy`` above
         :data:`_AUTO_ADDITIVE_MAX_N` — see :func:`resolve_additive_method`.
         See module docstring for details.
-    truncation_sigmas : float
-        Mahalanobis cutoff used for sparse-Gram pruning (default 3.0).
-        Only relevant for ``greedy`` and ``spectral``.
+    truncation_sigmas : float, optional
+        Mahalanobis cutoff used for sparse-Gram pruning. Defaults to the
+        dataset's own ``truncation_radius`` — the support the splats were
+        fitted at and are rendered at. Only relevant for ``greedy`` and
+        ``spectral``.
     max_n_dense : int
         For ``greedy``, build a dense Gram and use scan-greedy when
         $N \\leq$ this threshold.  Above it, build a sparse Gram and
@@ -571,6 +616,8 @@ def compute_additive_order(
     """
     if method not in _VALID_CHOICES:
         raise ValueError(f"method must be one of {_VALID_CHOICES}, got {method!r}")
+
+    sigmas = resolve_truncation_sigmas(truncation_sigmas, data)
 
     N = data.n_splats
     if N == 0:
@@ -609,7 +656,7 @@ def compute_additive_order(
         return np.argsort(-score, kind="stable").astype(np.int64)
 
     # Spectral and greedy need the Gram matrix.
-    gram_csr = _build_sparse_gram(data, sigmas=truncation_sigmas)
+    gram_csr = _build_sparse_gram(data, sigmas=sigmas)
     return _order_from_gram(gram_csr, method, max_n_dense)
 
 
@@ -827,7 +874,7 @@ def make_additive_lod(
     *,
     method: AutoOrMethod = "auto",
     breakpoints: BreakpointSpec = "equal-count",
-    truncation_sigmas: float = 3.0,
+    truncation_sigmas: float | None = None,
     max_n_dense: int = 2_000,
     seed: int | None = None,
     substitutive_level: int | None = None,
@@ -873,8 +920,9 @@ def make_additive_lod(
           ``amplitude`` / ``random``) it is the O(N) self-energy cumulative,
           so cuts land where the viewer's own $e(k)$ quality stamp reads the
           requested fraction.
-    truncation_sigmas : float
-        $\\sigma$ multiplier for sparse-Gram pruning.  Default 3.0.
+    truncation_sigmas : float, optional
+        $\\sigma$ multiplier for sparse-Gram pruning. Defaults to the dataset's
+        own ``truncation_radius``.
     max_n_dense : int
         Threshold below which ``greedy`` uses a dense Gram + scan-greedy.
     seed : int, optional
@@ -912,6 +960,11 @@ def make_additive_lod(
     # Build the new additive ladder on the chosen substitutive level
     target_view = data.at_substitutive(s_target).flattened()
     n = target_view.n_splats
+
+    # Resolve the pruning σ from the view we actually prune, NOT from `data`:
+    # per-sub-LOD truncation radii round-trip independently, so the selected
+    # substitutive level may claim a different support than the finest leaf.
+    sigmas = resolve_truncation_sigmas(truncation_sigmas, target_view)
 
     # Resolve the size-adaptive sentinel ONCE, before the (expensive) Gram
     # build below, so `needs_gram` and the recorded `lod_method` stat both
@@ -953,9 +1006,7 @@ def make_additive_lod(
         # for the residual-energy curve. Reuse the same matrix across both.
         needs_gram = method in ("greedy", "spectral")
         gram_csr = (
-            _build_sparse_gram(target_view, sigmas=truncation_sigmas)
-            if needs_gram
-            else None
+            _build_sparse_gram(target_view, sigmas=sigmas) if needs_gram else None
         )
         if gram_csr is not None:
             order = _order_from_gram(gram_csr, method, max_n_dense)
@@ -963,7 +1014,7 @@ def make_additive_lod(
             order = compute_additive_order(
                 target_view,
                 method=method,
-                truncation_sigmas=truncation_sigmas,
+                truncation_sigmas=sigmas,
                 max_n_dense=max_n_dense,
                 seed=seed,
                 reveal_centre=reveal_centre,

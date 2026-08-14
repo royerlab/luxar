@@ -6378,3 +6378,74 @@ class TestAnnotateQualityCommand:
         fake.write_bytes(b"not a zip")
         result = runner.invoke(app, ["gsplat", "annotate-quality", str(fake)])
         assert result.exit_code != 0
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# `gsplat info` measures volumes at the DATASET's truncation radius (#1180)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestInfoVolumeTruncation:
+    """`gsplat info` used to compute (and label) volumes at a hardcoded 3σ, so a
+    dataset fitted at the canonical 2.75 was reported (3/2.75)^ndim too large."""
+
+    def _gsplats_at_radius(self, tmp_path: Path, radius: float) -> Path:
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        n, d = 6, 3
+        data = GSplatData(
+            centers=(np.arange(n * d, dtype=np.float32).reshape(n, d)),
+            amplitudes=np.linspace(0.2, 1.0, n).astype(np.float32),
+            cholesky_factors=np.tile(
+                np.array([1.0, 0, 1.0, 0, 0, 1.0], dtype=np.float32), (n, 1)
+            ),
+            truncation_radius=radius,
+        )
+        out = tmp_path / f"r{radius}.gsplats.zarr"
+        data.save(out)
+        return out
+
+    @pytest.mark.parametrize("ndim", [2, 3, 4])
+    def test_volumes_scale_as_truncate_to_the_ndim(self, ndim: int) -> None:
+        """The formula is unchanged; only the σ it is evaluated at is now the
+        dataset's. Volumes at 2.75 must be (2.75/3)^ndim of those at 3.0."""
+        from luxar.cli.gsplat_ops.inspect_commands import _compute_splat_volumes
+
+        tril = ndim * (ndim + 1) // 2
+        chol = np.zeros((4, tril), dtype=np.float32)
+        diag_idx = np.cumsum(np.arange(1, ndim + 1)) - 1
+        chol[:, diag_idx] = np.linspace(0.5, 2.0, 4)[:, None]
+
+        at_275 = _compute_splat_volumes(chol, ndim, 2.75)
+        at_3 = _compute_splat_volumes(chol, ndim, 3.0)
+
+        assert at_275 == pytest.approx(at_3 * (2.75 / 3.0) ** ndim, rel=1e-6)
+        # Not accidentally equal — the hardcoded-3 bug would make them identical.
+        assert not np.allclose(at_275, at_3)
+
+    def test_header_reports_the_dataset_radius(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """The section header carries the dataset's own radius, and an integral
+        radius prints without a trailing `.0`."""
+        canonical = self._gsplats_at_radius(tmp_path, 2.75)
+        r = runner.invoke(app, ["gsplat", "info", str(canonical), "--no-histograms"])
+        assert r.exit_code == 0, f"failed:\n{r.stdout}"
+        assert "VOLUME ANALYSIS (2.75-Sigma)" in _plain(r.stdout)
+        assert "3-Sigma" not in _plain(r.stdout)
+        # The SUMMARY line reports the same volumes array; its label must agree.
+        assert "Mean splat volume (2.75σ)" in _plain(r.stdout)
+        assert "(3σ)" not in _plain(r.stdout)
+
+        integral = self._gsplats_at_radius(tmp_path, 4.0)
+        r2 = runner.invoke(app, ["gsplat", "info", str(integral), "--no-histograms"])
+        assert r2.exit_code == 0, f"failed:\n{r2.stdout}"
+        assert "VOLUME ANALYSIS (4-Sigma)" in _plain(r2.stdout)
+
+    def test_histogram_title_reports_the_dataset_radius(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        path = self._gsplats_at_radius(tmp_path, 2.75)
+        r = runner.invoke(app, ["gsplat", "info", str(path)])
+        assert r.exit_code == 0, f"failed:\n{r.stdout}"
+        assert "Volume Distribution (2.75σ)" in _plain(r.stdout)
