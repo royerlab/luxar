@@ -259,22 +259,80 @@ def _build_part_for_tile(
     return part
 
 
+def volume_refit_source_error(
+    axes: "Optional[str]", n_timepoints: int, n_channels: int
+) -> "Optional[str]":
+    """Why a source cannot serve a per-tile volume re-fit — ``None`` if it can.
+
+    Pure, and deliberately shared by two callers: the PLANNER runs it so a
+    mistake costs nothing (the alternative is discovering it after every tile has
+    been fitted), and the merge front door runs it again because a manifest can
+    predate the check or be written by hand.
+
+    A merged part carries the spatial dims plus, when more than one timepoint was
+    selected, ONE stacked axis. Every other source axis has to be PINNED to the
+    index this batch fitted (see :func:`_merge_refit_volume`), so what has to hold
+    is that each such axis has a single index to pin:
+
+    * the manifest must record ``axes``, since the merged parts put spatial dims
+      first with the stacked axis LAST while the source is usually time-FIRST, and
+      guessing that mapping wrong sends every re-fit at the wrong axis;
+    * several selected channels cannot be pinned to one index — nor mapped onto
+      the one stacked axis a merged part carries;
+    * a channel index folded over SEVERAL source axes has no single axis to pin,
+      and neither does a source with two time axes.
+    """
+    if not axes:
+        return (
+            "the source's axis labels are needed to map the stacked axis (merged "
+            "parts put spatial dims first and the stacked axis LAST; a source is "
+            "usually time-FIRST). This batch was planned without --axes, so "
+            "re-plan with it, or merge without the re-fit."
+        )
+    labels = [a.strip().lower() for a in axes.split(",") if a.strip()]
+    # Classify every label through the shared vocabulary, so an unrecognised one
+    # is named here rather than surfacing from the loader further down.
+    from luxar.io.volume import _axis_kind
+
+    try:
+        kinds = [_axis_kind(label, "--axes") for label in labels]
+    except ValueError as exc:
+        return str(exc)
+    if not any(k == "s" for k in kinds):
+        return (
+            f"--axes {axes!r} names no spatial axis, so there is nothing to crop "
+            "a tile from."
+        )
+    if n_channels and n_channels > 1:
+        return (
+            f"several channels were selected ({n_channels}): a merged part carries "
+            "ONE stacked axis (the timepoints), so a channel cannot also map onto "
+            "it — and there is no single channel index to pin the source's channel "
+            "axis to. Merge without the re-fit, or fit one channel at a time."
+        )
+    if sum(1 for k in kinds if k == "c") > 1:
+        return (
+            f"--axes {axes!r} folds the channel index over more than one axis, so "
+            "there is no single index to pin each of them to. Merge without the "
+            "re-fit, or point --array-key at an array with one channel axis."
+        )
+    if sum(1 for k in kinds if k == "t") > 1:
+        return f"--axes {axes!r} names more than one time axis."
+    if n_timepoints > 1 and not any(k == "t" for k in kinds):
+        return (
+            f"{n_timepoints} timepoints were stacked but --axes {axes!r} names no "
+            "time axis, so the stacked axis has nothing to map onto."
+        )
+    return None
+
+
 def _validate_merge_volume_refit(manifest: "BatchManifest") -> None:
     """Refuse a merge-time volume re-fit the source cannot serve, before writing.
 
     The streaming merge was volume-free by design; it can now re-open the source
     and hand each tile-part its own crop (and each stacked timepoint its own
-    slice). Three things must hold, and each fails loudly rather than silently
-    leaving the levels unrefined:
-
-    * the source must still be readable at the path the plan recorded — an array
-      moved or deleted since the fit;
-    * the manifest must record ``axes``, since the merged parts put spatial dims
-      first with the stacked axis LAST while the source is usually time-FIRST, and
-      guessing that mapping wrong sends every re-fit at the wrong axis;
-    * folded CHANNEL axes are not supported: a merged part carries one stacked
-      axis, so a source with both time and channel to select from cannot be
-      mapped one-to-one onto it.
+    slice). The path must still resolve, and the axis facts must line up — see
+    :func:`volume_refit_source_error` for the latter.
     """
     from pathlib import Path
 
@@ -292,34 +350,11 @@ def _validate_merge_volume_refit(manifest: "BatchManifest") -> None:
             f"{manifest.input_path} no longer exists. Merge without it, or "
             "re-run the merge from a machine that can see the source."
         )
-    if not manifest.axes:
-        raise ValueError(
-            "merge: refine='volume' needs the source's axis labels to map the "
-            "stacked axis (merged parts put spatial dims first and the stacked "
-            "axis LAST; a source is usually time-FIRST). This batch was planned "
-            "without --axes, so re-plan with it, or merge without the re-fit."
-        )
-    labels = [a.strip().lower() for a in manifest.axes.split(",") if a.strip()]
-    if manifest.n_channels and manifest.n_channels > 1:
-        raise ValueError(
-            f"merge: refine='volume' does not support a folded channel axis "
-            f"({manifest.n_channels} channels): a merged part carries ONE "
-            "stacked axis, so time and channel cannot both map onto it. Merge "
-            "without the re-fit, or fit one channel at a time."
-        )
-    # Classify every label through the shared vocabulary, so an unrecognised one
-    # is named here rather than surfacing from the loader further down. (It would
-    # still be caught before any part is written — the source is resolved ahead of
-    # the stream — but the message would not mention the merge.)
-    from luxar.io.volume import _axis_kind
-
-    for label in labels:
-        _axis_kind(label, "--axes")
-    if not any(x in ("z", "y", "x", "depth", "height", "width") for x in labels):
-        raise ValueError(
-            f"merge: --axes {manifest.axes!r} names no spatial axis, so there is "
-            "nothing to crop a tile from."
-        )
+    problem = volume_refit_source_error(
+        manifest.axes, manifest.n_timepoints, manifest.n_channels
+    )
+    if problem:
+        raise ValueError(f"merge: refine='volume': {problem}")
 
 
 def _merge_refit_volume(manifest: "BatchManifest") -> "tuple[Any, tuple]":
@@ -328,13 +363,43 @@ def _merge_refit_volume(manifest: "BatchManifest") -> "tuple[Any, tuple]":
     Validated by :func:`_validate_merge_volume_refit`, so this only has to build
     what that proved possible. The source is never read whole: each tile-part
     slices its own timepoint and crop out of it.
+
+    The re-opened source is the FULL array, so it still carries the axes this
+    batch selected a single index of — a channel, and the time axis itself when
+    only one timepoint was fitted (the merge then stacks nothing). A merged part
+    has no center column for those, so they are PINNED to the index the fit used:
+    lazily, because pre-slicing a zarr array materialises it.
     """
     from pathlib import Path
 
-    from luxar.io.volume import open_volume_lazy, volume_axes_from_spec
+    from luxar.io.volume import (
+        _axis_kind,
+        open_volume_lazy,
+        pin_volume_axes,
+        volume_axes_from_spec,
+    )
 
     volume = open_volume_lazy(Path(manifest.input_path), manifest.array_key)
-    axes = volume_axes_from_spec(manifest.axes or "", len(volume.shape), flag="--axes")
+    labels = [a.strip().lower() for a in (manifest.axes or "").split(",") if a.strip()]
+    if len(labels) != len(volume.shape):
+        raise ValueError(
+            f"merge: refine='volume': --axes {manifest.axes!r} has {len(labels)} "
+            f"labels but {Path(manifest.input_path).name} resolved to a "
+            f"{len(volume.shape)}D array {tuple(volume.shape)}; the labels must "
+            "describe the array the fit read."
+        )
+    kinds = [_axis_kind(label, "--axes") for label in labels]
+    t_indices, c_indices = _tile_indices(manifest)
+    pins = {
+        axis: (c_indices[0] if kind == "c" else t_indices[0])
+        for axis, kind in enumerate(kinds)
+        # The stacked axis is the one the re-fit WALKS (one slice per barrier
+        # group), so it is the only non-spatial axis that must stay.
+        if kind == "c" or (kind == "t" and manifest.n_timepoints <= 1)
+    }
+    volume = pin_volume_axes(volume, pins)
+    kept = ",".join(label for i, label in enumerate(labels) if i not in pins)
+    axes = volume_axes_from_spec(kept, len(volume.shape), flag="--axes")
     return volume, axes
 
 

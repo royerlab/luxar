@@ -200,7 +200,7 @@ luxar gsplat additive sub.gsplats.zarr pyr.gsplats.zarr --target-ms 200   # ~200
 | `--refine` | none | `l2` = post-merge L2 refit of each level against its fine input (slower, higher fidelity, peak-preserving; mass pinned); `volume` = warm-start re-fit against the source volume given via `--target` (highest fidelity; never worse than the merge; works on levels/overview and per-tile `adaptive`, with or without barrier dims — each re-fit gets the sub-volume it owns, and a per-tile re-fit that leaves its tile is discarded) |
 | `--refine-iters` | 120 / 300 | steps per refined level (120 for `l2`, 300 for `volume`; requires `--refine l2\|volume`) |
 | `--target` | — | source volume for `--refine volume` (.npy/.npz/.tiff/.zarr[.zip]; with `--channel`/`--timepoint`/`--array-key` selectors) |
-| `--target-axes` | — | per-dimension labels for a `--target` that KEEPS its stacked axis (e.g. `time,z,y,x`), so `--refine volume` walks it one slice per barrier group. Contrast `--timepoint`, which slices a single timepoint out. |
+| `--target-axes` | — | per-dimension labels for a `--target` that KEEPS its stacked axis (e.g. `time,z,y,x`), so `--refine volume` walks it one slice per barrier group; the target is then opened lazily (only the slice is read). Contrast `--timepoint`, which slices a single timepoint out and drops the axis — mutually exclusive with this. |
 | `--coarsen-dims` | all | center-column indices coarsening may merge over (rest = hard barriers) |
 
 ### LOD switch tuning (any kind=lod group)

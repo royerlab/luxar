@@ -365,13 +365,18 @@ def _cell_for_coarsened_dims(
     The sub-volume drops the barrier dims, so its box is indexed by the
     COARSENED dims only. Returns ``None`` when there is nothing to crop to, or
     when the re-fit is not volume-based (the box would be dead weight).
+
+    Sorted and de-duplicated the same way ``make_substitutive_lod`` normalises
+    ``coarsen_dims``: the sub-volume's retained dims come back in ASCENDING order,
+    so a box built in the order the caller happened to spell them (``2,1,0``)
+    would crop each axis to another axis's bounds.
     """
     if cell is None or params.refine != "volume":
         return None
     free = (
         tuple(range(ndim))
         if params.coarsen_dims is None
-        else tuple(int(d) for d in params.coarsen_dims)
+        else tuple(sorted({int(d) for d in params.coarsen_dims}))
     )
     return [cell[d] for d in free]
 

@@ -27,6 +27,8 @@ _MERGE_OPTION_TOKENS = {
     "--levels": "substitutive",
     "--subst-method": "substitutive",
     "--coarsen-dims": "substitutive",
+    "--refine": "substitutive",
+    "--refine-iters": "substitutive",
 }
 _MERGE_ALLOWED_TOKENS = {
     "stream": frozenset({"additive"}),
@@ -41,11 +43,18 @@ def _apply_refine(
 
     Unset means the ``RecipeParams`` default ("none"), which keeps a merge
     byte-identical to one planned before these knobs existed.
+
+    The resolved PAIR is validated whenever either half is given, so
+    ``--refine-iters`` on its own gets the shared orphan-option error rather than
+    being recorded against a ``refine`` of "none" that never reads it.
     """
     from luxar.cli.gsplat_ops.recipe_shared import validate_refine
 
+    if refine is None and refine_iters is None:
+        return
+    norm = validate_refine(refine, refine_iters)
     if refine is not None:
-        overrides["refine"] = validate_refine(refine, refine_iters)
+        overrides["refine"] = norm
     if refine_iters is not None:
         overrides["refine_iters"] = refine_iters
 

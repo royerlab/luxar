@@ -30,5 +30,13 @@ tile as that tile streams. The volume is only ever sliced, never read whole, so 
 lazy zarr target stays lazy: a 253-timepoint 407x2048x2048 uint16 timelapse is
 431 GB while one timepoint is 3.4 GB.
 
+A re-opened batch source is the FULL array, so it still carries the axes the fit
+selected a single index of — a channel, and the time axis itself when only one
+timepoint was fitted. Those are pinned lazily to the index the fit used, so the
+canonical `(t, c, z, y, x)` OME-Zarr shape works rather than having to be reduced
+to `(t, z, y, x)` first. What cannot be mapped — several selected channels, a
+channel index folded over more than one axis, a missing `--axes` — is refused at
+PLAN time, before any tile has been fitted.
+
 Measured +7.7 dB mean on coarse levels of a stacked 3-timepoint fit that
 previously could not be refined at all.

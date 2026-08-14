@@ -945,3 +945,30 @@ def test_levels_recipe_refines_a_stacked_target_through_the_ladder():
     )
     assert stats["improved_frac"] > 0.0, "no group's re-fit was kept"
     assert stats["mse_stored"] <= stats["mse_seed"] + 1e-12
+
+
+def test_tile_box_follows_the_subvolume_dim_order_not_the_spelling() -> None:
+    """A tile's box is indexed by the RETAINED dims, which come back ascending.
+
+    ``select_sub_volume`` drops the barrier dims and hands back the survivors in
+    ascending order, and ``make_substitutive_lod`` normalises ``coarsen_dims`` the
+    same way. So the box has to be built in that order too — built in the order
+    the caller happened to spell them (``2,1,0``, or with a repeat), each axis
+    would be cropped to another axis's bounds. Fails pre-fix on the reversed
+    spelling.
+    """
+    from luxar.gsplats.lod.recipes import _cell_for_coarsened_dims
+
+    cell = [(0.0, 1.0), (10.0, 11.0), (20.0, 21.0), (float("-inf"), float("inf"))]
+    ascending = [(0.0, 1.0), (10.0, 11.0), (20.0, 21.0)]
+
+    for spelling in ((0, 1, 2), (2, 1, 0), (1, 0, 2), (2, 0, 1, 0)):
+        p = _params(refine="volume", coarsen_dims=spelling)
+        assert _cell_for_coarsened_dims(cell, p, 4) == ascending, spelling
+
+    # No barrier dims → every dim retained, still ascending.
+    p = _params(refine="volume", coarsen_dims=None)
+    assert _cell_for_coarsened_dims(cell, p, 4) == cell
+    # Not a volume re-fit → the box would be dead weight.
+    assert _cell_for_coarsened_dims(cell, _params(refine="l2"), 4) is None
+    assert _cell_for_coarsened_dims(None, p, 4) is None

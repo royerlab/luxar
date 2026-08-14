@@ -2708,3 +2708,92 @@ class TestMergeRefineReachesEveryConsumer:
         byte-identically."""
         args = self._args(recipe="levels", levels=1)
         assert "refine" not in args and "refine-iters" not in args
+
+    def test_orphan_iters_still_bites_at_merge_time(self) -> None:
+        """`batch-fit merge --refine-iters N` with no --refine is an orphan too.
+
+        Plan time rejects it; the merge-time builder must agree rather than
+        recording an iteration count against a `refine` of "none" that never reads
+        it. Its `refine` may also come from the stored plan, so the resolved PAIR
+        is what gets validated.
+        """
+        import typer
+
+        from luxar.cli.gsplat_ops.batch.recipe_args import build_merge_recipe_params
+
+        with pytest.raises(typer.BadParameter, match="only applies with"):
+            build_merge_recipe_params({}, refine_iters=5)
+        # Resolved against a stored refine, the same pair is legal.
+        params = build_merge_recipe_params({"refine": "volume"}, refine_iters=5)
+        assert params.refine == "volume" and params.refine_iters == 5
+
+
+class TestMergeRefineSourceValidatedAtPlanTime:
+    """`--merge-refine volume` re-opens THIS input at merge time, which is AFTER
+    every tile has been fitted. Anything that makes the source unmappable has to
+    be caught while planning, or a mistake costs the whole fit."""
+
+    @staticmethod
+    def _error(axes, n_t=1, n_c=1):
+        from luxar.gsplats.batch.merge_orchestrator import volume_refit_source_error
+
+        return volume_refit_source_error(axes, n_t, n_c)
+
+    def test_the_mappable_shapes_pass(self) -> None:
+        # Stacked timelapse: the time axis is the one the re-fit walks.
+        assert self._error("t,z,y,x", n_t=3) is None
+        # Canonical OME-Zarr: the channel axis is pinned to the fitted channel.
+        assert self._error("t,c,z,y,x", n_t=3, n_c=1) is None
+        # Single timepoint: nothing is stacked, so the time axis is pinned too.
+        assert self._error("t,c,z,y,x", n_t=1, n_c=1) is None
+        assert self._error("z,y,x") is None
+
+    def test_the_unmappable_shapes_are_named(self) -> None:
+        assert "axis labels" in (self._error(None) or "")
+        assert "not recognised" in (self._error("q,y,x") or "")
+        assert "no spatial axis" in (self._error("t,c") or "")
+        assert "several channels" in (self._error("t,c,z,y,x", n_t=2, n_c=3) or "")
+        # A flat channel index folded over two axes has no single axis to pin.
+        assert "more than one axis" in (self._error("c,cam,z,y,x") or "")
+        # Timepoints stacked but no time axis to map them onto.
+        assert "no time axis" in (self._error("z,y,x", n_t=4) or "")
+
+    def test_the_planner_refuses_before_submitting(self, tmp_path) -> None:
+        """End-to-end: the guard is wired into plan_batch, not just available."""
+        import typer
+        import zarr
+
+        from luxar.cli.gsplat_ops.batch.planning import (
+            ContentKnobs,
+            DenoiseConfig,
+            FitConfig,
+            MergeConfig,
+            plan_batch,
+        )
+
+        source = tmp_path / "movie.zarr"
+        z = zarr.open(str(source), mode="w", shape=(3, 8, 8, 8), dtype="u2")
+        z[:] = np.zeros((3, 8, 8, 8), np.uint16)
+
+        def _plan(axes_list):
+            return plan_batch(
+                input_path=source,
+                output_dir=tmp_path / "out",
+                tiling="uniform",
+                tile_size=8,
+                tile_overlap=0,
+                axes_list=axes_list,
+                array_key=None,
+                timepoints_slice=None,
+                channels_slice=None,
+                fit=FitConfig(),
+                denoise=DenoiseConfig(),
+                content=ContentKnobs(),
+                merge=MergeConfig(recipe="levels", levels=1, refine="volume"),
+            )
+
+        with pytest.raises(typer.BadParameter, match="axis labels"):
+            _plan(None)
+        # With labels the plan goes through, and records the knob for the merge.
+        result = _plan(["t", "z", "y", "x"])
+        assert result.manifest.merge_recipe_args["refine"] == "volume"

@@ -580,7 +580,9 @@ def _volume_refine_level(
     coarsen = tuple(range(d_total)) if coarsen_dims is None else tuple(coarsen_dims)
     barrier = tuple(d for d in range(d_total) if d not in set(coarsen))
 
-    def _one(piece: GSplatData, coords: Sequence[float]) -> tuple[GSplatData, dict]:
+    def _one(
+        piece: GSplatData, coords: Sequence[float]
+    ) -> tuple[GSplatData, dict, int]:
         sub = select_sub_volume(
             volume,
             ndim=d_total,
@@ -608,13 +610,14 @@ def _volume_refine_level(
             st["tile_escape"] = True
             st["improved"] = False
             st["seed_won"] = True
-            return piece, _with_stored_mse(st)
+            return piece, _with_stored_mse(st), int(sub.array.size)
         st = dict(st)
         st["tile_escape"] = False
-        return out, _with_stored_mse(st)
+        return out, _with_stored_mse(st), int(sub.array.size)
 
     if not barrier:
-        return _one(level, ())
+        refined_all, st_all, _ = _one(level, ())
+        return refined_all, st_all
 
     keys = np.asarray(level.centers)[:, list(barrier)]
     group_keys, inverse = np.unique(keys, axis=0, return_inverse=True)
@@ -631,9 +634,9 @@ def _volume_refine_level(
         piece = _subset_gsplatdata(level, order[starts[g] : ends[g]])
         if piece.n_splats == 0:
             continue
-        refined, st = _one(piece, group_keys[g])
+        refined, st, n_voxels = _one(piece, group_keys[g])
         pieces.append(refined)
-        merge_volume_refit_stats(sink, st, weight=int(piece.n_splats))
+        merge_volume_refit_stats(sink, st, weight=n_voxels)
     if not pieces:
         return level, finalize_volume_refit_stats(sink)
     return _concat_gsplatdata(pieces), finalize_volume_refit_stats(sink)

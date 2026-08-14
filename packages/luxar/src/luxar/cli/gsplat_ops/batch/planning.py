@@ -189,6 +189,31 @@ def _record_merge_refine(args: dict, merge: MergeConfig) -> None:
         args["refine-iters"] = str(merge.refine_iters)
 
 
+def _validate_merge_refine_source(
+    merge: MergeConfig,
+    axes_list: Optional[List[str]],
+    n_timepoints: int,
+    n_channels: int,
+) -> None:
+    """Refuse a planned merge-time volume re-fit this source cannot serve.
+
+    The re-fit re-opens THIS input at merge time and pins or walks its non-spatial
+    axes, which needs axis labels and a single channel. Checked HERE because the
+    merge job runs only after every tile has been fitted — discovering it there
+    costs the whole fit. (The merge front door re-checks the same rule: a manifest
+    can predate this, or be written by hand.)
+    """
+    if merge.refine != "volume":
+        return
+    from luxar.gsplats.batch.merge_orchestrator import volume_refit_source_error
+
+    problem = volume_refit_source_error(
+        ",".join(axes_list) if axes_list else None, n_timepoints, n_channels
+    )
+    if problem:
+        raise typer.BadParameter(f"--merge-refine volume: {problem}")
+
+
 def resolve_merge_recipe_args(
     merge: MergeConfig, *, merged_ndim: int = 4, merged_has_colors: bool = False
 ) -> dict:
@@ -519,6 +544,8 @@ def plan_batch(
             merged_ndim=len(spatial) + (1 if n_t > 1 else 0),
             merged_has_colors=bool(merge.channel_colors) and n_c > 1,
         )
+
+    _validate_merge_refine_source(merge, axes_list, n_t, n_c)
 
     # 3. Decompose the spatial volume into the slots fanned across (t, c).
     mode = "content" if tiling == "content" else "uniform"

@@ -257,6 +257,8 @@ def run_batch_merge_cmd(
                 "--levels": levels,
                 "--subst-method": substitutive_method,
                 "--coarsen-dims": coarsen_dims,
+                "--refine": refine,
+                "--refine-iters": refine_iters,
             },
             _MERGE_OPTION_TOKENS_IMPL,
             _MERGE_ALLOWED_TOKENS_IMPL,

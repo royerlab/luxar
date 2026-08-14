@@ -41,6 +41,7 @@ from .gsplat_ops.recipe_shared import (
     parse_lod_breakpoints,
     reject_irrelevant_recipe_options,
     resolve_streaming_breakpoints,
+    validate_refine,
     validate_streaming_knobs,
 )
 
@@ -576,15 +577,9 @@ def lod_recipe(
                 f"--no-additive contradicts --recipe {recipe}: its additive "
                 "ladder is the recipe's definition."
             )
-        refine_norm = (refine or "none").strip()
-        if refine_norm not in ("none", "l2", "volume"):
-            raise typer.BadParameter(
-                f"--refine must be 'none', 'l2', or 'volume'; got {refine!r}"
-            )
-        if refine_iters is not None and refine_norm == "none":
-            raise typer.BadParameter(
-                "--refine-iters only applies with --refine l2|volume."
-            )
+        # Same mode vocabulary and orphan-option rule as `fit --recipe` and the
+        # batch merge — one validator, so the three spellings cannot drift.
+        refine_norm = validate_refine(refine, refine_iters)
         if refine_norm == "volume" and target_path is None:
             raise typer.BadParameter(
                 "--refine volume needs the source volume: pass --target <volume>."
@@ -608,6 +603,15 @@ def lod_recipe(
             raise typer.BadParameter(
                 f"option(s) {', '.join(orphan_selectors)} select a sub-volume "
                 "of --target, but no --target was given."
+            )
+        if target_axes is not None and (
+            target_channel is not None or target_timepoint is not None
+        ):
+            raise typer.BadParameter(
+                "--target-axes KEEPS the target's stacked axis so --refine volume "
+                "can walk it one barrier group at a time, while --channel/"
+                "--timepoint slice one index out and drop it — the labels would "
+                "no longer describe the array. Use one or the other."
             )
         rule = partition_rule or "median"
         if rule not in _VALID_PARTITION_RULES:
@@ -653,18 +657,37 @@ def lod_recipe(
                 aprint(f"Loaded {data.n_splats:,} splats ({data.ndim}D)")
 
             # ── --refine volume: load the source volume (shared loader) ──
-            target_volume = None
+            target_volume: Any = None
             target_volume_axes = None
             if target_path is not None:
                 from luxar.cli.gsplat_config import load_volume
 
+                # A --target-axes target keeps its stacked axis, and the re-fit
+                # then only ever SLICES it (one barrier group at a time). Open it
+                # lazily so that stays true on disk as well as in principle: a
+                # 253-timepoint 407x2048x2048 uint16 timelapse is 431 GB while one
+                # timepoint is 3.4 GB. The selector flags are the eager case by
+                # definition (they reduce the array before the fit sees it), and
+                # they cannot be combined with --target-axes anyway.
+                lazy = (
+                    target_axes is not None
+                    and target_channel is None
+                    and target_timepoint is None
+                )
                 with asection(f"Loading target volume: {target_path.name}"):
-                    target_volume = load_volume(
-                        target_path,
-                        channel=target_channel,
-                        timepoint=target_timepoint,
-                        array_key=target_array_key,
-                    )
+                    if lazy:
+                        from luxar.io.volume import open_volume_lazy
+
+                        target_volume = open_volume_lazy(
+                            target_path, array_key=target_array_key
+                        )
+                    else:
+                        target_volume = load_volume(
+                            target_path,
+                            channel=target_channel,
+                            timepoint=target_timepoint,
+                            array_key=target_array_key,
+                        )
                     aprint(f"Volume shape: {target_volume.shape}")
                 if len(target_volume.shape) != data.ndim:
                     raise typer.BadParameter(

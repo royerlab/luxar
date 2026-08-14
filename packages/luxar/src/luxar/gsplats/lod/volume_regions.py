@@ -288,8 +288,11 @@ def merge_volume_refit_stats(sink: Dict, group: Dict, *, weight: int) -> None:
     single ``improved`` for 253 timepoints would throw away exactly the
     information a caller wants.
 
-    ``weight`` is the piece's splat count. Kept flat and JSON-safe: the zarr
-    writer and the stats tests both require that.
+    ``weight`` is the number of TARGET VOXELS the piece's MSEs are means over —
+    not its splat count, which says nothing about how many samples contributed.
+    (For barrier groups every piece is the same-shaped slice, so that reduces to
+    a plain mean; for tiles of different size it does not.) Kept flat and
+    JSON-safe: the zarr writer and the stats tests both require that.
     """
     sink["n_pieces"] = sink.get("n_pieces", 0) + 1
     sink["n_seed"] = sink.get("n_seed", 0) + int(group.get("n_seed", 0))
