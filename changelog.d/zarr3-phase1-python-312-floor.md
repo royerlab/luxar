@@ -1,11 +1,11 @@
 #### Raise the Python floor to 3.12 and uncap numpy
 
 `requires-python` moves from `>=3.10` to `>=3.12`, and the mypy target and ruff
-`target-version` move with it. This is the first step of the migration off
-zarr-python 2: every zarr 3 release requires Python >= 3.11, and 3.2 onward
-requires >= 3.12, so the floor has to move before the library can. Nothing about
-zarr itself changes here — the project still resolves `zarr>=2.16,<3.0` and still
-writes zarr format 2 stores, byte for byte.
+`target-version` move with it. The floor is what the move to zarr-python 3
+requires: every zarr 3 release needs Python >= 3.11, and 3.2 onward needs
+>= 3.12. It is called out separately because it is the part with consequences of
+its own beyond zarr — everything below follows from raising the floor, not from
+changing the zarr pin, and none of it changes a byte on disk.
 
 The `numpy>=2.0,<2.5` cap is lifted as a direct consequence. That cap existed only
 because mypy checked numpy's PEP 695 stubs against `python_version = "3.10"`, where
