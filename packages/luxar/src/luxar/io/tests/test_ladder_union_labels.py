@@ -77,7 +77,7 @@ class TestPointsLadderUnionLabels:
         assert parent.attrs["has_labels"] is True
         assert "label_offsets" in parent
         assert "label_bytes" in parent
-        assert len(parent["label_offsets"]) == n_points + 1
+        assert parent["label_offsets"].shape[0] == n_points + 1
 
         decoded = decode_labels(parent)
         assert len(decoded) == n_points
@@ -317,7 +317,7 @@ class TestPointsLadderUnionLabels:
 
         # …and the union CSR spans exactly that concatenated index space, which
         # is what the composed pick ids address.
-        assert len(parent["label_offsets"]) == sum(level_sizes) + 1
+        assert parent["label_offsets"].shape[0] == sum(level_sizes) + 1
         assert len(decode_labels(parent)) == sum(level_sizes)
 
     def test_partition_of_ladder_puts_the_union_on_each_part(self, tmp_path):
@@ -592,7 +592,7 @@ class TestLinesLadderUnionLabels:
         store = zarr.open_group(path, mode="r")
         parent = store["ladder"]
         assert parent.attrs["has_labels"] is True
-        assert len(parent["label_offsets"]) == n_vertices_total + 1
+        assert parent["label_offsets"].shape[0] == n_vertices_total + 1
 
         decoded = decode_labels(parent)
         assert sorted(decoded) == sorted(lbl for lab in level_labels for lbl in lab)
@@ -687,7 +687,7 @@ class TestLinesLadderUnionLabels:
         store = zarr.open_group(path, mode="r")
         parent = store["ladder"]
         assert parent.attrs["has_labels"] is True
-        assert len(parent["label_offsets"]) == n_vertices + 1
+        assert parent["label_offsets"].shape[0] == n_vertices + 1
         assert sorted(decode_labels(parent)) == sorted(labels)
 
         for i in range(int(parent.attrs["n_additive_sublods"])):

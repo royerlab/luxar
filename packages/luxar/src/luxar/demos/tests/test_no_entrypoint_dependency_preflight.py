@@ -49,8 +49,10 @@ Not covered on purpose:
   ``return`` (not an exit call in the handler), ``raise builtins.SystemExit``
   (attribute form), or an exit placed in a ``finally:`` rather than the
   ``except`` handler.
-- ``except*`` (:class:`ast.TryStar`) handlers — moot on the Python 3.10 floor,
-  where ``except*`` is a syntax error (3.11+).
+- (``except*`` handlers ARE scanned. :class:`ast.TryStar` is a sibling of
+  :class:`ast.Try`, not a subclass, so it has to be matched explicitly — it was
+  once skipped as moot under a Python 3.10 floor, where ``except*`` is a syntax
+  error, but the floor is 3.12 now and the form is reachable.)
 - Reversed-operand or ``and``-compound spellings of the ``__name__`` guard;
   only the idiomatic ``if __name__ == "__main__":`` is recognised.
 - A gate exported from a module that HAS its own entry point: a function in a
@@ -168,7 +170,7 @@ def _is_dependency_call(call: ast.Call) -> bool:
     return False
 
 
-def _loads_dependency(try_node: ast.Try) -> bool:
+def _loads_dependency(try_node: ast.Try | ast.TryStar) -> bool:
     """Does the ``try`` BODY (only) load an optional dependency?
 
     A dependency load is an ``import`` / ``from ... import`` / ``__import__`` /
@@ -313,7 +315,7 @@ def _preflights(path: Path) -> list[str]:
     found: list[str] = []
     for root in _entry_reachable(tree):
         for node in ast.walk(root):
-            if not isinstance(node, ast.Try):
+            if not isinstance(node, ast.Try | ast.TryStar):
                 continue
             if not _loads_dependency(node):
                 continue

@@ -563,9 +563,15 @@ class TestDeps:
     def test_deps_shows_the_constrained_requirement_not_a_bare_name(
         self, runner
     ) -> None:
-        """The whole point of INSTALL_SPECS: never advertise an unbounded pin."""
+        """The whole point of INSTALL_SPECS: never advertise an unbounded pin.
+
+        Asserted on metpy rather than anndata: anndata's `<0.13` ceiling existed
+        only to hold off zarr 3 and is gone now the project is ON zarr 3, so a
+        substring check against it would no longer prove a bound is carried.
+        metpy's is version-driven and still live.
+        """
         result = runner.invoke(app, ["demo", "deps"])
-        assert "anndata>=0.10,<0.13" in result.stdout
+        assert "metpy>=1.6.3,<2.0" in result.stdout
 
     def test_deps_rejects_an_unknown_extra(self, runner) -> None:
         result = runner.invoke(app, ["demo", "deps", "--extra", "nope"])
