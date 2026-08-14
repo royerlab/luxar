@@ -35,11 +35,16 @@
  *   (first failing row `const partner 120° ql2 min` −0.399 against −0.01).
  *   Each test stops at its first failing row, so the row count is at least six
  *   and unknown beyond that — the TEST count is the measured figure.
- * - Deleting the SAME far cap from all four SHADER sources and leaving the
- *   mirror alone leaves the entire viewer unit suite green — every one of the
- *   11363 tests in the 552 files this one joins. Nothing tied the shader text
- *   to the model, so the exact regression #1490 describes (a packing refactor
- *   applied identically to all four twins) could land again invisibly.
+ * - Deleting the far cap's OVERSHOOT half (`xp - cut.w` in `op`) from all four
+ *   SHADER sources and leaving the mirror alone reds NOTHING BUT THIS FILE:
+ *   measured here, four failures (one per surface) and the other 553 files
+ *   green, 11420 passing. Nothing else ties that shader text to the model, so
+ *   the exact regression #1490 describes (a packing refactor applied
+ *   identically to all four twins) could land again invisibly. The RADIUS half
+ *   is no longer sole: #1563's `line/capsule-partner-radius.test.ts` pins the
+ *   whole `rp` base — `clamp(xp, 0.0, cut.w)` included — on all four surfaces,
+ *   so removing BOTH halves reds the eight cases here plus four of its.
+ *   Neither half was covered anywhere when this file was written.
  * - The TSL↔GLSL parity harness cannot see it either: it runs under
  *   `.github/workflows/ci.yml`'s `e2e-tests` job, which is `if: false`
  *   repo-wide, and until the fixture added alongside this file
@@ -90,9 +95,14 @@
  *    `toContain('unpackHalf2x16(vPack.x)')` survives a lane swap. The guards
  *    here are per-end and, for the call, keyed on the call spelling.
  * 7. THE PACKET GATE CLAUSES (#1495 / #1501) — all four, at BOTH ends of all
- *    four vertex surfaces (sibling describe). Same live hole: a shader-only
- *    clause deletion is invisible today, and dropping the sharp-turn clause
- *    alone measured −0.92 of peak in the 2r–3r partner band.
+ *    four vertex surfaces (sibling describe). Dropping the sharp-turn clause
+ *    alone measured −0.92 of peak in the 2r–3r partner band. A clause deletion
+ *    is NOT invisible any more: #1548 pins the whole clause CHAIN as one exact
+ *    string, per end and per surface, in `line-capsule.test.ts` — which is also
+ *    what pins the `||` / `.or(...)` COMPOSITION, deliberately not restated
+ *    here. These guards are the per-clause, HOIST-TOLERANT form of that pin
+ *    (see the sharp-turn note in the describe below): they are what survives
+ *    the cleanup the chain pin will red.
  * 8. THE CPU MIRROR — one brief text cross-check that it carries the same
  *    bounded rod. Deliberately brief: the numeric sweep above already catches
  *    a mirror-only regression BY VALUE, which is strictly better; this exists
@@ -102,6 +112,15 @@
  *    walks `src/rendering` and asserts the set of modules mentioning a partner
  *    profile is exactly these four (the twin of `join-width-tsl.test.ts`'s
  *    `locks EVERY TSL factory that calls tslLineJoin` case).
+ *
+ * Overlap with the sibling lock: `line/capsule-partner-radius.test.ts` (#1494 /
+ * #1563) came at the same four surfaces from the other side of the same
+ * contract, and reaches three of the guards above — its base-radius pin carries
+ * guard 1's `clamp(xp, 0.0, cut.w)`, its per-end call pins cover guard 5, and
+ * its `src/rendering` scan is guard 9 under a different needle. Guards 2, 3, 4
+ * and 6 are unique here. The overlap is left standing rather than pruned: it
+ * costs a handful of static string matches, and each file stays a complete
+ * statement of the contract it describes.
  *
  * Every match runs on comment-stripped, whitespace-squashed text: prose can
  * never satisfy a pin, and reformatting can never break one — but dropping
@@ -482,8 +501,14 @@ describe('capsule joint deficit packet: the packet contract (#1490 far cap)', ()
 /**
  * The packet GATE — a sibling describe, not a child of the one above, because
  * these clauses are #1495 / #1501 and are green on a #1490 revert. They live
- * here because they share the same hole: a shader-only clause deletion is
- * invisible to every other test in the repo.
+ * here because they belong to the same packet contract. Division of labour with
+ * #1548's chain pin in `line-capsule.test.ts`: that one holds the clauses in
+ * ORDER, joined by `||` / `.or(...)`, as a single exact string — so it, not
+ * this, is what an operator swap reds (measured: `||` → `&&` on the GLSL pair
+ * plus `.or(` → `.and(` on the TSL pair reds it and nothing else). These are
+ * the per-clause form, scoped to the gate statement and tolerant of the operand
+ * hoist below, and they cover the surfaces one at a time so a failure names the
+ * clause rather than printing a whole shader.
  */
 describe('capsule joint deficit packet: the gate clauses (#1495 / #1501)', () => {
   describe.each(GLSL_SURFACES)('$label', ({ vertex, label }) => {
