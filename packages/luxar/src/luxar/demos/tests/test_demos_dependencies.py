@@ -159,10 +159,8 @@ class TestSpecsMatchPyproject:
         # the EXTRA that declares it. A name-only match is too weak: scipy is
         # pinned twice (demos >=1.15.0, gsplats >=1.9.0), and a spec that had
         # silently relaxed to the gsplats floor would match "some pin" and pass.
-        try:
-            import tomllib
-        except ModuleNotFoundError:  # py3.10
-            tomllib = pytest.importorskip("tomli")
+        import tomllib
+
         data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
         optional = data["project"].get("optional-dependencies", {})
 

@@ -22,7 +22,7 @@ Before running `make setup-dev`, you need:
 
 | Tool | Required Version | Notes |
 |------|-----------------|-------|
-| Python | 3.10+ | Usually pre-installed on Linux/macOS |
+| Python | 3.12+ | Usually pre-installed on Linux/macOS |
 | Git | Any | For cloning the repository |
 | curl | Any | For downloading installers |
 
@@ -87,8 +87,8 @@ The setup process has 5 steps:
    - Checks for pipx (required on modern Ubuntu/Debian)
    - Installs Hatch via `pipx install hatch`
    - Without pipx, falls back to `pip install --user` / a venv — this
-     fallback is where a Python 3.10+ interpreter is scanned for
-     (`python3.13` → `python3.12` → ... → `python3`)
+     fallback is where a Python 3.12+ interpreter is scanned for
+     (`python3.14` → `python3.13` → `python3.12` → `python3`)
    - Handles edge cases (broken symlinks, already installed)
 
 #### Step 2: Node.js Environment
@@ -421,13 +421,12 @@ a local pass:
 hatch run python -V     # the interpreter your tests actually used
 ```
 
-To test the versions the project supports (`requires-python = ">=3.10"`), use the
-per-version `test` matrix environments instead of the default env:
+The project supports a single Python version (`requires-python = ">=3.12"`, and
+3.12 is the newest release), so the `test` matrix has one leg. Run it explicitly
+with:
 
 ```bash
-hatch python install 3.10 3.11   # once, if those interpreters are missing
-hatch run test.py3.10:cov        # one version
-hatch run test:cov               # all three, sequentially
+hatch run test.py3.12:cov
 ```
 
 CI runs each version it tests as its own parallel job and asserts the interpreter
@@ -719,7 +718,7 @@ fitting tasks are grouped into each Slurm job to reduce scheduling overhead.
 python scripts/check_hpc_setup.py
 ```
 
-Tests: Python 3.10+ available, hatch installed and functional, hatch env show works, hatch uses Python >= 3.10, pnpm installed and functional, `~/.local/bin` in PATH, npm `--prefix` fallback works, hatch venv uses Python >= 3.10.
+Tests: Python 3.12+ available, hatch installed and functional, hatch env show works, hatch uses Python >= 3.12, pnpm installed and functional, `~/.local/bin` in PATH, npm `--prefix` fallback works, hatch venv uses Python >= 3.12.
 
 The batch-planning regression tests (zarr.zip support, custom axes parsing,
 axes override validation, array selection consistency, auto-tile logic,
@@ -831,15 +830,15 @@ runs everything. The same trade as the per-PR Python matrix below: found on
 
 | Event | Python legs |
 |-------|-------------|
-| `pull_request` | `3.12` only — the one required status context |
-| `push` to `main` | `3.10`, `3.11`, `3.12` |
-| nightly `schedule` (09:17 UTC) | `3.10`, `3.11`, `3.12` |
+| `pull_request` | `3.12` — the one required status context |
+| `push` to `main` | `3.12` |
+| nightly `schedule` (09:17 UTC) | `3.12` |
 
-The supported floor is still 3.10 (`requires-python`), so 3.10/3.11 stay
-exercised every day and on every merge; what the per-PR matrix gives up is
-only the *latency* of finding a version-specific break — within 24h rather
-than in the PR that caused it. The trade buys back two of the three legs of the
-slowest job on a box with five self-hosted slots.
+The supported floor is 3.12 (`requires-python = ">=3.12"`) and 3.12 is the
+newest release, so there is only one interpreter to test and every event runs
+the same single leg. The nightly and push runs still differ from a PR run in
+*scope* rather than in Python version: neither has a PR base, so the `changes`
+job cannot path-filter and selects the whole suite plus the documentation gate.
 
 Scheduled runs sit in their own `concurrency` group: they share
 `refs/heads/main` with merge-triggered runs, so under one shared group
@@ -875,7 +874,7 @@ selects the full suite and the documentation gate as well.
 
 | Tool | Minimum Version | Reason |
 |------|----------------|--------|
-| Python | 3.10 | Type hints, dataclasses, match statements |
+| Python | 3.12 | zarr 3 requires >=3.12 from 3.2 on; also stdlib `tomllib`, PEP 695 type stubs |
 | Node.js | 22.22 | jsdom 30 engines `^22.22.2 || ^24.15.0 || >=26.0.0` (undici 8 crashes on older Node); Vite 8.x needs only 20.19 |
 | Rust | stable | WASM compilation |
 | wasm-pack | 0.14.0 (pinned) | WASM packaging — `install-rust` installs exactly `wasm-pack 0.14.0` with `cargo install --locked` |

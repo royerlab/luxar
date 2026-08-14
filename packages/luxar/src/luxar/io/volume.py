@@ -218,8 +218,10 @@ def load_volume(
         volume = np.asarray(volume, dtype=np.float32)
     else:
         # Post-process: drop incidental size-1 dims from the positional heuristic.
+        # The second asarray is a no-op at runtime (already float32, no copy); it
+        # is there because np.squeeze is typed as returning Any.
         volume = np.asarray(volume, dtype=np.float32)
-        volume = np.squeeze(volume)
+        volume = np.asarray(np.squeeze(volume), dtype=np.float32)
 
     if volume.ndim < 2:
         raise ValueError(

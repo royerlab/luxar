@@ -35,21 +35,18 @@ classifiers = [
     "Intended Audience :: Science/Research",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering :: Visualization",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Typing :: Typed"
 ]
-requires-python = ">=3.10"
+# 3.12 floor: zarr 3 requires >=3.11 in every release and >=3.12 from 3.2 on, and
+# the project is moving to zarr 3 (the `zarr>=2.16,<3.0` pin below transitively
+# caps anndata and napari, and blocks reading any zarr-v3 store outright). Raising
+# the floor here first keeps that migration a separate, reviewable change.
+requires-python = ">=3.12"
 dependencies = [
-    # numpy 2.5.0 rewrote its type stubs to PEP 695 `type` statements, which mypy
-    # rejects under our target python_version=3.10 ("Type statement is only supported
-    # in Python 3.12 and greater") — aborting the type-check step and turning main +
-    # every PR red. Cap below 2.5 (newest clean stubs = 2.4.6) until the mypy target
-    # moves to 3.12 or numpy/mypy reconcile.
-    "numpy>=2.0,<2.5",
+    "numpy>=2.0",
     "zarr>=2.16,<3.0",
     "typer>=0.19,<1.0",
     "fastapi>=0.111,<1.0",
@@ -92,7 +89,15 @@ test = [
     "pytest-xdist>=3.5.0",
     # Exercise the custom root-level hatch_build.py hook directly in tests.
     "hatchling>=1.27",
-    "hypothesis>=6.0"
+    "hypothesis>=6.0",
+    # `fastapi.testclient` (test_cli_integration.py) is a re-export of
+    # starlette's TestClient, which refuses to import without httpx. It reached
+    # the DEFAULT env transitively via a `dev` dependency, so the omission was
+    # invisible there — but the `test` matrix envs got no httpx at all and died
+    # during collection ("Interrupted: 1 error during collection", which pytest
+    # then reports with a ZERO exit status). Declared here, next to the pytest
+    # deps it belongs with, rather than left to a transitive.
+    "httpx>=0.27"
 ]
 dev = [
     "luxar[test]",
@@ -102,9 +107,6 @@ dev = [
     "pre-commit>=3.3.0",
     "bandit[toml]>=1.7.5",
     "import-linter>=2.0",
-    # `make stats` parses pyproject/Cargo TOML. stdlib tomllib only exists from
-    # 3.11, so the 3.10 floor needs the backport; a no-op on 3.11+.
-    "tomli>=2.0; python_version < '3.11'"
 ]
 io = [
     "tifffile>=2023.1.0",
@@ -149,7 +151,7 @@ demos = [
     # Pure-Python NEXRAD Level II decoder (metpy.io.Level2File) for
     # demo_gsplats_4d_nexrad_supercell. The >=1.6.3 floor is LOAD-BEARING:
     # metpy declares only `numpy>=1.20.0`, so a resolver would happily pair
-    # metpy 1.5.x with Luxar's core `numpy>=2.0,<3.0` and break at runtime;
+    # metpy 1.5.x with Luxar's core `numpy>=2.0` and break at runtime;
     # 1.6.3 is the release that added NumPy 2.0 support. Verified NOT to
     # threaten the `zarr>=2.16,<3.0` pin: metpy pulls xarray, but only
     # xarray's CORE requirements (numpy/packaging/pandas) — `zarr>=3.0` lives
@@ -369,7 +371,7 @@ dependencies = [
 ]
 
 [[tool.hatch.envs.test.matrix]]
-python = ["3.10", "3.11", "3.12"]
+python = ["3.12"]
 
 [tool.hatch.envs.test.scripts]
 # `run` = full suite (local gate); `cov` deselects `slow` to match CI (fast,
@@ -378,11 +380,9 @@ python = ["3.10", "3.11", "3.12"]
 # These stay LIBRARY-ONLY on purpose — they do not pick up the `examples/tests`
 # and `stats` paths the default env's `test`/`test-cov` scripts run (nor
 # `testpaths`, which the explicit args below override). This env has
-# `features = ["test"]`, and `stats/generate_stats.py` needs the `tomli`
-# backport on 3.10, which lives in the `dev` extra; adding `stats` here would
-# break the 3.10 leg on import. The default env (`features = ["dev"]`) has it,
-# which is why `hatch run test-cov` — what CI runs on every matrix leg — can
-# collect it.
+# `features = ["test"]`, which omits the `dev`-only tooling those paths import.
+# The default env (`features = ["dev"]`) has it, which is why `hatch run
+# test-cov` — what CI runs on every matrix leg — can collect them.
 run = "pytest {args:packages/luxar/src/luxar}"
 cov = "pytest -m 'not slow' --cov=luxar --cov-report=term-missing {args:packages/luxar/src/luxar}"
 
@@ -402,7 +402,7 @@ disable = true
 # Black and isort configuration removed - using ruff instead
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.12"
 
 # Strict mode settings
 strict = true
@@ -631,7 +631,7 @@ skips = ["B101"]  # Skip assert_used test
 [tool.ruff]
 # Ruff replaces black, isort, flake8, and more
 line-length = 88
-target-version = "py310"
+target-version = "py312"
 
 # Exclude directories
 exclude = [

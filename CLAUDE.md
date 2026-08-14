@@ -119,7 +119,7 @@ make help         # Show all available commands
 The build system is designed to work on **fresh Linux/macOS machines** with minimal pre-installed tools, including **HPC/Slurm login nodes** (no sudo, no GPU on login node).
 
 **Prerequisites:**
-- Python 3.10+ (usually pre-installed; `python3.12` or `python3.11` work on HPC)
+- Python 3.12+ (usually pre-installed; `python3.12` is the usual HPC module)
 - Git and curl
 - **Git LFS** (optional, required for demo data files): `brew install git-lfs` (macOS) or `sudo apt-get install git-lfs` (Ubuntu)
 - **Ubuntu/Debian only**: `sudo apt-get install -y pipx && pipx ensurepath`
