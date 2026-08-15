@@ -1165,7 +1165,9 @@ def _floor_level_and_sample_max(
         f = floor.strip().lower()
         if f in ("none", ""):
             return None, None
-        if f == "auto" or f.startswith("p"):
+        # One predicate for "measured ON the volume", so this function and the
+        # denoise-basis regime rule below can never disagree about a spec.
+        if _floor_spec_is_volume_derived(floor):
             needs_data = True
     if not needs_data:
         # Numeric spec: echo the constant back — never sample the volume.
