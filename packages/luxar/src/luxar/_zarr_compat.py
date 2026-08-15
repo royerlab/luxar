@@ -92,9 +92,11 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
 __all__ = [
     "DEFAULT_ZARR_FORMAT",
+    "NODE_ATTR_DOCS",
     "SUPPORTED_ZARR_FORMATS",
     "ZARR_FORMAT",
     "ZARR_FORMAT_ENV_VAR",
+    "attrs_from_node_doc",
     "close",
     "consolidate",
     "create_array",
@@ -320,6 +322,35 @@ def read_array_meta(array_dir: Path) -> dict[str, Any] | None:
     return None
 
 
+#: The per-node documents that can carry a node's user attributes, best first.
+#:
+#: Exported because a caller may hold the document's BYTES rather than a path
+#: and so cannot use :func:`read_node_attrs` — the archive peek in
+#: ``luxar.gsplats.io._archive`` reads one member out of a zip/tar without
+#: extracting it, and has to recognise the member by name. Keeping the names
+#: here means that peek does not have to know them itself.
+NODE_ATTR_DOCS: tuple[str, ...] = (".zattrs", _V3_METADATA_DOC)
+
+
+def attrs_from_node_doc(parsed: Any) -> dict[str, Any]:
+    """User attributes out of an ALREADY-PARSED node metadata document.
+
+    A format-2 ``.zattrs`` *is* the attributes mapping; a format-3 ``zarr.json``
+    nests it under ``attributes`` beside the node's structural fields. Answering
+    the format-3 document verbatim would hand back ``shape``/``data_type``/
+    ``node_type`` as though a user had authored them.
+
+    Anything that is not a JSON object, and a format-3 document whose
+    ``attributes`` is missing or not an object, both yield ``{}``.
+    """
+    if not isinstance(parsed, dict):
+        return {}
+    if parsed.get("zarr_format") == 3:
+        attrs = parsed.get("attributes")
+        return attrs if isinstance(attrs, dict) else {}
+    return parsed
+
+
 def read_node_attrs(node_dir: Path) -> dict[str, Any] | None:
     """A node's user attributes, from v2's ``.zattrs`` or v3's ``zarr.json``.
 
@@ -327,13 +358,10 @@ def read_node_attrs(node_dir: Path) -> dict[str, Any] | None:
     so an EMPTY attributes mapping must stay distinguishable from a missing
     one, and is returned as ``{}``.
     """
-    v2 = _read_json_doc(node_dir / ".zattrs")
-    if v2 is not None:
-        return v2
-    v3 = _read_json_doc(node_dir / _V3_METADATA_DOC)
-    if v3 is not None:
-        attrs = v3.get("attributes")
-        return attrs if isinstance(attrs, dict) else {}
+    for doc in NODE_ATTR_DOCS:
+        parsed = _read_json_doc(node_dir / doc)
+        if parsed is not None:
+            return attrs_from_node_doc(parsed)
     return None
 
 

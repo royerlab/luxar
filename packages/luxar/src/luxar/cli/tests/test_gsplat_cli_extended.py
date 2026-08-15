@@ -5632,6 +5632,11 @@ class TestLODCarriesAuthoredAppearance:
         Re-consolidating through the facade is also what keeps exactly ONE
         index, at the root; re-opening with plain ``zarr.open_group`` would
         write the stale in-memory tree back out as a nested one.
+
+        Re-consolidating rather than deleting is what leaves the fixture store
+        self-CONSISTENT: the index now agrees with the edit, so a consumer that
+        opens it consolidated sees the authored value too, instead of just
+        losing the index the writers all assume is there.
         """
         group = zc_open_group(src, mode="r+")
         group.attrs.update(authored)
@@ -5684,6 +5689,80 @@ class TestLODCarriesAuthoredAppearance:
         for key, want in self.AUTHORED.items():
             assert key in got, f"{label}: dropped {key!r} (had {want!r})"
             assert got[key] == want, f"{label}: {key} = {got[key]!r}, want {want!r}"
+
+    @staticmethod
+    def _authored_archive(src: Path, out: Path, authored: dict[str, Any]) -> None:
+        """Re-save ``src`` as a compressed archive whose ROOT carries ``authored``."""
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        compress = "zip" if out.name.endswith(".zip") else "tar.gz"
+        GSplatData.load(src).save(out, compress=compress, root_attrs=authored)
+
+    @staticmethod
+    def _archive_root_attrs(archive: Path) -> dict[str, Any]:
+        """Root attrs of an archive, obtained by actually EXTRACTING it.
+
+        Deliberately not the peek helper the fix added: the "is this test even
+        exercising anything" guard below has to be able to DISAGREE with the code
+        under test, so it takes the long way round. Reading the extracted root
+        through ``read_node_attrs`` keeps that independence — it is the facade's
+        document reader, not the appearance path under test — while staying
+        correct for whichever format wrote the archive.
+        """
+        import shutil
+
+        from luxar.gsplats.io._archive import extract_compressed_zarr
+
+        extracted = extract_compressed_zarr(archive)
+        try:
+            attrs = read_node_attrs(extracted)
+            assert attrs is not None, f"no readable zarr node in {archive}"
+            return attrs
+        finally:
+            shutil.rmtree(extracted.parent, ignore_errors=True)
+
+    @pytest.mark.parametrize("recipe", ["levels", "stream"])
+    @pytest.mark.parametrize("suffix", ["zip", "tar.gz"])
+    def test_authored_appearance_survives_an_archive_input(
+        self,
+        runner: CliRunner,
+        medium_gsplats: Path,
+        tmp_path: Path,
+        suffix: str,
+        recipe: str,
+    ) -> None:
+        """An ARCHIVE input carries its appearance across too (#1604).
+
+        ``.gsplats.zarr.zip`` / ``.tar.gz`` are first-class recipe inputs — the
+        loader extracts them transparently — but the appearance read bailed on
+        anything that was not a directory, so an archived dataset lost every
+        authored value on a rebuild while the identical directory kept them. Both
+        suffixes run because they take separate extraction paths, and both a
+        GROUP-rooted recipe (``levels``, whose caller attrs are copied onto the
+        root verbatim) and a LEAF-rooted one (``stream``, whose attrs go through
+        ``apply_gsplat_group_attrs``) because those are two different write paths.
+        """
+        archive = tmp_path / f"authored.gsplats.zarr.{suffix}"
+        self._authored_archive(medium_gsplats, archive, self.AUTHORED)
+        # Not vacuous: the INPUT archive really does carry every authored value.
+        in_attrs = self._archive_root_attrs(archive)
+        for key, want in self.AUTHORED.items():
+            assert in_attrs.get(key) == want, (
+                f"input archive lacks {key!r}: got {in_attrs.get(key)!r}, "
+                f"want {want!r} — the test would pass vacuously"
+            )
+
+        tag = f"{suffix.replace('.', '_')}_{recipe}"
+        out = tmp_path / f"carried_{tag}.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            ["gsplat", "lod", str(archive), str(out), "--recipe", recipe],
+        )
+        assert result.exit_code == 0, f"failed:\n{result.stdout}"
+        got = self._root_attrs(out)
+        for key, want in self.AUTHORED.items():
+            assert key in got, f"{tag}: dropped {key!r} (had {want!r})"
+            assert got[key] == want, f"{tag}: {key} = {got[key]!r}, want {want!r}"
 
     def test_carry_invents_nothing(
         self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path

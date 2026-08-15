@@ -30,15 +30,25 @@ format-3 store at all, `detect_store_encoding` answered "unclassifiable" so
 `gsplat lod` stopped detecting its input's encoding, batch-fit's bytes/splat
 measurement counted zero splats and fell back to its analytic estimate, the
 overlay loader's directory-listing fallback offered `zarr.json` itself as an
-overlay, and the demo re-encoder classified a `kind=partition` baseline as a
+overlay, the demo re-encoder classified a `kind=partition` baseline as a
 flat leaf — which selects the `flatten` path, so with `--apply` it would have
 collapsed a partitioned dataset's structure and written the result over the
-committed Git-LFS file.
+committed Git-LFS file — and the archive *peek* that reads a
+`.gsplats.zarr.zip`'s root attributes without extracting it matched its member
+by name, so every format-3 archive peeked as `{}`, which reads as "this dataset
+authored no appearance" rather than as an error and silently dropped the whole
+authored appearance of an archived input on rebuild.
 `luxar._zarr_compat` now offers `read_array_meta`, `read_node_attrs`,
 `is_consolidated` and `read_consolidated_attrs`, and nothing outside it names a
-document. The shared shape of all eight is worth stating: **none of them raised**
+document. A caller holding a document's BYTES rather than a path — the archive
+peek reads one zip/tar member without extracting — gets `NODE_ATTR_DOCS` and
+`attrs_from_node_doc` for the same reason.
+The shared shape of all nine is worth stating: **none of them raised**
 — each returned an ordinary value that a caller had a reasonable interpretation
-for, which is why they have to be found by grepping for the document names.
+for, which is why they have to be found by grepping for the document names. The
+archive peek is the sharpest evidence that this is a standing hazard rather than
+a one-off migration chore: it did not exist when this branch started, and
+arrived on `dev` mid-review already carrying the bug.
 
 Two translations were needed that the plan had not anticipated. numcodecs
 objects are format-2 currency and a format-3 array rejects them outright, so the
