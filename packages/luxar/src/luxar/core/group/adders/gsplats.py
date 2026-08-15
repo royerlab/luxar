@@ -56,7 +56,11 @@ def add_gsplats_impl(
     try:
         # "An explicit None means absent" (#1574), applied ONCE here rather than
         # at each consumer, so neither the flat write nor the partition branch
-        # (nor either ``sync_custom_colormap_attr`` call) can see the raw None.
+        # (nor this module's one ``sync_custom_colormap_attr`` call) can see the
+        # raw None. The partition branch matters as much as the flat write:
+        # it forwards this same dict on to every ``part_i``, so a strip scoped
+        # to the flat path leaves the raw None in each part's write — measured,
+        # all four parts ship the LUT-less ``'custom'``.
         # This is also what makes the leaf agree with the pipeline door above it:
         # ``add_gsplats_from_data`` strips the same way before delegating here,
         # so a ``colormap=None`` no longer means one thing through the data door

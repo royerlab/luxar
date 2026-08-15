@@ -24,7 +24,12 @@ Measured on the unfixed leaf adders, uncoloured data, a 3-dimension scene:
     LOD selector threshold into the node's zarr attrs.
 
 Both assertions are made against what LANDED IN THE STORE, not merely against
-the returned node object: the complaint is about the file the viewer reads.
+the returned node object: the complaint is about the file the viewer reads. And
+against the WHOLE STORE on the structural routes: the fix is one statement above
+every structural branch precisely because the None otherwise reaches each
+``part_i`` / ``child_i`` of a partitioned or LOD node — see
+:class:`TestTheStripRunsAboveEveryStructuralBranch`, which is what a flat-only
+strip fails and the flat cases above do not.
 
 The last two classes are scope controls rather than regression cases. They pass
 before and after the fix by construction — their job is to kill an OVER-broad
@@ -42,7 +47,10 @@ import pytest
 import zarr
 
 from luxar.core.group.compositing import ABSENT_WHEN_NONE_RENDER_ATTRS
-from luxar.core.group.gsplats_pipeline.from_data import ABSENT_WHEN_NONE_ATTRS
+from luxar.core.group.gsplats_pipeline.from_data import (
+    ABSENT_WHEN_NONE_ATTRS,
+    GATE_FORWARDED_LEAF_PARAMS,
+)
 
 from .conftest import cholesky_rows, grid_mesh, open_scene, random_positions
 
@@ -106,6 +114,33 @@ def _write_leaf(
     return dict(node.attrs), set(node.array_keys())
 
 
+def _subtree(store: Any, node: str) -> Dict[str, Tuple[Dict[str, Any], Set[str]]]:
+    """``{path: (attrs, array names)}`` for ``node`` and every descendant.
+
+    The same whole-tree readback shape as ``lod/test_source_validation.py``'s
+    ``_node_attrs``, extended with each node's array names because the LUT-less
+    ``'custom'`` this suite hunts is a pair of facts (the attr AND the absent
+    ``colormap_lut``) rather than one.
+    """
+    group = store[node]
+    found: Dict[str, Tuple[Dict[str, Any], Set[str]]] = {
+        node: (dict(group.attrs), set(group.array_keys()))
+    }
+    for child in sorted(group.group_keys()):
+        found.update(_subtree(store, f"{node}/{child}"))
+    return found
+
+
+def _write_tree(
+    tmp_path: Any, filename: str, adder: Callable[..., Any], **attrs: Any
+) -> Dict[str, Tuple[Dict[str, Any], Set[str]]]:
+    """Write one node, finalize, and read back the WHOLE subtree it produced."""
+    compiler, scene, path = open_scene(tmp_path, filename)
+    adder(scene, "leaf", **attrs)
+    compiler.finalize()
+    return _subtree(zarr.open_group(path, mode="r"), "leaf")
+
+
 class TestAColormapNoneIsAbsentNotCustom:
     @pytest.mark.parametrize("geometry,adder", LEAF_ADDERS)
     def test_it_matches_the_omitted_key_control(
@@ -161,13 +196,136 @@ class TestACoverageFractionNoneIsNotPersisted:
         assert "coverage_fraction" not in attrs
 
 
+#: ``(id, adder, structural kwargs)`` — every leaf adder through a STRUCTURAL
+#: branch, which is where a leaked None actually ships: a partitioned / LOD scene
+#: is the one a user builds because it is too big to eyeball, and the strip's
+#: placement ABOVE those branches is the whole reason it is one statement at the
+#: top of each ``add_*_impl`` rather than one guard per consumer.
+#:
+#: Both structures each adder supports, minus the combinations that do not exist:
+#: ``partition=`` on all four, plus the Points/Lines ``substitutive_lod=`` ladder
+#: (whose coarse levels are GSPLAT nodes, written by a different adder than the
+#: finest child, so the two halves of one tree can disagree about what the same
+#: ``None`` meant). Mesh's ``substitutive_lod=`` and the additive ladders are left to the
+#: two structures above: they reach the same ``**attrs`` dict past the same single
+#: strip, and each extra route costs a real zarr write.
+#:
+#: Sizes are the smallest that actually SPLIT — Lines needs ``segments`` to have
+#: anything to cut (a single polyline partitions to one node), and the split is
+#: asserted rather than assumed by every case below.
+STRUCTURAL_ROUTES = [
+    ("points_partition", _add_points, {"partition": {"max_elements": 3}}),
+    (
+        "lines_partition",
+        _add_lines,
+        {"line_type": "segments", "partition": {"max_elements": 4}},
+    ),
+    ("mesh_partition", _add_mesh, {"partition": {"max_elements": 8}}),
+    ("gsplats_partition", _add_gsplats, {"partition": {"max_elements": 3}}),
+    ("points_substitutive_lod", _add_points, {"substitutive_lod": True}),
+    ("lines_substitutive_lod", _add_lines, {"substitutive_lod": True}),
+]
+
+
+class TestTheStripRunsAboveEveryStructuralBranch:
+    """Placement, not merely the rule: the None must not reach a CHILD either.
+
+    The flat cases above are all satisfiable by a strip scoped to the plain-leaf
+    write — measured, by scoping each adder's call to
+    ``if partition is None and substitutive_lod is None:``, which leaves every
+    flat case green while ``add_points(..., partition={'max_elements': 3},
+    colormap=None)`` goes back to stamping ``colormap='custom'`` on all four
+    parts. That is the case that actually ships: a partitioned / LOD node is
+    exactly the one nobody inspects attr-by-attr, and the viewer renders every
+    LUT-less ``'custom'`` part in viridis.
+
+    So this asserts over EVERY descendant of the written tree, not the node the
+    adder returned. Both keys travel in ONE write per route — they are
+    independent keys of the same dict past the same single strip, and each route
+    is a real zarr store.
+
+    Five of the six cases fail against that mutation; ``lines_partition`` is the
+    one that does not, and it is kept as a plain regression case rather than
+    advertised as a proof. Every partition path writes its parts by RECURSING
+    into its own adder, and the recursive call's no-partition sentinel decides
+    whether a ``partition is None`` guard still fires down there: Points / Mesh /
+    GSplats pass ``partition=False`` (so the guard is False and the mutant skips
+    the child's strip too — the raw None reaches all four parts), while Lines
+    passes ``partition=None`` (so the child re-strips and absorbs the mutation).
+    Lines' own discriminating route is ``substitutive_lod`` below it.
+    """
+
+    @pytest.mark.parametrize(
+        "route,adder,structure",
+        STRUCTURAL_ROUTES,
+        ids=[r[0] for r in STRUCTURAL_ROUTES],
+    )
+    def test_no_descendant_carries_either_wrong_value(
+        self,
+        tmp_path: Any,
+        route: str,
+        adder: Callable[..., Any],
+        structure: Dict[str, Any],
+    ) -> None:
+        tree = _write_tree(
+            tmp_path,
+            f"{route}.luxar.zarr",
+            adder,
+            colormap=None,
+            coverage_fraction=None,
+            **structure,
+        )
+
+        assert len(tree) > 1, (
+            f"{route} wrote a single node, so this case would pass without ever "
+            f"exercising a structural branch: {sorted(tree)}"
+        )
+
+        lutless = {
+            node: sorted(arrays)
+            for node, (node_attrs, arrays) in tree.items()
+            if node_attrs.get("colormap") == "custom" and "colormap_lut" not in arrays
+        }
+        assert not lutless, (
+            f"{route} shipped a LUT-less colormap='custom' on {sorted(lutless)}; "
+            "the viewer warns and falls back to VIRIDIS where the omitted key "
+            "gives gray"
+        )
+
+        nulls = [
+            node
+            for node, (node_attrs, _) in tree.items()
+            if "coverage_fraction" in node_attrs
+            and node_attrs["coverage_fraction"] is None
+        ]
+        assert not nulls, (
+            f"{route} persisted a literal coverage_fraction: null on {nulls}"
+        )
+
+
 class TestTheDataDoorAndTheLeafDoorAgree:
     def test_colormap_none_reads_the_same_through_both(self, tmp_path: Any) -> None:
-        """``add_gsplats_from_data`` and the ``add_gsplats`` it delegates to.
+        """``add_gsplats_from_data`` and the leaf ``add_gsplats``, side by side.
 
         The asymmetry #1574 names: the outer door stripped the None (#1496) and
         wrote ``'gray'``, the leaf it delegates to rewrote it to ``'custom'``, so
         the same argument meant two different things one call apart.
+
+        The outer door is driven through ``additive_lod=`` rather than its flat
+        route on purpose. The flat route DELEGATES to the very leaf adder this
+        module already parametrizes, so with the outer strip removed its None
+        would simply fall through to the leaf strip and the case would still pass
+        — a duplicate of the gsplats leaf case wearing a two-door label. The
+        laddered route instead lands in ``gsplats_pipeline/lod_dispatch.py``,
+        which writes the ladder itself and runs its OWN
+        ``sync_custom_colormap_attr`` with no leaf strip anywhere above it:
+        measured, with the ``from_data`` strip removed that route writes
+        ``colormap='custom'`` on the ladder parent while the leaf beside it still
+        writes ``'gray'``. So each door is answering for itself here.
+
+        (The outer door's own five-key × four-route matrix lives with #1496, in
+        ``lod/test_source_validation.py``; this case exists only to pin that the
+        two doors READ THE SAME, which is the asymmetry #1574 opened with.)
         """
         from luxar.gsplats.gsplat_data import GSplatData
 
@@ -178,14 +336,27 @@ class TestTheDataDoorAndTheLeafDoorAgree:
         )
 
         compiler, scene, path = open_scene(tmp_path, "both_doors.luxar.zarr")
-        scene.add_gsplats_from_data("from_data", data, colormap=None)
+        scene.add_gsplats_from_data(
+            "from_data", data, additive_lod={"n_lods": 2}, colormap=None
+        )
         _add_gsplats(scene, "leaf", colormap=None)
         compiler.finalize()
 
         store = zarr.open_group(path, mode="r")
-        assert store["leaf"].attrs.get("colormap", _ABSENT) == store[
-            "from_data"
-        ].attrs.get("colormap", _ABSENT)
+        leaf = store["leaf"].attrs.get("colormap", _ABSENT)
+        # Over whichever nodes of the ladder carry the attr at all, rather than
+        # one named node: the ladder puts it on the PARENT and leaves the
+        # ``additive_<i>`` rungs without one, and that layout is not this test's
+        # business — the VALUE is.
+        outer = {
+            node: node_attrs["colormap"]
+            for node, (node_attrs, _) in _subtree(store, "from_data").items()
+            if "colormap" in node_attrs
+        }
+        assert outer, "no node of the data door's ladder carried a colormap"
+        assert set(outer.values()) == {leaf}, (
+            f"the leaf wrote colormap={leaf!r} where the data door wrote {outer}"
+        )
 
 
 class TestARenderAttrOutsideTheSetStillRefusesItsNone:
@@ -224,6 +395,19 @@ class TestTheLeafSetIsTheOnePipelineDerivesFrom:
     def test_the_leaf_set_is_the_two_silently_wrong_render_attrs(self) -> None:
         assert set(ABSENT_WHEN_NONE_RENDER_ATTRS) == {"colormap", "coverage_fraction"}
 
-    def test_the_pipeline_set_is_a_superset_of_it(self) -> None:
-        """#1496's wider set ADDS to this one; it does not restate it."""
-        assert set(ABSENT_WHEN_NONE_RENDER_ATTRS) <= set(ABSENT_WHEN_NONE_ATTRS)
+    def test_the_pipeline_set_is_this_one_plus_its_own_keys(self) -> None:
+        """#1496's wider set ADDS to this one; it does not restate it.
+
+        The CONCATENATION, not a subset relation: ``set(RENDER) <= set(ATTRS)``
+        holds for any value of either tuple as long as the derivation exists, so
+        it can never fail — and it would go on passing against exactly the drift
+        this class exists to catch, a hand-typed literal of today's seven keys.
+        Asserting the identity against the components means a key added to (or
+        removed from) either source without the other side agreeing is reported
+        here rather than shipping as two lists that quietly disagree.
+        """
+        assert ABSENT_WHEN_NONE_ATTRS == (
+            GATE_FORWARDED_LEAF_PARAMS
+            + ("colors", "truncation_radius")
+            + ABSENT_WHEN_NONE_RENDER_ATTRS
+        )
