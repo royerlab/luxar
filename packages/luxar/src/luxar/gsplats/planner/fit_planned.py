@@ -63,13 +63,30 @@ def _scaled_budget(
     return budget
 
 
+def _box_truncation_radius(fit_kwargs: "dict[str, Any]") -> float:
+    """The truncation radius this box's fit config asks for.
+
+    ``fit_gaussian_splats`` stamps ``truncation_radius=config.truncate`` on its
+    result, so the fitted radius is simply the ``truncate`` fit kwarg. Resolved
+    here (rather than read off a result) because the zero-budget early-out of
+    :func:`_fit_one_box` must return an empty dataset with the SAME radius the
+    config asked for, without running a fit.
+    """
+    from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
+
+    truncate = fit_kwargs.get("truncate")
+    if truncate is None:
+        return float(DEFAULT_TRUNCATION_RADIUS)
+    return float(truncate)
+
+
 def _fit_one_box(
     volume: np.ndarray,
     box: PlanBox,
     overlap: int,
     cap: int,
     **fit_kwargs: Any,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+) -> "Any":
     """Fit a single plan box and return its core-kept splats in GLOBAL coords.
 
     Crops a halo-padded region, fits it with the (padded-scaled, capped) budget,
@@ -77,11 +94,22 @@ def _fit_one_box(
     splats whose centre lands in the half-open core box ``[z0:z1, y0:y1, x0:x1]``
     (so adjacent boxes tile the volume with no gaps and no double-counting).
 
-    Returns ``(centers, amplitudes, cholesky_factors)`` — possibly empty (a box
-    with non-positive scaled budget yields 0 splats). Shared by the sequential
-    :func:`fit_planned` loop and the parallel per-box worker.
+    Returns the fitted :class:`~luxar.gsplats.gsplat_data.GSplatData`, filtered
+    to the core-kept splats — possibly EMPTY (a box with non-positive scaled
+    budget yields 0 splats), in which case it still carries the radius the fit
+    config asked for. Shared by the sequential :func:`fit_planned` loop and the
+    parallel per-box worker.
+
+    The whole dataset, not the bare ``(centers, amplitudes, cholesky_factors)``
+    arrays it used to hand back: every consumer rebuilt a ``GSplatData`` from
+    those three arrays, which silently dropped the fit's ``truncation_radius``
+    (a config asking for ``truncate: 3.5`` stored the 2.75 default) and its
+    per-box ``stats``. A content result then refused to
+    ``GSplatData.concatenate`` with a uniform-tiled one fitted from the same
+    config ("Truncation radius mismatch") — issue #1637.
     """
     from luxar.gsplats.fit_gsplats import fit_gaussian_splats
+    from luxar.gsplats.gsplat_data import GSplatData
     from luxar.gsplats.utils.trils import tril_size
 
     # The content pipeline is voxel-space end to end: plan boxes, padded
@@ -107,14 +135,16 @@ def _fit_one_box(
     pz0, pz1, py0, py1, px0, px1 = _padded_bounds(box, overlap, V.shape)
     z0, z1, y0, y1, x0, x1 = box.box
 
-    empty = (
-        np.zeros((0, ndim), np.float32),
-        np.zeros((0,), np.float32),
-        np.zeros((0, tril_size(ndim)), np.float32),
-    )
     budget = _scaled_budget(box, overlap, V.shape, cap)
     if budget <= 0:
-        return empty
+        # An empty box still has to speak for the config: a default-radius empty
+        # would not concatenate with its fitted siblings (#1637).
+        return GSplatData(
+            centers=np.zeros((0, ndim), np.float32),
+            amplitudes=np.zeros((0,), np.float32),
+            cholesky_factors=np.zeros((0, tril_size(ndim)), np.float32),
+            truncation_radius=_box_truncation_radius(fit_kwargs),
+        )
 
     sub = V[pz0:pz1, py0:py1, px0:px1]
     gd = fit_gaussian_splats(sub, seeds=budget, **fit_kwargs)
@@ -129,7 +159,23 @@ def _fit_one_box(
         & (c[:, 2] >= x0)
         & (c[:, 2] < x1)
     )
-    out = (c[keep], a[keep], k[keep])
+    # Slice FIRST, then drop `gd`: keeping the whole inner result alive just to
+    # read slices out of it would defeat the per-box memory release below.
+    colors = None if gd.colors is None else np.asarray(gd.colors)[keep]
+    box_stats = dict(gd.stats)
+    # The napari capture buffers are per-optimisation scratch (the writer excludes
+    # them anyway); copying the references would hold a box's frames — and the
+    # crop shape they were rendered at — past the release below.
+    box_stats.pop("movie_frames", None)
+    box_stats.pop("movie_shape", None)
+    out = GSplatData(
+        centers=c[keep],
+        amplitudes=a[keep],
+        cholesky_factors=k[keep],
+        colors=colors,
+        stats=box_stats,
+        truncation_radius=gd.truncation_radius,
+    )
 
     # free the per-box working set before the next box / before the worker exits
     del gd
@@ -212,15 +258,18 @@ def fit_planned(
             continue
         if progress_callback is not None:
             progress_callback(i, n, f"box {i + 1}/{n} budget={budget}")
-        c, a, k = _fit_one_box(V, b, pad, cap, **fit_kwargs)
+        region = _fit_one_box(V, b, pad, cap, **fit_kwargs)
         n_fit += 1
-        if c.shape[0] > 0:
-            regions.append(GSplatData(centers=c, amplitudes=a, cholesky_factors=k))
+        n_kept = int(region.n_splats)
+        if n_kept > 0:
+            # The fitted dataset itself, so its truncation_radius and per-box
+            # stats reach the merge instead of being rebuilt away (#1637).
+            regions.append(region)
             region_boxes.append(i)
         if verbose:
             from arbol import aprint
 
-            aprint(f"  box {i + 1}/{n}: kept {int(c.shape[0]):,} splats")
+            aprint(f"  box {i + 1}/{n}: kept {n_kept:,} splats")
 
     if not regions:
         raise ValueError("fit_planned produced no splats (all boxes empty?)")
@@ -239,19 +288,19 @@ def fit_planned(
             region_labels=region_boxes,
         )
 
-    merged = GSplatData(
-        centers=np.concatenate([r.centers for r in regions]).astype(np.float32),
-        amplitudes=np.concatenate([r.amplitudes for r in regions]).astype(np.float32),
-        cholesky_factors=np.concatenate([r.cholesky_factors for r in regions]).astype(
-            np.float32
-        ),
-        stats={
+    # `concatenate` (what the uniform tiled path's `merge_tile_results` uses)
+    # carries the boxes' shared truncation_radius through the merge — a manual
+    # re-`GSplatData(...)` of the three arrays reset it to the default (#1637).
+    # It REPLACES stats with its own summary, so the planned-fit keys go on after.
+    merged = GSplatData.concatenate(regions)
+    merged.stats.update(
+        {
             "planned_fit": True,
             "n_boxes": n,
             "n_boxes_fit": n_fit,
             "overlap": pad,
             "volume_shape": list(V.shape),
-        },
+        }
     )
     return merged
 

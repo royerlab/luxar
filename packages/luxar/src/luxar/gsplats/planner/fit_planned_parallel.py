@@ -27,7 +27,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-import numpy as np
 from arbol import aprint, asection
 
 from luxar.gsplats.batch.task_pool import cancel_pool_on_interrupt
@@ -271,15 +270,13 @@ def fit_planned_parallel(
             region_labels=region_boxes,
         )
     else:
-        result = GSplatData(
-            centers=np.concatenate([r.centers for r in regions]).astype(np.float32),
-            amplitudes=np.concatenate([r.amplitudes for r in regions]).astype(
-                np.float32
-            ),
-            cholesky_factors=np.concatenate(
-                [r.cholesky_factors for r in regions]
-            ).astype(np.float32),
-            stats={
+        # `concatenate` keeps the reloaded boxes' shared truncation_radius; a
+        # manual re-`GSplatData(...)` of the three arrays reset it to the default
+        # (#1637). It REPLACES stats with its own summary, so the planned-fit
+        # keys are applied afterwards.
+        result = GSplatData.concatenate(regions)
+        result.stats.update(
+            {
                 "planned_fit": True,
                 "n_boxes": len(plan.boxes),
                 "n_boxes_fit": n_boxes_fit,
@@ -287,7 +284,7 @@ def fit_planned_parallel(
                 "volume_shape": list(plan.volume_shape),
                 "parallel_jobs": int(jobs),
                 "elapsed_seconds": float(elapsed),
-            },
+            }
         )
 
     if not keep_boxes:

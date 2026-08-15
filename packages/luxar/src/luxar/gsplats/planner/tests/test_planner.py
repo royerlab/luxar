@@ -335,8 +335,17 @@ def _toy_plan(n_boxes: int = 3, budget: int = 100, width: int = 16) -> FitPlan:
     )
 
 
-def _fake_box_builder(n_per_box: int = 5):
-    """Worker builder writing ``n_per_box`` deterministic splats — no torch/GPU."""
+def _fake_box_builder(n_per_box: int = 5, truncation_radius: float | None = None):
+    """Worker builder writing ``n_per_box`` deterministic splats — no torch/GPU.
+
+    ``truncation_radius`` stands in for a box worker whose fit config asked for a
+    non-default ``truncate`` (the real worker stamps it on the store it saves).
+    """
+    radius = (
+        ""
+        if truncation_radius is None
+        else f", truncation_radius={truncation_radius!r}"
+    )
 
     def builder(i: int, out_path: Path) -> list[str]:
         script = textwrap.dedent(
@@ -349,7 +358,7 @@ def _fake_box_builder(n_per_box: int = 5):
             amps = rng.random(k).astype(np.float32) + 0.1
             chol = np.tile(np.array([1, 0, 1, 0, 0, 1], np.float32), (k, 1))
             GSplatData(centers=centers, amplitudes=amps,
-                       cholesky_factors=chol).save(r"{out_path}")
+                       cholesky_factors=chol{radius}).save(r"{out_path}")
             """
         )
         return [sys.executable, "-c", script]
@@ -433,12 +442,14 @@ class TestContentFitSharedFloor:
     @staticmethod
     def _one_splat(volume, box, overlap, cap, **fit_kwargs):
         """Stand-in for ``_fit_one_box``: one splat at the box centre."""
+        from luxar.gsplats.gsplat_data import GSplatData
+
         z0, z1, y0, y1, x0, x1 = box.box
         c = np.array([[(z0 + z1) / 2, (y0 + y1) / 2, (x0 + x1) / 2]], np.float32)
-        return (
-            c,
-            np.ones((1,), np.float32),
-            np.tile(np.array([1, 0, 1, 0, 0, 1], np.float32), (1, 1)),
+        return GSplatData(
+            centers=c,
+            amplitudes=np.ones((1,), np.float32),
+            cholesky_factors=np.tile(np.array([1, 0, 1, 0, 0, 1], np.float32), (1, 1)),
         )
 
     def _run(self, tmp_path, monkeypatch, volume, floor, jobs="1"):
@@ -785,6 +796,182 @@ class TestFitPlannedParallel:
         assert d.exists() and any(d.iterdir())
 
 
+# ── The fit's truncation radius survives the planned path (#1637) ──
+#
+# `_fit_one_box` used to hand back bare (centers, amplitudes, cholesky_factors),
+# so every consumer rebuilt a GSplatData from those three arrays and the fitted
+# radius fell back to the 2.75 default even when the config said `truncate: 3.5`.
+# The user-visible symptom is that such a content result then refuses to
+# `GSplatData.concatenate` with a uniform-tiled one fitted from the SAME config.
+
+# Fast real CPU fit knobs: tiny volume, a handful of iterations. The radius is a
+# config passthrough, so the fit only has to run — not converge.
+_FAST_FIT = dict(
+    device="cpu",
+    n_iters=5,
+    early_stop_patience=5,
+    use_cuda=False,
+    use_metal=False,
+    verbose=False,
+)
+
+
+def _leaf_nodes(node) -> list:
+    """Every ``GSplatLeaf`` under ``node`` (a bare leaf is its own only leaf)."""
+    children = getattr(node, "children", None)
+    if not children:
+        return [node]
+    out: list = []
+    for child in children:
+        out.extend(_leaf_nodes(child))
+    return out
+
+
+class TestPlannedFitTruncationRadius:
+    """A planned fit keeps the radius (and per-box stats) its config asked for."""
+
+    @staticmethod
+    def _tiny_volume_and_plan():
+        V = _corner_blobs((24, 24, 24), n=4, corner=20)
+        plan = plan_volume(
+            V,
+            _density(k_star_reference=200, saturation_cap=400, splats_per_feature=25.0),
+            cell=4,
+            min_leaf=12,
+            max_leaf=12,
+            overlap=2,
+        )
+        assert any(b.budget > 0 for b in plan.boxes)
+        return V, plan
+
+    def test_flat_leaf_keeps_the_configured_radius(self):
+        """Sequential ``partition=False``: the flat leaf carries ``truncate``."""
+        from luxar.gsplats.planner import fit_planned
+
+        V, plan = self._tiny_volume_and_plan()
+        merged = fit_planned(V, plan, truncate=3.5, **_FAST_FIT)
+
+        assert merged.n_splats > 0
+        assert merged.truncation_radius == pytest.approx(3.5)
+        # The planned-fit stats keys still describe the merge (concatenate()
+        # replaces stats with its own summary, so they are re-applied after).
+        assert merged.stats["planned_fit"] is True
+        assert merged.stats["n_boxes"] == len(plan.boxes)
+        assert merged.stats["n_boxes_fit"] >= 1
+        assert merged.stats["overlap"] == plan.overlap
+        assert list(merged.stats["volume_shape"]) == list(V.shape)
+
+    def test_partition_parts_keep_the_configured_radius_and_box_stats(self):
+        """Sequential ``partition=True``: every part leaf carries ``truncate``."""
+        from luxar.gsplats.planner import fit_planned
+
+        V, plan = self._tiny_volume_and_plan()
+        node = fit_planned(V, plan, partition=True, truncate=3.5, **_FAST_FIT)
+
+        leaves = _leaf_nodes(node)
+        assert leaves
+        for leaf in leaves:
+            for sub in leaf.additive_sublods:
+                assert sub.truncation_radius == pytest.approx(3.5)
+            # The per-box fit stats ride along with the part they describe.
+            box_stats = leaf.additive_sublods[0].stats
+            assert box_stats.get("n_splats", 0) > 0
+            assert "final_loss" in box_stats
+
+    def test_zero_budget_box_carries_the_configured_radius(self):
+        """The early-out has no fit to read the radius off — resolve it anyway."""
+        from luxar.gsplats.planner.fit_planned import _fit_one_box
+        from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
+
+        V = np.zeros((8, 8, 8), np.float32)
+        box = PlanBox(box=[0, 8, 0, 8, 0, 8], n_features=0, budget=0)
+
+        out = _fit_one_box(V, box, 0, 0, truncate=3.5)
+        assert out.n_splats == 0
+        assert out.truncation_radius == pytest.approx(3.5)
+        # Nothing configured -> the documented default.
+        bare = _fit_one_box(V, box, 0, 0)
+        assert bare.truncation_radius == pytest.approx(DEFAULT_TRUNCATION_RADIUS)
+
+    def test_content_and_uniform_flat_leaves_compose(self):
+        """The reported symptom: "Truncation radius mismatch" on concatenate."""
+        from luxar.gsplats.fit_tiled_gsplats import fit_tiled
+        from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.planner import fit_planned
+
+        V, plan = self._tiny_volume_and_plan()
+        content = fit_planned(V, plan, truncate=3.5, **_FAST_FIT)
+        uniform = fit_tiled(
+            V, tile_size=16, overlap=4, seeds=100, truncate=3.5, **_FAST_FIT
+        )
+        assert uniform.truncation_radius == pytest.approx(3.5)  # control
+
+        merged = GSplatData.concatenate([content, uniform])
+        assert merged.n_splats == content.n_splats + uniform.n_splats
+        assert merged.truncation_radius == pytest.approx(3.5)
+
+    def test_plan_box_worker_saves_the_configured_radius(self, tmp_path):
+        """`fit --plan-box K --config` — also the content batch-fit array task."""
+        from typer.testing import CliRunner
+
+        from luxar.cli.gsplat_commands import app_gsplat
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        V, plan = self._tiny_volume_and_plan()
+        vol = tmp_path / "vol.npy"
+        np.save(vol, V)
+        plan_json = tmp_path / "plan.json"
+        plan.to_json(plan_json)
+        cfg = tmp_path / "fit.yaml"
+        cfg.write_text("truncate: 3.5\nn_iters: 5\nearly_stop_patience: 5\n")
+        box_idx = next(i for i, b in enumerate(plan.boxes) if b.budget > 0)
+        out = tmp_path / "box.gsplats.zarr"
+
+        result = CliRunner().invoke(
+            app_gsplat,
+            # fmt: off
+            [
+                "fit",
+                str(vol),
+                str(out),
+                "--tiling",
+                "content",
+                "--plan",
+                str(plan_json),
+                "--plan-box",
+                str(box_idx),
+                "--config",
+                str(cfg),
+                "--device",
+                "cpu",
+            ],
+            # fmt: on
+        )
+        assert result.exit_code == 0, result.output
+        assert out.exists(), result.output
+        assert GSplatData.load(out).truncation_radius == pytest.approx(3.5)
+
+    def test_parallel_flat_merge_keeps_the_boxes_radius(self, tmp_path):
+        """``fit -j N --flat``: the reloaded boxes' radius survives the merge."""
+        plan = _toy_plan(n_boxes=2)
+        merged = fit_planned_parallel(
+            plan,
+            jobs=2,
+            tmp_dir=tmp_path / "boxes",
+            worker_cmd_builder=_fake_box_builder(5, truncation_radius=3.5),
+            verbose=False,
+        )
+        assert merged.n_splats == 10
+        assert merged.truncation_radius == pytest.approx(3.5)
+        # ... and the planned-fit stats keys are still there afterwards.
+        assert merged.stats["planned_fit"] is True
+        assert merged.stats["n_boxes"] == 2
+        assert merged.stats["n_boxes_fit"] == 2
+        assert merged.stats["parallel_jobs"] == 2
+        assert merged.stats["overlap"] == int(plan.overlap)
+        assert "elapsed_seconds" in merged.stats
+
+
 class TestMaxPaddedBoxVoxels:
     def test_returns_largest_padded_budgeted_box(self):
         # volume 16 x 16 x 48, three 16-wide x-columns, overlap 4 (clamped to vol).
@@ -923,12 +1110,14 @@ def test_fit_planned_labels_parts_by_box_not_by_position(monkeypatch):
     )
 
     def fake_fit_one_box(V, b, pad, cap, **kwargs):
+        from luxar.gsplats.gsplat_data import GSplatData
+
         z0, z1 = b.box[0], b.box[1]
         if z0 == 10:  # box 1 legitimately yields nothing
-            return (
-                np.zeros((0, 3), np.float32),
-                np.zeros((0,), np.float32),
-                np.zeros((0, 6), np.float32),
+            return GSplatData(
+                centers=np.zeros((0, 3), np.float32),
+                amplitudes=np.zeros((0,), np.float32),
+                cholesky_factors=np.zeros((0, 6), np.float32),
             )
         centers = np.stack(
             [
@@ -940,7 +1129,11 @@ def test_fit_planned_labels_parts_by_box_not_by_position(monkeypatch):
         ).astype(np.float32)
         chol = np.zeros((5, 6), np.float32)
         chol[:, [0, 2, 5]] = 1.0
-        return centers, np.full(5, 0.5, np.float32), chol
+        return GSplatData(
+            centers=centers,
+            amplitudes=np.full(5, 0.5, np.float32),
+            cholesky_factors=chol,
+        )
 
     monkeypatch.setattr(fit_planned_mod, "_fit_one_box", fake_fit_one_box)
 

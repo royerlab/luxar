@@ -32,7 +32,12 @@ fit_planned(volume, plan)        -> GSplatData|GSplatNode   # fit each box, merg
   on a halo-padded crop, keep the core, merge. `partition=True` (default) returns
   a `kind=partition` `GSplatNode` (one part per box); `recipe=`/`recipe_params=`
   give each part its own per-part LOD (`fit --recipe`). `partition=False` (`--flat`)
-  concatenates into one flat leaf.
+  concatenates into one flat leaf. Each box is carried through the merge as the
+  `GSplatData` it was fitted as (`_fit_one_box` returns the dataset, not bare
+  arrays), so the fit's `truncation_radius` — a `truncate:` in the config — and its
+  per-box stats survive; rebuilding from arrays reset the radius to the default and
+  a content result then refused to `GSplatData.concatenate` with a uniform-tiled
+  one fitted the same way (#1637).
 - **`fit_planned_parallel`** (`fit_planned_parallel.py`) — the `-j N` path: fit
   each box in its own subprocess (`fit --plan-box`), then merge identically. A box
   that fits 0 splats writes a sibling `<output>.empty` marker (skipped at merge).
