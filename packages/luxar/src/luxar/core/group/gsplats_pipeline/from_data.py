@@ -14,6 +14,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
+from ..compositing import (
+    ABSENT_WHEN_NONE_RENDER_ATTRS,
+    strip_absent_attr_kwargs,
+)
 from .lod_dispatch import (
     add_gsplats_as_lod_group_impl,
     add_gsplats_multi_lod_impl,
@@ -119,37 +123,27 @@ GATE_FORWARDED_LEAF_PARAMS = ("labels", "image_labels", "partition")
 #     rule it must mean "no override" and let the data's value stand. A NON-None
 #     value here is a legitimate override, so it likewise does not belong in the
 #     gate's exclusion tuple — the gate should and does still validate it;
-#   * ``colormap`` and ``coverage_fraction`` — the two render attrs whose None is
-#     not caught by any value validator, so it reaches disk. Both are ACCEPTED
-#     with a None and then write something wrong, which is why they belong here
-#     and the rest of the render attrs do not: measured, ``opacity=None``,
-#     ``blending_mode=None``, ``layer=None``, ``visible=None``, ``gamma=None``,
-#     ``intensity=None`` and ``absorption=None`` each refuse outright with a "must
-#     be convertible to float / must be a boolean / …, got NoneType" (their
-#     validators run unconditionally), and ``scalars=None`` refuses as an unknown
-#     attribute (GSplats has no scalars channel at all), so for all of those a
-#     None is loud and reading it as "absent" would only mask typos. ``colormap``
-#     is the opposite and is the worst case in this whole set, because it is
-#     silent: ``validate_render_attrs`` guards its colormap check on ``is not
-#     None``, and ``compositing.sync_custom_colormap_attr`` then rewrites the None
-#     to ``'custom'`` (it is not a str in ``BUILTIN_COLORMAP_NAMES``) WITHOUT
-#     writing any ``colormap_lut`` — measured on disk, ``colormap=None`` on
-#     uncoloured data gives ``colormap='custom'`` where omitting the key gives
-#     ``colormap='gray'``, and the viewer's ``build-scene-graph.ts`` reacts to a
-#     ``'custom'`` with no LUT by warning and falling back to VIRIDIS. So the node
-#     renders in the wrong colormap rather than failing. ``coverage_fraction``
-#     writes a literal ``coverage_fraction: null`` selector threshold on the flat
-#     route, and on the multi-substitutive route trips the "must not be passed"
-#     refusal below for a caller who effectively passed nothing.
+#   * :data:`~luxar.core.group.compositing.ABSENT_WHEN_NONE_RENDER_ATTRS` —
+#     ``colormap`` and ``coverage_fraction``, the two render attrs whose None is
+#     caught by no value validator and so reaches disk. Not this module's
+#     property but every adder's (the leaf adders hit the identical shape, #1574),
+#     which is why it is taken from ``compositing`` rather than restated here; the
+#     measured argument for those two and against the rest of the render attrs
+#     lives with the definition. ``scalars=None`` is the one member of the family
+#     specific to this door, and it stays OUT: it refuses as an unknown attribute
+#     (GSplats has no scalars channel at all), so its None is already loud.
 #
-# Spelled once, derived, and commented on purpose: the two sets answer different
-# questions ("may this key ride onward untouched?" vs "does None mean absent for
-# this key?") and a hand-copied second list would be free to drift.
-ABSENT_WHEN_NONE_ATTRS = GATE_FORWARDED_LEAF_PARAMS + (
-    "colors",
-    "truncation_radius",
-    "colormap",
-    "coverage_fraction",
+# Spelled once, derived from BOTH sources, and commented on purpose: the sets
+# answer different questions ("may this key ride onward untouched?" vs "does None
+# mean absent for this key?" vs "is this key's None a render fault every adder
+# shares?") and a hand-copied second list would be free to drift.
+ABSENT_WHEN_NONE_ATTRS = (
+    GATE_FORWARDED_LEAF_PARAMS
+    + (
+        "colors",
+        "truncation_radius",
+    )
+    + ABSENT_WHEN_NONE_RENDER_ATTRS
 )
 
 # The channels this adder supplies FROM the ``GSplatData`` itself, so a
@@ -160,47 +154,6 @@ ABSENT_WHEN_NONE_ATTRS = GATE_FORWARDED_LEAF_PARAMS + (
 # #1496 and was the one member still able to strand a childless wrapper. Asked in
 # THIS order (see :func:`reject_data_owned_channels`).
 DATA_OWNED_CHANNELS = ("colors", "centers", "amplitudes", "cholesky_factors")
-
-
-def strip_absent_attr_kwargs(attrs: Dict[str, Any]) -> None:
-    """Delete every :data:`ABSENT_WHEN_NONE_ATTRS` key from ``attrs`` valued None.
-
-    ``labels=None`` means "no labels" — that is how the leaf adders read it, since
-    they bind it (and ``image_labels``, ``partition``, ``colors``) as named params
-    defaulting to None. Here they arrive inside ``**attrs``, where a
-    present-but-None KEY is a different thing entirely: it survives into
-    ``child_attrs`` and reaches ``validate_render_attrs``, which rejects an unknown
-    key by NAME and never looks at its value. So the idiomatic
-    ``labels=maybe_labels`` call stranded a childless wrapper with ``Unknown node
-    attribute 'labels'`` raised from inside ``child_0``, whenever a child took the
-    additive-ladder writer — which every level of a stock ``gsplat lod --recipe
-    levels`` file does, its stream ladders being on by default (#1471).
-
-    #1496 generalised that from the two label channels to the whole set above,
-    because the identical shape was live for the rest of it, in three different
-    severities. Measured on the ``lod_group=True, additive_lod={"n_lods": 2}``
-    route, ``partition=None`` raised ``Unknown node attribute 'partition'`` from
-    inside ``child_0`` and left the ``kind=lod`` wrapper on disk, childless,
-    through ``finalize()`` — while the very same call with the key omitted wrote
-    both children: a REFUSAL that also stranded. ``colors=None`` was refused on
-    every route (as a raw ``TypeError``, "multiple values for keyword argument",
-    on the flat one) and ``truncation_radius=None`` clobbered the data's own
-    radius and then failed the float conversion: refusals that wrote nothing.
-    ``colormap=None`` and ``coverage_fraction=None`` were ACCEPTED and wrote
-    something wrong — a ``'custom'`` colormap with no LUT (which the viewer
-    renders as viridis) and a literal null selector threshold. One rule — an
-    explicit None means absent — answers all of them, but only for the keys in
-    the set above: every other render attr refuses a None loudly on its own, and
-    is deliberately left doing so (see the constant's comment for the measured
-    list).
-
-    Mutates in place and returns None: every caller owns the dict it passes (its
-    own ``**attrs``), and handing back a copy would only invite one of them to
-    forget to use it.
-    """
-    for key in ABSENT_WHEN_NONE_ATTRS:
-        if key in attrs and attrs[key] is None:
-            del attrs[key]
 
 
 def data_owned_channel_reason(kwarg: str) -> str:
@@ -605,8 +558,8 @@ def add_gsplats_from_data_impl(
     # Done here rather than per-branch because all three targets forward ``**attrs``
     # verbatim, and it is a no-op on the flat route for the keys the leaf adder
     # binds as named params defaulting to None. See
-    # :func:`strip_absent_attr_kwargs`.
-    strip_absent_attr_kwargs(attrs)
+    # :func:`~luxar.core.group.compositing.strip_absent_attr_kwargs`.
+    strip_absent_attr_kwargs(attrs, ABSENT_WHEN_NONE_ATTRS)
     # Then refuse a channel this adder owns, whatever its value, before ANY route
     # is taken and before anything is written. Above every branch on purpose
     # (#1496) — including above the ``coverage_fraction`` refusal, the
