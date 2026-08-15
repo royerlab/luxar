@@ -42,7 +42,7 @@ group/
 ├── __init__.py          # re-exports Group
 ├── group.py             # Group class: public add_* API (delegates to adders/ + gsplats_pipeline/)
 ├── auto_partition.py     # resolve_auto_partition — compiler-level opt-in auto-partition
-├── compositing.py        # COMPOSITING_ATTRS, AUTHORED_APPEARANCE_ATTRS, slice_optional_array, is_broadcast_color, validate_*_before_split, position_bounds_from_array
+├── compositing.py        # COMPOSITING_ATTRS, AUTHORED_APPEARANCE_ATTRS, slice_optional_array, is_broadcast_color, validate_*_before_split, position_bounds_from_array, strip_absent_attr_kwargs
 ├── dim_order.py          # apply_dim_order_positions / apply_dim_order_cholesky
 ├── partition.py          # BSP splitters + PartitionSpec + validate_partition_group
 ├── adders/               # per-leaf add_<type> bodies (Points / Lines / GSplats)
@@ -252,6 +252,17 @@ LOD wrapper builders:
   silent, and it shares this classifier.
 - `position_bounds_from_array(positions)` — per-axis min/max of an `(N, D)`
   array, matching the compiler's per-leaf `position_bounds` shape.
+- `strip_absent_attr_kwargs(attrs, keys)` + `ABSENT_WHEN_NONE_RENDER_ATTRS` —
+  "an explicit `None` means absent", stated once for every door that can be
+  handed one. The tuple is the two render attrs whose `None` no value validator
+  catches, so it reaches disk: `colormap` (rewritten to a LUT-less `'custom'`,
+  which the viewer renders as viridis) and `coverage_fraction` (a literal null
+  selector threshold). Every leaf adder strips it at its entry, above its own
+  colours gate, attrs gate and structural branches (#1574); the gsplats pipeline
+  passes a wider set that also covers the leaf params it forwards through
+  wrappers (#1496, below). The key set is a required argument precisely so
+  neither door can inherit the other's — every OTHER render attr refuses a
+  `None` loudly on its own, and swallowing those would mask typos.
 
 ### `dim_order.py` — dimension remapping
 

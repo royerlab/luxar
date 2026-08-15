@@ -65,8 +65,11 @@ the top of `add_gsplats_from_data_impl` — and at the top of
 `add_gsplats_from_file_impl` and of `graft_gsplat_node` in `from_io.py` — settle
 it:
 
-1. `strip_absent_attr_kwargs(attrs)` deletes every `ABSENT_WHEN_NONE_ATTRS` key
-   valued `None`:
+1. `strip_absent_attr_kwargs(attrs, ABSENT_WHEN_NONE_ATTRS)` (the shared helper
+   in `core/group/compositing.py`, which `from_data.py` and `from_io.py` each
+   import from there directly; only the `ABSENT_WHEN_NONE_ATTRS` tuple is
+   defined here and imported by `from_io.py`) deletes every
+   `ABSENT_WHEN_NONE_ATTRS` key valued `None`:
    - `labels`, `image_labels`, `partition`, `colors` — named params of the leaf
      `Group.add_gsplats` defaulting to `None`, so `None` already means "absent"
      one level down;
@@ -106,13 +109,17 @@ it:
    `colors=None` is passed and accepted), so its message carries an extra clause
    saying so.
 
-`ABSENT_WHEN_NONE_ATTRS` is *derived* from `GATE_FORWARDED_LEAF_PARAMS`, the
-node-attrs gate's own exclusion tuple, so the two cannot drift; they differ
-because they answer different questions. The gate's set is "leaf named params
-this adder forwards onward STRUCTURALLY" — `colors`, `truncation_radius`,
+`ABSENT_WHEN_NONE_ATTRS` is *derived* from two sources, so no part of it can
+drift. From `GATE_FORWARDED_LEAF_PARAMS`, the node-attrs gate's own exclusion
+tuple: the two answer different questions, and the gate's set is "leaf named
+params this adder forwards onward STRUCTURALLY" — `colors`, `truncation_radius`,
 `colormap` and `coverage_fraction` are deliberately **not** in it, because a
 non-`None` value of each must still be judged (a collision, a legitimate
-override, a colormap name to validate, a real threshold).
+override, a colormap name to validate, a real threshold). And from
+`compositing.ABSENT_WHEN_NONE_RENDER_ATTRS`, for the last two: their `None` is a
+render fault every adder shares, not this module's property, so since #1574 the
+four leaf adders strip the same tuple at their own entries and this set adds to
+it rather than restating it.
 
 Both calls sit at the adder ENTRY, so they outrank everything below —
 `_reject_before_wrapper`'s `dim_order` spec validators and rank guard, and the
@@ -177,7 +184,7 @@ Both functions produce a `GSplatData` and hand it to
   is the remedy the message names. Both doors of the gate share one message
   template, `from_data.labels_on_wrapper_reason(kwarg, structure, remedy)`, with
   the two `*_STRUCTURE` / `*_REMEDY` constants beside it, so the wording cannot
-  drift apart. `from_data.strip_absent_attr_kwargs` runs first on both and
+  drift apart. `compositing.strip_absent_attr_kwargs` runs first on both and
   DELETES a present-but-`None` key: the leaf adders bind both as named params
   defaulting to `None`, but inside `**attrs` a `None`-valued key is still an
   unknown attr to `validate_render_attrs` (which matches by name, never by
