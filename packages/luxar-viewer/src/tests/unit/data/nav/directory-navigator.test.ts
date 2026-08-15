@@ -107,7 +107,10 @@ describe('DirectoryNavigator', () => {
   // conformant server emits the same payload shape.
   describe('JSON Directory Listing strategy', () => {
     it('should parse JSON directory listing', async () => {
-      // Zarr check fails
+      // Zarr check fails. TWO responses: the probe checks both root documents
+      // (`zarr.json` for format 3, `.zgroup` for format 2) and a directory that
+      // is not a store misses both.
+      mockFetch.mockResolvedValueOnce({ ok: false });
       mockFetch.mockResolvedValueOnce({ ok: false });
 
       // WebDAV fails
@@ -145,7 +148,10 @@ describe('DirectoryNavigator', () => {
     // nginx-style `<pre><a href="...">` listing. jsdom provides DOMParser,
     // so the source's `doc.querySelectorAll('pre a')` branch runs for real.
     it('should parse an nginx-style <pre><a href> HTML directory listing', async () => {
-      // Zarr check fails
+      // Zarr check fails. TWO responses: the probe checks both root documents
+      // (`zarr.json` for format 3, `.zgroup` for format 2) and a directory that
+      // is not a store misses both.
+      mockFetch.mockResolvedValueOnce({ ok: false });
       mockFetch.mockResolvedValueOnce({ ok: false });
       // WebDAV fails
       mockFetch.mockResolvedValueOnce({ ok: false });
@@ -187,7 +193,10 @@ describe('DirectoryNavigator', () => {
     });
 
     it('should handle HTML parsing fallback', async () => {
-      // Zarr check fails
+      // Zarr check fails. TWO responses: the probe checks both root documents
+      // (`zarr.json` for format 3, `.zgroup` for format 2) and a directory that
+      // is not a store misses both.
+      mockFetch.mockResolvedValueOnce({ ok: false });
       mockFetch.mockResolvedValueOnce({ ok: false });
 
       // WebDAV fails
@@ -227,7 +236,10 @@ describe('DirectoryNavigator', () => {
 
   describe('Index File Strategy', () => {
     it('should load .luxar-index.json file', async () => {
-      // Zarr check fails
+      // Zarr check fails. TWO responses: the probe checks both root documents
+      // (`zarr.json` for format 3, `.zgroup` for format 2) and a directory that
+      // is not a store misses both.
+      mockFetch.mockResolvedValueOnce({ ok: false });
       mockFetch.mockResolvedValueOnce({ ok: false });
 
       // WebDAV fails
@@ -307,7 +319,10 @@ describe('DirectoryNavigator', () => {
     });
 
     it('should handle malformed JSON', async () => {
-      // Zarr check fails
+      // Zarr check fails. TWO responses: the probe checks both root documents
+      // (`zarr.json` for format 3, `.zgroup` for format 2) and a directory that
+      // is not a store misses both.
+      mockFetch.mockResolvedValueOnce({ ok: false });
       mockFetch.mockResolvedValueOnce({ ok: false });
 
       // WebDAV fails
@@ -362,7 +377,10 @@ describe('DirectoryNavigator', () => {
   // Regression: MED-39 — runtime validation of server-supplied `type`.
   describe('JSON Directory Listing: malformed type field', () => {
     it('should coerce unknown `type` values to "file" instead of crashing', async () => {
-      // Zarr check fails
+      // Zarr check fails. TWO responses: the probe checks both root documents
+      // (`zarr.json` for format 3, `.zgroup` for format 2) and a directory that
+      // is not a store misses both.
+      mockFetch.mockResolvedValueOnce({ ok: false });
       mockFetch.mockResolvedValueOnce({ ok: false });
       // WebDAV fails
       mockFetch.mockResolvedValueOnce({ ok: false });

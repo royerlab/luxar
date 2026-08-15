@@ -7,6 +7,7 @@ import pytest
 import zarr
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar._zarr_compat import is_consolidated
 
 
 class TestSceneMethods:
@@ -37,12 +38,14 @@ class TestSceneMethods:
 
             # Finalize is called automatically by context manager
 
-        # Check the zarr was properly finalized
-        # Assert on the FILE, not `".zmetadata" in store.store`: zarr 3's store is
-        # an async Store rather than a MutableMapping, so `in` raises TypeError.
-        # Checking the path is also a truer statement of the invariant — the
-        # consolidated document must be on disk for the viewer to fetch it.
-        assert (tmp_path / "test.luxar.zarr" / ".zmetadata").is_file()
+        # Check the zarr was properly finalized.
+        # Assert on what is ON DISK, not `".zmetadata" in store.store`: zarr 3's
+        # store is an async Store rather than a MutableMapping, so `in` raises
+        # TypeError. On-disk is also the truer statement of the invariant — the
+        # consolidated index must be there for the viewer to fetch it. Named via
+        # the facade because only format 2 spells it `.zmetadata`; format 3
+        # embeds it in the root document.
+        assert is_consolidated(tmp_path / "test.luxar.zarr")
         store = zarr.open_group(tmp_path / "test.luxar.zarr", mode="r")
         assert "points" in store
 

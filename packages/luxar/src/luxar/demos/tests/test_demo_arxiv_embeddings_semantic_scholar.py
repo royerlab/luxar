@@ -11,13 +11,13 @@ null, missing, and explicit ``0`` are all treated as zero citations.
 
 from __future__ import annotations
 
-import json
 import sys
 from typing import Any
 
 import numpy as np
 import pytest
 
+from luxar._zarr_compat import read_node_attrs
 from luxar.demos import demo_arxiv_embeddings_semantic_scholar as demo
 from luxar.demos.demo_arxiv_embeddings_semantic_scholar import (
     generate_paper_landscape,
@@ -218,8 +218,9 @@ class TestCompleteCacheRunsWithoutLodDeps:
 
         # A FLAT Points leaf was written — not an LOD group.
         assert (out / "papers" / "positions").exists()
-        zattrs = json.loads((out / "papers" / ".zattrs").read_text())
-        assert zattrs.get("kind") != "lod"
+        attrs = read_node_attrs(out / "papers")
+        assert attrs is not None, "the papers node must carry attributes"
+        assert attrs.get("kind") != "lod"
 
     def test_lod_group_built_when_deps_present(
         self, monkeypatch, capsys, tmp_path
@@ -240,7 +241,8 @@ class TestCompleteCacheRunsWithoutLodDeps:
 
         # A substitutive-LOD group was written: kind=lod with child_N levels and
         # NO top-level positions leaf.
-        zattrs = json.loads((out / "papers" / ".zattrs").read_text())
-        assert zattrs.get("kind") == "lod"
+        attrs = read_node_attrs(out / "papers")
+        assert attrs is not None, "the papers node must carry attributes"
+        assert attrs.get("kind") == "lod"
         assert (out / "papers" / "child_0").exists()
         assert not (out / "papers" / "positions").exists()

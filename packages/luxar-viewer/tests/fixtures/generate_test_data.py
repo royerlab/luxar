@@ -1393,13 +1393,18 @@ def generate_delta_filter_test() -> None:
 
     Positions are a smooth 3D random walk, so after spatial ordering the
     uint16 codes ramp and the encode-time probe ENABLES the delta filter on
-    the positions array. The compressor is **zlib**, not the COMPRESSOR_DISABLED
+    the positions array. The compressor is **gzip**, not the COMPRESSOR_DISABLED
     default: the probe requires a real compressor (no compressor -> no filter),
     blosc cannot run under Node.js (see the audit note at the top of this
-    file), and zarrita ships a pure-JS zlib codec — so the Node unit suite
+    file), and zarrita ships a pure-JS gzip codec — so the Node unit suite
     decodes this fixture end-to-end THROUGH the registered
-    ``numcodecs.luxar_delta_v1`` codec (`zarr-delta-fixture.test.ts` +
-    the generic round-trip expectations).
+    ``luxar_delta_v1`` codec (`zarr-delta-fixture.test.ts` + the generic
+    round-trip expectations).
+
+    It was zlib until the move to zarr format 3, which has no zlib codec at all:
+    zarrita implements one, but zarr-python does not, so Python could no longer
+    WRITE the array. gzip is the compressor both sides support in both formats
+    and Node can still decode, which is the whole requirement here.
 
     The generator asserts the filter actually engaged — if probe gating or
     the encoder wiring regresses, fixture generation fails loudly instead of
@@ -1408,7 +1413,7 @@ def generate_delta_filter_test() -> None:
     with asection("Generating Delta Filter Test"):
         import json
 
-        from numcodecs import Zlib
+        from numcodecs import GZip
 
         output = FIXTURES_DIR / "test_delta_filter.luxar.zarr"
 
@@ -1437,7 +1442,7 @@ def generate_delta_filter_test() -> None:
         with LuxarZarrCompiler(
             output,
             encoding_mode=EncodingMode.AUTO,
-            compressor=Zlib(level=6),  # Node-decodable; probe needs a compressor
+            compressor=GZip(level=6),  # Node-decodable; probe needs a compressor
             float16_allowed=FLOAT16_ALLOWED,
         ) as compiler:
             scene = compiler.create_scene(dimensions=dims)
@@ -1446,9 +1451,20 @@ def generate_delta_filter_test() -> None:
         # Fail fast if the filter did not engage (probe/wiring regression) —
         # on BOTH the u16 positions and the u8 colors arrays.
         for arr_name in ("positions", "colors"):
-            zarray = json.loads((output / "points" / arr_name / ".zarray").read_text())
-            filters = zarray.get("filters") or []
-            if not any(f.get("id") == "luxar_delta_v1" for f in filters):
+            # Read whichever metadata document the format writes, and pull the
+            # filter names out of whichever field holds them: format 2 lists
+            # them under `filters` keyed by `id`, format 3 as array-to-array
+            # members of the `codecs` chain keyed by `name`.
+            arr_dir = output / "points" / arr_name
+            v2_doc = arr_dir / ".zarray"
+            meta = json.loads(
+                (v2_doc if v2_doc.exists() else arr_dir / "zarr.json").read_text()
+            )
+            if "filters" in meta:
+                filters = [f.get("id") for f in (meta.get("filters") or [])]
+            else:
+                filters = [c.get("name") for c in meta.get("codecs", [])]
+            if "luxar_delta_v1" not in filters:
                 raise RuntimeError(
                     f"test_delta_filter fixture: {arr_name} array did not receive "
                     f"the luxar_delta_v1 filter (filters={filters}). The "
@@ -1456,8 +1472,8 @@ def generate_delta_filter_test() -> None:
                 )
 
         aprint(f"✓ Created {output}")
-        aprint(f"  Positions: {positions.shape} (uint16 + luxar_delta_v1 + zlib)")
-        aprint(f"  Colors: {colors.shape} (uint8 + luxar_delta_v1 + zlib)")
+        aprint(f"  Positions: {positions.shape} (uint16 + luxar_delta_v1 + gzip)")
+        aprint(f"  Colors: {colors.shape} (uint8 + luxar_delta_v1 + gzip)")
 
 
 def generate_uint16_quantization_test() -> None:
@@ -2552,16 +2568,24 @@ def generate_blending_inherited_test() -> None:
                 # NO blending_mode — must inherit 'max' from surface_group.
             )
 
-        # Pin the PR1 contract end-to-end: the child leaf's .zattrs must
+        # Pin the PR1 contract end-to-end: the child leaf's attributes must
         # NOT carry a blending_mode key (unset ⇒ inherited in the viewer).
-        import json
+        # Read through the facade so this works whichever format was written —
+        # format 2 keeps attributes in a separate `.zattrs`, format 3 inside
+        # `zarr.json`, and naming either one directly makes the check silently
+        # unrunnable on the other (it raised FileNotFoundError at format 3).
+        from luxar._zarr_compat import read_node_attrs
 
-        zattrs_path = output / "surface_group" / "child_points" / ".zattrs"
-        child_attrs = json.loads(zattrs_path.read_text())
+        child_attrs = read_node_attrs(output / "surface_group" / "child_points")
+        if child_attrs is None:
+            raise RuntimeError(
+                "test_blending_inherited: child_points has no readable metadata "
+                "document — the fixture did not write the node at all."
+            )
         if "blending_mode" in child_attrs:
             raise RuntimeError(
-                "test_blending_inherited: child_points/.zattrs unexpectedly "
-                "carries a blending_mode key — the writer stamped a default "
+                "test_blending_inherited: child_points attributes unexpectedly "
+                "carry a blending_mode key — the writer stamped a default "
                 "again, breaking the inheritance regression fixture."
             )
 

@@ -1,5 +1,7 @@
+import { ROOT_ATTR_DOCS, rootAttributes } from '../../types/zarr-documents';
 import { buildUrl, fetchWithRetry } from './fetch-retry';
 import { sha256Hex } from './sha256';
+import type { FetchResponseScope } from './fetch-retry';
 
 /**
  * Cross-instance validation serializer.
@@ -122,35 +124,65 @@ export interface RemoteValidationToken {
  * changes. Uses the dedicated `validationTimeoutMs` budget so a flaky
  * network does not block scene loading for the full data-fetch timeout.
  *
- * When the root `.zattrs` carries Luxar's `content_hash` attr, that is the
+ * When the root metadata carries Luxar's `content_hash` attr, that is the
  * token (`content-hash` mode — strongest guarantee). Otherwise the SHA-256
- * of the raw `.zattrs` bytes serves as an implicit token (`zattrs-hash`
+ * of the raw document bytes serves as an implicit token (`zattrs-hash`
  * mode): every Luxar writer re-stamps a per-save `timestamp` attr and most
  * external producers rewrite root metadata on regeneration, so a dataset
  * replaced in place at the same URL still invalidates instead of being
  * served stale from OPFS forever (the pre-fix behaviour with the default
  * `externalDatasetTtlMs: null`).
  *
- * Returns `null` if the `.zattrs` fetch fails or is non-ok (offline /
- * truly headerless store) — callers then fall back to the TTL path.
+ * BOTH formats' documents are tried, `zarr.json` first. Probing only `.zattrs`
+ * — correct while every store was format 2 — returns `null` for a format-3
+ * dataset, which drops the caller onto the TTL path and reinstates exactly the
+ * serve-stale-forever behaviour this function exists to prevent. The
+ * `zattrs-hash` mode name is kept for a format-3 document too: it is a stable
+ * identifier that callers and tests match on, and renaming it to suit the
+ * format would break them to describe the same thing.
+ *
+ * `timeoutMsOverride` stays a budget for the WHOLE probe, not per candidate:
+ * with two sequential fetches a hanging server would otherwise block scene
+ * loading for twice the fail-fast budget the option exists to impose, and it is
+ * a format-2 dataset — the one that needs the second request — that would pay
+ * it. The first candidate keeps the full budget, so the common single-request
+ * case is unchanged.
+ *
+ * Returns `null` only if NEITHER document can be fetched or both are non-ok
+ * (offline / truly headerless store) — callers then fall back to the TTL path.
  */
 export async function getRemoteContentHash(
   baseUrl: string,
   options: { signal?: AbortSignal; timeoutMsOverride?: number }
 ): Promise<RemoteValidationToken | null> {
   try {
-    const fetched = await fetchWithRetry(buildUrl(baseUrl, '.zattrs'), {
-      timeoutMsOverride: options.timeoutMsOverride,
-      signal: options.signal,
-    });
-    if (!fetched) return null;
+    // Each rejected attempt is disposed IMMEDIATELY. `dispose()` is not just
+    // listener cleanup — it also cancels a body the caller never read, so an
+    // undisposed 404 holds its connection open. Probing two documents means the
+    // miss is now the common case (a format-2 store 404s `zarr.json` on every
+    // poll), so letting the loop overwrite the previous scope would leak one
+    // connection and two abort listeners per validation.
+    let scope: FetchResponseScope | null = null;
+    const startedAt = Date.now();
+    for (const doc of ROOT_ATTR_DOCS) {
+      const budget = options.timeoutMsOverride;
+      const attempt = await fetchWithRetry(buildUrl(baseUrl, doc), {
+        timeoutMsOverride:
+          budget === undefined ? undefined : Math.max(1, budget - (Date.now() - startedAt)),
+        signal: options.signal,
+      });
+      if (!attempt) continue;
+      if (attempt.response.ok) {
+        scope = attempt;
+        break;
+      }
+      attempt.dispose();
+    }
+    if (!scope) return null;
 
     try {
-      const { response } = fetched;
-      if (!response.ok) return null;
-
-      const data = await response.arrayBuffer();
-      const attrs = JSON.parse(new TextDecoder().decode(data));
+      const data = await scope.response.arrayBuffer();
+      const attrs = rootAttributes(JSON.parse(new TextDecoder().decode(data)));
       const stamped = attrs?.content_hash;
       if (typeof stamped === 'string' && stamped.length > 0) {
         return { hash: stamped, mode: 'content-hash' };
@@ -164,7 +196,7 @@ export async function getRemoteContentHash(
       const digest = await sha256Hex(new Uint8Array(data));
       return { hash: `zattrs:${digest}`, mode: 'zattrs-hash' };
     } finally {
-      fetched.dispose();
+      scope.dispose();
     }
   } catch {
     return null;

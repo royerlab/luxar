@@ -6,8 +6,9 @@ inspect/serve commands). Consolidated here so the security-critical extraction
 logic exists in exactly one place and cannot drift between call sites.
 
 Also home to :func:`read_archive_root_attrs`, a read-only *peek* that pulls the
-root ``.zattrs`` out of such an archive without extracting it — same layout and
-same threat model, so it belongs beside the extractor rather than in a caller.
+root attributes out of such an archive without extracting it — from whichever
+metadata document the store's format wrote — same layout and same threat model,
+so it belongs beside the extractor rather than in a caller.
 
 Threat model (CVE-2007-4559 and symlink-escape): a ``.gsplats.zarr`` archive
 legitimately contains only regular files and directories. Every member is
@@ -29,6 +30,8 @@ import tempfile
 import zipfile
 from pathlib import Path, PurePosixPath
 from typing import Any, Dict, Optional
+
+from luxar._zarr_compat import NODE_ATTR_DOCS, attrs_from_node_doc
 
 __all__ = ["extract_compressed_zarr", "read_archive_root_attrs"]
 
@@ -164,17 +167,24 @@ def extract_compressed_zarr(compressed_path: Path) -> Path:
         raise
 
 
-def _root_zattrs_rank(name: str) -> Optional[int]:
-    """How root-like a ``.zattrs`` member is; ``None`` if it cannot be the root.
+def _root_attrs_rank(name: str) -> Optional[int]:
+    """How root-like an attrs member is; ``None`` if it cannot be the root.
+
+    BOTH formats' documents count (:data:`NODE_ATTR_DOCS`): format 2 puts the
+    root attributes in ``.zattrs``, format 3 inside ``zarr.json``. A store is
+    written in one format or the other, so only one of the two names is ever
+    present and they can share a rank without competing. Recognising only
+    ``.zattrs`` made this peek answer ``{}`` for every format-3 archive — which
+    reads as "this dataset authored no appearance" rather than as an error.
 
     Lower sorts better. The two ranks mirror, one for one, the two rules
     :func:`extract_compressed_zarr` uses to locate the store inside an archive:
 
-    * ``0`` — ``<name>.gsplats.zarr/.zattrs``: the top-level directory whose name
+    * ``0`` — ``<name>.gsplats.zarr/<doc>``: the top-level directory whose name
       ends in ``.gsplats.zarr``. The extractor prefers it, and it is what
       ``_compress_zarr`` always writes. Nothing else can outrank it, so it needs
       no further qualification.
-    * ``1`` — ``<anything-else>/.zattrs``: a candidate for the extractor's
+    * ``1`` — ``<anything-else>/<doc>``: a candidate for the extractor's
       fallback, the *sole* top-level directory whatever it happens to be called
       (what you get from ``tar czf x.gsplats.zarr.tar.gz mystore``). The rank
       alone does NOT establish that: only :func:`_fallback_is_unambiguous`, which
@@ -192,7 +202,7 @@ def _root_zattrs_rank(name: str) -> Optional[int]:
     layout and hand back attrs belonging to something that is not the dataset.
     """
     parts = PurePosixPath(name).parts
-    if not parts or parts[-1] != ".zattrs":
+    if not parts or parts[-1] not in NODE_ATTR_DOCS:
         return None
     if len(parts) != 2:
         return None
@@ -247,13 +257,17 @@ def _zip_member_is_symlink(info: zipfile.ZipInfo) -> bool:
 
 
 def _parse_attrs(raw: bytes) -> Dict[str, Any]:
-    """Decode a ``.zattrs`` payload; anything but a JSON object yields ``{}``."""
-    parsed = json.loads(raw.decode("utf-8"))
-    return parsed if isinstance(parsed, dict) else {}
+    """Decode a node metadata payload; anything but a JSON object yields ``{}``.
+
+    Both formats' documents arrive here, so the unwrapping is the facade's:
+    a format-2 ``.zattrs`` IS the attributes, while a format-3 ``zarr.json``
+    nests them under ``attributes`` beside the structural fields.
+    """
+    return attrs_from_node_doc(json.loads(raw.decode("utf-8")))
 
 
 def _read_zip_root_attrs(path: Path) -> Dict[str, Any]:
-    """Root ``.zattrs`` of a zip archive, reading that one member's bytes only."""
+    """Root attrs of a zip archive, reading that one member's bytes only."""
     with zipfile.ZipFile(path, "r") as zip_ref:
         best: Optional[zipfile.ZipInfo] = None
         best_rank = 0
@@ -267,7 +281,7 @@ def _read_zip_root_attrs(path: Path) -> Dict[str, Any]:
                 top_dirs.add(top)
             if is_dir or _zip_member_is_symlink(info):
                 continue
-            rank = _root_zattrs_rank(info.filename)
+            rank = _root_attrs_rank(info.filename)
             if rank is None:
                 continue
             if best is None or rank < best_rank:
@@ -288,32 +302,42 @@ def _read_zip_root_attrs(path: Path) -> Dict[str, Any]:
         return _parse_attrs(raw)
 
 
-#: The best possible ``_root_zattrs_rank``: the ``.zattrs`` of a top-level
-#: ``*.gsplats.zarr`` directory. Nothing can outrank it and it needs no
+#: The best possible ``_root_attrs_rank``: the root attrs document of a
+#: top-level ``*.gsplats.zarr`` directory. Nothing can outrank it and it needs no
 #: whole-archive context to be usable, so the tar walk can stop the moment it
-#: sees one — which is what keeps the peek cheap on the layout ``_compress_zarr``
-#: always writes, where the member turns up within the first couple of headers
-#: (``tarfile.add`` walks a directory in sorted order, so dotfiles come first).
-#: The unnamed fallback layout gets no such stop, twice over: a rank-1 member can
-#: still be superseded by a rank-0 one later in the stream, and whether it may be
-#: used at all depends on the archive's full set of top-level directories
-#: (:func:`_fallback_is_unambiguous`). So that walk has to reach the end of the
-#: header stream — and a gzipped tar has no index, so reaching the end means
-#: inflating the whole file.
+#: sees one.
+#:
+#: HOW EARLY that stop comes depends on the on-disk format, because
+#: ``tarfile.add`` walks a directory in sorted order. A format-2 store's
+#: ``.zattrs`` is a dotfile and lands second (measured: member 1 of 24), so the
+#: walk really does end after a couple of headers. A format-3 store's document is
+#: ``zarr.json``, which sorts AFTER every array sub-directory and lands last
+#: (measured: member 26 of 27) — so on the format Luxar now writes, the stop
+#: effectively never fires and the peek costs a full inflate. Correct either way,
+#: and free for a zip (its central directory is an index); reordering the tar at
+#: write time would only help archives written from here on, so it is not done.
+#:
+#: The unnamed fallback layout gets no such stop in either format, twice over: a
+#: rank-1 member can still be superseded by a rank-0 one later in the stream, and
+#: whether it may be used at all depends on the archive's full set of top-level
+#: directories (:func:`_fallback_is_unambiguous`). So that walk has to reach the
+#: end of the header stream — and a gzipped tar has no index, so reaching the end
+#: means inflating the whole file.
 _BEST_ROOT_RANK = 0
 
 
 def _read_targz_root_attrs(path: Path) -> Dict[str, Any]:
-    """Root ``.zattrs`` of a tar.gz archive, reading that one member's bytes only.
+    """Root attrs of a tar.gz archive, reading that one member's bytes only.
 
     Member HEADERS are walked lazily (never ``getmembers()``, which materializes
     the whole archive), and only the winning member's payload is read. The walk
     stops as soon as a member reaches :data:`_BEST_ROOT_RANK`; failing that it
     runs to the end of the header stream (see :data:`_BEST_ROOT_RANK` for what
-    that costs), because a better-ranked ``.zattrs`` may appear after a worse one,
-    the fallback tier cannot be settled before the archive's top-level
-    directories are all known, and reading the wrong node's attrs as the root's
-    would silently author an appearance nobody asked for.
+    that costs, and why a format-3 archive nearly always pays it), because a
+    better-ranked member may appear after a worse one, the fallback tier cannot
+    be settled before the archive's top-level directories are all known, and
+    reading the wrong node's attrs as the root's would silently author an
+    appearance nobody asked for.
     """
     with tarfile.open(path, "r:gz") as tar_ref:
         best: Optional[tarfile.TarInfo] = None
@@ -328,7 +352,7 @@ def _read_targz_root_attrs(path: Path) -> Dict[str, Any]:
             # check would hand back whatever node the link points at).
             if not member.isfile():
                 continue
-            rank = _root_zattrs_rank(member.name)
+            rank = _root_attrs_rank(member.name)
             if rank is None:
                 continue
             if best is None or rank < best_rank:
@@ -347,15 +371,16 @@ def _read_targz_root_attrs(path: Path) -> Dict[str, Any]:
 
 
 def read_archive_root_attrs(path: str | Path) -> Dict[str, Any]:
-    """Read the ROOT ``.zattrs`` of a compressed ``.gsplats.zarr``, no extraction.
+    """Read the ROOT attributes of a compressed ``.gsplats.zarr``, no extraction.
 
     Only ONE member's payload is read: the archive index (zip central directory /
-    tar headers) is scanned for the root ``.zattrs``, and nothing else is
+    tar headers) is scanned for the root attrs document, and nothing else is
     decompressed. Nothing is ever written to disk and no link is ever followed.
     Scanning the index is free for a zip but not for a gzipped tar, which has no
-    index at all — see :data:`_BEST_ROOT_RANK` for when that walk stops early.
+    index at all — see :data:`_BEST_ROOT_RANK` for when that walk stops early
+    (rarely, at format 3).
 
-    Which member counts as the root follows :func:`_root_zattrs_rank` and
+    Which member counts as the root follows :func:`_root_attrs_rank` and
     :func:`_fallback_is_unambiguous`, which pick the same KIND of node
     :func:`extract_compressed_zarr` does: a top-level ``*.gsplats.zarr``
     directory, as ``_compress_zarr`` writes, else — only when it is the archive's
@@ -392,7 +417,7 @@ def read_archive_root_attrs(path: str | Path) -> Dict[str, Any]:
 
     Returns:
         The root attrs as a dict. ``{}`` when the path is missing or is not one of
-        the two supported archive formats, when no root ``.zattrs`` member exists,
+        the two supported archive formats, when no root attrs member exists,
         when the store root is ambiguous (above), or when the payload is oversized
         or not a JSON object.
 

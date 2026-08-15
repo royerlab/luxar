@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 import zarr
 
+from luxar._zarr_compat import is_consolidated
 from luxar.core.dimensions import Dimensions
 from luxar.encoding import ArrayDecoder
 from luxar.io.compiler import LuxarZarrCompiler
@@ -39,8 +40,9 @@ class TestProgressiveWriting:
             store = zarr.open_group(output_path, mode="r")
             assert store.attrs["type"] == "scene"
             # See test_scene_methods: zarr 3's store is not a mapping, so check
-            # the consolidated document on disk directly.
-            assert (Path(output_path) / ".zmetadata").is_file()
+            # the consolidated index on disk directly — through the facade,
+            # since only format 2 keeps it in a `.zmetadata` document.
+            assert is_consolidated(Path(output_path))
 
     def test_progressive_points_writing(self) -> None:
         """Test that points are written immediately without keeping in memory."""
