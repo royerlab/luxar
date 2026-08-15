@@ -80,11 +80,11 @@ group table.
 | `webgpuForceWebGL` | `boolean`             | `false`         | Diagnostic: with `renderer: 'webgpu'`, route through Three.js's internal WebGL2 backend while keeping the WebGPU/TSL API surface.                                                                            |
 | `perfTimestamp`    | `boolean`             | `false`         | Opt in to WebGPU `timestamp-query` GPU profiling. Tiny runtime cost; ignored under WebGL.                                                                                                                    |
 | `openCacheStats`   | `boolean`             | `false`         | Open the data-loading monitor (Cache tab, expanded) once the scene is wired up — useful for profiling cache behaviour.                                                                                       |
-| `pinnedDPR`        | `number`              | —               | Pin DPR to `[0.25, native]` and disable adaptive DPR; intended for deterministic tests, captures, and bug reproduction.                                                                                     |
-| `lodFade`          | `boolean`             | `true`          | Cross-fade adjacent replacement LOD levels instead of swapping abruptly.                                                                                                                                   |
-| `lodEnergyComp`    | `boolean`             | `true`          | Compensate incomplete stream ladders by their committed energy fraction to reduce brightness popping.                                                                                                      |
-| `lodFinest`        | `boolean`             | `false`         | Force the finest replacement LOD regardless of projected coverage; useful for high-quality still or video capture.                                                                                         |
-| `depthSort`        | `boolean`             | `true`          | Enable worker-based back-to-front sorting for order-dependent geometry; disable for deterministic comparisons.                                                                                             |
+| `pinnedDPR`        | `number`              | —               | Pin DPR to `[0.25, native]` and disable adaptive DPR; intended for deterministic tests, captures, and bug reproduction.                                                                                      |
+| `lodFade`          | `boolean`             | `true`          | Cross-fade adjacent replacement LOD levels instead of swapping abruptly.                                                                                                                                     |
+| `lodEnergyComp`    | `boolean`             | `true`          | Compensate incomplete stream ladders by their committed energy fraction to reduce brightness popping.                                                                                                        |
+| `lodFinest`        | `boolean`             | `false`         | Force the finest replacement LOD regardless of projected coverage; useful for high-quality still or video capture.                                                                                           |
+| `depthSort`        | `boolean`             | `true`          | Enable worker-based back-to-front sorting for order-dependent geometry; disable for deterministic comparisons.                                                                                               |
 | `factories`        | `AppFactories`        | —               | Construction overrides for the heavy components built by `init()` (scene manager, recording panel, …). For tests and advanced embedders; omit for the production path.                                       |
 
 ### Programmatic API
@@ -526,12 +526,8 @@ const pointMat = materialManager.getPointMaterial({
   opacity: 1.0,
   gamma: 2.2,
 });
-const lineMat = materialManager.getLineMaterial({
-  /* ... */
-});
-const gsplatMat = materialManager.getGSplatMaterial({
-  /* ... */
-});
+const lineMat = materialManager.getLineMaterial({/* ... */});
+const gsplatMat = materialManager.getGSplatMaterial({/* ... */});
 ```
 
 ### Per-Point Attributes
@@ -698,8 +694,8 @@ monitor.element; // the widget element (mounted by the control rail)
 - `?renderer=webgpu&webgpu-force-webgl` — Keep the WebGPU/TSL API surface while Three.js routes through its internal WebGL2 backend (diagnostic)
 - `?perf-timestamp` — Enable WebGPU timestamp-query profiling for performance tests
 - `?dpr=<value>` — Pin a fixed device pixel ratio for the session (clamped to `[0.25, native]`) and lock adaptive resolution off
-- `?lineJoin=<none|miter>` — Force the line join style for the session; applies only to `linePrimitive=screen-space` (the default capsule partitions joints unconditionally; scheduled for removal)
-- `?linePrimitive=<capsule|screen-space|volumetric>` — Select the line rendering primitive for the session (#1352); default `capsule` (gaussian-like 2D point-to-segment profile: stable end-on discs, seamless partitioned joints, quad-class cost). The legacy `screen-space` quad and the exact-but-slow `volumetric` remain selectable until their scheduled removal
+- `?lineJoin=<none|miter>` — Force the line join style for the session; applies only to `linePrimitive=screen-space` (the capsule partitions joints unconditionally)
+- `?linePrimitive=<capsule|screen-space>` — Select the line rendering primitive for the session (#1352), overriding the `Settings → Advanced → Line primitive` policy; default policy `auto` builds the `capsule` (gaussian-like 2D point-to-segment profile: stable end-on discs, seamless partitioned joints) except for very large line nodes, which build the leaner `screen-space` quad. The third primitive, `volumetric`, was deleted after the capsule flip
 - `?gpuBudgetMB=<N>` — Override the shared GPU-geometry/LOD retention budget; `0` means unbounded
 - `?cacheBudgetMB=<N>` — Override the total in-memory cache pool (L0 + L1 + S-cache) in megabytes; used where `performance.memory` is unavailable (WKWebView, Safari)
 

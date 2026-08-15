@@ -312,4 +312,98 @@ describe('createLinesNode material wiring', () => {
       expect(materialDispose).toHaveBeenCalled();
     });
   });
+
+  describe('auto line-primitive policy: per-node sizing (#1352)', () => {
+    /** Picking system that hands back every registered pick node. */
+    function stubPicking() {
+      const registered: THREE.Mesh[] = [];
+      const stub = {
+        allocatePickId: () => registered.length + 1,
+        registerNode: (_main: THREE.Object3D, pick: THREE.Mesh) => registered.push(pick),
+      } as unknown as PickingSystem;
+      return { stub, registered };
+    }
+
+    /** Unit cube extent; a 0.1-wide line in it renders far above the 1.5px floor. */
+    const unitBounds = { min: [0, 0, 0], max: [1, 1, 1] };
+
+    it('gives the visual AND pick materials the SAME resolved primitive', () => {
+      // The one invariant the seam exists for: a divergence would rasterize a
+      // capsule pick stencil under a quad render (or vice versa), so the hit
+      // test would disagree with the pixels at every joint and line end.
+      const { stub, registered } = stubPicking();
+      const factory = new NodeFactory();
+      factory.setPickingSystem(stub);
+
+      const mesh = factory.createLinesNode(
+        '/streamlines',
+        {},
+        { ...rawAttrs, n_segments: 60_000, max_width: 0.1, position_bounds: unitBounds },
+        makeProcessed(),
+        makeLoader()
+      );
+
+      const visual = mesh.material as LineMaterial;
+      const pick = registered[0].material as LinePickingMaterial;
+      expect(visual.userData.linePrimitive).toBe('screen-space');
+      expect(pick.userData.linePrimitive).toBe(visual.userData.linePrimitive);
+    });
+
+    it('normalizes the width factor by position_bounds when there is no spatial index', () => {
+      // `position_bounds` is stamped on EVERY lines node, so an unindexed node
+      // (enable_spatial_index=False, or a scene with no scene_dimensions) still
+      // gets the width term. 60k segments alone are far below the 2M threshold;
+      // only the rendered-width factor pushes this node over it.
+      const factory = new NodeFactory();
+      const wide = factory.createLinesNode(
+        '/streamlines',
+        {},
+        { ...rawAttrs, n_segments: 60_000, max_width: 0.1, position_bounds: unitBounds },
+        makeProcessed(),
+        makeLoader()
+      );
+      expect((wide.material as LineMaterial).userData.linePrimitive).toBe('screen-space');
+
+      // Same node with the extent withheld: count-only, so it stays capsule.
+      // Without this half, "reads position_bounds" would also be satisfied by
+      // flipping every 60k node to the quad.
+      const noExtent = factory.createLinesNode(
+        '/streamlines',
+        {},
+        { ...rawAttrs, n_segments: 60_000, max_width: 0.1 },
+        makeProcessed(),
+        makeLoader()
+      );
+      expect((noExtent.material as LineMaterial).userData.linePrimitive).toBe('capsule');
+    });
+
+    it('prefers the spatial-index extent over position_bounds when both exist', () => {
+      // The index bounds are the tighter reading (they exclude discrete slice
+      // dims). Here they describe a 1000× larger extent than position_bounds,
+      // which shrinks the width factor below the flip — so the assertion fails
+      // if the fallback order is inverted.
+      const factory = new NodeFactory();
+      const mesh = factory.createLinesNode(
+        '/streamlines',
+        {},
+        {
+          ...rawAttrs,
+          n_segments: 60_000,
+          max_width: 0.1,
+          ordering: 'morton',
+          vertex_ordering: {
+            slice_dims: [],
+            ordering_dims: [0, 1, 2],
+            ordering_min: [0, 0, 0],
+            ordering_max: [1000, 1000, 1000],
+            chunk_size: 2048,
+          },
+          position_bounds: unitBounds,
+        } as unknown as LinesMetadata,
+        makeProcessed(),
+        makeLoader()
+      );
+      expect((mesh.material as LineMaterial).userData.linePrimitive).toBe('capsule');
+    });
+  });
 });

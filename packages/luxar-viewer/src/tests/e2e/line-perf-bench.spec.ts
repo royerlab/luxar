@@ -153,9 +153,56 @@ for (const id of SCENARIO_FILTER) {
     );
   }
 }
-const ACTIVE_SCENARIOS = SCENARIO_FILTER.length
+const FILTERED_SCENARIOS = SCENARIO_FILTER.length
   ? SCENARIOS.filter((s) => SCENARIO_FILTER.includes(s.id))
   : SCENARIOS;
+
+/**
+ * Synthetic count sweep: `LUXAR_PERF_SYNTHETIC_COUNTS` (comma-separated
+ * segment counts; bare integers or `k`/`M` suffixes, e.g.
+ * `100k,1M,4M,10M`) re-parameterizes every active synthetic scenario at
+ * each count in turn, replacing its authored count — the axis a
+ * capsule-vs-quad crossover measurement sweeps. Sweep arms carry
+ * suffixed scenario ids (`<id>-n<count>`) so their results.json rows
+ * never collide with the authored-count rows (same rule as the
+ * primitive axis above: a swept row is keyed apart and never compared
+ * to a bare-id row). `LUXAR_PERF_SCENARIO_FILTER` still names the BASE
+ * ids — filter first, then expand. Zarr scenarios pass through
+ * unchanged; unset means authored counts, exactly as before.
+ */
+const parseSyntheticCount = (raw: string): number => {
+  const match = /^(\d+(?:\.\d+)?)([kM]?)$/.exec(raw);
+  const scale = match?.[2] === 'M' ? 1_000_000 : match?.[2] === 'k' ? 1_000 : 1;
+  const count = match ? Number(match[1]) * scale : NaN;
+  if (!Number.isInteger(count) || count <= 0) {
+    throw new Error(
+      `LUXAR_PERF_SYNTHETIC_COUNTS entry '${raw}' is not a whole segment count ` +
+        '(use e.g. 250000, 250k or 2.5M)'
+    );
+  }
+  return count;
+};
+const SYNTHETIC_COUNTS = [
+  ...new Set(
+    (process.env.LUXAR_PERF_SYNTHETIC_COUNTS ?? '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .map(parseSyntheticCount)
+  ),
+];
+const ACTIVE_SCENARIOS: ScenarioSpec[] = SYNTHETIC_COUNTS.length
+  ? FILTERED_SCENARIOS.flatMap((scn): ScenarioSpec[] =>
+      scn.type === 'synthetic-lines'
+        ? SYNTHETIC_COUNTS.map((count) => ({
+            ...scn,
+            id: `${scn.id}-n${count}`,
+            label: `${scn.label} [count sweep: ${count} segments]`,
+            count,
+          }))
+        : [scn]
+    )
+  : FILTERED_SCENARIOS;
 
 const BACKENDS = ['webgl', 'webgpu'] as const;
 type Backend = (typeof BACKENDS)[number];
@@ -192,9 +239,15 @@ const LINE_PRIMITIVES = ((): string[] => {
  * Result-row id for one (scenario, primitive) arm. The `default` arm
  * keeps the bare scenario id so its rows stay comparable across runs —
  * NOTE that "default" changed meaning at the #1352 flip (screen-space →
- * capsule), so bare-id rows from a pre-flip results.json measure a
- * DIFFERENT shader than post-flip rows; compare across the flip only via
- * explicit `-screen-space` / `-capsule` arms.
+ * capsule), and AGAIN when the auto policy landed: a default arm now
+ * builds whatever production would for that scenario's SIZE — segment
+ * count scaled by the rendered-width factor, so a wide scenario flips to
+ * screen-space well below the 2 M count (the 10 M and both thick 2 M
+ * scenarios resolve to screen-space). That is the point of
+ * the default arm — it measures shipping behavior — but it means bare-id
+ * rows are only comparable between runs of the SAME policy era; compare
+ * across either boundary only via explicit `-screen-space` / `-capsule`
+ * arms.
  */
 const armId = (scenarioId: string, primitive: string): string =>
   primitive === 'default' ? scenarioId : `${scenarioId}-${primitive}`;
