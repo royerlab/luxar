@@ -299,3 +299,42 @@ def test_progressive_residual_passes_drop_the_shared_range(monkeypatch):
     )
 
     assert seen == [(0.0, 4.0), None]
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        (5.0, 5.0),  # empty range -> the "nearly uniform" fill-with-0.5 branch
+        (2.0, 1.0),  # reversed -> every voxel normalizes negative, clips to 0
+        (0.0, float("nan")),
+        (0.0, float("inf")),
+        (1.0,),  # not a pair
+    ],
+)
+def test_a_degenerate_norm_range_is_refused(bad):
+    """A bad supplied range must fail loudly, not fit successfully on nonsense."""
+    from luxar.gsplats import fit_gaussian_splats
+
+    vol = np.zeros((4, 8, 8), dtype=np.float32)
+    vol[2, 4, 4] = 1.0
+    with pytest.raises(ValueError):
+        fit_gaussian_splats(
+            vol, seeds=4, n_iters=1, device="cpu", verbose=False, norm_range=bad
+        )
+
+
+def test_a_resolved_tile_range_passes_that_validation(ramp_volume):
+    """Control: what the tiled fitter actually produces IS a valid range."""
+    from luxar.gsplats import fit_gaussian_splats
+
+    resolved = _tile_norm_range(ramp_volume, {}, None)
+    assert resolved is not None and resolved[1] > resolved[0]
+    result = fit_gaussian_splats(
+        ramp_volume,
+        seeds=4,
+        n_iters=1,
+        device="cpu",
+        verbose=False,
+        norm_range=resolved,
+    )
+    assert result is not None
