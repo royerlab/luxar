@@ -166,14 +166,20 @@ def test_authored_nodes_keep_gaia_volumetric_appearance(tmp_path: Path) -> None:
         "value assertions above without pinning anything about the ladder"
     )
     # ...and every level must be INERT under it — which is NOT the same as
-    # carrying no attrs. The viewer composes opacity/absorption/intensity (and
-    # gamma) MULTIPLICATIVELY root->leaf, and offset additively (viewer
+    # carrying no attrs. The viewer composes opacity/absorption/intensity/gamma
+    # MULTIPLICATIVELY root->leaf and offset ADDITIVELY (viewer
     # src/data/attrs-composer.ts), so a level is inert exactly when its value is
-    # the identity 1.0. The writers stamp exactly those 1.0s onto every node
-    # unconditionally (`apply_default_render_attrs`,
+    # that operator's identity. The writers stamp exactly those identities onto
+    # every node unconditionally (`apply_default_render_attrs`,
     # io/_compiler/node_common.py:450-472, mirrored for gsplats in
     # io/_compiler/gsplat_assembly.py), so absence is not available to assert and
     # would not mean anything if it were.
+    #
+    # All five are checked, not just the three the demo authors: `gamma` and
+    # `offset` are stamped on every level and set on NEITHER the wrapper nor the
+    # markers, so a level that acquired a non-identity one would re-light that
+    # level alone — the mixed ladder mismatching across an LOD switch, which is
+    # the exact failure this test exists to catch.
     #
     # `blending_mode` is the exception, and the reason it gets its own check: it
     # has no identity value, so it is nearest-setter-wins, and the writers
@@ -190,13 +196,21 @@ def test_authored_nodes_keep_gaia_volumetric_appearance(tmp_path: Path) -> None:
             f"level {level!r} sets its own blending_mode; under nearest-setter-wins "
             "that overrides the wrapper's 'volumetric' for this level alone"
         )
-        for key in ("opacity", "absorption", "intensity"):
-            # The identity IS the invariant that matters: at 1.0 the value the
+        # key -> the identity of the operator the viewer composes it with.
+        for key, identity in (
+            ("opacity", 1.0),
+            ("absorption", 1.0),
+            ("intensity", 1.0),
+            ("gamma", 1.0),
+            ("offset", 0.0),
+        ):
+            # The identity IS the invariant that matters: at it, the value the
             # renderer composes for this level is the wrapper's, unchanged.
-            child_value = level_attrs.get(key, 1.0)
-            assert child_value == pytest.approx(1.0), (
-                f"level {level!r} has {key}={child_value}, not the multiplicative "
-                f"identity — it would rescale the wrapper's {stars[key]}"
+            child_value = level_attrs.get(key, identity)
+            assert child_value == pytest.approx(identity), (
+                f"level {level!r} has {key}={child_value}, not the composition "
+                f"identity {identity} — it would re-light this level alone "
+                f"(wrapper {key}={stars.get(key, 'unset')})"
             )
 
 
