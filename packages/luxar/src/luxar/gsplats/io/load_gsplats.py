@@ -8,7 +8,7 @@ from typing import Any, Dict
 
 from luxar._zarr_compat import open_group as zc_open_group
 from luxar.gsplats import GSplatData
-from luxar.gsplats.io._archive import extract_compressed_zarr
+from luxar.gsplats.io._archive import extract_compressed_zarr, read_archive_root_attrs
 
 
 def load_gsplats(
@@ -56,6 +56,10 @@ def read_authored_appearance(path: str | Path) -> Dict[str, Any]:
     ``absorption`` snap back to their identity. Feed the result to
     ``write_gsplats_tree(root_attrs=...)`` (or ``GSplatData.save(root_attrs=...)``).
 
+    Works on a ``.gsplats.zarr`` directory and on a ``.gsplats.zarr.zip`` /
+    ``.gsplats.zarr.tar.gz`` archive alike — both are first-class inputs to the
+    rebuild commands, so appearance must survive both (#1604).
+
     Not every dropped attr is fixed by this: an authored ``colormap`` still
     reverts to gray, and the 4x4 ``transform`` is deliberately left behind
     because feeding a stored (column-major) matrix back through the writer
@@ -69,23 +73,26 @@ def read_authored_appearance(path: str | Path) -> Dict[str, Any]:
     See :data:`~luxar.core.group.compositing.AUTHORED_APPEARANCE_ATTRS` for the
     key set and https://github.com/royerlab/luxar/issues/1600 for the invariant.
     """
-    # Imported here rather than leaning on the module-level name: this module's
-    # zarr access is moving to the format facade (``luxar._zarr_compat``), and a
-    # rewrite that drops the module-level import would leave this call raising
-    # NameError straight into the best-effort ``except`` below — i.e. the carry
-    # would go quietly back to doing nothing.
-    import zarr
-
     from luxar.core.group.compositing import AUTHORED_APPEARANCE_ATTRS
 
     p = Path(path)
     try:
-        # Archives are handled by the caller's real load; peeking inside one just
-        # to read appearance would extract GBs a second time.
-        if not p.is_dir():
-            return {}
-        root = zarr.open_group(str(p), mode="r")
-        attrs = dict(root.attrs)
+        if p.is_dir():
+            # The facade, not a bare ``zarr.open_group``: every zarr read routes
+            # through ``luxar._zarr_compat``, and it opts reads out of
+            # consolidated metadata, so a directory store is read from the same
+            # per-node ``.zattrs`` the archive peek below reads. Measured on zarr
+            # 3.3, the two spellings agree for a ROOT GROUP'S OWN ATTRS even with
+            # a stale ``.zmetadata`` present — ``.zmetadata`` governs child
+            # lookups, not the root's attrs — so this is the module convention
+            # holding rather than a divergence being papered over.
+            root = zc_open_group(p, mode="r")
+            attrs = dict(root.attrs)
+        else:
+            # An archive is peeked, not extracted: only the root `.zattrs`
+            # member's bytes are read, and nothing is written to disk.
+            # A regular file that is not an archive yields {} from the helper.
+            attrs = read_archive_root_attrs(p)
     except Exception:
         return {}
     return {k: attrs[k] for k in sorted(AUTHORED_APPEARANCE_ATTRS) if k in attrs}
