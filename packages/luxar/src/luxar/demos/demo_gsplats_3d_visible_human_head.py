@@ -64,7 +64,7 @@ DEMO_META = {
         "gpu": "optional",
         "local_data": "git-lfs",
     },
-    "caches": [],
+    "caches": ["gsplats_visible_human_head"],
     "outputs": ["gsplats_3d_visible_human_head"],
 }
 
@@ -346,7 +346,7 @@ def fit_head(rgb_vol: np.ndarray) -> tuple[GSplatData, np.ndarray]:
     result.save(
         CACHE_FIT,
         encoding_mode=EncodingMode.MEMORY,  # uint8 Cholesky — smallest on-disk
-        include_fitting_info=False,
+        include_fitting_info=True,
         compress="zip",
         zip_deflate=True,
     )

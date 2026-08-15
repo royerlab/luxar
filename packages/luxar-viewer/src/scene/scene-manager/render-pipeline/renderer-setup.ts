@@ -75,6 +75,53 @@ export function selectBackend(rendererOverride: 'webgl' | 'webgpu' | undefined):
   return { backend: 'webgl', source: 'default' };
 }
 
+/**
+ * Adapter limits forwarded verbatim into the device's `requiredLimits`
+ * when the adapter advertises them as numbers (absent / non-numeric
+ * entries are omitted so the device keeps the spec default).
+ *
+ * `maxTextureDimension2D` is the per-node element-data ceiling:
+ * element textures (points/lines/gsplats) grow DOWNWARD in rows, and
+ * `renderer-capabilities` reads the LIVE DEVICE limit to derive every
+ * capacity clamp. The WebGPU default is 8192 rows — for lines
+ * (6 texels/segment, 682 segments/row at width 4096) that caps a node
+ * at 5,586,944 segments while the same GPU's WebGL context exposes
+ * 16384 rows = 11.2 M. Same forward-the-adapter policy as the buffer
+ * limits.
+ *
+ * `maxVertexBuffers` is deliberately NOT here — it is clamped to 16
+ * rather than forwarded verbatim (see `createWebGPURenderer`).
+ */
+export const FORWARDED_ADAPTER_LIMIT_NAMES = [
+  'maxBufferSize',
+  'maxStorageBufferBindingSize',
+  'maxTextureDimension2D',
+] as const;
+
+/** One of the adapter limits forwarded verbatim into `requiredLimits`. */
+export type ForwardedAdapterLimitName = (typeof FORWARDED_ADAPTER_LIMIT_NAMES)[number];
+
+/**
+ * Pick the {@link FORWARDED_ADAPTER_LIMIT_NAMES} entries the adapter
+ * advertises as numbers, shaped for a `requestDevice` descriptor's
+ * `requiredLimits`. Absent / non-numeric entries are omitted so the
+ * device keeps the WebGPU spec default for them.
+ */
+export function forwardedAdapterLimits(
+  // Structural over the three explicit names only — a real
+  // `GPUSupportedLimits` (no string index signature) satisfies this,
+  // so the signature survives a future move off the file-local
+  // `GPUAdapterLike` shim onto @webgpu/types.
+  limits: Partial<Record<ForwardedAdapterLimitName, number>> | undefined
+): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const key of FORWARDED_ADAPTER_LIMIT_NAMES) {
+    const value = limits?.[key];
+    if (typeof value === 'number') out[key] = value;
+  }
+  return out;
+}
+
 /** Result of a successful renderer construction. */
 export interface CreatedRenderer {
   renderer: Renderer;
@@ -174,9 +221,10 @@ export type CreateWebGPUResult = (CreatedRenderer & { fallback: false }) | { fal
 
 /**
  * Construct a `WebGPURenderer`. Negotiates a "core" adapter with
- * raised vertex-buffer / buffer-size limits to bypass r184's
- * compat-mode defaults. Performs `await renderer.init()` before
- * returning.
+ * raised vertex-buffer / buffer-size / texture-dimension limits to
+ * bypass r184's compat-mode defaults (see
+ * {@link forwardedAdapterLimits}). Performs `await renderer.init()`
+ * before returning.
  *
  * When the adapter advertises `maxVertexBuffers < 8` (WebGPU spec
  * minimum) and `rendererOverride !== 'webgpu'`, returns
@@ -260,29 +308,25 @@ export async function createWebGPURenderer(
     }
 
     const requestedMax = typeof adapterMax === 'number' ? Math.min(adapterMax, 16) : undefined;
-    const adapterMaxBufferSize = adapter.limits?.maxBufferSize;
-    const adapterMaxStorageBuffer = adapter.limits?.maxStorageBufferBindingSize;
 
     const requiredFeatures: string[] = [];
     for (const name of adapter.features) {
       requiredFeatures.push(name);
     }
-    const requiredLimits: Record<string, number> = {};
+    // Buffer + element-texture ceilings forwarded from the adapter —
+    // see forwardedAdapterLimits for the row-ceiling rationale.
+    const requiredLimits: Record<string, number> = forwardedAdapterLimits(adapter.limits);
     if (requestedMax !== undefined) requiredLimits.maxVertexBuffers = requestedMax;
-    if (typeof adapterMaxBufferSize === 'number') {
-      requiredLimits.maxBufferSize = adapterMaxBufferSize;
-    }
-    if (typeof adapterMaxStorageBuffer === 'number') {
-      requiredLimits.maxStorageBufferBindingSize = adapterMaxStorageBuffer;
-    }
     log.info(
       Modules.RENDERER,
       `WebGPU adapter advertises maxVertexBuffers=${adapterMax}, ` +
-        `maxBufferSize=${adapterMaxBufferSize}, ` +
-        `maxStorageBufferBindingSize=${adapterMaxStorageBuffer}; ` +
+        `maxBufferSize=${adapter.limits?.maxBufferSize}, ` +
+        `maxStorageBufferBindingSize=${adapter.limits?.maxStorageBufferBindingSize}, ` +
+        `maxTextureDimension2D=${adapter.limits?.maxTextureDimension2D}; ` +
         `requesting maxVertexBuffers=${requestedMax}, ` +
         `maxBufferSize=${requiredLimits.maxBufferSize ?? 'default'}, ` +
-        `maxStorageBufferBindingSize=${requiredLimits.maxStorageBufferBindingSize ?? 'default'}`
+        `maxStorageBufferBindingSize=${requiredLimits.maxStorageBufferBindingSize ?? 'default'}, ` +
+        `maxTextureDimension2D=${requiredLimits.maxTextureDimension2D ?? 'default'}`
     );
     try {
       device = await adapter.requestDevice({ requiredFeatures, requiredLimits });

@@ -109,10 +109,41 @@ SLICE="time:240,channel:0" CAMERA_ZOOM=1.5 \
   pnpm exec tsx tools/capture-hires.ts
 ```
 
-The script logs the resolved `getState()` snapshot before screenshotting
-(`totalPoints`, `totalGSplats`, `totalElements`, point-cloud and gsplat
-counts) and warns if `totalElements === 0` — that almost always means
-the slice position is wrong or the dataset URL is stale.
+The script logs a readiness summary of the `getState()` snapshot before
+screenshotting. If the scene is not ready it warns
+`Warning: scene not ready — <reason>` followed by the four counts in
+parentheses; the wording stays vague about WHY on purpose, because the
+reason may be that there was no debug state, an unexpected `getState()`
+shape or a probe that threw, in which case those counts are placeholders
+rather than measurements. A ready verdict that still carries a caveat —
+a total that was counted as 0 because it was `Infinity`/`NaN`, or
+because a partial snapshot never carried it — prints as `Note: <reason>`,
+naming the fields, instead of being swallowed.
+
+All four geometry types are reported — `totalPoints`, `totalGSplats`,
+`totalLines`, `totalTriangles`, plus `totalElements`, which is the
+**maximum** of the snapshot's own `totalElements` field and the sum of
+those four (a version-skew hedge: the tool captures against whatever
+viewer build is served at `APP_URL`, and a stale or partial snapshot must
+never under-claim against the per-type totals it is carrying — the
+current viewer sets the field to exactly that sum, so the max is inert on
+a live snapshot). The per-node counts `pointCloudCount`, `gsplatCount`,
+`lineCount` and `meshNodeCount` come along too, so a mesh-only or
+lines-only scene is recognised as loaded rather than reading as empty. A
+warning almost always means the slice position is wrong or the dataset
+URL is stale. The converse does not hold: the verdict measures the scene
+graph (hidden nodes and all LOD levels included), so an all-hidden scene
+passes and can still capture blank.
+
+The verdict itself is computed in Node by
+`summarizeCaptureReadiness()` (`../src/core/app/debug/capture-readiness.ts`);
+the browser closure only hands back `getState()` verbatim. That split is
+deliberate — deciding readiness inside `page.evaluate` is untestable, and
+the previous inline version read the totals from a `state.performance`
+sub-object that `getState()` has never returned, silently reporting every
+scene as empty (#1579). The probe is only a diagnostic: if `getState()`
+throws, the failure is logged as the not-ready reason and the screenshot
+is still written.
 
 ## Requirements
 
@@ -132,5 +163,7 @@ install chromium` if first-time setup).
   `window.__luxarDebug` object (`scene`, `camera`, `renderer`,
   `controls`, `sceneDimsManager`, `getState()`, `renderOnce()`).
 - `../src/core/app/debug/debug-state.ts` — the pure scene-walking
-  computer behind `__luxarDebug.getState()` (point / gsplat / line
-  counts + camera + dim reporting).
+  computer behind `__luxarDebug.getState()` (point / gsplat / line /
+  triangle counts + camera + dim reporting).
+- `../src/core/app/debug/capture-readiness.ts` — the pure readiness
+  verdict `capture-hires.ts` runs over that snapshot.

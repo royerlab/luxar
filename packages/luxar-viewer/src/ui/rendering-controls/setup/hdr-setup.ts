@@ -123,7 +123,7 @@ export function setupHDRControls(context: SetupContext): SetupResult {
       '• Cineon: Film-like response curve\n' +
       '• ACES: Academy Color Encoding, film industry standard (default; shifts hues)\n' +
       '• AgX: Modern filmic mapping with good color preservation\n' +
-      '• Neutral: Minimal color shift — best for exact colormap-LUT fidelity'
+      '• Neutral: Gentle rolloff — well above 1.0 it desaturates hard (keeps hue, not chroma)'
   );
 
   return {

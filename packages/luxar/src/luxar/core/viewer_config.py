@@ -316,9 +316,15 @@ class ViewerConfig:
     # "ACES" is the recommended choice for almost every scene: its filmic
     # highlight rolloff is what keeps dense, bright structure from clipping
     # flat, and it is also the viewer's default when this is left None. It
-    # does intentionally shift hues, so prefer "Neutral" in the narrower case
-    # where a colormap LUT carries an exact scientific color encoding that
-    # must survive to the screen. Setting this explicitly — to "ACES" as much
+    # does intentionally shift hues, so in the narrower case where a colormap
+    # LUT carries an exact color encoding that must survive to the screen,
+    # prefer "None" — an exact passthrough, valid while the scene stays
+    # inside [0, 1]. "Neutral" is not a passthrough: even below its knee it
+    # subtracts an offset taken from the channel minimum, so anything but a
+    # fully saturated colour moves, and over range it keeps the hue angle but
+    # sheds chroma (a `None` clamp distorts both and flattens everything above
+    # 1.0) — a gentle rolloff rather than a fidelity choice.
+    # Setting this explicitly — to "ACES" as much
     # as to anything else — silences the compiler's LUT tone-mapping notice,
     # which only fires when no choice was made at all.
     tone_mapping: Optional[str] = None
@@ -342,7 +348,14 @@ class ViewerConfig:
     # macOS, false elsewhere) and persists the user's choice per-scene.
     natural_drag: Optional[bool] = None
 
-    # Cinematic effects
+    # Cinematic effects. `cinematic_mode=True` is not just a checkbox: the
+    # viewer expands the full preset (ACES tone mapping, subtle wide bloom,
+    # detector noise, vignette, 35 mm chromatic lens + FOV) for every field
+    # this config does NOT set explicitly, so a scene can enable the look and
+    # still override individual fields (e.g. `bloom_strength`) on top of it.
+    # The 35 mm field of view (63°) is wider than the viewer's default framing,
+    # and `camera.fov` / `camera.fov_preset` count as ONE unit: pin either of
+    # them and the preset leaves both alone, so a composed framing survives.
     cinematic_mode: Optional[bool] = None
     vignette_enabled: Optional[bool] = None
     vignette_darkness: Optional[float] = None

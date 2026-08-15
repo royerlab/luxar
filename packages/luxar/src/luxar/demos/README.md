@@ -42,6 +42,11 @@ luxar demo deps --only scipy       # report one import module
 luxar demo deps --only scipy --install  # install only scipy's constrained spec
 ```
 
+A cache directory holding a **hand-placed input** — bytes with no download path,
+listed in `luxar.demos.registry.PROTECTED_INPUT_DIRS` — is inventoried by `demo
+cache list` (marked `🔒 hand-placed input`) but is never reported as an orphan and
+never deleted by `demo cache clear`, by key, under `--all` or under `--orphans`.
+
 Eleven gsplat demos also accept `--show-roundtrip`, which renders the fitted
 splats back and shows original / reconstruction / absolute-difference panels
 with PSNR and MSE (needs `matplotlib`). The five whose figure is one row per
@@ -93,8 +98,10 @@ Two rules govern the gate, both learned from real bugs:
 the versions its `pyproject.toml` pin accepts, every module passed to
 `require_module` must exist in the table, and no scanned source — runtime message
 or docstring alike — may spell out `pip install <pkg>` for a package the table
-bounds without carrying that bound. Those guards — and the substitutive-LOD one
-in `tests/test_substitutive_lod_gated.py` — read the set defined by
+bounds without carrying that bound. Those guards — along with the substitutive-LOD
+one in `tests/test_substitutive_lod_gated.py` and the fit-provenance one in
+`tests/test_demo_fit_provenance.py`, which forbids saving a real fit with
+`include_fitting_info=False` — read the set defined by
 `tests/_scanned_modules.py`: every `*.py` directly under `demos/` **except**
 `__init__.py` and `_dependencies.py`. It is a denylist, not a `demo_*.py` glob or
 a `_*_common.py` pattern, so a gate that moves out of a demo into a shared helper
@@ -934,7 +941,7 @@ Fetches the aerial "small city" MatrixCity scene — **13,589,514 Gaussians** �
 
 **Run**: `luxar demo run gsplats_4d_neuromast_2ch`
 
-**Requires**: The two pre-fit `.gsplats.zarr` (~220 MB) in a local store (`~/luxar_demo_data/gsplats_neuromast_2ch/`, or `$LUXAR_NEUROMAST_DATA_DIR`). ⚠️ **Not bundled/hosted yet** — this is the outstanding follow-up (upload to the demo data host and switch to `load_precomputed_gsplats`, like the other gsplat demos). No network/GPU needed once the store is populated.
+**Requires**: The two pre-fit `.gsplats.zarr` (~220 MB) in a local store (`~/luxar_demo_data/gsplats_neuromast_2ch/`, or `$LUXAR_NEUROMAST_DATA_DIR`). ⚠️ **Not bundled, and not downloadable yet** — both channels are uploaded to the `cc-by` Zenodo record and pinned by SHA-256 in `demos/data_manifest.json`, but that record is still an unsubmitted draft (`published: false`), so nothing can be fetched until it is published; the remaining follow-up is to publish it and switch to `ensure_dataset`, like the other gsplat demos. No network/GPU needed once the store is populated.
 
 **Demonstrates**: 4D + multi-channel gsplats, per-channel `layer=True` + named colormaps (`bop_blue`/`bop_orange`) for the Layers panel, `add_gsplats_from_file` grafting of pre-fit multi-LOD (`stream`, 8 LODs) nodes, Z-anisotropy correction baked via `transform --scale`, redundancy-based culling, near-zero volumetric absorption (κ=0.05) so the two superimposed channels barely occlude each other. Options: `--no-serve`, `--serve-only`.
 

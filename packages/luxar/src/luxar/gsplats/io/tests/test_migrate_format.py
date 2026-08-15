@@ -847,6 +847,35 @@ class TestMigrateV3LegacyLodAttrs:
         assert data.n_substitutive == 3
         assert data.n_splats == 16  # default view = finest
 
+    def test_migrate_keeps_the_authored_appearance(self, tmp_path: Path) -> None:
+        """A migration rewrites the LAYOUT and must leave the look alone (#1600).
+
+        The rewrite goes through the same node-tree writer as the rest of the
+        rewriting family (`lod`, `flatten`, `reencode`, ...), so without the
+        carry the writer's defaults take over: ``blending_mode`` disappears and
+        the multiplicative attrs snap back to 1.0. Every authored value here is
+        non-default on purpose — an identity would coincide with the stamped
+        default and hide the drop.
+        """
+        legacy = tmp_path / "legacy_lod.gsplats.zarr"
+        _make_v3_lod_pixel_size(legacy, [2, 8])
+        authored = {"blending_mode": "volumetric", "opacity": 0.75, "gamma": 1.3}
+        src = zarr.open_group(str(legacy), mode="r+")
+        for key, value in authored.items():
+            src.attrs[key] = value
+        zarr.consolidate_metadata(src.store)
+
+        out = tmp_path / "out.gsplats.zarr"
+        migrate_format(legacy, out)
+
+        got = dict(zarr.open_group(str(out), mode="r").attrs)
+        for key, want in authored.items():
+            assert got.get(key) == want, f"dropped {key!r} (had {want!r})"
+        # The layout upgrade itself still happened — the carry rides the
+        # writer's lowest-precedence channel, so it cannot shadow structure.
+        assert got["selector"] == "screen-area"
+        assert got["format_version"] == GSPLATS_FORMAT_VERSION
+
     def test_detect_nested_legacy_lod_inside_partition(self, tmp_path: Path) -> None:
         """The legacy-attr scan recurses: a kind=partition root whose part is a
         legacy-attr lod group is detected (and migrates) too."""

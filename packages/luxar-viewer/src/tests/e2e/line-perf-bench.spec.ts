@@ -15,7 +15,11 @@
  *
  * Per scenario we record:
  *   - JS frame time stats (median, p95, p99, mean) over a fixed
- *     sample window
+ *     sample window, with the intervals contaminated by a GPU-timestamp
+ *     resolve excluded (see `skipNextDt`) — every measured row carries
+ *     the drop count in `excludedResolveIntervals` (and a note when it
+ *     is non-zero), because its frame stats are not comparable to a
+ *     JSON captured before that exclusion existed
  *   - A warmed post-settle one-shot frame interval (`postSettleFrameMs`,
  *     measured separately) — NOT a cold first render; see the field's
  *     doc comment
@@ -149,9 +153,56 @@ for (const id of SCENARIO_FILTER) {
     );
   }
 }
-const ACTIVE_SCENARIOS = SCENARIO_FILTER.length
+const FILTERED_SCENARIOS = SCENARIO_FILTER.length
   ? SCENARIOS.filter((s) => SCENARIO_FILTER.includes(s.id))
   : SCENARIOS;
+
+/**
+ * Synthetic count sweep: `LUXAR_PERF_SYNTHETIC_COUNTS` (comma-separated
+ * segment counts; bare integers or `k`/`M` suffixes, e.g.
+ * `100k,1M,4M,10M`) re-parameterizes every active synthetic scenario at
+ * each count in turn, replacing its authored count — the axis a
+ * capsule-vs-quad crossover measurement sweeps. Sweep arms carry
+ * suffixed scenario ids (`<id>-n<count>`) so their results.json rows
+ * never collide with the authored-count rows (same rule as the
+ * primitive axis above: a swept row is keyed apart and never compared
+ * to a bare-id row). `LUXAR_PERF_SCENARIO_FILTER` still names the BASE
+ * ids — filter first, then expand. Zarr scenarios pass through
+ * unchanged; unset means authored counts, exactly as before.
+ */
+const parseSyntheticCount = (raw: string): number => {
+  const match = /^(\d+(?:\.\d+)?)([kM]?)$/.exec(raw);
+  const scale = match?.[2] === 'M' ? 1_000_000 : match?.[2] === 'k' ? 1_000 : 1;
+  const count = match ? Number(match[1]) * scale : NaN;
+  if (!Number.isInteger(count) || count <= 0) {
+    throw new Error(
+      `LUXAR_PERF_SYNTHETIC_COUNTS entry '${raw}' is not a whole segment count ` +
+        '(use e.g. 250000, 250k or 2.5M)'
+    );
+  }
+  return count;
+};
+const SYNTHETIC_COUNTS = [
+  ...new Set(
+    (process.env.LUXAR_PERF_SYNTHETIC_COUNTS ?? '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .map(parseSyntheticCount)
+  ),
+];
+const ACTIVE_SCENARIOS: ScenarioSpec[] = SYNTHETIC_COUNTS.length
+  ? FILTERED_SCENARIOS.flatMap((scn): ScenarioSpec[] =>
+      scn.type === 'synthetic-lines'
+        ? SYNTHETIC_COUNTS.map((count) => ({
+            ...scn,
+            id: `${scn.id}-n${count}`,
+            label: `${scn.label} [count sweep: ${count} segments]`,
+            count,
+          }))
+        : [scn]
+    )
+  : FILTERED_SCENARIOS;
 
 const BACKENDS = ['webgl', 'webgpu'] as const;
 type Backend = (typeof BACKENDS)[number];
@@ -188,9 +239,15 @@ const LINE_PRIMITIVES = ((): string[] => {
  * Result-row id for one (scenario, primitive) arm. The `default` arm
  * keeps the bare scenario id so its rows stay comparable across runs —
  * NOTE that "default" changed meaning at the #1352 flip (screen-space →
- * capsule), so bare-id rows from a pre-flip results.json measure a
- * DIFFERENT shader than post-flip rows; compare across the flip only via
- * explicit `-screen-space` / `-capsule` arms.
+ * capsule), and AGAIN when the auto policy landed: a default arm now
+ * builds whatever production would for that scenario's SIZE — segment
+ * count scaled by the rendered-width factor, so a wide scenario flips to
+ * screen-space well below the 2 M count (the 10 M and both thick 2 M
+ * scenarios resolve to screen-space). That is the point of
+ * the default arm — it measures shipping behavior — but it means bare-id
+ * rows are only comparable between runs of the SAME policy era; compare
+ * across either boundary only via explicit `-screen-space` / `-capsule`
+ * arms.
  */
 const armId = (scenarioId: string, primitive: string): string =>
   primitive === 'default' ? scenarioId : `${scenarioId}-${primitive}`;
@@ -258,6 +315,19 @@ interface ScenarioResult {
    *  completed draws, so only the WebGL surface's monotonic
    *  `info.render.frame` is honest evidence here. */
   renderedFramesBefore?: number | null;
+  /**
+   * How many frame intervals `frameMs` dropped as GPU-timestamp resolve
+   * latency (0 when timestamps are unsupported or nothing was dropped).
+   * Present on every MEASURED row, absent on a skipped one — and absent
+   * entirely from a JSON captured before the exclusion existed, which is
+   * how `scripts/perf-diff.mjs` detects a diff that straddles the change
+   * and warns instead of printing the instrument's own delta as a win.
+   * Deliberately per-row and not run-level: the per-SHA `results.json` is
+   * merge-written by both perf benches, and the gsplat bench rebuilds the
+   * run header from its own known keys, so a run-level flag would vanish
+   * when it writes second.
+   */
+  excludedResolveIntervals?: number;
   gpu: GpuStats;
   notes: string[];
   skipped: boolean;
@@ -536,6 +606,20 @@ async function measureScenario(
       const start = lastTime;
       let collectingStart: number | null = null;
       let framesSinceResolve = 0;
+      // True when the PREVIOUS sampled frame awaited a GPU timestamp
+      // resolve: that await's full latency (queue flush + mapAsync
+      // round-trip — ~90 ms at 10 M segments) lands in the NEXT frame
+      // interval, so the sample is the instrument's cost, not the
+      // scene's. Measured 2026-08-13: with resolves included the 10 M
+      // WebGPU arm reads p95=109 ms; with the same run's contaminated
+      // intervals excluded (or timestamps off entirely) p95=21 ms.
+      let skipNextDt = false;
+      // How many intervals the flag above actually dropped. Reported so
+      // the exclusion is visible in the JSON rather than silent: it
+      // explains why `frameMs.count` sits below the frames drawn, and
+      // it marks the row as non-comparable to an archived baseline
+      // measured before the exclusion existed.
+      let excludedDts = 0;
 
       // Resolve cadence: 16 frames per resolve. Frequent enough for
       // good per-batch averages, infrequent enough that the
@@ -550,6 +634,7 @@ async function measureScenario(
         gpuPerFrameMs: number[];
         totalMs: number;
         supportsTimestamp: boolean;
+        excludedDts: number;
       }>((resolve) => {
         const watchdog = window.setTimeout(
           () =>
@@ -558,6 +643,7 @@ async function measureScenario(
               gpuPerFrameMs,
               totalMs: performance.now() - start,
               supportsTimestamp,
+              excludedDts,
             }),
           // Cap at 30s even for very slow scenes; better to bail than
           // hang the run indefinitely.
@@ -571,7 +657,15 @@ async function measureScenario(
           const warmupDone = frames >= cfg.warmupFrames || elapsedSinceStart > cfg.warmupMaxMs;
           if (warmupDone) {
             if (collectingStart === null) collectingStart = now;
-            dts.push(now - lastTime);
+            if (skipNextDt) {
+              // Interval contaminated by the previous frame's resolve
+              // await — drop it from the frame stats (the loop's
+              // minFrames floor keeps the sample count honest).
+              skipNextDt = false;
+              excludedDts++;
+            } else {
+              dts.push(now - lastTime);
+            }
 
             // Resolve GPU timestamps every N frames. The pool returns
             // the last-frame duration only (see header comment), so
@@ -597,6 +691,7 @@ async function measureScenario(
                 // batch.
               }
               framesSinceResolve = 0;
+              skipNextDt = true;
             }
           }
           lastTime = now;
@@ -612,6 +707,7 @@ async function measureScenario(
               gpuPerFrameMs,
               totalMs: elapsedSinceStart,
               supportsTimestamp,
+              excludedDts,
             });
           }
         };
@@ -649,6 +745,14 @@ async function measureScenario(
         medianMs: null,
         p95Ms: null,
       };
+  if (timing.excludedDts > 0) {
+    notes.push(
+      `${timing.excludedDts} frame interval(s) excluded as GPU-timestamp resolve latency — ` +
+        "frameMs.count sits below the frames drawn, and this row's frame stats (p95/p99 " +
+        'especially, but median and mean too) are not comparable to a baseline JSON ' +
+        'captured without the exclusion'
+    );
+  }
   if (!timing.supportsTimestamp) {
     notes.push('GPU timestamp-query unavailable (WebGL backend or missing feature)');
   } else if (timing.gpuPerFrameMs.length === 0) {
@@ -667,6 +771,7 @@ async function measureScenario(
     frameMs,
     postSettleFrameMs: postSettle.ms,
     renderedFramesBefore: postSettle.renderedFramesBefore,
+    excludedResolveIntervals: timing.excludedDts,
     gpu,
     notes,
     skipped: false,

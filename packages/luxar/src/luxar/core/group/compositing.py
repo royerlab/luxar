@@ -221,6 +221,54 @@ COMPOSITING_ATTRS = frozenset(
 )
 
 
+#: Attrs a STRUCTURE-ONLY rebuild (``gsplat lod`` and friends: the input is
+#: re-laddered / re-tiled, the appearance is not the command's business) must
+#: carry from the source root to the output root. Without this the reduction's
+#: fresh nodes know nothing about the input and the writer's own defaults take
+#: over — ``blending_mode`` vanishes and the multiplicative attrs snap back to
+#: their identity (#1600).
+#:
+#: :data:`COMPOSITING_ATTRS` minus ``transform`` (see below), because those are
+#: precisely the attrs a root-level stamp actually reaches the leaf with. The
+#: viewer's ``composeAttrs`` (``viewer/src/data/attrs-composer.ts``) MULTIPLIES
+#: opacity/absorption/gamma/intensity and ADDS offset along the root→leaf chain,
+#: so a per-level identity stamp composes to the root's authored value; and
+#: ``blending_mode``/``join`` are nearest-SETTER-wins with no per-leaf default
+#: stamped, so the root's choice wins.
+#:
+#: ``transform`` is EXCLUDED for a different reason — carrying it corrupts it.
+#: The stored value is already COLUMN-major (THREE.js), and the leaf writer runs
+#: whatever it is handed through ``prepare_transform_for_zarr``, which reads its
+#: input as ROW-major and transposes. Handing the stored list straight back
+#: transposes it a SECOND time on a leaf-rooted result (``flat``/``stream``/
+#: ``levels``): an authored translation lands in the bottom row and the command
+#: dies on ``validate_transform`` ("bottom row must be [0, 0, 0, 1]", measured
+#: exit 1 where the un-carried command exited 0), and a rotation is silently
+#: INVERTED. A group-rooted result (``adaptive``/``tiles``) writes caller attrs
+#: verbatim and does round-trip — so one carry would mean two different things
+#: depending on the recipe. Carrying it needs the writer to tell an
+#: already-stored transform from an authored one; tracked with the rest of the
+#: sweep in #1600, and the reason the ``gsplat`` rebuilds leave the attr alone
+#: (the same status quo as before the carry existed).
+#:
+#: ALSO DELIBERATELY EXCLUDED, because a root stamp would be SHADOWED and
+#: therefore only look preserved:
+#:
+#: * ``colormap`` — the writer auto-defaults it to ``"gray"`` on each colorless
+#:   group (``apply_gsplat_group_attrs``), which sits nearer the leaf than the
+#:   root. It is not composed, so the nearer value wins.
+#: * ``amplitude_data_range`` / ``scalar_data_range`` — likewise not composed,
+#:   and each level re-derives its own from its (post-reduction) amplitudes.
+#: * ``truncation_radius`` — auto-defaulted per leaf by design (see the note on
+#:   ``COMPOSITING_ATTRS``); each leaf already carries the source value through
+#:   ``GSplatData.truncation_radius``, so the footprint survives anyway.
+#:
+#: Carrying an authored colormap / display window through a rebuild needs the
+#: writer to stop defaulting them when an ancestor authored one — tracked in
+#: https://github.com/royerlab/luxar/issues/1600 with the rest of the sweep.
+AUTHORED_APPEARANCE_ATTRS = COMPOSITING_ATTRS - {"transform"}
+
+
 def lines_only_join_reason(geometry_type: str) -> str:
     """The one explanation of why ``join`` is refused on a non-lines leaf.
 
