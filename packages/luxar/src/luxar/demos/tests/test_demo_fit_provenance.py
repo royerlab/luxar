@@ -7,9 +7,11 @@ are excluded from ``pipeline_info`` they are dropped from the store ENTIRELY.
 
 For the demos this matters more than it looks: several of them save straight to
 the file that is then SHIPPED (the cache path and the packaged artifact are the
-same name), so suppressing the flag means the published dataset can never state
-what volume it is a representation of -- no source grid, and therefore no
-compression ratio.
+same name), so suppressing the flag means the published dataset carries no
+top-line record of the fit that produced it -- no fitter, no splat count, no
+runtime, no PSNR, and (where the fit culls) no culling provenance either. The
+whitelist is where source-grid stamps land as well, so a suppressing demo also
+forfeits any compression figure the fitter learns to record.
 
 The one legitimate use is a store that never came from a fit at all, which is
 why the exemption below is keyed to a reason rather than merely allowed.
@@ -18,28 +20,34 @@ why the exemption below is keyed to a reason rather than merely allowed.
 from __future__ import annotations
 
 import ast
+from collections.abc import Iterable
+from pathlib import Path
 
 from luxar.demos import registry
 
 DEMO_PATHS = sorted(registry._DEMOS_DIR.glob("demo_*.py"))
 
-#: Call sites allowed to pass ``include_fitting_info=False``, and why.
+#: Call sites allowed to pass ``include_fitting_info=False``: file name ->
+#: (number of allowed call sites, why there is no fit to record).
 #:
 #: NOT a general opt-out list: each entry must describe a store built WITHOUT
 #: fitting, where there is no provenance to keep. A real fit belongs nowhere
-#: near this mapping.
-_NO_FIT_TO_RECORD = {
+#: near this mapping. The count is part of the exemption on purpose — a file
+#: that legitimately suppresses one sentinel save must not thereby become free
+#: to suppress a second, real one.
+_NO_FIT_TO_RECORD: dict[str, tuple[int, str]] = {
     "demo_gsplats_4d_nexrad_supercell.py": (
+        1,
         "the empty-frame sentinel -- a synthetic single-splat placeholder for a "
-        "frame with nothing above the dBZ floor, which the fitter never saw"
+        "frame with nothing above the dBZ floor, which the fitter never saw",
     ),
 }
 
 
-def _suppressing_modules() -> dict[str, int]:
+def _suppressing_modules(paths: Iterable[Path] = DEMO_PATHS) -> dict[str, int]:
     """Map demo file name -> count of ``include_fitting_info=False`` call sites."""
     found: dict[str, int] = {}
-    for path in DEMO_PATHS:
+    for path in paths:
         tree = ast.parse(path.read_text(), filename=str(path))
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
@@ -55,39 +63,43 @@ def _suppressing_modules() -> dict[str, int]:
 def test_no_demo_discards_the_provenance_of_a_real_fit() -> None:
     """Only the documented no-fit stores may suppress fitting info."""
     suppressing = _suppressing_modules()
-    assert set(suppressing) == set(_NO_FIT_TO_RECORD), (
+    expected = {name: count for name, (count, _) in _NO_FIT_TO_RECORD.items()}
+    assert suppressing == expected, (
         "include_fitting_info=False changed. A demo that saves a REAL fit must "
-        "keep its provenance -- the flag drops the source-grid stamps entirely "
-        "(they are excluded from pipeline_info too), so the shipped dataset "
-        "loses its compression figure.\n"
-        f"  suppressing now: {sorted(suppressing)}\n"
-        f"  documented no-fit stores: {sorted(_NO_FIT_TO_RECORD)}"
+        "keep its provenance -- the flag drops the whitelisted fit stats "
+        "entirely (they are excluded from pipeline_info too), so the shipped "
+        "dataset states neither what produced it nor how well it did. Counts "
+        "are compared, not just file names: an exempt file gets exactly the "
+        "documented number of suppressing call sites, no more.\n"
+        f"  suppressing now: {sorted(suppressing.items())}\n"
+        f"  documented no-fit stores: {sorted(expected.items())}"
     )
 
 
 def test_every_exemption_states_why_there_is_no_fit() -> None:
     """A bare exemption is how this list would rot into a general opt-out."""
-    for name, reason in _NO_FIT_TO_RECORD.items():
+    for name, (count, reason) in _NO_FIT_TO_RECORD.items():
         assert (registry._DEMOS_DIR / name).exists(), (
             f"{name} is exempted but no longer exists -- drop the entry"
         )
+        assert count >= 1, f"{name}: an exemption for zero call sites is dead"
         assert len(reason) > 40, f"{name}: give the reason the fit is absent"
 
 
-def test_the_detector_sees_a_planted_suppression() -> None:
-    """Guard against the scan quietly matching nothing (a vacuous gate)."""
-    source = "result.save(path, include_fitting_info=False)\n"
-    tree = ast.parse(source)
-    hits = [
-        kw
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Call)
-        for kw in node.keywords
-        if kw.arg == "include_fitting_info"
-        and isinstance(kw.value, ast.Constant)
-        and kw.value.value is False
-    ]
-    assert len(hits) == 1
+def test_the_detector_sees_a_planted_suppression(tmp_path: Path) -> None:
+    """Guard against the scan quietly matching nothing (a vacuous gate).
+
+    Runs the real detector over a planted module, so it also pins that a second
+    suppressing call site in one file counts as two rather than collapsing into
+    the first.
+    """
+    planted = tmp_path / "demo_planted.py"
+    planted.write_text(
+        "result.save(path, include_fitting_info=False)\n"
+        "result.save(other, include_fitting_info=True)\n"
+        "result.save(third, include_fitting_info=False)\n"
+    )
+    assert _suppressing_modules([planted]) == {"demo_planted.py": 2}
     assert DEMO_PATHS, "no demo modules were scanned at all"
 
 
