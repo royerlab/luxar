@@ -225,6 +225,25 @@ def _occupied_fraction(Vn: np.ndarray, fitted_voxels: int) -> float:
     return float(occupied / fitted_voxels)
 
 
+#: Source-grid stamps that describe the VOLUME and so belong to a whole fit,
+#: however many times the fitter was invoked to produce it.
+#:
+#: Deliberately excludes ``voxels_per_splat``: that one is a ratio against the
+#: splat count of the invocation that produced it, so a multi-pass fitter
+#: copying it verbatim would report the first pass's density for the whole
+#: result. It has to be recomputed against the final count.
+SOURCE_GRID_VOLUME_KEYS = (
+    "source_shape",
+    "source_dtype",
+    "source_voxels",
+    "source_bytes",
+    "source_declared",
+    "fitted_shape",
+    "fitted_voxels",
+    "occupancy",
+)
+
+
 def _source_grid_stats(
     config: FitConfig, preprocessed_data: PreprocessedData, n_splats: int
 ) -> dict[str, Any]:

@@ -397,3 +397,57 @@ def test_an_exact_integral_dimension_is_still_accepted() -> None:
     assert _explicit_source_shape(np.array([96, 128, 128])) == [96, 128, 128]
     assert _explicit_source_shape((96.0, 128.0, 128.0)) == [96, 128, 128]
     assert _explicit_source_shape([236 // 2, 16, 16]) == [118, 16, 16]
+
+
+# ── The progressive fitter is a second producer of these stamps ───────────────
+#
+# It calls the single-pass fitter once per pass and assembles its own
+# `overall_stats`, so the stamps do not reach the result by themselves. Five
+# shipped demos use this path, and every one of them had no compression figure.
+
+
+def _fit_progressive(V, **kw):
+    from luxar.gsplats import fit_progressive_gaussian_splats
+
+    return fit_progressive_gaussian_splats(
+        V,
+        max_splats=60,
+        max_splats_per_pass=30,
+        iters_per_pass=20,
+        device="cpu",
+        verbose=False,
+        **kw,
+    )
+
+
+def test_progressive_fit_carries_the_source_grid() -> None:
+    """Stamps must reach the merged result, not stay buried in `pass_stats`."""
+    V = _sparse_blobs(shape=(16, 16, 16), n=6)
+    stats = _fit_progressive(V).stats
+    for key in ("source_shape", "source_dtype", "source_voxels", "fitted_shape"):
+        assert key in stats, f"progressive result lost {key!r}"
+    assert stats["source_shape"] == [16, 16, 16]
+
+
+def test_progressive_fit_honours_a_declared_source_grid() -> None:
+    stats = _fit_progressive(
+        _sparse_blobs(shape=(16, 16, 16), n=6),
+        source_shape=(64, 80, 80),
+        source_dtype="uint16",
+    ).stats
+    assert stats["source_shape"] == [64, 80, 80]
+    assert stats["source_bytes"] == 64 * 80 * 80 * 2
+    assert stats["source_declared"] is True
+
+
+def test_progressive_density_counts_the_splats_actually_delivered() -> None:
+    """The post-fit cull runs after the stats are assembled.
+
+    Quoting the pre-cull count would overstate how much of the volume each
+    surviving splat stands for — and it is the surviving ones that ship.
+    """
+    result = _fit_progressive(_sparse_blobs(shape=(16, 16, 16), n=6))
+    n = len(result.amplitudes)
+    assert n > 0
+    expected = result.stats["fitted_voxels"] / n
+    assert result.stats["voxels_per_splat"] == pytest.approx(expected)
