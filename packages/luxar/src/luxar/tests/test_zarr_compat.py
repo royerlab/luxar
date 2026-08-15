@@ -707,6 +707,68 @@ def test_append_to_an_existing_v3_store_does_not_shadow_it(tmp_path: Path) -> No
     assert reader.attrs["origin"] == "other-tool", "clobbered the foreign attrs"
 
 
+def test_document_readers_resolve_a_mixed_store_the_way_zarr_does(
+    tmp_path: Path,
+) -> None:
+    """With BOTH formats' documents present, the readers must answer format 3.
+
+    zarr resolves such a node as format 3 (it warns, then uses `zarr.json`), so a
+    document-level reader that consulted `.zattrs`/`.zarray` first would report a
+    pre-migration view of a store that every OPENER — the viewer included — reads
+    as v3. Silent, and the shape it hands back is what `batch-fit validate`
+    checks tiles against.
+
+    Luxar's writers do not produce this state (see the shadow-root test above);
+    an interrupted in-place migration or a half-finished copy does.
+    """
+    p = tmp_path / "mixed.zarr"
+    zc.set_zarr_format(3)
+    g = zc.open_group(p, mode="w")
+    g.attrs["kind"] = "v3-truth"
+    zc.create_array(g, "a", data=np.arange(6, dtype=np.uint8), compressor=None)
+    zc.consolidate(g)
+
+    # Drop a stale v2 root beside it, as an interrupted migration would leave.
+    (p / ".zgroup").write_text(json.dumps({"zarr_format": 2}))
+    (p / ".zattrs").write_text(json.dumps({"kind": "v2-STALE"}))
+    (p / "a" / ".zarray").write_text(json.dumps({"shape": [999], "dtype": "|u1"}))
+
+    attrs = zc.read_node_attrs(p)
+    assert attrs is not None and attrs["kind"] == "v3-truth", (
+        f"read_node_attrs answered the stale v2 view: {attrs!r}"
+    )
+    meta = zc.read_array_meta(p / "a")
+    assert meta is not None and meta["shape"] == [6], (
+        f"read_array_meta answered the stale v2 shape: {meta and meta.get('shape')!r}"
+    )
+    # ...and each agrees with what an auto-detecting opener sees.
+    opened = zarr.open_group(str(p), mode="r")
+    assert opened.metadata.zarr_format == 3
+    assert opened.attrs["kind"] == attrs["kind"]
+
+
+def test_is_consolidated_ignores_a_stale_v2_index_beside_a_v3_root(
+    tmp_path: Path,
+) -> None:
+    """An unfinished v3 save must not read as finished because of a leftover
+    `.zmetadata`.
+
+    This is the completion sentinel `batch-fit` uses to tell a written tile from
+    an interrupted one, so answering "yes" for a store whose v3 root carries no
+    consolidated index would let a half-written tile into a merge.
+    """
+    p = tmp_path / "unfinished.zarr"
+    zc.set_zarr_format(3)
+    g = zc.open_group(p, mode="w")  # created, never consolidated
+    zc.create_array(g, "a", data=np.arange(3, dtype=np.uint8), compressor=None)
+    assert not zc.is_consolidated(p), "a fresh unconsolidated v3 store is not finished"
+
+    (p / ".zmetadata").write_text(json.dumps({"metadata": {}}))
+    assert not zc.is_consolidated(p), (
+        "a stale v2 index made an unfinished v3 store report as complete"
+    )
+
+
 def test_append_still_pins_the_format_when_there_is_nothing_there(
     tmp_path: Path, write_format: int
 ) -> None:

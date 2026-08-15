@@ -313,13 +313,18 @@ def read_array_meta(array_dir: Path) -> dict[str, Any] | None:
     Returns ``None`` when ``array_dir`` is not an array — no document, corrupt
     JSON, or a v3 document whose ``node_type`` says group. Both formats spell
     ``shape`` the same way, so callers reading that need no branch of their own.
+
+    Format 3 is consulted FIRST, for the reason :data:`NODE_ATTR_DOCS` gives:
+    zarr resolves a node carrying both documents as format 3, and answering from
+    a stale ``.zarray`` here would hand a caller the wrong ``shape`` — which
+    ``batch-fit validate`` checks tiles against.
     """
-    v2 = _read_json_doc(array_dir / ".zarray")
-    if v2 is not None:
-        return v2
     v3 = _read_json_doc(array_dir / _V3_METADATA_DOC)
     if v3 is not None and v3.get("node_type") == "array":
         return v3
+    v2 = _read_json_doc(array_dir / ".zarray")
+    if v2 is not None:
+        return v2
     return None
 
 
@@ -330,7 +335,18 @@ def read_array_meta(array_dir: Path) -> dict[str, Any] | None:
 #: ``luxar.gsplats.io._archive`` reads one member out of a zip/tar without
 #: extracting it, and has to recognise the member by name. Keeping the names
 #: here means that peek does not have to know them itself.
-NODE_ATTR_DOCS: tuple[str, ...] = (".zattrs", _V3_METADATA_DOC)
+#:
+#: FORMAT 3 FIRST, because that is how zarr itself resolves a node carrying both
+#: documents: it warns ("Both zarr.json and .zgroup metadata objects exist …")
+#: and uses format 3. Luxar's own writers never produce that state — appending
+#: to a foreign v3 store leaves no v2 shadow root, which
+#: ``test_append_to_an_existing_v3_store_does_not_shadow_it`` pins — but an
+#: interrupted in-place migration or a half-overwritten copy can, and there the
+#: reader must
+#: not answer with the stale v2 view while every opener sees v3. Ordering only
+#: matters in that mixed case: a single-format store has just one of the two.
+#: The viewer's ``ROOT_ATTR_DOCS`` is ordered the same way for the same reason.
+NODE_ATTR_DOCS: tuple[str, ...] = (_V3_METADATA_DOC, ".zattrs")
 
 #: The per-node documents whose presence marks a GROUP, best first.
 #:
@@ -345,7 +361,12 @@ NODE_ATTR_DOCS: tuple[str, ...] = (".zattrs", _V3_METADATA_DOC)
 #: describing an ARRAY is recognised here too and only fails later, at
 #: ``open_group``, with ``ContainsArrayError`` — the same failure that input
 #: already produced, so this is a naming caveat and not a behaviour change.
-NODE_GROUP_DOCS: tuple[str, ...] = (".zgroup", _V3_METADATA_DOC)
+#:
+#: Format 3 first, matching :data:`NODE_ATTR_DOCS`. Today both consumers test
+#: MEMBERSHIP rather than iterating, so the order is documentation — but stating
+#: it consistently is what keeps a future consumer that does iterate from
+#: silently preferring a stale v2 document.
+NODE_GROUP_DOCS: tuple[str, ...] = (_V3_METADATA_DOC, ".zgroup")
 
 
 def attrs_from_node_doc(parsed: Any) -> dict[str, Any]:
@@ -392,11 +413,22 @@ def is_consolidated(store_dir: Path) -> bool:
     in the root ``zarr.json`` — which is a zarr-python extension rather than part
     of the v3 spec, but one zarrita implements, so it stays load-bearing for the
     viewer either way.
+
+    A v3 root document, when present, is answered from EXCLUSIVELY — not merely
+    first. zarr reads such a store as format 3, so a leftover ``.zmetadata``
+    beside it describes a store nobody will open; treating it as the answer
+    would report an interrupted v3 save as finished, and this is the sentinel
+    ``batch-fit`` uses to tell a complete tile from a half-written one. An
+    unparseable v3 root likewise reads as unfinished rather than falling back,
+    since a corrupt root IS the interrupted case.
     """
-    if (store_dir / ".zmetadata").exists():
-        return True
-    root_doc = _read_json_doc(store_dir / _V3_METADATA_DOC)
-    return root_doc is not None and root_doc.get("consolidated_metadata") is not None
+    root = store_dir / _V3_METADATA_DOC
+    if root.exists():
+        root_doc = _read_json_doc(root)
+        return (
+            root_doc is not None and root_doc.get("consolidated_metadata") is not None
+        )
+    return (store_dir / ".zmetadata").exists()
 
 
 #: zarr group modes that map straight onto a ``ZipStore`` mode. ``"w-"`` is
