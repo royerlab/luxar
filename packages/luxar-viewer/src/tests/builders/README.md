@@ -116,10 +116,11 @@ the full mock store.
 ## Spatial-Loader Fixtures
 
 `spatial-loader-fixtures.ts` carries the shared bits between the
-three spatial-index loader test files
-(`unit/data/points/spatial-index-loader.test.ts`,
-`unit/data/lines/spatial-index-loader.test.ts`,
-`unit/data/gsplats/spatial-index-loader.test.ts`). The mock-symmetry rule
+spatial-index loader test files that import it —
+`unit/data/lines/spatial-index-loader.test.ts` and
+`unit/data/gsplats/spatial-index-loader.test.ts`, which mirror
+`unit/data/points/spatial-index-loader.test.ts` (that one still
+hand-rolls its own stubs). The mock-symmetry rule
 means each of these tests needs the same `zarr.Location` stub,
 the same chunk-bounds array shape, and the same default visible
 ranges from a mocked `SpatialQueryBuilder.execute()`.

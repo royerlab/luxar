@@ -7,6 +7,7 @@
  */
 
 import { chromium } from '@playwright/test';
+import { summarizeCaptureReadiness } from '../src/core/app/debug/capture-readiness';
 
 const URL = process.env.APP_URL || '';
 const OUT = process.env.OUT || 'test-results/debug/hires.png';
@@ -144,24 +145,47 @@ async function main() {
   // Remaining wait budget — lets new frustum chunks stream in after zoom
   await page.waitForTimeout(Math.max(0, WAIT - 15000));
 
-  // Inspect state to confirm data loaded
-  const state = await page.evaluate(() => {
-    const d = (window as any).__luxarDebug;
-    if (!d) return { ok: false, reason: 'no debug object' };
-    const perf = d.getState?.().performance || {};
-    return {
-      ok: perf.totalElements > 0,
-      totalPoints: perf.totalPoints,
-      totalGSplats: perf.totalGSplats,
-      totalElements: perf.totalElements,
-      pointCloudCount: perf.pointClouds?.length || 0,
-      gsplatCount: perf.gsplatMeshes?.length || 0,
+  // Inspect state to confirm data loaded. The browser closure only FETCHES the
+  // snapshot (verbatim, plain-serialisable); the verdict is computed here in
+  // Node by the shared pure helper, which is unit-tested. Deciding readiness
+  // inside `page.evaluate` is what let #1579 read a non-existent
+  // `state.performance` sub-object and report every scene as empty.
+  // The probe is a DIAGNOSTIC; the screenshot is the product. A `getState()`
+  // that throws on a live page must not cost us the render we already waited
+  // for, so a failed probe degrades to `ok: false` with the error as its reason
+  // instead of rejecting out to `main().catch`. (A page that is genuinely gone
+  // still fails at `page.screenshot()` below — nothing can rescue that.)
+  let state;
+  try {
+    const rawState = await page.evaluate(() => (window as any).__luxarDebug?.getState?.() ?? null);
+    state = summarizeCaptureReadiness(rawState);
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    console.error(`[CAPTURE] getState() probe failed: ${message}`);
+    state = {
+      ...summarizeCaptureReadiness(null),
+      reason: `getState() probe failed: ${message}`,
     };
-  });
+  }
   console.log('[CAPTURE] State:', JSON.stringify(state));
 
+  const counts =
+    `(points=${state.totalPoints} gsplats=${state.totalGSplats} ` +
+    `lines=${state.totalLines} triangles=${state.totalTriangles})`;
   if (!state.ok) {
-    console.error('[CAPTURE] Warning: no elements loaded');
+    // "scene not ready", not "no elements loaded": the reason may be that there
+    // was no debug state at all, an unexpected `getState()` shape, or a probe
+    // that threw — in which case the four counts below are placeholders, not
+    // measurements, and claiming they were measured is a lie the tool cannot
+    // back up.
+    console.error(
+      `[CAPTURE] Warning: scene not ready — ${state.reason ?? 'unknown reason'} ${counts}`
+    );
+  } else if (state.reason) {
+    // A ready verdict with a reason is a CAVEAT (e.g. a non-finite total counted
+    // as zero). Printing it keeps a count we could not read from masquerading as
+    // a measured 0 — the silent-zero failure mode of #1579.
+    console.log(`[CAPTURE] Note: ${state.reason}`);
   }
 
   // Take high-res screenshot

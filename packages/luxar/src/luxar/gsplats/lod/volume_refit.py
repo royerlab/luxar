@@ -7,7 +7,10 @@ target is the *fine mixture* and therefore inherits the fine fit's own error —
 this optimizes the true render-fidelity objective at the coarse budget.
 Benchmarked on real microscopy (skimage cells3d nuclei): +5–6 dB
 full-res and +10–12 dB at viewing scale over the merge, with unchanged splat
-count and lower cross-level drift than a cold fit.
+count and lower cross-level drift than a cold fit. (Measured before the #1172
+amplitude-convention fix; the never-worse guard below bounds the outcome at the
+merge, so the sign of the gain is safe, but the magnitudes have not been
+re-measured.)
 
 This module is a thin orchestration layer at ``GSplatData`` altitude: the heavy
 lifting (rasterizer, Adam, schedulers) is entirely
@@ -225,6 +228,16 @@ def volume_refine_splats(
     refit = fit_gaussian_splats(
         volume,
         seeds=seed,
+        # The seed is TREATED AS a fit's output, i.e. its amplitudes are already
+        # background-relative — the recipe's contract, since the seed is a merged
+        # level of the input fit. Without this the "auto" floor the re-fit
+        # inherits would be subtracted a SECOND time and every seed dimmer than
+        # the floor would start at exactly 0 (#1172). An imported or
+        # intensity-rescaled input carries neither convention exactly, so its
+        # warm start is approximate either way — but never worse than the old
+        # double-subtraction, and the never-worse MSE guard below bounds the
+        # outcome regardless.
+        seed_amps_background_relative=True,
         n_iters=config.iters,
         lr=config.lr,
         early_stop_patience=config.early_stop_patience,

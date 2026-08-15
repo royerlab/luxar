@@ -28,6 +28,7 @@ import { GSplatPickingMaterial } from '../../../../rendering/picking/gsplat/mate
 import { MeshPickingMaterial } from '../../../../rendering/picking/mesh/material';
 import { GEOMETRY_TYPES } from '../../../../types/format-contract';
 import { LINE_JOIN_UNIFORM, type LineJoinStyle } from '../../../../types/line-join';
+import { DEFAULT_LINE_PRIMITIVE } from '../../../../types/line-primitive';
 import type { PickingSystem } from '../../../../rendering/picking/picking-system';
 
 /** Minimal PickingSystem stand-in: the three members the pass touches. */
@@ -241,6 +242,51 @@ describe('registerExistingSceneNodes', () => {
 
     const pick = registered[0].pick.material as LinePickingMaterial;
     expect(pick.uniforms.uLineJoin.value).toBe(LINE_JOIN_UNIFORM.none);
+  });
+
+  it('gives the lines pick material the PRIMITIVE its visual material resolved to', () => {
+    // Under the `auto` policy the primitive is a PER-NODE choice made when the
+    // visual material was built (#1352 follow-up), and this retro pass is the
+    // one production takes on a first load. Re-resolving here — without the
+    // node's size in hand — would give a large node a capsule pick footprint
+    // under a quad render, so the hit test would disagree with the pixels at
+    // every joint and line end. The visual material's RESOLVED stamp is the
+    // only correct source.
+    const { stub, registered } = stubPickingSystem();
+    factory.setPickingSystem(stub);
+    const root = new THREE.Group();
+    const node = makeNode('lines', '/tracks/part_0');
+    node.material = materialManager.getLineMaterial({
+      blendingMode: 'additive',
+      opacity: 1.0,
+      gamma: 1.0,
+      intensity: 1.0,
+      offset: 0.0,
+      // Deliberately NOT the session default, so inheriting the default
+      // instead of reading the visual material fails this.
+      primitive: 'screen-space',
+    });
+    root.add(node);
+
+    factory.registerExistingSceneNodes(root);
+
+    const pick = registered[0].pick.material as LinePickingMaterial;
+    expect(pick.userData.linePrimitive).toBe('screen-space');
+  });
+
+  it('falls back to the session default primitive when the visual carries no stamp', () => {
+    // The other half: a non-line material (or any node without the stamp) must
+    // still get a usable pick material rather than `undefined` reaching the
+    // shader-pair selection.
+    const { stub, registered } = stubPickingSystem();
+    factory.setPickingSystem(stub);
+    const root = new THREE.Group();
+    root.add(makeNode('lines', '/tracks'));
+
+    factory.registerExistingSceneNodes(root);
+
+    const pick = registered[0].pick.material as LinePickingMaterial;
+    expect(pick.userData.linePrimitive).toBe(DEFAULT_LINE_PRIMITIVE);
   });
 
   it('carries the mesh coverage inputs from the node attrs', () => {

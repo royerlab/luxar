@@ -134,7 +134,9 @@ class RecipeParams:
     reveal_centre: Optional[Sequence[float]] = None
     spatial_dims: Optional[Sequence[int]] = None
     breakpoints: BreakpointSpec = "equal-count"
-    truncation_sigmas: float = 3.0
+    # None = the dataset's own `truncation_radius` (the support it was fitted and
+    # is rendered at). Threaded through as-is; the additive builders resolve it.
+    truncation_sigmas: Optional[float] = None
     max_n_dense: int = 2000
     # spatial partition (tiles / overview)
     max_elements: Optional[int] = None
