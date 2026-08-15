@@ -6,17 +6,29 @@ so the ``_FITTING_INFO_KEYS`` whitelist never runs, and because those same keys
 are excluded from ``pipeline_info`` they are dropped from the store ENTIRELY.
 
 For the demos this matters more than it looks: several of them save straight to
-the file that is then SHIPPED (the cache path and the packaged artifact are the
-same name), so suppressing the flag means the published dataset carries no
-top-line record of the fit that produced it -- no fitter, no splat count, no
-runtime, no PSNR, and (where the fit culls) no culling provenance either. The
-whitelist is where source-grid stamps land as well, so a suppressing demo also
+the file that is then SHIPPED (the cache path and the packaged artifact carry the
+same name), so a suppressed save bakes into the next artifact regenerated from a
+demo run -- no fitter, no splat count, no runtime, no PSNR, no record of what the
+final cull removed. ``fitting/`` is also one of the three groups the loader reads
+back into ``stats``, so a figure that was never written cannot be quoted later.
+The whitelist is where source-grid stamps land as well, so a suppressing demo
 forfeits any compression figure the fitter learns to record.
 
 The one legitimate use is a store that never came from a fit at all, which is
 why the exemption below is keyed to a stated reason AND to a call-site count
 rather than merely allowed: clearance for one sentinel save is not clearance for
 the file it happens to live in.
+
+Scope, stated so it is not mistaken for more: this guard sees the EXPLICIT
+suppression only. ``write_gsplats_tree`` takes ``fitting_info`` as a keyword that
+defaults to ``None``, so a tree write drops the same record by saying nothing at
+all -- there is no keyword for the scan to find. Several demos write trees that
+way (``_interop_common.py``, ``demo_gsplats_recipes_tribolium.py``), though today
+they hand those writers data loaded with ``include_stats=False``, so there is no
+provenance in hand to lose. Whether a caller holding fit stats should be made to
+pass them through is the wider question #1600 asks of every in-out rewrite, not
+something a demo lint can settle -- so it is out of this guard's reach by
+decision, not by oversight.
 """
 
 from __future__ import annotations

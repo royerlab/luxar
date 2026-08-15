@@ -98,8 +98,10 @@ Two rules govern the gate, both learned from real bugs:
 the versions its `pyproject.toml` pin accepts, every module passed to
 `require_module` must exist in the table, and no scanned source — runtime message
 or docstring alike — may spell out `pip install <pkg>` for a package the table
-bounds without carrying that bound. Those guards — and the substitutive-LOD one
-in `tests/test_substitutive_lod_gated.py` — read the set defined by
+bounds without carrying that bound. Those guards — along with the substitutive-LOD
+one in `tests/test_substitutive_lod_gated.py` and the fit-provenance one in
+`tests/test_demo_fit_provenance.py`, which forbids saving a real fit with
+`include_fitting_info=False` — read the set defined by
 `tests/_scanned_modules.py`: every `*.py` directly under `demos/` **except**
 `__init__.py` and `_dependencies.py`. It is a denylist, not a `demo_*.py` glob or
 a `_*_common.py` pattern, so a gate that moves out of a demo into a shared helper

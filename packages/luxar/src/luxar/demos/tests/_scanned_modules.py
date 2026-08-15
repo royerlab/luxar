@@ -13,7 +13,7 @@ re-exporting what the demos ask of it; it widens the set with the three
 module carries a justified exception; it too covers shared helpers, since
 ``_interop_common.build_interop_scene`` sets a scene's tone mapping by
 default), and one in ``test_demo_fit_provenance.py`` (the fit-provenance lint —
-``_interop_common.py`` saves gsplat stores, so a ``include_fitting_info=False``
+``_interop_common.py`` saves gsplat stores, so an ``include_fitting_info=False``
 save could hide in a helper). The dependency guards all
 used to enumerate ``demo_*.py`` only, which left the package's SHARED helper
 modules unscanned. That became a real blind spot when ``_roundtrip_common.py``
@@ -61,11 +61,13 @@ there is no reason to carve it out.
 Not a test module and not a demo (no ``test_`` / ``demo_`` prefix), so neither
 pytest collection nor the demo import smoke test picks it up.
 
-One operational note: :func:`scanned_demo_modules` feeds ``pytest.mark.parametrize``
-in four of those guards' test functions, so its assertions run at COLLECTION
-time. A trip therefore aborts the whole session with ``Interrupted: 1 error
-during collection`` and reports zero test results, rather than failing one test
-— an alarming-looking symptom for a deliberate tripwire, so recognise it as this.
+One operational note: several guards call :func:`scanned_demo_modules` before any
+test runs — four ``pytest.mark.parametrize`` decorators, plus module-level
+constants in ``test_demo_layers.py``, ``test_substitutive_lod_gated.py`` and
+``test_demo_fit_provenance.py`` — so its assertions run at COLLECTION time. A trip
+therefore aborts the whole session with ``Interrupted: 1 error during collection``
+and reports zero test results, rather than failing one test — an alarming-looking
+symptom for a deliberate tripwire, so recognise it as this.
 """
 
 from __future__ import annotations
