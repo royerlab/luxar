@@ -318,7 +318,13 @@ def preprocess_data(config: FitConfig) -> PreprocessedData:
     # Normalize input data
     with asection("Normalizing input data"):
         V_normalized, image_min, image_max, intensity_range, applied_floor = (
-            _normalize_data(V, config.norm_percentile, config.verbose, config.floor)
+            _normalize_data(
+                V,
+                config.norm_percentile,
+                config.verbose,
+                config.floor,
+                config.norm_range,
+            )
         )
 
     # Rescale pre-initialized amplitudes to match normalized image scale
@@ -1042,6 +1048,88 @@ def _sample_volume_for_floor(volume: Any, budget: int) -> "np.ndarray | None":
     return np.concatenate(samples)
 
 
+# Smallest span a resolved normalization range may report. Reached only when a
+# subtracted floor sits at or above the sampled top, i.e. the sample says the
+# whole volume is pedestal; callers treat a span this small as "no usable shared
+# scale" rather than as a real range (see `_tile_norm_range`).
+NORM_RANGE_MIN_SPAN = 1e-12
+
+
+def resolve_volume_norm_range(
+    volume: Any,
+    norm_percentile: float,
+    *,
+    subtract: float | None = None,
+    verbose: bool = False,
+) -> tuple[float, float]:
+    """Resolve the normalization range against a whole volume.
+
+    The intensity-scale counterpart of :func:`resolve_volume_floor`, and it
+    exists for the same reason. A tiled fit hands each worker one tile; if the
+    tile is normalized by its OWN min/max then each tile is stretched to fill
+    [0, 1] by a different factor. Output amplitudes are rescaled by that same
+    factor afterwards, so the *physical* amplitude of a linear fit largely
+    cancels out — what does NOT cancel is everything the optimiser expresses
+    as an absolute quantity in the normalized range: the convergence tolerance
+    (``max_abs_error``, 1% of it by default), seeding and culling thresholds,
+    and any ``amp_max``. A dim tile is therefore resolved to a much finer
+    physical accuracy than a bright one, and the two tiles' splats are not
+    mutually comparable. Sharing one range makes a tiled fit behave like the
+    whole-volume fit it is meant to approximate.
+
+    The flip side is deliberate: a tile far dimmer than the volume maximum is
+    now held to the same ABSOLUTE tolerance as the rest of the volume, so it
+    converges earlier instead of resolving its own noise at full contrast.
+
+    Parameters
+    ----------
+    volume : np.ndarray or zarr.Array
+        Full volume (may be a lazy zarr array; only a bounded sample is read,
+        via the same budget and block layout as :func:`resolve_volume_floor`).
+    norm_percentile : float
+        0 for full min-max; otherwise the low/high percentile pair, exactly as
+        :func:`_normalize_data` interprets it.
+    subtract : float, optional
+        A level already subtracted from the tile before fitting (the resolved
+        floor). The returned range is shifted to match, since the fit sees
+        post-subtraction data. Clamped at 0 like the tile's own clip.
+    verbose : bool, default False
+        Print the resolved range via arbol.
+
+    Returns
+    -------
+    tuple[float, float]
+        ``(image_min, image_max)`` to hand to every tile of this volume.
+
+    Notes
+    -----
+    Determinism matters as much as it does for the floor: the sample is a pure
+    function of ``volume.shape`` and the fixed budget, so independent workers
+    (``--tile k/M``, ``-j N``, batch-fit) all resolve the SAME range for the
+    volume they are HANDED, without coordinating. That scope is where this
+    stops short of the floor: a ``batch-fit`` task is handed one ``(t, c)``
+    sub-volume, so its tiles share a range while two timepoints do not,
+    whereas the floor level is pinned once for the whole run in the manifest.
+    Amplitudes stay physically comparable either way (``finalize_results``
+    rescales by ``intensity_range``); what differs across timepoints is the
+    absolute convergence tolerance. #1616 tracks the remaining scopes.
+    """
+    sample = _sample_volume_for_floor(volume, int(FLOOR_SAMPLE_BUDGET_VOXELS))
+    if sample is None or sample.size == 0:
+        return (0.0, 1.0)
+    if norm_percentile == 0.0:
+        lo, hi = float(np.min(sample)), float(np.max(sample))
+    else:
+        lo = float(np.percentile(sample, norm_percentile))
+        hi = float(np.percentile(sample, 100.0 - norm_percentile))
+    if subtract is not None:
+        lo = max(0.0, lo - float(subtract))
+        hi = max(lo + NORM_RANGE_MIN_SPAN, hi - float(subtract))
+    if verbose:
+        aprint(f"Whole-volume normalization range: [{lo:.6g}, {hi:.6g}]")
+    return (lo, hi)
+
+
 def resolve_volume_floor(
     volume: Any,
     floor: "str | float | None",
@@ -1135,11 +1223,49 @@ def resolve_volume_floor(
     return float(resolved)
 
 
+def _resolve_norm_bounds(
+    V: np.ndarray,
+    norm_percentile: float,
+    verbose: bool,
+    norm_range: "tuple[float, float] | None",
+) -> tuple[float, float]:
+    """The ``(image_min, image_max)`` normalization will use, before any floor.
+
+    A supplied ``norm_range`` wins outright (tiled fitting resolves one against
+    the whole volume); otherwise the pair comes from THIS array, either its
+    extremes (``norm_percentile == 0``) or a symmetric percentile pair.
+    """
+    if norm_range is not None:
+        image_min, image_max = float(norm_range[0]), float(norm_range[1])
+        if verbose:
+            aprint(
+                f"Normalization: whole-volume range [{image_min:.6g}, "
+                f"{image_max:.6g}] (supplied, not derived from this array)"
+            )
+        return image_min, image_max
+    if norm_percentile == 0.0:
+        # Full range normalization
+        if verbose:
+            aprint("Normalization: full min-max range")
+        return float(np.min(V)), float(np.max(V))
+    # Percentile-based robust normalization
+    if verbose:
+        aprint(
+            f"Normalization: {norm_percentile:.1f}%-"
+            f"{100.0 - norm_percentile:.1f}% percentile range"
+        )
+    return (
+        float(np.percentile(V, norm_percentile)),
+        float(np.percentile(V, 100.0 - norm_percentile)),
+    )
+
+
 def _normalize_data(
     V: np.ndarray,
     norm_percentile: float,
     verbose: bool,
     floor: "str | float | None" = None,
+    norm_range: "tuple[float, float] | None" = None,
 ) -> tuple[np.ndarray, float, float, float, "float | None"]:
     """Normalize input data to [0, 1] range.
 
@@ -1148,23 +1274,18 @@ def _normalize_data(
     is clipped to 0 by the existing ``np.clip((V - image_min) / range, 0, 1)``.
     ``norm_percentile`` still governs ``image_max`` (bright-outlier clipping),
     so the two are orthogonal.
+
+    ``norm_range`` supplies ``(image_min, image_max)`` outright, bypassing
+    ``norm_percentile``'s derivation from ``V``. Tiled fitting passes a range
+    resolved against the WHOLE volume so that every tile maps a given physical
+    intensity to the same normalized value, and is therefore held to the same
+    absolute convergence tolerance and thresholds (see
+    :func:`resolve_volume_norm_range`). Because such a range is estimated from
+    a bounded sample, a value above ``image_max`` is real signal rather than an
+    outlier and is left unclipped when ``norm_percentile == 0``.
     """
     # Configurable normalization - store parameters for intensity rescaling
-    if norm_percentile == 0.0:
-        # Full range normalization
-        image_min: float = float(np.min(V))
-        image_max: float = float(np.max(V))
-        if verbose:
-            aprint("Normalization: full min-max range")
-    else:
-        # Percentile-based robust normalization
-        image_min = float(np.percentile(V, norm_percentile))
-        image_max = float(np.percentile(V, 100.0 - norm_percentile))
-        if verbose:
-            aprint(
-                f"Normalization: {norm_percentile:.1f}%-"
-                f"{100.0 - norm_percentile:.1f}% percentile range"
-            )
+    image_min, image_max = _resolve_norm_bounds(V, norm_percentile, verbose, norm_range)
 
     # Background floor suppression: raise image_min to the resolved floor.
     resolved_floor = _resolve_floor(V, floor)
@@ -1199,7 +1320,15 @@ def _normalize_data(
         if verbose:
             aprint("Warning: Input image is nearly uniform")
     else:
-        V = np.clip((V - image_min) / intensity_range, 0.0, 1.0)
+        # A SUPPLIED full-range (``norm_percentile == 0``) range is the whole
+        # volume's extremes ESTIMATED from a bounded sample, so this array can
+        # legitimately hold a voxel brighter than it. Clipping there would
+        # flatten exactly the brightest structure — something the per-array
+        # path never does, since that array's own max is its ceiling by
+        # construction. Keep the shared scale, drop the ceiling. A percentile
+        # range asked for bright-outlier clipping, so its ceiling stays.
+        ceiling = None if (norm_range is not None and norm_percentile == 0.0) else 1.0
+        V = np.clip((V - image_min) / intensity_range, 0.0, ceiling)
 
     return V, image_min, image_max, intensity_range, applied_floor
 
