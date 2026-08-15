@@ -89,3 +89,37 @@ def test_cli_fit_stamps_the_stored_dtype_not_the_loaders_cast(tmp_path: Path) ->
     attrs = read_node_attrs(out / "fitting")
     assert attrs["source_dtype"] == "uint16"
     assert attrs["source_bytes"] == V.size * 2
+
+
+def test_an_artifact_larger_than_its_source_is_not_reported_as_0_to_1(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A sub-unity ratio must print as itself rather than round to "0:1".
+
+    A store bigger than the volume it represents is a real outcome — a small
+    crop with a generous seed budget — and "0:1" reads as a broken measurement
+    instead of an expansion. Exercised through the printer because the ratio is
+    formatted there; the stamps themselves carry no ratio.
+    """
+    from types import SimpleNamespace
+
+    from luxar.cli.gsplat_ops.inspect_commands import _print_source_grid, _store_size
+
+    store = tmp_path / "expanded.gsplats.zarr"
+    store.mkdir()
+    (store / "chunk").write_bytes(b"\0" * 4096)
+    data = SimpleNamespace(
+        stats={
+            "source_shape": [8, 8, 8],
+            "source_voxels": 512,
+            "source_dtype": "uint16",
+            "source_bytes": 1024,
+            "fitted_shape": [8, 8, 8],
+            "fitted_voxels": 512,
+        },
+        amplitudes=np.zeros(64, dtype=np.float32),
+    )
+    _print_source_grid(data, _store_size(store))
+    out = capsys.readouterr().out
+    assert "Source volume: 8 x 8 x 8 uint16" in out, out
+    assert "0.25:1" in out, out

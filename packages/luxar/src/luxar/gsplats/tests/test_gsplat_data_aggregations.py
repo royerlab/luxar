@@ -13,6 +13,7 @@ the core data API. This file covers:
 import numpy as np
 import pytest
 
+from luxar._zarr_compat import read_node_attrs
 from luxar.gsplats.gsplat_data import GSplatData
 
 from ._gsplat_data_helpers import _make_2d_gsplat, _make_3d_gsplat, _make_empty_gsplat
@@ -678,19 +679,24 @@ class TestSourceStampAfterFilter:
         leaf's `lod_stats` — so a crop that only rebound the top-level dict left
         an uncropped stamp on disk anyway.
         """
-        import json
-
         out = self._stamped().filter_by(bbox=[(0, 60)] * 3)
         store = tmp_path / "cropped.gsplats.zarr"
         out.save(store, ordering="none")
 
+        # Walk the node documents rather than naming `.zattrs`: the on-disk zarr
+        # format is selectable and v3 — the default — keeps a node's attributes
+        # in `zarr.json` instead, so globbing for `.zattrs` finds nothing at all
+        # and the walk silently examines no attributes.
         seen_lod_stats = False
-        for zattrs in store.rglob(".zattrs"):
-            lod_stats = json.loads(zattrs.read_text()).get("lod_stats")
+        for node_dir in (store, *(p for p in store.rglob("*") if p.is_dir())):
+            attrs = read_node_attrs(node_dir)
+            if attrs is None:
+                continue
+            lod_stats = attrs.get("lod_stats")
             seen_lod_stats = seen_lod_stats or lod_stats is not None
             for key in _REGION_KEYS:
                 assert key not in (lod_stats or {}), (
-                    f"{key!r} survived the crop in {zattrs}'s lod_stats"
+                    f"{key!r} survived the crop in {node_dir}'s lod_stats"
                 )
         assert seen_lod_stats, "no lod_stats was written — the test proves nothing"
 
