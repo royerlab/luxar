@@ -87,12 +87,18 @@ def run_denoise_volume_cmd(
             elif suffix in (".zarr",):
                 import zarr
 
-                from luxar._zarr_compat import ZARR_FORMAT
+                from luxar._zarr_compat import zarr_format
 
-                # `zarr_format` is NOT optional here: zarr 3 defaults to format
-                # 3, so an unpinned `save` writes a `zarr.json` + `c/` store
-                # while everything else Luxar emits is format 2.
-                zarr.save(str(output_path), denoised, zarr_format=ZARR_FORMAT)
+                # `zarr_format` is NOT optional here even though zarr's own
+                # default now matches Luxar's: the write format is overridable
+                # (LUXAR_ZARR_FORMAT / `set_zarr_format`), so an unpinned `save`
+                # would ignore the override and emit a format-3 store in a run
+                # the user asked to be format 2. Called through the accessor
+                # rather than importing `ZARR_FORMAT` by value, which is what the
+                # facade asks callers to do: a `from ... import ZARR_FORMAT`
+                # binds whatever was current when the import ran, so hoisting it
+                # to module scope would silently stop honouring the override.
+                zarr.save(str(output_path), denoised, zarr_format=zarr_format())
             else:
                 np.save(output_path, denoised)
             aprint("Done")

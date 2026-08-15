@@ -17,6 +17,9 @@ import {
   type CinematicContext,
   type CinematicSnapshot,
 } from '../../../../ui/rendering-controls/cinematic-mode';
+// The runtime key array is NOT re-exported by the UI module (nothing outside
+// `config/` needs it), so it comes straight from the preset module.
+import { CINEMATIC_SNAPSHOT_KEYS } from '../../../../config/cinematic-preset';
 import { config, type RenderingSettings } from '../../../../config';
 
 function makeStubContext(overrides: Partial<RenderingSettings> = {}): {
@@ -391,5 +394,14 @@ describe('CinematicSnapshot type — round trip', () => {
     for (const k of keys) {
       expect(v[k]).toBeDefined();
     }
+  });
+
+  it('CINEMATIC_SNAPSHOT_KEYS is exhaustive — every key buildCinematicValues sets is listed', () => {
+    // The `CinematicSnapshotKeys[]` annotation only constrains each ENTRY to
+    // the union; nothing forces the runtime array to be complete. A missing
+    // entry silently drops that key from the zarr expansion, the C-key
+    // snapshot, and the restore dirty-check — so assert the array against the
+    // object the preset actually returns.
+    expect([...CINEMATIC_SNAPSHOT_KEYS].sort()).toEqual(Object.keys(buildCinematicValues()).sort());
   });
 });

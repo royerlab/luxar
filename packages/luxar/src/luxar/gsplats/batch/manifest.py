@@ -101,6 +101,26 @@ class BatchManifest:
     this field — in the last two cases the run keeps its recorded ``fit_args``
     floor SPEC, so a resumed old batch behaves exactly as it did when planned."""
 
+    grid_scale: Optional[List[float]] = None
+    """Per-axis factor mapping the VOXEL tile grid onto the frame the fit tasks'
+    splats actually come back in (``uniform`` mode; #1587).
+
+    Every array task runs ``luxar gsplat fit --tile k/M`` with this run's
+    ``--preset`` and (verbatim) its ``--config`` YAML, so a ``voxel_size:`` with
+    the default ``output_space: real`` makes each worker emit PHYSICAL centers
+    while ``spatial_shape`` — and hence the tile grid rebuilt from it at merge
+    time — stays in voxels; a ``downscale:`` is a second, multiplicative term.
+    The planner resolves both ONCE, here, with
+    :func:`~luxar.gsplats.tiling.resolve_grid_scale`, because that is where the
+    merged fit config is in hand: re-deriving it at merge time would mean
+    re-reading a YAML that may have moved, been deleted, or been replaced by an
+    unrelated same-named file.
+
+    ``None`` means NO scale — the tile grid and the splats share a frame. That
+    is both the overwhelmingly common case and what a manifest written before
+    this field existed says by omission, which is exactly the pre-#1587
+    behaviour: build the planes straight off the voxel grid."""
+
     # GPU + time
     gpu_name: str = ""
     estimated_seconds_per_task: float = 0.0

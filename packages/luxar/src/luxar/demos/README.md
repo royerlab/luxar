@@ -98,8 +98,10 @@ Two rules govern the gate, both learned from real bugs:
 the versions its `pyproject.toml` pin accepts, every module passed to
 `require_module` must exist in the table, and no scanned source — runtime message
 or docstring alike — may spell out `pip install <pkg>` for a package the table
-bounds without carrying that bound. Those guards — and the substitutive-LOD one
-in `tests/test_substitutive_lod_gated.py` — read the set defined by
+bounds without carrying that bound. Those guards — along with the substitutive-LOD
+one in `tests/test_substitutive_lod_gated.py` and the fit-provenance one in
+`tests/test_demo_fit_provenance.py`, which forbids saving a real fit with
+`include_fitting_info=False` — read the set defined by
 `tests/_scanned_modules.py`: every `*.py` directly under `demos/` **except**
 `__init__.py` and `_dependencies.py`. It is a denylist, not a `demo_*.py` glob or
 a `_*_common.py` pattern, so a gate that moves out of a demo into a shared helper
@@ -550,11 +552,11 @@ HYCOM surface-current streamlines (220k connected ribbons, coloured by speed) dr
 #### demo_gaia_milky_way_3m.py - Milky Way Stars (Gaia DR3, 3M Stars)
 Real Milky Way stars from Gaia DR3: top 3M brightest stars with real photometric colors (BP-RP index), galactocentric coordinates, and reference markers (Sun, Betelgeuse, Rigel).
 
-**Run**: `luxar demo run galaxy`
+**Run**: `luxar demo run gaia_milky_way`
 
-**Requires**: Internet access (Gaia DR3 TAP query or cached data). Substitutive Points LOD needs `luxar[gsplats]` (torch + scipy); without it the scene builds as a flat, fully viewable point cloud.
+**Requires**: The Gaia catalog present at `~/.cache/luxar/milky_way_gaia_3m/milky_way_gaia_3m.zarr.zip` — it is CC BY-NC, so it is not distributed with Luxar. Rebuild it there by hand with `hatch run python scripts/generate_galaxy_simple.py --count 3000000 --output ~/.cache/luxar/milky_way_gaia_3m/milky_way_gaia_3m.zarr` (the `--output` stem is load-bearing: the zip must contain a top-level `milky_way_gaia_3m.zarr/` directory) — that rebuild runs from a source checkout only (the script is not in the wheel), needs `astroquery` + `astropy` (no Luxar extra provides astroquery), and takes ~90 minutes for 3M stars; doing it automatically on first run is issue #1575. Substitutive Points LOD needs `luxar[gsplats]` (torch + scipy); without it the scene builds as a flat, fully viewable point cloud.
 
-**Demonstrates**: Real astronomical data (Gaia space telescope), 3M star dataset, BP-RP photometric color-to-RGB conversion, galactocentric coordinate system, magnitude-dependent point radii.
+**Demonstrates**: Real astronomical data (Gaia space telescope), 3M star dataset, BP-RP photometric color-to-RGB conversion, galactocentric coordinate system, magnitude-dependent point radii, volumetric emission-absorption compositing on a mixed substitutive ladder, per-marker hover labels and a colour-swatch HTML legend built from the marker nodes.
 
 ---
 

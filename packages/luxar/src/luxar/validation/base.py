@@ -51,6 +51,14 @@ def validate_node_name(name: Any, context: str = "node name") -> str:
       metadata. We reject the entire dot-prefixed namespace (stricter than the
       exact reserved set, but safe: it also covers future zarr metadata keys
       and hidden dot-files that most tooling cannot see).
+    - Must not be ``zarr.json``. Format 3 replaced the dot-prefixed documents
+      with a single ``zarr.json`` per node, and that name is NOT dot-prefixed —
+      so the rule above, which covered every reserved key at format 2, stops
+      being complete the moment anything writes format 3. Measured: the write
+      does not silently corrupt the store, but it dies inside zarr with
+      ``ValueError: delete_dir was passed a prefix='zarr.json' that is a file``,
+      which is exactly the deep-internal-error experience this function exists
+      to replace with a clear one.
     - Must not contain control characters (``\\x00``–``\\x1f``, ``\\x7f``) —
       filesystem and JSON hazards for directory-backed scenes.
 
@@ -90,6 +98,17 @@ def validate_node_name(name: Any, context: str = "node name") -> str:
             "Zarr reserves dot-prefixed keys (.zgroup/.zattrs/.zarray/.zmetadata) "
             "for its own metadata.",
             "Rename the node without the leading dot",
+        )
+
+    # Format 3's metadata document is `zarr.json`, which the dot rule above
+    # does not catch. Checked case-insensitively because a case-insensitive
+    # filesystem (macOS, Windows) would collide on `Zarr.JSON` just the same.
+    if name.lower() == "zarr.json":
+        raise ValidationError(
+            f"{context}: Name cannot be {name!r}. "
+            "Zarr format 3 reserves 'zarr.json' for each node's own metadata "
+            "document, so a node with this name collides with it.",
+            "Rename the node to something other than 'zarr.json'",
         )
 
     if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in name):

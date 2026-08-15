@@ -9,13 +9,13 @@ quarantined path, its size, and what to do about it.
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 
 import numpy as np
 import pytest
 
+from luxar._zarr_compat import read_node_attrs
 from luxar.demos import demo_esm3_protein_landscape as demo
 from luxar.demos import require_module
 from luxar.demos._dependencies import MissingDependencyError
@@ -490,7 +490,7 @@ class TestCompleteCacheRunsWithoutLodDeps:
         assert (proteins / "positions").exists(), (
             "flat Points leaf missing positions — LOD group written instead"
         )
-        attrs = json.loads((proteins / ".zattrs").read_text())
+        attrs = read_node_attrs(proteins) or {}
         assert attrs.get("kind") != "lod", (
             f"expected a flat Points leaf, got a substitutive-LOD group: {attrs.get('kind')!r}"
         )
@@ -522,7 +522,7 @@ class TestCompleteCacheRunsWithoutLodDeps:
             "degradation notice printed even though torch and scipy are installed"
         )
         proteins = out_path / "proteins"
-        attrs = json.loads((proteins / ".zattrs").read_text())
+        attrs = read_node_attrs(proteins) or {}
         assert attrs.get("kind") == "lod", (
             f"expected a substitutive-LOD group with the deps present: {attrs.get('kind')!r}"
         )

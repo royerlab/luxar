@@ -421,6 +421,95 @@ describe('getRemoteContentHash', () => {
     }
   });
 
+  it('releases the listeners of a REJECTED candidate, not just the accepted one', async () => {
+    // A format-2 dataset 404s `zarr.json` on every poll, so the rejected
+    // attempt is the COMMON case, not an edge one. `dispose()` cancels an
+    // unread body as well as removing listeners, so an undisposed 404 holds
+    // its connection open once per validation. Measured before the fix: the
+    // loop overwrote the first scope and only ever disposed the last.
+    const restore = forceAbortSignalAnyFallback();
+    const caller = new AbortController();
+    try {
+      const disposedBodies: string[] = [];
+      global.fetch = vi.fn(async (url: string) => {
+        if (String(url).endsWith('/zarr.json')) return mockResponse(404);
+        disposedBodies.push(String(url));
+        return mockResponse(200, JSON.stringify({ content_hash: 'v2hash' }));
+      }) as unknown as typeof fetch;
+
+      const token = await getRemoteContentHash('https://example.com/d.zarr', {
+        signal: caller.signal,
+      });
+
+      // It fell back to the format-2 document...
+      expect(token).toEqual({ hash: 'v2hash', mode: 'content-hash' });
+      expect(disposedBodies).toEqual(['https://example.com/d.zarr/.zattrs']);
+      // ...and BOTH attempts released their listeners. One leaked pair per
+      // poll is what this asserts against.
+      expect(getEventListeners(caller.signal, 'abort')).toHaveLength(0);
+    } finally {
+      restore();
+    }
+  });
+
+  it('spends ONE validation budget across both candidates, not one each', async () => {
+    // `timeoutMsOverride` is the fail-fast budget that keeps a flaky network
+    // from holding up scene loading. Probing two documents sequentially handed
+    // the SECOND its own full budget, so a hanging server cost twice over —
+    // and it is a format-2 dataset, the one that needs the second request,
+    // that would pay it.
+    //
+    // Asserted on the timeout each candidate is actually granted rather than on
+    // total wall clock: retry backoff (jittered, and not charged against the
+    // budget) dominates the elapsed time, so a wall-clock bound would be both
+    // noisy and a weak discriminator. The per-attempt timeout is observable as
+    // the delay between a fetch starting and its signal aborting.
+    const budgetMs = 400;
+    const abortDelays = new Map<string, number>();
+    global.fetch = vi.fn((url: string, init?: { signal?: AbortSignal }) => {
+      const key = String(url).split('/').pop() as string;
+      const startedAt = Date.now();
+      return new Promise<Response>((_resolve, reject) => {
+        // Never answers; only the per-attempt timeout ends it.
+        init?.signal?.addEventListener('abort', () => {
+          if (!abortDelays.has(key)) abortDelays.set(key, Date.now() - startedAt);
+          reject(new DOMException('aborted', 'AbortError'));
+        });
+      });
+    }) as unknown as typeof fetch;
+
+    expect(
+      await getRemoteContentHash('https://example.com/d.zarr', {
+        timeoutMsOverride: budgetMs,
+      })
+    ).toBeNull();
+
+    const first = abortDelays.get('zarr.json');
+    const second = abortDelays.get('.zattrs');
+    expect(first).toBeDefined();
+    expect(second).toBeDefined();
+    // The first candidate keeps the full budget (so the common single-request
+    // case is untouched); the second gets only what is left of it, which by
+    // then is nearly nothing. Before the fix the two were equal.
+    expect(second as number).toBeLessThan((first as number) / 2);
+  });
+
+  it('releases listeners when NEITHER document is available', async () => {
+    // The both-404 path returned before the try/finally, so the last attempt
+    // was never disposed either.
+    const restore = forceAbortSignalAnyFallback();
+    const caller = new AbortController();
+    try {
+      global.fetch = vi.fn(async () => mockResponse(404)) as unknown as typeof fetch;
+      expect(
+        await getRemoteContentHash('https://example.com/d.zarr', { signal: caller.signal })
+      ).toBeNull();
+      expect(getEventListeners(caller.signal, 'abort')).toHaveLength(0);
+    } finally {
+      restore();
+    }
+  });
+
   it('falls back to an implicit zattrs-hash token when the attr is absent', async () => {
     // Standalone .gsplats.zarr / external datasets carry no content_hash;
     // the SHA-256 of the raw .zattrs bytes serves as the validation token

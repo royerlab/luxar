@@ -49,12 +49,26 @@ classifiers = [
 requires-python = ">=3.12"
 dependencies = [
     "numpy>=2.0",
-    # zarr-python 3. Luxar still WRITES zarr format 2 on disk (see
-    # `luxar._zarr_compat.ZARR_FORMAT`) — the store layout is unchanged and
-    # the viewer is untouched. What the 3.x library buys is the ability to READ
-    # zarr v3 stores, which 2.18 cannot do at all, and it lifts the transitive
-    # caps the old pin forced on anndata and napari.
+    # zarr-python 3. Luxar WRITES zarr format 3 on disk by default and reads
+    # both formats (see `luxar._zarr_compat`); 2.18 could not read a v3 store at
+    # all, and the 3.x pin also lifts the transitive caps the old `zarr<3.0`
+    # forced on anndata and napari.
     "zarr>=3.2,<4",
+    # A DIRECT dependency, not just zarr's transitive one, because the floor is
+    # load-bearing for the compressor policy. zarr's format-3 `BloscCodec` hands
+    # numcodecs the SERIALIZED BYTE buffer, so the element width is lost unless
+    # it can forward `typesize` — which it only does for numcodecs >= 0.16
+    # (numcodecs #713). Below that floor the byte shuffle
+    # `luxar.encoding.compression` measured for multi-byte integer codes becomes
+    # a silent no-op: the metadata still records `typesize: 2, shuffle: shuffle`
+    # while the chunk is compressed as if typesize were 1. Measured on a
+    # 200k-point scene, that cost 12.5% of the chunk bytes — more than the delta
+    # filter was introduced to win. Nothing raises, and only format 3 is
+    # affected (a format-2 array is handed the typed array itself), which is why
+    # `test_zarr_compat.py::test_format_3_blosc_actually_applies_the_byte_shuffle`
+    # asserts on the stored BYTES rather than on the recorded configuration.
+    "numcodecs>=0.16",
+
     "typer>=0.19,<1.0",
     "fastapi>=0.111,<1.0",
     "uvicorn[standard]>=0.27,<1.0",
@@ -196,6 +210,16 @@ luxar = "luxar.cli:app"
 # it eagerly; this is the no-import fallback numcodecs loads lazily.)
 [project.entry-points."numcodecs.codecs"]
 luxar_delta_v1 = "luxar.encoding._encoders.delta_codec:LuxarDelta"
+
+# The format-3 twin of the entry point above, for the same reason: a vanilla
+# `zarr.open(...)` on a format-3 delta store resolves the codec without any
+# `import luxar`. zarr 3 has its OWN registry and its own entry-point group
+# ("zarr.codecs"), so being registered with numcodecs buys nothing here —
+# and `numcodecs.zarr3`, the wrapper that would have bridged them, is
+# deprecated. Same codec NAME under both groups: one wire format, one
+# TypeScript twin, two plumbings.
+[project.entry-points."zarr.codecs"]
+luxar_delta_v1 = "luxar.encoding._encoders.delta_codec:LuxarDeltaV3"
 
 # ---------------------------------------------
 # Hatch Configuration

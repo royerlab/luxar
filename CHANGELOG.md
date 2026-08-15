@@ -2088,8 +2088,11 @@ Guards (miter limit 120°, an overshoot test on the axial reach, and a 2 px
 rendered-HALF-width gate, i.e. 4 px rendered width) keep the cost where the
 benefit is: a joint pays one extra texel fetch and one extra projection per
 vertex, and the width gate skips the block entirely below that threshold, so
-thin-line scenes — the million-segment ones — pay nothing. Default style is
-`miter`; a per-node `join` attribute and `?lineJoin=none|miter` override it.
+thin-line scenes — the million-segment ones — pay nothing. The near-plane guard
+is two-sided (#1346) — each side tests BOTH far endpoints, not just the
+partner's — so the two quads cannot disagree at a joint next to the camera plane
+and leave one segment mitering alone. Default style is `miter`; a per-node
+`join` attribute and `?lineJoin=none|miter` override it.
 
 `join` is a compositing attribute, so on a partitioned / LOD lines node it is
 written once on the wrapper and inherited by the parts. Three consequences of
@@ -2227,6 +2230,11 @@ tests: it is non-monotone in defect width (1 px and 2 px counted, ≥ 3 px
 invisible, because the defect poisons its own median), so its fraction is a
 detector, not a severity measure, and not comparable between bands of different
 turn angle.
+
+The TSL parity suite's near-plane join pair asserts that the mitred render IS
+the unmitred one — an equality that every way of never reaching the join block
+would satisfy too — so it is now backed by a control at a lowered cull plane
+which must visibly differ, making that equality a gate rather than a tautology.
 
 #### Four geometry types, said consistently
 

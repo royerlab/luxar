@@ -79,13 +79,38 @@ export function parseGeneratedFixtureNames(generatorPath: string): string[] {
  * on its own 45 s content-wait, which is exactly the opaque failure the preflight exists
  * to replace.
  *
- * `.zmetadata` is the completeness signal because `LuxarZarrCompiler.finalize()` writes it
- * last, via `zarr.consolidate_metadata()`, after every array and attribute is in place
+ * CONSOLIDATED METADATA is the completeness signal, because
+ * `LuxarZarrCompiler.finalize()` writes it last, via `zarr.consolidate_metadata()`, after
+ * every array and attribute is in place
  * (`packages/luxar/src/luxar/cli/gsplat_ops/batch/validation.py` reads it the same way for
- * the same reason). Cheap enough to run per fixture: one `stat` each, no HTTP.
+ * the same reason). Cheap enough to run per fixture: one or two `stat`s each, no HTTP.
+ *
+ * WHERE it lives depends on the zarr format, which is why this cannot just name a file:
+ * format 2 writes a separate `.zmetadata` document, format 3 embeds
+ * `consolidated_metadata` in the root `zarr.json`. Naming only `.zmetadata` — correct
+ * while Luxar wrote format 2 — reports every format-3 fixture as incomplete, so the
+ * preflight regenerates the whole set, finds them "still missing", and aborts the run
+ * before a single test executes. The format-3 branch parses rather than merely checking
+ * that `zarr.json` exists, because a bare `zarr.json` is written EARLY (it is the root
+ * group's own metadata) and would signal completeness for a store the generator had
+ * barely started.
  *
  * @param fixturePath Absolute path to a `*.zarr` fixture directory.
  */
 export function isGeneratedFixtureComplete(fixturePath: string): boolean {
-  return existsSync(join(fixturePath, '.zmetadata'));
+  if (existsSync(join(fixturePath, '.zmetadata'))) return true;
+  const rootDoc = join(fixturePath, 'zarr.json');
+  if (!existsSync(rootDoc)) return false;
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(rootDoc, 'utf8'));
+    return (
+      typeof parsed === 'object' &&
+      parsed !== null &&
+      (parsed as Record<string, unknown>).consolidated_metadata != null
+    );
+  } catch {
+    // Present but unparseable: a half-written root document is the interrupted
+    // case this function exists to catch, so treat it as incomplete.
+    return false;
+  }
 }

@@ -10,7 +10,6 @@ that what was written actually orders the parts correctly.
 from __future__ import annotations
 
 import itertools
-import json
 import tempfile
 from pathlib import Path
 
@@ -18,6 +17,9 @@ import numpy as np
 import pytest
 import zarr
 
+from luxar._zarr_compat import consolidate as zc_consolidate
+from luxar._zarr_compat import open_group as zc_open_group
+from luxar._zarr_compat import read_consolidated_attrs, read_node_attrs
 from luxar.gsplats.doctor import diagnose_store
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.io.save_gsplats import write_gsplats_tree
@@ -75,27 +77,44 @@ def _uniform_tiled_store(tmp: Path) -> Path:
 
 
 def _root_attrs(path: Path) -> dict:
-    return json.loads((path / ".zattrs").read_text())
+    """The root node's attributes as they sit on disk, in either zarr format."""
+    attrs = read_node_attrs(path)
+    assert attrs is not None, f"no readable root metadata under {path}"
+    return attrs
 
 
 def _consolidated_attrs(path: Path) -> dict:
-    return json.loads((path / ".zmetadata").read_text())["metadata"][".zattrs"]
+    """The root's attributes as recorded in the CONSOLIDATED index.
+
+    Deliberately distinct from :func:`_root_attrs`: the doctor's job includes
+    noticing when the two disagree, which is exactly what a stale consolidation
+    looks like. Format 2 keys the index by metadata document and format 3 by
+    node, so the distinction is preserved through the facade rather than by
+    naming either layout.
+    """
+    return read_consolidated_attrs(path)["/"]
 
 
 def _set_root_attr(path: Path, key: str, value) -> None:
-    """Write (or delete) a root attr through zarr, refreshing consolidation."""
-    root = zarr.open_group(str(path), mode="r+")
+    """Write (or delete) a root attr through the facade, refreshing consolidation.
+
+    Through the facade, as Luxar's own in-place editors are: re-opening an
+    already-consolidated store with plain ``zarr.open_group`` and
+    re-consolidating leaves a NESTED index holding the pre-edit attributes,
+    which later reads prefer over the correct per-node documents.
+    """
+    root = zc_open_group(str(path), mode="r+")
     if value is None:
         del root.attrs[key]
     else:
         root.attrs[key] = value
-    zarr.consolidate_metadata(root.store)
+    zc_consolidate(root)
 
 
 def _part_boxes(path: Path) -> list:
     boxes = {}
     for part in path.glob("part_*"):
-        attrs = json.loads((part / ".zattrs").read_text())
+        attrs = read_node_attrs(part) or {}
         boxes[int(attrs["child_index"])] = (
             np.array(attrs["position_bounds"]["min"][:3]),
             np.array(attrs["position_bounds"]["max"][:3]),

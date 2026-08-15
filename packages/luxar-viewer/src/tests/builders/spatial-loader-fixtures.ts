@@ -1,8 +1,8 @@
 /**
- * Shared test fixtures for the three spatial-index loader test files —
- * `points-spatial-index-loader.test.ts`,
- * `lines-spatial-index-loader.test.ts`,
- * `gsplats-spatial-index-loader.test.ts`.
+ * Shared test fixtures for the spatial-index loader test files —
+ * `tests/unit/data/lines/spatial-index-loader.test.ts` and
+ * `tests/unit/data/gsplats/spatial-index-loader.test.ts`, which mirror
+ * `tests/unit/data/points/spatial-index-loader.test.ts`.
  *
  * Per the cross-geometry symmetry rule: each geometry's
  * loader has the same `zarr.Location` and `SpatialQueryBuilder` mock

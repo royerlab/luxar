@@ -82,7 +82,7 @@ from luxar.demos import (
     detect_device,
     is_lfs_pointer,
     launch_viewer,
-    load_precomputed_gsplats,
+    load_dataset_gsplats,
     parse_demo_flags,
     require_module,
     warn_if_no_cuda_gpu,
@@ -595,7 +595,7 @@ def fit_atlas(
     result.save(
         CACHE_FIT,
         encoding_mode=EncodingMode.MEMORY,
-        include_fitting_info=False,
+        include_fitting_info=True,
         compress="zip",
         zip_deflate=True,
     )
@@ -606,12 +606,18 @@ def fit_atlas(
 def load_or_build() -> tuple[GSplatData, np.ndarray]:
     """Return (fit, per-splat labels), self-contained on a fresh system."""
     if not RECOMPUTE:
-        if CACHE_FIT.exists() and CACHE_LABELS.exists():
-            precomputed = load_precomputed_gsplats(
-                DEMO_NAME, [FIT_FILE], recompute=False
-            )
-            if precomputed is not None:
-                return precomputed[0], _load_labels(CACHE_LABELS)
+        # Deliberately NOT gated on the cache already holding both files: that
+        # is what the fetch is for. `load_dataset_gsplats` resolves the whole
+        # manifest entry (cache -> in-repo -> Zenodo), and this dataset lists
+        # the labels sidecar alongside the fit, so CACHE_LABELS lands next to
+        # CACHE_FIT as part of the same call.
+        try:
+            precomputed = load_dataset_gsplats(DEMO_NAME, [FIT_FILE], recompute=False)
+        except FileNotFoundError as exc:
+            aprint(f"Manifest fetch unavailable ({exc}).")
+            precomputed = None
+        if precomputed is not None and CACHE_LABELS.exists():
+            return precomputed[0], _load_labels(CACHE_LABELS)
         if (
             LFS_FIT.exists()
             and LFS_LABELS.exists()

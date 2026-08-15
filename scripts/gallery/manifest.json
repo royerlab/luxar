@@ -69,12 +69,12 @@
       "readme": true
     },
     {
-      "id": "galaxy",
+      "id": "gaia_milky_way",
       "title": "Gaia Milky Way (3M stars)",
       "geometry": "points",
       "category": "astronomy",
       "script": "demo_gaia_milky_way_3m.py",
-      "dataset": "datasets/demos/galaxy.luxar.zarr",
+      "dataset": "datasets/demos/gaia_milky_way.luxar.zarr",
       "autoFrame": false,
       "autoExpose": false,
       "readme": true

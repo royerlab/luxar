@@ -113,14 +113,34 @@ export class DirectoryNavigator {
   private static readonly FETCH_TIMEOUT = 10000;
 
   /**
-   * Check if a path is a Zarr dataset by looking for .zgroup file.
+   * Check if a path is a Zarr dataset by looking for a root group document.
+   *
+   * Probes BOTH formats' documents concurrently: format 2 writes `.zgroup`,
+   * format 3 writes `zarr.json`. A dataset has exactly one of them, so probing
+   * only `.zgroup` — which was correct while everything was format 2 — makes
+   * every format-3 store fail to register as a dataset and vanish from the
+   * browser. Concurrent rather than sequential because these are HEAD requests
+   * against a directory listing the user is waiting on, and the miss costs a
+   * full round-trip on whichever format is asked second.
    */
   private async checkIfZarr(url: string): Promise<boolean> {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), DirectoryNavigator.FETCH_TIMEOUT);
     try {
-      const response = await fetch(url + '.zgroup', { method: 'HEAD', signal: controller.signal });
-      return response.ok;
+      const results = await Promise.all(
+        ['zarr.json', '.zgroup'].map(async (doc) => {
+          try {
+            const response = await fetch(url + doc, {
+              method: 'HEAD',
+              signal: controller.signal,
+            });
+            return response.ok;
+          } catch {
+            return false;
+          }
+        })
+      );
+      return results.some(Boolean);
     } catch {
       return false;
     } finally {

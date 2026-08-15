@@ -5,7 +5,6 @@ Also tests the config system (presets, YAML loading, dump) and volume loader.
 
 from __future__ import annotations
 
-import json
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -19,7 +18,11 @@ from typer.testing import CliRunner
 if TYPE_CHECKING:
     from luxar.gsplats.gsplat_data import GSplatData
 
-from luxar._zarr_compat import create_array
+import zarr
+
+from luxar._zarr_compat import consolidate as zc_consolidate
+from luxar._zarr_compat import create_array, read_array_meta, read_node_attrs
+from luxar._zarr_compat import open_group as zc_open_group
 from luxar.cli import app
 from luxar.cli.gsplat_config import (
     PRESETS,
@@ -5290,6 +5293,44 @@ class TestLODCommand:
             assert detect_store_encoding(out) == expected, mode
         assert detect_store_encoding(tmp_path / "nope.gsplats.zarr") is None
 
+    @pytest.mark.parametrize("fmt", [2, 3])
+    def test_detect_store_encoding_reads_both_on_disk_formats(
+        self, tmp_path: Path, fmt: int
+    ) -> None:
+        """The classifier must read a store written in EITHER on-disk format.
+
+        Its first implementation globbed for the format-2 ``.zattrs`` document by
+        name, which matches nothing in a format-3 store — and the miss was
+        invisible, because "found no encoding attrs" is spelled ``None``, the
+        same perfectly ordinary value a zip archive returns. Callers read that as
+        "unclassifiable, don't assume a mode" and carried on. Pinning BOTH
+        formats is what makes the failure loud; the default-format test above
+        only ever exercises whichever format is current.
+        """
+        import luxar._zarr_compat as zc
+        from luxar.cli.gsplat_ops.recipe_shared import detect_store_encoding
+        from luxar.encoding import EncodingMode
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        rng = np.random.default_rng(1)
+        n = 16
+        data = GSplatData(
+            centers=(rng.random((n, 3)) * 10).astype(np.float32),
+            amplitudes=rng.random(n).astype(np.float32),
+            cholesky_factors=(rng.random((n, 6)) * 0.5 + 0.5).astype(np.float32),
+        )
+        original = zc.ZARR_FORMAT
+        zc.set_zarr_format(fmt)
+        try:
+            out = tmp_path / "store.gsplats.zarr"
+            data.save(out, encoding_mode=EncodingMode.MEMORY)
+            # The store really is in the format under test — otherwise this
+            # would pass for the wrong reason.
+            assert (out / "zarr.json").exists() == (fmt == 3)
+            assert detect_store_encoding(out) == "memory"
+        finally:
+            zc.set_zarr_format(original)
+
     def test_detect_store_encoding_escalated_legacy_and_certified_f32(
         self, tmp_path: Path
     ) -> None:
@@ -5297,7 +5338,6 @@ class TestLODCommand:
         certificate) and a LEGACY pre-certificate AUTO store (bare u16) both
         classify as "auto"; a certified-float32 store (the f32 rung) is "auto"
         while bare float32 stays "precision"."""
-        import json
 
         from luxar.cli.gsplat_ops.recipe_shared import detect_store_encoding
         from luxar.gsplats.gsplat_data import GSplatData
@@ -5314,20 +5354,27 @@ class TestLODCommand:
         out = tmp_path / "escalated.gsplats.zarr"
         with pytest.warns(UserWarning, match="escalating to uint16"):
             data.save(out)
-        zattrs = next(out.rglob("cholesky_factors_diag/.zattrs"))
-        enc = json.loads(zattrs.read_text())["encoding"]
+        # Locate the array by DIRECTORY and mutate through zarr's own attrs
+        # writer: the two formats keep attributes in different places
+        # (`.zattrs` vs inside `zarr.json`), so hand-editing one of them only
+        # edits the store that happens to be in that format.
+        chol_dir = next(
+            d
+            for d in out.rglob("cholesky_factors_diag")
+            if read_array_meta(d) is not None
+        )
+        chol = zarr.open_array(str(chol_dir), mode="r+")
+        enc = dict(chol.attrs["encoding"])
         assert enc["name"] == "log_perchannel_u16"  # really escalated
         assert detect_store_encoding(out) == "auto"  # u16 (certified) → auto
 
         # Legacy pre-certificate AUTO store: bare u16, no certificate key.
-        attrs = json.loads(zattrs.read_text())
-        del attrs["encoding"]["certificate"]
-        zattrs.write_text(json.dumps(attrs))
+        chol.attrs["encoding"] = {k: v for k, v in enc.items() if k != "certificate"}
         assert detect_store_encoding(out) == "auto"  # bare u16 (legacy) → auto
 
         # Certified float32 (the practically-unreachable f32 rung): auto, not
         # precision — the certificate key is the discriminator.
-        attrs["encoding"] = {
+        chol.attrs["encoding"] = {
             "name": "float32",
             "original_dtype": "float32",
             "certificate": {
@@ -5337,7 +5384,6 @@ class TestLODCommand:
                 "tier": "float32",
             },
         }
-        zattrs.write_text(json.dumps(attrs))
         assert detect_store_encoding(out) == "auto"
 
     def test_lod_target_ms_and_breakpoints_mutually_exclusive(
@@ -5551,7 +5597,7 @@ class TestLODCarriesAuthoredAppearance:
             app, ["gsplat", "lod", str(medium_gsplats), str(out), "--recipe", "stream"]
         )
         assert result.exit_code == 0, f"failed:\n{result.stdout}"
-        got = json.loads((out / ".zattrs").read_text())
+        got = self._root_attrs(out)
         # Not carried at all — the rebuild leaves the attr alone rather than
         # writing a re-transposed (wrong) one.
         assert "transform" not in got
@@ -5559,16 +5605,42 @@ class TestLODCarriesAuthoredAppearance:
         assert got["blending_mode"] == "volumetric"
 
     @staticmethod
-    def _authored_input(src: Path, authored: dict[str, Any]) -> None:
-        """Stamp ``authored`` onto an existing store's root, dropping .zmetadata.
+    def _root_attrs(store: Path) -> dict[str, Any]:
+        """A store root's attributes, whichever format wrote it.
 
-        Consolidated metadata SHADOWS per-node ``.zattrs``, so a stale copy would
-        make the reader see the pre-edit attrs.
+        Format 2 keeps them in ``.zattrs``, format 3 nests them inside
+        ``zarr.json`` — so naming either document reads nothing at all on the
+        other format. ``None`` means "no readable node here", which is a test
+        failure rather than "no attributes".
         """
-        attrs = json.loads((src / ".zattrs").read_text())
-        attrs.update(authored)
-        (src / ".zattrs").write_text(json.dumps(attrs))
-        (src / ".zmetadata").unlink(missing_ok=True)
+        attrs = read_node_attrs(store)
+        assert attrs is not None, f"no readable zarr node at {store}"
+        return attrs
+
+    @staticmethod
+    def _authored_input(src: Path, authored: dict[str, Any]) -> None:
+        """Stamp ``authored`` onto an existing store's root.
+
+        Edited through the facade rather than by writing the attributes
+        document directly. That is not merely a portability nicety: the
+        consolidated index SHADOWS per-node attributes, so the edit has to
+        reach the index too. Hand-editing dealt with that by deleting
+        ``.zmetadata``, which only exists at format 2 — at format 3 the index
+        is embedded in the root document, so the unlink was a silent no-op and
+        the reader kept serving pre-edit attrs.
+
+        Re-consolidating through the facade is also what keeps exactly ONE
+        index, at the root; re-opening with plain ``zarr.open_group`` would
+        write the stale in-memory tree back out as a nested one.
+
+        Re-consolidating rather than deleting is what leaves the fixture store
+        self-CONSISTENT: the index now agrees with the edit, so a consumer that
+        opens it consolidated sees the authored value too, instead of just
+        losing the index the writers all assume is there.
+        """
+        group = zc_open_group(src, mode="r+")
+        group.attrs.update(authored)
+        zc_consolidate(group)
 
     #: Rewriting commands that must pass appearance through, as
     #: ``label -> extra argv after (input, output)``.
@@ -5613,10 +5685,84 @@ class TestLODCarriesAuthoredAppearance:
             app, [argv[0], argv[1], str(medium_gsplats), str(out), *argv[2:]]
         )
         assert result.exit_code == 0, f"{label} failed:\n{result.stdout}"
-        got = json.loads((out / ".zattrs").read_text())
+        got = self._root_attrs(out)
         for key, want in self.AUTHORED.items():
             assert key in got, f"{label}: dropped {key!r} (had {want!r})"
             assert got[key] == want, f"{label}: {key} = {got[key]!r}, want {want!r}"
+
+    @staticmethod
+    def _authored_archive(src: Path, out: Path, authored: dict[str, Any]) -> None:
+        """Re-save ``src`` as a compressed archive whose ROOT carries ``authored``."""
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        compress = "zip" if out.name.endswith(".zip") else "tar.gz"
+        GSplatData.load(src).save(out, compress=compress, root_attrs=authored)
+
+    @staticmethod
+    def _archive_root_attrs(archive: Path) -> dict[str, Any]:
+        """Root attrs of an archive, obtained by actually EXTRACTING it.
+
+        Deliberately not the peek helper the fix added: the "is this test even
+        exercising anything" guard below has to be able to DISAGREE with the code
+        under test, so it takes the long way round. Reading the extracted root
+        through ``read_node_attrs`` keeps that independence — it is the facade's
+        document reader, not the appearance path under test — while staying
+        correct for whichever format wrote the archive.
+        """
+        import shutil
+
+        from luxar.gsplats.io._archive import extract_compressed_zarr
+
+        extracted = extract_compressed_zarr(archive)
+        try:
+            attrs = read_node_attrs(extracted)
+            assert attrs is not None, f"no readable zarr node in {archive}"
+            return attrs
+        finally:
+            shutil.rmtree(extracted.parent, ignore_errors=True)
+
+    @pytest.mark.parametrize("recipe", ["levels", "stream"])
+    @pytest.mark.parametrize("suffix", ["zip", "tar.gz"])
+    def test_authored_appearance_survives_an_archive_input(
+        self,
+        runner: CliRunner,
+        medium_gsplats: Path,
+        tmp_path: Path,
+        suffix: str,
+        recipe: str,
+    ) -> None:
+        """An ARCHIVE input carries its appearance across too (#1604).
+
+        ``.gsplats.zarr.zip`` / ``.tar.gz`` are first-class recipe inputs — the
+        loader extracts them transparently — but the appearance read bailed on
+        anything that was not a directory, so an archived dataset lost every
+        authored value on a rebuild while the identical directory kept them. Both
+        suffixes run because they take separate extraction paths, and both a
+        GROUP-rooted recipe (``levels``, whose caller attrs are copied onto the
+        root verbatim) and a LEAF-rooted one (``stream``, whose attrs go through
+        ``apply_gsplat_group_attrs``) because those are two different write paths.
+        """
+        archive = tmp_path / f"authored.gsplats.zarr.{suffix}"
+        self._authored_archive(medium_gsplats, archive, self.AUTHORED)
+        # Not vacuous: the INPUT archive really does carry every authored value.
+        in_attrs = self._archive_root_attrs(archive)
+        for key, want in self.AUTHORED.items():
+            assert in_attrs.get(key) == want, (
+                f"input archive lacks {key!r}: got {in_attrs.get(key)!r}, "
+                f"want {want!r} — the test would pass vacuously"
+            )
+
+        tag = f"{suffix.replace('.', '_')}_{recipe}"
+        out = tmp_path / f"carried_{tag}.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            ["gsplat", "lod", str(archive), str(out), "--recipe", recipe],
+        )
+        assert result.exit_code == 0, f"failed:\n{result.stdout}"
+        got = self._root_attrs(out)
+        for key, want in self.AUTHORED.items():
+            assert key in got, f"{tag}: dropped {key!r} (had {want!r})"
+            assert got[key] == want, f"{tag}: {key} = {got[key]!r}, want {want!r}"
 
     def test_carry_invents_nothing(
         self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
@@ -5633,14 +5779,14 @@ class TestLODCarriesAuthoredAppearance:
         Echoing those is correct and composes to a no-op, so the assertion is
         input-vs-output equality rather than plain absence.
         """
-        before = json.loads((medium_gsplats / ".zattrs").read_text())
+        before = self._root_attrs(medium_gsplats)
         out = tmp_path / "bare.gsplats.zarr"
         result = runner.invoke(
             app,
             ["gsplat", "lod", str(medium_gsplats), str(out), "--recipe", "adaptive"],
         )
         assert result.exit_code == 0, f"failed:\n{result.stdout}"
-        got = json.loads((out / ".zattrs").read_text())
+        got = self._root_attrs(out)
         for key in self.AUTHORED:
             assert (key in got) == (key in before), (
                 f"{key}: presence changed (input={key in before}, output={key in got})"
@@ -5684,7 +5830,7 @@ class TestLODCarriesAuthoredAppearance:
                 "blending_mode": "volumetric",
             },
         )
-        got = json.loads((out / ".zattrs").read_text())
+        got = self._root_attrs(out)
         assert got["kind"] == "lod"
         assert got["type"] == "group"
         assert got["blending_mode"] == "volumetric"
@@ -6133,7 +6279,7 @@ class TestMigrateFormatCommand:
         create_array(splats, "amplitudes", data=rng.random(n).astype("float32"))
         create_array(splats, "cholesky_factors", data=self._identity_chol(n))
         create_array(splats, "chunk_bounds", data=np.zeros((1, 3, 2), dtype="float32"))
-        zarr.consolidate_metadata(store)
+        zc_consolidate(store)
 
     def _make_v1_1(self, path: Path, lod_sizes=(6, 3)) -> None:
         import numpy as np
@@ -6168,7 +6314,7 @@ class TestMigrateFormatCommand:
             create_array(lod, "amplitudes", data=rng.random(n).astype("float32"))
             create_array(lod, "cholesky_factors", data=self._identity_chol(n))
             create_array(lod, "chunk_bounds", data=np.zeros((1, 3, 2), dtype="float32"))
-        zarr.consolidate_metadata(store)
+        zc_consolidate(store)
 
     def _make_sub_dir(self, dir_path: Path, level_sizes=(16, 4, 1)) -> None:
         import json
@@ -6455,16 +6601,20 @@ class TestAxesThreadingAndSqueeze:
 def _chol_base(path: Path) -> Path:
     """Return the group holding the Cholesky arrays (leaf root or child_0)."""
     for base in (path, path / "child_0"):
-        if (base / "cholesky_factors_diag" / ".zarray").exists():
+        if read_array_meta(base / "cholesky_factors_diag") is not None:
             return base
     raise AssertionError(f"no split-Cholesky arrays under {path}")
 
 
 def _diag_dtype(path: Path) -> str:
-    import json
+    """The diag array's dtype as a NUMPY name (``uint8``, ``float32``).
 
+    Read through zarr rather than off the metadata document: the two formats
+    spell the field differently (`dtype: "|u1"` vs `data_type: "uint8"`), and
+    the numpy name is what the assertions actually mean.
+    """
     base = _chol_base(path)
-    return json.load(open(base / "cholesky_factors_diag" / ".zarray"))["dtype"]
+    return str(zarr.open_array(str(base / "cholesky_factors_diag"), mode="r").dtype)
 
 
 def _varying_gsplats(path: Path, n: int = 300, d: int = 3) -> Path:
@@ -6494,18 +6644,18 @@ class TestReencode:
     def test_memory_encoding_yields_uint8(
         self, runner: CliRunner, tmp_path: Path
     ) -> None:
-        # memory encoding must store the Cholesky diag as uint8 (|u1). The
-        # source is saved PRECISION (float32), so the encoding demonstrably
-        # changes regardless of what the adaptive AUTO ladder would pick.
+        # memory encoding must store the Cholesky diag as uint8. The source is
+        # saved PRECISION (float32), so the encoding demonstrably changes
+        # regardless of what the adaptive AUTO ladder would pick.
         src = _varying_gsplats(tmp_path / "src.gsplats.zarr")
         src_dtype = _diag_dtype(src)
-        assert src_dtype == "<f4"
+        assert src_dtype == "float32"
         out = tmp_path / "u8.gsplats.zarr"
         result = runner.invoke(
             app, ["gsplat", "reencode", str(src), str(out), "-e", "memory"]
         )
         assert result.exit_code == 0, result.output
-        assert _diag_dtype(out) == "|u1"
+        assert _diag_dtype(out) == "uint8"
         assert _diag_dtype(out) != src_dtype  # the encoding actually changed
 
     def test_precision_encoding_yields_float32(
@@ -6517,7 +6667,7 @@ class TestReencode:
             ["gsplat", "reencode", str(sample_gsplats), str(out), "-e", "precision"],
         )
         assert result.exit_code == 0, result.output
-        assert _diag_dtype(out) == "<f4"
+        assert _diag_dtype(out) == "float32"
 
     def test_reencode_preserves_splat_count_and_geometry(
         self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
@@ -6776,3 +6926,267 @@ class TestInfoVolumeTruncation:
         r = runner.invoke(app, ["gsplat", "info", str(path)])
         assert r.exit_code == 0, f"failed:\n{r.stdout}"
         assert "Volume Distribution (2.75σ)" in _plain(r.stdout)
+
+
+class TestParallelTiledDownscaleFactorsThreading:
+    """The grid→splat scale must reach the merge (issue #1587).
+
+    ``dispatch_parallel_tiled`` deliberately computes its tile grid on the
+    POST-downscale shape while every worker rescales its splats back to full
+    resolution — and, with a ``voxel_size``, emits physical coordinates on top
+    of that.  The merge builds the partition's split planes from that grid, so
+    it needs the PRODUCT of both factors to state them in the splats' own
+    frame — otherwise every plane is a factor too small and the viewer's
+    back-to-front part ordering (#1555) is computed against planes that
+    separate nothing.
+
+    Patched at the ``fit_tiled_parallel`` boundary: the real typer command,
+    volume load, tiling resolution and grid math all run.
+    """
+
+    @staticmethod
+    def _volume(path: Path) -> None:
+        v = np.zeros((48, 48), np.float32)
+        yy, xx = np.ogrid[:48, :48]
+        for cy, cx in [(12, 12), (36, 36), (12, 36), (36, 12)]:
+            v += np.exp(-((yy - cy) ** 2 + (xx - cx) ** 2) / 20.0).astype(np.float32)
+        np.save(path, v)
+
+    @staticmethod
+    def _one_splat_result() -> "GSplatData":
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        chol = np.zeros((1, 3), dtype=np.float32)  # packed 2D: [l00, l10, l11]
+        chol[0, 0] = chol[0, 2] = 1.0
+        return GSplatData(
+            centers=np.full((1, 2), 1.0, dtype=np.float32),
+            amplitudes=np.ones((1,), dtype=np.float32),
+            cholesky_factors=chol,
+            stats={"time_seconds": 0.0},
+        )
+
+    def _run(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        extra: "list[str]",
+        case: str,
+    ) -> "dict[str, Any]":
+        pytest.importorskip("torch", reason="the fit CLI imports the torch fitter")
+        captured: dict[str, Any] = {}
+
+        def _fake_parallel(**kwargs: Any) -> "GSplatData":
+            captured.update(kwargs)
+            return self._one_splat_result()
+
+        monkeypatch.setattr(
+            "luxar.gsplats.fit_tiled_parallel.fit_tiled_parallel", _fake_parallel
+        )
+        vol = tmp_path / "vol.npy"
+        self._volume(vol)
+        # An explicit per-case output name: deriving it from the arguments
+        # would silently collide the moment two cases pass the same count.
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "fit",
+                str(vol),
+                str(tmp_path / f"out_{case}.gsplats.zarr"),
+                "--tiling",
+                "uniform",
+                "--tile-size",
+                "24",
+                "--overlap",
+                "4",
+                "-j",
+                "2",
+                "--seeds",
+                "10",
+                "--device",
+                "cpu",
+                *extra,
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert captured, "fit_tiled_parallel was never reached"
+        return captured
+
+    def test_downscale_factors_reach_the_merge(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """ANISOTROPIC on purpose: an axis transposition anywhere in the chain
+        would survive the isotropic spelling."""
+        captured = self._run(
+            runner, tmp_path, monkeypatch, ["--downscale", "1,2"], "aniso"
+        )
+        # The grid IS in downscaled voxels, per axis (48 -> 48, 48 -> 24)...
+        assert captured["volume_shape"] == (48, 24)
+        # ...so the factors that lift it back must travel with it, in that
+        # same axis order.
+        assert captured["grid_scale"] == (1.0, 2.0)
+
+    def test_no_downscale_threads_no_factors(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Without ``--downscale`` the two frames already agree — no factors."""
+        captured = self._run(runner, tmp_path, monkeypatch, [], "plain")
+        assert captured["volume_shape"] == (48, 48)
+        assert captured["grid_scale"] is None
+
+    def test_voxel_size_composes_with_the_downscale_factors(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A ``voxel_size`` from ``--config`` moves the workers' splats too, and
+        the two terms MULTIPLY (issue #1587)."""
+        config = tmp_path / "fit.yaml"
+        config.write_text("voxel_size: [4.0, 1.0]\noutput_space: real\n")
+        captured = self._run(
+            runner,
+            tmp_path,
+            monkeypatch,
+            ["--downscale", "1,2", "--config", str(config)],
+            "voxel_size",
+        )
+        assert captured["volume_shape"] == (48, 24)
+        assert captured["grid_scale"] == (4.0, 2.0)
+
+    def test_voxel_output_space_drops_the_voxel_size_term(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """With ``output_space: voxel`` the centers stay in voxels, so only the
+        downscale factors apply."""
+        config = tmp_path / "fit_voxel.yaml"
+        config.write_text("voxel_size: [4.0, 1.0]\noutput_space: voxel\n")
+        captured = self._run(
+            runner,
+            tmp_path,
+            monkeypatch,
+            ["--downscale", "1,2", "--config", str(config)],
+            "voxel_space",
+        )
+        assert captured["grid_scale"] == (1.0, 2.0)
+
+
+class TestRefineVolumeRejectsARescaledFrame:
+    """``--refine volume`` needs the tile grid and the splats in ONE frame.
+
+    A per-part volume re-fit crops the source to the part's own ``bsp_tree``
+    cell and uses that cell as VOXEL INDICES. A real-space ``voxel_size``
+    breaks that exactly as ``--downscale`` does (and was already refused for):
+    the grid is in voxels while the splats are in physical units, so every crop
+    lands a factor off. Refused up front, in the same voice — the sequential
+    partition path reaches this with no ``--downscale`` anywhere in sight
+    (#1587).
+    """
+
+    @staticmethod
+    def _volume(path: Path) -> None:
+        v = np.zeros((48, 48), np.float32)
+        yy, xx = np.ogrid[:48, :48]
+        for cy, cx in [(12, 12), (36, 36), (12, 36), (36, 12)]:
+            v += np.exp(-((yy - cy) ** 2 + (xx - cx) ** 2) / 20.0).astype(np.float32)
+        np.save(path, v)
+
+    def _invoke(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        config_text: str,
+        case: str,
+        extra: "list[str]" = [],
+    ) -> "Any":
+        pytest.importorskip("torch", reason="the fit CLI imports the torch fitter")
+        vol = tmp_path / "vol.npy"
+        self._volume(vol)
+        config = tmp_path / f"{case}.yaml"
+        config.write_text(config_text)
+        out = tmp_path / f"out_{case}.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "fit",
+                str(vol),
+                str(out),
+                "--tiling",
+                "uniform",
+                "--tile-size",
+                "24",
+                "--overlap",
+                "4",
+                "--seeds",
+                "10",
+                "--iters",
+                "3",
+                "--recipe",
+                "levels",
+                "--refine",
+                "volume",
+                "--config",
+                str(config),
+                "--device",
+                "cpu",
+                *extra,
+            ],
+        )
+        return result, out
+
+    def test_a_real_space_voxel_size_is_refused_on_the_sequential_path(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        result, out = self._invoke(runner, tmp_path, "voxel_size: [4.0, 1.0]\n", "real")
+        assert result.exit_code != 0, result.output
+        plain = _plain(result.output)
+        assert "--refine volume" in plain and "voxel_size" in plain
+        # Refused BEFORE any fitting, like its --downscale sibling.
+        assert not out.exists()
+
+    def _run_past_the_guard(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        config_text: str,
+        case: str,
+    ) -> None:
+        """Assert the guard does NOT fire for ``config_text``.
+
+        Runs the parallel branch with the merge stubbed out, so the assertion is
+        "the fit started", not a real (slow) fit.
+        """
+        reached: dict[str, Any] = {}
+
+        def _fake_parallel(**kwargs: Any) -> Any:
+            reached.update(kwargs)
+            return TestParallelTiledDownscaleFactorsThreading._one_splat_result()
+
+        monkeypatch.setattr(
+            "luxar.gsplats.fit_tiled_parallel.fit_tiled_parallel", _fake_parallel
+        )
+        result, _ = self._invoke(runner, tmp_path, config_text, case, extra=["-j", "2"])
+        assert result.exit_code == 0, result.output
+        assert reached, "the fit never started — the guard fired anyway"
+
+    def test_output_space_voxel_is_not_refused(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Non-vacuity control: the guard is value-scoped, not a blanket ban on
+        ``voxel_size``. With ``output_space: voxel`` the centers stay in voxels,
+        so the grid and the splats already agree and the fit must proceed."""
+        self._run_past_the_guard(
+            runner,
+            tmp_path,
+            monkeypatch,
+            "voxel_size: [4.0, 1.0]\noutput_space: voxel\n",
+            "voxelspace",
+        )
+
+    def test_a_unit_voxel_size_is_not_refused(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A spacing of 1 is an identity, not a frame change."""
+        self._run_past_the_guard(
+            runner, tmp_path, monkeypatch, "voxel_size: 1.0\n", "unit"
+        )

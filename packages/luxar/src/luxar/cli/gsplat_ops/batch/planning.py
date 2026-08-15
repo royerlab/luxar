@@ -710,6 +710,74 @@ def _validate_merge_refine_source(
         raise typer.BadParameter(f"--merge-refine volume: {problem}")
 
 
+def _validate_merge_refine_frame(
+    merge: MergeConfig, grid_scale: Optional[List[float]]
+) -> None:
+    """Refuse a planned merge-time volume re-fit whose crops would be mis-framed.
+
+    The second half of the same fail-fast pair as
+    :func:`_validate_merge_refine_source`: that one asks whether the source's
+    AXES can be mapped, this one whether its COORDINATES can. A per-part re-fit
+    reads the part's ``bsp_tree`` cell as VOXEL INDICES into the source, so a
+    ``grid_scale`` (a ``voxel_size`` / ``downscale`` in the run's ``--config``)
+    puts every crop a factor off — exactly the reason ``gsplat fit`` refuses
+    ``--refine volume`` under the same conditions
+    (:func:`~luxar.cli.gsplat_ops.fitting.fit_utils.reject_rescaled_volume_refit`).
+    Checked at plan time so a typo costs nothing; the merge front door checks it
+    again off the same recorded factor.
+    """
+    if (merge.refine or "").strip() != "volume":
+        return
+    from luxar.gsplats.batch.merge_orchestrator import volume_refit_frame_error
+
+    problem = volume_refit_frame_error(grid_scale)
+    if problem:
+        raise typer.BadParameter(f"--merge-refine volume: {problem}")
+
+
+def resolve_uniform_grid_scale(fit: FitConfig, ndim: int) -> Optional[List[float]]:
+    """The frame factor to record on the manifest for a uniform batch (#1587).
+
+    Resolved HERE, at plan time, because this is where the workers' merged fit
+    config is in hand: every array task is a ``fit --tile k/M`` run with this
+    run's ``--preset`` and (verbatim) its ``--config``, so a ``voxel_size`` /
+    ``downscale`` in that config moves the tasks' splats out of the manifest's
+    voxel tile grid. Doing it at MERGE time instead would mean re-reading a YAML
+    that may have moved (planes silently dropped) or been replaced by an
+    unrelated same-named file (planes silently wrong), and would put a
+    ``luxar.cli`` import inside ``luxar.gsplats``.
+
+    Returns the per-axis factor, or ``None`` when the two frames already agree
+    (the common case — recorded as an absent ``grid_scale``). Raises
+    :class:`typer.BadParameter` when the config cannot be read or holds a frame
+    the resolver refuses: at plan time the user is still here to fix it.
+    """
+    from luxar.cli.gsplat_config import load_fit_config
+    from luxar.gsplats.tiling import resolve_grid_scale
+
+    try:
+        config = load_fit_config(preset=fit.preset, config_path=fit.config)
+    except Exception as exc:
+        raise typer.BadParameter(
+            f"could not read the fit config for this run (--preset "
+            f"{fit.preset!r}, --config {str(fit.config) if fit.config else None!r}): "
+            f"{exc}"
+        ) from exc
+    try:
+        scale = resolve_grid_scale(
+            ndim,
+            downscale_factors=config.get("downscale"),
+            voxel_size=config.get("voxel_size"),
+            output_space=config.get("output_space", "real"),
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(
+            f"the fit config for this run states a coordinate frame the tile "
+            f"grid cannot be reconciled with: {exc}"
+        ) from exc
+    return list(scale) if scale is not None else None
+
+
 def resolve_merge_recipe_args(
     merge: MergeConfig, *, merged_ndim: int = 4, merged_has_colors: bool = False
 ) -> dict:
@@ -882,7 +950,11 @@ def _assemble_fit_args(
     if fit.iters is not None:
         fit_args["iters"] = str(fit.iters)
     if fit.config:
-        fit_args["config"] = str(fit.config)
+        # Resolved like every other path on the manifest (input_path, output_dir,
+        # plan_path, denoised_zarr_path): this string is handed to workers that
+        # run from a Slurm job's own working directory, so a relative spelling
+        # would resolve against the wrong CWD (or an unrelated same-named file).
+        fit_args["config"] = str(fit.config.resolve())
     # NOTE: no "floor" here on purpose — `_resolve_and_record_floor` is the ONE
     # writer of that key (it forwards the resolved LEVEL, not the spec, #1174).
     if fit.progressive:
@@ -1078,6 +1150,16 @@ def plan_batch(
 
     rep_c = c_indices[0]
 
+    # The frame the tasks will emit in, resolved once and recorded on the
+    # manifest for the merge (#1587). Uniform only: a content merge takes its
+    # split planes from the shared plan's own boxes, not from a rebuilt grid.
+    # Ahead of the floor resolution below because it reads only the fit config:
+    # a frame the merge cannot reconcile fails before any voxel is sampled.
+    grid_scale = (
+        resolve_uniform_grid_scale(fit, len(spatial)) if mode != "content" else None
+    )
+    _validate_merge_refine_frame(merge, grid_scale)
+
     # 3a. Background floor: ONE level for the whole timelapse, resolved here and
     # recorded in the manifest, so no task re-estimates its own (#1174). The
     # basis is a bounded set of evenly spaced (t, c) slices spanning the store's
@@ -1258,6 +1340,7 @@ def plan_batch(
         preset=fit.preset,
         fit_args=fit_args,
         floor_level=recorded_floor_level,
+        grid_scale=grid_scale,
         gpu_name=resolved_gpu,
         estimated_seconds_per_task=est_seconds,
         timepoint_indices=t_indices if timepoints_slice else None,

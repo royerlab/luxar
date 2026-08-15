@@ -41,6 +41,9 @@ config/
 │                                  #   Settings-popover model; live values mutate config, startup
 │                                  #   values thread through bootstrap (URL params always win)
 ├── constants.ts                   # WASM ABI constants
+├── cinematic-preset.ts            # Cinematic-mode preset values — shared by the C-key toggle
+│                                  #   (ui/rendering-controls/cinematic-mode.ts, which re-exports
+│                                  #   them) and the zarr bridge's cinematic_mode expansion
 ├── sections/
 │   ├── camera/             {data,types,validate}.ts
 │   ├── animation/          {data,types}.ts
@@ -195,7 +198,7 @@ renderingControls: {
     msaaEnabled: false,         // Incompatible with additive blending
     msaaSamples: 4,
     ssaaEnabled: false,
-    toneMapping: 'ACES',        // Default; use 'Neutral' for exact colormap-LUT fidelity
+    toneMapping: 'ACES',        // Default; use 'None' for exact colormap-LUT fidelity inside [0, 1]
     // Detector noise (physics-based: Poisson + Gaussian + FPN)
     detectorNoiseEnabled: false,
     detectorNoiseReadoutSigma: 0.002,  // Temporal readout noise

@@ -148,7 +148,7 @@ from arbol import Arbol, aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.demos import (
     launch_viewer,
-    load_precomputed_gsplats,
+    load_dataset_gsplats,
     parse_demo_flags,
     require_module,
     warn_if_no_cuda_gpu,
@@ -549,8 +549,8 @@ def main():
             aprint(f"No scene found at {output_path}. Run without --serve-only first.")
         return
 
-    # Try loading precomputed data from Git LFS / local cache
-    gsplats_list = load_precomputed_gsplats(
+    # Try the manifest-driven fetch (checksum-verified cache -> in-repo -> Zenodo)
+    gsplats_list = load_dataset_gsplats(
         _PRECOMPUTED_DEMO_NAME,
         _PRECOMPUTED_FILE_NAMES,
         recompute=RECOMPUTE,

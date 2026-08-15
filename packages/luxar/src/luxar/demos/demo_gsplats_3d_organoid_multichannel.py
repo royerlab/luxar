@@ -122,7 +122,7 @@ from luxar import Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import (
     launch_viewer,
-    load_precomputed_gsplats,
+    load_dataset_gsplats,
     parse_demo_flags,
     warn_if_no_cuda_gpu,
 )
@@ -523,8 +523,8 @@ def main():
             aprint("Run without --serve-only to generate first")
             return
 
-    # Try loading precomputed data (from Git LFS / local cache)
-    precomputed = load_precomputed_gsplats(
+    # Try the manifest-driven fetch (checksum-verified cache -> in-repo -> Zenodo)
+    precomputed = load_dataset_gsplats(
         "gsplats_multichannel",
         [
             "organoids_ch0.gsplats.zarr.zip",
