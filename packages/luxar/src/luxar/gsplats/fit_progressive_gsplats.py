@@ -69,7 +69,10 @@ import numpy as np
 import torch
 from arbol import aprint, asection
 
-from luxar.gsplats.fitting.results import SOURCE_GRID_VOLUME_KEYS
+from luxar.gsplats.fitting.results import (
+    lift_source_grid_stats,
+    stamp_voxels_per_splat,
+)
 from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData
 from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
 
@@ -563,12 +566,9 @@ def fit_progressive_gaussian_splats(
     # how the progressive demos came to have no compression figure at all.
     #
     # `voxels_per_splat` is deliberately NOT copied: it is a ratio against one
-    # pass's splat count, and the merged result has all of them.
-    if accumulated_lods:
-        first_pass = accumulated_lods[0].stats
-        for key in SOURCE_GRID_VOLUME_KEYS:
-            if key in first_pass:
-                overall_stats[key] = first_pass[key]
+    # pass's splat count, and the merged result has all of them — it is stamped
+    # below instead, after the cull.
+    lift_source_grid_stats(overall_stats, accumulated_lods)
     final_result = GSplatData.from_additive_sublods(
         accumulated_lods, stats=overall_stats
     )
@@ -617,15 +617,11 @@ def fit_progressive_gaussian_splats(
                 f"(removed {n_removed}, {100.0 * n_removed / n_before:.1f}%)"
             )
 
-    # Density is quoted against the splats actually DELIVERED, so it is computed
+    # Density is quoted against the splats actually DELIVERED, so it is stamped
     # here rather than beside the other source-grid stamps above: the post-fit
     # cull runs in between, and the pre-cull count would overstate how much of
     # the volume each surviving splat stands for.
-    fitted_voxels = final_result.stats.get("fitted_voxels")
-    if fitted_voxels and final_result.n_splats:
-        final_result.stats["voxels_per_splat"] = float(
-            fitted_voxels / final_result.n_splats
-        )
+    stamp_voxels_per_splat(final_result.stats, final_result.n_splats)
 
     # Collapse per-pass LODs into a single flattened LOD.  The pass-by-pass
     # accumulation is an internal implementation detail; callers that want

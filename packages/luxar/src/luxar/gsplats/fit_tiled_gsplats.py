@@ -20,6 +20,7 @@ from arbol import aprint, asection
 
 from luxar.gsplats.fit_gsplats import fit_gaussian_splats
 from luxar.gsplats.fitting.preprocessing import resolve_volume_floor
+from luxar.gsplats.fitting.results import stamp_voxels_per_splat
 from luxar.gsplats.fitting.validation import _validate_floor
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.tiling import (
@@ -259,6 +260,14 @@ def _tiled_source_grid_stats(
 
     declared = _explicit_source_shape(source_shape)
     dtype, itemsize = source_dtype, source_itemsize
+    if itemsize is None and dtype:
+        # A caller holding only the dtype NAME (the parallel orchestrator, whose
+        # volume lives in the worker subprocesses) still gets a byte count: no
+        # size means no compression ratio at all in `info`.
+        try:
+            itemsize = int(np.dtype(dtype).itemsize)
+        except TypeError:  # an unrecognized dtype name — record it without a size
+            itemsize = None
 
     shape = [int(x) for x in (declared if declared else volume_shape)]
     voxels = int(np.prod(shape)) if shape else 0
@@ -344,6 +353,17 @@ def fit_tiled(
         splats that account for this fraction of total amplitude (0--1).
         Per-tile culling is disabled automatically; only the merged result
         is culled.  Set to ``None`` to disable.
+    source_shape : sequence of int, optional
+        Grid of the ACQUISITION, when ``volume`` is already a preprocessed copy
+        of it — a caller that decimated before tiling must declare it, or the
+        merged result records the working copy as its source and the compression
+        ratio is quoted against a grid the data never had. ``None`` measures
+        ``volume`` itself, which is right whenever nothing was preprocessed.
+    source_dtype : str, optional
+        Element type the volume was STORED in, for the same reason as in
+        :func:`~luxar.gsplats.fit_gsplats.fit_gaussian_splats`. Applied to the
+        MERGED result rather than forwarded to the tiles: a tile would use it to
+        describe its own crop.
     **fit_kwargs
         All other keyword arguments forwarded to the per-tile fitting function
         (e.g. ``seeds``, ``n_iters``, ``preset``, ``device``,
@@ -531,6 +551,16 @@ def merge_tile_results(
         (:func:`~luxar.gsplats.tiling.grid_bsp_tree`), which would otherwise be
         a factor too small and would no longer separate the parts they label.
         ``None`` when the grid and the splats share one frame.
+    source_shape, source_dtype, source_itemsize : optional
+        What the merged result is a representation of, stamped by
+        :func:`_tiled_source_grid_stats` — no tile can say, since each was handed
+        a crop. ``source_shape`` is for a caller that decimated before tiling
+        (``volume_shape`` is then the fitted grid, not the acquisition); the
+        dtype/itemsize are the element type the volume was STORED in, without
+        which no compression ratio can be quoted. Only the flat merge carries
+        them: a ``partition=True`` tree has nowhere to persist fit stats (the
+        writer takes them from a flat leaf's ``stats``), which is also why
+        ``applied_floor`` above is in-memory only there.
 
     Returns
     -------
@@ -657,9 +687,7 @@ def merge_tile_results(
 
     # Density counts the splats actually DELIVERED, so it is set after the cull
     # above rather than beside the other source-grid stamps.
-    fitted_voxels = merged.stats.get("fitted_voxels")
-    if fitted_voxels and merged.n_splats:
-        merged.stats["voxels_per_splat"] = float(fitted_voxels / merged.n_splats)
+    stamp_voxels_per_splat(merged.stats, merged.n_splats)
 
     return merged
 

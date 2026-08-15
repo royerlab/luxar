@@ -244,6 +244,37 @@ SOURCE_GRID_VOLUME_KEYS = (
 )
 
 
+def lift_source_grid_stats(dest: dict[str, Any], passes: "Sequence[Any]") -> None:
+    """Copy the source-grid stamps from a multi-pass fit's FIRST pass onto ``dest``.
+
+    Every pass of a progressive fit sees the same volume (later ones fit its
+    residual), so the first pass's record of that volume describes the fit as a
+    whole. Left in the per-pass stats it never reaches ``_FITTING_INFO_KEYS``, and
+    the dataset cannot say what it is a representation of.
+
+    ``passes`` are the accumulated sub-LODs, in order; an empty list is a no-op.
+    """
+    if not passes:
+        return
+    first = getattr(passes[0], "stats", None) or {}
+    for key in SOURCE_GRID_VOLUME_KEYS:
+        if key in first:
+            dest[key] = first[key]
+
+
+def stamp_voxels_per_splat(stats: dict[str, Any], n_splats: int) -> None:
+    """Quote density against the splats actually DELIVERED.
+
+    Called after any post-fit cull rather than beside the other source-grid
+    stamps: the pre-cull count would overstate how much of the volume each
+    surviving splat stands for, and it is the surviving ones that ship. A no-op
+    without a fitted grid to divide, or with nothing left to divide by.
+    """
+    fitted_voxels = stats.get("fitted_voxels")
+    if fitted_voxels and n_splats:
+        stats["voxels_per_splat"] = float(fitted_voxels / n_splats)
+
+
 def _source_grid_stats(
     config: FitConfig, preprocessed_data: PreprocessedData, n_splats: int
 ) -> dict[str, Any]:

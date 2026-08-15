@@ -169,3 +169,106 @@ def test_an_artifact_larger_than_its_source_is_not_reported_as_0_to_1(
     out = capsys.readouterr().out
     assert "Source volume: 8 x 8 x 8 uint16" in out, out
     assert "0.25:1" in out, out
+
+
+def test_a_downscaled_tiled_fit_records_the_grid_it_was_given_not_the_decimated_copy(
+    tmp_path: Path,
+) -> None:
+    """``--tiling uniform --downscale`` must not publish the working copy.
+
+    The tiled fitter measures the array it is HANDED, and on this path the
+    command decimates the volume itself before handing it over — so without a
+    declaration the merged result records the decimated grid as its source, and
+    quotes a compression ratio against a volume 8x smaller than the file it was
+    fitted from. Worse, ``fitted_shape`` would equal it, so ``info`` could not
+    even show that a decimation happened.
+    """
+    src = tmp_path / "vol.npy"
+    V = _sparse_blobs(shape=(16, 16, 16), n=10)
+    np.save(src, V)
+    out = tmp_path / "tiled.gsplats.zarr"
+    result = CliRunner().invoke(
+        app,
+        [
+            "gsplat",
+            "fit",
+            str(src),
+            str(out),
+            "--tiling",
+            "uniform",
+            "--tile-size",
+            "8",
+            "--overlap",
+            "2",
+            "--downscale",
+            "2",
+            "--iters",
+            "10",
+            "--seeds",
+            "40",
+            "--device",
+            "cpu",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    attrs = read_node_attrs(out / "fitting")
+    assert attrs["source_shape"] == [16, 16, 16], attrs
+    assert attrs["source_bytes"] == V.size * 2
+    assert attrs["source_declared"] is True
+    # The optimiser saw the decimated grid, and the report says so.
+    assert attrs["fitted_shape"] == [8, 8, 8]
+
+    info = CliRunner().invoke(app, ["gsplat", "info", str(out), "--no-histograms"])
+    assert info.exit_code == 0, info.output
+    assert "Source volume: 16 x 16 x 16 uint16" in info.output, info.output
+    assert "downscaled before fitting" in info.output, info.output
+
+
+def test_a_single_downscaled_tile_does_not_claim_the_whole_acquisition(
+    tmp_path: Path,
+) -> None:
+    """``--tile i/M`` writes ONE crop, and a crop's source is its own region.
+
+    The declaration above exists because the merged result covers the volume; a
+    lone tile does not, so it must keep measuring what it was handed. Without the
+    distinction every tile of a distributed run would publish the whole
+    acquisition as its own source.
+    """
+    from luxar.gsplats.tiling import compute_tile_specs
+
+    src = tmp_path / "vol.npy"
+    V = _sparse_blobs(shape=(32, 32, 32), n=16)
+    np.save(src, V)
+    n_tiles = len(compute_tile_specs((16, 16, 16), 8, 2))
+    assert n_tiles > 1, "a single tile would cover the whole grid, proving nothing"
+    out = tmp_path / "tile0.gsplats.zarr"
+    result = CliRunner().invoke(
+        app,
+        [
+            "gsplat",
+            "fit",
+            str(src),
+            str(out),
+            "--tile",
+            f"0/{n_tiles}",
+            "--tile-size",
+            "8",
+            "--overlap",
+            "2",
+            "--downscale",
+            "2",
+            "--iters",
+            "10",
+            "--seeds",
+            "40",
+            "--device",
+            "cpu",
+            "--allow-empty-tile",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    if not out.exists():
+        pytest.skip("tile 0 windowed to empty; nothing was stamped")
+    attrs = read_node_attrs(out / "fitting")
+    assert attrs["source_shape"] != [32, 32, 32], attrs
+    assert "source_declared" not in attrs, attrs

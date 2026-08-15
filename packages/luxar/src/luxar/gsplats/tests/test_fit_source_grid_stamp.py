@@ -506,3 +506,50 @@ def test_tiled_density_counts_the_splats_actually_delivered() -> None:
     assert result.n_splats > 0
     expected = result.stats["fitted_voxels"] / result.n_splats
     assert result.stats["voxels_per_splat"] == pytest.approx(expected)
+
+
+def test_the_merge_sizes_a_source_grid_from_the_dtype_name_alone() -> None:
+    """A caller holding only the dtype NAME must still get a byte count.
+
+    The parallel tiled orchestrator is that caller: the volume lives in its
+    worker subprocesses, so it can forward what the CLI observed at load time
+    but cannot measure an item size itself. Without one the merged result records
+    a source grid and no bytes, and `info` prints no compression ratio at all —
+    the same command differing only in ``-j`` would report a different amount of
+    provenance.
+    """
+    from luxar.gsplats.fit_tiled_gsplats import merge_tile_results
+    from luxar.gsplats.gsplat_data import GSplatData
+
+    tile = GSplatData(
+        centers=np.zeros((3, 3), dtype=np.float32),
+        amplitudes=np.ones(3, dtype=np.float32),
+        cholesky_factors=np.tile(np.array([1, 0, 1, 0, 0, 1], np.float32), (3, 1)),
+    )
+    merged = merge_tile_results(
+        [tile],
+        volume_shape=(16, 16, 16),
+        tile_size=16,
+        overlap=0,
+        num_tiles=1,
+        progressive=False,
+        cull_retention=None,
+        elapsed=0.0,
+        verbose=False,
+        source_dtype="uint16",  # no itemsize alongside it
+    )
+    assert merged.stats["source_bytes"] == 16**3 * 2
+    # And an unsizable name still reports no bytes rather than a made-up size.
+    unsizable = merge_tile_results(
+        [tile],
+        volume_shape=(16, 16, 16),
+        tile_size=16,
+        overlap=0,
+        num_tiles=1,
+        progressive=False,
+        cull_retention=None,
+        elapsed=0.0,
+        verbose=False,
+        source_dtype="not-a-dtype",
+    )
+    assert "source_bytes" not in unsizable.stats

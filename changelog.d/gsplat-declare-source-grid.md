@@ -34,6 +34,14 @@ The fitted grid is still reported separately, and `gsplat info` prints
 A ratio against the acquisition necessarily folds in the decimation, and the
 reader is entitled to see that rather than infer it.
 
+The progressive and tiled fitters record it too. Both assemble their own stats
+from per-pass or per-tile fits, so the stamps did not reach their results by
+themselves: a progressive fit left them buried in `pass_stats`, and a tiled fit
+had nothing at all (each tile honestly records the crop it was handed, and no
+tile knows the grid the merge stands for). A tiled fit driven with `--downscale`
+declares the pre-decimation grid, so its ratio is quoted against the file rather
+than against the copy the command made.
+
 A malformed declaration is refused at the call, not stored. Empty, zero,
 negative and non-integer shapes all raise, because this number becomes the
 denominator of a published figure and a bad one would otherwise surface much
