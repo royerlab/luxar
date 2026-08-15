@@ -96,7 +96,7 @@ Reference Markers:
     - Rigel: Blue supergiant in Orion, ~265 pc from Sun
 
 Usage:
-    python demo_gaia_milky_way.py
+    python demo_gaia_milky_way_3m.py
 
 Controls:
     - Mouse drag: Rotate view
@@ -112,30 +112,40 @@ Viewing Tips:
 """
 
 DEMO_META = {
-    "key": "galaxy",
+    "key": "gaia_milky_way",
     "title": "Gaia Milky Way (3M stars)",
     "description": "Real Milky Way stars from Gaia DR3 (3M brightest) in galactocentric coordinates.",
     "category": "astronomy",
     "geometry": "points",
     "requirements": {
-        "download_mb": 41,
+        # Nothing is downloaded: the catalog is placed (or rebuilt) by hand.
+        "download_mb": 0,
         "compute": "medium",
         "gpu": "none",
-        # The catalog is CC BY-NC, so it is not shipped in-tree: it has to be
-        # placed in the cache by hand until #1461 builds it from the ESA
-        # archive on first run (see `resolve_data_file`).
+        # The catalog is CC BY-NC, so it is not shipped in-tree: rebuild it with
+        # `scripts/generate_galaxy_simple.py` (or place a copy in the cache by
+        # hand) until #1575 does that from the ESA archive automatically on
+        # first run (see `resolve_data_file`).
         "local_data": "manual-file",
     },
-    "caches": [],
-    "outputs": ["galaxy"],
+    # Claiming the cache namespace is what ATTRIBUTES that directory to this
+    # demo: `luxar demo` reports the demo as `cached`, and `demo cache list`
+    # names this key against the bytes. It is deliberately NOT what protects the
+    # hand-placed catalog from deletion — `registry.PROTECTED_INPUT_DIRS` is,
+    # independently of DEMO_META (see the comment on it), so `demo cache clear`
+    # spares the directory by key, under `--all` and under `--orphans` alike, and
+    # no edit here can quietly disarm that. The two are separate on purpose:
+    # declaring the name buys reporting, and only reporting.
+    "caches": ["milky_way_gaia_3m"],
+    "outputs": ["gaia_milky_way"],
 }
 
 import sys
 import tempfile
 from pathlib import Path
+from typing import NoReturn
 
 import numpy as np
-import zarr
 from arbol import aprint, asection
 
 from luxar import (
@@ -145,15 +155,18 @@ from luxar import (
     LuxarZarrCompiler,
     ViewerConfig,
 )
+from luxar._zarr_compat import open_group
 from luxar.demos import launch_viewer, substitutive_lod_or_flat
 from luxar.utils.paths import get_demos_output_dir
 
 # The Gaia catalog is CC BY-NC 3.0 IGO. NonCommercial survives derivation, so it
 # applies to this point cloud too and is incompatible with a BSD-3 repository —
 # the file is therefore NOT shipped, and is read from the local cache when a
-# machine happens to have one. Building it from the ESA archive on first run is
-# issue #1461; until that lands, a machine without the cached file cannot run
-# this demo, and `resolve_data_file` says so rather than failing obscurely.
+# machine happens to have one. Rebuilding it from the ESA archive by hand is
+# `scripts/generate_galaxy_simple.py`; doing that AUTOMATICALLY on first run is
+# issue #1575. Until that lands, a machine with neither the cached file nor a
+# hand-run rebuild cannot run this demo, and `resolve_data_file` says so — with
+# the command — rather than failing obscurely.
 SCRIPT_DIR = Path(__file__).parent
 CACHE_FILE = (
     Path.home()
@@ -165,25 +178,186 @@ CACHE_FILE = (
 #: Legacy in-repo location, kept in the search order so a checkout that still
 #: has the file (or a user who restores it by hand) keeps working.
 REPO_FILE = SCRIPT_DIR / "data" / "milky_way_gaia_3m.zarr.zip"
+#: The one top-level directory the catalog zip must contain. Derived from
+#: CACHE_FILE rather than restated, because what names that member is exactly the
+#: `--output` stem the rebuild command is given (= the cache file without .zip).
+RAW_ZARR_NAME = CACHE_FILE.with_suffix("").name
+#: The raw table columns `load_and_convert_gaia_data` reads. Checked once at
+#: extraction so a store that is not this table says which columns are missing,
+#: instead of the converter dying on a bare `KeyError` half-way through the read.
+RAW_TABLE_FIELDS = ("x_kpc", "y_kpc", "z_kpc", "phot_g_mean_mag", "bp_rp")
+#: The rebuild command every unusable-catalog message below ends with. One
+#: spelling, because the `--count`/`--output` pair is the load-bearing part and
+#: five copies of it drift.
+REBUILD_COMMAND = (
+    "  hatch run python scripts/generate_galaxy_simple.py --count 3000000 "
+    f"--output {CACHE_FILE.with_suffix('')}"
+)
+
+
+class CatalogUnusable(FileNotFoundError):
+    """The catalog is missing, or is not the one this demo can read.
+
+    A distinct type, because the entry points below turn it into a terse
+    ``❌ Error: …`` + exit 1 — right for a message that IS the advice, wrong for
+    any other ``FileNotFoundError`` raised while converting or writing the scene,
+    which is a bug and wants its traceback. Subclasses ``FileNotFoundError`` so
+    callers that only care that the file is absent keep working.
+    """
 
 
 def resolve_data_file() -> Path:
-    """The star catalog: local cache first, then the legacy in-repo copy."""
+    """The star catalog: local cache first, then the legacy in-repo copy.
+
+    ``is_file()``, not ``exists()``: a *directory* at the catalog path is an easy
+    way to end up here, because the load-bearing ``--output`` stem is the cache
+    file minus ``.zip`` — hand the rebuild script the ``.zip`` path instead and it
+    writes the raw zarr *directory* under that name (its zip lands beside it as
+    ``.zarr.zarr.zip``). ``exists()`` accepts that, and ``zipfile`` then raises
+    ``IsADirectoryError`` — an ``OSError``, not a ``FileNotFoundError``, so no
+    handler on the way out catches it and the advice below never prints. Anything
+    that is not a regular file (a directory, a broken symlink, a FIFO ``ZipFile``
+    would block on) is simply not a candidate.
+    """
     for candidate in (CACHE_FILE, REPO_FILE):
-        if candidate.exists():
+        if candidate.is_file():
             return candidate
-    raise FileNotFoundError(
+    raise CatalogUnusable(
         "Gaia star catalog not found.\n\n"
         "This dataset is CC BY-NC 3.0 IGO (NonCommercial), which the derived "
         "point cloud inherits, so it is deliberately not distributed with "
         "Luxar.\n"
-        f"Place `milky_way_gaia_3m.zarr.zip` at {CACHE_FILE} to run this demo, "
-        "or follow royerlab/luxar#1461, which builds it from the ESA Gaia "
-        "archive on first run.\n"
+        f"Put a copy of the catalog at exactly {CACHE_FILE} (that full path, "
+        "filename included), or rebuild it from the ESA Gaia archive with\n"
+        f"{REBUILD_COMMAND}\n"
+        "That rebuild runs from a source checkout only (the script is not in the "
+        "wheel), needs `astroquery` + `astropy` (no Luxar extra provides "
+        "astroquery, so `luxar demo deps --install` cannot supply it), and takes "
+        "~90 minutes for 3M stars.\n"
+        "The --output stem is load-bearing: the zip must contain a top-level "
+        "`milky_way_gaia_3m.zarr/` directory. Building the catalog automatically "
+        "on first run is royerlab/luxar#1575.\n"
         "Required acknowledgement when using Gaia data: this work has made use "
         "of data from the ESA mission Gaia, processed by the Gaia Data "
         "Processing and Analysis Consortium (DPAC)."
     )
+
+
+def _exit_with_advice(exc: CatalogUnusable) -> NoReturn:
+    """Report a catalog problem as a CLI error and exit non-zero.
+
+    Both :func:`resolve_data_file` and :func:`_extract_raw_zarr` raise messages
+    written to be READ — where the file belongs, the command that rebuilds it —
+    so every entry point prints them the same way instead of letting one of them
+    surface as a traceback with the advice buried in it.
+    """
+    aprint(f"\n❌ Error: {exc}")
+    sys.exit(1)
+
+
+def _extract_raw_zarr(data_zip_path: Path, dest: Path) -> Path:
+    """Unpack the catalog zip into ``dest`` and return the raw zarr inside it.
+
+    Everything that makes an archive readable *as this demo's catalog* is checked
+    here, at the extraction, because none of it is checkable earlier and each
+    failure mode otherwise escapes as a traceback that buries the advice: the zip
+    has to open (a truncated copy raises ``BadZipFile``), it has to hold a
+    top-level ``RAW_ZARR_NAME`` directory (a wrong ``--output`` stem extracts
+    *successfully*, and only the store read later notices), and that directory has
+    to be the raw star table (a store built by hand with other column names reads
+    fine and dies on a bare ``KeyError`` mid-conversion). None of the exceptions
+    involved is a ``CatalogUnusable``, which is the only type the entry points
+    turn into advice — not ``BadZipFile``, not the bare ``KeyError``, and not any
+    of what the store read raises (three classes, two from the open itself and one
+    from reading a column's metadata; see the handler below) — so each one
+    otherwise escapes as a traceback with nothing in it about the rebuild.
+
+    The catalog is placed (or rebuilt) by hand, which is what makes all three
+    ordinary rather than exotic — an interrupted ``scp``, the rebuild script's
+    default ``--output``, a table assembled from one's own Gaia query.
+    ``resolve_data_file`` cannot tell any of them apart, since reading the archive
+    IS the check.
+    """
+    import zipfile
+
+    try:
+        with zipfile.ZipFile(data_zip_path, "r") as zip_ref:
+            zip_ref.extractall(dest)
+    except zipfile.BadZipFile as exc:
+        raise CatalogUnusable(
+            f"{data_zip_path} is not a readable zip archive ({exc}) — most "
+            "likely a truncated or partial copy.\n"
+            "Delete it and put a complete copy back, or rebuild it with\n"
+            f"{REBUILD_COMMAND}"
+        ) from exc
+    raw_zarr_path = dest / RAW_ZARR_NAME
+    if not raw_zarr_path.is_dir():
+        raise CatalogUnusable(
+            f"{data_zip_path} extracted, but holds no top-level "
+            f"`{RAW_ZARR_NAME}/` directory — so the raw catalog is not where "
+            "this demo reads it.\n"
+            "The --output stem is load-bearing: rebuild with\n"
+            f"{REBUILD_COMMAND}"
+        )
+    try:
+        # ``luxar._zarr_compat.open_group``, never a bare ``zarr.open``, and for
+        # two independent reasons. (1) The facade passes
+        # ``use_consolidated=False``, restoring the zarr-2 rule that a read sees
+        # the arrays actually ON DISK. Nothing in the current build path
+        # consolidates — the shipped zip carries no `.zmetadata` and the rebuild
+        # script never writes one — so this reason does not bite on a catalog
+        # obtained the documented way. It bites on the OTHER way the catalog
+        # arrives: this file is hand-placed, and a store that its reader
+        # re-exported or assembled themselves may well carry a consolidated
+        # index, whereupon zarr 3's reversed default has the column check below
+        # answer from that index and report a deleted column directory as present
+        # — the guard passes and the converter reads that column as all-zeros
+        # fill, which for `bp_rp` is a 3M-star scene with a dead colour index.
+        # (2) The reason that bites on ANY catalog: ``zarr.open`` returns an
+        # ``Array`` when the extracted directory is an array store rather than a
+        # group (single-array ``zarr.save`` output — a table someone assembled
+        # from their own query), and ``name not in <Array>`` falls back to the
+        # SEQUENCE protocol: element-by-element, measured here at 33 s per 20 000
+        # values (~1.6 ms each), i.e. over an hour on a 3M-row catalog before
+        # printing advice that blames the columns. ``open_group`` raises on that
+        # node instead, so it lands in the handler below within milliseconds.
+        raw_table = open_group(str(raw_zarr_path), mode="r")
+        missing = [name for name in RAW_TABLE_FIELDS if name not in raw_table]
+    # ``FileNotFoundError``/``ValueError``, not zarr's own error names: zarr 3
+    # deleted ``PathNotFoundError``, so naming it raises ``AttributeError`` while
+    # merely BUILDING the handler tuple and the advice below is lost to that
+    # traceback instead. The pair is really one class wide: zarr's own errors
+    # descend from ``BaseZarrError``, itself a ``ValueError``, so the
+    # ``FileNotFoundError`` arm is a subset kept because it is the spelling
+    # ``luxar._zarr_compat.is_missing_error`` sanctions. ``ValueError`` is what
+    # earns its place — the three failures measured on this path do NOT share a
+    # narrower base, and only two of them come from the OPEN: a v2 array store
+    # gives ``GroupNotFoundError`` (a ``FileNotFoundError``) and a v3 one
+    # ``ContainsArrayError``. The third arrives one line later: a column whose
+    # ``.zarray`` is corrupt JSON opens as a ``Group`` perfectly well, and it is
+    # the membership check that reads that document and raises a bare
+    # ``json.JSONDecodeError`` (not a zarr error at all) — which is why both
+    # statements sit inside this one ``try``. Only the first is a
+    # ``FileNotFoundError``, so the narrower handler let two thirds of the
+    # docstring's "everything is checked here" escape as the traceback this
+    # function exists to prevent.
+    except (FileNotFoundError, ValueError) as exc:
+        raise CatalogUnusable(
+            f"{data_zip_path} holds a `{RAW_ZARR_NAME}/` directory, but it does "
+            "not read as this demo's raw star table: it is not a zarr store, or "
+            f"one of its columns has unreadable metadata ({exc}).\n"
+            "Delete it and put a complete copy back, or rebuild it with\n"
+            f"{REBUILD_COMMAND}"
+        ) from exc
+    if missing:
+        raise CatalogUnusable(
+            f"{data_zip_path} holds `{RAW_ZARR_NAME}/`, but it is missing the raw "
+            f"Gaia column(s) {', '.join(missing)} — this demo reads a flat table "
+            f"of {', '.join(RAW_TABLE_FIELDS)}, one value per star.\n"
+            "Rebuild it (which writes exactly those columns) with\n"
+            f"{REBUILD_COMMAND}"
+        )
+    return raw_zarr_path
 
 
 def compute_colors(bp_rp: np.ndarray, phot_g_mean_mag: np.ndarray) -> np.ndarray:
@@ -233,7 +407,7 @@ def load_and_convert_gaia_data(data_zarr_path: Path, output_path: Path) -> int:
     Raw Gaia data (zarr table) → Luxar scene (zarr)
 
     Args:
-        data_zarr_path: Path to extracted raw galaxy.zarr
+        data_zarr_path: Path to the extracted raw milky_way_gaia_3m.zarr
         output_path: Path for Luxar-formatted output
 
     Returns:
@@ -244,14 +418,13 @@ def load_and_convert_gaia_data(data_zarr_path: Path, output_path: Path) -> int:
     SCALE = 10.0  # 10x larger for better visualization
 
     with asection("Loading Raw Gaia Data"):
-        # Open raw zarr store (supports reading from zip directly!)
-        if str(data_zarr_path).endswith(".zip"):
-            # Read directly from zip
-            store = zarr.open(
-                f"zip://{data_zarr_path}::milky_way_gaia_3m.zarr", mode="r"
-            )
-        else:
-            store = zarr.open(str(data_zarr_path), mode="r")
+        # Always an already-extracted directory: every caller unpacks the zip
+        # first (via `_extract_raw_zarr`), because reading the zip in place
+        # through a zip:// store is unreliable across zarr versions. Through the
+        # facade for the same reason the guard there uses it: consolidated
+        # metadata is not trusted, so a column that is not on disk raises here
+        # rather than being served as zeros from a stale `.zmetadata`.
+        store = open_group(str(data_zarr_path), mode="r")
 
         # Read arrays
         x_kpc = store["x_kpc"][:]
@@ -355,32 +528,35 @@ def load_and_convert_gaia_data(data_zarr_path: Path, output_path: Path) -> int:
             # detail it can resolve (the census demo uses the same wiring). The
             # `layer=True` flag rides onto the wrapper kind=lod group → one "Stars"
             # layer in the Layers panel.
-            # Volumetric emission–absorption blending (kappa 1.3) instead of
-            # plain additive: dense sight-lines through the disc self-shadow
-            # instead of saturating, which keeps the bulge from blowing out
-            # while the spiral-arm structure stays readable. Volumetric
-            # compositing bounds accumulated radiance (additive sums without
-            # bound), so it needs a hotter intensity than the old additive
-            # 0.031 — 0.075 = a 0–13.4 display range over the 0–32.3 data
-            # range in the Layers panel.
-            # kappa is DELIBERATELY unchanged by the 2026-08-02 ray-mass
-            # unification. This is a MIXED ladder: the coarse levels are lifted
-            # gsplats, whose tau = kappa*rayMass never carried the point
-            # shader's world-radius factor, so 1.3 still renders them exactly as
-            # before. What changes is the finest (Points) level, which used to
-            # be ~35x more transparent than the coarse levels it replaces
-            # (radius 0.035 * chord 0.826) and now matches them — the whole
-            # point of the fix. Rescaling kappa here would break the coarse
-            # levels instead.
+            # Volumetric emission–absorption blending instead of plain
+            # additive: dense sight-lines through the disc self-shadow instead
+            # of saturating, which keeps the bulge from blowing out while the
+            # spiral-arm structure stays readable.
+            # The three appearance knobs are tuned as ONE set (and pinned by
+            # tests/test_demo_gaia_milky_way_3m.py), because they all land on
+            # the same two shader terms: ray mass = falloff * opacity, optical
+            # depth tau = kappa * ray mass, emitted radiance = colour *
+            # intensity * ray mass * S(tau).
+            #   opacity 0.5 + kappa 0.12 keep tau low enough that the disc
+            #     stays translucent front to back — a heavier tau hides the far
+            #     side of the bulge behind the near side, which reads as a flat
+            #     silhouette rather than depth.
+            #   intensity 0.175 buys back the emission that the lower ray mass
+            #     gives up: a 0–5.7 display range over the 0–32.3 data range in
+            #     the Layers panel (the range is 1/intensity).
+            # All three ride on the wrapper kind=lod group, so every level of
+            # this MIXED ladder — lifted gsplats at the coarse levels, Points
+            # at the finest — composites with the same tau and the same gain,
+            # and the levels stay matched across an LOD switch.
             scene.add_points(
                 "Stars",
                 positions,
                 colors=colors,
                 radii=radii,
-                opacity=1.0,
+                opacity=0.5,
                 blending_mode="volumetric",
-                absorption=1.3,
-                intensity=0.075,
+                absorption=0.12,
+                intensity=0.175,
                 layer=True,
                 substitutive_lod=substitutive_lod_or_flat(
                     dict(compression_factor=8, levels=3, device="auto")
@@ -390,21 +566,34 @@ def load_and_convert_gaia_data(data_zarr_path: Path, output_path: Path) -> int:
             # Add reference markers for famous stars
             aprint("Adding reference markers...")
 
-            # Calculate marker radius: 10x typical scaled star radius
-            # Typical star: ~0.0035 kpc × SCALE = 0.035
-            # Marker: 10x typical = 0.35
-            typical_star_radius = (0.001 + 0.01 * 0.5**2) * SCALE  # Mid-brightness star
+            # Marker radius: 10x a typical scaled star, sized from the demo's OWN
+            # radius law rather than a restated literal — `compute_radii` at the
+            # magnitude whose normalized brightness is exactly 0.5, which its
+            # (21 - mag) / 18 puts at G = 12.0 (~0.0035 kpc × SCALE = 0.035, so a
+            # marker is 0.35). Retuning the law moves the markers with it.
+            typical_star_radius = (
+                float(compute_radii(np.array([12.0], dtype=np.float32))[0]) * SCALE
+            )
             marker_radius = typical_star_radius * 10
 
-            # The markers are PLAIN points (no substitutive LOD), so unlike the
-            # "Stars" node above they need kappa rescaled to survive the
-            # 2026-08-02 ray-mass unification: tau dropped its world-radius
-            # factor, so the old 1.3 would now absorb ~3.5x harder
-            # (1 / (0.35 x 0.826)). Preserving
+            # The markers keep their ORIGINAL authored look, so — unlike the
+            # retuned "Stars" node above — their kappa is not a free knob but a
+            # rescale of the historical 1.3 through the 2026-08-02 ray-mass
+            # unification: tau dropped its world-radius factor, so a bare 1.3
+            # would now absorb ~3.5x harder (1 / (0.35 x 0.826)). Preserving
             # the authored look is exactly kappa * radius * chord.
             MARKER_ABSORPTION = (
                 1.3 * marker_radius * float(np.sqrt(np.pi / np.log(100.0)))
             )
+
+            # One string per marker, used TWICE: as the node's hover label and
+            # as its legend row. Defined once so the tooltip and the legend
+            # cannot drift apart.
+            SUN_LABEL = "Sun — our star, 8.1 kpc from the Galactic Centre"
+            BETELGEUSE_LABEL = (
+                "Betelgeuse — red supergiant in Orion (~168 pc from the Sun)"
+            )
+            RIGEL_LABEL = "Rigel — blue supergiant in Orion (~265 pc from the Sun)"
 
             # Sun marker at the Sun's Galactocentric position
             r0_kpc = 8.122  # Sun-GC distance
@@ -419,6 +608,7 @@ def load_and_convert_gaia_data(data_zarr_path: Path, output_path: Path) -> int:
                 opacity=1.0,
                 blending_mode="volumetric",
                 absorption=MARKER_ABSORPTION,
+                labels=[SUN_LABEL],
                 layer=True,
             )
             aprint(f"  ✓ Sun at ({-r0_kpc * SCALE:.1f}, 0, 0)")
@@ -438,6 +628,7 @@ def load_and_convert_gaia_data(data_zarr_path: Path, output_path: Path) -> int:
                 opacity=1.0,
                 blending_mode="volumetric",
                 absorption=MARKER_ABSORPTION,
+                labels=[BETELGEUSE_LABEL],
                 layer=True,
             )
             aprint("  ✓ Betelgeuse (red supergiant, 168 pc)")
@@ -457,9 +648,38 @@ def load_and_convert_gaia_data(data_zarr_path: Path, output_path: Path) -> int:
                 opacity=1.0,
                 blending_mode="volumetric",
                 absorption=MARKER_ABSORPTION,
+                labels=[RIGEL_LABEL],
                 layer=True,
             )
             aprint("  ✓ Rigel (blue supergiant, 265 pc)")
+
+            # Named-star legend: swatch colours read from the marker RGB above
+            # (not re-invented), same add_html pattern as the other demos.
+            def _swatch(rgb: np.ndarray) -> str:
+                """Format a float 0-1 RGB triple as a CSS ``rgb()`` colour."""
+                r, g, b = (int(round(float(c) * 255)) for c in rgb)
+                return f"rgb({r},{g},{b})"
+
+            _dot = (
+                "display:inline-block;width:0.8em;height:0.8em;"
+                "border-radius:50%;margin-right:0.5em;vertical-align:middle"
+            )
+            legend_html = (
+                '<div style="font:13px sans-serif;color:#fff;line-height:1.7">'
+                f'<span style="{_dot};background:{_swatch(sun_color[0])}"></span>'
+                f"{SUN_LABEL}<br>"
+                f'<span style="{_dot};background:{_swatch(betelgeuse_color[0])}"></span>'
+                f"{BETELGEUSE_LABEL}<br>"
+                f'<span style="{_dot};background:{_swatch(rigel_color[0])}"></span>'
+                f"{RIGEL_LABEL}"
+                "</div>"
+            )
+            scene.add_html(
+                legend_html,
+                position=(0.02, 0.98),
+                anchor="bottom-left",
+                opacity=0.92,
+            )
 
             # Overlay annotations
             scene.add_text(
@@ -491,39 +711,25 @@ def load_and_convert_from_zip(data_zip_path: Path, temp_dir: Path) -> Path:
     """Load raw Gaia data from zip and convert to Luxar format.
 
     Args:
-        data_zip_path: Path to galaxy.zarr.zip
+        data_zip_path: Path to milky_way_gaia_3m.zarr.zip
         temp_dir: Temporary directory for extraction
 
     Returns:
         Path to Luxar-formatted zarr
     """
     with asection("Loading Gaia DR3 Dataset"):
-        if not data_zip_path.exists():
-            aprint(f"❌ Error: Data file not found: {data_zip_path}")
-            aprint("")
-            aprint("The galaxy.zarr.zip file should be in:")
-            aprint(f"  {data_zip_path.parent}/")
-            aprint("")
-            aprint("To generate the dataset:")
-            aprint("  cd scripts")
-            aprint("  hatch run python generate_galaxy_simple.py --count 3000000")
-            raise FileNotFoundError(f"Data file not found: {data_zip_path}")
-
+        # No existence check: every caller passes `resolve_data_file()`, which
+        # already raised (with the rebuild command) if nothing was found.
         aprint(f"Data file: {data_zip_path}")
         aprint(f"Size: {data_zip_path.stat().st_size / 1e6:.1f} MB")
 
         # Extract zarr from zip to temp directory
         aprint("\nExtracting Gaia data from zip...")
-        import zipfile
-
-        with zipfile.ZipFile(data_zip_path, "r") as zip_ref:
-            zip_ref.extractall(temp_dir)
-
-        raw_zarr_path = temp_dir / "milky_way_gaia_3m.zarr"
+        raw_zarr_path = _extract_raw_zarr(data_zip_path, temp_dir)
         aprint(f"✓ Extracted to: {raw_zarr_path}")
 
     # Convert to Luxar format
-    luxar_zarr_path = temp_dir / "galaxy.luxar.zarr"
+    luxar_zarr_path = temp_dir / f"{DEMO_META['outputs'][0]}.luxar.zarr"
     load_and_convert_gaia_data(raw_zarr_path, luxar_zarr_path)
 
     return luxar_zarr_path
@@ -565,24 +771,28 @@ def main() -> None:
     aprint("  from the Galactic Center. You're viewing our galaxy from home!")
     aprint("")
 
+    # Resolve the catalog ONCE, for both branches: `resolve_data_file`'s message
+    # is the whole point of the missing-file path, so it must not surface as a
+    # raw traceback on the default (serve) invocation either.
+    try:
+        data_file = resolve_data_file()
+    except CatalogUnusable as e:
+        _exit_with_advice(e)
+
     # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
     if "--no-serve" in sys.argv:
-        output_path = get_demos_output_dir() / "galaxy.luxar.zarr"
-        try:
-            # Extract the raw .zarr from the zip to a temp dir, then convert to the
-            # persistent output_path (same extraction the serve path uses — reading
-            # the zip in place via a zip:// store is unreliable across zarr versions).
-            import zipfile
-
-            with tempfile.TemporaryDirectory(prefix="luxar_demo_gaia_") as tmpdir:
-                with zipfile.ZipFile(resolve_data_file(), "r") as zf:
-                    zf.extractall(tmpdir)
-                load_and_convert_gaia_data(
-                    Path(tmpdir) / "milky_way_gaia_3m.zarr", output_path
-                )
-        except FileNotFoundError as e:
-            aprint(f"\n❌ Error: {e}")
-            sys.exit(1)
+        output_path = get_demos_output_dir() / f"{DEMO_META['outputs'][0]}.luxar.zarr"
+        # Extract the raw .zarr from the zip to a temp dir, then convert to the
+        # persistent output_path (same extraction the serve path uses — reading
+        # the zip in place via a zip:// store is unreliable across zarr versions).
+        # A catalog built with the wrong `--output` stem fails HERE rather than at
+        # resolution, so this call needs the same clean-error exit.
+        with tempfile.TemporaryDirectory(prefix="luxar_demo_gaia_") as tmpdir:
+            try:
+                raw_zarr_path = _extract_raw_zarr(data_file, Path(tmpdir))
+            except CatalogUnusable as e:
+                _exit_with_advice(e)
+            load_and_convert_gaia_data(raw_zarr_path, output_path)
         aprint(f"Dataset generated at {output_path}")
         return
 
@@ -590,8 +800,16 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix="luxar_demo_gaia_") as tmpdir:
         tmp_path = Path(tmpdir)
 
-        # Load from zip and convert to Luxar format (extracts to temp_dir)
-        zarr_path = load_and_convert_from_zip(resolve_data_file(), tmp_path)
+        # Load from zip and convert to Luxar format (extracts to temp_dir).
+        # Same clean-error exit as above: the extraction inside is where a
+        # wrong-stem catalog is caught. This try wraps the CONVERSION too, so it
+        # catches `CatalogUnusable` and not `FileNotFoundError` — a missing file
+        # met while writing the scene is a bug, and swallowing its traceback into
+        # "❌ Error" would report it as a catalog problem it is not.
+        try:
+            zarr_path = load_and_convert_from_zip(data_file, tmp_path)
+        except CatalogUnusable as e:
+            _exit_with_advice(e)
 
         aprint("")
         aprint("=" * 70)
