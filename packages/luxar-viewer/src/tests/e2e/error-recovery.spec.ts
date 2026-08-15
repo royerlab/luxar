@@ -182,12 +182,19 @@ test.describe('Error Recovery - Network Failures', () => {
     let requestCount = 0;
     await page.route(`${DATASET}/**`, (route) => {
       const url = route.request().url();
-      // Let .zmetadata and .zarray (metadata) through
+      // Let metadata through — BOTH formats' documents. Naming only format 2's
+      // makes this test quietly stop testing what it says: on a format-3 store
+      // the metadata document is `zarr.json`, which would fall through to the
+      // chunk branch and be ABORTED after the first two requests, so the viewer
+      // fails at metadata load rather than mid-chunk. The assertion below is a
+      // disjunction, so it would still pass — while exercising a different path.
+      // Same failure mode the corrupted-metadata test above already documents.
       if (
         url.includes('.zmetadata') ||
         url.includes('.zarray') ||
         url.includes('.zattrs') ||
-        url.includes('.zgroup')
+        url.includes('.zgroup') ||
+        url.includes('zarr.json')
       ) {
         route.continue();
         return;

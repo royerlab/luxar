@@ -95,12 +95,17 @@ export function parseGeneratedFixtureNames(generatorPath: string): string[] {
  * group's own metadata) and would signal completeness for a store the generator had
  * barely started.
  *
+ * The v3 root is authoritative EXCLUSIVELY, matching `_zarr_compat.is_consolidated`
+ * on the Python side: with both documents present (a fixture directory an older
+ * format-2 store was copied over, say) zarr resolves the node as format 3, so a
+ * leftover `.zmetadata` would report an unfinished v3 write as complete — the one
+ * thing this predicate exists to catch.
+ *
  * @param fixturePath Absolute path to a `*.zarr` fixture directory.
  */
 export function isGeneratedFixtureComplete(fixturePath: string): boolean {
-  if (existsSync(join(fixturePath, '.zmetadata'))) return true;
   const rootDoc = join(fixturePath, 'zarr.json');
-  if (!existsSync(rootDoc)) return false;
+  if (!existsSync(rootDoc)) return existsSync(join(fixturePath, '.zmetadata'));
   try {
     const parsed: unknown = JSON.parse(readFileSync(rootDoc, 'utf8'));
     return (
