@@ -184,25 +184,35 @@ DEFAULT_SEEDS = 60000
 # read as nine separate embryos rather than one slab.
 GRID_GAP_FACTOR = 1.14
 
-# Substitutive LOD: ONE coarser level, half the size.
+# Substitutive LOD. The ladder's DEPTH is this demo's single most important
+# performance knob, and it is set from a measurement rather than a preference.
 #
-# Deliberately short, because of how the screen-area selector interacts with a
-# grid of small tiles. The ladder is stamped `selector="screen-area"` with the
-# finest level anchored at half the screen and each step down a halving, so a
-# 4-level ladder gets thresholds [0, 0.125, 0.25, 0.5]. A tile of a 3x3 matrix
-# occupies only 1/(3 x 1.14)^2 = 0.0855 of the screen area — under the lowest
-# threshold — so EVERY tile drew the coarsest level, and with 3 coarser levels
-# that was an eighth of the splats. The matrix looked blurry for that reason
-# alone, independent of the fit.
+# The ladder is stamped `selector="screen-area"`: the finest level is anchored at
+# half the screen and each step down is a halving, so a 4-level ladder gets
+# thresholds [0, 0.125, 0.25, 0.5]. A tile of a 3x3 matrix occupies only
+# 1/(3 x GRID_GAP_FACTOR)^2 = 0.0855 of the screen area — below the lowest
+# threshold of ANY ladder length — so every tile draws, and therefore FETCHES,
+# the coarsest level. Ladder depth is exactly "how much of the fit the opening
+# framing keeps", and it sets the per-frame cost of scrubbing time.
 #
-# No ladder length avoids that (0.0855 is below the coarsest threshold of any of
-# them), so the lever is how much the coarsest level keeps: 1 level -> half,
-# which is what a tile now draws. The ladder still earns its keep — it halves
-# the cost when you zoom the whole matrix away, and it is what the demo is meant
-# to exercise — it just no longer throws away the detail at the framing the demo
-# opens on. Zooming into a tile crosses 0.5 and gets the finest level.
+# Measured on one timepoint by merging the fit down to each candidate count and
+# rendering it back (see the MIP comparison that produced these numbers):
+#
+#   drawn/tp   x7 crops   verdict
+#    1,105        7,735   smears; nuclei merge together (this was the old blur)
+#    2,500       17,500   nucleus separation returning
+#    5,000       35,000   clear boundaries and dark gaps  <-- knee
+#   10,000       70,000   marginally crisper
+#   20,000      140,000   barely distinguishable from 10k, twice the cost
+#
+# 3 coarser levels puts the drawn count at ~N/8 ~= 5.1k/timepoint: the knee, and
+# a 4x cut in per-frame fetch+draw against the 1-level ladder that made scrubbing
+# choppy. Note this is NOT a return to the old blur despite a similar drawn
+# count — a level merged from the 60k fit is visibly better than 1.1k splats
+# fitted directly, which is why the fit budget stays high even though most of it
+# is only unpacked when you zoom into a tile.
 LOD_COMPRESSION_FACTOR = 2
-LOD_LEVELS = 1
+LOD_LEVELS = 3
 
 # Additive (progressive streaming) sub-ladders INSIDE each substitutive level are
 # on by default everywhere else, and are deliberately off here. In a 4D stacked

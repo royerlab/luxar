@@ -247,21 +247,34 @@ class TestCuratedCrops:
         prefixes = {c.split("_")[0] for c in crops}
         assert prefixes == {"6bba", "44b6"}, "the matrix should show both embryos"
 
-    def test_lod_ladder_is_short_enough_to_survive_the_grid_framing(self) -> None:
-        """A 3x3 tile draws the COARSEST level, so that level must keep enough.
+    def test_the_drawn_level_lands_in_the_measured_quality_band(self) -> None:
+        """A 3x3 tile draws — and fetches — the COARSEST level; pin its SIZE.
 
-        The screen-area selector anchors its finest level at half the screen and
+        The screen-area selector anchors the finest level at half the screen and
         halves per step, and a tile of a 3x3 grid covers only
-        1/(3*GRID_GAP_FACTOR)^2 of the screen area — below any ladder's lowest
-        threshold. So what a tile actually draws is
-        finest / compression^levels, and this pins that fraction at >= 1/4.
+        1/(3*GRID_GAP_FACTOR)^2, below any ladder's lowest threshold. So the
+        coarsest level is what the demo opens on, and its absolute count per
+        timepoint sets both the first paint and the cost of scrubbing time.
+
+        The band comes from rendering merged levels back to the volume and
+        looking: below ~3k/timepoint the nuclei smear together (the original
+        blur), above ~12k the extra splats are barely distinguishable while the
+        per-frame cost keeps doubling — 20k/tp made scrubbing choppy.
+
+        Deliberately an ABSOLUTE count, not a fraction of the fit: a fraction
+        says nothing without the fit size, which is exactly how the earlier
+        version of this test passed while the demo was drawing 20k/tp.
         """
         tile_area = 1.0 / (3.0 * _demo.GRID_GAP_FACTOR) ** 2
         assert tile_area < 0.125, "premise: a 3x3 tile is under the lowest threshold"
-        coarsest_fraction = 1.0 / (_demo.LOD_COMPRESSION_FACTOR**_demo.LOD_LEVELS)
-        assert coarsest_fraction >= 0.25, (
-            f"a tile would draw only {coarsest_fraction:.3f} of the fitted splats; "
-            "shorten the ladder or lower the compression factor"
+
+        # The fit keeps ~70% of the requested seeds, minus the p95 size filter.
+        fitted_per_tp = _demo.DEFAULT_SEEDS * 0.70 * (_demo.SCALE_MAX_PERCENTILE / 100)
+        drawn_per_tp = fitted_per_tp / (_demo.LOD_COMPRESSION_FACTOR**_demo.LOD_LEVELS)
+        assert 3_000 <= drawn_per_tp <= 12_000, (
+            f"a tile would draw ~{drawn_per_tp:,.0f} splats/timepoint, outside the "
+            "measured 3k-12k band: below it the nuclei smear, above it the frame "
+            "cost doubles for no visible gain. Adjust LOD_LEVELS."
         )
 
 
