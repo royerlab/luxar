@@ -91,6 +91,12 @@ def test_recipe_params_additive_method_defaults_to_auto():
     assert RecipeParams().additive_method == "auto"
 
 
+def test_recipe_params_truncation_sigmas_defaults_to_none():
+    """``None`` = the dataset's own truncation radius; a float default (the
+    historical 3.0) is the #1180 bug — pruning at a support the data never had."""
+    assert RecipeParams().truncation_sigmas is None
+
+
 def test_tiles_counts_breakpoints_clamp_to_small_parts():
     """REGRESSION (pre-existing footgun): explicit `counts:` breakpoints larger
     than a small BSP part used to abort the WHOLE tiles build with

@@ -14,6 +14,7 @@ import {
   waitForNextRender,
   getWebGLErrors,
   assertNoConsoleErrors,
+  captureCanvasRGBA,
   samplePixelsAt,
   openLayersPanel,
 } from './helpers';
@@ -523,10 +524,16 @@ test.describe('GSplat normal mode (premultiplied coverage alpha)', () => {
   });
 
   test('background splat shows through the overlap (real alpha-over)', async ({ page }) => {
+    // Scope: this gate owns only "both splats visible + the background
+    // survives the overlap". The exact blend state is asserted by
+    // 'material carries the gsplat premultiplied normal state' above, and
+    // the draw ordering by the Phase-2 depth-sort test below — a
+    // blend-state or sort regression is caught there, not here.
+    //
     // Suppress the one-time control-rail hint popup: its gray pixels
-    // (~rgb 42,45,49) sit inside the sampling grid and would satisfy a
-    // naive r>30 && g>30 test — the discriminator below also excludes
-    // grays, but keeping the frame clean makes failures readable.
+    // (~rgb 42,45,49) would satisfy a naive r>30 && g>30 test — the
+    // discriminators below also exclude grays, but keeping the frame clean
+    // makes failures readable.
     await page.addInitScript(() => {
       localStorage.setItem('luxar-control-rail-hint-dismissed', '1');
     });
@@ -536,32 +543,124 @@ test.describe('GSplat normal mode (premultiplied coverage alpha)', () => {
     await waitForGSplatsCommitted(page);
     await waitForNextRender(page, 5);
 
-    // Dense grid over the central region where the two big splats live.
-    const offsets: Array<[number, number]> = [];
-    for (let gx = 0.15; gx <= 0.85; gx += 0.05) {
-      for (let gy = 0.25; gy <= 0.75; gy += 0.05) {
-        offsets.push([gx, gy]);
-      }
-    }
-    const samples = await samplePixelsAt(page, 'canvas', offsets);
+    // ONE dense capture, then EVERY pixel of the WHOLE frame is classified.
+    // No sub-box: the old x ∈ [0.15,0.85] / y ∈ [0.25,0.75] rectangle was a
+    // magic crop that wasn't even centred on the content (the splats project
+    // at ≈0.34-0.37 of width and ≈0.68-0.71 of height, and float error left
+    // the lattice's effective last row at y = 0.70, cutting off nearer the
+    // bottom HALF of both discs) and it re-introduced the very framing
+    // sensitivity this test exists to remove. Scanning everything is safe
+    // because all three discriminators reject neutral pixels — not because UI
+    // chrome *cannot* satisfy them, but because the viewer's greys (the rail
+    // is ~rgb 42,45,49) cannot. The one non-neutral overlay that could is the
+    // scene-identity banner (`changed` ≈rgb 147,40,40 → red-dominant,
+    // `unreachable` ≈rgb 138,101,18 → `mixed`, at ~1.9% of the frame — larger
+    // than any healthy class), so it is asserted absent first.
+    //
+    // Dense rather than a sparse lattice because the red-dominant area is a
+    // genuine but THIN crescent: the two big splats project nearly
+    // concentric (centres ~44 px apart against ~46/54 px screen sigmas) and
+    // the nearer green splat is the LARGER on screen, so the background
+    // survives only in a rim covering ~0.35% of the frame. The deleted
+    // `gx += 0.05` lattice accumulated float error (0.8000000000000002), so
+    // it was 14 columns x 10 rows = 140 points over x ∈ [0.15,0.80],
+    // y ∈ [0.25,0.70], spaced 64x36 px — and that box clipped the crescent,
+    // leaving ≈1 expected hit: a coin-flip-grade oracle, ~60-75% pass odds on
+    // a HEALTHY renderer against ~6% under the defect below. It measured its
+    // own luck, not the frame.
+    //
+    // captureCanvasRGBA takes an ELEMENT screenshot, so DOM overlays are
+    // composited over the canvas: a raised banner could pass this vacuously.
+    expect(
+      await page.locator('#luxar-scene-identity-banner').count(),
+      'scene-identity banner is up — its non-neutral fill satisfies the colour ' +
+        'predicates below, so this gate would pass vacuously'
+    ).toBe(0);
+    const frame = await captureCanvasRGBA(page);
 
-    const redDominant = samples.filter((s) => s.r > 40 && s.r > 2 * s.g);
-    const greenDominant = samples.filter((s) => s.g > 40 && s.g > 2 * s.r);
-    // The alpha-over discriminator: pre-fix, gsplat 'normal' emitted
-    // alpha=1.0, so the front (green) splat fully REPLACED the back
-    // (red) splat wherever it covered — no pixel could carry both
-    // channels. With premultiplied coverage alpha at opacity 0.5 the
-    // overlap composites green over red and both channels survive.
-    // The b < min(r,g)/2 term excludes NEUTRAL pixels (UI chrome,
-    // grays): the fixture's red+green overlap has near-zero blue, so a
-    // gray popup pixel (r≈g≈b) can never satisfy this vacuously.
-    const mixed = samples.filter((s) => s.r > 30 && s.g > 30 && s.b < Math.min(s.r, s.g) / 2);
+    let redDominant = 0;
+    let greenDominant = 0;
+    let mixed = 0;
+    for (let i = 0; i < frame.rgba.length; i += 4) {
+      const r = frame.rgba[i];
+      const g = frame.rgba[i + 1];
+      const b = frame.rgba[i + 2];
+      // Three-way dominance: the FORM matches the sibling additive test
+      // above, but the brightness floors are deliberately lower (40/30 vs
+      // its 100/80) — the crescent's red-dominant pixels bottom out around
+      // r ≈ 63, so a 100 floor would erase the very class this test counts.
+      // Without the blue term, magenta/cyan would count as red/green.
+      if (r > 40 && r > 2 * g && r > 2 * b) redDominant++;
+      if (g > 40 && g > 2 * r && g > 2 * b) greenDominant++;
+      // The alpha-over discriminator: pre-fix, gsplat 'normal' emitted
+      // alpha=1.0, so the front (green) splat fully REPLACED the back
+      // (red) splat wherever it covered — no pixel could carry both
+      // channels. With premultiplied coverage alpha at opacity 0.5 the
+      // overlap composites green over red and both channels survive.
+      // `b < min(r,g)/2` is the TIGHTEST term here, not slack: ACES injects
+      // blue through its input matrix, so blue runs ≈0.3-0.4 of min(r,g) in
+      // the counted ring (≈0.5-0.6 in the excluded bright core). It is still
+      // hopeless for a neutral grey (r≈g≈b), and structurally unsatisfiable
+      // by ANY single splat — red is (1,0.1,0.1) so b==g, green is
+      // (0.1,1,0.1) so b==r, and the blue reference splat is blue-max — so
+      // only genuine red-over-green compositing can produce a `mixed` pixel.
+      if (r > 30 && g > 30 && b < Math.min(r, g) / 2) mixed++;
+    }
+
+    const scanned = frame.width * frame.height;
+    // The floors are FRACTIONS of the frame, so the gate is invariant to
+    // canvas SCALE and dpr; an ASPECT change re-frames the scene (vertical FOV,
+    // and calculateCameraDistance switches between vertical and horizontal
+    // fit), so the fractions move and must be re-measured. Both readings below
+    // are real headless-Chromium runs of this fixture at 1280x720 / dpr=1
+    // (frame = 921,600 px) with the predicates above:
+    //   healthy (current renderer): red 3215 = 0.349%, green 18429 = 2.000%,
+    //                               mixed 14173 = 1.538%
+    //   NEGATIVE CONTROL, the defect this test guards (coverage forced to
+    //   1.0 in the LUXAR_NORMAL_PREMULT branch of shader-glsl.ts, so the
+    //   front splat replaces the background): red 156 = 0.017%,
+    //   green 38164 = 4.141%, mixed 0 = 0.000%
+    // The floors are PER-CLASS because the headroom is. Red is a thin rim the
+    // defect does NOT zero (healthy 0.349% vs residual 0.017%), so its floor
+    // is a geometric-mean compromise inside that narrow window (0.08% = 4.4x
+    // under healthy, 4.7x over the residual). Green and mixed have no lower
+    // constraint — the defect gives mixed exactly 0.000% and INFLATES green —
+    // so 0.5% (4.0x / 3.1x under healthy) costs nothing and there is no reason
+    // to leave ~19x slack under them. It buys no sensitivity to GRADED
+    // occlusion, though: a measured 3x over-occlusion control (coverage x3 in
+    // that same branch) still reads mixed 1.386% / red 0.326% and PASSES —
+    // these are hue-DOMINANCE classes, so the overlap ring keeps mixing both
+    // channels even when the front splat occludes far harder. This gate
+    // deliberately bounds only the total-replacement defect; quantifying
+    // graded over-occlusion needs a different measurement (the mixed ring's
+    // width, an intensity profile), not this one. Green only checks that the
+    // front splat rendered at all (the defect raises it, so it discriminates
+    // nothing here); `mixed` is the load-bearing alpha-over discriminator.
+    // Retune by re-measuring BOTH sets, not by nudging until green.
+    const RED_FLOOR = 0.0008; // thin rim, little room above the defect residual
+    const LIT_FLOOR = 0.005; // green/mixed: defect gives 0.000% / 4.141%
+    const pct = (n: number) => `${((100 * n) / scanned).toFixed(3)}%`;
+    const report =
+      `frame ${frame.width}x${frame.height} (${scanned} px): ` +
+      `red=${redDominant} (${pct(redDominant)} vs floor ${pct(RED_FLOOR * scanned)}) ` +
+      `green=${greenDominant} (${pct(greenDominant)} vs floor ${pct(LIT_FLOOR * scanned)}) ` +
+      `mixed=${mixed} (${pct(mixed)} vs floor ${pct(LIT_FLOOR * scanned)})`;
+    // Printed on success too, so a passing run records its margin and
+    // erosion is visible before the gate goes red.
+    console.log(`[gsplat-alpha-over] ${report}`);
 
     // Both splats render…
-    expect(redDominant.length).toBeGreaterThan(0);
-    expect(greenDominant.length).toBeGreaterThan(0);
+    expect(redDominant / scanned, `background (red) splat not visible — ${report}`).toBeGreaterThan(
+      RED_FLOOR
+    );
+    expect(greenDominant / scanned, `front (green) splat not visible — ${report}`).toBeGreaterThan(
+      LIT_FLOOR
+    );
     // …and the background shows through the overlap (fails pre-fix).
-    expect(mixed.length).toBeGreaterThan(0);
+    expect(
+      mixed / scanned,
+      `no alpha-over overlap — the front splat replaced the background: ${report}`
+    ).toBeGreaterThan(LIT_FLOOR);
   });
 
   test('depth sort applies a back-to-front ordering after load settle (Phase 2)', async ({

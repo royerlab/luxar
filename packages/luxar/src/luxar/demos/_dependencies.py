@@ -18,10 +18,14 @@ install resumes instead of refetching.
 _preflight.py`` fails the build if an entry-point gate reappears.
 
 **2. Advertise the CONSTRAINED requirement, never a bare package name.** A bare
-``pip install anndata`` resolves to 0.13+, which requires ``zarr>=3.1`` and
-silently upgrades Luxar past its ``zarr>=2.16,<3.0`` pin — breaking every store
-on disk. :data:`INSTALL_SPECS` therefore carries the version bound, and
-``test_demos_dependencies.py`` fails if a spec here drifts from ``pyproject.toml``.
+``pip install metpy`` happily resolves 1.5.x, which declares only
+``numpy>=1.20.0`` and then breaks at runtime against Luxar's ``numpy>=2.0``;
+1.6.3 is the release that added NumPy 2 support. :data:`INSTALL_SPECS` therefore
+carries the version bound, and ``test_demos_dependencies.py`` fails if a spec
+here drifts from ``pyproject.toml``. (The historical example was anndata, capped
+at ``<0.13`` because 0.13 required ``zarr>=3.1`` and would have dragged the
+project past its old ``zarr<3.0`` pin. That cap is gone — Luxar is on zarr 3 —
+but the rule it motivated is not.)
 
 The gate RAISES and does not print: the demo entry points already report the
 exception, and a helper that printed as well showed the user the same message
@@ -45,7 +49,7 @@ from typing import Any, NamedTuple
 class DependencySpec(NamedTuple):
     """How to install one optional dependency, and why it is bounded."""
 
-    #: PEP 440 requirement to advertise, e.g. ``anndata>=0.10,<0.13``. MUST stay
+    #: PEP 440 requirement to advertise, e.g. ``metpy>=1.6.3,<2.0``. MUST stay
     #: equivalent to the corresponding pin in ``pyproject.toml``.
     spec: str
     #: Luxar extra this spec is ATTRIBUTED to (``""`` for specs in no extra). A
@@ -63,12 +67,12 @@ class DependencySpec(NamedTuple):
 #: ``PIL`` vs ``Pillow``, ``sentence_transformers`` vs ``sentence-transformers``).
 INSTALL_SPECS: dict[str, DependencySpec] = {
     "anndata": DependencySpec(
-        "anndata>=0.10,<0.13",
+        "anndata>=0.10",
         "demos",
-        "The upper bound is REQUIRED: anndata >= 0.13 pulls zarr >= 3.1, which "
-        "conflicts with Luxar's zarr>=2.16,<3.0 pin and would break every "
-        "Luxar store. 0.10/0.11 declare no zarr dependency; 0.12 asks for "
-        "zarr>=2.18.7,!=3.0.*, which zarr 2.18.7 satisfies.",
+        "Reads the .h5ad inputs for the Tabula Sapiens and Zebrahub-velocity "
+        "demos. Formerly capped at <0.13 because anndata 0.13 requires "
+        "zarr >= 3.1, which the old zarr<3.0 pin could not satisfy; Luxar is on "
+        "zarr 3 now, so the ceiling is gone.",
     ),
     "esm": DependencySpec(
         "esm>=3.0.0",

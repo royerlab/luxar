@@ -476,8 +476,9 @@ def create_luxar_scene(
             )
             # 2D data: start in orthographic mode with scale bar visible.
             # ACES, set explicitly (the house default). It shifts LUT hues a
-            # little; Neutral is the alternative if exact per-marker colour
-            # fidelity ever matters more than the filmic look.
+            # little; "None" is the alternative if exact per-marker colour
+            # fidelity ever matters more than the filmic look (#1459) — an
+            # exact passthrough, as long as the render is inside [0, 1].
             viewer_config = ViewerConfig(
                 control_type="ortho",
                 tone_mapping="ACES",

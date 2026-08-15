@@ -179,7 +179,7 @@ from luxar.demos import (
     cached_download,
     detect_device,
     launch_viewer,
-    load_precomputed_bundle,
+    load_dataset_bundle,
     parse_demo_flags,
     parse_int_arg,
     print_data_provenance,
@@ -1587,7 +1587,7 @@ def main() -> None:
     file_names = [_frame_cache_file(i).name for i in indices]
 
     try:
-        gsplats_list = load_precomputed_bundle(
+        gsplats_list = load_dataset_bundle(
             DEMO_NAME, _PRECOMPUTED_BUNDLE_NAME, file_names, recompute=RECOMPUTE
         )
     except FileNotFoundError as exc:

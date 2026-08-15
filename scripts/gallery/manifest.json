@@ -398,6 +398,14 @@
       "dataset": "datasets/demos/gsplats_3d_acto3d_heart.luxar.zarr"
     },
     {
+      "id": "gsplats_3d_flylight_mcfo_neurons",
+      "title": "3D FlyLight MCFO Neurons",
+      "geometry": "gsplats",
+      "category": "microscopy",
+      "script": "demo_gsplats_3d_flylight_mcfo_neurons.py",
+      "dataset": "datasets/demos/gsplats_3d_flylight_mcfo_neurons.luxar.zarr"
+    },
+    {
       "id": "gsplats_3d_kidney_multichannel_layers",
       "title": "3D Kidney Multichannel Layers",
       "geometry": "gsplats",

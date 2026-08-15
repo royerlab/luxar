@@ -8,9 +8,9 @@ Two things are guarded here:
   dependency.
 * Spec/pin agreement — every entry in :data:`INSTALL_SPECS` must stay compatible
   with the corresponding pin in ``pyproject.toml``. This is what stops the hint
-  and the packaging metadata from drifting apart; the anndata ceiling in
-  particular is load-bearing (``>=0.13`` would upgrade zarr past Luxar's pin and
-  break every store on disk).
+  and the packaging metadata from drifting apart; the metpy floor is the live
+  example (``metpy<1.6.3`` declares only ``numpy>=1.20`` and breaks at runtime
+  against Luxar's ``numpy>=2.0``).
 """
 
 from __future__ import annotations
@@ -133,11 +133,25 @@ class TestSpecsAreValidRequirements:
         Requirement = pytest.importorskip("packaging.requirements").Requirement
         Requirement(INSTALL_SPECS[module].spec)  # raises on a malformed spec
 
-    def test_anndata_ceiling_is_present(self) -> None:
-        """Load-bearing: anndata >= 0.13 requires zarr >= 3.1, breaking our pin."""
-        spec = INSTALL_SPECS["anndata"]
-        assert "<0.13" in spec.spec, f"anndata lost its upper bound: {spec.spec}"
-        assert "zarr" in spec.note, "the reason for the bound must travel with it"
+    def test_every_upper_bound_explains_itself(self) -> None:
+        """A ceiling must arrive with its reason, or nobody can ever lift it.
+
+        This generalizes a test that used to pin one specific ceiling
+        (``anndata<0.13``, which existed because anndata 0.13 needs zarr >= 3.1
+        and the project was pinned to zarr 2). That cap is gone now Luxar is on
+        zarr 3 — and the lesson is that an unexplained bound outlives its cause.
+        So the invariant is no longer "this bound exists" but "whatever bounds
+        exist, say why", which stays true as caps come and go.
+        """
+        unexplained = [
+            module
+            for module, spec in INSTALL_SPECS.items()
+            if ("<" in spec.spec or "!=" in spec.spec) and len(spec.note.strip()) < 20
+        ]
+        assert not unexplained, (
+            "these specs cap a version without explaining the cap, so a future "
+            f"reader cannot tell whether it is still needed: {unexplained}"
+        )
 
 
 class TestSpecsMatchPyproject:
@@ -159,10 +173,8 @@ class TestSpecsMatchPyproject:
         # the EXTRA that declares it. A name-only match is too weak: scipy is
         # pinned twice (demos >=1.15.0, gsplats >=1.9.0), and a spec that had
         # silently relaxed to the gsplats floor would match "some pin" and pass.
-        try:
-            import tomllib
-        except ModuleNotFoundError:  # py3.10
-            tomllib = pytest.importorskip("tomli")
+        import tomllib
+
         data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
         optional = data["project"].get("optional-dependencies", {})
 
@@ -453,9 +465,9 @@ class TestSubstitutiveLodGate:
 class TestScannedModuleSet:
     """The guards below are only as good as the set of files they read.
 
-    Eight guards read :func:`scanned_demo_modules` — four here, plus the
-    entry-point preflight, substitutive-LOD, Layers-panel and import-spelling
-    guards next door.
+    Nine guards read :func:`scanned_demo_modules` — four here, plus the
+    entry-point preflight, substitutive-LOD, Layers-panel, import-spelling and
+    tone-mapping-policy guards next door.
     A gate that moves out of a ``demo_*.py`` into a shared helper must stay
     covered, so the set is a denylist over ``demos/*.py`` rather than an opt-in
     filename pattern.
@@ -470,7 +482,7 @@ class TestScannedModuleSet:
 
     def test_the_set_is_a_denylist_over_every_module(self) -> None:
         # Not an allowlist: a new demos/_plot_helpers.py must be picked up with
-        # no edit here, or it would silently escape all eight guards.
+        # no edit here, or it would silently escape all nine guards.
         demos_dir = Path(__file__).resolve().parents[1]
         on_disk = {p.name for p in demos_dir.glob("*.py")}
         scanned = {p.name for p in scanned_demo_modules()}
@@ -522,8 +534,8 @@ class TestNoRuntimePipInstall:
     to ``pip install -q <pkg>`` with stdout/stderr sent to DEVNULL
     (``demo_zebrahub_velocity_streamlines``, then ``demo_tabula_sapiens``).
     It mutates the environment without consent, is hostile on a shared HPC node
-    or in CI, pulls an UNBOUNDED requirement that can walk zarr past Luxar's
-    pin, and hides the failure it is papering over. `require_module` is the
+    or in CI, pulls an UNBOUNDED requirement that can walk a core dependency
+    past Luxar's pins, and hides the failure it is papering over. `require_module` is the
     sanctioned reaction to a missing dependency; installing is the user's call,
     via the explicit `luxar demo deps --install` (which is why this scans only
     the demo modules, not the CLI that command lives in).
@@ -741,8 +753,8 @@ class TestNoUnboundedInstallHint:
     ``aprint("pip install matplotlib")`` from sitting next to the tabled
     ``matplotlib>=3.5.0``, which is how eleven of them accumulated. A hint that
     drops the bound is the same defect as the code doing the install: it walks
-    the user into the resolution the pin exists to prevent (``anndata>=0.13``
-    dragging ``zarr>=3`` past Luxar's ``zarr<3.0``).
+    the user into the resolution the pin exists to prevent (a bare
+    ``pip install metpy`` landing 1.5.x against Luxar's ``numpy>=2.0``).
 
     Scanned as text, docstrings included — a "Requirements:" block is advice
     the user follows just as readily as a runtime message.

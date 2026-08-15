@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/royerlab/luxar/actions/workflows/ci.yml/badge.svg)](https://github.com/royerlab/luxar/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/License-BSD_3--Clause-blue.svg)](LICENSE)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/downloads/)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue)](https://www.python.org/downloads/)
 
 **High-performance n-dimensional scientific visualization.**
 
@@ -78,7 +78,7 @@ is the slow exception).
 
 ### Prerequisites
 
-- Python 3.10+ (usually pre-installed on Linux/macOS)
+- Python 3.12+ (usually pre-installed on Linux/macOS)
 - Modern browser with WebGL 2.0
 - **Gaussian-splat _fitting_** also needs an NVIDIA **CUDA GPU** (see `make build-cuda`); _viewing_ splats in the browser does not.
 - **Ubuntu/Debian only**: `sudo apt-get install -y pipx && pipx ensurepath`
@@ -89,7 +89,7 @@ is the slow exception).
 git clone https://github.com/royerlab/luxar.git
 cd luxar
 make setup-dev          # Auto-installs Node.js, pnpm, Hatch (no sudo)
-luxar demo              # Browse the 83 bundled demos
+luxar demo              # Browse the 85 bundled demos
 luxar demo run lorenz   # Run one — generates the data and opens the viewer
 ```
 
@@ -103,7 +103,7 @@ That last command generates a Lorenz attractor and opens the viewer:
 category, what it needs, and whether you have already built it:
 
 ```
-🎬 [Luxar] 83 demos
+🎬 [Luxar] 85 demos
 
   #  KEY                                    GEOM         CATEGORY       NEEDS                STATUS
 ───────────────────────────────────────────────────────────────────────────────────────────────────
@@ -246,7 +246,7 @@ A cross-section of Luxar's built-in demos — all four geometry types (**Points*
 | [![Particle Collision — physics event](docs/images/readme/gallery/collision.webp)](docs/images/readme/gallery/collision.webm) | [![Ocean — bioluminescent jellyfish](docs/images/readme/gallery/ocean.webp)](docs/images/readme/gallery/ocean.webm) |
 | **Particle Collision**<br>physics event | **Ocean**<br>bioluminescent jellyfish |
 
-> The full curated set (and more datasets) lives in `scripts/gallery/manifest.json`. A few very large point clouds (Gaia 3M stars, DESI cosmic web) and heavy volumes render too slowly under headless software-GL to include as videos here — regenerate with a GPU via `make generate-gallery`.
+> The full curated set (and more datasets) lives in `scripts/gallery/manifest.json`. A few very large point clouds (DESI cosmic web) and heavy volumes render too slowly under headless software-GL to include as videos here — regenerate those with a GPU via `make generate-gallery`. The Gaia 3M-star tile is missing for a different reason: that catalog is CC BY-NC, so it is not shipped, and the demo reads it from `~/.cache/luxar/milky_way_gaia_3m/milky_way_gaia_3m.zarr.zip`, where you have to place it by hand. The gallery harness still runs every such demo — on a machine that has the file the tile regenerates normally — and only reports it as `manual-data` (rather than failing the whole build) if it exits non-zero, which is what happens on a machine without the file.
 >
 > These demos visualize openly-shared scientific datasets — see [Acknowledgments → Datasets & scientific data](#datasets--scientific-data) for full sources and citations.
 

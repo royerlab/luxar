@@ -13,6 +13,7 @@ import pytest
 import zarr
 
 from luxar import Dimensions, LuxarZarrCompiler
+from luxar._zarr_compat import create_array
 from luxar.core.mesh import Mesh
 from luxar.io import LuxarScene, MeshData
 
@@ -923,8 +924,8 @@ def _handwritten_mesh_store(tmp_path, mutate):
             "position_bounds": {"min": [0.0, 0.0, 0.0], "max": [1.0, 1.0, 1.0]},
         }
     )
-    node.create_dataset("vertices", data=_V)
-    node.create_dataset("faces", data=_F)
+    create_array(node, "vertices", data=_V)
+    create_array(node, "faces", data=_F)
     mutate(node)
     return path
 
@@ -940,7 +941,7 @@ def test_reader_rejects_a_malformed_normal_dims_triple(tmp_path) -> None:
     path = _handwritten_mesh_store(
         tmp_path,
         lambda node: (
-            node.create_dataset("normals", data=np.zeros((4, 3), dtype=np.float32)),
+            create_array(node, "normals", data=np.zeros((4, 3), dtype=np.float32)),
             node.attrs.update({"has_normals": True, "normal_dims": [0, 1]}),
         ),
     )
@@ -953,7 +954,7 @@ def test_reader_rejects_undersized_normals(tmp_path) -> None:
     path = _handwritten_mesh_store(
         tmp_path,
         lambda node: (
-            node.create_dataset("normals", data=np.zeros((2, 3), dtype=np.float32)),
+            create_array(node, "normals", data=np.zeros((2, 3), dtype=np.float32)),
             node.attrs.update({"has_normals": True, "normal_dims": [0, 1, 2]}),
         ),
     )

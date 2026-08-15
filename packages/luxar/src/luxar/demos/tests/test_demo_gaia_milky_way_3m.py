@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 import zarr
 
+from luxar._zarr_compat import create_array
 from luxar.demos._dependencies import SUBSTITUTIVE_LOD_MODULES, is_installed
 from luxar.demos.demo_gaia_milky_way_3m import (
     CACHE_FILE,
@@ -34,7 +35,7 @@ def _write_tiny_gaia_table(path: Path, n_stars: int = 16) -> None:
         "bp_rp": np.linspace(-0.5, 3.0, n_stars, dtype=np.float32),
     }
     for name, data in values.items():
-        root.create_dataset(name, data=data, shape=data.shape, dtype=data.dtype)
+        create_array(root, name, data=data, shape=data.shape, dtype=data.dtype)
 
 
 def _catalog_zip(tmp_path: Path, member_name: str) -> Path:
@@ -65,7 +66,7 @@ def _foreign_table_catalog_zip(tmp_path: Path) -> Path:
     root = zarr.open(str(raw), mode="w")
     for name in ("x", "y", "z", "mag", "colour"):
         values = np.linspace(0.0, 1.0, 8, dtype=np.float32)
-        root.create_dataset(name, data=values, shape=values.shape, dtype=values.dtype)
+        create_array(root, name, data=values, shape=values.shape, dtype=values.dtype)
     zip_path = tmp_path / "catalog.zarr.zip"
     with zipfile.ZipFile(zip_path, "w") as zf:
         for f in raw.rglob("*"):

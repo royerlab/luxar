@@ -23,6 +23,7 @@ import {
 import { stampLadderComplete } from '../../../data/scene-loader/commit/stamp-view-version';
 import { LoaderError } from '../../../data/scene-loader/nodes/load-leaf-error-dispatch';
 import { MESH_DECODE_BUDGET_BYTES } from '../../../config/constants';
+import { CACHE_HIT_THRESHOLD_MS } from '../../../data/loaders/progressive/constants';
 import type { LoadedMeshData, MeshViewState } from '../../../types/mesh';
 import type { MeshWholeNodeLoader } from '../../../data/mesh/mesh-whole-node-loader';
 
@@ -239,16 +240,82 @@ describe('MeshProgressiveLoader', () => {
   }
 
   it('streams every level on a refine pass and reports completion', async () => {
-    const { loader } = makeLadder([level(4, [0, 1, 2]), level(3, [0, 1, 2]), level(3, [0, 1, 2])]);
+    // The clock is PINNED for this one test, and the reason is the assertion
+    // itself. These stubs are cache hits by construction — they resolve
+    // immediately and report `allResident: true` — but the ladder loop times
+    // each level with a clock that tracks wall time and stops after any level
+    // that took longer than `CACHE_HIT_THRESHOLD_MS`, resident or not (rightly:
+    // a slow level should yield the frame). So a >15ms scheduler stall between
+    // `t0` and the stub's resolution — a loaded runner, a GC pause under
+    // coverage — was charged to level 1 as work it never did and truncated the
+    // pass at 2 of 3 levels: machine load, not the ladder.
+    //
+    // Any test asserting that a refine pass streamed an ALL-RESIDENT ladder of
+    // three or more levels to completion needs the same freeze. The file's
+    // 2-level ladders do not: the break lands after the level is pushed, so even
+    // a spurious stop leaves both of them committed. The sibling
+    // progressive-loader suites never meet this at all — they install
+    // `vi.useFakeTimers()`, which substitutes a clock that only advances when
+    // told to — whereas this file runs on real timers. Restored in a `finally`
+    // so a failing assertion cannot leak the pin into the tests that follow
+    // (this file sets no global `restoreMocks`).
+    const nowSpy = vi.spyOn(performance, 'now').mockReturnValue(0);
+    try {
+      const { loader } = makeLadder([
+        level(4, [0, 1, 2]),
+        level(3, [0, 1, 2]),
+        level(3, [0, 1, 2]),
+      ]);
 
-    expect(loader.hasMoreLODs).toBe(true);
-    const data = await loader.updateView(VIEW);
+      expect(loader.hasMoreLODs).toBe(true);
+      const data = await loader.updateView(VIEW);
 
-    expect(loader.loadedLODCount).toBe(3);
-    expect(loader.totalLODCount).toBe(3);
-    expect(loader.hasMoreLODs).toBe(false);
-    expect(data.faceCount).toBe(3);
-    expect(data.vertexCount).toBe(10);
+      expect(loader.loadedLODCount).toBe(3);
+      expect(loader.totalLODCount).toBe(3);
+      expect(loader.hasMoreLODs).toBe(false);
+      expect(data.faceCount).toBe(3);
+      expect(data.vertexCount).toBe(10);
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
+  it(`stops after a RESIDENT level that took > ${CACHE_HIT_THRESHOLD_MS}ms`, async () => {
+    // The other disjunct of `shouldStopAfterLevel`, and the one the freeze above
+    // deliberately puts out of that test's reach: `!allResident || elapsedMs >
+    // CACHE_HIT_THRESHOLD_MS`. A level can be fully cache-resident and still be
+    // too expensive to continue past — residency spares it the fetch, not the
+    // dequant+project — so the pass must yield the frame and let a later pass
+    // take the rest. The
+    // `!allResident` half is pinned by the test below; without this one the mesh
+    // ladder would cover only that half, while `points-`, `lines-` and
+    // `gsplats-progressive-loader.test.ts` each pin the timing half too — and the
+    // four geometry types are expected to keep mirrored test coverage.
+    let now = 0;
+    const nowSpy = vi.spyOn(performance, 'now').mockImplementation(() => now);
+    try {
+      const levels = [level(4, [0, 1, 2]), level(3, [0, 1, 2]), level(3, [0, 1, 2])];
+      const subs = levels.map((d) => subLoader(d));
+      // Level 1 alone "costs" more than the threshold; every other level is
+      // free. Residency stays TRUE throughout, so only the timing disjunct can
+      // end the pass here.
+      subs[1].updateViewWithResidency = vi.fn(async () => {
+        now += CACHE_HIT_THRESHOLD_MS + 1;
+        return { data: levels[1], allResident: true };
+      });
+      const loader = new MeshProgressiveLoader(subs, levels.length, '/surf');
+
+      const data = await loader.updateView(VIEW);
+
+      expect(loader.loadedLODCount).toBe(2);
+      expect(loader.hasMoreLODs).toBe(true);
+      // The slow level itself IS committed (the break is after the push) —
+      // what never loads is the level after it.
+      expect(data.faceCount).toBe(2);
+      expect(subs[2].calls).toBe(0);
+    } finally {
+      nowSpy.mockRestore();
+    }
   });
 
   it('stops after the first COLD level on a refine pass', async () => {

@@ -141,7 +141,7 @@ import os
 
 from luxar.demos import (
     launch_viewer,
-    load_precomputed_gsplats,
+    load_dataset_gsplats,
     parse_demo_flags,
     warn_if_no_cuda_gpu,
 )
@@ -473,9 +473,7 @@ def view_with_napari(volume, gsplats_data):
         import napari
     except ImportError:
         aprint("⚠️  napari not installed, skipping napari view")
-        # Keep the <0.8 cap: napari 0.8 requires zarr>=3, which is unsatisfiable
-        # against Luxar's zarr<3.0 pin (see the note in pyproject.toml).
-        aprint("   Install with: pip install 'napari[all]>=0.4.18,<0.8'")
+        aprint("   Install with: pip install 'napari[all]>=0.8'")
         return
 
     with asection("Opening in napari"):
@@ -557,11 +555,11 @@ def main():
             aprint("Run without --serve-only to generate first")
             return
 
-    # Try loading precomputed data (from Git LFS / local cache)
+    # Try the manifest-driven fetch (checksum-verified cache -> in-repo -> Zenodo)
     volume = None
     gsplats_data_original = None
 
-    precomputed = load_precomputed_gsplats(
+    precomputed = load_dataset_gsplats(
         "gsplats_dapi",
         ["dapi.gsplats.zarr.zip"],
         recompute=RECOMPUTE,

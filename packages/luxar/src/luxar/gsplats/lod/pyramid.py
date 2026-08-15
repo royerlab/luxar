@@ -23,6 +23,7 @@ from luxar.gsplats.lod.additive import (
     BreakpointSpec,
     clamp_counts_breakpoints,
     make_additive_lod,
+    resolve_truncation_sigmas,
     sibling_aware_stream_breakpoints,
     validate_counts_breakpoints,
 )
@@ -55,7 +56,7 @@ def make_lod_pyramid(
     additive_reveal_centre: Optional[Sequence[float]] = None,
     additive_spatial_dims: Optional[Sequence[int]] = None,
     breakpoints: BreakpointSpec = "equal-count",
-    truncation_sigmas: float = 3.0,
+    truncation_sigmas: Optional[float] = None,
     max_n_dense: int = 2_000,
     seed: Optional[int] = None,
     verbose: bool = False,
@@ -86,7 +87,9 @@ def make_lod_pyramid(
     n_additive_lods, additive_method, breakpoints
         Additive axis parameters (passed to :func:`make_additive_lod`).
     truncation_sigmas, max_n_dense
-        Additive axis algorithmic knobs.
+        Additive axis algorithmic knobs. ``truncation_sigmas=None`` (the
+        default) means the dataset's own ``truncation_radius`` — resolved once
+        here and passed as a concrete value to every level's ladder.
     seed
         Optional shared seed (per-axis offsets are added internally).
     verbose
@@ -101,6 +104,12 @@ def make_lod_pyramid(
         A matrix-shaped dataset with the full
         ``[levels+1, n_additive_lods]`` pyramid.
     """
+    # Resolve the truncation support ONCE, from the INPUT dataset: `None` means
+    # "the radius this data was fitted/rendered at", and every level's ladder
+    # then prunes at that same support (a substitutive level inherits the
+    # radius, so this is also the value each ladder would resolve for itself).
+    sigmas = resolve_truncation_sigmas(truncation_sigmas, data)
+
     # Explicit `counts:` breakpoints must still be sane for the FULL dataset:
     # the finest pyramid level IS the input's (flattened) default substitutive
     # level, so a largest count exceeding that N is a whole-dataset-scale typo
@@ -157,7 +166,7 @@ def make_lod_pyramid(
             n_lods=n_additive_lods,
             method=additive_method,
             breakpoints=level_breakpoints,
-            truncation_sigmas=truncation_sigmas,
+            truncation_sigmas=sigmas,
             max_n_dense=max_n_dense,
             seed=None if seed is None else seed + s,
             substitutive_level=s,

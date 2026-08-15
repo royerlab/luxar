@@ -11,8 +11,8 @@ byte-for-byte behaviour. Round-trip suites use tolerances that would mask a
 from __future__ import annotations
 
 import numpy as np
-import zarr
 
+from luxar._zarr_compat import memory_group
 from luxar.encoding import ArrayEncoder
 
 
@@ -35,7 +35,7 @@ def test_custom_bounded_scalar_truncates() -> None:
     # Exercise _encode_custom directly — going through encode() would hit the
     # broadcast/LUT priority ladder (a low-cardinality array never reaches the
     # dtype encoders), which is not what this test is pinning.
-    g = zarr.group(store=zarr.MemoryStore())
+    g = memory_group()
     ArrayEncoder()._encode_custom(
         g,
         "a",

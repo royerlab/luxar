@@ -22,7 +22,7 @@ Before running `make setup-dev`, you need:
 
 | Tool | Required Version | Notes |
 |------|-----------------|-------|
-| Python | 3.10+ | Usually pre-installed on Linux/macOS |
+| Python | 3.12+ | Usually pre-installed on Linux/macOS |
 | Git | Any | For cloning the repository |
 | curl | Any | For downloading installers |
 
@@ -51,7 +51,7 @@ pipx ensurepath
 # Python 3 comes with macOS or install via:
 xcode-select --install  # Command line tools
 # or
-brew install python@3.11
+brew install python@3.12
 ```
 
 ## Quick Start
@@ -87,8 +87,8 @@ The setup process has 5 steps:
    - Checks for pipx (required on modern Ubuntu/Debian)
    - Installs Hatch via `pipx install hatch`
    - Without pipx, falls back to `pip install --user` / a venv — this
-     fallback is where a Python 3.10+ interpreter is scanned for
-     (`python3.13` → `python3.12` → ... → `python3`)
+     fallback is where a Python 3.12+ interpreter is scanned for
+     (`python3.14` → `python3.13` → `python3.12` → `python3`)
    - Handles edge cases (broken symlinks, already installed)
 
 #### Step 2: Node.js Environment
@@ -341,12 +341,12 @@ MIN_NODE_MINOR := 22
 | Command | Description |
 |---------|-------------|
 | `make help` | Show all available commands |
-| `make clean-all` | Clean all artifacts (Python, TypeScript, WASM, CUDA, launchers, datasets, and the `~/.cache/luxar` user cache via `clean-launchers` + `clean-cache`) |
+| `make clean-all` | Clean all artifacts: Python, TypeScript, WASM, CUDA, launcher binaries (`clean-launchers`), generated datasets (`clean-examples`) and the `~/.cache/luxar` user cache (`clean-cache`, which keeps hand-placed demo inputs — see its row) |
 | `make clean-examples` | Clean generated example datasets |
 | `make clean-python` | Clean Python build artifacts and caches |
 | `make clean-viewer` | Clean viewer build artifacts (node_modules, dist, `.vite`, coverage, playwright-report, test-results) |
 | `make clean-launchers` | Clean native launcher binaries |
-| `make clean-cache` | Clear the Luxar user cache (`~/.cache/luxar`) |
+| `make clean-cache` | Clear the Luxar user cache (`~/.cache/luxar`), except the hand-placed demo inputs listed in `luxar.demos.registry.PROTECTED_INPUT_DIRS` (`milky_way_gaia_3m/` — a CC BY-NC catalog with no download path, so it is kept) |
 | `make stats` | Generate project statistics report |
 | `make stats-fast` | Generate project statistics without running tests (file counts only) |
 | `make shell` | Enter Hatch development shell |
@@ -421,19 +421,23 @@ a local pass:
 hatch run python -V     # the interpreter your tests actually used
 ```
 
-To test the versions the project supports (`requires-python = ">=3.10"`), use the
-per-version `test` matrix environments instead of the default env:
+The `test` matrix carries one leg per version the wheel's classifiers advertise —
+3.12 (the floor, `requires-python = ">=3.12"`, which is what zarr 3.2+ requires),
+3.13, and 3.14 (the newest). All three matter: `>=3.12` has no ceiling,
+`install-hatch` prefers the newest interpreter it can find, and a developer's
+`hatch env` therefore usually runs something newer than the floor. Run any of them
+explicitly:
 
 ```bash
-hatch python install 3.10 3.11   # once, if those interpreters are missing
-hatch run test.py3.10:cov        # one version
-hatch run test:cov               # all three, sequentially
+hatch run test.py3.12:cov   # the floor, and the required CI context
+hatch run test.py3.13:cov
+hatch run test.py3.14:cov   # the newest supported
 ```
 
 CI runs each version it tests as its own parallel job and asserts the interpreter
 matches the matrix leg, so a mismatch fails loudly rather than silently testing
 one version three times (see issue #839). Which versions that is depends on the
-event — a pull request runs 3.12 alone; see "Which Python versions CI runs"
+event — a pull request runs the floor alone; see "Which Python versions CI runs"
 below.
 
 ### pnpm for TypeScript
@@ -719,7 +723,7 @@ fitting tasks are grouped into each Slurm job to reduce scheduling overhead.
 python scripts/check_hpc_setup.py
 ```
 
-Tests: Python 3.10+ available, hatch installed and functional, hatch env show works, hatch uses Python >= 3.10, pnpm installed and functional, `~/.local/bin` in PATH, npm `--prefix` fallback works, hatch venv uses Python >= 3.10.
+Tests: Python 3.12+ available, hatch installed and functional, hatch env show works, hatch uses Python >= 3.12, pnpm installed and functional, `~/.local/bin` in PATH, npm `--prefix` fallback works, hatch venv uses Python >= 3.12.
 
 The batch-planning regression tests (zarr.zip support, custom axes parsing,
 axes override validation, array selection consistency, auto-tile logic,
@@ -827,19 +831,33 @@ runs everything. The same trade as the per-PR Python matrix below: found on
 
 ### Which Python versions CI runs
 
-`python-tests` is a matrix, but not the same matrix on every event:
+`python-tests` is a matrix whose legs depend on the event:
 
 | Event | Python legs |
 |-------|-------------|
-| `pull_request` | `3.12` only — the one required status context |
-| `push` to `main` | `3.10`, `3.11`, `3.12` |
-| nightly `schedule` (09:17 UTC) | `3.10`, `3.11`, `3.12` |
+| `pull_request` | `3.12` — the floor, and the one required status context |
+| `push` to `main` | `3.12`, `3.13`, `3.14` |
+| nightly `schedule` (09:17 UTC) | `3.12`, `3.13`, `3.14` |
 
-The supported floor is still 3.10 (`requires-python`), so 3.10/3.11 stay
-exercised every day and on every merge; what the per-PR matrix gives up is
-only the *latency* of finding a version-specific break — within 24h rather
-than in the PR that caused it. The trade buys back two of the three legs of the
-slowest job on a box with five self-hosted slots.
+3.12 is the FLOOR (`requires-python = ">=3.12"`, what zarr 3.2+ requires) and is
+what the required `python-tests (3.12)` status context names, so it runs on every
+event. `>=3.12` has no ceiling, though: 3.13 and 3.14 are supported, `install-hatch`
+explicitly prefers them, and a developer's `hatch env` picks the newest interpreter
+on the box. So the off-PR set is exactly the set of versions the wheel's
+classifiers advertise — "declared" and "tested" are kept identical by
+construction, because a claimed-but-never-exercised version is the same species of
+lie as an untested 3.10 claim would be. Finding a break within 24h is the trade
+against spending three legs on every PR, on a box with five self-hosted slots. (If
+newer interpreters ever become deliberately unsupported, the honest fix is a
+`requires-python` upper bound, not a quiet single-leg matrix.)
+
+This is also why the version-equality assertion in the job matters: it proves each
+leg really ran the interpreter it claims, rather than whatever pipx picked — the
+defect behind issue #839, where all three legs silently ran the same version.
+
+The nightly and push runs differ from a PR run in *scope* as well: neither has a PR
+base, so the `changes` job cannot path-filter and selects the whole suite plus the
+documentation gate.
 
 Scheduled runs sit in their own `concurrency` group: they share
 `refs/heads/main` with merge-triggered runs, so under one shared group
@@ -875,7 +893,7 @@ selects the full suite and the documentation gate as well.
 
 | Tool | Minimum Version | Reason |
 |------|----------------|--------|
-| Python | 3.10 | Type hints, dataclasses, match statements |
+| Python | 3.12 | zarr 3 requires >=3.12 from 3.2 on; also stdlib `tomllib`, PEP 695 type stubs |
 | Node.js | 22.22 | jsdom 30 engines `^22.22.2 || ^24.15.0 || >=26.0.0` (undici 8 crashes on older Node); Vite 8.x needs only 20.19 |
 | Rust | stable | WASM compilation |
 | wasm-pack | 0.14.0 (pinned) | WASM packaging — `install-rust` installs exactly `wasm-pack 0.14.0` with `cargo install --locked` |
