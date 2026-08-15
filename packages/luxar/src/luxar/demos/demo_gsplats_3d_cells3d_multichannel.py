@@ -181,7 +181,7 @@ def load_cells3d():
             aprint(f"  {ch_name}: {V.shape}, range [{V.min():.3f}, {V.max():.3f}]")
 
         aprint(f"Loaded {len(volumes)} channels")
-        return volumes
+        return volumes, str(raw.dtype)
 
 
 # =============================================================================
@@ -189,7 +189,7 @@ def load_cells3d():
 # =============================================================================
 
 
-def fit_channel(volume, channel_name, cache_file):
+def fit_channel(volume, channel_name, cache_file, source_dtype=None):
     """Fit gsplats to a single channel (always fits — caller handles precomputed).
 
     Args:
@@ -214,6 +214,9 @@ def fit_channel(volume, channel_name, cache_file):
     result = fit_gaussian_splats(
         volume,
         seeds=MAX_SPLATS,
+        # The grid is the acquisition's; only the element type was changed
+        # on the way here, and that is the denominator of the ratio.
+        source_dtype=source_dtype,
         device=DEVICE,
         seed_method="edges",
         verbose=True,
@@ -238,7 +241,7 @@ def fit_channel(volume, channel_name, cache_file):
     return result
 
 
-def fit_all_channels(volumes):
+def fit_all_channels(volumes, source_dtype=None):
     """Fit gsplats to all channels."""
     with asection("Fitting GSplats per channel"):
         gsplats_list = []
@@ -248,7 +251,9 @@ def fit_all_channels(volumes):
             cache_file = CACHE_DIR / f"cells3d_ch{i}.gsplats.zarr.zip"
 
             with asection(f"Channel {i}: {ch_name}"):
-                gsplats = fit_channel(volume, ch_name, cache_file)
+                gsplats = fit_channel(
+                    volume, ch_name, cache_file, source_dtype=source_dtype
+                )
                 gsplats_list.append(gsplats)
 
         return gsplats_list
@@ -405,8 +410,8 @@ def main():
     else:
         # --recompute path: load raw data, fit from scratch
         warn_if_no_cuda_gpu()
-        volumes = load_cells3d()
-        gsplats_list = fit_all_channels(volumes)
+        volumes, source_dtype = load_cells3d()
+        gsplats_list = fit_all_channels(volumes, source_dtype=source_dtype)
 
     # Report
     with asection("Fitting Summary"):

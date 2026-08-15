@@ -168,6 +168,9 @@ def load_opencell_data(tiff_path: Path) -> list[np.ndarray]:
         aprint(f"Reading {tiff_path.name}...")
         data = tifffile.imread(str(tiff_path))
         aprint(f"Raw shape: {data.shape}, dtype: {data.dtype}")
+        # Captured now: `data` is freed below, and this is the element
+        # type every compression ratio for this dataset is quoted against.
+        source_dtype = str(data.dtype)
 
         # Expected: (Z, C, Y, X) = (51, 2, 600, 600)
         if data.ndim == 4 and data.shape[1] == N_CHANNELS:
@@ -211,7 +214,7 @@ def load_opencell_data(tiff_path: Path) -> list[np.ndarray]:
 
         del data
 
-    return volumes
+    return volumes, source_dtype
 
 
 # =============================================================================
@@ -223,6 +226,7 @@ def fit_channel(
     volume: np.ndarray,
     channel_name: str,
     cache_file: Path,
+    source_dtype: str | None = None,
 ) -> GSplatData:
     """Fit gsplats to a single channel.
 
@@ -248,6 +252,9 @@ def fit_channel(
     result = fit_gaussian_splats(
         volume,
         seeds=MAX_SPLATS,
+        # The grid is the acquisition's; only the element type was changed
+        # on the way here, and that is the denominator of the ratio.
+        source_dtype=source_dtype,
         device=DEVICE,
         verbose=True,
         cull_retention=0.99,
@@ -269,7 +276,9 @@ def fit_channel(
     return result
 
 
-def fit_all_channels(volumes: list[np.ndarray]) -> list[GSplatData]:
+def fit_all_channels(
+    volumes: list[np.ndarray], source_dtype: str | None = None
+) -> list[GSplatData]:
     """Fit gsplats to all channels."""
     with asection("Fitting GSplats per channel"):
         gsplats_list = []
@@ -279,7 +288,9 @@ def fit_all_channels(volumes: list[np.ndarray]) -> list[GSplatData]:
             cache_file = CACHE_DIR / f"opencell_map4_ch{i}.gsplats.zarr.zip"
 
             with asection(f"Channel {i}: {ch_name}"):
-                gsplats = fit_channel(volume, ch_name, cache_file)
+                gsplats = fit_channel(
+                    volume, ch_name, cache_file, source_dtype=source_dtype
+                )
                 gsplats_list.append(gsplats)
 
         return gsplats_list
@@ -479,13 +490,13 @@ def main():
                 )
 
         warn_if_no_cuda_gpu()
-        volumes = load_opencell_data(tiff_path)
+        volumes, source_dtype = load_opencell_data(tiff_path)
 
         if len(volumes) < N_CHANNELS:
             aprint(f"Error: Need {N_CHANNELS} channels, got {len(volumes)}")
             return
 
-        gsplats_list = fit_all_channels(volumes)
+        gsplats_list = fit_all_channels(volumes, source_dtype=source_dtype)
 
     # Optional round-trip visualisation
     if SHOW_ROUNDTRIP:
