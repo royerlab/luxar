@@ -116,7 +116,7 @@ from luxar.core.viewer_config import UIConfig, ViewerConfig
 from luxar.demos import (
     MissingDependencyError,
     launch_viewer,
-    load_precomputed_gsplats,
+    load_dataset_gsplats,
     parse_demo_flags,
     require_module,
     warn_if_no_cuda_gpu,
@@ -436,7 +436,8 @@ def create_luxar_scene(
             # ACES, set explicitly (the house default; its filmic rolloff suits
             # the bright slide background). ACES does shift hues, so if faithful
             # H&E stain colour ever matters more than the filmic look here,
-            # Neutral is the documented alternative.
+            # "None" is the documented alternative (#1459) — an exact
+            # passthrough, as long as the render sits inside [0, 1].
             viewer_config = ViewerConfig(
                 control_type="ortho",
                 tone_mapping="ACES",
@@ -647,8 +648,8 @@ def main():
             aprint(f"No scene found at {output_path}. Run without --serve-only first.")
         return
 
-    # Try loading precomputed data (from Git LFS / local cache)
-    precomputed = load_precomputed_gsplats(
+    # Try the manifest-driven fetch (checksum-verified cache -> in-repo -> Zenodo)
+    precomputed = load_dataset_gsplats(
         "gsplats_cmu1_pathology",
         [
             "cmu1_ch0.gsplats.zarr.zip",

@@ -17,9 +17,60 @@ import numpy as np
 from luxar.io.volume import _find_all_arrays
 
 __all__ = [
+    "CHANNEL_LIKE_AXIS_LABELS",
     "OMEZarrInfo",
+    "TIME_AXIS_LABELS",
+    "classify_axis_labels",
     "discover_ome_zarr_shape",
 ]
+
+# The axis-label vocabulary for LABEL-driven axis classification, in ONE place:
+# every consumer that has to decide which axes of a store are time /
+# channel-like / spatial reads these (see :func:`classify_axis_labels`). Keeping
+# a private copy per call site is how they drift — a ``view`` axis classified as
+# spatial by one and channel-like by another silently disagrees about the store's
+# shape.
+#
+# DELIBERATE EXCEPTION, do not "unify" it: ``luxar.io.volume._axis_kind`` keeps
+# its OWN, narrower vocabulary — no ``view``/``angle``, and it RAISES on an
+# unknown label instead of treating it as spatial. That is load-bearing: it backs
+# the user-facing ``--axes`` spec, where a typo must be a clean error rather than
+# a silently mis-sliced volume, whereas discovery here must stay lenient about
+# whatever a store happens to declare.
+#
+# Not part of the classification rule below (an unrecognised label defaults to
+# spatial, so nothing consults this set) — it is documentation of the labels a
+# store is expected to use, hence not exported.
+SPATIAL_AXIS_LABELS = frozenset({"z", "y", "x", "depth", "height", "width"})
+TIME_AXIS_LABELS = frozenset({"time", "t"})
+CHANNEL_LIKE_AXIS_LABELS = frozenset(
+    # channel + extra non-spatial ("camera"-like) axes: each combination of them
+    # becomes its own flat channel task.
+    {"channel", "c", "ch", "camera", "cam", "view", "angle"}
+)
+
+
+def classify_axis_labels(
+    axes: "List[str] | Tuple[str, ...]",
+) -> "Tuple[Optional[int], List[int], List[int]]":
+    """Split axis LABELS into ``(time_axis, channel_like_axes, spatial_axes)``.
+
+    Indices into ``axes``; an unrecognised label is treated as spatial (the same
+    lenient rule the NGFF parser uses), and a repeated time label keeps the last
+    one. Case-insensitive.
+    """
+    time_axis: Optional[int] = None
+    channel_like: List[int] = []
+    spatial: List[int] = []
+    for i, label in enumerate(axes):
+        lowered = str(label).strip().lower()
+        if lowered in TIME_AXIS_LABELS:
+            time_axis = i
+        elif lowered in CHANNEL_LIKE_AXIS_LABELS:
+            channel_like.append(i)
+        else:
+            spatial.append(i)
+    return time_axis, channel_like, spatial
 
 
 @dataclass
@@ -255,26 +306,9 @@ def _parse_custom_axes_attr(
       - Spatial: ``z``, ``y``, ``x``, ``depth``, ``height``, ``width``
         (and any unrecognised leftover axes)
     """
-    _SPATIAL = {"z", "y", "x", "depth", "height", "width"}
-    _TIME = {"time", "t"}
-    _CHANNEL = {"channel", "c", "ch"}
-    _CAMERA = {"camera", "cam", "view", "angle"}
-
-    t_idx: Optional[int] = None
-    channel_indices: List[int] = []  # channel + camera axes
-    spatial_indices: List[int] = []
-
-    for i, ax in enumerate(axes):
-        ax_l = ax.lower()
-        if ax_l in _TIME:
-            t_idx = i
-        elif ax_l in _CHANNEL or ax_l in _CAMERA:
-            channel_indices.append(i)
-        elif ax_l in _SPATIAL:
-            spatial_indices.append(i)
-        else:
-            # Unknown axis — treat as spatial
-            spatial_indices.append(i)
+    # Shared vocabulary (see classify_axis_labels): an unrecognised label is
+    # treated as spatial.
+    t_idx, channel_indices, spatial_indices = classify_axis_labels(axes)
 
     n_t = shape[t_idx] if t_idx is not None else 1
     channel_shape = tuple(shape[i] for i in channel_indices)

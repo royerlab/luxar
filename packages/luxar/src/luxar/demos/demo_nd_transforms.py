@@ -1114,10 +1114,20 @@ def generate_demo(output_path: Path) -> int:
                 dimensions=dims,
                 viewer_config=ViewerConfig(
                     background_color="#07080c",
-                    # Neutral rather than the ACES default: the bench encodes
-                    # meaning in exact colours (a red R must stay red) and ACES
-                    # deliberately shifts hues. Bloom stays off so the glyph
-                    # pixels stay crisp and countable.
+                    # Neutral rather than the ACES default (#1459): the bench's
+                    # colour IS an exact encoding — a red R must read as red —
+                    # and its lit palette is deliberately HDR (C_LIT peaks at
+                    # 1.9, CH_LIT at 2.4), so the scene runs over range. Over
+                    # range Neutral is the hue-exact option: it scales every
+                    # channel and adds the same amount to all, which cannot move
+                    # the hue angle. "None" would clip, and clipping shifts hue
+                    # whenever several channels clip unequally; ACES shifts hue
+                    # by design. What Neutral costs is the chroma of the
+                    # brightest glyphs — that is the trade being taken, so
+                    # moving this pin trades hue fidelity for chroma and needs a
+                    # live A/B, not a blind flip.
+                    # Bloom stays off so the glyph pixels stay crisp and
+                    # countable.
                     tone_mapping="Neutral",
                     bloom_enabled=False,
                     auto_rotate=False,

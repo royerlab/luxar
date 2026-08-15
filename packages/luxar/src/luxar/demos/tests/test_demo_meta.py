@@ -375,16 +375,6 @@ def _cache_dirs_written(path: Path) -> set[str]:
     return found
 
 
-#: Cache declarations another in-flight change owns, so this one does not touch
-#: the same demo file. royerlab/luxar#1558 adds Gaia's ``caches`` entry and #1588
-#: builds its never-delete guard around that declaration; a third edit would
-#: collide with both. The staleness assertion below fails once the declaration
-#: lands, which is the signal to delete the exemption rather than let it rot.
-_CACHES_OWNED_ELSEWHERE = {
-    "demo_gaia_milky_way_3m.py": {"milky_way_gaia_3m"},
-}
-
-
 @pytest.mark.parametrize("path", DEMO_PATHS, ids=lambda p: p.stem)
 def test_written_cache_dirs_are_declared(path: Path) -> None:
     """A cache directory a demo writes must be declared in its ``caches``.
@@ -397,17 +387,7 @@ def test_written_cache_dirs_are_declared(path: Path) -> None:
     meta = extract_demo_meta(path)
     written = _cache_dirs_written(path)
     declared = set(meta["caches"])
-    exempt = _CACHES_OWNED_ELSEWHERE.get(path.name, set())
-    if exempt:
-        assert exempt & written, (
-            f"{path.name}: exemption {sorted(exempt)} no longer matches any cache "
-            f"dir this demo writes ({sorted(written)}) — drop it"
-        )
-        assert not (exempt & declared), (
-            f"{path.name}: {sorted(exempt & declared)} is now declared, so the "
-            f"_CACHES_OWNED_ELSEWHERE exemption is stale — delete the entry"
-        )
-    undeclared = sorted(written - declared - exempt)
+    undeclared = sorted(written - declared)
     assert not undeclared, (
         f"{path.name} writes {undeclared} under the cache root but declares "
         f"caches={sorted(declared)}; `luxar demo cache list/clear` cannot "

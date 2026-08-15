@@ -69,8 +69,14 @@ def compute_chunk_bounds_gsplats(
             all splats have a uniform (identical) Cholesky factorization
         chunk_size: Number of splats per chunk
         coverage_sigma: Coverage radius in standard deviations. This is the
-            gsplat ``truncation_radius`` under its spatial-ordering name; the
-            compiler binds the two in ``gsplat_tree.py``.
+            gsplat ``truncation_radius`` under its spatial-ordering name — the
+            same quantity the LOD path spells ``truncation_sigmas``. Two compiler
+            sites bind it to the dataset's own radius:
+            ``io/_compiler/gsplat_tree.py::_write_single_splat_set`` (by keyword)
+            and the scene path ``geometry_writers/gsplats.py`` →
+            ``gsplat_assembly.py::apply_gsplat_spatial_ordering``, which passes
+            ``truncation_radius`` positionally. The default here only applies to
+            a direct call.
         slice_dims: Barrier/categorical dimension indices (no σ expansion).
             Default None → expand all axes (historical behavior).
 
@@ -103,7 +109,8 @@ def compute_chunk_bounds_gsplats(
             else cholesky_factors[start_idx:end_idx]
         )
 
-        # Compute ellipsoidal extent (per spec: extent[d] = sqrt(covariance[d,d]) * 3σ)
+        # Ellipsoidal extent (per spec:
+        # extent[d] = sqrt(covariance[d,d]) * coverage_sigma)
         extents = np.zeros((end_idx - start_idx, ndim), dtype=np.float32)
 
         for d in range(ndim):

@@ -9,7 +9,9 @@ import numpy as np
 import pytest
 import zarr
 
+from luxar._zarr_compat import consolidate as zc_consolidate
 from luxar._zarr_compat import create_array
+from luxar._zarr_compat import open_group as zc_open_group
 from luxar.gsplats.io import load_gsplats
 from luxar.gsplats.io.migrate import (
     _read_substitutive_directory,
@@ -81,7 +83,7 @@ def _make_v1_0(path: Path, n: int, *, with_fitting: bool = False) -> None:
                 "source_dtype": "float32",
             }
         )
-    zarr.consolidate_metadata(store)
+    zc_consolidate(store)
 
 
 def _make_v1_1(path: Path, lod_sizes: list[int]) -> None:
@@ -125,7 +127,7 @@ def _make_v1_1(path: Path, lod_sizes: list[int]) -> None:
         create_array(lod, "amplitudes", data=rng.random(n).astype(np.float32))
         create_array(lod, "cholesky_factors", data=_identity_chol(n))
         create_array(lod, "chunk_bounds", data=np.zeros((1, 3, 2), dtype=np.float32))
-    zarr.consolidate_metadata(store)
+    zc_consolidate(store)
 
 
 def _make_v2_0(path: Path, n: int) -> None:
@@ -169,7 +171,7 @@ def _make_v2_0(path: Path, n: int) -> None:
     create_array(add, "amplitudes", data=rng.random(n).astype(np.float32))
     create_array(add, "cholesky_factors", data=_identity_chol(n))
     create_array(add, "chunk_bounds", data=np.zeros((1, 3, 2), dtype=np.float32))
-    zarr.consolidate_metadata(store)
+    zc_consolidate(store)
 
 
 def _make_v2_0_multi(path: Path, level_sizes: list[int]) -> None:
@@ -215,7 +217,7 @@ def _make_v2_0_multi(path: Path, level_sizes: list[int]) -> None:
         create_array(add, "centers", data=(rng.random((n, 3)) * 10).astype(np.float32))
         create_array(add, "amplitudes", data=rng.random(n).astype(np.float32))
         create_array(add, "cholesky_factors", data=_identity_chol(n))
-    zarr.consolidate_metadata(store)
+    zc_consolidate(store)
 
 
 def _make_substitutive_dir(dir_path: Path, level_sizes: list[int]) -> None:
@@ -700,7 +702,7 @@ class TestMigrateFormat:
         create_array(splats, "cholesky_factors", data=_identity_chol(n))
         create_array(splats, "chunk_bounds", data=np.zeros((1, 3, 2), dtype=np.float32))
         create_array(splats, "colors", data=colors)
-        zarr.consolidate_metadata(store)
+        zc_consolidate(store)
 
         out = tmp_path / "out.gsplats.zarr"
         migrate_format(legacy, out)
@@ -756,7 +758,11 @@ def _make_v3_lod_pixel_size(
         else None,
         pipeline_info={"lod_kind": "substitutive"} if with_fitting else None,
     )
-    root = zarr.open_group(str(path), mode="r+")
+    # Aged through the facade — see the note in
+    # `test_detect_nested_legacy_lod_inside_partition`: a plain re-open leaves a
+    # stale NESTED consolidated index that later reads prefer over the correct
+    # per-node documents, so the deletions below would not be observed.
+    root = zc_open_group(str(path), mode="r+")
     root.attrs["format_version"] = format_version
     root.attrs["selector"] = "pixel_size"
     for i, n in enumerate(level_sizes):
@@ -764,7 +770,7 @@ def _make_v3_lod_pixel_size(
         del child.attrs["coverage_fraction"]
         # The legacy count-anchored ladder: base(100px)·sqrt(N_i/N_0).
         child.attrs["min_pixel_size"] = 100.0 * float(np.sqrt(n / level_sizes[0]))
-    zarr.consolidate_metadata(root.store)
+    zc_consolidate(root)
 
 
 class TestMigrateV3LegacyLodAttrs:
@@ -841,6 +847,35 @@ class TestMigrateV3LegacyLodAttrs:
         assert data.n_substitutive == 3
         assert data.n_splats == 16  # default view = finest
 
+    def test_migrate_keeps_the_authored_appearance(self, tmp_path: Path) -> None:
+        """A migration rewrites the LAYOUT and must leave the look alone (#1600).
+
+        The rewrite goes through the same node-tree writer as the rest of the
+        rewriting family (`lod`, `flatten`, `reencode`, ...), so without the
+        carry the writer's defaults take over: ``blending_mode`` disappears and
+        the multiplicative attrs snap back to 1.0. Every authored value here is
+        non-default on purpose — an identity would coincide with the stamped
+        default and hide the drop.
+        """
+        legacy = tmp_path / "legacy_lod.gsplats.zarr"
+        _make_v3_lod_pixel_size(legacy, [2, 8])
+        authored = {"blending_mode": "volumetric", "opacity": 0.75, "gamma": 1.3}
+        src = zarr.open_group(str(legacy), mode="r+")
+        for key, value in authored.items():
+            src.attrs[key] = value
+        zarr.consolidate_metadata(src.store)
+
+        out = tmp_path / "out.gsplats.zarr"
+        migrate_format(legacy, out)
+
+        got = dict(zarr.open_group(str(out), mode="r").attrs)
+        for key, want in authored.items():
+            assert got.get(key) == want, f"dropped {key!r} (had {want!r})"
+        # The layout upgrade itself still happened — the carry rides the
+        # writer's lowest-precedence channel, so it cannot shadow structure.
+        assert got["selector"] == "screen-area"
+        assert got["format_version"] == GSPLATS_FORMAT_VERSION
+
     def test_detect_nested_legacy_lod_inside_partition(self, tmp_path: Path) -> None:
         """The legacy-attr scan recurses: a kind=partition root whose part is a
         legacy-attr lod group is detected (and migrates) too."""
@@ -869,14 +904,31 @@ class TestMigrateV3LegacyLodAttrs:
                 max_elements=0,
             ),
         )
-        root = zarr.open_group(str(legacy), mode="r+")
+        # Age the store into a v3.1 legacy shape THROUGH THE FACADE, which is
+        # how Luxar itself re-opens a store to edit attributes in place.
+        #
+        # Not cosmetic. `zarr.open_group` trusts consolidated metadata, so the
+        # nodes it hands back are built from the root index; re-consolidating
+        # from that tree writes a SECOND, nested consolidated index into
+        # `part_0/zarr.json` carrying the pre-edit attributes. At format 3 a
+        # nested index is honoured even when the root one is bypassed, so the
+        # migration then re-derives from `coverage_fraction` values this
+        # function had just deleted and stamps the legacy `selector="coverage"`.
+        #
+        # Format 2 grows the nested index too, but reads there are unaffected:
+        # `use_consolidated=False` skips a `.zmetadata` at EVERY level, while at
+        # format 3 the index lives inside each `zarr.json` and only the root's
+        # is bypassed. That asymmetry is the whole bug, not the extra document.
+        # A real v3.0/v3.1 store carries exactly ONE index, at its root — what
+        # the facade produces here.
+        root = zc_open_group(str(legacy), mode="r+")
         root.attrs["format_version"] = "3.1"
         lod = root["part_0"]
         lod.attrs["selector"] = "pixel_size"
         for i, n in enumerate((2, 8)):
             del lod[f"child_{i}"].attrs["coverage_fraction"]
             lod[f"child_{i}"].attrs["min_pixel_size"] = 100.0 * float(np.sqrt(n / 2))
-        zarr.consolidate_metadata(root.store)
+        zc_consolidate(root)
 
         assert detect_legacy_format(legacy) == "v3.1-lod-pixel-size"
         out = tmp_path / "out.gsplats.zarr"

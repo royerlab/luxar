@@ -32,13 +32,14 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import json
 import shutil
 import subprocess
 import sys
 import tempfile
 import zipfile
 from pathlib import Path
+
+from luxar._zarr_compat import read_node_attrs
 
 REPO = Path(__file__).resolve().parents[1]
 DATA_DIR = REPO / "packages/luxar/src/luxar/demos/data"
@@ -54,22 +55,27 @@ def run_cli(*args: str) -> None:
         raise RuntimeError(f"CLI failed: {' '.join(cmd)}")
 
 
+def _is_group_dir(path: Path) -> bool:
+    """Is there a zarr GROUP at ``path``, in either on-disk format?
+
+    Both root documents count: format 2 writes ``.zgroup``, format 3 writes
+    ``zarr.json``. Checked rather than read, because a group is a group even
+    with no user attributes — which is why this cannot just ask
+    :func:`read_node_attrs` for a non-``None`` answer.
+    """
+    return (path / ".zgroup").exists() or (path / "zarr.json").exists()
+
+
 def find_store_dir(extract_root: Path) -> Path | None:
     """Return the single `*.gsplats.zarr` store dir at the top of an extract, or None."""
-    candidates = [
-        p for p in extract_root.iterdir() if p.is_dir() and (p / ".zgroup").exists()
-    ]
+    candidates = [p for p in extract_root.iterdir() if p.is_dir() and _is_group_dir(p)]
     if len(candidates) == 1:
         return candidates[0]
     return None
 
 
 def read_root_attrs(store: Path) -> dict:
-    zattrs = store / ".zattrs"
-    if zattrs.exists():
-        data: dict = json.loads(zattrs.read_text())
-        return data
-    return {}
+    return read_node_attrs(store) or {}
 
 
 def classify(store: Path) -> str:
@@ -81,10 +87,11 @@ def classify(store: Path) -> str:
     # A nested tree without a top-level splat leaf also counts as partition-like:
     # detect child groups that are themselves kind=partition/lod.
     for child in store.iterdir():
-        if child.is_dir() and (child / ".zattrs").exists():
-            ca = json.loads((child / ".zattrs").read_text())
-            if ca.get("kind") in ("partition", "lod"):
-                return "partition"
+        if not child.is_dir():
+            continue
+        ca = read_node_attrs(child)
+        if ca is not None and ca.get("kind") in ("partition", "lod"):
+            return "partition"
     return "leaf"
 
 

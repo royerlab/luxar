@@ -79,7 +79,7 @@ from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import (
     detect_device,
     launch_viewer,
-    load_precomputed_gsplats,
+    load_dataset_gsplats,
     parse_demo_flags,
     parse_int_arg,
     require_module,
@@ -260,7 +260,7 @@ def load_or_build_gsplats() -> GSplatData:
     """
     if not RECOMPUTE:
         try:
-            precomputed = load_precomputed_gsplats(DEMO_NAME, [GSPLATS_FILE])
+            precomputed = load_dataset_gsplats(DEMO_NAME, [GSPLATS_FILE])
             if precomputed is not None:
                 return precomputed[0]
         except FileNotFoundError:

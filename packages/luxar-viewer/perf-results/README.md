@@ -31,4 +31,11 @@ Compare two:
 - **Subset runs**: `LUXAR_PERF_SCENARIO_FILTER=<id,id>` restricts scenarios (ids are
   validated); `LUXAR_PERF_LINE_PRIMITIVES=default,<primitive>` crosses the primitive
   axis. One scenario × one primitive ≈ minutes, the full matrix ≈ tens of minutes.
+- **Count sweeps**: `LUXAR_PERF_SYNTHETIC_COUNTS=250k,1M,4M` re-parameterizes each
+  active synthetic scenario at every listed segment count (rows keyed `<id>-n<count>`,
+  never colliding with authored-count rows). Note the `default` primitive arm builds
+  whatever production would for that scene's size — under the auto policy that flips
+  to the quad once count × the rendered-width factor reaches the threshold, so a wide
+  scenario flips well below the swept count — which makes cross-era `default`-arm
+  comparisons invalid; sweep with explicit `-capsule`/`-screen-space` arms.
 - `&dpr=1` is pinned in the bench URLs — AdaptiveDPR must never run during sampling.

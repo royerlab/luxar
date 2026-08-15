@@ -3,10 +3,11 @@
  *
  * `tests/fixtures/test_delta_filter.luxar.zarr` is written by the PYTHON
  * encoder (`generate_test_data.py::generate_delta_filter_test`) with the
- * delta filter probe-enabled on the positions array and a zlib compressor
+ * delta filter probe-enabled on the positions array and a gzip compressor
  * (Node-decodable, unlike blosc — see the fixture generator's docstring).
- * Reading it here exercises the real zarrita pipeline: zlib decompress →
- * `numcodecs.luxar_delta_v1` (registered by the zarr facade) → codes.
+ * Reading it here exercises the real zarrita pipeline: gzip decompress →
+ * the `luxar_delta_v1` codec (registered by the zarr facade under both the
+ * format-2 and format-3 names) → codes.
  *
  * The generic decode-parity check (sha256 + samples vs Python's own
  * ArrayDecoder) is covered by `array-roundtrip.test.ts` via
@@ -42,14 +43,31 @@ describe('luxar_delta_v1 fixture (Python-written, TS-read)', () => {
   });
 
   it('fixture metadata carries the delta filter', () => {
-    const zarray = JSON.parse(
-      fs.readFileSync(path.join(FIXTURE, 'points/positions/.zarray'), 'utf-8')
+    // The filter is recorded differently per zarr format and this test is the
+    // cross-language contract for BOTH, since the single TypeScript codec has
+    // to resolve either one: format 2 lists a numcodecs filter keyed by `id` in
+    // `.zarray`, format 3 an array-to-array codec keyed by `name` in the
+    // `zarr.json` `codecs` chain. The NAME and the parameters are identical by
+    // design; only the envelope differs.
+    const v2Doc = path.join(FIXTURE, 'points/positions/.zarray');
+    if (fs.existsSync(v2Doc)) {
+      const zarray = JSON.parse(fs.readFileSync(v2Doc, 'utf-8'));
+      expect(zarray.filters).toEqual([{ id: 'luxar_delta_v1', cols: 3, bits: 16 }]);
+      expect(zarray.dtype).toContain('u2'); // uint16 codes
+      return;
+    }
+
+    const meta = JSON.parse(
+      fs.readFileSync(path.join(FIXTURE, 'points/positions/zarr.json'), 'utf-8')
     );
-    expect(zarray.filters).toEqual([{ id: 'luxar_delta_v1', cols: 3, bits: 16 }]);
-    expect(zarray.dtype).toContain('u2'); // uint16 codes
+    expect(meta.codecs).toContainEqual({
+      name: 'luxar_delta_v1',
+      configuration: { cols: 3, bits: 16 },
+    });
+    expect(String(meta.data_type)).toContain('uint16');
   });
 
-  it('reads the whole array through zlib + delta and decodes sane codes', async () => {
+  it('reads the whole array through gzip + delta and decodes sane codes', async () => {
     const { data, shape } = await zarr.readArray(positions);
     expect(shape).toEqual([20000, 3]);
     const codes = data as Uint16Array;

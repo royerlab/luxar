@@ -1,10 +1,11 @@
 /**
- * Streaming policy for the progressive loaders (GSplats, Points, Lines).
+ * Streaming policy for the progressive loaders (GSplats, Points, Lines, and
+ * the Mesh reveal ladder).
  *
  * A progressive loader streams an additive LOD ladder coarse→fine. HOW MANY
  * levels a single `updateView` pass loads — and when it stops — depends on why
  * the pass is running. Encoding that decision as three pure functions keeps the
- * three geometry loaders' streaming loops identical by construction (they share
+ * geometry loaders' streaming loops identical by construction (they share
  * this module rather than each re-deriving the rule), and makes the policy
  * unit-testable in isolation.
  *

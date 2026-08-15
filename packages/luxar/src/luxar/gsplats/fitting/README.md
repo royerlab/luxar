@@ -160,8 +160,17 @@ The fitting pipeline orchestrates the entire process of fitting n-dimensional Ga
    it is NOT added back (output amplitudes are background-relative).
 2. **Normalization**: Converts input to [0, 1] range (floor/percentile-based or full range)
 3. **Seed Generation**: Creates initial splat positions (auto or user-provided)
-4. **L1 Regularization Defaults**: Sets proportional defaults based on base learning rate and parameter type multipliers
-5. **Convergence Threshold**: Sets sensible default if not specified
+4. **Pre-initialized amplitude rescaling**: Brings `init_amps` onto the
+   normalized `[0, 1]` scale the optimizer works on. Which rescaling applies
+   depends on the amplitude convention: raw-image-sampled amplitudes (what the
+   seeding methods produce) become `(a - image_min) / intensity_range`, while
+   background-relative ones (what a previous fit returns — see item 1) become
+   `a / intensity_range`. A `seeds=GSplatData` carries either kind and records
+   no provenance, so the caller declares it with
+   `config.seed_amps_background_relative` (default `False` = raw); declaring it
+   wrong subtracts the floor twice and zeroes every sub-floor seed (#1172).
+5. **L1 Regularization Defaults**: Sets proportional defaults based on base learning rate and parameter type multipliers
+6. **Convergence Threshold**: Sets sensible default if not specified
 
 **Key Insight:** L1 regularization is proportional to learning rate for consistent sparsity pressure across different learning rate choices.
 

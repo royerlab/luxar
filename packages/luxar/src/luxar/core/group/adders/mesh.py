@@ -47,12 +47,14 @@ from arbol import aprint, asection
 
 from ...mesh import Mesh
 from ..compositing import (
+    ABSENT_WHEN_NONE_RENDER_ATTRS,
     COMPOSITING_ATTRS,
     funnel_add_error,
     is_broadcast_color,
     position_bounds_from_array,
     reject_lines_only_join,
     slice_optional_array,
+    strip_absent_attr_kwargs,
     sync_custom_colormap_attr,
     unnest_add_error,
 )
@@ -863,6 +865,16 @@ def add_mesh_impl(
     _reject_partition_with_substitutive_lod(partition, substitutive_lod)
     _reject_additive_lod_compositions(additive_lod, substitutive_lod, partition)
     try:
+        # "An explicit None means absent" (#1574), applied ONCE here rather than
+        # at each consumer: above the refusals below (none of which judges these
+        # two keys), above the entry attrs gate, and above every structural
+        # branch, so no route can see the raw None. Only render attrs are in the
+        # set — the structural keys whose None also means absent
+        # (``colors``/``labels``/``image_labels``/``partition``) are named params
+        # of this function and can never reach ``**attrs``, which is exactly what
+        # ``_reject_structure_params`` relies on too.
+        strip_absent_attr_kwargs(attrs, ABSENT_WHEN_NONE_RENDER_ATTRS)
+
         # Fail-fast pre-write gate: reject invalid names (empty/'/'/dot-prefixed —
         # an empty name resolves to the zarr ROOT group and would clobber the
         # scene root) and duplicate siblings BEFORE any zarr write. Node.__init__

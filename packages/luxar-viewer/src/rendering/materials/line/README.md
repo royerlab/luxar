@@ -213,11 +213,14 @@ and are projection-invariant anyway.
 All four stages build the join from one source: the visual and pick GLSL vertex
 shaders share `GLSL_LINE_JOIN`'s `luxarLineJoin`, and the visual and pick TSL
 factories share its twin `tslLineJoin` (`_shared/tsl-helpers.ts`). Parity tests
-assert the two backends agree on the VISUAL join — end→start, END–END, and a
-tapered perspective joint (`line-join-*` in the TSL harness) — so a mitred
-joint is not a WebGL2/WebGPU difference. The pick stages run the same helper by
-construction, but no pick fixture carries a slot-bearing joint code, so a
-mitred corner's pick footprint is not pixel-pinned on either backend.
+assert the two backends agree on the VISUAL join — end→start, END–END, a tapered
+perspective joint, a joint across the near plane (the only rendered coverage of
+the two-sided guard: both sides decline, so the mitred render IS the unmitred
+one), and its lowered-cull-plane control, which must differ (`line-join-*` in
+the TSL harness) — so a mitred joint is not a WebGL2/WebGPU difference. The pick
+stages run the same helper by construction, but no pick fixture carries a
+slot-bearing joint code, so a mitred corner's pick footprint is not pixel-pinned
+on either backend.
 
 The wedge was given an automated acceptance measurement before it was
 closed, and that harness stays. `../../../tests/e2e/line-join-artifact.spec.ts`
@@ -276,6 +279,39 @@ as a third parity surface. The full implementation (GLSL + TSL twins, the
 quadrature-validated CPU reference, the Abel-transform sharpness LUT, the
 ray-integral shared-math module, and the pick pair) lives in git history
 at the deletion's branch point, `1481995d9`.
+
+## Primitive selection: the auto policy
+
+Which primitive a lines node builds is decided ONCE, at material
+construction, by `types/line-primitive.ts` — every consumer (visual +
+picking, both backends) resolves through the same seam, so the pick
+footprint always rasterizes the stencil the eye sees. Precedence:
+`?linePrimitive=` (session override, the A/B escape hatch) > the
+`Settings → Advanced → Line primitive` policy (`capsule` / `quad`
+force one primitive) > the `auto` rule. Auto keeps the capsule default
+but builds the cheaper quad for nodes whose effective segment load —
+authored `n_segments` × a rendered-width factor normalized by the
+node's authored extent — reaches 2 M. The threshold is a measured
+budget choice, not a crossover: on a discrete NVIDIA GPU the capsule's
+GPU pass costs ~1.5× the quad at every thin-line count and 3.16–3.38×
+on wide lines, while an Apple GPU barely registers the difference
+(1.04–1.11×); past ~2 M thin segments the capsule's GPU pass alone
+costs over a quarter of a 60 fps frame on the NVIDIA class (4.6 ms of
+16.7 ms, vs the quad's 3.0 ms). The resolved
+primitive is stamped on `userData.linePrimitive` (both backends stamp
+the RESOLVED value) and carried through `clone()`, the node-factory
+retro picking pass, and TSL graph rebuilds — the sizing never re-runs
+after first build. Partition parts and LOD levels are separate nodes
+with their own authored counts, so one ladder can legitimately mix
+primitives across levels (a 10 M finest level builds the quad while its
+500 k coarse sibling keeps the capsule); that is safe because the
+capsule is calibrated to match the quad side-on by construction — the
+primitives differ visibly only end-on and at joints. The corollary is
+that the rule is deliberately PER-NODE and never sums a scene: a thin
+10 M-segment object split into twenty 500 k parts reads as twenty
+sub-threshold nodes and keeps the capsule throughout, even though the
+frame still pays for the whole 10 M. Force `Quad` (or
+`?linePrimitive=screen-space`) for that case.
 
 ## Capsule primitive (the DEFAULT since the #1352 flip)
 
@@ -474,15 +510,15 @@ at build time and emits a single-branch graph, so a mode flip in
 
 ## Shared helpers from `_shared/`
 
-| Symbol                                                             | Used for                                                                                                                                                                                        |
-| ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `clampGamma(g)`                                                    | `Math.max(0.001, g ?? 1.0)` guard before `1 / gamma` (shared across all eight material constructors).                                                                                           |
-| `CameraAwareMaterial` interface                                    | Implemented so `MaterialManager.updateCameraParams(fov, resolution, isOrtho?)` reaches this material.                                                                                           |
-| `ColormapAwareMaterial` interface                                  | Implemented so `material-colormap-helpers.ts` sets the LUT texture and scalar range through setters.                                                                                            |
-| `GLSL_SANITIZE_FUNCTIONS`                                          | Prepended to the GLSL vertex shader; gives `sanitizePositive` / `sanitizeNonNegative` / `sanitizeAlpha` to clean width/sharpness/alpha inputs against NaN/Inf/out-of-range.                     |
-| `sanitizePositive` / `sanitizeNonNegative` / `sanitizeAlpha` (TSL) | TSL counterparts of the GLSL sanitisers — same contract, called inline in the factory.                                                                                                          |
-| `volumetric.ts` constants                                          | `ALPHA_CLAMP` (the `1 − 1/512` cap of the `w(a)` map) + the `S(τ)` series thresholds/coefficients — shared with the point/gsplat volumetric branches so all three geometries agree numerically. |
-| `proxyIUniform(node)`                                              | Wraps each TSL `UniformNode` in an `IUniform`-shaped getter/setter so `material.uniforms.uX.value = Y` lands on `node.value`. No per-render callback bridge.                                    |
+| Symbol                                        | Used for                                                                                                                                                                                        |
+| --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `clampGamma(g)`                               | `Math.max(0.001, g ?? 1.0)` guard before `1 / gamma` (shared across all eight material constructors).                                                                                           |
+| `CameraAwareMaterial` interface               | Implemented so `MaterialManager.updateCameraParams(fov, resolution, isOrtho?)` reaches this material.                                                                                           |
+| `ColormapAwareMaterial` interface             | Implemented so `material-colormap-helpers.ts` sets the LUT texture and scalar range through setters.                                                                                            |
+| `GLSL_SANITIZE_FUNCTIONS`                     | Prepended to the GLSL vertex shader; gives `sanitizePositive` / `sanitizeNonNegative` / `sanitizeAlpha` to clean width/sharpness/alpha inputs against NaN/Inf/out-of-range.                     |
+| `sanitizeNonNegative` / `sanitizeAlpha` (TSL) | TSL counterparts of those two GLSL sanitisers — same contract, called inline in the factory. `sanitizePositive` has no TSL twin: no TSL shader calls it.                                        |
+| `volumetric.ts` constants                     | `ALPHA_CLAMP` (the `1 − 1/512` cap of the `w(a)` map) + the `S(τ)` series thresholds/coefficients — shared with the point/gsplat volumetric branches so all three geometries agree numerically. |
+| `proxyIUniform(node)`                         | Wraps each TSL `UniformNode` in an `IUniform`-shaped getter/setter so `material.uniforms.uX.value = Y` lands on `node.value`. No per-render callback bridge.                                    |
 
 ## `isGammaOne` / `isNoGOG` cross-export
 

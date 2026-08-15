@@ -1,10 +1,17 @@
 """The one module in Luxar that knows which zarr *format* version we write.
 
-Luxar runs on **zarr-python 3** but still writes **zarr format 2** stores. Those
-are two independent axes and this module is where they are pinned together:
-:data:`ZARR_FORMAT` selects the on-disk format, and every helper below routes a
-Luxar call through the zarr-3 API in a way that reproduces the format-2 bytes
-the viewer (and every published `.luxar.zarr` / `.gsplats.zarr`) already expects.
+Library version and on-disk format are independent axes, and this module is
+where they are pinned together. Luxar runs on **zarr-python 3** and writes
+**zarr format 3** by default; :data:`ZARR_FORMAT` selects the on-disk format and
+:data:`ZARR_FORMAT_ENV_VAR` overrides it, so format 2 remains producible for a
+tool that cannot read 3.
+
+READING is not affected by any of this — zarr-python 3 opens both formats — and
+that asymmetry is the whole design. Existing `.luxar.zarr` / `.gsplats.zarr`
+stores stay format 2 and are never rewritten, so a mixed-format tree is the
+expected steady state rather than a migration window. Every helper here that
+answers a question ABOUT a store therefore answers it for both formats, while
+the helpers that CREATE one follow :data:`ZARR_FORMAT`.
 
 Why a facade at all
 -------------------
@@ -12,20 +19,26 @@ The TypeScript viewer has exactly one module that imports zarrita
 (``src/data/zarr.ts``); everything else speaks in Luxar concepts. That design
 made the viewer nearly version-agnostic for free. The Python side had no
 equivalent — 53 production modules imported ``zarr`` directly (171 counting
-tests) — so a format change meant sweeping all of them. Routing through here
-means a future move to format 3 edits *this* file, not that whole surface.
+tests) — so a format change meant sweeping all of them. Routing through here is
+what made the move to format 3 an edit to *this* file rather than to that whole
+surface: the flip itself was one constant, and the work that remained was the
+translation layer below (numcodecs objects are format-2 currency; format 3 wants
+``zarr.codecs`` ones) plus the bi-format readers.
 
 Five zarr-3 behaviours are actively dangerous here, and all five are neutralised
 below rather than left to call sites. Each one fails SILENTLY — none raises:
 
 1. **An omitted compressor is not "no compressor".** zarr's ``compressors="auto"``
-   silently applies Blosc/lz4/clevel-5, whereas Luxar has arrays that must be
+   silently applies a real compressor, whereas Luxar has arrays that must be
    stored RAW (the packed label byte-blobs) and others that must carry the
    measured zstd-9 policy. ``None`` is therefore mapped to an explicit
-   ``compressors=None`` rather than being confused with "unspecified". The
-   ``"auto"`` default here reproduces zarr 2's implicit default exactly, so test
-   fixtures that never named a compressor keep their old bytes; production code
-   is held to naming one by
+   ``compressors=None`` rather than being confused with "unspecified".
+
+   ``"auto"`` is NOT the same compressor in both formats — it is whatever zarr
+   would have chosen for that format, which is Blosc/lz4/clevel-5 at format 2
+   and ``zstd`` level 0 at format 3. It exists for test fixtures that never
+   named a compressor and do not care; nothing whose bytes matter may rely on
+   it. Production code is held to naming one by
    ``test_zarr_compat.py::test_production_create_array_calls_pass_a_compressor``,
    which walks the AST rather than trusting review.
 2. **``data=`` and ``shape=`` are mutually exclusive.** zarr 2's
@@ -63,6 +76,9 @@ safe for any layer to depend on.
 
 from __future__ import annotations
 
+import json
+import os
+import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -75,28 +91,101 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from luxar.encoding.compression import CompressorLike
 
 __all__ = [
+    "DEFAULT_ZARR_FORMAT",
+    "NODE_ATTR_DOCS",
+    "NODE_GROUP_DOCS",
+    "SUPPORTED_ZARR_FORMATS",
     "ZARR_FORMAT",
+    "ZARR_FORMAT_ENV_VAR",
+    "attrs_from_node_doc",
     "close",
     "consolidate",
     "create_array",
     "create_root_group",
+    "is_consolidated",
     "is_missing_error",
     "is_zarr_path",
     "memory_group",
     "open_group",
     "open_store",
+    "read_array_meta",
+    "read_consolidated_attrs",
+    "read_node_attrs",
+    "set_zarr_format",
+    "zarr_format",
 ]
 
-#: The zarr format Luxar WRITES. Reading is version-agnostic — zarr-python 3
-#: opens format 2 and format 3 stores alike, which is the whole point of being
-#: on 3.x while still emitting 2 (a v3 store from, say, a GEFF-writing tracking
-#: tool is readable, but nothing Luxar produces changes shape).
+#: The zarr format Luxar writes by DEFAULT. Reading is version-agnostic — zarr
+#: -python 3 opens format 2 and format 3 stores alike — so this governs new
+#: output only, and a repository holding both formats is the expected steady
+#: state rather than a transitional one.
+DEFAULT_ZARR_FORMAT = 3
+
+#: The formats this module will write. Reading is not restricted to these.
+SUPPORTED_ZARR_FORMATS = (2, 3)
+
+#: Environment variable that overrides :data:`DEFAULT_ZARR_FORMAT`.
 #:
-#: Flipping this to 3 is NOT sufficient on its own to migrate the format: the
-#: `luxar_delta_v1` filter would have to become a `zarr.codecs` entry-point
-#: codec, and the viewer has its own v2 assumptions (raw `.zattrs` fetches in
-#: cache validation and the scene-identity watchdog). See the migration plan.
-ZARR_FORMAT = 2
+#: An ENV VAR rather than only a CLI flag because the processes that do the
+#: writing are frequently not the process the user invoked: ``batch-fit run``
+#: spawns per-GPU workers, ``batch-fit submit`` writes an sbatch script whose
+#: array tasks run hours later on other nodes, and ``fit -j N`` forks tile
+#: workers. An exported variable reaches all of them; a flag parsed by one
+#: command would have to be threaded through every spawn site to match.
+ZARR_FORMAT_ENV_VAR = "LUXAR_ZARR_FORMAT"
+
+
+def _format_from_env() -> int:
+    """Resolve the startup format from the environment, or the default."""
+    raw = os.environ.get(ZARR_FORMAT_ENV_VAR)
+    if raw is None or raw.strip() == "":
+        return DEFAULT_ZARR_FORMAT
+    try:
+        value = int(raw)
+    except ValueError:
+        raise ValueError(
+            f"{ZARR_FORMAT_ENV_VAR}={raw!r} is not an integer; expected one of "
+            f"{list(SUPPORTED_ZARR_FORMATS)}"
+        ) from None
+    if value not in SUPPORTED_ZARR_FORMATS:
+        raise ValueError(
+            f"{ZARR_FORMAT_ENV_VAR}={raw!r} is not a supported write format; "
+            f"expected one of {list(SUPPORTED_ZARR_FORMATS)}"
+        )
+    return value
+
+
+#: The zarr format Luxar WRITES right now.
+#:
+#: Read through :func:`zarr_format` rather than imported by value — a
+#: ``from luxar._zarr_compat import ZARR_FORMAT`` snapshots whatever was current
+#: at import time and would not see :func:`set_zarr_format`. The helpers in this
+#: module all read the module attribute at CALL time, so an override applies to
+#: every write that follows it.
+ZARR_FORMAT = _format_from_env()
+
+
+def zarr_format() -> int:
+    """The format new stores are written at. See :func:`set_zarr_format`."""
+    return ZARR_FORMAT
+
+
+def set_zarr_format(value: int) -> None:
+    """Override the write format for the rest of this process.
+
+    The escape hatch for producing v2 for a tool that cannot read v3. Prefer the
+    :data:`ZARR_FORMAT_ENV_VAR` environment variable when the write may happen in
+    a child process — a setter call does not survive a fork/exec boundary, and
+    Luxar's heavier writers routinely cross one.
+    """
+    global ZARR_FORMAT
+    if value not in SUPPORTED_ZARR_FORMATS:
+        raise ValueError(
+            f"set_zarr_format({value!r}): expected one of "
+            f"{list(SUPPORTED_ZARR_FORMATS)}"
+        )
+    ZARR_FORMAT = value
+
 
 # Suffixes that mean "this path is a zipped store, not a directory". zarr 2
 # sniffed these inside `zarr.open`; zarr 3 requires the store to be chosen
@@ -136,6 +225,178 @@ def _metadata_docs_exist(path: Path) -> bool:
     if path.suffix.lower() in _ZIP_SUFFIXES:
         return path.is_file()
     return any((path / name).exists() for name in (".zgroup", ".zarray", "zarr.json"))
+
+
+# --------------------------------------------------------------------------
+# Reading metadata documents straight off disk, in either format.
+#
+# Several tools deliberately inspect a store WITHOUT opening it: the batch-fit
+# validator walks thousands of tile directories and wants a structural verdict
+# without paying a store open per node, and `luxar serve` needs to know which
+# filenames are zarr's rather than a user's data. Those sites named v2's
+# documents literally, which stops being true the moment anything writes v3.
+#
+# They are BI-FORMAT rather than switched on :data:`ZARR_FORMAT`. Luxar's steady
+# state now holds both — existing `.luxar.zarr` / `.gsplats.zarr` stores stay v2
+# while new output is v3 — so a reader that followed the write format would be
+# wrong for exactly the stores it did not create. `luxar serve` will be asked
+# for a v2 dataset by a viewer that also loads v3 ones; `batch-fit validate`
+# will meet a run whose earlier tiles predate the flip.
+#
+# DIRECTORY STORES ONLY. They read paths, so a `.zarr.zip` answers False /
+# None for every one of them — a COMPLETE zipped store reads as "save
+# incomplete", which is the wrong answer rather than a missing feature. That is
+# reachable only by a future caller: the sole caller today (`batch-fit
+# validate`) skips anything failing `is_dir()` before it gets here, and the
+# v2-only code these replaced had exactly the same blind spot. Anything that
+# needs to ask these questions of a zipped store should open it through
+# :func:`open_store` and inspect the group, not extend these.
+# --------------------------------------------------------------------------
+
+_V3_METADATA_DOC = "zarr.json"
+
+
+def _read_json_doc(path: Path) -> dict[str, Any] | None:
+    """Parse a JSON metadata document, or ``None`` if absent/unreadable."""
+    try:
+        loaded = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    return loaded if isinstance(loaded, dict) else None
+
+
+def read_consolidated_attrs(store_dir: Path) -> dict[str, dict[str, Any]]:
+    """Every node's attributes, keyed by node path, from the consolidated index.
+
+    The root is keyed ``"/"``; children by their store-relative path
+    (``"points"``, ``"grp/child"``). Reading the consolidated document rather
+    than walking the tree is what makes this ONE file read instead of one per
+    node, which is why writers' round-trip tests use it.
+
+    The formats key it differently and this is where that is absorbed. Format 2
+    lists every metadata document — ``"points/.zattrs"``, ``"points/.zarray"``,
+    ``"points/.zgroup"`` — so the attribute documents have to be picked out by
+    suffix. Format 3 lists one entry per NODE, whose attributes are nested under
+    ``attributes``, and the root's own attributes live outside
+    ``consolidated_metadata`` entirely, in the top-level document.
+
+    Empty when there is no consolidated index — that is "nothing to read here",
+    not "a store with no nodes"; use :func:`is_consolidated` to tell them apart.
+    """
+    v2 = _read_json_doc(store_dir / ".zmetadata")
+    if v2 is not None:
+        out: dict[str, dict[str, Any]] = {}
+        for key, value in (v2.get("metadata") or {}).items():
+            if key.endswith(".zattrs") and isinstance(value, dict):
+                out[key[: -len("/.zattrs")] or "/"] = value
+        return out
+
+    root = _read_json_doc(store_dir / _V3_METADATA_DOC)
+    if root is None or root.get("consolidated_metadata") is None:
+        return {}
+    out = {}
+    root_attrs = root.get("attributes")
+    out["/"] = root_attrs if isinstance(root_attrs, dict) else {}
+    consolidated = root["consolidated_metadata"]
+    entries = consolidated.get("metadata") if isinstance(consolidated, dict) else None
+    for path, node in (entries or {}).items():
+        if not isinstance(node, dict):
+            continue
+        attrs = node.get("attributes")
+        out[str(path).lstrip("/") or "/"] = attrs if isinstance(attrs, dict) else {}
+    return out
+
+
+def read_array_meta(array_dir: Path) -> dict[str, Any] | None:
+    """Array metadata (``shape``, ``dtype``, …) read straight off disk.
+
+    Returns ``None`` when ``array_dir`` is not an array — no document, corrupt
+    JSON, or a v3 document whose ``node_type`` says group. Both formats spell
+    ``shape`` the same way, so callers reading that need no branch of their own.
+    """
+    v2 = _read_json_doc(array_dir / ".zarray")
+    if v2 is not None:
+        return v2
+    v3 = _read_json_doc(array_dir / _V3_METADATA_DOC)
+    if v3 is not None and v3.get("node_type") == "array":
+        return v3
+    return None
+
+
+#: The per-node documents that can carry a node's user attributes, best first.
+#:
+#: Exported because a caller may hold the document's BYTES rather than a path
+#: and so cannot use :func:`read_node_attrs` — the archive peek in
+#: ``luxar.gsplats.io._archive`` reads one member out of a zip/tar without
+#: extracting it, and has to recognise the member by name. Keeping the names
+#: here means that peek does not have to know them itself.
+NODE_ATTR_DOCS: tuple[str, ...] = (".zattrs", _V3_METADATA_DOC)
+
+#: The per-node documents whose presence marks a GROUP, best first.
+#:
+#: Exported for the same reason as :data:`NODE_ATTR_DOCS`: a caller holding an
+#: archive INDEX rather than a directory tree — the resolver in
+#: ``luxar.gsplats.io._archive`` — must recognise "a store root lives here" from
+#: member names alone. Note this is deliberately NOT ``NODE_ATTR_DOCS``:
+#: ``.zattrs`` may sit beside an array or be a stray. The marking is exact only
+#: at format 2, where ``.zgroup`` is a group's document and nothing else's; at
+#: format 3 ``zarr.json`` marks a node of EITHER kind (which is why
+#: :func:`read_array_meta` has to check ``node_type``), so a ``zarr.json``
+#: describing an ARRAY is recognised here too and only fails later, at
+#: ``open_group``, with ``ContainsArrayError`` — the same failure that input
+#: already produced, so this is a naming caveat and not a behaviour change.
+NODE_GROUP_DOCS: tuple[str, ...] = (".zgroup", _V3_METADATA_DOC)
+
+
+def attrs_from_node_doc(parsed: Any) -> dict[str, Any]:
+    """User attributes out of an ALREADY-PARSED node metadata document.
+
+    A format-2 ``.zattrs`` *is* the attributes mapping; a format-3 ``zarr.json``
+    nests it under ``attributes`` beside the node's structural fields. Answering
+    the format-3 document verbatim would hand back ``shape``/``data_type``/
+    ``node_type`` as though a user had authored them.
+
+    Anything that is not a JSON object, and a format-3 document whose
+    ``attributes`` is missing or not an object, both yield ``{}``.
+    """
+    if not isinstance(parsed, dict):
+        return {}
+    if parsed.get("zarr_format") == 3:
+        attrs = parsed.get("attributes")
+        return attrs if isinstance(attrs, dict) else {}
+    return parsed
+
+
+def read_node_attrs(node_dir: Path) -> dict[str, Any] | None:
+    """A node's user attributes, from v2's ``.zattrs`` or v3's ``zarr.json``.
+
+    ``None`` means "no readable node here", which callers treat as corrupt —
+    so an EMPTY attributes mapping must stay distinguishable from a missing
+    one, and is returned as ``{}``.
+    """
+    for doc in NODE_ATTR_DOCS:
+        parsed = _read_json_doc(node_dir / doc)
+        if parsed is not None:
+            return attrs_from_node_doc(parsed)
+    return None
+
+
+def is_consolidated(store_dir: Path) -> bool:
+    """Does ``store_dir`` carry consolidated metadata — i.e. did the save finish?
+
+    Luxar's writers consolidate LAST, so this doubles as the completion sentinel
+    that batch-fit uses to tell a finished tile from an interrupted one.
+
+    The two formats put it in different places: v2 writes a separate
+    ``.zmetadata`` document, while v3 embeds a ``consolidated_metadata`` member
+    in the root ``zarr.json`` — which is a zarr-python extension rather than part
+    of the v3 spec, but one zarrita implements, so it stays load-bearing for the
+    viewer either way.
+    """
+    if (store_dir / ".zmetadata").exists():
+        return True
+    root_doc = _read_json_doc(store_dir / _V3_METADATA_DOC)
+    return root_doc is not None and root_doc.get("consolidated_metadata") is not None
 
 
 #: zarr group modes that map straight onto a ``ZipStore`` mode. ``"w-"`` is
@@ -261,7 +522,22 @@ def open_group(path: str | Path, *, mode: str = "r", **kwargs: Any) -> zarr.Grou
     # correctness bug; half a second on a large store is the cheaper problem.
     #
     # The VIEWER — which is what consolidated metadata is really for, over HTTP —
-    # is untouched either way: it fetches `.zmetadata` itself.
+    # is untouched either way: it fetches the consolidated document itself.
+    #
+    # ONE CAVEAT, and it is why in-place attribute edits must go through THIS
+    # function rather than `zarr.open_group`. Re-opening an ALREADY-consolidated
+    # store with plain `zarr.open_group` returns nodes built FROM the root index
+    # (it trusts it), so re-consolidating serializes that stale in-memory tree
+    # back out as a NESTED index beneath the root. Both formats grow the nested
+    # document; only format 3 is CORRUPTED by it, and that asymmetry is the bug:
+    # at format 2 a `.zmetadata` is skipped at every level, whereas at format 3
+    # the index lives inside each `zarr.json` and only the ROOT one is bypassed,
+    # so the nested copy is honoured. Reads then return pre-edit attributes even
+    # though every document on disk is correct, and nothing raises. Re-opening
+    # HERE avoids it entirely: the tree carries no index to re-serialize, so
+    # consolidating leaves exactly one, at the root — the format-2 invariant
+    # every Luxar flow already assumes. Pinned by
+    # `test_editing_in_place_leaves_exactly_one_index`.
     if mode in ("r", "r+", "a") and "use_consolidated" not in kwargs:
         kwargs["use_consolidated"] = False
     return zarr.open_group(store, mode=mode, **kwargs)
@@ -337,6 +613,111 @@ def _as_stored(
     return arr
 
 
+# --------------------------------------------------------------------------
+# Compressor translation: numcodecs objects (format 2) -> zarr codecs (format 3)
+#
+# This is the hazard that does NOT announce itself as a format concern. Luxar's
+# compressor policy (`luxar.encoding.compression`) is expressed as numcodecs
+# `Blosc` instances, which are exactly right for a format-2 array and are
+# REJECTED outright by a format-3 one — `TypeError: 'Blosc' object is not
+# iterable`, raised deep in zarr's codec-pipeline parsing, because v3 wants a
+# sequence of bytes-to-bytes codec objects instead of one numcodecs filter.
+#
+# The translation lives here rather than in `compression.py` on purpose: the
+# policy is a MEASUREMENT (zstd-9, byte shuffle for multi-byte integer codes —
+# manuscript supplementary `codec_selection`) and should be stated once, in the
+# module that owns it, without a second format-shaped copy to keep in sync. This
+# module already owns "what does the current format need"; that is all this is.
+# --------------------------------------------------------------------------
+
+#: numcodecs' integer shuffle constants -> the v3 blosc codec's spelling.
+#: ``-1`` is numcodecs' AUTOSHUFFLE; v3 spells "decide for me" as ``None``.
+_BLOSC_SHUFFLE_NAMES: dict[int, str | None] = {
+    0: "noshuffle",
+    1: "shuffle",
+    2: "bitshuffle",
+    -1: None,
+}
+
+
+def _to_v3_compressor(compressor: Any) -> Any:
+    """Translate a numcodecs compressor into its format-3 equivalent.
+
+    ``None`` (store raw) and ``"auto"`` (let zarr choose) are format-neutral and
+    pass through. An object that is already a v3 codec passes through too, so a
+    caller may hand one over directly.
+
+    ``typesize`` is deliberately NOT set: zarr evolves it from the array's dtype
+    at creation, which is what numcodecs' Blosc did implicitly from the buffer.
+    Pinning it here to the value visible at policy-definition time would silently
+    disable the byte shuffle the policy depends on — the shuffle is only worth
+    anything when its element width matches the stored codes.
+
+    Whether zarr can FORWARD that evolved ``typesize`` to blosc is a
+    ``numcodecs`` version question, and it is why ``pyproject.toml`` carries a
+    direct ``numcodecs>=0.16`` floor: below it zarr's format-3 ``BloscCodec``
+    hands numcodecs the serialized byte buffer with no width, the byte shuffle
+    becomes a no-op, and the metadata still records the shuffle that did not
+    happen. Pinned by
+    ``test_zarr_compat.py::test_the_recorded_shuffle_is_the_one_the_chunk_got``.
+    """
+    if compressor is None or isinstance(compressor, str):
+        return compressor
+    get_config = getattr(compressor, "get_config", None)
+    if not callable(get_config):
+        return compressor  # already a v3 codec (or something zarr will judge)
+
+    config = dict(get_config())
+    codec_id = config.pop("id", None)
+    if codec_id == "blosc":
+        shuffle = _BLOSC_SHUFFLE_NAMES.get(int(config.get("shuffle", 0)), None)
+        return zarr.codecs.BloscCodec(
+            cname=config.get("cname", "zstd"),
+            clevel=int(config.get("clevel", 5)),
+            shuffle=shuffle,
+            blocksize=int(config.get("blocksize", 0)),
+        )
+    if codec_id == "zstd":
+        return zarr.codecs.ZstdCodec(level=int(config.get("level", 0)))
+    if codec_id == "gzip":
+        return zarr.codecs.GzipCodec(level=int(config.get("level", 5)))
+    raise ValueError(
+        f"no format-3 equivalent is known for the numcodecs compressor "
+        f"{codec_id!r}; add one to _zarr_compat._to_v3_compressor rather than "
+        f"letting zarr fail with a codec-pipeline TypeError"
+    )
+
+
+def _to_v3_filter(filter_obj: Any) -> Any:
+    """Translate one numcodecs FILTER into its format-3 array-to-array codec.
+
+    Resolved through zarr's codec registry BY NAME rather than by importing the
+    Luxar codec class, which would close the import cycle this module exists
+    outside of (see the module docstring). The name is the numcodecs
+    ``codec_id``, and Luxar registers its format-3 twin under exactly that name
+    — one wire name per filter, whichever format is being written.
+
+    A filter with no registered format-3 twin is a hard error rather than a
+    silent drop: dropping it would write codes that no reader can invert, and
+    the resulting store would look valid and decode to garbage.
+    """
+    get_config = getattr(filter_obj, "get_config", None)
+    if not callable(get_config):
+        return filter_obj  # already a v3 codec
+
+    config = dict(get_config())
+    codec_id = config.pop("id", None)
+    try:
+        codec_cls = zarr.registry.get_codec_class(str(codec_id))
+    except KeyError:
+        raise ValueError(
+            f"filter {codec_id!r} has no format-3 codec registered under that "
+            f"name; register one (entry-point group 'zarr.codecs') before "
+            f"writing format 3, or the array becomes undecodable"
+        ) from None
+    return codec_cls.from_dict({"name": codec_id, "configuration": config})
+
+
 def create_array(
     group: zarr.Group,
     name: str,
@@ -364,11 +745,32 @@ def create_array(
     ``data`` and ``shape`` may both be supplied (zarr 2 allowed it, several
     Luxar writers rely on it); only what zarr 3 accepts is forwarded.
     """
+    # Translate for the format of the GROUP being written, NOT the module-level
+    # default. The two differ routinely and in both directions: a legacy v2 store
+    # opened for append takes new arrays while `ZARR_FORMAT` is 3, and a test may
+    # build a v2 group deliberately. Keying off the default instead put a v3
+    # `BloscCodec` into a v2 array's metadata, which zarr rejects with "Invalid
+    # compressor. Expected None, a numcodecs.abc.Codec, ..." — the exact mirror
+    # of the v3 failure this translation exists to prevent.
+    target_format = getattr(
+        getattr(group, "metadata", None), "zarr_format", ZARR_FORMAT
+    )
+
     call: dict[str, Any] = {
         "overwrite": overwrite,
-        # An explicit `compressors=` every time — never zarr's "auto".
-        "compressors": compressor,
-        "filters": filters,
+        # An explicit `compressors=` every time — never zarr's "auto". At
+        # format 3 the policy's numcodecs objects are translated first; see
+        # :func:`_to_v3_compressor` for why that is not `compression.py`'s job.
+        "compressors": (
+            _to_v3_compressor(compressor) if target_format == 3 else compressor
+        ),
+        # Filters travel the same road: writers (and the delta probe) build
+        # numcodecs objects, and format 3 wants array-to-array codecs.
+        "filters": (
+            [_to_v3_filter(f) for f in filters]
+            if (target_format == 3 and filters)
+            else filters
+        ),
         **kwargs,
     }
     if chunks is not None:
@@ -389,15 +791,55 @@ def create_array(
     return group.create_array(name, **call)
 
 
-def consolidate(group: zarr.Group) -> None:
-    """Write consolidated metadata for ``group``'s store.
+def consolidate(target: zarr.Group | Any) -> None:
+    """Write consolidated metadata for ``target``'s store.
 
-    At :data:`ZARR_FORMAT` 2 this is the ``.zmetadata`` document the viewer
-    fetches once to enumerate a whole scene, so it is load-bearing rather than
-    an optimisation: the TypeScript scene loader builds its graph purely from
-    the store's ``contents()`` listing and has no directory-walking fallback.
+    Accepts a :class:`zarr.Group` or a bare store, because both spellings occur
+    naturally at call sites — a writer holds the group it just built, while a
+    fixture that constructed a store directly holds only the store. Taking just
+    the group would leave the second kind reaching for ``zarr.*`` and silently
+    skipping the warning suppression below.
+
+    This is load-bearing rather than an optimisation, in BOTH formats: the
+    TypeScript scene loader builds its graph purely from the store's
+    ``contents()`` listing and has no directory-walking fallback. At format 2 it
+    is the ``.zmetadata`` document; at format 3 a ``consolidated_metadata``
+    member inside the root ``zarr.json``.
+
+    zarr-python warns that format-3 consolidated metadata is a zarr-python
+    EXTENSION rather than part of the v3 spec. That warning is suppressed here,
+    deliberately and at this one call site only:
+
+    - The warning is advice about portability, not about this store's validity.
+      Luxar's only consumer is zarrita, which implements the extension
+      (``isConsolidatedV3`` in its ``extension/consolidation`` module), and a
+      reader that does not is unaffected — the member is additive, and the
+      per-node ``zarr.json`` documents remain complete and standard.
+    - Not suppressing it makes every single save emit a warning, and turns any
+      save into a hard failure under ``-W error`` (which is what several tests
+      assert warning-freedom with, around a whole compile):
+      ``LuxarZarrCompiler.finalize`` catches it and re-raises ``Could not
+      finalize Zarr store``. Dropping consolidation to silence it is not an
+      option — that produces a store the viewer loads as an empty scene.
+
+    ``catch_warnings`` mutates PROCESS-GLOBAL filter state, so this is only
+    sound while no other thread is warning concurrently. It holds today because
+    Luxar's parallel writers are subprocesses — the ThreadPoolExecutors in
+    ``fit_tiled_parallel`` / ``batch.task_pool`` only launch and wait on them —
+    so consolidation always runs on a main thread. Consolidating from a worker
+    THREAD would need a different mechanism.
+
+    Matching on the message text means a reworded zarr warning would slip
+    through; ``test_consolidate_is_silent`` is the backstop, and it asserts on
+    the warning CATEGORY rather than the wording so a reword still fails it.
     """
-    zarr.consolidate_metadata(group.store)
+    store = target.store if isinstance(target, zarr.Group) else target
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message=".*[Cc]onsolidated metadata is currently not part.*",
+        )
+        zarr.consolidate_metadata(store)
 
 
 def close(group: zarr.Group) -> None:

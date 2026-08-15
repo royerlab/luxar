@@ -25,6 +25,10 @@ Exposed:
   gate: the flat ``indexed`` layout/parity check, run before the channels.
 * :func:`position_bounds_from_array` — per-axis min/max of an (N, D)
   position array, in the writer's shape.
+* :func:`strip_absent_attr_kwargs` + :data:`ABSENT_WHEN_NONE_RENDER_ATTRS` —
+  delete the caller-named keys whose present-but-``None`` value means ABSENT,
+  and the leaf adders' set of them (``colormap`` / ``coverage_fraction``). The
+  set is a required argument: the gsplats pipeline passes its own wider one.
 * :func:`sync_custom_colormap_attr` — mirror the writer's custom-colormap
   resolution (`ndarray / non-builtin name -> 'custom'`) into the adder's
   attrs dict so the returned node object matches what zarr stores.
@@ -43,7 +47,7 @@ Exposed:
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Sequence
 
 import numpy as np
 
@@ -221,6 +225,54 @@ COMPOSITING_ATTRS = frozenset(
 )
 
 
+#: Attrs a STRUCTURE-ONLY rebuild (``gsplat lod`` and friends: the input is
+#: re-laddered / re-tiled, the appearance is not the command's business) must
+#: carry from the source root to the output root. Without this the reduction's
+#: fresh nodes know nothing about the input and the writer's own defaults take
+#: over — ``blending_mode`` vanishes and the multiplicative attrs snap back to
+#: their identity (#1600).
+#:
+#: :data:`COMPOSITING_ATTRS` minus ``transform`` (see below), because those are
+#: precisely the attrs a root-level stamp actually reaches the leaf with. The
+#: viewer's ``composeAttrs`` (``viewer/src/data/attrs-composer.ts``) MULTIPLIES
+#: opacity/absorption/gamma/intensity and ADDS offset along the root→leaf chain,
+#: so a per-level identity stamp composes to the root's authored value; and
+#: ``blending_mode``/``join`` are nearest-SETTER-wins with no per-leaf default
+#: stamped, so the root's choice wins.
+#:
+#: ``transform`` is EXCLUDED for a different reason — carrying it corrupts it.
+#: The stored value is already COLUMN-major (THREE.js), and the leaf writer runs
+#: whatever it is handed through ``prepare_transform_for_zarr``, which reads its
+#: input as ROW-major and transposes. Handing the stored list straight back
+#: transposes it a SECOND time on a leaf-rooted result (``flat``/``stream``/
+#: ``levels``): an authored translation lands in the bottom row and the command
+#: dies on ``validate_transform`` ("bottom row must be [0, 0, 0, 1]", measured
+#: exit 1 where the un-carried command exited 0), and a rotation is silently
+#: INVERTED. A group-rooted result (``adaptive``/``tiles``) writes caller attrs
+#: verbatim and does round-trip — so one carry would mean two different things
+#: depending on the recipe. Carrying it needs the writer to tell an
+#: already-stored transform from an authored one; tracked with the rest of the
+#: sweep in #1600, and the reason the ``gsplat`` rebuilds leave the attr alone
+#: (the same status quo as before the carry existed).
+#:
+#: ALSO DELIBERATELY EXCLUDED, because a root stamp would be SHADOWED and
+#: therefore only look preserved:
+#:
+#: * ``colormap`` — the writer auto-defaults it to ``"gray"`` on each colorless
+#:   group (``apply_gsplat_group_attrs``), which sits nearer the leaf than the
+#:   root. It is not composed, so the nearer value wins.
+#: * ``amplitude_data_range`` / ``scalar_data_range`` — likewise not composed,
+#:   and each level re-derives its own from its (post-reduction) amplitudes.
+#: * ``truncation_radius`` — auto-defaulted per leaf by design (see the note on
+#:   ``COMPOSITING_ATTRS``); each leaf already carries the source value through
+#:   ``GSplatData.truncation_radius``, so the footprint survives anyway.
+#:
+#: Carrying an authored colormap / display window through a rebuild needs the
+#: writer to stop defaulting them when an ancestor authored one — tracked in
+#: https://github.com/royerlab/luxar/issues/1600 with the rest of the sweep.
+AUTHORED_APPEARANCE_ATTRS = COMPOSITING_ATTRS - {"transform"}
+
+
 def lines_only_join_reason(geometry_type: str) -> str:
     """The one explanation of why ``join`` is refused on a non-lines leaf.
 
@@ -281,6 +333,64 @@ def reject_lines_only_join(
             f"Cannot add {geometry_type} '{name}' with join={attrs['join']!r}. "
             + lines_only_join_reason(geometry_type)
         )
+
+
+# The RENDER attrs for which a present-but-``None`` value means ABSENT. Exactly
+# the two whose None is caught by no value validator and therefore reaches disk:
+# ``validate_render_attrs`` guards its colormap check on ``is not None``, and
+# ``coverage_fraction`` (an LOD selector threshold) has no validator at all. Both
+# are ACCEPTED with a None and then write something WRONG, which is why they are
+# here and the rest of the render attrs are not: measured, ``opacity=None``,
+# ``blending_mode=None``, ``layer=None``, ``visible=None``, ``gamma=None``,
+# ``intensity=None``, ``offset=None``, ``absorption=None`` and
+# ``truncation_radius=None`` each refuse outright with a "must be convertible to
+# float / must be a boolean / …, got NoneType" (their validators run
+# unconditionally), so for those a None is loud and reading it as "absent" would
+# only mask typos.
+#
+# Spelled here rather than in any one adder because every door that can be handed
+# a stray None needs the identical answer — each of the four leaf adders (#1574)
+# and the three ``**attrs``-forwarding gsplats pipeline doors (#1496), whose own
+# wider ``ABSENT_WHEN_NONE_ATTRS`` is derived from this tuple rather than
+# repeating it.
+ABSENT_WHEN_NONE_RENDER_ATTRS = ("colormap", "coverage_fraction")
+
+
+def strip_absent_attr_kwargs(attrs: Dict[str, Any], keys: Sequence[str]) -> None:
+    """Delete every ``keys`` entry of ``attrs`` whose value is ``None``.
+
+    One rule, stated once: for a key whose ABSENT case has a working default, an
+    explicit ``None`` means "absent", and the whole fix is to drop the key before
+    anything downstream looks at it. Which keys those are is the caller's
+    question, not this function's — :data:`ABSENT_WHEN_NONE_RENDER_ATTRS` for a
+    leaf adder, the wider ``gsplats_pipeline.from_data.ABSENT_WHEN_NONE_ATTRS``
+    (which adds that adder's structurally-forwarded leaf params) for the
+    ``add_gsplats_from_data`` / ``add_gsplats_from_file`` / graft doors. The set
+    is a required argument precisely so neither door can silently inherit the
+    other's.
+
+    What goes wrong without it, measured. ``colormap=None`` is the worst case
+    because it is SILENT: the key survives ``validate_render_attrs`` (whose
+    colormap check is guarded on ``is not None``) and then
+    :func:`sync_custom_colormap_attr` rewrites the None to ``'custom'`` (it is
+    not a str in ``BUILTIN_COLORMAP_NAMES``) WITHOUT writing any
+    ``colormap_lut`` — so the node ships a LUT-less custom colormap, and the
+    viewer's ``build-scene-graph.ts`` reacts to that by warning and falling back
+    to VIRIDIS, where omitting the key gives ``gray``. ``coverage_fraction=None``
+    persists a literal ``coverage_fraction: null`` LOD selector threshold into
+    the node's zarr attrs. On the gsplats pipeline's wider set the same shape
+    also STRANDS: a present-but-None ``labels`` / ``partition`` is rejected by
+    NAME by ``validate_render_attrs``, which never looks at the value, so an
+    idiomatic ``labels=maybe_labels`` left a childless ``kind=lod`` wrapper on
+    disk (#1471).
+
+    Mutates in place and returns None: every caller owns the dict it passes (its
+    own ``**attrs``), and handing back a copy would only invite one of them to
+    forget to use it.
+    """
+    for key in keys:
+        if key in attrs and attrs[key] is None:
+            del attrs[key]
 
 
 def sync_custom_colormap_attr(attrs: Dict[str, Any]) -> None:

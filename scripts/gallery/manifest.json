@@ -69,12 +69,12 @@
       "readme": true
     },
     {
-      "id": "galaxy",
+      "id": "gaia_milky_way",
       "title": "Gaia Milky Way (3M stars)",
       "geometry": "points",
       "category": "astronomy",
       "script": "demo_gaia_milky_way_3m.py",
-      "dataset": "datasets/demos/galaxy.luxar.zarr",
+      "dataset": "datasets/demos/gaia_milky_way.luxar.zarr",
       "autoFrame": false,
       "autoExpose": false,
       "readme": true
@@ -396,6 +396,14 @@
       "category": "microscopy",
       "script": "demo_gsplats_3d_acto3d_heart.py",
       "dataset": "datasets/demos/gsplats_3d_acto3d_heart.luxar.zarr"
+    },
+    {
+      "id": "gsplats_3d_flylight_mcfo_neurons",
+      "title": "3D FlyLight MCFO Neurons",
+      "geometry": "gsplats",
+      "category": "microscopy",
+      "script": "demo_gsplats_3d_flylight_mcfo_neurons.py",
+      "dataset": "datasets/demos/gsplats_3d_flylight_mcfo_neurons.luxar.zarr"
     },
     {
       "id": "gsplats_3d_kidney_multichannel_layers",

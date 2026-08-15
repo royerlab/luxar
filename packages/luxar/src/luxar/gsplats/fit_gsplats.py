@@ -145,6 +145,8 @@ class GaussianSplatFitter:
         sort_splats_interval: int = 1000,
         iter_callback: Optional[Any] = None,
         iter_callback_every: int = 25,
+        seed_amps_background_relative: bool = False,
+        source_dtype: Optional[str] = None,
         **seed_kwargs: Any,
     ) -> GSplatData:
         """
@@ -170,6 +172,10 @@ class GaussianSplatFitter:
             - Comma-separated combinations (e.g., "decomposition,edges,grid").
 
             This parameter is only used when seeds=None.
+        seed_amps_background_relative : bool, default=False
+            Amplitude convention of a ``seeds=GSplatData`` warm start — False for
+            ``generate_seeds()`` output (raw), True for a previous fit's output
+            (background-relative). See fit_gaussian_splats().
         **seed_kwargs
             Additional keyword arguments for seed generation (e.g., num_scales,
             percentile_thresh, etc.). Only used when seeds=None.
@@ -184,7 +190,8 @@ class GaussianSplatFitter:
             self,
             V,
             seeds,
-            norm_percentile,
+            seed_amps_background_relative=seed_amps_background_relative,
+            norm_percentile=norm_percentile,
             floor=floor,
             norm_range=norm_range,
             downscale=downscale,
@@ -222,6 +229,7 @@ class GaussianSplatFitter:
             sort_splats_interval=sort_splats_interval,
             iter_callback=iter_callback,
             iter_callback_every=iter_callback_every,
+            source_dtype=source_dtype,
             **seed_kwargs,
         )
 
@@ -317,6 +325,9 @@ def fit_gaussian_splats(
     # Per-iteration callback (e.g. validation-set scoring during fitting)
     iter_callback: Optional[Any] = None,
     iter_callback_every: int = 25,
+    seed_amps_background_relative: bool = False,
+    # Element type of the volume as it was ACQUIRED / stored on disk
+    source_dtype: Optional[str] = None,
     **seed_kwargs: Any,
 ) -> GSplatData:
     """
@@ -349,8 +360,11 @@ def fit_gaussian_splats(
           seeds=0.1 targets a representation using 10% of the original storage.
           The number of splats is computed as: n = ratio × total_voxels / floats_per_splat
           where floats_per_splat = d + d×(d+1)/2 + 1 (center + Cholesky + amp).
-        - If GSplatData: Warm-start from a previously fitted result
-          (centers + Cholesky + amplitudes carried over directly).
+        - If GSplatData: Explicit seeds or a warm start (centers + Cholesky +
+          amplitudes carried over directly). Both ``generate_seeds()`` output and
+          a previously fitted result go through this door — they differ in
+          amplitude scale, so declare it with
+          ``seed_amps_background_relative`` (below).
         - If None: Auto-generated using dimension-aware intelligent defaults:
           * Universal scales: (0.5, 1.0, 2.0, 4.0, 8.0, 16.0) for comprehensive detection
           * Volume-proportional density: ~1% of voxels as seeds
@@ -553,6 +567,41 @@ def fit_gaussian_splats(
         - ``"real"``: Physical coordinates (centers and Cholesky scaled by voxel_size).
           When voxel_size is None, identical to ``"voxel"``.
         - ``"voxel"``: Raw voxel indices (no conversion).
+    seed_amps_background_relative : bool, default=False
+        Which intensity convention the amplitudes of a ``seeds=GSplatData``
+        carry. Ignored for every other kind of ``seeds``.
+
+        - False (default): RAW-IMAGE-SAMPLED — the amplitudes were sampled off the
+          original volume (up to a fixed seeding scale factor), background
+          pedestal included. This is what
+          ``generate_seeds()`` returns, i.e. the explicit-seeding workflow
+          (``fit_gaussian_splats(V, seeds=generate_seeds(V))``). They are
+          rescaled as ``(a - image_min) / intensity_range``, so an active
+          ``floor`` is subtracted exactly once.
+        - True: BACKGROUND-RELATIVE — the amplitudes already have the pedestal
+          removed. This is what a previous fit returns (the fit's output
+          amplitudes are the normalized ones times ``intensity_range``, with
+          ``image_min`` never added back), hence also what a ``.gsplats.zarr``
+          WRITTEN BY a fit (``gsplat fit`` / ``gsplat lod``) carries. They are
+          rescaled as ``a / intensity_range``.
+
+        A store that was IMPORTED (``gsplat import`` maps PLY/SPZ opacity into
+        roughly [0, 1]) or intensity-rescaled (``gsplat transform
+        --normalize-intensity`` / ``--scale-intensity``) carries neither
+        convention exactly, so its warm start is approximate either way.
+
+        Getting this wrong is silent: declaring False on a fit's output makes an
+        active ``floor`` be subtracted twice, initializing every seed dimmer than
+        the floor to exactly 0; declaring True on raw amplitudes starts every
+        seed too bright by ``floor / intensity_range`` (#1172).
+    source_dtype : str or None, default=None
+        Element type of the volume as it was ACQUIRED (e.g. ``"uint16"``), when
+        that differs from ``V.dtype``. Recorded in ``stats["source_dtype"]`` /
+        ``stats["source_bytes"]`` — the honest denominator of a compression
+        ratio. Pass it when the volume has already been cast to float before
+        reaching here (as ``luxar.io.volume.load_volume`` does), otherwise the
+        recorded source size describes the float working copy and overstates
+        compression by the cast's inflation factor. If None, ``V.dtype`` is used.
 
     Returns
     -------
@@ -589,6 +638,7 @@ def fit_gaussian_splats(
         result = fitter.fit(
             V=V,
             seeds=seeds,
+            seed_amps_background_relative=seed_amps_background_relative,
             norm_percentile=norm_percentile,
             floor=floor,
             norm_range=norm_range,
@@ -627,6 +677,7 @@ def fit_gaussian_splats(
             sort_splats_interval=sort_splats_interval,
             iter_callback=iter_callback,
             iter_callback_every=iter_callback_every,
+            source_dtype=source_dtype,
             **seed_kwargs,
         )
 
@@ -647,12 +698,19 @@ def fit_gaussian_splats(
         from arbol import aprint
 
         with asection("Optimization Complete"):
-            aprint(f"Time: {result.stats['time_seconds']:.2f} seconds")
-            aprint(f"Iterations: {result.stats['iterations']}/{n_iters}")
-            if result.stats["converged"]:
-                aprint(
-                    f"✓ Converged (saved {n_iters - result.stats['iterations']} iterations)"
-                )
+            if not result.stats:
+                # No seed candidates: GaussianSplatFitter.fit returns an empty
+                # result with an empty stats dict before any optimization runs
+                # (a signal-free tile, or an empty GSplatData warm start), so
+                # there is no timing/iteration/convergence record to report.
+                aprint("No seed candidates — returned an empty result")
+            else:
+                aprint(f"Time: {result.stats['time_seconds']:.2f} seconds")
+                aprint(f"Iterations: {result.stats['iterations']}/{n_iters}")
+                if result.stats["converged"]:
+                    aprint(
+                        f"✓ Converged (saved {n_iters - result.stats['iterations']} iterations)"
+                    )
 
         # Calculate and display compression ratio
         from luxar.gsplats.fitting.visualization import display_compression_analysis

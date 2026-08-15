@@ -8,6 +8,11 @@
 
 import type { ZarrViewerConfig } from '../../types/zarr';
 import type { RenderingSettings } from '../types';
+import {
+  buildCinematicValues,
+  CINEMATIC_SNAPSHOT_KEYS,
+  type CinematicSnapshotKeys,
+} from '../cinematic-preset';
 import { log, Modules } from '../../utils/log';
 
 /**
@@ -98,10 +103,12 @@ export const REVERSE_SETTINGS_MAP: Record<string, string> = Object.fromEntries(
 
 /**
  * Extract RenderingSettings overrides from zarr viewer_config.
- * Returns only the fields that are set (partial object).
+ * Returns only the fields that are set (partial object), plus — when the
+ * scene asks for cinematic mode — the cinematic preset expanded into the
+ * fields the scene left unset (see `expandCinematicPreset` below).
  *
  * @param zarrConfig - Viewer config from zarr root attributes
- * @returns Partial RenderingSettings with only the fields set in zarr
+ * @returns Partial RenderingSettings with the fields set in zarr
  */
 export function extractRenderingOverrides(
   zarrConfig: ZarrViewerConfig
@@ -115,25 +122,100 @@ export function extractRenderingOverrides(
     }
   }
 
+  // The camera block uses `!= null` deliberately (not `!== undefined`): it must
+  // reject null exactly as the map walk above does, so "present in `overrides`"
+  // stays a single uniform author-set test. A null that slipped through would
+  // both suppress the cinematic preset for that key and reach consumers whose
+  // own guards only test `!== undefined`.
+
   // camera.fov maps to RenderingSettings.fov
-  if (zarrConfig.camera?.fov !== undefined) {
+  if (zarrConfig.camera?.fov != null) {
     overrides.fov = zarrConfig.camera.fov;
   }
 
   // camera.fov_preset maps to RenderingSettings.fovPreset
-  if (zarrConfig.camera?.fov_preset !== undefined) {
+  if (zarrConfig.camera?.fov_preset != null) {
     overrides.fovPreset = zarrConfig.camera.fov_preset as RenderingSettings['fovPreset'];
   }
 
   // camera.near/far map to RenderingSettings.near/far
-  if (zarrConfig.camera?.near !== undefined) {
+  if (zarrConfig.camera?.near != null) {
     overrides.near = zarrConfig.camera.near;
   }
-  if (zarrConfig.camera?.far !== undefined) {
+  if (zarrConfig.camera?.far != null) {
     overrides.far = zarrConfig.camera.far;
   }
 
+  expandCinematicPreset(zarrConfig, overrides);
+
   return overrides;
+}
+
+/**
+ * The two preset keys that describe the camera's framing. They are expanded as
+ * ONE unit: if the author set EITHER `camera.fov` or `camera.fov_preset`,
+ * NEITHER is filled from the preset.
+ *
+ * Why coupled — a framing is a unit, and half a pair is worse than neither
+ * half. Filling only the missing half makes the slider and the dropdown
+ * describe different lenses: an authored `fov_preset: '85mm Portrait'` beside
+ * the preset's 35 mm `fov` would actively drive the camera to 63° while the
+ * dropdown reads "85mm Portrait" (and the first panel open would rewrite the
+ * author's choice to '35mm' from the live FOV). Skipping both keeps exact
+ * parity with a non-cinematic scene in either direction: the author's camera
+ * authority wins whole, and the base default supplies the other half.
+ */
+const CINEMATIC_FOV_PAIR: readonly CinematicSnapshotKeys[] = ['fov', 'fovPreset'];
+
+/**
+ * Expand `viewer_config.cinematic_mode = true` into the actual preset values
+ * (ACES, subtle wide bloom, detector noise, vignette, 35 mm chromatic lens +
+ * FOV).
+ *
+ * Why here: `cinematic_mode` used to map straight through to
+ * `RenderingSettings.cinematicMode`, a flag nothing downstream acted on — the
+ * preset was only ever applied by the C-key/rail toggle, so an authored scene
+ * rendered with none of the effects. Expanding at the bridge means BOTH
+ * consumers of `extractRenderingOverrides` get it for free:
+ * `RenderingControls.applyZarrDefaults` (first-time scene load) and
+ * `buildResetDefaults` (reset-to-defaults for a scene that ships a config).
+ *
+ * PRECEDENCE — an author-set key always wins over the preset. A key counts as
+ * author-set exactly when it is already present in `overrides`, which is the
+ * single uniform test for both routes into this object: the
+ * `RENDERING_SETTINGS_MAP` walk above only adds a key when its snake_case
+ * spelling was present and non-null in the zarr config, and the camera block
+ * only adds `fov` / `fovPreset` when `camera.fov` / `camera.fov_preset` were
+ * likewise present and non-null.
+ * So `{cinematic_mode: true, bloom_strength: 0.9}` yields the full preset with
+ * `bloomStrength = 0.9`.
+ *
+ * The one exception to the per-key rule is `CINEMATIC_FOV_PAIR` (declared just
+ * above) — see there for why `fov` and `fovPreset` are expanded (or skipped)
+ * together.
+ *
+ * Strictly `=== true`: a `false`, `null`, absent, or non-boolean truthy value
+ * expands nothing (a corrupt config must not silently restyle the scene).
+ *
+ * `cinematicMode: true` itself stays in the overrides, so the control-rail
+ * "Cinematic mode" item still reads as active.
+ *
+ * @param zarrConfig - Viewer config from zarr root attributes
+ * @param overrides - Overrides built so far; mutated in place
+ */
+function expandCinematicPreset(
+  zarrConfig: ZarrViewerConfig,
+  overrides: Partial<RenderingSettings>
+): void {
+  if (zarrConfig.cinematic_mode !== true) return;
+
+  const preset = buildCinematicValues();
+  const authorSetFraming = CINEMATIC_FOV_PAIR.some((key) => key in overrides);
+  for (const key of CINEMATIC_SNAPSHOT_KEYS) {
+    if (key in overrides) continue; // author-set — leave it alone
+    if (authorSetFraming && CINEMATIC_FOV_PAIR.includes(key)) continue;
+    (overrides as Record<string, unknown>)[key] = preset[key];
+  }
 }
 
 /**

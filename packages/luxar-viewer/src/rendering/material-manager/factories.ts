@@ -14,6 +14,7 @@
 
 import type { BlendingMode } from '../../types/blending';
 import type { LineJoinStyle } from '../../types/line-join';
+import type { LinePrimitive } from '../../types/line-primitive';
 import { PointMaterial } from '../materials/point/material-glsl';
 import { LineMaterial } from '../materials/line/material-glsl';
 import { GSplatMaterial } from '../materials/gsplat/material-glsl';
@@ -102,6 +103,14 @@ export interface LineMaterialProperties {
    * backend BAKES this into the graph.
    */
   join?: LineJoinStyle;
+  /**
+   * Line rendering primitive (#1352). Omitted ⇒ the session-wide
+   * resolution (override > forced policy > default). `createLinesNode`
+   * passes the per-node `auto`-policy result here so the built shader
+   * matches the node's size class; same per-node/no-cache-key story as
+   * `join` above.
+   */
+  primitive?: LinePrimitive;
 }
 
 /** GSplat material properties driving the constructor config. */

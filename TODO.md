@@ -189,7 +189,7 @@ to ship after). Sequencing is at the bottom.
     licensing reason and returns `None` (→ the demo rebuilds from the raw source)
     instead of the old "run `git lfs pull`", which pointed at a file that no
     longer exists. The Gaia demo had no download path at all and now resolves
-    cache-first with an actionable error (see #1461 for the ESA-archive build).
+    cache-first with an actionable error (see #1575 for the ESA-archive build).
   - **🔴 REMOVAL IS NOT COMPLETE UNTIL HISTORY IS CLEANED — one launch-time
     operation, and it is gated.** GitHub serves LFS objects for any commit and
     does NOT garbage-collect unreferenced ones (docs: *"the Git LFS objects still
@@ -307,11 +307,11 @@ to ship after). Sequencing is at the bottom.
         query the ESA Gaia archive and build the point cloud on the user's
         machine on first run, caching to `~/.cache/luxar/` (compute once, stays
         cached), with the mandatory ESA/Gaia/DPAC acknowledgement. No GPU needed
-        (it's a point cloud, not a fit) — only a catalog query. Today
-        `demo_gaia_milky_way_3m.py` still loads the committed
-        `data/milky_way_gaia_3m.zarr.zip` and has no TAP query path (the archive
-        query lives only in its docstring, describing how that file was
-        produced), so this is pending work like the neuromast upload above.
+        (it's a point cloud, not a fit) — only a catalog query. Today the
+        committed `data/milky_way_gaia_3m.zarr.zip` is gone and
+        `demo_gaia_milky_way_3m.py` reads `~/.cache/luxar/`; the TAP query is
+        already executable as `scripts/generate_galaxy_simple.py`, so what is
+        pending is only wiring it up as an automatic first-run build.
       The gsplat cases total only ~35 MB, so the cost is a GPU-gated first run for
       those demos, not storage; Gaia needs only an archive query + CPU build.
       (Optional: email tng/acto3d/tribolium sources for written redistribution
@@ -396,12 +396,15 @@ to ship after). Sequencing is at the bottom.
   - **Scope note:** only *heavy processed datasets* move. Small README/doc images
     (`docs/images/**`) must stay in-repo so GitHub renders them (see R19).
   - **Status check 2026-08-11: the Zenodo leg is still dormant** — 0 of 24
-    manifest datasets carry a record ID, so every demo still runs off in-repo
-    LFS. Nothing has regressed, but nothing has moved either: the Gaia demo
-    still loads the committed `milky_way_gaia_3m.zarr.zip` (the TAP query
-    remains docstring-only; #1461 adds an appearance-tuning ask on top), and the
-    neuromast + h2afva uploads remain pending. Next concrete action is still
-    step 2 of the plan: create the Sandbox rehearsal record, then production.
+    manifest datasets carry a record ID, so no demo fetches from Zenodo yet: the
+    ones that still ship data run off in-repo LFS, and the `local-compute` four
+    (whose in-repo copies were removed) rebuild or read a placed file instead.
+    Nothing has regressed, but nothing has moved either: the Gaia demo now
+    reads `~/.cache/luxar/` instead of a committed `milky_way_gaia_3m.zarr.zip`
+    (the TAP query is executable as `scripts/generate_galaxy_simple.py`, just not
+    wired up as an automatic first-run build), and the neuromast +
+    h2afva uploads remain pending. Next concrete action is still step 2 of the
+    plan: create the Sandbox rehearsal record, then production.
     *(2026-08-12: the replacement-demos + dataset-removal work is now in flight
     as PR #1554 — see the removal/history-purge bullets above.)*
   - **Status check 2026-08-14 (supersedes the counts above): all three
@@ -418,7 +421,11 @@ to ship after). Sequencing is at the bottom.
     splat counts differ. h2afva keeps `pending_upload` because the 51tp file
     currently in the record is a superseded pre-isotropic-correction build (z
     squashed 4×, no substitutive LOD levels); its replacement is verified but not
-    uploaded. Next action is unchanged: the Sandbox rehearsal (point a record's
+    uploaded. Delivered alongside, on the Gaia demo that reads a placed file: the
+    appearance-tuning ask **#1461** — the `gaia_milky_way` rename, per-marker
+    hover labels, and the 0.5/0.12/0.175 volumetric retune. The first-run ESA
+    rebuild (#1575) is still not wired up, so the catalog is still hand-placed.
+    Next action is unchanged: the Sandbox rehearsal (point a record's
     `base_url` at Sandbox — that override is deliberately NOT gated by
     `published`, so the production records stay drafts through it), then publish.
   - **Also here (from R16):** the **64 MB** `luxar-paper`
@@ -552,7 +559,7 @@ to ship after). Sequencing is at the bottom.
     `make generate-gallery` (or `ONLY=id`). Output → `docs/images/gallery/`
     (gitignored staging); copy curated picks into `docs/images/readme/`. Per
     user calls: **DESI included** (astronomy), **cmu1_pathology dropped**. Next:
-    run the full sweep (incl. heavy datasets: `galaxy`/organoid/celegans need
+    run the full sweep (incl. heavy datasets: `gaia_milky_way`/organoid/celegans need
     generation), curate the winners, wire them into the README gallery table.
   - **LFS interaction (coordinate with R17):** README/doc images stay in-repo
     (GitHub must render them inline) — only the heavy *datasets* move to Zenodo.

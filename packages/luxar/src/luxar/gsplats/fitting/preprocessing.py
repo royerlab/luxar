@@ -94,6 +94,73 @@ class _InitContext:
 
     init_L: Optional[np.ndarray] = None
     init_amps: Optional[np.ndarray] = None
+    # Which intensity convention ``init_amps`` is expressed in. There are two,
+    # and they differ by exactly the background floor:
+    #
+    # * False (default) — RAW-IMAGE-SAMPLED: amplitudes read off the original
+    #   (un-normalized, un-floored) volume, as every seeding method produces
+    #   them. Rescaling to the optimizer's [0, 1] scale is
+    #   ``(a - image_min) / intensity_range``.
+    # * True — BACKGROUND-RELATIVE: amplitudes that already have the pedestal
+    #   removed, as a previous fit's output does. ``finalize_results`` multiplies
+    #   the normalized amplitudes by ``intensity_range`` and deliberately does
+    #   NOT add ``image_min`` back (see ``results.py``), so rescaling is
+    #   ``a / intensity_range`` — subtracting ``image_min`` again would remove
+    #   the floor a SECOND time and zero every sub-floor seed (#1172).
+    #
+    # Set by the CALL SITES. ``_extract_gsplatdata_init`` cannot tell which kind
+    # of ``GSplatData`` it was handed, and neither can ``preprocess_data``: the
+    # ``seeds=GSplatData`` door carries BOTH a previous fit's output (background-
+    # relative) and ``generate_seeds()`` output (raw — the documented explicit-
+    # seeding workflow), and a bare GSplatData records no provenance. Only the
+    # caller knows, so that branch reads ``config.seed_amps_background_relative``.
+    # The seeding path inside ``_generate_seeds`` is unambiguous (it samples the
+    # still-raw volume itself) and pins the flag to False.
+    init_amps_background_relative: bool = False
+
+
+def _rescale_init_amps(
+    init_ctx: _InitContext,
+    image_min: float,
+    intensity_range: float,
+    verbose: bool,
+) -> None:
+    """Rescale pre-initialized amplitudes to the normalized image scale, in place.
+
+    Optimization works on the normalized [0, 1] image; without this rescaling
+    ``amp_max`` constraints would be on the wrong scale. WHICH rescaling applies
+    depends on the amplitude convention (see
+    ``_InitContext.init_amps_background_relative``): a warm start from a previous
+    fit already has the pedestal removed, so subtracting ``image_min`` again
+    would remove the floor twice and zero every sub-floor seed (#1172); a
+    raw-image-sampled array still carries it.
+
+    Residual approximation (out of scope): a re-fit resolves its OWN
+    ``intensity_range``, which need not be byte-identical to the one the seed was
+    produced under, so the warm start is exact only when both fits resolve the
+    same normalization.
+
+    A no-op when there are no pre-initialized amplitudes.
+    """
+    if init_ctx.init_amps is None:
+        return
+
+    if init_ctx.init_amps_background_relative:
+        init_ctx.init_amps = np.clip(init_ctx.init_amps / intensity_range, 0.0, 1.0)
+    else:
+        init_ctx.init_amps = np.clip(
+            (init_ctx.init_amps - image_min) / intensity_range, 0.0, 1.0
+        )
+
+    if verbose:
+        # min()/max() have no identity on an empty array, so report the count.
+        if init_ctx.init_amps.size == 0:
+            aprint("Rescaled init_amps to normalized range: 0 seeds")
+        else:
+            aprint(
+                f"Rescaled init_amps to normalized range: "
+                f"[{init_ctx.init_amps.min():.4f}, {init_ctx.init_amps.max():.4f}]"
+            )
 
 
 def preprocess_data(config: FitConfig) -> PreprocessedData:
@@ -152,6 +219,8 @@ def preprocess_data(config: FitConfig) -> PreprocessedData:
         seed_kwargs["device"] = str(config.device)
 
     # Create mutable context for init parameters (avoids mutating config)
+    # ``config.init_amps`` follows the raw-image-sampled convention (see
+    # FitConfig.init_amps), hence the default background_relative=False.
     init_ctx = _InitContext(
         init_L=config.init_L.copy() if config.init_L is not None else None,
         init_amps=config.init_amps.copy() if config.init_amps is not None else None,
@@ -162,6 +231,13 @@ def preprocess_data(config: FitConfig) -> PreprocessedData:
         seed_centers = seeds.centers.copy()
         # Extract pre-initialized parameters from GSplatData
         _extract_gsplatdata_init(init_ctx, seeds)
+        # Which amplitude convention those extracted amplitudes are in is the
+        # CALLER's declaration: this door carries both a previous fit's output
+        # (background-relative — see `results.py`) and `generate_seeds()` output
+        # (raw-image-sampled), and a bare GSplatData records no provenance.
+        # Overwrites whatever convention config.init_amps had — the extractor
+        # replaced the array.
+        init_ctx.init_amps_background_relative = config.seed_amps_background_relative
         # Rescale seed centers to downscaled coordinates if downscaling is active
         if downscale_factors is not None:
             scale = np.array([1.0 / f for f in downscale_factors], dtype=np.float32)
@@ -252,18 +328,8 @@ def preprocess_data(config: FitConfig) -> PreprocessedData:
         )
 
     # Rescale pre-initialized amplitudes to match normalized image scale
-    # The seeding methods extract amplitudes from the original image, but
-    # optimization works on the normalized [0, 1] image. Without this rescaling,
-    # amp_max constraints would be on the wrong scale.
-    if init_ctx.init_amps is not None:
-        init_ctx.init_amps = np.clip(
-            (init_ctx.init_amps - image_min) / intensity_range, 0.0, 1.0
-        )
-        if config.verbose:
-            aprint(
-                f"Rescaled init_amps to normalized range: "
-                f"[{init_ctx.init_amps.min():.4f}, {init_ctx.init_amps.max():.4f}]"
-            )
+    # (convention-dependent — see _rescale_init_amps).
+    _rescale_init_amps(init_ctx, image_min, intensity_range, config.verbose)
 
     # Set auto-convergence threshold
     max_abs_error = _set_convergence_threshold(config.max_abs_error, config.verbose)
@@ -375,6 +441,12 @@ def _generate_seeds(
     # If init_ctx provided, extract pre-initialized parameters
     if init_ctx is not None:
         _extract_gsplatdata_init(init_ctx, seeds_result)
+        # generate_seeds() sampled these amplitudes off the volume BEFORE
+        # normalization (V is still raw here), so they carry the pedestal and the
+        # `- image_min` rescaling is the correct one. Same convention as the grid
+        # fallback amplitudes appended by _extend_init_arrays_for_grid_seeds
+        # below, which is why concatenating them stays provenance-consistent.
+        init_ctx.init_amps_background_relative = False
         if verbose:
             aprint("Using scale-informed initialization from seeding method")
 
@@ -1255,6 +1327,11 @@ def _extract_gsplatdata_init(init_ctx: _InitContext, gsplat_data: GSplatData) ->
 
     Populates init_ctx.init_L and init_ctx.init_amps from a GSplatData object. This enables using moment pursuit results
     or loaded splats as initialization for gradient descent refinement.
+
+    Both arrays are OVERWRITTEN wholesale, so the caller must also set
+    ``init_ctx.init_amps_background_relative`` to the convention of
+    ``gsplat_data.amplitudes`` — this function cannot know it (a caller's warm
+    start is background-relative, ``generate_seeds`` output is raw-sampled).
 
     Parameters
     ----------

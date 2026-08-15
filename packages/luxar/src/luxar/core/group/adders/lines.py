@@ -25,11 +25,13 @@ from arbol import aprint
 
 from ...lines import Lines
 from ..compositing import (
+    ABSENT_WHEN_NONE_RENDER_ATTRS,
     COMPOSITING_ATTRS,
     funnel_add_error,
     is_broadcast_color,
     position_bounds_from_array,
     slice_optional_array,
+    strip_absent_attr_kwargs,
     sync_custom_colormap_attr,
     unnest_add_error,
     validate_line_indices_before_split,
@@ -97,6 +99,14 @@ def add_lines_impl(
             "(partition-of-substitutive is not implemented). Use one or the other."
         )
     try:
+        # "An explicit None means absent" (#1574), applied ONCE here rather than
+        # at each consumer — this module's own two ``sync_custom_colormap_attr``
+        # call sites included — so no structural branch can see the raw None.
+        # Only render attrs are in the set: the structural keys whose None also
+        # means absent (``colors``/``labels``/``image_labels``/``partition``) are
+        # named params of this function and can never reach ``**attrs``.
+        strip_absent_attr_kwargs(attrs, ABSENT_WHEN_NONE_RENDER_ATTRS)
+
         # Fail-fast pre-write gate: reject invalid names (empty/'/'/dot-
         # prefixed — an empty name resolves to the zarr ROOT group and would
         # clobber the scene root) and duplicate siblings BEFORE any zarr

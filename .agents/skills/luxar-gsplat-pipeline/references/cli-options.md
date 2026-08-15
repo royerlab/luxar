@@ -14,7 +14,7 @@ Inputs: `.npy`, `.npz`, `.tiff`/`.tif`, `.zarr`, `.zarr.zip` (TIFF/other need `p
 | Flag | Default | Meaning |
 | --- | --- | --- |
 | `--seeds` / `-s` | auto | int = splat count — a WHOLE-VOLUME budget (what a default `cal` reports as K*); a tiled fit divides it across its N tiles (`ceil(K/N)`, floored at 1) instead of giving each tile the full count, so the total tracks the request, not the tile count. Not exact: near-zero tiles are skipped, and `K < N` gives N. A non-positive int is left alone so the fitter still rejects it. float in (0,1] = compression ratio, scale-free so applied per tile unchanged; `auto`. Ignored under `--tiling content` (budgets come from the density plan). A `cal --auto-region` K* is region-scoped, NOT a whole-volume budget — transfer it via `--cal` + `--tiling content`, not `--seeds` |
-| `--floor` | auto | background floor / DC-offset suppression subtracted (clip at 0) BEFORE normalization, so output amplitudes are background-relative. `auto` = histogram-mode estimate (capped at the median; a no-op on clean data). `pNN` = subtract that percentile; a plain number = fixed value; `none` = disable (legacy hard-min) |
+| `--floor` | auto | background floor / DC-offset suppression subtracted (clip at 0) BEFORE normalization, so output amplitudes are background-relative. `auto` = histogram-mode estimate (capped at the median; a no-op on clean data). `pNN` = subtract that percentile; a plain number = fixed value; `none` = disable (legacy hard-min). Resolved against the WHOLE volume under any tiling — never against a tile or box crop, so every tile/box works from the same level. `uniform`/`content` resolve it once in the parent and pass the number down; the uniform `-j N` / `--tile k/M` workers each resolve the same spec against the same whole volume (the sampler is deterministic, so they agree) |
 | `--iters` / `-n` | preset | max optimization iterations |
 | `--preset` | none | `draft` / `standard` / `hifi` / `ultra` / `n2s` (see preset table) |
 | `--config` | none | YAML config file (overrides preset) |
@@ -166,7 +166,7 @@ additive (refines one leaf); `levels` is substitutive (coarse↔fine swap);
 | `--target-ms` | — | streaming sizing: derive `stream:<c>` so the first additive chunk downloads in ~this many ms (mutually exclusive with `--breakpoints`) |
 | `--bandwidth-mbps` | 25 | assumed downlink for `--target-ms` sizing |
 | `--bytes-per-splat` | measured/estimated | override the on-wire bytes/splat for `--target-ms` sizing |
-| `--truncation-sigmas` | 3.0 | Mahalanobis cutoff for greedy |
+| `--truncation-sigmas` | the dataset's own truncation radius | Mahalanobis cutoff for greedy |
 | `--max-n-dense` | 2000 | greedy dense-Gram threshold |
 | `--reveal-centre` | dataset bbox centre | `-m radial` only: comma-separated shell centre, one coordinate per measured axis. On a partitioned recipe the default centres each part on itself — pass this to grow the whole object from one point |
 | `--spatial-dims` | non-degenerate axes | `-m radial` only: comma-separated centre-column indices the shell distance spans (order pairs with `--reveal-centre`); the default keeps a stacked time/channel axis out of the shells |

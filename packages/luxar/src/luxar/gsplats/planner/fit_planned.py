@@ -160,6 +160,18 @@ def fit_planned(
     n_iters / loss / cull_retention / ...). Each box's seed budget comes from the
     plan; near-empty boxes (budget 0) are skipped.
 
+    ``fit_kwargs["floor"]`` must already be a CONCRETE level (or ``"none"``):
+    every box crop is handed the same value, so a spec like ``auto``/``pNN``
+    would be re-estimated against each crop and abutting core-kept boxes would
+    subtract wildly different pedestals — visible brightness steps at box
+    boundaries. The CLI resolves it once against the whole volume before calling
+    here (``luxar.cli.gsplat_ops.fitting.fit_utils.resolve_shared_floor``). What
+    is shared is the floor ARGUMENT, not the input: every box is still handed its
+    own crop, and the subtraction is not bit-exact either, because the
+    normalization floor is clamped up to a crop's own minimum
+    (``image_min = max(level, min(crop))``) — so a box lying entirely above the
+    pedestal subtracts its own minimum instead.
+
     With ``partition=True`` (the CLI default) the per-box splats are kept as a
     ``kind=partition`` tree — one part per box (boxes are core-disjoint, so this
     is exact) — for viewer frustum culling; a :class:`~luxar.gsplats.tree.GSplatNode`

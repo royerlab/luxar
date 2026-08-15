@@ -336,7 +336,7 @@ DATASETS: dict[str, dict] = {
         dir="",
         source="ESA Gaia DR3 archive",
         reason="CC BY-NC (non-commercial) — incompatible with a cleanly-reusable host.",
-        strategy="Query the ESA Gaia archive and build the point cloud client-side (no GPU); cache locally. Requires the ESA/Gaia/DPAC acknowledgement.",
+        strategy="Rebuild by hand with scripts/generate_galaxy_simple.py (queries the ESA Gaia archive, no GPU) into ~/.cache/luxar/, or place a copy there; building it automatically on first run is royerlab/luxar#1575. Requires the ESA/Gaia/DPAC acknowledgement.",
     ),
     "gsplats_tng_cosmic_web": dict(
         bucket="local-compute",
@@ -353,6 +353,27 @@ DATASETS: dict[str, dict] = {
         source="Acto3D sample data (github.com/Acto3D/Acto3D)",
         reason="Repo MIT covers software only; sample data unlicensed (all rights reserved).",
         strategy="Fetch raw from the Acto3D source + fit locally (GPU).",
+    ),
+    "gsplats_flylight_mcfo": dict(
+        bucket="local-compute",
+        # Unlike the other local-compute rows this one IS redistributable —
+        # it is local-compute only because the cc-by Zenodo record does not
+        # exist yet. Promote it to bucket="zenodo", record="cc-by" once it
+        # does; nothing else about the demo has to change.
+        redistribute=True,
+        license="cc-by-4.0",
+        source="FISBe v1.0 (Zenodo 10875063) / Janelia FlyLight Gen1 MCFO",
+        attribution=(
+            "FISBe (Mais et al., CVPR 2024; doi:10.5281/zenodo.10875063, "
+            "CC BY 4.0). Imagery from the FlyLight Project Team, Janelia "
+            "Research Campus, HHMI; cite Meissner et al. eLife 2023 "
+            "12:e80660 and Tirian & Dickson 2017 for the VT line."
+        ),
+        reason="CC BY 4.0 and redistributable, but no Zenodo record is published yet.",
+        strategy=(
+            "Range-extract one sample (~415 MB) from the 7.1 GB Zenodo "
+            "archive + fit locally (GPU). The archive is never fetched whole."
+        ),
     ),
     "gsplats_tribolium": dict(
         bucket="local-compute",

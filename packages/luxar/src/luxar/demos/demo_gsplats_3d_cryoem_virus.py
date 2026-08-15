@@ -71,7 +71,7 @@ from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import (
     detect_device,
     launch_viewer,
-    load_precomputed_gsplats,
+    load_dataset_gsplats,
     parse_demo_flags,
     parse_int_arg,
     require_module,
@@ -206,7 +206,7 @@ def fit_map(volume: np.ndarray) -> GSplatData:
         result.save(
             CACHE_FILE,
             encoding_mode=EncodingMode.MEMORY,
-            include_fitting_info=False,
+            include_fitting_info=True,
             compress="zip",
             zip_deflate=True,
         )
@@ -217,7 +217,7 @@ def load_or_build_gsplats() -> GSplatData:
     """Return fitted virus-capsid splats, self-contained on a fresh system."""
     if not RECOMPUTE:
         try:
-            precomputed = load_precomputed_gsplats(DEMO_NAME, [GSPLATS_FILE])
+            precomputed = load_dataset_gsplats(DEMO_NAME, [GSPLATS_FILE])
             if precomputed is not None:
                 return precomputed[0]
         except FileNotFoundError:

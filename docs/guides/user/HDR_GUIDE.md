@@ -303,9 +303,46 @@ console.log('Float support:', !!gl.getExtension('EXT_color_buffer_float'));
   default and the right choice for almost every scene. Set it explicitly
   (`tone_mapping="ACES"`) when a scene uses a colormap: that records the
   decision and silences the compiler's LUT notice, which fires only when no
-  tone mapping was chosen at all. Switch to Neutral when you need exact color
-  fidelity (e.g. scientific colormap LUTs, where ACES's hue shift can distort
-  encoded colors)
+  tone mapping was chosen at all
+- When you need exact color fidelity (e.g. scientific colormap LUTs, where
+  ACES's hue shift can distort encoded colors), pick by range. If the scene
+  stays inside [0, 1], use `tone_mapping="None"` — an exact passthrough
+  (exposure, offset and gamma still apply; the shader runs them *before* the
+  tone-mapping switch). Luxar aliases `"None"` and `"Linear"` to the same
+  clamp mode, so either spelling is the passthrough; `"None"` is just the
+  clearer name for it. Neutral is not a passthrough: even below its knee it
+  subtracts an offset taken from the channel *minimum* (0.04 once that minimum
+  reaches 0.08, `x - 6.25*x*x` below that, which crushes near-black hardest —
+  `(0.5, 0.5, 0.5)` comes out `(0.46, 0.46, 0.46)`), so it dulls the very
+  encoding you are protecting. Only a colour whose minimum is exactly 0 and
+  whose peak is below the 0.76 knee — a fully saturated hue, or black — comes
+  through it untouched
+- Over range no operator is faithful, and the two fail in *different* ways.
+  Neutral compresses the peak and mixes toward the grey equal to that compressed
+  peak; since that is "scale every channel, then add the same amount to all", it
+  preserves the HSV hue angle *exactly* — in the shader's linear working space,
+  which is where to compare hues: the per-channel sRGB encode that follows is
+  nonlinear, so a hue *measured on the encoded pixels* is a different number for
+  any colour whose channels are not already equal (`(2, 1, 0)` maps to
+  `(0.961, 0.545, 0.130)`, still 30° in linear light but ≈38° once encoded).
+  That shift is the encode's, not Neutral's — it lands the same way on whatever
+  the operator emitted. What Neutral destroys instead is chroma —
+  `(8, 0.5, 8)` → `(0.992, 0.535, 0.992)` (hue 300°, saturation 0.46) and
+  `(100, 0, 0)` → `(0.999, 0.936, 0.936)` (hue 0°, saturation 0.06, essentially
+  white). `None` hard-clips per channel, which distorts *both*: it holds full
+  saturation only where the darkest channel is already 0
+  (`(100, 0, 0)` → `(1, 0, 0)`) and sheds saturation as soon as it is not
+  (`(2, 0.5, 0.5)` → `(1, 0.5, 0.5)`, saturation 0.75 → 0.5), it *shifts* hue
+  when channels clip unequally (`(2, 1, 0)` goes from hue 30° to hue 60°), and
+  it flattens everything above 1.0.
+  Bring the scene back into [0, 1] with exposure or intensity and use `None`, or
+  accept ACES's filmic rolloff; choose with an actual render
+- Remember that a scene pinned to `None` has no headroom left, so switching
+  bloom on (`ViewerConfig.bloom_enabled`, or the Rendering panel's
+  Effects → Bloom → Enabled toggle) will clip bright regions flat where a
+  rolloff would not — bloom is summed into the HDR sample *before* tone mapping
+  (`sampleHdrPlusBloom` in
+  `packages/luxar-viewer/src/rendering/post-processing/mega/shader.glsl.ts`)
 - Test on both HDR and SDR displays
 
 ### DON'T:

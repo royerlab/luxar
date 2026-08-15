@@ -48,6 +48,8 @@ save_gsplats(
 
 Transparently handles compressed formats (`.gsplats.zarr.zip`, `.gsplats.zarr.tar.gz`) by extracting to a temporary directory automatically (via the shared, hardened `_archive.extract_compressed_zarr` — it rejects links/devices, validates every member before extracting, and caps member count / total size to guard against path-traversal and archive-bomb attacks). Arrays are decoded from their stored encoding (quantization, broadcasting, etc.) to float32.
 
+Its read-only sibling `_archive.read_archive_root_attrs` extracts *nothing*: it scans the archive index (zip central directory / tar headers) for the store root's `.zattrs`, reads that one member's bytes, and returns the parsed attrs. Only that one payload is ever *read*, but only a zip has a real index: a gzipped tar's headers are walked lazily and the walk stops at the first top-level `*.gsplats.zarr/.zattrs` — member #1 of everything a compressed save writes — so the normal layout costs a couple of headers. The unnamed-fallback layout gets no such stop (a later member could still outrank the candidate, and the sole-top-level-directory rule needs the whole member list), and reaching the end of a gzip stream means inflating it, so *that* shape costs one decompression pass. It answers `{}` when there is no root `.zattrs` to read (and for a missing path or a non-archive file), but a *corrupt* archive raises — `BadZipFile`, `tarfile.ReadError`, `json.JSONDecodeError` — and it is `load_gsplats.read_authored_appearance` that absorbs those into `{}` for its best-effort carry. The store root is resolved as the same *kind* of node `extract_compressed_zarr` picks — the top-level `*.gsplats.zarr` directory, else, **only when it is the sole top-level directory**, that directory whatever it is named — which for any archive holding one store (every archive a compressed save writes) is the very node the extractor loads. An archive holding *several* `*.gsplats.zarr` directories is not a single dataset; the extractor picks among them arbitrarily (`iterdir()` order) and the peek may pick another. Either way a child group's attrs is never mistaken for the root's, and no link is ever followed. An archive with several top-level directories and no `*.gsplats.zarr`-named one is ambiguous (the extractor settles it by unpredictable `iterdir()` order) and deliberately carries nothing rather than guessing a sibling's attrs. Used by `load_gsplats.read_authored_appearance`, which carries a source root's authored compositing attrs across a structure-only rebuild (`gsplat lod`) for archive inputs as well as directories.
+
 ```python
 from luxar.gsplats.io import load_gsplats
 
@@ -78,7 +80,15 @@ print(format_gsplats_info(info))
 leaf's fields (`n_splats`, `ndim`, `ordering`, `chunk_size`,
 `amplitude_range`, `center_bounds`), plus tree-shape metadata
 (`n_additive_sublods_default`, `kind`, and `n_substitutive` or `n_parts`) so
-multi-LOD and partitioned datasets are visible at a glance.
+multi-LOD and partitioned datasets are visible at a glance. Like
+`load_gsplats()` it accepts a `.gsplats.zarr.zip` / `.gsplats.zarr.tar.gz`
+archive as well as a directory; `storage_bytes` then measures the archive file
+itself, and `compression_ratio` is `None` (not `1.0`) whenever that size cannot
+be measured. "Without loading arrays" refers to the array data: a directory
+store and a *flat* zip (store at the archive root) are read in place, while a
+nested archive — what `save_gsplats(..., compress=…)` writes — is extracted to a
+temp directory for the duration of the call, so inspecting one costs its
+uncompressed size in temp space.
 
 ### Convenience Methods
 
@@ -141,7 +151,10 @@ chunk_bounds = compute_chunk_bounds_gsplats(
     centers=sorted_centers,
     cholesky_factors=sorted_cholesky,
     chunk_size=2048,
-    coverage_sigma=3.0,  # 3σ coverage (99.7%)
+    # Explicit override. This function only ever sees arrays, so its own default
+    # is the canonical DEFAULT_TRUNCATION_RADIUS (2.75); the compiler call sites
+    # pass the dataset's own truncation_radius here.
+    coverage_sigma=3.0,
 )
 # Shape: (num_chunks, d, 2)
 # [..., d, 0] = min bound in dimension d
@@ -379,7 +392,9 @@ print(format_gsplats_info(info))
 # Access specific fields
 print(f"Splats: {info['n_splats']}")
 print(f"Ordering: {info['ordering']}")
-print(f"Compression: {info['compression_ratio']}x")
+# `compression_ratio` is None when the on-disk size could not be measured.
+if info["compression_ratio"] is not None:
+    print(f"Compression: {info['compression_ratio']}x")
 ```
 
 ### Migrate a Legacy Dataset to v3.3
@@ -431,6 +446,11 @@ is `luxar gsplat migrate-format`.
   a `GSplatData` bridged from the node tree. Raises on any `format_version`
   not in `SUPPORTED_FORMAT_VERSIONS` (`"3.0"`, `"3.1"`, `"3.2"`, `"3.3"`); the
   current writer emits v3.3, and earlier v3.x files are read transparently.
+  Also `read_authored_appearance(path)` — the source root's authored compositing
+  attrs (`AUTHORED_APPEARANCE_ATTRS`), for a command that rewrites a dataset to
+  hand back to `write_gsplats_tree(root_attrs=…)` / `GSplatData.save(root_attrs=…)`
+  so a structure-only rebuild does not silently reset the look. Best-effort:
+  a missing/unreadable store, or an archive input, yields `{}`.
 - **`inspect_gsplats.py`**: Metadata inspection without loading arrays
   (`inspect_gsplats_zarr`, `format_gsplats_info`).
 - **`migrate.py`**: Legacy-format migration (`migrate_format`,
