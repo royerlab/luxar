@@ -93,6 +93,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 __all__ = [
     "DEFAULT_ZARR_FORMAT",
     "NODE_ATTR_DOCS",
+    "NODE_GROUP_DOCS",
     "SUPPORTED_ZARR_FORMATS",
     "ZARR_FORMAT",
     "ZARR_FORMAT_ENV_VAR",
@@ -330,6 +331,21 @@ def read_array_meta(array_dir: Path) -> dict[str, Any] | None:
 #: extracting it, and has to recognise the member by name. Keeping the names
 #: here means that peek does not have to know them itself.
 NODE_ATTR_DOCS: tuple[str, ...] = (".zattrs", _V3_METADATA_DOC)
+
+#: The per-node documents whose presence marks a GROUP, best first.
+#:
+#: Exported for the same reason as :data:`NODE_ATTR_DOCS`: a caller holding an
+#: archive INDEX rather than a directory tree — the resolver in
+#: ``luxar.gsplats.io._archive`` — must recognise "a store root lives here" from
+#: member names alone. Note this is deliberately NOT ``NODE_ATTR_DOCS``:
+#: ``.zattrs`` may sit beside an array or be a stray. The marking is exact only
+#: at format 2, where ``.zgroup`` is a group's document and nothing else's; at
+#: format 3 ``zarr.json`` marks a node of EITHER kind (which is why
+#: :func:`read_array_meta` has to check ``node_type``), so a ``zarr.json``
+#: describing an ARRAY is recognised here too and only fails later, at
+#: ``open_group``, with ``ContainsArrayError`` — the same failure that input
+#: already produced, so this is a naming caveat and not a behaviour change.
+NODE_GROUP_DOCS: tuple[str, ...] = (".zgroup", _V3_METADATA_DOC)
 
 
 def attrs_from_node_doc(parsed: Any) -> dict[str, Any]:

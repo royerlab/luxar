@@ -1076,7 +1076,7 @@ from luxar.gsplats.io import inspect_gsplats_zarr
 info = inspect_gsplats_zarr("fitted.gsplats.zarr")  # returns a plain dict
 print(info["n_splats"], info["ndim"])               # 10000 3
 print(info["ordering"], info["ordering_bits_per_dim"])  # hilbert 21
-print(info["storage_mb"], info["compression_ratio"])
+print(info["storage_mb"], info["compression_ratio"])  # ratio is None if unmeasurable
 print(info["fitting"]["time_seconds"], info["fitting"]["iterations"])
 ```
 
