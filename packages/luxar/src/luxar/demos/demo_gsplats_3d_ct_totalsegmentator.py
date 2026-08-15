@@ -595,7 +595,7 @@ def fit_atlas(
     result.save(
         CACHE_FIT,
         encoding_mode=EncodingMode.MEMORY,
-        include_fitting_info=False,
+        include_fitting_info=True,
         compress="zip",
         zip_deflate=True,
     )
