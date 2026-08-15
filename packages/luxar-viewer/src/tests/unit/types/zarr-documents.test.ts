@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { ROOT_ATTR_DOCS, rootAttributes } from '../../../types/zarr-documents';
+import { ROOT_ATTR_DOCS, rootAttrDocOf, rootAttributes } from '../../../types/zarr-documents';
 
 describe('ROOT_ATTR_DOCS', () => {
   it('tries the format-3 document FIRST', () => {
@@ -60,5 +60,55 @@ describe('rootAttributes', () => {
     // attributes object itself.
     const attrs = { attributes: { nested: 1 }, content_hash: 'abc' };
     expect(rootAttributes(attrs)).toEqual(attrs);
+  });
+
+  it('trusts the DOCUMENT NAME over the content when it is given', () => {
+    // The content sniff is a guess, and this is the input it guesses wrong on:
+    // a format-2 `.zattrs` whose user attributes happen to carry a
+    // `zarr_format` key. Told which document served the bytes, there is nothing
+    // to guess — and both probes know, so both pass it.
+    const v2WithAConfusingKey = { zarr_format: 3, content_hash: 'abc', mine: 1 };
+
+    expect(rootAttributes(v2WithAConfusingKey)).toEqual({}); // sniffed: wrong
+    expect(rootAttributes(v2WithAConfusingKey, '.zattrs')).toEqual(v2WithAConfusingKey);
+
+    // ...and a real format-3 record still unwraps when named.
+    const v3 = { zarr_format: 3, node_type: 'group', attributes: { content_hash: 'xyz' } };
+    expect(rootAttributes(v3, 'zarr.json')).toEqual({ content_hash: 'xyz' });
+  });
+
+  it('the name may DEMOTE but never PROMOTE', () => {
+    // A flat, non-v3 body served from a `zarr.json` address stays verbatim.
+    // No real server does that, but test fakes and misconfigured proxies do,
+    // and answering `{}` there would trade a reachable failure for a silent one.
+    const flat = { content_hash: 'abc', timestamp: 't' };
+    expect(rootAttributes(flat, 'zarr.json')).toEqual(flat);
+  });
+
+  it('does not unwrap a zarr.json-named document that carries no attributes', () => {
+    // Named v3 with the member absent is "no attributes", not "fall through to
+    // the record" — exposing `zarr_format`/`node_type` AS attributes is what
+    // makes the watchdog report every poll as a change.
+    expect(rootAttributes({ zarr_format: 3, node_type: 'group' }, 'zarr.json')).toEqual({});
+  });
+});
+
+describe('rootAttrDocOf', () => {
+  it('names the document a probe URL addresses', () => {
+    expect(rootAttrDocOf('http://h/d.zarr/zarr.json')).toBe('zarr.json');
+    expect(rootAttrDocOf('http://h/d.zarr/.zattrs')).toBe('.zattrs');
+  });
+
+  it('ignores a query string or fragment', () => {
+    // The cache probe appends cache-busting params; matching the raw string
+    // would silently fall back to sniffing on every such request.
+    expect(rootAttrDocOf('http://h/d.zarr/zarr.json?v=2')).toBe('zarr.json');
+    expect(rootAttrDocOf('http://h/d.zarr/.zattrs#frag')).toBe('.zattrs');
+  });
+
+  it('is undefined for a URL that addresses neither document', () => {
+    expect(rootAttrDocOf('http://h/d.zarr/points/0.0')).toBeUndefined();
+    // A path merely CONTAINING the name is not addressing it.
+    expect(rootAttrDocOf('http://h/zarr.json.bak')).toBeUndefined();
   });
 });

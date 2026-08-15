@@ -747,6 +747,42 @@ def test_document_readers_resolve_a_mixed_store_the_way_zarr_does(
     assert opened.attrs["kind"] == attrs["kind"]
 
 
+def test_a_document_name_demotes_but_never_promotes(tmp_path: Path) -> None:
+    """`doc_name` vetoes an unwrap; it never forces one.
+
+    The content signal alone (`zarr_format: 3`) mis-reads a format-2 document
+    whose USER attributes carry that key — it would answer `{}` and drop every
+    authored value. Naming the document it came from settles that, and
+    `read_node_attrs` always can.
+
+    The asymmetry is the point: promoting on the name would answer `{}` for any
+    non-v3 body served from a `zarr.json` address, which no real writer produces
+    but fakes and misconfigured proxies do — trading a reachable failure for a
+    silent one.
+    """
+    # Demote: a v2 attrs document that merely LOOKS v3 comes back verbatim.
+    confusing = {"zarr_format": 3, "kind": "leaf", "mine": 1}
+    assert zc.attrs_from_node_doc(confusing) == {}, "the content sniff still guesses"
+    assert zc.attrs_from_node_doc(confusing, doc_name=".zattrs") == confusing
+
+    # Never promote: a flat body named `zarr.json` is still returned verbatim.
+    flat = {"kind": "leaf"}
+    assert zc.attrs_from_node_doc(flat, doc_name="zarr.json") == flat
+
+    # A real v3 record still unwraps, named or not.
+    v3 = {"zarr_format": 3, "node_type": "group", "attributes": {"k": "v"}}
+    assert zc.attrs_from_node_doc(v3) == {"k": "v"}
+    assert zc.attrs_from_node_doc(v3, doc_name="zarr.json") == {"k": "v"}
+
+    # End to end: `read_node_attrs` names the document, so a v2 store whose
+    # attrs carry `zarr_format` keeps them.
+    d = tmp_path / "confusing.zarr"
+    d.mkdir()
+    (d / ".zgroup").write_text(json.dumps({"zarr_format": 2}))
+    (d / ".zattrs").write_text(json.dumps(confusing))
+    assert zc.read_node_attrs(d) == confusing
+
+
 def test_is_consolidated_ignores_a_stale_v2_index_beside_a_v3_root(
     tmp_path: Path,
 ) -> None:

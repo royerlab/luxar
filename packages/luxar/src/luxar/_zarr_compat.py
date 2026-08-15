@@ -369,7 +369,7 @@ NODE_ATTR_DOCS: tuple[str, ...] = (_V3_METADATA_DOC, ".zattrs")
 NODE_GROUP_DOCS: tuple[str, ...] = (_V3_METADATA_DOC, ".zgroup")
 
 
-def attrs_from_node_doc(parsed: Any) -> dict[str, Any]:
+def attrs_from_node_doc(parsed: Any, *, doc_name: str | None = None) -> dict[str, Any]:
     """User attributes out of an ALREADY-PARSED node metadata document.
 
     A format-2 ``.zattrs`` *is* the attributes mapping; a format-3 ``zarr.json``
@@ -377,12 +377,30 @@ def attrs_from_node_doc(parsed: Any) -> dict[str, Any]:
     the format-3 document verbatim would hand back ``shape``/``data_type``/
     ``node_type`` as though a user had authored them.
 
+    The content signal is a ``zarr_format: 3`` member, and alone it is a guess:
+    a format-2 document whose USER attributes happen to carry a ``zarr_format``
+    key is indistinguishable from a format-3 one and would be answered as ``{}``
+    instead of verbatim. Unreachable for a Luxar store — its roots carry
+    ``kind``/``format_type``, and zarr never writes ``zarr_format`` into
+    ``.zattrs`` — but a foreign store is not ours to constrain.
+
+    ``doc_name``, the file name the bytes came from, settles it. It may only
+    DEMOTE: a name that is not ``zarr.json`` vetoes the unwrap, but a name that
+    IS ``zarr.json`` never forces one on a document that does not look like a v3
+    record. That asymmetry is deliberate. Promoting on the name alone would make
+    this answer ``{}`` for any non-v3 body served from a ``zarr.json`` address —
+    a shape no real server produces, but one that fakes and misconfigured
+    proxies do, and turning those into empty attributes trades a reachable
+    failure for an unreachable one.
+
     Anything that is not a JSON object, and a format-3 document whose
     ``attributes`` is missing or not an object, both yield ``{}``.
     """
     if not isinstance(parsed, dict):
         return {}
-    if parsed.get("zarr_format") == 3:
+    looks_v3 = parsed.get("zarr_format") == 3
+    named_v2 = doc_name is not None and doc_name != _V3_METADATA_DOC
+    if looks_v3 and not named_v2:
         attrs = parsed.get("attributes")
         return attrs if isinstance(attrs, dict) else {}
     return parsed
@@ -398,7 +416,8 @@ def read_node_attrs(node_dir: Path) -> dict[str, Any] | None:
     for doc in NODE_ATTR_DOCS:
         parsed = _read_json_doc(node_dir / doc)
         if parsed is not None:
-            return attrs_from_node_doc(parsed)
+            # The document's NAME settles the format; nothing is sniffed.
+            return attrs_from_node_doc(parsed, doc_name=doc)
     return None
 
 

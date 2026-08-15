@@ -38,7 +38,7 @@
  * `dispose()`, which the SceneLoader calls on dataset switch and teardown.
  */
 
-import { ROOT_ATTR_DOCS, rootAttributes } from '../types/zarr-documents';
+import { ROOT_ATTR_DOCS, rootAttrDocOf, rootAttributes } from '../types/zarr-documents';
 import { log, Modules } from '../utils/log';
 import { notifier } from '../utils/cross-layer/notifier';
 
@@ -256,6 +256,18 @@ export class SceneIdentityWatchdog {
     }
   }
 
+  /**
+   * The document name the last successful probe was served from.
+   *
+   * `undefined` only before any probe has succeeded, which cannot happen on the
+   * paths that call this (they run after a body was read); `rootAttributes`
+   * falls back to sniffing the content in that case, which is the same answer
+   * it gave before the name was threaded through.
+   */
+  private servedDocName(): string | undefined {
+    return this.resolvedAttrsUrl === null ? undefined : rootAttrDocOf(this.resolvedAttrsUrl);
+  }
+
   private async fetchVerdict(): Promise<SceneIdentityVerdict> {
     let body: string;
     // Bounded: an abort (timeout or disposal) surfaces as a thrown fetch,
@@ -305,7 +317,9 @@ export class SceneIdentityWatchdog {
 
     if (this.expectedHash !== null) {
       try {
-        const attrs = rootAttributes(JSON.parse(body));
+        // `resolvedAttrsUrl` is the document that actually answered, so the
+        // format follows from its NAME rather than from the body's content.
+        const attrs = rootAttributes(JSON.parse(body), this.servedDocName());
         return attrs.content_hash === this.expectedHash ? 'ok' : 'changed';
       } catch {
         return 'changed';
@@ -317,7 +331,8 @@ export class SceneIdentityWatchdog {
     // first probe is caught.
     if (this.expectedAttrsJson !== null) {
       try {
-        return canonicalJson(rootAttributes(JSON.parse(body))) === this.expectedAttrsJson
+        return canonicalJson(rootAttributes(JSON.parse(body), this.servedDocName())) ===
+          this.expectedAttrsJson
           ? 'ok'
           : 'changed';
       } catch {
