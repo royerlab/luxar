@@ -188,6 +188,43 @@ def _clip_to_bounds(
     return clipped
 
 
+#: Fraction of the normalized [0, 1] intensity range a voxel must EXCEED to count
+#: as occupied. A bare ``> 0`` test measures noise, not sparsity: ``V_normalized``
+#: is ``clip((V - image_min) / range, 0, 1)`` and ``image_min`` is a low
+#: percentile -- or, under ``floor=auto``, the estimated background MODE, i.e. the
+#: background's own centre -- so roughly half of a noisy background survives it.
+#: Measured on a volume that is 2.2% signal: 58% "occupancy", a number that flatly
+#: contradicts the compression ratio it is printed beside. One percent of the
+#: dynamic range sits far above camera read noise (a few 1e-3 of range on a 16-bit
+#: acquisition) and far below real structure.
+#:
+#: The threshold is deliberately relative to the fit's OWN normalization, so
+#: ``occupancy`` describes what the fit actually had to represent: with
+#: ``floor=none`` an unsuppressed pedestal counts, because the optimiser did spend
+#: splats on it.
+_OCCUPANCY_THRESHOLD = 0.01
+
+#: Voxels per counting block in :func:`_occupied_fraction` (16M -> a 16 MB bool
+#: temporary, whatever the volume's size).
+_OCCUPANCY_BLOCK_VOXELS = 1 << 24
+
+
+def _occupied_fraction(Vn: np.ndarray, fitted_voxels: int) -> float:
+    """Fraction of ``Vn`` above :data:`_OCCUPANCY_THRESHOLD` of its range.
+
+    Counted in blocks along the first axis rather than through a whole-volume
+    ``Vn > t`` mask: that mask is another full-size allocation, on top of the
+    three copies of the volume already resident at this point. Basic slicing is a
+    view, so the temporary is bounded by the block size whatever the volume's.
+    """
+    rows = max(1, _OCCUPANCY_BLOCK_VOXELS // max(1, int(np.prod(Vn.shape[1:]))))
+    occupied = 0
+    for start in range(0, len(Vn), rows):
+        block = Vn[start : start + rows]
+        occupied += int(np.count_nonzero(block > _OCCUPANCY_THRESHOLD))
+    return float(occupied / fitted_voxels)
+
+
 def _source_grid_stats(
     config: FitConfig, preprocessed_data: PreprocessedData, n_splats: int
 ) -> dict[str, Any]:
@@ -208,10 +245,10 @@ def _source_grid_stats(
         the grid actually optimised against, after any downscaling. Equal to the
         source grid when no downscaling happened.
 
-    ``occupancy`` is the fraction of fitted voxels above the subtracted background
-    floor. Sparse microscopy volumes are typically >99% empty, and a compression
-    ratio means something quite different at 0.03% occupancy than at 50%, so the
-    ratio should never be quoted without it.
+    ``occupancy`` is the fraction of fitted voxels carrying signal (see
+    :func:`_occupied_fraction`). Sparse microscopy volumes are typically >99%
+    empty, and a compression ratio means something quite different at 0.03%
+    occupancy than at 50%, so the ratio should never be quoted without it.
     """
     out: dict[str, Any] = {}
     V = getattr(config, "V", None)
@@ -228,7 +265,14 @@ def _source_grid_stats(
         out["source_dtype"] = dtype
         if itemsize:
             out["source_bytes"] = voxels * int(itemsize)
-        elif getattr(V, "nbytes", None) is not None:
+        elif dtype == str(getattr(V, "dtype", "")) and getattr(V, "nbytes", None):
+            # No captured item size: quote the working array's own bytes ONLY
+            # while the recorded dtype IS that array's dtype. A dtype name numpy
+            # could not size (recorded verbatim, on purpose) would otherwise be
+            # paired with float32 byte counts, and `gsplat info` would turn that
+            # pair into a compression ratio inflated by the cast. No bytes is
+            # better than bytes measured on a different type — `info` already
+            # stays silent when the source size is unknown.
             out["source_bytes"] = int(V.nbytes)
 
     Vn = getattr(preprocessed_data, "V_normalized", None)
@@ -237,13 +281,7 @@ def _source_grid_stats(
         fitted_voxels = int(np.prod(Vn.shape)) if Vn.ndim else 0
         out["fitted_voxels"] = fitted_voxels
         if fitted_voxels:
-            # V_normalized is already floor-subtracted and clipped into [0, 1],
-            # so a nonzero voxel is exactly one above the background floor -- no
-            # second pass over the raw volume, and no separate threshold to keep
-            # in sync. Counted directly rather than through a `Vn > 0` mask: on a
-            # large volume that mask is another full-size allocation, on top of
-            # the three copies of the volume already resident at this point.
-            out["occupancy"] = float(np.count_nonzero(Vn) / fitted_voxels)
+            out["occupancy"] = _occupied_fraction(Vn, fitted_voxels)
         if n_splats:
             out["voxels_per_splat"] = float(fitted_voxels / n_splats)
     return out

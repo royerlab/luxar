@@ -69,8 +69,14 @@ def _explicit_dtype_name(source_dtype: Any) -> Optional[str]:
     """
     if source_dtype is None:
         return None
-    if isinstance(source_dtype, str) and not source_dtype.strip():
-        return None
+    if isinstance(source_dtype, str):
+        # Stripped for the lookup too, not only for the emptiness test above: a
+        # quoted YAML `source_dtype: "uint16 "` is otherwise unsizable, and the
+        # size then silently goes missing — the same degradation the blank check
+        # exists to prevent.
+        source_dtype = source_dtype.strip()
+        if not source_dtype:
+            return None
     try:
         return str(np.dtype(source_dtype))
     except TypeError:  # a name/object numpy cannot interpret — keep it verbatim

@@ -31,16 +31,25 @@ STAMPS = (
 )
 
 
-def _sparse_blobs(shape=(24, 32, 32), n=20, dtype=np.uint16) -> np.ndarray:
-    """A sparse blob field: sparse enough that occupancy is a meaningful number."""
+def _sparse_blobs(
+    shape=(24, 32, 32), n=20, dtype=np.uint16, pedestal=0, noise=0.0
+) -> np.ndarray:
+    """A sparse blob field: sparse enough that occupancy is a meaningful number.
+
+    ``pedestal``/``noise`` add the constant offset and read noise a real
+    acquisition has. Without them the background is EXACTLY zero, which is the
+    one input on which a `> 0` occupancy test cannot go wrong.
+    """
     rng = np.random.default_rng(0)
-    V = np.zeros(shape, dtype=dtype)
+    V = np.zeros(shape, dtype=np.float32)
     hi = [s - 2 for s in shape]
     for _ in range(n):
         idx = rng.integers([2] * len(shape), hi)
         sl = tuple(slice(i - 1, i + 2) for i in idx)
         V[sl] = 3000
-    return V
+    if pedestal or noise:
+        V = np.clip(V + pedestal + rng.normal(0, noise, size=shape), 0, None)
+    return np.round(V).astype(dtype)
 
 
 def _fit(V, **kw):
@@ -103,6 +112,29 @@ def test_occupancy_tracks_how_full_the_volume_is() -> None:
     sparse = _fit(_sparse_blobs(n=5)).stats["occupancy"]
     dense = _fit(_sparse_blobs(n=60)).stats["occupancy"]
     assert dense > sparse, f"occupancy did not respond to density: {dense} vs {sparse}"
+
+
+def test_occupancy_measures_signal_not_camera_noise() -> None:
+    """A noisy background must not read as occupied volume.
+
+    The stamp is printed as the caveat on the compression ratio, so a number that
+    says "58% full" about a stack that is 2% signal is worse than no number: it
+    contradicts the ratio it stands beside. A pedestal with read noise is what
+    every real acquisition looks like, and a plain "above the subtracted floor"
+    test counts about half of it — the floor sits at the background's own level,
+    so half the background is above it.
+
+    Default floor suppression, i.e. what a real fit runs. Under ``--floor none``
+    the pedestal is not subtracted and does count, which is the honest answer
+    there: those voxels are content the fit spent splats representing.
+    """
+    V = _sparse_blobs(pedestal=100, noise=8.0)
+    truth = 20 * 27 / V.size  # 20 blobs of 3x3x3, before overlaps
+    occ = _fit(V).stats["occupancy"]
+    assert occ < 4 * truth, (
+        f"occupancy {occ:.4f} reads noise as signal (truth ~{truth:.4f})"
+    )
+    assert occ > 0.0
 
 
 def test_stamps_reach_the_fitting_group_on_disk(tmp_path: Path) -> None:
@@ -194,6 +226,23 @@ def test_an_unrecognizable_dtype_name_is_recorded_without_a_size() -> None:
     assert itemsize is None
 
 
+def test_an_unsizable_dtype_records_no_byte_count() -> None:
+    """The recorded dtype and the recorded bytes must describe the SAME type.
+
+    A dtype name numpy cannot size is kept verbatim, so the byte count must not
+    quietly come from the float32 working copy instead: paired that way, ``info``
+    would report a compression ratio inflated by the cast — the very error the
+    stamp exists to prevent. Silence about the source size is what ``info``
+    already does for a dataset that never carried one.
+    """
+    stats = _fit(_sparse_blobs(shape=(8, 8, 8), n=4), source_dtype="mystery12").stats
+    assert stats["source_dtype"] == "mystery12"
+    assert "source_bytes" not in stats, stats.get("source_bytes")
+    # The rest of the stamp is unaffected — only the size is unknowable.
+    assert stats["source_shape"] == [8, 8, 8]
+    assert stats["source_voxels"] == 512
+
+
 def test_a_dtype_object_survives_the_save(tmp_path: Path) -> None:
     """End to end: the JSON serialization that used to blow up at the very end."""
     V = _sparse_blobs(shape=(8, 8, 8), n=4).astype(np.float32)
@@ -263,7 +312,7 @@ def test_an_artifact_larger_than_its_source_is_not_reported_as_0_to_1(
     """
     from types import SimpleNamespace
 
-    from luxar.cli.gsplat_ops.inspect_commands import _print_source_grid
+    from luxar.cli.gsplat_ops.inspect_commands import _print_source_grid, _store_size
 
     store = tmp_path / "expanded.gsplats.zarr"
     store.mkdir()
@@ -279,7 +328,16 @@ def test_an_artifact_larger_than_its_source_is_not_reported_as_0_to_1(
         },
         amplitudes=np.zeros(64, dtype=np.float32),
     )
-    _print_source_grid(data, store)
+    _print_source_grid(data, _store_size(store))
     out = capsys.readouterr().out
     assert "Source volume: 8 x 8 x 8 uint16" in out, out
     assert "0.25:1" in out, out
+
+
+def test_a_whitespace_padded_dtype_is_still_sized() -> None:
+    """A quoted YAML `source_dtype: "uint16 "` must not lose its byte count."""
+    from luxar.gsplats.fitting.validation import _resolve_source_dtype
+
+    V = np.zeros((2, 2), dtype=np.float32)
+    assert _resolve_source_dtype(V, "uint16 ") == ("uint16", 2)
+    assert _resolve_source_dtype(V, " uint16") == ("uint16", 2)

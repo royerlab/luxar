@@ -694,6 +694,38 @@ class TestSourceStampAfterFilter:
                 )
         assert seen_lod_stats, "no lod_stats was written — the test proves nothing"
 
+    def test_a_ladder_sublod_does_not_keep_the_pre_crop_stamp(self):
+        """The aliased-twin argument covers ONE sub-LOD; a ladder has several.
+
+        A progressive fit stamps each pass's full fit stats into that pass's
+        sub-LOD, and those dicts are persisted as the leaf's `lod_stats`. On the
+        ladder path `filter()` copies each sub-LOD's stats independently, so the
+        pre-crop stamp survives there unless every sub-LOD is cleaned.
+        """
+        from luxar.gsplats.gsplat_data import AdditiveSubLOD
+
+        def _lod(centers: list[list[float]]) -> AdditiveSubLOD:
+            n = len(centers)
+            return AdditiveSubLOD(
+                centers=np.array(centers, dtype=np.float32),
+                amplitudes=np.ones(n, dtype=np.float32),
+                cholesky_factors=np.tile(
+                    np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (n, 1)
+                ),
+                stats=dict(_SOURCE_STAMP),
+            )
+
+        laddered = GSplatData.from_additive_sublods(
+            [_lod([[10, 10, 10], [50, 50, 50]]), _lod([[90, 90, 90]])],
+            stats=dict(_SOURCE_STAMP),
+        )
+        out = laddered.filter_by(bbox=[(0, 60)] * 3)
+        assert out.n_additive_sublods == 2  # the ladder is preserved
+        for i, lod in enumerate(out.additive_sublods):
+            for key in _REGION_KEYS:
+                assert key not in lod.stats, f"{key!r} survived the crop in sub-LOD {i}"
+            assert lod.stats["source_dtype"] == "uint16"
+
 
 # ── Concatenate ─────────────────────────────────────────
 

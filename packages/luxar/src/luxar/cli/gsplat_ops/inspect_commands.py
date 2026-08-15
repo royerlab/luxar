@@ -186,13 +186,14 @@ def info_dataset(
         aprint("DATASET INFORMATION")
         aprint("═" * 70)
 
+        stored_bytes = _store_size(path)
         aprint(f"\nFile: {path.name}")
-        aprint(f"Size: {format_memory_size(_store_size(path))}")
+        aprint(f"Size: {format_memory_size(stored_bytes)}")
 
         aprint(f"\nSplats: {n_splats:,}")
         aprint(f"Dimensions: {ndim}D")
         aprint(f"Has Colors: {'Yes' if data.colors is not None else 'No'}")
-        source_grid_keys = _print_source_grid(data, path)
+        source_grid_keys = _print_source_grid(data, stored_bytes)
 
         # ================================================================
         # Bounding Box
@@ -817,7 +818,10 @@ def _print_gsplat_tree_summary(path: Path) -> None:
         aprint("DATASET INFORMATION (node tree)")
         aprint("═" * 70)
         aprint(f"\nFile: {path.name}")
-        aprint(f"Size: {format_memory_size(path.stat().st_size)}")
+        # Same measurement as the flat report's "Size:" line — a directory store's
+        # own stat() is the ~4 KB directory entry, not the chunks in it, and a
+        # partition is the shape most likely to BE a directory.
+        aprint(f"Size: {format_memory_size(_store_size(path))}")
         kind = (
             "partition"
             if isinstance(node, GSplatPartition)
@@ -1104,12 +1108,16 @@ def _voxels_per_splat(stats: dict, n_splats: int) -> Optional[float]:
     return float(stamped) if stamped else None
 
 
-def _print_source_grid(data: Any, path: Path) -> tuple[str, ...]:
+def _print_source_grid(data: Any, stored_bytes: int) -> tuple[str, ...]:
     """Report what the splats are a representation of, when the fit recorded it.
 
     Silent for a dataset fitted before these stamps existed: the source grid is
     genuinely unknown there, and a compression ratio invented from the bounding
     box would be a guess presented as a measurement.
+
+    ``stored_bytes`` is the size the caller already measured for its "Size:"
+    line, handed over rather than re-measured: a directory store is sized by
+    walking every chunk file, and the two numbers must be the same one anyway.
 
     Returns the ``stats`` keys this block has now reported —
     :data:`_SOURCE_GRID_STATS_KEYS` when it ran, empty when it bailed out. The
@@ -1136,14 +1144,17 @@ def _print_source_grid(data: Any, path: Path) -> tuple[str, ...]:
         )
     occ = stats.get("occupancy")
     if occ is not None:
-        aprint(f"  occupancy:   {100 * float(occ):.3f}% of voxels above the floor")
+        aprint(
+            f"  occupancy:   {100 * float(occ):.3f}% of voxels above "
+            "1% of the intensity range"
+        )
     n_splats = len(data.amplitudes) if data.amplitudes is not None else 0
     per_splat = _voxels_per_splat(stats, n_splats)
     if per_splat is not None:
         aprint(f"  voxels/splat: {per_splat:,.0f}")
     src_bytes = stats.get("source_bytes")
     if src_bytes:
-        stored = _store_size(path)
+        stored = stored_bytes
         if stored:
             ratio = src_bytes / stored
             # A whole-number ratio reads best, but a stored artifact LARGER than

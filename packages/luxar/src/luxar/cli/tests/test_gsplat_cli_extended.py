@@ -6914,3 +6914,35 @@ class TestInfoSourceGridReportedOnce:
         assert "Source volume:" not in out
         assert "voxels_per_splat: 20000" in out.replace(",", "")
         assert "occupancy: 0.01" in out
+
+
+class TestInfoPartitionSize:
+    """The node-tree report must measure a directory store, like the flat one.
+
+    `Path.stat().st_size` on a `.gsplats.zarr` DIRECTORY is the ~4 KB directory
+    entry, not the chunks in it — and a partition is the shape most likely to be
+    a directory, so `info` reported a plausible-looking 4.0 KB for every one.
+    """
+
+    def test_size_is_the_summed_chunk_size(
+        self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
+    ) -> None:
+        out = tmp_path / "part.gsplats.zarr"
+        assert (
+            runner.invoke(
+                app,
+                ["gsplat", "partition", str(sample_gsplats), str(out), "--parts", "2"],
+            ).exit_code
+            == 0
+        )
+        real = sum(f.stat().st_size for f in out.rglob("*") if f.is_file())
+        assert real > out.stat().st_size  # the premise: the entry understates it
+
+        r = runner.invoke(app, ["gsplat", "info", str(out)])
+        assert r.exit_code == 0, f"failed:\n{r.stdout}"
+        text = _plain(r.stdout)
+        assert "Root kind: partition" in text  # the tree-summary path, not the flat one
+        from luxar.cli.gsplat_ops.inspect_commands import _store_size
+        from luxar.cli.utils import format_memory_size
+
+        assert f"Size: {format_memory_size(_store_size(out))}" in text, text

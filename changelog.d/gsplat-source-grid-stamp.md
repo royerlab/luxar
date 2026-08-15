@@ -48,7 +48,12 @@ fit-time stamp is stale on nearly every dataset — and its catch-all metadata d
 no longer re-prints the stamped fields underneath, which had the report quoting
 two different numbers for the same quantity.
 
-`occupancy` is the fraction of fitted voxels above the subtracted background floor.
-Sparse microscopy volumes are routinely more than 99% empty, and a compression
-ratio means something quite different at 0.03% occupancy than at 50%, so the two
-belong together.
+`occupancy` is the fraction of fitted voxels carrying signal — above 1% of the
+normalized intensity range. Sparse microscopy volumes are routinely more than 99%
+empty, and a compression ratio means something quite different at 0.03% occupancy
+than at 50%, so the two belong together. The threshold is what makes the number
+mean that: "above the subtracted background floor" sounds equivalent but measures
+read noise instead, since the floor sits at the background's own level — measured
+58% "occupancy" on a stack that is 2.2% signal. It is relative to the fit's own
+normalization, so under `--floor none` an unsuppressed pedestal counts, which is
+the honest answer there: the optimiser did spend splats on it.

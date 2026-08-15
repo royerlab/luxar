@@ -47,25 +47,43 @@ def _is_crop(bbox: object, n_before: int, n_after: int) -> bool:
     return bbox is not None and n_after < n_before
 
 
-def _stats_after_filter(stats: dict, *, cropped: bool) -> dict:
-    """Drop the region-scoped source stamps from ``stats`` when ``cropped``.
+def _stats_after_filter(result: "GSplatData", *, cropped: bool) -> "GSplatData":
+    """Drop the region-scoped source stamps from ``result`` when ``cropped``.
 
     A non-spatial filter (amplitude/scale/mass/... thresholds) does NOT change
     which region the splats represent, so it keeps the whole stamp; only a
     bbox/slice restriction that actually excluded splats invalidates it (see
     :func:`_is_crop`).
 
-    Mutates ``stats`` IN PLACE (and returns it) rather than copying: every call
-    site hands over a dict ``filter()`` has just built, never a caller's — and on
-    the single-leaf path ``GSplatData.__init__`` ALIASES that dict as the leaf's
-    per-sub-LOD stats, so popping in place also cleans the twin that would
-    otherwise be persisted as the leaf's ``lod_stats`` still carrying the
-    uncropped stamp.
+    Mutates the stats dicts IN PLACE rather than copying: every call site hands
+    over a result it has just built, never a caller's object (``filter()`` and the
+    ``_map_*`` rebuilds all copy ``stats``).
+
+    Cleans the TOP-LEVEL stats and every additive sub-LOD's, because the writer
+    persists a sub-LOD's dict as the leaf's ``lod_stats`` — a crop that fixed only
+    the top level would leave the uncropped stamp on disk one level down. On a
+    single leaf those are the SAME dict (``GSplatData.__init__`` aliases it) and
+    the extra pass is a no-op; a ladder needs it, and a progressive fit builds one
+    whose every sub-LOD carries that pass's full fit stats.
     """
-    if cropped:
+    if not cropped:
+        return result
+    for stats in (result.stats, *(lod.stats for lod in _all_sublods(result))):
         for key in _REGION_SCOPED_STATS_KEYS:
             stats.pop(key, None)
-    return stats
+    return result
+
+
+def _all_sublods(result: "GSplatData") -> list:
+    """Every additive sub-LOD of every substitutive level.
+
+    ``substitutive_levels`` is a view rebuilt from the node, but it shares the
+    ``AdditiveSubLOD`` objects themselves, so mutating their ``stats`` reaches
+    what gets written.
+    """
+    return [
+        lod for level in result.substitutive_levels for lod in level.additive_sublods
+    ]
 
 
 class FilteringMixin(_GSplatDataOps):
@@ -265,10 +283,7 @@ class FilteringMixin(_GSplatDataOps):
                 }
             )
             # Nothing to remove from an empty dataset, so no bbox can be a crop.
-            result.stats = _stats_after_filter(
-                result.stats, cropped=_is_crop(bbox, 0, 0)
-            )
-            return result
+            return _stats_after_filter(result, cropped=_is_crop(bbox, 0, 0))
 
         # Validate sigma_axis usage
         if (sigma_min is not None or sigma_max is not None) and sigma_axis is None:
@@ -333,10 +348,9 @@ class FilteringMixin(_GSplatDataOps):
             )
             # A crop restricts WHICH REGION the splats represent (the per-level
             # recursion above cannot fix the rebuilt top-level stats).
-            out.stats = _stats_after_filter(
-                out.stats, cropped=_is_crop(bbox, self.n_splats, out.n_splats)
+            return _stats_after_filter(
+                out, cropped=_is_crop(bbox, self.n_splats, out.n_splats)
             )
-            return out
 
         mask = np.ones(self.n_splats, dtype=bool)
         criteria: dict[str, object] = {}
@@ -489,10 +503,9 @@ class FilteringMixin(_GSplatDataOps):
         # A bbox crop that actually excluded splats invalidates the source-region
         # stamps inherited from the fit (see _stats_after_filter / _is_crop); a
         # non-spatial threshold, or a bbox that removed nothing, keeps them.
-        result.stats = _stats_after_filter(
-            result.stats, cropped=_is_crop(bbox, self.n_splats, result.n_splats)
+        return _stats_after_filter(
+            result, cropped=_is_crop(bbox, self.n_splats, result.n_splats)
         )
-        return result
 
     def slice_by(self, slices: list[slice]) -> "GSplatData":
         """Slice splats by coordinate ranges per dimension (numpy-style).

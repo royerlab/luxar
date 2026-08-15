@@ -586,10 +586,16 @@ was **stored** in — `source_bytes` is the honest denominator of a compression
 ratio, and a 16-bit acquisition must not be recorded as the float32 the fitter
 works in. `fitted_*` is the grid actually optimised against, which differs when
 the fit downscaled first; collapsing the two would overstate compression by the
-downscale factor cubed. `occupancy` is the fraction of fitted voxels above the
-subtracted background floor — a ratio means something quite different at 0.03%
-occupancy than at 50%. `voxels_per_splat` is `fitted_voxels` over the splat
-count **at the end of the fit**, so it predates any post-fit culling.
+downscale factor cubed. `occupancy` is the fraction of fitted voxels carrying
+signal — above 1% of the normalized intensity range — a ratio means something
+quite different at 0.03% occupancy than at 50%. (A bare "above the subtracted
+background floor" test would instead measure camera noise: the floor sits at the
+background's own level, so roughly half of a noisy background is above it.) The
+threshold is relative to the fit's own normalization, so a fit that did not
+suppress its background counts that background as occupied — which is what it
+spent splats on.
+`voxels_per_splat` is `fitted_voxels` over the splat count **at the end of the
+fit**, so it predates any post-fit culling.
 
 Absent on datasets written before these keys existed; readers should report
 nothing rather than infer a source grid from the bounding box.
