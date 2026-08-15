@@ -188,6 +188,105 @@ def _clip_to_bounds(
     return clipped
 
 
+#: Fraction of the normalized [0, 1] intensity range a voxel must EXCEED to count
+#: as occupied. A bare ``> 0`` test measures noise, not sparsity: ``V_normalized``
+#: is ``clip((V - image_min) / range, 0, 1)`` and ``image_min`` is a low
+#: percentile -- or, under ``floor=auto``, the estimated background MODE, i.e. the
+#: background's own centre -- so roughly half of a noisy background survives it.
+#: Measured on a volume that is 2.2% signal: 58% "occupancy", a number that flatly
+#: contradicts the compression ratio it is printed beside. One percent of the
+#: dynamic range sits far above camera read noise (a few 1e-3 of range on a 16-bit
+#: acquisition) and far below real structure.
+#:
+#: The threshold is deliberately relative to the fit's OWN normalization, so
+#: ``occupancy`` describes what the fit actually had to represent: with
+#: ``floor=none`` an unsuppressed pedestal counts, because the optimiser did spend
+#: splats on it.
+_OCCUPANCY_THRESHOLD = 0.01
+
+#: Voxels per counting block in :func:`_occupied_fraction` (16M -> a 16 MB bool
+#: temporary, whatever the volume's size).
+_OCCUPANCY_BLOCK_VOXELS = 1 << 24
+
+
+def _occupied_fraction(Vn: np.ndarray, fitted_voxels: int) -> float:
+    """Fraction of ``Vn`` above :data:`_OCCUPANCY_THRESHOLD` of its range.
+
+    Counted in blocks along the first axis rather than through a whole-volume
+    ``Vn > t`` mask: that mask is another full-size allocation, on top of the
+    three copies of the volume already resident at this point. Basic slicing is a
+    view, so the temporary is bounded by the block size whatever the volume's.
+    """
+    rows = max(1, _OCCUPANCY_BLOCK_VOXELS // max(1, int(np.prod(Vn.shape[1:]))))
+    occupied = 0
+    for start in range(0, len(Vn), rows):
+        block = Vn[start : start + rows]
+        occupied += int(np.count_nonzero(block > _OCCUPANCY_THRESHOLD))
+    return float(occupied / fitted_voxels)
+
+
+def _source_grid_stats(
+    config: FitConfig, preprocessed_data: PreprocessedData, n_splats: int
+) -> dict[str, Any]:
+    """Record the volume the splats represent, so compression is computable later.
+
+    A fitted ``.gsplats.zarr`` records its own byte size but nothing about what it
+    is a representation of, which makes "how much did this compress?" unanswerable
+    from the artifact. It is not answerable from the producing script either: the
+    fitted grid is derived at run time from downscale factors and from isotropic
+    resampling of the voxel spacing, so it is not a constant anyone can read off.
+
+    Two grids are kept separate on purpose:
+
+    ``source_*``
+        the array handed to the fitter, in its original dtype -- the honest
+        denominator for a compression ratio.
+    ``fitted_*``
+        the grid actually optimised against, after any downscaling. Equal to the
+        source grid when no downscaling happened.
+
+    ``occupancy`` is the fraction of fitted voxels carrying signal (see
+    :func:`_occupied_fraction`). Sparse microscopy volumes are typically >99%
+    empty, and a compression ratio means something quite different at 0.03%
+    occupancy than at 50%, so the ratio should never be quoted without it.
+    """
+    out: dict[str, Any] = {}
+    V = getattr(config, "V", None)
+    if V is not None and hasattr(V, "shape"):
+        out["source_shape"] = [int(x) for x in V.shape]
+        voxels = int(np.prod(V.shape)) if V.ndim else 0
+        out["source_voxels"] = voxels
+        # `config.V` has already been cast to float32, so its own dtype/nbytes
+        # would describe the fitter's working copy rather than the caller's
+        # array. Use what validation captured before the cast, and fall back to
+        # the cast array only when that is unavailable.
+        dtype = getattr(config, "source_dtype", None) or str(getattr(V, "dtype", ""))
+        itemsize = getattr(config, "source_itemsize", None)
+        out["source_dtype"] = dtype
+        if itemsize:
+            out["source_bytes"] = voxels * int(itemsize)
+        elif dtype == str(getattr(V, "dtype", "")) and getattr(V, "nbytes", None):
+            # No captured item size: quote the working array's own bytes ONLY
+            # while the recorded dtype IS that array's dtype. A dtype name numpy
+            # could not size (recorded verbatim, on purpose) would otherwise be
+            # paired with float32 byte counts, and `gsplat info` would turn that
+            # pair into a compression ratio inflated by the cast. No bytes is
+            # better than bytes measured on a different type — `info` already
+            # stays silent when the source size is unknown.
+            out["source_bytes"] = int(V.nbytes)
+
+    Vn = getattr(preprocessed_data, "V_normalized", None)
+    if Vn is not None and hasattr(Vn, "shape"):
+        out["fitted_shape"] = [int(x) for x in Vn.shape]
+        fitted_voxels = int(np.prod(Vn.shape)) if Vn.ndim else 0
+        out["fitted_voxels"] = fitted_voxels
+        if fitted_voxels:
+            out["occupancy"] = _occupied_fraction(Vn, fitted_voxels)
+        if n_splats:
+            out["voxels_per_splat"] = float(fitted_voxels / n_splats)
+    return out
+
+
 def finalize_results(
     optimization_results: OptimizationResults,
     config: FitConfig,
@@ -311,6 +410,14 @@ def finalize_results(
         "image_max": preprocessed_data.image_max,
         "intensity_range": preprocessed_data.intensity_range,
         "floor": preprocessed_data.floor,
+        # What the splats are a representation OF. Without this, a stored
+        # .gsplats.zarr cannot say how much it compressed: the source grid is
+        # nowhere on disk, and it is not recoverable from the demo either,
+        # because the fitted grid is computed at run time (downscale factors,
+        # isotropic resampling from voxel spacing). Two grids, kept apart on
+        # purpose -- `source_*` is the array handed to the fitter, `fitted_*` is
+        # what it actually optimised against after any downscaling.
+        **_source_grid_stats(config, preprocessed_data, len(amps_np)),
     }
 
     # Store movie frames in stats for later display (don't show here to avoid timing issues)

@@ -140,6 +140,20 @@ _FITTING_INFO_KEYS = (
     "psnr_db",
     "ssim",
     "mse",
+    # What the splats represent. These describe the fit's INPUT, so they belong
+    # beside the fit's other statistics rather than in the pipeline bucket that
+    # catches everything else. Without them a stored dataset cannot say how much
+    # it compressed: the source grid appears nowhere else on disk, and it is not
+    # recoverable from the producing script either, because the fitted grid is
+    # derived at run time from downscale factors and voxel spacing.
+    "source_shape",
+    "source_dtype",
+    "source_voxels",
+    "source_bytes",
+    "fitted_shape",
+    "fitted_voxels",
+    "occupancy",
+    "voxels_per_splat",
 )
 
 

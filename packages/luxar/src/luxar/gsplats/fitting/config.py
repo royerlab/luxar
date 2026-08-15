@@ -267,6 +267,12 @@ class FitConfig:
     # must not raise.
     iter_callback: Optional[IterCallback] = None
     iter_callback_every: int = 25  # call cadence (capped to >= eval interval)
+    # The caller's array as handed in, BEFORE `V` was cast to float32. Recorded
+    # because it is the honest denominator of a compression ratio: a uint16
+    # source cast to float32 doubles in size, and quoting the cast size would
+    # overstate compression by 2x. `None` when unknown.
+    source_dtype: Optional[str] = None
+    source_itemsize: Optional[int] = None
 
 
 @dataclass
