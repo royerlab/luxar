@@ -121,7 +121,9 @@ def _import_demo(file_stem: str) -> ModuleType:
 
 def _load_dapi() -> list[tuple[str, np.ndarray]]:
     mod = _import_demo("demo_gsplats_3d_organoid_dapi_nuclei")
-    V = mod.load_dapi_data()
+    # The loader also hands back the acquisition (shape, dtype) it declares to the
+    # fitter; calibration only ever sees the working copy, so drop it.
+    V, _acquisition = mod.load_dapi_data()
     return [("dapi", V)]
 
 

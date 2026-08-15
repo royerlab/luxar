@@ -571,6 +571,7 @@ the artifact alone:
 ```json
 {
   "source_shape": [24, 32, 32],
+  "source_declared": true,
   "source_dtype": "uint16",
   "source_voxels": 24576,
   "source_bytes": 49152,
@@ -584,7 +585,14 @@ the artifact alone:
 `source_*` describes the volume as handed to the fitter, in the element type it
 was **stored** in — `source_bytes` is the honest denominator of a compression
 ratio, and a 16-bit acquisition must not be recorded as the float32 the fitter
-works in. `fitted_*` is the grid actually optimised against, which differs when
+works in. `source_declared` is present (and `true`) only when the producer
+*stated* the source grid instead of it being measured from the array the fitter
+saw — a producer that pulls one channel out of a 5D store and downscales it
+before fitting must declare the acquisition, or the ratio would be quoted
+against its own working copy. Absent means measured; readers that quote the
+ratio should carry the distinction, because a stated denominator is a claim and
+a measured one is an observation. `fitted_*` is the grid actually optimised
+against, which differs when
 the fit downscaled first; collapsing the two would overstate compression by the
 downscale factor cubed. `occupancy` is the fraction of fitted voxels carrying
 signal — above 1% of the normalized intensity range — a ratio means something

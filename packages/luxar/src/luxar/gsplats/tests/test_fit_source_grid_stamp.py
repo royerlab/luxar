@@ -336,9 +336,64 @@ def test_an_unsizable_declared_dtype_reports_no_bytes_at_all() -> None:
 
 
 @pytest.mark.parametrize(
-    "bad", [(), (0, 8, 8), (-4, 8, 8), ("a", 8, 8)], ids=["empty", "zero", "neg", "str"]
+    "bad",
+    [(), (0, 8, 8), (-4, 8, 8), ("a", 8, 8), (12.9, 16, 16), "128", 96, (True, 8, 8)],
+    ids=[
+        "empty",
+        "zero",
+        "neg",
+        "str",
+        "fractional",
+        "bare-string",
+        "bare-int",
+        "bool",
+    ],
 )
 def test_a_malformed_declared_grid_is_refused(bad: object) -> None:
-    """It becomes the denominator of a published ratio — fail here, not later."""
+    """It becomes the denominator of a published ratio — fail here, not later.
+
+    Two of these would pass a bare ``int(x)`` per element with no complaint, and
+    both are silent rather than loud afterwards: ``(12.9, 16, 16)`` truncates to
+    a grid the caller never meant, and the bare ``"128"`` iterates into
+    ``[1, 2, 8]`` — a denominator wrong by four orders of magnitude, which is
+    exactly the plausible-looking figure this validation exists to stop.
+    """
     with pytest.raises(ValueError):
         _fit(_sparse_blobs(shape=(8, 8, 8)), source_shape=bad)
+
+
+def test_the_declared_marker_reaches_the_fitting_group_beside_the_grid(
+    tmp_path: Path,
+) -> None:
+    """The marker is worthless one group away from the number it qualifies.
+
+    ``split_fitting_info`` whitelists ``fitting/``; a key missing from that list
+    lands in ``pipeline/`` — reduction/topology provenance — where a reader
+    holding ``fitting/source_shape`` has no reason to look, and so cannot tell a
+    stated denominator from a measured one.
+    """
+    out = tmp_path / "declared.gsplats.zarr"
+    if out.exists():
+        shutil.rmtree(out)
+    _fit(_sparse_blobs(shape=(24, 32, 32)), source_shape=(96, 128, 128)).save(out)
+    attrs = read_node_attrs(out / "fitting")
+    assert attrs["source_shape"] == [96, 128, 128]
+    assert attrs["source_declared"] is True
+
+    # And a measured grid must not acquire the marker on the way to disk.
+    plain = tmp_path / "measured.gsplats.zarr"
+    _fit(_sparse_blobs(shape=(24, 32, 32))).save(plain)
+    assert "source_declared" not in (read_node_attrs(plain / "fitting") or {})
+
+
+def test_an_exact_integral_dimension_is_still_accepted() -> None:
+    """Strictness must not reject the dimensions callers legitimately compute.
+
+    A shape read off a numpy array, or divided out exactly, is a fine
+    declaration; only a value that is not the integer it claims to be is not.
+    """
+    from luxar.gsplats.fitting.validation import _explicit_source_shape
+
+    assert _explicit_source_shape(np.array([96, 128, 128])) == [96, 128, 128]
+    assert _explicit_source_shape((96.0, 128.0, 128.0)) == [96, 128, 128]
+    assert _explicit_source_shape([236 // 2, 16, 16]) == [118, 16, 16]

@@ -83,6 +83,23 @@ def _explicit_dtype_name(source_dtype: Any) -> Optional[str]:
         return str(source_dtype)
 
 
+def _exact_dim(value: Any) -> int:
+    """One grid dimension as an exact integer, or raise.
+
+    ``int()`` alone silently TRUNCATES, which is the wrong failure for a number
+    that will be published as a denominator: a caller who computed a dimension
+    (a downscale factor, a JSON round-trip) wants to hear about it, not to get a
+    grid quietly off by a voxel. ``bool`` is rejected for the same reason — it is
+    an ``int`` subclass, so ``True`` would pass as a one-voxel axis.
+    """
+    if isinstance(value, bool):
+        raise TypeError(f"not an integer dimension: {value!r}")
+    dim = int(value)  # raises TypeError/ValueError on anything uninterpretable
+    if dim != value:
+        raise ValueError(f"not an integer dimension: {value!r}")
+    return dim
+
+
 def _explicit_source_shape(source_shape: Any) -> Optional[list[int]]:
     """Normalize an EXPLICIT ``source_shape`` argument, or None.
 
@@ -95,12 +112,20 @@ def _explicit_source_shape(source_shape: Any) -> Optional[list[int]]:
 
     Validated rather than trusted: this number becomes the denominator of a
     published ratio, so a malformed one must fail here, loudly, and not surface
-    later as a plausible-looking figure nobody can reproduce.
+    later as a plausible-looking figure nobody can reproduce. That rules out two
+    inputs a bare ``int(x)`` would have accepted with a straight face: a
+    fractional dimension (``236 / 2`` truncates to a grid 0.2% off the one the
+    caller meant) and a bare string (``"128"`` iterates into ``[1, 2, 8]``, a
+    denominator four orders of magnitude wrong).
     """
     if source_shape is None:
         return None
+    if isinstance(source_shape, (str, bytes)):
+        raise ValueError(
+            f"source_shape must be a sequence of integers, got {source_shape!r}"
+        )
     try:
-        dims = [int(x) for x in source_shape]
+        dims = [_exact_dim(x) for x in source_shape]
     except (TypeError, ValueError) as exc:
         raise ValueError(
             f"source_shape must be a sequence of integers, got {source_shape!r}"

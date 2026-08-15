@@ -91,6 +91,52 @@ def test_cli_fit_stamps_the_stored_dtype_not_the_loaders_cast(tmp_path: Path) ->
     assert attrs["source_bytes"] == V.size * 2
 
 
+def test_info_says_when_the_source_grid_was_declared_rather_than_measured(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A stated denominator must read as a claim in the report, not as a
+    measurement.
+
+    ``source_declared`` is stamped when the producer preprocessed before fitting
+    and named the acquisition itself. The compression line printed here rests on
+    that number, so the report is the one place a reader would find out — a
+    marker only visible by opening `fitting/.zattrs` is not a distinction anyone
+    reading `info` gets to make.
+    """
+    from types import SimpleNamespace
+
+    from luxar.cli.gsplat_ops.inspect_commands import _print_source_grid, _store_size
+
+    store = tmp_path / "declared.gsplats.zarr"
+    store.mkdir()
+    (store / "chunk").write_bytes(b"\0" * 4096)
+    stats = {
+        "source_shape": [96, 128, 128],
+        "source_voxels": 96 * 128 * 128,
+        "source_dtype": "uint16",
+        "source_bytes": 2 * 96 * 128 * 128,
+        "fitted_shape": [24, 32, 32],
+        "fitted_voxels": 24 * 32 * 32,
+    }
+    data = SimpleNamespace(
+        stats={**stats, "source_declared": True},
+        amplitudes=np.zeros(64, dtype=np.float32),
+    )
+    _print_source_grid(data, _store_size(store))
+    out = capsys.readouterr().out
+    assert "Source volume: 96 x 128 x 128 uint16" in out, out
+    assert "declared by the producer" in out, out
+
+    # The negative control: a measured grid must not be labelled a claim.
+    _print_source_grid(
+        SimpleNamespace(stats=stats, amplitudes=np.zeros(64, dtype=np.float32)),
+        _store_size(store),
+    )
+    measured = capsys.readouterr().out
+    assert "Source volume: 96 x 128 x 128 uint16" in measured, measured
+    assert "declared" not in measured, measured
+
+
 def test_an_artifact_larger_than_its_source_is_not_reported_as_0_to_1(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

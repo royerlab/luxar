@@ -23,9 +23,11 @@ looks plausible and survives review.
 
 Three things keep the new number honest rather than merely bigger.
 
-The declaration is marked. `source_declared: True` is stamped beside it, because
-a stated denominator that is indistinguishable from a measured one is worse than
-no denominator: nobody downstream could tell which they were reading.
+The declaration is marked. `source_declared: True` is stamped beside it in
+`fitting/`, and `gsplat info` prints `[declared by the producer]` on the source
+line, because a stated denominator that is indistinguishable from a measured one
+is worse than no denominator: nobody downstream could tell which they were
+reading. A crop drops it along with the grid it qualifies.
 
 The fitted grid is still reported separately, and `gsplat info` prints
 `fitted at: 128 x 128 x 128 (downscaled before fitting)` under the source line.
