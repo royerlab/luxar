@@ -976,6 +976,19 @@ FLOOR_SAMPLE_BUDGET_VOXELS = 32_000_000
 _FLOOR_SAMPLE_BLOCKS = 32
 
 
+def _centered_base_slices(
+    shape: tuple[int, ...], block_shape: list[int], axis: int
+) -> list[slice]:
+    """Center-crop slices for every axis except ``axis`` (the sampled one)."""
+    base_slices: list[slice] = [slice(None)] * len(shape)
+    for i, (full_len, sample_len) in enumerate(zip(shape, block_shape, strict=True)):
+        if i == axis or sample_len == full_len:
+            continue
+        start = (full_len - sample_len) // 2
+        base_slices[i] = slice(start, start + sample_len)
+    return base_slices
+
+
 def _sample_volume_for_floor(volume: Any, budget: int) -> "np.ndarray | None":
     """Read a bounded, deterministic sample of ``volume`` as flat float32.
 
@@ -1033,12 +1046,7 @@ def _sample_volume_for_floor(volume: Any, budget: int) -> "np.ndarray | None":
             {int(round(span * i / (n_blocks - 1))) for i in range(n_blocks)}
         )
 
-    base_slices = [slice(None)] * len(shape)
-    for i, (full_len, sample_len) in enumerate(zip(shape, sample_shape, strict=True)):
-        if i == axis or sample_len == full_len:
-            continue
-        start = (full_len - sample_len) // 2
-        base_slices[i] = slice(start, start + sample_len)
+    base_slices = _centered_base_slices(shape, sample_shape, axis)
 
     samples = []
     for start in starts:
@@ -1145,7 +1153,10 @@ def _floor_level_and_sample_max(
 
     Returns ``(level, sample_max)``. ``sample_max`` is ``None`` whenever no
     sample was drawn (a spec that needs no data, or an empty volume) or the spec
-    resolved to "nothing to subtract" before the guard was reached.
+    resolved to "nothing to subtract" before the guard was reached. A non-``None``
+    level with a ``None`` max therefore identifies exactly one case — the
+    read-free numeric short-circuit — which is how :func:`resolve_volume_floor`
+    keeps that path SILENT, as it was before this body was split out.
     """
     if floor is None:
         return None, None
@@ -1238,12 +1249,17 @@ def resolve_volume_floor(
       ``None`` is returned. For numeric specs the guard runs only with
       ``guard_numeric=True``.
     """
-    resolved, _sample_max = _floor_level_and_sample_max(
+    resolved, sample_max = _floor_level_and_sample_max(
         volume, floor, guard_numeric=guard_numeric
     )
     if resolved is None:
         return None
-    if verbose:
+    # A read-free numeric short-circuit (level resolved, no sample drawn) stays
+    # SILENT: nothing was measured against the volume, so there is nothing to
+    # report about it. This mirrors the early `return` the numeric branch had
+    # before the body moved into `_floor_level_and_sample_max`, keeping the log
+    # surface identical for every input class.
+    if verbose and sample_max is not None:
         aprint(f"Resolved whole-volume background floor: {resolved:.6g}")
     return float(resolved)
 
@@ -1276,6 +1292,31 @@ def _floor_spec_is_volume_derived(floor: "str | float | None") -> bool:
     return f == "auto" or f.startswith("p")
 
 
+def _floor_spec_is_percentile(floor: "str | float | None") -> bool:
+    """Whether this ``floor`` spec is a ``pNN`` percentile.
+
+    The one volume-derived spec whose denoise-induced shift survives being
+    measured on a bounded crop — see :func:`resolve_volume_floor_denoised`'s
+    Notes for the measurements that decide this.
+    """
+    return isinstance(floor, str) and floor.strip().lower().startswith("p")
+
+
+def _volume_fits_probe_budget(volume: Any, budget: int) -> bool:
+    """Whether the denoise probe of this volume IS the whole volume.
+
+    ``<=`` and not ``<``, matching :func:`_sample_blocks_for_denoise_probe`
+    exactly: a volume of exactly ``budget`` voxels is returned as one whole
+    block, so the correction measured on it is the denoised-whole-volume
+    estimate. Reads nothing — ``volume.shape`` is enough, which is what lets the
+    caller skip the probe (and its NLM pass) entirely.
+    """
+    total = 1
+    for s in volume.shape:
+        total *= int(s)
+    return total <= budget
+
+
 def _cubic_block_shape(shape: tuple[int, ...], per_block: int) -> list[int]:
     """Shrink ``shape`` toward a cube until one block fits ``per_block`` voxels.
 
@@ -1295,19 +1336,6 @@ def _cubic_block_shape(shape: tuple[int, ...], per_block: int) -> list[int]:
         if block_shape[longest] <= 1:
             return block_shape
         block_shape[longest] = max(1, block_shape[longest] // 2)
-
-
-def _centered_base_slices(
-    shape: tuple[int, ...], block_shape: list[int], axis: int
-) -> list[slice]:
-    """Center-crop slices for every axis except ``axis`` (the sampled one)."""
-    base_slices: list[slice] = [slice(None)] * len(shape)
-    for i, (full_len, sample_len) in enumerate(zip(shape, block_shape, strict=True)):
-        if i == axis or sample_len == full_len:
-            continue
-        start = (full_len - sample_len) // 2
-        base_slices[i] = slice(start, start + sample_len)
-    return base_slices
 
 
 def _sample_blocks_for_denoise_probe(
@@ -1368,6 +1396,101 @@ def _sample_blocks_for_denoise_probe(
     return blocks
 
 
+def _denoise_probe_correction(
+    volume: Any,
+    floor: "str | float | None",
+    level_raw: float,
+    denoise_h: float,
+    denoise_params: "dict[str, Any]",
+) -> "tuple[float, float, int] | None":
+    """Shift ``level_raw`` onto the denoised basis with a bounded probe.
+
+    Returns ``(level, delta, probe_voxels)``, or ``None`` when there is nothing
+    to correct or nothing trustworthy to correct WITH — an unreadable probe, a
+    raising denoiser, a degenerate or non-finite estimate. Every ``None`` but the
+    "denoising left this estimator alone" one says why out loud, and the caller
+    then keeps ``level_raw``: this function degrades, it never raises.
+
+    The whole probe pipeline — the READ, the denoise pass and both estimator
+    calls — is inside one ``try``, and the denoised probe is checked for
+    finiteness before either estimator runs. Checking the probe OUTPUT rather than
+    the resulting level is the point: a NaN does not reliably propagate to the
+    level, so a level test would miss the worst case. Measured, one NaN in the
+    probe makes ``auto`` return 0.0009765625 — finite, plausible, and floor
+    suppression effectively off for the whole run; a NaN ``pNN`` level instead
+    makes every tile all-NaN and the fit dies later blaming the input data; and a
+    ``-inf`` raises out of ``np.histogram``. With the probe finite (and
+    ``level_raw`` finite by construction) the level cannot be non-finite, so there
+    is no second test. Today's kernels emit none of this; it is insurance.
+    """
+    from luxar.gsplats.preprocessing.denoise_pipeline import denoise_volume_array
+
+    try:
+        blocks = _sample_blocks_for_denoise_probe(
+            volume, int(DENOISE_PROBE_BUDGET_VOXELS)
+        )
+        if not blocks:
+            # Defensive only: an empty volume has no floor sample either, so
+            # `level_raw` never got this far. Kept so a future sampler change
+            # cannot turn "no probe" into a TypeError mid-fit.
+            aprint(
+                "Note: denoise floor probe found no data; keeping the raw-basis "
+                f"background level {level_raw:.6g}."
+            )
+            return None
+        denoised = [
+            denoise_volume_array(block, h=float(denoise_h), **denoise_params)
+            for block in blocks
+        ]
+        raw_flat = np.concatenate([b.ravel() for b in blocks])
+        denoised_flat = np.concatenate(
+            [np.asarray(b, dtype=np.float32).ravel() for b in denoised]
+        )
+        if not bool(np.isfinite(denoised_flat).all()):
+            # Checked on the probe OUTPUT, not just on the level it produces: a
+            # NaN does not always propagate to the level. `estimate_floor` on a
+            # NaN-bearing array returns ~0.001, which is finite, plausible, and
+            # would silently disable floor suppression for the whole run.
+            aprint(
+                "Note: the denoise floor probe produced non-finite values; "
+                f"keeping the raw-basis background level {level_raw:.6g}."
+            )
+            return None
+        probe_raw = _resolve_floor(raw_flat, floor)
+        probe_denoised = _resolve_floor(denoised_flat, floor)
+    except Exception as exc:  # noqa: BLE001 - never let a probe break a fit
+        aprint(
+            f"Note: denoise floor probe failed ({type(exc).__name__}: {exc}); "
+            f"keeping the raw-basis background level {level_raw:.6g}."
+        )
+        return None
+
+    if probe_raw is None or probe_denoised is None:
+        # Defensive only: a volume-derived spec ("auto"/"pNN") always resolves to
+        # a number on a non-empty array, and an empty one already returned above.
+        aprint(
+            "Note: denoise floor probe is degenerate (no floor estimable); "
+            f"keeping the raw-basis background level {level_raw:.6g}."
+        )
+        return None
+
+    delta = float(probe_denoised) - float(probe_raw)
+    if delta == 0.0:
+        # Nothing to correct (denoising left this estimator's answer alone, or
+        # the probe is constant). No note: the two bases agree. Returning here
+        # rather than computing `level` keeps `level_raw` BIT-exact — the
+        # reconstruction below is only exactly the identity for a `delta` of 0
+        # when no rounding creeps into the two additions.
+        return None
+
+    # Algebraically ``level_raw + delta``, grouped so that the whole-volume-probe
+    # case is EXACT: there ``probe_raw == level_raw`` bit for bit (same
+    # estimator, same values), the offset is a hard 0.0, and the result is the
+    # denoised-whole-volume estimate itself rather than a rounded reconstruction.
+    level = float(probe_denoised) + (float(level_raw) - float(probe_raw))
+    return level, delta, int(raw_flat.size)
+
+
 def resolve_volume_floor_denoised(
     volume: Any,
     floor: "str | float | None",
@@ -1388,7 +1511,9 @@ def resolve_volume_floor_denoised(
     estimator is more reliable once the tail is collapsed — so this function
     keeps :func:`resolve_volume_floor`'s whole-volume basis (one global level,
     the #1174 invariant) and applies the denoise-induced CORRECTION measured on
-    a small bounded probe.
+    a small bounded probe, **wherever that shift can actually be measured**: on a
+    volume within the probe budget always, and above it only for a ``pNN`` spec.
+    See the Notes for the two regimes and the measurements behind them.
 
     Parameters
     ----------
@@ -1396,8 +1521,9 @@ def resolve_volume_floor_denoised(
         Full volume (may be lazy; only bounded samples are read).
     floor : str, float, or None
         Floor spec, exactly as :func:`resolve_volume_floor` interprets it. Only
-        a VOLUME-DERIVED spec (``"auto"`` / ``"pNN"``) is corrected; a numeric
-        spec or ``"none"`` is a user absolute and passes through untouched.
+        a VOLUME-DERIVED spec (``"auto"`` / ``"pNN"``) is ever corrected; a
+        numeric spec or ``"none"`` is a user absolute and passes through
+        untouched. Above the probe budget only ``"pNN"`` is corrected.
     denoise_h : float, optional
         NLM filtering strength the tiles will be denoised with. ``None``
         (denoise off) delegates to :func:`resolve_volume_floor` verbatim.
@@ -1410,7 +1536,8 @@ def resolve_volume_floor_denoised(
     guard_numeric : bool, default False
         Forwarded to :func:`resolve_volume_floor` (see there).
     verbose : bool, default False
-        Print the raw level, the correction and the final level.
+        Print the raw level, the correction and the final level. Forwarded to
+        :func:`resolve_volume_floor` on the paths that delegate to it.
 
     Returns
     -------
@@ -1420,46 +1547,89 @@ def resolve_volume_floor_denoised(
 
     Notes
     -----
-    - **This is an approximation** of "estimate on the denoised whole volume".
-      It is EXACT when the volume fits :data:`DENOISE_PROBE_BUDGET_VOXELS` (the
-      probe is then the whole volume as one block, so the correction reproduces
-      the denoised-whole-volume estimate bit for bit — which is what makes
-      tiled/non-tiled parity exact on small volumes), and otherwise exact to
-      the extent that the denoise-induced shift is spatially uniform.
-    - **The messenger must agree on the baseline before its shift is trusted.**
-      Above the budget the probe measures a different population than the floor
-      sample does (a few cubic center crops vs. slabs spanning the whole volume),
-      and the estimators are non-linear in the population, so the probe's shift
-      is only transferable if the probe first REPRODUCES the whole-volume raw
-      level. When the raw disagreement between the two samples exceeds the shift
-      the probe proposes, the correction is declined with a note and the
-      RAW-basis level is returned — behaviour then is exactly the pre-#1178 one.
-      A whole-volume probe has a raw disagreement of exactly ``0.0``, so the
-      exact case above is never declined.
+    - **Two regimes, one measured rule.** The correction is applied where it is
+      demonstrably right, and not applied where it is not:
+
+      1. The probe covers the WHOLE volume (``total <=``
+         :data:`DENOISE_PROBE_BUDGET_VOXELS`). The corrected level then IS the
+         denoised-whole-volume estimate, bit for bit — the same estimator over
+         the same values — so it is applied for any volume-derived spec. This is
+         what makes tiled/non-tiled parity exact on small volumes.
+      2. Above the budget the probe is a handful of cubic centre crops, and
+         whether its shift transfers depends on the ESTIMATOR. A ``pNN``
+         percentile shift does; the ``auto`` histogram-mode shift does not, and
+         is therefore not applied at all — the raw-basis level is kept (exactly
+         the pre-#1178 behaviour) and one note says so. No probe is denoised in
+         that case, so the skip costs nothing.
+
+    - **What was measured** (synthetic 24x64x64 stacks with a known pedestal,
+      six background families x six seeds, production denoise params including
+      the whole-volume ``norm_range``, probe at 4.7% of the volume; error =
+      ``|level - reference|`` against the reference ``--tiling none`` computes,
+      ``_resolve_floor(denoise_whole(volume), spec)``):
+
+      * ``pNN`` (``p10``): mean error 4.386 raw -> **1.408** corrected, closer on
+        28/36 volumes, and the worst family (Poisson) goes from a mean 11.656 to
+        1.644 (worst single volume 2.091). Applied.
+      * ``auto``: mean error 1.309 raw -> 0.830 corrected, but closer on only
+        21/36 volumes — the sign is close to a coin flip. It wins big on the two
+        families whose true shift is large (gamma-skewed and masked pedestals,
+        ~2.6 -> ~0.6) and loses on the four whose true shift is ~0.2-0.6 (flat
+        Gaussian 0.248 -> 0.473, vignetted 0.649 -> 1.149), because a
+        crop-measured mode shift carries ~1 unit of noise regardless. Two
+        independent reviewers measured the same aggregate as net WORSE on their
+        volumes. Not applied above the budget.
+
+    - **The deciding measurement is the probe-size sweep** (12 volumes, probe at
+      2.3 / 4.7 / 18.8 / 37.5% of the volume). ``p10``'s corrected error falls
+      monotonically — 1.03, 0.98, 0.59, 0.38 units, closer than raw on 9/12 then
+      12/12 — so the percentile shift is a real property of the data that a bigger
+      probe measures better. ``auto``'s does not move: 0.91, 0.75, 0.72, 0.90,
+      closer than raw on 8/12 even with 37.5% of the volume in the probe,
+      and its WORST case gets worse (2.6 -> 4.3). The mode shift is a property of
+      the LOCAL background level, which varies spatially, so no affordable probe
+      converges on it — and a real light-sheet stack sits at ~0.03%, far below
+      anything measured here.
+
     - **Cost**: one extra denoise pass over at most
-      :data:`DENOISE_PROBE_BUDGET_VOXELS` voxels per CALL. That is once per
-      resolution, not once per tile — but every worker resolves its own level,
-      so a ``-j N`` run or an ``M``-way ``--tile k/M`` fleet pays it once per
-      worker, and for a volume within the probe budget the probe IS the whole
-      volume (M whole-volume denoise passes for M workers).
+      :data:`DENOISE_PROBE_BUDGET_VOXELS` voxels per CALL, and none at all for
+      ``auto`` above the budget (regime 2 is decided from ``volume.shape``, before
+      anything is read). That is once per resolution, not once per tile — but
+      every worker resolves its own level, so a ``-j N`` run or an ``M``-way
+      ``--tile k/M`` fleet pays it once per worker, and for a volume within the
+      probe budget the probe IS the whole volume (M whole-volume denoise passes
+      for M workers).
     - **Determinism**: the probe is a pure function of ``volume.shape`` and the
       budget, so independent workers (``--tile k/M``, ``-j N``) that share a
       volume, ``h`` and params all reach the same corrected level — provided
       they also share a denoise BACKEND. ``backend="auto"`` resolves to skimage
       on a CPU-only host and to the torch/CUDA kernel on a GPU host, and the two
-      differ by ~6e-4 intensity units; that is well inside one histogram bin of
-      the ``auto`` estimator, but an argmax flip at a bin edge is conceivable.
-      Pin ``--denoise-backend`` for a fleet spanning heterogeneous hosts.
+      do NOT agree closely enough for the estimators to be indifferent: on four
+      synthetic pedestals their outputs differed by a mean of ~0.34-0.48 and by up
+      to 26-34 INTENSITY units at individual voxels, and the resolved ``auto``
+      level came out different in 4 of 4 configurations (by 0.001-0.043 units; a
+      reviewer measured 0.005-0.085 on other data). A level difference across
+      backends is therefore the norm, not a corner case: pin
+      ``--denoise-backend`` for a fleet spanning heterogeneous hosts.
     - The "level >= sampled max would erase all signal" guard is re-applied to
       the corrected level against the **raw floor sample's** max — the same
       basis, and the same bounded read, :func:`resolve_volume_floor` judges on.
-      The probe's own denoised max is deliberately NOT used: NLM only shrinks
-      the range, so it can never catch a level the raw guard accepted, while a
-      center-cropped probe may legitimately see no signal at all (a masked or
-      zero-padded centre) and would then veto a perfectly good level.
-    - **Degrades, never crashes**: a failing ``denoise_volume_array`` (no torch,
-      an unavailable backend, a raising kernel) prints an honest note and
-      returns the RAW-basis level, i.e. exactly today's behaviour.
+      The probe's own denoised max is deliberately NOT used, and the reason is
+      NOT that it would catch less: NLM shrinks the range, so the denoised max is
+      a strictly TIGHTER bound and would veto a SUPERSET of levels (measured on a
+      light-sheet crop: raw max 288.5 vs denoised max 263.0, and a level between
+      the two erases every denoised tile while passing the raw-max guard). It is
+      not used because a centre-cropped, smoothed probe may legitimately see no
+      signal at all — a masked or zero-padded middle — and a veto there would
+      silently drop floor suppression for a whole run, which is worse than the
+      level being a little generous. The cost of that choice is the gap: a level
+      between the denoised and raw maxima is not caught. A background-mode level
+      does not land there in practice.
+    - **Degrades, never crashes**: an unreadable probe, a failing
+      ``denoise_volume_array`` (no torch, an unavailable backend, a raising
+      kernel), a degenerate estimate or a probe carrying non-finite values each
+      print an honest note and return the RAW-basis level, i.e. exactly today's
+      behaviour. See :func:`_denoise_probe_correction`.
     """
     if (
         denoise_h is None
@@ -1472,6 +1642,29 @@ def resolve_volume_floor_denoised(
             volume, floor, guard_numeric=guard_numeric, verbose=verbose
         )
 
+    # REGIME 2, decided from `volume.shape` alone — before any read, and in
+    # particular before any NLM pass. A bounded crop cannot measure the
+    # histogram-mode shift (see Notes for the numbers), so `auto` keeps the raw
+    # basis and says so instead of pretending otherwise.
+    if not _volume_fits_probe_budget(
+        volume, int(DENOISE_PROBE_BUDGET_VOXELS)
+    ) and not _floor_spec_is_percentile(floor):
+        level = resolve_volume_floor(
+            volume, floor, guard_numeric=guard_numeric, verbose=verbose
+        )
+        if level is not None:
+            aprint(
+                f"Note: --floor auto keeps its RAW-basis level {level:.6g}. This "
+                "volume is larger than the denoise probe budget, and the "
+                "histogram-mode shift denoising induces is not measurable on a "
+                "bounded sample of it — measured, applying it was as likely to "
+                "move the level away from the non-tiled estimate as toward it. "
+                "For a level resolved on the denoised data, use an explicit "
+                "--floor pNN (whose shift does transfer) or a fit that is not "
+                "tiled."
+            )
+        return level
+
     # The sampled max comes back with the level so the guard below can judge the
     # CORRECTED level on the very same basis, without a second bounded read.
     level_raw, raw_sample_max = _floor_level_and_sample_max(
@@ -1482,78 +1675,18 @@ def resolve_volume_floor_denoised(
         # correct.
         return None
 
-    blocks = _sample_blocks_for_denoise_probe(volume, int(DENOISE_PROBE_BUDGET_VOXELS))
-    if not blocks:
-        # Defensive only: an empty volume has no floor sample either, so
-        # `level_raw` already returned None above. Kept so a future sampler
-        # change cannot turn "no probe" into a TypeError mid-fit.
-        aprint(
-            "Note: denoise floor probe found no data; keeping the raw-basis "
-            f"background level {level_raw:.6g}."
-        )
-        return level_raw
-
-    from luxar.gsplats.preprocessing.denoise_pipeline import denoise_volume_array
-
-    try:
-        denoised = [
-            denoise_volume_array(block, h=float(denoise_h), **denoise_params)
-            for block in blocks
-        ]
-    except Exception as exc:  # noqa: BLE001 - never let a probe break a fit
-        aprint(
-            f"Note: denoise floor probe failed ({type(exc).__name__}: {exc}); "
-            f"keeping the raw-basis background level {level_raw:.6g}."
-        )
-        return level_raw
-
-    raw_flat = np.concatenate([b.ravel() for b in blocks])
-    denoised_flat = np.concatenate(
-        [np.asarray(b, dtype=np.float32).ravel() for b in denoised]
+    corrected = _denoise_probe_correction(
+        volume, floor, float(level_raw), float(denoise_h), denoise_params
     )
-    probe_raw = _resolve_floor(raw_flat, floor)
-    probe_denoised = _resolve_floor(denoised_flat, floor)
-    if probe_raw is None or probe_denoised is None:
-        # Defensive only: a volume-derived spec ("auto"/"pNN") always resolves to
-        # a number on a non-empty array, and an empty one already returned above.
-        aprint(
-            "Note: denoise floor probe is degenerate (no floor estimable); "
-            f"keeping the raw-basis background level {level_raw:.6g}."
-        )
+    if corrected is None:
+        # Nothing to correct, or nothing trustworthy to correct with — the helper
+        # has already explained itself where that was worth saying.
         return level_raw
-
-    delta = float(probe_denoised) - float(probe_raw)
-    if delta == 0.0:
-        # Nothing to correct (denoising left this estimator's answer alone, or
-        # the probe is constant). No note: the two bases agree.
-        return level_raw
-
-    # Only trust the shift once the probe reproduces the whole-volume RAW level:
-    # the probe and the floor sample cover different populations, and both
-    # estimators are non-linear in the population, so a probe that disagrees
-    # about the baseline is not measuring the same background at all. When the
-    # raw gap dwarfs the shift, the "correction" is dominated by that mismatch
-    # and can move the level FURTHER from the non-tiled reference.
-    basis_gap = abs(float(level_raw) - float(probe_raw))
-    if basis_gap > abs(delta):
-        aprint(
-            f"Note: the denoise floor probe disagrees with the whole volume on "
-            f"the RAW level ({probe_raw:.6g} vs {level_raw:.6g}, gap "
-            f"{basis_gap:.6g}) by more than the shift it proposes "
-            f"({delta:+.6g}), so that shift is not transferable; keeping the "
-            f"raw-basis background level {level_raw:.6g}."
-        )
-        return level_raw
-
-    # Algebraically ``level_raw + delta``, grouped so that the whole-volume-probe
-    # case is EXACT: there ``probe_raw == level_raw`` bit for bit (same
-    # estimator, same values), the offset is a hard 0.0, and the result is the
-    # denoised-whole-volume estimate itself rather than a rounded reconstruction.
-    level = float(probe_denoised) + (float(level_raw) - float(probe_raw))
+    level, delta, probe_voxels = corrected
 
     # Re-guard on the RAW SAMPLED max, the basis `resolve_volume_floor` uses (see
-    # Notes): the probe's denoised max is not a valid bound — NLM only shrinks
-    # the range, and a center-cropped probe may see no signal at all.
+    # Notes): the probe's denoised max is a tighter bound but an unreliable one,
+    # because a centre-cropped probe may see no signal at all.
     # `raw_sample_max` is never None here (a volume-derived spec always samples).
     if raw_sample_max is not None and level >= raw_sample_max:
         aprint(
@@ -1565,7 +1698,7 @@ def resolve_volume_floor_denoised(
         aprint(
             f"Resolved whole-volume background floor on the DENOISED basis: "
             f"{level:.6g} (raw {level_raw:.6g} {delta:+.6g} from a "
-            f"{raw_flat.size:,}-voxel denoise probe)"
+            f"{probe_voxels:,}-voxel denoise probe)"
         )
     return level
 

@@ -10,7 +10,10 @@ partition-of-unity property then ensures seamless blending without
 post-merge pruning. When per-tile denoising is active, the level is resolved
 on the DENOISED basis (``resolve_volume_floor_denoised``), because that is
 the data it is subtracted from — matching what the non-tiled path, which
-denoises the whole volume first, estimates (#1178).
+denoises the whole volume first, estimates (#1178). That match is exact for a
+volume within the denoise probe's budget; above it, only a ``pNN`` floor is
+corrected onto the denoised basis and the default ``auto`` keeps its raw-basis
+level with a printed note.
 """
 
 from __future__ import annotations
@@ -24,6 +27,7 @@ from arbol import aprint, asection
 from luxar.gsplats.fit_gsplats import fit_gaussian_splats
 from luxar.gsplats.fitting.preprocessing import (
     NORM_RANGE_MIN_SPAN,
+    _floor_spec_is_volume_derived,
     resolve_volume_floor_denoised,
     resolve_volume_norm_range,
 )
@@ -202,12 +206,16 @@ def fit_tile(
         ``_denoise_params`` in ``fit_kwargs`` that resolution happens on the
         DENOISED basis — the tile is denoised before the level is subtracted, so
         a raw-basis level would remove a different pedestal than the non-tiled
-        path does (#1178). A numeric value is taken at
+        path does (#1178) — wherever that shift is measurable: always within the
+        denoise probe's budget, and above it for a ``pNN`` spec only (see
+        :func:`~luxar.gsplats.fitting.preprocessing.resolve_volume_floor_denoised`).
+        A numeric value is taken at
         face value — the caller is expected to have guarded it (as
         :func:`fit_tiled` does with ``guard_numeric=True``; the single-tile CLI
         worker deliberately does NOT, so one level resolved by its parent
-        applies unchanged to a dim timepoint). The level is subtracted from the raw tile
-        *before* apodization; the inner fit then runs with ``floor="none"``
+        applies unchanged to a dim timepoint). The level is subtracted from the
+        tile — after any denoising, before apodization; the two do not commute
+        the other way — and the inner fit then runs with ``floor="none"``
         and the applied level is recorded in
         ``result.stats["applied_floor"]``.
 
@@ -248,16 +256,16 @@ def fit_tile(
     # removes a different pedestal than `--tiling none` does (#1178). The
     # denoise keys are only PEEKED at here: they are popped further down, after
     # the tile has been extracted.
+    # Deliberately no `verbose=`: this is the PER-TILE door, so anything logged
+    # here is logged once per tile. The two callers that resolve a spec once per
+    # RUN do the announcing — `fit_tiled` below, and the standalone
+    # `fit_single_tile` worker, which resolves the level itself and hands this
+    # function the number. Same log surface as before #1178.
     applied_floor = resolve_volume_floor_denoised(
         volume,
         floor_spec,
         denoise_h=fit_kwargs.get("_denoise_h"),
         denoise_params=fit_kwargs.get("_denoise_params"),
-        # A standalone worker's resolved level is exactly what you want in its
-        # log, to confirm every `--tile k/M` worker agreed on the same one. Only
-        # for a SPEC, though: under `fit_tiled` the level is already resolved and
-        # arrives as a number, and re-announcing it once per tile is pure noise.
-        verbose=bool(fit_kwargs.get("verbose", False)) and isinstance(floor_spec, str),
     )
 
     # Resolve the INTENSITY SCALE against the whole volume too, for the same
@@ -413,7 +421,10 @@ def fit_tiled(
     before windowing; on the floor-subtracted data the Hann
     partition-of-unity property guarantees seamless blending. When per-tile
     denoising is active (``_denoise_h`` / ``_denoise_params``), the level is
-    resolved on the denoised basis, matching the non-tiled path (#1178).
+    resolved on the denoised basis, matching the non-tiled path (#1178) — with
+    the one documented exception that the default ``"auto"`` spec on a volume
+    above the denoise probe's budget keeps its raw-basis level, since the
+    histogram-mode shift is not measurable on a bounded crop.
 
     When ``progressive=True``, each tile is fitted using progressive
     residual decomposition, producing a multi-LOD result where LODs are
@@ -496,11 +507,14 @@ def fit_tiled(
         guard_numeric=True,
         # Log the DENOISED basis the level was resolved on (raw level + the
         # measured shift) — the one number the summary line below cannot show.
-        # Nothing extra is logged with denoise off, or for a numeric level: the
-        # summary already echoes that.
+        # Gated on a VOLUME-DERIVED spec (`auto`/`pNN`) and on denoising actually
+        # being active, so `--denoise` off, and any absolute level, print exactly
+        # what they printed before #1178. `isinstance(str)` would not do: the CLI
+        # hands `--floor 110` down as the STRING "110", which is an absolute the
+        # summary line below already echoes.
         verbose=(
             verbose
-            and isinstance(floor_spec, str)
+            and _floor_spec_is_volume_derived(floor_spec)
             and fit_kwargs.get("_denoise_h") is not None
             and fit_kwargs.get("_denoise_params") is not None
         ),
@@ -636,8 +650,8 @@ def merge_tile_results(
     verbose : bool, default True
         Print a summary line via arbol.
     applied_floor : float or None, default None
-        The background level subtracted from every raw tile before
-        apodization. Supplied by the sequential :func:`fit_tiled` path; the
+        The background level subtracted from every tile (after any denoising)
+        before apodization. Supplied by the sequential :func:`fit_tiled` path; the
         subprocess-based paths leave it ``None`` (a worker records the level
         it applied in its own tile's in-memory stats, which do not survive
         the reload at merge). Recorded in the flat merged result's stats;

@@ -256,13 +256,18 @@ def resolve_denoise_h(ctx: FitPipelineCtx, volume: "Any") -> Optional[float]:
     now (non-tiled fitting, :func:`maybe_denoise_full_volume`) or passes
     ``h`` + params through to ``fit_tile`` (tiled fitting, per-tile denoise).
 
-    Either way the background floor ends up resolved on DENOISED data: the
-    non-tiled path because the fit sees the denoised volume, the uniform tiled
-    paths because they correct the whole-volume level onto the denoised basis
+    The non-tiled path then resolves the background floor on DENOISED data as a
+    matter of ordering (the fit sees the denoised volume). The uniform tiled
+    paths get there by correcting the whole-volume level onto the denoised basis
     with a bounded probe
     (:func:`~luxar.gsplats.fitting.preprocessing.resolve_volume_floor_denoised`,
-    #1178) — except where that probe cannot vouch for the shift, which keeps the
-    raw-basis level and says so.
+    #1178), which has three documented exceptions: a volume ABOVE the probe
+    budget keeps its raw-basis level under the default ``--floor auto`` (the
+    histogram-mode shift is not measurable on a bounded crop — a ``pNN`` spec is
+    corrected there), a probe that cannot be read or denoised keeps it too, and
+    ``batch-fit`` hands its tasks a numeric level resolved from the raw input
+    (see :func:`resolve_shared_floor`). The first two print a note; the third is a
+    known gap, tracked separately rather than announced per task.
     """
     if not ctx.denoise:
         return None
@@ -310,9 +315,11 @@ def maybe_denoise_full_volume(
     the volume is returned unchanged.
 
     Ordering note: the non-tiled fit therefore resolves its ``--floor`` from the
-    DENOISED volume (``_normalize_data`` runs on what this returns). The tiled
-    paths reach the same basis differently — they resolve the whole-volume level
-    with a denoise-corrected estimator rather than reordering the passes (#1178).
+    DENOISED volume (``_normalize_data`` runs on what this returns), always and
+    exactly. The tiled paths cannot reorder the passes that way, so they aim at
+    the same basis with a denoise-corrected whole-volume estimator instead
+    (#1178) — exactly within the probe budget, and above it only for a ``pNN``
+    spec (see :func:`resolve_denoise_h`).
     """
     if ctx.denoise and ctx.denoise_effective_h is not None and not is_tiled:
         from luxar.gsplats.preprocessing.denoise_pipeline import (
@@ -796,7 +803,8 @@ def resolve_shared_floor(
     :func:`~luxar.gsplats.fitting.preprocessing.resolve_volume_floor_denoised`
     passes through uncorrected. Out of scope for #1178 and tracked separately.
     The paths that DO resolve on the denoised basis — uniform tiling, sequential
-    and ``-j``/``--tile k/M`` alike — call
+    and ``-j``/``--tile k/M`` alike (for any volume-derived spec within the
+    denoise probe's budget, and above it for a ``pNN`` spec only) — call
     :func:`~luxar.gsplats.fitting.preprocessing.resolve_volume_floor_denoised`
     instead of this function (see :func:`fit_single_tile` and
     :func:`luxar.gsplats.fit_tiled_gsplats.fit_tiled`). Add
@@ -999,13 +1007,18 @@ def fit_single_tile(
         denoise_h=fit_config.get("_denoise_h"),
         denoise_params=fit_config.get("_denoise_params"),
         guard_numeric=False,
-        # This worker's own resolution, so LOG it (raw level + the measured
-        # denoise shift): a `-j N` / `--tile k/M` fleet has no other way to show
-        # that every worker reached the same level. Only for a spec — a numeric
-        # level is not resolved here, and `warn_if_level_erases_volume` below is
-        # the line that matters for one of those.
+        # Log the raw level and the measured denoise shift — but ONLY where
+        # denoising made this a new resolution to report. With `--denoise` off
+        # this worker's log stays byte-identical to what it printed before #1178
+        # (and it would not be read anyway: `build_worker_cmd` hardcodes
+        # ``--quiet`` and the parent discards a successful worker's stdout).
+        # Gated on a volume-derived spec too: an absolute level is not resolved
+        # here, and `warn_if_level_erases_volume` below is the line that matters
+        # for one of those.
         verbose=bool(fit_config.get("verbose", False))
-        and floor_spec_needs_volume(floor_spec),
+        and floor_spec_needs_volume(floor_spec)
+        and fit_config.get("_denoise_h") is not None
+        and fit_config.get("_denoise_params") is not None,
     )
     if resolved_floor is not None and not floor_spec_needs_volume(floor_spec):
         warn_if_level_erases_volume(

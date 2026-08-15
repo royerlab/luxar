@@ -160,14 +160,17 @@ The fitting pipeline orchestrates the entire process of fitting n-dimensional Ga
    tiled paths denoise each tile), `resolve_volume_floor_denoised` corrects the
    whole-volume level onto the denoised basis using a bounded
    (`DENOISE_PROBE_BUDGET_VOXELS`) denoise probe, so `--denoise` removes the same
-   pedestal tiled and non-tiled whenever the volume fits the probe budget (the
-   probe is then the whole volume, and the two agree exactly) and an approximation
-   of it above the budget — where the correction is declined outright, keeping the
-   raw-basis level, if the probe does not first reproduce the whole-volume raw
-   estimate (#1178); a numeric/`none` spec is a user absolute and is never
-   corrected. The subtracted level is recorded on
-   `PreprocessedData.floor`; it is NOT added back (output amplitudes are
-   background-relative).
+   pedestal tiled and non-tiled whenever the volume fits the probe budget — the
+   probe is then the whole volume and the two agree bit for bit. Above the budget
+   the probe is a handful of cubic centre crops, and the correction is applied
+   only for a `pNN` spec, whose shift transfers (measured: mean error against the
+   non-tiled estimate 4.4 → 1.4 intensity units). The default `auto` keeps its
+   raw-basis level there and prints one note saying so, because a crop-measured
+   histogram-mode shift is dominated by measurement noise and was as likely to
+   hurt as to help (#1178); no probe is denoised in that case. A numeric/`none`
+   spec is a user absolute and is never corrected. The subtracted level is
+   recorded on `PreprocessedData.floor`; it is NOT added back (output amplitudes
+   are background-relative).
 2. **Normalization**: Converts input to [0, 1] range (floor/percentile-based or full range)
 3. **Seed Generation**: Creates initial splat positions (auto or user-provided)
 4. **Pre-initialized amplitude rescaling**: Brings `init_amps` onto the

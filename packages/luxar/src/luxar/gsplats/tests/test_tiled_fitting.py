@@ -1381,13 +1381,28 @@ class TestSingleTileWorkerFloor:
 # Denoise settings for the #1178 wiring tests: small, CPU-pinned, explicit — a
 # per-tile pass costs a few ms and the numbers are machine-independent.
 _D_H = 0.15
-_D_PARAMS = {
+_D_BASE_PARAMS = {
     "patch_size": 3,
     "search_distance": 2,
     "backend": "pytorch",
     "device": "cpu",
     "use_2d": False,
 }
+
+
+def _d_params(volume: np.ndarray) -> dict:
+    """PRODUCTION-shaped per-tile denoise params for ``volume``.
+
+    ``norm_range`` is the whole-volume ``(min, max)``, which ``resolve_denoise_h``
+    always records and ``assemble_fit_config`` always forwards: a fixed ``h`` is
+    not scale-invariant, so every tile and the floor probe must normalize against
+    the same range. Leaving it out measures a configuration production never runs
+    (and can flip the sign of the measured denoise shift).
+    """
+    return {
+        **_D_BASE_PARAMS,
+        "norm_range": (float(volume.min()), float(volume.max())),
+    }
 
 
 def _skewed_pedestal_volume() -> np.ndarray:
@@ -1427,7 +1442,7 @@ class TestTiledFloorOnDenoisedBasis:
             volume,
             "auto",
             denoise_h=_D_H,
-            denoise_params=_D_PARAMS,
+            denoise_params=_d_params(volume),
             guard_numeric=True,
         )
         assert raw is not None and denoised is not None
@@ -1450,7 +1465,7 @@ class TestTiledFloorOnDenoisedBasis:
             floor="auto",
             verbose=False,
             _denoise_h=_D_H,
-            _denoise_params=_D_PARAMS,
+            _denoise_params=_d_params(volume),
         )
 
         assert len(records) > 1
@@ -1475,7 +1490,7 @@ class TestTiledFloorOnDenoisedBasis:
             floor="auto",
             verbose=False,
             _denoise_h=_D_H,
-            _denoise_params=_D_PARAMS,
+            _denoise_params=_d_params(volume),
         )
         assert result.stats["applied_floor"] == pytest.approx(denoised)
         assert result.stats["applied_floor"] != pytest.approx(raw, rel=1e-3)
@@ -1498,7 +1513,7 @@ class TestTiledFloorOnDenoisedBasis:
             {
                 "floor": "auto",
                 "_denoise_h": _D_H,
-                "_denoise_params": dict(_D_PARAMS),
+                "_denoise_params": _d_params(volume),
             },
             None,
         )
@@ -1542,7 +1557,7 @@ class TestTiledFloorOnDenoisedBasis:
             floor="auto",
             verbose=True,
             _denoise_h=_D_H,
-            _denoise_params=_D_PARAMS,
+            _denoise_params=_d_params(volume),
         )
 
         out = capsys.readouterr().out
@@ -1563,6 +1578,135 @@ class TestTiledFloorOnDenoisedBasis:
 
         floors = [rec["result"].stats["applied_floor"] for rec in records]
         assert floors and all(f == pytest.approx(raw) for f in floors)
+
+    def test_denoise_off_logs_nothing_new_about_the_floor(
+        self, monkeypatch, capsys
+    ) -> None:
+        """With ``--denoise`` off the log surface is byte-identical to before #1178.
+
+        The floor resolution now goes through a wrapper that CAN log, so the
+        ``verbose=`` forwarding is gated on denoising actually being active. Only
+        the one summary line ``fit_tiled`` always printed may appear.
+        """
+        import luxar.gsplats.fit_tiled_gsplats as ftg
+
+        volume = _skewed_pedestal_volume()
+        records: list = []
+        monkeypatch.setattr(ftg, "fit_gaussian_splats", _recording_stub(records))
+        capsys.readouterr()
+        ftg.fit_tiled(volume, tile_size=48, overlap=16, floor="auto", verbose=True)
+
+        out = capsys.readouterr().out
+        assert "Resolved whole-volume background floor" not in out
+        assert "DENOISED basis" not in out
+        assert "Floor suppression: subtracting background level" in out
+
+    @pytest.mark.parametrize("spec", ["110", 110.0, "none"])
+    def test_an_absolute_floor_logs_nothing_new_even_with_denoise_on(
+        self, monkeypatch, capsys, spec
+    ) -> None:
+        """A user absolute is not "resolved", so nothing new is announced for it.
+
+        ``--floor 110`` reaches this function as the STRING ``"110"`` (the CLI
+        passes the flag through verbatim), which an ``isinstance(str)`` gate would
+        wave through — and the resulting line duplicates the summary line below
+        it. The gate is on the VOLUME-DERIVED predicate for that reason.
+        """
+        import luxar.gsplats.fit_tiled_gsplats as ftg
+
+        volume = _skewed_pedestal_volume()
+        records: list = []
+        monkeypatch.setattr(ftg, "fit_gaussian_splats", _recording_stub(records))
+        capsys.readouterr()
+        ftg.fit_tiled(
+            volume,
+            tile_size=48,
+            overlap=16,
+            floor=spec,
+            verbose=True,
+            _denoise_h=_D_H,
+            _denoise_params=_d_params(volume),
+        )
+
+        out = capsys.readouterr().out
+        assert "Resolved whole-volume background floor" not in out
+        assert "DENOISED basis" not in out
+
+    def test_the_per_tile_door_never_announces_the_level(
+        self, monkeypatch, capsys
+    ) -> None:
+        """``fit_tile`` resolves per TILE, so it must not log the level.
+
+        Whatever it printed would be printed once per tile. The two callers that
+        resolve once per RUN do the announcing — ``fit_tiled`` (above) and the
+        standalone worker (``TestSingleTileWorkerFloor``) — and both hand
+        ``fit_tile`` a concrete number afterwards.
+        """
+        import luxar.gsplats.fit_tiled_gsplats as ftg
+
+        volume = _skewed_pedestal_volume()
+        records: list = []
+        monkeypatch.setattr(ftg, "fit_gaussian_splats", _recording_stub(records))
+        specs = compute_tile_specs(volume.shape, 48, 16)
+        capsys.readouterr()
+        ftg.fit_tile(
+            volume,
+            specs[0],
+            floor="auto",
+            verbose=True,
+            _denoise_h=_D_H,
+            _denoise_params=_d_params(volume),
+        )
+
+        out = capsys.readouterr().out
+        assert "Resolved whole-volume background floor" not in out
+        assert "DENOISED basis" not in out
+
+    def test_the_standalone_worker_announces_only_with_denoise_on(
+        self, monkeypatch, capsys
+    ) -> None:
+        """The ``--tile k/M`` worker's own new line, and only where it is new.
+
+        With ``--denoise`` on it resolves a level nothing else in its log shows,
+        so it says which basis that level came from. With ``--denoise`` off there
+        is nothing new to report and its log stays as it was — which also matters
+        because ``build_worker_cmd`` hardcodes ``--quiet`` and the parent discards
+        a successful worker's stdout, so this line is for a human running one
+        worker by hand, not for a fleet.
+        """
+        import luxar.gsplats.fit_tiled_gsplats as ftg
+        from luxar.cli.gsplat_ops.fitting.fit_utils import fit_single_tile
+
+        volume = _skewed_pedestal_volume()
+        records: list = []
+        monkeypatch.setattr(ftg, "fit_gaussian_splats", _recording_stub(records))
+
+        capsys.readouterr()
+        fit_single_tile(
+            _single_tile_ctx("0/4"),
+            volume,
+            {"floor": "auto", "verbose": True},
+            None,
+        )
+        out = capsys.readouterr().out
+        assert "DENOISED basis" not in out
+        # Both lines, not just the denoised one: with denoise off the wrapper
+        # delegates to `resolve_volume_floor`, so an ungated `verbose=` shows up as
+        # the plain "Resolved whole-volume background floor" line instead.
+        assert "Resolved whole-volume background floor" not in out
+
+        fit_single_tile(
+            _single_tile_ctx("0/4"),
+            volume,
+            {
+                "floor": "auto",
+                "verbose": True,
+                "_denoise_h": _D_H,
+                "_denoise_params": _d_params(volume),
+            },
+            None,
+        )
+        assert "DENOISED basis" in capsys.readouterr().out
 
 
 class TestGridBspTree:
