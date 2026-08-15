@@ -164,6 +164,14 @@ class FitConfig:
     # pedestal is clipped to 0 before fitting. "auto" | "none" | "pN" | float.
     floor: str | float | None = "auto"
 
+    # Explicit (image_min, image_max) for normalization, overriding the values
+    # `norm_percentile` would derive from THIS array. Set by the tiled fitter to
+    # a level resolved against the WHOLE volume, so every tile maps the same
+    # physical intensity to the same normalized value — the amplitude-scale
+    # counterpart of the globally-resolved `floor`. Leave None for a
+    # whole-volume fit, where the array already IS the volume.
+    norm_range: Optional[tuple[float, float]] = None
+
     # Metal acceleration (with defaults - must come after required fields)
     use_metal: bool = True  # Enable Metal acceleration when available (macOS + MPS)
     metal_intensity_floor: float = 1e-5  # Early culling threshold for Metal kernels

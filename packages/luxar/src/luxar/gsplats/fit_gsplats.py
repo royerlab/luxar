@@ -109,6 +109,7 @@ class GaussianSplatFitter:
         seeds: Optional[np.ndarray | int | float | GSplatData] = None,
         norm_percentile: float = 0.0,
         floor: "str | float | None" = "auto",
+        norm_range: "tuple[float, float] | None" = None,
         downscale: Optional[int | Sequence[int]] = None,
         init_sigma_vox: Optional[float] = None,
         n_iters: int = 1000,
@@ -192,6 +193,7 @@ class GaussianSplatFitter:
             seed_amps_background_relative=seed_amps_background_relative,
             norm_percentile=norm_percentile,
             floor=floor,
+            norm_range=norm_range,
             downscale=downscale,
             init_sigma_vox=init_sigma_vox,
             n_iters=n_iters,
@@ -270,6 +272,7 @@ def fit_gaussian_splats(
     seeds: Optional[np.ndarray | int | float | GSplatData] = None,
     norm_percentile: float = 0.0,
     floor: "str | float | None" = "auto",
+    norm_range: "tuple[float, float] | None" = None,
     downscale: Optional[int | Sequence[int]] = None,
     init_sigma_vox: Optional[float] = None,
     n_iters: int = 1000,
@@ -384,6 +387,18 @@ def fit_gaussian_splats(
         - "none" / 0 / None: disabled (today's hard-min normalization).
 
         Orthogonal to ``norm_percentile`` (which still governs image_max).
+    norm_range : tuple of float, or None, default=None
+        Explicit ``(image_min, image_max)`` for normalization, replacing the
+        pair ``norm_percentile`` would derive from ``V`` itself. Tiled fitting
+        passes a range resolved against the WHOLE volume
+        (:func:`~luxar.gsplats.fitting.preprocessing.resolve_volume_norm_range`)
+        so every tile maps a given physical intensity to the same normalized
+        value, and is therefore held to the same absolute convergence tolerance
+        and thresholds. Must be finite with ``image_max > image_min``. Because
+        such a range is a bounded-sample estimate, a voxel above ``image_max``
+        is left unclipped when ``norm_percentile == 0`` (and the auto ``amp_max``
+        rises with it), rather than flattening the brightest structure. Leave
+        None for a whole-volume fit — the array already IS the volume.
     downscale : int, sequence of int, or None, default=None
         Downsample the volume by integer factor(s) before fitting.
         Useful for band-limited data where high-frequency voxels contain only noise.
@@ -638,6 +653,7 @@ def fit_gaussian_splats(
             seed_amps_background_relative=seed_amps_background_relative,
             norm_percentile=norm_percentile,
             floor=floor,
+            norm_range=norm_range,
             downscale=downscale,
             init_sigma_vox=init_sigma_vox,
             n_iters=n_iters,

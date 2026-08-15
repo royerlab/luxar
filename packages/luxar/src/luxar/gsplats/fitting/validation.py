@@ -52,6 +52,30 @@ def _validate_floor(floor: "str | float | None") -> None:
         raise ValueError(f"floor must be >= 0, got {value}")
 
 
+def _validate_norm_range(norm_range: "tuple[float, float] | None") -> None:
+    """Validate a supplied ``(image_min, image_max)`` normalization range.
+
+    A degenerate or reversed range is otherwise silent: ``image_max ==
+    image_min`` lands in ``_normalize_data``'s "nearly uniform" branch, which
+    replaces the whole array with 0.5, and ``image_max < image_min`` normalizes
+    every voxel negative and clips it to zero. Both fit successfully and return
+    nonsense.
+    """
+    if norm_range is None:
+        return
+    if len(norm_range) != 2:
+        raise ValueError(
+            f"norm_range must be an (image_min, image_max) pair, got {norm_range!r}"
+        )
+    lo, hi = float(norm_range[0]), float(norm_range[1])
+    if not (math.isfinite(lo) and math.isfinite(hi)):
+        raise ValueError(f"norm_range values must be finite, got {norm_range!r}")
+    if hi <= lo:
+        raise ValueError(
+            f"norm_range must satisfy image_max > image_min, got {norm_range!r}"
+        )
+
+
 def _explicit_dtype_name(source_dtype: Any) -> Optional[str]:
     """Normalize an EXPLICIT ``source_dtype`` argument to a dtype name, or None.
 
@@ -119,6 +143,7 @@ def prepare_fit_config(
     seeds: Optional[np.ndarray | int | float | GSplatData] = None,
     norm_percentile: float = 0.0,
     floor: "str | float | None" = "auto",
+    norm_range: "tuple[float, float] | None" = None,
     downscale: Optional[int | Sequence[int]] = None,
     init_sigma_vox: Optional[float] = None,
     n_iters: int = 1000,
@@ -326,6 +351,8 @@ def prepare_fit_config(
     if amp_max is not None and amp_max <= 0:
         raise ValueError("amp_max must be positive if specified")
 
+    _validate_norm_range(norm_range)
+
     # Validate max_eccentricity
     if max_eccentricity is not None and max_eccentricity < 1.0:
         raise ValueError(
@@ -386,6 +413,7 @@ def prepare_fit_config(
         seed_kwargs=seed_kwargs,
         norm_percentile=norm_percentile,
         floor=floor,
+        norm_range=norm_range,
         init_sigma_vox=init_sigma_vox,
         sigma_min_diag=sigma_min_diag,
         sigma_max_diag=sigma_max_diag,
