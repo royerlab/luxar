@@ -238,6 +238,49 @@ def fit_tile(
     return result
 
 
+def _tiled_source_grid_stats(
+    volume_shape: tuple[int, ...],
+    source_shape: Optional[Sequence[int]],
+    source_dtype: Optional[str],
+    source_itemsize: Optional[int],
+) -> dict[str, Any]:
+    """Source-grid stamps for a MERGED tiled fit.
+
+    A tiled fit needs its own record because the per-tile stamps describe crops:
+    each tile is handed a sub-volume and honestly records that, so no tile knows
+    the grid the merged result stands for. (``GSplatData.concatenate`` drops tile
+    stats rather than promoting one, which is the only reason the merged result
+    was not already claiming a single tile's crop as its source.)
+
+    ``fitted_shape`` is the whole volume, not a tile: the tiles cover it, so the
+    grid the optimiser collectively saw is the volume itself.
+    """
+    from luxar.gsplats.fitting.validation import _explicit_source_shape
+
+    declared = _explicit_source_shape(source_shape)
+    dtype, itemsize = source_dtype, source_itemsize
+
+    shape = [int(x) for x in (declared if declared else volume_shape)]
+    voxels = int(np.prod(shape)) if shape else 0
+    out: dict[str, Any] = {
+        "source_shape": shape,
+        "source_voxels": voxels,
+    }
+    if dtype:
+        out["source_dtype"] = dtype
+    out.update(
+        {
+            "fitted_shape": [int(x) for x in volume_shape],
+            "fitted_voxels": int(np.prod(volume_shape)) if volume_shape else 0,
+        }
+    )
+    if declared:
+        out["source_declared"] = True
+    if itemsize:
+        out["source_bytes"] = voxels * int(itemsize)
+    return out
+
+
 def fit_tiled(
     volume: Any,
     tile_size: int | Sequence[int] = 256,
@@ -253,6 +296,11 @@ def fit_tiled(
     partition: bool = False,
     recipe: Optional[str] = None,
     recipe_params: "Optional[Any]" = None,
+    # Taken explicitly rather than left in **fit_kwargs: forwarded to the tiles
+    # they would declare the WHOLE acquisition as each crop's source. They
+    # describe the merged result, so the merge is where they are applied.
+    source_shape: Optional[Sequence[int]] = None,
+    source_dtype: Optional[str] = None,
     **fit_kwargs: Any,
 ) -> "Any":
     """Fit Gaussian splats to a large volume using tiled decomposition.
@@ -374,9 +422,18 @@ def fit_tiled(
                 results.append(tile_result)
 
     elapsed = time.perf_counter() - t0
+    # Resolved HERE, where the caller's array is still in hand: after the tiles
+    # are fitted only their crops remain, and the merge cannot recover the
+    # element type the volume was stored in.
+    from luxar.gsplats.fitting.validation import _resolve_source_dtype
+
+    merged_dtype, merged_itemsize = _resolve_source_dtype(volume, source_dtype)
     return merge_tile_results(
         results,
         volume_shape=volume_shape,
+        source_shape=source_shape,
+        source_dtype=merged_dtype,
+        source_itemsize=merged_itemsize,
         tile_size=tile_size,
         overlap=overlap,
         num_tiles=len(specs),
@@ -415,6 +472,9 @@ def merge_tile_results(
     recipe_params: "Optional[Any]" = None,
     applied_floor: "float | None" = None,
     grid_scale: "tuple[float, ...] | None" = None,
+    source_shape: Optional[Sequence[int]] = None,
+    source_dtype: Optional[str] = None,
+    source_itemsize: Optional[int] = None,
 ) -> "Any":
     """Merge per-tile fit results into a single (optionally multi-LOD) dataset.
 
@@ -572,6 +632,11 @@ def merge_tile_results(
             "applied_floor": applied_floor,
         }
     )
+    merged.stats.update(
+        _tiled_source_grid_stats(
+            volume_shape, source_shape, source_dtype, source_itemsize
+        )
+    )
 
     if verbose:
         lod_info = f", {merged.n_additive_sublods} LODs" if has_lods else ""
@@ -589,6 +654,12 @@ def merge_tile_results(
                 f"Post-fit culling: {n_before} -> {merged.n_splats} splats "
                 f"(retained {cull_retention * 100:.0f}% of amplitude)"
             )
+
+    # Density counts the splats actually DELIVERED, so it is set after the cull
+    # above rather than beside the other source-grid stamps.
+    fitted_voxels = merged.stats.get("fitted_voxels")
+    if fitted_voxels and merged.n_splats:
+        merged.stats["voxels_per_splat"] = float(fitted_voxels / merged.n_splats)
 
     return merged
 

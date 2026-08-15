@@ -451,3 +451,58 @@ def test_progressive_density_counts_the_splats_actually_delivered() -> None:
     assert n > 0
     expected = result.stats["fitted_voxels"] / n
     assert result.stats["voxels_per_splat"] == pytest.approx(expected)
+
+
+# ── The tiled fitter is a THIRD producer, and its tiles see only crops ────────
+#
+# Each tile honestly records the sub-volume it was handed, so no tile knows the
+# grid the merged result stands for. `GSplatData.concatenate` drops tile stats
+# rather than promoting one, which is the only reason the merged result was not
+# already publishing a single tile's crop as its source.
+
+
+def _fit_tiled_small(V, **kw):
+    from luxar.gsplats import fit_tiled
+
+    return fit_tiled(
+        V,
+        tile_size=16,
+        overlap=2,
+        seeds=40,
+        n_iters=10,
+        device="cpu",
+        verbose=False,
+        **kw,
+    )
+
+
+def test_tiled_fit_records_the_whole_volume_not_a_tile() -> None:
+    V = _sparse_blobs(shape=(32, 32, 32), n=12)
+    stats = _fit_tiled_small(V).stats
+    assert stats["source_shape"] == [32, 32, 32], (
+        "recorded a tile's crop, not the volume"
+    )
+    assert stats["fitted_shape"] == [32, 32, 32]
+    assert stats["source_dtype"] == "uint16"
+    assert stats["source_bytes"] == 32**3 * 2
+    assert "source_declared" not in stats
+
+
+def test_tiled_fit_honours_a_declared_source_grid() -> None:
+    stats = _fit_tiled_small(
+        _sparse_blobs(shape=(32, 32, 32), n=12),
+        source_shape=(64, 64, 64),
+        source_dtype="uint16",
+    ).stats
+    assert stats["source_shape"] == [64, 64, 64]
+    assert stats["source_bytes"] == 64**3 * 2
+    assert stats["source_declared"] is True
+    # The tiles still collectively covered the volume they were given.
+    assert stats["fitted_shape"] == [32, 32, 32]
+
+
+def test_tiled_density_counts_the_splats_actually_delivered() -> None:
+    result = _fit_tiled_small(_sparse_blobs(shape=(32, 32, 32), n=12))
+    assert result.n_splats > 0
+    expected = result.stats["fitted_voxels"] / result.n_splats
+    assert result.stats["voxels_per_splat"] == pytest.approx(expected)
