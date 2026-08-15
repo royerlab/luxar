@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * The wiring between the mesh commit and the depth-sort coordinator.
  *

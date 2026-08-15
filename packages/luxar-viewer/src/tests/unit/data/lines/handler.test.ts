@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Smoke tests for the Lines handler — mirrors points/handler.test.ts
  * and gsplats/handler.test.ts so all geometry handlers share the same
