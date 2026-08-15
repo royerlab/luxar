@@ -342,7 +342,14 @@ class ViewerConfig:
     # macOS, false elsewhere) and persists the user's choice per-scene.
     natural_drag: Optional[bool] = None
 
-    # Cinematic effects
+    # Cinematic effects. `cinematic_mode=True` is not just a checkbox: the
+    # viewer expands the full preset (ACES tone mapping, subtle wide bloom,
+    # detector noise, vignette, 35 mm chromatic lens + FOV) for every field
+    # this config does NOT set explicitly, so a scene can enable the look and
+    # still override individual fields (e.g. `bloom_strength`) on top of it.
+    # The 35 mm field of view (63°) is wider than the viewer's default framing,
+    # and `camera.fov` / `camera.fov_preset` count as ONE unit: pin either of
+    # them and the preset leaves both alone, so a composed framing survives.
     cinematic_mode: Optional[bool] = None
     vignette_enabled: Optional[bool] = None
     vignette_darkness: Optional[float] = None

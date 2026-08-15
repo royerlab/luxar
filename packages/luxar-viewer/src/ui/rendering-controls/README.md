@@ -13,7 +13,7 @@ rendering-controls/
 ├── sync-current-state.ts      # syncCurrentState — pull live state ← subsystems → GUI
 ├── settings-persistence.ts    # localStorage save/load + base & reset defaults builders
 ├── controls-utils.ts          # Pure: validate / clamp / serialize / merge / impact-score
-├── cinematic-mode.ts          # CinematicModeController — film-look preset (snapshot/restore)
+├── cinematic-mode.ts          # CinematicModeController — film-look preset (snapshot/restore); values live in config/cinematic-preset.ts
 ├── clipping-display.ts        # ClippingDisplay — RAF loop showing live near/far when dynamic
 ├── focus-manager.ts           # FocusManager — outside-click blur + canvas refocus
 ├── fov-utils.ts               # Pure: 35mm focal-length ↔ FOV conversions
@@ -68,7 +68,7 @@ Pure utility functions extracted for testability — no external dependencies be
 
 ### `cinematic-mode.ts`
 
-`CinematicModeController` owns the Cinematic-Mode preset (C-key toggle):
+`CinematicModeController` owns the Cinematic-Mode preset (C-key toggle). The preset VALUES themselves (`buildCinematicValues`, `CINEMATIC_SNAPSHOT_KEYS`, `CinematicSnapshot`) live in [`../../config/cinematic-preset.ts`](../../config/cinematic-preset.ts), because the zarr config bridge expands `viewer_config.cinematic_mode` from the same source and must not import from `ui/`; this module re-exports `buildCinematicValues` and the two types for its existing importers.
 
 - **Enable** snapshots the affected `RenderingSettings` keys (tone mapping, bloom, detector noise, vignette, chromatic lens distortion, FOV, FOV preset) and applies cinematic values: ACES tone mapping, bloom on as a subtle wide glow (threshold `0.01`, strength `0.05`, radius `1.0`, 8 mipmap levels), low detector noise (readout/photon/FPN), vignette on, the `35mm` lens-distortion preset, and 35 mm FOV.
 - **Disable** restores from the snapshot, dirty-checked per key (a key is only restored if it still holds the cinematic value — user edits are preserved). If no snapshot exists (panel loaded with cinematic already on), falls back to `50mm Normal` defaults and the default bloom settings.
