@@ -2,10 +2,18 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Any
+
 import numpy as np
 import pytest
 
 from luxar.gsplats.tiling import compute_tile_specs, cosine_window
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from luxar.gsplats.gsplat_data import GSplatData
+    from luxar.gsplats.tiling import TileSpec
 
 # Fitting tests require torch
 try:
@@ -1483,6 +1491,16 @@ class TestGridBspTreeScale:
         with pytest.raises(ValueError, match="scale has length 2"):
             grid_bsp_tree(specs, scale=(4, 4))
 
+    @pytest.mark.parametrize("bad", [(0, 1, 1), (1, -2, 1), (1, 1, 0.0)])
+    def test_a_non_positive_scale_is_refused(self, bad: tuple[float, ...]) -> None:
+        """A 0 collapses every plane onto the origin and a negative one mirrors
+        the frame — both would emit a tree that orders the parts wrongly."""
+        from luxar.gsplats.tiling import grid_bsp_tree
+
+        specs = compute_tile_specs((25, 20, 20), 10, 2)
+        with pytest.raises(ValueError, match="strictly positive"):
+            grid_bsp_tree(specs, scale=bad)
+
     @staticmethod
     def _labels_of(node: dict) -> list[int]:
         if "part" in node:
@@ -1492,8 +1510,69 @@ class TestGridBspTreeScale:
         ) + TestGridBspTreeScale._labels_of(node["right"])
 
 
-def _core_region(spec, factors: tuple[int, ...], n: int, seed: int):
-    """``n`` splats inside ``spec``'s CORE, in FULL-RESOLUTION coordinates.
+class TestResolveGridScale:
+    """``resolve_grid_scale`` composes the two terms that move the splats.
+
+    The tile grid is always in voxels of the array that was tiled; ``--downscale``
+    and a real-space ``voxel_size`` each move the SPLATS relative to it, and a
+    downscaled parallel fit with a ``voxel_size`` applies both (#1587).
+    """
+
+    def test_no_terms_means_no_scale(self) -> None:
+        from luxar.gsplats.tiling import resolve_grid_scale
+
+        assert resolve_grid_scale(3) is None
+        # Explicit no-ops are still no-ops (so the caller passes None onward).
+        assert resolve_grid_scale(3, downscale_factors=(1, 1, 1)) is None
+        assert resolve_grid_scale(3, voxel_size=1.0) is None
+
+    def test_downscale_only(self) -> None:
+        from luxar.gsplats.tiling import resolve_grid_scale
+
+        assert resolve_grid_scale(3, downscale_factors=(1, 2, 4)) == (1.0, 2.0, 4.0)
+
+    def test_voxel_size_only(self) -> None:
+        from luxar.gsplats.tiling import resolve_grid_scale
+
+        assert resolve_grid_scale(3, voxel_size=(4.0, 1.0, 1.0)) == (4.0, 1.0, 1.0)
+        # A scalar broadcasts, like everywhere else voxel_size is accepted.
+        assert resolve_grid_scale(3, voxel_size=2.5) == (2.5, 2.5, 2.5)
+
+    def test_the_two_terms_multiply(self) -> None:
+        """The parallel worker emits ``voxel_size * f * origin``, so only the
+        PRODUCT puts the planes back on the parts."""
+        from luxar.gsplats.tiling import resolve_grid_scale
+
+        assert resolve_grid_scale(
+            3, downscale_factors=(2, 2, 2), voxel_size=(4.0, 1.0, 1.0)
+        ) == (8.0, 2.0, 2.0)
+
+    def test_voxel_output_space_drops_the_voxel_size_term(self) -> None:
+        """With ``output_space="voxel"`` the centers stay in voxels, so applying
+        the spacing would move the planes OFF the parts."""
+        from luxar.gsplats.tiling import resolve_grid_scale
+
+        assert (
+            resolve_grid_scale(3, voxel_size=(4.0, 1.0, 1.0), output_space="voxel")
+            is None
+        )
+        # ...but the downscale term is unconditional — the worker rescales
+        # its centers whatever space they are expressed in.
+        assert resolve_grid_scale(
+            3,
+            downscale_factors=(2, 2, 2),
+            voxel_size=(4.0, 1.0, 1.0),
+            output_space="voxel",
+        ) == (2.0, 2.0, 2.0)
+
+
+def _core_region(
+    spec: "TileSpec", factors: tuple[float, ...], n: int, seed: int
+) -> "GSplatData":
+    """``n`` splats inside ``spec``'s CORE, in the SPLATS' own frame.
+
+    ``factors`` maps the spec's voxel frame onto that frame — the same product
+    of downscale and voxel size :func:`resolve_grid_scale` builds.
 
     The core is the tile minus its overlap band, so the synthetic parts are
     genuinely disjoint and an exact separating plane must exist — which is what
@@ -1532,24 +1611,31 @@ class TestDownscaledPartitionPlanes:
 
     The parallel tiled path hands in a grid computed on the downscaled shape
     while its workers write splats already rescaled to full resolution. Without
-    ``downscale_factors`` every plane is a factor too small and no longer lies
-    between the parts it separates (#1587).
+    ``grid_scale`` every plane is a factor too small and no longer lies between
+    the parts it separates (#1587).
     """
 
-    FACTORS = (4, 4, 4)
+    FACTORS = (4.0, 4.0, 4.0)
     GRID_SHAPE = (24, 24, 24)  # the post-downscale shape the parent computes
     TILE_SIZE = 16
     OVERLAP = 4
 
-    def _specs(self):
+    def _specs(self) -> "list[TileSpec]":
         return compute_tile_specs(self.GRID_SHAPE, self.TILE_SIZE, self.OVERLAP)
 
-    def _merge(self, downscale_factors):
+    def _merge(
+        self,
+        grid_scale: "tuple[float, ...] | None",
+        splat_factors: "tuple[float, ...] | None" = None,
+    ) -> "Any":
+        """Merge synthetic tiles placed at ``splat_factors`` (default: FACTORS)
+        with the planes scaled by ``grid_scale``."""
         from luxar.gsplats.fit_tiled_gsplats import merge_tile_results
 
         specs = self._specs()
         assert len(specs) > 1
-        results = [_core_region(s, self.FACTORS, 6, 100 + s.index) for s in specs]
+        factors = self.FACTORS if splat_factors is None else splat_factors
+        results = [_core_region(s, factors, 6, 100 + s.index) for s in specs]
         return merge_tile_results(
             results,
             volume_shape=self.GRID_SHAPE,
@@ -1561,7 +1647,7 @@ class TestDownscaledPartitionPlanes:
             elapsed=0.0,
             verbose=False,
             partition=True,
-            downscale_factors=downscale_factors,
+            grid_scale=grid_scale,
         )
 
     @staticmethod
@@ -1609,6 +1695,31 @@ class TestDownscaledPartitionPlanes:
         assert len(centers) == len(self._specs())
         assert self._separation_failures(node.bsp_tree, centers) == []
 
+    def test_a_downscale_and_a_voxel_size_compose(self) -> None:
+        """A downscaled parallel fit with a ``voxel_size`` applies BOTH factors
+        to its splats, so only their product separates the parts (#1587)."""
+        from luxar.gsplats.tiling import resolve_grid_scale
+
+        downscale = (2, 2, 2)
+        voxel_size = (4.0, 1.0, 1.0)
+        combined = resolve_grid_scale(
+            3, downscale_factors=downscale, voxel_size=voxel_size
+        )
+        assert combined == (8.0, 2.0, 2.0)
+
+        good = self._merge(combined, splat_factors=combined)
+        assert good.bsp_tree is not None
+        assert self._separation_failures(good.bsp_tree, self._part_centers(good)) == []
+
+        # Either term ALONE leaves every plane in the wrong frame.
+        for partial in (tuple(float(f) for f in downscale), voxel_size):
+            half = self._merge(partial, splat_factors=combined)
+            assert half.bsp_tree is not None
+            failures = self._separation_failures(
+                half.bsp_tree, self._part_centers(half)
+            )
+            assert failures, f"scale={partial} should not separate the parts"
+
     def test_omitting_the_factors_misplaces_every_plane(self) -> None:
         """The regression guard: the un-threaded tree is in the wrong frame."""
         good = self._merge(self.FACTORS)
@@ -1626,3 +1737,191 @@ class TestDownscaledPartitionPlanes:
         # ...and consequently separates nothing.
         failures = self._separation_failures(bad.bsp_tree, self._part_centers(bad))
         assert len(failures) == len(bad_splits), failures
+
+
+@pytest.mark.skipif(not HAS_TORCH, reason="torch not available")
+class TestParallelTiledGridScaleThreading:
+    """``fit_tiled_parallel`` must FORWARD its ``grid_scale`` to the merge.
+
+    The dispatcher resolves the factor and ``merge_tile_results`` consumes it,
+    but the hop between them is a plain keyword: dropping it reintroduces #1587
+    one frame later, with both endpoints still passing their own tests. This
+    drives the real orchestrator through its ``worker_cmd_builder`` seam, with
+    the subprocess launch replaced by an in-process fake that writes each tile's
+    store directly — no torch fitting, no child processes, so it runs in the
+    default (``-m "not slow"``) gate.
+    """
+
+    GRID_SHAPE = (24, 12, 12)  # 2 tiles on axis 0 -> exactly one split plane
+    TILE_SIZE = 16
+    OVERLAP = 4
+    # What a `--downscale 2` fit with `voxel_size=(4, 1, 1)` puts on the splats.
+    SCALE = (8.0, 2.0, 2.0)
+
+    def _specs(self) -> "list[TileSpec]":
+        return compute_tile_specs(self.GRID_SHAPE, self.TILE_SIZE, self.OVERLAP)
+
+    def _run(
+        self,
+        tmp_path: "Path",
+        monkeypatch: pytest.MonkeyPatch,
+        grid_scale: "tuple[float, ...] | None",
+    ) -> "Any":
+        import subprocess
+
+        from luxar.gsplats.fit_tiled_parallel import fit_tiled_parallel
+
+        specs = self._specs()
+        assert len(specs) == 2
+
+        def _fake_run(cmd: "list[str]", **kwargs: "Any") -> "Any":
+            # Stand in for the `fit --tile i/M` worker: write the tile's splats
+            # in the SPLATS' frame (already rescaled / in physical units), which
+            # is exactly what the real worker does before exiting 0.
+            index, out_path = int(cmd[1]), cmd[2]
+            _core_region(specs[index], self.SCALE, 6, 100 + index).save(out_path)
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+
+        monkeypatch.setattr(
+            "luxar.gsplats.fit_tiled_parallel.subprocess.run", _fake_run
+        )
+        return fit_tiled_parallel(
+            num_tiles=len(specs),
+            jobs=1,
+            tmp_dir=tmp_path / "tiles",
+            worker_cmd_builder=lambda i, m, p: ["worker", str(i), str(p)],
+            volume_shape=self.GRID_SHAPE,
+            tile_size=self.TILE_SIZE,
+            overlap=self.OVERLAP,
+            progressive=False,
+            cull_retention=None,
+            verbose=False,
+            partition=True,
+            grid_scale=grid_scale,
+        )
+
+    def test_the_scale_reaches_the_split_planes(
+        self, tmp_path: "Path", monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        node = self._run(tmp_path, monkeypatch, self.SCALE)
+        assert node.bsp_tree is not None
+        centers = TestDownscaledPartitionPlanes._part_centers(node)
+        assert (
+            TestDownscaledPartitionPlanes._separation_failures(node.bsp_tree, centers)
+            == []
+        )
+
+    def test_without_the_scale_the_planes_separate_nothing(
+        self, tmp_path: "Path", monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Non-vacuity control: the assertion above is only a guard because the
+        un-scaled tree genuinely fails it."""
+        node = self._run(tmp_path, monkeypatch, None)
+        assert node.bsp_tree is not None
+        centers = TestDownscaledPartitionPlanes._part_centers(node)
+        assert TestDownscaledPartitionPlanes._separation_failures(
+            node.bsp_tree, centers
+        )
+
+
+@pytest.mark.skipif(not HAS_TORCH, reason="torch not available")
+class TestVoxelSizePartitionPlanes:
+    """A real ``fit_tiled`` partition with a ``voxel_size``: planes follow the splats.
+
+    The second, independent term of the #1587 frame mismatch, and the one that
+    needs no ``--downscale`` at all: the tile grid is in VOXELS while
+    ``output_space="real"`` (the CLI default) offsets every tile's splats by
+    ``origin * voxel_size``. This runs the SEQUENTIAL path end to end, so it
+    covers the resolution inside ``fit_tiled`` and not just the merge keyword.
+    """
+
+    VOXEL_SIZE = (4.0, 1.0, 1.0)
+
+    @pytest.fixture(scope="class")
+    def fits(self) -> "dict[str, Any]":
+        """The three fits this class compares, run once (each is a real fit).
+
+        A 2-tile grid on axis 0 — the axis ``VOXEL_SIZE`` scales — keeps the
+        cost of a real fit inside the default gate.
+        """
+        from luxar.gsplats.fit_tiled_gsplats import fit_tiled
+
+        rng = np.random.RandomState(3)
+        volume = rng.random_sample((24, 12, 12)).astype(np.float32)
+
+        def run(**kwargs: "Any") -> "Any":
+            return fit_tiled(
+                volume,
+                tile_size=16,
+                overlap=4,
+                partition=True,
+                seeds=8,
+                n_iters=10,
+                floor="none",
+                cull_retention=None,
+                verbose=False,
+                **kwargs,
+            )
+
+        return {
+            "real": run(voxel_size=self.VOXEL_SIZE, output_space="real"),
+            "voxel": run(voxel_size=self.VOXEL_SIZE, output_space="voxel"),
+            "plain": run(voxel_size=None),
+        }
+
+    @staticmethod
+    def _plane_is_between_its_sides(node: "Any") -> "list[str]":
+        """Internal nodes whose plane does NOT sit between the two sides' splats.
+
+        Weaker than exact separation — apodized tiles overlap, so a few splats
+        legitimately cross — but it is exactly what the frame mismatch breaks:
+        a plane stated in voxels while the splats are physical lands below the
+        whole object on the scaled axis.
+        """
+        centers = TestDownscaledPartitionPlanes._part_centers(node)
+        bad: "list[str]" = []
+
+        def walk(sub: dict) -> None:
+            if "part" in sub:
+                return
+            axis, split = int(sub["axis"]), float(sub["split"])
+            leaves = TestDownscaledPartitionPlanes._leaf_parts
+            left = np.concatenate([centers[i][:, axis] for i in leaves(sub["left"])])
+            right = np.concatenate([centers[i][:, axis] for i in leaves(sub["right"])])
+            if not (float(left.mean()) <= split <= float(right.mean())):
+                bad.append(
+                    f"axis={axis} split={split} left.mean={left.mean()} "
+                    f"right.mean={right.mean()}"
+                )
+            walk(sub["left"])
+            walk(sub["right"])
+
+        walk(node.bsp_tree)
+        return bad
+
+    def test_planes_are_stated_in_physical_units(self, fits: "dict[str, Any]") -> None:
+        node = fits["real"]
+        assert node.bsp_tree is not None
+        # The scaled axis really is scaled: the axis-0 planes are ~4x the
+        # voxel-frame ones the same grid would give.
+        plain = fits["plain"]
+        scaled_splits = TestGridBspTreeScale._splits(node.bsp_tree)
+        plain_splits = TestGridBspTreeScale._splits(plain.bsp_tree)
+        assert len(scaled_splits) == len(plain_splits) > 0
+        for (ax_s, s_s), (ax_p, s_p) in zip(scaled_splits, plain_splits):
+            assert ax_s == ax_p
+            assert s_s == pytest.approx(self.VOXEL_SIZE[ax_s] * s_p)
+        # ...and every plane lands between the parts it separates.
+        assert self._plane_is_between_its_sides(node) == []
+
+    def test_voxel_output_space_keeps_the_planes_in_voxels(
+        self, fits: "dict[str, Any]"
+    ) -> None:
+        """``output_space="voxel"`` leaves the centers in voxels, so the planes
+        must NOT pick up the spacing."""
+        voxelled = fits["voxel"]
+        plain = fits["plain"]
+        assert TestGridBspTreeScale._splits(
+            voxelled.bsp_tree
+        ) == TestGridBspTreeScale._splits(plain.bsp_tree)
+        assert self._plane_is_between_its_sides(voxelled) == []

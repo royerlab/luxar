@@ -193,6 +193,85 @@ def compute_tile_specs(
     return specs
 
 
+def resolve_grid_scale(
+    ndim: int,
+    *,
+    downscale_factors: Sequence[int] | None = None,
+    voxel_size: Sequence[float] | float | None = None,
+    output_space: str = "real",
+) -> tuple[float, ...] | None:
+    """Combine the two factors that separate the tile grid's frame from the splats'.
+
+    :func:`compute_tile_specs` works in VOXELS of the array that was tiled, but
+    the fitted splats need not live in that frame (issue #1587), for two
+    independent and MULTIPLICATIVE reasons:
+
+    * ``--downscale``: the grid is computed on the decimated shape while each
+      worker rescales its splats back to full resolution, so a tile origin
+      ``o`` lands at ``o * f``.
+    * ``voxel_size`` with ``output_space="real"``: the fit emits physical
+      coordinates, so a tile origin ``o`` lands at ``o * voxel_size``.
+
+    Both at once (a downscaled parallel fit with a ``voxel_size`` from
+    ``--config``) gives ``o * f * voxel_size``, which is why one combined
+    factor is resolved here rather than each caller applying its own.
+
+    Parameters
+    ----------
+    ndim : int
+        Number of dimensions of the tiled array (the length of the result).
+    downscale_factors : sequence of int, optional
+        Per-axis ``--downscale`` factors the grid was decimated by, or ``None``
+        when the grid is at full resolution. A scalar is broadcast.
+    voxel_size : float or sequence of float, optional
+        Physical voxel spacing the fit was given. A scalar is broadcast;
+        ``None`` means unit spacing.
+    output_space : str, default "real"
+        The fit's output space. The ``voxel_size`` term applies only for
+        ``"real"`` — with ``"voxel"`` the centers stay in voxel coordinates and
+        multiplying by the spacing would move the planes off the parts.
+
+    Returns
+    -------
+    tuple of float or None
+        Per-axis factor for :func:`grid_bsp_tree`'s ``scale``, or ``None`` when
+        every factor is 1 (the two frames already agree).
+    """
+    factors = np.ones(ndim, dtype=np.float64)
+    if downscale_factors is not None:
+        factors *= np.broadcast_to(
+            np.asarray(downscale_factors, dtype=np.float64), (ndim,)
+        )
+    if output_space == "real" and voxel_size is not None:
+        factors *= np.broadcast_to(np.asarray(voxel_size, dtype=np.float64), (ndim,))
+    if np.all(factors == 1.0):
+        return None
+    return tuple(float(f) for f in factors)
+
+
+def _validated_scale(scale: Sequence[float] | None, ndim: int) -> tuple[float, ...]:
+    """``scale`` as a per-axis float tuple, or all-ones for ``None``.
+
+    Raises
+    ------
+    ValueError
+        On a wrong length, or a non-positive entry: a ``0`` collapses every
+        plane onto the origin and a negative factor mirrors the frame, so the
+        tree would order the parts backwards. Neither can be meant, so refuse
+        rather than emit a silently useless tree.
+    """
+    if scale is None:
+        return (1.0,) * ndim
+    factors = tuple(float(f) for f in scale)
+    if len(factors) != ndim:
+        raise ValueError(
+            f"scale has length {len(factors)} but the tile grid has {ndim} dimensions"
+        )
+    if any(f <= 0.0 for f in factors):
+        raise ValueError(f"scale entries must be strictly positive, got {factors}")
+    return factors
+
+
 def grid_bsp_tree(
     specs: Sequence[TileSpec], *, scale: Sequence[float] | None = None
 ) -> dict | None:
@@ -223,22 +302,33 @@ def grid_bsp_tree(
     specs : sequence of TileSpec
         A full grid as returned by :func:`compute_tile_specs`.
     scale : sequence of float, optional
-        Per-axis factor mapping the specs' voxel frame onto the frame the
+        Per-axis factor mapping the specs' VOXEL frame onto the frame the
         SPLATS live in. ``None`` (the default) means the two frames agree.
+        Every entry must be strictly positive: ``0`` would collapse the planes
+        onto the origin and a negative factor would mirror the ordering the
+        tree encodes. Use :func:`resolve_grid_scale` to build it.
 
-        This exists for ``--downscale`` (issue #1587). The parallel tiled path
-        deliberately computes its grid on the POST-downscale shape — that is how
-        the parent and its ``fit --tile i/M`` workers agree on the tile count M
-        — while each worker rescales its own splats back to full resolution
-        before writing. Without a factor here, every plane of the resulting
-        ``kind=partition`` would be off by the downscale factor and would no
-        longer lie between the parts it separates, so the viewer's back-to-front
-        part ordering (#1555) would be computed against nonsense. Passing the
-        resolved downscale factors maps a tile spanning
-        ``[origin[d], origin[d] + shape[d])`` to
+        Two independent terms can put the splats in a different frame from the
+        grid, and they COMPOSE (issue #1587):
+
+        * ``--downscale``. The parallel tiled path deliberately computes its
+          grid on the POST-downscale shape — that is how the parent and its
+          ``fit --tile i/M`` workers agree on the tile count M — while each
+          worker rescales its own splats back to full resolution before
+          writing.
+        * ``voxel_size`` with ``output_space="real"``. The specs are voxel
+          coordinates, but a fit asked for real-space output emits centers in
+          physical units (see :func:`~luxar.gsplats.fit_tiled_gsplats.fit_tile`,
+          which offsets a tile by ``origin * voxel_size``).
+
+        Without a factor here, every plane of the resulting ``kind=partition``
+        would be a factor too small and would no longer lie between the parts it
+        separates, so the viewer's back-to-front part ordering (#1555) would be
+        computed against nonsense. Passing the resolved factors maps a tile
+        spanning ``[origin[d], origin[d] + shape[d])`` to
         ``[origin[d] * f[d], (origin[d] + shape[d]) * f[d])``, which is exactly
         the convention :func:`~luxar.gsplats.fitting.downscale.rescale_centers`
-        applies to the centers.
+        (and the ``origin * voxel_size`` offset) applies to the centers.
 
     Returns
     -------
@@ -250,21 +340,14 @@ def grid_bsp_tree(
     Raises
     ------
     ValueError
-        If ``scale`` is given with a length other than the grid's ndim.
+        If ``scale`` is given with a length other than the grid's ndim, or with
+        a non-positive entry.
     """
     if not specs:
         return None
 
     ndim = len(specs[0].grid_index)
-    if scale is None:
-        factors = (1.0,) * ndim
-    else:
-        factors = tuple(float(f) for f in scale)
-        if len(factors) != ndim:
-            raise ValueError(
-                f"scale has length {len(factors)} but the tile grid has "
-                f"{ndim} dimensions"
-            )
+    factors = _validated_scale(scale, ndim)
     n_cells = [max(s.grid_index[d] for s in specs) + 1 for d in range(ndim)]
     if any(n_cells[d] > 1 for d in range(3, ndim)):
         return None

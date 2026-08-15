@@ -243,7 +243,7 @@ def fit_tiled_parallel(
     partition: bool = False,
     recipe: Optional[str] = None,
     recipe_params: "Optional[Any]" = None,
-    downscale_factors: Optional[tuple[int, ...]] = None,
+    grid_scale: Optional[tuple[float, ...]] = None,
 ) -> "Any":  # GSplatData (flat) or a GSplatNode (partition)
     """Fit all tiles via concurrent worker subprocesses, then merge.
 
@@ -258,8 +258,8 @@ def fit_tiled_parallel(
     **not** rescale again; ``volume_shape`` here is the (post-downscale) shape,
     which is what the stats and the empty-result fallback want, and is also the
     shape the partition's split planes are computed on — so under ``--downscale``
-    the two frames disagree and ``downscale_factors`` must be supplied to
-    reconcile them (issue #1587).
+    (and/or a ``voxel_size`` with real-space output) the two frames disagree and
+    ``grid_scale`` must be supplied to reconcile them (issue #1587).
 
     Parameters
     ----------
@@ -277,12 +277,14 @@ def fit_tiled_parallel(
         Forwarded to :func:`merge_tile_results`.
     keep_tiles : bool, default False
         Keep the per-tile temp outputs after a successful merge.
-    downscale_factors : tuple of int, optional
-        The resolved ``--downscale`` factors ``volume_shape`` was decimated by,
-        or ``None`` when not downscaling.  Forwarded to
+    grid_scale : tuple of float, optional
+        Per-axis factor from the ``volume_shape`` grid's VOXEL frame to the
+        frame the workers write their splats in — the ``--downscale`` factors
+        times the ``voxel_size`` when the fit emits real-space centers, as
+        resolved by :func:`~luxar.gsplats.tiling.resolve_grid_scale`; ``None``
+        when the two frames already agree.  Forwarded to
         :func:`merge_tile_results`, where it lifts the partition's split planes
-        out of the downscaled grid frame into the workers' full-resolution
-        splat frame (#1587).  Nothing else consumes it.
+        into the workers' splat frame (#1587).  Nothing else consumes it.
 
     Returns
     -------
@@ -409,7 +411,7 @@ def fit_tiled_parallel(
         partition=partition,
         recipe=recipe,
         recipe_params=recipe_params,
-        downscale_factors=downscale_factors,
+        grid_scale=grid_scale,
     )
 
     if not keep_tiles:

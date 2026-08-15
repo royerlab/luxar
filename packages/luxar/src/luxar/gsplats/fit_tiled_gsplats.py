@@ -27,6 +27,7 @@ from luxar.gsplats.tiling import (
     compute_tile_specs,
     cosine_window,
     grid_bsp_tree,
+    resolve_grid_scale,
 )
 
 
@@ -387,6 +388,14 @@ def fit_tiled(
         recipe=recipe,
         recipe_params=recipe_params,
         applied_floor=applied_floor,
+        # The grid above is in voxels; with a voxel_size and real-space output
+        # every tile's splats were offset by `origin * voxel_size`, so the
+        # partition's split planes need the same factor (#1587).
+        grid_scale=resolve_grid_scale(
+            len(volume_shape),
+            voxel_size=voxel_size,
+            output_space=output_space,
+        ),
     )
 
 
@@ -405,7 +414,7 @@ def merge_tile_results(
     recipe: Optional[str] = None,
     recipe_params: "Optional[Any]" = None,
     applied_floor: "float | None" = None,
-    downscale_factors: "tuple[int, ...] | None" = None,
+    grid_scale: "tuple[float, ...] | None" = None,
 ) -> "Any":
     """Merge per-tile fit results into a single (optionally multi-LOD) dataset.
 
@@ -452,11 +461,13 @@ def merge_tile_results(
         stamped into the returned node's ``meta["applied_floor"]``
         (in-memory bookkeeping only — the tree writer does not persist this
         key).
-    downscale_factors : tuple of int or None, default None
-        Per-axis ``--downscale`` factors when ``volume_shape`` (and hence the
-        tile grid) is in DOWNSCALED voxels while ``results`` carry centers
-        already rescaled back to full resolution — the parallel tiled path
-        (issue #1587). Consumed only by the partition's split planes
+    grid_scale : tuple of float or None, default None
+        Per-axis factor mapping the tile grid's VOXEL frame (``volume_shape``,
+        ``tile_size``, ``overlap``) onto the frame ``results`` carry their
+        centers in — the product of the ``--downscale`` factors and, when the
+        fit emitted real-space output, the ``voxel_size`` (issue #1587). Build
+        it with :func:`~luxar.gsplats.tiling.resolve_grid_scale`. Consumed only
+        by the partition's split planes
         (:func:`~luxar.gsplats.tiling.grid_bsp_tree`), which would otherwise be
         a factor too small and would no longer separate the parts they label.
         ``None`` when the grid and the splats share one frame.
@@ -516,12 +527,12 @@ def merge_tile_results(
             # both callers guarantee by inserting a 0-splat placeholder for a tile
             # that fit nothing; a length mismatch means that no longer holds, so
             # drop the tree rather than mislabel it.
-            # `scale` lifts the (possibly downscaled) grid into the splats' own
-            # full-resolution frame — see `downscale_factors` above (#1587).
+            # `scale` lifts the (possibly downscaled) voxel grid into the
+            # splats' own frame — see `grid_scale` above (#1587).
             bsp_tree=(
                 grid_bsp_tree(
                     compute_tile_specs(volume_shape, tile_size, overlap),
-                    scale=downscale_factors,
+                    scale=grid_scale,
                 )
                 if len(results) == num_tiles
                 else None

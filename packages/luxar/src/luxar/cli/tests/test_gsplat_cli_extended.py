@@ -6779,14 +6779,16 @@ class TestInfoVolumeTruncation:
 
 
 class TestParallelTiledDownscaleFactorsThreading:
-    """``--downscale`` factors must reach the merge (issue #1587).
+    """The grid→splat scale must reach the merge (issue #1587).
 
     ``dispatch_parallel_tiled`` deliberately computes its tile grid on the
     POST-downscale shape while every worker rescales its splats back to full
-    resolution.  The merge builds the partition's split planes from that grid,
-    so it needs the factors to state them in the splats' own frame — otherwise
-    every plane is a factor too small and the viewer's back-to-front part
-    ordering (#1555) is computed against planes that separate nothing.
+    resolution — and, with a ``voxel_size``, emits physical coordinates on top
+    of that.  The merge builds the partition's split planes from that grid, so
+    it needs the PRODUCT of both factors to state them in the splats' own
+    frame — otherwise every plane is a factor too small and the viewer's
+    back-to-front part ordering (#1555) is computed against planes that
+    separate nothing.
 
     Patched at the ``fit_tiled_parallel`` boundary: the real typer command,
     volume load, tiling resolution and grid math all run.
@@ -6819,6 +6821,7 @@ class TestParallelTiledDownscaleFactorsThreading:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
         extra: "list[str]",
+        case: str,
     ) -> "dict[str, Any]":
         pytest.importorskip("torch", reason="the fit CLI imports the torch fitter")
         captured: dict[str, Any] = {}
@@ -6832,13 +6835,15 @@ class TestParallelTiledDownscaleFactorsThreading:
         )
         vol = tmp_path / "vol.npy"
         self._volume(vol)
+        # An explicit per-case output name: deriving it from the arguments
+        # would silently collide the moment two cases pass the same count.
         result = runner.invoke(
             app,
             [
                 "gsplat",
                 "fit",
                 str(vol),
-                str(tmp_path / f"out{len(extra)}.gsplats.zarr"),
+                str(tmp_path / f"out_{case}.gsplats.zarr"),
                 "--tiling",
                 "uniform",
                 "--tile-size",
@@ -6861,16 +6866,54 @@ class TestParallelTiledDownscaleFactorsThreading:
     def test_downscale_factors_reach_the_merge(
         self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        captured = self._run(runner, tmp_path, monkeypatch, ["--downscale", "2"])
-        # The grid IS in downscaled voxels (48 -> 24 per axis)...
-        assert captured["volume_shape"] == (24, 24)
-        # ...so the factors that lift it back must travel with it.
-        assert captured["downscale_factors"] == (2, 2)
+        """ANISOTROPIC on purpose: an axis transposition anywhere in the chain
+        would survive the isotropic spelling."""
+        captured = self._run(
+            runner, tmp_path, monkeypatch, ["--downscale", "1,2"], "aniso"
+        )
+        # The grid IS in downscaled voxels, per axis (48 -> 48, 48 -> 24)...
+        assert captured["volume_shape"] == (48, 24)
+        # ...so the factors that lift it back must travel with it, in that
+        # same axis order.
+        assert captured["grid_scale"] == (1.0, 2.0)
 
     def test_no_downscale_threads_no_factors(
         self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Without ``--downscale`` the two frames already agree — no factors."""
-        captured = self._run(runner, tmp_path, monkeypatch, [])
+        captured = self._run(runner, tmp_path, monkeypatch, [], "plain")
         assert captured["volume_shape"] == (48, 48)
-        assert captured["downscale_factors"] is None
+        assert captured["grid_scale"] is None
+
+    def test_voxel_size_composes_with_the_downscale_factors(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A ``voxel_size`` from ``--config`` moves the workers' splats too, and
+        the two terms MULTIPLY (issue #1587)."""
+        config = tmp_path / "fit.yaml"
+        config.write_text("voxel_size: [4.0, 1.0]\noutput_space: real\n")
+        captured = self._run(
+            runner,
+            tmp_path,
+            monkeypatch,
+            ["--downscale", "1,2", "--config", str(config)],
+            "voxel_size",
+        )
+        assert captured["volume_shape"] == (48, 24)
+        assert captured["grid_scale"] == (4.0, 2.0)
+
+    def test_voxel_output_space_drops_the_voxel_size_term(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """With ``output_space: voxel`` the centers stay in voxels, so only the
+        downscale factors apply."""
+        config = tmp_path / "fit_voxel.yaml"
+        config.write_text("voxel_size: [4.0, 1.0]\noutput_space: voxel\n")
+        captured = self._run(
+            runner,
+            tmp_path,
+            monkeypatch,
+            ["--downscale", "1,2", "--config", str(config)],
+            "voxel_space",
+        )
+        assert captured["grid_scale"] == (1.0, 2.0)

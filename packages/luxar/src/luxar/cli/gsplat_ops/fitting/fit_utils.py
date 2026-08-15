@@ -524,7 +524,7 @@ def dispatch_parallel_tiled(
         resolve_jobs,
     )
     from luxar.gsplats.fitting.downscale import normalize_downscale
-    from luxar.gsplats.tiling import compute_tile_specs
+    from luxar.gsplats.tiling import compute_tile_specs, resolve_grid_scale
 
     # Compute the tile grid on the POST-downscale shape (shape math
     # only — decimation is volume[::f]) so the parent and workers
@@ -655,10 +655,17 @@ def dispatch_parallel_tiled(
                 recipe=ctx.recipe,
                 recipe_params=recipe_params,
                 # The grid above is in DOWNSCALED voxels while every worker
-                # rescales its splats back to full resolution, so the merge
-                # needs the factors to place the partition's split planes in
-                # the splats' own frame (#1587).
-                downscale_factors=ds_factors,
+                # rescales its splats back to full resolution AND (with a
+                # voxel_size from --config, unless output_space is "voxel")
+                # emits physical coordinates. Both factors compose, so the
+                # merge needs their product to place the partition's split
+                # planes in the splats' own frame (#1587).
+                grid_scale=resolve_grid_scale(
+                    volume.ndim,
+                    downscale_factors=ds_factors,
+                    voxel_size=fit_config.get("voxel_size"),
+                    output_space=fit_config.get("output_space", "real"),
+                ),
             )
 
         with asection(f"Saving to {ctx.output_path.name}"):
