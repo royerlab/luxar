@@ -1022,7 +1022,11 @@ Why it matters, concretely:
   compressors and filters to `zarr.codecs` equivalents, keyed on the format of
   the GROUP being written — not the global default, since writing into a legacy
   v2 store while the default is 3 is routine. There is no zlib codec in
-  zarr-python 3 at all; use gzip.
+  zarr-python 3 at all; use gzip. `numcodecs>=0.16` is a DIRECT dependency for
+  this reason: below it zarr's format-3 `BloscCodec` cannot forward the evolved
+  `typesize` to blosc, so the measured byte shuffle silently becomes a no-op
+  (~12.5% larger chunks) while the metadata still records the shuffle that never
+  happened. Assert compression on the stored BYTES, not on the recorded config.
 - **An omitted compressor is not "no compressor".** zarr 3's `compressors`
   defaults to `"auto"`, which is Blosc/lz4/clevel-5 at format 2 but zstd at
   format 3 — not the same bytes. Some Luxar arrays must be RAW and the rest carry

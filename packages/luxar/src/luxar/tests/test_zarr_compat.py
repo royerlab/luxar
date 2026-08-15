@@ -68,6 +68,35 @@ def _array_meta(path: Path, name: str) -> dict:
     return json.loads((path / name / "zarr.json").read_text())
 
 
+def _only_chunk(path: Path, name: str) -> bytes:
+    """The single stored chunk of a one-chunk array, in whichever format.
+
+    The formats key chunks differently — ``codes/0`` at format 2, ``codes/c/0``
+    at format 3 — so this collects every non-metadata file under the array and
+    insists there is exactly one, rather than naming a layout.
+    """
+    array_dir = path / name
+    chunks = sorted(
+        f
+        for f in array_dir.rglob("*")
+        if f.is_file() and f.name not in (".zarray", ".zattrs", "zarr.json")
+    )
+    assert len(chunks) == 1, f"expected one chunk under {array_dir}, got {chunks}"
+    return chunks[0].read_bytes()
+
+
+def _shuffle_sensitive_codes() -> np.ndarray:
+    """A deterministic uint16 ramp whose bytes compress better byte-shuffled.
+
+    Quantization codes in a real store are Hilbert-ordered, so the high byte is
+    nearly constant while the low byte churns — precisely what a byte shuffle
+    separates. A flat ``arange`` would compress the same either way and would
+    make an assertion on the shuffled bytes vacuous.
+    """
+    steps = np.random.default_rng(0xC0FFEE).integers(-5, 6, size=4096)
+    return (np.cumsum(steps) % 65536).astype(np.uint16)
+
+
 def _compressor_view(meta: dict) -> dict | None:
     """The array's compressor as a comparable dict, from either format.
 
@@ -270,6 +299,46 @@ def test_compressor_object_is_used_verbatim(tmp_path: Path, write_format: int) -
     shuffle = c["shuffle"]
     assert (c["name"], c["cname"], c["clevel"]) == ("blosc", "zstd", 9)
     assert shuffle in (1, "shuffle"), f"lost byte shuffle: {shuffle!r}"
+
+
+def test_the_recorded_shuffle_is_the_one_the_chunk_got(
+    tmp_path: Path, write_format: int
+) -> None:
+    """The stored CHUNK must be what the policy's compressor produces.
+
+    The test above reads the recorded configuration, which is exactly what a
+    lost shuffle does NOT disturb — and format 3 can lose it. zarr's format-3
+    ``BloscCodec`` hands numcodecs the SERIALIZED BYTE buffer rather than the
+    typed array, so blosc infers ``typesize=1`` and the byte shuffle degrades to
+    a no-op unless zarr can forward ``typesize`` explicitly — which it only does
+    for ``numcodecs >= 0.16`` (hence the direct floor in ``pyproject.toml``).
+    Below it, ``zarr.json`` still says ``typesize: 2, shuffle: shuffle`` while
+    the bytes are the unshuffled ones; nothing raises, the round-trip is fine
+    (blosc records its own parameters in the frame header, so a reader is
+    unaffected), and the store is simply larger. Measured on a 200k-point scene:
+    12.5% of the chunk bytes, more than the delta filter was added to win.
+
+    So this asserts on the BYTES, which is the only place the difference is
+    visible, and it does so for both formats — the chunk is byte-identical to
+    the numcodecs encoding either way, which is the property that makes a
+    format-2 store and a format-3 one cost the same.
+    """
+    codes = _shuffle_sensitive_codes()
+    policy = Blosc(cname="zstd", clevel=9, shuffle=Blosc.SHUFFLE)
+    shuffled = bytes(policy.encode(codes))
+    plain = bytes(Blosc(cname="zstd", clevel=9, shuffle=Blosc.NOSHUFFLE).encode(codes))
+    # Non-vacuity: on data the shuffle cannot help, storing the unshuffled bytes
+    # would satisfy the assertion below by accident.
+    assert len(shuffled) < len(plain), "sample data must reward the byte shuffle"
+
+    p = tmp_path / "policy.zarr"
+    g = zc.open_group(p, mode="w")
+    zc.create_array(g, "codes", data=codes, chunks=(codes.size,), compressor=policy)
+    assert _only_chunk(p, "codes") == shuffled, (
+        f"format {write_format} stored {len(_only_chunk(p, 'codes'))} bytes; the "
+        f"byte-shuffled policy encoding is {len(shuffled)} and the unshuffled one "
+        f"{len(plain)} — a match with the latter means the shuffle was dropped"
+    )
 
 
 def test_compressor_auto_is_the_formats_own_default(

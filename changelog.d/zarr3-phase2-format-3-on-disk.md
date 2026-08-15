@@ -47,9 +47,20 @@ keyed on the format of the group being written rather than the global default,
 since adding an array to a legacy format-2 store while the default is 3 is
 routine. The measured compressor policy survives intact: uint16 codes still get
 `typesize=2` with byte shuffle, because `typesize` is left tunable and zarr
-evolves it from the dtype. Note that `compressor="auto"` is NOT the same
-compressor in both formats (Blosc/lz4/5 versus zstd), which matters only for
-fixtures that never named one.
+evolves it from the dtype. Keeping it intact needs one dependency change, so
+`numcodecs>=0.16` is now a direct dependency rather than only zarr's transitive
+one. zarr's format-3 `BloscCodec` hands numcodecs the *serialized byte buffer*
+rather than the typed array, so the element width is lost unless it can forward
+`typesize` explicitly — which it only does above that floor. Below it the byte
+shuffle silently degrades to a no-op while the metadata still records
+`typesize: 2, shuffle: shuffle`; measured on a 200k-point scene, that cost 12.5%
+of the chunk bytes, more than the delta filter was introduced to win. With the
+floor in place a format-3 store's chunks are byte-identical in size to a
+format-2 one's, and the regression test asserts on the stored bytes rather than
+on the recorded configuration, which is exactly what a lost shuffle leaves
+looking correct. Note also that `compressor="auto"` is NOT the same compressor
+in both formats (Blosc/lz4/5 versus zstd), which matters only for fixtures that
+never named one.
 
 The `luxar_delta_v1` filter now exists once per format and produces
 **byte-identical chunks** either way — verified across 18 combinations of rows,

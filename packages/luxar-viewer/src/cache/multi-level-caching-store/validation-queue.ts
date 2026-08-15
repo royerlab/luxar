@@ -141,6 +141,13 @@ export interface RemoteValidationToken {
  * identifier that callers and tests match on, and renaming it to suit the
  * format would break them to describe the same thing.
  *
+ * `timeoutMsOverride` stays a budget for the WHOLE probe, not per candidate:
+ * with two sequential fetches a hanging server would otherwise block scene
+ * loading for twice the fail-fast budget the option exists to impose, and it is
+ * a format-2 dataset — the one that needs the second request — that would pay
+ * it. The first candidate keeps the full budget, so the common single-request
+ * case is unchanged.
+ *
  * Returns `null` only if NEITHER document can be fetched or both are non-ok
  * (offline / truly headerless store) — callers then fall back to the TTL path.
  */
@@ -156,9 +163,12 @@ export async function getRemoteContentHash(
     // poll), so letting the loop overwrite the previous scope would leak one
     // connection and two abort listeners per validation.
     let scope: FetchResponseScope | null = null;
+    const startedAt = Date.now();
     for (const doc of ROOT_ATTR_DOCS) {
+      const budget = options.timeoutMsOverride;
       const attempt = await fetchWithRetry(buildUrl(baseUrl, doc), {
-        timeoutMsOverride: options.timeoutMsOverride,
+        timeoutMsOverride:
+          budget === undefined ? undefined : Math.max(1, budget - (Date.now() - startedAt)),
         signal: options.signal,
       });
       if (!attempt) continue;

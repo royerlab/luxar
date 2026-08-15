@@ -608,6 +608,14 @@ def _to_v3_compressor(compressor: Any) -> Any:
     Pinning it here to the value visible at policy-definition time would silently
     disable the byte shuffle the policy depends on — the shuffle is only worth
     anything when its element width matches the stored codes.
+
+    Whether zarr can FORWARD that evolved ``typesize`` to blosc is a
+    ``numcodecs`` version question, and it is why ``pyproject.toml`` carries a
+    direct ``numcodecs>=0.16`` floor: below it zarr's format-3 ``BloscCodec``
+    hands numcodecs the serialized byte buffer with no width, the byte shuffle
+    becomes a no-op, and the metadata still records the shuffle that did not
+    happen. Pinned by
+    ``test_zarr_compat.py::test_the_recorded_shuffle_is_the_one_the_chunk_got``.
     """
     if compressor is None or isinstance(compressor, str):
         return compressor

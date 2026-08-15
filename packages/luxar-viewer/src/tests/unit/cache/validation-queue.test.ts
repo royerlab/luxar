@@ -452,6 +452,48 @@ describe('getRemoteContentHash', () => {
     }
   });
 
+  it('spends ONE validation budget across both candidates, not one each', async () => {
+    // `timeoutMsOverride` is the fail-fast budget that keeps a flaky network
+    // from holding up scene loading. Probing two documents sequentially handed
+    // the SECOND its own full budget, so a hanging server cost twice over —
+    // and it is a format-2 dataset, the one that needs the second request,
+    // that would pay it.
+    //
+    // Asserted on the timeout each candidate is actually granted rather than on
+    // total wall clock: retry backoff (jittered, and not charged against the
+    // budget) dominates the elapsed time, so a wall-clock bound would be both
+    // noisy and a weak discriminator. The per-attempt timeout is observable as
+    // the delay between a fetch starting and its signal aborting.
+    const budgetMs = 400;
+    const abortDelays = new Map<string, number>();
+    global.fetch = vi.fn((url: string, init?: { signal?: AbortSignal }) => {
+      const key = String(url).split('/').pop() as string;
+      const startedAt = Date.now();
+      return new Promise<Response>((_resolve, reject) => {
+        // Never answers; only the per-attempt timeout ends it.
+        init?.signal?.addEventListener('abort', () => {
+          if (!abortDelays.has(key)) abortDelays.set(key, Date.now() - startedAt);
+          reject(new DOMException('aborted', 'AbortError'));
+        });
+      });
+    }) as unknown as typeof fetch;
+
+    expect(
+      await getRemoteContentHash('https://example.com/d.zarr', {
+        timeoutMsOverride: budgetMs,
+      })
+    ).toBeNull();
+
+    const first = abortDelays.get('zarr.json');
+    const second = abortDelays.get('.zattrs');
+    expect(first).toBeDefined();
+    expect(second).toBeDefined();
+    // The first candidate keeps the full budget (so the common single-request
+    // case is untouched); the second gets only what is left of it, which by
+    // then is nearly nothing. Before the fix the two were equal.
+    expect(second as number).toBeLessThan((first as number) / 2);
+  });
+
   it('releases listeners when NEITHER document is available', async () => {
     // The both-404 path returned before the try/finally, so the last attempt
     // was never disposed either.
