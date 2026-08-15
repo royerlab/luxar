@@ -266,11 +266,11 @@ def _extract_raw_zarr(data_zip_path: Path, dest: Path) -> Path:
     *successfully*, and only the store read later notices), and that directory has
     to be the raw star table (a store built by hand with other column names reads
     fine and dies on a bare ``KeyError`` mid-conversion). None of the exceptions
-    involved — ``BadZipFile``, whatever zarr raises for a store it cannot open as
-    a group (see the handler below: three different classes), a bare ``KeyError``
-    — is a ``CatalogUnusable``, which is the only type the entry points turn into
-    advice, so each one otherwise escapes as a traceback with nothing in it about
-    the rebuild.
+    involved is a ``CatalogUnusable``, which is the only type the entry points
+    turn into advice — not ``BadZipFile``, not the bare ``KeyError``, and not any
+    of what the store read raises (three classes, two from the open itself and one
+    from reading a column's metadata; see the handler below) — so each one
+    otherwise escapes as a traceback with nothing in it about the rebuild.
 
     The catalog is placed (or rebuilt) by hand, which is what makes all three
     ordinary rather than exotic — an interrupted ``scp``, the rebuild script's
@@ -303,18 +303,24 @@ def _extract_raw_zarr(data_zip_path: Path, dest: Path) -> Path:
         # ``luxar._zarr_compat.open_group``, never a bare ``zarr.open``, and for
         # two independent reasons. (1) The facade passes
         # ``use_consolidated=False``, restoring the zarr-2 rule that a read sees
-        # the arrays actually ON DISK; the real catalog IS consolidated, so under
-        # zarr 3's reversed default the column check below would answer from
-        # `.zmetadata` and report a deleted column directory as present — the
-        # guard passes and the converter reads that column as all-zeros fill,
-        # which for `bp_rp` is a 3M-star scene with a dead colour index. (2)
-        # ``zarr.open`` returns an ``Array`` when the extracted directory is an
-        # array store rather than a group (``zarr.save`` output — a table someone
-        # assembled from their own query), and ``name not in <Array>`` falls back
-        # to the SEQUENCE protocol: element-by-element, ~10.6 s per 2000 values,
-        # i.e. hours on a 3M-row catalog before printing advice that blames the
-        # columns. ``open_group`` raises on that node instead, so it lands in the
-        # handler below within milliseconds.
+        # the arrays actually ON DISK. Nothing in the current build path
+        # consolidates — the shipped zip carries no `.zmetadata` and the rebuild
+        # script never writes one — so this reason does not bite on a catalog
+        # obtained the documented way. It bites on the OTHER way the catalog
+        # arrives: this file is hand-placed, and a store that its reader
+        # re-exported or assembled themselves may well carry a consolidated
+        # index, whereupon zarr 3's reversed default has the column check below
+        # answer from that index and report a deleted column directory as present
+        # — the guard passes and the converter reads that column as all-zeros
+        # fill, which for `bp_rp` is a 3M-star scene with a dead colour index.
+        # (2) The reason that bites on ANY catalog: ``zarr.open`` returns an
+        # ``Array`` when the extracted directory is an array store rather than a
+        # group (single-array ``zarr.save`` output — a table someone assembled
+        # from their own query), and ``name not in <Array>`` falls back to the
+        # SEQUENCE protocol: element-by-element, measured here at 33 s per 20 000
+        # values (~1.6 ms each), i.e. over an hour on a 3M-row catalog before
+        # printing advice that blames the columns. ``open_group`` raises on that
+        # node instead, so it lands in the handler below within milliseconds.
         raw_table = open_group(str(raw_zarr_path), mode="r")
         missing = [name for name in RAW_TABLE_FIELDS if name not in raw_table]
     # ``FileNotFoundError``/``ValueError``, not zarr's own error names: zarr 3
@@ -324,17 +330,22 @@ def _extract_raw_zarr(data_zip_path: Path, dest: Path) -> Path:
     # descend from ``BaseZarrError``, itself a ``ValueError``, so the
     # ``FileNotFoundError`` arm is a subset kept because it is the spelling
     # ``luxar._zarr_compat.is_missing_error`` sanctions. ``ValueError`` is what
-    # earns its place — the three store failures measured on this path do NOT
-    # share a narrower base: a v2 array store gives ``GroupNotFoundError`` (a
-    # ``FileNotFoundError``), a v3 one ``ContainsArrayError``, and a column whose
-    # ``.zarray`` is corrupt JSON a bare ``json.JSONDecodeError`` (not a zarr
-    # error at all). Only the first is a ``FileNotFoundError``, so the narrower
-    # handler let two thirds of the docstring's "everything is checked here"
-    # escape as the traceback this function exists to prevent.
+    # earns its place — the three failures measured on this path do NOT share a
+    # narrower base, and only two of them come from the OPEN: a v2 array store
+    # gives ``GroupNotFoundError`` (a ``FileNotFoundError``) and a v3 one
+    # ``ContainsArrayError``. The third arrives one line later: a column whose
+    # ``.zarray`` is corrupt JSON opens as a ``Group`` perfectly well, and it is
+    # the membership check that reads that document and raises a bare
+    # ``json.JSONDecodeError`` (not a zarr error at all) — which is why both
+    # statements sit inside this one ``try``. Only the first is a
+    # ``FileNotFoundError``, so the narrower handler let two thirds of the
+    # docstring's "everything is checked here" escape as the traceback this
+    # function exists to prevent.
     except (FileNotFoundError, ValueError) as exc:
         raise CatalogUnusable(
-            f"{data_zip_path} holds a `{RAW_ZARR_NAME}/` directory, but it is not "
-            f"a zarr store ({exc}).\n"
+            f"{data_zip_path} holds a `{RAW_ZARR_NAME}/` directory, but it does "
+            "not read as this demo's raw star table: it is not a zarr store, or "
+            f"one of its columns has unreadable metadata ({exc}).\n"
             "Delete it and put a complete copy back, or rebuild it with\n"
             f"{REBUILD_COMMAND}"
         ) from exc

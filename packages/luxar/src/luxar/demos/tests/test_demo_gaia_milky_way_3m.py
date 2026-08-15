@@ -354,13 +354,18 @@ class TestRawZarrExtraction:
     ) -> None:
         """The column check must see the disk, not a stale `.zmetadata` index.
 
-        The real catalog is consolidated, and zarr 3 REVERSED zarr 2's default: a
-        bare ``zarr.open`` consults `.zmetadata` automatically, so a column whose
-        array directory never arrived (a partial copy, a hand-edited store) is
-        still reported as present. The guard then passes and the converter reads
-        that column as all-zeros fill — for ``bp_rp`` a 3M-star scene with every
-        star the same colour, silently. ``luxar._zarr_compat.open_group`` exists
-        for exactly this: it passes ``use_consolidated=False``.
+        Consolidation has to be arranged here because nothing in the build path
+        does it: the shipped zip carries no `.zmetadata` and the rebuild script
+        never writes one. A hand-placed catalog is exactly where that stops being
+        a guarantee, though — its reader may have re-exported or assembled the
+        store themselves, index included — and zarr 3 REVERSED zarr 2's default:
+        a bare ``zarr.open`` consults `.zmetadata` automatically, so a column
+        whose array directory never arrived (a partial copy, a hand-edited store)
+        is still reported as present. The guard then passes and the converter
+        reads that column as all-zeros fill — for ``bp_rp`` a 3M-star scene with
+        every star the same colour, silently.
+        ``luxar._zarr_compat.open_group`` exists for exactly this: it passes
+        ``use_consolidated=False``.
         """
         removed = "bp_rp"
         raw = tmp_path / RAW_ZARR_NAME
@@ -416,17 +421,22 @@ class TestRawZarrExtraction:
     def test_a_store_zarr_cannot_open_as_this_table_reaches_the_advice(
         self, tmp_path: Path, kind: str
     ) -> None:
-        """Two store failures that are ``ValueError``, not ``FileNotFoundError``.
+        """Two failures that are ``ValueError``, not ``FileNotFoundError``.
 
         zarr's own errors descend from ``BaseZarrError`` → ``ValueError`` and only
         *some* of them also subclass ``FileNotFoundError``; a corrupt metadata
         document does not even reach zarr's exceptions. So a handler narrowed to
-        ``FileNotFoundError`` loses both. Both cases below are ordinary for a
-        hand-placed catalog: ``zarr.save`` on a stock zarr 3 writes an ARRAY store
-        at that path (a v3 one, which answers ``ContainsArrayError`` where a v2
-        array answers the ``FileNotFoundError``-flavoured ``GroupNotFoundError``),
-        and a truncated per-file copy can leave a column's ``.zarray`` as invalid
-        JSON, which is a bare ``json.JSONDecodeError``.
+        ``FileNotFoundError`` loses both. Only the first is a failure to OPEN the
+        store: the corrupt column opens as a ``Group`` and dies in the membership
+        check, which is why the guard wraps both statements. Both cases are
+        ordinary for a hand-placed catalog: the single-array
+        ``zarr.save(path, arr)`` leaves an ARRAY store at that path on a stock
+        zarr 3 — a v3 one, which answers ``ContainsArrayError`` where a v2 array
+        answers the ``FileNotFoundError``-flavoured ``GroupNotFoundError`` —
+        whereas the multi-column ``zarr.save(path, x_kpc=…, …)`` someone would
+        reach for to save a five-column table writes a readable GROUP and gets
+        past here; and a truncated per-file copy can leave a column's ``.zarray``
+        as invalid JSON, which is a bare ``json.JSONDecodeError``.
 
         The assertion is on the "not a zarr store" branch specifically: reading
         through ``zarr.open`` instead would raise too, but from the column check —
