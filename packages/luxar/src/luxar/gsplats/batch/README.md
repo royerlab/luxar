@@ -31,7 +31,7 @@ Batch fitting orchestration for large OME-Zarr datasets, fanning a whole nD time
 | `env_capture.py` | Environment detection (conda, venv, modules, env vars), Slurm scheduler queries, env preamble generation |
 | `time_estimate.py` | Wall-time estimation from GPU benchmark profiles via log-log interpolation |
 | `status.py` | Batch status checking via output file existence and `sacct` queries |
-| `merge_orchestrator.py` | Post-batch merge: default streaming `kind=partition` (one part per tile); `--flat` for the legacy single-leaf fan-in (tiles -> per-(T,C) -> per-C -> final) |
+| `merge_orchestrator.py` | Post-batch merge: default streaming `kind=partition` (one part per tile); `--flat` for the legacy single-leaf fan-in (tiles -> per-(T,C) -> per-C -> final). The partition's split planes are rebuilt from the manifest's tile grid, which is in VOXELS -- a `voxel_size`/`downscale` in the run's `--config` moves the workers' splats out of that frame, so the merge re-resolves the recorded `--preset`/`--config` through `resolve_grid_scale` (#1587) and drops the planes with a warning if that config can no longer be read |
 
 ## Usage
 

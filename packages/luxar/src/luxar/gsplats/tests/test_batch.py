@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import numpy as np
@@ -2805,3 +2806,135 @@ class TestMergeRefineSourceValidatedAtPlanTime:
         # With labels the plan goes through, and records the knob for the merge.
         result = _plan(["t", "z", "y", "x"])
         assert result.manifest.merge_recipe_args["refine"] == "volume"
+
+
+class TestUniformSlotBspTreeFrame:
+    """The batch uniform merge's split planes must be in the SPLATS' frame.
+
+    ``batch-fit run/submit --config <yaml>`` forwards that YAML verbatim to
+    every ``fit --tile k/M`` worker, so a ``voxel_size:`` with the default
+    ``output_space: real`` makes every worker emit PHYSICAL centers while the
+    manifest's ``spatial_shape`` — and the tile grid rebuilt from it — stays in
+    voxels. The batch merge is the fourth producer of these planes and needs the
+    same reconciliation as ``fit`` itself (#1587).
+    """
+
+    SPATIAL_SHAPE = (32, 32, 32)
+    TILE_SIZE = 12
+    OVERLAP = 2
+
+    @classmethod
+    def _manifest(cls, **kwargs: Any) -> Any:
+        from luxar.gsplats.batch.manifest import BatchManifest
+        from luxar.gsplats.tiling import compute_tile_specs
+
+        n_tiles = len(compute_tile_specs(cls.SPATIAL_SHAPE, cls.TILE_SIZE, cls.OVERLAP))
+        return BatchManifest(
+            mode="uniform",
+            spatial_shape=cls.SPATIAL_SHAPE,
+            tile_size=cls.TILE_SIZE,
+            tile_overlap=cls.OVERLAP,
+            n_tiles=n_tiles,
+            **kwargs,
+        )
+
+    @staticmethod
+    def _splits(tree: dict) -> list:
+        """Every internal node's ``(axis, split)``, in DFS order."""
+        if "part" in tree:
+            return []
+        return (
+            [(int(tree["axis"]), float(tree["split"]))]
+            + TestUniformSlotBspTreeFrame._splits(tree["left"])
+            + TestUniformSlotBspTreeFrame._splits(tree["right"])
+        )
+
+    @classmethod
+    def _tree(cls, **kwargs: Any) -> Any:
+        from luxar.gsplats.batch.merge_orchestrator import _slot_bsp_tree
+
+        return _slot_bsp_tree(cls._manifest(**kwargs), Path("."), False)
+
+    def test_a_voxel_size_in_the_config_scales_every_plane(
+        self, tmp_path: Path
+    ) -> None:
+        """The regression: anisotropic on purpose, so an axis swap anywhere in
+        the recovery would show up."""
+        config = tmp_path / "fit.yaml"
+        config.write_text("voxel_size: [4.0, 1.0, 1.0]\n")
+
+        unscaled = self._tree()
+        scaled = self._tree(fit_args={"config": str(config)})
+        assert unscaled is not None and scaled is not None
+
+        plain = self._splits(unscaled)
+        physical = self._splits(scaled)
+        assert len(plain) == len(physical) > 0
+        for (ax_p, s_p), (ax_s, s_s) in zip(plain, physical):
+            assert ax_p == ax_s
+            assert s_s == pytest.approx((4.0, 1.0, 1.0)[ax_s] * s_p)
+        # The measured symptom of the bug: without the factor, every axis-0
+        # plane sits in the first quarter of the object.
+        assert [s for ax, s in plain if ax == 0] != [s for ax, s in physical if ax == 0]
+
+    def test_a_downscale_in_the_config_scales_every_plane(self, tmp_path: Path) -> None:
+        """``downscale:`` is a documented YAML key and rides the same door."""
+        config = tmp_path / "ds.yaml"
+        config.write_text("downscale: 2\n")
+
+        plain = self._splits(self._tree())
+        scaled = self._splits(self._tree(fit_args={"config": str(config)}))
+        assert len(plain) == len(scaled) > 0
+        for (ax_p, s_p), (ax_s, s_s) in zip(plain, scaled):
+            assert ax_p == ax_s and s_s == pytest.approx(2.0 * s_p)
+
+    def test_output_space_voxel_leaves_the_planes_in_voxels(
+        self, tmp_path: Path
+    ) -> None:
+        """Non-vacuity control: the spacing term is value-scoped, not blanket —
+        with ``output_space: voxel`` the centers stay in voxels."""
+        config = tmp_path / "voxel.yaml"
+        config.write_text("voxel_size: [4.0, 1.0, 1.0]\noutput_space: voxel\n")
+        assert self._splits(
+            self._tree(fit_args={"config": str(config)})
+        ) == self._splits(self._tree())
+
+    def test_a_config_without_a_spacing_is_bit_identical(self, tmp_path: Path) -> None:
+        """The overwhelmingly common case must be untouched by the recovery."""
+        config = tmp_path / "plain.yaml"
+        config.write_text("n_iters: 50\nfloor: none\n")
+        assert self._tree(fit_args={"config": str(config)}) == self._tree()
+        # A `--preset` alone likewise carries no spacing.
+        assert self._tree(preset="draft") == self._tree()
+
+    def test_an_unreadable_config_drops_the_tree_loudly(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture
+    ) -> None:
+        """A Slurm run merged days later can find its YAML moved or deleted.
+
+        The frame is then unknown, so writing voxel-frame planes would be a
+        silent guess. Refuse them and say so — loudly, and NOT gated on
+        ``verbose`` — leaving the documented centroid fallback.
+        """
+        missing = tmp_path / "gone.yaml"
+        assert self._tree(fit_args={"config": str(missing)}) is None
+        out = capsys.readouterr().out
+        assert "WARNING" in out
+        assert str(missing) in out
+        assert "centroid" in out
+
+    def test_a_config_the_resolver_refuses_degrades_the_same_way(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture
+    ) -> None:
+        """Readable but unusable is the same situation as unreadable.
+
+        ``resolve_grid_scale`` refuses an out-of-vocabulary ``output_space``
+        rather than reading it as "voxel". Letting that ValueError out would
+        abort the whole merge — after every tile has been fitted — so it
+        degrades to the centroid fallback with the same warning.
+        """
+        config = tmp_path / "typo.yaml"
+        config.write_text("voxel_size: [4.0, 1.0, 1.0]\noutput_space: physical\n")
+        assert self._tree(fit_args={"config": str(config)}) is None
+        out = capsys.readouterr().out
+        assert "WARNING" in out and "output_space" in out

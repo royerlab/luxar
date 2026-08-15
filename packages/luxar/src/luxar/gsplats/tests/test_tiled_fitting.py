@@ -1565,6 +1565,34 @@ class TestResolveGridScale:
             output_space="voxel",
         ) == (2.0, 2.0, 2.0)
 
+    @pytest.mark.parametrize("bad", ["physical", "Real", "", None])
+    def test_out_of_vocabulary_output_space_raises(self, bad: "Any") -> None:
+        """A typo (or a YAML ``output_space: null``) must NOT be read as "voxel".
+
+        Silently dropping the spacing term is exactly the #1587 mismatch this
+        function exists to close, and it would be invisible: the tree still
+        builds, just in the wrong frame.
+        """
+        from luxar.gsplats.tiling import resolve_grid_scale
+
+        with pytest.raises(ValueError, match="output_space"):
+            resolve_grid_scale(3, voxel_size=(4.0, 1.0, 1.0), output_space=bad)
+        # Refused even with nothing for the term to apply to, so a caller
+        # cannot discover the typo only once a spacing is configured.
+        with pytest.raises(ValueError, match="output_space"):
+            resolve_grid_scale(3, output_space=bad)
+
+    def test_wrong_length_voxel_size_is_refused_by_name(self) -> None:
+        """Matching ``fitting.validation``: a length-1 spacing on a 3D grid is a
+        mistake, not something to broadcast, and the message must say so."""
+        from luxar.gsplats.tiling import resolve_grid_scale
+
+        for bad in ((0.5,), (1.0, 1.0), (1.0, 1.0, 1.0, 1.0)):
+            with pytest.raises(ValueError, match="voxel_size must have length 3"):
+                resolve_grid_scale(3, voxel_size=bad)
+        # A genuine scalar still broadcasts (the documented spelling).
+        assert resolve_grid_scale(3, voxel_size=0.5) == (0.5, 0.5, 0.5)
+
 
 def _core_region(
     spec: "TileSpec", factors: tuple[float, ...], n: int, seed: int
@@ -1605,7 +1633,11 @@ def _core_region(
     )
 
 
-@pytest.mark.skipif(not HAS_TORCH, reason="torch not available")
+# Torch-gated for an IMPORT reason, not a fitting one: nothing below fits
+# anything, but `merge_tile_results` lives in `fit_tiled_gsplats`, which imports
+# `fit_gsplats`, which imports torch at module scope. Verified by running the
+# class with `import torch` blocked (ModuleNotFoundError at collection).
+@pytest.mark.skipif(not HAS_TORCH, reason="fit_tiled_gsplats imports torch")
 class TestDownscaledPartitionPlanes:
     """``merge_tile_results`` must place the split planes in the SPLATS' frame.
 
@@ -1739,7 +1771,7 @@ class TestDownscaledPartitionPlanes:
         assert len(failures) == len(bad_splits), failures
 
 
-@pytest.mark.skipif(not HAS_TORCH, reason="torch not available")
+@pytest.mark.skipif(not HAS_TORCH, reason="fit_tiled_parallel imports torch")
 class TestParallelTiledGridScaleThreading:
     """``fit_tiled_parallel`` must FORWARD its ``grid_scale`` to the merge.
 
@@ -1836,24 +1868,32 @@ class TestVoxelSizePartitionPlanes:
     """
 
     VOXEL_SIZE = (4.0, 1.0, 1.0)
+    SHAPE = (24, 12, 12)
+    TILE_SIZE = 16
+    OVERLAP = 4
 
+    @staticmethod
     @pytest.fixture(scope="class")
-    def fits(self) -> "dict[str, Any]":
-        """The three fits this class compares, run once (each is a real fit).
+    def fits() -> "dict[str, Any]":
+        """The two fits this class compares, run once (each is a real fit).
 
         A 2-tile grid on axis 0 — the axis ``VOXEL_SIZE`` scales — keeps the
-        cost of a real fit inside the default gate.
+        cost of a real fit inside the default gate. The unscaled reference is
+        NOT a third fit: the voxel-frame planes are a pure function of the tile
+        grid, so :func:`grid_bsp_tree` yields them for free (see
+        ``_voxel_frame_splits``).
         """
         from luxar.gsplats.fit_tiled_gsplats import fit_tiled
 
+        cls = TestVoxelSizePartitionPlanes
         rng = np.random.RandomState(3)
-        volume = rng.random_sample((24, 12, 12)).astype(np.float32)
+        volume = rng.random_sample(cls.SHAPE).astype(np.float32)
 
         def run(**kwargs: "Any") -> "Any":
             return fit_tiled(
                 volume,
-                tile_size=16,
-                overlap=4,
+                tile_size=cls.TILE_SIZE,
+                overlap=cls.OVERLAP,
                 partition=True,
                 seeds=8,
                 n_iters=10,
@@ -1864,10 +1904,18 @@ class TestVoxelSizePartitionPlanes:
             )
 
         return {
-            "real": run(voxel_size=self.VOXEL_SIZE, output_space="real"),
-            "voxel": run(voxel_size=self.VOXEL_SIZE, output_space="voxel"),
-            "plain": run(voxel_size=None),
+            "real": run(voxel_size=cls.VOXEL_SIZE, output_space="real"),
+            "voxel": run(voxel_size=cls.VOXEL_SIZE, output_space="voxel"),
         }
+
+    @classmethod
+    def _voxel_frame_splits(cls) -> list:
+        """The planes an unscaled fit of the same grid writes — no fit needed."""
+        from luxar.gsplats.tiling import grid_bsp_tree
+
+        tree = grid_bsp_tree(compute_tile_specs(cls.SHAPE, cls.TILE_SIZE, cls.OVERLAP))
+        assert tree is not None
+        return TestGridBspTreeScale._splits(tree)
 
     @staticmethod
     def _plane_is_between_its_sides(node: "Any") -> "list[str]":
@@ -1904,9 +1952,8 @@ class TestVoxelSizePartitionPlanes:
         assert node.bsp_tree is not None
         # The scaled axis really is scaled: the axis-0 planes are ~4x the
         # voxel-frame ones the same grid would give.
-        plain = fits["plain"]
         scaled_splits = TestGridBspTreeScale._splits(node.bsp_tree)
-        plain_splits = TestGridBspTreeScale._splits(plain.bsp_tree)
+        plain_splits = self._voxel_frame_splits()
         assert len(scaled_splits) == len(plain_splits) > 0
         for (ax_s, s_s), (ax_p, s_p) in zip(scaled_splits, plain_splits):
             assert ax_s == ax_p
@@ -1920,8 +1967,8 @@ class TestVoxelSizePartitionPlanes:
         """``output_space="voxel"`` leaves the centers in voxels, so the planes
         must NOT pick up the spacing."""
         voxelled = fits["voxel"]
-        plain = fits["plain"]
-        assert TestGridBspTreeScale._splits(
-            voxelled.bsp_tree
-        ) == TestGridBspTreeScale._splits(plain.bsp_tree)
+        assert (
+            TestGridBspTreeScale._splits(voxelled.bsp_tree)
+            == self._voxel_frame_splits()
+        )
         assert self._plane_is_between_its_sides(voxelled) == []

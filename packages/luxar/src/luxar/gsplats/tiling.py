@@ -227,23 +227,49 @@ def resolve_grid_scale(
         Physical voxel spacing the fit was given. A scalar is broadcast;
         ``None`` means unit spacing.
     output_space : str, default "real"
-        The fit's output space. The ``voxel_size`` term applies only for
-        ``"real"`` — with ``"voxel"`` the centers stay in voxel coordinates and
-        multiplying by the spacing would move the planes off the parts.
+        The fit's output space, ``"real"`` or ``"voxel"``. The ``voxel_size``
+        term applies only for ``"real"`` — with ``"voxel"`` the centers stay in
+        voxel coordinates and multiplying by the spacing would move the planes
+        off the parts.
 
     Returns
     -------
     tuple of float or None
         Per-axis factor for :func:`grid_bsp_tree`'s ``scale``, or ``None`` when
         every factor is 1 (the two frames already agree).
+
+    Raises
+    ------
+    ValueError
+        On an ``output_space`` outside ``("real", "voxel")``, or a
+        ``voxel_size`` that is neither a scalar nor a length-``ndim`` sequence.
+        Both are refused rather than absorbed: an unrecognised
+        ``output_space`` would silently DROP the ``voxel_size`` term (the exact
+        #1587 mismatch this function exists to close), and a wrong-length
+        spacing would broadcast a partial answer.
     """
+    # Same vocabulary as `luxar.gsplats.fitting.validation`, checked here too
+    # because this is a public entry point that a producer can reach without
+    # ever going through the fitter.
+    if output_space not in ("real", "voxel"):
+        raise ValueError(
+            f"output_space must be 'real' or 'voxel', got {output_space!r}"
+        )
     factors = np.ones(ndim, dtype=np.float64)
     if downscale_factors is not None:
         factors *= np.broadcast_to(
             np.asarray(downscale_factors, dtype=np.float64), (ndim,)
         )
     if output_space == "real" and voxel_size is not None:
-        factors *= np.broadcast_to(np.asarray(voxel_size, dtype=np.float64), (ndim,))
+        spacing = np.asarray(voxel_size, dtype=np.float64)
+        if spacing.ndim == 0:
+            spacing = np.full(ndim, float(spacing))
+        elif spacing.shape != (ndim,):
+            raise ValueError(
+                f"voxel_size must have length {ndim} to match the tile grid's "
+                f"dimensions, got length {spacing.size}"
+            )
+        factors *= spacing
     if np.all(factors == 1.0):
         return None
     return tuple(float(f) for f in factors)

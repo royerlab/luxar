@@ -600,12 +600,15 @@ def _slot_bsp_tree(
       geometry, so :func:`~luxar.gsplats.tiling.compute_tile_specs` reproduces it
       exactly, and ``TileSpec.index`` is the slot index. Approximate: apodized
       tiles keep their overlap band (see
-      :func:`~luxar.gsplats.tiling.grid_bsp_tree`).
+      :func:`~luxar.gsplats.tiling.grid_bsp_tree`). That grid is in VOXELS,
+      which is not always the frame the tasks' splats came back in — see
+      :func:`_uniform_grid_scale`.
 
     Returns ``None`` — the documented centroid fallback — when the source is
     missing or unusable: a plan written before this landed, an unreadable
-    ``plan.json``, an incomplete manifest, or a box count that disagrees with the
-    plan (which would mislabel every leaf).
+    ``plan.json``, an incomplete manifest, a box count that disagrees with the
+    plan (which would mislabel every leaf), or (uniform) a recorded fit config
+    that can no longer be read, leaving the grid's frame unknown.
     """
     if manifest.mode == "content":
         return _content_slot_bsp_tree(manifest, output_dir, verbose)
@@ -643,6 +646,50 @@ def _content_slot_bsp_tree(
     return plan.bsp_tree
 
 
+class _GridScaleUnresolved(Exception):
+    """The frame the fit tasks emitted in could not be recovered (see below)."""
+
+
+def _uniform_grid_scale(manifest: BatchManifest) -> Optional[Tuple[float, ...]]:
+    """The factor mapping the manifest's VOXEL tile grid onto the splats' frame.
+
+    Every array task runs ``luxar gsplat fit --tile k/M`` with the run's
+    ``--preset`` and (verbatim) its ``--config`` YAML, so a ``voxel_size:`` with
+    the default ``output_space: real`` makes each worker emit PHYSICAL centers
+    while ``manifest.spatial_shape`` — and hence the tile grid rebuilt from it —
+    stays in voxels. A ``downscale:`` in the same YAML is the second,
+    multiplicative term. Both are exactly what
+    :func:`~luxar.gsplats.tiling.resolve_grid_scale` composes (#1587), so
+    re-resolve the workers' merged config here and hand it the answer.
+
+    Returns the per-axis factor tuple, or ``None`` when the two frames already
+    agree. Raises :class:`_GridScaleUnresolved` when the recorded config cannot
+    be read back — a moved or deleted YAML, entirely plausible for a Slurm run
+    merged days after it was submitted, or one holding values the resolver
+    refuses. That is NOT the same as "no factor": the caller must not write
+    voxel-frame planes on a guess.
+    """
+    # `luxar.cli` is deferred on purpose: it pulls in the whole Typer app, and
+    # this module is imported by it. At CALL time there is no cycle.
+    from luxar.cli.gsplat_config import load_fit_config
+    from luxar.gsplats.tiling import resolve_grid_scale
+
+    config_path = manifest.fit_args.get("config")
+    try:
+        config = load_fit_config(
+            preset=manifest.preset,
+            config_path=Path(config_path) if config_path else None,
+        )
+        return resolve_grid_scale(
+            len(manifest.spatial_shape),
+            downscale_factors=config.get("downscale"),
+            voxel_size=config.get("voxel_size"),
+            output_space=config.get("output_space", "real"),
+        )
+    except Exception as exc:
+        raise _GridScaleUnresolved(repr(exc)) from exc
+
+
 def _uniform_slot_bsp_tree(
     manifest: BatchManifest, verbose: bool
 ) -> Optional[Dict[str, Any]]:
@@ -668,7 +715,25 @@ def _uniform_slot_bsp_tree(
                 f"the manifest expects {manifest.n_tiles}"
             )
         return None
-    return grid_bsp_tree(specs)
+    try:
+        scale = _uniform_grid_scale(manifest)
+    except _GridScaleUnresolved as exc:
+        # Loud on purpose, and NOT gated on `verbose`: the honest options are a
+        # voxel-frame tree (silently wrong whenever that config carried a
+        # voxel_size/downscale) or none at all, and the second at least falls
+        # back to the documented centroid ordering.
+        aprint(
+            "  WARNING: no split planes — the fit config recorded for this run "
+            f"({manifest.fit_args.get('config')!r}, preset "
+            f"{manifest.preset!r}) could not be resolved ({exc}), so a "
+            "voxel_size / downscale in it cannot be ruled out and the tile "
+            "grid's frame is unknown. The partition is written WITHOUT split "
+            "planes; the viewer falls back to ordering the parts by centroid, "
+            "which can pop at the seams (#1555). Restore the config file and "
+            "re-run the merge to get exact ordering."
+        )
+        return None
+    return grid_bsp_tree(specs, scale=scale)
 
 
 def _merge_partition(
