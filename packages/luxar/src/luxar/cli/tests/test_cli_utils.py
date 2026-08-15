@@ -21,7 +21,8 @@ import numpy as np
 import pytest
 import zarr
 
-from luxar._zarr_compat import create_array
+from luxar._zarr_compat import consolidate as zc_consolidate
+from luxar._zarr_compat import create_array, is_consolidated
 from luxar.cli.utils import (
     check_port_available,
     check_viewer_built,
@@ -543,10 +544,10 @@ class TestGetZarrInfo:
                 data=np.zeros((1000, 3), dtype=np.float32),
                 compressor=None,
             )
-            zarr.consolidate_metadata(root.store)
+            zc_consolidate(root.store)
 
             shutil.rmtree(store_path / "pts" / "positions")
-            assert (store_path / ".zmetadata").is_file(), "stale index must remain"
+            assert is_consolidated(store_path), "stale index must remain"
 
             result = get_zarr_info(store_path, detailed=True)
             assert result["n_points_total"] == 0

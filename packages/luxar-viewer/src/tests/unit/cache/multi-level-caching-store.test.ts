@@ -121,11 +121,30 @@ const createMocks = () => {
     fetchedUrls.push(url);
     const path = url.replace('https://example.com/data.zarr/', '');
 
+    // Both root-document spellings answer, with the SAME attributes: format 2
+    // keeps them in `.zattrs`, format 3 nests them in `zarr.json`. A real
+    // dataset has exactly one, but serving both keeps these tests independent
+    // of which document the implementation reaches for first.
     if (path === '.zattrs') {
       return {
         ok: true,
         async arrayBuffer() {
           return new TextEncoder().encode(JSON.stringify({ content_hash: 'test-hash-123' })).buffer;
+        },
+      } as Response;
+    }
+
+    if (path === 'zarr.json') {
+      return {
+        ok: true,
+        async arrayBuffer() {
+          return new TextEncoder().encode(
+            JSON.stringify({
+              zarr_format: 3,
+              node_type: 'group',
+              attributes: { content_hash: 'test-hash-123' },
+            })
+          ).buffer;
         },
       } as Response;
     }
@@ -140,6 +159,19 @@ const createMocks = () => {
 
   return { files, metaFiles, fetchedUrls, mockDirHandle };
 };
+
+/**
+ * Is `url` a request for the dataset's ROOT metadata document?
+ *
+ * Format 2 spells it `.zattrs`, format 3 `zarr.json`, and validation probes
+ * whichever exists. These stubs are about the VALIDATION behaviour -- bypassing
+ * cache, counting fetches, cancelling in-flight gets -- so keying them on one
+ * format's filename made them fail the moment the other was preferred, for
+ * reasons having nothing to do with what they assert.
+ */
+function isRootDocRequest(url: string): boolean {
+  return url.includes('.zattrs') || url.includes('zarr.json');
+}
 
 describe('MultiLevelCachingStore', () => {
   let store: MultiLevelCachingStore;
@@ -393,7 +425,7 @@ describe('MultiLevelCachingStore', () => {
 
       // Simulate hash change
       global.fetch = vi.fn(async (url: string) => {
-        if (url.includes('.zattrs')) {
+        if (isRootDocRequest(url)) {
           return {
             ok: true,
             async arrayBuffer() {
@@ -776,7 +808,7 @@ describe('MultiLevelCachingStore', () => {
       // Stub fetch so getRemoteContentHash returns 'new-hash' for the
       // .zattrs probe.
       global.fetch = vi.fn(async (url: string) => {
-        if (url.includes('.zattrs')) {
+        if (isRootDocRequest(url)) {
           return {
             ok: true,
             async arrayBuffer() {
@@ -842,7 +874,7 @@ describe('MultiLevelCachingStore', () => {
         releaseChunk = resolve;
       });
       global.fetch = vi.fn(async (url: string) => {
-        if (url.includes('.zattrs')) {
+        if (isRootDocRequest(url)) {
           return {
             ok: true,
             async arrayBuffer() {
@@ -923,7 +955,7 @@ describe('MultiLevelCachingStore', () => {
         releaseChunk = r;
       });
       global.fetch = vi.fn(async (url: string) => {
-        if (url.includes('.zattrs')) {
+        if (isRootDocRequest(url)) {
           return {
             ok: true,
             async arrayBuffer() {
@@ -984,7 +1016,7 @@ describe('MultiLevelCachingStore', () => {
       global.fetch = vi.fn(async (url: string) => {
         fetchCalls.push(url);
 
-        if (url.includes('.zattrs')) {
+        if (isRootDocRequest(url)) {
           // Return CURRENT hash (simulates server state)
           return {
             ok: true,
@@ -1003,7 +1035,7 @@ describe('MultiLevelCachingStore', () => {
 
       // Initial load - dataset 1
       await store.init();
-      expect(fetchCalls.some((url) => url.includes('.zattrs'))).toBe(true);
+      expect(fetchCalls.some(isRootDocRequest)).toBe(true);
       fetchCalls.length = 0;
 
       // Cache .zattrs by accessing it normally (goes through cache cascade)
@@ -1029,7 +1061,7 @@ describe('MultiLevelCachingStore', () => {
 
       // CRITICAL: Validation MUST have fetched .zattrs directly from HTTP
       // If it used cache, it would get old hash and validation would fail
-      const attrsWasFetched = fetchCalls.some((url) => url.includes('.zattrs'));
+      const attrsWasFetched = fetchCalls.some(isRootDocRequest);
       expect(attrsWasFetched).toBe(true);
 
       // And it should have cleared L2 due to hash mismatch
@@ -1042,7 +1074,7 @@ describe('MultiLevelCachingStore', () => {
 
       let fetchCount = 0;
       global.fetch = vi.fn(async (url: string) => {
-        if (url.includes('.zattrs')) {
+        if (isRootDocRequest(url)) {
           fetchCount++;
           return {
             ok: true,
@@ -1093,7 +1125,7 @@ describe('MultiLevelCachingStore', () => {
       let zattrsFetches = 0;
 
       global.fetch = vi.fn(async (url: string) => {
-        if (url.includes('.zattrs')) {
+        if (isRootDocRequest(url)) {
           const fetchIndex = zattrsFetches++;
           if (fetchIndex === 0) {
             await firstFetchGate;
@@ -1923,8 +1955,12 @@ describe('MultiLevelCachingStore', () => {
         // measurement, but stay well under the data-fetch budget.
         await new Promise((r) => setTimeout(r, 2500));
 
-        const start = startTimes.get('.zattrs');
-        const abort = abortTimes.get('.zattrs');
+        // Whichever root document the probe reached for — the budget under
+        // test is the validation one, not the document's spelling.
+        const rootDoc = [...startTimes.keys()].find(isRootDocRequest);
+        expect(rootDoc).toBeDefined();
+        const start = startTimes.get(rootDoc as string);
+        const abort = abortTimes.get(rootDoc as string);
         expect(start).toBeDefined();
         expect(abort).toBeDefined();
         // First-attempt abort should fire within ~validationTimeoutMs/4 ≈ 1.25 s
@@ -2416,19 +2452,24 @@ describe('MultiLevelCachingStore', () => {
       expect(mocks.fetchedUrls).toContain('https://example.com/data.zarr/test.chunk');
     });
 
-    it('should correctly construct .zattrs URL for content hash validation', async () => {
+    it('should correctly construct the root-document URL for content hash validation', async () => {
       mocks.fetchedUrls.length = 0;
 
       // Store with trailing slash
       const storeWithSlash = new MultiLevelCachingStore('https://example.com/data.zarr/');
       await storeWithSlash.init();
 
-      // .zattrs should be fetched correctly during init
-      const zattrsUrls = mocks.fetchedUrls.filter((u) => u.includes('.zattrs'));
-      expect(zattrsUrls.length).toBeGreaterThan(0);
-      expect(zattrsUrls[0]).toBe('https://example.com/data.zarr/.zattrs');
-      // No double slashes before .zattrs
-      expect(zattrsUrls.some((u) => u.includes('//.zattrs'))).toBe(false);
+      // Whichever root document the implementation asks for, the URL must be
+      // joined without a doubled slash. Asserting on the document NAME would
+      // pin the format rather than the joining bug this test exists for.
+      const rootDocUrls = mocks.fetchedUrls.filter(
+        (u) => u.includes('.zattrs') || u.includes('zarr.json')
+      );
+      expect(rootDocUrls.length).toBeGreaterThan(0);
+      expect(rootDocUrls[0]).toMatch(/^https:\/\/example\.com\/data\.zarr\/(\.zattrs|zarr\.json)$/);
+      expect(rootDocUrls.some((u) => u.includes('//.zattrs') || u.includes('//zarr.json'))).toBe(
+        false
+      );
     });
   });
 

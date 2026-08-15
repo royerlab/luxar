@@ -481,10 +481,12 @@ def load_dataset_gsplats(
           and assumes nothing about the format.
         * **Datasets whose bucket is not ``zenodo``.** ``gsplats_tribolium``,
           ``gsplats_acto3d_heart``, ``gsplats_tng_cosmic_web`` and
-          ``milky_way_gaia_3m`` still ship files in-repo but are marked
-          ``local-compute``, so this returns ``None`` for them and the demo would
-          fit from scratch on a GPU instead of loading the file that is sitting
-          right there. Migrate a demo only once its dataset is ``zenodo``.
+          ``milky_way_gaia_3m`` are marked ``local-compute`` and no longer ship
+          files in-repo, so this returns ``None`` for them and the demo takes its
+          own build path: a GPU refit for the three gsplat ones, and for Gaia a
+          hand-run ``scripts/generate_galaxy_simple.py`` rebuild (or a copy the
+          user already placed in the cache). Migrate a demo only once its dataset
+          is ``zenodo``.
     """
     if recompute:
         return None

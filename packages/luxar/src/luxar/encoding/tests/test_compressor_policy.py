@@ -14,6 +14,7 @@ import pytest
 import zarr
 from numcodecs import Blosc
 
+from luxar.conftest import array_compressor
 from luxar.encoding.compression import WIDTH_AWARE_DEFAULT, resolve_compressor
 
 
@@ -74,7 +75,7 @@ class TestStoreWideCompressorPolicy:
             for name, (dtype, shuffle) in expectations.items():
                 arr = g[name]
                 assert str(arr.dtype) == dtype, (name, arr.dtype)
-                c = arr.compressor
+                c = array_compressor(arr)
                 assert c is not None and c.cname == "zstd", (name, c)
                 assert c.clevel == 9, (name, c.clevel)
                 assert c.shuffle == shuffle, (name, c.shuffle)
@@ -96,4 +97,4 @@ class TestStoreWideCompressorPolicy:
                 ordering="none",
             )
             g = zarr.open_group(str(p), mode="r")
-            assert g["centers"].compressor is None
+            assert array_compressor(g["centers"]) is None

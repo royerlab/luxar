@@ -8,7 +8,6 @@ from downscale factors and from isotropic resampling of the voxel spacing.
 
 from __future__ import annotations
 
-import json
 import shutil
 from pathlib import Path
 
@@ -17,6 +16,7 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
+from luxar._zarr_compat import read_node_attrs  # noqa: E402
 from luxar.gsplats.fit_gsplats import fit_gaussian_splats  # noqa: E402
 
 STAMPS = (
@@ -149,7 +149,7 @@ def test_stamps_reach_the_fitting_group_on_disk(tmp_path: Path) -> None:
     if out.exists():
         shutil.rmtree(out)
     _fit(V).save(out)
-    attrs = json.loads((out / "fitting" / ".zattrs").read_text())
+    attrs = read_node_attrs(out / "fitting")
     for key in STAMPS:
         assert key in attrs, f"{key!r} did not reach fitting/ on disk"
     assert attrs["source_bytes"] == V.nbytes
@@ -242,7 +242,7 @@ def test_a_dtype_object_survives_the_save(tmp_path: Path) -> None:
     V = _sparse_blobs(shape=(8, 8, 8), n=4).astype(np.float32)
     out = tmp_path / "dtype_object.gsplats.zarr"
     _fit(V, source_dtype=np.dtype("uint16")).save(out)
-    attrs = json.loads((out / "fitting" / ".zattrs").read_text())
+    attrs = read_node_attrs(out / "fitting")
     assert attrs["source_dtype"] == "uint16"
     assert attrs["source_bytes"] == V.size * 2
 

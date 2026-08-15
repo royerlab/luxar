@@ -374,19 +374,316 @@ def _empty_marker_for(*box_idxs: int, n_per_box: int = 5):
 
 
 class TestDefaultWorkerCmdBuilder:
-    def test_forwards_floor(self, tmp_path):
-        # An explicit --floor must reach each content box worker (else -j>1
-        # content fits silently drop the override and default to 'auto').
+    def test_forwards_resolved_floor_level(self, tmp_path):
+        # The parent resolves the spec ONCE against the whole volume and hands
+        # each box worker the concrete LEVEL (#1174) — a spec would be
+        # re-estimated per box crop, so abutting boxes would subtract different
+        # pedestals. The builder must carry a number through verbatim.
         from luxar.gsplats.planner.fit_planned_parallel import (
             _default_worker_cmd_builder,
         )
 
-        b = _default_worker_cmd_builder("in.zarr", "plan.json", floor="p10")
+        b = _default_worker_cmd_builder("in.zarr", "plan.json", floor=4.25)
         cmd = [str(c) for c in b(0, tmp_path / "box0.gsplats.zarr")]
-        assert "--floor" in cmd and cmd[cmd.index("--floor") + 1] == "p10"
-        # Not emitted when unset (worker defaults to 'auto').
+        assert "--floor" in cmd
+        assert float(cmd[cmd.index("--floor") + 1]) == pytest.approx(4.25)
+        # A disabled floor is forwarded explicitly (not omitted): the worker must
+        # not fall back to its own 'auto' default.
+        b_none = _default_worker_cmd_builder("in.zarr", "plan.json", floor="none")
+        cmd_none = [str(c) for c in b_none(0, tmp_path / "box0.gsplats.zarr")]
+        assert cmd_none[cmd_none.index("--floor") + 1] == "none"
+        # A SPEC is still forwarded verbatim (documented contract): a worker
+        # invoked by hand, or from a plan written before the level was resolved
+        # up front, resolves it against its whole (t, c) volume — never the box
+        # crop — so the deterministic sampler still makes the boxes agree.
+        b_spec = _default_worker_cmd_builder("in.zarr", "plan.json", floor="p10")
+        cmd_spec = [str(c) for c in b_spec(0, tmp_path / "box0.gsplats.zarr")]
+        assert cmd_spec[cmd_spec.index("--floor") + 1] == "p10"
+        # Nothing to forward -> no flag (the worker resolves its own config).
         b2 = _default_worker_cmd_builder("in.zarr", "plan.json")
         assert "--floor" not in [str(c) for c in b2(0, tmp_path / "box0.gsplats.zarr")]
+
+
+def _pedestal_blobs(shape=(32, 32, 64), pedestal=5.0, step=12.0, seed=0):
+    """Blobs on a background pedestal that STEPS across the x midpoint.
+
+    The step is what makes per-box floor estimation visible: the two abutting
+    boxes of the plan below sit on different pedestals, so a box that resolves
+    ``auto`` against its own crop gets a different level from its neighbour —
+    different subtracted baseline AND different normalization range, i.e. a
+    brightness step at the box boundary.
+    """
+    zz, yy, xx = np.mgrid[0 : shape[0], 0 : shape[1], 0 : shape[2]]
+    V = np.full(shape, pedestal, np.float32)
+    V[:, :, shape[2] // 2 :] = step
+    rng = np.random.default_rng(seed)
+    for _ in range(12):
+        cz = rng.integers(4, shape[0] - 4)
+        cy = rng.integers(4, shape[1] - 4)
+        cx = rng.integers(4, shape[2] - 4)
+        V += 10.0 * np.exp(
+            -(((zz - cz) ** 2 + (yy - cy) ** 2 + (xx - cx) ** 2) / 4.0)
+        ).astype(np.float32)
+    return V
+
+
+class TestContentFitSharedFloor:
+    """`fit --tiling content` resolves ONE floor level for every box (#1174)."""
+
+    @staticmethod
+    def _one_splat(volume, box, overlap, cap, **fit_kwargs):
+        """Stand-in for ``_fit_one_box``: one splat at the box centre."""
+        z0, z1, y0, y1, x0, x1 = box.box
+        c = np.array([[(z0 + z1) / 2, (y0 + y1) / 2, (x0 + x1) / 2]], np.float32)
+        return (
+            c,
+            np.ones((1,), np.float32),
+            np.tile(np.array([1, 0, 1, 0, 0, 1], np.float32), (1, 1)),
+        )
+
+    def _run(self, tmp_path, monkeypatch, volume, floor, jobs="1"):
+        """Run a content fit over a 2-box plan, capturing each box's floor kwarg."""
+        import importlib
+
+        from luxar.cli.gsplat_ops.planner import run_content_fit
+
+        # `luxar.gsplats.planner.fit_planned` the ATTRIBUTE is the re-exported
+        # function, so the module has to be fetched explicitly to patch into it.
+        fp = importlib.import_module("luxar.gsplats.planner.fit_planned")
+        seen: list = []
+
+        def _spy(volume_, box, overlap, cap, **fit_kwargs):
+            seen.append(fit_kwargs.get("floor"))
+            return self._one_splat(volume_, box, overlap, cap, **fit_kwargs)
+
+        monkeypatch.setattr(fp, "_fit_one_box", _spy)
+
+        # Two abutting boxes splitting x in half (core-disjoint, no gap).
+        z, y, x = volume.shape
+        plan = FitPlan(
+            volume_shape=[z, y, x],
+            boxes=[
+                PlanBox(box=[0, z, 0, y, 0, x // 2], n_features=10, budget=50),
+                PlanBox(box=[0, z, 0, y, x // 2, x], n_features=10, budget=50),
+            ],
+            overlap=4,
+            feature_method="peaks",
+            min_leaf=8,
+            max_leaf=32,
+            density={"saturation_cap": 10_000},
+        )
+        plan_json = tmp_path / "plan.json"
+        plan.to_json(plan_json)
+
+        run_content_fit(
+            tmp_path / "unused.npy",
+            tmp_path / "out.gsplats.zarr",
+            volume=volume,
+            k_star_ref=4000,
+            n_features_ref=200,
+            plan=plan_json,
+            floor=floor,
+            jobs=jobs,
+            flat=True,
+            preset="draft",
+            device="cpu",
+            verbose=False,
+        )
+        return seen
+
+    def test_abutting_boxes_get_one_identical_numeric_level(
+        self, tmp_path, monkeypatch
+    ):
+        from luxar.gsplats.fitting.preprocessing import (
+            _resolve_floor,
+            resolve_volume_floor,
+        )
+
+        V = _pedestal_blobs()
+        expected = resolve_volume_floor(V, "auto", guard_numeric=True)
+        assert expected is not None and expected > 0.0  # the fixture has a pedestal
+
+        # The pre-fix behaviour this pins down: each box crop resolves its OWN,
+        # different level (that is what forwarding the spec into the per-box
+        # fit does), so the boundary between them shows a brightness step.
+        half = V.shape[2] // 2
+        per_crop = (
+            _resolve_floor(V[:, :, :half], "auto"),
+            _resolve_floor(V[:, :, half:], "auto"),
+        )
+        assert per_crop[0] != per_crop[1]
+
+        seen = self._run(tmp_path, monkeypatch, V, floor="auto")
+        assert len(seen) == 2
+        # A NUMBER, not the spec: a spec would be re-resolved per box crop.
+        assert all(isinstance(f, float) for f in seen), seen
+        assert seen[0] == pytest.approx(expected)
+        assert seen[0] == seen[1]
+
+    def test_disabled_and_explicit_numeric_round_trip(self, tmp_path, monkeypatch):
+        V = _pedestal_blobs()
+        assert self._run(tmp_path, monkeypatch, V, floor="none") == ["none", "none"]
+        seen = self._run(tmp_path, monkeypatch, V, floor="3.0")
+        assert seen == [pytest.approx(3.0), pytest.approx(3.0)]
+
+    def test_percentile_spec_becomes_one_number_for_every_box(
+        self, tmp_path, monkeypatch
+    ):
+        """`--floor pNN` too: ONE identical number for every box (#1174).
+
+        Pre-fix each box ran its own `np.percentile` over its own crop, so
+        abutting boxes were normalized against different baselines. The shared
+        resolution goes through the same deterministic whole-volume sampler every
+        worker would use; this fixture is well under the sample budget, so the
+        sample IS the whole array and the level equals the exact percentile.
+        """
+        from luxar.gsplats.fitting.preprocessing import (
+            _resolve_floor,
+            resolve_volume_floor,
+        )
+
+        V = _pedestal_blobs()
+        expected = resolve_volume_floor(V, "p10", guard_numeric=True)
+        assert expected is not None
+        half = V.shape[2] // 2
+        assert _resolve_floor(V[:, :, :half], "p10") != _resolve_floor(
+            V[:, :, half:], "p10"
+        )
+
+        seen = self._run(tmp_path, monkeypatch, V, floor="p10")
+        assert all(isinstance(f, float) for f in seen), seen
+        assert seen == [pytest.approx(expected), pytest.approx(expected)]
+
+    def test_parallel_worker_argv_carries_a_number_not_a_spec(
+        self, tmp_path, monkeypatch
+    ):
+        """The -j>1 box subprocesses must be handed the level, not 'auto'."""
+        import importlib
+
+        from luxar.cli.gsplat_ops.planner import run_content_fit
+        from luxar.gsplats.fitting.preprocessing import resolve_volume_floor
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        fpp = importlib.import_module("luxar.gsplats.planner.fit_planned_parallel")
+        V = _pedestal_blobs()
+        expected = resolve_volume_floor(V, "auto", guard_numeric=True)
+        argvs: list = []
+
+        def _fake_parallel(plan, *, jobs, tmp_dir, worker_cmd_builder, **kwargs):
+            for i in range(len(plan.boxes)):
+                argvs.append([str(t) for t in worker_cmd_builder(i, tmp_dir / f"b{i}")])
+            return GSplatData(
+                centers=np.zeros((1, 3), np.float32),
+                amplitudes=np.ones((1,), np.float32),
+                cholesky_factors=np.array([[1, 0, 1, 0, 0, 1]], np.float32),
+            )
+
+        monkeypatch.setattr(fpp, "fit_planned_parallel", _fake_parallel)
+
+        z, y, x = V.shape
+        plan = FitPlan(
+            volume_shape=[z, y, x],
+            boxes=[
+                PlanBox(box=[0, z, 0, y, 0, x // 2], n_features=10, budget=50),
+                PlanBox(box=[0, z, 0, y, x // 2, x], n_features=10, budget=50),
+            ],
+            overlap=4,
+            feature_method="peaks",
+            min_leaf=8,
+            max_leaf=32,
+            density={"saturation_cap": 10_000},
+        )
+        plan_json = tmp_path / "plan.json"
+        plan.to_json(plan_json)
+        run_content_fit(
+            tmp_path / "unused.npy",
+            tmp_path / "out.gsplats.zarr",
+            volume=V,
+            k_star_ref=4000,
+            n_features_ref=200,
+            plan=plan_json,
+            floor="auto",
+            jobs="2",
+            flat=True,
+            preset="draft",
+            device="cpu",
+            verbose=False,
+        )
+        assert len(argvs) == 2
+        levels = [float(a[a.index("--floor") + 1]) for a in argvs]
+        assert levels == [pytest.approx(expected), pytest.approx(expected)]
+
+    def test_bad_floor_spec_is_rejected_before_the_volume_is_read(self, tmp_path):
+        """An invalid spec is a usage error, paid for with zero volume reads.
+
+        FAILS pre-fix: the volume was loaded FIRST (``fit.py`` loads before
+        dispatching to the content path) and the spec was only validated inside
+        ``resolve_shared_floor``, i.e. after the read — surfacing as a bare
+        ``ValueError``. A ``floor:`` in a YAML ``--config`` was not validated on
+        this path at all. The input path below does not exist, so a read would
+        raise something else entirely.
+        """
+        import typer
+
+        from luxar.cli.gsplat_ops.planner import run_content_fit
+
+        missing = tmp_path / "does-not-exist.zarr"
+        with pytest.raises(typer.BadParameter):
+            run_content_fit(
+                missing,
+                tmp_path / "out.gsplats.zarr",
+                k_star_ref=4000,
+                n_features_ref=200,
+                floor="p150",
+                verbose=False,
+            )
+        cfg = tmp_path / "fit.yaml"
+        cfg.write_text("floor: -5.0\n")
+        with pytest.raises(typer.BadParameter):
+            run_content_fit(
+                missing,
+                tmp_path / "out.gsplats.zarr",
+                k_star_ref=4000,
+                n_features_ref=200,
+                config=cfg,
+                verbose=False,
+            )
+
+    def test_cli_renders_a_bad_floor_spec_as_a_usage_error(self, tmp_path):
+        """No traceback: `fit --tiling content --floor p150` is a usage error.
+
+        FAILS pre-fix: `fit`'s generic ``except Exception`` printed the
+        ``ValueError`` plus a full traceback (after loading the volume).
+        """
+        from typer.testing import CliRunner
+
+        from luxar.cli.gsplat_commands import app_gsplat
+
+        vol = tmp_path / "vol.npy"
+        np.save(vol, _pedestal_blobs(shape=(16, 16, 16)))
+        result = CliRunner().invoke(
+            app_gsplat,
+            # fmt: off
+            [
+                "fit",
+                str(vol),
+                str(tmp_path / "out.gsplats.zarr"),
+                "--tiling",
+                "content",
+                "--k-star-ref",
+                "4000",
+                "--n-features-ref",
+                "200",
+                "--floor",
+                "p150",
+                "--device",
+                "cpu",
+            ],
+            # fmt: on
+        )
+        assert result.exit_code != 0
+        assert "Traceback" not in result.output
+        assert "floor" in result.output.lower()
 
 
 class TestFitPlannedParallel:

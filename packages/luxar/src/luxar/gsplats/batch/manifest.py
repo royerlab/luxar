@@ -80,6 +80,47 @@ class BatchManifest:
     preset: Optional[str] = None
     fit_args: Dict[str, Any] = field(default_factory=dict)
 
+    floor_level: Optional[float] = None
+    """The ONE background floor level resolved at plan time, subtracted by every
+    ``(t, c)`` task. ``batch-fit`` deliberately uses a single global level for the
+    whole timelapse rather than letting each task re-estimate on its own
+    sub-volume, which would be a time-varying pedestal (brightness flicker) across
+    the merged partition. It is the MINIMUM of the levels resolved on a bounded set
+    of evenly spaced ``(t, c)`` slices spanning the store's full extent (see
+    :func:`luxar.cli.gsplat_ops.batch.planning.resolve_batch_floor`): a minimum is
+    a lower bound on every SAMPLED slice's pedestal, so it cannot clip a sampled
+    sub-volume to zero (which would drop that slice silently from the merge) — a
+    dimmer non-sampled slice still can, bounded sampling being bounded — and it
+    does not depend on the ``--timepoints``/``--channels`` selection. The level
+    that actually drives the fits is the concrete number in ``fit_args["floor"]``;
+    this field RECORDS it for inspection (nothing reads it back — notably the
+    merge-time ``refine='volume'`` re-fit does not, so its coarse levels
+    re-estimate their own ``auto`` floor per crop). ``None`` means "no level is
+    pinned": suppression is disabled, or the resolved level was negative so the
+    SPEC was forwarded and each task resolves it itself, or the manifest predates
+    this field — in the last two cases the run keeps its recorded ``fit_args``
+    floor SPEC, so a resumed old batch behaves exactly as it did when planned."""
+
+    grid_scale: Optional[List[float]] = None
+    """Per-axis factor mapping the VOXEL tile grid onto the frame the fit tasks'
+    splats actually come back in (``uniform`` mode; #1587).
+
+    Every array task runs ``luxar gsplat fit --tile k/M`` with this run's
+    ``--preset`` and (verbatim) its ``--config`` YAML, so a ``voxel_size:`` with
+    the default ``output_space: real`` makes each worker emit PHYSICAL centers
+    while ``spatial_shape`` — and hence the tile grid rebuilt from it at merge
+    time — stays in voxels; a ``downscale:`` is a second, multiplicative term.
+    The planner resolves both ONCE, here, with
+    :func:`~luxar.gsplats.tiling.resolve_grid_scale`, because that is where the
+    merged fit config is in hand: re-deriving it at merge time would mean
+    re-reading a YAML that may have moved, been deleted, or been replaced by an
+    unrelated same-named file.
+
+    ``None`` means NO scale — the tile grid and the splats share a frame. That
+    is both the overwhelmingly common case and what a manifest written before
+    this field existed says by omission, which is exactly the pre-#1587
+    behaviour: build the planes straight off the voxel grid."""
+
     # GPU + time
     gpu_name: str = ""
     estimated_seconds_per_task: float = 0.0

@@ -15,7 +15,6 @@ STORED in rather than the float32 the loader hands the optimiser.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import numpy as np
@@ -25,6 +24,7 @@ pytest.importorskip("torch")
 
 from typer.testing import CliRunner  # noqa: E402
 
+from luxar._zarr_compat import read_node_attrs
 from luxar.cli import app  # noqa: E402
 from luxar.gsplats.fit_gsplats import fit_gaussian_splats  # noqa: E402
 
@@ -86,6 +86,6 @@ def test_cli_fit_stamps_the_stored_dtype_not_the_loaders_cast(tmp_path: Path) ->
         ],
     )
     assert result.exit_code == 0, result.output
-    attrs = json.loads((out / "fitting" / ".zattrs").read_text())
+    attrs = read_node_attrs(out / "fitting")
     assert attrs["source_dtype"] == "uint16"
     assert attrs["source_bytes"] == V.size * 2

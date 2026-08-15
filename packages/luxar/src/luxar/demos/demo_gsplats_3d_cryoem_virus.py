@@ -206,7 +206,7 @@ def fit_map(volume: np.ndarray) -> GSplatData:
         result.save(
             CACHE_FILE,
             encoding_mode=EncodingMode.MEMORY,
-            include_fitting_info=False,
+            include_fitting_info=True,
             compress="zip",
             zip_deflate=True,
         )
