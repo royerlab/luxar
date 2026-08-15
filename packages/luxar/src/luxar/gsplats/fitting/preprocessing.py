@@ -1105,14 +1105,8 @@ def resolve_volume_norm_range(
     -----
     Determinism matters as much as it does for the floor: the sample is a pure
     function of ``volume.shape`` and the fixed budget, so independent workers
-    (``--tile k/M``, ``-j N``, batch-fit) all resolve the SAME range for the
-    volume they are HANDED, without coordinating. That scope is where this
-    stops short of the floor: a ``batch-fit`` task is handed one ``(t, c)``
-    sub-volume, so its tiles share a range while two timepoints do not,
-    whereas the floor level is pinned once for the whole run in the manifest.
-    Amplitudes stay physically comparable either way (``finalize_results``
-    rescales by ``intensity_range``); what differs across timepoints is the
-    absolute convergence tolerance. #1616 tracks the remaining scopes.
+    (``--tile k/M``, ``-j N``, batch-fit) all resolve the SAME range and their
+    amplitudes stay mutually comparable.
     """
     sample = _sample_volume_for_floor(volume, int(FLOOR_SAMPLE_BUDGET_VOXELS))
     if sample is None or sample.size == 0:
@@ -1223,43 +1217,6 @@ def resolve_volume_floor(
     return float(resolved)
 
 
-def _resolve_norm_bounds(
-    V: np.ndarray,
-    norm_percentile: float,
-    verbose: bool,
-    norm_range: "tuple[float, float] | None",
-) -> tuple[float, float]:
-    """The ``(image_min, image_max)`` normalization will use, before any floor.
-
-    A supplied ``norm_range`` wins outright (tiled fitting resolves one against
-    the whole volume); otherwise the pair comes from THIS array, either its
-    extremes (``norm_percentile == 0``) or a symmetric percentile pair.
-    """
-    if norm_range is not None:
-        image_min, image_max = float(norm_range[0]), float(norm_range[1])
-        if verbose:
-            aprint(
-                f"Normalization: whole-volume range [{image_min:.6g}, "
-                f"{image_max:.6g}] (supplied, not derived from this array)"
-            )
-        return image_min, image_max
-    if norm_percentile == 0.0:
-        # Full range normalization
-        if verbose:
-            aprint("Normalization: full min-max range")
-        return float(np.min(V)), float(np.max(V))
-    # Percentile-based robust normalization
-    if verbose:
-        aprint(
-            f"Normalization: {norm_percentile:.1f}%-"
-            f"{100.0 - norm_percentile:.1f}% percentile range"
-        )
-    return (
-        float(np.percentile(V, norm_percentile)),
-        float(np.percentile(V, 100.0 - norm_percentile)),
-    )
-
-
 def _normalize_data(
     V: np.ndarray,
     norm_percentile: float,
@@ -1285,7 +1242,28 @@ def _normalize_data(
     outlier and is left unclipped when ``norm_percentile == 0``.
     """
     # Configurable normalization - store parameters for intensity rescaling
-    image_min, image_max = _resolve_norm_bounds(V, norm_percentile, verbose, norm_range)
+    if norm_range is not None:
+        image_min, image_max = (float(norm_range[0]), float(norm_range[1]))
+        if verbose:
+            aprint(
+                f"Normalization: whole-volume range [{image_min:.6g}, "
+                f"{image_max:.6g}] (supplied, not derived from this array)"
+            )
+    elif norm_percentile == 0.0:
+        # Full range normalization
+        image_min = float(np.min(V))
+        image_max = float(np.max(V))
+        if verbose:
+            aprint("Normalization: full min-max range")
+    else:
+        # Percentile-based robust normalization
+        image_min = float(np.percentile(V, norm_percentile))
+        image_max = float(np.percentile(V, 100.0 - norm_percentile))
+        if verbose:
+            aprint(
+                f"Normalization: {norm_percentile:.1f}%-"
+                f"{100.0 - norm_percentile:.1f}% percentile range"
+            )
 
     # Background floor suppression: raise image_min to the resolved floor.
     resolved_floor = _resolve_floor(V, floor)

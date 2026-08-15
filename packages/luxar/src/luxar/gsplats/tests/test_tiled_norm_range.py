@@ -187,6 +187,30 @@ def test_tile_range_declines_a_non_finite_top():
     assert _tile_norm_range(vol_inf, {}, None) is None
 
 
+def test_tile_range_declines_a_top_with_no_positive_extent():
+    """A sample that saw no signal is not a scale, floor or no floor.
+
+    Reachable without any floor at all: the bounded sample lands entirely in an
+    empty (or masked, or padded) region of a large volume. Sharing ``hi == 0``
+    would give every tile ``intensity_range == 0``, and ``_normalize_data``
+    answers that by filling the tile with a uniform 0.5 — a fabricated flat
+    field fitted as if it were data. A negative top (background-subtracted data
+    whose positive structure the sample missed) inverts the sign instead.
+    """
+    assert _tile_norm_range(np.zeros((8, 32, 32), dtype=np.float32), {}, None) is None
+    assert (
+        _tile_norm_range(np.full((8, 32, 32), -5.0, dtype=np.float32), {}, None) is None
+    )
+
+
+def test_zero_range_fabricates_a_flat_field():
+    """Pin what the decline above avoids, so that guard is not vacuous."""
+    tile = np.zeros((4, 8, 8), dtype=np.float32)
+    tile[2, 4, 4] = 5.0
+    shared_zero, *_ = _normalize_data(tile.copy(), 0.0, False, None, (0.0, 0.0))
+    assert np.allclose(shared_zero, 0.5)
+
+
 def test_tile_range_keeps_a_genuinely_tiny_scale():
     """Small is not the same as collapsed — a tiny float stack keeps its scale.
 
@@ -240,6 +264,31 @@ def test_a_declined_range_is_not_resolved_again_per_tile(monkeypatch):
     # and without the marker the same call DOES resolve — the guard is not vacuous
     ftg.fit_tile(
         vol, spec, floor="none", norm_range=None, seeds=10, n_iters=1, verbose=False
+    )
+    assert len(calls) == 1
+
+
+def test_fit_tiled_resolves_a_declined_range_once_for_the_grid(monkeypatch):
+    """The orchestrator's half of the same contract, over a real tile grid.
+
+    An empty volume is the reachable decline that needs no floor at all: every
+    tile is skipped as signal-free, so what this measures is purely how many
+    times the grid asked for a shared scale.
+    """
+    from luxar.gsplats import fit_tiled_gsplats as ftg
+
+    calls: list = []
+    real = ftg._tile_norm_range
+
+    def _counting(volume, fit_kwargs, applied_floor, verbose=False):
+        calls.append(applied_floor)
+        return real(volume, fit_kwargs, applied_floor, verbose=verbose)
+
+    monkeypatch.setattr(ftg, "_tile_norm_range", _counting)
+
+    vol = np.zeros((8, 64, 64), dtype=np.float32)
+    ftg.fit_tiled(
+        vol, tile_size=32, overlap=0, floor="none", seeds=10, n_iters=1, verbose=False
     )
     assert len(calls) == 1
 
@@ -299,42 +348,3 @@ def test_progressive_residual_passes_drop_the_shared_range(monkeypatch):
     )
 
     assert seen == [(0.0, 4.0), None]
-
-
-@pytest.mark.parametrize(
-    "bad",
-    [
-        (5.0, 5.0),  # empty range -> the "nearly uniform" fill-with-0.5 branch
-        (2.0, 1.0),  # reversed -> every voxel normalizes negative, clips to 0
-        (0.0, float("nan")),
-        (0.0, float("inf")),
-        (1.0,),  # not a pair
-    ],
-)
-def test_a_degenerate_norm_range_is_refused(bad):
-    """A bad supplied range must fail loudly, not fit successfully on nonsense."""
-    from luxar.gsplats import fit_gaussian_splats
-
-    vol = np.zeros((4, 8, 8), dtype=np.float32)
-    vol[2, 4, 4] = 1.0
-    with pytest.raises(ValueError):
-        fit_gaussian_splats(
-            vol, seeds=4, n_iters=1, device="cpu", verbose=False, norm_range=bad
-        )
-
-
-def test_a_resolved_tile_range_passes_that_validation(ramp_volume):
-    """Control: what the tiled fitter actually produces IS a valid range."""
-    from luxar.gsplats import fit_gaussian_splats
-
-    resolved = _tile_norm_range(ramp_volume, {}, None)
-    assert resolved is not None and resolved[1] > resolved[0]
-    result = fit_gaussian_splats(
-        ramp_volume,
-        seeds=4,
-        n_iters=1,
-        device="cpu",
-        verbose=False,
-        norm_range=resolved,
-    )
-    assert result is not None

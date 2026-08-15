@@ -387,18 +387,6 @@ def fit_gaussian_splats(
         - "none" / 0 / None: disabled (today's hard-min normalization).
 
         Orthogonal to ``norm_percentile`` (which still governs image_max).
-    norm_range : tuple of float, or None, default=None
-        Explicit ``(image_min, image_max)`` for normalization, replacing the
-        pair ``norm_percentile`` would derive from ``V`` itself. Tiled fitting
-        passes a range resolved against the WHOLE volume
-        (:func:`~luxar.gsplats.fitting.preprocessing.resolve_volume_norm_range`)
-        so every tile maps a given physical intensity to the same normalized
-        value, and is therefore held to the same absolute convergence tolerance
-        and thresholds. Must be finite with ``image_max > image_min``. Because
-        such a range is a bounded-sample estimate, a voxel above ``image_max``
-        is left unclipped when ``norm_percentile == 0`` (and the auto ``amp_max``
-        rises with it), rather than flattening the brightest structure. Leave
-        None for a whole-volume fit — the array already IS the volume.
     downscale : int, sequence of int, or None, default=None
         Downsample the volume by integer factor(s) before fitting.
         Useful for band-limited data where high-frequency voxels contain only noise.
