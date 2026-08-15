@@ -10,6 +10,7 @@
 import type { BlendingMode } from './blending';
 import type { ViewState } from '../data/data-loader-types';
 import type { ScalarArray } from './points';
+import type { PositionBounds } from './zarr';
 import type { LoaderMetrics, MonitorEventListener, QueryInfo } from './data-monitor-types';
 
 // ============================================================================
@@ -77,6 +78,15 @@ export interface LinesMetadata {
 
   /** Maximum line width in world units */
   max_width: number;
+
+  /**
+   * Authored nD axis-aligned vertex bounds. Written unconditionally on
+   * every lines node by the compiler (`geometry_writers/lines.py`), and
+   * on an additive-ladder parent as the union over its levels — so it is
+   * the one authored extent that survives when a node has no spatial
+   * index. Optional only for hand-written metadata.
+   */
+  position_bounds?: PositionBounds;
 
   /** Whether colors array is present */
   has_colors: boolean;
