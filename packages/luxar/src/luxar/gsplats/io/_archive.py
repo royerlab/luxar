@@ -369,14 +369,20 @@ def _zip_member_is_symlink(info: zipfile.ZipInfo) -> bool:
     return stat.S_ISLNK(info.external_attr >> 16)
 
 
-def _parse_attrs(raw: bytes) -> Dict[str, Any]:
+def _parse_attrs(raw: bytes, member_name: str) -> Dict[str, Any]:
     """Decode a node metadata payload; anything but a JSON object yields ``{}``.
 
     Both formats' documents arrive here, so the unwrapping is the facade's:
     a format-2 ``.zattrs`` IS the attributes, while a format-3 ``zarr.json``
-    nests them under ``attributes`` beside the structural fields.
+    nests them under ``attributes`` beside the structural fields. The member's
+    own name is what settles which — it is how the member was selected in the
+    first place — so the facade is told rather than left to infer it from the
+    content.
     """
-    return attrs_from_node_doc(json.loads(raw.decode("utf-8")))
+    return attrs_from_node_doc(
+        json.loads(raw.decode("utf-8")),
+        doc_name=PurePosixPath(member_name).name,
+    )
 
 
 def _read_zip_root_attrs(path: Path) -> Dict[str, Any]:
@@ -412,7 +418,7 @@ def _read_zip_root_attrs(path: Path) -> Dict[str, Any]:
             raw = handle.read(_MAX_ATTRS_BYTES + 1)
         if len(raw) > _MAX_ATTRS_BYTES:
             return {}
-        return _parse_attrs(raw)
+        return _parse_attrs(raw, best.filename)
 
 
 #: The best possible ``_root_attrs_rank``: the root attrs document of a
@@ -480,7 +486,7 @@ def _read_targz_root_attrs(path: Path) -> Dict[str, Any]:
         if handle is None:
             return {}
         with handle:
-            return _parse_attrs(handle.read())
+            return _parse_attrs(handle.read(), best.name)
 
 
 def read_archive_root_attrs(path: str | Path) -> Dict[str, Any]:

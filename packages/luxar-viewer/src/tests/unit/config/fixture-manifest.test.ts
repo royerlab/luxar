@@ -114,6 +114,74 @@ describe('isGeneratedFixtureComplete', () => {
     expect(isGeneratedFixtureComplete(complete)).toBe(true);
   });
 
+  it('accepts a FORMAT-3 fixture, whose index lives inside zarr.json', () => {
+    // Format 3 writes no `.zmetadata` at all — the consolidated index is a member
+    // of the root document — so a predicate that names only `.zmetadata` reports
+    // every v3 fixture as "incomplete" and both global setups demand a
+    // regeneration that can never satisfy them. That is not hypothetical: it is
+    // what stopped the E2E suite from running once the writers moved to format 3.
+    //
+    // The manifest sweep below covers this only INCIDENTALLY, and only while the
+    // ambient generator happens to emit v3 — under `LUXAR_ZARR_FORMAT=2` it
+    // silently reverts to pinning the v2 branch alone. This pins v3 explicitly.
+    const v3 = path.join(temporaryRoot, 'v3complete.luxar.zarr');
+    mkdirSync(v3, { recursive: true });
+    writeFileSync(
+      path.join(v3, 'zarr.json'),
+      JSON.stringify({
+        zarr_format: 3,
+        node_type: 'group',
+        attributes: {},
+        consolidated_metadata: { metadata: {}, kind: 'inline', must_understand: false },
+      }),
+      'utf-8'
+    );
+
+    expect(existsSync(path.join(v3, '.zmetadata'))).toBe(false);
+    expect(isGeneratedFixtureComplete(v3)).toBe(true);
+  });
+
+  it('rejects a format-3 root written before consolidation finished', () => {
+    // The v3 counterpart of the interrupted-stump case: the root document exists
+    // (the group was created) but carries no consolidated index yet, so the write
+    // did not finish. Accepting it would let a half-written store pass as a fixture.
+    const partial = path.join(temporaryRoot, 'v3partial.luxar.zarr');
+    mkdirSync(partial, { recursive: true });
+    writeFileSync(
+      path.join(partial, 'zarr.json'),
+      JSON.stringify({ zarr_format: 3, node_type: 'group', attributes: {} }),
+      'utf-8'
+    );
+
+    expect(isGeneratedFixtureComplete(partial)).toBe(false);
+  });
+
+  it('ignores a stale .zmetadata beside an unfinished format-3 root', () => {
+    // A fixture directory an older format-2 store was copied over keeps its
+    // `.zmetadata`. zarr resolves such a directory as format 3, so the leftover
+    // describes a store nobody opens — and answering from it would report the
+    // interrupted v3 write as complete, which is the one case this predicate
+    // exists to catch. Mirrors `_zarr_compat.is_consolidated`.
+    const mixed = path.join(temporaryRoot, 'mixed.luxar.zarr');
+    mkdirSync(mixed, { recursive: true });
+    writeFileSync(path.join(mixed, '.zmetadata'), '{"metadata": {}}', 'utf-8');
+    writeFileSync(
+      path.join(mixed, 'zarr.json'),
+      JSON.stringify({ zarr_format: 3, node_type: 'group', attributes: {} }),
+      'utf-8'
+    );
+
+    expect(isGeneratedFixtureComplete(mixed)).toBe(false);
+  });
+
+  it('rejects a format-3 root document that is not parseable JSON', () => {
+    const broken = path.join(temporaryRoot, 'v3broken.luxar.zarr');
+    mkdirSync(broken, { recursive: true });
+    writeFileSync(path.join(broken, 'zarr.json'), '{"zarr_format": 3, "attrib', 'utf-8');
+
+    expect(isGeneratedFixtureComplete(broken)).toBe(false);
+  });
+
   it('accepts every fixture the checked-in generator manifest declares', () => {
     // Guards the predicate against a producer change: if the compiler ever stopped
     // writing `.zmetadata`, both global setups would demand a regeneration that can
