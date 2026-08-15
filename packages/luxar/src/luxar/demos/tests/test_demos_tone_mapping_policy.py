@@ -243,6 +243,21 @@ def _target_names(target: ast.expr) -> set[str]:
     return {n.id for n in ast.walk(target) if isinstance(n, ast.Name)}
 
 
+def _names_bound_here(node: ast.AST) -> set[str]:
+    """Every name ``node`` itself binds, ignoring whatever its children bind."""
+    if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+        return {node.id}
+    if isinstance(node, (ast.Import, ast.ImportFrom)):
+        return {(alias.asname or alias.name).split(".")[0] for alias in node.names}
+    if isinstance(node, ast.ExceptHandler) and node.name:
+        return {node.name}
+    if isinstance(node, (ast.MatchAs, ast.MatchStar)) and node.name:
+        return {node.name}
+    if isinstance(node, ast.MatchMapping) and node.rest:
+        return {node.rest}
+    return set()
+
+
 def _bound_names(body: list[ast.stmt]) -> set[str]:
     """Every name ``body`` binds in a scope of its OWN, whatever shape the value has.
 
@@ -273,17 +288,7 @@ def _bound_names(body: list[ast.stmt]) -> set[str]:
             (ast.Lambda, ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp),
         ):
             return
-        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
-            names.add(node.id)
-        elif isinstance(node, (ast.Import, ast.ImportFrom)):
-            for alias in node.names:
-                names.add((alias.asname or alias.name).split(".")[0])
-        elif isinstance(node, ast.ExceptHandler) and node.name:
-            names.add(node.name)
-        elif isinstance(node, (ast.MatchAs, ast.MatchStar)) and node.name:
-            names.add(node.name)
-        elif isinstance(node, ast.MatchMapping) and node.rest:
-            names.add(node.rest)
+        names.update(_names_bound_here(node))
         for child in ast.iter_child_nodes(node):
             visit(child)
 
@@ -333,6 +338,72 @@ def _default_values(
     return values
 
 
+def _collect_function(
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+    consts: dict[str, tuple[str, ...]],
+    found: list[str],
+) -> None:
+    """Collect from a ``def``: defaults and decorators outside, body inside."""
+    # Defaults and decorators are evaluated in the ENCLOSING scope; only the
+    # body sees the function's own names.
+    found.extend(_default_values(node.args, consts))
+    for outer in [node.args, *node.decorator_list]:
+        _collect(outer, consts, found)
+    scope = _function_scope(node, consts)
+    for stmt in node.body:
+        _collect(stmt, scope, found)
+
+
+def _collect_class(
+    node: ast.ClassDef, consts: dict[str, tuple[str, ...]], found: list[str]
+) -> None:
+    """Collect from a ``class``: bases/keywords/decorators outside, body inside."""
+    # Bases, keywords and decorators are evaluated in the ENCLOSING scope;
+    # the body binds its own names on top of it. Methods do not really see
+    # those class attributes, but descending with them visible over-reports
+    # rather than misses, which is the safe direction for this guard.
+    for outer in [*node.bases, *node.keywords, *node.decorator_list]:
+        _collect(outer, consts, found)
+    scope = _body_scope(node.body, consts)
+    for stmt in node.body:
+        _collect(stmt, scope, found)
+
+
+def _collect_lambda(
+    node: ast.Lambda, consts: dict[str, tuple[str, ...]], found: list[str]
+) -> None:
+    """Collect from a ``lambda``: defaults outside, body without its params."""
+    # Same split as a `def`, and for the same reason: only the body sees the
+    # lambda's parameters, so a forwarded one carries no policy.
+    found.extend(_default_values(node.args, consts))
+    _collect(node.args, consts, found)
+    _collect(node.body, _without_params(node.args, consts), found)
+
+
+def _collect_comprehension(
+    node: ast.ListComp | ast.SetComp | ast.DictComp | ast.GeneratorExp,
+    consts: dict[str, tuple[str, ...]],
+    found: list[str],
+) -> None:
+    """Collect from a comprehension, dropping each ``for`` target as it binds."""
+    # A comprehension is a scope of its own: its `for` targets are bound
+    # inside it, the scan cannot read them, and so — like any other
+    # unreadable local — they must hide a same-named outer constant rather
+    # than let it leak into the element expression. Only the FIRST iterable
+    # is evaluated in the enclosing scope; every later one, the `if`
+    # clauses and the element see the targets bound before them.
+    scope = consts
+    for generator in node.generators:
+        _collect(generator.iter, scope, found)
+        bound = _target_names(generator.target)
+        scope = {n: v for n, v in scope.items() if n not in bound}
+        for condition in generator.ifs:
+            _collect(condition, scope, found)
+    elements = [node.key, node.value] if isinstance(node, ast.DictComp) else [node.elt]
+    for element in elements:
+        _collect(element, scope, found)
+
+
 def _collect(
     node: ast.AST, consts: dict[str, tuple[str, ...]], found: list[str]
 ) -> None:
@@ -347,52 +418,16 @@ def _collect(
     would see, instead of to a same-named module constant it shadows.
     """
     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-        # Defaults and decorators are evaluated in the ENCLOSING scope; only the
-        # body sees the function's own names.
-        found.extend(_default_values(node.args, consts))
-        for outer in [node.args, *node.decorator_list]:
-            _collect(outer, consts, found)
-        scope = _function_scope(node, consts)
-        for stmt in node.body:
-            _collect(stmt, scope, found)
+        _collect_function(node, consts, found)
         return
     if isinstance(node, ast.ClassDef):
-        # Bases, keywords and decorators are evaluated in the ENCLOSING scope;
-        # the body binds its own names on top of it. Methods do not really see
-        # those class attributes, but descending with them visible over-reports
-        # rather than misses, which is the safe direction for this guard.
-        for outer in [*node.bases, *node.keywords, *node.decorator_list]:
-            _collect(outer, consts, found)
-        scope = _body_scope(node.body, consts)
-        for stmt in node.body:
-            _collect(stmt, scope, found)
+        _collect_class(node, consts, found)
         return
     if isinstance(node, ast.Lambda):
-        # Same split as a `def`, and for the same reason: only the body sees the
-        # lambda's parameters, so a forwarded one carries no policy.
-        found.extend(_default_values(node.args, consts))
-        _collect(node.args, consts, found)
-        _collect(node.body, _without_params(node.args, consts), found)
+        _collect_lambda(node, consts, found)
         return
     if isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
-        # A comprehension is a scope of its own: its `for` targets are bound
-        # inside it, the scan cannot read them, and so — like any other
-        # unreadable local — they must hide a same-named outer constant rather
-        # than let it leak into the element expression. Only the FIRST iterable
-        # is evaluated in the enclosing scope; every later one, the `if`
-        # clauses and the element see the targets bound before them.
-        scope = consts
-        for generator in node.generators:
-            _collect(generator.iter, scope, found)
-            bound = _target_names(generator.target)
-            scope = {n: v for n, v in scope.items() if n not in bound}
-            for condition in generator.ifs:
-                _collect(condition, scope, found)
-        elements = (
-            [node.key, node.value] if isinstance(node, ast.DictComp) else [node.elt]
-        )
-        for element in elements:
-            _collect(element, scope, found)
+        _collect_comprehension(node, consts, found)
         return
     if isinstance(node, ast.Call):
         found.extend(_keyword_values(node, consts))
@@ -708,3 +743,32 @@ def test_a_rebound_constant_cannot_mask_a_stray_neutral(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     assert sorted(_tone_mappings(local)) == ["ACES", "Neutral"]
+
+
+def test_each_part_of_a_def_is_visited_exactly_once(tmp_path: Path) -> None:
+    """A canary on the walk's own visit order, one visit per part.
+
+    :func:`_collect_function` visits the signature defaults, the decorators and
+    the body as three separate steps, so permuting them would silently permute
+    the results and nothing else here would notice: every other assertion in
+    this file compares a set, a sorted list, or a run of the same value. A
+    DROPPED visit is better covered — losing the defaults or the body reddens
+    several other tests in this file — but the decorator visit is pinned here
+    and nowhere else.
+
+    The order below is that visit order, NOT the interpreter's: CPython
+    evaluates a decorator's own expression (``register(tone_mapping="Deco")``)
+    *before* the signature defaults, so only "body last" is evaluation-faithful.
+    Nothing depends on the order — the policy check reads the values as a set —
+    so it is pinned purely as a canary. Reordering the visits to match the
+    interpreter is a legitimate change; update this list with it rather than
+    reading the failure as a regression.
+    """
+    ordered = tmp_path / "demo_walk_order.py"
+    ordered.write_text(
+        '@register(tone_mapping="Deco")\n'
+        'def build(*, tone_mapping: str = "Default") -> None:\n'
+        '    ViewerConfig(tone_mapping="Body")\n',
+        encoding="utf-8",
+    )
+    assert _tone_mappings(ordered) == ["Default", "Deco", "Body"]
