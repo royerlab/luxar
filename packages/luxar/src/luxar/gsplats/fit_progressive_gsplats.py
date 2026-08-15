@@ -200,6 +200,11 @@ def fit_progressive_gaussian_splats(
         at the default.
     **kwargs
         Additional keyword arguments passed through to ``fit_gaussian_splats``.
+        ``norm_range`` (a whole-volume intensity scale, as tiled fitting
+        supplies) applies to pass 0 only: passes 1+ fit a residual that is by
+        construction a small fraction of that range, and normalizing it against
+        the range would put it under the absolute convergence tolerance and end
+        the pass immediately. Residual passes keep their own per-pass scale.
 
     Returns
     -------
@@ -394,7 +399,14 @@ def fit_progressive_gaussian_splats(
         # wrongly eat signal.
         pass_kwargs["floor"] = "none"
 
+        # A supplied whole-volume intensity scale describes the VOLUME, not the
+        # residual chain built from it. Pass 0 shares it (that is the point);
+        # passes 1+ normalize their residual by its own extent, as they always
+        # have — against the whole-volume range a residual worth several passes
+        # sits below the absolute convergence tolerance and the pass ends at
+        # its first evaluation.
         if pass_i > 0:
+            pass_kwargs["norm_range"] = None
             # Residual-pass overrides (see module docstring for rationale):
             pass_kwargs["loss_type"] = "poisson"  # natural for sparse residuals
             pass_kwargs["lr"] = 0.03  # fine-detail splats converge faster

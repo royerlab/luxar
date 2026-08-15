@@ -163,6 +163,9 @@ export async function getRemoteContentHash(
     // poll), so letting the loop overwrite the previous scope would leak one
     // connection and two abort listeners per validation.
     let scope: FetchResponseScope | null = null;
+    // Which document answered: the format follows from the NAME, so the parse
+    // below never has to infer it from the content.
+    let servedDoc: (typeof ROOT_ATTR_DOCS)[number] | null = null;
     const startedAt = Date.now();
     for (const doc of ROOT_ATTR_DOCS) {
       const budget = options.timeoutMsOverride;
@@ -174,6 +177,7 @@ export async function getRemoteContentHash(
       if (!attempt) continue;
       if (attempt.response.ok) {
         scope = attempt;
+        servedDoc = doc;
         break;
       }
       attempt.dispose();
@@ -182,7 +186,10 @@ export async function getRemoteContentHash(
 
     try {
       const data = await scope.response.arrayBuffer();
-      const attrs = rootAttributes(JSON.parse(new TextDecoder().decode(data)));
+      const attrs = rootAttributes(
+        JSON.parse(new TextDecoder().decode(data)),
+        servedDoc ?? undefined
+      );
       const stamped = attrs?.content_hash;
       if (typeof stamped === 'string' && stamped.length > 0) {
         return { hash: stamped, mode: 'content-hash' };

@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Tests for SceneLoaderManager singleton lifecycle.
  *

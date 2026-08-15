@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Direct unit tests for `ui/data-loading-monitor/tabs/cache.ts`. Exercises
  * the structure guard, L0/L1/L2 patch paths, progress-bar fill, and

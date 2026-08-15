@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Unit Integration Tests for Data Loading Monitor
  *

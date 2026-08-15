@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * GUI Tests - Main GUI class functionality
  */

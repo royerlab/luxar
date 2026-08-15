@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * EventManager Tests - CRITICAL for memory leak prevention
  */

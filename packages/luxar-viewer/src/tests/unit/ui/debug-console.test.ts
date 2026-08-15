@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Unit tests for Debug Console
  * Tests critical fixes: XSS vulnerability, memory leaks from resize/drag

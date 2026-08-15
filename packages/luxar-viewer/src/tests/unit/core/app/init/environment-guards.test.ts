@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Unit tests for core/app/init/environment-guards.ts (G2).
  *

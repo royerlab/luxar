@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Unit tests for `scheduleFrame` — frame-boundary scheduling that keeps
  * working in hidden tabs (rAF is suspended there) and stays synchronous in

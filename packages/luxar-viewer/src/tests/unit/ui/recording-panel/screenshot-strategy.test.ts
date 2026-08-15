@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Tests for ScreenshotStrategy — the screenshot capture pipeline.
  *

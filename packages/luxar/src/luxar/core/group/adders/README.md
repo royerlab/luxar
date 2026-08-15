@@ -116,7 +116,24 @@ per-case explanation.
 
 ## Add-Path Anatomy
 
-Each `*_impl` walks the same ordered decision tree:
+Each `*_impl` walks the same ordered decision tree. Above all of it, as the first
+statement inside each of the four `try` blocks — above every consumer of `attrs`,
+and below only the argument-composition refusals `points.py`, `lines.py` and
+`mesh.py` raise ahead of their `try` (which judge `partition` /
+`substitutive_lod` / `additive_lod` against each other and never touch these two
+keys) — sits `strip_absent_attr_kwargs(attrs, ABSENT_WHEN_NONE_RENDER_ATTRS)`: a
+present-but-`None` `colormap` or `coverage_fraction` is deleted so it means
+*absent* rather than a value (#1574 — a `None` colormap otherwise survives step 3
+and step 5 untouched and is rewritten by `sync_custom_colormap_attr` into a
+LUT-less `'custom'` the viewer renders as viridis). Once here rather than at each
+consumer, because steps 3, 5 and 10, every structural branch and every
+`sync_custom_colormap_attr` call site (two per module, one in `gsplats.py`) read
+the same dict — and a structural branch is where the leak actually shipped: with
+the strip scoped to the flat write, `add_points(partition=…, colormap=None)`
+stamps the LUT-less `'custom'` on *every part*. Only render attrs are
+in the set: the structural keys whose `None` also means absent (`colors`,
+`labels`, `image_labels`, `partition`) are named parameters of all four `*_impl`
+signatures and can never reach `**attrs`.
 
 1. **Coerce + shape-check** the primary array to `(N, D)`.
 2. **Apply `dim_order`** (`apply_dim_order_positions`, plus
@@ -327,9 +344,13 @@ only re-emit the advisory.)
 
 **Sibling modules** (`core/group/`):
 - `auto_partition.resolve_auto_partition`
-- `partition` — BSP kernels (`median_bsp_partition`, `midpoint_bsp_partition`,
-  `sah_bsp_partition`, `median_bsp_polylines`, `midpoint_bsp_polylines`,
-  `DEFAULT_MAX_ELEMENTS`, `warn_if_oversized_single_part`)
+- `partition` — the `partition=` spec validator (`resolve_partition_spec`, one
+  spelling of the value vocabulary for all four adders and for the gsplats
+  pre-wrapper gates — no adder resolves `DEFAULT_MAX_ELEMENTS` itself any more),
+  the BSP kernels (`median_bsp_partition`, `midpoint_bsp_partition`,
+  `sah_bsp_partition`, `median_bsp_polylines`, `midpoint_bsp_polylines`) and the
+  two advisories (`warn_if_partition_needs_more_dims`, which DROPS the request
+  below 2 spatial dims, and `warn_if_oversized_single_part`)
 - `compositing` — `COMPOSITING_ATTRS`, `position_bounds_from_array`,
   `slice_optional_array`, `is_broadcast_color`,
   `validate_points_channels_before_split`,
