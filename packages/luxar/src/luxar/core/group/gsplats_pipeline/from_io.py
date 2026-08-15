@@ -193,12 +193,27 @@ def _reject_a_partition_beside_a_stored_ladder(
     deletes it once it reaches a laddered leaf, so the graft succeeds instead of
     stranding (measured pre-fix: the same childless ``kind=partition``, this time
     from ``Unknown node attribute 'partition'``).
+
+    An ``additive_lod=False`` in the same call is likewise not judged, and for the
+    reason the data door reads the RESOLVED result rather than the store: that is
+    the documented "collapse the ladder" spelling, and
+    ``resolve_additive_axis_gsplats(False)`` flattens every level to a single
+    sub-LOD before the data door asks this same question — so the store's ladder
+    is not the one that would be written and there is no conflict left to refuse.
+    Measured: a laddered leaf file and a laddered ``kind=partition`` both split
+    into real parts with that kwarg, so judging the STORE alone refused two calls
+    that work. A ``recompute`` dict resolving to a single rung
+    (``{"n_lods": 1, "recompute": True}``) is the same shape and is NOT covered
+    here — telling it apart from ``{"n_lods": 2}`` needs the resolved rung count
+    rather than the spec, which is the design question #1632 owns.
     """
     from luxar.gsplats.tree import iter_leaves
 
     from ..partition import is_requested
 
     if not is_requested(attrs.get("partition")):
+        return
+    if attrs.get("additive_lod") is False:
         return
     if not any(len(leaf.additive_sublods) > 1 for leaf in iter_leaves(node)):
         return

@@ -601,8 +601,10 @@ combination is refused: the writer every laddered gsplats leaf goes through
 `add_gsplats_from_data(..., additive_lod=..., partition=...)` raises rather than
 silently dropping one of the two, and so does `add_gsplats_from_file` on a store
 whose leaves already carry ladders (`gsplat lod --recipe tiles|overview|adaptive`,
-`batch-fit merge --recipe stream`) — collapse those with `gsplat flatten` first if
-you need to re-partition them. Partitioned gsplats ladders are still *readable*:
+`batch-fit merge --recipe stream`). Collapse those with `gsplat flatten` if you
+need to re-partition them — or pass `additive_lod=False`, which flattens each
+level to a single sub-LOD in memory and partitions normally, on either door.
+Partitioned gsplats ladders are still *readable*:
 the paragraph above describes what the pipeline itself produces, which the viewer
 resolves the same way it resolves a Points one.
 

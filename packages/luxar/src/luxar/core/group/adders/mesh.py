@@ -395,8 +395,8 @@ def _reject_partition_with_substitutive_lod(
 
     ``False`` is an explicit no-op sentinel on BOTH sides, so neither trips this —
     see :func:`~luxar.core.group.partition.is_requested`, which is where that rule
-    and the ``is``-vs-``==`` hazard behind it are stated. Refusing either would refuse a call that asked for exactly
-    one of the two features.
+    and the ``is``-vs-``==`` hazard behind it are stated. Refusing either would
+    refuse a call that asked for exactly one of the two features.
 
     Its own function rather than an inline ``if`` because ``add_mesh_impl`` sits at
     the C901 limit the complexity ratchet enforces — the same reason

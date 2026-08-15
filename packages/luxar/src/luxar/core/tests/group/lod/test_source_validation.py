@@ -1889,6 +1889,43 @@ class TestTheGSplatsPartitionSpecCheckSkipsASubTwoDimensionScene:
             None
         }
 
+    def test_a_dim_order_that_widens_the_data_is_judged_at_the_scene_width(
+        self, tmp_path: Any
+    ) -> None:
+        """The skip reads the POST-transform width, which is the scene's (#1550).
+
+        The mirror image of the case above, and the one that makes the gate's
+        ``effective_ndim`` a computation rather than ``centers.shape[1]``: 1-column
+        data mapped into a 3-dimension scene by a ``dim_order`` is 3-D by the time
+        any child sees it, so the leaf's ``warn_if_partition_needs_more_dims`` lets
+        the spec through and a nonsense one must be refused HERE. Measured with the
+        gate judging the raw column count instead: ``Could not add gsplats
+        'child_0': partition must be None, True, or dict; got str`` with ``g``
+        surviving ``finalize()`` as a childless ``kind=lod`` group — exactly the
+        stranding this gate exists to close, reintroduced by reading the width one
+        step too early.
+        """
+        data = _multi_substitutive_data(
+            lambda n, seed: bad_ndim_positions(n, seed=seed, ndim=1),
+            lambda n: cholesky_rows_nd(n, 1),
+        )
+        compiler, scene, path = open_scene(tmp_path, "lg_dim_order_width.luxar.zarr")
+
+        exc = refusal(
+            lambda: scene.add_gsplats_from_data(
+                "g",
+                data,
+                dim_order=["X"],
+                lod_group=True,
+                partition="nonsense",
+            )
+        )
+
+        assert "partition must be None, True, or dict" in str(exc)
+        assert "child_0" not in str(exc)
+        assert "g" not in compiler.store
+        assert finalized_group_keys(compiler, path) == set()
+
 
 class TestGSplatsFromDataRefusesPartitionBesideAnAdditiveLadder:
     """A VALID spec strands too, when the children are multi-LOD leaves (#1550).

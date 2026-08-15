@@ -1133,6 +1133,60 @@ class TestGraftedFilePartitionBesideAStoredLadder:
             "additive_1",
         ]
 
+    @pytest.mark.parametrize("shape", ["leaf", "partition"])
+    def test_additive_lod_false_collapses_the_ladder_and_still_splits(
+        self, tmp_path: Any, shape: str
+    ) -> None:
+        """The gate reads the STORE, so it must honour the kwarg that empties it.
+
+        ``additive_lod=False`` is the documented "collapse the ladder" spelling:
+        ``resolve_additive_axis_gsplats`` flattens every level to a single sub-LOD
+        BEFORE the data door asks this same question, so the store's ladder is not
+        the one that would be written and the conflict does not exist. Judging the
+        store alone refused two calls that work — measured with the skip removed,
+        both parametrisations answer ``Could not add gsplats 'g': partition= is
+        not supported alongside the additive ladder this .gsplats.zarr already
+        carries``, where without the gate entirely they split into 4 and 2 real
+        parts respectively.
+
+        Both doors, because the gate has two call sites: the matrix-shaped branch
+        of ``add_gsplats_from_file`` (the bare leaf) and ``graft_gsplat_node``
+        (the nested ``kind=partition``).
+        """
+        from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+
+        tree = _laddered_partition_tree()
+        file_path = str(tmp_path / f"ladder_off_{shape}.gsplats.zarr")
+        write_gsplats_tree(
+            file_path, tree if shape == "partition" else next(iter(tree.children))
+        )
+        compiler, scene, path = open_scene(
+            tmp_path, f"graft_ladder_off_{shape}.luxar.zarr"
+        )
+
+        scene.add_gsplats_from_file(
+            "g", file_path, partition={"max_elements": 4}, additive_lod=False
+        )
+        compiler.finalize()
+
+        store = zarr.open_group(path, mode="r")
+        assert store["g"].attrs.get("kind") == "partition"
+        parts = sorted(store["g"].group_keys())
+        # The split really ran: a leaf of 8 splats at a cap of 4 gives 4 parts
+        # (the ladder's rungs are unioned into one 8-splat leaf first), and the
+        # 2-part store gives one re-split part each.
+        assert parts == (
+            ["part_0", "part_1"]
+            if shape == "partition"
+            else ["part_0", "part_1", "part_2", "part_3"]
+        )
+        # No ladder survived anywhere — that is what ``False`` asked for.
+        assert not any(
+            key.startswith("additive_")
+            for part in parts
+            for key in store["g"][part].group_keys()
+        )
+
     def test_an_unladdered_partition_still_splits(self, tmp_path: Any) -> None:
         """Non-vacuity: the gate keys on the LADDER, not on grafting a partition.
 

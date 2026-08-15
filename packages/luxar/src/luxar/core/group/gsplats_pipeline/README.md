@@ -166,6 +166,16 @@ attribute. It is DELETED instead, and only when that writer is the destination:
 it, so stripping it earlier would silently re-enable a compiler-level
 `auto_partition_max_elements`.
 
+The file door's half reads the ladder off the STORE, which makes it the one of
+the two that can be told to look at the wrong thing: an `additive_lod=False` in
+the same call is the documented "collapse the ladder" spelling, and
+`resolve_additive_axis_gsplats` flattens every level to a single sub-LOD before
+the data door asks the same question — so that kwarg is skipped here, or the gate
+refuses a laddered store that would have partitioned perfectly well. Only the
+`False` spelling, not a `recompute` dict that happens to resolve to one rung:
+telling `{"n_lods": 1, "recompute": True}` apart from `{"n_lods": 2}` needs the
+resolved rung count rather than the spec, the same missing query #1632 is about.
+
 ### `from_io.py` — load/fit then delegate
 
 Both functions produce a `GSplatData` and hand it to
