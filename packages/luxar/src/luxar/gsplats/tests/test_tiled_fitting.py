@@ -1491,10 +1491,21 @@ class TestGridBspTreeScale:
         with pytest.raises(ValueError, match="scale has length 2"):
             grid_bsp_tree(specs, scale=(4, 4))
 
-    @pytest.mark.parametrize("bad", [(0, 1, 1), (1, -2, 1), (1, 1, 0.0)])
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            (0, 1, 1),
+            (1, -2, 1),
+            (1, 1, 0.0),
+            (1, float("nan"), 1),
+            (float("inf"), 1, 1),
+        ],
+    )
     def test_a_non_positive_scale_is_refused(self, bad: tuple[float, ...]) -> None:
-        """A 0 collapses every plane onto the origin and a negative one mirrors
-        the frame — both would emit a tree that orders the parts wrongly."""
+        """A 0 collapses every plane onto the origin, a negative one mirrors the
+        frame, and a ``NaN``/``inf`` (which a bare ``<= 0`` test lets through)
+        puts a non-number in the tree — all three would emit a tree that cannot
+        order the parts."""
         from luxar.gsplats.tiling import grid_bsp_tree
 
         specs = compute_tile_specs((25, 20, 20), 10, 2)
@@ -1592,6 +1603,32 @@ class TestResolveGridScale:
                 resolve_grid_scale(3, voxel_size=bad)
         # A genuine scalar still broadcasts (the documented spelling).
         assert resolve_grid_scale(3, voxel_size=0.5) == (0.5, 0.5, 0.5)
+
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            {"voxel_size": float("nan")},
+            {"voxel_size": (4.0, float("inf"), 1.0)},
+            {"voxel_size": (4.0, 0.0, 1.0)},
+            {"voxel_size": -1.0},
+            {"downscale_factors": (2, 0, 2)},
+            {"downscale_factors": (2, 2, 2), "voxel_size": float("nan")},
+        ],
+    )
+    def test_a_frame_the_tree_cannot_state_is_refused(self, kwargs: "Any") -> None:
+        """Neither term is validated upstream for finiteness.
+
+        ``fitting.validation`` tests ``voxel_size <= 0``, which is False for
+        ``NaN``, and nothing checks a YAML ``downscale:`` before it reaches
+        here. An unrefused ``NaN``/``0`` would become a ``NaN``/collapsed split
+        plane in the serialized tree — a silently unorderable partition — or, on
+        the batch path, get recorded on the manifest for a merge days later to
+        trip over. Refused where the offending term can still be named.
+        """
+        from luxar.gsplats.tiling import resolve_grid_scale
+
+        with pytest.raises(ValueError, match="finite and strictly positive"):
+            resolve_grid_scale(3, **kwargs)
 
 
 def _core_region(

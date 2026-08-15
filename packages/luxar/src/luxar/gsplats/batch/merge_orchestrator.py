@@ -725,9 +725,10 @@ def _uniform_slot_bsp_tree(
         return grid_bsp_tree(
             specs, scale=list(manifest.grid_scale) if manifest.grid_scale else None
         )
-    except ValueError as exc:
+    except (ValueError, TypeError) as exc:
         # Only reachable from a hand-edited / corrupt manifest (the planner
-        # writes a validated factor of the right length). Loud and NOT gated on
+        # writes a validated factor of the right length) — hence TypeError too,
+        # for an entry that is not a number at all. Loud and NOT gated on
         # `verbose`, because the alternative — aborting a merge that ran after
         # every tile was fitted — is worse than the documented centroid
         # fallback.

@@ -9,6 +9,7 @@ the partition-of-unity property: overlapping windows sum to 1.0.
 from __future__ import annotations
 
 import itertools
+import math
 import numbers
 from dataclasses import dataclass
 from typing import Sequence
@@ -270,6 +271,17 @@ def resolve_grid_scale(
                 f"dimensions, got length {spacing.size}"
             )
         factors *= spacing
+    # Both terms are user input (a YAML `voxel_size:` / `downscale:`), and
+    # neither the fitter's own `<= 0` check nor a `== 1.0` comparison rejects a
+    # NaN — which would go on to produce NaN split planes rather than an error.
+    # Refuse anything the tree cannot be stated in, here, where the offending
+    # term is still nameable.
+    if not np.all(np.isfinite(factors)) or np.any(factors <= 0.0):
+        raise ValueError(
+            f"the tile grid's scale must be finite and strictly positive, got "
+            f"{tuple(float(f) for f in factors)} from downscale_factors="
+            f"{downscale_factors!r} and voxel_size={voxel_size!r}"
+        )
     if np.all(factors == 1.0):
         return None
     return tuple(float(f) for f in factors)
@@ -281,10 +293,12 @@ def _validated_scale(scale: Sequence[float] | None, ndim: int) -> tuple[float, .
     Raises
     ------
     ValueError
-        On a wrong length, or a non-positive entry: a ``0`` collapses every
-        plane onto the origin and a negative factor mirrors the frame, so the
-        tree would order the parts backwards. Neither can be meant, so refuse
-        rather than emit a silently useless tree.
+        On a wrong length, or an entry that is not finite and positive: a ``0``
+        collapses every plane onto the origin, a negative factor mirrors the
+        frame (so the tree would order the parts backwards), and a
+        ``NaN``/``inf`` — which a bare ``<= 0`` test lets through — would put a
+        non-number in the serialized tree. None can be meant, so refuse rather
+        than emit a silently useless tree.
     """
     if scale is None:
         return (1.0,) * ndim
@@ -293,8 +307,10 @@ def _validated_scale(scale: Sequence[float] | None, ndim: int) -> tuple[float, .
         raise ValueError(
             f"scale has length {len(factors)} but the tile grid has {ndim} dimensions"
         )
-    if any(f <= 0.0 for f in factors):
-        raise ValueError(f"scale entries must be strictly positive, got {factors}")
+    if any(not math.isfinite(f) or f <= 0.0 for f in factors):
+        raise ValueError(
+            f"scale entries must be finite and strictly positive, got {factors}"
+        )
     return factors
 
 

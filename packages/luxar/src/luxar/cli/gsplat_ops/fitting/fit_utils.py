@@ -496,7 +496,10 @@ def reject_rescaled_volume_refit(
     refuses ``--recipe`` outright under ``--downscale`` (it writes a flat leaf
     there), so ``-j>1`` is what makes that combination otherwise reachable; a
     ``voxel_size`` is reachable on both the sequential and the parallel
-    partition path.
+    partition path. It is checked on the NON-tiled path too, where there are no
+    parts to crop but the re-fit still renders on the source's voxel grid, so a
+    physical-unit ladder can only ever be discarded — hence the message speaks
+    of the crop's frame rather than of tiles.
     """
     if recipe_params is None or getattr(recipe_params, "refine", "none") != "volume":
         return
@@ -516,11 +519,12 @@ def reject_rescaled_volume_refit(
         if any(v != 1.0 for v in spacing):
             raise typer.BadParameter(
                 f"--refine volume cannot be combined with a real-space "
-                f"voxel_size ({spacing} with output_space='real'): each "
-                "part's crop of the volume is taken in VOXELS from the tile "
-                "grid while the fitted splats are in physical units, so every "
-                "crop would be a factor off. Set output_space: voxel in the "
-                "config, drop voxel_size, or use --refine l2."
+                f"voxel_size ({spacing} with output_space='real'): the re-fit "
+                "crops and renders on the source's VOXEL grid (per part, from "
+                "the tile grid, when there are parts) while the fitted splats "
+                "are in physical units, so every crop would be a factor off. "
+                "Set output_space: voxel in the config, drop voxel_size, or "
+                "use --refine l2."
             )
 
 

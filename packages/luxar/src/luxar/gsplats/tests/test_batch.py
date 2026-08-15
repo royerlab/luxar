@@ -3034,6 +3034,14 @@ class TestUniformSlotBspTreeFrame:
         assert "WARNING" in out and "grid_scale" in out
         assert self._tree(grid_scale=[4.0, 0.0, 1.0]) is None
         assert "WARNING" in capsys.readouterr().out
+        # A NaN and a non-number entry are the same class of hand-edit and must
+        # degrade the same way — the second raises TypeError rather than
+        # ValueError, so it has to be caught too or the merge dies here, after
+        # every tile was fitted.
+        assert self._tree(grid_scale=[4.0, float("nan"), 1.0]) is None
+        assert "WARNING" in capsys.readouterr().out
+        assert self._tree(grid_scale=[4.0, None, 1.0]) is None
+        assert "WARNING" in capsys.readouterr().out
 
     # -- the frame also gates --merge-refine volume --------------------------
 
@@ -3075,6 +3083,15 @@ class TestUniformSlotBspTreeFrame:
         config.write_text("voxel_size: [4.0, 1.0, 1.0]\noutput_space: physical\n")
         with pytest.raises(typer.BadParameter, match="output_space"):
             self._plan(tmp_path, config=config)
+
+        # Likewise a spacing the tree cannot be stated in. `.nan` is legal YAML
+        # and the fitter's own `<= 0` check does not reject it, so without the
+        # resolver's finiteness check it would be recorded on the manifest and
+        # become a NaN split plane at merge time.
+        nan_config = tmp_path / "nan.yaml"
+        nan_config.write_text("voxel_size: [.nan, 1.0, 1.0]\n")
+        with pytest.raises(typer.BadParameter, match="finite and strictly positive"):
+            self._plan(tmp_path, config=nan_config)
 
     def test_an_unreadable_config_fails_at_plan_time(self, tmp_path: Path) -> None:
         """Same door, other side: a ``--config`` that cannot be read at all is a
