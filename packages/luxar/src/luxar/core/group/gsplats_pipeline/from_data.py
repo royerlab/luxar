@@ -301,7 +301,7 @@ def reject_data_owned_channels(name: str, attrs: Dict[str, Any]) -> None:
             )
 
 
-def reject_bad_partition_spec(attrs: Optional[Dict[str, Any]]) -> None:
+def reject_bad_partition_spec(attrs: Optional[Dict[str, Any]], ndim: int) -> None:
     """Judge ``partition``'s VALUE, which the node-attrs gate cannot (#1550).
 
     ``partition`` is in :data:`GATE_FORWARDED_LEAF_PARAMS`, so its KEY is
@@ -315,14 +315,68 @@ def reject_bad_partition_spec(attrs: Optional[Dict[str, Any]]) -> None:
     cap and rule belong to the child that actually splits — so the message and
     exception type are byte-identical to the flat path's. Its own function
     rather than three lines inline purely to keep :func:`_reject_before_wrapper`
-    under the C901 limit the complexity ratchet enforces; it is called from the
-    slot right below the node-attrs gate and nowhere else.
+    under the C901 limit the complexity ratchet enforces; it is also the graft
+    door's gate (``from_io.graft_gsplat_node``, which builds its wrapper from the
+    on-disk tree before the first leaf write and had the identical bug).
+
+    Two values are skipped, because the leaf never judges them either and a gate
+    that refuses what the flat path accepts is its own regression:
+
+    * ``False`` is a first-class member of the :data:`~luxar.core.group.partition.PartitionSpec`
+      vocabulary — the explicit no-partition bypass ``resolve_auto_partition``
+      normalises to ``None`` (and the recursion guard the partition wrappers use),
+      so it is the only way to opt a ``lod_group=`` ladder out of a compiler-level
+      ``auto_partition_max_elements``. Every leaf adder normalises it away before
+      resolving, so it must be normalised away here too.
+    * ``ndim < 2`` is where the leaf DROPS the partition request with a warning
+      (``warn_if_partition_needs_more_dims``) BEFORE it resolves the spec, so a
+      1-dimension scene accepts even a nonsense spec. Skipped silently: the child
+      still emits that warning, and a second copy from here would only double it.
+
+    ``ndim`` is the EFFECTIVE post-transform width — see the call site.
     """
     from ..partition import resolve_partition_spec
 
     partition = (attrs or {}).get("partition")
-    if partition is not None:
-        resolve_partition_spec(partition)
+    if partition is None or partition is False or ndim < 2:
+        return
+    resolve_partition_spec(partition)
+
+
+def reject_partition_with_an_additive_ladder(
+    name: str,
+    attrs: Optional[Dict[str, Any]],
+    result: Any,  # GSplatData
+) -> None:
+    """Refuse ``partition=`` when the resolved result carries an additive ladder.
+
+    ``add_gsplats_multi_lod_impl`` — the writer every multi-rung level goes
+    through — has no ``partition`` parameter, so the key stays in ``**attrs`` and
+    reaches ``validate_render_attrs`` as an unknown node attribute. On the
+    multi-substitutive route that fired from inside ``child_0`` with the
+    ``kind=lod`` wrapper already on disk, so a VALID spec stranded exactly like an
+    invalid one did (#1550): ``Could not add gsplats 'child_0': Unknown node
+    attribute 'partition'. Did you mean 'absorption'?``, ``g`` surviving
+    ``finalize()``. Refused here instead, above both routes, so the two report the
+    same thing and nothing is written.
+
+    Only a REAL spec is refused — ``False`` rides through, matching how the three
+    ``substitutive_lod=`` doors word their own partition conflict
+    (``adders/mesh.py``). Partitioning a ladder is not a wording fix but a
+    feature: a prefix ordering and a BSP split are two different decompositions of
+    the same splats, and nothing downstream can carry both.
+    """
+    partition = (attrs or {}).get("partition")
+    if partition is None or partition is False:
+        return
+    if not any(len(level.additive_sublods) > 1 for level in result.substitutive_levels):
+        return
+    raise ValueError(
+        f"Could not add gsplats '{name}': partition= is not supported alongside "
+        "additive_lod= on this door — each level is written as a multi-LOD leaf, "
+        "which cannot also be split into parts. Drop one of the two, or partition "
+        "the data yourself and add each part with its own ladder."
+    )
 
 
 def _reject_before_wrapper(
@@ -470,11 +524,17 @@ def _reject_before_wrapper(
         # safe: ``AdditiveSubLOD`` accepts 1-D centers, so a bare ``IndexError``
         # would otherwise escape this funnel.
         validate_array_rank(centers, "centers")
+        # The width the CHILDREN will actually be handed, which is what decides
+        # whether a partition can run at all (see the ``partition``-spec check
+        # below): the incoming column count, unless a ``dim_order`` reallocates
+        # it to the scene's own ``ndim``.
+        effective_ndim = int(centers.shape[1])
         if dim_order is not None:
             # Same order as the flat path, which applies dim_order to the centers
             # (spec + fill) before it embeds the Cholesky factors (fill_sigma) —
             # and does both BEFORE it reaches its colours/colormap gate.
             scene = group._find_scene()
+            effective_ndim = int(scene._dimensions.ndim)
             validate_dim_order_spec(scene, dim_order, centers.shape[1], fill)
             validate_fill_sigma_keys(scene, dim_order, fill_sigma)
         # Asked of EVERY level's ladder, not just ``result.colors`` (which is the
@@ -560,8 +620,9 @@ def _reject_before_wrapper(
         validate_render_attrs(attrs_for_gate, reserved_attrs=GSPLATS_RESERVED_ATTRS)
         # …and immediately after it, the one thing that exclusion leaves
         # unjudged: ``partition``'s VALUE (#1550). Same stranding shape this
-        # function exists to prevent, one key over — see the helper.
-        reject_bad_partition_spec(attrs)
+        # function exists to prevent, one key over — see the helper, which also
+        # states why ``False`` and a sub-2-D width are skipped rather than judged.
+        reject_bad_partition_spec(attrs, effective_ndim)
         # The leaf's WHOLE colours validator, run against EVERY rung of EVERY
         # level, for the same reason the colours/colormap question above is asked
         # of every level — and below the width, because that is where the flat
@@ -685,6 +746,10 @@ def add_gsplats_from_data_impl(
         result, lod_group
     )
     result = resolve_additive_axis_gsplats(result, additive_lod)
+    # ``partition=`` and an additive ladder are mutually exclusive on this door,
+    # and the answer must be the same on both routes below — hence above the
+    # branch, beside the other structural-kwarg refusals (#1550).
+    reject_partition_with_an_additive_ladder(name, attrs, result)
 
     # Multi-substitutive → kind=lod Group with one gsplats child per level
     if result.n_substitutive > 1:

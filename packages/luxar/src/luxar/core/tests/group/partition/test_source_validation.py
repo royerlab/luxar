@@ -864,6 +864,106 @@ class TestGraftedFileDimensionCount:
         assert len(list(store["g"].group_keys())) == 2
 
 
+#: Every shape ``partition.resolve_partition_spec`` refuses, one per branch —
+#: the same list the lod/ sibling runs against the ``lod_group=`` door. The two
+#: non-dict cases matter as much as the dict ones: the leaf raises ``TypeError``
+#: for them and only its funnel turns that into a ``ValueError``, so a gate that
+#: let the raw type escape would diverge from the flat path in exception TYPE.
+_BAD_PARTITION_SPECS = [
+    ("not_a_dict", "nonsense"),
+    ("an_int", 3),
+    ("max_elements_zero", {"max_elements": 0}),
+    ("unknown_rule", {"rule": "bogus"}),
+]
+
+
+class TestGraftedFilePartitionSpec:
+    """The graft door's half of the #1550 partition-spec gate.
+
+    ``partition=`` is not a kwarg this door consumes: it rides in ``child_attrs``
+    down to each part's own ``add_gsplats``, where it drives that leaf's BSP
+    split. So the spec was judged one level down, AFTER ``graft_gsplat_node`` had
+    already built the ``kind=partition`` wrapper from the on-disk tree. Measured
+    through the public file door, all four shapes below: ``Could not add gsplats
+    'part_0': partition must be None, True, or dict; got str`` (and its three
+    siblings), with ``g`` surviving ``finalize()`` as a childless
+    ``kind=partition`` group. Identical to the ``lod_group=`` door's bug in the
+    lod/ sibling, and closed the same way — one call in the slot that already
+    holds this door's ``strip_absent_attr_kwargs`` / ``reject_data_owned_channels``
+    pair.
+    """
+
+    def _file(self, tmp_path: Any, filename: str = "nested_part.gsplats.zarr") -> str:
+        from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+
+        file_path = str(tmp_path / filename)
+        write_gsplats_tree(file_path, _nested_partition_tree(3))
+        return file_path
+
+    @pytest.mark.parametrize("case,spec", _BAD_PARTITION_SPECS)
+    def test_a_bad_spec_is_refused_before_the_wrapper_exists(
+        self, tmp_path: Any, case: str, spec: Any
+    ) -> None:
+        file_path = self._file(tmp_path, f"nested_{case}.gsplats.zarr")
+        compiler, scene, path = open_scene(tmp_path, f"graft_part_{case}.luxar.zarr")
+        _, flat_scene, _ = open_scene(tmp_path, f"graft_part_{case}_flat.luxar.zarr")
+        leaf_sub = next(iter(_nested_partition_tree(3).children)).additive_sublods[0]
+
+        flat = refusal(
+            lambda: flat_scene.add_gsplats(
+                "g",
+                centers=leaf_sub.centers,
+                amplitudes=leaf_sub.amplitudes,
+                cholesky_factors=leaf_sub.cholesky_factors,
+                partition=spec,
+            )
+        )
+        split = refusal(
+            lambda: scene.add_gsplats_from_file("g", file_path, partition=spec)
+        )
+
+        assert_same_refusal(flat, split)
+        assert "part_0" not in str(split)
+        assert "g" not in compiler.store
+        assert finalized_group_keys(compiler, path) == set()
+
+    def test_a_valid_spec_still_grafts_and_still_splits(self, tmp_path: Any) -> None:
+        """Non-vacuity control: judging the value must not become refusing it.
+
+        The stored tree is a 2-part partition of an 8- and a 6-splat leaf, so a
+        cap of 4 makes each grafted part split again — the request really is
+        honoured, not merely tolerated.
+        """
+        file_path = self._file(tmp_path, "nested_valid.gsplats.zarr")
+        compiler, scene, path = open_scene(tmp_path, "graft_part_valid.luxar.zarr")
+
+        scene.add_gsplats_from_file("g", file_path, partition={"max_elements": 4})
+        compiler.finalize()
+
+        store = zarr.open_group(path, mode="r")
+        assert store["g"].attrs.get("kind") == "partition"
+        parts = sorted(store["g"].group_keys())
+        assert parts == ["part_0", "part_1"]
+        assert [store["g"][p].attrs.get("kind") for p in parts] == [
+            "partition",
+            "partition",
+        ]
+
+    def test_false_is_a_bypass_the_gate_must_not_judge(self, tmp_path: Any) -> None:
+        """``False`` is vocabulary (the no-partition bypass), not a bad spec."""
+        file_path = self._file(tmp_path, "nested_false.gsplats.zarr")
+        compiler, scene, path = open_scene(tmp_path, "graft_part_false.luxar.zarr")
+
+        scene.add_gsplats_from_file("g", file_path, partition=False)
+        compiler.finalize()
+
+        store = zarr.open_group(path, mode="r")
+        assert store["g"].attrs.get("kind") == "partition"
+        assert [
+            store["g"][p].attrs.get("kind") for p in sorted(store["g"].group_keys())
+        ] == [None, None]
+
+
 # ---------------------------------------------------------------------------
 # labels / image_labels on a GRAFTED subtree (#1471)
 # ---------------------------------------------------------------------------

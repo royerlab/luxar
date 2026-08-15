@@ -43,7 +43,8 @@ This module hosts:
   ``partition=`` convenience kwarg on ``add_points`` / ``add_lines`` /
   ``add_gsplats``.
 * :func:`resolve_partition_spec` — the validator for that vocabulary, shared by
-  all four adders and by the gsplats ``lod_group=`` pre-wrapper gate.
+  all four adders and by both gsplats pre-wrapper gates (``lod_group=`` and the
+  graft door).
 * :data:`DEFAULT_MAX_ELEMENTS` — the cap used when the user passes
   ``partition=True`` without a dict.
 """
@@ -93,10 +94,19 @@ def resolve_partition_spec(partition: Any) -> Tuple[int, str]:
 
     One spelling of the :data:`PartitionSpec` vocabulary for all four adders,
     which each carried a byte-identical inline copy. Factored out for #1550: the
-    gsplats ``lod_group=`` pre-wrapper gate
-    (``gsplats_pipeline/from_data.py::_reject_before_wrapper``) has to judge the
-    same spec one level ABOVE the leaf that consumes it, and a fifth copy there
-    is exactly how the wordings drift apart.
+    gsplats ``lod_group=`` and graft pre-wrapper gates
+    (``gsplats_pipeline/from_data.py::_reject_before_wrapper`` and
+    ``from_io.py::graft_gsplat_node``) have to judge the same spec one level
+    ABOVE the leaf that consumes it, and further copies there are exactly how the
+    wordings drift apart.
+
+    ``False`` is a member of :data:`PartitionSpec` but NOT of this function's
+    accepted set, on purpose: it is the explicit no-partition bypass, so by the
+    time a spec is being resolved into a cap and a rule the decision to partition
+    has already been taken and a ``False`` here means a caller skipped its
+    normalisation (``resolve_auto_partition`` in the adders, an explicit skip in
+    the two gates). Refusing it keeps that mistake loud rather than quietly
+    partitioning at the default cap.
 
     For Mesh, ``max_elements`` counts **faces**, not vertices. The BSP recurses
     on face centroids — one triangle is one indivisible unit of the split — so

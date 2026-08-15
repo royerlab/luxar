@@ -1702,6 +1702,264 @@ class TestGSplatsFromDataRefusesABadPartitionSpecBeforeTheWrapper:
             f"expected exactly one partitioned child; got {partitioned}"
         )
 
+    def test_false_is_a_bypass_the_gate_must_not_judge(self, tmp_path: Any) -> None:
+        """``False`` is vocabulary, not a bad spec — the flat path accepts it.
+
+        ``PartitionSpec`` is ``None | bool | dict``, and ``False`` is the explicit
+        no-partition bypass ``resolve_auto_partition`` normalises to ``None``.
+        Every leaf adder normalises it away BEFORE resolving the spec, so a gate
+        that resolves it verbatim refuses what the flat path writes: measured with
+        the skip removed, ``Could not add gsplats 'g': partition must be None,
+        True, or dict; got bool`` and an EMPTY store, against a flat
+        ``add_gsplats(..., partition=False)`` that writes its leaf.
+        """
+        compiler, scene, path = open_scene(tmp_path, "lg_part_false.luxar.zarr")
+
+        node = scene.add_gsplats_from_data(
+            "g", _multi_substitutive_3d_data(), lod_group=True, partition=False
+        )
+        compiler.finalize()
+
+        assert node is not None
+        store = zarr.open_group(path, mode="r")
+        assert store["g"].attrs.get("kind") == "lod"
+        assert set(store["g"].group_keys()) == {"child_0", "child_1"}
+
+    def test_false_still_bypasses_compiler_auto_partition(self, tmp_path: Any) -> None:
+        """And it must keep MEANING what it means, not merely be tolerated.
+
+        ``False`` is the only way to opt a ``lod_group=`` ladder out of a
+        compiler-level ``auto_partition_max_elements`` (which drops
+        ``coverage_fraction`` and breaks the LOD selector — see
+        ``examples/partition_of_lod_example.py``), so the bypass is asserted
+        against its own control: the same scene without the kwarg DOES partition.
+        """
+        from luxar import LuxarZarrCompiler
+
+        from ..conftest import make_3d_dims
+
+        def build(filename: str, **kwargs: Any) -> Any:
+            path = str(tmp_path / filename)
+            compiler = LuxarZarrCompiler(path, auto_partition_max_elements=4)
+            scene = compiler.create_scene(dimensions=make_3d_dims())
+            scene.add_gsplats_from_data(
+                "g", _multi_substitutive_3d_data(), lod_group=True, **kwargs
+            )
+            compiler.finalize()
+            store = zarr.open_group(path, mode="r")
+            return {c: store["g"][c].attrs.get("kind") for c in store["g"].group_keys()}
+
+        # Non-vacuity control: the 8-splat finest level is over the threshold, so
+        # without the bypass auto-partition really does split it.
+        assert "partition" in set(build("lg_auto_on.luxar.zarr").values())
+        assert set(build("lg_auto_off.luxar.zarr", partition=False).values()) == {None}
+
+
+class TestTheGSplatsPartitionSpecCheckSitsWhereTheFlatPathPutsIt:
+    """WHERE the #1550 check sits is the design claim, so it gets its own pins.
+
+    Measured with the call moved ABOVE ``validate_render_attrs``: the whole module
+    still passed while flat parity visibly broke — flat ``add_gsplats(...,
+    partition={"rule": "bogus"}, blending="max")`` answers ``Unknown node
+    attribute 'blending'`` and the split path answered ``partition rule must be
+    …``. Same idiom as the flat-path pair in the partition/ sibling
+    (``TestGSplatsPartitionNodeAttrsGateOutranksThePartitionRuleCheck``): trip the
+    partition fault alone, then trip it together with a neighbour, and assert the
+    neighbour the FLAT path reports is the one reported here.
+
+    Two neighbours are enough to bracket the slot, and each catches a move the
+    other cannot: the node-attrs gate directly ABOVE it, and the labels refusal
+    BELOW it (the closest check on that side, and the one whose whole point is
+    that it must not outrank a fault the flat path reports first). The
+    ``dim_order`` spec is pinned too — it sits several checks higher, and the
+    docstring names getting that relative order wrong as the recurring bug here.
+    """
+
+    _BAD_SPEC = {"rule": "bogus"}
+
+    def _split(self, scene: Any, **kwargs: Any) -> Exception:
+        return refusal(
+            lambda: scene.add_gsplats_from_data(
+                "g",
+                _multi_substitutive_3d_data(),
+                lod_group=True,
+                partition=self._BAD_SPEC,
+                **kwargs,
+            )
+        )
+
+    def test_the_spec_fault_alone_is_what_is_reported(self, tmp_path: Any) -> None:
+        _, scene, _ = open_scene(tmp_path, "lg_slot_alone.luxar.zarr")
+
+        assert "partition rule must be" in str(self._split(scene))
+
+    def test_the_node_attrs_gate_above_it_wins(self, tmp_path: Any) -> None:
+        compiler, scene, path = open_scene(tmp_path, "lg_slot_attrs.luxar.zarr")
+
+        exc = self._split(scene, blending="max")
+
+        assert "Did you mean 'blending_mode'?" in str(exc)
+        assert "partition rule" not in str(exc)
+        assert "g" not in compiler.store
+        assert finalized_group_keys(compiler, path) == set()
+
+    def test_the_dim_order_spec_check_above_it_wins(self, tmp_path: Any) -> None:
+        _, scene, _ = open_scene(tmp_path, "lg_slot_dim_order.luxar.zarr")
+
+        exc = self._split(scene, dim_order=["X", "Y", "X"])
+
+        assert "dim_order has duplicate names" in str(exc)
+        assert "partition rule" not in str(exc)
+
+    def test_it_outranks_the_labels_refusal_below_it(self, tmp_path: Any) -> None:
+        """The flat path validates labels LAST, so the spec fault must win here too."""
+        _, scene, _ = open_scene(tmp_path, "lg_slot_labels.luxar.zarr")
+        _, flat_scene, _ = open_scene(tmp_path, "lg_slot_labels_flat.luxar.zarr")
+        data = _multi_substitutive_3d_data()
+
+        flat = refusal(
+            lambda: flat_scene.add_gsplats(
+                "g",
+                centers=data.centers,
+                amplitudes=data.amplitudes,
+                cholesky_factors=data.cholesky_factors,
+                partition=self._BAD_SPEC,
+                labels=LABELS,
+            )
+        )
+        split = self._split(scene, labels=LABELS)
+
+        assert_same_refusal(flat, split)
+        assert "partition rule must be" in str(split)
+
+
+class TestTheGSplatsPartitionSpecCheckSkipsASubTwoDimensionScene:
+    """Below 2 spatial dims the leaf DROPS the request — so the gate must too (#1550).
+
+    ``warn_if_partition_needs_more_dims`` runs in every leaf adder ABOVE
+    ``resolve_partition_spec``, so on a 1-dimension scene a nonsense spec is
+    warned about and discarded, never judged. Measured with the gate validating
+    unconditionally: flat ``add_gsplats(..., partition="nonsense")`` on a 1-D
+    scene SUCCEEDS while the ``lod_group=`` twin answered ``Could not add gsplats
+    'g': partition must be None, True, or dict; got str`` — a divergence invented
+    by the gate itself.
+    """
+
+    def _open_1d(self, tmp_path: Any, filename: str) -> Any:
+        from luxar import Dimension, Dimensions, LuxarZarrCompiler
+
+        compiler = LuxarZarrCompiler(str(tmp_path / filename))
+        return compiler, compiler.create_scene(
+            dimensions=Dimensions([Dimension("X", display=True)])
+        )
+
+    def test_both_paths_write_a_single_leaf_and_neither_refuses(
+        self, tmp_path: Any
+    ) -> None:
+        data = _multi_substitutive_data(
+            lambda n, seed: bad_ndim_positions(n, seed=seed, ndim=1),
+            lambda n: cholesky_rows_nd(n, 1),
+        )
+
+        _, flat_scene = self._open_1d(tmp_path, "lg_1d_flat.luxar.zarr")
+        flat_scene.add_gsplats(
+            "g",
+            centers=data.centers,
+            amplitudes=data.amplitudes,
+            cholesky_factors=data.cholesky_factors,
+            partition="nonsense",
+        )
+
+        compiler, scene = self._open_1d(tmp_path, "lg_1d_split.luxar.zarr")
+        scene.add_gsplats_from_data("g", data, lod_group=True, partition="nonsense")
+        compiler.finalize()
+
+        store = zarr.open_group(str(tmp_path / "lg_1d_split.luxar.zarr"), mode="r")
+        assert store["g"].attrs.get("kind") == "lod"
+        # Every child a plain leaf: the request was dropped, not honoured.
+        assert set(store["g"].group_keys()) == {"child_0", "child_1"}
+        assert {store["g"][c].attrs.get("kind") for c in store["g"].group_keys()} == {
+            None
+        }
+
+
+class TestGSplatsFromDataRefusesPartitionBesideAnAdditiveLadder:
+    """A VALID spec strands too, when the children are multi-LOD leaves (#1550).
+
+    ``add_gsplats_multi_lod_impl`` has no ``partition`` parameter, so the key
+    stays in ``**attrs`` and lands on ``validate_render_attrs`` as an unknown
+    node attribute. Measured pre-fix: ``add_gsplats_from_data(..., lod_group=True,
+    additive_lod={"n_lods": 2}, partition={"max_elements": 2})`` →
+    ``Could not add gsplats 'child_0': Unknown node attribute 'partition'. Did you
+    mean 'absorption'?``, with ``g`` surviving ``finalize()`` as a childless
+    ``kind=lod`` group — the same stranding shape as the invalid specs above, on a
+    spec that is not invalid at all. Refused above BOTH routes, so the
+    single-substitutive one (which did not strand, but blamed the same unknown
+    attr) now answers identically.
+    """
+
+    def test_the_multi_substitutive_route_refuses_and_writes_nothing(
+        self, tmp_path: Any
+    ) -> None:
+        compiler, scene, path = open_scene(tmp_path, "lg_part_additive.luxar.zarr")
+
+        exc = refusal(
+            lambda: scene.add_gsplats_from_data(
+                "g",
+                _multi_substitutive_3d_data(),
+                lod_group=True,
+                additive_lod={"n_lods": 2},
+                partition={"max_elements": 2},
+            )
+        )
+
+        assert "partition= is not supported alongside additive_lod=" in str(exc)
+        assert "child_0" not in str(exc)
+        assert "g" not in compiler.store
+        assert finalized_group_keys(compiler, path) == set()
+
+    def test_the_single_substitutive_route_answers_the_same(
+        self, tmp_path: Any
+    ) -> None:
+        _, scene, _ = open_scene(tmp_path, "lg_part_additive_flat.luxar.zarr")
+        data = _multi_substitutive_3d_data()
+
+        exc = refusal(
+            lambda: scene.add_gsplats_from_data(
+                "g",
+                data,
+                lod_group=False,
+                additive_lod={"n_lods": 2},
+                partition={"max_elements": 2},
+            )
+        )
+
+        assert "partition= is not supported alongside additive_lod=" in str(exc)
+
+    def test_false_is_not_a_partition_request(self, tmp_path: Any) -> None:
+        """``False`` means "no partition", so there is nothing to conflict with.
+
+        Same rule the three ``substitutive_lod=`` doors keep (``adders/mesh.py``
+        spells it ``partition is not None and partition is not False``). It still
+        fails one level down as an unknown node attribute on the multi-LOD child
+        writer — a separate, pre-existing hole of the #1496 "an explicit None means
+        absent" class that this gate deliberately does not paper over — but it must
+        not be answered with a conflict the caller did not ask for.
+        """
+        _, scene, _ = open_scene(tmp_path, "lg_part_additive_false.luxar.zarr")
+
+        exc = refusal(
+            lambda: scene.add_gsplats_from_data(
+                "g",
+                _multi_substitutive_3d_data(),
+                lod_group=True,
+                additive_lod={"n_lods": 2},
+                partition=False,
+            )
+        )
+
+        assert "not supported alongside additive_lod=" not in str(exc)
+
 
 # ---------------------------------------------------------------------------
 # An explicit ``None`` in ``**attrs`` means ABSENT — the whole family (#1496)

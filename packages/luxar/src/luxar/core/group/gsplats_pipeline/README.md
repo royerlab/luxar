@@ -114,14 +114,6 @@ this adder forwards onward STRUCTURALLY" — `colors`, `truncation_radius`,
 non-`None` value of each must still be judged (a collision, a legitimate
 override, a colormap name to validate, a real threshold).
 
-Excluding a key from the gate does not excuse its VALUE. `partition`'s is
-judged by an explicit `partition.resolve_partition_spec` call in the slot right
-after the node-attrs gate (#1550) — the same function the leaf adder calls,
-here for its verdict alone. Without it an invalid spec (`partition="nonsense"`,
-`{"max_elements": 0}`) rode the exclusion straight down into `child_0` and was
-refused only after `add_lod_group` had created the `kind=lod` wrapper, which
-then survived `finalize()`.
-
 Both calls sit at the adder ENTRY, so they outrank everything below —
 `_reject_before_wrapper`'s `dim_order` spec validators and rank guard, and the
 `coverage_fraction` refusal. That is deliberate: a channel collision means the
@@ -131,6 +123,33 @@ branches, because the graft branch reaches its own copy only *below* that method
 `dim_order` refusal and stored-column-count check — so with the pair left to the
 branches, one public method gave two different verdicts for the same mistake
 depending on whether the file happened to be matrix-shaped.
+
+Excluding a key from the gate does not excuse its VALUE, and `partition` is the
+one excluded key with a value worth judging. It gets an explicit
+`partition.resolve_partition_spec` call — the same function the leaf adder calls,
+here for its verdict alone — at each of the two doors that build a wrapper before
+the first leaf write (#1550). Without it an invalid spec (`partition="nonsense"`,
+`{"max_elements": 0}`) rode the exclusion straight down into `child_0` /
+`part_0` and was refused only after the `kind=lod` / `kind=partition` wrapper
+existed, which then survived `finalize()`. Note this one is NOT an entry-level
+call like the pair above: on the `lod_group=` door it sits INSIDE
+`_reject_before_wrapper`, in the slot directly below the node-attrs gate and so
+below the `dim_order` spec, rank and colours checks — because that is the flat
+path's own order (the leaf validates node attrs at its entry and resolves the
+spec inside its partition branch, further down), and precedence parity with the
+flat path is the whole point. On the graft door (`from_io`'s
+`_reject_a_bad_partition_spec_on_a_graft`) there is nothing above it to be below,
+so it joins the entry pair. Two values are skipped at both doors, because the
+leaf never judges them either: `False` (the explicit no-partition bypass, which
+every adder normalises away before resolving) and a sub-2-D width (where
+`warn_if_partition_needs_more_dims` DROPS the request with a warning).
+
+A VALID spec has one conflict of its own on the `lod_group=` door:
+`reject_partition_with_an_additive_ladder` refuses `partition=` beside an
+`additive_lod=` ladder, above the route branch so both routes answer alike. The
+multi-LOD child writer has no `partition` parameter, so the key reached
+`validate_render_attrs` as an unknown node attribute — and, on the
+multi-substitutive route, from inside `child_0` with the wrapper already written.
 
 ### `from_io.py` — load/fit then delegate
 

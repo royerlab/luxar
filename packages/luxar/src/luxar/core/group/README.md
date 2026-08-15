@@ -125,9 +125,12 @@ Exports:
 - `PartitionSpec` — value-vocabulary type alias for `partition=`
   (`None` / `True` / `dict`).
 - `resolve_partition_spec` — validator for that vocabulary, returning
-  `(max_elements, rule)`. One spelling for all four adders and for the gsplats
-  `lod_group=` pre-wrapper gate, which has to judge the same spec one level
-  above the leaf that consumes it (#1550).
+  `(max_elements, rule)`. One spelling for all four adders and for the two
+  gsplats pre-wrapper gates (`lod_group=` and the graft door), which have to
+  judge the same spec one level above the leaf that consumes it (#1550). It
+  rejects `False`, deliberately: normalising the bypass away is the CALLER's job
+  (`resolve_auto_partition` for the adders, the gates' own skip), since by the
+  time a spec is being resolved into a cap the decision to partition is made.
 - `DEFAULT_MAX_ELEMENTS = 1_000_000` — cap used for bare `partition=True`.
 
 ### `auto_partition.py` — compiler-level opt-in

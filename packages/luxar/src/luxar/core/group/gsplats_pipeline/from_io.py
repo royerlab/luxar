@@ -17,6 +17,7 @@ from .from_data import (
     add_gsplats_from_data_impl,
     labels_on_a_laddered_leaf_reason,
     labels_on_wrapper_reason,
+    reject_bad_partition_spec,
     reject_data_owned_channels,
     strip_absent_attr_kwargs,
 )
@@ -147,6 +148,36 @@ def add_gsplats_from_file_impl(
     return graft_gsplat_node(
         group, name=name, node=node, parent=parent, extend_to_all=extend_to_all, **attrs
     )
+
+
+def _reject_a_bad_partition_spec_on_a_graft(
+    name: str, node: Any, attrs: Dict[str, Any]
+) -> None:
+    """The graft door's half of the #1550 partition-spec gate.
+
+    ``partition`` is not a kwarg this door consumes: it rides in ``child_attrs``
+    all the way down to each part's own ``add_gsplats``, where it drives that
+    leaf's BSP split. So an invalid spec was judged one level down — measured,
+    ``Could not add gsplats 'part_0': partition must be None, True, or dict; got
+    str`` — by which point :func:`graft_gsplat_node` had already built the
+    ``kind=partition`` wrapper from the on-disk tree, and that childless wrapper
+    survived ``finalize()``. Identical shape, and the identical fix, to the
+    ``lod_group=`` door (``from_data._reject_before_wrapper``): the same
+    ``reject_bad_partition_spec``, for its verdict alone.
+
+    The ndim is the STORED tree's — every leaf of a tree shares one
+    (``node_ndim``) — because that is the width each part would be split on, and
+    it is what makes the sub-2-D skip mean the same thing here as there. The
+    ``Could not add gsplats '<name>': `` prefix is applied by hand for the reason
+    :func:`add_gsplats_from_file_impl`'s dimension-count check gives: this module
+    has no funnel of its own.
+    """
+    from luxar.gsplats.tree import node_ndim
+
+    try:
+        reject_bad_partition_spec(attrs, node_ndim(node))
+    except (ValueError, TypeError) as e:
+        raise ValueError(f"Could not add gsplats '{name}': {e}") from e
 
 
 def _reject_labels_on_a_grafted_wrapper(
@@ -411,6 +442,7 @@ def graft_gsplat_node(
     # depends on it; if you delete it, nothing observable changes.
     strip_absent_attr_kwargs(attrs)
     reject_data_owned_channels(name, attrs)
+    _reject_a_bad_partition_spec_on_a_graft(name, node, attrs)
     _reject_labels_on_a_grafted_wrapper(name, node, attrs)
 
     if isinstance(node, GSplatLeaf):
