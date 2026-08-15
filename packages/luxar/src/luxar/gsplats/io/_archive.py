@@ -267,7 +267,7 @@ def _parse_attrs(raw: bytes) -> Dict[str, Any]:
 
 
 def _read_zip_root_attrs(path: Path) -> Dict[str, Any]:
-    """Root ``.zattrs`` of a zip archive, reading that one member's bytes only."""
+    """Root attrs of a zip archive, reading that one member's bytes only."""
     with zipfile.ZipFile(path, "r") as zip_ref:
         best: Optional[zipfile.ZipInfo] = None
         best_rank = 0
@@ -302,32 +302,42 @@ def _read_zip_root_attrs(path: Path) -> Dict[str, Any]:
         return _parse_attrs(raw)
 
 
-#: The best possible ``_root_attrs_rank``: the ``.zattrs`` of a top-level
-#: ``*.gsplats.zarr`` directory. Nothing can outrank it and it needs no
+#: The best possible ``_root_attrs_rank``: the root attrs document of a
+#: top-level ``*.gsplats.zarr`` directory. Nothing can outrank it and it needs no
 #: whole-archive context to be usable, so the tar walk can stop the moment it
-#: sees one — which is what keeps the peek cheap on the layout ``_compress_zarr``
-#: always writes, where the member turns up within the first couple of headers
-#: (``tarfile.add`` walks a directory in sorted order, so dotfiles come first).
-#: The unnamed fallback layout gets no such stop, twice over: a rank-1 member can
-#: still be superseded by a rank-0 one later in the stream, and whether it may be
-#: used at all depends on the archive's full set of top-level directories
-#: (:func:`_fallback_is_unambiguous`). So that walk has to reach the end of the
-#: header stream — and a gzipped tar has no index, so reaching the end means
-#: inflating the whole file.
+#: sees one.
+#:
+#: HOW EARLY that stop comes depends on the on-disk format, because
+#: ``tarfile.add`` walks a directory in sorted order. A format-2 store's
+#: ``.zattrs`` is a dotfile and lands second (measured: member 1 of 24), so the
+#: walk really does end after a couple of headers. A format-3 store's document is
+#: ``zarr.json``, which sorts AFTER every array sub-directory and lands last
+#: (measured: member 26 of 27) — so on the format Luxar now writes, the stop
+#: effectively never fires and the peek costs a full inflate. Correct either way,
+#: and free for a zip (its central directory is an index); reordering the tar at
+#: write time would only help archives written from here on, so it is not done.
+#:
+#: The unnamed fallback layout gets no such stop in either format, twice over: a
+#: rank-1 member can still be superseded by a rank-0 one later in the stream, and
+#: whether it may be used at all depends on the archive's full set of top-level
+#: directories (:func:`_fallback_is_unambiguous`). So that walk has to reach the
+#: end of the header stream — and a gzipped tar has no index, so reaching the end
+#: means inflating the whole file.
 _BEST_ROOT_RANK = 0
 
 
 def _read_targz_root_attrs(path: Path) -> Dict[str, Any]:
-    """Root ``.zattrs`` of a tar.gz archive, reading that one member's bytes only.
+    """Root attrs of a tar.gz archive, reading that one member's bytes only.
 
     Member HEADERS are walked lazily (never ``getmembers()``, which materializes
     the whole archive), and only the winning member's payload is read. The walk
     stops as soon as a member reaches :data:`_BEST_ROOT_RANK`; failing that it
     runs to the end of the header stream (see :data:`_BEST_ROOT_RANK` for what
-    that costs), because a better-ranked ``.zattrs`` may appear after a worse one,
-    the fallback tier cannot be settled before the archive's top-level
-    directories are all known, and reading the wrong node's attrs as the root's
-    would silently author an appearance nobody asked for.
+    that costs, and why a format-3 archive nearly always pays it), because a
+    better-ranked member may appear after a worse one, the fallback tier cannot
+    be settled before the archive's top-level directories are all known, and
+    reading the wrong node's attrs as the root's would silently author an
+    appearance nobody asked for.
     """
     with tarfile.open(path, "r:gz") as tar_ref:
         best: Optional[tarfile.TarInfo] = None
@@ -361,13 +371,14 @@ def _read_targz_root_attrs(path: Path) -> Dict[str, Any]:
 
 
 def read_archive_root_attrs(path: str | Path) -> Dict[str, Any]:
-    """Read the ROOT ``.zattrs`` of a compressed ``.gsplats.zarr``, no extraction.
+    """Read the ROOT attributes of a compressed ``.gsplats.zarr``, no extraction.
 
     Only ONE member's payload is read: the archive index (zip central directory /
-    tar headers) is scanned for the root ``.zattrs``, and nothing else is
+    tar headers) is scanned for the root attrs document, and nothing else is
     decompressed. Nothing is ever written to disk and no link is ever followed.
     Scanning the index is free for a zip but not for a gzipped tar, which has no
-    index at all — see :data:`_BEST_ROOT_RANK` for when that walk stops early.
+    index at all — see :data:`_BEST_ROOT_RANK` for when that walk stops early
+    (rarely, at format 3).
 
     Which member counts as the root follows :func:`_root_attrs_rank` and
     :func:`_fallback_is_unambiguous`, which pick the same KIND of node
@@ -406,7 +417,7 @@ def read_archive_root_attrs(path: str | Path) -> Dict[str, Any]:
 
     Returns:
         The root attrs as a dict. ``{}`` when the path is missing or is not one of
-        the two supported archive formats, when no root ``.zattrs`` member exists,
+        the two supported archive formats, when no root attrs member exists,
         when the store root is ambiguous (above), or when the payload is oversized
         or not a JSON object.
 

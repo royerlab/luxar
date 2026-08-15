@@ -11,7 +11,12 @@ import numpy as np
 import pytest
 import zarr
 
-from luxar._zarr_compat import consolidate, create_array, open_group
+from luxar._zarr_compat import (
+    consolidate,
+    create_array,
+    is_consolidated,
+    open_group,
+)
 from luxar.demos._dependencies import SUBSTITUTIVE_LOD_MODULES, is_installed
 from luxar.demos.demo_gaia_milky_way_3m import (
     CACHE_FILE,
@@ -366,10 +371,10 @@ class TestRawZarrExtraction:
     def test_a_consolidated_store_missing_a_column_is_still_caught(
         self, tmp_path: Path
     ) -> None:
-        """The column check must see the disk, not a stale `.zmetadata` index.
+        """The column check must see the disk, not a stale consolidated index.
 
         Consolidation has to be arranged here because nothing in the build path
-        does it: the shipped zip carries no `.zmetadata` and the rebuild script
+        does it: the shipped zip carries no index and the rebuild script
         never writes one. A hand-placed catalog is exactly where that stops being
         a guarantee, though — its reader may have re-exported or assembled the
         store themselves, index included — and zarr 3 REVERSED zarr 2's default:
@@ -384,7 +389,10 @@ class TestRawZarrExtraction:
         removed = "bp_rp"
         raw = tmp_path / RAW_ZARR_NAME
         consolidate(_write_tiny_gaia_table(raw))
-        assert (raw / ".zmetadata").exists(), (
+        # `is_consolidated`, not a named document: format 2 writes a separate
+        # `.zmetadata` while format 3 embeds the index in the root `zarr.json`,
+        # and either one is enough to shadow the disk.
+        assert is_consolidated(raw), (
             "nothing to test: without consolidated metadata a raw `zarr.open` "
             "would read the disk too and this test could not fail"
         )
@@ -459,15 +467,25 @@ class TestRawZarrExtraction:
         """
         raw = tmp_path / RAW_ZARR_NAME
         if kind == "v3-array-store":
-            # zarr_format=3 explicitly: the autouse fixture in luxar/conftest.py
-            # pins the ambient default to 2, which is the flavour the existing
-            # FileNotFoundError already covers.
+            # zarr_format=3 explicitly: the ambient default follows whatever
+            # Luxar writes (luxar/conftest.py), and this case is specifically
+            # the v3 array store, whose ContainsArrayError is NOT the
+            # FileNotFoundError a v2 array store answers with.
             zarr.create_array(
                 store=str(raw), shape=(4,), dtype=np.float32, zarr_format=3
             )
         else:
             _write_tiny_gaia_table(raw)
-            (raw / "bp_rp" / ".zarray").write_text("{ not json")
+            # Corrupt the document the table's own format actually wrote: a
+            # stray `.zarray` beside a format-3 `zarr.json` is ignored, and the
+            # store would then open and read perfectly.
+            docs = [
+                p
+                for p in (raw / "bp_rp" / ".zarray", raw / "bp_rp" / "zarr.json")
+                if p.exists()
+            ]
+            assert len(docs) == 1, f"expected one column metadata document, got {docs}"
+            docs[0].write_text("{ not json")
         zip_path = tmp_path / "catalog.zarr.zip"
         with zipfile.ZipFile(zip_path, "w") as zf:
             for f in raw.rglob("*"):
