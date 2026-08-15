@@ -101,6 +101,7 @@ class TestManifest:
             slurm_partition="gpu",
             merge_recipe="substitutive",
             merge_recipe_args={"compression-factor": "4", "levels": "3"},
+            grid_scale=[4.0, 1.0, 1.0],
         )
         manifest.jobs = [
             BatchJob(
@@ -127,6 +128,9 @@ class TestManifest:
         assert loaded.jobs[0].channel_coords == (0, 0)
         assert loaded.merge_recipe == "substitutive"
         assert loaded.merge_recipe_args == {"compression-factor": "4", "levels": "3"}
+        # The frame the fit tasks emit in (#1587) survives the JSON round-trip as
+        # floats — the merge's split planes are built from it.
+        assert loaded.grid_scale == [4.0, 1.0, 1.0]
 
     def test_decode_task_id(self) -> None:
         from luxar.gsplats.batch.manifest import BatchManifest, decode_task_id
@@ -2817,6 +2821,11 @@ class TestUniformSlotBspTreeFrame:
     manifest's ``spatial_shape`` — and the tile grid rebuilt from it — stays in
     voxels. The batch merge is the fourth producer of these planes and needs the
     same reconciliation as ``fit`` itself (#1587).
+
+    That reconciliation is resolved ONCE at PLAN time — where the merged fit
+    config is in hand — and recorded on the manifest as ``grid_scale``; the
+    merge only reads it. So the tests come in two halves: what the planner
+    records, and what the merge does with what it finds recorded.
     """
 
     SPATIAL_SHAPE = (32, 32, 32)
@@ -2855,86 +2864,222 @@ class TestUniformSlotBspTreeFrame:
 
         return _slot_bsp_tree(cls._manifest(**kwargs), Path("."), False)
 
-    def test_a_voxel_size_in_the_config_scales_every_plane(
+    @classmethod
+    def _plan(
+        cls,
+        tmp_path: Path,
+        *,
+        config: "Path | None" = None,
+        preset: str = "standard",
+        refine: "str | None" = None,
+    ) -> Any:
+        """Plan a real uniform batch over ``SPATIAL_SHAPE``; return its manifest."""
+        import zarr
+
+        from luxar.cli.gsplat_ops.batch.planning import (
+            ContentKnobs,
+            DenoiseConfig,
+            FitConfig,
+            MergeConfig,
+            plan_batch,
+        )
+
+        source = tmp_path / "vol.zarr"
+        if not source.exists():
+            z = zarr.open(str(source), mode="w", shape=cls.SPATIAL_SHAPE, dtype="u2")
+            z[:] = np.zeros(cls.SPATIAL_SHAPE, np.uint16)
+        merge = (
+            MergeConfig(recipe="levels", levels=1, refine=refine)
+            if refine
+            else MergeConfig()
+        )
+        return plan_batch(
+            input_path=source,
+            output_dir=tmp_path / "out",
+            tiling="uniform",
+            tile_size=cls.TILE_SIZE,
+            tile_overlap=cls.OVERLAP,
+            axes_list=["z", "y", "x"],
+            array_key=None,
+            timepoints_slice=None,
+            channels_slice=None,
+            fit=FitConfig(preset=preset, config=config),
+            denoise=DenoiseConfig(),
+            content=ContentKnobs(),
+            merge=merge,
+        ).manifest
+
+    # -- what the planner records -------------------------------------------
+
+    def test_the_planner_records_a_voxel_size_as_the_frame(
         self, tmp_path: Path
     ) -> None:
         """The regression: anisotropic on purpose, so an axis swap anywhere in
         the recovery would show up."""
         config = tmp_path / "fit.yaml"
         config.write_text("voxel_size: [4.0, 1.0, 1.0]\n")
+        assert self._plan(tmp_path, config=config).grid_scale == [4.0, 1.0, 1.0]
 
-        unscaled = self._tree()
-        scaled = self._tree(fit_args={"config": str(config)})
-        assert unscaled is not None and scaled is not None
+    def test_output_space_voxel_records_no_frame(self, tmp_path: Path) -> None:
+        """Non-vacuity control: the spacing term is value-scoped, not blanket —
+        with ``output_space: voxel`` the centers stay in voxels, so there is
+        nothing to reconcile and nothing is recorded."""
+        config = tmp_path / "voxel.yaml"
+        config.write_text("voxel_size: [4.0, 1.0, 1.0]\noutput_space: voxel\n")
+        assert self._plan(tmp_path, config=config).grid_scale is None
 
-        plain = self._splits(unscaled)
-        physical = self._splits(scaled)
+    def test_a_config_without_a_spacing_records_no_frame(self, tmp_path: Path) -> None:
+        """The overwhelmingly common case must record nothing, so its merge is
+        bit-identical to a pre-#1587 one."""
+        config = tmp_path / "plain.yaml"
+        config.write_text("n_iters: 50\nfloor: none\n")
+        assert self._plan(tmp_path, config=config).grid_scale is None
+        # A `--preset` alone likewise carries no spacing.
+        assert self._plan(tmp_path, preset="draft").grid_scale is None
+
+    def test_a_downscale_composes_the_same_term(self, tmp_path: Path) -> None:
+        """``downscale:`` is a documented YAML key and rides the same door.
+
+        Recorded for convention parity with the single-fit path (where a
+        ``--downscale`` tiled fit is the original #1587 symptom) — NOT because a
+        batch run with a ``downscale:`` in its ``--config`` works today. It does
+        not, for a reason upstream of this tree: the planner builds its tasks on
+        the FULL-resolution shape while each ``fit --tile k/M`` worker recomputes
+        the grid on the decimated one, so the tile counts disagree and most tasks
+        exit before any merge exists. This asserts only what the planner writes
+        down.
+        """
+        config = tmp_path / "ds.yaml"
+        config.write_text("downscale: 2\n")
+        assert self._plan(tmp_path, config=config).grid_scale == [2.0, 2.0, 2.0]
+
+    def test_the_recorded_config_path_is_resolved(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``--config fit.yaml`` is handed to workers that run from a Slurm job's
+        own working directory, so it is stored absolute like every other path on
+        the manifest — never as the relative spelling the user typed."""
+        config = tmp_path / "fit.yaml"
+        config.write_text("n_iters: 50\n")
+        monkeypatch.chdir(tmp_path)
+        manifest = self._plan(tmp_path, config=Path("fit.yaml"))
+        assert manifest.fit_args["config"] == str(config.resolve())
+        assert Path(manifest.fit_args["config"]).is_absolute()
+
+    # -- what the merge does with it ----------------------------------------
+
+    def test_the_merge_scales_every_plane_by_the_recorded_frame(self) -> None:
+        """A recorded frame moves the planes onto the splats, per axis."""
+        plain = self._splits(self._tree())
+        physical = self._splits(self._tree(grid_scale=[4.0, 1.0, 1.0]))
         assert len(plain) == len(physical) > 0
         for (ax_p, s_p), (ax_s, s_s) in zip(plain, physical):
             assert ax_p == ax_s
             assert s_s == pytest.approx((4.0, 1.0, 1.0)[ax_s] * s_p)
-        # The measured symptom of the bug: without the factor, every axis-0
-        # plane sits in the first quarter of the object.
-        assert [s for ax, s in plain if ax == 0] != [s for ax, s in physical if ax == 0]
+        # The measured symptom of the bug: without the factor every axis-0 plane
+        # sits in the first quarter of the object.
+        assert sorted({s for ax, s in plain if ax == 0}) == [11.0, 21.0, 31.0]
+        assert sorted({s for ax, s in physical if ax == 0}) == [44.0, 84.0, 124.0]
 
-    def test_a_downscale_in_the_config_scales_every_plane(self, tmp_path: Path) -> None:
-        """``downscale:`` is a documented YAML key and rides the same door."""
-        config = tmp_path / "ds.yaml"
-        config.write_text("downscale: 2\n")
+    def test_a_manifest_without_a_frame_keeps_the_voxel_grid(
+        self, capsys: pytest.CaptureFixture
+    ) -> None:
+        """Backward compatibility: an ABSENT ``grid_scale`` — every manifest
+        written before this field existed, and every run whose frames agree —
+        means no scale, which is exactly the pre-#1587 behaviour. Silently, with
+        no warning and no dropped planes."""
+        assert self._tree(grid_scale=None) == self._tree()
+        assert self._tree(grid_scale=[1.0, 1.0, 1.0]) == self._tree()
+        assert self._tree() is not None
+        assert "WARNING" not in capsys.readouterr().out
 
-        plain = self._splits(self._tree())
-        scaled = self._splits(self._tree(fit_args={"config": str(config)}))
-        assert len(plain) == len(scaled) > 0
-        for (ax_p, s_p), (ax_s, s_s) in zip(plain, scaled):
-            assert ax_p == ax_s and s_s == pytest.approx(2.0 * s_p)
+    def test_the_merge_reads_the_manifest_not_the_config_file(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture
+    ) -> None:
+        """The frame travels ON the manifest, so the merge never touches the YAML.
 
-    def test_output_space_voxel_leaves_the_planes_in_voxels(
+        Re-resolving it at merge time had two measured failure modes, and this
+        pins both shut: a config that has since been DELETED (a Slurm run merged
+        days later) must not cost the planes, and an unrelated same-named file
+        sitting where the merge runs must not be able to restate the frame.
+        """
+        config = tmp_path / "fit.yaml"
+        config.write_text("voxel_size: [4.0, 1.0, 1.0]\n")
+        manifest = self._plan(tmp_path, config=config)
+        recorded = manifest.grid_scale
+        assert recorded == [4.0, 1.0, 1.0]
+
+        config.unlink()  # the YAML is gone by merge time
+        decoy = tmp_path / "decoy"
+        decoy.mkdir()
+        (decoy / "fit.yaml").write_text("voxel_size: [9.0, 9.0, 9.0]\n")
+
+        tree = self._tree(grid_scale=recorded, fit_args=dict(manifest.fit_args))
+        splits = self._splits(tree)
+        # Absolute values, not a comparison against another recovered tree: the
+        # planes must be where the PHYSICAL splats are (44/84/124 on axis 0),
+        # neither back in voxels (11/21/31, the deleted-YAML failure) nor at the
+        # decoy's 9x (99/189/279), nor dropped for want of a config.
+        assert sorted({s for ax, s in splits if ax == 0}) == [44.0, 84.0, 124.0]
+        assert "WARNING" not in capsys.readouterr().out
+
+    def test_a_corrupt_recorded_frame_degrades_loudly(
+        self, capsys: pytest.CaptureFixture
+    ) -> None:
+        """Only reachable from a hand-edited manifest, but a merge that runs
+        after every tile has been fitted must not abort over it: drop the planes
+        (the documented centroid fallback) and say so, loudly."""
+        assert self._tree(grid_scale=[4.0, 1.0]) is None
+        out = capsys.readouterr().out
+        assert "WARNING" in out and "grid_scale" in out
+        assert self._tree(grid_scale=[4.0, 0.0, 1.0]) is None
+        assert "WARNING" in capsys.readouterr().out
+
+    # -- the frame also gates --merge-refine volume --------------------------
+
+    def test_refine_volume_is_refused_when_the_frames_disagree(
         self, tmp_path: Path
     ) -> None:
-        """Non-vacuity control: the spacing term is value-scoped, not blanket —
-        with ``output_space: voxel`` the centers stay in voxels."""
-        config = tmp_path / "voxel.yaml"
-        config.write_text("voxel_size: [4.0, 1.0, 1.0]\noutput_space: voxel\n")
-        assert self._splits(
-            self._tree(fit_args={"config": str(config)})
-        ) == self._splits(self._tree())
+        """A per-part re-fit crops the source in VOXELS from the tile grid, so a
+        recorded frame makes every crop a factor off — refused at PLAN time, so
+        the mistake costs nothing rather than surfacing after every tile has been
+        fitted (`gsplat fit` refuses the same combination)."""
+        import typer
 
-    def test_a_config_without_a_spacing_is_bit_identical(self, tmp_path: Path) -> None:
-        """The overwhelmingly common case must be untouched by the recovery."""
-        config = tmp_path / "plain.yaml"
-        config.write_text("n_iters: 50\nfloor: none\n")
-        assert self._tree(fit_args={"config": str(config)}) == self._tree()
-        # A `--preset` alone likewise carries no spacing.
-        assert self._tree(preset="draft") == self._tree()
+        config = tmp_path / "fit.yaml"
+        config.write_text("voxel_size: [4.0, 1.0, 1.0]\n")
+        with pytest.raises(typer.BadParameter, match="frame scaled by"):
+            self._plan(tmp_path, config=config, refine="volume")
+        # Whitespace must not smuggle it past: the mode is normalised first.
+        with pytest.raises(typer.BadParameter, match="frame scaled by"):
+            self._plan(tmp_path, config=config, refine=" volume ")
+        # Non-vacuity: the same plan with the frames in agreement goes through
+        # and records the knob for the merge.
+        ok = self._plan(tmp_path, refine="volume")
+        assert ok.grid_scale is None
+        assert ok.merge_recipe_args["refine"] == "volume"
 
-    def test_an_unreadable_config_drops_the_tree_loudly(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture
+    def test_a_frame_the_resolver_refuses_fails_at_plan_time(
+        self, tmp_path: Path
     ) -> None:
-        """A Slurm run merged days later can find its YAML moved or deleted.
-
-        The frame is then unknown, so writing voxel-frame planes would be a
-        silent guess. Refuse them and say so — loudly, and NOT gated on
-        ``verbose`` — leaving the documented centroid fallback.
-        """
-        missing = tmp_path / "gone.yaml"
-        assert self._tree(fit_args={"config": str(missing)}) is None
-        out = capsys.readouterr().out
-        assert "WARNING" in out
-        assert str(missing) in out
-        assert "centroid" in out
-
-    def test_a_config_the_resolver_refuses_degrades_the_same_way(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture
-    ) -> None:
-        """Readable but unusable is the same situation as unreadable.
+        """Readable but unusable is caught while the user is still here.
 
         ``resolve_grid_scale`` refuses an out-of-vocabulary ``output_space``
-        rather than reading it as "voxel". Letting that ValueError out would
-        abort the whole merge — after every tile has been fitted — so it
-        degrades to the centroid fallback with the same warning.
+        rather than reading it as "voxel", which would silently drop the spacing
+        term — the very #1587 mismatch. Raised at PLAN time, not from a merge
+        days later that would have to choose between a wrong tree and none.
         """
+        import typer
+
         config = tmp_path / "typo.yaml"
         config.write_text("voxel_size: [4.0, 1.0, 1.0]\noutput_space: physical\n")
-        assert self._tree(fit_args={"config": str(config)}) is None
-        out = capsys.readouterr().out
-        assert "WARNING" in out and "output_space" in out
+        with pytest.raises(typer.BadParameter, match="output_space"):
+            self._plan(tmp_path, config=config)
+
+    def test_an_unreadable_config_fails_at_plan_time(self, tmp_path: Path) -> None:
+        """Same door, other side: a ``--config`` that cannot be read at all is a
+        planning error, not something the merge should have to guess around."""
+        import typer
+
+        with pytest.raises(typer.BadParameter, match="could not read the fit config"):
+            self._plan(tmp_path, config=tmp_path / "gone.yaml")
