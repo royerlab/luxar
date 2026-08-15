@@ -83,7 +83,7 @@ def _make_v1_0(path: Path, n: int, *, with_fitting: bool = False) -> None:
                 "source_dtype": "float32",
             }
         )
-    zarr.consolidate_metadata(store)
+    zc_consolidate(store)
 
 
 def _make_v1_1(path: Path, lod_sizes: list[int]) -> None:
@@ -127,7 +127,7 @@ def _make_v1_1(path: Path, lod_sizes: list[int]) -> None:
         create_array(lod, "amplitudes", data=rng.random(n).astype(np.float32))
         create_array(lod, "cholesky_factors", data=_identity_chol(n))
         create_array(lod, "chunk_bounds", data=np.zeros((1, 3, 2), dtype=np.float32))
-    zarr.consolidate_metadata(store)
+    zc_consolidate(store)
 
 
 def _make_v2_0(path: Path, n: int) -> None:
@@ -171,7 +171,7 @@ def _make_v2_0(path: Path, n: int) -> None:
     create_array(add, "amplitudes", data=rng.random(n).astype(np.float32))
     create_array(add, "cholesky_factors", data=_identity_chol(n))
     create_array(add, "chunk_bounds", data=np.zeros((1, 3, 2), dtype=np.float32))
-    zarr.consolidate_metadata(store)
+    zc_consolidate(store)
 
 
 def _make_v2_0_multi(path: Path, level_sizes: list[int]) -> None:
@@ -217,7 +217,7 @@ def _make_v2_0_multi(path: Path, level_sizes: list[int]) -> None:
         create_array(add, "centers", data=(rng.random((n, 3)) * 10).astype(np.float32))
         create_array(add, "amplitudes", data=rng.random(n).astype(np.float32))
         create_array(add, "cholesky_factors", data=_identity_chol(n))
-    zarr.consolidate_metadata(store)
+    zc_consolidate(store)
 
 
 def _make_substitutive_dir(dir_path: Path, level_sizes: list[int]) -> None:
@@ -702,7 +702,7 @@ class TestMigrateFormat:
         create_array(splats, "cholesky_factors", data=_identity_chol(n))
         create_array(splats, "chunk_bounds", data=np.zeros((1, 3, 2), dtype=np.float32))
         create_array(splats, "colors", data=colors)
-        zarr.consolidate_metadata(store)
+        zc_consolidate(store)
 
         out = tmp_path / "out.gsplats.zarr"
         migrate_format(legacy, out)
@@ -758,7 +758,11 @@ def _make_v3_lod_pixel_size(
         else None,
         pipeline_info={"lod_kind": "substitutive"} if with_fitting else None,
     )
-    root = zarr.open_group(str(path), mode="r+")
+    # Aged through the facade — see the note in
+    # `test_detect_nested_legacy_lod_inside_partition`: a plain re-open leaves a
+    # stale NESTED consolidated index that later reads prefer over the correct
+    # per-node documents, so the deletions below would not be observed.
+    root = zc_open_group(str(path), mode="r+")
     root.attrs["format_version"] = format_version
     root.attrs["selector"] = "pixel_size"
     for i, n in enumerate(level_sizes):
@@ -766,7 +770,7 @@ def _make_v3_lod_pixel_size(
         del child.attrs["coverage_fraction"]
         # The legacy count-anchored ladder: base(100px)·sqrt(N_i/N_0).
         child.attrs["min_pixel_size"] = 100.0 * float(np.sqrt(n / level_sizes[0]))
-    zarr.consolidate_metadata(root.store)
+    zc_consolidate(root)
 
 
 class TestMigrateV3LegacyLodAttrs:
@@ -881,7 +885,11 @@ class TestMigrateV3LegacyLodAttrs:
         # nested index is honoured even when the root one is bypassed, so the
         # migration then re-derives from `coverage_fraction` values this
         # function had just deleted and stamps the legacy `selector="coverage"`.
-        # (Format 2 has no nested index, which is why it passed either way.)
+        #
+        # Format 2 grows the nested index too, but reads there are unaffected:
+        # `use_consolidated=False` skips a `.zmetadata` at EVERY level, while at
+        # format 3 the index lives inside each `zarr.json` and only the root's
+        # is bypassed. That asymmetry is the whole bug, not the extra document.
         # A real v3.0/v3.1 store carries exactly ONE index, at its root — what
         # the facade produces here.
         root = zc_open_group(str(legacy), mode="r+")

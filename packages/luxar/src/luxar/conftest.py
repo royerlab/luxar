@@ -94,58 +94,59 @@ class CompressorView(NamedTuple):
     shuffle: int
 
 
-#: v3 spells blosc's shuffle as a name; the policy speaks numcodecs' integers.
+#: v3 spells blosc's shuffle as a NAME; numcodecs spells it as an int, and the
+#: policy (:mod:`luxar.encoding.compression`) is stated in the ints.
 _V3_SHUFFLE_INTS = {"noshuffle": 0, "shuffle": 1, "bitshuffle": 2}
 
 
 def array_compressor(array: Any) -> CompressorView | None:
     """The blosc compressor of ``array``, from a format-2 or format-3 store.
 
-    ``None`` means stored RAW. Raises for a non-blosc compressor rather than
-    guessing, since every caller asserts against the blosc-shaped policy.
+    ``None`` means stored RAW. A non-blosc compressor RAISES rather than
+    answering, in both formats: every caller asserts against the blosc-shaped
+    policy, and callers read ``None`` as "stored uncompressed", so quietly
+    returning it for a zstd-compressed array would turn a compression
+    regression into a passing test.
 
-    Formats differ in BOTH the accessor and the spelling: format 2 exposes a
-    single numcodecs ``.compressor`` whose ``shuffle`` is an int; format 3
-    exposes a ``.compressors`` tuple of ``zarr.codecs`` objects whose
-    ``shuffle`` is a name.
+    Read through ``.compressors`` for BOTH formats. The singular
+    ``.compressor`` is zarr-2-shaped and doubly unusable: it is deprecated (it
+    warns on every format-2 read) and it RAISES on a format-3 array —
+    ``TypeError: `compressor` is not available for Zarr format 3 arrays.`` —
+    rather than returning ``None``, so even ``getattr(array, "compressor",
+    None)`` does not absorb it, getattr's default covering only
+    ``AttributeError``.
 
-    ``.compressor`` RAISES on a format-3 array — ``TypeError: `compressor` is
-    not available for Zarr format 3 arrays.`` — rather than returning ``None``,
-    so ``getattr(array, "compressor", None)`` does NOT absorb it: getattr's
-    default only covers ``AttributeError``. That is the good outcome (loud, not
-    silent), but it has to be caught here rather than at every call site.
+    What differs between the formats is only the SPELLING of what
+    ``.compressors`` holds, and both are normalised here. Measured, for the
+    same logical array:
 
-    A non-blosc compressor raises in BOTH formats, which takes a deliberate
-    check at format 3. Measured: ``.compressors`` is ``()`` for a raw array and
-    ``(ZstdCodec(...),)`` for a zstd-compressed one — the mandatory ``bytes``
-    codec is in ``.serializer``, never here — so skipping every entry without a
-    ``cname`` and falling through to ``None`` reported a zstd-compressed array
-    as RAW. Callers assert ``is None`` to mean "stored uncompressed", so that
-    turned a compression regression into a passing test at format 3 while the
-    identical format-2 store raised.
+    ========  ==================================  ==============================
+    stored    format 2                            format 3
+    ========  ==================================  ==============================
+    raw       ``()``                              ``()``
+    blosc     ``(Blosc(cname='zstd', ...),)``     ``(BloscCodec(cname=..., ...),)``
+    zstd      ``(Zstd(level=9),)``                ``(ZstdCodec(level=9, ...),)``
+    ========  ==================================  ==============================
+
+    So ``()`` unambiguously means RAW in both — the mandatory ``bytes`` codec
+    lives in ``.serializer``, never here — and an entry without a ``cname`` is
+    always a real non-blosc compressor rather than structural noise to skip.
+    ``cname``/``shuffle`` are plain values at format 2 and enums at format 3,
+    hence the ``.value`` unwrapping.
     """
-    try:
-        legacy = array.compressor
-    except (AttributeError, TypeError):
-        legacy = None
-    if legacy is not None:
-        return CompressorView(
-            cname=str(legacy.cname),
-            clevel=int(legacy.clevel),
-            shuffle=int(legacy.shuffle),
-        )
-
     codecs = tuple(getattr(array, "compressors", ()) or ())
     for codec in codecs:
-        name = getattr(codec, "cname", None)
-        if name is None:
-            continue
-        shuffle = getattr(codec, "shuffle", None)
-        shuffle_name = getattr(shuffle, "value", shuffle)
+        cname = getattr(codec, "cname", None)
+        if cname is None:
+            continue  # a real non-blosc compressor; reported below
+        shuffle = getattr(codec, "shuffle", 0)
+        shuffle = getattr(shuffle, "value", shuffle)  # v3 enum -> its name
         return CompressorView(
-            cname=str(getattr(name, "value", name)),
+            cname=str(getattr(cname, "value", cname)),
             clevel=int(codec.clevel),
-            shuffle=_V3_SHUFFLE_INTS[str(shuffle_name)],
+            shuffle=(
+                _V3_SHUFFLE_INTS[shuffle] if isinstance(shuffle, str) else int(shuffle)
+            ),
         )
     if codecs:
         raise TypeError(

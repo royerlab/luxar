@@ -555,6 +555,65 @@ def test_consolidate_is_silent(tmp_path: Path, write_format: int) -> None:
     assert not offending, [f"{w.category.__name__}: {w.message}" for w in offending]
 
 
+def _consolidated_index_holders(store_dir: Path, fmt: int) -> list[str]:
+    """Store-relative dirs carrying a consolidated index ( ``"."`` = the root)."""
+    out: list[str] = []
+    if fmt == 2:
+        for doc in sorted(store_dir.rglob(".zmetadata")):
+            out.append(str(doc.parent.relative_to(store_dir)))
+    else:
+        for doc in sorted(store_dir.rglob("zarr.json")):
+            if json.loads(doc.read_text()).get("consolidated_metadata") is not None:
+                out.append(str(doc.parent.relative_to(store_dir)))
+    return out
+
+
+def test_editing_in_place_leaves_exactly_one_index(
+    tmp_path: Path, write_format: int
+) -> None:
+    """An in-place edit through the facade must not leave a NESTED index behind.
+
+    Format 3 permits a consolidated index on ANY group, and the facade's
+    deliberate ``use_consolidated=False`` bypasses only the ROOT one — a nested
+    index is still honoured. Re-opening an already-consolidated store with plain
+    ``zarr.open_group`` returns nodes built FROM the root index, so
+    re-consolidating serializes that stale tree back out beneath the root; reads
+    afterwards return the PRE-EDIT attributes while every document on disk is
+    correct, and nothing raises.
+
+    Re-opening through the facade carries no index to re-serialize. Pinned as
+    "exactly one index, at the root" (the format-2 invariant the rest of the
+    codebase assumes) AND "the edit is what reads back", because the count alone
+    would still pass if the single remaining index were stale.
+    """
+    p = tmp_path / "edit.zarr"
+    root = zc.open_group(p, mode="w")
+    child = root.create_group("part_0").create_group("child_0")
+    child.attrs["coverage_fraction"] = 0.25
+    child.attrs["keep"] = "me"
+    zc.create_array(
+        child, "a", data=np.arange(4, dtype=np.uint8), chunks=(4,), compressor=None
+    )
+    zc.consolidate(root)
+    assert _consolidated_index_holders(p, write_format) == ["."]
+
+    # The edit-in-place cycle Luxar's own tools perform (annotate-quality,
+    # doctor --fix, the migrate fixtures).
+    reopened = zc.open_group(p, mode="r+")
+    del reopened["part_0"]["child_0"].attrs["coverage_fraction"]
+    reopened["part_0"]["child_0"].attrs["min_pixel_size"] = 100.0
+    zc.consolidate(reopened)
+
+    assert _consolidated_index_holders(p, write_format) == ["."], (
+        "a nested consolidated index survived; reads will prefer it over the "
+        "per-node documents and serve pre-edit attributes"
+    )
+    after = dict(zc.open_group(p, mode="r")["part_0"]["child_0"].attrs)
+    assert "coverage_fraction" not in after, after
+    assert after["min_pixel_size"] == 100.0
+    assert after["keep"] == "me", "untouched attrs must survive the round trip"
+
+
 def test_append_to_an_existing_v3_store_does_not_shadow_it(tmp_path: Path) -> None:
     """``mode="a"`` must NOT pin the format against a store that already exists.
 

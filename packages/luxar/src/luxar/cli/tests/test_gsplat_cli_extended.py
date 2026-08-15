@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 
 import zarr
 
+from luxar._zarr_compat import consolidate as zc_consolidate
 from luxar._zarr_compat import create_array, read_array_meta
 from luxar.cli import app
 from luxar.cli.gsplat_config import (
@@ -5900,7 +5901,7 @@ class TestMigrateFormatCommand:
         create_array(splats, "amplitudes", data=rng.random(n).astype("float32"))
         create_array(splats, "cholesky_factors", data=self._identity_chol(n))
         create_array(splats, "chunk_bounds", data=np.zeros((1, 3, 2), dtype="float32"))
-        zarr.consolidate_metadata(store)
+        zc_consolidate(store)
 
     def _make_v1_1(self, path: Path, lod_sizes=(6, 3)) -> None:
         import numpy as np
@@ -5935,7 +5936,7 @@ class TestMigrateFormatCommand:
             create_array(lod, "amplitudes", data=rng.random(n).astype("float32"))
             create_array(lod, "cholesky_factors", data=self._identity_chol(n))
             create_array(lod, "chunk_bounds", data=np.zeros((1, 3, 2), dtype="float32"))
-        zarr.consolidate_metadata(store)
+        zc_consolidate(store)
 
     def _make_sub_dir(self, dir_path: Path, level_sizes=(16, 4, 1)) -> None:
         import json

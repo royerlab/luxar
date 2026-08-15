@@ -17,6 +17,8 @@ import numpy as np
 import pytest
 import zarr
 
+from luxar._zarr_compat import consolidate as zc_consolidate
+from luxar._zarr_compat import open_group as zc_open_group
 from luxar._zarr_compat import read_consolidated_attrs, read_node_attrs
 from luxar.gsplats.doctor import diagnose_store
 from luxar.gsplats.gsplat_data import GSplatData
@@ -94,13 +96,19 @@ def _consolidated_attrs(path: Path) -> dict:
 
 
 def _set_root_attr(path: Path, key: str, value) -> None:
-    """Write (or delete) a root attr through zarr, refreshing consolidation."""
-    root = zarr.open_group(str(path), mode="r+")
+    """Write (or delete) a root attr through the facade, refreshing consolidation.
+
+    Through the facade, as Luxar's own in-place editors are: re-opening an
+    already-consolidated store with plain ``zarr.open_group`` and
+    re-consolidating leaves a NESTED index holding the pre-edit attributes,
+    which later reads prefer over the correct per-node documents.
+    """
+    root = zc_open_group(str(path), mode="r+")
     if value is None:
         del root.attrs[key]
     else:
         root.attrs[key] = value
-    zarr.consolidate_metadata(root.store)
+    zc_consolidate(root)
 
 
 def _part_boxes(path: Path) -> list:

@@ -22,6 +22,7 @@ from pathlib import Path
 import numpy as np
 import zarr
 
+from luxar._zarr_compat import consolidate as zc_consolidate
 from luxar._zarr_compat import create_array
 from luxar.cli.gsplat_ops.batch.validation import validate_tile as _validate_tile
 from luxar.gsplats.gsplat_data import AdditiveSubLOD
@@ -101,7 +102,7 @@ def _make_v2_0_tile(path: Path, n: int = 5) -> None:
     create_array(add, "centers", data=s["centers"])
     create_array(add, "amplitudes", data=s["amplitudes"])
     create_array(add, "cholesky_factors", data=s["cholesky_factors"])
-    zarr.consolidate_metadata(store)
+    zc_consolidate(store)
 
 
 # ── v3.0 tiles → "ok" ─────────────────────────────────────────────────────

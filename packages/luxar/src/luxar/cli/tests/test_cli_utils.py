@@ -21,6 +21,7 @@ import numpy as np
 import pytest
 import zarr
 
+from luxar._zarr_compat import consolidate as zc_consolidate
 from luxar._zarr_compat import create_array, is_consolidated
 from luxar.cli.utils import (
     check_port_available,
@@ -543,7 +544,7 @@ class TestGetZarrInfo:
                 data=np.zeros((1000, 3), dtype=np.float32),
                 compressor=None,
             )
-            zarr.consolidate_metadata(root.store)
+            zc_consolidate(root.store)
 
             shutil.rmtree(store_path / "pts" / "positions")
             assert is_consolidated(store_path), "stale index must remain"

@@ -481,17 +481,19 @@ def open_group(path: str | Path, *, mode: str = "r", **kwargs: Any) -> zarr.Grou
     # is untouched either way: it fetches the consolidated document itself.
     #
     # ONE CAVEAT, and it is why in-place attribute edits must go through THIS
-    # function rather than `zarr.open_group`. Format 3 allows a consolidated
-    # index on ANY group, not just the root, and `use_consolidated=False`
-    # bypasses only the ROOT one — a nested index is still honoured. Nested
-    # indexes appear when an ALREADY-consolidated store is re-opened with plain
-    # `zarr.open_group` (which trusts the root index, so the nodes it returns
-    # are built from it) and then re-consolidated: the stale in-memory tree is
-    # serialized back out beneath the root. Subsequent reads then see the
-    # pre-edit attributes even though every document on disk is correct, and
-    # nothing raises. Re-opening HERE avoids it: the tree carries no index to
-    # re-serialize, so consolidating leaves exactly one index, at the root —
-    # the format-2 invariant every Luxar flow already assumes.
+    # function rather than `zarr.open_group`. Re-opening an ALREADY-consolidated
+    # store with plain `zarr.open_group` returns nodes built FROM the root index
+    # (it trusts it), so re-consolidating serializes that stale in-memory tree
+    # back out as a NESTED index beneath the root. Both formats grow the nested
+    # document; only format 3 is CORRUPTED by it, and that asymmetry is the bug:
+    # at format 2 a `.zmetadata` is skipped at every level, whereas at format 3
+    # the index lives inside each `zarr.json` and only the ROOT one is bypassed,
+    # so the nested copy is honoured. Reads then return pre-edit attributes even
+    # though every document on disk is correct, and nothing raises. Re-opening
+    # HERE avoids it entirely: the tree carries no index to re-serialize, so
+    # consolidating leaves exactly one, at the root — the format-2 invariant
+    # every Luxar flow already assumes. Pinned by
+    # `test_editing_in_place_leaves_exactly_one_index`.
     if mode in ("r", "r+", "a") and "use_consolidated" not in kwargs:
         kwargs["use_consolidated"] = False
     return zarr.open_group(store, mode=mode, **kwargs)
@@ -737,8 +739,14 @@ def create_array(
     return group.create_array(name, **call)
 
 
-def consolidate(group: zarr.Group) -> None:
-    """Write consolidated metadata for ``group``'s store.
+def consolidate(target: zarr.Group | Any) -> None:
+    """Write consolidated metadata for ``target``'s store.
+
+    Accepts a :class:`zarr.Group` or a bare store, because both spellings occur
+    naturally at call sites — a writer holds the group it just built, while a
+    fixture that constructed a store directly holds only the store. Taking just
+    the group would leave the second kind reaching for ``zarr.*`` and silently
+    skipping the warning suppression below.
 
     This is load-bearing rather than an optimisation, in BOTH formats: the
     TypeScript scene loader builds its graph purely from the store's
@@ -773,12 +781,13 @@ def consolidate(group: zarr.Group) -> None:
     through; ``test_consolidate_is_silent`` is the backstop, and it asserts on
     the warning CATEGORY rather than the wording so a reword still fails it.
     """
+    store = target.store if isinstance(target, zarr.Group) else target
     with warnings.catch_warnings():
         warnings.filterwarnings(
             "ignore",
             message=".*[Cc]onsolidated metadata is currently not part.*",
         )
-        zarr.consolidate_metadata(group.store)
+        zarr.consolidate_metadata(store)
 
 
 def close(group: zarr.Group) -> None:
