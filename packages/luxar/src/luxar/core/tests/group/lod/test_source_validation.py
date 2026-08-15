@@ -1791,7 +1791,14 @@ class TestTheGSplatsPartitionSpecCheckSitsWhereTheFlatPathPutsIt:
     def test_the_spec_fault_alone_is_what_is_reported(self, tmp_path: Any) -> None:
         _, scene, _ = open_scene(tmp_path, "lg_slot_alone.luxar.zarr")
 
-        assert "partition rule must be" in str(self._split(scene))
+        exc = self._split(scene)
+
+        assert "partition rule must be" in str(exc)
+        # Discriminating half: the PRE-FIX message contains this same substring
+        # (the child's own funnel prefixes it with ``Could not add gsplats
+        # 'child_0': ``), so without the name assertion this passes with the gate
+        # neutralised and pins nothing. Its siblings above already assert it.
+        assert "child_0" not in str(exc)
 
     def test_the_node_attrs_gate_above_it_wins(self, tmp_path: Any) -> None:
         compiler, scene, path = open_scene(tmp_path, "lg_slot_attrs.luxar.zarr")
@@ -1913,7 +1920,9 @@ class TestGSplatsFromDataRefusesPartitionBesideAnAdditiveLadder:
             )
         )
 
-        assert "partition= is not supported alongside additive_lod=" in str(exc)
+        assert "partition= is not supported alongside an additive_lod= ladder" in str(
+            exc
+        )
         assert "child_0" not in str(exc)
         assert "g" not in compiler.store
         assert finalized_group_keys(compiler, path) == set()
@@ -1934,31 +1943,144 @@ class TestGSplatsFromDataRefusesPartitionBesideAnAdditiveLadder:
             )
         )
 
-        assert "partition= is not supported alongside additive_lod=" in str(exc)
+        assert "partition= is not supported alongside an additive_lod= ladder" in str(
+            exc
+        )
 
-    def test_false_is_not_a_partition_request(self, tmp_path: Any) -> None:
-        """``False`` means "no partition", so there is nothing to conflict with.
+    def test_false_is_not_a_partition_request_and_no_longer_strands(
+        self, tmp_path: Any
+    ) -> None:
+        """``False`` means "no partition" — so the ladder is simply written (#1550).
 
         Same rule the three ``substitutive_lod=`` doors keep (``adders/mesh.py``
-        spells it ``partition is not None and partition is not False``). It still
-        fails one level down as an unknown node attribute on the multi-LOD child
-        writer — a separate, pre-existing hole of the #1496 "an explicit None means
-        absent" class that this gate deliberately does not paper over — but it must
-        not be answered with a conflict the caller did not ask for.
+        spells it ``is_requested``). It must not be answered with a conflict the
+        caller did not ask for — and it must not STRAND either, which is what it
+        did: measured, this exact call raised ``Could not add gsplats 'child_0':
+        Unknown node attribute 'partition'. Did you mean 'absorption'?`` and left
+        ``g`` on disk as a childless ``kind=lod`` group surviving ``finalize()``,
+        while the single-substitutive twin below merely refused (naming ``'g'``,
+        writing nothing) — the two routes disagreeing on the same call.
+
+        Asserting the STORE, not just the message: the earlier cut of this test
+        checked only that the conflict was not named, which the stranding refusal
+        satisfied perfectly.
         """
-        _, scene, _ = open_scene(tmp_path, "lg_part_additive_false.luxar.zarr")
+        compiler, scene, path = open_scene(
+            tmp_path, "lg_part_additive_false.luxar.zarr"
+        )
+
+        scene.add_gsplats_from_data(
+            "g",
+            _multi_substitutive_3d_data(),
+            lod_group=True,
+            additive_lod={"n_lods": 2},
+            partition=False,
+        )
+        compiler.finalize()
+
+        store = zarr.open_group(path, mode="r")
+        assert store["g"].attrs.get("kind") == "lod"
+        # Both levels written, each as a laddered leaf: the bypass was honoured
+        # (nothing partitioned) rather than stranded.
+        assert sorted(store["g"].group_keys()) == ["child_0", "child_1"]
+        assert sorted(store["g"]["child_0"].group_keys()) == [
+            "additive_0",
+            "additive_1",
+        ]
+
+    def test_false_writes_the_same_ladder_on_the_single_substitutive_route(
+        self, tmp_path: Any
+    ) -> None:
+        """The twin route must AGREE — it is the disagreement that was the bug.
+
+        The deletion that makes both routes succeed is scoped to the multi-LOD
+        destination, and the control for that scope is
+        ``TestGSplatsFromDataRefusesABadPartitionSpecBeforeTheWrapper::
+        test_false_still_bypasses_compiler_auto_partition`` above: widen the
+        deletion to every ``False`` and it goes red, because ``False`` is also
+        the ``resolve_auto_partition`` bypass on every route that reaches a leaf.
+        """
+        compiler, scene, path = open_scene(
+            tmp_path, "lg_part_additive_false_flat.luxar.zarr"
+        )
+
+        scene.add_gsplats_from_data(
+            "g",
+            _multi_substitutive_3d_data(),
+            lod_group=False,
+            additive_lod={"n_lods": 2},
+            partition=False,
+        )
+        compiler.finalize()
+
+        store = zarr.open_group(path, mode="r")
+        assert sorted(store["g"].group_keys()) == ["additive_0", "additive_1"]
+
+
+class TestTheLadderConflictOutranksTheOtherPreWrapperFaults:
+    """The #1550 ladder conflict is deliberately hoisted above the sibling gates.
+
+    Unlike the partition-SPEC check next door, this one sits ABOVE the route
+    branch instead of inside ``_reject_before_wrapper``, so it outranks the
+    node-attrs gate, the ``dim_order`` spec check and the colours/colormap
+    exclusion — where the same call WITHOUT ``additive_lod=`` reports the other
+    fault. The trade is stated in
+    ``from_data.resolve_partition_beside_an_additive_ladder``: the two routes
+    below must answer identically, and only the multi-substitutive one has a
+    pre-wrapper gate to sit in, so any lower placement would re-open the
+    route-dependent divergence #1550 exists to close. Every combination refuses
+    with an EMPTY store either way, so only the naming is at stake — pinned here
+    so a future move is a deliberate one.
+    """
+
+    _CASES = [
+        ("node_attrs", {"blending": "max"}, "Did you mean 'blending_mode'?"),
+        ("dim_order", {"dim_order": ["X", "Y", "X"]}, "dim_order has duplicate names"),
+    ]
+
+    @pytest.mark.parametrize("case,kwargs,other_fault", _CASES)
+    @pytest.mark.parametrize("lod_group", [True, False])
+    def test_the_conflict_is_named_on_both_routes(
+        self,
+        tmp_path: Any,
+        case: str,
+        kwargs: Dict[str, Any],
+        other_fault: str,
+        lod_group: bool,
+    ) -> None:
+        compiler, scene, path = open_scene(
+            tmp_path, f"lg_rank_{case}_{lod_group}.luxar.zarr"
+        )
 
         exc = refusal(
             lambda: scene.add_gsplats_from_data(
                 "g",
                 _multi_substitutive_3d_data(),
-                lod_group=True,
+                lod_group=lod_group,
                 additive_lod={"n_lods": 2},
-                partition=False,
+                partition={"max_elements": 2},
+                **kwargs,
             )
         )
 
-        assert "not supported alongside additive_lod=" not in str(exc)
+        assert "partition= is not supported alongside" in str(exc)
+        assert other_fault not in str(exc)
+        assert finalized_group_keys(compiler, path) == set()
+
+    @pytest.mark.parametrize("case,kwargs,other_fault", _CASES)
+    def test_the_same_call_without_the_ladder_reports_the_other_fault(
+        self, tmp_path: Any, case: str, kwargs: Dict[str, Any], other_fault: str
+    ) -> None:
+        """Non-vacuity: the sibling gates DO fire, they are merely outranked."""
+        _, scene, _ = open_scene(tmp_path, f"lg_rank_ref_{case}.luxar.zarr")
+
+        exc = refusal(
+            lambda: scene.add_gsplats_from_data(
+                "g", _multi_substitutive_3d_data(), lod_group=True, **kwargs
+            )
+        )
+
+        assert other_fault in str(exc)
 
 
 # ---------------------------------------------------------------------------

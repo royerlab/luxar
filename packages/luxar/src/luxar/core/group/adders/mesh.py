@@ -57,7 +57,7 @@ from ..compositing import (
     unnest_add_error,
 )
 from ..dim_order import apply_dim_order_positions
-from ..partition import reject_mismatched_partition_parent
+from ..partition import is_requested, reject_mismatched_partition_parent
 
 if TYPE_CHECKING:
     from ....mesh.split import MeshPart
@@ -331,23 +331,12 @@ def _resolve_mesh_vertices(vertices: Any) -> np.ndarray:
     return vert_arr
 
 
-def _requested(value: Any) -> bool:
-    """Whether a structural knob was actually asked for.
-
-    ``False`` is an explicit no-op sentinel on every one of them — ``partition=False``
-    is what :func:`_add_mesh_partition` hands each part (a part must never recurse
-    into another partition), and ``substitutive_lod=False`` / ``additive_lod=False``
-    are the resolvers' documented "no ladder" spelling — so it must read as *not
-    requested* here.
-
-    Tested with ``is`` rather than ``in (None, False)``, because the latter compares
-    by EQUALITY: ``0 == False``, so ``partition=0`` read as "not requested" in the
-    composition guards while the real dispatch (``partition is not None and
-    partition is not False``) read it as requested and silently dropped the split
-    behind a ladder. One helper so the guards and the dispatch cannot drift apart —
-    the drift itself was the bug.
-    """
-    return value is not None and value is not False
+#: The "was this structural knob asked for?" predicate, kept under its local name
+#: for the guards below. It moved next to ``resolve_partition_spec`` for #1550,
+#: when the gsplats ``partition=``-beside-a-ladder gates needed the same question
+#: one level above the leaf — see :func:`~luxar.core.group.partition.is_requested`
+#: for the ``False`` sentinel rule and the ``is``-vs-``==`` hazard behind it.
+_requested = is_requested
 
 
 def _reject_additive_lod_compositions(
@@ -405,8 +394,8 @@ def _reject_partition_with_substitutive_lod(
     partition branch is reached, so accepting both would silently drop the split.
 
     ``False`` is an explicit no-op sentinel on BOTH sides, so neither trips this —
-    see :func:`_requested`, which is where that rule and the ``is``-vs-``==`` hazard
-    behind it are stated. Refusing either would refuse a call that asked for exactly
+    see :func:`~luxar.core.group.partition.is_requested`, which is where that rule
+    and the ``is``-vs-``==`` hazard behind it are stated. Refusing either would refuse a call that asked for exactly
     one of the two features.
 
     Its own function rather than an inline ``if`` because ``add_mesh_impl`` sits at

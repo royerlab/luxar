@@ -45,6 +45,9 @@ This module hosts:
 * :func:`resolve_partition_spec` — the validator for that vocabulary, shared by
   all four adders and by both gsplats pre-wrapper gates (``lod_group=`` and the
   graft door).
+* :func:`is_requested` — the "was this structural knob actually asked for?"
+  predicate that vocabulary needs, shared with ``substitutive_lod=`` /
+  ``additive_lod=``.
 * :data:`DEFAULT_MAX_ELEMENTS` — the cap used when the user passes
   ``partition=True`` without a dict.
 """
@@ -87,6 +90,32 @@ PartitionSpec = Union[None, bool, dict]
 #: a single tile is still a comfortable WebGL batch, small enough that
 #: partitioning is worth it for the 10M+ node sizes the feature targets.
 DEFAULT_MAX_ELEMENTS: int = 1_000_000
+
+
+def is_requested(value: Any) -> bool:
+    """Whether a structural knob was actually asked for.
+
+    ``False`` is an explicit no-op sentinel on every one of them —
+    ``partition=False`` is what ``_add_mesh_partition`` hands each part (a part
+    must never recurse into another partition) and the ``resolve_auto_partition``
+    bypass a caller uses to opt out of a compiler-level
+    ``auto_partition_max_elements``, and ``substitutive_lod=False`` /
+    ``additive_lod=False`` are the resolvers' documented "no ladder" spelling —
+    so it must read as *not requested* here.
+
+    Tested with ``is`` rather than ``in (None, False)``, because the latter
+    compares by EQUALITY: ``0 == False``, so ``partition=0`` read as "not
+    requested" in the mesh composition guards while the real dispatch
+    (``partition is not None and partition is not False``) read it as requested
+    and silently dropped the split behind a ladder. One helper so the guards and
+    the dispatch cannot drift apart — the drift itself was the bug. It lives here
+    beside :func:`resolve_partition_spec` because the two answer the two halves of
+    the same vocabulary ("is a split wanted?" then "what split?"), and because
+    the gsplats ``partition=``-beside-a-ladder gates
+    (``gsplats_pipeline/from_data.py`` / ``from_io.py``) need the first half one
+    level above the leaf that resolves the second (#1550).
+    """
+    return value is not None and value is not False
 
 
 def resolve_partition_spec(partition: Any) -> Tuple[int, str]:

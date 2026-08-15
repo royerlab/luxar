@@ -144,12 +144,27 @@ leaf never judges them either: `False` (the explicit no-partition bypass, which
 every adder normalises away before resolving) and a sub-2-D width (where
 `warn_if_partition_needs_more_dims` DROPS the request with a warning).
 
-A VALID spec has one conflict of its own on the `lod_group=` door:
-`reject_partition_with_an_additive_ladder` refuses `partition=` beside an
-`additive_lod=` ladder, above the route branch so both routes answer alike. The
-multi-LOD child writer has no `partition` parameter, so the key reached
-`validate_render_attrs` as an unknown node attribute — and, on the
-multi-substitutive route, from inside `child_0` with the wrapper already written.
+A VALID spec has one conflict of its own, at BOTH doors: `partition=` cannot ride
+a node that also carries an additive ladder, because the multi-LOD writer has no
+`partition` parameter at all — so the key reached `validate_render_attrs` as an
+unknown node attribute, on the multi-substitutive route from inside `child_0`
+with the wrapper already written, and on the graft door from inside `part_0` with
+the `kind=partition` already written. One reason template
+(`partition_beside_a_ladder_reason`) with a structure and a remedy per door, the
+same convention `labels_on_wrapper_reason` keeps: the `additive_lod=` door says
+"drop one of the two", the file/graft door says `gsplat flatten`, because there
+is no `additive_lod=` in an `add_gsplats_from_file` call to drop.
+`resolve_partition_beside_an_additive_ladder` holds the data door's half, above
+the route branch so both routes answer alike; `_reject_a_partition_beside_a_stored_ladder`
+holds the file door's, above the spec-shape gate at both of its call sites so the
+two doors rank the two faults the same way.
+
+`partition=False` is not a request and is never refused — but it stranded the
+same wrappers all the same, arriving at the multi-LOD writer as an unknown node
+attribute. It is DELETED instead, and only when that writer is the destination:
+`False` is the `resolve_auto_partition` bypass everywhere a leaf adder resolves
+it, so stripping it earlier would silently re-enable a compiler-level
+`auto_partition_max_elements`.
 
 ### `from_io.py` — load/fit then delegate
 
