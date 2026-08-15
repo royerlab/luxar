@@ -9,7 +9,9 @@ import numpy as np
 import pytest
 import zarr
 
+from luxar._zarr_compat import consolidate as zc_consolidate
 from luxar._zarr_compat import create_array
+from luxar._zarr_compat import open_group as zc_open_group
 from luxar.gsplats.io import load_gsplats
 from luxar.gsplats.io.migrate import (
     _read_substitutive_directory,
@@ -869,14 +871,27 @@ class TestMigrateV3LegacyLodAttrs:
                 max_elements=0,
             ),
         )
-        root = zarr.open_group(str(legacy), mode="r+")
+        # Age the store into a v3.1 legacy shape THROUGH THE FACADE, which is
+        # how Luxar itself re-opens a store to edit attributes in place.
+        #
+        # Not cosmetic. `zarr.open_group` trusts consolidated metadata, so the
+        # nodes it hands back are built from the root index; re-consolidating
+        # from that tree writes a SECOND, nested consolidated index into
+        # `part_0/zarr.json` carrying the pre-edit attributes. At format 3 a
+        # nested index is honoured even when the root one is bypassed, so the
+        # migration then re-derives from `coverage_fraction` values this
+        # function had just deleted and stamps the legacy `selector="coverage"`.
+        # (Format 2 has no nested index, which is why it passed either way.)
+        # A real v3.0/v3.1 store carries exactly ONE index, at its root — what
+        # the facade produces here.
+        root = zc_open_group(str(legacy), mode="r+")
         root.attrs["format_version"] = "3.1"
         lod = root["part_0"]
         lod.attrs["selector"] = "pixel_size"
         for i, n in enumerate((2, 8)):
             del lod[f"child_{i}"].attrs["coverage_fraction"]
             lod[f"child_{i}"].attrs["min_pixel_size"] = 100.0 * float(np.sqrt(n / 2))
-        zarr.consolidate_metadata(root.store)
+        zc_consolidate(root)
 
         assert detect_legacy_format(legacy) == "v3.1-lod-pixel-size"
         out = tmp_path / "out.gsplats.zarr"

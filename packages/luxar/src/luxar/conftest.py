@@ -114,6 +114,15 @@ def array_compressor(array: Any) -> CompressorView | None:
     so ``getattr(array, "compressor", None)`` does NOT absorb it: getattr's
     default only covers ``AttributeError``. That is the good outcome (loud, not
     silent), but it has to be caught here rather than at every call site.
+
+    A non-blosc compressor raises in BOTH formats, which takes a deliberate
+    check at format 3. Measured: ``.compressors`` is ``()`` for a raw array and
+    ``(ZstdCodec(...),)`` for a zstd-compressed one — the mandatory ``bytes``
+    codec is in ``.serializer``, never here — so skipping every entry without a
+    ``cname`` and falling through to ``None`` reported a zstd-compressed array
+    as RAW. Callers assert ``is None`` to mean "stored uncompressed", so that
+    turned a compression regression into a passing test at format 3 while the
+    identical format-2 store raised.
     """
     try:
         legacy = array.compressor
@@ -126,16 +135,23 @@ def array_compressor(array: Any) -> CompressorView | None:
             shuffle=int(legacy.shuffle),
         )
 
-    for codec in getattr(array, "compressors", ()) or ():
+    codecs = tuple(getattr(array, "compressors", ()) or ())
+    for codec in codecs:
         name = getattr(codec, "cname", None)
         if name is None:
-            continue  # not blosc (e.g. the mandatory `bytes` codec)
+            continue
         shuffle = getattr(codec, "shuffle", None)
         shuffle_name = getattr(shuffle, "value", shuffle)
         return CompressorView(
             cname=str(getattr(name, "value", name)),
             clevel=int(codec.clevel),
             shuffle=_V3_SHUFFLE_INTS[str(shuffle_name)],
+        )
+    if codecs:
+        raise TypeError(
+            f"array is compressed by {codecs!r}, which is not blosc; "
+            f"array_compressor only describes the blosc-shaped policy, and "
+            f"returning None here would report it as stored RAW"
         )
     return None
 

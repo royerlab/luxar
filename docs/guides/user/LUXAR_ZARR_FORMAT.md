@@ -1830,9 +1830,18 @@ with LuxarZarrCompiler("output.luxar.zarr", enable_spatial_index=True) as compil
   consolidated listing and has no directory-walking fallback. Format 2 writes a
   separate `.zmetadata`; format 3 embeds `consolidated_metadata` in the root
   `zarr.json`. For v3 this is a zarr-python extension rather than part of the
-  spec — zarr says so with a warning on every write — but zarrita implements it,
-  so it remains load-bearing for the viewer in both formats. A third-party v3
-  reader that does NOT implement it will see the arrays but not the fast listing.
+  spec — zarr warns about exactly that, and Luxar suppresses the warning at its
+  one consolidation call site rather than pass it on, since the advice concerns
+  portability and not the store's validity — but zarrita implements it, so it
+  remains load-bearing for the viewer in both formats. A third-party v3 reader
+  that does NOT implement it will see the arrays but not the fast listing; the
+  per-node `zarr.json` documents are complete and standard either way.
+- **Editing a store in place:** re-open it through `luxar._zarr_compat.open_group`,
+  not `zarr.open_group`. Format 3 permits a consolidated index on *any* group, and
+  re-consolidating a store that was re-opened with plain zarr writes a second,
+  nested index holding the pre-edit attributes; later reads then return stale
+  values although every document on disk is correct. Going through the facade
+  leaves exactly one index, at the root, in both formats.
 - **Browser Support:** Via zarrita.js library
 
 ## Future Extensions (Planned)

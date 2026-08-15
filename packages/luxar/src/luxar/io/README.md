@@ -439,9 +439,13 @@ Compression gains from:
   `luxar._zarr_compat`, the only module that names a zarr format; go through its
   helpers (`open_group`, `create_array`, `consolidate`, ...) rather than calling
   `zarr.*` directly. Code that inspects a store on disk should use its
-  bi-format readers (`read_array_meta`, `read_node_attrs`, `is_consolidated`)
-  instead of naming `.zarray` / `.zattrs` / `.zmetadata`, which exist in only
-  one of the two formats.
+  bi-format readers (`read_array_meta`, `read_node_attrs`, `is_consolidated`,
+  `read_consolidated_attrs`) instead of naming `.zarray` / `.zattrs` /
+  `.zmetadata`, which exist in only one of the two formats. Editing a store in
+  place likewise goes through `open_group`: re-opening an already-consolidated
+  store with plain `zarr.open_group` and re-consolidating writes a nested
+  consolidated index holding the pre-edit attributes, which later reads then
+  serve in preference to the (correct) documents on disk.
 - `numpy>=2.0`: Array operations
 - `numcodecs`: Blosc compressor (`DEFAULT_COMP`)
 - `arbol>=0.3.5`: Progress logging

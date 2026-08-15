@@ -996,10 +996,14 @@ Why it matters, concretely:
   `.zmetadata` exist only at format 2; format 3 has one `zarr.json` per node with
   attributes nested under `attributes`, `c/0/0` chunk keys, and consolidated
   metadata *inside* the root `zarr.json`. Use the facade's bi-format readers —
-  `read_array_meta`, `read_node_attrs`, `is_consolidated` — for anything that
-  inspects a store on disk. Every bug found during the format-3 migration was a
-  literal document name: a validator that passed a corrupt tile, a cache probe
-  that served stale data forever, a dataset browser that could not see v3 stores.
+  `read_array_meta`, `read_node_attrs`, `is_consolidated`, `read_consolidated_attrs`
+  — for anything that inspects a store on disk. Every bug found during the
+  format-3 migration was a literal document name, and **not one of them raised**:
+  a validator that passed a corrupt tile, a cache probe that served stale data
+  forever, a dataset browser that could not see v3 stores, an encoding classifier
+  that answered "unclassifiable", a batch measurement that silently fell back to
+  its analytic estimate. The failure mode is always a plausible wrong answer, so
+  grep for the document names rather than trusting the test suite to go red.
 - **numcodecs objects are format-2 currency.** A format-3 array REJECTS them
   (`TypeError: 'Blosc' object is not iterable`). `create_array` translates
   compressors and filters to `zarr.codecs` equivalents, keyed on the format of
@@ -1013,6 +1017,21 @@ Why it matters, concretely:
   AST test fails the build if a production call site omits it.
 - **`data=` and `shape=` are mutually exclusive in zarr 3** (zarr 2 allowed both).
   `create_array` accepts both and forwards only what zarr 3 permits.
+- **Edit a store in place through the facade, never `zarr.open_group`.** Format 3
+  allows a consolidated index on ANY group, and the facade's deliberate
+  `use_consolidated=False` bypasses only the ROOT one. Re-opening an
+  already-consolidated store with plain zarr hands back nodes built FROM the root
+  index, so re-consolidating serializes that stale tree out as a NESTED index —
+  after which reads return pre-edit attributes even though every document on disk
+  is correct. Silent, as usual. The facade's tree carries no index to
+  re-serialize, leaving exactly one at the root (the format-2 invariant
+  everything already assumes).
+- **Consolidating a v3 store warns**, and `ZarrUserWarning` subclasses
+  `UserWarning` — so under `-W error` (which several tests use around a whole
+  compile) saving FAILS with "Could not finalize Zarr store". Suppressed inside
+  `_zarr_compat.consolidate()`. Never "fix" it by not consolidating: the viewer
+  builds its entire scene graph from that index and has no directory-walk
+  fallback, so the store would load as an empty scene.
 - Reading is version-agnostic: zarr-python 3 opens v2 *and* v3, which is the point
   of being on 3.x — 2.18 could not open a v3 store at all.
 

@@ -16,8 +16,32 @@ import requests
 from fastapi.testclient import TestClient
 
 from luxar import Dimensions, LuxarZarrCompiler
+from luxar._zarr_compat import ZARR_FORMAT
 from luxar.cli.utils import find_available_port
 from luxar.utils.demos import create_lorenz_attractor
+
+#: The served document carrying a node's attributes / group record / array
+#: record, for the format Luxar currently writes. Format 3 folds all three into
+#: one ``zarr.json`` per node; format 2 keeps them apart. These are URL paths
+#: fetched over HTTP by name — the server just serves files, so the test has to
+#: ask for the document that actually exists.
+_ATTRS_DOC = ".zattrs" if ZARR_FORMAT == 2 else "zarr.json"
+_GROUP_DOC = ".zgroup" if ZARR_FORMAT == 2 else "zarr.json"
+_ARRAY_DOC = ".zarray" if ZARR_FORMAT == 2 else "zarr.json"
+
+
+def _node_attrs(payload: dict) -> dict:
+    """A node's user attributes from either document shape.
+
+    A ``.zattrs`` IS the attributes object; a ``zarr.json`` is the whole node
+    record with attributes nested under ``attributes``, so reading a Luxar attr
+    off the top level of the latter always yields ``None``. Mirrors the viewer's
+    ``rootAttributes`` in ``scene-identity-watchdog.ts`` — both sides bypass the
+    zarr library here and so both need this unwrap.
+    """
+    if payload.get("zarr_format") == 3 and isinstance(payload.get("attributes"), dict):
+        return payload["attributes"]
+    return payload
 
 
 class _ImmediateThread:
@@ -140,17 +164,17 @@ class TestServeIntegration:
 
     def test_root_zarr_endpoint(self, test_server):
         """Test that root zarr endpoint returns correct metadata."""
-        response = requests.get(f"{test_server}/.zattrs")
+        response = requests.get(f"{test_server}/{_ATTRS_DOC}")
         assert response.status_code == 200
-        data = response.json()
+        data = _node_attrs(response.json())
         assert "luxar_version" in data  # Changed from "version" to match implementation
         assert data["type"] == "scene"
 
     def test_scene_metadata(self, test_server):
         """Test retrieving scene metadata."""
-        response = requests.get(f"{test_server}/.zattrs")
+        response = requests.get(f"{test_server}/{_ATTRS_DOC}")
         assert response.status_code == 200
-        metadata = response.json()
+        metadata = _node_attrs(response.json())
 
         # Verify expected metadata structure
         assert (
@@ -160,7 +184,7 @@ class TestServeIntegration:
 
     def test_zarr_group_listing(self, test_server):
         """Test listing zarr groups."""
-        response = requests.get(f"{test_server}/.zgroup")
+        response = requests.get(f"{test_server}/{_GROUP_DOC}")
         assert response.status_code == 200
         data = response.json()
         assert "zarr_format" in data
@@ -168,21 +192,25 @@ class TestServeIntegration:
     def test_positions_array_access(self, test_server):
         """Test accessing point positions array."""
         # First, get the scene structure to find point nodes
-        response = requests.get(f"{test_server}/.zattrs")
+        response = requests.get(f"{test_server}/{_ATTRS_DOC}")
         assert response.status_code == 200
 
         # The Lorenz demo creates a node named "LorenzAttractor"
-        response = requests.get(f"{test_server}/LorenzAttractor/positions/.zarray")
+        url = f"{test_server}/LorenzAttractor/positions/{_ARRAY_DOC}"
+        response = requests.get(url)
         assert response.status_code == 200, (
-            f"Expected 200 for LorenzAttractor/positions/.zarray, "
-            f"got {response.status_code}"
+            f"Expected 200 for {url}, got {response.status_code}"
         )
         array_meta = response.json()
         assert "shape" in array_meta
-        assert "dtype" in array_meta
+        # The formats spell the element type differently — format 2 stores a
+        # numpy dtype string (`<u2`), format 3 a `data_type` name (`uint16`) —
+        # so accept either KEY, then assert the value against both spellings.
+        dtype = array_meta.get("dtype", array_meta.get("data_type"))
+        assert dtype is not None, f"no dtype key in {sorted(array_meta)}"
         # Positions default to uint16 per-axis fixed-point (linear_perchannel_u16),
         # decoded to float32 in the viewer; PRECISION / large-extent scenes stay float32.
-        assert array_meta["dtype"] in ["<u2", ">u2", "uint16", "<f4", ">f4", "float32"]
+        assert dtype in ["<u2", ">u2", "uint16", "<f4", ">f4", "float32"]
 
     def test_cors_headers(self, test_server):
         """Test that local CORS origins are allowed by default."""
@@ -195,7 +223,7 @@ class TestServeIntegration:
 
     def test_no_cache_header_on_data_responses(self, test_server):
         """Every mutable data response must require browser revalidation."""
-        response = requests.get(f"{test_server}/.zattrs")
+        response = requests.get(f"{test_server}/{_ATTRS_DOC}")
         assert response.headers.get("Cache-Control") == "no-cache"
 
     def test_no_cache_middleware_accepts_start_without_headers(self):
@@ -656,10 +684,10 @@ class TestDataServerMountRoot:
         client = TestClient(_build_data_app(sample_scene))
 
         # The store is served AT the root (data URLs carry no name suffix).
-        assert client.get("/.zgroup").status_code == 200
+        assert client.get(f"/{_GROUP_DOC}").status_code == 200
         # Neither the sibling nor the old parent-mounted URL shape resolves.
         assert client.get("/secret_sibling.txt").status_code == 404
-        assert client.get(f"/{sample_scene.name}/.zgroup").status_code == 404
+        assert client.get(f"/{sample_scene.name}/{_GROUP_DOC}").status_code == 404
 
     def test_resolve_mount_root(self, tmp_path):
         """Directories mount themselves; files never fall back to their parent."""

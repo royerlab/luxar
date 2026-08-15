@@ -13,12 +13,12 @@ with a degradation notice when either module is missing.
 
 from __future__ import annotations
 
-import json
 import sys
 
 import numpy as np
 import pytest
 
+from luxar._zarr_compat import read_node_attrs
 from luxar.demos import demo_arxiv_embeddings_kaggle as demo
 from luxar.demos.demo_arxiv_embeddings_kaggle import generate_paper_landscape
 
@@ -83,8 +83,9 @@ class TestCompleteCacheRunsWithoutLodDeps:
 
         # A FLAT Points leaf was written — not an LOD group. (Node: arxiv_papers_kaggle.)
         assert (out / "arxiv_papers_kaggle" / "positions").exists()
-        zattrs = json.loads((out / "arxiv_papers_kaggle" / ".zattrs").read_text())
-        assert zattrs.get("kind") != "lod"
+        attrs = read_node_attrs(out / "arxiv_papers_kaggle")
+        assert attrs is not None, "the kaggle papers node must carry attributes"
+        assert attrs.get("kind") != "lod"
 
     def test_lod_group_built_when_deps_present(
         self, monkeypatch, capsys, tmp_path
@@ -105,7 +106,8 @@ class TestCompleteCacheRunsWithoutLodDeps:
 
         # A substitutive-LOD group was written: kind=lod with child_N levels and
         # NO top-level positions leaf.
-        zattrs = json.loads((out / "arxiv_papers_kaggle" / ".zattrs").read_text())
-        assert zattrs.get("kind") == "lod"
+        attrs = read_node_attrs(out / "arxiv_papers_kaggle")
+        assert attrs is not None, "the kaggle papers node must carry attributes"
+        assert attrs.get("kind") == "lod"
         assert (out / "arxiv_papers_kaggle" / "child_0").exists()
         assert not (out / "arxiv_papers_kaggle" / "positions").exists()

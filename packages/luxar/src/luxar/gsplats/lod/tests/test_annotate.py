@@ -326,7 +326,7 @@ def test_annotate_dry_run_writes_nothing(levels_store: Path) -> None:
 def test_annotate_refreshes_content_hash(levels_store: Path) -> None:
     """New attrs must invalidate the viewer's persistent cache: the root
     content_hash changes and lands in consolidated metadata too."""
-    import json
+    from luxar._zarr_compat import read_consolidated_attrs
 
     _strip_quality_attrs(levels_store)
     before = zarr.open_group(str(levels_store), mode="r").attrs["content_hash"]
@@ -334,8 +334,13 @@ def test_annotate_refreshes_content_hash(levels_store: Path) -> None:
     root = zarr.open_group(str(levels_store), mode="r")
     after = root.attrs["content_hash"]
     assert after != before
-    zmeta = json.loads((levels_store / ".zmetadata").read_text())
-    assert zmeta["metadata"][".zattrs"]["content_hash"] == after
+    # The CONSOLIDATED copy is the one that matters: readers trust it over the
+    # per-node attrs, so a hash written after consolidation would be invisible
+    # to the viewer no matter how correct the per-node document looked. Read it
+    # through the facade — the two formats key the index differently (v2 by
+    # metadata document, v3 by node) and the root's attrs live outside the
+    # index entirely at v3.
+    assert read_consolidated_attrs(levels_store)["/"]["content_hash"] == after
 
 
 def test_annotate_rejects_compressed_store(tmp_path: Path) -> None:

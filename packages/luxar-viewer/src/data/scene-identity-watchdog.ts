@@ -38,6 +38,7 @@
  * `dispose()`, which the SceneLoader calls on dataset switch and teardown.
  */
 
+import { ROOT_ATTR_DOCS, rootAttributes } from '../types/zarr-documents';
 import { log, Modules } from '../utils/log';
 import { notifier } from '../utils/cross-layer/notifier';
 
@@ -95,16 +96,6 @@ export function canonicalJson(value: unknown): string | undefined {
 }
 
 /**
- * Root metadata documents that carry a node's attributes, newest format first.
- *
- * Format 3 keeps attributes inside `zarr.json`; format 2 keeps them in a
- * separate `.zattrs`. Luxar writes 3 and existing stores stay 2, so the probe
- * has to accept either — and it tries `zarr.json` first because that is what
- * new datasets are.
- */
-const ROOT_ATTR_DOCS = ['zarr.json', '.zattrs'] as const;
-
-/**
  * Build the URL of one root metadata document for a dataset base URL.
  *
  * Appends to the PATH rather than to the raw string, so a query string
@@ -127,24 +118,6 @@ function buildAttrsUrl(datasetUrl: string, doc: string): string {
   } catch {
     return `${datasetUrl.replace(/\/+$/, '')}/${doc}`;
   }
-}
-
-/**
- * The node's ATTRIBUTES, from either root document shape.
- *
- * A format-2 `.zattrs` *is* the attributes object. A format-3 `zarr.json` is
- * the whole node record — `zarr_format`, `node_type`, `consolidated_metadata`
- * and the attributes nested under `attributes` — so comparing it whole would
- * never match the attrs the scene was loaded with, and `content_hash` would
- * read as `undefined` and report every poll as a change.
- */
-function rootAttributes(parsed: unknown): Record<string, unknown> {
-  if (parsed === null || typeof parsed !== 'object') return {};
-  const record = parsed as Record<string, unknown>;
-  if (record.zarr_format === 3 && typeof record.attributes === 'object') {
-    return (record.attributes as Record<string, unknown>) ?? {};
-  }
-  return record;
 }
 
 function sortKeysDeep(value: unknown): unknown {

@@ -1,3 +1,4 @@
+import { ROOT_ATTR_DOCS, rootAttributes } from '../../types/zarr-documents';
 import { buildUrl, fetchWithRetry } from './fetch-retry';
 import { sha256Hex } from './sha256';
 import type { FetchResponseScope } from './fetch-retry';
@@ -115,28 +116,6 @@ export interface RemoteValidationToken {
    *  never collide with a producer-stamped content hash. */
   hash: string;
   mode: 'content-hash' | 'zattrs-hash';
-}
-
-/**
- * Root metadata documents that carry a node's attributes, newest format first.
- * Format 3 nests them inside `zarr.json`; format 2 uses a separate `.zattrs`.
- */
-const ROOT_ATTR_DOCS = ['zarr.json', '.zattrs'] as const;
-
-/**
- * A node's attributes, from either root document shape.
- *
- * A `.zattrs` IS the attributes object; a `zarr.json` is the whole node record
- * with the attributes nested under `attributes`, so reading `content_hash` off
- * the top level of the latter always yields `undefined`.
- */
-function rootAttributes(parsed: unknown): Record<string, unknown> {
-  if (parsed === null || typeof parsed !== 'object') return {};
-  const record = parsed as Record<string, unknown>;
-  if (record.zarr_format === 3 && typeof record.attributes === 'object') {
-    return (record.attributes as Record<string, unknown>) ?? {};
-  }
-  return record;
 }
 
 /**

@@ -25,9 +25,17 @@ failures were all quiet ones rather than errors: `batch-fit validate` passed a
 tile whose attributes had been stripped, the viewer's cache-validation probe
 returned no token and fell back to a null TTL (serving stale OPFS data
 indefinitely), the scene-identity watchdog reported *every* poll as a change
-because a 404 is not an inconclusive status, and the dataset browser could not
-see a format-3 store at all. `luxar._zarr_compat` now offers `read_array_meta`,
-`read_node_attrs` and `is_consolidated`, and nothing outside it names a document.
+because a 404 is not an inconclusive status, the dataset browser could not see a
+format-3 store at all, `detect_store_encoding` answered "unclassifiable" so
+`gsplat lod` stopped detecting its input's encoding, batch-fit's bytes/splat
+measurement counted zero splats and fell back to its analytic estimate, and the
+overlay loader's directory-listing fallback offered `zarr.json` itself as an
+overlay.
+`luxar._zarr_compat` now offers `read_array_meta`, `read_node_attrs`,
+`is_consolidated` and `read_consolidated_attrs`, and nothing outside it names a
+document. The shared shape of all seven is worth stating: **none of them raised**
+— each returned an ordinary value that a caller had a reasonable interpretation
+for, which is why they have to be found by grepping for the document names.
 
 Two translations were needed that the plan had not anticipated. numcodecs
 objects are format-2 currency and a format-3 array rejects them outright, so the
@@ -48,6 +56,26 @@ same name, registered through the `zarr.codecs` entry point so a vanilla
 `zarr.open_group` in a process that never imports Luxar still decodes it. The
 viewer registers both `numcodecs.luxar_delta_v1` and the bare `luxar_delta_v1`,
 because zarrita looks the two formats up in different registry namespaces.
+
+Consolidated metadata needed two accommodations that only exist at format 3.
+zarr-python warns that it is a zarr-python extension rather than part of the v3
+spec — advice about portability, not about the store's validity, since zarrita
+implements it and the member is additive. Left alone that warning fired on
+*every* save, and turned saving into a hard failure for anyone running with
+`-W error` (`LuxarZarrCompiler.finalize` catches it and re-raises "Could not
+finalize Zarr store"). It is now suppressed at the single facade call site;
+dropping consolidation instead was never an option, because the viewer builds
+its whole scene graph from that index and has no directory-walk fallback.
+
+The second is subtler and is why in-place attribute edits must go through the
+facade. Format 3 allows a consolidated index on ANY group, and bypassing the
+root one does not bypass a nested one. Re-opening an already-consolidated store
+with plain `zarr.open_group` yields nodes built from the root index, so
+re-consolidating writes that stale in-memory tree back out as a nested index —
+after which reads return pre-edit attributes although every document on disk is
+correct, silently, as usual. Re-opening through the facade carries no index to
+re-serialize and leaves exactly one, at the root: the format-2 invariant the
+rest of the codebase already assumes.
 
 One incidental hazard closed on the way: `validate_node_name` rejected the whole
 dot-prefixed namespace, which covered every reserved key at format 2. Format 3's

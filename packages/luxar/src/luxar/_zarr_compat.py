@@ -78,6 +78,7 @@ from __future__ import annotations
 
 import json
 import os
+import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -477,7 +478,20 @@ def open_group(path: str | Path, *, mode: str = "r", **kwargs: Any) -> zarr.Grou
     # correctness bug; half a second on a large store is the cheaper problem.
     #
     # The VIEWER — which is what consolidated metadata is really for, over HTTP —
-    # is untouched either way: it fetches `.zmetadata` itself.
+    # is untouched either way: it fetches the consolidated document itself.
+    #
+    # ONE CAVEAT, and it is why in-place attribute edits must go through THIS
+    # function rather than `zarr.open_group`. Format 3 allows a consolidated
+    # index on ANY group, not just the root, and `use_consolidated=False`
+    # bypasses only the ROOT one — a nested index is still honoured. Nested
+    # indexes appear when an ALREADY-consolidated store is re-opened with plain
+    # `zarr.open_group` (which trusts the root index, so the nodes it returns
+    # are built from it) and then re-consolidated: the stale in-memory tree is
+    # serialized back out beneath the root. Subsequent reads then see the
+    # pre-edit attributes even though every document on disk is correct, and
+    # nothing raises. Re-opening HERE avoids it: the tree carries no index to
+    # re-serialize, so consolidating leaves exactly one index, at the root —
+    # the format-2 invariant every Luxar flow already assumes.
     if mode in ("r", "r+", "a") and "use_consolidated" not in kwargs:
         kwargs["use_consolidated"] = False
     return zarr.open_group(store, mode=mode, **kwargs)
@@ -726,12 +740,45 @@ def create_array(
 def consolidate(group: zarr.Group) -> None:
     """Write consolidated metadata for ``group``'s store.
 
-    At :data:`ZARR_FORMAT` 2 this is the ``.zmetadata`` document the viewer
-    fetches once to enumerate a whole scene, so it is load-bearing rather than
-    an optimisation: the TypeScript scene loader builds its graph purely from
-    the store's ``contents()`` listing and has no directory-walking fallback.
+    This is load-bearing rather than an optimisation, in BOTH formats: the
+    TypeScript scene loader builds its graph purely from the store's
+    ``contents()`` listing and has no directory-walking fallback. At format 2 it
+    is the ``.zmetadata`` document; at format 3 a ``consolidated_metadata``
+    member inside the root ``zarr.json``.
+
+    zarr-python warns that format-3 consolidated metadata is a zarr-python
+    EXTENSION rather than part of the v3 spec. That warning is suppressed here,
+    deliberately and at this one call site only:
+
+    - The warning is advice about portability, not about this store's validity.
+      Luxar's only consumer is zarrita, which implements the extension
+      (``isConsolidatedV3`` in its ``extension/consolidation`` module), and a
+      reader that does not is unaffected — the member is additive, and the
+      per-node ``zarr.json`` documents remain complete and standard.
+    - Not suppressing it makes every single save emit a warning, and turns any
+      save into a hard failure under ``-W error`` (which is what several tests
+      assert warning-freedom with, around a whole compile):
+      ``LuxarZarrCompiler.finalize`` catches it and re-raises ``Could not
+      finalize Zarr store``. Dropping consolidation to silence it is not an
+      option — that produces a store the viewer loads as an empty scene.
+
+    ``catch_warnings`` mutates PROCESS-GLOBAL filter state, so this is only
+    sound while no other thread is warning concurrently. It holds today because
+    Luxar's parallel writers are subprocesses — the ThreadPoolExecutors in
+    ``fit_tiled_parallel`` / ``batch.task_pool`` only launch and wait on them —
+    so consolidation always runs on a main thread. Consolidating from a worker
+    THREAD would need a different mechanism.
+
+    Matching on the message text means a reworded zarr warning would slip
+    through; ``test_consolidate_is_silent`` is the backstop, and it asserts on
+    the warning CATEGORY rather than the wording so a reword still fails it.
     """
-    zarr.consolidate_metadata(group.store)
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message=".*[Cc]onsolidated metadata is currently not part.*",
+        )
+        zarr.consolidate_metadata(group.store)
 
 
 def close(group: zarr.Group) -> None:

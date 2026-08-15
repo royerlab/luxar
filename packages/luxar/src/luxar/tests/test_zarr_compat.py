@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import ast
 import json
+import warnings
 import zipfile
 from pathlib import Path
 
@@ -216,6 +217,39 @@ def test_compressor_none_stores_raw_not_blosc(
         g, "blob", data=np.arange(16, dtype=np.uint8), chunks=(16,), compressor=None
     )
     assert _compressor_view(_array_meta(p, "blob")) is None
+
+
+def test_array_compressor_never_reports_a_compressed_array_as_raw(
+    tmp_path: Path, write_format: int
+) -> None:
+    """``array_compressor(a) is None`` must mean RAW in BOTH formats.
+
+    Tests assert ``is None`` to mean "stored uncompressed" (the packed
+    image-label byte blobs are the real case), so anything else answering None
+    turns a compression regression into a green test.
+
+    Format 3 got this wrong: the helper skipped every codec without a ``cname``
+    on the theory that it was the mandatory ``bytes`` codec, and fell through to
+    ``None``. Measured, ``.compressors`` holds ONLY bytes-to-bytes compressors —
+    the ``bytes`` codec is in ``.serializer`` — so the skip was reached solely by
+    a real non-blosc compressor, and a zstd-compressed array read back as raw
+    while the identical format-2 array raised.
+    """
+    from numcodecs import Zstd
+
+    from luxar.conftest import array_compressor
+
+    p = tmp_path / "mixed.zarr"
+    g = zc.open_group(p, mode="w")
+    data = np.arange(16, dtype=np.uint16)
+    zc.create_array(g, "raw", data=data, chunks=(16,), compressor=None)
+    zc.create_array(g, "zstd", data=data, chunks=(16,), compressor=Zstd(level=9))
+
+    opened = zc.open_group(p, mode="r")
+    assert array_compressor(opened["raw"]) is None
+    # Loud, in whichever way the format expresses it — never a quiet None.
+    with pytest.raises((TypeError, AttributeError)):
+        array_compressor(opened["zstd"])
 
 
 def test_compressor_object_is_used_verbatim(tmp_path: Path, write_format: int) -> None:
@@ -486,6 +520,39 @@ def test_consolidate_indexes_the_arrays_in_either_format(
         assert "a" in indexed, sorted(indexed)
         assert indexed["a"]["node_type"] == "array"
         assert not (p / ".zmetadata").exists(), "wrote a v2 sidecar too"
+
+
+def test_consolidate_is_silent(tmp_path: Path, write_format: int) -> None:
+    """Consolidating must not emit a warning, in either format.
+
+    zarr-python warns that format-3 consolidated metadata is a zarr-python
+    extension. Unsuppressed it fires on EVERY save, and — because
+    ``ZarrUserWarning`` subclasses ``UserWarning`` — any caller that promotes
+    warnings to errors cannot save at all: ``LuxarZarrCompiler.finalize``
+    catches it and re-raises ``Could not finalize Zarr store``. Several tests
+    legitimately assert warning-freedom around a whole compile
+    (``warnings.simplefilter("error", UserWarning)``), so this is not a
+    hypothetical.
+
+    Asserted as "no warning AND still consolidated", because silencing it by
+    not consolidating would produce a store the viewer loads as an empty scene.
+
+    Matched on the warning CATEGORY, not its wording: the suppression itself is
+    keyed on the message text, so a reworded zarr warning would slip past it —
+    and a test keyed on the same text would slip past in exactly the same way,
+    agreeing with the bug instead of catching it.
+    """
+    p = tmp_path / "quiet.zarr"
+    g = zc.open_group(p, mode="w")
+    zc.create_array(g, "a", data=np.arange(4, dtype=np.float32), compressor=None)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        zc.consolidate(g)
+
+    assert zc.is_consolidated(p), "must still write the index"
+    offending = [w for w in caught if issubclass(w.category, UserWarning)]
+    assert not offending, [f"{w.category.__name__}: {w.message}" for w in offending]
 
 
 def test_append_to_an_existing_v3_store_does_not_shadow_it(tmp_path: Path) -> None:

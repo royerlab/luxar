@@ -19,6 +19,7 @@ import numpy as np
 import pytest
 
 from luxar import Dimensions, LuxarZarrCompiler
+from luxar._zarr_compat import read_node_attrs
 from luxar.core.dimensions import Dimension
 from luxar.core.scene import Scene
 
@@ -314,8 +315,10 @@ class TestToZarr:
 
             assert export_path.exists()
             assert export_path.is_dir()
-            assert (export_path / ".zgroup").exists()
-            assert (export_path / ".zattrs").exists()
+            # The format-2 pair (`.zgroup` + `.zattrs`) is a single `zarr.json`
+            # at format 3, so assert that the NODE is there and carries its
+            # attributes rather than naming either format's documents.
+            assert read_node_attrs(export_path) is not None
 
 
 class TestGetStorePath:
