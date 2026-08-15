@@ -29,8 +29,12 @@ only bites well over 1.0.
 
 Because that mix is "scale every channel, then add the same amount to all", what
 Neutral costs over range is CHROMA, not hue: it holds the HSV hue angle exactly
-(in the shader's linear working space — the sRGB encode that follows can still
-move a measured hue reading by a degree or two) and takes ``(100, 0, 0)`` to
+in the shader's linear working space — which is the frame to compare hues in,
+since the per-channel sRGB encode that follows is nonlinear and moves a hue
+*measured on the encoded pixels* for any colour whose channels are not already
+equal (``(2, 1, 0)`` comes out ``(0.961, 0.545, 0.130)``: 30° in linear light,
+≈38° encoded, and the same encode would shift whatever any other operator
+emitted) — and takes ``(100, 0, 0)`` to
 saturation 0.06 — essentially white. A hard clamp
 is not the clean opposite it looks like: it holds full saturation only where
 the darkest channel is already 0 (``(100, 0, 0)`` clamps to ``(1, 0, 0)``,
@@ -52,7 +56,8 @@ This guard pins that policy so a new demo cannot copy-paste a ``"Neutral"``
 into the tree without stating a reason: every statically known ``tone_mapping``
 in the demo package — a literal, a signature default, or a string constant —
 must be ``"ACES"`` unless its module is in :data:`EXCEPTIONS` below, which
-carries the justification with it.
+carries the justification with it — and a row covers ONE site per value, so a
+second copy pasted into that same module fails too.
 
 Scope and method mirror the other AST lints in this directory: the module set
 comes from ``_scanned_modules`` (a denylist, so a new demo joins automatically),
@@ -105,9 +110,11 @@ from ._scanned_modules import scanned_demo_modules
 #: needs a live A/B, not a blind flip. The one Neutral row that is NOT this
 #: case (``_interop_common.py``) says so in its own reason. Each entry must name
 #: the driver, and each demo repeats the reason at its own pin. A row exempts
-#: the scene that needs it, not the whole module: the rest of the file may
-#: still pin the ACES default (see :func:`_allowed_values`), and a row whose
-#: module pins nothing but ACES is dead and must be deleted.
+#: the ONE scene that needs it, not the whole module: the rest of the file may
+#: still pin the ACES default (see :func:`_allowed_values`), a row whose
+#: module pins nothing but ACES is dead and must be deleted, and a SECOND copy
+#: of the same non-ACES pin in that module is not covered by the row (see
+#: :func:`_repeated_deviations`) — that copy is the paste this guard is for.
 EXCEPTIONS: dict[str, tuple[tuple[str, ...], str]] = {
     # --- in-gamut: no tone mapping is the exact choice -------------------
     "demo_ocean_currents_earth.py": (
@@ -465,6 +472,22 @@ def _allowed_values(module_name: str) -> tuple[str, ...]:
     return EXCEPTIONS.get(module_name, ((), ""))[0] + ("ACES",)
 
 
+def _repeated_deviations(values: list[str]) -> list[str]:
+    """The non-ACES pins ``values`` carries MORE THAN ONCE.
+
+    :func:`_allowed_values` grants an exception value to the whole module,
+    because a static scan has no finer handle on "the scene that argued for
+    it". Left there, a second ``tone_mapping="Neutral"`` pasted into a module
+    that already has a justified one would pass silently — the exact
+    copy-paste this guard exists to stop. A row exempts ONE site per value, so
+    a duplicate is an offence even inside an exception module; a module that
+    genuinely needs two of them says so by widening its reason and this check.
+    ACES is exempt: the house default may repeat as often as a file has scenes.
+    """
+    strays = [value for value in values if value != "ACES"]
+    return sorted({value for value in strays if strays.count(value) > 1})
+
+
 def test_every_demo_tone_mapping_is_aces_or_a_justified_exception() -> None:
     """No demo pins a non-ACES tone mapping without a row in EXCEPTIONS."""
     offenders: list[str] = []
@@ -515,20 +538,44 @@ def test_every_exception_is_real_and_justified() -> None:
         assert deviations <= set(allowed), (
             f"{name} pins {sorted(deviations)}, not {sorted(allowed)}"
         )
+        repeated = _repeated_deviations(values)
+        assert not repeated, (
+            f"{name} pins {repeated} more than once. The row exempts the one "
+            f"scene that argued for it — a second copy of the same non-ACES pin "
+            f"is the copy-paste this guard is for. Pin ACES there, or, if that "
+            f"scene needs it too, say so in the row's reason and relax this."
+        )
 
 
 def test_an_exception_row_still_allows_aces() -> None:
     """A row exempts one scene; the rest of its module may still pin ACES.
 
-    An exception is per-MODULE only because that is the granularity a static
-    scan has. It must not read as "this file may not use the house default",
-    which would leave a module with one justified deviation and one ordinary
-    ACES scene nothing legal to write.
+    The VALUE an exception grants is per-module, because that is the granularity
+    a static scan has. It must not read as "this file may not use the house
+    default", which would leave a module with one justified deviation and one
+    ordinary ACES scene nothing legal to write.
     """
     for name, (allowed, _reason) in EXCEPTIONS.items():
         assert "ACES" in _allowed_values(name), name
         assert set(allowed) <= set(_allowed_values(name)), name
     assert _allowed_values("demo_not_in_exceptions.py") == ("ACES",)
+
+
+def test_a_row_does_not_cover_a_second_copy_of_its_pin() -> None:
+    """The COUNT is what keeps a per-module value from exempting a whole file.
+
+    A negative control on :func:`_repeated_deviations`, which is what stops the
+    module-wide grant of :func:`_allowed_values` from waving through a
+    ``"Neutral"`` pasted into a module that already justified one. ACES is the
+    house default and repeats freely; a non-ACES value gets exactly one site.
+    """
+    assert _repeated_deviations(["Neutral"]) == []
+    assert _repeated_deviations(["ACES", "ACES", "ACES"]) == []
+    assert _repeated_deviations(["Neutral", "ACES", "Neutral"]) == ["Neutral"]
+    assert _repeated_deviations(["None", "None", "Neutral", "Neutral"]) == [
+        "Neutral",
+        "None",
+    ]
 
 
 def test_the_guard_detects_a_stray_neutral(tmp_path: Path) -> None:

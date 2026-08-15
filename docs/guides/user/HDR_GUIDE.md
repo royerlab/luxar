@@ -320,9 +320,13 @@ console.log('Float support:', !!gl.getExtension('EXT_color_buffer_float'));
 - Over range no operator is faithful, and the two fail in *different* ways.
   Neutral compresses the peak and mixes toward the grey equal to that compressed
   peak; since that is "scale every channel, then add the same amount to all", it
-  preserves the HSV hue angle *exactly* (in the shader's linear working space;
-  the sRGB encode that follows can still move a measured hue reading by a
-  degree or two) and destroys chroma instead —
+  preserves the HSV hue angle *exactly* — in the shader's linear working space,
+  which is where to compare hues: the per-channel sRGB encode that follows is
+  nonlinear, so a hue *measured on the encoded pixels* is a different number for
+  any colour whose channels are not already equal (`(2, 1, 0)` maps to
+  `(0.961, 0.545, 0.130)`, still 30° in linear light but ≈38° once encoded).
+  That shift is the encode's, not Neutral's — it lands the same way on whatever
+  the operator emitted. What Neutral destroys instead is chroma —
   `(8, 0.5, 8)` → `(0.992, 0.535, 0.992)` (hue 300°, saturation 0.46) and
   `(100, 0, 0)` → `(0.999, 0.936, 0.936)` (hue 0°, saturation 0.06, essentially
   white). `None` hard-clips per channel, which distorts *both*: it holds full
