@@ -93,6 +93,7 @@ def prepare_fit_config(
     sort_splats_interval: int = 1000,
     iter_callback: Optional[Any] = None,
     iter_callback_every: int = 25,
+    source_dtype: Optional[str] = None,
     **seed_kwargs: Any,
 ) -> FitConfig:
     """
@@ -133,9 +134,26 @@ def prepare_fit_config(
     # after this line the original element size is gone. It is the denominator of
     # any compression ratio quoted about the result, and a uint16 volume recorded
     # as float32 would overstate compression by 2x.
-    _src = np.asarray(V)
-    source_dtype = str(_src.dtype)
-    source_itemsize = int(_src.dtype.itemsize)
+    #
+    # An explicit `source_dtype` wins over what `V` reports, because a caller can
+    # be one cast further removed than we are: `luxar gsplat fit` loads through
+    # `load_volume`, which already returns float32, so on that path -- the one
+    # that produces essentially every stored dataset -- the on-disk element type
+    # is knowable ONLY from there. Reading `V.dtype` (rather than
+    # `np.asarray(V).dtype`) keeps a lazy zarr/dask input lazy: materializing it
+    # twice would double both the peak memory and the read.
+    if source_dtype is None:
+        _dt = getattr(V, "dtype", None)
+        try:
+            source_dtype = str(
+                np.dtype(_dt) if _dt is not None else np.asarray(V).dtype
+            )
+        except TypeError:  # a non-numpy dtype object (e.g. a torch dtype)
+            source_dtype = str(np.asarray(V).dtype)
+    try:
+        source_itemsize: Optional[int] = int(np.dtype(source_dtype).itemsize)
+    except TypeError:  # an unrecognized dtype name — record it without a size
+        source_itemsize = None
     V = np.asarray(V, dtype=np.float32)
     if V.size == 0:
         raise ValueError("Input image V cannot be empty")

@@ -258,6 +258,7 @@ def load_volume(
     timepoint: Optional[int] = None,
     array_key: Optional[str] = None,
     axes: Optional[str] = None,
+    info: Optional[dict] = None,
 ) -> np.ndarray:
     """Load a volume from various file formats.
 
@@ -281,6 +282,13 @@ def load_volume(
             the positional TCZYX/CZYX/ZYX heuristic — for data whose axis order
             differs. Time/channel axes are sliced (by ``timepoint``/``channel``)
             and dropped; spatial axes are kept in the given order.
+        info: Optional dict, populated with ``source_dtype`` — the element type
+            of the array AS STORED, captured before the float32 cast below.
+            This is the only place it is knowable: the returned array is always
+            float32, so a consumer that wants to quote a size (e.g. the
+            denominator of a compression ratio) would otherwise describe the
+            working copy and overstate it by the cast's inflation factor —
+            exactly 2x for the 16-bit acquisitions most microscopy produces.
 
     Returns:
         Volume as float32 numpy array (>=2D)
@@ -341,6 +349,14 @@ def load_volume(
             ) from exc
         aprint(f"Loading via imageio: {path.name}")
         volume = iio.imread(str(path))
+
+    # Record the STORED element type before the float32 cast below — the last
+    # point at which it exists. `.dtype` rather than `np.asarray(...).dtype` so
+    # a lazy zarr array is not materialized just to be measured.
+    if info is not None:
+        src_dtype = getattr(volume, "dtype", None)
+        if src_dtype is not None:
+            info["source_dtype"] = str(np.dtype(src_dtype))
 
     # Explicit axis spec (overrides the positional heuristic): slice/drop the
     # time & channel axes and keep the spatial axes in the given order.

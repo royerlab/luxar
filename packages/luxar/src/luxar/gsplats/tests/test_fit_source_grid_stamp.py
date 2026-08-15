@@ -126,3 +126,112 @@ def test_stamps_reach_the_fitting_group_on_disk(tmp_path: Path) -> None:
     stored = sum(f.stat().st_size for f in out.rglob("*") if f.is_file())
     assert stored > 0
     assert attrs["source_bytes"] / stored > 0
+
+    # And `gsplat info` reads them back out of `fitting/` and reports them —
+    # the stamp is only worth writing if the read path surfaces it.
+    from typer.testing import CliRunner
+
+    from luxar.cli import app
+
+    result = CliRunner().invoke(app, ["gsplat", "info", str(out), "--no-histograms"])
+    assert result.exit_code == 0, result.output
+    assert "Source volume: 24 x 32 x 32 uint16" in result.output, result.output
+    assert "compression:" in result.output, result.output
+
+
+def test_a_caller_that_already_cast_can_name_the_stored_dtype() -> None:
+    """``source_dtype`` overrides what ``V`` reports.
+
+    The CLI loads through ``load_volume``, which returns float32 whatever the
+    file holds — so on the path that produces essentially every stored dataset
+    the fitter never sees the acquisition's element type, and measuring ``V``
+    would report the float working copy (2x too many bytes for a 16-bit stack).
+    """
+    V = _sparse_blobs().astype(np.float32)  # as load_volume would hand it over
+    stats = _fit(V, source_dtype="uint16").stats
+    assert stats["source_dtype"] == "uint16"
+    assert stats["source_bytes"] == stats["source_voxels"] * 2
+    # Without the override the same array records its float32 self, which is
+    # what makes passing it necessary rather than decorative.
+    assert _fit(V).stats["source_bytes"] == stats["source_voxels"] * 4
+
+
+def test_load_volume_reports_the_stored_dtype(tmp_path: Path) -> None:
+    """The loader is the last place the on-disk element type exists."""
+    from luxar.io.volume import load_volume
+
+    src = tmp_path / "vol.npy"
+    np.save(src, _sparse_blobs(shape=(8, 8, 8)))
+    info: dict = {}
+    volume = load_volume(src, info=info)
+    assert volume.dtype == np.float32  # unchanged contract
+    assert info["source_dtype"] == "uint16"
+
+
+def test_cli_fit_stamps_the_stored_dtype_not_the_loaders_cast(tmp_path: Path) -> None:
+    """End to end through the command: a uint16 file must not record float32.
+
+    This is the whole point of the stamp — a compression ratio quoted against
+    the float working copy is exactly 2x too flattering on 16-bit data.
+    """
+    from typer.testing import CliRunner
+
+    from luxar.cli import app
+
+    src = tmp_path / "vol.npy"
+    V = _sparse_blobs(shape=(16, 16, 16), n=10)
+    np.save(src, V)
+    out = tmp_path / "cli.gsplats.zarr"
+    result = CliRunner().invoke(
+        app,
+        [
+            "gsplat",
+            "fit",
+            str(src),
+            str(out),
+            "--iters",
+            "20",
+            "--seeds",
+            "80",
+            "--device",
+            "cpu",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    attrs = json.loads((out / "fitting" / ".zattrs").read_text())
+    assert attrs["source_dtype"] == "uint16"
+    assert attrs["source_bytes"] == V.size * 2
+
+
+def test_an_artifact_larger_than_its_source_is_not_reported_as_0_to_1(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A sub-unity ratio must print as itself rather than round to "0:1".
+
+    A store bigger than the volume it represents is a real outcome — a small
+    crop with a generous seed budget — and "0:1" reads as a broken measurement
+    instead of an expansion. Exercised through the printer because the ratio is
+    formatted there; the stamps themselves carry no ratio.
+    """
+    from types import SimpleNamespace
+
+    from luxar.cli.gsplat_ops.inspect_commands import _print_source_grid
+
+    store = tmp_path / "expanded.gsplats.zarr"
+    store.mkdir()
+    (store / "chunk").write_bytes(b"\0" * 4096)
+    data = SimpleNamespace(
+        stats={
+            "source_shape": [8, 8, 8],
+            "source_voxels": 512,
+            "source_dtype": "uint16",
+            "source_bytes": 1024,
+            "fitted_shape": [8, 8, 8],
+            "fitted_voxels": 512,
+        },
+        amplitudes=np.zeros(64, dtype=np.float32),
+    )
+    _print_source_grid(data, store)
+    out = capsys.readouterr().out
+    assert "Source volume: 8 x 8 x 8 uint16" in out, out
+    assert "0.25:1" in out, out

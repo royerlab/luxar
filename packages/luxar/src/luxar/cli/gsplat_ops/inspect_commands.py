@@ -178,7 +178,7 @@ def info_dataset(
         aprint("═" * 70)
 
         aprint(f"\nFile: {path.name}")
-        aprint(f"Size: {format_memory_size(path.stat().st_size)}")
+        aprint(f"Size: {format_memory_size(_store_size(path))}")
 
         aprint(f"\nSplats: {n_splats:,}")
         aprint(f"Dimensions: {ndim}D")
@@ -1034,6 +1034,21 @@ def register_inspect_commands(app: typer.Typer) -> None:
     app.command("annotate-quality")(annotate_quality)
 
 
+def _store_size(path: Path) -> int:
+    """Bytes a dataset occupies: an archive's own size, a directory store's total.
+
+    ``Path.stat().st_size`` on a `.gsplats.zarr` directory reports the directory
+    entry (typically 4 KB), not the chunks inside it — off by orders of magnitude,
+    and it would contradict the compression line printed from the same number.
+    """
+    try:
+        if path.is_file():
+            return path.stat().st_size
+        return sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
+    except OSError:
+        return 0
+
+
 def _print_source_grid(data: Any, path: Path) -> None:
     """Report what the splats are a representation of, when the fit recorded it.
 
@@ -1062,21 +1077,24 @@ def _print_source_grid(data: Any, path: Path) -> None:
     occ = stats.get("occupancy")
     if occ is not None:
         aprint(f"  occupancy:   {100 * float(occ):.3f}% of voxels above the floor")
-    vps = stats.get("voxels_per_splat")
-    if vps:
-        aprint(f"  voxels/splat: {float(vps):,.0f}")
+    # Recomputed from the splats actually in the file rather than read from the
+    # stamp: post-fit culling (on by default) and any later `cull`/`decimate`
+    # change the count without restamping, and a figure that contradicts the
+    # "Splats:" line printed just above would be worse than none.
+    fitted_voxels = stats.get("fitted_voxels")
+    n_splats = len(data.amplitudes) if data.amplitudes is not None else 0
+    if fitted_voxels and n_splats:
+        aprint(f"  voxels/splat: {float(fitted_voxels) / n_splats:,.0f}")
     src_bytes = stats.get("source_bytes")
     if src_bytes:
-        try:
-            stored = (
-                path.stat().st_size
-                if path.is_file()
-                else sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
-            )
-        except OSError:
-            stored = 0
+        stored = _store_size(path)
         if stored:
+            ratio = src_bytes / stored
+            # A whole-number ratio reads best, but a stored artifact LARGER than
+            # its source is a real outcome (few voxels, many splats) and must not
+            # round to a nonsensical "0:1".
+            shown = f"{ratio:,.0f}" if ratio >= 10 else f"{ratio:.2g}"
             aprint(
-                f"  compression: {src_bytes / stored:,.0f}:1 "
+                f"  compression: {shown}:1 "
                 f"({format_memory_size(src_bytes)} -> {format_memory_size(stored)})"
             )

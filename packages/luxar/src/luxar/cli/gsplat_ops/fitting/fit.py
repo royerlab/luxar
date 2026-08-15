@@ -509,8 +509,20 @@ def run_fit_volume(
         with asection(f"Fitting Gaussian Splats: {input_path.name}"):
             # 1. Load volume
             with asection("Loading volume"):
+                # `load_volume` returns float32 whatever the file holds, so the
+                # stored element type is knowable only from it. It is what the
+                # fit records as its source size, and hence the denominator of
+                # any compression ratio quoted about the result: a 16-bit
+                # acquisition measured as float32 would report half the real
+                # compression.
+                source_info: dict = {}
                 volume = load_volume(
-                    input_path, channel, timepoint, array_key, axes=axes
+                    input_path,
+                    channel,
+                    timepoint,
+                    array_key,
+                    axes=axes,
+                    info=source_info,
                 )
                 aprint(f"Volume shape: {volume.shape}")
 
@@ -681,6 +693,11 @@ def run_fit_volume(
             fit_config, parsed_seeds, effective_downscale = assemble_fit_config(
                 ctx, is_tiled
             )
+            # Carried through every fit branch (they all forward **fit_config to
+            # fit_gaussian_splats), so a tile worker stamps the same source dtype
+            # as a whole-volume fit.
+            if source_info.get("source_dtype"):
+                fit_config["source_dtype"] = source_info["source_dtype"]
 
             # A per-tile volume re-fit needs the tile grid and the splats in ONE
             # coordinate frame, which --downscale breaks (see the helper).

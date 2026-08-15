@@ -237,10 +237,13 @@ def _source_grid_stats(
         fitted_voxels = int(np.prod(Vn.shape)) if Vn.ndim else 0
         out["fitted_voxels"] = fitted_voxels
         if fitted_voxels:
-            # V_normalized is already floor-subtracted and clipped at 0, so
-            # "> 0" is exactly "above the background floor" -- no second pass
-            # over the raw volume, and no separate threshold to keep in sync.
-            out["occupancy"] = float(np.count_nonzero(Vn > 0) / fitted_voxels)
+            # V_normalized is already floor-subtracted and clipped into [0, 1],
+            # so a nonzero voxel is exactly one above the background floor -- no
+            # second pass over the raw volume, and no separate threshold to keep
+            # in sync. Counted directly rather than through a `Vn > 0` mask: on a
+            # large volume that mask is another full-size allocation, on top of
+            # the three copies of the volume already resident at this point.
+            out["occupancy"] = float(np.count_nonzero(Vn) / fitted_voxels)
         if n_splats:
             out["voxels_per_splat"] = float(fitted_voxels / n_splats)
     return out

@@ -14,10 +14,13 @@ compression ratio.
 
 Two details are what make the numbers honest rather than merely present.
 
-The source dtype is captured **before** the fitter casts the volume to float32.
-A uint16 acquisition doubles in size under that cast, so quoting the cast size
-would overstate compression by exactly 2x — and the cast happens early enough that
-the original element size is gone by the time results are assembled.
+The source dtype is captured **before** the volume is cast to float32. A uint16
+acquisition doubles in size under that cast, so quoting the cast size would
+overstate compression by exactly 2x. There are two casts to get in front of, not
+one: the fitter's own, and the earlier one in the CLI's volume loader — which
+returns float32 whatever the file holds, and so is the only place the stored
+element type still exists. `luxar gsplat fit` reads it there and hands it down,
+so a fit of a 16-bit stack records 16-bit source bytes on every path.
 
 The source grid and the fitted grid are kept as separate fields. When a demo
 downscales before fitting, they differ, and collapsing them would overstate

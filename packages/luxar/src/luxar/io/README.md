@@ -216,11 +216,14 @@ This ensures:
 sources fed to gsplat fitting/calibration), independent of the compiled
 `.luxar.zarr` scene format above:
 
-- `volume.load_volume(path, channel=, timepoint=, array_key=, axes=)` — reads
-  `.npy` / `.npz` / `.zarr` / `.zarr.zip` / `.tiff` / imageio-supported files to
-  a float32 volume, with OME-Zarr-aware positional slicing and an explicit
-  `--axes` override. Missing optional readers raise `ImportError` (the CLI turns
-  it into a clean exit).
+- `volume.load_volume(path, channel=, timepoint=, array_key=, axes=, info=)` —
+  reads `.npy` / `.npz` / `.zarr` / `.zarr.zip` / `.tiff` / imageio-supported
+  files to a float32 volume, with OME-Zarr-aware positional slicing and an
+  explicit `--axes` override. Missing optional readers raise `ImportError` (the
+  CLI turns it into a clean exit). Pass an `info` dict to get back
+  `source_dtype`, the element type the array was **stored** in — the return is
+  always float32, so this is the last point at which it is knowable, and it is
+  the honest denominator of any size/compression figure quoted about the result.
 - `ome_zarr.discover_ome_zarr_shape(path, ...)` → `OMEZarrInfo` — discovers the
   T/C/Z/Y/X layout, voxel size, unit, and resolution levels from NGFF
   `multiscales` (with custom-`axes` and shape-heuristic fallbacks).
