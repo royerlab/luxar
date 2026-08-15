@@ -20,6 +20,7 @@ from arbol import aprint, asection
 
 from luxar.gsplats.fit_gsplats import fit_gaussian_splats
 from luxar.gsplats.fitting.preprocessing import (
+    NORM_RANGE_MIN_SPAN,
     resolve_volume_floor,
     resolve_volume_norm_range,
 )
@@ -39,7 +40,7 @@ def _tile_norm_range(
     fit_kwargs: dict[str, Any],
     applied_floor: "float | None",
     verbose: bool = False,
-) -> tuple[float, float]:
+) -> "tuple[float, float] | None":
     """Shared ``(image_min, image_max)`` for every tile of ``volume``.
 
     The top comes from :func:`resolve_volume_norm_range` (whole volume, shifted
@@ -53,6 +54,19 @@ def _tile_norm_range(
     sides of an overlap: ``(V*w_A - m) + (V*w_B - m) = V - 2m`` against ``V - m``
     in the tile interior, i.e. exactly the box-shaped seam this is meant to
     remove — and it would clip the taper away entirely below ``m``.
+
+    Returns ``None`` — meaning "no shared scale; let each tile derive its own" —
+    when the sampled volume lies entirely at or below the applied floor, so that
+    the post-floor top collapses to :func:`resolve_volume_norm_range`'s
+    degenerate epsilon. That is reachable: an unguarded numeric ``--floor`` (the
+    single-tile CLI worker resolves with ``guard_numeric=False`` on purpose, so
+    a bleached timepoint of a ``batch-fit`` is not re-guarded away from the run's
+    global level) above a volume max the bounded sample under-reported. A tile
+    that really is below the floor still clips to zero and is skipped by the
+    near-zero guard in :func:`fit_tile`; a tile holding the signal the sample
+    missed would otherwise be normalized by ~1e-12 and come back ~1e12 times too
+    dark, which is worse than simply losing cross-tile comparability in a case
+    where the shared measurement is already meaningless.
     """
     _, hi = resolve_volume_norm_range(
         volume,
@@ -60,6 +74,12 @@ def _tile_norm_range(
         subtract=applied_floor,
         verbose=verbose,
     )
+    if hi <= NORM_RANGE_MIN_SPAN:
+        aprint(
+            "Whole-volume intensity range collapsed under the applied floor "
+            f"({applied_floor}) — tiles fall back to their own scale."
+        )
+        return None
     return (0.0, hi)
 
 
@@ -119,8 +139,9 @@ def fit_tile(
         (so independent tile workers agree on one level), with the
         "would erase all signal" guard applied. A numeric value is taken at
         face value — the caller is expected to have guarded it (as
-        :func:`fit_tiled` and the single-tile CLI worker do with
-        ``guard_numeric=True``). The level is subtracted from the raw tile
+        :func:`fit_tiled` does with ``guard_numeric=True``; the single-tile CLI
+        worker deliberately does NOT, so one level resolved by its parent
+        applies unchanged to a dim timepoint). The level is subtracted from the raw tile
         *before* apodization; the inner fit then runs with ``floor="none"``
         and the applied level is recorded in
         ``result.stats["applied_floor"]``.
@@ -166,7 +187,8 @@ def fit_tile(
     # physical structure is resolved to a different accuracy in each tile.
     # Only resolve it when the caller has not already supplied one (the
     # orchestrator resolves it once and passes it down, so per-tile workers do
-    # not re-read the volume).
+    # not re-read the volume). A None result means the shared scale collapsed
+    # under the floor and this tile derives its own — see `_tile_norm_range`.
     if fit_kwargs.get("norm_range") is None:
         fit_kwargs["norm_range"] = _tile_norm_range(volume, fit_kwargs, applied_floor)
 

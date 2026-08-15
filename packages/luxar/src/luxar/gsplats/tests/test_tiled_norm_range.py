@@ -16,6 +16,7 @@ import pytest
 
 from luxar.gsplats.fit_tiled_gsplats import _tile_norm_range
 from luxar.gsplats.fitting.preprocessing import (
+    NORM_RANGE_MIN_SPAN,
     _normalize_data,
     resolve_volume_norm_range,
 )
@@ -148,6 +149,39 @@ def test_tile_range_stays_in_post_floor_terms():
     lo, hi = _tile_norm_range(vol, {}, 100.0)
     assert lo == 0.0
     assert hi == pytest.approx(800.0)
+
+
+def test_tile_range_declines_when_the_floor_swallows_the_volume():
+    """A floor at or above the sampled top leaves no usable shared scale.
+
+    Reachable: the single-tile CLI worker applies a numeric ``--floor``
+    unguarded (so one parent-resolved level survives onto a dim timepoint), and
+    the sampled max under-reports a peak the bounded sample missed. The shifted
+    range then collapses to the epsilon floor, and normalizing a tile by it
+    would divide real signal by ~1e-12. Declining the shared scale sends the
+    tile back to its own — worse comparability, but the measurement that would
+    have provided it is meaningless anyway.
+    """
+    vol = np.full((8, 32, 32), 100.0, dtype=np.float32)
+    vol[4, 16, 16] = 900.0
+
+    assert _tile_norm_range(vol, {}, 900.0) is None
+    assert _tile_norm_range(vol, {}, 5000.0) is None
+    # just below the top is still a usable scale — the guard is not over-broad
+    assert _tile_norm_range(vol, {}, 899.0) == pytest.approx((0.0, 1.0))
+
+
+def test_collapsed_range_would_amplify_signal_by_1e12():
+    """Pin the hazard the decline above avoids, so that guard is not vacuous."""
+    tile = np.zeros((4, 8, 8), dtype=np.float32)
+    tile[2, 4, 4] = 5.0
+    collapsed, *_ = _normalize_data(
+        tile.copy(), 0.0, False, None, (0.0, NORM_RANGE_MIN_SPAN)
+    )
+    assert collapsed.max() > 1e12
+    # and the fallback the decline produces keeps it in [0, 1]
+    own, *_ = _normalize_data(tile.copy(), 0.0, False, None, None)
+    assert own.max() == pytest.approx(1.0)
 
 
 def test_progressive_residual_passes_drop_the_shared_range(monkeypatch):

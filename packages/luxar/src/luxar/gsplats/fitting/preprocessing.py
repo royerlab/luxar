@@ -1048,6 +1048,13 @@ def _sample_volume_for_floor(volume: Any, budget: int) -> "np.ndarray | None":
     return np.concatenate(samples)
 
 
+# Smallest span a resolved normalization range may report. Reached only when a
+# subtracted floor sits at or above the sampled top, i.e. the sample says the
+# whole volume is pedestal; callers treat a span this small as "no usable shared
+# scale" rather than as a real range (see `_tile_norm_range`).
+NORM_RANGE_MIN_SPAN = 1e-12
+
+
 def resolve_volume_norm_range(
     volume: Any,
     norm_percentile: float,
@@ -1111,7 +1118,7 @@ def resolve_volume_norm_range(
         hi = float(np.percentile(sample, 100.0 - norm_percentile))
     if subtract is not None:
         lo = max(0.0, lo - float(subtract))
-        hi = max(lo + 1e-12, hi - float(subtract))
+        hi = max(lo + NORM_RANGE_MIN_SPAN, hi - float(subtract))
     if verbose:
         aprint(f"Whole-volume normalization range: [{lo:.6g}, {hi:.6g}]")
     return (lo, hi)
