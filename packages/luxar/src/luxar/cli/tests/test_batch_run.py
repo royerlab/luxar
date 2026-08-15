@@ -260,13 +260,19 @@ def _plan(
     axes_list: "list[str] | None" = None,
     timepoints_slice: "str | None" = None,
     channels_slice: "str | None" = None,
+    tile_size: int = 64,
+    tile_overlap: int = 8,
     **fit_kwargs: object,
 ):
-    """Plan a single-tile uniform batch over a (T, Z, Y, X) store.
+    """Plan a uniform batch over a (T, Z, Y, X) store — one tile by default.
 
     ``axes_list`` defaults to the explicit ``t,z,y,x`` labels; pass ``None``
     explicitly via ``axes_list=[]`` — or rely on the store's own ``axes`` attr —
     to exercise the no-``--axes`` discovery path.
+
+    ``tile_size`` defaults to 64, which is above every spatial extent of the
+    ``(16, 24, 24)`` store and so gives a SINGLE tile (no GPU profile needed).
+    Pass a smaller one for a genuinely multi-tile plan.
     """
     from luxar.cli.gsplat_ops.batch.planning import (
         ContentKnobs,
@@ -280,8 +286,8 @@ def _plan(
         input_path=src,
         output_dir=out,
         tiling="uniform",
-        tile_size=64,  # > 24 -> a single tile, no GPU profile needed
-        tile_overlap=8,
+        tile_size=tile_size,
+        tile_overlap=tile_overlap,
         axes_list=(_TZYX if axes_list is None else (axes_list or None)),
         array_key=None,
         timepoints_slice=timepoints_slice,
@@ -756,6 +762,237 @@ def test_batch_plan_rejects_a_negative_config_floor(tmp_path: Path) -> None:
     # floor=None = "--floor unset", which is what lets the config's floor apply.
     with pytest.raises(typer.BadParameter):
         _plan(src, tmp_path / "out", floor=None, config=cfg)
+
+
+def test_batch_plan_refuses_a_downscale_only_for_a_multi_tile_uniform_plan(
+    tmp_path: Path,
+) -> None:
+    """The one decomposition a config `downscale:` cannot complete in (#1624).
+
+    `--config` is handed to every array task VERBATIM, and a uniform task is a
+    `fit --tile k/M` run that decimates its own volume and then re-tiles the
+    DECIMATED shape, while the planner tiled the full-resolution one. Measured on
+    this `(16, 24, 24)` store with `--tile-size 12 --overlap 4`: 18 planned tiles
+    per slot against a worker that sees 4 (its volume is `(8, 12, 12)`), so each
+    slot's tiles 4..17 exit 1 with "tile index out of range" and no merge ever
+    happens.
+
+    FAILS pre-fix: the plan succeeded, submitted every doomed task, and the
+    failure only surfaced once the array job had started writing tiles. The
+    message has to carry BOTH tile counts, because that difference is the whole
+    diagnosis and neither number is visible from the config alone.
+    """
+    src = tmp_path / "movie.zarr"
+    _make_timelapse_zarr(src)
+    cfg = tmp_path / "ds.yaml"
+    cfg.write_text("downscale: 2\n")
+
+    with pytest.raises(typer.BadParameter) as excinfo:
+        _plan(src, tmp_path / "out", config=cfg, tile_size=12, tile_overlap=4)
+    message = str(excinfo.value)
+    assert "downscale" in message
+    assert "18 tiles" in message  # what the plan built
+    assert "only 4" in message  # what a worker would see
+    assert "(8, 12, 12)" in message  # the decimated shape (ceil division)
+    assert "gsplat fit -j N --downscale" in message  # the working alternative
+
+
+def test_batch_plan_records_no_frame_for_a_single_tile_downscale(
+    tmp_path: Path,
+) -> None:
+    """A SINGLE-tile uniform plan completes with a `downscale:`, so it is not refused.
+
+    Measured: with one tile the worker's decimated volume still yields exactly
+    one tile, so `--tile 0/1` passes its bounds check, and `rescale_and_save`
+    hands the splats back at FULL resolution — the frame the planner tiled.
+
+    That is also why nothing is recorded as `grid_scale`: composing the
+    downscale into that factor (as this planner did before #1624) changed no
+    split plane, but falsely refused `--merge-refine volume`, whose per-part
+    crops are taken in voxels off the very grid the splats are already in.
+
+    FAILS pre-fix in both halves: the plan raised at all, and before the gate
+    existed it recorded `[2.0, 2.0, 2.0]`.
+    """
+    src = tmp_path / "movie.zarr"
+    _make_timelapse_zarr(src)
+    cfg = tmp_path / "ds.yaml"
+    cfg.write_text("downscale: 2\n")
+
+    manifest = _plan(src, tmp_path / "out", config=cfg).manifest
+
+    assert manifest.n_tiles == 1
+    assert manifest.grid_scale is None
+    assert manifest.total_tasks == 4  # T=4, C=1, one tile
+
+
+def test_batch_plan_accepts_a_downscale_in_content_mode(tmp_path: Path) -> None:
+    """A content-mode plan completes with a `downscale:`, so it is not refused.
+
+    A content task is `fit --tiling content --plan plan.json --plan-box K`, which
+    never re-tiles — it bounds-checks `K` against the same plan JSON the planner
+    wrote — and `_fit_one_box` crops the FULL-resolution volume, after which
+    `finalize_results` rescales the crop's splats back to full resolution before
+    the box origin is added. Measured: with `downscale: 2` leaked in, the centers
+    land in the same global full-resolution range as without it.
+
+    Deliberately a MULTI-box plan (4 boxes here), so the exemption is not
+    passing on the strength of a degenerate single-box decomposition.
+
+    FAILS pre-fix: the gate sat ahead of the mode split and refused this too.
+    """
+    from luxar.cli.gsplat_ops.batch.planning import (
+        ContentKnobs,
+        DenoiseConfig,
+        FitConfig,
+        MergeConfig,
+        plan_batch,
+    )
+
+    src = tmp_path / "movie.zarr"
+    _make_timelapse_zarr(src)
+    cfg = tmp_path / "ds.yaml"
+    cfg.write_text("downscale: 2\n")
+
+    manifest = plan_batch(
+        input_path=src,
+        output_dir=tmp_path / "out-content",
+        tiling="content",
+        tile_size=None,
+        tile_overlap=8,
+        axes_list=_TZYX,
+        array_key=None,
+        timepoints_slice=None,
+        channels_slice=None,
+        fit=FitConfig(config=cfg),
+        denoise=DenoiseConfig(),
+        content=ContentKnobs(
+            k_star_ref=60000, n_features_ref=5000, cell=4, min_leaf=8, max_leaf=16
+        ),
+        merge=MergeConfig(),
+    ).manifest
+
+    assert manifest.mode == "content"
+    assert manifest.n_tiles > 1  # a real multi-box plan, not a degenerate one
+    assert manifest.grid_scale is None
+
+
+def test_batch_plan_accepts_a_no_op_config_downscale(tmp_path: Path) -> None:
+    """Non-vacuity control: the gate reads the VALUE, not the key's presence.
+
+    `downscale: 1` (and its per-axis spelling) decimates nothing, so the
+    planner's grid and the worker's agree even for the multi-tile plan that a
+    decimating value is refused for — a blanket "any `downscale:` is fatal" gate
+    would break a config that is a documented no-op.
+    """
+    src = tmp_path / "movie.zarr"
+    _make_timelapse_zarr(src)
+    for i, spelling in enumerate(("downscale: 1\n", "downscale: [1, 1, 1]\n")):
+        cfg = tmp_path / f"noop-{i}.yaml"
+        cfg.write_text(spelling)
+        manifest = _plan(
+            src, tmp_path / f"out-{i}", config=cfg, tile_size=12, tile_overlap=4
+        ).manifest
+        assert manifest.grid_scale is None
+        assert manifest.n_tiles == 18  # the multi-tile plan, planned in full
+        assert manifest.total_tasks == 4 * 18
+
+
+def test_batch_plan_rejects_a_malformed_config_downscale(tmp_path: Path) -> None:
+    """A malformed `downscale:` is a plan-time usage error in EVERY mode.
+
+    The value is validated through `normalize_downscale` before the mode/tile
+    exemptions are consulted, because nothing else on the batch path looks at
+    this key any more: since #1624 the grid-scale resolver — which used to raise
+    on it — is no longer passed it. Without the check here a `downscale: 0` or
+    `2.5` would reach every task as a raw traceback at fit time (`2.5` is neither
+    an int nor iterable, so it raises TypeError, not ValueError).
+
+    Both exempt shapes are covered: a single-tile uniform plan and a content
+    plan must reject it too, not wave it through on their exemption.
+    """
+    from luxar.cli.gsplat_ops.batch.planning import (
+        ContentKnobs,
+        DenoiseConfig,
+        FitConfig,
+        MergeConfig,
+        plan_batch,
+    )
+
+    src = tmp_path / "movie.zarr"
+    _make_timelapse_zarr(src)
+    for i, spelling in enumerate(
+        ("downscale: 0\n", "downscale: 2.5\n", "downscale: [2, 2]\n")
+    ):
+        cfg = tmp_path / f"bad-{i}.yaml"
+        cfg.write_text(spelling)
+        # Single-tile uniform (exempt from the refusal, not from validation).
+        with pytest.raises(typer.BadParameter, match="invalid"):
+            _plan(src, tmp_path / f"out-u-{i}", config=cfg)
+        # Content (likewise exempt from the refusal only).
+        with pytest.raises(typer.BadParameter, match="invalid"):
+            plan_batch(
+                input_path=src,
+                output_dir=tmp_path / f"out-c-{i}",
+                tiling="content",
+                tile_size=None,
+                tile_overlap=8,
+                axes_list=_TZYX,
+                array_key=None,
+                timepoints_slice=None,
+                channels_slice=None,
+                fit=FitConfig(config=cfg),
+                denoise=DenoiseConfig(),
+                content=ContentKnobs(
+                    k_star_ref=60000,
+                    n_features_ref=5000,
+                    cell=4,
+                    min_leaf=8,
+                    max_leaf=16,
+                ),
+                merge=MergeConfig(),
+            )
+
+
+def test_run_and_submit_reject_a_config_downscale(tmp_path: Path) -> None:
+    """Both front doors refuse it as a clean usage error, before any submission.
+
+    `--dry-run` is the strongest place to pin this: the refusal has to happen
+    during PLANNING (which dry-run does in full), not in the fitting/submission
+    step that dry-run skips.
+
+    `--tile-size 24 --overlap 8` on this 48^3 store is deliberately MULTI-tile
+    (27 tiles; a `downscale: 2` worker sees 8): the refusal is scoped to that
+    shape, so a single-tile `--tile-size 64` would now plan fine and this test
+    would pass vacuously.
+    """
+    src = tmp_path / "vol.zarr"
+    _make_zarr(src)
+    cfg = tmp_path / "ds.yaml"
+    cfg.write_text("downscale: 2\n")
+
+    common = [
+        "--axes",
+        "z,y,x",
+        "--tile-size",
+        "24",
+        "--overlap",
+        "8",
+        "--config",
+        str(cfg),
+        "--dry-run",
+    ]
+    invocations = [
+        ["run", str(src), str(tmp_path / "o-run"), *common, "--gpus", "cpu"],
+        ["submit", str(src), str(tmp_path / "o-sub"), *common, "-p", "gpu"],
+    ]
+    for argv in invocations:
+        res = runner.invoke(app_gsplat, ["batch-fit", *argv])
+        assert res.exit_code != 0, res.output
+        assert "downscale" in res.output, res.output
+        assert "Traceback" not in res.output
+        # Nothing was planned into existence, let alone submitted.
+        assert not (Path(argv[2]) / "manifest.json").exists()
 
 
 def test_floor_sample_pairs_are_bounded_and_deterministic() -> None:
