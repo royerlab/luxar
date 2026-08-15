@@ -20,12 +20,15 @@ rather than merely allowed: clearance for one sentinel save is not clearance for
 the file it happens to live in.
 
 Scope, stated so it is not mistaken for more: this guard sees the EXPLICIT
-suppression only. ``write_gsplats_tree`` takes ``fitting_info`` as a keyword that
-defaults to ``None``, so a tree write drops the same record by saying nothing at
-all -- there is no keyword for the scan to find. Several demos write trees that
-way (``_interop_common.py``, ``demo_gsplats_recipes_tribolium.py``), though today
-they hand those writers data loaded with ``include_stats=False``, so there is no
-provenance in hand to lose. Whether a caller holding fit stats should be made to
+suppression only (in either spelling -- the keyword, or the flag's positional
+slot). ``write_gsplats_tree`` takes ``fitting_info`` as a keyword that defaults
+to ``None``, so a tree write drops the same record by saying nothing at all --
+there is no argument for the scan to find. Two demos write trees that way.
+``_interop_common.py`` hands its writer imported splats that were never fitted,
+so nothing in the whitelist exists to lose. ``demo_gsplats_recipes_tribolium.py``
+normally builds on a precomputed base loaded with ``include_stats=False``, but
+under ``--recompute`` it re-fits and does hold the fit's stats, so that path
+drops them by omission. Whether a caller holding fit stats should be made to
 pass them through is the wider question #1600 asks of every in-out rewrite, not
 something a demo lint can settle -- so it is out of this guard's reach by
 decision, not by oversight.
@@ -62,19 +65,37 @@ _NO_FIT_TO_RECORD: dict[str, tuple[int, str]] = {
 }
 
 
+#: ``GSplatData.save(path, ordering, encoding_mode, include_fitting_info, ...)``
+#: — the flag is the FOURTH positional parameter and is not keyword-only, so a
+#: bare ``False`` in that slot suppresses exactly as well as the keyword does.
+#: Every call site spells it out today; the scan covers both forms so that stays
+#: a style choice rather than the way past this gate.
+_SAVE_POSITIONAL_INDEX = 3
+
+
+def _suppresses(node: ast.Call) -> bool:
+    """Does this call pass ``include_fitting_info=False``, spelled either way?"""
+    for kw in node.keywords:
+        if kw.arg == "include_fitting_info":
+            return isinstance(kw.value, ast.Constant) and kw.value.value is False
+    if (
+        isinstance(node.func, ast.Attribute)
+        and node.func.attr == "save"
+        and len(node.args) > _SAVE_POSITIONAL_INDEX
+    ):
+        positional = node.args[_SAVE_POSITIONAL_INDEX]
+        return isinstance(positional, ast.Constant) and positional.value is False
+    return False
+
+
 def _suppressing_modules(paths: Iterable[Path] = SCANNED_PATHS) -> dict[str, int]:
     """Map module file name -> count of ``include_fitting_info=False`` call sites."""
     found: dict[str, int] = {}
     for path in paths:
         tree = ast.parse(path.read_text(), filename=str(path))
         for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
-                continue
-            for kw in node.keywords:
-                if kw.arg != "include_fitting_info":
-                    continue
-                if isinstance(kw.value, ast.Constant) and kw.value.value is False:
-                    found[path.name] = found.get(path.name, 0) + 1
+            if isinstance(node, ast.Call) and _suppresses(node):
+                found[path.name] = found.get(path.name, 0) + 1
     return found
 
 
@@ -109,15 +130,18 @@ def test_the_detector_sees_a_planted_suppression(tmp_path: Path) -> None:
 
     Runs the real detector over a planted module, so it also pins that a second
     suppressing call site in one file counts as two rather than collapsing into
-    the first.
+    the first, and that the positional spelling of the flag counts as well.
     """
     planted = tmp_path / "demo_planted.py"
     planted.write_text(
         "result.save(path, include_fitting_info=False)\n"
         "result.save(other, include_fitting_info=True)\n"
         "result.save(third, include_fitting_info=False)\n"
+        # The flag's positional slot -- suppression without the keyword.
+        "result.save(fourth, 'hilbert', mode, False)\n"
+        "result.save(fifth, 'hilbert', mode, True)\n"
     )
-    assert _suppressing_modules([planted]) == {"demo_planted.py": 2}
+    assert _suppressing_modules([planted]) == {"demo_planted.py": 3}
     assert SCANNED_PATHS, "no demo modules were scanned at all"
 
 
