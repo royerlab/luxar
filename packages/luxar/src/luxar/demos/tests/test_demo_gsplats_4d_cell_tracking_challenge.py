@@ -47,15 +47,41 @@ def _translation(xform) -> tuple[float, float, float]:
 
 
 class TestGridLayout:
-    """The matrix placement: N crops onto the smallest square grid that fits."""
+    """The matrix placement: N crops onto the most compact grid that holds them."""
 
-    @pytest.mark.parametrize("n,side", [(1, 1), (2, 2), (4, 2), (5, 3), (7, 3), (9, 3)])
-    def test_grid_side_is_ceil_sqrt(self, n: int, side: int) -> None:
+    @pytest.mark.parametrize(
+        "n,cols,rows",
+        [(1, 1, 1), (2, 2, 1), (4, 2, 2), (5, 3, 2), (6, 3, 2), (7, 3, 3), (9, 3, 3)],
+    )
+    def test_grid_shape_is_the_shortest_rectangle(
+        self, n: int, cols: int, rows: int
+    ) -> None:
+        assert _demo.grid_shape(n) == (cols, rows)
+        assert cols * rows >= n, "the grid must hold every crop"
+
+    def test_six_crops_fill_a_rectangle_with_no_holes(self) -> None:
+        """The whole point of 6: a complete 3x2, not a 3x3 with three gaps."""
+        cols, rows = _demo.grid_shape(6)
+        assert (cols, rows) == (3, 2)
+        assert cols * rows == 6, "no empty slots"
+
+    @pytest.mark.parametrize("n,cols", [(1, 1), (2, 2), (4, 2), (5, 3), (6, 3), (9, 3)])
+    def test_distinct_columns_match_the_grid_shape(self, n: int, cols: int) -> None:
         xforms = _demo.grid_transforms(n, 100.0)
         assert len(xforms) == n
-        # Distinct column offsets reveal the side length actually used.
         xs = {round(_translation(x)[0], 4) for x in xforms}
-        assert len(xs) == min(n, side)
+        assert len(xs) == min(n, cols)
+
+    def test_a_partial_row_is_still_centred(self) -> None:
+        """Centring follows the OCCUPIED rows, not the enclosing square.
+
+        Two crops occupy one row, so both sit at y=0. Centring on a 2x2 square
+        instead would push the pair half a pitch off-centre and the default
+        camera would frame empty space below them.
+        """
+        offsets = np.array([_translation(x) for x in _demo.grid_transforms(2, 100.0)])
+        np.testing.assert_allclose(offsets[:, 1], 0.0)
+        assert offsets[:, 0].mean() == pytest.approx(0.0)
 
     def test_grid_is_centred_on_the_origin(self) -> None:
         """So the default camera frames the whole matrix, not a corner of it."""
@@ -248,13 +274,21 @@ class TestCuratedCrops:
         assert prefixes == {"6bba", "44b6"}, "the matrix should show both embryos"
 
     def test_the_drawn_level_lands_in_the_measured_quality_band(self) -> None:
-        """A 3x3 tile draws — and fetches — the COARSEST level; pin its SIZE.
+        """The matrix draws — and fetches — the COARSEST level; pin its SIZE.
 
         The screen-area selector anchors the finest level at half the screen and
-        halves per step, and a tile of a 3x3 grid covers only
-        1/(3*GRID_GAP_FACTOR)^2, below any ladder's lowest threshold. So the
-        coarsest level is what the demo opens on, and its absolute count per
+        halves per step, so a matrix tile lands below the lowest threshold and
+        the coarsest level is what the demo opens on. Its absolute count per
         timepoint sets both the first paint and the cost of scrubbing time.
+
+        MEASURED, not derived. The viewer reports `activeLevel: 0` (coarsest) for
+        every group at the shipped 3x2, drawing 29,774 splats per frame across
+        six crops. A naive `1/(cols*rows*GRID_GAP_FACTOR^2)` puts a 3x2 tile at
+        0.128 — just OVER the 0.125 threshold — and would predict one level
+        finer, so that formula is not the ground truth and is deliberately not
+        asserted here: the camera frames the matrix with padding and the viewport
+        aspect does not match the grid's. Re-read
+        `__luxarDebug.getState().lodGroups[].activeLevel` after any grid change.
 
         The band comes from rendering merged levels back to the volume and
         looking: below ~3k/timepoint the nuclei smear together (the original
@@ -265,8 +299,11 @@ class TestCuratedCrops:
         says nothing without the fit size, which is exactly how the earlier
         version of this test passed while the demo was drawing 20k/tp.
         """
-        tile_area = 1.0 / (3.0 * _demo.GRID_GAP_FACTOR) ** 2
-        assert tile_area < 0.125, "premise: a 3x3 tile is under the lowest threshold"
+        cols, rows = _demo.grid_shape(_demo.DEFAULT_N_DATASETS)
+        assert cols * rows == _demo.DEFAULT_N_DATASETS, (
+            f"the shipped {cols}x{rows} grid has holes; the default crop count "
+            "should fill its rectangle exactly"
+        )
 
         # The fit keeps ~70% of the requested seeds, minus the p95 size filter.
         fitted_per_tp = _demo.DEFAULT_SEEDS * 0.70 * (_demo.SCALE_MAX_PERCENTILE / 100)
@@ -275,6 +312,11 @@ class TestCuratedCrops:
             f"a tile would draw ~{drawn_per_tp:,.0f} splats/timepoint, outside the "
             "measured 3k-12k band: below it the nuclei smear, above it the frame "
             "cost doubles for no visible gain. Adjust LOD_LEVELS."
+        )
+        per_frame = drawn_per_tp * _demo.DEFAULT_N_DATASETS
+        assert per_frame <= 60_000, (
+            f"the whole matrix would draw ~{per_frame:,.0f} splats per frame; "
+            "140k was visibly choppy when scrubbing time"
         )
 
 

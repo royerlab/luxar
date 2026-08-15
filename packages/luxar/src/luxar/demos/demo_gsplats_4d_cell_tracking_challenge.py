@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""GSplats Demo: 4D Cell Tracking Challenge — a 3x3 matrix of zebrafish embryos
+"""GSplats Demo: 4D Cell Tracking Challenge — a matrix of zebrafish embryos
 
-Nine crops of a developing zebrafish embryo, laid out as a 3x3 matrix, each one a
+Six crops of a developing zebrafish embryo, laid out as a 3x2 matrix, each one a
 full 100-timepoint light-sheet timelapse showing three things at once:
 
   1. **GSplats** — the image data itself, fitted per timepoint and stacked into a
@@ -11,8 +11,8 @@ full 100-timepoint light-sheet timelapse showing three things at once:
   3. **Lines**   — each cell's whole trajectory through space and time, so the
      lineage structure stays visible while the volume animates underneath
 
-Nine full timelapses is a lot of geometry (~43k splats per timepoint x 100
-timepoints x 9 crops, so ~39M splats), which is the point: each crop carries its
+Six full timelapses is a lot of geometry (~43k splats per timepoint x 100
+timepoints x 6 crops, so ~26M splats), which is the point: each crop carries its
 own **substitutive LOD** ladder, so the whole matrix stays affordable and zooming
 into one tile is what pays for its finest level.
 
@@ -28,8 +28,9 @@ Imaging: Royer Group light-sheet microscopy of zebrafish embryos
 Each of the 199 training crops is an OME-Zarr **0.5** (zarr v3) store —
 ``T=100, Z=64, Y=256, X=256`` uint16, voxel 1.625 x 0.40625 x 0.40625 um, so a
 104 um cube — paired with a **GEFF** tracking graph (``<crop>.geff``) holding the
-ground-truth cell positions and lineage edges. This demo uses the nine
-most densely annotated crops (~1,300-1,950 annotated cells each).
+ground-truth cell positions and lineage edges. This demo ranks the crops by
+annotation density and shows the top six (~1,500-1,950 annotated cells each);
+`DATASETS` carries nine, and `--datasets 9` uses them all.
 
 The competition data needs Kaggle credentials, so this demo cannot download it
 unattended. See the "Requirements" section below.
@@ -37,13 +38,13 @@ unattended. See the "Requirements" section below.
 WORKFLOW
 ========
 
-1. **Fetch** the nine crops from Kaggle (image store + GEFF graph, ~4 GB)
+1. **Fetch** the crops from Kaggle (image store + GEFF graph, ~450 MB each)
 2. **Fit** GSplats to every timepoint of every crop (cached per timepoint)
 3. **Combine** each crop's timepoints into one 4D GSplatData (time as a
    coarsening barrier, so no LOD level ever blends across time)
 4. **Ladder** each crop with a substitutive LOD pyramid
 5. **Read** each crop's GEFF graph into lineage polylines + per-timepoint points
-6. **Lay out** the crops on a 3x3 grid, one group per crop
+6. **Lay out** the crops on the most compact grid that fits, one group per crop
 7. **Visualise** — scrub time, watch cells move along their tracks
 
 USAGE
@@ -51,9 +52,11 @@ USAGE
     python demo_gsplats_4d_cell_tracking_challenge.py [options]
 
 Options:
-    --datasets=N      How many crops to show, 1..9 (default: 9). They are laid out
-                      on the smallest square grid that fits: 1 -> 1x1, 4 -> 2x2,
-                      7 or 9 -> 3x3. Useful when only some crops have downloaded.
+    --datasets=N      How many crops to show, 1..9 (default: 6). They are laid out
+                      on the most compact grid that holds them: 4 -> 2x2,
+                      6 -> 3x2, 9 -> 3x3. The default is 6 because only seven
+                      crops have cleared Kaggle's download quota and seven fills
+                      no rectangle; six does.
     --timepoints=N    Timepoints per crop (default: 100, the whole timelapse)
     --seeds=K         Splats per timepoint fit (default: 60000, keeping ~43k)
     --recompute       Re-fit from scratch, ignoring the fit cache
@@ -80,9 +83,9 @@ Output:
 
 DEMO_META = {
     "key": "gsplats_4d_cell_tracking_challenge",
-    "title": "4D Cell Tracking Challenge (3x3)",
+    "title": "4D Cell Tracking Challenge (matrix)",
     "description": (
-        "Nine zebrafish embryo timelapses in a 3x3 matrix: 4D gsplat volumes "
+        "Six zebrafish embryo timelapses in a 3x2 matrix: 4D gsplat volumes "
         "with annotated cell positions and lineage tracks."
     ),
     "category": "microscopy",
@@ -189,25 +192,32 @@ GRID_GAP_FACTOR = 1.14
 #
 # The ladder is stamped `selector="screen-area"`: the finest level is anchored at
 # half the screen and each step down is a halving, so a 4-level ladder gets
-# thresholds [0, 0.125, 0.25, 0.5]. A tile of a 3x3 matrix occupies only
-# 1/(3 x GRID_GAP_FACTOR)^2 = 0.0855 of the screen area — below the lowest
-# threshold of ANY ladder length — so every tile draws, and therefore FETCHES,
-# the coarsest level. Ladder depth is exactly "how much of the fit the opening
-# framing keeps", and it sets the per-frame cost of scrubbing time.
+# thresholds [0, 0.125, 0.25, 0.5]. A tile of the matrix occupies a small
+# fraction of that, so it draws — and therefore FETCHES — a coarse level, and the
+# ladder's depth is exactly "how much of the fit the opening framing keeps".
+#
+# GRID SHAPE MOVES THIS. A 3x3 tile sits around 0.05 of the screen area, well
+# under the lowest threshold; a 3x2 tile is roughly 0.12, which is close enough
+# to the 0.125 boundary that it can select one level FINER depending on viewport
+# aspect. That is the selector behaving correctly — fewer, bigger tiles deserve
+# more detail — but it means changing the grid changes the per-frame cost, so
+# check `__luxarDebug.getState().lodGroups[].activeLevel` after doing so rather
+# than assuming the numbers below still apply.
 #
 # Measured on one timepoint by merging the fit down to each candidate count and
 # rendering it back (see the MIP comparison that produced these numbers):
 #
-#   drawn/tp   x7 crops   verdict
-#    1,105        7,735   smears; nuclei merge together (this was the old blur)
-#    2,500       17,500   nucleus separation returning
-#    5,000       35,000   clear boundaries and dark gaps  <-- knee
-#   10,000       70,000   marginally crisper
-#   20,000      140,000   barely distinguishable from 10k, twice the cost
+#   drawn/tp   x6 crops   verdict
+#    1,105        6,630   smears; nuclei merge together (this was the old blur)
+#    2,500       15,000   nucleus separation returning
+#    5,000       30,000   clear boundaries and dark gaps  <-- knee
+#   10,000       60,000   marginally crisper
+#   20,000      120,000   barely distinguishable from 10k, twice the cost
 #
 # 3 coarser levels puts the drawn count at ~N/8 ~= 5.1k/timepoint: the knee, and
 # a 4x cut in per-frame fetch+draw against the 1-level ladder that made scrubbing
-# choppy. Note this is NOT a return to the old blur despite a similar drawn
+# choppy. Measured in the viewer at the shipped 3x2: every group reports
+# activeLevel 0 (coarsest), 29,774 splats drawn per frame across six crops. Note this is NOT a return to the old blur despite a similar drawn
 # count — a level merged from the 60k fit is visibly better than 1.1k splats
 # fitted directly, which is why the fit budget stays high even though most of it
 # is only unpacked when you zoom into a tile.
@@ -274,12 +284,13 @@ def display_window(amplitudes: np.ndarray) -> tuple[float, float]:
 
 # Nuclei in these crops are ~8 um across. A marker at ~1/6 of that flags "this
 # cell is tracked" as a dot ON the nucleus rather than a ball covering it — at
-# half the nucleus width the markers dominated the 3x3 framing and hid the very
+# half the nucleus width the markers dominated the matrix framing and hid the very
 # splats they annotate.
 CELL_MARKER_RADIUS_UM = 1.3
 
 # Tracks are context, not the subject: at 0.7 um and fully opaque they read as a
-# solid cage over the embryo, and in a 3x3 matrix (each tile ~1/9 of the screen)
+# solid cage over the embryo, and in a matrix (each tile a small share of the
+# screen)
 # that cage is most of what you see. Thin enough to sit between nuclei — median
 # nearest-neighbour spacing is 1.84 um — and translucent enough that the splatted
 # volume shows through where trajectories bundle.
@@ -287,7 +298,14 @@ TRACK_WIDTH_UM = 0.35
 TRACK_OPACITY = 0.15
 
 FLAGS = parse_demo_flags()
-N_DATASETS = parse_int_arg("datasets", len(DATASETS))
+
+# Six, not nine: a COMPLETE 3x2 rectangle beats a 3x3 with holes in it. The last
+# two of the nine ranked crops are stuck behind Kaggle's per-account download
+# quota, and seven tiles cannot fill any rectangle either. Since DATASETS is
+# ordered by annotation density, `[:6]` drops the sparsest available crop and
+# keeps the six best. Raise it with `--datasets 9` once the other two are in hand.
+DEFAULT_N_DATASETS = 6
+N_DATASETS = parse_int_arg("datasets", DEFAULT_N_DATASETS)
 TIMEPOINTS = parse_int_arg("timepoints", N_TIMEPOINTS)
 SEEDS = parse_int_arg("seeds", DEFAULT_SEEDS)
 
@@ -744,8 +762,8 @@ def crop_centre_um(image_store: Path) -> np.ndarray:
     """The crop's geometric centre in um, ZYX.
 
     Every crop is the same 104 um cube, so centring on the box centre — rather
-    than on each crop's own amplitude-weighted centroid — makes all nine tiles
-    occupy identical boxes and the 3x3 grid line up exactly.
+    than on each crop's own amplitude-weighted centroid — makes all tiles
+    occupy identical boxes and the grid line up exactly.
     """
     import zarr
 
@@ -897,19 +915,35 @@ def track_geometry(
 # =============================================================================
 
 
+def grid_shape(n: int) -> tuple[int, int]:
+    """Columns and rows of the most compact grid holding ``n`` tiles.
+
+    Square when n is a perfect square (9 -> 3x3, 4 -> 2x2), otherwise the
+    shortest rectangle that still fits: 6 -> 3x2, 8 -> 3x3 with one gap. A plain
+    ``ceil(sqrt(n))`` square would leave 6 in a 3x3 with THREE holes, which is
+    what the rectangle exists to avoid.
+    """
+    cols = int(math.ceil(math.sqrt(n)))
+    rows = int(math.ceil(n / cols))
+    return cols, rows
+
+
 def grid_transforms(n: int, pitch: float) -> list[np.ndarray]:
-    """Row-major square-grid placement: 1 -> 1x1, 4 -> 2x2, 9 -> 3x3.
+    """Row-major grid placement over :func:`grid_shape`.
 
     The grid is laid out in the scene's x/y plane and centred on the origin, so
     the default camera frames the whole matrix.
     """
-    side = int(math.ceil(math.sqrt(n)))
-    half = (side - 1) / 2.0
+    cols, rows = grid_shape(n)
+    half_col = (cols - 1) / 2.0
+    half_row = (rows - 1) / 2.0
     out = []
     for i in range(n):
-        row, col = divmod(i, side)
+        row, col = divmod(i, cols)
         out.append(
-            transforms.translate((col - half) * pitch, (row - half) * pitch, 0.0)
+            transforms.translate(
+                (col - half_col) * pitch, (row - half_row) * pitch, 0.0
+            )
         )
     return out
 
@@ -919,9 +953,9 @@ def create_luxar_scene(
     n_timepoints: int,
     output_path: Path,
 ) -> Path:
-    """Build the 3x3 matrix scene: one group per crop, each with gsplats+points+lines."""
+    """Build the matrix scene: one group per crop, each with gsplats+points+lines."""
     n = len(crops)
-    side = int(math.ceil(math.sqrt(n)))
+    cols, rows = grid_shape(n)
     extent = float(crops[0]["extent_um"])
     xforms = grid_transforms(n, extent * GRID_GAP_FACTOR)
 
@@ -929,7 +963,7 @@ def create_luxar_scene(
     total_cells = sum(int(c["tracks"]["n_cells"]) for c in crops if c["tracks"])
     total_divisions = sum(int(c["tracks"]["n_divisions"]) for c in crops if c["tracks"])
 
-    with asection(f"Creating scene: {side}x{side} matrix, {n} crops"):
+    with asection(f"Creating scene: {cols}x{rows} matrix, {n} crops"):
         aprint(f"Output: {output_path.name}")
         aprint(f"Splats: {total_splats:,} across {n} crops (finest level)")
         aprint(f"Tracked cell positions: {total_cells:,}")
@@ -963,7 +997,7 @@ def create_luxar_scene(
 4D Cell Tracking — Biohub Challenge Data
 ========================================
 
-{n} crops of a developing zebrafish embryo in a {side}x{side} matrix, each a full
+{n} crops of a developing zebrafish embryo in a {cols}x{rows} matrix, each a full
 {n_timepoints}-timepoint light-sheet timelapse.
 
 What you are looking at:
@@ -1094,7 +1128,7 @@ Navigation:
 def main() -> None:
     """Build (and serve) the cell-tracking matrix scene."""
     aprint("=" * 64)
-    aprint("4D CELL TRACKING CHALLENGE — 3x3 EMBRYO MATRIX")
+    aprint("4D CELL TRACKING CHALLENGE — EMBRYO MATRIX")
     aprint("=" * 64)
     aprint(f"Dataset: {COMPETITION_URL}")
 
