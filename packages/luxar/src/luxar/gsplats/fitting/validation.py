@@ -52,6 +52,61 @@ def _validate_floor(floor: "str | float | None") -> None:
         raise ValueError(f"floor must be >= 0, got {value}")
 
 
+def _explicit_dtype_name(source_dtype: Any) -> Optional[str]:
+    """Normalize an EXPLICIT ``source_dtype`` argument to a dtype name, or None.
+
+    A caller naturally passes a dtype OBJECT (``np.dtype("uint16")``) or a scalar
+    type (``np.uint16``), not only a string, and the value is stored verbatim in
+    ``stats`` — where a dtype object is not JSON-serializable, so the whole fit
+    used to complete and then die in ``.save()``. Normalized through
+    ``str(np.dtype(...))`` exactly like the derived path.
+
+    ``None`` (absent) and a blank string both mean "no explicit value": storing
+    ``""`` gave a ``None`` itemsize, which sends ``results.py`` to the post-cast
+    float32 ``V.nbytes`` — the 2x-overstated source size this stamp exists to
+    prevent. An unrecognizable dtype NAME is still tolerated and recorded as
+    given (the itemsize resolver records it without a size).
+    """
+    if source_dtype is None:
+        return None
+    if isinstance(source_dtype, str) and not source_dtype.strip():
+        return None
+    try:
+        return str(np.dtype(source_dtype))
+    except TypeError:  # a name/object numpy cannot interpret — keep it verbatim
+        return str(source_dtype)
+
+
+def _resolve_source_dtype(V: Any, source_dtype: Any) -> tuple[str, Optional[int]]:
+    """Resolve ``(source_dtype, source_itemsize)`` for the volume ``V``.
+
+    Called BEFORE the fitter's float32 cast: the fitter works in float32, so
+    after that cast the original element size is gone. It is the denominator of
+    any compression ratio quoted about the result, and a uint16 volume recorded
+    as float32 would overstate compression by 2x.
+
+    An explicit ``source_dtype`` wins over what ``V`` reports, because a caller
+    can be one cast further removed than we are: ``luxar gsplat fit`` loads
+    through ``load_volume``, which already returns float32, so on that path --
+    the one that produces essentially every stored dataset -- the on-disk
+    element type is knowable ONLY from there. Reading ``V.dtype`` (rather than
+    ``np.asarray(V).dtype``) keeps a lazy zarr/dask input lazy: materializing it
+    twice would double both the peak memory and the read.
+    """
+    name = _explicit_dtype_name(source_dtype)
+    if name is None:
+        _dt = getattr(V, "dtype", None)
+        try:
+            name = str(np.dtype(_dt) if _dt is not None else np.asarray(V).dtype)
+        except TypeError:  # a non-numpy dtype object (e.g. a torch dtype)
+            name = str(np.asarray(V).dtype)
+    try:
+        source_itemsize: Optional[int] = int(np.dtype(name).itemsize)
+    except TypeError:  # an unrecognized dtype name — record it without a size
+        source_itemsize = None
+    return name, source_itemsize
+
+
 def prepare_fit_config(
     fitter: "GaussianSplatFitter",  # GaussianSplatFitter instance
     V: np.ndarray,
@@ -137,30 +192,9 @@ def prepare_fit_config(
         If any parameters are invalid
     """
     # Input validation.
-    # Capture the caller's dtype BEFORE the cast: the fitter works in float32, so
-    # after this line the original element size is gone. It is the denominator of
-    # any compression ratio quoted about the result, and a uint16 volume recorded
-    # as float32 would overstate compression by 2x.
-    #
-    # An explicit `source_dtype` wins over what `V` reports, because a caller can
-    # be one cast further removed than we are: `luxar gsplat fit` loads through
-    # `load_volume`, which already returns float32, so on that path -- the one
-    # that produces essentially every stored dataset -- the on-disk element type
-    # is knowable ONLY from there. Reading `V.dtype` (rather than
-    # `np.asarray(V).dtype`) keeps a lazy zarr/dask input lazy: materializing it
-    # twice would double both the peak memory and the read.
-    if source_dtype is None:
-        _dt = getattr(V, "dtype", None)
-        try:
-            source_dtype = str(
-                np.dtype(_dt) if _dt is not None else np.asarray(V).dtype
-            )
-        except TypeError:  # a non-numpy dtype object (e.g. a torch dtype)
-            source_dtype = str(np.asarray(V).dtype)
-    try:
-        source_itemsize: Optional[int] = int(np.dtype(source_dtype).itemsize)
-    except TypeError:  # an unrecognized dtype name — record it without a size
-        source_itemsize = None
+    # Capture the caller's dtype BEFORE the cast below (see the helper: after the
+    # cast the original element size is gone).
+    source_dtype, source_itemsize = _resolve_source_dtype(V, source_dtype)
     V = np.asarray(V, dtype=np.float32)
     if V.size == 0:
         raise ValueError("Input image V cannot be empty")

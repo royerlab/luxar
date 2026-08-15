@@ -19,13 +19,34 @@ acquisition doubles in size under that cast, so quoting the cast size would
 overstate compression by exactly 2x. There are two casts to get in front of, not
 one: the fitter's own, and the earlier one in the CLI's volume loader — which
 returns float32 whatever the file holds, and so is the only place the stored
-element type still exists. `luxar gsplat fit` reads it there and hands it down,
-so a fit of a 16-bit stack records 16-bit source bytes on every path.
+element type still exists. `luxar gsplat fit` reads it there and hands it down to
+whichever fit branch runs, so a fit of a 16-bit stack records 16-bit source bytes
+rather than the 32-bit working copy's.
 
 The source grid and the fitted grid are kept as separate fields. When a demo
 downscales before fitting, they differ, and collapsing them would overstate
 compression by the downscale factor cubed. `fitted_*` is what the optimiser saw;
 `source_*` is what was handed in.
+
+The stamp is scoped to what can honestly claim it. A whole-volume `gsplat fit`
+carries it into its output, and so does a single-tile fit (`fit --tile i/N`) for
+its own tile. Tiled and batch merges do not yet: the flat tiled merge builds fresh
+statistics in `GSplatData.concatenate`, and the partition, content-plan,
+progressive and `batch-fit merge` paths write their tree without a `fitting/`
+stamp at all. `gsplat info` therefore stays silent about the source grid for those
+artifacts rather than quoting a ratio it cannot support. Likewise a crop
+(`gsplat slice`, `gsplat filter --bbox`) drops the region-scoped fields, since the
+result represents only part of what was fitted — but only a crop that actually
+excluded splats does. A bbox enclosing the whole volume, or an all-unbounded
+slice, leaves an artifact representing exactly the same content, and its stamp is
+still true; discarding provenance there would punish the natural spelling of a
+scripted sweep with one unbounded axis.
+
+`gsplat info` reports the source grid in one place. It recomputes voxels/splat
+from the splats actually stored — post-fit culling is on by default, so the
+fit-time stamp is stale on nearly every dataset — and its catch-all metadata dump
+no longer re-prints the stamped fields underneath, which had the report quoting
+two different numbers for the same quantity.
 
 `occupancy` is the fraction of fitted voxels above the subtracted background floor.
 Sparse microscopy volumes are routinely more than 99% empty, and a compression

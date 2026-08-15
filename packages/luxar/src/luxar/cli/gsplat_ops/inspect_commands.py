@@ -192,7 +192,7 @@ def info_dataset(
         aprint(f"\nSplats: {n_splats:,}")
         aprint(f"Dimensions: {ndim}D")
         aprint(f"Has Colors: {'Yes' if data.colors is not None else 'No'}")
-        _print_source_grid(data, path)
+        source_grid_keys = _print_source_grid(data, path)
 
         # ================================================================
         # Bounding Box
@@ -326,8 +326,13 @@ def info_dataset(
                         aprint(f"  {key}: {value}")
                     displayed_keys.add(key)
 
-            # Display remaining metadata
-            remaining = set(data.stats.keys()) - displayed_keys
+            # Display remaining metadata. The source-volume block above already
+            # reported its own keys (and RECOMPUTED voxels/splat from the stored
+            # splats), so re-dumping them here would quote one quantity twice with
+            # two different numbers. Only the keys it actually reported are
+            # suppressed: when that block bailed out (no `source_shape`) it
+            # returns nothing and the stamps still surface here.
+            remaining = set(data.stats.keys()) - displayed_keys - set(source_grid_keys)
             if remaining:
                 aprint("\nAdditional Metadata:")
                 for key in sorted(remaining):
@@ -1064,17 +1069,57 @@ def _store_size(path: Path) -> int:
         return 0
 
 
-def _print_source_grid(data: Any, path: Path) -> None:
+#: ``stats`` keys :func:`_print_source_grid` reports itself. ``info``'s
+#: "Additional Metadata" dump skips exactly these once the source block has run,
+#: so one quantity is never quoted twice in one report: the block RECOMPUTES
+#: ``voxels/splat`` from the splats actually stored, and on any dataset whose
+#: count changed after the fit (post-fit culling is on by default) the stamped
+#: ``voxels_per_splat`` disagrees with it.
+_SOURCE_GRID_STATS_KEYS = (
+    "source_shape",
+    "source_dtype",
+    "source_voxels",
+    "source_bytes",
+    "fitted_shape",
+    "fitted_voxels",
+    "occupancy",
+    "voxels_per_splat",
+)
+
+
+def _voxels_per_splat(stats: dict, n_splats: int) -> Optional[float]:
+    """Voxels per splat for the splats actually IN the file, else the stamp.
+
+    Recomputed rather than read from ``voxels_per_splat``: post-fit culling (on
+    by default) and any later ``cull``/``decimate`` change the count without
+    restamping, and a figure that contradicts the "Splats:" line printed just
+    above would be worse than none. The stamp is the fallback for a store that
+    carries it without a ``fitted_voxels`` denominator (a third-party stamp),
+    which would otherwise go unreported.
+    """
+    fitted_voxels = stats.get("fitted_voxels")
+    if fitted_voxels and n_splats:
+        return float(fitted_voxels) / n_splats
+    stamped = stats.get("voxels_per_splat")
+    return float(stamped) if stamped else None
+
+
+def _print_source_grid(data: Any, path: Path) -> tuple[str, ...]:
     """Report what the splats are a representation of, when the fit recorded it.
 
     Silent for a dataset fitted before these stamps existed: the source grid is
     genuinely unknown there, and a compression ratio invented from the bounding
     box would be a guess presented as a measurement.
+
+    Returns the ``stats`` keys this block has now reported —
+    :data:`_SOURCE_GRID_STATS_KEYS` when it ran, empty when it bailed out. The
+    caller suppresses exactly those from its catch-all metadata dump, so bailing
+    out here leaves them to be printed there rather than dropping them.
     """
     stats = getattr(data, "stats", None) or {}
     shape = stats.get("source_shape")
     if not shape:
-        return
+        return ()
     voxels = stats.get("source_voxels")
     dtype = stats.get("source_dtype")
     aprint(
@@ -1092,14 +1137,10 @@ def _print_source_grid(data: Any, path: Path) -> None:
     occ = stats.get("occupancy")
     if occ is not None:
         aprint(f"  occupancy:   {100 * float(occ):.3f}% of voxels above the floor")
-    # Recomputed from the splats actually in the file rather than read from the
-    # stamp: post-fit culling (on by default) and any later `cull`/`decimate`
-    # change the count without restamping, and a figure that contradicts the
-    # "Splats:" line printed just above would be worse than none.
-    fitted_voxels = stats.get("fitted_voxels")
     n_splats = len(data.amplitudes) if data.amplitudes is not None else 0
-    if fitted_voxels and n_splats:
-        aprint(f"  voxels/splat: {float(fitted_voxels) / n_splats:,.0f}")
+    per_splat = _voxels_per_splat(stats, n_splats)
+    if per_splat is not None:
+        aprint(f"  voxels/splat: {per_splat:,.0f}")
     src_bytes = stats.get("source_bytes")
     if src_bytes:
         stored = _store_size(path)
@@ -1113,3 +1154,4 @@ def _print_source_grid(data: Any, path: Path) -> None:
                 f"  compression: {shown}:1 "
                 f"({format_memory_size(src_bytes)} -> {format_memory_size(stored)})"
             )
+    return _SOURCE_GRID_STATS_KEYS

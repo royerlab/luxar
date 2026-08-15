@@ -29,6 +29,28 @@ from .fit_utils import (
 )
 
 
+def _stamp_source_dtype(fit_config: dict, source_info: dict) -> None:
+    """Carry the loader-observed source dtype into the fit config.
+
+    ``fit_config`` is forwarded (as ``**fit_config``) by every fit branch to
+    ``fit_gaussian_splats``, so a tile worker stamps the same source dtype as a
+    whole-volume fit. The CLI's ``load_volume`` returns float32 whatever the file
+    holds, so this is the only place the on-disk element type still exists.
+
+    A dtype the USER put in the config wins, and there is no CLI flag to override
+    it: ``load_fit_config`` passes arbitrary YAML keys through, so a
+    ``source_dtype: uint16`` in a ``--config`` file is a deliberate statement
+    about a file whose stored type the loader can no longer see (a float32 .npy
+    exported from a 16-bit acquisition). Only a TRUTHY existing value counts as a
+    choice — ``get_fit_defaults()`` injects a signature-derived
+    ``source_dtype: None``, which must still be filled in from the loader.
+    """
+    if fit_config.get("source_dtype"):
+        return
+    if source_info.get("source_dtype"):
+        fit_config["source_dtype"] = source_info["source_dtype"]
+
+
 def run_fit_volume(
     input_path: Optional[Path] = typer.Argument(
         None, help="Input volume (.npy/.npz/.tiff/.zarr)"
@@ -693,11 +715,7 @@ def run_fit_volume(
             fit_config, parsed_seeds, effective_downscale = assemble_fit_config(
                 ctx, is_tiled
             )
-            # Carried through every fit branch (they all forward **fit_config to
-            # fit_gaussian_splats), so a tile worker stamps the same source dtype
-            # as a whole-volume fit.
-            if source_info.get("source_dtype"):
-                fit_config["source_dtype"] = source_info["source_dtype"]
+            _stamp_source_dtype(fit_config, source_info)
 
             # A per-tile volume re-fit needs the tile grid and the splats in ONE
             # coordinate frame, which --downscale breaks (see the helper).

@@ -205,6 +205,39 @@ class TestLoadFitConfig:
         assert "seeds" not in config
 
 
+class TestSourceDtypePrecedence:
+    """A `source_dtype:` a user put in a --config must beat the loader's guess.
+
+    `load_fit_config` passes arbitrary YAML keys through, so the key reaches the
+    fit config — and there is no CLI flag to override it afterwards. On a float32
+    .npy exported from a 16-bit acquisition the loader can only report float32,
+    which is exactly the 2x-overstated `source_bytes` the stamp exists to prevent.
+    """
+
+    def test_a_user_supplied_dtype_wins(self) -> None:
+        from luxar.cli.gsplat_ops.fitting.fit import _stamp_source_dtype
+
+        config = {"source_dtype": "uint16"}
+        _stamp_source_dtype(config, {"source_dtype": "float32"})
+        assert config["source_dtype"] == "uint16"
+
+    def test_the_signature_derived_none_is_still_filled_in(self) -> None:
+        """`get_fit_defaults()` injects `source_dtype: None` from the signature,
+        so mere PRESENCE of the key cannot mean "the user chose this"."""
+        from luxar.cli.gsplat_ops.fitting.fit import _stamp_source_dtype
+
+        assert load_fit_config()["source_dtype"] is None  # precondition
+        config = load_fit_config()
+        _stamp_source_dtype(config, {"source_dtype": "uint16"})
+        assert config["source_dtype"] == "uint16"
+
+    def test_yaml_source_dtype_reaches_the_config(self, tmp_path: Path) -> None:
+        """The precondition for the above being a real path, not a hypothetical."""
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text("source_dtype: uint16\n")
+        assert load_fit_config(config_path=yaml_path)["source_dtype"] == "uint16"
+
+
 class TestDumpDefaultConfig:
     def test_valid_yaml(self) -> None:
         text = dump_default_config("standard")
@@ -6776,3 +6809,108 @@ class TestInfoVolumeTruncation:
         r = runner.invoke(app, ["gsplat", "info", str(path)])
         assert r.exit_code == 0, f"failed:\n{r.stdout}"
         assert "Volume Distribution (2.75σ)" in _plain(r.stdout)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# `gsplat info` quotes the source grid ONCE
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestInfoSourceGridReportedOnce:
+    """One report must not give two numbers for one quantity.
+
+    The source-volume block RECOMPUTES `voxels/splat` from the splats actually
+    stored (post-fit culling is on by default, so the fit-time stamp is stale on
+    nearly every dataset), while the catch-all "Additional Metadata" dump printed
+    the stamped `voxels_per_splat` underneath it.
+    """
+
+    #: What a 100³ uint16 fit stamps, plus a `voxels_per_splat` assembled at 50
+    #: splats — before the default cull left the 6 that are actually stored.
+    _STAMP = {
+        "source_shape": [100, 100, 100],
+        "source_dtype": "uint16",
+        "source_voxels": 1_000_000,
+        "source_bytes": 2_000_000,
+        "fitted_shape": [100, 100, 100],
+        "fitted_voxels": 1_000_000,
+        "occupancy": 0.01,
+        "voxels_per_splat": 20_000.0,
+    }
+
+    def _stamped(self, tmp_path: Path, **stats: Any) -> tuple[Path, int]:
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        n, d = 6, 3
+        data = GSplatData(
+            centers=np.arange(n * d, dtype=np.float32).reshape(n, d),
+            amplitudes=np.linspace(0.2, 1.0, n).astype(np.float32),
+            cholesky_factors=np.tile(
+                np.array([1.0, 0, 1.0, 0, 0, 1.0], dtype=np.float32), (n, 1)
+            ),
+            stats=dict(stats),
+        )
+        out = tmp_path / "stamped.gsplats.zarr"
+        data.save(out, ordering="none")
+        return out, n
+
+    def test_one_voxels_per_splat_figure_not_two(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        path, n = self._stamped(tmp_path, **self._STAMP)
+        r = runner.invoke(app, ["gsplat", "info", str(path), "--no-histograms"])
+        assert r.exit_code == 0, f"failed:\n{r.stdout}"
+        out = _plain(r.stdout)
+
+        recomputed = self._STAMP["fitted_voxels"] / n  # 166,666.67
+        assert f"voxels/splat: {recomputed:,.0f}" in out
+        # The stamped twin (20,000) must not also be printed, under its own key
+        # or any other spelling of the same number.
+        assert "voxels_per_splat" not in out, (
+            "the stamped voxels_per_splat is still dumped in Additional Metadata:\n"
+            + out
+        )
+        assert f"{self._STAMP['voxels_per_splat']:,.0f}" not in out
+        assert out.count("voxels/splat") == 1
+
+    def test_no_source_grid_key_is_printed_twice(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """Every key the source block owns belongs to the source block alone."""
+        from luxar.cli.gsplat_ops.inspect_commands import _SOURCE_GRID_STATS_KEYS
+
+        path, _ = self._stamped(tmp_path, **self._STAMP)
+        r = runner.invoke(app, ["gsplat", "info", str(path), "--no-histograms"])
+        assert r.exit_code == 0, f"failed:\n{r.stdout}"
+        out = _plain(r.stdout)
+
+        assert "Source volume: 100 x 100 x 100 uint16" in out  # the block DID run
+        # Scoped to the catch-all dump: the source block prints its own labels
+        # ("occupancy:", "voxels/splat:"), which is precisely where they belong.
+        # With every stamp accounted for above, the section may not render at all.
+        marker = "Additional Metadata:"
+        dump = out.split(marker, 1)[1] if marker in out else ""
+        for key in _SOURCE_GRID_STATS_KEYS:
+            assert f"{key}:" not in dump, f"{key!r} was dumped as raw metadata too"
+            assert f"{key}:" not in out.split("METADATA", 1)[-1], (
+                f"{key!r} appears in the METADATA section as well as the source block"
+            )
+
+    def test_stamps_still_reported_when_the_source_block_bails(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """Suppression must follow what was REPORTED, not what could be.
+
+        Without `source_shape` the source block prints nothing at all, so the
+        metadata dump is the only place those keys can appear — suppressing them
+        unconditionally would silently drop them from the report.
+        """
+        stamp = {k: v for k, v in self._STAMP.items() if k != "source_shape"}
+        path, _ = self._stamped(tmp_path, **stamp)
+        r = runner.invoke(app, ["gsplat", "info", str(path), "--no-histograms"])
+        assert r.exit_code == 0, f"failed:\n{r.stdout}"
+        out = _plain(r.stdout)
+
+        assert "Source volume:" not in out
+        assert "voxels_per_splat: 20000" in out.replace(",", "")
+        assert "occupancy: 0.01" in out

@@ -786,7 +786,9 @@ class TestCompression:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "test.gsplats.zarr"
             GSplatData(**create_test_splats_3d(100)).save(path)
-            assert isinstance(zarr.open(str(path), mode="r")["centers"].compressor, Blosc)
+            assert isinstance(
+                zarr.open(str(path), mode="r")["centers"].compressor, Blosc
+            )
 
     def test_multi_lod_compression(self):
         from numcodecs import Blosc

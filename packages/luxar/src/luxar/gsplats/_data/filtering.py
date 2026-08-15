@@ -13,6 +13,61 @@ if TYPE_CHECKING:
     from luxar.gsplats.gsplat_data import GSplatData
 
 
+#: Source-provenance ``stats`` keys that describe the REGION the splats
+#: represent. A bbox crop keeps only part of that region, so carrying them over
+#: would make ``gsplat info`` quote a compression ratio (and an occupancy) for a
+#: volume this artifact no longer represents — inflated by the crop factor. They
+#: are dropped instead: staying silent about an unknown source grid is what
+#: ``info`` already does for a dataset fitted before these stamps existed.
+#: ``source_dtype`` is deliberately EXEMPT — the element type of the source
+#: volume is unchanged by a crop, so it remains true. ``voxels_per_splat`` IS
+#: region-scoped: it is a ratio over the fitted grid, so after a crop it
+#: describes a region the object no longer represents — and its ``fitted_voxels``
+#: denominator has just been dropped, leaving it unanchored.
+_REGION_SCOPED_STATS_KEYS = (
+    "source_shape",
+    "source_voxels",
+    "source_bytes",
+    "fitted_shape",
+    "fitted_voxels",
+    "occupancy",
+    "voxels_per_splat",
+)
+
+
+def _is_crop(bbox: object, n_before: int, n_after: int) -> bool:
+    """Whether a filter actually RESTRICTED the region the splats represent.
+
+    A bbox that excluded nothing (``slice_by([slice(None)] * ndim)``, or a
+    ``--bbox`` enclosing the whole volume — the natural spelling when one axis of
+    a scripted sweep is unbounded) leaves an artifact representing exactly the
+    same content, so its source stamp is still true and must survive. Only a
+    bbox that removed splats invalidates it.
+    """
+    return bbox is not None and n_after < n_before
+
+
+def _stats_after_filter(stats: dict, *, cropped: bool) -> dict:
+    """Drop the region-scoped source stamps from ``stats`` when ``cropped``.
+
+    A non-spatial filter (amplitude/scale/mass/... thresholds) does NOT change
+    which region the splats represent, so it keeps the whole stamp; only a
+    bbox/slice restriction that actually excluded splats invalidates it (see
+    :func:`_is_crop`).
+
+    Mutates ``stats`` IN PLACE (and returns it) rather than copying: every call
+    site hands over a dict ``filter()`` has just built, never a caller's — and on
+    the single-leaf path ``GSplatData.__init__`` ALIASES that dict as the leaf's
+    per-sub-LOD stats, so popping in place also cleans the twin that would
+    otherwise be persisted as the leaf's ``lod_stats`` still carrying the
+    uncropped stamp.
+    """
+    if cropped:
+        for key in _REGION_SCOPED_STATS_KEYS:
+            stats.pop(key, None)
+    return stats
+
+
 class FilteringMixin(_GSplatDataOps):
     """``filter`` / ``filter_by`` / ``slice_by`` and the threshold resolver."""
 
@@ -209,6 +264,10 @@ class FilteringMixin(_GSplatDataOps):
                     "truncate": truncate,
                 }
             )
+            # Nothing to remove from an empty dataset, so no bbox can be a crop.
+            result.stats = _stats_after_filter(
+                result.stats, cropped=_is_crop(bbox, 0, 0)
+            )
             return result
 
         # Validate sigma_axis usage
@@ -271,6 +330,11 @@ class FilteringMixin(_GSplatDataOps):
                     "n_removed": self.n_splats - out.n_splats,
                     "truncate": truncate,
                 }
+            )
+            # A crop restricts WHICH REGION the splats represent (the per-level
+            # recursion above cannot fix the rebuilt top-level stats).
+            out.stats = _stats_after_filter(
+                out.stats, cropped=_is_crop(bbox, self.n_splats, out.n_splats)
             )
             return out
 
@@ -421,6 +485,12 @@ class FilteringMixin(_GSplatDataOps):
                 "n_removed": self.n_splats - result.n_splats,
                 "truncate": truncate,
             }
+        )
+        # A bbox crop that actually excluded splats invalidates the source-region
+        # stamps inherited from the fit (see _stats_after_filter / _is_crop); a
+        # non-spatial threshold, or a bbox that removed nothing, keeps them.
+        result.stats = _stats_after_filter(
+            result.stats, cropped=_is_crop(bbox, self.n_splats, result.n_splats)
         )
         return result
 

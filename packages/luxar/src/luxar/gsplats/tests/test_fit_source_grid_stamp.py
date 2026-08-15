@@ -156,6 +156,54 @@ def test_a_caller_that_already_cast_can_name_the_stored_dtype() -> None:
     assert _fit(V).stats["source_bytes"] == stats["source_voxels"] * 4
 
 
+@pytest.mark.parametrize(
+    "explicit", [np.dtype("uint16"), np.uint16, "uint16"], ids=["dtype", "type", "str"]
+)
+def test_an_explicit_dtype_object_is_normalized_to_its_name(explicit: object) -> None:
+    """A dtype OBJECT is what a Python caller naturally passes.
+
+    It used to be stored verbatim, so the whole optimisation completed and then
+    died in ``.save()`` with "Object of type UInt16DType is not JSON
+    serializable" — after all the compute, which is the worst possible time.
+    """
+    from luxar.gsplats.fitting.validation import _resolve_source_dtype
+
+    name, itemsize = _resolve_source_dtype(np.zeros((2, 2), dtype=np.float32), explicit)
+    assert name == "uint16"
+    assert isinstance(name, str)
+    assert itemsize == 2
+
+
+def test_a_blank_explicit_dtype_behaves_as_absent() -> None:
+    """``""`` must not be stored: it yields a ``None`` itemsize, which sends
+    ``results.py`` to the post-cast float32 ``V.nbytes`` — the 2x-overstated
+    source size the stamp exists to prevent."""
+    from luxar.gsplats.fitting.validation import _resolve_source_dtype
+
+    V = np.zeros((2, 2), dtype=np.uint16)
+    assert _resolve_source_dtype(V, "") == ("uint16", 2)
+    assert _resolve_source_dtype(V, "   ") == ("uint16", 2)
+
+
+def test_an_unrecognizable_dtype_name_is_recorded_without_a_size() -> None:
+    """Tolerance, not a crash: the name is kept, the itemsize is left unknown."""
+    from luxar.gsplats.fitting.validation import _resolve_source_dtype
+
+    name, itemsize = _resolve_source_dtype(np.zeros(2, dtype=np.float32), "mystery12")
+    assert name == "mystery12"
+    assert itemsize is None
+
+
+def test_a_dtype_object_survives_the_save(tmp_path: Path) -> None:
+    """End to end: the JSON serialization that used to blow up at the very end."""
+    V = _sparse_blobs(shape=(8, 8, 8), n=4).astype(np.float32)
+    out = tmp_path / "dtype_object.gsplats.zarr"
+    _fit(V, source_dtype=np.dtype("uint16")).save(out)
+    attrs = json.loads((out / "fitting" / ".zattrs").read_text())
+    assert attrs["source_dtype"] == "uint16"
+    assert attrs["source_bytes"] == V.size * 2
+
+
 def test_load_volume_reports_the_stored_dtype(tmp_path: Path) -> None:
     """The loader is the last place the on-disk element type exists."""
     from luxar.io.volume import load_volume
