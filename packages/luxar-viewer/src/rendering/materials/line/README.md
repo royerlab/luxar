@@ -510,15 +510,15 @@ at build time and emits a single-branch graph, so a mode flip in
 
 ## Shared helpers from `_shared/`
 
-| Symbol                                                             | Used for                                                                                                                                                                                        |
-| ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `clampGamma(g)`                                                    | `Math.max(0.001, g ?? 1.0)` guard before `1 / gamma` (shared across all eight material constructors).                                                                                           |
-| `CameraAwareMaterial` interface                                    | Implemented so `MaterialManager.updateCameraParams(fov, resolution, isOrtho?)` reaches this material.                                                                                           |
-| `ColormapAwareMaterial` interface                                  | Implemented so `material-colormap-helpers.ts` sets the LUT texture and scalar range through setters.                                                                                            |
-| `GLSL_SANITIZE_FUNCTIONS`                                          | Prepended to the GLSL vertex shader; gives `sanitizePositive` / `sanitizeNonNegative` / `sanitizeAlpha` to clean width/sharpness/alpha inputs against NaN/Inf/out-of-range.                     |
-| `sanitizePositive` / `sanitizeNonNegative` / `sanitizeAlpha` (TSL) | TSL counterparts of the GLSL sanitisers — same contract, called inline in the factory.                                                                                                          |
-| `volumetric.ts` constants                                          | `ALPHA_CLAMP` (the `1 − 1/512` cap of the `w(a)` map) + the `S(τ)` series thresholds/coefficients — shared with the point/gsplat volumetric branches so all three geometries agree numerically. |
-| `proxyIUniform(node)`                                              | Wraps each TSL `UniformNode` in an `IUniform`-shaped getter/setter so `material.uniforms.uX.value = Y` lands on `node.value`. No per-render callback bridge.                                    |
+| Symbol                                        | Used for                                                                                                                                                                                        |
+| --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `clampGamma(g)`                               | `Math.max(0.001, g ?? 1.0)` guard before `1 / gamma` (shared across all eight material constructors).                                                                                           |
+| `CameraAwareMaterial` interface               | Implemented so `MaterialManager.updateCameraParams(fov, resolution, isOrtho?)` reaches this material.                                                                                           |
+| `ColormapAwareMaterial` interface             | Implemented so `material-colormap-helpers.ts` sets the LUT texture and scalar range through setters.                                                                                            |
+| `GLSL_SANITIZE_FUNCTIONS`                     | Prepended to the GLSL vertex shader; gives `sanitizePositive` / `sanitizeNonNegative` / `sanitizeAlpha` to clean width/sharpness/alpha inputs against NaN/Inf/out-of-range.                     |
+| `sanitizeNonNegative` / `sanitizeAlpha` (TSL) | TSL counterparts of those two GLSL sanitisers — same contract, called inline in the factory. `sanitizePositive` has no TSL twin: no TSL shader calls it.                                        |
+| `volumetric.ts` constants                     | `ALPHA_CLAMP` (the `1 − 1/512` cap of the `w(a)` map) + the `S(τ)` series thresholds/coefficients — shared with the point/gsplat volumetric branches so all three geometries agree numerically. |
+| `proxyIUniform(node)`                         | Wraps each TSL `UniformNode` in an `IUniform`-shaped getter/setter so `material.uniforms.uX.value = Y` lands on `node.value`. No per-render callback bridge.                                    |
 
 ## `isGammaOne` / `isNoGOG` cross-export
 
