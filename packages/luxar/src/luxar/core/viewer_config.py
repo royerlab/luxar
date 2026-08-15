@@ -316,9 +316,15 @@ class ViewerConfig:
     # "ACES" is the recommended choice for almost every scene: its filmic
     # highlight rolloff is what keeps dense, bright structure from clipping
     # flat, and it is also the viewer's default when this is left None. It
-    # does intentionally shift hues, so prefer "Neutral" in the narrower case
-    # where a colormap LUT carries an exact scientific color encoding that
-    # must survive to the screen. Setting this explicitly — to "ACES" as much
+    # does intentionally shift hues, so in the narrower case where a colormap
+    # LUT carries an exact color encoding that must survive to the screen,
+    # prefer "None" — an exact passthrough, valid while the scene stays
+    # inside [0, 1]. "Neutral" is not a passthrough: even below its knee it
+    # subtracts an offset taken from the channel minimum, so anything but a
+    # fully saturated colour moves, and over range it keeps the hue angle but
+    # sheds chroma (a `None` clamp distorts both and flattens everything above
+    # 1.0) — a gentle rolloff rather than a fidelity choice.
+    # Setting this explicitly — to "ACES" as much
     # as to anything else — silences the compiler's LUT tone-mapping notice,
     # which only fires when no choice was made at all.
     tone_mapping: Optional[str] = None

@@ -97,8 +97,14 @@ def build_interop_scene(
 
     Classical captures carry per-splat color, so ``colormap`` is normally
     ``None``, and ``tone_mapping`` defaults to ``"Neutral"`` on purpose:
-    the baked RGB is already display-referred, so the viewer's default ACES
-    (which lifts highlights and shifts hue) would distort it. Imports render
+    the baked RGB is clipped to [0, 1] at import (``gsplats/interop/_color.py``
+    converts sRGB → linear light), so the viewer's default ACES
+    (which lifts highlights and shifts hue) would distort it. That [0, 1] bound
+    would make ``"None"`` the exact choice today (#1459), except that
+    ``demo_gsplats_interop_sog_matrixcity`` builds ``recipe="overview"``, whose
+    substitutive merge emits amplitudes with no bound of 1 that the gsplat
+    ``normal`` shader feeds straight into RGB — so the pin stays ``"Neutral"``
+    until someone render-checks it. Imports render
     under ``blending_mode="normal"`` (alpha-over) — the surface-like,
     occluding look these photogrammetric scenes need, which
     composites correctly now that depth-sorted rendering has landed (R10). Both

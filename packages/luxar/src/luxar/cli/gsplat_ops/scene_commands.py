@@ -56,8 +56,8 @@ def convert_to_scene(
         help="Scene HDR tone-mapping (None/Linear/Reinhard/Cineon/ACES/AgX/"
         "Neutral). 'ACES' suits almost every scene and is also the viewer "
         "default when unset; pass it explicitly to record the choice. Use "
-        "'Neutral' when a colormap carries an exact scientific color encoding "
-        "(ACES shifts hues).",
+        "'None' — an exact passthrough — when a colormap carries an exact "
+        "color encoding and the scene stays inside [0, 1].",
     ),
     gamma: Optional[float] = typer.Option(
         None, "--gamma", help="Display gamma (default 1.0)"
@@ -81,9 +81,19 @@ def convert_to_scene(
 
     Appearance (colormap / tone-mapping / gamma / intensity) is baked into the
     scene here. Prefer ``--tone-mapping ACES`` (its filmic rolloff keeps bright
-    structure from clipping flat, and passing it explicitly records the choice);
-    reach for ``Neutral`` when a colormap carries an exact scientific color
-    encoding, since ACES intentionally shifts hues.
+    structure from clipping flat, and passing it explicitly records the choice).
+    When a colormap carries an exact scientific color encoding that ACES's hue
+    shift would distort, pick by range: inside [0, 1], ``None`` is the only
+    exact passthrough (the mega-shader applies exposure/offset/gamma *before*
+    the tone-mapping switch, so those still work). ``Neutral`` is not a
+    passthrough — even below its knee it subtracts an offset taken from the
+    channel minimum, so anything but a fully saturated colour moves. Over range
+    nothing is faithful: ``Neutral`` keeps the HSV hue angle exactly but sheds
+    chroma (essentially white by peak 100), while a ``None`` clamp flattens
+    everything above 1.0 and shifts hue when channels clip unequally, losing
+    saturation too wherever the darkest channel is not already 0. So bring the
+    scene back into [0, 1] with ``--intensity`` and use ``None``, or accept
+    ACES's filmic rolloff (#1459).
 
     Examples:
         luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr
@@ -92,7 +102,7 @@ def convert_to_scene(
         luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr \\
             --colormap plasma --tone-mapping ACES
         luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr \\
-            --colormap plasma --tone-mapping Neutral
+            --colormap plasma --tone-mapping None
     """
     try:
         import numpy as np
