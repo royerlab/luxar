@@ -472,6 +472,8 @@ def run_transform_dataset(
             # on disk — threading the loaded stats through split_fitting_info so
             # the fitting/ / provenance/ / pipeline/ groups round-trip exactly
             # like the flat path (they used to be silently stripped here).
+            from luxar.gsplats.io.load_gsplats import read_authored_appearance
+
             with asection(f"Saving to {output_path.name}"):
                 if matrix_shaped:
                     data.save(
@@ -479,6 +481,7 @@ def run_transform_dataset(
                         encoding_mode=encoding_mode_obj,
                         include_fitting_info=True,
                         compress=compress,
+                        root_attrs=read_authored_appearance(input_path),
                     )
                 else:
                     fitting_info, fitting_config, provenance_info, pipeline_info = (
@@ -493,6 +496,7 @@ def run_transform_dataset(
                         fitting_config=fitting_config,
                         provenance_info=provenance_info,
                         pipeline_info=pipeline_info,
+                        root_attrs=read_authored_appearance(input_path),
                     )
                 aprint(f"Saved: {output_path}")
 

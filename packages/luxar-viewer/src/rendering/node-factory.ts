@@ -56,6 +56,7 @@ import type { MeshDataLoader, MeshMetadata } from '../types/mesh';
 import { isMeshPickAwareMaterial } from './picking/mesh/pick-mode';
 import type { GeometryTypeName } from '../types/format-contract';
 import { lineJoinStyleFromUniform, type LineJoinStyle } from '../types/line-join';
+import type { LinePrimitive } from '../types/line-primitive';
 // Picking materials are constructed via `materialManager.create*PickingMaterial`
 // helpers so the GLSL vs. TSL dispatch on `caps.apiSurface` lives in one place. The
 // concrete types are still imported elsewhere (e.g. material-sync-helpers).
@@ -90,7 +91,9 @@ interface PickMaterialRecipe {
  *
  * Each recipe reads whatever its type's pick material needs off the visual node: points
  * need the geometry's `radiusScale` (the 80%-radius pick footprint derives from it),
- * lines need the join style (the pick pass builds the same screen-space quad), mesh
+ * lines need the join style AND the primitive (the pick pass rasterizes the same
+ * stencil the visual material draws, and under the `auto` policy that is a per-node
+ * choice — see {@link linePrimitiveFromVisual}), mesh
  * needs the node opacity and cutout threshold (they are its coverage term). Only
  * gsplats need nothing but the id.
  */
@@ -107,6 +110,7 @@ const PICK_MATERIAL_RECIPES: Record<GeometryTypeName, PickMaterialRecipe> = {
       materialManager.createLinePickingMaterial({
         nodeId: pickId,
         join: lineJoinStyleFromVisual(obj),
+        primitive: linePrimitiveFromVisual(obj),
       }),
   },
   gsplats: {
@@ -158,6 +162,24 @@ function lineJoinStyleFromVisual(obj: THREE.Mesh): LineJoinStyle | undefined {
     .uniforms;
   const code = uniforms?.uLineJoin?.value;
   return lineJoinStyleFromUniform(typeof code === 'number' ? code : undefined);
+}
+
+/**
+ * Recover a lines node's PRIMITIVE (#1352) from its live visual material —
+ * the `join` mirror above, for the same reason: this retro pass is the one
+ * production takes on a first load, and under the `auto` policy the
+ * primitive is per-node (sized at the visual material's build), so
+ * re-resolving here without the node's size would give large nodes a
+ * capsule pick footprint over a quad render. Every wrapper stamps the
+ * RESOLVED primitive on `userData.linePrimitive` at construction, so this
+ * read is exact; `undefined` (not a lines material) falls through to the
+ * session-wide resolution, which is correct for everything except a
+ * missing stamp — and the stamp is unconditional.
+ */
+function linePrimitiveFromVisual(obj: THREE.Mesh): LinePrimitive | undefined {
+  const visual = obj.material as THREE.Material | THREE.Material[] | undefined;
+  const single = Array.isArray(visual) ? visual[0] : visual;
+  return single?.userData?.linePrimitive as LinePrimitive | undefined;
 }
 
 /**

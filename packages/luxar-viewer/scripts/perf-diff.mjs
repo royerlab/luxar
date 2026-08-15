@@ -9,7 +9,10 @@
  * `src/tests/e2e/line-perf-bench.spec.ts` or
  * `src/tests/e2e/gsplat-perf-bench.spec.ts` and writes a Markdown table
  * to stdout suitable for pasting into a commit body. Scenarios that
- * don't appear in BOTH inputs are reported but not deltaed.
+ * don't appear in BOTH inputs are reported but not deltaed. A row whose
+ * two sides disagree on the presence of `excludedResolveIntervals`
+ * straddles the line bench's GPU-timestamp exclusion change and is
+ * called out as not comparable.
  *
  * The markdown-building logic lives in the exported pure function
  * {@link buildPerfDiff} (so it can be unit-tested); all CLI behaviour
@@ -177,6 +180,33 @@ export function buildPerfDiff(base, next) {
     const np = n.frameMs?.p95;
 
     md += `| ${k} | ${api} | ${segs} | ${fmt(bm)} | ${fmt(nm)} | ${delta(bm, nm)} | ${fmt(bp)} | ${fmt(np)} | ${delta(bp, np)} |\n`;
+  }
+
+  // The line bench excludes the frame interval that follows each GPU
+  // timestamp resolve (the readback latency lands there, not in the
+  // scene's work) and records the drop count as
+  // `excludedResolveIntervals`. That field did not exist before the
+  // exclusion did, so a row whose two sides disagree on its PRESENCE
+  // straddles the change: the older side's frame stats still include
+  // readback latency, and the deltas above are instrument drift, not a
+  // rendering change. Warn rather than let a −86% p95 read as a win.
+  // Only measured rows are considered — a skipped row has no timing to
+  // compare and omits the field on purpose.
+  //
+  // The test is presence-only, and deliberately conservative: whether the
+  // OLDER side resolved timestamps at all is not recoverable from its
+  // JSON (a run with the feature enabled but no usable samples reports
+  // `gpu.supported: false` all the same), so an arm that never resolved —
+  // every WebGL row — gets flagged too. The message says so rather than
+  // asserting readback latency in stats that cannot contain it.
+  const straddling = sortedKeys.filter((k) => {
+    const b = baseByKey.get(k);
+    const n = nextByKey.get(k);
+    if (!b || !n || b.skipped || n.skipped) return false;
+    return 'excludedResolveIntervals' in b !== 'excludedResolveIntervals' in n;
+  });
+  if (straddling.length > 0) {
+    md += `\n⚠️ JS frame timing not comparable for ${straddling.join(', ')}: one side predates the bench's exclusion of GPU-timestamp resolve intervals, so its frame stats still include readback latency wherever that run resolved timestamps (p95/p99 worst; an arm that never resolved — any WebGL row — is listed conservatively and is in fact comparable). Re-measure that side before reading these deltas.\n`;
   }
 
   // GPU-time section. Only emitted when at least one row has a real

@@ -166,7 +166,7 @@ additive (refines one leaf); `levels` is substitutive (coarse↔fine swap);
 | `--target-ms` | — | streaming sizing: derive `stream:<c>` so the first additive chunk downloads in ~this many ms (mutually exclusive with `--breakpoints`) |
 | `--bandwidth-mbps` | 25 | assumed downlink for `--target-ms` sizing |
 | `--bytes-per-splat` | measured/estimated | override the on-wire bytes/splat for `--target-ms` sizing |
-| `--truncation-sigmas` | 3.0 | Mahalanobis cutoff for greedy |
+| `--truncation-sigmas` | the dataset's own truncation radius | Mahalanobis cutoff for greedy |
 | `--max-n-dense` | 2000 | greedy dense-Gram threshold |
 | `--reveal-centre` | dataset bbox centre | `-m radial` only: comma-separated shell centre, one coordinate per measured axis. On a partitioned recipe the default centres each part on itself — pass this to grow the whole object from one point |
 | `--spatial-dims` | non-degenerate axes | `-m radial` only: comma-separated centre-column indices the shell distance spans (order pairs with `--reveal-centre`); the default keeps a stacked time/channel axis out of the shells |

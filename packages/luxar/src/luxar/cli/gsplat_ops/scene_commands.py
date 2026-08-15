@@ -403,6 +403,8 @@ def reencode_command(
                 if "provenance" in root:
                     provenance_info = dict(root["provenance"].attrs)
 
+            from luxar.gsplats.io.load_gsplats import read_authored_appearance
+
             write_gsplats_tree(
                 output_path,
                 node,
@@ -412,6 +414,7 @@ def reencode_command(
                 fitting_info=fitting_info,
                 fitting_config=fitting_config,
                 provenance_info=provenance_info,
+                root_attrs=read_authored_appearance(input_path),
             )
 
             # Read-back verify — a loadable current-format file, not blind success.

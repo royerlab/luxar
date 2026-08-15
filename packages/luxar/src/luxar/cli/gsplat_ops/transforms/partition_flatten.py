@@ -26,6 +26,7 @@ def run_partition_dataset(
         import math
 
         from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.io.load_gsplats import read_authored_appearance
         from luxar.gsplats.io.save_gsplats import write_gsplats_tree
         from luxar.gsplats.tree import iter_leaves
 
@@ -66,6 +67,7 @@ def run_partition_dataset(
                     partition_node,
                     encoding_mode=encoding_mode_obj,
                     compress=compress,
+                    root_attrs=read_authored_appearance(input_path),
                 )
                 aprint(
                     f"  Saved kind=partition file: {output_path} "
@@ -93,7 +95,10 @@ def run_flatten_dataset(
     """Run flatten command implementation."""
     try:
         from luxar.gsplats.gsplat_data import GSplatData
-        from luxar.gsplats.io.load_gsplats import load_gsplat_node
+        from luxar.gsplats.io.load_gsplats import (
+            load_gsplat_node,
+            read_authored_appearance,
+        )
         from luxar.gsplats.tree import iter_default_leaves
 
         if output_path.exists() and not overwrite:
@@ -142,6 +147,7 @@ def run_flatten_dataset(
                     output_path,
                     encoding_mode=encoding_mode_obj,
                     compress=compress,
+                    root_attrs=read_authored_appearance(input_path),
                 )
                 aprint(f"  Saved flat file: {output_path} ({flat.n_splats:,} splats)")
 
