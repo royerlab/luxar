@@ -1445,36 +1445,6 @@ def add_mesh_substitutive_lod_wrapper_impl(
     return lod_group_node
 
 
-def _resolve_mesh_partition(partition: Any) -> tuple[int, str]:
-    """Validate ``partition=`` and return ``(max_elements, rule)``.
-
-    Same vocabulary as the sibling adders (``True`` / ``{max_elements, rule}``)
-    so a caller who knows ``add_points(partition=...)`` already knows this one.
-
-    ``max_elements`` counts **faces**, not vertices. The BSP recurses on face
-    centroids — one triangle is one indivisible unit of the split — so faces are
-    the quantity the cap can actually bound. A part's vertex count is whatever
-    its faces reference (at most ``3 * max_elements``, in practice far less).
-    """
-    from ..partition import DEFAULT_MAX_ELEMENTS
-
-    if partition is True:
-        return DEFAULT_MAX_ELEMENTS, "median"
-    if isinstance(partition, dict):
-        max_elements = int(partition.get("max_elements", DEFAULT_MAX_ELEMENTS))
-        if max_elements < 1:
-            raise ValueError(f"partition max_elements must be >= 1, got {max_elements}")
-        rule = str(partition.get("rule", "median"))
-        if rule not in ("median", "midpoint", "sah"):
-            raise ValueError(
-                f"partition rule must be 'median', 'midpoint', or 'sah'; got {rule!r}"
-            )
-        return max_elements, rule
-    raise TypeError(
-        f"partition must be None, True, or dict; got {type(partition).__name__}"
-    )
-
-
 def _validate_partition_sources(
     faces_arr: np.ndarray,
     n_vertices: int,
@@ -1595,11 +1565,14 @@ def _add_mesh_partition(
     from ..partition import (
         median_bsp_partition,
         midpoint_bsp_partition,
+        resolve_partition_spec,
         sah_bsp_partition,
         warn_if_oversized_single_part,
     )
 
-    max_elements, rule = _resolve_mesh_partition(partition)
+    # Same vocabulary as the sibling adders — and for a mesh ``max_elements``
+    # counts FACES, not vertices (see :func:`resolve_partition_spec`).
+    max_elements, rule = resolve_partition_spec(partition)
 
     # No `warn_if_partition_needs_more_dims` call: it guards against <2 spatial
     # dims, and add_mesh_impl has already refused those outright with a

@@ -114,6 +114,14 @@ this adder forwards onward STRUCTURALLY" — `colors`, `truncation_radius`,
 non-`None` value of each must still be judged (a collision, a legitimate
 override, a colormap name to validate, a real threshold).
 
+Excluding a key from the gate does not excuse its VALUE. `partition`'s is
+judged by an explicit `partition.resolve_partition_spec` call in the slot right
+after the node-attrs gate (#1550) — the same function the leaf adder calls,
+here for its verdict alone. Without it an invalid spec (`partition="nonsense"`,
+`{"max_elements": 0}`) rode the exclusion straight down into `child_0` and was
+refused only after `add_lod_group` had created the `kind=lod` wrapper, which
+then survived `finalize()`.
+
 Both calls sit at the adder ENTRY, so they outrank everything below —
 `_reject_before_wrapper`'s `dim_order` spec validators and rank guard, and the
 `coverage_fraction` refusal. That is deliberate: a channel collision means the

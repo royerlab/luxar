@@ -124,6 +124,10 @@ Exports:
   `display_type`, `max_elements >= 1`, homogeneous child `display_type`).
 - `PartitionSpec` — value-vocabulary type alias for `partition=`
   (`None` / `True` / `dict`).
+- `resolve_partition_spec` — validator for that vocabulary, returning
+  `(max_elements, rule)`. One spelling for all four adders and for the gsplats
+  `lod_group=` pre-wrapper gate, which has to judge the same spec one level
+  above the leaf that consumes it (#1550).
 - `DEFAULT_MAX_ELEMENTS = 1_000_000` — cap used for bare `partition=True`.
 
 ### `auto_partition.py` — compiler-level opt-in

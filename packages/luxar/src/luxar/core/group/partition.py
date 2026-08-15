@@ -42,6 +42,8 @@ This module hosts:
 * :data:`PartitionSpec` — the value-vocabulary type alias for the
   ``partition=`` convenience kwarg on ``add_points`` / ``add_lines`` /
   ``add_gsplats``.
+* :func:`resolve_partition_spec` — the validator for that vocabulary, shared by
+  all four adders and by the gsplats ``lod_group=`` pre-wrapper gate.
 * :data:`DEFAULT_MAX_ELEMENTS` — the cap used when the user passes
   ``partition=True`` without a dict.
 """
@@ -84,6 +86,45 @@ PartitionSpec = Union[None, bool, dict]
 #: a single tile is still a comfortable WebGL batch, small enough that
 #: partitioning is worth it for the 10M+ node sizes the feature targets.
 DEFAULT_MAX_ELEMENTS: int = 1_000_000
+
+
+def resolve_partition_spec(partition: Any) -> Tuple[int, str]:
+    """Validate a non-``None`` ``partition=`` and return ``(max_elements, rule)``.
+
+    One spelling of the :data:`PartitionSpec` vocabulary for all four adders,
+    which each carried a byte-identical inline copy. Factored out for #1550: the
+    gsplats ``lod_group=`` pre-wrapper gate
+    (``gsplats_pipeline/from_data.py::_reject_before_wrapper``) has to judge the
+    same spec one level ABOVE the leaf that consumes it, and a fifth copy there
+    is exactly how the wordings drift apart.
+
+    For Mesh, ``max_elements`` counts **faces**, not vertices. The BSP recurses
+    on face centroids — one triangle is one indivisible unit of the split — so
+    faces are the quantity the cap can actually bound. A part's vertex count is
+    whatever its faces reference (at most ``3 * max_elements``, in practice far
+    less).
+
+    Raises:
+        ValueError: on an out-of-range ``max_elements`` or an unknown ``rule``.
+        TypeError: on anything that is not ``True`` or a dict. The leaf adders'
+            own ``except (ValueError, TypeError)`` funnel converts it to a
+            ``ValueError``, so the caller sees one exception type either way.
+    """
+    if partition is True:
+        return DEFAULT_MAX_ELEMENTS, "median"
+    if isinstance(partition, dict):
+        max_elements = int(partition.get("max_elements", DEFAULT_MAX_ELEMENTS))
+        if max_elements < 1:
+            raise ValueError(f"partition max_elements must be >= 1, got {max_elements}")
+        rule = str(partition.get("rule", "median"))
+        if rule not in ("median", "midpoint", "sah"):
+            raise ValueError(
+                f"partition rule must be 'median', 'midpoint', or 'sah'; got {rule!r}"
+            )
+        return max_elements, rule
+    raise TypeError(
+        f"partition must be None, True, or dict; got {type(partition).__name__}"
+    )
 
 
 # ────────────────────────────────────────────────────────────────────────

@@ -129,12 +129,14 @@ WIDER set from it — see the ``TestAnExplicitNoneMeansAbsent…`` /
 ``TestGSplatsFromDataNodeAttrsGateStillForwardsPartition``, which close the
 present-but-``None``/conflicting-``**attrs`` half of this same door that the
 paragraph here used to record as open.
-The exclusion of ``partition`` still does not extend to its VALUE: an invalid
-partition spec (``partition="nonsense"``, ``partition={"max_elements": 0}``)
-is still refused only from inside ``child_0``, after the ``kind=lod`` wrapper
-is on disk — the spec check lives in the leaf adder, one level below this
-gate, so it is the same stranding shape one door over and needs its own
-change, not a wider exclusion here.
+The exclusion of ``partition`` does not extend to its VALUE, and #1550 closed
+that half separately (``TestGSplatsFromDataRefusesABadPartitionSpecBeforeThe
+Wrapper``, right below the class named above): an invalid spec
+(``partition="nonsense"``, ``partition={"max_elements": 0}``) used to be
+refused only from inside ``child_0``, after the ``kind=lod`` wrapper was on
+disk. The fix was not a wider exclusion — excluding the key is what lets a
+valid spec through — but an explicit call to the leaf's own spec validator,
+now ``partition.resolve_partition_spec``, in the slot right after this gate.
 
 Unlike the #1437/#1446 sections this is not a per-element SLICE hoisted
 upward; it is the SAME pure attrs validator (``validate_render_attrs``) the
@@ -1605,6 +1607,100 @@ class TestGSplatsFromDataNodeAttrsGateStillForwardsPartition:
         assert "Did you mean 'blending_mode'?" in str(split)
         assert "g" not in compiler.store
         assert "g" not in finalized_group_keys(compiler, path)
+
+
+# ---------------------------------------------------------------------------
+# …but its VALUE must still be judged before the wrapper exists (#1550)
+# ---------------------------------------------------------------------------
+
+#: Every shape the ``partition=`` spec vocabulary refuses, one per branch of
+#: ``partition.resolve_partition_spec``. The two non-dict cases matter as much as
+#: the dict ones: the leaf raises ``TypeError`` for them and only its funnel
+#: turns that into a ``ValueError``, so a gate that let the raw ``TypeError``
+#: escape would diverge from the flat path in exception TYPE — which is exactly
+#: what ``assert_same_refusal`` compares, and what a substring-only assertion
+#: would miss.
+_BAD_PARTITION_SPECS = [
+    ("not_a_dict", "nonsense"),
+    ("an_int", 3),
+    ("max_elements_zero", {"max_elements": 0}),
+    ("unknown_rule", {"rule": "bogus"}),
+]
+
+
+class TestGSplatsFromDataRefusesABadPartitionSpecBeforeTheWrapper:
+    """The other half of the exclusion above: the key rides, the value is judged.
+
+    ``partition`` is excluded from the gate's ``validate_render_attrs`` call so a
+    VALID spec can reach each child's own BSP split (the sibling class pins
+    that). Pre-fix that exclusion also carried the INVALID ones through unread,
+    to be refused one level down inside ``child_0`` — by which point
+    ``add_lod_group`` had created the ``kind=lod`` wrapper. Measured on main, all
+    four spec shapes below: ``Could not add gsplats 'child_0': partition must be
+    None, True, or dict; got str`` (and its three siblings), with ``g`` surviving
+    ``finalize()`` as a childless ``kind=lod`` group. Same pair #1529/#1534 closed
+    elsewhere — a wrapper that strands, and a message blaming an internal child
+    for the caller's own kwarg.
+    """
+
+    @pytest.mark.parametrize("case,spec", _BAD_PARTITION_SPECS)
+    def test_a_bad_spec_is_refused_exactly_as_the_flat_path(
+        self, tmp_path: Any, case: str, spec: Any
+    ) -> None:
+        compiler, scene, path = open_scene(tmp_path, f"lg_part_{case}.luxar.zarr")
+        _, flat_scene, _ = open_scene(tmp_path, f"lg_part_{case}_flat.luxar.zarr")
+        data = _multi_substitutive_3d_data()
+
+        flat = refusal(
+            lambda: flat_scene.add_gsplats(
+                "g",
+                centers=data.centers,
+                amplitudes=data.amplitudes,
+                cholesky_factors=data.cholesky_factors,
+                partition=spec,
+            )
+        )
+        split = refusal(
+            lambda: scene.add_gsplats_from_data(
+                "g", data, lod_group=True, partition=spec
+            )
+        )
+
+        assert_same_refusal(flat, split)
+        assert "child_0" not in str(split)
+        assert "g" not in compiler.store
+        # The stranding half, stated separately: the wrapper must not merely be
+        # absent from the live store, it must never reach the delivered scene.
+        assert finalized_group_keys(compiler, path) == set()
+
+    def test_a_valid_spec_is_untouched_by_the_new_check(self, tmp_path: Any) -> None:
+        """The exclusion still has to let a good spec through to the children.
+
+        The negative control for the check above: judging the value must not
+        become judging the key. Same shape as the sibling class's own success
+        case — ``max_elements=2`` splits the 8-splat finest level into 4 parts
+        and leaves the 2-splat coarsest whole.
+        """
+        compiler, scene, path = open_scene(tmp_path, "lg_part_valid.luxar.zarr")
+        data = _multi_substitutive_3d_data()
+
+        node = scene.add_gsplats_from_data(
+            "g", data, lod_group=True, partition={"max_elements": 2}
+        )
+        compiler.finalize()
+
+        assert node is not None
+        store = zarr.open_group(path, mode="r")
+        assert store["g"].attrs.get("kind") == "lod"
+        assert set(store["g"].group_keys()) == {"child_0", "child_1"}
+        partitioned = [
+            c
+            for c in store["g"].group_keys()
+            if store["g"][c].attrs.get("kind") == "partition"
+        ]
+        assert len(partitioned) == 1, (
+            f"expected exactly one partitioned child; got {partitioned}"
+        )
 
 
 # ---------------------------------------------------------------------------

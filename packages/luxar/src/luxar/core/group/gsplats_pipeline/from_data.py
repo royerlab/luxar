@@ -301,6 +301,30 @@ def reject_data_owned_channels(name: str, attrs: Dict[str, Any]) -> None:
             )
 
 
+def reject_bad_partition_spec(attrs: Optional[Dict[str, Any]]) -> None:
+    """Judge ``partition``'s VALUE, which the node-attrs gate cannot (#1550).
+
+    ``partition`` is in :data:`GATE_FORWARDED_LEAF_PARAMS`, so its KEY is
+    excluded from ``validate_render_attrs`` — deliberately, since that exclusion
+    is what lets a valid spec ride into each substitutive child, where it drives
+    that child's own BSP split. An INVALID one rode it too, unread, and was
+    refused only from inside ``child_0``, after ``add_lod_group`` had created
+    the ``kind=lod`` wrapper.
+
+    Calls the leaf adder's own validator for the verdict alone — the resolved
+    cap and rule belong to the child that actually splits — so the message and
+    exception type are byte-identical to the flat path's. Its own function
+    rather than three lines inline purely to keep :func:`_reject_before_wrapper`
+    under the C901 limit the complexity ratchet enforces; it is called from the
+    slot right below the node-attrs gate and nowhere else.
+    """
+    from ..partition import resolve_partition_spec
+
+    partition = (attrs or {}).get("partition")
+    if partition is not None:
+        resolve_partition_spec(partition)
+
+
 def _reject_before_wrapper(
     group: "Group",
     *,
@@ -387,6 +411,20 @@ def _reject_before_wrapper(
     validate again, so it stays the closest thing to a "structural" check this
     function has and the attrs gate outranks it the same way the leaf adder's
     own attrs gate outranks its channel-validator wrappers).
+
+    Immediately below it sits the ``partition``-SPEC check (#1550), the one
+    thing the attrs gate cannot reach: ``partition`` is in
+    :data:`GATE_FORWARDED_LEAF_PARAMS`, so its key is excluded from
+    ``validate_render_attrs`` — deliberately, since that is what lets a VALID
+    spec ride into each child's own BSP split — which left an INVALID one
+    (``partition="nonsense"``, ``{"max_elements": 0}``) judged one level down,
+    inside ``child_0``, with the wrapper already written. Same stranding shape,
+    closed the same way by :func:`reject_bad_partition_spec`, which calls
+    ``partition.resolve_partition_spec`` — the very function the leaf adder
+    calls — for its verdict alone. Directly
+    below the attrs gate because that is the flat path's own order — the leaf
+    validates node attrs at its entry and resolves the spec inside its
+    partition branch, further down.
 
     ``labels`` / ``image_labels`` are the ONE check here with no flat-path
     counterpart (#1471), which is why they come LAST. Both ride into every child
@@ -520,6 +558,10 @@ def _reject_before_wrapper(
             if k not in GATE_FORWARDED_LEAF_PARAMS
         }
         validate_render_attrs(attrs_for_gate, reserved_attrs=GSPLATS_RESERVED_ATTRS)
+        # …and immediately after it, the one thing that exclusion leaves
+        # unjudged: ``partition``'s VALUE (#1550). Same stranding shape this
+        # function exists to prevent, one key over — see the helper.
+        reject_bad_partition_spec(attrs)
         # The leaf's WHOLE colours validator, run against EVERY rung of EVERY
         # level, for the same reason the colours/colormap question above is asked
         # of every level — and below the width, because that is where the flat
