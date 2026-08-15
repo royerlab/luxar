@@ -161,7 +161,12 @@ def normalize_dust_volume(mean: np.ndarray, target_size: int) -> np.ndarray:
 
 
 def load_dust_volume(target_size: int = TARGET_SIZE) -> tuple:
-    """Download (resumable) + load the dust cube, ready for fitting."""
+    """Download (resumable) + load the dust cube, ready for fitting.
+
+    Returns ``(volume, acquisition)``: the fit-ready cube, and the ``(shape,
+    dtype)`` of the HDF5 cube as stored, to be declared to the fit — the cube is a
+    resized, normalized float32 copy of it.
+    """
     h5py = require_module("h5py")
 
     from luxar.utils.download import robust_download

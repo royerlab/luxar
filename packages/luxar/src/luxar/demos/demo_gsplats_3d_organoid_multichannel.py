@@ -183,6 +183,13 @@ def load_multichannel_data():
     biasing K* upward.  Native resolution at this image (≤20M voxels) is
     plenty tractable.
 
+    Returns:
+        tuple: ``(volumes, source_dtype)`` -- one volume per channel, and the
+        element type the store holds, to be declared to the fit so compression is
+        quoted against the acquisition and not the float32 working copy. The
+        dtype is ``None`` on the synthetic fallback path, whose arrays are built
+        here and so are their own source.
+
     Data Source: Image Data Resource (IDR) study idr0062, Image 6001240
     Original Authors: Prisca Liberali lab, FMI
     Citation: Blin et al. (2019) + Williams et al. (2017) Nature Methods 14(8):775-781

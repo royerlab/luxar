@@ -153,7 +153,12 @@ def normalize_map_volume(density: np.ndarray, target_size: int) -> np.ndarray:
 
 
 def load_map_volume(target_size: int = TARGET_SIZE) -> tuple:
-    """Download (resumable) + read the EMDB map, ready for fitting."""
+    """Download (resumable) + read the EMDB map, ready for fitting.
+
+    Returns ``(volume, acquisition)``: the fit-ready cube, and the ``(shape,
+    dtype)`` of the MRC as stored, to be declared to the fit — the cube is a
+    resized, normalized float32 copy of it.
+    """
     mrcfile = require_module("mrcfile")
 
     from luxar.utils.download import robust_download

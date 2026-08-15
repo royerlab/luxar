@@ -46,3 +46,12 @@ A malformed declaration is refused at the call, not stored. Empty, zero,
 negative and non-integer shapes all raise, because this number becomes the
 denominator of a published figure and a bad one would otherwise surface much
 later as a plausible ratio nobody can reproduce.
+
+Every shipped gsplat demo now declares its acquisition, so the compression
+figures those 14 datasets report have changed — upward, and this time against the
+file that was downloaded rather than against the working copy the demo made of
+it. Eleven of them were quoting a denominator of the wrong element type, the
+wrong grid, or both. Which demos still owe a declaration is a test rather than a
+memory: `test_demo_declares_acquisition.py` fails on a demo that fits without
+declaring and is not listed, and equally on a listed demo that has since been
+wired.

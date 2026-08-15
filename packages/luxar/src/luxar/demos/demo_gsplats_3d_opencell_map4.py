@@ -153,14 +153,17 @@ DEVICE = None
 # =============================================================================
 
 
-def load_opencell_data(tiff_path: Path) -> list[np.ndarray]:
+def load_opencell_data(tiff_path: Path) -> tuple[list[np.ndarray], str]:
     """Load the 2-channel OpenCell z-stack.
 
     Args:
         tiff_path: Path to the downloaded OpenCell TIFF.
 
     Returns:
-        List of 2 channel volumes, each float32 normalised to [0, 1].
+        ``(volumes, source_dtype)`` -- 2 channel volumes, each float32 normalised
+        to [0, 1], and the element type the stack was STORED in. The grid is
+        untouched here, so the dtype is all the fit needs to quote compression
+        against the acquisition rather than against the float32 working copy.
     """
     tifffile = require_module("tifffile")
 

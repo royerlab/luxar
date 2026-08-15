@@ -144,7 +144,11 @@ def load_cells3d():
     """Load cells3d dataset from scikit-image.
 
     Returns:
-        list[np.ndarray]: One 3D volume per channel, shape (Z, Y, X), float32 [0, 1].
+        tuple: ``(volumes, source_dtype)`` -- one 3D volume per channel, shape
+        (Z, Y, X), float32 [0, 1], and the element type the data was STORED in.
+        The grid is untouched here, so only the dtype has to be declared to the
+        fit; without it the compression ratio is quoted against the float32
+        working copy rather than the acquisition.
     """
     with asection("Loading cells3d dataset"):
         cells3d = require_module("skimage.data").cells3d

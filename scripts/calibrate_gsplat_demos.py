@@ -129,7 +129,11 @@ def _load_dapi() -> list[tuple[str, np.ndarray]]:
 
 def _load_kidney_layers() -> list[tuple[str, np.ndarray]]:
     mod = _import_demo("demo_gsplats_3d_kidney_multichannel_layers")
-    vols = mod.load_kidney()
+    # A loader that declares an acquisition to the fitter hands it back beside the
+    # volumes; calibration only ever sees the working copy, so it is dropped here.
+    # Unpacked explicitly rather than tolerantly: skip it and `enumerate` walks the
+    # 2-tuple instead, making the dtype string a second "channel".
+    vols, _source_dtype = mod.load_kidney()
     return [(f"ch{i}", v) for i, v in enumerate(vols)]
 
 
@@ -146,13 +150,13 @@ def _load_acto3d() -> list[tuple[str, np.ndarray]]:
 
 def _load_organoid_multi() -> list[tuple[str, np.ndarray]]:
     mod = _import_demo("demo_gsplats_3d_organoid_multichannel")
-    vols = mod.load_multichannel_data()
+    vols, _source_dtype = mod.load_multichannel_data()
     return [(f"ch{i}", v) for i, v in enumerate(vols)]
 
 
 def _load_cells3d() -> list[tuple[str, np.ndarray]]:
     mod = _import_demo("demo_gsplats_3d_cells3d_multichannel")
-    vols = mod.load_cells3d()
+    vols, _source_dtype = mod.load_cells3d()
     return [(f"ch{i}", v) for i, v in enumerate(vols)]
 
 
@@ -161,7 +165,7 @@ def _load_opencell() -> list[tuple[str, np.ndarray]]:
     cache = mod.CACHE_DIR / "opencell_map4_stack.tif"
     if not cache.exists():
         cache = mod.download_opencell_map4()
-    vols = mod.load_opencell_data(cache)
+    vols, _source_dtype = mod.load_opencell_data(cache)
     return [(f"ch{i}", v) for i, v in enumerate(vols)]
 
 
@@ -215,7 +219,7 @@ def _load_zebrafish() -> list[tuple[str, np.ndarray]]:
 def _load_cmu1_pathology_tile() -> list[tuple[str, np.ndarray]]:
     """Calibrate on a single representative tile-sized crop of the RGB image."""
     mod = _import_demo("demo_gsplats_2d_cmu1_pathology")
-    channels = mod.load_cmu1_image()
+    channels, _acquisition = mod.load_cmu1_image()
     tile = mod.TILE_SIZE
     samples = []
     for i, ch in enumerate(channels):

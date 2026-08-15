@@ -241,11 +241,15 @@ def download_head_slices() -> Path:
     return PNG_DIR
 
 
-def assemble_volume(png_dir: Path, target_max_dim: int = TARGET_MAX_DIM) -> np.ndarray:
+def assemble_volume(
+    png_dir: Path, target_max_dim: int = TARGET_MAX_DIM
+) -> tuple[np.ndarray, tuple]:
     """Load the head PNGs into a masked, cropped, downsampled RGB volume.
 
-    Returns a (Z, Y, X, 3) float32 array in [0, 1] with the blue gel / ruler
-    background zeroed out.
+    Returns ``(vol, acquisition)``: a (Z, Y, X, 3) float32 array in [0, 1] with
+    the blue gel / ruler background zeroed out, and the ``(shape, dtype)`` of the
+    PNG stack as downloaded, to be declared to the fit — ``vol`` is a cropped,
+    masked and resampled copy of it.
     """
     from PIL import Image
     from scipy import ndimage
@@ -265,8 +269,8 @@ def assemble_volume(png_dir: Path, target_max_dim: int = TARGET_MAX_DIM) -> np.n
             vol[i] = a[:cut]
         # The acquisition is the PNG stack as downloaded: 8-bit RGB at full
         # slice resolution, before the ruler crop, the masking and the
-        # physically-isotropic resample below. `first` is read undecoded above,
-        # so its dtype is the stored one.
+        # physically-isotropic resample below. `first` is read above without the
+        # float cast the loop applies, so its dtype is the stored one.
         acquisition = (
             (len(paths), first.shape[0], first.shape[1], 3),
             str(first.dtype),

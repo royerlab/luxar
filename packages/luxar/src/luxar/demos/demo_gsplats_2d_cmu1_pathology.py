@@ -199,7 +199,10 @@ def load_cmu1_image() -> tuple:
     (brightfield), and normalises.
 
     Returns:
-        List of 3 channel images (2D float32, normalised to [0, 1]).
+        ``(channels, acquisition)`` -- 3 channel images (2D float32, normalised to
+        [0, 1]), and the ``(shape, dtype)`` of ONE channel of the slide page as
+        read, to be declared to the fit: the images handed back are a resized,
+        inverted float32 copy of it.
     """
     tifffile = require_module("tifffile")
 

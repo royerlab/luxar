@@ -179,10 +179,12 @@ def load_zebrafish_volumes() -> tuple:
     """Download and load the zebrafish LSM as a list of 3D volumes.
 
     Returns:
-        Tuple of (volumes, voxel_size_zyx, time_indices):
+        Tuple of (volumes, voxel_size_zyx, time_indices, acquisition):
         - volumes: List of 3D float32 volumes, one per timepoint, each normalised to [0, 1].
         - voxel_size_zyx: Tuple of (Z, Y, X) voxel spacing in micrometres, or None.
         - time_indices: List of source frame indices used (for cache key stability).
+        - acquisition: ``(shape, dtype)`` of ONE stored timepoint, declared to the
+          fit — every volume above is a normalised, possibly resized copy of one.
     """
     tifffile = require_module("tifffile")
 
@@ -245,11 +247,13 @@ def load_zebrafish_volumes() -> tuple:
             f"(stride={stride}, indices={time_indices[0]}..{time_indices[-1]})"
         )
 
+        # The acquisition grid + stored type of one timepoint, taken before the
+        # normalization and the optional resize in the loop below. Every timepoint
+        # shares the grid, so it is read once here rather than per iteration.
+        acquisition = (tuple(int(x) for x in raw.shape[1:]), str(raw.dtype))
+
         volumes = []
         for t in time_indices:
-            # Per-timepoint acquisition grid + stored type, before the
-            # normalization and the optional resize below.
-            acquisition = (tuple(int(x) for x in raw[t].shape), str(raw.dtype))
             V = raw[t].astype(np.float32)
             # Normalise to [0, 1]
             vmin, vmax = V.min(), V.max()
