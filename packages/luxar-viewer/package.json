@@ -116,7 +116,7 @@
     "@types/node": "^26.2.0",
     "@types/three": "~0.185.1",
     "@typescript-eslint/eslint-plugin": "^8.65.0",
-    "@typescript-eslint/parser": "^8.65.0",
+    "@typescript-eslint/parser": "^8.67.0",
     "@vitest/coverage-v8": "~4.1.5",
     "@vitest/ui": "~4.1.5",
     "@zarrita/storage": "^0.2.0",
