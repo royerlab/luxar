@@ -319,10 +319,14 @@ class TestPrecomputedRoundTrip:
             "tracks": {
                 "point_positions": rng.uniform(size=(n_pts, 4)).astype(np.float32),
                 "point_colors": rng.uniform(size=(n_pts, 3)).astype(np.float32),
-                "point_radii": np.full(n_pts, 2.6, np.float32),
+                # Deliberately NOT the shipped constants: the loader re-derives
+                # both from CELL_MARKER_RADIUS_UM / TRACK_WIDTH_UM, and a fixture
+                # that already matched them could not tell that apart from a
+                # faithful round-trip. See test_sizes_are_rederived_not_stored.
+                "point_radii": np.full(n_pts, 9.5, np.float32),
                 "line_vertices": rng.uniform(size=(n_verts, 4)).astype(np.float32),
                 "line_colors": rng.uniform(size=(n_verts, 3)).astype(np.float32),
-                "line_widths": np.full(n_verts, 0.7, np.float32),
+                "line_widths": np.full(n_verts, 9.5, np.float32),
                 "line_indices": rng.integers(
                     0, n_verts, size=(n_edges, 2), dtype=np.uint32
                 ),
@@ -374,11 +378,39 @@ class TestPrecomputedRoundTrip:
         assert got["extent_um"] == pytest.approx(104.0)
         assert got["n_timepoints"] == 4
         assert got["lod"].n_splats == original["lod"].n_splats
+        # `point_radii` / `line_widths` are appearance re-derived from constants,
+        # not data — they are covered by test_sizes_are_rederived_not_stored.
+        rederived = {"point_radii", "line_widths"}
         for key, want in original["tracks"].items():
+            if key in rederived:
+                continue
             if isinstance(want, int):
                 assert got["tracks"][key] == want, key
             else:
                 np.testing.assert_allclose(got["tracks"][key], want, err_msg=key)
+
+    def test_sizes_are_rederived_not_stored(self, tmp_path) -> None:
+        """Retuning marker/track size must not require re-uploading the bundle.
+
+        Both fields are uniform, so they carry no measured information; storing
+        them would pin appearance to a 0.68 GB hosted artifact. The staged crop
+        carries 9.5 for both — the loader must return the constants instead, at
+        the payload's own lengths.
+        """
+        original = self._crop()
+        cache_root, written = self._stage(original, tmp_path)
+        (got,) = _demo.load_precomputed_crops(
+            ["crop_x"], manifest=self._manifest(written), cache_root=cache_root
+        )
+        tracks = got["tracks"]
+
+        assert np.all(tracks["point_radii"] == _demo.CELL_MARKER_RADIUS_UM)
+        assert np.all(tracks["line_widths"] == _demo.TRACK_WIDTH_UM)
+        # The stored values really were different, so this is not vacuous.
+        assert not np.allclose(tracks["line_widths"], original["tracks"]["line_widths"])
+        # One entry per element, matching the geometry that WAS loaded.
+        assert len(tracks["point_radii"]) == len(tracks["point_positions"])
+        assert len(tracks["line_widths"]) == len(tracks["line_vertices"])
 
     def test_window_is_rederived_not_stored(self, tmp_path) -> None:
         """The display window follows the hosted amplitudes, per display_window."""

@@ -272,10 +272,19 @@ def display_window(amplitudes: np.ndarray) -> tuple[float, float]:
     return 1.0 / span, -lo / span
 
 
-# Nuclei in these crops are ~8 um across; a marker a bit under half that reads as
-# "this cell is tracked" without hiding the splatted nucleus underneath it.
-CELL_MARKER_RADIUS_UM = 2.6
-TRACK_WIDTH_UM = 0.7
+# Nuclei in these crops are ~8 um across. A marker at ~1/6 of that flags "this
+# cell is tracked" as a dot ON the nucleus rather than a ball covering it — at
+# half the nucleus width the markers dominated the 3x3 framing and hid the very
+# splats they annotate.
+CELL_MARKER_RADIUS_UM = 1.3
+
+# Tracks are context, not the subject: at 0.7 um and fully opaque they read as a
+# solid cage over the embryo, and in a 3x3 matrix (each tile ~1/9 of the screen)
+# that cage is most of what you see. Thin enough to sit between nuclei — median
+# nearest-neighbour spacing is 1.84 um — and translucent enough that the splatted
+# volume shows through where trajectories bundle.
+TRACK_WIDTH_UM = 0.35
+TRACK_OPACITY = 0.15
 
 FLAGS = parse_demo_flags()
 N_DATASETS = parse_int_arg("datasets", len(DATASETS))
@@ -392,7 +401,14 @@ def load_precomputed_crops(
 
 
 def _crop_from_precomputed(dataset: str, volume: Path, tracks: Path) -> dict:
-    """Rehydrate one crop dict from its two hosted files."""
+    """Rehydrate one crop dict from its two hosted files.
+
+    Marker radius and track width are re-derived from the constants rather than
+    read back from the payload. Both are uniform (``np.full`` of one constant),
+    so they carry no measured information — but stored, they would make retuning
+    the look require re-uploading the whole hosted set. Only the geometry that
+    was actually derived from the data is loaded.
+    """
     lod = GSplatData.load(volume, include_stats=False)
     with np.load(tracks) as npz:
         payload = {k: npz[k] for k in npz.files}
@@ -408,10 +424,14 @@ def _crop_from_precomputed(dataset: str, volume: Path, tracks: Path) -> dict:
         "tracks": {
             "point_positions": payload["point_positions"],
             "point_colors": payload["point_colors"],
-            "point_radii": payload["point_radii"],
+            "point_radii": np.full(
+                len(payload["point_positions"]), CELL_MARKER_RADIUS_UM, np.float32
+            ),
             "line_vertices": payload["line_vertices"],
             "line_colors": payload["line_colors"],
-            "line_widths": payload["line_widths"],
+            "line_widths": np.full(
+                len(payload["line_vertices"]), TRACK_WIDTH_UM, np.float32
+            ),
             "line_indices": payload["line_indices"],
             "n_lineages": int(payload["n_lineages"][0]),
             "n_cells": int(payload["n_cells"][0]),
@@ -1021,6 +1041,7 @@ Navigation:
                     dim_order=["z", "y", "x", "time"],
                     extend_to_all=["time"],
                     blending_mode="normal",
+                    opacity=TRACK_OPACITY,
                 )
                 group.add_points(
                     "cells",
