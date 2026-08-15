@@ -116,6 +116,30 @@ def _tile_norm_range(
     return (0.0, hi)
 
 
+def _ensure_tile_norm_range(
+    volume: Any,
+    fit_kwargs: dict[str, Any],
+    applied_floor: "float | None",
+    verbose: bool = False,
+) -> None:
+    """Resolve the shared range into ``fit_kwargs`` unless someone already has.
+
+    The orchestrator resolves it once and passes it down, so a per-tile worker
+    does not re-read the volume; a standalone :func:`fit_tile` has nobody to
+    inherit from and resolves it itself. The answer may legitimately be ``None``
+    — no usable shared scale, each tile derives its own (see
+    :func:`_tile_norm_range`) — which a plain ``norm_range is None`` test cannot
+    tell from "nobody has looked yet", hence the private already-resolved
+    marker. It is popped rather than forwarded, like the other
+    underscore-prefixed tile-internal keys.
+    """
+    already_resolved = fit_kwargs.pop("_norm_range_resolved", False)
+    if not already_resolved and fit_kwargs.get("norm_range") is None:
+        fit_kwargs["norm_range"] = _tile_norm_range(
+            volume, fit_kwargs, applied_floor, verbose=verbose
+        )
+
+
 def fit_tile(
     volume: Any,
     spec: TileSpec,
@@ -218,21 +242,16 @@ def fit_tile(
     # under criteria (convergence tolerance, seeding and culling thresholds)
     # that are all absolute in the normalized [0, 1] range, so the same
     # physical structure is resolved to a different accuracy in each tile.
-    # Only resolve it when the caller has not already done so (the orchestrator
-    # resolves it once and passes it down, so per-tile workers do not re-read
-    # the volume). Its answer may legitimately be None — no usable shared scale,
-    # this tile derives its own (see `_tile_norm_range`) — which a plain
-    # `norm_range is None` test cannot tell from "nobody has looked yet", hence
-    # the private already-resolved marker. It is popped here rather than
-    # forwarded, like the other underscore-prefixed tile-internal keys.
-    _norm_range_resolved = fit_kwargs.pop("_norm_range_resolved", False)
-    if not _norm_range_resolved and fit_kwargs.get("norm_range") is None:
-        fit_kwargs["norm_range"] = _tile_norm_range(
-            volume,
-            fit_kwargs,
-            applied_floor,
-            verbose=bool(fit_kwargs.get("verbose", False)),
-        )
+    # Only resolve it when the caller has not already done so — see
+    # `_ensure_tile_norm_range`. A standalone worker resolving its own is
+    # exactly where you want the resolved number logged, to confirm that every
+    # worker of a `--tile k/M` run agreed on it.
+    _ensure_tile_norm_range(
+        volume,
+        fit_kwargs,
+        applied_floor,
+        verbose=bool(fit_kwargs.get("verbose", False)),
+    )
 
     # 1. Extract tile subvolume (materializes from zarr if needed)
     tile_data = np.asarray(volume[spec.slices], dtype=np.float32)

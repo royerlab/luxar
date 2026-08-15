@@ -117,11 +117,18 @@ def initialize_optimization(
         amps0 = preprocessed_data.V_normalized[tuple(idx.T)]
 
     # Auto-determine amp_max if not specified
-    # Default: 1.0 (matches max value in normalized [0, 1] image)
-    # This prevents amplitude explosion during optimization
+    # Default: the normalized image's own peak, which is exactly 1.0 whenever
+    # the normalization derived its range from THIS array (that array's max IS
+    # the ceiling by construction). A SUPPLIED whole-volume `norm_range` (tiled
+    # fitting) is a bounded-sample estimate and deliberately leaves a brighter
+    # voxel unclipped, so a hard 1.0 here would clamp — with zero gradient
+    # above the cap — precisely the peak that unclipped scale exists to
+    # preserve. Tracking the peak keeps the "no amplitude explosion" bound: an
+    # amplitude still cannot exceed the data's own maximum.
     amp_max = config.amp_max
     if amp_max is None:
-        amp_max = 1.0
+        peak = float(np.max(preprocessed_data.V_normalized))
+        amp_max = max(1.0, peak) if np.isfinite(peak) else 1.0
         if config.verbose:
             aprint(f"Using auto amp_max={amp_max} (prevents amplitude explosion)")
 
