@@ -322,6 +322,7 @@ def load_volume(
     timepoint: Optional[int] = None,
     array_key: Optional[str] = None,
     axes: Optional[str] = None,
+    info: Optional[Dict[str, Any]] = None,
 ) -> np.ndarray:
     """CLI wrapper around :func:`luxar.io.volume.load_volume`.
 
@@ -339,6 +340,7 @@ def load_volume(
             timepoint=timepoint,
             array_key=array_key,
             axes=axes,
+            info=info,
         )
     except ImportError as exc:
         aprint(str(exc))

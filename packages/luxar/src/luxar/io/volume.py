@@ -252,12 +252,29 @@ def _apply_axes_spec(
     return np.asarray(arr[tuple(index)])
 
 
+def _record_source_dtype(info: Optional[dict], volume: Any) -> None:
+    """Record the STORED element type of ``volume`` into ``info``, if requested.
+
+    Must be called BEFORE the loader's float32 cast — the last point at which
+    the on-disk element type still exists (it is the honest denominator of any
+    compression ratio quoted about a fit of this volume). Reads
+    ``getattr(volume, "dtype", None)`` rather than ``np.asarray(volume).dtype``
+    so a lazy zarr array is not materialized just to be measured.
+    """
+    if info is None:
+        return
+    src_dtype = getattr(volume, "dtype", None)
+    if src_dtype is not None:
+        info["source_dtype"] = str(np.dtype(src_dtype))
+
+
 def load_volume(
     path: Path,
     channel: Optional[int] = None,
     timepoint: Optional[int] = None,
     array_key: Optional[str] = None,
     axes: Optional[str] = None,
+    info: Optional[dict] = None,
 ) -> np.ndarray:
     """Load a volume from various file formats.
 
@@ -281,6 +298,13 @@ def load_volume(
             the positional TCZYX/CZYX/ZYX heuristic — for data whose axis order
             differs. Time/channel axes are sliced (by ``timepoint``/``channel``)
             and dropped; spatial axes are kept in the given order.
+        info: Optional dict, populated with ``source_dtype`` — the element type
+            of the array AS STORED, captured before the float32 cast below.
+            This is the only place it is knowable: the returned array is always
+            float32, so a consumer that wants to quote a size (e.g. the
+            denominator of a compression ratio) would otherwise describe the
+            working copy and overstate it by the cast's inflation factor —
+            exactly 2x for the 16-bit acquisitions most microscopy produces.
 
     Returns:
         Volume as float32 numpy array (>=2D)
@@ -341,6 +365,10 @@ def load_volume(
             ) from exc
         aprint(f"Loading via imageio: {path.name}")
         volume = iio.imread(str(path))
+
+    # Record the STORED element type before the float32 cast below — the last
+    # point at which it exists.
+    _record_source_dtype(info, volume)
 
     # Explicit axis spec (overrides the positional heuristic): slice/drop the
     # time & channel axes and keep the spatial axes in the given order.

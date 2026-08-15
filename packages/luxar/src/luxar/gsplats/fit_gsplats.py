@@ -145,6 +145,7 @@ class GaussianSplatFitter:
         iter_callback: Optional[Any] = None,
         iter_callback_every: int = 25,
         seed_amps_background_relative: bool = False,
+        source_dtype: Optional[str] = None,
         **seed_kwargs: Any,
     ) -> GSplatData:
         """
@@ -226,6 +227,7 @@ class GaussianSplatFitter:
             sort_splats_interval=sort_splats_interval,
             iter_callback=iter_callback,
             iter_callback_every=iter_callback_every,
+            source_dtype=source_dtype,
             **seed_kwargs,
         )
 
@@ -321,6 +323,8 @@ def fit_gaussian_splats(
     iter_callback: Optional[Any] = None,
     iter_callback_every: int = 25,
     seed_amps_background_relative: bool = False,
+    # Element type of the volume as it was ACQUIRED / stored on disk
+    source_dtype: Optional[str] = None,
     **seed_kwargs: Any,
 ) -> GSplatData:
     """
@@ -587,6 +591,14 @@ def fit_gaussian_splats(
         active ``floor`` be subtracted twice, initializing every seed dimmer than
         the floor to exactly 0; declaring True on raw amplitudes starts every
         seed too bright by ``floor / intensity_range`` (#1172).
+    source_dtype : str or None, default=None
+        Element type of the volume as it was ACQUIRED (e.g. ``"uint16"``), when
+        that differs from ``V.dtype``. Recorded in ``stats["source_dtype"]`` /
+        ``stats["source_bytes"]`` — the honest denominator of a compression
+        ratio. Pass it when the volume has already been cast to float before
+        reaching here (as ``luxar.io.volume.load_volume`` does), otherwise the
+        recorded source size describes the float working copy and overstates
+        compression by the cast's inflation factor. If None, ``V.dtype`` is used.
 
     Returns
     -------
@@ -661,6 +673,7 @@ def fit_gaussian_splats(
             sort_splats_interval=sort_splats_interval,
             iter_callback=iter_callback,
             iter_callback_every=iter_callback_every,
+            source_dtype=source_dtype,
             **seed_kwargs,
         )
 

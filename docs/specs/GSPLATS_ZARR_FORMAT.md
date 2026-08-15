@@ -564,6 +564,42 @@ The `fitting/` group is **optional** and designed to be **fitter-agnostic**. Dif
 1. Always read common fields from `fitting/.zattrs`
 2. Only interpret `fitting/config/.zattrs` if they recognize the `fitter_name`
 
+**Source grid** (fitting/.zattrs, optional) — what the splats are a
+representation *of*, so that "how much did this compress?" is answerable from
+the artifact alone:
+
+```json
+{
+  "source_shape": [24, 32, 32],
+  "source_dtype": "uint16",
+  "source_voxels": 24576,
+  "source_bytes": 49152,
+  "fitted_shape": [12, 16, 16],
+  "fitted_voxels": 3072,
+  "occupancy": 0.02197,
+  "voxels_per_splat": 205.0
+}
+```
+
+`source_*` describes the volume as handed to the fitter, in the element type it
+was **stored** in — `source_bytes` is the honest denominator of a compression
+ratio, and a 16-bit acquisition must not be recorded as the float32 the fitter
+works in. `fitted_*` is the grid actually optimised against, which differs when
+the fit downscaled first; collapsing the two would overstate compression by the
+downscale factor cubed. `occupancy` is the fraction of fitted voxels carrying
+signal — above 1% of the normalized intensity range — a ratio means something
+quite different at 0.03% occupancy than at 50%. (A bare "above the subtracted
+background floor" test would instead measure camera noise: the floor sits at the
+background's own level, so roughly half of a noisy background is above it.) The
+threshold is relative to the fit's own normalization, so a fit that did not
+suppress its background counts that background as occupied — which is what it
+spent splats on.
+`voxels_per_splat` is `fitted_voxels` over the splat count **at the end of the
+fit**, so it predates any post-fit culling.
+
+Absent on datasets written before these keys existed; readers should report
+nothing rather than infer a source grid from the bounding box.
+
 ### Pipeline Group Attributes (Optional)
 
 The `pipeline/` group records the reduction/topology provenance of a dataset —
