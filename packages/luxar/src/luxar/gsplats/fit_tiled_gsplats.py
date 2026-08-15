@@ -19,7 +19,10 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar.gsplats.fit_gsplats import fit_gaussian_splats
-from luxar.gsplats.fitting.preprocessing import resolve_volume_floor
+from luxar.gsplats.fitting.preprocessing import (
+    resolve_volume_floor,
+    resolve_volume_norm_range,
+)
 from luxar.gsplats.fitting.validation import _validate_floor
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.tiling import (
@@ -125,6 +128,20 @@ def fit_tile(
     if isinstance(floor_spec, str):
         _validate_floor(floor_spec)
     applied_floor = resolve_volume_floor(volume, floor_spec)
+
+    # Resolve the INTENSITY SCALE against the whole volume too, for the same
+    # reason the floor is: a tile normalized by its own min/max maps a given
+    # physical brightness to a different normalized value than its neighbour,
+    # so identical structure fits to different amplitudes and anything smooth
+    # crossing a tile boundary shows a box-shaped step. Only resolve it when
+    # the caller has not already supplied one (the orchestrator resolves it
+    # once and passes it down, so per-tile workers do not re-read the volume).
+    if fit_kwargs.get("norm_range") is None:
+        fit_kwargs["norm_range"] = resolve_volume_norm_range(
+            volume,
+            fit_kwargs.get("norm_percentile", 0.0),
+            subtract=applied_floor,
+        )
 
     # 1. Extract tile subvolume (materializes from zarr if needed)
     tile_data = np.asarray(volume[spec.slices], dtype=np.float32)
@@ -338,6 +355,18 @@ def fit_tiled(
             f"{applied_floor:.6g} from every tile"
         )
     fit_kwargs["floor"] = applied_floor if applied_floor is not None else "none"
+
+    # Same treatment for the intensity scale: resolve ONCE here so every tile
+    # shares it, rather than letting each tile normalize by its own extremes.
+    # `fit_tile` would resolve it per tile otherwise — identical result, but a
+    # bounded volume read per tile instead of one.
+    if fit_kwargs.get("norm_range") is None:
+        fit_kwargs["norm_range"] = resolve_volume_norm_range(
+            volume,
+            fit_kwargs.get("norm_percentile", 0.0),
+            subtract=applied_floor,
+            verbose=verbose,
+        )
 
     volume_shape = tuple(volume.shape)
     specs = compute_tile_specs(volume_shape, tile_size, overlap)
