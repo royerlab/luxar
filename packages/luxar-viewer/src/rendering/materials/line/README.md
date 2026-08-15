@@ -213,11 +213,14 @@ and are projection-invariant anyway.
 All four stages build the join from one source: the visual and pick GLSL vertex
 shaders share `GLSL_LINE_JOIN`'s `luxarLineJoin`, and the visual and pick TSL
 factories share its twin `tslLineJoin` (`_shared/tsl-helpers.ts`). Parity tests
-assert the two backends agree on the VISUAL join — end→start, END–END, and a
-tapered perspective joint (`line-join-*` in the TSL harness) — so a mitred
-joint is not a WebGL2/WebGPU difference. The pick stages run the same helper by
-construction, but no pick fixture carries a slot-bearing joint code, so a
-mitred corner's pick footprint is not pixel-pinned on either backend.
+assert the two backends agree on the VISUAL join — end→start, END–END, a tapered
+perspective joint, a joint across the near plane (the only rendered coverage of
+the two-sided guard: both sides decline, so the mitred render IS the unmitred
+one), and its lowered-cull-plane control, which must differ (`line-join-*` in
+the TSL harness) — so a mitred joint is not a WebGL2/WebGPU difference. The pick
+stages run the same helper by construction, but no pick fixture carries a
+slot-bearing joint code, so a mitred corner's pick footprint is not pixel-pinned
+on either backend.
 
 The wedge was given an automated acceptance measurement before it was
 closed, and that harness stays. `../../../tests/e2e/line-join-artifact.spec.ts`
@@ -507,15 +510,15 @@ at build time and emits a single-branch graph, so a mode flip in
 
 ## Shared helpers from `_shared/`
 
-| Symbol                                                             | Used for                                                                                                                                                                                        |
-| ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `clampGamma(g)`                                                    | `Math.max(0.001, g ?? 1.0)` guard before `1 / gamma` (shared across all eight material constructors).                                                                                           |
-| `CameraAwareMaterial` interface                                    | Implemented so `MaterialManager.updateCameraParams(fov, resolution, isOrtho?)` reaches this material.                                                                                           |
-| `ColormapAwareMaterial` interface                                  | Implemented so `material-colormap-helpers.ts` sets the LUT texture and scalar range through setters.                                                                                            |
-| `GLSL_SANITIZE_FUNCTIONS`                                          | Prepended to the GLSL vertex shader; gives `sanitizePositive` / `sanitizeNonNegative` / `sanitizeAlpha` to clean width/sharpness/alpha inputs against NaN/Inf/out-of-range.                     |
-| `sanitizePositive` / `sanitizeNonNegative` / `sanitizeAlpha` (TSL) | TSL counterparts of the GLSL sanitisers — same contract, called inline in the factory.                                                                                                          |
-| `volumetric.ts` constants                                          | `ALPHA_CLAMP` (the `1 − 1/512` cap of the `w(a)` map) + the `S(τ)` series thresholds/coefficients — shared with the point/gsplat volumetric branches so all three geometries agree numerically. |
-| `proxyIUniform(node)`                                              | Wraps each TSL `UniformNode` in an `IUniform`-shaped getter/setter so `material.uniforms.uX.value = Y` lands on `node.value`. No per-render callback bridge.                                    |
+| Symbol                                        | Used for                                                                                                                                                                                        |
+| --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `clampGamma(g)`                               | `Math.max(0.001, g ?? 1.0)` guard before `1 / gamma` (shared across all eight material constructors).                                                                                           |
+| `CameraAwareMaterial` interface               | Implemented so `MaterialManager.updateCameraParams(fov, resolution, isOrtho?)` reaches this material.                                                                                           |
+| `ColormapAwareMaterial` interface             | Implemented so `material-colormap-helpers.ts` sets the LUT texture and scalar range through setters.                                                                                            |
+| `GLSL_SANITIZE_FUNCTIONS`                     | Prepended to the GLSL vertex shader; gives `sanitizePositive` / `sanitizeNonNegative` / `sanitizeAlpha` to clean width/sharpness/alpha inputs against NaN/Inf/out-of-range.                     |
+| `sanitizeNonNegative` / `sanitizeAlpha` (TSL) | TSL counterparts of those two GLSL sanitisers — same contract, called inline in the factory. `sanitizePositive` has no TSL twin: no TSL shader calls it.                                        |
+| `volumetric.ts` constants                     | `ALPHA_CLAMP` (the `1 − 1/512` cap of the `w(a)` map) + the `S(τ)` series thresholds/coefficients — shared with the point/gsplat volumetric branches so all three geometries agree numerically. |
+| `proxyIUniform(node)`                         | Wraps each TSL `UniformNode` in an `IUniform`-shaped getter/setter so `material.uniforms.uX.value = Y` lands on `node.value`. No per-render callback bridge.                                    |
 
 ## `isGammaOne` / `isNoGOG` cross-export
 
