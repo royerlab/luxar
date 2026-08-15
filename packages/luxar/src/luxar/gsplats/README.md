@@ -213,7 +213,7 @@ merged = GSplatData.concatenate(all_tile_results)
 
 **Key properties:**
 - Overlap must satisfy `overlap <= tile_size // 2` to avoid triple tile overlap.
-- The background floor (`floor`, default `"auto"`) is resolved once against the whole volume (never per tile) and subtracted from each raw tile before apodization; on the floor-subtracted data the cosine windows guarantee seamless blending without post-merge pruning. The content-adaptive planner resolves it the same way — one whole-volume level, handed to the density scan and to every box (#1174) — but its boxes are unapodized and the level reaches them as the fit's `floor` argument, so a box lying entirely above the pedestal still normalizes against its own crop minimum (`image_min = max(level, min(crop))`) rather than the level.
+- The background floor (`floor`, default `"auto"`) is resolved once against the whole volume (never per tile) and subtracted from each tile before apodization — on the DENOISED basis when `--denoise` is active, since that is the data the level is subtracted from: `resolve_volume_floor_denoised` keeps the whole-volume level and adds the shift measured on a small bounded denoise probe, which reproduces the non-tiled path's denoised estimate exactly whenever the volume fits the probe budget (#1178); on the floor-subtracted data the cosine windows guarantee seamless blending without post-merge pruning. The content-adaptive planner resolves it the same way — one whole-volume level, handed to the density scan and to every box (#1174) — but its boxes are unapodized and the level reaches them as the fit's `floor` argument, so a box lying entirely above the pedestal still normalizes against its own crop minimum (`image_min = max(level, min(crop))`) rather than the level.
 - The intensity scale gets the same treatment: `resolve_volume_norm_range` resolves one `(image_min, image_max)` against the whole volume (same bounded sampler and determinism guarantee as the floor) and every tile normalizes with it, so the optimiser's absolute criteria — convergence tolerance, seeding and culling thresholds, `amp_max` — mean the same thing in every tile. `image_min` is pinned at 0 (where floor-subtracted, apodized tile data starts) and a full-range scale carries no ceiling, since it is a bounded *sample* and a brighter voxel is real signal. A tile far dimmer than the volume maximum is therefore held to the same absolute tolerance as the rest of the volume, and converges earlier than it would have on its own scale. Because that unclipped scale can put a voxel above 1.0, the auto `amp_max` follows the normalized peak instead of capping at 1.0 (it stays 1.0 exactly whenever the range came from the array itself, so a whole-volume fit is unaffected). Because the bottom is pinned, a `norm_percentile > 0` keeps its bright-outlier clipping under tiling but not its low-end clipping. Where the measurement carries no usable scale — a non-finite top, a top with no positive extent (the sample landed in empty or masked space), or a top the applied floor reaches — every tile falls back to its own scale with a printed note, rather than being handed a zero, negative or epsilon range to divide by. A volume that is honestly dim is not one of those cases and keeps its shared scale. Uniform tiling only — the content-adaptive planner's boxes still normalize against their own crop.
 - `fit_tile` rejects explicit seed arrays (use int count, float ratio, or None).
 - zarr arrays are supported for out-of-core processing -- only one tile is materialized at a time.
@@ -973,8 +973,13 @@ Main fitting function with automatic optimizations.
 Tiled fitting for large volumes that exceed GPU memory. Splits the volume into
 overlapping tiles with Hann cosine apodization, fits each tile independently,
 and concatenates results. The background floor is resolved once against the
-whole volume and subtracted from each raw tile before windowing (floor
-subtraction and apodization do not commute); the partition-of-unity property
+whole volume and subtracted from each tile before windowing (floor
+subtraction and apodization do not commute) — on the denoised basis when
+per-tile denoising is active, so `--denoise` removes the same pedestal here as
+it does on the non-tiled path — exactly so within the bounded probe's budget,
+approximately above it, and not at all (the raw-basis level is kept, with a
+note) where the probe disagrees with the whole volume about the raw level
+(#1178); the partition-of-unity property
 then eliminates seam artifacts. The normalization range is resolved once
 against the whole volume too (`resolve_volume_norm_range`), so every tile is
 fitted on one shared intensity scale — see the tiling key-properties list

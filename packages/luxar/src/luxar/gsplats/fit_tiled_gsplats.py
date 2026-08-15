@@ -4,10 +4,13 @@
 Splits a volume into overlapping tiles with cosine (Hann) apodization,
 fits Gaussian splats independently per tile, and concatenates results.
 The background floor is resolved once against the whole volume and
-subtracted from each raw tile *before* apodization (floor subtraction and
+subtracted from each tile *before* apodization (floor subtraction and
 windowing do not commute); on the floor-subtracted data the Hann
 partition-of-unity property then ensures seamless blending without
-post-merge pruning.
+post-merge pruning. When per-tile denoising is active, the level is resolved
+on the DENOISED basis (``resolve_volume_floor_denoised``), because that is
+the data it is subtracted from — matching what the non-tiled path, which
+denoises the whole volume first, estimates (#1178).
 """
 
 from __future__ import annotations
@@ -21,7 +24,7 @@ from arbol import aprint, asection
 from luxar.gsplats.fit_gsplats import fit_gaussian_splats
 from luxar.gsplats.fitting.preprocessing import (
     NORM_RANGE_MIN_SPAN,
-    resolve_volume_floor,
+    resolve_volume_floor_denoised,
     resolve_volume_norm_range,
 )
 from luxar.gsplats.fitting.validation import _validate_floor
@@ -153,8 +156,9 @@ def fit_tile(
 ) -> GSplatData:
     """Fit Gaussian splats on a single tile of a larger volume.
 
-    Extracts the tile subvolume, subtracts the background floor (resolved
-    against the *whole* volume, never the tile), applies cosine apodization,
+    Extracts the tile subvolume, optionally denoises it, subtracts the
+    background floor (resolved against the *whole* volume, never the tile, and
+    on the denoised basis when denoising is active), applies cosine apodization,
     fits splats, and translates centers to global volume coordinates. This is
     the atomic unit for tiled fitting — each call is independent and
     Slurm-ready.
@@ -192,9 +196,13 @@ def fit_tile(
         semantics.
         ``floor`` (default ``"auto"``) is intercepted here: a spec string is
         resolved once against the whole ``volume`` via
-        :func:`~luxar.gsplats.fitting.preprocessing.resolve_volume_floor`
+        :func:`~luxar.gsplats.fitting.preprocessing.resolve_volume_floor_denoised`
         (so independent tile workers agree on one level), with the
-        "would erase all signal" guard applied. A numeric value is taken at
+        "would erase all signal" guard applied. With ``_denoise_h`` /
+        ``_denoise_params`` in ``fit_kwargs`` that resolution happens on the
+        DENOISED basis — the tile is denoised before the level is subtracted, so
+        a raw-basis level would remove a different pedestal than the non-tiled
+        path does (#1178). A numeric value is taken at
         face value — the caller is expected to have guarded it (as
         :func:`fit_tiled` does with ``guard_numeric=True``; the single-tile CLI
         worker deliberately does NOT, so one level resolved by its parent
@@ -235,7 +243,22 @@ def fit_tile(
     floor_spec = fit_kwargs.pop("floor", "auto")
     if isinstance(floor_spec, str):
         _validate_floor(floor_spec)
-    applied_floor = resolve_volume_floor(volume, floor_spec)
+    # Denoising is applied to the tile BELOW, before the level is subtracted, so
+    # a volume-derived spec must be resolved on the DENOISED basis or this path
+    # removes a different pedestal than `--tiling none` does (#1178). The
+    # denoise keys are only PEEKED at here: they are popped further down, after
+    # the tile has been extracted.
+    applied_floor = resolve_volume_floor_denoised(
+        volume,
+        floor_spec,
+        denoise_h=fit_kwargs.get("_denoise_h"),
+        denoise_params=fit_kwargs.get("_denoise_params"),
+        # A standalone worker's resolved level is exactly what you want in its
+        # log, to confirm every `--tile k/M` worker agreed on the same one. Only
+        # for a SPEC, though: under `fit_tiled` the level is already resolved and
+        # arrives as a number, and re-announcing it once per tile is pure noise.
+        verbose=bool(fit_kwargs.get("verbose", False)) and isinstance(floor_spec, str),
+    )
 
     # Resolve the INTENSITY SCALE against the whole volume too, for the same
     # reason the floor is: a tile normalized by its own extremes is fitted
@@ -386,9 +409,11 @@ def fit_tiled(
     Splits the volume into overlapping tiles with cosine apodization
     (Hann window), fits each tile independently, and merges results.
     The background floor (``floor`` in ``fit_kwargs``, default ``"auto"``)
-    is resolved once against the whole volume and subtracted from each raw
-    tile before windowing; on the floor-subtracted data the Hann
-    partition-of-unity property guarantees seamless blending.
+    is resolved once against the whole volume and subtracted from each tile
+    before windowing; on the floor-subtracted data the Hann
+    partition-of-unity property guarantees seamless blending. When per-tile
+    denoising is active (``_denoise_h`` / ``_denoise_params``), the level is
+    resolved on the denoised basis, matching the non-tiled path (#1178).
 
     When ``progressive=True``, each tile is fitted using progressive
     residual decomposition, producing a multi-LOD result where LODs are
@@ -458,7 +483,28 @@ def fit_tiled(
     # path, which warns and ignores such a floor).
     floor_spec = fit_kwargs.pop("floor", "auto")
     _validate_floor(floor_spec)
-    applied_floor = resolve_volume_floor(volume, floor_spec, guard_numeric=True)
+    # Every tile is denoised before the level is subtracted, so a volume-derived
+    # spec is resolved on the DENOISED basis (#1178) — otherwise this path
+    # removes a different pedestal than `--tiling none` does on the same input.
+    # PEEK at the denoise keys: `fit_kwargs` is forwarded to `fit_tile`, which
+    # pops them itself.
+    applied_floor = resolve_volume_floor_denoised(
+        volume,
+        floor_spec,
+        denoise_h=fit_kwargs.get("_denoise_h"),
+        denoise_params=fit_kwargs.get("_denoise_params"),
+        guard_numeric=True,
+        # Log the DENOISED basis the level was resolved on (raw level + the
+        # measured shift) — the one number the summary line below cannot show.
+        # Nothing extra is logged with denoise off, or for a numeric level: the
+        # summary already echoes that.
+        verbose=(
+            verbose
+            and isinstance(floor_spec, str)
+            and fit_kwargs.get("_denoise_h") is not None
+            and fit_kwargs.get("_denoise_params") is not None
+        ),
+    )
     if verbose and applied_floor is not None:
         aprint(
             f"Floor suppression: subtracting background level "

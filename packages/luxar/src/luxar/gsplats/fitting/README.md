@@ -156,8 +156,18 @@ The fitting pipeline orchestrates the entire process of fitting n-dimensional Ga
    fixed, `none` = disabled. Whole-volume/tiled floor resolution reads at most
    `FLOOR_SAMPLE_BUDGET_VOXELS` from deterministic contiguous slabs; oversized
    cross-sections are center-cropped along additional axes rather than exceeding
-   that hard budget. The subtracted level is recorded on `PreprocessedData.floor`;
-   it is NOT added back (output amplitudes are background-relative).
+   that hard budget. When the caller denoises before subtracting the level (the
+   tiled paths denoise each tile), `resolve_volume_floor_denoised` corrects the
+   whole-volume level onto the denoised basis using a bounded
+   (`DENOISE_PROBE_BUDGET_VOXELS`) denoise probe, so `--denoise` removes the same
+   pedestal tiled and non-tiled whenever the volume fits the probe budget (the
+   probe is then the whole volume, and the two agree exactly) and an approximation
+   of it above the budget — where the correction is declined outright, keeping the
+   raw-basis level, if the probe does not first reproduce the whole-volume raw
+   estimate (#1178); a numeric/`none` spec is a user absolute and is never
+   corrected. The subtracted level is recorded on
+   `PreprocessedData.floor`; it is NOT added back (output amplitudes are
+   background-relative).
 2. **Normalization**: Converts input to [0, 1] range (floor/percentile-based or full range)
 3. **Seed Generation**: Creates initial splat positions (auto or user-provided)
 4. **Pre-initialized amplitude rescaling**: Brings `init_amps` onto the
