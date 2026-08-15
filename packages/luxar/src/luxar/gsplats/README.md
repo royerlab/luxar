@@ -213,6 +213,7 @@ merged = GSplatData.concatenate(all_tile_results)
 **Key properties:**
 - Overlap must satisfy `overlap <= tile_size // 2` to avoid triple tile overlap.
 - The background floor (`floor`, default `"auto"`) is resolved once against the whole volume (never per tile) and subtracted from each raw tile before apodization; on the floor-subtracted data the cosine windows guarantee seamless blending without post-merge pruning. (This applies to uniform/apodized tiling; the content-adaptive planner currently hands each unapodized box the raw floor spec, so its boxes still estimate per box.)
+- The intensity scale gets the same treatment: `resolve_volume_norm_range` resolves one `(image_min, image_max)` against the whole volume (same bounded sampler and determinism guarantee as the floor) and every tile normalizes with it, so the optimiser's absolute criteria — convergence tolerance, seeding and culling thresholds, `amp_max` — mean the same thing in every tile. `image_min` is pinned at 0 (where floor-subtracted, apodized tile data starts) and a full-range scale carries no ceiling, since it is a bounded *sample* and a brighter voxel is real signal. A tile far dimmer than the volume maximum is therefore held to the same absolute tolerance as the rest of the volume, and converges earlier than it would have on its own scale. Uniform tiling only — the content-adaptive planner's boxes still normalize against their own crop.
 - `fit_tile` rejects explicit seed arrays (use int count, float ratio, or None).
 - zarr arrays are supported for out-of-core processing -- only one tile is materialized at a time.
 
@@ -968,7 +969,10 @@ overlapping tiles with Hann cosine apodization, fits each tile independently,
 and concatenates results. The background floor is resolved once against the
 whole volume and subtracted from each raw tile before windowing (floor
 subtraction and apodization do not commute); the partition-of-unity property
-then eliminates seam artifacts.
+then eliminates seam artifacts. The normalization range is resolved once
+against the whole volume too (`resolve_volume_norm_range`), so every tile is
+fitted on one shared intensity scale — see the tiling key-properties list
+above.
 
 **Key Parameters:**
 - `tile_size`: Tile size per axis (int or tuple). Must satisfy `overlap <= tile_size // 2`.
