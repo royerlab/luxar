@@ -987,15 +987,20 @@ def resolve_volume_norm_range(
 
     The intensity-scale counterpart of :func:`resolve_volume_floor`, and it
     exists for the same reason. A tiled fit hands each worker one tile; if the
-    tile is normalized by its OWN min/max then the same physical brightness
-    becomes a different normalized value — and hence a different fitted
-    amplitude — in each tile. Bright localized structure hides this (it defines
-    its own tile's maximum), but anything that varies smoothly across a tile
-    boundary shows it as a box-shaped step in amplitude.
+    tile is normalized by its OWN min/max then each tile is stretched to fill
+    [0, 1] by a different factor. Output amplitudes are rescaled by that same
+    factor afterwards, so the *physical* amplitude of a linear fit largely
+    cancels out — what does NOT cancel is everything the optimiser expresses
+    as an absolute quantity in the normalized range: the convergence tolerance
+    (``max_abs_error``, 1% of it by default), seeding and culling thresholds,
+    and any ``amp_max``. A dim tile is therefore resolved to a much finer
+    physical accuracy than a bright one, and the two tiles' splats are not
+    mutually comparable. Sharing one range makes a tiled fit behave like the
+    whole-volume fit it is meant to approximate.
 
-    Measured on a 2573x2707x463 confocal mosaic before this was resolved
-    globally: the amplitude-to-source-intensity ratio varied 3.0x across the
-    volume, with 78% jumps between neighbouring regions (p95).
+    The flip side is deliberate: a tile far dimmer than the volume maximum is
+    now held to the same ABSOLUTE tolerance as the rest of the volume, so it
+    converges earlier instead of resolving its own noise at full contrast.
 
     Parameters
     ----------
@@ -1151,10 +1156,11 @@ def _normalize_data(
     ``norm_range`` supplies ``(image_min, image_max)`` outright, bypassing
     ``norm_percentile``'s derivation from ``V``. Tiled fitting passes a range
     resolved against the WHOLE volume so that every tile maps a given physical
-    intensity to the same normalized value; without it each tile normalizes by
-    its own extremes and the same brightness fits to different amplitudes,
-    which shows up as box-shaped steps wherever the data varies smoothly
-    across a tile boundary (see :func:`resolve_volume_norm_range`).
+    intensity to the same normalized value, and is therefore held to the same
+    absolute convergence tolerance and thresholds (see
+    :func:`resolve_volume_norm_range`). Because such a range is estimated from
+    a bounded sample, a value above ``image_max`` is real signal rather than an
+    outlier and is left unclipped when ``norm_percentile == 0``.
     """
     # Configurable normalization - store parameters for intensity rescaling
     if norm_range is not None:
@@ -1213,7 +1219,15 @@ def _normalize_data(
         if verbose:
             aprint("Warning: Input image is nearly uniform")
     else:
-        V = np.clip((V - image_min) / intensity_range, 0.0, 1.0)
+        # A SUPPLIED full-range (``norm_percentile == 0``) range is the whole
+        # volume's extremes ESTIMATED from a bounded sample, so this array can
+        # legitimately hold a voxel brighter than it. Clipping there would
+        # flatten exactly the brightest structure — something the per-array
+        # path never does, since that array's own max is its ceiling by
+        # construction. Keep the shared scale, drop the ceiling. A percentile
+        # range asked for bright-outlier clipping, so its ceiling stays.
+        ceiling = None if (norm_range is not None and norm_percentile == 0.0) else 1.0
+        V = np.clip((V - image_min) / intensity_range, 0.0, ceiling)
 
     return V, image_min, image_max, intensity_range, applied_floor
 

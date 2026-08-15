@@ -1,19 +1,20 @@
 """Every tile of one volume must share an intensity scale.
 
-Regression for box-shaped amplitude steps in tiled fits: a tile normalized by
-its OWN min/max maps a given physical brightness to a different normalized
-value than its neighbour, so identical structure fits to different amplitudes.
-Bright localized structure hides it (it sets its own tile's maximum); anything
-varying smoothly across a tile boundary shows it as a box edge.
+A tile normalized by its OWN min/max is stretched to fill [0, 1] by a different
+factor than its neighbour. Output amplitudes are rescaled by that same factor,
+so the physical amplitude of a linear fit largely cancels — but the optimiser's
+absolute criteria (convergence tolerance, seeding and culling thresholds) do
+not, so the same structure is resolved to a different accuracy in each tile.
 
-Measured on a 2573x2707x463 confocal mosaic before the fix: amplitude per unit
-source intensity varied 3.0x across the volume, with 78% jumps between
-neighbouring regions (p95).
+Two things the shared range must NOT do, both covered below: clip a voxel
+brighter than the bounded sample that produced it, and lift ``image_min`` off
+zero (which would break the Hann partition of unity across tile overlaps).
 """
 
 import numpy as np
 import pytest
 
+from luxar.gsplats.fit_tiled_gsplats import _tile_norm_range
 from luxar.gsplats.fitting.preprocessing import (
     _normalize_data,
     resolve_volume_norm_range,
@@ -50,7 +51,7 @@ def test_tiles_agree_on_brightness_with_global_range(ramp_volume):
 
 
 def test_per_tile_normalization_is_what_disagrees(ramp_volume):
-    """Pin the bug this guards against, so the test cannot pass vacuously."""
+    """Pin the disagreement this guards against, so the guard is not vacuous."""
     left = ramp_volume[:, :, :32].copy()
     right = ramp_volume[:, :, 32:].copy()
     norm_l, *_ = _normalize_data(left, 0.0, False, None, None)
@@ -100,3 +101,94 @@ def test_percentile_range_is_resolved_globally(ramp_volume):
     assert hi == pytest.approx(float(np.percentile(ramp_volume, 99.0)))
     # the single bright outlier must be clipped away by the 99th percentile
     assert hi < float(ramp_volume.max())
+
+
+def test_supplied_full_range_does_not_clip_a_brighter_voxel(ramp_volume):
+    """The range is sampled, so a tile may hold a voxel above it.
+
+    Clipping there would flatten the brightest structure — precisely what
+    per-array normalization never does, since that array's own max is its
+    ceiling by construction.
+    """
+    lo, hi = 0.0, 200.0  # deliberately below the fixture's 500.0 spot
+    norm, *_ = _normalize_data(ramp_volume.copy(), 0.0, False, None, (lo, hi))
+    assert norm[8, 40, 10] == pytest.approx(500.0 / 200.0)
+    assert norm.min() >= 0.0
+
+
+def test_supplied_percentile_range_still_clips_outliers(ramp_volume):
+    """A percentile range asked for bright-outlier clipping; it keeps it."""
+    norm, *_ = _normalize_data(ramp_volume.copy(), 1.0, False, None, (0.0, 200.0))
+    assert norm.max() == pytest.approx(1.0)
+
+
+def test_tile_range_pins_image_min_at_zero_without_a_floor():
+    """Apodized, floor-subtracted tile data starts at zero — so must the range.
+
+    With no floor to subtract (``--floor none``, or a floor the guard refused)
+    the volume minimum is a pedestal the tiles never see: the Hann window
+    tapers every overlapped face to 0. A positive ``image_min`` would subtract
+    a constant from BOTH sides of an overlap and clip the taper away.
+    """
+    vol = np.full((8, 32, 32), 100.0, dtype=np.float32)
+    vol[4, 16, 16] = 900.0
+
+    lo, hi = _tile_norm_range(vol, {}, None)
+    assert lo == 0.0
+    assert hi == pytest.approx(900.0)
+
+    # the volume minimum really is well above zero — the guard is not vacuous
+    assert resolve_volume_norm_range(vol, 0.0)[0] == pytest.approx(100.0)
+
+
+def test_tile_range_stays_in_post_floor_terms():
+    """With a floor applied the top is shifted, and the bottom is still zero."""
+    vol = np.full((8, 32, 32), 100.0, dtype=np.float32)
+    vol[4, 16, 16] = 900.0
+    lo, hi = _tile_norm_range(vol, {}, 100.0)
+    assert lo == 0.0
+    assert hi == pytest.approx(800.0)
+
+
+def test_progressive_residual_passes_drop_the_shared_range(monkeypatch):
+    """A residual is a fraction of the volume range; it renormalizes itself.
+
+    Pass 0 shares the whole-volume scale (that is the point of supplying it);
+    a residual pass normalized against it would sit under the absolute
+    convergence tolerance and end at its first evaluation.
+    """
+    from luxar.gsplats import fit_progressive_gsplats as fpg
+    from luxar.gsplats.gsplat_data import GSplatData
+    from luxar.gsplats.utils.trils import tril_size
+
+    seen: list = []
+
+    def _fake_fit(V, **kwargs):
+        seen.append(kwargs.get("norm_range", "absent"))
+        ndim = np.asarray(V).ndim
+        return GSplatData(
+            centers=np.zeros((0, ndim), dtype=np.float32),
+            amplitudes=np.zeros((0,), dtype=np.float32),
+            cholesky_factors=np.zeros((0, tril_size(ndim)), dtype=np.float32),
+            stats={},
+        )
+
+    # the progressive fitter imports it lazily inside the function body
+    monkeypatch.setattr(
+        "luxar.gsplats.fit_gsplats.fit_gaussian_splats", _fake_fit, raising=True
+    )
+
+    vol = np.zeros((8, 16, 16), dtype=np.float32)
+    vol[4, 8, 8] = 1.0
+    fpg.fit_progressive_gaussian_splats(
+        vol,
+        max_splats=10,
+        max_splats_per_pass=5,
+        iters_per_pass=1,
+        max_passes=2,
+        device="cpu",
+        verbose=False,
+        norm_range=(0.0, 4.0),
+    )
+
+    assert seen == [(0.0, 4.0), None]

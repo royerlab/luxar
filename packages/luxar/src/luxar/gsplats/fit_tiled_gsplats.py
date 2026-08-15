@@ -33,6 +33,35 @@ from luxar.gsplats.tiling import (
 )
 
 
+def _tile_norm_range(
+    volume: Any,
+    fit_kwargs: dict[str, Any],
+    applied_floor: "float | None",
+    verbose: bool = False,
+) -> tuple[float, float]:
+    """Shared ``(image_min, image_max)`` for every tile of ``volume``.
+
+    The top comes from :func:`resolve_volume_norm_range` (whole volume, shifted
+    into post-floor terms). The bottom is pinned at **zero**, which is where the
+    array each tile fitter actually sees starts: the floor subtraction clips at
+    0 and the Hann window then tapers every overlapped face down to 0.
+
+    Pinning matters whenever the applied floor sits below the volume minimum —
+    ``--floor none``, a floor the guard refused, or an explicit level under the
+    pedestal. A positive ``image_min`` would then subtract a constant from BOTH
+    sides of an overlap: ``(V*w_A - m) + (V*w_B - m) = V - 2m`` against ``V - m``
+    in the tile interior, i.e. exactly the box-shaped seam this is meant to
+    remove — and it would clip the taper away entirely below ``m``.
+    """
+    _, hi = resolve_volume_norm_range(
+        volume,
+        fit_kwargs.get("norm_percentile", 0.0),
+        subtract=applied_floor,
+        verbose=verbose,
+    )
+    return (0.0, hi)
+
+
 def fit_tile(
     volume: Any,
     spec: TileSpec,
@@ -130,18 +159,15 @@ def fit_tile(
     applied_floor = resolve_volume_floor(volume, floor_spec)
 
     # Resolve the INTENSITY SCALE against the whole volume too, for the same
-    # reason the floor is: a tile normalized by its own min/max maps a given
-    # physical brightness to a different normalized value than its neighbour,
-    # so identical structure fits to different amplitudes and anything smooth
-    # crossing a tile boundary shows a box-shaped step. Only resolve it when
-    # the caller has not already supplied one (the orchestrator resolves it
-    # once and passes it down, so per-tile workers do not re-read the volume).
+    # reason the floor is: a tile normalized by its own extremes is fitted
+    # under criteria (convergence tolerance, seeding and culling thresholds)
+    # that are all absolute in the normalized [0, 1] range, so the same
+    # physical structure is resolved to a different accuracy in each tile.
+    # Only resolve it when the caller has not already supplied one (the
+    # orchestrator resolves it once and passes it down, so per-tile workers do
+    # not re-read the volume).
     if fit_kwargs.get("norm_range") is None:
-        fit_kwargs["norm_range"] = resolve_volume_norm_range(
-            volume,
-            fit_kwargs.get("norm_percentile", 0.0),
-            subtract=applied_floor,
-        )
+        fit_kwargs["norm_range"] = _tile_norm_range(volume, fit_kwargs, applied_floor)
 
     # 1. Extract tile subvolume (materializes from zarr if needed)
     tile_data = np.asarray(volume[spec.slices], dtype=np.float32)
@@ -361,11 +387,8 @@ def fit_tiled(
     # `fit_tile` would resolve it per tile otherwise — identical result, but a
     # bounded volume read per tile instead of one.
     if fit_kwargs.get("norm_range") is None:
-        fit_kwargs["norm_range"] = resolve_volume_norm_range(
-            volume,
-            fit_kwargs.get("norm_percentile", 0.0),
-            subtract=applied_floor,
-            verbose=verbose,
+        fit_kwargs["norm_range"] = _tile_norm_range(
+            volume, fit_kwargs, applied_floor, verbose=verbose
         )
 
     volume_shape = tuple(volume.shape)
