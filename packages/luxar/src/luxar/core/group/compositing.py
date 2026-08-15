@@ -25,6 +25,10 @@ Exposed:
   gate: the flat ``indexed`` layout/parity check, run before the channels.
 * :func:`position_bounds_from_array` — per-axis min/max of an (N, D)
   position array, in the writer's shape.
+* :func:`strip_absent_attr_kwargs` + :data:`ABSENT_WHEN_NONE_RENDER_ATTRS` —
+  delete the caller-named keys whose present-but-``None`` value means ABSENT,
+  and the leaf adders' set of them (``colormap`` / ``coverage_fraction``). The
+  set is a required argument: the gsplats pipeline passes its own wider one.
 * :func:`sync_custom_colormap_attr` — mirror the writer's custom-colormap
   resolution (`ndarray / non-builtin name -> 'custom'`) into the adder's
   attrs dict so the returned node object matches what zarr stores.

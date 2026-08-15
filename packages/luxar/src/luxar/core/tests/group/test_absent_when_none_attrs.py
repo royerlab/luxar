@@ -363,6 +363,30 @@ class TestTheDataDoorAndTheLeafDoorAgree:
         )
 
 
+#: ``(attr, measured message fragment)`` — every render attr the leaf set leaves
+#: out, which is exactly the list ``ABSENT_WHEN_NONE_RENDER_ATTRS``' own comment
+#: enumerates and the four public ``Group.add_*`` docstrings promise about when
+#: they say "every OTHER render attr still refuses a ``None``" (the ninth,
+#: ``truncation_radius``, is gsplats-only and gets the case below).
+#:
+#: In full rather than sampled: a one-attr control only backs a one-attr claim,
+#: and a strip widened by a key nobody pinned is precisely the regression this
+#: class exists to catch — measured, adding ``layer`` and ``offset`` to the set
+#: fails eight cases here. The expected messages are the measured ones, so a
+#: validator quietly downgraded to accepting a None fails here too, not only an
+#: over-broad strip.
+LOUD_NONE_RENDER_ATTRS = [
+    ("opacity", "convertible to float, got NoneType"),
+    ("gamma", "convertible to float, got NoneType"),
+    ("intensity", "convertible to float, got NoneType"),
+    ("absorption", "convertible to float, got NoneType"),
+    ("offset", "convertible to float, got NoneType"),
+    ("blending_mode", "must be a string, got NoneType"),
+    ("layer", "must be a boolean, got NoneType"),
+    ("visible", "must be a boolean, got NoneType"),
+]
+
+
 class TestARenderAttrOutsideTheSetStillRefusesItsNone:
     """Scope control: the strip must not start swallowing the LOUD Nones.
 
@@ -372,12 +396,20 @@ class TestARenderAttrOutsideTheSetStillRefusesItsNone:
     and after the fix; they fail against a strip widened past its set.
     """
 
+    @pytest.mark.parametrize("attr,message", LOUD_NONE_RENDER_ATTRS)
     @pytest.mark.parametrize("geometry,adder", LEAF_ADDERS)
-    def test_opacity_none_is_reported(
-        self, tmp_path: Any, geometry: str, adder: Callable[..., Any]
+    def test_it_is_reported_on_every_geometry(
+        self,
+        tmp_path: Any,
+        geometry: str,
+        adder: Callable[..., Any],
+        attr: str,
+        message: str,
     ) -> None:
-        with pytest.raises(ValueError, match="convertible to float, got NoneType"):
-            _write_leaf(tmp_path, f"{geometry}_opacity.luxar.zarr", adder, opacity=None)
+        with pytest.raises(ValueError, match=message):
+            _write_leaf(
+                tmp_path, f"{geometry}_{attr}.luxar.zarr", adder, **{attr: None}
+            )
 
     def test_truncation_radius_none_is_reported(self, tmp_path: Any) -> None:
         """The gsplat-only member of the same family, and the near miss.
