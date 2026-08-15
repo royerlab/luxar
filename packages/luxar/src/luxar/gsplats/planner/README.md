@@ -37,6 +37,17 @@ fit_planned(volume, plan)        -> GSplatData|GSplatNode   # fit each box, merg
   each box in its own subprocess (`fit --plan-box`), then merge identically. A box
   that fits 0 splats writes a sibling `<output>.empty` marker (skipped at merge).
 
+Both drivers expect the background floor to arrive as a **concrete level** (or
+`"none"`): the CLI resolves `--floor` once against the whole volume and hands the
+same number to every box and to the density scan. A spec (`auto`/`pNN`) forwarded
+into the per-box fit would be re-estimated against each box CROP, so abutting
+core-kept boxes would subtract wildly different pedestals and normalize by different
+ranges — visible brightness steps at box boundaries. What is shared is the floor
+ARGUMENT, not the input: every box is still handed its own crop, and the
+normalization floor inside a box is still clamped up to that crop's own minimum
+(`image_min = max(level, min(crop))`), so a box lying entirely above the pedestal
+subtracts its own minimum.
+
 ## Consumers
 
 - `cli/gsplat_ops/fitting/fit.py::run_fit_volume` (`fit --tiling content`) and

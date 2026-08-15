@@ -642,10 +642,14 @@ def dispatch_parallel_tiled(
                 config=ctx.config,
                 loss=ctx.loss,
                 lr=ctx.lr,
-                # Forward the user's SPEC verbatim: each worker resolves it
-                # against the same volume with the deterministic sampler, so
-                # every worker subtracts one identical level. (An unset floor
-                # lets each worker apply its own --config/--preset merge.)
+                # Forward the user's SPEC verbatim: for auto/pNN each worker
+                # resolves it against the same volume with the deterministic
+                # sampler, so every worker subtracts one identical level. (An
+                # unset floor lets each worker apply its own --config/--preset
+                # merge.) A user NUMERIC passes straight through to the worker,
+                # which now applies it unvetoed — see fit_single_tile: a numeric
+                # above the volume's max windows every tile to zero, warned about
+                # per tile rather than silently ignored as it once was.
                 floor=ctx.floor,
                 seed_method=ctx.seed_method,
                 downscale=ds_arg,
@@ -717,6 +721,173 @@ def dispatch_parallel_tiled(
     return False
 
 
+def validate_floor_spec(floor_spec: "str | float | None") -> None:
+    """Reject a malformed/negative floor spec as a clean usage error.
+
+    Meant to run BEFORE any volume is touched, so a typo (``--floor potato``) or
+    an out-of-range percentile (``--floor p150``) costs no read, and surfaces as a
+    :class:`typer.BadParameter` (which Typer renders as a usage error) rather than
+    a bare ``ValueError`` traceback from deep inside the fit. Numeric specs are
+    validated too — a ``floor: -5.0`` in a YAML config would otherwise reach a
+    worker's argv as ``--floor -5.0``, which click parses as an option, not a
+    value.
+    """
+    from luxar.gsplats.fitting.validation import _validate_floor
+
+    try:
+        _validate_floor(floor_spec)
+    except ValueError as exc:
+        raise typer.BadParameter(f"--floor: {exc}") from exc
+
+
+def floor_spec_needs_volume(floor_spec: "str | float | None") -> bool:
+    """Whether resolving this ``--floor`` spec has to read the volume.
+
+    ``auto`` / ``pNN`` are volume-derived; ``none`` / ``None`` / a numeric spec
+    are already concrete, so a caller that would have to LOAD data purely to
+    resolve them can skip the load entirely.
+    """
+    if not isinstance(floor_spec, str):
+        return False
+    f = floor_spec.strip().lower()
+    return f == "auto" or f.startswith("p")
+
+
+def resolve_shared_floor(
+    volume: "Any",
+    floor_spec: "str | float | None",
+    *,
+    guard_numeric: bool = True,
+    scope: str = "every tile",
+    verbose: bool = True,
+) -> "tuple[float | None, str | float]":
+    """Resolve a user ``--floor`` spec ONCE into the level every worker subtracts.
+
+    The multi-worker counterpart of what :func:`luxar.gsplats.fit_tiled_gsplats.fit_tiled`
+    does inline: a spec is resolved against the WHOLE ``volume`` (via
+    :func:`~luxar.gsplats.fitting.preprocessing.resolve_volume_floor`, a bounded
+    deterministic sample — never a full ``np.percentile``) so independent
+    consumers — content boxes, ``-j`` box subprocesses, every batch ``(t, c)``
+    task — all subtract one identical pedestal instead of each re-estimating its
+    own.
+
+    Parameters
+    ----------
+    volume
+        The volume the level is a property of. May be ``None`` when
+        :func:`floor_spec_needs_volume` is ``False`` (nothing is read).
+    guard_numeric
+        Apply the "floor >= max would erase all signal" guard to a NUMERIC spec
+        too (one bounded read). ``True`` where a user spec first becomes a level;
+        ``False`` for a level a parent already resolved and guarded.
+    scope
+        Phrase naming who subtracts it, for the log line ("every box", ...).
+
+    Returns
+    -------
+    (level, forward)
+        ``level`` is the concrete level to subtract locally (``None`` = disabled,
+        or the guard refused it). ``forward`` is what to hand a worker — the same
+        number, the string ``"none"``, or, for the rare NEGATIVE resolved level
+        (dark-frame-corrected data), the original spec: neither ``--floor`` nor
+        ``fit_gaussian_splats`` accepts a negative level, so that one case keeps
+        forwarding the spec exactly as before this function existed — and, being
+        a spec again, it is re-resolved wherever it lands:
+
+        * ``fit --tiling uniform -j N`` / ``--tile k/M``: exact. Each worker
+          re-resolves the spec against the SAME whole volume with the same
+          deterministic sampler, so they all reach the same level.
+        * ``fit --tiling content``: DEGENERATES to per-box resolution. The spec
+          goes into ``box_fit_kwargs["floor"]`` and reaches
+          ``fit_gaussian_splats(crop, floor=<spec>)`` per box, which resolves it
+          against that BOX CROP — i.e. the #1174 per-box pedestal, and a
+          violation of :func:`~luxar.gsplats.planner.fit_planned.fit_planned`'s
+          "must already be a CONCRETE level" contract. It is accepted only
+          because refusing would make dark-frame-corrected data unfittable.
+        * ``batch-fit``: each ``(t, c)`` task resolves it on its own timepoint, so
+          pedestals may differ across the run; that is said loudly at plan time
+          and no level is recorded in the manifest (see
+          :func:`luxar.cli.gsplat_ops.batch.planning.resolve_batch_floor`).
+    """
+    from luxar.gsplats.fitting.preprocessing import resolve_volume_floor
+    from luxar.gsplats.fitting.validation import _validate_floor
+
+    if isinstance(floor_spec, str):
+        _validate_floor(floor_spec)  # reject a malformed/negative USER spec early
+    if volume is None:
+        # Nothing to sample: a concrete spec resolves without data (the caller
+        # checked `floor_spec_needs_volume`), so the guard has to be skipped.
+        guard_numeric = False
+    level = resolve_volume_floor(volume, floor_spec, guard_numeric=guard_numeric)
+    if level is None:
+        # Disabled, resolved to 0 (the "0 disables" rule), or refused by the
+        # guard — all three mean "subtract nothing", which is what the workers
+        # must be told explicitly so they don't re-resolve the spec themselves.
+        return None, "none"
+    if level < 0.0:
+        aprint(
+            f"Note: resolved background floor {level:.6g} is negative and cannot "
+            f"be forwarded as --floor; {scope} resolves the spec itself."
+        )
+        # `floor_spec` cannot be None here: a None spec resolves to level None
+        # and already returned above.
+        assert floor_spec is not None
+        return level, floor_spec
+    if verbose:
+        aprint(
+            f"Floor suppression: {scope} subtracts background level {level:.6g} "
+            f"(resolved once for the whole volume)"
+        )
+    return level, level
+
+
+def _tile_worker_label(ctx: "Any", tile_idx: int, n_tiles: int) -> str:
+    """Name this worker's sub-volume for a diagnostic: ``tile 3/16 (t=7, c=1)``."""
+    label = f"tile {tile_idx}/{n_tiles}"
+    t_idx = getattr(ctx, "timepoint", None)
+    c_idx = getattr(ctx, "channel", None)
+    if t_idx is not None or c_idx is not None:
+        label += f" (t={t_idx}, c={c_idx})"
+    return label
+
+
+def warn_if_level_erases_volume(volume: "Any", level: float, *, what: str) -> None:
+    """Loudly flag a concrete floor level that clips ``what``'s volume to zero.
+
+    A concrete numeric ``--floor`` reaching a worker is applied UNVETOED, by
+    design: the number is a property of the whole volume the workers share, and
+    re-guarding it against one worker's sub-volume is exactly the per-sub-volume
+    pedestal disagreement #1174 removes (see :func:`fit_single_tile`). But a level
+    at or above THIS sub-volume's maximum windows it entirely to zero — 0 splats,
+    an ``.empty`` marker, and a merge that skips it while the run reports success
+    — and nothing downstream mentions the floor. So it is announced here.
+
+    Warn-only: the level is still applied. Reuses the same bounded deterministic
+    sample :func:`~luxar.gsplats.fitting.preprocessing.resolve_volume_floor`
+    would draw, so this costs one bounded read and never a second one.
+    """
+    from luxar.gsplats.fitting.preprocessing import (
+        FLOOR_SAMPLE_BUDGET_VOXELS,
+        _sample_volume_for_floor,
+    )
+
+    sample = _sample_volume_for_floor(volume, int(FLOOR_SAMPLE_BUDGET_VOXELS))
+    if sample is None or sample.size == 0:
+        return
+    sample_max = float(sample.max())
+    if level < sample_max:
+        return
+    aprint(
+        f"⚠ Background floor level {level:.6g} is NOT below {what}'s sampled "
+        f"maximum ({sample_max:.6g}): subtracting it clips this whole sub-volume "
+        f"to zero, so it will fit 0 SPLATS and be skipped by the merge (an "
+        f".empty marker). The level is applied AS GIVEN — a concrete numeric "
+        f"--floor is deliberately not re-guarded per sub-volume, so no worker "
+        f"disagrees about the pedestal. Pass --floor none, or a lower "
+        f"--floor N, if this sub-volume must survive."
+    )
+
+
 def fit_single_tile(
     ctx: FitPipelineCtx, volume: "Any", fit_config: dict, parsed_seeds: "Any"
 ) -> "Any":
@@ -757,18 +928,40 @@ def fit_single_tile(
     fc_output_space = fit_config.pop("output_space", "real")
 
     # This is the standalone worker's own user-spec entry point: validate the
-    # spec (rejecting e.g. a negative --floor, as every other entry point
-    # does), then resolve it GUARDED so fit_tile is never handed an unguarded
-    # numeric — a too-high explicit floor is warned about and dropped instead
-    # of silently erasing the tile. ``None`` in the merged config (a
-    # ``floor: null`` YAML) means DISABLED, exactly as on the sequential
-    # tiled and non-tiled paths.
+    # spec (rejecting e.g. a negative --floor, as every other entry point does),
+    # then resolve it. ``None`` in the merged config (a ``floor: null`` YAML)
+    # means DISABLED, exactly as on the sequential tiled and non-tiled paths.
+    #
+    # A CONCRETE numeric level is applied UNGUARDED (#1174). This worker holds
+    # only ONE sub-volume — one tile of one (t, c) — so re-guarding the number
+    # here would drop it on a dim/bleached timepoint (``floor=None`` → hard-min
+    # normalization) while every sibling task subtracts it: precisely the
+    # per-timepoint pedestal difference the shared resolution removes. The number
+    # normally comes from a parent that already resolved and guarded it against
+    # the whole volume the tiles belong to (`batch-fit` plan time; the
+    # `fit --tiling uniform -j N` parent, which forwards its ``--floor`` spec
+    # verbatim, so each worker re-resolves the same spec against the same volume).
+    #
+    # BEHAVIOUR CHANGE vs main: a USER numeric on this path — `fit --tile k/M
+    # --floor 110`, or `-j N --floor 110` — used to be guarded here too and would
+    # be reported-and-ignored when it exceeded the volume's sampled max. It is now
+    # APPLIED, so a too-high number windows the tile to zero. The loud warn-only
+    # check below names exactly that, since the resulting ``.empty`` tile would
+    # otherwise never mention the floor. A volume-derived spec (``auto``/``pNN``)
+    # is still resolved against this whole volume WITH the guard, because it
+    # becomes a level here for the first time.
     from luxar.gsplats.fitting.preprocessing import resolve_volume_floor
     from luxar.gsplats.fitting.validation import _validate_floor
 
     floor_spec = fit_config.get("floor", "auto")
     _validate_floor(floor_spec)
-    resolved_floor = resolve_volume_floor(volume, floor_spec, guard_numeric=True)
+    resolved_floor = resolve_volume_floor(volume, floor_spec, guard_numeric=False)
+    if resolved_floor is not None and not floor_spec_needs_volume(floor_spec):
+        warn_if_level_erases_volume(
+            volume,
+            resolved_floor,
+            what=_tile_worker_label(ctx, tile_idx, len(specs)),
+        )
     fit_config["floor"] = resolved_floor if resolved_floor is not None else "none"
 
     with asection(
