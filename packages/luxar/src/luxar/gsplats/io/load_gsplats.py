@@ -78,11 +78,14 @@ def read_authored_appearance(path: str | Path) -> Dict[str, Any]:
     p = Path(path)
     try:
         if p.is_dir():
-            # The facade, not a bare ``zarr.open_group``: it ignores consolidated
-            # metadata, so a directory store is read from the same per-node
-            # ``.zattrs`` the archive peek below reads. Bare zarr 3 would answer
-            # from a stale ``.zmetadata`` instead, and the two inputs would then
-            # disagree about the same hand-edited store.
+            # The facade, not a bare ``zarr.open_group``: every zarr read routes
+            # through ``luxar._zarr_compat``, and it opts reads out of
+            # consolidated metadata, so a directory store is read from the same
+            # per-node ``.zattrs`` the archive peek below reads. Measured on zarr
+            # 3.3, the two spellings agree for a ROOT GROUP'S OWN ATTRS even with
+            # a stale ``.zmetadata`` present — ``.zmetadata`` governs child
+            # lookups, not the root's attrs — so this is the module convention
+            # holding rather than a divergence being papered over.
             root = zc_open_group(p, mode="r")
             attrs = dict(root.attrs)
         else:
