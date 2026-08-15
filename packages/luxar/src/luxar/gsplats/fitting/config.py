@@ -281,6 +281,9 @@ class FitConfig:
     # overstate compression by 2x. `None` when unknown.
     source_dtype: Optional[str] = None
     source_itemsize: Optional[int] = None
+    #: Declared grid of the ACQUISITION, when the caller preprocessed before
+    #: fitting. `None` means the array handed in IS the source.
+    source_shape: Optional[list[int]] = None
 
 
 @dataclass

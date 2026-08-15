@@ -147,6 +147,7 @@ class GaussianSplatFitter:
         iter_callback_every: int = 25,
         seed_amps_background_relative: bool = False,
         source_dtype: Optional[str] = None,
+        source_shape: Optional[Sequence[int]] = None,
         **seed_kwargs: Any,
     ) -> GSplatData:
         """
@@ -230,6 +231,7 @@ class GaussianSplatFitter:
             iter_callback=iter_callback,
             iter_callback_every=iter_callback_every,
             source_dtype=source_dtype,
+            source_shape=source_shape,
             **seed_kwargs,
         )
 
@@ -328,6 +330,7 @@ def fit_gaussian_splats(
     seed_amps_background_relative: bool = False,
     # Element type of the volume as it was ACQUIRED / stored on disk
     source_dtype: Optional[str] = None,
+    source_shape: Optional[Sequence[int]] = None,
     **seed_kwargs: Any,
 ) -> GSplatData:
     """
@@ -614,6 +617,16 @@ def fit_gaussian_splats(
         reaching here (as ``luxar.io.volume.load_volume`` does), otherwise the
         recorded source size describes the float working copy and overstates
         compression by the cast's inflation factor. If None, ``V.dtype`` is used.
+    source_shape : sequence of int or None, default=None
+        Grid of the ACQUISITION this fit represents, when the caller
+        preprocessed before fitting. Most producers do: a demo that pulls one
+        channel out of a 5D OME-Zarr, downscales it and normalizes it hands over
+        an array that is no longer the data anyone means by "the source", so
+        measuring ``V`` would quote compression against the working copy. Pair it
+        with ``source_dtype`` — a declared grid with the cast's dtype is still
+        the wrong denominator. Recorded with ``stats["source_declared"] = True``
+        so a reader can tell a stated grid from a measured one. If None, ``V``'s
+        own shape is used, which is correct whenever nothing was preprocessed.
 
     Returns
     -------
@@ -690,6 +703,7 @@ def fit_gaussian_splats(
             iter_callback=iter_callback,
             iter_callback_every=iter_callback_every,
             source_dtype=source_dtype,
+            source_shape=source_shape,
             **seed_kwargs,
         )
 

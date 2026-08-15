@@ -191,7 +191,7 @@ DEVICE = None
 # =============================================================================
 
 
-def load_cmu1_image() -> list[np.ndarray]:
+def load_cmu1_image() -> tuple:
     """Download and load the CMU-1 whole-slide image as RGB channels.
 
     Downloads the SVS file, reads the full-resolution level (or a suitable
@@ -199,7 +199,10 @@ def load_cmu1_image() -> list[np.ndarray]:
     (brightfield), and normalises.
 
     Returns:
-        List of 3 channel images (2D float32, normalised to [0, 1]).
+        ``(channels, acquisition)`` -- 3 channel images (2D float32, normalised to
+        [0, 1]), and the ``(shape, dtype)`` of ONE channel of the slide page as
+        read, to be declared to the fit: the images handed back are a resized,
+        inverted float32 copy of it.
     """
     tifffile = require_module("tifffile")
 
@@ -246,6 +249,10 @@ def load_cmu1_image() -> list[np.ndarray]:
             aprint(f"Selected page {best_page_idx}: {best_shape}")
             data = tif.pages[best_page_idx].asarray()
             aprint(f"Loaded: {data.shape}, dtype={data.dtype}")
+            # The slide page as read, before the per-channel split, the resize
+            # and the float32 cast below. One CHANNEL of it is what each fit
+            # represents, so the channel axis is dropped from the declaration.
+            acquisition = (tuple(int(x) for x in data.shape[:2]), str(data.dtype))
 
     # Convert to float32 and split channels
     with asection("Processing RGB channels"):
@@ -304,7 +311,7 @@ def load_cmu1_image() -> list[np.ndarray]:
 
         del data  # Free memory
 
-    return channels
+    return channels, acquisition
 
 
 # =============================================================================
@@ -316,6 +323,7 @@ def fit_channel_tiled(
     image: np.ndarray,
     channel_name: str,
     cache_file: Path,
+    acquisition: tuple | None = None,
 ) -> GSplatData:
     """Fit 2D gsplats to a single channel using tiled fitting.
 
@@ -344,8 +352,14 @@ def fit_channel_tiled(
     aprint(f"  Seeds/tile: {SEEDS_PER_TILE:,}, iters: {N_ITERS}")
     aprint(f"  Device: {DEVICE}")
 
+    src_shape, src_dtype = acquisition or (None, None)
     result = fit_tiled(
         image,
+        # One channel of the slide page as read; the fitted image is a resized,
+        # normalized float32 copy of it. fit_tiled applies this to the MERGED
+        # result -- the tiles themselves see crops.
+        source_shape=src_shape,
+        source_dtype=src_dtype,
         tile_size=TILE_SIZE,
         overlap=OVERLAP,
         seeds=SEEDS_PER_TILE,
@@ -373,6 +387,7 @@ def fit_channel_tiled(
 
 def fit_all_channels(
     images: list[np.ndarray],
+    acquisition: tuple | None = None,
 ) -> list[GSplatData]:
     """Fit 2D gsplats to all RGB channels using tiled fitting."""
     with asection("Tiled fitting of 2D GSplats per channel"):
@@ -391,7 +406,9 @@ def fit_all_channels(
                     continue
 
             with asection(f"Channel {i}: {ch_name}"):
-                gsplats = fit_channel_tiled(image, ch_name, cache_file)
+                gsplats = fit_channel_tiled(
+                    image, ch_name, cache_file, acquisition=acquisition
+                )
                 gsplats_list.append(gsplats)
 
         return gsplats_list
@@ -666,14 +683,14 @@ def main():
     else:
         # --recompute path: download raw data, fit from scratch
         warn_if_no_cuda_gpu()
-        images = load_cmu1_image()
+        images, acquisition = load_cmu1_image()
 
         if len(images) < N_CHANNELS:
             aprint(f"Error: Need {N_CHANNELS} channels, got {len(images)}")
             return
 
         # Tiled fitting per channel
-        gsplats_list = fit_all_channels(images)
+        gsplats_list = fit_all_channels(images, acquisition=acquisition)
 
     # Optional round-trip visualisation
     if SHOW_ROUNDTRIP:

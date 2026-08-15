@@ -225,6 +225,56 @@ def _occupied_fraction(Vn: np.ndarray, fitted_voxels: int) -> float:
     return float(occupied / fitted_voxels)
 
 
+#: Source-grid stamps that describe the VOLUME and so belong to a whole fit,
+#: however many times the fitter was invoked to produce it.
+#:
+#: Deliberately excludes ``voxels_per_splat``: that one is a ratio against the
+#: splat count of the invocation that produced it, so a multi-pass fitter
+#: copying it verbatim would report the first pass's density for the whole
+#: result. It has to be recomputed against the final count.
+SOURCE_GRID_VOLUME_KEYS = (
+    "source_shape",
+    "source_dtype",
+    "source_voxels",
+    "source_bytes",
+    "source_declared",
+    "fitted_shape",
+    "fitted_voxels",
+    "occupancy",
+)
+
+
+def lift_source_grid_stats(dest: dict[str, Any], passes: "Sequence[Any]") -> None:
+    """Copy the source-grid stamps from a multi-pass fit's FIRST pass onto ``dest``.
+
+    Every pass of a progressive fit sees the same volume (later ones fit its
+    residual), so the first pass's record of that volume describes the fit as a
+    whole. Left in the per-pass stats it never reaches ``_FITTING_INFO_KEYS``, and
+    the dataset cannot say what it is a representation of.
+
+    ``passes`` are the accumulated sub-LODs, in order; an empty list is a no-op.
+    """
+    if not passes:
+        return
+    first = getattr(passes[0], "stats", None) or {}
+    for key in SOURCE_GRID_VOLUME_KEYS:
+        if key in first:
+            dest[key] = first[key]
+
+
+def stamp_voxels_per_splat(stats: dict[str, Any], n_splats: int) -> None:
+    """Quote density against the splats actually DELIVERED.
+
+    Called after any post-fit cull rather than beside the other source-grid
+    stamps: the pre-cull count would overstate how much of the volume each
+    surviving splat stands for, and it is the surviving ones that ship. A no-op
+    without a fitted grid to divide, or with nothing left to divide by.
+    """
+    fitted_voxels = stats.get("fitted_voxels")
+    if fitted_voxels and n_splats:
+        stats["voxels_per_splat"] = float(fitted_voxels / n_splats)
+
+
 def _source_grid_stats(
     config: FitConfig, preprocessed_data: PreprocessedData, n_splats: int
 ) -> dict[str, Any]:
@@ -253,9 +303,21 @@ def _source_grid_stats(
     out: dict[str, Any] = {}
     V = getattr(config, "V", None)
     if V is not None and hasattr(V, "shape"):
-        out["source_shape"] = [int(x) for x in V.shape]
-        voxels = int(np.prod(V.shape)) if V.ndim else 0
+        # A DECLARED source grid wins over the array's own. Most producers
+        # preprocess before fitting — a demo that downscales a 5D OME-Zarr
+        # channel to 128^3 hands the fitter something that is no longer the
+        # acquisition, so measuring `V` would quote the ratio against the
+        # working copy. `source_declared` is recorded alongside so a reader can
+        # tell a measured grid from a stated one; an unmarked declaration would
+        # be indistinguishable from a measurement, which is the whole risk of
+        # letting callers name their own denominator.
+        declared = getattr(config, "source_shape", None)
+        shape = [int(x) for x in (declared if declared else V.shape)]
+        out["source_shape"] = shape
+        voxels = int(np.prod(shape)) if shape else 0
         out["source_voxels"] = voxels
+        if declared:
+            out["source_declared"] = True
         # `config.V` has already been cast to float32, so its own dtype/nbytes
         # would describe the fitter's working copy rather than the caller's
         # array. Use what validation captured before the cast, and fall back to
@@ -273,6 +335,14 @@ def _source_grid_stats(
             # pair into a compression ratio inflated by the cast. No bytes is
             # better than bytes measured on a different type — `info` already
             # stays silent when the source size is unknown.
+            #
+            # UNREACHABLE on every current path, and deliberately left rather
+            # than deleted: `config.V` is always the post-cast float32 array, so
+            # this needs `dtype == "float32"`, whose item size is never missing.
+            # Should that cast ever move, note this branch measures `V` — which
+            # a DECLARED `source_shape` makes the wrong array, not merely the
+            # wrong type. Guard on `declared` here if it becomes live; it is not
+            # guarded today because no test could prove the guard works.
             out["source_bytes"] = int(V.nbytes)
 
     Vn = getattr(preprocessed_data, "V_normalized", None)

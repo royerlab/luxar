@@ -241,11 +241,15 @@ def download_head_slices() -> Path:
     return PNG_DIR
 
 
-def assemble_volume(png_dir: Path, target_max_dim: int = TARGET_MAX_DIM) -> np.ndarray:
+def assemble_volume(
+    png_dir: Path, target_max_dim: int = TARGET_MAX_DIM
+) -> tuple[np.ndarray, tuple]:
     """Load the head PNGs into a masked, cropped, downsampled RGB volume.
 
-    Returns a (Z, Y, X, 3) float32 array in [0, 1] with the blue gel / ruler
-    background zeroed out.
+    Returns ``(vol, acquisition)``: a (Z, Y, X, 3) float32 array in [0, 1] with
+    the blue gel / ruler background zeroed out, and the ``(shape, dtype)`` of the
+    PNG stack as downloaded, to be declared to the fit — ``vol`` is a cropped,
+    masked and resampled copy of it.
     """
     from PIL import Image
     from scipy import ndimage
@@ -263,6 +267,14 @@ def assemble_volume(png_dir: Path, target_max_dim: int = TARGET_MAX_DIM) -> np.n
         for i, p in enumerate(paths):
             a = np.asarray(Image.open(p).convert("RGB"), dtype=np.float32) / 255.0
             vol[i] = a[:cut]
+        # The acquisition is the PNG stack as downloaded: 8-bit RGB at full
+        # slice resolution, before the ruler crop, the masking and the
+        # physically-isotropic resample below. `first` is read above without the
+        # float cast the loop applies, so its dtype is the stored one.
+        acquisition = (
+            (len(paths), first.shape[0], first.shape[1], 3),
+            str(first.dtype),
+        )
         aprint(f"  Stacked {len(paths)} slices → {vol.shape}")
 
         vol = mask_background(vol)
@@ -293,7 +305,7 @@ def assemble_volume(png_dir: Path, target_max_dim: int = TARGET_MAX_DIM) -> np.n
         factors = (out[0] / nz, out[1] / ny, out[2] / nx, 1.0)
         vol = zoom(vol, factors, order=1).clip(0.0, 1.0).astype(np.float32)
         aprint(f"  Resampled to physically-isotropic {vol.shape[:3]}")
-        return vol
+        return vol, acquisition
 
 
 # =============================================================================
@@ -318,7 +330,7 @@ def _load_colors_f32(path: Path) -> np.ndarray:
     return c.astype(np.float32) / 255.0 if c.dtype == np.uint8 else c.astype(np.float32)
 
 
-def fit_head(rgb_vol: np.ndarray) -> tuple[GSplatData, np.ndarray]:
+def fit_head(rgb_vol: np.ndarray, acquisition=None) -> tuple[GSplatData, np.ndarray]:
     """Fit luminance, sample per-splat colors, cache both. Returns (fit, colors)."""
     global DEVICE
     if DEVICE is None:
@@ -328,8 +340,16 @@ def fit_head(rgb_vol: np.ndarray) -> tuple[GSplatData, np.ndarray]:
 
     lum = luminance(rgb_vol)
     with asection(f"Fitting GSplats to luminance ({lum.shape}, device={DEVICE})"):
+        src_shape, src_dtype = acquisition or (None, None)
         result = fit_progressive_gaussian_splats(
             lum,
+            # The acquisition is the 8-bit RGB slice stack as downloaded; the
+            # fit is of its luminance, resampled and cropped. Declaring the
+            # stack keeps the ratio about the data rather than about `lum`.
+            # The two grids differ in rank, which `gsplat info` shows: source
+            # 4D (slices, H, W, 3), fitted 3D.
+            source_shape=src_shape,
+            source_dtype=src_dtype,
             max_splats=MAX_SPLATS,
             max_splats_per_pass=MAX_SPLATS_PER_PASS,
             iters_per_pass=ITERS_PER_PASS,
@@ -387,8 +407,8 @@ def load_or_build() -> tuple[GSplatData, np.ndarray]:
 
     warn_if_no_cuda_gpu()
     png_dir = download_head_slices()
-    vol = assemble_volume(png_dir)
-    return fit_head(vol)
+    vol, acquisition = assemble_volume(png_dir)
+    return fit_head(vol, acquisition)
 
 
 # =============================================================================

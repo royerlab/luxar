@@ -518,7 +518,7 @@ def build_label_volume(subject_dir: Path, shape: tuple[int, ...]) -> np.ndarray:
     return labels
 
 
-def load_ct_and_labels() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def load_ct_and_labels() -> tuple[np.ndarray, np.ndarray, np.ndarray, tuple]:
     """Return (fit_volume, label_volume, spacing_mm) on a shared cubic grid.
 
     fit_volume is the windowed CT masked to segmented anatomy; label_volume is
@@ -532,6 +532,13 @@ def load_ct_and_labels() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
 
     with asection("Reading CT + segmentation"):
         ct_nii = nib.load(subject_dir / "ct.nii.gz")
+        # The NIfTI's own grid and stored element type, before get_fdata()'s
+        # float cast and before the crop and resample below. This is what the
+        # compression ratio for this dataset is quoted against.
+        acquisition = (
+            tuple(int(x) for x in ct_nii.shape),
+            str(ct_nii.get_data_dtype()),
+        )
         ct = np.asarray(ct_nii.get_fdata(), dtype=np.float32)
         spacing = np.asarray(ct_nii.header.get_zooms()[:3], dtype=np.float64)
         labels = build_label_volume(subject_dir, ct.shape)
@@ -558,7 +565,7 @@ def load_ct_and_labels() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
             labels = zoom(labels, factors, order=0).astype(np.int32)
         aprint(f"Fit grid {fit_vol.shape} (cubic {target_iso:.2f} mm voxels)")
 
-    return fit_vol.astype(np.float32), labels, spacing
+    return fit_vol.astype(np.float32), labels, spacing, acquisition
 
 
 # =============================================================================
@@ -567,7 +574,7 @@ def load_ct_and_labels() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
 
 
 def fit_atlas(
-    fit_vol: np.ndarray, label_vol: np.ndarray
+    fit_vol: np.ndarray, label_vol: np.ndarray, acquisition: tuple | None = None
 ) -> tuple[GSplatData, np.ndarray]:
     """Fit splats to the CT, sample the per-splat organ label, cache both."""
     global DEVICE
@@ -577,8 +584,13 @@ def fit_atlas(
     from luxar.gsplats import fit_progressive_gaussian_splats
 
     with asection(f"Fitting GSplats ({fit_vol.shape}, max {MAX_SPLATS:,}, {DEVICE})"):
+        src_shape, src_dtype = acquisition or (None, None)
         result = fit_progressive_gaussian_splats(
             fit_vol,
+            # The fitted volume is windowed, masked, cropped and resampled; the
+            # ratio is meant to be about the CT that was downloaded.
+            source_shape=src_shape,
+            source_dtype=src_dtype,
             max_splats=MAX_SPLATS,
             max_splats_per_pass=MAX_SPLATS_PER_PASS,
             iters_per_pass=ITERS_PER_PASS,
@@ -632,8 +644,8 @@ def load_or_build() -> tuple[GSplatData, np.ndarray]:
         )
 
     warn_if_no_cuda_gpu()
-    fit_vol, label_vol, _ = load_ct_and_labels()
-    return fit_atlas(fit_vol, label_vol)
+    fit_vol, label_vol, _, acquisition = load_ct_and_labels()
+    return fit_atlas(fit_vol, label_vol, acquisition)
 
 
 # =============================================================================

@@ -147,6 +147,12 @@ _FITTING_INFO_KEYS = (
     # recoverable from the producing script either, because the fitted grid is
     # derived at run time from downscale factors and voxel spacing.
     "source_shape",
+    # Whether that grid was DECLARED by the caller rather than measured from the
+    # array handed in. It belongs beside the grid it qualifies: dropped from this
+    # list it lands in `pipeline/` instead, and a reader looking at
+    # `fitting/source_shape` would have no way to tell a stated denominator from
+    # a measured one — the whole point of stamping it.
+    "source_declared",
     "source_dtype",
     "source_voxels",
     "source_bytes",

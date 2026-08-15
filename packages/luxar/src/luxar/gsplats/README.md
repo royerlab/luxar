@@ -986,6 +986,7 @@ above.
 - `voxel_size`: Physical voxel spacing (optional), forwarded to per-tile fitting.
 - `output_space`: `"real"` or `"voxel"` coordinate space for output centers.
 - `verbose`: Print per-tile progress (default: True).
+- `source_shape` / `source_dtype`: Grid and stored element type of the ACQUISITION, when `volume` is already a preprocessed copy of it (a caller that decimated before tiling must declare the grid, or the merged result records the working copy as its source). Taken explicitly rather than through `**fit_kwargs` because they describe the MERGED result and are applied at the merge: forwarded to the tiles, each would claim the whole acquisition as its own crop's source. `source_shape=None` measures `volume`, which is right whenever nothing was preprocessed.
 - `**fit_kwargs`: All parameters from `fit_gaussian_splats` (seeds, n_iters, device, etc.)
 
 `seeds` is handed to **every** tile as-is, so an integer here is a *per-tile* count, not a whole-volume budget: N tiles fit ~N × `seeds` splats. This differs from the CLI, where `--seeds` **is** a whole-volume budget that `luxar gsplat fit` divides by the tile count before calling this function (`cli.gsplat_ops.fitting.fit_utils.split_seeds_across_tiles`). If you are fitting at a K\* from `gsplat cal` (see the calibration sections above), divide it yourself — or pass a float compression ratio, which is scale-free and needs no adjustment.

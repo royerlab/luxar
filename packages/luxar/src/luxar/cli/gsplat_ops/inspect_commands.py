@@ -1081,6 +1081,7 @@ def _store_size(path: Path) -> int:
 #: ``voxels_per_splat`` disagrees with it.
 _SOURCE_GRID_STATS_KEYS = (
     "source_shape",
+    "source_declared",
     "source_dtype",
     "source_voxels",
     "source_bytes",
@@ -1134,6 +1135,11 @@ def _print_source_grid(data: Any, stored_bytes: int) -> tuple[str, ...]:
         f"Source volume: {' x '.join(str(int(s)) for s in shape)}"
         + (f" {dtype}" if dtype else "")
         + (f" ({voxels:,} voxels)" if voxels else "")
+        # A grid the producer STATED (because it preprocessed before fitting) is
+        # not a grid measured from the array the fitter saw, and the compression
+        # ratio printed below rests on it. Saying so beside the number is the
+        # only place a reader of this report would look.
+        + (" [declared by the producer]" if stats.get("source_declared") else "")
     )
     fitted = stats.get("fitted_shape")
     if fitted and list(fitted) != list(shape):

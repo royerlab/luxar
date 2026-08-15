@@ -584,6 +584,10 @@ class TestSliceBy:
 #: What a whole-volume `gsplat fit` of a 64³ uint16 stack stamps into `stats`.
 _SOURCE_STAMP = {
     "source_shape": [64, 64, 64],
+    # A producer that preprocessed before fitting declares its acquisition; the
+    # marker is region-scoped like the grid it qualifies, or a crop would leave a
+    # flag behind saying a shape that is no longer stored was declared.
+    "source_declared": True,
     "source_dtype": "uint16",
     "source_voxels": 64**3,
     "source_bytes": 2 * 64**3,

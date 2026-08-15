@@ -277,3 +277,279 @@ def test_a_whitespace_padded_dtype_is_still_sized() -> None:
     V = np.zeros((2, 2), dtype=np.float32)
     assert _resolve_source_dtype(V, "uint16 ") == ("uint16", 2)
     assert _resolve_source_dtype(V, " uint16") == ("uint16", 2)
+
+
+# ── Declaring the acquisition when the caller preprocessed first ──────────────
+#
+# Most producers do not hand the fitter the acquisition. They pull one channel
+# out of a 5D store, downscale it and normalize it — so the array the fitter
+# sees is a working copy, and a ratio measured against it answers a question
+# nobody asked.
+
+
+def test_a_declared_source_grid_overrides_the_array_handed_in() -> None:
+    V = _sparse_blobs(shape=(24, 32, 32))  # the 128^3-style working copy
+    stats = _fit(V, source_shape=(96, 128, 128), source_dtype="uint16").stats
+    assert stats["source_shape"] == [96, 128, 128]
+    assert stats["source_voxels"] == 96 * 128 * 128
+    assert stats["source_bytes"] == 96 * 128 * 128 * 2
+    # The optimiser still reports what it actually saw.
+    assert stats["fitted_shape"] == [24, 32, 32]
+
+
+def test_a_declared_grid_is_marked_as_declared() -> None:
+    """A stated denominator must not be indistinguishable from a measured one."""
+    V = _sparse_blobs(shape=(24, 32, 32))
+    assert _fit(V, source_shape=(48, 64, 64)).stats["source_declared"] is True
+    assert "source_declared" not in _fit(V).stats
+
+
+@pytest.mark.parametrize(
+    "declared", [None, (96, 128, 128)], ids=["measured", "declared"]
+)
+def test_source_bytes_always_agrees_with_the_grid_it_is_quoted_against(
+    declared: object,
+) -> None:
+    """``source_bytes`` must be voxels x itemsize OF THE RECORDED GRID.
+
+    This is the invariant a compression ratio rests on. It is stated as a
+    relation rather than as a branch test on purpose: the byte count has more
+    than one origin inside the helper, and only the relation distinguishes
+    "counted the grid we published" from "counted the array we happened to
+    hold" — which for a declared grid are different arrays entirely.
+    """
+    V = _sparse_blobs(shape=(24, 32, 32))
+    stats = _fit(V, source_shape=declared, source_dtype="uint16").stats
+    assert stats["source_bytes"] == stats["source_voxels"] * 2
+    assert stats["source_voxels"] == int(np.prod(stats["source_shape"]))
+
+
+def test_an_unsizable_declared_dtype_reports_no_bytes_at_all() -> None:
+    """No number beats a number measured against the wrong array."""
+    stats = _fit(
+        _sparse_blobs(shape=(24, 32, 32)),
+        source_shape=(96, 128, 128),
+        source_dtype="not-a-dtype",
+    ).stats
+    assert stats["source_dtype"] == "not-a-dtype"
+    assert "source_bytes" not in stats
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [(), (0, 8, 8), (-4, 8, 8), ("a", 8, 8), (12.9, 16, 16), "128", 96, (True, 8, 8)],
+    ids=[
+        "empty",
+        "zero",
+        "neg",
+        "str",
+        "fractional",
+        "bare-string",
+        "bare-int",
+        "bool",
+    ],
+)
+def test_a_malformed_declared_grid_is_refused(bad: object) -> None:
+    """It becomes the denominator of a published ratio — fail here, not later.
+
+    Two of these would pass a bare ``int(x)`` per element with no complaint, and
+    both are silent rather than loud afterwards: ``(12.9, 16, 16)`` truncates to
+    a grid the caller never meant, and the bare ``"128"`` iterates into
+    ``[1, 2, 8]`` — a denominator wrong by four orders of magnitude, which is
+    exactly the plausible-looking figure this validation exists to stop.
+    """
+    with pytest.raises(ValueError):
+        _fit(_sparse_blobs(shape=(8, 8, 8)), source_shape=bad)
+
+
+def test_the_declared_marker_reaches_the_fitting_group_beside_the_grid(
+    tmp_path: Path,
+) -> None:
+    """The marker is worthless one group away from the number it qualifies.
+
+    ``split_fitting_info`` whitelists ``fitting/``; a key missing from that list
+    lands in ``pipeline/`` — reduction/topology provenance — where a reader
+    holding ``fitting/source_shape`` has no reason to look, and so cannot tell a
+    stated denominator from a measured one.
+    """
+    out = tmp_path / "declared.gsplats.zarr"
+    if out.exists():
+        shutil.rmtree(out)
+    _fit(_sparse_blobs(shape=(24, 32, 32)), source_shape=(96, 128, 128)).save(out)
+    attrs = read_node_attrs(out / "fitting")
+    assert attrs["source_shape"] == [96, 128, 128]
+    assert attrs["source_declared"] is True
+
+    # And a measured grid must not acquire the marker on the way to disk.
+    plain = tmp_path / "measured.gsplats.zarr"
+    _fit(_sparse_blobs(shape=(24, 32, 32))).save(plain)
+    assert "source_declared" not in (read_node_attrs(plain / "fitting") or {})
+
+
+def test_an_exact_integral_dimension_is_still_accepted() -> None:
+    """Strictness must not reject the dimensions callers legitimately compute.
+
+    A shape read off a numpy array, or divided out exactly, is a fine
+    declaration; only a value that is not the integer it claims to be is not.
+    """
+    from luxar.gsplats.fitting.validation import _explicit_source_shape
+
+    assert _explicit_source_shape(np.array([96, 128, 128])) == [96, 128, 128]
+    assert _explicit_source_shape((96.0, 128.0, 128.0)) == [96, 128, 128]
+    assert _explicit_source_shape([236 // 2, 16, 16]) == [118, 16, 16]
+
+
+# ── The progressive fitter is a second producer of these stamps ───────────────
+#
+# It calls the single-pass fitter once per pass and assembles its own
+# `overall_stats`, so the stamps do not reach the result by themselves. Five
+# shipped demos use this path, and every one of them had no compression figure.
+
+
+def _fit_progressive(V, **kw):
+    from luxar.gsplats import fit_progressive_gaussian_splats
+
+    return fit_progressive_gaussian_splats(
+        V,
+        max_splats=60,
+        max_splats_per_pass=30,
+        iters_per_pass=20,
+        device="cpu",
+        verbose=False,
+        **kw,
+    )
+
+
+def test_progressive_fit_carries_the_source_grid() -> None:
+    """Stamps must reach the merged result, not stay buried in `pass_stats`."""
+    V = _sparse_blobs(shape=(16, 16, 16), n=6)
+    stats = _fit_progressive(V).stats
+    for key in ("source_shape", "source_dtype", "source_voxels", "fitted_shape"):
+        assert key in stats, f"progressive result lost {key!r}"
+    assert stats["source_shape"] == [16, 16, 16]
+
+
+def test_progressive_fit_honours_a_declared_source_grid() -> None:
+    stats = _fit_progressive(
+        _sparse_blobs(shape=(16, 16, 16), n=6),
+        source_shape=(64, 80, 80),
+        source_dtype="uint16",
+    ).stats
+    assert stats["source_shape"] == [64, 80, 80]
+    assert stats["source_bytes"] == 64 * 80 * 80 * 2
+    assert stats["source_declared"] is True
+
+
+def test_progressive_density_counts_the_splats_actually_delivered() -> None:
+    """The post-fit cull runs after the stats are assembled.
+
+    Quoting the pre-cull count would overstate how much of the volume each
+    surviving splat stands for — and it is the surviving ones that ship.
+    """
+    result = _fit_progressive(_sparse_blobs(shape=(16, 16, 16), n=6))
+    n = len(result.amplitudes)
+    assert n > 0
+    expected = result.stats["fitted_voxels"] / n
+    assert result.stats["voxels_per_splat"] == pytest.approx(expected)
+
+
+# ── The tiled fitter is a THIRD producer, and its tiles see only crops ────────
+#
+# Each tile honestly records the sub-volume it was handed, so no tile knows the
+# grid the merged result stands for. `GSplatData.concatenate` drops tile stats
+# rather than promoting one, which is the only reason the merged result was not
+# already publishing a single tile's crop as its source.
+
+
+def _fit_tiled_small(V, **kw):
+    from luxar.gsplats import fit_tiled
+
+    return fit_tiled(
+        V,
+        tile_size=16,
+        overlap=2,
+        seeds=40,
+        n_iters=10,
+        device="cpu",
+        verbose=False,
+        **kw,
+    )
+
+
+def test_tiled_fit_records_the_whole_volume_not_a_tile() -> None:
+    V = _sparse_blobs(shape=(32, 32, 32), n=12)
+    stats = _fit_tiled_small(V).stats
+    assert stats["source_shape"] == [32, 32, 32], (
+        "recorded a tile's crop, not the volume"
+    )
+    assert stats["fitted_shape"] == [32, 32, 32]
+    assert stats["source_dtype"] == "uint16"
+    assert stats["source_bytes"] == 32**3 * 2
+    assert "source_declared" not in stats
+
+
+def test_tiled_fit_honours_a_declared_source_grid() -> None:
+    stats = _fit_tiled_small(
+        _sparse_blobs(shape=(32, 32, 32), n=12),
+        source_shape=(64, 64, 64),
+        source_dtype="uint16",
+    ).stats
+    assert stats["source_shape"] == [64, 64, 64]
+    assert stats["source_bytes"] == 64**3 * 2
+    assert stats["source_declared"] is True
+    # The tiles still collectively covered the volume they were given.
+    assert stats["fitted_shape"] == [32, 32, 32]
+
+
+def test_tiled_density_counts_the_splats_actually_delivered() -> None:
+    result = _fit_tiled_small(_sparse_blobs(shape=(32, 32, 32), n=12))
+    assert result.n_splats > 0
+    expected = result.stats["fitted_voxels"] / result.n_splats
+    assert result.stats["voxels_per_splat"] == pytest.approx(expected)
+
+
+def test_the_merge_sizes_a_source_grid_from_the_dtype_name_alone() -> None:
+    """A caller holding only the dtype NAME must still get a byte count.
+
+    The parallel tiled orchestrator is that caller: the volume lives in its
+    worker subprocesses, so it can forward what the CLI observed at load time
+    but cannot measure an item size itself. Without one the merged result records
+    a source grid and no bytes, and `info` prints no compression ratio at all —
+    the same command differing only in ``-j`` would report a different amount of
+    provenance.
+    """
+    from luxar.gsplats.fit_tiled_gsplats import merge_tile_results
+    from luxar.gsplats.gsplat_data import GSplatData
+
+    tile = GSplatData(
+        centers=np.zeros((3, 3), dtype=np.float32),
+        amplitudes=np.ones(3, dtype=np.float32),
+        cholesky_factors=np.tile(np.array([1, 0, 1, 0, 0, 1], np.float32), (3, 1)),
+    )
+    merged = merge_tile_results(
+        [tile],
+        volume_shape=(16, 16, 16),
+        tile_size=16,
+        overlap=0,
+        num_tiles=1,
+        progressive=False,
+        cull_retention=None,
+        elapsed=0.0,
+        verbose=False,
+        source_dtype="uint16",  # no itemsize alongside it
+    )
+    assert merged.stats["source_bytes"] == 16**3 * 2
+    # And an unsizable name still reports no bytes rather than a made-up size.
+    unsizable = merge_tile_results(
+        [tile],
+        volume_shape=(16, 16, 16),
+        tile_size=16,
+        overlap=0,
+        num_tiles=1,
+        progressive=False,
+        cull_retention=None,
+        elapsed=0.0,
+        verbose=False,
+        source_dtype="not-a-dtype",
+    )
+    assert "source_bytes" not in unsizable.stats

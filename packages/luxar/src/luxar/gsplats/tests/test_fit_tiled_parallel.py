@@ -538,6 +538,35 @@ class TestFitTiledParallel:
         assert spt[0] == 0 and spt[3] == 0
         assert sum(spt) == 5 * (m - 2)
 
+    def test_source_grid_reaches_the_merged_result(self, tmp_path: Path) -> None:
+        """The merged result must say what it is a representation of.
+
+        No tile can: each was handed a crop, and its stats do not survive the
+        reload anyway. The volume itself lives in the workers, so the caller is
+        the only one that knows the acquisition grid (``volume_shape`` here is
+        the post-downscale grid the workers fit) and the element type it was
+        stored in — without them the same command differing only in ``-j``
+        records a different amount of provenance.
+        """
+        m = self._specs_count()
+        merged = fit_tiled_parallel(
+            num_tiles=m,
+            jobs=2,
+            tmp_dir=tmp_path / "tiles",
+            worker_cmd_builder=_fake_worker_builder(n_per_tile=5),
+            volume_shape=(40, 40),
+            tile_size=16,
+            overlap=4,
+            progressive=False,
+            cull_retention=None,
+            source_shape=(80, 80),
+            source_dtype="uint16",
+        )
+        assert merged.stats["source_shape"] == [80, 80]
+        assert merged.stats["source_declared"] is True
+        assert merged.stats["source_bytes"] == 80 * 80 * 2
+        assert merged.stats["fitted_shape"] == [40, 40]
+
     def test_exit0_without_output_raises(self, tmp_path: Path) -> None:
         """A worker exiting 0 but writing no file must not be silently dropped."""
         m = self._specs_count()

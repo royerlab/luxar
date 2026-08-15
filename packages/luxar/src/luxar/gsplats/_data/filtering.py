@@ -26,6 +26,9 @@ if TYPE_CHECKING:
 #: denominator has just been dropped, leaving it unanchored.
 _REGION_SCOPED_STATS_KEYS = (
     "source_shape",
+    # Goes with the grid it qualifies: on its own it is a flag saying a shape that
+    # is no longer there was declared.
+    "source_declared",
     "source_voxels",
     "source_bytes",
     "fitted_shape",
