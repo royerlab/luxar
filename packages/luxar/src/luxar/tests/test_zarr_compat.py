@@ -55,6 +55,22 @@ def write_format(request: pytest.FixtureRequest):
         zc.set_zarr_format(original)
 
 
+@pytest.fixture
+def v3_writes():
+    """Pin format-3 writes for one test, restoring the default afterwards.
+
+    A bare `set_zarr_format(3)` in a test body leaks into every test that runs
+    after it in the same process, which is invisible while the default already is
+    3 and confusing under `LUXAR_ZARR_FORMAT=2`.
+    """
+    original = zc.ZARR_FORMAT
+    zc.set_zarr_format(3)
+    try:
+        yield 3
+    finally:
+        zc.set_zarr_format(original)
+
+
 def _array_meta(path: Path, name: str) -> dict:
     """An array's raw metadata document, in whichever format it was written.
 
@@ -708,7 +724,7 @@ def test_append_to_an_existing_v3_store_does_not_shadow_it(tmp_path: Path) -> No
 
 
 def test_document_readers_resolve_a_mixed_store_the_way_zarr_does(
-    tmp_path: Path,
+    tmp_path: Path, v3_writes: int
 ) -> None:
     """With BOTH formats' documents present, the readers must answer format 3.
 
@@ -722,7 +738,6 @@ def test_document_readers_resolve_a_mixed_store_the_way_zarr_does(
     an interrupted in-place migration or a half-finished copy does.
     """
     p = tmp_path / "mixed.zarr"
-    zc.set_zarr_format(3)
     g = zc.open_group(p, mode="w")
     g.attrs["kind"] = "v3-truth"
     zc.create_array(g, "a", data=np.arange(6, dtype=np.uint8), compressor=None)
@@ -731,6 +746,9 @@ def test_document_readers_resolve_a_mixed_store_the_way_zarr_does(
     # Drop a stale v2 root beside it, as an interrupted migration would leave.
     (p / ".zgroup").write_text(json.dumps({"zarr_format": 2}))
     (p / ".zattrs").write_text(json.dumps({"kind": "v2-STALE"}))
+    (p / ".zmetadata").write_text(
+        json.dumps({"metadata": {".zattrs": {"kind": "v2-STALE"}}})
+    )
     (p / "a" / ".zarray").write_text(json.dumps({"shape": [999], "dtype": "|u1"}))
 
     attrs = zc.read_node_attrs(p)
@@ -741,10 +759,58 @@ def test_document_readers_resolve_a_mixed_store_the_way_zarr_does(
     assert meta is not None and meta["shape"] == [6], (
         f"read_array_meta answered the stale v2 shape: {meta and meta.get('shape')!r}"
     )
+    # The consolidated reader answers the same store as the per-node one. It has
+    # its own document (`.zmetadata` vs the index inside `zarr.json`), so a
+    # v2-first order here would have the two facade readers disagreeing about one
+    # store while every opener sees only the v3 view.
+    consolidated = zc.read_consolidated_attrs(p)
+    assert consolidated["/"]["kind"] == "v3-truth", (
+        f"read_consolidated_attrs answered the stale v2 index: {consolidated!r}"
+    )
     # ...and each agrees with what an auto-detecting opener sees.
     opened = zarr.open_group(str(p), mode="r")
     assert opened.metadata.zarr_format == 3
     assert opened.attrs["kind"] == attrs["kind"]
+
+
+def test_a_present_v3_document_is_never_second_guessed_by_a_v2_one(
+    tmp_path: Path, v3_writes: int
+) -> None:
+    """A `zarr.json` that is unusable answers for the node ANYWAY.
+
+    Ordering alone is not enough: a v3 document that says GROUP, or one too
+    corrupt to parse, would otherwise fall through to a stale `.zarray`/`.zattrs`
+    and hand back a plausible pre-migration view. Both of those ARE the
+    corruption `batch-fit validate` is looking for — it reads `read_array_meta`
+    for exactly that verdict — so falling back would let a broken tile pass.
+    """
+    root = tmp_path / "shapes.zarr"
+    g = zc.open_group(root, mode="w")
+    g.create_group("child")
+    (root / "child" / ".zarray").write_text(json.dumps({"shape": [777]}))
+    assert zc.read_array_meta(root / "child") is None, (
+        "a v3 GROUP document fell through to a stale .zarray"
+    )
+
+    corrupt = tmp_path / "corrupt.zarr"
+    corrupt.mkdir()
+    (corrupt / "zarr.json").write_text('{"zarr_format": 3, "node_type": "arr')
+    (corrupt / ".zarray").write_text(json.dumps({"shape": [555]}))
+    (corrupt / ".zattrs").write_text(json.dumps({"kind": "v2-STALE"}))
+    assert zc.read_array_meta(corrupt) is None, (
+        "an unparseable v3 document fell through to a stale .zarray"
+    )
+    assert zc.read_node_attrs(corrupt) is None, (
+        "an unparseable v3 document fell through to stale .zattrs"
+    )
+
+    # A single-format v2 node is untouched by any of this.
+    v2 = tmp_path / "v2array"
+    v2.mkdir()
+    (v2 / ".zarray").write_text(json.dumps({"shape": [3]}))
+    (v2 / ".zattrs").write_text(json.dumps({"kind": "leaf"}))
+    assert (zc.read_array_meta(v2) or {})["shape"] == [3]
+    assert zc.read_node_attrs(v2) == {"kind": "leaf"}
 
 
 def test_a_document_name_demotes_but_never_promotes(tmp_path: Path) -> None:
@@ -784,7 +850,7 @@ def test_a_document_name_demotes_but_never_promotes(tmp_path: Path) -> None:
 
 
 def test_is_consolidated_ignores_a_stale_v2_index_beside_a_v3_root(
-    tmp_path: Path,
+    tmp_path: Path, v3_writes: int
 ) -> None:
     """An unfinished v3 save must not read as finished because of a leftover
     `.zmetadata`.
@@ -794,7 +860,6 @@ def test_is_consolidated_ignores_a_stale_v2_index_beside_a_v3_root(
     consolidated index would let a half-written tile into a merge.
     """
     p = tmp_path / "unfinished.zarr"
-    zc.set_zarr_format(3)
     g = zc.open_group(p, mode="w")  # created, never consolidated
     zc.create_array(g, "a", data=np.arange(3, dtype=np.uint8), compressor=None)
     assert not zc.is_consolidated(p), "a fresh unconsolidated v3 store is not finished"

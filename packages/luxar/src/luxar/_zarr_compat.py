@@ -282,28 +282,39 @@ def read_consolidated_attrs(store_dir: Path) -> dict[str, dict[str, Any]]:
 
     Empty when there is no consolidated index — that is "nothing to read here",
     not "a store with no nodes"; use :func:`is_consolidated` to tell them apart.
+    The two agree on which document to ask, so they never disagree about a store:
+    a v3 root, when present, is answered from EXCLUSIVELY, and a leftover
+    ``.zmetadata`` beside it (an ``rsync`` over an older v2 store, an interrupted
+    migration) describes a store nobody opens. Consulting it would hand back the
+    PRE-copy attributes of every node while :func:`read_node_attrs` and every
+    opener report the new ones.
     """
-    v2 = _read_json_doc(store_dir / ".zmetadata")
-    if v2 is not None:
+    root_doc = store_dir / _V3_METADATA_DOC
+    if root_doc.exists():
+        root = _read_json_doc(root_doc)
+        if root is None or root.get("consolidated_metadata") is None:
+            return {}
         out: dict[str, dict[str, Any]] = {}
-        for key, value in (v2.get("metadata") or {}).items():
-            if key.endswith(".zattrs") and isinstance(value, dict):
-                out[key[: -len("/.zattrs")] or "/"] = value
+        root_attrs = root.get("attributes")
+        out["/"] = root_attrs if isinstance(root_attrs, dict) else {}
+        consolidated = root["consolidated_metadata"]
+        entries = (
+            consolidated.get("metadata") if isinstance(consolidated, dict) else None
+        )
+        for path, node in (entries or {}).items():
+            if not isinstance(node, dict):
+                continue
+            attrs = node.get("attributes")
+            out[str(path).lstrip("/") or "/"] = attrs if isinstance(attrs, dict) else {}
         return out
 
-    root = _read_json_doc(store_dir / _V3_METADATA_DOC)
-    if root is None or root.get("consolidated_metadata") is None:
+    v2 = _read_json_doc(store_dir / ".zmetadata")
+    if v2 is None:
         return {}
     out = {}
-    root_attrs = root.get("attributes")
-    out["/"] = root_attrs if isinstance(root_attrs, dict) else {}
-    consolidated = root["consolidated_metadata"]
-    entries = consolidated.get("metadata") if isinstance(consolidated, dict) else None
-    for path, node in (entries or {}).items():
-        if not isinstance(node, dict):
-            continue
-        attrs = node.get("attributes")
-        out[str(path).lstrip("/") or "/"] = attrs if isinstance(attrs, dict) else {}
+    for key, value in (v2.get("metadata") or {}).items():
+        if key.endswith(".zattrs") and isinstance(value, dict):
+            out[key[: -len("/.zattrs")] or "/"] = value
     return out
 
 
@@ -314,18 +325,20 @@ def read_array_meta(array_dir: Path) -> dict[str, Any] | None:
     JSON, or a v3 document whose ``node_type`` says group. Both formats spell
     ``shape`` the same way, so callers reading that need no branch of their own.
 
-    Format 3 is consulted FIRST, for the reason :data:`NODE_ATTR_DOCS` gives:
-    zarr resolves a node carrying both documents as format 3, and answering from
-    a stale ``.zarray`` here would hand a caller the wrong ``shape`` — which
-    ``batch-fit validate`` checks tiles against.
+    A format-3 document, when present, is answered from EXCLUSIVELY, for the
+    reason :data:`NODE_ATTR_DOCS` gives: zarr resolves a node carrying both
+    documents as format 3, and answering from a stale ``.zarray`` here would hand
+    a caller the wrong ``shape`` — which ``batch-fit validate`` checks tiles
+    against. So a ``zarr.json`` that says GROUP, or one too corrupt to parse,
+    reads as "not an array here" rather than falling through to a v2 document
+    that describes a store nobody opens: both of those ARE the corruption the
+    validator is looking for, and a plausible stale shape would hide it.
     """
-    v3 = _read_json_doc(array_dir / _V3_METADATA_DOC)
-    if v3 is not None and v3.get("node_type") == "array":
-        return v3
-    v2 = _read_json_doc(array_dir / ".zarray")
-    if v2 is not None:
-        return v2
-    return None
+    v3_doc = array_dir / _V3_METADATA_DOC
+    if v3_doc.exists():
+        v3 = _read_json_doc(v3_doc)
+        return v3 if v3 is not None and v3.get("node_type") == "array" else None
+    return _read_json_doc(array_dir / ".zarray")
 
 
 #: The per-node documents that can carry a node's user attributes, best first.
@@ -412,12 +425,19 @@ def read_node_attrs(node_dir: Path) -> dict[str, Any] | None:
     ``None`` means "no readable node here", which callers treat as corrupt —
     so an EMPTY attributes mapping must stay distinguishable from a missing
     one, and is returned as ``{}``.
+
+    A ``zarr.json`` that is PRESENT but unparseable answers ``None`` rather than
+    falling through to ``.zattrs``: zarr reads that node as format 3 and fails, so
+    a stale v2 view of it would be attributes nobody else can see.
     """
     for doc in NODE_ATTR_DOCS:
-        parsed = _read_json_doc(node_dir / doc)
+        path = node_dir / doc
+        parsed = _read_json_doc(path)
         if parsed is not None:
             # The document's NAME settles the format; nothing is sniffed.
             return attrs_from_node_doc(parsed, doc_name=doc)
+        if doc == _V3_METADATA_DOC and path.exists():
+            return None
     return None
 
 

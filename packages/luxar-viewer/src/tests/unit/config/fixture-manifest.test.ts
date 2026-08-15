@@ -156,6 +156,24 @@ describe('isGeneratedFixtureComplete', () => {
     expect(isGeneratedFixtureComplete(partial)).toBe(false);
   });
 
+  it('ignores a stale .zmetadata beside an unfinished format-3 root', () => {
+    // A fixture directory an older format-2 store was copied over keeps its
+    // `.zmetadata`. zarr resolves such a directory as format 3, so the leftover
+    // describes a store nobody opens — and answering from it would report the
+    // interrupted v3 write as complete, which is the one case this predicate
+    // exists to catch. Mirrors `_zarr_compat.is_consolidated`.
+    const mixed = path.join(temporaryRoot, 'mixed.luxar.zarr');
+    mkdirSync(mixed, { recursive: true });
+    writeFileSync(path.join(mixed, '.zmetadata'), '{"metadata": {}}', 'utf-8');
+    writeFileSync(
+      path.join(mixed, 'zarr.json'),
+      JSON.stringify({ zarr_format: 3, node_type: 'group', attributes: {} }),
+      'utf-8'
+    );
+
+    expect(isGeneratedFixtureComplete(mixed)).toBe(false);
+  });
+
   it('rejects a format-3 root document that is not parseable JSON', () => {
     const broken = path.join(temporaryRoot, 'v3broken.luxar.zarr');
     mkdirSync(broken, { recursive: true });
