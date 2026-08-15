@@ -55,18 +55,29 @@ def _tile_norm_range(
     in the tile interior, i.e. exactly the box-shaped seam this is meant to
     remove — and it would clip the taper away entirely below ``m``.
 
-    Returns ``None`` — meaning "no shared scale; let each tile derive its own" —
-    when the sampled volume lies entirely at or below the applied floor, so that
-    the post-floor top collapses to :func:`resolve_volume_norm_range`'s
-    degenerate epsilon. That is reachable: an unguarded numeric ``--floor`` (the
-    single-tile CLI worker resolves with ``guard_numeric=False`` on purpose, so
-    a bleached timepoint of a ``batch-fit`` is not re-guarded away from the run's
-    global level) above a volume max the bounded sample under-reported. A tile
-    that really is below the floor still clips to zero and is skipped by the
-    near-zero guard in :func:`fit_tile`; a tile holding the signal the sample
-    missed would otherwise be normalized by ~1e-12 and come back ~1e12 times too
-    dark, which is worse than simply losing cross-tile comparability in a case
-    where the shared measurement is already meaningless.
+    Returns ``None`` — meaning "no shared scale; let each tile derive its own,
+    as it did before there was a shared one" — in the two cases where the
+    measurement carries no usable scale:
+
+    * The applied floor reaches the sampled top, so the shifted top is nothing
+      but :func:`resolve_volume_norm_range`'s degenerate epsilon. Reachable
+      through an unguarded numeric ``--floor``: the single-tile CLI worker
+      resolves with ``guard_numeric=False`` on purpose, so one level resolved by
+      its parent still applies to a dim timepoint, and the bounded sample can
+      under-report the max. A tile that really is below the floor clips to zero
+      and is skipped by the near-zero guard in :func:`fit_tile` — but a tile
+      holding the signal the sample missed would be normalized by ~1e-12 and
+      come back ~1e12 times too dark, which is far worse than losing cross-tile
+      comparability where the shared measurement is meaningless anyway.
+    * A non-finite top (a NaN or infinity anywhere in the sample). ``NaN``
+      compares False against everything, so it would otherwise sail through as
+      a "valid" scale and turn every tile's normalized array into NaN, past the
+      raw-tile NaN check that already ran.
+
+    The test is deliberately narrow — it catches the manufactured epsilon, not
+    every unhelpfully small range. A genuinely tiny-valued volume (a float stack
+    topping out at 1e-13) still gets its shared scale, because normalizing by
+    its own true extent is exactly right.
     """
     _, hi = resolve_volume_norm_range(
         volume,
@@ -74,10 +85,16 @@ def _tile_norm_range(
         subtract=applied_floor,
         verbose=verbose,
     )
-    if hi <= NORM_RANGE_MIN_SPAN:
+    if not np.isfinite(hi):
         aprint(
-            "Whole-volume intensity range collapsed under the applied floor "
-            f"({applied_floor}) — tiles fall back to their own scale."
+            f"Whole-volume intensity range is not finite ({hi}) — tiles fall "
+            "back to their own scale."
+        )
+        return None
+    if applied_floor is not None and hi <= NORM_RANGE_MIN_SPAN:
+        aprint(
+            f"Whole-volume intensity range collapsed under the floor "
+            f"({applied_floor:g}) — tiles fall back to their own scale."
         )
         return None
     return (0.0, hi)
@@ -185,11 +202,15 @@ def fit_tile(
     # under criteria (convergence tolerance, seeding and culling thresholds)
     # that are all absolute in the normalized [0, 1] range, so the same
     # physical structure is resolved to a different accuracy in each tile.
-    # Only resolve it when the caller has not already supplied one (the
-    # orchestrator resolves it once and passes it down, so per-tile workers do
-    # not re-read the volume). A None result means the shared scale collapsed
-    # under the floor and this tile derives its own — see `_tile_norm_range`.
-    if fit_kwargs.get("norm_range") is None:
+    # Only resolve it when the caller has not already done so (the orchestrator
+    # resolves it once and passes it down, so per-tile workers do not re-read
+    # the volume). Its answer may legitimately be None — no usable shared scale,
+    # this tile derives its own (see `_tile_norm_range`) — which a plain
+    # `norm_range is None` test cannot tell from "nobody has looked yet", hence
+    # the private already-resolved marker. It is popped here rather than
+    # forwarded, like the other underscore-prefixed tile-internal keys.
+    _norm_range_resolved = fit_kwargs.pop("_norm_range_resolved", False)
+    if not _norm_range_resolved and fit_kwargs.get("norm_range") is None:
         fit_kwargs["norm_range"] = _tile_norm_range(volume, fit_kwargs, applied_floor)
 
     # 1. Extract tile subvolume (materializes from zarr if needed)
@@ -408,8 +429,11 @@ def fit_tiled(
     # Same treatment for the intensity scale: resolve ONCE here so every tile
     # shares it, rather than letting each tile normalize by its own extremes.
     # `fit_tile` would resolve it per tile otherwise — identical result, but a
-    # bounded volume read per tile instead of one.
+    # bounded volume read per tile instead of one. The marker says "already
+    # looked", so a declined range (None, see `_tile_norm_range`) costs one read
+    # here rather than one per tile.
     if fit_kwargs.get("norm_range") is None:
+        fit_kwargs["_norm_range_resolved"] = True
         fit_kwargs["norm_range"] = _tile_norm_range(
             volume, fit_kwargs, applied_floor, verbose=verbose
         )

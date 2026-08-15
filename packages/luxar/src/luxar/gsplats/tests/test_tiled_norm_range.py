@@ -171,6 +171,79 @@ def test_tile_range_declines_when_the_floor_swallows_the_volume():
     assert _tile_norm_range(vol, {}, 899.0) == pytest.approx((0.0, 1.0))
 
 
+def test_tile_range_declines_a_non_finite_top():
+    """NaN compares False against everything, so it must be tested for.
+
+    The raw-tile NaN check inside the fitter already ran on a clean tile; a NaN
+    arriving through the SHARED scale would turn that tile's normalized array
+    into NaN with nothing left to catch it.
+    """
+    vol = np.full((8, 32, 32), 100.0, dtype=np.float32)
+    vol[0, 0, 0] = np.nan
+    assert _tile_norm_range(vol, {}, None) is None
+
+    vol_inf = np.full((8, 32, 32), 100.0, dtype=np.float32)
+    vol_inf[0, 0, 0] = np.inf
+    assert _tile_norm_range(vol_inf, {}, None) is None
+
+
+def test_tile_range_keeps_a_genuinely_tiny_scale():
+    """Small is not the same as collapsed — a tiny float stack keeps its scale.
+
+    The decline exists for a range MANUFACTURED by the floor subtraction, not
+    for data that is honestly this dim: normalizing such a volume by its own
+    extent is exactly right, and withdrawing the shared scale would silently
+    restore the per-tile disagreement this module exists to remove.
+    """
+    vol = np.zeros((8, 32, 32), dtype=np.float64)
+    vol[4, 16, 16] = 5e-13
+    assert _tile_norm_range(vol, {}, None) == pytest.approx((0.0, 5e-13))
+
+
+def test_a_declined_range_is_not_resolved_again_per_tile(monkeypatch):
+    """A decline must not cost one bounded volume read per tile.
+
+    ``None`` is both "no shared scale" and the un-resolved default, so the
+    orchestrator marks that it has already looked; without that marker every
+    tile would re-sample the whole volume to be told the same thing again (and
+    re-print the note), which on a lazy zarr is the per-tile read the shared
+    resolution exists to avoid.
+    """
+    from luxar.gsplats import fit_tiled_gsplats as ftg
+    from luxar.gsplats.tiling import compute_tile_specs
+
+    calls: list = []
+    real = ftg._tile_norm_range
+
+    def _counting(volume, fit_kwargs, applied_floor, verbose=False):
+        calls.append(applied_floor)
+        return real(volume, fit_kwargs, applied_floor, verbose=verbose)
+
+    monkeypatch.setattr(ftg, "_tile_norm_range", _counting)
+
+    vol = np.zeros((8, 32, 32), dtype=np.float32)
+    vol[4, 16, 16] = 900.0
+    spec = compute_tile_specs(vol.shape, 32, 0)[0]
+
+    ftg.fit_tile(
+        vol,
+        spec,
+        floor="none",
+        norm_range=None,
+        _norm_range_resolved=True,
+        seeds=10,
+        n_iters=1,
+        verbose=False,
+    )
+    assert calls == []
+
+    # and without the marker the same call DOES resolve — the guard is not vacuous
+    ftg.fit_tile(
+        vol, spec, floor="none", norm_range=None, seeds=10, n_iters=1, verbose=False
+    )
+    assert len(calls) == 1
+
+
 def test_collapsed_range_would_amplify_signal_by_1e12():
     """Pin the hazard the decline above avoids, so that guard is not vacuous."""
     tile = np.zeros((4, 8, 8), dtype=np.float32)
