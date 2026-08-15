@@ -748,15 +748,24 @@ test-all:  ## Run all tests (Python+CUDA, Rust/WASM, TypeScript, Go)
 # -n 6). For a real edit-run-edit loop, SCOPE it:
 #     make test-fast PYTEST_ARGS='packages/luxar/src/luxar/encoding'   # ~35 s
 #     make test-fast PYTEST_ARGS='-k colormap'
+# PYTEST_ARGS REPLACES the default paths rather than prepending to them —
+# appending would hand pytest the scope AND the whole tree, collecting all
+# 10286 tests and scoping nothing. Same semantics as hatch's `{args:...}`.
+# Options-only args (`-k colormap`) therefore pass no path at all, and pytest
+# falls back to `testpaths` in pyproject.toml — the same five directories.
 # Tune workers with LUXAR_PYTEST_JOBS=12 — the same variable `hatch run test`
 # reads, so one setting covers both entry points.
 test-fast:  ## Fast inner loop (no slow tests, no coverage, parallel)
 	@echo "🐍 Python (parallel, -m 'not slow')..."
 	$(HATCH) run pytest -n $(or $(LUXAR_PYTEST_JOBS),6) --dist loadfile -m 'not slow' -q \
-		-p no:cacheprovider $(PYTEST_ARGS) \
-		packages/luxar/src/luxar packages/luxar/examples/tests stats scripts/gallery/tests scripts/tests
+		-p no:cacheprovider \
+		$(or $(PYTEST_ARGS),packages/luxar/src/luxar packages/luxar/examples/tests stats scripts/gallery/tests scripts/tests)
 	@echo "📘 TypeScript unit tests..."
-	cd packages/luxar-viewer && pnpm vitest run
+	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
+		echo "📦 Installing TypeScript dependencies first..."; \
+		cd packages/luxar-viewer && pnpm install; \
+	fi
+	cd packages/luxar-viewer && pnpm test --run
 
 test-python:  ## Run Python tests only
 	$(HATCH) run test

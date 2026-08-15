@@ -336,12 +336,24 @@ dependencies = [
 # `hatch run test`, which is the documented pre-push gate, until now.
 #
 # Set here rather than in conftest.py so the pin also reaches the subprocesses
-# some tests spawn (`luxar gsplat fit --tile`, the `-j 2` worker pools).
+# some tests spawn (`luxar gsplat fit --tile`, the `-j 2` worker pools), and so
+# an ad-hoc `hatch run pytest <file>` — the documented way to run one test file
+# — is pinned too, not just the `test` script.
+#
+# The env-var scope is the WHOLE environment, though, so it also reaches
+# `hatch run python demo_x.py`, `hatch run luxar gsplat fit --device cpu` and
+# the benchmark scripts, where one thread is the wrong default and a
+# single-threaded CPU baseline would flatter every GPU comparison. Hence
+# `{env:NAME:1}`: an explicitly exported value WINS, so
+#     OMP_NUM_THREADS=16 MKL_NUM_THREADS=16 hatch run luxar gsplat fit ... --device cpu
+# runs at full width while an unqualified `hatch run` stays pinned. Both
+# variables, not just OMP: this torch takes its intra-op count from MKL, so
+# overriding OMP alone still gives `torch.get_num_threads() == 1`.
 [tool.hatch.envs.default.env-vars]
-OMP_NUM_THREADS = "1"
-OPENBLAS_NUM_THREADS = "1"
-MKL_NUM_THREADS = "1"
-NUMEXPR_NUM_THREADS = "1"
+OMP_NUM_THREADS = "{env:OMP_NUM_THREADS:1}"
+OPENBLAS_NUM_THREADS = "{env:OPENBLAS_NUM_THREADS:1}"
+MKL_NUM_THREADS = "{env:MKL_NUM_THREADS:1}"
+NUMEXPR_NUM_THREADS = "{env:NUMEXPR_NUM_THREADS:1}"
 
 # `test` runs the FULL suite (incl. `slow`) — the authoritative pre-push gate,
 # run locally before every push. `test-cov` (what CI runs) deselects `slow` so
@@ -454,12 +466,12 @@ dependencies = [
     "Pillow>=9.0.0"
 ]
 
-# Same single-thread pin as the default env — see the note there.
+# Same overridable single-thread pin as the default env — see the note there.
 [tool.hatch.envs.test.env-vars]
-OMP_NUM_THREADS = "1"
-OPENBLAS_NUM_THREADS = "1"
-MKL_NUM_THREADS = "1"
-NUMEXPR_NUM_THREADS = "1"
+OMP_NUM_THREADS = "{env:OMP_NUM_THREADS:1}"
+OPENBLAS_NUM_THREADS = "{env:OPENBLAS_NUM_THREADS:1}"
+MKL_NUM_THREADS = "{env:MKL_NUM_THREADS:1}"
+NUMEXPR_NUM_THREADS = "{env:NUMEXPR_NUM_THREADS:1}"
 
 [[tool.hatch.envs.test.matrix]]
 # Every version the classifiers advertise, mirroring the CI matrix's non-PR set:

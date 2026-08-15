@@ -15,6 +15,18 @@ hatch run python -m ruff check .  # Lint
 hatch run mypy packages/luxar/src/luxar/  # Type check
 ```
 
+The hatch env pins `OMP/OPENBLAS/MKL/NUMEXPR_NUM_THREADS=1` (see the note in
+`pyproject.toml`) — the test suite is thousands of tiny tensor ops and loses
+several-fold to fork-join overhead otherwise. That pin also applies to real work
+run through hatch, so for a CPU fit, a demo, or a benchmark, export the width
+you want — an explicit value wins. Set `MKL_NUM_THREADS` too, not just
+`OMP_NUM_THREADS`: torch takes its intra-op count from MKL here, so overriding
+OMP alone still leaves `torch.get_num_threads() == 1`.
+```bash
+OMP_NUM_THREADS=16 MKL_NUM_THREADS=16 \
+  hatch run luxar gsplat fit vol.tiff out.gsplats.zarr --device cpu
+```
+
 ### TypeScript (use pnpm, from packages/luxar-viewer/)
 ```bash
 pnpm dev          # Dev server (port 5173)

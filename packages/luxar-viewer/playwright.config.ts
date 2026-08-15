@@ -52,9 +52,11 @@ export default defineConfig({
   // The suite is state-independent by construction: every test takes the
   // per-test `page` fixture, no file creates a shared page in `beforeAll`, and
   // there is no `test.describe.serial` anywhere. What genuinely cannot share is
-  // a handful of RESOURCE-bound files — wall-clock assertions, a spawned
-  // `luxar serve`, FPS benchmarks — and those opt OUT locally with
-  // `test.describe.configure({ mode: 'serial' })`.
+  // a handful of RESOURCE-bound files — a spawned `luxar serve`, concurrent
+  // `hatch` invocations, FPS benchmarks — and those opt OUT locally with
+  // `test.describe.configure({ mode: 'default' })`, which pins the file to one
+  // worker without `'serial'`'s skip-the-rest-after-a-failure behaviour. The
+  // perf benches, which do want that, keep `'serial'`.
   fullyParallel: true,
 
   // Fail the build on CI if you accidentally left test.only
