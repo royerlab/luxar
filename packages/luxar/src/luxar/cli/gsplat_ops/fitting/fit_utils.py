@@ -707,6 +707,16 @@ def dispatch_parallel_tiled(
                     voxel_size=fit_config.get("voxel_size"),
                     output_space=fit_config.get("output_space", "real"),
                 ),
+                # What the merged result is a representation OF. The workers hold
+                # the volume, so this process is the only one that can say: the
+                # grid above is post-downscale, and the stored element type is
+                # gone by the time `load_volume` has handed back float32. Under
+                # --downscale the acquisition grid is declared; without one the
+                # two grids agree and there is nothing to declare.
+                source_shape=(
+                    [int(s) for s in volume.shape] if ds_factors is not None else None
+                ),
+                source_dtype=fit_config.get("source_dtype"),
             )
 
         with asection(f"Saving to {ctx.output_path.name}"):

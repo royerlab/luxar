@@ -244,6 +244,8 @@ def fit_tiled_parallel(
     recipe: Optional[str] = None,
     recipe_params: "Optional[Any]" = None,
     grid_scale: Optional[tuple[float, ...]] = None,
+    source_shape: Optional[Sequence[int]] = None,
+    source_dtype: Optional[str] = None,
 ) -> "Any":  # GSplatData (flat) or a GSplatNode (partition)
     """Fit all tiles via concurrent worker subprocesses, then merge.
 
@@ -285,6 +287,18 @@ def fit_tiled_parallel(
         when the two frames already agree.  Forwarded to
         :func:`merge_tile_results`, where it lifts the partition's split planes
         into the workers' splat frame (#1587).  Nothing else consumes it.
+    source_shape : sequence of int, optional
+        Grid of the volume the merged result represents, when that is NOT
+        ``volume_shape`` — i.e. when the caller decimated before tiling, since
+        ``volume_shape`` is then the (post-downscale) grid the workers fit.
+        Recorded as the source with ``source_declared``; leave ``None`` when the
+        two are the same grid, or the stamp would claim a measurement was a
+        declaration.
+    source_dtype : str, optional
+        Element type the volume was STORED in. The workers hold the volume, not
+        this process, so it cannot be observed here — without it the merged
+        result records a source grid with no byte count and ``info`` prints no
+        compression ratio at all.
 
     Returns
     -------
@@ -412,6 +426,8 @@ def fit_tiled_parallel(
         recipe=recipe,
         recipe_params=recipe_params,
         grid_scale=grid_scale,
+        source_shape=source_shape,
+        source_dtype=source_dtype,
     )
 
     if not keep_tiles:

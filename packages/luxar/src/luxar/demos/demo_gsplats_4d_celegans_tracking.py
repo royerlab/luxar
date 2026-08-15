@@ -862,6 +862,7 @@ def fit_timepoint(
     volume: np.ndarray,
     label: str,
     cache_file: Path,
+    source_dtype: str | None = None,
 ) -> GSplatData:
     """Fit GSplats to a single timepoint with caching.
 
@@ -898,6 +899,9 @@ def fit_timepoint(
     # so centers come back in physical µm coordinates.
     result = fit_gaussian_splats(
         volume,
+        # NLM + CLAHE change the values, not the grid, so only the element type
+        # has to be declared for the ratio to be about the acquisition.
+        source_dtype=source_dtype,
         seeds=MAX_SPLATS,
         device=DEVICE,
         verbose=True,
@@ -976,6 +980,15 @@ def preprocess_and_fit_all_timepoints(tiff_files: list) -> list:
         aprint(f"  GSplats cached: {n_gs_cached}/{n}")
         aprint(f"  Remaining: {n - n_gs_cached} to fit")
 
+        # Read from the TIFF HEADER rather than from a loaded array: the
+        # preprocessed volumes are cached as float32 .npy, so on a cache hit the
+        # stored element type is never seen again -- and it is the denominator
+        # of this dataset's compression ratio.
+        _tifffile = require_module("tifffile")
+        with _tifffile.TiffFile(str(tiff_files[0])) as _tf:
+            source_dtype = str(_tf.series[0].dtype)
+        aprint(f"  Acquisition dtype: {source_dtype}")
+
         gsplats_list = []
         for t in range(n):
             with asection(f"Timepoint {t}/{n - 1}"):
@@ -995,7 +1008,12 @@ def preprocess_and_fit_all_timepoints(tiff_files: list) -> list:
                 )
 
                 # Fit GSplats on preprocessed volume
-                gsplats = fit_timepoint(volume, f"T={t}", gsplat_cache_files[t])
+                gsplats = fit_timepoint(
+                    volume,
+                    f"T={t}",
+                    gsplat_cache_files[t],
+                    source_dtype=source_dtype,
+                )
                 gsplats_list.append(gsplats)
                 del volume  # Free numpy array early
 

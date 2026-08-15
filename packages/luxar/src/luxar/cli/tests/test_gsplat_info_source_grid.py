@@ -91,6 +91,52 @@ def test_cli_fit_stamps_the_stored_dtype_not_the_loaders_cast(tmp_path: Path) ->
     assert attrs["source_bytes"] == V.size * 2
 
 
+def test_info_says_when_the_source_grid_was_declared_rather_than_measured(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A stated denominator must read as a claim in the report, not as a
+    measurement.
+
+    ``source_declared`` is stamped when the producer preprocessed before fitting
+    and named the acquisition itself. The compression line printed here rests on
+    that number, so the report is the one place a reader would find out — a
+    marker only visible by opening `fitting/.zattrs` is not a distinction anyone
+    reading `info` gets to make.
+    """
+    from types import SimpleNamespace
+
+    from luxar.cli.gsplat_ops.inspect_commands import _print_source_grid, _store_size
+
+    store = tmp_path / "declared.gsplats.zarr"
+    store.mkdir()
+    (store / "chunk").write_bytes(b"\0" * 4096)
+    stats = {
+        "source_shape": [96, 128, 128],
+        "source_voxels": 96 * 128 * 128,
+        "source_dtype": "uint16",
+        "source_bytes": 2 * 96 * 128 * 128,
+        "fitted_shape": [24, 32, 32],
+        "fitted_voxels": 24 * 32 * 32,
+    }
+    data = SimpleNamespace(
+        stats={**stats, "source_declared": True},
+        amplitudes=np.zeros(64, dtype=np.float32),
+    )
+    _print_source_grid(data, _store_size(store))
+    out = capsys.readouterr().out
+    assert "Source volume: 96 x 128 x 128 uint16" in out, out
+    assert "declared by the producer" in out, out
+
+    # The negative control: a measured grid must not be labelled a claim.
+    _print_source_grid(
+        SimpleNamespace(stats=stats, amplitudes=np.zeros(64, dtype=np.float32)),
+        _store_size(store),
+    )
+    measured = capsys.readouterr().out
+    assert "Source volume: 96 x 128 x 128 uint16" in measured, measured
+    assert "declared" not in measured, measured
+
+
 def test_an_artifact_larger_than_its_source_is_not_reported_as_0_to_1(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -123,3 +169,106 @@ def test_an_artifact_larger_than_its_source_is_not_reported_as_0_to_1(
     out = capsys.readouterr().out
     assert "Source volume: 8 x 8 x 8 uint16" in out, out
     assert "0.25:1" in out, out
+
+
+def test_a_downscaled_tiled_fit_records_the_grid_it_was_given_not_the_decimated_copy(
+    tmp_path: Path,
+) -> None:
+    """``--tiling uniform --downscale`` must not publish the working copy.
+
+    The tiled fitter measures the array it is HANDED, and on this path the
+    command decimates the volume itself before handing it over — so without a
+    declaration the merged result records the decimated grid as its source, and
+    quotes a compression ratio against a volume 8x smaller than the file it was
+    fitted from. Worse, ``fitted_shape`` would equal it, so ``info`` could not
+    even show that a decimation happened.
+    """
+    src = tmp_path / "vol.npy"
+    V = _sparse_blobs(shape=(16, 16, 16), n=10)
+    np.save(src, V)
+    out = tmp_path / "tiled.gsplats.zarr"
+    result = CliRunner().invoke(
+        app,
+        [
+            "gsplat",
+            "fit",
+            str(src),
+            str(out),
+            "--tiling",
+            "uniform",
+            "--tile-size",
+            "8",
+            "--overlap",
+            "2",
+            "--downscale",
+            "2",
+            "--iters",
+            "10",
+            "--seeds",
+            "40",
+            "--device",
+            "cpu",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    attrs = read_node_attrs(out / "fitting")
+    assert attrs["source_shape"] == [16, 16, 16], attrs
+    assert attrs["source_bytes"] == V.size * 2
+    assert attrs["source_declared"] is True
+    # The optimiser saw the decimated grid, and the report says so.
+    assert attrs["fitted_shape"] == [8, 8, 8]
+
+    info = CliRunner().invoke(app, ["gsplat", "info", str(out), "--no-histograms"])
+    assert info.exit_code == 0, info.output
+    assert "Source volume: 16 x 16 x 16 uint16" in info.output, info.output
+    assert "downscaled before fitting" in info.output, info.output
+
+
+def test_a_single_downscaled_tile_does_not_claim_the_whole_acquisition(
+    tmp_path: Path,
+) -> None:
+    """``--tile i/M`` writes ONE crop, and a crop's source is its own region.
+
+    The declaration above exists because the merged result covers the volume; a
+    lone tile does not, so it must keep measuring what it was handed. Without the
+    distinction every tile of a distributed run would publish the whole
+    acquisition as its own source.
+    """
+    from luxar.gsplats.tiling import compute_tile_specs
+
+    src = tmp_path / "vol.npy"
+    V = _sparse_blobs(shape=(32, 32, 32), n=16)
+    np.save(src, V)
+    n_tiles = len(compute_tile_specs((16, 16, 16), 8, 2))
+    assert n_tiles > 1, "a single tile would cover the whole grid, proving nothing"
+    out = tmp_path / "tile0.gsplats.zarr"
+    result = CliRunner().invoke(
+        app,
+        [
+            "gsplat",
+            "fit",
+            str(src),
+            str(out),
+            "--tile",
+            f"0/{n_tiles}",
+            "--tile-size",
+            "8",
+            "--overlap",
+            "2",
+            "--downscale",
+            "2",
+            "--iters",
+            "10",
+            "--seeds",
+            "40",
+            "--device",
+            "cpu",
+            "--allow-empty-tile",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    if not out.exists():
+        pytest.skip("tile 0 windowed to empty; nothing was stamped")
+    attrs = read_node_attrs(out / "fitting")
+    assert attrs["source_shape"] != [32, 32, 32], attrs
+    assert "source_declared" not in attrs, attrs

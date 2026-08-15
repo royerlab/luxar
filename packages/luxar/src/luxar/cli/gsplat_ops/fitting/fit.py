@@ -51,6 +51,31 @@ def _stamp_source_dtype(fit_config: dict, source_info: dict) -> None:
         fit_config["source_dtype"] = source_info["source_dtype"]
 
 
+def _declare_pre_downscale_source(
+    fit_config: dict, original_shape: "tuple[int, ...]", *, single_tile: bool
+) -> None:
+    """Declare the pre-downscale grid when the CLI decimates before tiling.
+
+    The tiled fitter measures the array it is HANDED, and on the tiled paths the
+    command downscales the volume itself first. Left alone the merged result
+    would therefore record the decimated working copy as its source — a
+    compression ratio quoted against a grid the acquisition never had, with
+    ``fitted_shape`` equal to it so ``info`` cannot even show the decimation.
+    (The whole-volume path has no such problem: ``fit_gaussian_splats``
+    downscales internally, so it measures the caller's array.)
+
+    Not for ``--tile i/M``: that writes ONE crop, whose source is its own
+    sub-volume, not the whole acquisition.
+
+    A ``source_shape`` already in the config is a deliberate statement by the
+    user (``--config`` passes arbitrary keys through) and wins, exactly as
+    :func:`_stamp_source_dtype` treats ``source_dtype``.
+    """
+    if single_tile or fit_config.get("source_shape"):
+        return
+    fit_config["source_shape"] = [int(s) for s in original_shape]
+
+
 def run_fit_volume(
     input_path: Optional[Path] = typer.Argument(
         None, help="Input volume (.npy/.npz/.tiff/.zarr)"
@@ -756,6 +781,9 @@ def run_fit_volume(
                     aprint(
                         f"Downscaled volume: {original_shape} -> {volume.shape} "
                         f"(factors={tiled_downscale_factors})"
+                    )
+                    _declare_pre_downscale_source(
+                        fit_config, original_shape, single_tile=tile is not None
                     )
 
             # 6. Fit
