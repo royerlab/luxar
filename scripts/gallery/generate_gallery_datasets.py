@@ -11,6 +11,26 @@ already be present (typically generated once, then committed/kept locally). Such
 entries are reported as *capture-only* and skipped by the generator — the
 capture spec still picks them up if their dataset is on disk.
 
+A demo whose ``DEMO_META`` declares ``local_data`` (``manual-file`` — the Gaia
+catalog is CC BY-NC, so it is not shipped and has to be placed by hand — or
+``kaggle-auth``, which needs API credentials) exits non-zero wherever that input
+is absent, which used to make the whole run report a hard ``failed`` and return
+1. Such an entry is now *demoted on failure*: it is RUN like any other (so the
+machine that does have the input regenerates its tile on every route, ``--force``
+included), and only a NON-ZERO EXIT is reclassified into the soft *manual-data*
+bucket instead of ``failed``.
+
+Two limits of that rule, both deliberate. A genuine bug inside one of those demos
+also lands in the soft bucket rather than returning 1 — its error tail is still
+printed, so it stays visible. And a ``timeout``, a ``no-output`` (exit 0 having
+written nothing) or a death by signal (a negative return code: the OOM killer, a
+segfault) stays HARD even for them, which leaves one real case unrescued:
+``arxiv_papers_kaggle`` needs no credentials to start and declares a ~30 GB
+download, so on a cold machine it can exhaust ``GEN_TIMEOUT_S`` and land in
+``timeout`` — a non-zero exit for the whole run. Fixing that by skipping large
+downloads is deliberately NOT done: it would stop regenerating the tile on a
+machine whose cache is warm.
+
 Usage::
 
     hatch run python scripts/gallery/generate_gallery_datasets.py            # generate all missing
@@ -38,6 +58,11 @@ DEMOS_DIR = REPO_ROOT / "packages" / "luxar" / "src" / "luxar" / "demos"
 # Gaussian splats; give them room but don't hang the whole run forever.
 GEN_TIMEOUT_S = 3600
 
+# Provisioning modes whose input cannot be fetched by the demo itself, so a
+# non-zero exit is more likely to mean "this machine doesn't have it" than "the
+# demo is broken". Mirrors the pair `luxar demo run-all` skips outright.
+LOCAL_INPUT_MODES = ("manual-file", "kaggle-auth")
+
 
 def load_manifest() -> list[dict[str, Any]]:
     with MANIFEST.open() as fh:
@@ -49,8 +74,49 @@ def dataset_exists(entry: dict[str, Any]) -> bool:
     return bool((REPO_ROOT / entry["dataset"]).exists())
 
 
+def needs_local_input(entry: dict[str, Any]) -> str | None:
+    """The entry's demo's ``local_data`` mode, if it is one of the un-fetchable ones.
+
+    Returns ``"manual-file"`` / ``"kaggle-auth"``, or ``None`` for everything else
+    — including ``git-lfs``, which `git lfs pull` provides and whose ~20 demos
+    must keep failing hard. Read straight from the demo's ``DEMO_META`` by AST
+    (never importing it): the gallery manifest carries no such field, and the demo
+    file is the source of truth the ``luxar demo`` commands already use. A
+    malformed or missing block is *not* this predicate's business — report
+    ``None`` and let the normal generation path fail loudly in its own vocabulary.
+    """
+    script = entry.get("script")
+    if not script:
+        return None
+    script_path = DEMOS_DIR / script
+    if not script_path.exists():
+        return None
+    # Deferred import: this script otherwise needs only stdlib + arbol, and a
+    # module-level `luxar` import would make even --help traceback on a partial
+    # environment. An uninstalled luxar means nothing can be demoted, which errs
+    # toward reporting failures loudly (and `--list` still prints its plan).
+    try:
+        from luxar.demos import registry
+    except ImportError:
+        return None
+
+    try:
+        meta = registry.extract_demo_meta(script_path)
+    except registry.DemoMetaError:
+        return None
+    mode = meta["requirements"]["local_data"]
+    return str(mode) if mode in LOCAL_INPUT_MODES else None
+
+
 def generate_one(entry: dict[str, Any]) -> tuple[str, str]:
-    """Run a demo's generator. Returns (status, detail)."""
+    """Run a demo's generator. Returns (status, detail).
+
+    A non-zero exit is ``failed`` — except for a demo whose input this machine
+    may simply not have (:func:`needs_local_input`), which is demoted to the soft
+    ``manual-data`` bucket. The demotion is decided only AFTER the run, so the
+    tile is still regenerated wherever the input is present; a ``timeout``, a
+    ``no-output`` or a death by SIGNAL stays hard even then.
+    """
     script = entry.get("script")
     if not script:
         return ("capture-only", "no generator script (feature-branch demo)")
@@ -77,11 +143,42 @@ def generate_one(entry: dict[str, Any]) -> tuple[str, str]:
             tail = (proc.stderr or proc.stdout or "").strip().splitlines()[-8:]
             for line in tail:
                 aprint(line)
+            # The tail is printed either way: a demoted failure is soft, not
+            # silent, since the same exit code covers "no input here" and a real
+            # bug in the demo.
+            #
+            # `> 0`, not `!= 0`: on POSIX a NEGATIVE returncode means the child
+            # was killed by a signal (-9 = the OOM killer, -11 = a segfault in a
+            # native dependency), which is never how a demo reports a missing
+            # input — it is a real failure of a run that got far enough to
+            # allocate, so it stays hard rather than being filed under "this
+            # machine doesn't have the file".
+            mode = needs_local_input(entry) if proc.returncode > 0 else None
+            if mode is not None:
+                return (
+                    "manual-data",
+                    f"exit {proc.returncode}; this machine appears not to have "
+                    f"the {mode} input",
+                )
             return ("failed", f"exit {proc.returncode}")
 
     if not dataset_exists(entry):
         return ("no-output", f"script ran but {entry['dataset']} not found")
     return ("generated", entry["dataset"])
+
+
+def print_plan(demos: list[dict[str, Any]]) -> None:
+    """Print the per-demo plan for ``--list`` (generates nothing)."""
+    with asection(f"Gallery plan ({len(demos)} demos)"):
+        for d in demos:
+            present = "ready" if dataset_exists(d) else "MISSING"
+            gen = d.get("script") or "(capture-only)"
+            mode = needs_local_input(d)
+            if mode is not None:
+                # Still run — the mark says a failure here will be reported as
+                # manual-data rather than as a hard failure.
+                gen += f"  (needs {mode}; a failure is reported as manual-data)"
+            aprint(f"[{present:>7}] {d['id']:<34} {gen}")
 
 
 def main() -> int:
@@ -112,17 +209,14 @@ def main() -> int:
             aprint(f"⚠️  Unknown demo ids ignored: {', '.join(sorted(unknown))}")
 
     if args.list:
-        with asection(f"Gallery plan ({len(demos)} demos)"):
-            for d in demos:
-                present = "ready" if dataset_exists(d) else "MISSING"
-                gen = d.get("script") or "(capture-only)"
-                aprint(f"[{present:>7}] {d['id']:<34} {gen}")
+        print_plan(demos)
         return 0
 
     results: dict[str, list[str]] = {
         "generated": [],
         "already-present": [],
         "capture-only": [],
+        "manual-data": [],
         "failed": [],
         "timeout": [],
         "no-output": [],
@@ -149,8 +243,9 @@ def main() -> int:
     aprint(f"\n{len(ready)}/{len(demos)} datasets ready for capture.")
     aprint("Next: cd packages/luxar-viewer && pnpm gallery")
 
-    # Non-zero only on hard generation failures (capture-only / missing input
-    # data are expected and not errors).
+    # Non-zero only on hard generation failures. capture-only and manual-data are
+    # expected states, not errors: the latter is a demo whose un-fetchable input
+    # this machine does not have (see `generate_one`).
     hard_failures = results["failed"] + results["timeout"] + results["no-output"]
     return 1 if hard_failures else 0
 

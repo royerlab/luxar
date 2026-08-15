@@ -104,18 +104,24 @@ make_additive_lod(
     *,
     method: str = "auto",         # see "Methods" below
     breakpoints = "equal-count",   # or list[int] | list[float]
-    truncation_sigmas: float = 3.0,
+    truncation_sigmas: float | None = None,   # None = data.truncation_radius
     max_n_dense: int = 2_000,
     seed: int | None = None,
 ) -> GSplatData
 ```
+
+`truncation_sigmas=None` (the default) means the σ support the **dataset itself**
+was fitted and is rendered at (`data.truncation_radius`, canonically 2.75) — not a
+hardcoded 3.0. It is read off the object actually being pruned, so with
+`substitutive_level=` it is that level's radius, not the finest leaf's. Pass a
+float to prune at a different support.
 
 ```python
 compute_additive_order(
     data: GSplatData,
     method: str = "auto",
     *,
-    truncation_sigmas: float = 3.0,
+    truncation_sigmas: float | None = None,   # None = data.truncation_radius
     max_n_dense: int = 2_000,
     seed: int | None = None,
 ) -> np.ndarray   # length-N permutation
@@ -255,7 +261,7 @@ The result of `make_additive_lod` is a multi-LOD `GSplatData` whose
 
 | Step                      | Cost                                          |
 |---------------------------|-----------------------------------------------|
-| Sparse Gram (3σ pruning)  | $O(N \log N + N \cdot \bar{c})$ where $\bar{c}$ = avg neighbourhood size |
+| Sparse Gram (σ-trunc. pruning) | $O(N \log N + N \cdot \bar{c})$ where $\bar{c}$ = avg neighbourhood size |
 | Dense Gram                | $O(N^2 D^3)$ — used at $N \le 2000$            |
 | Lazy greedy (sparse)      | $O(N \cdot \mathrm{nnz}(G))$ amortised        |
 | Scan greedy (dense)       | $O(N^2)$                                      |
@@ -376,7 +382,10 @@ render-fidelity objective at the coarse budget. Benchmarked on real microscopy
 (skimage cells3d nuclei): **+5–6 dB** full-res and
 **+10–12 dB** at viewing scale over the merge, with unchanged splat count, and
 the warm start beats a cold fit while drifting ~2× less across levels (less
-LOD popping). Fitting a blurred/downscaled volume proxy was benchmarked and
+LOD popping). (Those figures were measured before the #1172 amplitude-convention
+fix. The never-worse guard bounds the outcome at the merge, so the *sign* of the
+reported gain is safe, but the magnitudes have not been re-measured since.)
+Fitting a blurred/downscaled volume proxy was benchmarked and
 rejected — it discards positional detail the merge inherits from the sharp
 fine fit.
 

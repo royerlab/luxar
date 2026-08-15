@@ -207,6 +207,8 @@ def run_filter_dataset(
                 aprint("\n(dry-run: nothing written)")
                 return
 
+            from luxar.gsplats.io.load_gsplats import read_authored_appearance
+
             with asection(f"Saving to {output_path.name}"):
                 if n_filtered == 0:
                     aprint("⚠ No splats remain after filtering — skipping save")
@@ -216,6 +218,7 @@ def run_filter_dataset(
                         encoding_mode=encoding_mode_obj,
                         include_fitting_info=True,
                         compress=compress,
+                        root_attrs=read_authored_appearance(input_path),
                     )
                     aprint(f"Saved filtered dataset: {output_path}")
                     if output_path.exists():
@@ -276,6 +279,8 @@ def run_slice_dataset(
                 )
 
             # Save
+            from luxar.gsplats.io.load_gsplats import read_authored_appearance
+
             with asection(f"Saving to {output_path.name}"):
                 if n_sliced == 0:
                     aprint("⚠ No splats remain after slicing — skipping save")
@@ -285,6 +290,7 @@ def run_slice_dataset(
                         encoding_mode=encoding_mode_obj,
                         include_fitting_info=True,
                         compress=compress,
+                        root_attrs=read_authored_appearance(input_path),
                     )
                     aprint(f"Saved sliced dataset: {output_path}")
 

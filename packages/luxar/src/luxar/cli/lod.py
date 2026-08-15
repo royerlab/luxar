@@ -35,6 +35,7 @@ from luxar.utils.lod_methods import (
 from .gsplat_ops.recipe_shared import (
     VALID_ADDITIVE_METHODS,
     VALID_SUBSTITUTIVE_METHODS,
+    carried_appearance,
     detect_store_encoding,
     estimate_bytes_per_splat,
     measure_store_bytes,
@@ -244,7 +245,10 @@ def lod_recipe(
         "(default: measured from the input store).",
     ),
     truncation_sigmas: Optional[float] = typer.Option(
-        None, "--truncation-sigmas", help="Mahalanobis cutoff for greedy (default 3.0)."
+        None,
+        "--truncation-sigmas",
+        help="Mahalanobis cutoff for greedy (default: the dataset's own "
+        "truncation radius).",
     ),
     max_n_dense: Optional[int] = typer.Option(
         None, "--max-n-dense", help="Greedy dense-Gram threshold (default 2000)."
@@ -655,6 +659,10 @@ def lod_recipe(
                         f"`luxar gsplat flatten {input_path.name} flat.gsplats.zarr`."
                     ) from e
                 aprint(f"Loaded {data.n_splats:,} splats ({data.ndim}D)")
+                # A recipe rebuild owns the STRUCTURE, not the appearance: carry
+                # the source root's authored attrs across or they are silently
+                # replaced by the writer's defaults (#1600).
+                source_appearance = carried_appearance(input_path)
 
             # ── --refine volume: load the source volume (shared loader) ──
             target_volume: Any = None
@@ -831,9 +839,9 @@ def lod_recipe(
                 reveal_centre=parsed_reveal_centre,
                 spatial_dims=parsed_spatial_dims,
                 breakpoints=bp,
-                truncation_sigmas=(
-                    truncation_sigmas if truncation_sigmas is not None else 3.0
-                ),
+                # Passed through as-is: None means "the dataset's own
+                # truncation_radius", which the additive builders resolve.
+                truncation_sigmas=truncation_sigmas,
                 max_n_dense=max_n_dense if max_n_dense is not None else 2000,
                 max_elements=eff_max_elements,
                 partition_rule=rule,  # type: ignore[arg-type]
@@ -900,6 +908,7 @@ def lod_recipe(
                         ordering=ordering,  # type: ignore[arg-type]
                         encoding_mode=encoding_obj,
                         compress=compress,  # type: ignore[arg-type]
+                        root_attrs=source_appearance,
                     )
                 else:
                     # Composed recipe — write the node tree, carrying input
@@ -918,6 +927,7 @@ def lod_recipe(
                         provenance_info=provenance_info,
                         pipeline_info=pipeline_info,
                         compress=compress,  # type: ignore[arg-type]
+                        root_attrs=source_appearance,
                     )
                 if not quiet:
                     aprint(f"Saved to {output_path}")

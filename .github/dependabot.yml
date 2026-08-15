@@ -8,6 +8,7 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    target-branch: "dev"
 
   # TypeScript viewer (pnpm/npm)
   - package-ecosystem: npm
@@ -15,6 +16,7 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    target-branch: "dev"
 
   # Rust / WASM acceleration crate
   - package-ecosystem: cargo
@@ -22,6 +24,7 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    target-branch: "dev"
 
   # Go native launcher
   - package-ecosystem: gomod
@@ -29,6 +32,7 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    target-branch: "dev"
 
   # GitHub Actions — keep the SHA-pinned actions in workflows up to date.
   - package-ecosystem: github-actions
@@ -36,3 +40,4 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    target-branch: "dev"

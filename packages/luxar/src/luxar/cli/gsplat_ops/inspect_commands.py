@@ -57,8 +57,16 @@ def _ascii_histogram(
     return "\n".join(lines)
 
 
-def _compute_splat_volumes(cholesky_factors: "np.ndarray", ndim: int) -> "np.ndarray":
-    """Compute volumes at 3-sigma for each splat."""
+def _compute_splat_volumes(
+    cholesky_factors: "np.ndarray", ndim: int, truncate: float
+) -> "np.ndarray":
+    """Compute volumes at ``truncate``-sigma for each splat.
+
+    ``truncate`` is REQUIRED and comes from the dataset's own
+    ``truncation_radius``: this used to be a hardcoded 3, so a dataset fitted at
+    the canonical 2.75 was measured at a support it never had (the report was
+    ``(3/2.75)**ndim`` too large — 30% at 3D).
+    """
     import numpy as np
 
     # Extract diagonal elements from packed Cholesky factors
@@ -70,10 +78,10 @@ def _compute_splat_volumes(cholesky_factors: "np.ndarray", ndim: int) -> "np.nda
     det_L = np.prod(diag_elements, axis=1)
     det_Sigma = det_L**2
 
-    # Volume of nD ellipsoid at 3-sigma
-    # V = (2π)^(n/2) * det(Σ)^(1/2) * 3^n / Γ(n/2 + 1)
-    # For simplicity, use det(Σ)^(1/2) * 3^n as proxy
-    volumes: np.ndarray = np.abs(det_Sigma) ** 0.5 * (3**ndim)
+    # Volume of nD ellipsoid at T-sigma (T = the dataset's truncation radius)
+    # V = (2π)^(n/2) * det(Σ)^(1/2) * T^n / Γ(n/2 + 1)
+    # For simplicity, use det(Σ)^(1/2) * T^n as proxy
+    volumes: np.ndarray = np.abs(det_Sigma) ** 0.5 * (float(truncate) ** ndim)
 
     return volumes
 
@@ -120,7 +128,8 @@ def info_dataset(
     - Number of splats and dimensions
     - Bounding box in each dimension
     - Amplitude distribution with statistics and histogram
-    - Volume distribution (size at 3-sigma) with statistics and histogram
+    - Volume distribution (size at the dataset's own truncation radius, in
+      sigmas) with statistics and histogram
     - Color information (if present)
     - Metadata (fitting info, provenance, etc.)
 
@@ -238,18 +247,24 @@ def info_dataset(
             )
 
         # ================================================================
-        # Volume Statistics (3-sigma)
+        # Volume Statistics (at the dataset's own truncation radius)
         # ================================================================
+        # `:g` so the canonical 2.75 reads "2.75" and an integral 3.0 reads "3".
+        truncate = data.truncation_radius
         aprint("\n" + "─" * 70)
-        aprint("VOLUME ANALYSIS (3-Sigma)")
+        aprint(f"VOLUME ANALYSIS ({truncate:g}-Sigma)")
         aprint("─" * 70)
 
-        volumes = _compute_splat_volumes(data.cholesky_factors, ndim)
+        volumes = _compute_splat_volumes(data.cholesky_factors, ndim, truncate)
         _print_statistics_table(volumes, "Volume")
 
         if show_histograms:
             aprint(
-                _ascii_histogram(volumes, bins=bins, title="Volume Distribution (3σ)")
+                _ascii_histogram(
+                    volumes,
+                    bins=bins,
+                    title=f"Volume Distribution ({truncate:g}σ)",
+                )
             )
 
         # ================================================================
@@ -340,7 +355,7 @@ def info_dataset(
         aprint(f"\n✓ Dataset contains {n_splats:,} Gaussian splats in {ndim}D")
         aprint(f"✓ Total amplitude: {total_amp:.4e}")
         aprint(f"✓ Bounding box volume: {total_volume:.4e}")
-        aprint(f"✓ Mean splat volume (3σ): {np.mean(volumes):.4e}")
+        aprint(f"✓ Mean splat volume ({truncate:g}σ): {np.mean(volumes):.4e}")
 
         # Pruning recommendation
         n_for_95pct = np.searchsorted(cumsum_norm, 0.95) + 1

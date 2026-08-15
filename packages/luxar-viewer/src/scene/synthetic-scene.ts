@@ -89,6 +89,32 @@ export interface SyntheticSceneSpec {
 /** Default gaussian-blob count for the clustered samplers. */
 export const DEFAULT_CLUSTERS = 256;
 
+/** Default half-extent of the generation volume (`SyntheticSceneSpec.bounds`). */
+const DEFAULT_SYNTHETIC_BOUNDS = 100;
+
+/**
+ * Diagonal of the cube a synthetic LINES walk fills — the stand-in for
+ * the `position_bounds` a compiled node carries, so the debug injector
+ * can size its line primitive the way `createLinesNode` does (authored
+ * width normalized by the node's own extent — see
+ * `types/line-primitive.ts`). Without it a WIDE synthetic scene would
+ * read as thin and build the capsule where production builds the quad.
+ *
+ * The walk is re-anchored uniformly inside `[-bounds, bounds]^3` every
+ * 64 steps and steps by at most `bounds × stepScale`, so the cube
+ * diagonal is its extent to within the drift a run of 64 steps can
+ * accumulate: negligible for the unbiased walk (~√64 steps ≈ 8% of
+ * `bounds` at the default `stepScale`), but up to ~60% of `bounds` for
+ * the near-ballistic `turnAngle` variant. That makes this a mild
+ * UNDER-estimate of the true extent there — i.e. a mild over-estimate
+ * of the width factor — which stays well inside the order-of-magnitude
+ * tolerance the rule is stated at, and does not move any bench
+ * scenario's resolution.
+ */
+export function syntheticLinesBoundsDiagonal(spec: SyntheticSceneSpec): number {
+  return 2 * (spec.bounds ?? DEFAULT_SYNTHETIC_BOUNDS) * Math.sqrt(3);
+}
+
 /**
  * Mulberry32 PRNG — small, fast, deterministic. Sufficient for
  * filler synthetic data; no cryptographic claims.
@@ -132,7 +158,7 @@ function mulberry32(seed: number): () => number {
  */
 export function generateSyntheticLines(spec: SyntheticSceneSpec): InstancedLinesMeshConfig {
   const count = spec.count;
-  const bounds = spec.bounds ?? 100;
+  const bounds = spec.bounds ?? DEFAULT_SYNTHETIC_BOUNDS;
   const rand = mulberry32(spec.seed ?? 1);
 
   const startPositions = new Float32Array(count * 3);
@@ -387,7 +413,7 @@ export interface SyntheticPointsConfig {
  */
 export function generateSyntheticPoints(spec: SyntheticSceneSpec): SyntheticPointsConfig {
   const count = spec.count;
-  const bounds = spec.bounds ?? 100;
+  const bounds = spec.bounds ?? DEFAULT_SYNTHETIC_BOUNDS;
   const clusters = spec.clusters ?? DEFAULT_CLUSTERS;
   const rand = mulberry32(spec.seed ?? 1);
 
@@ -441,7 +467,7 @@ export function generateSyntheticPoints(spec: SyntheticSceneSpec): SyntheticPoin
  */
 export function generateSyntheticGSplats(spec: SyntheticSceneSpec): InstancedGSplatsMeshConfig {
   const count = spec.count;
-  const bounds = spec.bounds ?? 100;
+  const bounds = spec.bounds ?? DEFAULT_SYNTHETIC_BOUNDS;
   const clusters = spec.clusters ?? DEFAULT_CLUSTERS;
   const rand = mulberry32(spec.seed ?? 1);
 

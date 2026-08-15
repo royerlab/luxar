@@ -93,7 +93,7 @@ from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.demos import (
     MissingDependencyError,
     launch_viewer,
-    load_precomputed_bundle,
+    load_dataset_bundle,
     parse_demo_flags,
     require_module,
     warn_if_no_cuda_gpu,
@@ -681,7 +681,7 @@ def main():
         f"zebrafish_frame{idx:04d}.gsplats.zarr.zip" for idx in precomputed_indices
     ]
 
-    gsplats_list = load_precomputed_bundle(
+    gsplats_list = load_dataset_bundle(
         _PRECOMPUTED_DEMO_NAME,
         _PRECOMPUTED_BUNDLE_NAME,
         precomputed_file_names,

@@ -41,6 +41,9 @@ config/
 │                                  #   Settings-popover model; live values mutate config, startup
 │                                  #   values thread through bootstrap (URL params always win)
 ├── constants.ts                   # WASM ABI constants
+├── cinematic-preset.ts            # Cinematic-mode preset values — shared by the C-key toggle
+│                                  #   (ui/rendering-controls/cinematic-mode.ts, which re-exports
+│                                  #   them) and the zarr bridge's cinematic_mode expansion
 ├── sections/
 │   ├── camera/             {data,types,validate}.ts
 │   ├── animation/          {data,types}.ts

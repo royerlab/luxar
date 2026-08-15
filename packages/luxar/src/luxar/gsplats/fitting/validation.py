@@ -93,6 +93,7 @@ def prepare_fit_config(
     sort_splats_interval: int = 1000,
     iter_callback: Optional[Any] = None,
     iter_callback_every: int = 25,
+    seed_amps_background_relative: bool = False,
     source_dtype: Optional[str] = None,
     **seed_kwargs: Any,
 ) -> FitConfig:
@@ -113,6 +114,12 @@ def prepare_fit_config(
         - "auto": Principled combination of all methods (recommended)
         This parameter is only used when seeds=None. If seeds are provided,
         this parameter is ignored.
+    seed_amps_background_relative : bool, default=False
+        Amplitude convention of a ``seeds=GSplatData`` warm start. False (the
+        default) = raw-image-sampled, as ``generate_seeds()`` returns; True =
+        background-relative, as a previous fit's output is. See
+        ``fit_gaussian_splats`` for the full explanation. Ignored unless
+        ``seeds`` is a GSplatData.
     **seed_kwargs
         Additional keyword arguments for seed generation (e.g., num_scales,
         percentile_thresh, etc.). Only used when seeds=None.
@@ -334,6 +341,7 @@ def prepare_fit_config(
         source_dtype=source_dtype,
         source_itemsize=source_itemsize,
         seeds=seeds,
+        seed_amps_background_relative=seed_amps_background_relative,
         seed_method=seed_method,
         seed_kwargs=seed_kwargs,
         norm_percentile=norm_percentile,

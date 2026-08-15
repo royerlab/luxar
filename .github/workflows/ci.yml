@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
   pull_request:
-    branches: [main]
+    branches: [main, dev]
   schedule:
     # Nightly full-suite run, and still the multi-version Python matrix: per-PR CI
     # runs the FLOOR (3.12) only, so this is where the newest supported

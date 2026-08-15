@@ -141,7 +141,10 @@ chunk_bounds = compute_chunk_bounds_gsplats(
     centers=sorted_centers,
     cholesky_factors=sorted_cholesky,
     chunk_size=2048,
-    coverage_sigma=3.0,  # 3σ coverage (99.7%)
+    # Explicit override. This function only ever sees arrays, so its own default
+    # is the canonical DEFAULT_TRUNCATION_RADIUS (2.75); the compiler call sites
+    # pass the dataset's own truncation_radius here.
+    coverage_sigma=3.0,
 )
 # Shape: (num_chunks, d, 2)
 # [..., d, 0] = min bound in dimension d
@@ -431,6 +434,11 @@ is `luxar gsplat migrate-format`.
   a `GSplatData` bridged from the node tree. Raises on any `format_version`
   not in `SUPPORTED_FORMAT_VERSIONS` (`"3.0"`, `"3.1"`, `"3.2"`, `"3.3"`); the
   current writer emits v3.3, and earlier v3.x files are read transparently.
+  Also `read_authored_appearance(path)` — the source root's authored compositing
+  attrs (`AUTHORED_APPEARANCE_ATTRS`), for a command that rewrites a dataset to
+  hand back to `write_gsplats_tree(root_attrs=…)` / `GSplatData.save(root_attrs=…)`
+  so a structure-only rebuild does not silently reset the look. Best-effort:
+  a missing/unreadable store, or an archive input, yields `{}`.
 - **`inspect_gsplats.py`**: Metadata inspection without loading arrays
   (`inspect_gsplats_zarr`, `format_gsplats_info`).
 - **`migrate.py`**: Legacy-format migration (`migrate_format`,
