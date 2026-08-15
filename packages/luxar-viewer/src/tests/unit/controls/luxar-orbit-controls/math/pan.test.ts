@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Unit tests for luxar-orbit-controls/math/pan.ts.
  *

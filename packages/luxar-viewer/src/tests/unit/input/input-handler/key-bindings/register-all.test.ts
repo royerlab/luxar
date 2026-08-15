@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Unit tests for the key-bindings registration module.
  *

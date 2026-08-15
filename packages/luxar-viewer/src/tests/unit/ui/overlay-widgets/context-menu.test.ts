@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Unit tests for ui/overlay-widgets/context-menu.ts — the shared
  * right-click menu: ARIA roles, activation, dismissal (Escape /

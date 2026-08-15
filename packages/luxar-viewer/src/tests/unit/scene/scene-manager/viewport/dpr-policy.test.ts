@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Unit tests for the pure DPR-policy helpers used by SceneManager's
  * adaptive/manual pixel-ratio handling.

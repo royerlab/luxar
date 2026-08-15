@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Tests for VideoRecordingStrategy — the real-time MediaRecorder path.
  *

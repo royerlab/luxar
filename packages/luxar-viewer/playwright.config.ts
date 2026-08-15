@@ -47,8 +47,15 @@ export default defineConfig({
   // default `pnpm test:e2e` run.
   testIgnore: /.*perf-bench\.spec\.ts$/,
 
-  // Run tests in files in parallel
-  fullyParallel: false, // WebGL tests can be GPU-intensive, run serially
+  // Tests within a file run in parallel too.
+  //
+  // The suite is state-independent by construction: every test takes the
+  // per-test `page` fixture, no file creates a shared page in `beforeAll`, and
+  // there is no `test.describe.serial` anywhere. What genuinely cannot share is
+  // a handful of RESOURCE-bound files — wall-clock assertions, a spawned
+  // `luxar serve`, FPS benchmarks — and those opt OUT locally with
+  // `test.describe.configure({ mode: 'serial' })`.
+  fullyParallel: true,
 
   // Fail the build on CI if you accidentally left test.only
   forbidOnly: !!process.env.CI,
@@ -59,9 +66,18 @@ export default defineConfig({
   // - CI: 2 retries because CI environments have more variability.
   retries: process.env.CI ? 2 : 0,
 
-  // Local: 2 workers for ~2x speedup (most GPUs handle 2 concurrent WebGL contexts)
-  // CI: 1 worker (software rendering is slower and less stable with concurrency)
-  workers: process.env.CI ? 1 : 2,
+  // Local: 4 workers. CI: 1 (software rendering is slower and less stable with
+  // concurrency).
+  //
+  // The ceiling here is NOT the GPU — it is the dataset server, a GIL-bound
+  // `python3 -m http.server 9000` (see webServer below) streaming thousands of
+  // small zarr chunks to every worker at once. The evidence is already in the
+  // tree: all-examples-smoke-test.spec.ts raised its own timeout to 120 s to
+  // "absorb HTTP-server contention when several worker-pool tabs decode
+  // mid-size datasets concurrently". Raise this past 4 only together with a
+  // measurement, and if it saturates, replace that server rather than adding
+  // workers. Override per run with `--workers=N`.
+  workers: process.env.CI ? 1 : 4,
 
   // Reporter to use
   reporter: [
@@ -75,15 +91,24 @@ export default defineConfig({
     // Base URL for tests
     baseURL: viewerBaseURL,
 
-    // Collect trace on failure for debugging
-    trace: 'retain-on-failure',
-
-    // Screenshot settings - capture visual state for inspection
-    // All artifacts (screenshots, videos, traces) saved to test-results/
-    screenshot: 'on', // Always take screenshots for visual debugging
-
-    // Video on failure (useful but large files)
-    video: 'retain-on-failure',
+    // Artifact capture is FAILURE-ONLY.
+    //
+    // `retain-on-failure` still RECORDS for every test and deletes on pass, and
+    // `screenshot: 'on'` wrote a PNG for all 567 tests — roughly 330-430 s of
+    // worker time per run spent producing artifacts nobody looks at.
+    //
+    // `on-first-retry` keeps debuggability exactly where it is needed: CI sets
+    // `retries: 2` (below) and `test:e2e:ci` passes `--retries 2`, so a failure
+    // is retried and THAT run is fully traced and recorded. Locally `retries: 0`
+    // — re-run the failing spec with `--trace on --video on` to get the same
+    // artifacts on demand.
+    //
+    // Specs that write their own screenshots via `page.screenshot({ path })`
+    // are unaffected, and the readme/doc-image/gallery generators use their own
+    // configs (which already set all three to 'off').
+    trace: 'on-first-retry',
+    screenshot: 'only-on-failure',
+    video: 'on-first-retry',
 
     // Maximum time for each action (click, fill, etc.)
     actionTimeout: 10000,

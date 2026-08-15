@@ -39,15 +39,21 @@ make clean-setup  # Remove ALL dev tools to simulate fresh machine
 make install-demo-deps  # Install the demo extras (demos + gsplats + io)
 
 # Quality & Testing
+make test-fast    # INNER LOOP: Python (-m 'not slow', xdist) + TS units, no coverage.
+                  # ~6-7 min whole-suite; SCOPE it for a real loop:
+                  #   make test-fast PYTEST_ARGS='packages/luxar/src/luxar/encoding'
+                  # Not a gate — no slow tests, no coverage thresholds, no E2E.
+                  # LUXAR_PYTEST_JOBS=12 to tune (I/O-bound, so it buys little).
 make test-all     # All tests (Python incl. CUDA + WASM/Rust + TypeScript + Go launcher)
 make test-cov-all # Coverage: Python (minus `-m slow`) + TypeScript
 make test-python  # Python tests only
 make test-e2e     # Full Playwright E2E suite (~17 min)
 make test-e2e-smoke  # E2E smoke subset (the specs CI would run)
 make test-perf-e2e   # Opt-in Playwright performance suite
-# check-all is NOT read-only: `hatch run check` begins with `format`, so it
+# check-all is NOT read-only: `check-static` begins with `format`, so it
 # REWRITES packages/luxar/src and scripts. When other agents/people are editing
 # the same tree, use the read-only scoped targets instead (listed right below it).
+# It runs NO tests — `make test-all` is the single place those execute.
 make check-all    # All quality checks (Python, TypeScript, Rust, Go) — reformats
 make lint-python        # read-only: ruff check
 make check-complexity   # read-only: ruff C901 ratcheted against scripts/complexity_baseline.json
@@ -1254,12 +1260,32 @@ release-prep. See `changelog.d/README.md`. (Not every PR needs one.)
 
 ## Pre-commit Checklist
 
+While iterating, use the fast loop — it deselects `slow`, runs pytest under
+xdist and skips coverage:
+
 ```bash
-make test-all                    # All tests pass
-make check-all                   # Linting, type checking
+make test-fast                                                  # whole suite, ~6-7 min
+make test-fast PYTEST_ARGS='packages/luxar/src/luxar/encoding'  # scoped, ~35 s
+make test-fast PYTEST_ARGS='-k colormap'
+```
+
+Scope it if you want a real edit-run-edit loop: with `slow` deselected the
+remaining Python suite is I/O-bound on zarr small-file writes, so more workers
+barely help (`LUXAR_PYTEST_JOBS=12` buys ~11% over the default 6).
+
+`test-fast` is NOT a gate: no `slow` tests, no coverage thresholds, no E2E.
+Before pushing, run the real thing:
+
+```bash
+make test-all                    # All tests pass (Python incl. slow, Rust/WASM, TS, Go)
+make check-all                   # Linting, type checking — static only, runs no tests
 make check-docs                  # Documentation gate (required check in CI)
 pnpm run format                  # Format TypeScript (from luxar-viewer/)
 ```
+
+`check-all` deliberately runs no tests: `test-all` is the single place they
+execute. For one command covering everything *including* coverage, use
+`hatch run check` and `pnpm run check:ci` (what CI runs) directly.
 
 Before PR/merge:
 - Full E2E suite: `cd packages/luxar-viewer && pnpm test:e2e`

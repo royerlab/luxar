@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Property tests for the pure DPR-policy helpers (fast-check).
  *

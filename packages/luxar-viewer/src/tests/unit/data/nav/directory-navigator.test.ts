@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Tests for DirectoryNavigator - server-agnostic directory navigation
  *

@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Tests for RecordingSession — the shared scaffolding owned by Panel
  * and used by all three strategies.

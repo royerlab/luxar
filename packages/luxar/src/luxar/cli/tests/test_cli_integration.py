@@ -74,8 +74,23 @@ class _ImmediateThread:
 
 @pytest.fixture
 def available_port():
-    """Find an available port for testing."""
-    return find_available_port(8000, end_port=9000)
+    """A port for this test to bind.
+
+    Deliberately an OS-assigned EPHEMERAL port rather than
+    ``find_available_port(8000, ...)``. That helper scans deterministically
+    upward from its start port, so under ``pytest -n`` every worker probing at
+    the same moment is handed 8000 and they collide — and the collision surfaces
+    as ``pytest.fail`` in the ``test_server`` fixture, i.e. a hard red rather
+    than a retry. The kernel's ephemeral allocator hands out distinct ports
+    instead. (``test_export.py`` already uses this pattern.)
+
+    Still a probe-then-close: the socket is closed so the caller can bind it,
+    which every consumer here does — ``test_port_conflict_handling`` binds it
+    ITSELF to manufacture a conflict, so the fixture cannot hold it open.
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
 
 
 @pytest.fixture
@@ -88,59 +103,54 @@ def sample_scene(tmp_path):
 
 @pytest.fixture
 def test_server(sample_scene, available_port):
-    """Start a real test server in a background thread."""
-    from luxar.cli.main import create_server_app
+    """Start a real test server in a background thread, and stop it afterwards."""
+    import asyncio
 
-    # Create server app
-    app = create_server_app(str(sample_scene))
-
-    # Start server in background thread
     import uvicorn
 
-    server_thread = None
-    server_started = threading.Event()
+    from luxar.cli.main import create_server_app
 
-    def run_server():
-        config = uvicorn.Config(
-            app, host="127.0.0.1", port=available_port, log_level="error"
-        )
-        server = uvicorn.Server(config)
+    app = create_server_app(str(sample_scene))
+    # Build the Server OUTSIDE the thread so teardown has a handle to signal.
+    config = uvicorn.Config(
+        app, host="127.0.0.1", port=available_port, log_level="error"
+    )
+    server = uvicorn.Server(config)
 
-        # Signal that server is starting
-        server_started.set()
-
-        # Run server (this blocks)
-        import asyncio
-
-        asyncio.run(server.serve())
-
-    server_thread = threading.Thread(target=run_server, daemon=True)
+    server_thread = threading.Thread(
+        target=lambda: asyncio.run(server.serve()), daemon=True
+    )
     server_thread.start()
 
-    # Wait for server to start
-    server_started.wait(timeout=5)
-    time.sleep(0.5)  # Give server time to bind to port
-
-    # Verify server is running
-    max_retries = 10
-    for i in range(max_retries):
+    # Poll /health as the readiness signal. The previous version set an Event
+    # immediately BEFORE `serve()` (so it said nothing about readiness) and then
+    # slept a flat 0.5 s to compensate — dead time on every one of the 11 tests
+    # that take this fixture.
+    deadline = time.monotonic() + 15.0
+    while True:
         try:
-            response = requests.get(
-                f"http://127.0.0.1:{available_port}/health", timeout=1
-            )
-            if response.status_code == 200:
+            if (
+                requests.get(
+                    f"http://127.0.0.1:{available_port}/health", timeout=1
+                ).status_code
+                == 200
+            ):
                 break
         except requests.exceptions.RequestException:
-            if i == max_retries - 1:
-                pytest.fail(
-                    f"Server failed to start after {max_retries} retries — "
-                    "a real regression, not a reason to skip."
-                )
-            time.sleep(0.5)
+            pass
+        if time.monotonic() > deadline:
+            pytest.fail(
+                "Server failed to become healthy within 15s — a real regression."
+            )
+        time.sleep(0.05)
 
     yield f"http://127.0.0.1:{available_port}"
 
-    # Server thread is daemon, will be cleaned up automatically
+    # Actually shut down. The thread is a daemon, so a leaked server survived
+    # until the process exited and kept its port bound; under `pytest -n` that
+    # is one abandoned listener per server per worker.
+    server.should_exit = True
+    server_thread.join(timeout=10)
 
 
 class TestServeIntegration:

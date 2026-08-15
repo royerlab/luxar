@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Unit tests for UIComponent base class
  * Tests lifecycle management, event listeners, theme subscription, and disposal

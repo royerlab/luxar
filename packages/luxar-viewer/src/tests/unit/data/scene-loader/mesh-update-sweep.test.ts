@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Mesh participates in the scene-loader's per-update sweep.
  *

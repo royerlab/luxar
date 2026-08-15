@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Folder Tests - Folder functionality and nesting
  */

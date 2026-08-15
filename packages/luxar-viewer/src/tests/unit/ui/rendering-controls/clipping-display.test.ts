@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Unit tests for ClippingDisplay — RAF-driven mirror of camera near/far
  * into the rendering-controls near/far sliders when dynamic clipping

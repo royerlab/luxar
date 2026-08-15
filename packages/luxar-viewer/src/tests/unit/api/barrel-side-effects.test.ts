@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Asserts that importing the public package barrel (`src/index.ts`) is
  * side-effect-free.

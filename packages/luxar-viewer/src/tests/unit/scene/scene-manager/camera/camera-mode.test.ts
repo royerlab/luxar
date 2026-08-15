@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Unit tests for camera-mode helpers used by SceneManager.
  *
