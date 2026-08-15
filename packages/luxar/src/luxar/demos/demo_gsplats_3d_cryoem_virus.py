@@ -152,7 +152,7 @@ def normalize_map_volume(density: np.ndarray, target_size: int) -> np.ndarray:
     return V.astype(np.float32)
 
 
-def load_map_volume(target_size: int = TARGET_SIZE) -> np.ndarray:
+def load_map_volume(target_size: int = TARGET_SIZE) -> tuple:
     """Download (resumable) + read the EMDB map, ready for fitting."""
     mrcfile = require_module("mrcfile")
 
@@ -171,11 +171,15 @@ def load_map_volume(target_size: int = TARGET_SIZE) -> np.ndarray:
 
     with asection("Reading MRC density map"):
         with mrcfile.open(CACHE_MAP, permissive=True) as mrc:
+            # Captured before the float32 cast and before the resize below:
+            # the MRC's own grid and element type are what a compression ratio
+            # for this dataset has to be quoted against.
+            acquisition = (tuple(mrc.data.shape), str(mrc.data.dtype))
             density = np.asarray(mrc.data, dtype=np.float32)
-        aprint(f"Raw map: shape={density.shape}, dtype={density.dtype}")
+        aprint(f"Raw map: shape={acquisition[0]}, dtype={acquisition[1]}")
         V = normalize_map_volume(density, target_size)
         aprint(f"✓ Fit-ready cube: {V.shape}, range [{V.min():.3f}, {V.max():.3f}]")
-        return V
+        return V, acquisition
 
 
 # =============================================================================
@@ -183,7 +187,7 @@ def load_map_volume(target_size: int = TARGET_SIZE) -> np.ndarray:
 # =============================================================================
 
 
-def fit_map(volume: np.ndarray) -> GSplatData:
+def fit_map(volume: np.ndarray, acquisition=None) -> GSplatData:
     """Fit Gaussian splats to the density map and cache the result."""
     global DEVICE
     if DEVICE is None:
@@ -192,8 +196,13 @@ def fit_map(volume: np.ndarray) -> GSplatData:
     from luxar.gsplats import fit_progressive_gaussian_splats
 
     with asection(f"Fitting GSplats ({volume.shape}, max {MAX_SPLATS:,}, {DEVICE})"):
+        src_shape, src_dtype = acquisition or (None, None)
         result = fit_progressive_gaussian_splats(
             volume,
+            # The fitted cube is a resized, normalized float32 copy; the ratio
+            # is meant to be about the map that was downloaded.
+            source_shape=src_shape,
+            source_dtype=src_dtype,
             max_splats=MAX_SPLATS,
             max_splats_per_pass=MAX_SPLATS_PER_PASS,
             iters_per_pass=ITERS_PER_PASS,
@@ -227,8 +236,8 @@ def load_or_build_gsplats() -> GSplatData:
             )
 
     warn_if_no_cuda_gpu()
-    volume = load_map_volume()
-    return fit_map(volume)
+    volume, acquisition = load_map_volume()
+    return fit_map(volume, acquisition)
 
 
 # =============================================================================

@@ -247,6 +247,9 @@ def load_zebrafish_volumes() -> tuple:
 
         volumes = []
         for t in time_indices:
+            # Per-timepoint acquisition grid + stored type, before the
+            # normalization and the optional resize below.
+            acquisition = (tuple(int(x) for x in raw[t].shape), str(raw.dtype))
             V = raw[t].astype(np.float32)
             # Normalise to [0, 1]
             vmin, vmax = V.min(), V.max()
@@ -271,7 +274,7 @@ def load_zebrafish_volumes() -> tuple:
 
         aprint(f"Loaded {len(volumes)} volumes, shape per volume: {volumes[0].shape}")
 
-    return volumes, voxel_size_zyx, time_indices
+    return volumes, voxel_size_zyx, time_indices, acquisition
 
 
 # =============================================================================
@@ -308,6 +311,7 @@ def fit_timepoint(
     label: str,
     cache_file: Path,
     voxel_size=None,
+    acquisition=None,
 ) -> GSplatData:
     """Fit GSplats to a single timepoint volume with caching.
 
@@ -340,8 +344,13 @@ def fit_timepoint(
 
     aprint(f"Fitting {label} (fixed-K joint fit: seeds={MAX_SPLATS})...")
 
+    src_shape, src_dtype = acquisition or (None, None)
     result = fit_gaussian_splats(
         volume,
+        # One timepoint of the stored stack is the source; the fitted array is
+        # a normalized, possibly resized float32 copy of it.
+        source_shape=src_shape,
+        source_dtype=src_dtype,
         seeds=MAX_SPLATS,
         device=DEVICE,
         verbose=True,
@@ -363,7 +372,9 @@ def fit_timepoint(
     return result
 
 
-def fit_all_timepoints(volumes: list, voxel_size=None, time_indices=None) -> list:
+def fit_all_timepoints(
+    volumes: list, voxel_size=None, time_indices=None, acquisition=None
+) -> list:
     """Fit GSplats to every timepoint.
 
     Args:
@@ -390,6 +401,7 @@ def fit_all_timepoints(volumes: list, voxel_size=None, time_indices=None) -> lis
                     f"T={t} (frame {src_idx})",
                     cache_file,
                     voxel_size=voxel_size,
+                    acquisition=acquisition,
                 )
                 gsplats_list.append(gsplats)
         return gsplats_list
@@ -697,11 +709,14 @@ def main():
         # Load data — per-timepoint cache checks happen inside fit_all_timepoints().
         # We can't skip the load here because the time_indices (which frames to use)
         # depend on the stride computed from the data's total frame count.
-        volumes, voxel_size_zyx, time_indices = load_zebrafish_volumes()
+        volumes, voxel_size_zyx, time_indices, acquisition = load_zebrafish_volumes()
 
         # Fit GSplats per timepoint (with per-frame caching)
         gsplats_list = fit_all_timepoints(
-            volumes, voxel_size=voxel_size_zyx, time_indices=time_indices
+            volumes,
+            voxel_size=voxel_size_zyx,
+            time_indices=time_indices,
+            acquisition=acquisition,
         )
 
     # Optional round-trip visualisation

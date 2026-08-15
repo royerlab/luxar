@@ -160,7 +160,7 @@ def normalize_dust_volume(mean: np.ndarray, target_size: int) -> np.ndarray:
     return V.astype(np.float32)
 
 
-def load_dust_volume(target_size: int = TARGET_SIZE) -> np.ndarray:
+def load_dust_volume(target_size: int = TARGET_SIZE) -> tuple:
     """Download (resumable) + load the dust cube, ready for fitting."""
     h5py = require_module("h5py")
 
@@ -182,10 +182,12 @@ def load_dust_volume(target_size: int = TARGET_SIZE) -> np.ndarray:
             key = _find_mean_dataset(f)
             aprint(f"Reading dataset '{key}' {f[key].shape}")
             mean = f[key][:]
+        # Captured before the resize and float32 normalization below.
+        acquisition = (tuple(mean.shape), str(mean.dtype))
         aprint(f"Raw cube: shape={mean.shape}, dtype={mean.dtype}")
         V = normalize_dust_volume(mean, target_size)
         aprint(f"✓ Fit-ready cube: {V.shape}, range [{V.min():.3f}, {V.max():.3f}]")
-        return V
+        return V, acquisition
 
 
 def _find_mean_dataset(h5file) -> str:
@@ -216,7 +218,7 @@ def _find_mean_dataset(h5file) -> str:
 # =============================================================================
 
 
-def fit_dust(volume: np.ndarray) -> GSplatData:
+def fit_dust(volume: np.ndarray, acquisition=None) -> GSplatData:
     """Fit Gaussian splats to the dust cube and cache the result."""
     global DEVICE
     if DEVICE is None:
@@ -228,8 +230,13 @@ def fit_dust(volume: np.ndarray) -> GSplatData:
         f"Fitting GSplats (max {MAX_SPLATS:,} splats, {ITERS_PER_PASS} iters/pass)"
     ):
         aprint(f"Volume: {volume.shape}   Device: {DEVICE}")
+        src_shape, src_dtype = acquisition or (None, None)
         result = fit_progressive_gaussian_splats(
             volume,
+            # The fitted cube is a resized, normalized float32 copy; the ratio
+            # is meant to be about the cube that was downloaded.
+            source_shape=src_shape,
+            source_dtype=src_dtype,
             max_splats=MAX_SPLATS,
             max_splats_per_pass=MAX_SPLATS_PER_PASS,
             iters_per_pass=ITERS_PER_PASS,
@@ -271,8 +278,8 @@ def load_or_build_gsplats() -> GSplatData:
             )
 
     warn_if_no_cuda_gpu()
-    volume = load_dust_volume()
-    return fit_dust(volume)
+    volume, acquisition = load_dust_volume()
+    return fit_dust(volume, acquisition)
 
 
 # =============================================================================

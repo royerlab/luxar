@@ -41,18 +41,12 @@ _IS_ITS_OWN_SOURCE = {
 
 #: Demos still to be wired. SHRINKS to empty; entries are work, not exemptions.
 _NOT_YET_DECLARING = {
-    "demo_gsplats_2d_cmu1_pathology.py",
     "demo_gsplats_3d_acto3d_heart.py",
-    "demo_gsplats_3d_cryoem_virus.py",
-    "demo_gsplats_3d_ct_totalsegmentator.py",
     # Not among the 14 shipped datasets, but it fits, so it is in scope. Found
     # by this gate on its first run, having been missed by a hand-built list.
     "demo_gsplats_3d_flylight_mcfo_neurons.py",
-    "demo_gsplats_3d_milky_way_dust.py",
     "demo_gsplats_3d_tng_cosmic_web.py",
     "demo_gsplats_3d_tribolium_embryo.py",
-    "demo_gsplats_3d_visible_human_head.py",
-    "demo_gsplats_4d_zebrafish_timelapse.py",
     "demo_gsplats_2d_codex_pancreas.py",
 }
 
