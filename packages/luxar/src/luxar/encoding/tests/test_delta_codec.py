@@ -314,10 +314,18 @@ class TestCompressionRegressionGuard:
                     compressor=WIDTH_AWARE_DEFAULT,
                 )
             assert delta_on == bool(g["a"].filters), "probe gating regressed"
+            # Sum CHUNK bytes only. The exclusion has to name both formats'
+            # metadata documents: this group is built by plain `zarr.group`,
+            # which writes format 3, so a v2-only tuple excluded nothing and
+            # counted every `zarr.json` as data. Harmless for the ratio (the
+            # same constant lands on both sides) but it is not what the sum
+            # claims to be, and it shrinks the measured gain.
             return sum(
                 len(v)
                 for k, v in store.items()
-                if not k.endswith((".zarray", ".zattrs", ".zgroup"))
+                if not k.endswith(
+                    (".zarray", ".zattrs", ".zgroup", ".zmetadata", "zarr.json")
+                )
             )
 
         on, off = stored_bytes(True), stored_bytes(False)
