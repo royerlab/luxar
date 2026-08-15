@@ -36,11 +36,17 @@ def _node_attrs(payload: dict) -> dict:
     A ``.zattrs`` IS the attributes object; a ``zarr.json`` is the whole node
     record with attributes nested under ``attributes``, so reading a Luxar attr
     off the top level of the latter always yields ``None``. Mirrors the viewer's
-    ``rootAttributes`` in ``scene-identity-watchdog.ts`` — both sides bypass the
+    ``rootAttributes`` in ``types/zarr-documents.ts`` — both sides bypass the
     zarr library here and so both need this unwrap.
+
+    A v3 record whose ``attributes`` is present but not a mapping yields ``{}``,
+    matching the TypeScript side (whose ``typeof null === "object"`` check falls
+    through to ``?? {}``). Returning ``payload`` there instead would hand back
+    ``zarr_format`` and ``node_type`` as though they were the node's attributes.
     """
-    if payload.get("zarr_format") == 3 and isinstance(payload.get("attributes"), dict):
-        return payload["attributes"]
+    if payload.get("zarr_format") == 3:
+        attributes = payload.get("attributes")
+        return attributes if isinstance(attributes, dict) else {}
     return payload
 
 

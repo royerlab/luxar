@@ -35,14 +35,24 @@ export const ROOT_ATTR_DOCS = ['zarr.json', '.zattrs'] as const;
  * top level always yields `undefined`. For the watchdog that means reporting
  * every poll as a change; for cache validation it means no token at all.
  *
- * Returns `{}` rather than throwing for a non-object or a null `attributes`,
- * because both callers treat "no attributes" as a normal, answerable state.
+ * Returns `{}` rather than throwing for a non-object, or for a format-3 record
+ * whose `attributes` is absent or not an object — both callers treat "no
+ * attributes" as a normal, answerable state. Falling through to the record
+ * itself in that case would expose `zarr_format` and `node_type` AS the node's
+ * attributes, which is worse than an empty answer and would compare unequal to
+ * the attrs the scene was loaded with on every poll.
+ *
+ * Mirrored on the Python side by `_node_attrs` in `test_cli_integration.py`,
+ * which probes the same documents over HTTP; keep the two in step.
  */
 export function rootAttributes(parsed: unknown): Record<string, unknown> {
   if (parsed === null || typeof parsed !== 'object') return {};
   const record = parsed as Record<string, unknown>;
-  if (record.zarr_format === 3 && typeof record.attributes === 'object') {
-    return (record.attributes as Record<string, unknown>) ?? {};
+  if (record.zarr_format === 3) {
+    const attributes = record.attributes;
+    return attributes !== null && typeof attributes === 'object'
+      ? (attributes as Record<string, unknown>)
+      : {};
   }
   return record;
 }
