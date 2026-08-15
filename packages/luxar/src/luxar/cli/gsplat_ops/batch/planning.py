@@ -339,13 +339,16 @@ FLOOR_SAMPLE_MAX_CHANNELS = 4
 def _evenly_spaced(n: int, k: int) -> List[int]:
     """``k`` evenly spaced indices in ``range(n)``, endpoints included, unique.
 
-    ``k == 1`` picks the MIDDLE index: the first slice of a stack / of a timelapse
-    is systematically atypical (warm-up frames, empty leading planes).
+    Both callers pass ``k = min(n, <cap>)`` with ``n >= 1``, so ``k == 1`` only
+    happens for a single-index axis and the endpoints are always among the
+    returned indices — which is what makes a MINIMUM over the sampled slices a
+    lower bound under a monotone drift (see :func:`_floor_sample_pairs`). There is
+    deliberately no "one sample -> take the middle" rule here: for the (t, c)
+    axes a middle sample is not representative of the run's dimmest pedestal, it
+    just hides which end is.
     """
     if n <= 0 or k <= 0:
         return []
-    if k == 1:
-        return [(n - 1) // 2]
     if k >= n:
         return list(range(n))
     import numpy as _np
