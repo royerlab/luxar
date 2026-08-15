@@ -28,12 +28,15 @@ indefinitely), the scene-identity watchdog reported *every* poll as a change
 because a 404 is not an inconclusive status, the dataset browser could not see a
 format-3 store at all, `detect_store_encoding` answered "unclassifiable" so
 `gsplat lod` stopped detecting its input's encoding, batch-fit's bytes/splat
-measurement counted zero splats and fell back to its analytic estimate, and the
+measurement counted zero splats and fell back to its analytic estimate, the
 overlay loader's directory-listing fallback offered `zarr.json` itself as an
-overlay.
+overlay, and the demo re-encoder classified a `kind=partition` baseline as a
+flat leaf — which selects the `flatten` path, so with `--apply` it would have
+collapsed a partitioned dataset's structure and written the result over the
+committed Git-LFS file.
 `luxar._zarr_compat` now offers `read_array_meta`, `read_node_attrs`,
 `is_consolidated` and `read_consolidated_attrs`, and nothing outside it names a
-document. The shared shape of all seven is worth stating: **none of them raised**
+document. The shared shape of all eight is worth stating: **none of them raised**
 — each returned an ordinary value that a caller had a reasonable interpretation
 for, which is why they have to be found by grepping for the document names.
 
