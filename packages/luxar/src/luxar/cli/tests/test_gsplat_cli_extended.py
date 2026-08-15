@@ -5,7 +5,6 @@ Also tests the config system (presets, YAML loading, dump) and volume loader.
 
 from __future__ import annotations
 
-import json
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -22,7 +21,8 @@ if TYPE_CHECKING:
 import zarr
 
 from luxar._zarr_compat import consolidate as zc_consolidate
-from luxar._zarr_compat import create_array, read_array_meta
+from luxar._zarr_compat import create_array, read_array_meta, read_node_attrs
+from luxar._zarr_compat import open_group as zc_open_group
 from luxar.cli import app
 from luxar.cli.gsplat_config import (
     PRESETS,
@@ -5597,7 +5597,7 @@ class TestLODCarriesAuthoredAppearance:
             app, ["gsplat", "lod", str(medium_gsplats), str(out), "--recipe", "stream"]
         )
         assert result.exit_code == 0, f"failed:\n{result.stdout}"
-        got = json.loads((out / ".zattrs").read_text())
+        got = self._root_attrs(out)
         # Not carried at all — the rebuild leaves the attr alone rather than
         # writing a re-transposed (wrong) one.
         assert "transform" not in got
@@ -5605,16 +5605,37 @@ class TestLODCarriesAuthoredAppearance:
         assert got["blending_mode"] == "volumetric"
 
     @staticmethod
-    def _authored_input(src: Path, authored: dict[str, Any]) -> None:
-        """Stamp ``authored`` onto an existing store's root, dropping .zmetadata.
+    def _root_attrs(store: Path) -> dict[str, Any]:
+        """A store root's attributes, whichever format wrote it.
 
-        Consolidated metadata SHADOWS per-node ``.zattrs``, so a stale copy would
-        make the reader see the pre-edit attrs.
+        Format 2 keeps them in ``.zattrs``, format 3 nests them inside
+        ``zarr.json`` — so naming either document reads nothing at all on the
+        other format. ``None`` means "no readable node here", which is a test
+        failure rather than "no attributes".
         """
-        attrs = json.loads((src / ".zattrs").read_text())
-        attrs.update(authored)
-        (src / ".zattrs").write_text(json.dumps(attrs))
-        (src / ".zmetadata").unlink(missing_ok=True)
+        attrs = read_node_attrs(store)
+        assert attrs is not None, f"no readable zarr node at {store}"
+        return attrs
+
+    @staticmethod
+    def _authored_input(src: Path, authored: dict[str, Any]) -> None:
+        """Stamp ``authored`` onto an existing store's root.
+
+        Edited through the facade rather than by writing the attributes
+        document directly. That is not merely a portability nicety: the
+        consolidated index SHADOWS per-node attributes, so the edit has to
+        reach the index too. Hand-editing dealt with that by deleting
+        ``.zmetadata``, which only exists at format 2 — at format 3 the index
+        is embedded in the root document, so the unlink was a silent no-op and
+        the reader kept serving pre-edit attrs.
+
+        Re-consolidating through the facade is also what keeps exactly ONE
+        index, at the root; re-opening with plain ``zarr.open_group`` would
+        write the stale in-memory tree back out as a nested one.
+        """
+        group = zc_open_group(src, mode="r+")
+        group.attrs.update(authored)
+        zc_consolidate(group)
 
     #: Rewriting commands that must pass appearance through, as
     #: ``label -> extra argv after (input, output)``.
@@ -5659,7 +5680,7 @@ class TestLODCarriesAuthoredAppearance:
             app, [argv[0], argv[1], str(medium_gsplats), str(out), *argv[2:]]
         )
         assert result.exit_code == 0, f"{label} failed:\n{result.stdout}"
-        got = json.loads((out / ".zattrs").read_text())
+        got = self._root_attrs(out)
         for key, want in self.AUTHORED.items():
             assert key in got, f"{label}: dropped {key!r} (had {want!r})"
             assert got[key] == want, f"{label}: {key} = {got[key]!r}, want {want!r}"
@@ -5679,14 +5700,14 @@ class TestLODCarriesAuthoredAppearance:
         Echoing those is correct and composes to a no-op, so the assertion is
         input-vs-output equality rather than plain absence.
         """
-        before = json.loads((medium_gsplats / ".zattrs").read_text())
+        before = self._root_attrs(medium_gsplats)
         out = tmp_path / "bare.gsplats.zarr"
         result = runner.invoke(
             app,
             ["gsplat", "lod", str(medium_gsplats), str(out), "--recipe", "adaptive"],
         )
         assert result.exit_code == 0, f"failed:\n{result.stdout}"
-        got = json.loads((out / ".zattrs").read_text())
+        got = self._root_attrs(out)
         for key in self.AUTHORED:
             assert (key in got) == (key in before), (
                 f"{key}: presence changed (input={key in before}, output={key in got})"
@@ -5730,7 +5751,7 @@ class TestLODCarriesAuthoredAppearance:
                 "blending_mode": "volumetric",
             },
         )
-        got = json.loads((out / ".zattrs").read_text())
+        got = self._root_attrs(out)
         assert got["kind"] == "lod"
         assert got["type"] == "group"
         assert got["blending_mode"] == "volumetric"
