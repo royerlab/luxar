@@ -201,10 +201,17 @@ def _floor_axis_pins(
     channel, silently measuring the floor on ``t=0`` whatever timepoint was asked
     for (#1174). The flat ``channel`` task index is decoded back into one index
     per channel-like axis, exactly as the task argv builders do. The vocabulary is
-    :func:`luxar.io.ome_zarr.classify_axis_labels` — the same one discovery used
-    to derive ``channel_shape``, so the two cannot disagree about which axes are
-    channel-like. Raises :class:`ValueError` when the labels do not describe this
-    store.
+    :func:`luxar.io.ome_zarr.classify_axis_labels`, which goes by axis NAME, while
+    NGFF discovery derived ``channel_shape`` by axis *type* first — so the two CAN
+    disagree (an NGFF axis typed ``channel`` but named outside the vocabulary, say
+    ``stain``, is channel-like to discovery and invisible here). Only the
+    channel-side disagreement is caught here, as a COUNT mismatch against the
+    discovered ``channel_shape``, and it raises :class:`ValueError`. A time-side
+    one raises nothing — an axis typed ``time`` but named outside the vocabulary
+    is spatial to the classifier, so no time pin is emitted and the caller's own
+    spatial-shape check on the pinned view is what notices. Either outcome sends
+    the caller to its eager fallback, which is a hedge, not a guarantee that the
+    intended slice is recovered (see :func:`_pinned_slice_volume`).
     """
     from luxar.io.ome_zarr import classify_axis_labels
     from luxar.io.volume import decode_flat_channel_index
