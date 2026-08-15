@@ -330,6 +330,10 @@ test.describe('Worker + WASM Combined Performance', () => {
 
     // With workers + WASM, large queries should complete quickly
     // This is a smoke test, not precise benchmarking
+    //
+    // CONTENTION NOTE: wall-clock assertion, and the suite now runs
+    // `fullyParallel` across 4 workers. If this flakes, diagnose with
+    // `--workers=1` rather than raising the threshold.
     expect(totalTime).toBeLessThan(10000); // Should finish in <10 seconds
 
     // Verify data loaded

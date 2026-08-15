@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Tests for SceneManager - the core 3D rendering orchestrator
  *

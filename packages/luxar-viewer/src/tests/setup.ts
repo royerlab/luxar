@@ -98,6 +98,23 @@ Reflect.construct = function patchedConstruct<T extends object>(
   }
 }
 
+// Pin `navigator.platform` so the two test environments agree.
+//
+// jsdom reports `''`; Node's own global `navigator` reports the REAL host
+// ('MacIntel' on a Mac, 'Linux x86_64' in CI). `utils/platform.ts::isMacPlatform`
+// reads it, and ~130 tests reach that module transitively — so without this pin,
+// moving a file between `node` and `jsdom` (or moving CI between a Mac and a
+// Linux runner) silently flips Cmd-vs-Ctrl modifier behaviour underneath tests
+// that never mention the platform.
+//
+// `''` is jsdom's value, chosen so no existing expectation moves: today every
+// test already runs as "not a Mac". A test that wants the Mac branch should
+// override this explicitly rather than inherit it from the host.
+Object.defineProperty(globalThis.navigator, 'platform', {
+  value: '',
+  configurable: true,
+});
+
 // Install all mocks
 installAllMocks();
 

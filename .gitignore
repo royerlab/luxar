@@ -175,6 +175,11 @@ yarn-error.log*
 *.zarr
 *.zarr/
 packages/luxar-viewer/tests/fixtures/roundtrip_expectations.json
+# Digests of the inputs that produced the generated fixtures / expectations.
+# Written by src/tests/global-setup.ts; local build state, like the artifacts
+# they describe.
+packages/luxar-viewer/tests/fixtures/.fixture-inputs.sha256
+packages/luxar-viewer/tests/fixtures/.expectations-inputs.sha256
 autoresearch-progressive-results.tsv
 
 # Claude Code lock files

@@ -79,6 +79,12 @@ function getZarrName(scriptName: string): string {
   return `${baseName}.luxar.zarr`;
 }
 
+// Opt out of the config's `fullyParallel: true`: both tests shell out to
+// `hatch run python`, and concurrent hatch invocations contend on (and can
+// re-resolve) the shared environment. `default` rather than `serial` so a
+// failure does not skip the sibling test.
+test.describe.configure({ mode: 'default' });
+
 test.describe('Demo Script Validation', () => {
   test('all demo scripts should be syntactically valid Python', async () => {
     console.log('\n[Demo Validation] Checking Python syntax...\n');

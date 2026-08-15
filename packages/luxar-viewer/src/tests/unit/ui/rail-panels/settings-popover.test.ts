@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Unit tests for ui/rail-panels/settings-popover.ts.
  *

@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Unit tests for the pure DOM-focus helpers in input/handlers/focus-utils.
  *

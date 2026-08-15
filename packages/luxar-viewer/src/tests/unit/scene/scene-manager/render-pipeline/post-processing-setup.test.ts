@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Unit tests for the post-processing-setup factory used by
  * SceneManager.

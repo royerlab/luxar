@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Unit tests for LuxarOrbitControls — quaternion-based orbit with damping.
  */

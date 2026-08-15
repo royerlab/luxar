@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Unit tests for core/app/debug/debug-interface.ts (G11).
  *

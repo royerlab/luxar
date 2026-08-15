@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Unit tests for the viewer-container registry — the single mount root the
  * viewer appends its overlays/panels into, and the containing-block promotion
