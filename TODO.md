@@ -402,9 +402,7 @@ to ship after). Sequencing is at the bottom.
     Nothing has regressed, but nothing has moved either: the Gaia demo now
     reads `~/.cache/luxar/` instead of a committed `milky_way_gaia_3m.zarr.zip`
     (the TAP query is executable as `scripts/generate_galaxy_simple.py`, just not
-    wired up as an automatic first-run build; the appearance-tuning ask #1461 put
-    on top of it is now delivered — the `gaia_milky_way` rename, per-marker hover
-    labels, and the 0.5/0.12/0.175 volumetric retune), and the neuromast +
+    wired up as an automatic first-run build), and the neuromast +
     h2afva uploads remain pending. Next concrete action is still step 2 of the
     plan: create the Sandbox rehearsal record, then production.
     *(2026-08-12: the replacement-demos + dataset-removal work is now in flight
@@ -423,7 +421,11 @@ to ship after). Sequencing is at the bottom.
     splat counts differ. h2afva keeps `pending_upload` because the 51tp file
     currently in the record is a superseded pre-isotropic-correction build (z
     squashed 4×, no substitutive LOD levels); its replacement is verified but not
-    uploaded. Next action is unchanged: the Sandbox rehearsal (point a record's
+    uploaded. Delivered alongside, on the Gaia demo that reads a placed file: the
+    appearance-tuning ask **#1461** — the `gaia_milky_way` rename, per-marker
+    hover labels, and the 0.5/0.12/0.175 volumetric retune. The first-run ESA
+    rebuild (#1575) is still not wired up, so the catalog is still hand-placed.
+    Next action is unchanged: the Sandbox rehearsal (point a record's
     `base_url` at Sandbox — that override is deliberately NOT gated by
     `published`, so the production records stay drafts through it), then publish.
   - **Also here (from R16):** the **64 MB** `luxar-paper`

@@ -128,15 +128,14 @@ DEMO_META = {
         # first run (see `resolve_data_file`).
         "local_data": "manual-file",
     },
-    # Claiming the cache namespace is what keeps `luxar demo cache clear
-    # --orphans` from rmtree-ing a hand-placed catalog nothing rebuilds
-    # automatically, and lets `luxar demo` report this demo as `cached`. The
-    # honest trade-off: `cache clear gaia_milky_way` (scoped) AND `cache clear
-    # --all` (every demo) now both count that hand-placed input as a clearable
-    # download and rmdir the emptied cache dir with it. Both prompt unless
-    # `--yes` and both preview under `--dry-run`, so the risk moved from
-    # `--orphans` onto those flags rather than going away. Protecting a
-    # hand-placed *input* from clearing is #1577.
+    # Claiming the cache namespace is what ATTRIBUTES that directory to this
+    # demo: `luxar demo` reports the demo as `cached`, and `demo cache list`
+    # names this key against the bytes. It is deliberately NOT what protects the
+    # hand-placed catalog from deletion — `registry.PROTECTED_INPUT_DIRS` is,
+    # independently of DEMO_META (see the comment on it), so `demo cache clear`
+    # spares the directory by key, under `--all` and under `--orphans` alike, and
+    # no edit here can quietly disarm that. The two are separate on purpose:
+    # declaring the name buys reporting, and only reporting.
     "caches": ["milky_way_gaia_3m"],
     "outputs": ["gaia_milky_way"],
 }
@@ -147,7 +146,6 @@ from pathlib import Path
 from typing import NoReturn
 
 import numpy as np
-import zarr
 from arbol import aprint, asection
 
 from luxar import (
@@ -157,6 +155,7 @@ from luxar import (
     LuxarZarrCompiler,
     ViewerConfig,
 )
+from luxar._zarr_compat import open_group
 from luxar.demos import launch_viewer, substitutive_lod_or_flat
 from luxar.utils.paths import get_demos_output_dir
 
@@ -264,12 +263,14 @@ def _extract_raw_zarr(data_zip_path: Path, dest: Path) -> Path:
     failure mode otherwise escapes as a traceback that buries the advice: the zip
     has to open (a truncated copy raises ``BadZipFile``), it has to hold a
     top-level ``RAW_ZARR_NAME`` directory (a wrong ``--output`` stem extracts
-    *successfully*, and only ``zarr.open`` later notices), and that directory has
+    *successfully*, and only the store read later notices), and that directory has
     to be the raw star table (a store built by hand with other column names reads
-    fine and dies on a bare ``KeyError`` mid-conversion). ``zarr``'s
-    ``PathNotFoundError`` and ``KeyError`` are no more a ``FileNotFoundError``
-    than ``BadZipFile`` is, so no ``except CatalogUnusable`` on the way out
-    catches them.
+    fine and dies on a bare ``KeyError`` mid-conversion). None of the exceptions
+    involved — ``BadZipFile``, whatever zarr raises for a store it cannot open as
+    a group (see the handler below: three different classes), a bare ``KeyError``
+    — is a ``CatalogUnusable``, which is the only type the entry points turn into
+    advice, so each one otherwise escapes as a traceback with nothing in it about
+    the rebuild.
 
     The catalog is placed (or rebuilt) by hand, which is what makes all three
     ordinary rather than exotic — an interrupted ``scp``, the rebuild script's
@@ -299,9 +300,38 @@ def _extract_raw_zarr(data_zip_path: Path, dest: Path) -> Path:
             f"{REBUILD_COMMAND}"
         )
     try:
-        raw_table = zarr.open(str(raw_zarr_path), mode="r")
+        # ``luxar._zarr_compat.open_group``, never a bare ``zarr.open``, and for
+        # two independent reasons. (1) The facade passes
+        # ``use_consolidated=False``, restoring the zarr-2 rule that a read sees
+        # the arrays actually ON DISK; the real catalog IS consolidated, so under
+        # zarr 3's reversed default the column check below would answer from
+        # `.zmetadata` and report a deleted column directory as present — the
+        # guard passes and the converter reads that column as all-zeros fill,
+        # which for `bp_rp` is a 3M-star scene with a dead colour index. (2)
+        # ``zarr.open`` returns an ``Array`` when the extracted directory is an
+        # array store rather than a group (``zarr.save`` output — a table someone
+        # assembled from their own query), and ``name not in <Array>`` falls back
+        # to the SEQUENCE protocol: element-by-element, ~10.6 s per 2000 values,
+        # i.e. hours on a 3M-row catalog before printing advice that blames the
+        # columns. ``open_group`` raises on that node instead, so it lands in the
+        # handler below within milliseconds.
+        raw_table = open_group(str(raw_zarr_path), mode="r")
         missing = [name for name in RAW_TABLE_FIELDS if name not in raw_table]
-    except (zarr.errors.PathNotFoundError, zarr.errors.GroupNotFoundError) as exc:
+    # ``FileNotFoundError``/``ValueError``, not zarr's own error names: zarr 3
+    # deleted ``PathNotFoundError``, so naming it raises ``AttributeError`` while
+    # merely BUILDING the handler tuple and the advice below is lost to that
+    # traceback instead. The pair is really one class wide: zarr's own errors
+    # descend from ``BaseZarrError``, itself a ``ValueError``, so the
+    # ``FileNotFoundError`` arm is a subset kept because it is the spelling
+    # ``luxar._zarr_compat.is_missing_error`` sanctions. ``ValueError`` is what
+    # earns its place — the three store failures measured on this path do NOT
+    # share a narrower base: a v2 array store gives ``GroupNotFoundError`` (a
+    # ``FileNotFoundError``), a v3 one ``ContainsArrayError``, and a column whose
+    # ``.zarray`` is corrupt JSON a bare ``json.JSONDecodeError`` (not a zarr
+    # error at all). Only the first is a ``FileNotFoundError``, so the narrower
+    # handler let two thirds of the docstring's "everything is checked here"
+    # escape as the traceback this function exists to prevent.
+    except (FileNotFoundError, ValueError) as exc:
         raise CatalogUnusable(
             f"{data_zip_path} holds a `{RAW_ZARR_NAME}/` directory, but it is not "
             f"a zarr store ({exc}).\n"
@@ -379,8 +409,11 @@ def load_and_convert_gaia_data(data_zarr_path: Path, output_path: Path) -> int:
     with asection("Loading Raw Gaia Data"):
         # Always an already-extracted directory: every caller unpacks the zip
         # first (via `_extract_raw_zarr`), because reading the zip in place
-        # through a zip:// store is unreliable across zarr versions.
-        store = zarr.open(str(data_zarr_path), mode="r")
+        # through a zip:// store is unreliable across zarr versions. Through the
+        # facade for the same reason the guard there uses it: consolidated
+        # metadata is not trusted, so a column that is not on disk raises here
+        # rather than being served as zeros from a stale `.zmetadata`.
+        store = open_group(str(data_zarr_path), mode="r")
 
         # Read arrays
         x_kpc = store["x_kpc"][:]

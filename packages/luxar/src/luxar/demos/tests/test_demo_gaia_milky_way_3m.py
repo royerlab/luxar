@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 import sys
 import zipfile
 from pathlib import Path
@@ -10,7 +11,7 @@ import numpy as np
 import pytest
 import zarr
 
-from luxar._zarr_compat import create_array
+from luxar._zarr_compat import consolidate, create_array, open_group
 from luxar.demos._dependencies import SUBSTITUTIVE_LOD_MODULES, is_installed
 from luxar.demos.demo_gaia_milky_way_3m import (
     CACHE_FILE,
@@ -24,9 +25,9 @@ from luxar.demos.demo_gaia_milky_way_3m import (
 from luxar.demos.registry import DEMO_CACHE_ROOT
 
 
-def _write_tiny_gaia_table(path: Path, n_stars: int = 16) -> None:
+def _write_tiny_gaia_table(path: Path, n_stars: int = 16) -> zarr.Group:
     """Write the five raw columns consumed by the demo converter."""
-    root = zarr.open(str(path), mode="w")
+    root = open_group(str(path), mode="w")
     values = {
         "x_kpc": np.linspace(-2.0, 2.0, n_stars, dtype=np.float32),
         "y_kpc": np.linspace(-1.0, 1.0, n_stars, dtype=np.float32),
@@ -36,6 +37,7 @@ def _write_tiny_gaia_table(path: Path, n_stars: int = 16) -> None:
     }
     for name, data in values.items():
         create_array(root, name, data=data, shape=data.shape, dtype=data.dtype)
+    return root
 
 
 def _catalog_zip(tmp_path: Path, member_name: str) -> Path:
@@ -63,7 +65,7 @@ def _foreign_table_catalog_zip(tmp_path: Path) -> Path:
     differently, so the converter would fail on a bare ``KeyError``.
     """
     raw = tmp_path / RAW_ZARR_NAME
-    root = zarr.open(str(raw), mode="w")
+    root = open_group(str(raw), mode="w")
     for name in ("x", "y", "z", "mag", "colour"):
         values = np.linspace(0.0, 1.0, 8, dtype=np.float32)
         create_array(root, name, data=values, shape=values.shape, dtype=values.dtype)
@@ -265,12 +267,13 @@ def test_named_star_legend_is_derived_from_the_marker_nodes(tmp_path: Path) -> N
 def test_declared_cache_namespace_is_where_the_catalog_is_read() -> None:
     """The declared cache name and the directory read must stay one directory.
 
-    ``DEMO_META["caches"]`` is what `luxar demo cache …` walks and what keeps
-    `cache clear --orphans` from rmtree-ing this hand-placed catalog; CACHE_FILE
-    is where the demo actually reads it. The two spell the same directory in two
-    places, and a drift is silent in both directions: --orphans starts deleting
-    the real catalog again (exactly the bug the claim was added to fix), while
-    `cache clear gaia_milky_way` clears a directory nothing reads.
+    ``DEMO_META["caches"]`` is what `luxar demo cache …` walks and what attributes
+    the directory to this demo; CACHE_FILE is where the demo actually reads it.
+    The two spell the same directory in two places, and a drift is silent in both
+    directions: `luxar demo` reports this demo as uncached while a real catalog
+    sits there, and `cache clear gaia_milky_way` names a directory nothing reads.
+    (Deletion is not among the stakes — `registry.PROTECTED_INPUT_DIRS` spares
+    the catalog by directory name, independently of this declaration.)
     """
     assert DEMO_META["caches"] == [CACHE_FILE.parent.name]
     # ...and that name resolves under the cache root, which is how
@@ -315,6 +318,12 @@ class TestRawZarrExtraction:
 
         message = str(excinfo.value)
         assert RAW_ZARR_NAME in message
+        # The phrase that only the wrong-stem guard can produce. Naming
+        # RAW_ZARR_NAME and the rebuild command is not enough to pin it: an
+        # ABSENT extracted path is also a FileNotFoundError, so with the
+        # `is_dir()` check gone the store read below fails and its "not a zarr
+        # store" advice carries all three of those strings too.
+        assert "holds no top-level" in message
         assert "scripts/generate_galaxy_simple.py" in message
         assert "--output" in message
 
@@ -340,14 +349,54 @@ class TestRawZarrExtraction:
             assert field in message
         assert "scripts/generate_galaxy_simple.py" in message
 
+    def test_a_consolidated_store_missing_a_column_is_still_caught(
+        self, tmp_path: Path
+    ) -> None:
+        """The column check must see the disk, not a stale `.zmetadata` index.
+
+        The real catalog is consolidated, and zarr 3 REVERSED zarr 2's default: a
+        bare ``zarr.open`` consults `.zmetadata` automatically, so a column whose
+        array directory never arrived (a partial copy, a hand-edited store) is
+        still reported as present. The guard then passes and the converter reads
+        that column as all-zeros fill — for ``bp_rp`` a 3M-star scene with every
+        star the same colour, silently. ``luxar._zarr_compat.open_group`` exists
+        for exactly this: it passes ``use_consolidated=False``.
+        """
+        removed = "bp_rp"
+        raw = tmp_path / RAW_ZARR_NAME
+        consolidate(_write_tiny_gaia_table(raw))
+        assert (raw / ".zmetadata").exists(), (
+            "nothing to test: without consolidated metadata a raw `zarr.open` "
+            "would read the disk too and this test could not fail"
+        )
+        shutil.rmtree(raw / removed)
+        zip_path = tmp_path / "catalog.zarr.zip"
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            for f in raw.rglob("*"):
+                if f.is_file():
+                    zf.write(f, f.relative_to(tmp_path))
+
+        with pytest.raises(FileNotFoundError) as excinfo:
+            _extract_raw_zarr(zip_path, tmp_path / "unpacked")
+
+        message = str(excinfo.value)
+        # `removed in message` would not do: the advice lists all five
+        # RAW_TABLE_FIELDS as "what this demo reads" whatever is missing, so the
+        # assertion has to reach the MISSING list specifically.
+        assert f"column(s) {removed}" in message
+        assert "scripts/generate_galaxy_simple.py" in message
+
     def test_a_directory_that_is_not_a_zarr_store_names_the_rebuild(
         self, tmp_path: Path
     ) -> None:
         """...and the right directory name is not even necessarily a zarr store.
 
-        ``zarr.open`` answers this one with ``PathNotFoundError`` — a
-        ``ValueError``, so as invisible to the entry points' handlers as the
-        ``KeyError`` above.
+        The store read answers this one with ``GroupNotFoundError``, which is not
+        a ``CatalogUnusable`` — so as invisible to the entry points' handlers as the
+        ``KeyError`` above, however it is spelled. The assertions below are on the
+        MESSAGE for that reason: ``GroupNotFoundError`` is itself a
+        ``FileNotFoundError`` under zarr 3, so the raised type alone cannot tell a
+        caught-and-readvised failure from the raw zarr error escaping.
         """
         raw = tmp_path / RAW_ZARR_NAME
         raw.mkdir()
@@ -355,6 +404,51 @@ class TestRawZarrExtraction:
         zip_path = tmp_path / "catalog.zarr.zip"
         with zipfile.ZipFile(zip_path, "w") as zf:
             zf.write(raw / "notes.txt", Path(RAW_ZARR_NAME) / "notes.txt")
+
+        with pytest.raises(FileNotFoundError) as excinfo:
+            _extract_raw_zarr(zip_path, tmp_path / "unpacked")
+
+        message = str(excinfo.value)
+        assert "not a zarr store" in message
+        assert "scripts/generate_galaxy_simple.py" in message
+
+    @pytest.mark.parametrize("kind", ["v3-array-store", "corrupt-column-metadata"])
+    def test_a_store_zarr_cannot_open_as_this_table_reaches_the_advice(
+        self, tmp_path: Path, kind: str
+    ) -> None:
+        """Two store failures that are ``ValueError``, not ``FileNotFoundError``.
+
+        zarr's own errors descend from ``BaseZarrError`` → ``ValueError`` and only
+        *some* of them also subclass ``FileNotFoundError``; a corrupt metadata
+        document does not even reach zarr's exceptions. So a handler narrowed to
+        ``FileNotFoundError`` loses both. Both cases below are ordinary for a
+        hand-placed catalog: ``zarr.save`` on a stock zarr 3 writes an ARRAY store
+        at that path (a v3 one, which answers ``ContainsArrayError`` where a v2
+        array answers the ``FileNotFoundError``-flavoured ``GroupNotFoundError``),
+        and a truncated per-file copy can leave a column's ``.zarray`` as invalid
+        JSON, which is a bare ``json.JSONDecodeError``.
+
+        The assertion is on the "not a zarr store" branch specifically: reading
+        through ``zarr.open`` instead would raise too, but from the column check —
+        an ``Array`` contains none of the five names, so the message would blame
+        the columns of a store that is not a table at all.
+        """
+        raw = tmp_path / RAW_ZARR_NAME
+        if kind == "v3-array-store":
+            # zarr_format=3 explicitly: the autouse fixture in luxar/conftest.py
+            # pins the ambient default to 2, which is the flavour the existing
+            # FileNotFoundError already covers.
+            zarr.create_array(
+                store=str(raw), shape=(4,), dtype=np.float32, zarr_format=3
+            )
+        else:
+            _write_tiny_gaia_table(raw)
+            (raw / "bp_rp" / ".zarray").write_text("{ not json")
+        zip_path = tmp_path / "catalog.zarr.zip"
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            for f in raw.rglob("*"):
+                if f.is_file():
+                    zf.write(f, f.relative_to(tmp_path))
 
         with pytest.raises(FileNotFoundError) as excinfo:
             _extract_raw_zarr(zip_path, tmp_path / "unpacked")
@@ -400,7 +494,11 @@ class TestRawZarrExtraction:
     @pytest.mark.parametrize(
         "broken,expected",
         [
-            ("wrong-stem", RAW_ZARR_NAME),
+            # Each expectation is a phrase only ONE guard can print, not merely a
+            # string the message happens to contain: `RAW_ZARR_NAME` alone would
+            # also match the "not a zarr store" advice a missing extracted
+            # directory falls through to (see the wrong-stem test above).
+            ("wrong-stem", "holds no top-level"),
             ("truncated", "truncated"),
             ("foreign-table", "x_kpc"),
         ],
