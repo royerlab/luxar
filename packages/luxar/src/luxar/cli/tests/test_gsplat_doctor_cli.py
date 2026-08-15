@@ -13,9 +13,10 @@ import tempfile
 from pathlib import Path
 
 import numpy as np
-import zarr
 from typer.testing import CliRunner
 
+from luxar._zarr_compat import consolidate as zc_consolidate
+from luxar._zarr_compat import open_group as zc_open_group
 from luxar.cli import app
 
 
@@ -37,9 +38,12 @@ def _partition_without_split_planes(tmp: Path) -> Path:
     path = tmp / "part.gsplats.zarr"
     write_gsplats_tree(path, node)
 
-    root = zarr.open_group(str(path), mode="r+")
+    # Through the facade, as Luxar's in-place editors are: a plain re-open of
+    # an already-consolidated store leaves a stale NESTED index behind on
+    # re-consolidation (see `_zarr_compat.open_group`).
+    root = zc_open_group(str(path), mode="r+")
     del root.attrs["bsp_tree"]
-    zarr.consolidate_metadata(root.store)
+    zc_consolidate(root)
     return path
 
 

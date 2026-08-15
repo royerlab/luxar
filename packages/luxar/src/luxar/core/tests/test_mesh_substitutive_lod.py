@@ -11,7 +11,6 @@ first end-to-end write of this feature actually had.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
@@ -19,6 +18,7 @@ import numpy as np
 import pytest
 
 from luxar import Dimensions, LuxarZarrCompiler
+from luxar._zarr_compat import read_consolidated_attrs
 from luxar.core.group.lod.group import (
     PARTITION_FINEST_AREA,
     WHOLE_OBJECT_FINEST_ANCHOR,
@@ -74,12 +74,7 @@ def read_nodes(store: Path) -> Dict[str, Dict[str, Any]]:
     the ladder's correctness is a property of the bytes the viewer will load, and
     an in-memory assertion would pass against a node tree that never reached disk.
     """
-    meta = json.loads((store / ".zmetadata").read_text())["metadata"]
-    out: Dict[str, Dict[str, Any]] = {}
-    for key, value in meta.items():
-        if key.endswith(".zattrs"):
-            out[key[: -len("/.zattrs")] or "/"] = value
-    return out
+    return dict(read_consolidated_attrs(store))
 
 
 def write_ladder(tmp_path: Path, verts, faces, **kwargs) -> Dict[str, Dict[str, Any]]:

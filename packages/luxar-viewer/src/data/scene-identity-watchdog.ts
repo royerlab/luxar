@@ -38,6 +38,7 @@
  * `dispose()`, which the SceneLoader calls on dataset switch and teardown.
  */
 
+import { ROOT_ATTR_DOCS, rootAttributes } from '../types/zarr-documents';
 import { log, Modules } from '../utils/log';
 import { notifier } from '../utils/cross-layer/notifier';
 
@@ -95,7 +96,7 @@ export function canonicalJson(value: unknown): string | undefined {
 }
 
 /**
- * Build the root `.zattrs` URL for a dataset base URL.
+ * Build the URL of one root metadata document for a dataset base URL.
  *
  * Appends to the PATH rather than to the raw string, so a query string
  * survives (presigned / tokenized sources — zarrita's `FetchStore` copies the
@@ -108,14 +109,14 @@ export function canonicalJson(value: unknown): string | undefined {
  * happens to end in `/` (`?token=abc/`), sending the probe somewhere the
  * store never goes.
  */
-function buildAttrsUrl(datasetUrl: string): string {
+function buildAttrsUrl(datasetUrl: string, doc: string): string {
   try {
     const url = new URL(datasetUrl);
-    url.pathname = `${url.pathname.replace(/\/+$/, '')}/.zattrs`;
+    url.pathname = `${url.pathname.replace(/\/+$/, '')}/${doc}`;
     url.hash = '';
     return url.toString();
   } catch {
-    return `${datasetUrl.replace(/\/+$/, '')}/.zattrs`;
+    return `${datasetUrl.replace(/\/+$/, '')}/${doc}`;
   }
 }
 
@@ -160,8 +161,13 @@ export type SceneIdentityVerdict = 'ok' | 'changed' | 'unreachable';
 
 export class SceneIdentityWatchdog {
   private readonly url: string;
-  /** Root `.zattrs` address derived from the dataset URL (query-preserving). */
-  private readonly attrsUrl: string;
+  /** Candidate root-attribute addresses, newest format first (query-preserving). */
+  private readonly attrsUrls: readonly string[];
+  /**
+   * The candidate that last answered, so steady-state polling costs ONE
+   * request. Only the first probe of a format-2 dataset pays the extra 404.
+   */
+  private resolvedAttrsUrl: string | null = null;
   private readonly expectedHash: string | null;
   private readonly expectedAttrsJson: string | null;
   private readonly intervalMs: number;
@@ -189,7 +195,7 @@ export class SceneIdentityWatchdog {
     // which is the only place they mean "directory" — a raw-string trim here
     // would instead truncate a credential ending in `/`.
     this.url = opts.datasetUrl;
-    this.attrsUrl = buildAttrsUrl(this.url);
+    this.attrsUrls = ROOT_ATTR_DOCS.map((doc) => buildAttrsUrl(this.url, doc));
     this.expectedHash = opts.expectedContentHash;
     this.expectedAttrsJson = opts.expectedAttrsJson ?? null;
     this.intervalMs = opts.intervalMs ?? CHECK_INTERVAL_MS;
@@ -258,12 +264,38 @@ export class SceneIdentityWatchdog {
     this.inFlightAbort = abort;
     const timeout = setTimeout(() => abort.abort(), PROBE_TIMEOUT_MS);
     try {
-      const res = await this.fetchImpl(this.attrsUrl, {
-        cache: 'no-store',
-        signal: abort.signal,
-      });
-      if (!res.ok) return isInconclusiveStatus(res.status) ? 'unreachable' : 'changed';
-      body = await res.text();
+      // Try the format we last saw, then the other. A dataset only has ONE of
+      // these documents, so a 404 on the first candidate means "wrong format",
+      // not "gone" — and 404 is deliberately absent from the inconclusive set,
+      // so treating it as an answer would report every poll of a format-3
+      // store as `changed` and drive a reload loop.
+      const candidates =
+        this.resolvedAttrsUrl !== null
+          ? [this.resolvedAttrsUrl, ...this.attrsUrls.filter((u) => u !== this.resolvedAttrsUrl)]
+          : this.attrsUrls;
+
+      let text: string | null = null;
+      let lastStatus = 404;
+      for (const candidate of candidates) {
+        const res = await this.fetchImpl(candidate, {
+          cache: 'no-store',
+          signal: abort.signal,
+        });
+        if (res.ok) {
+          this.resolvedAttrsUrl = candidate;
+          text = await res.text();
+          break;
+        }
+        lastStatus = res.status;
+        // Anything other than "not here" is a real answer about THIS address
+        // and must not be masked by trying the other document.
+        if (res.status !== 404) break;
+      }
+
+      if (text === null) {
+        return isInconclusiveStatus(lastStatus) ? 'unreachable' : 'changed';
+      }
+      body = text;
     } catch {
       return 'unreachable';
     } finally {
@@ -273,7 +305,7 @@ export class SceneIdentityWatchdog {
 
     if (this.expectedHash !== null) {
       try {
-        const attrs = JSON.parse(body) as { content_hash?: unknown };
+        const attrs = rootAttributes(JSON.parse(body));
         return attrs.content_hash === this.expectedHash ? 'ok' : 'changed';
       } catch {
         return 'changed';
@@ -285,7 +317,9 @@ export class SceneIdentityWatchdog {
     // first probe is caught.
     if (this.expectedAttrsJson !== null) {
       try {
-        return canonicalJson(JSON.parse(body)) === this.expectedAttrsJson ? 'ok' : 'changed';
+        return canonicalJson(rootAttributes(JSON.parse(body))) === this.expectedAttrsJson
+          ? 'ok'
+          : 'changed';
       } catch {
         return 'changed';
       }

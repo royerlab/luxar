@@ -12,6 +12,8 @@ import numpy as np
 import pytest
 import zarr
 
+from luxar._zarr_compat import read_consolidated_attrs
+from luxar.conftest import array_compressor
 from luxar.encoding import EncodingMode
 from luxar.gsplats import GSplatData
 from luxar.gsplats.io import (
@@ -79,12 +81,10 @@ class TestSaveGsplats:
             root = zarr.open_group(str(path), mode="r")
             content_hash = root.attrs["content_hash"]
             assert isinstance(content_hash, str) and len(content_hash) > 0
-            # The hash must also land in consolidated metadata (the viewer
-            # reads .zmetadata for structure and .zattrs for validation).
-            import json
-
-            zmeta = json.loads((path / ".zmetadata").read_text())
-            assert zmeta["metadata"][".zattrs"]["content_hash"] == content_hash
+            # The hash must also land in consolidated metadata: the viewer
+            # builds its scene graph from that index, so a hash present only on
+            # the node itself would never be seen.
+            assert read_consolidated_attrs(path)["/"]["content_hash"] == content_hash
 
     def test_resave_changes_content_hash(self) -> None:
         # Identical data re-saved must yield a DIFFERENT hash (the timestamp
@@ -750,20 +750,19 @@ class TestCompression:
     """Blosc compression + chunk sizing (v3.0 leaf-root paths)."""
 
     def test_default_compression_applied(self):
-        from numcodecs import Blosc
 
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "test.gsplats.zarr"
             save_gsplats(path=path, **create_test_splats_3d(100))
             centers = zarr.open(str(path), mode="r")["centers"]
-            assert isinstance(centers.compressor, Blosc)
-            assert centers.compressor.cname == "zstd"
+            comp = array_compressor(centers)
+            assert comp is not None and comp.cname == "zstd"
 
     def test_compression_disabled(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "test.gsplats.zarr"
             save_gsplats(path=path, compressor=None, **create_test_splats_3d(100))
-            assert zarr.open(str(path), mode="r")["centers"].compressor is None
+            assert array_compressor(zarr.open(str(path), mode="r")["centers"]) is None
 
     def test_chunk_capping_small_array(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -781,17 +780,19 @@ class TestCompression:
             )
 
     def test_gsplatdata_save_default_compression(self):
-        from numcodecs import Blosc
 
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "test.gsplats.zarr"
             GSplatData(**create_test_splats_3d(100)).save(path)
-            assert isinstance(
-                zarr.open(str(path), mode="r")["centers"].compressor, Blosc
+            # `array_compressor` is the bi-format spelling of "is this Blosc?":
+            # it RAISES for a real non-blosc compressor and answers None only
+            # for a genuinely raw array, so a non-None view IS the isinstance
+            # check. Asking `.compressor` directly would raise at format 3.
+            assert (
+                array_compressor(zarr.open(str(path), mode="r")["centers"]) is not None
             )
 
     def test_multi_lod_compression(self):
-        from numcodecs import Blosc
 
         from luxar.gsplats.gsplat_data import AdditiveSubLOD
 
@@ -811,8 +812,8 @@ class TestCompression:
             GSplatData(additive_sublods=lods).save(path)
             root = zarr.open(str(path), mode="r")
             # Additive ladder → additive_<i>/ subgroups under the leaf root.
-            assert isinstance(root["additive_0/centers"].compressor, Blosc)
-            assert isinstance(root["additive_1/centers"].compressor, Blosc)
+            assert array_compressor(root["additive_0/centers"]) is not None
+            assert array_compressor(root["additive_1/centers"]) is not None
             assert root["additive_0/centers"].chunks[0] <= 50
             assert root["additive_1/centers"].chunks[0] <= 80
 
@@ -969,12 +970,15 @@ def test_save_explicit_none_compressor_disables_compression():
         # Explicit None → no compression.
         raw = Path(tmp) / "raw.gsplats.zarr"
         data.save(raw, ordering="none", compressor=None)
-        assert zarr.open_group(str(raw), mode="r")["centers"].compressor is None
+        assert array_compressor(zarr.open_group(str(raw), mode="r")["centers"]) is None
 
         # Unspecified → default Blosc (compression still on by default).
         comp = Path(tmp) / "comp.gsplats.zarr"
         data.save(comp, ordering="none")
-        assert zarr.open_group(str(comp), mode="r")["centers"].compressor is not None
+        assert (
+            array_compressor(zarr.open_group(str(comp), mode="r")["centers"])
+            is not None
+        )
 
 
 class TestCompressedLoadSecurity:
@@ -1127,6 +1131,42 @@ class TestArchiveRootAttrsPeek:
         assert attrs["format_type"] == "gsplats_zarr"
         assert attrs["opacity"] == 0.75
         assert attrs["gamma"] == 1.3
+
+    @pytest.mark.parametrize("fmt", ["zip", "tar.gz"])
+    @pytest.mark.parametrize("write_format", (2, 3), ids=("v2", "v3"))
+    def test_peek_reads_an_archive_of_either_on_disk_format(
+        self, tmp_path: Path, fmt: str, write_format: int
+    ) -> None:
+        """The peek finds the root attrs whichever format wrote the archive.
+
+        The document is named differently per format — ``.zattrs`` at 2, inside
+        ``zarr.json`` at 3 — and the member is matched BY NAME, so recognising
+        only one of them made every archive of the other format peek as ``{}``.
+        That is indistinguishable from "this dataset authored no appearance", so
+        `gsplat lod` silently dropped the whole authored appearance of an
+        archived input instead of failing.
+
+        The sibling test above uses the ambient write format, which pins only
+        whichever one CI happens to run; this pins both explicitly.
+        """
+        from luxar._zarr_compat import ZARR_FORMAT, set_zarr_format
+        from luxar.gsplats.io._archive import read_archive_root_attrs
+
+        original = ZARR_FORMAT
+        set_zarr_format(write_format)
+        try:
+            data = GSplatData(**create_test_splats_3d(16))
+            archive = tmp_path / f"peek_v{write_format}.gsplats.zarr.{fmt}"
+            data.save(archive, compress=fmt, root_attrs={"blending_mode": "volumetric"})
+        finally:
+            set_zarr_format(original)
+
+        attrs = read_archive_root_attrs(archive)
+        # Not vacuous: a peek that found nothing also returns a dict.
+        assert attrs, f"format {write_format} {fmt} archive peeked as empty"
+        assert attrs["blending_mode"] == "volumetric"
+        # The structural key proves the ROOT was read, not some child node.
+        assert attrs["format_type"] == "gsplats_zarr"
 
     #: The two store layouts ``extract_compressed_zarr`` accepts, as the archive
     #: member path of each one's ROOT ``.zattrs``: the ``*.gsplats.zarr``-named
