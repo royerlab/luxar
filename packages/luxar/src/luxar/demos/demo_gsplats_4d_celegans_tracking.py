@@ -112,7 +112,7 @@ from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.demos import (
     MissingDependencyError,
     launch_viewer,
-    load_precomputed_bundle,
+    load_dataset_bundle,
     parse_demo_flags,
     require_module,
     warn_if_no_cuda_gpu,
@@ -1811,7 +1811,7 @@ def main():
     file_names = [
         f"celegans_s{SAMPLE_INDEX}_t{t:04d}.gsplats.zarr.zip" for t in range(n_use)
     ]
-    precomputed = load_precomputed_bundle(
+    precomputed = load_dataset_bundle(
         "gsplats_celegans",
         "celegans_s1.gsplats.zarr.zip",
         file_names,
