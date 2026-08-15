@@ -234,6 +234,38 @@ class TestMergePipelineProvenance:
                 )
             )
 
+        # Mis-FRAMED: the run's --config carried a real-space voxel_size, so the
+        # planner recorded a grid_scale and every part's crop — taken in VOXELS
+        # from the tile grid — would be a factor off (#1587). `gsplat fit`
+        # already refuses --refine volume there; the batch front door must too.
+        with pytest.raises(ValueError, match="frame scaled by"):
+            _merge(
+                BatchManifest(
+                    n_timepoints=1,
+                    n_channels=1,
+                    n_tiles=1,
+                    input_path=str(source),
+                    axes="z,y,x",
+                    grid_scale=[4.0, 1.0, 1.0],
+                )
+            )
+        # Non-vacuity: the same manifest with the frames in agreement passes the
+        # front door (an all-ones factor is no scale, and so is an absent one —
+        # which is what every manifest written before #1587 says).
+        from luxar.gsplats.batch.merge_orchestrator import _validate_merge_volume_refit
+
+        for agreeing in ([1.0, 1.0, 1.0], None):
+            _validate_merge_volume_refit(
+                BatchManifest(
+                    n_timepoints=1,
+                    n_channels=1,
+                    n_tiles=1,
+                    input_path=str(source),
+                    axes="z,y,x",
+                    grid_scale=agreeing,
+                )
+            )
+
         # Every rejection happened before anything was written.
         assert not (out_dir / "merged").exists()
 

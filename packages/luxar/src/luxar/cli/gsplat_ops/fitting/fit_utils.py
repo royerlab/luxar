@@ -459,36 +459,73 @@ def split_seeds_across_tiles(
     return per_tile
 
 
-def reject_downscaled_volume_refit(
-    recipe_params: "Any", effective_downscale: "Any"
+def reject_rescaled_volume_refit(
+    recipe_params: "Any",
+    effective_downscale: "Any",
+    *,
+    voxel_size: "Any" = None,
+    output_space: "Any" = "real",
 ) -> None:
-    """Refuse ``--refine volume`` under ``--downscale`` — different frames.
+    """Refuse ``--refine volume`` when the tile grid and the splats differ in frame.
 
-    A per-part volume re-fit crops the source to the part's own tile, which only
-    holds while the tile grid and the splats share a coordinate frame. Under
-    ``--downscale`` they do not: the grid is computed on the DOWNSCALED shape (so
-    the parent and its workers agree on the tile count) while every worker
-    rescales its splats back to full resolution. Each crop would then be a factor
-    too small and in the wrong place, and the never-worse guard could not tell —
-    it compares against that same wrong crop. Checked before any fitting, since
-    the alternative is discovering it after the whole fit.
+    A per-part volume re-fit crops the source to the part's own tile — the cell
+    of the partition's ``bsp_tree`` — and uses that cell as VOXEL INDICES into
+    the volume. That only holds while the tile grid and the splats share a
+    coordinate frame. Two independent factors break it, and they are exactly the
+    two :func:`~luxar.gsplats.tiling.resolve_grid_scale` reconciles for the
+    split planes (#1587):
 
-    Called with the resolved downscale, so a factor coming from ``--config`` /
-    ``--preset`` is caught as well as the flag. The sequential tiled path refuses
-    ``--recipe`` outright under ``--downscale`` (it writes a flat leaf there), so
-    ``-j>1`` is what makes this combination otherwise reachable.
+    * ``--downscale``: the grid is computed on the DOWNSCALED shape (so the
+      parent and its workers agree on the tile count) while every worker
+      rescales its splats back to full resolution.
+    * a ``voxel_size`` with ``output_space="real"`` (the default): the grid is
+      in voxels while every tile's splats are offset by ``origin * voxel_size``
+      and emitted in PHYSICAL units.
+
+    Either way each crop is a factor off and in the wrong place, and the
+    never-worse guard cannot tell — it compares against that same wrong crop.
+    (Physical-unit centers additionally defeat the re-fit itself: it renders on
+    an origin-anchored voxel grid, which is what
+    :class:`~luxar.gsplats.lod.volume_refit.VolumeRefitConfig`'s
+    ``frame_tolerance`` heuristic exists to notice after the fact.) Checked
+    before any fitting, since the alternative is discovering it after the whole
+    fit.
+
+    Called with the RESOLVED values, so a factor coming from ``--config`` /
+    ``--preset`` is caught as well as the flag. The sequential tiled path
+    refuses ``--recipe`` outright under ``--downscale`` (it writes a flat leaf
+    there), so ``-j>1`` is what makes that combination otherwise reachable; a
+    ``voxel_size`` is reachable on both the sequential and the parallel
+    partition path. It is checked on the NON-tiled path too, where there are no
+    parts to crop but the re-fit still renders on the source's voxel grid, so a
+    physical-unit ladder can only ever be discarded — hence the message speaks
+    of the crop's frame rather than of tiles.
     """
-    if (
-        recipe_params is not None
-        and getattr(recipe_params, "refine", "none") == "volume"
-        and effective_downscale is not None
-    ):
+    if recipe_params is None or getattr(recipe_params, "refine", "none") != "volume":
+        return
+    if effective_downscale is not None:
         raise typer.BadParameter(
             "--refine volume cannot be combined with --downscale: the tile grid "
             "is computed on the downscaled shape while the fitted splats are "
             "rescaled back to full resolution, so each tile's crop of the volume "
             "would land in the wrong place. Drop --downscale, or use --refine l2."
         )
+    if voxel_size is not None and output_space == "real":
+        spacing = (
+            [float(voxel_size)]
+            if isinstance(voxel_size, (int, float))
+            else [float(v) for v in voxel_size]
+        )
+        if any(v != 1.0 for v in spacing):
+            raise typer.BadParameter(
+                f"--refine volume cannot be combined with a real-space "
+                f"voxel_size ({spacing} with output_space='real'): the re-fit "
+                "crops and renders on the source's VOXEL grid (per part, from "
+                "the tile grid, when there are parts) while the fitted splats "
+                "are in physical units, so every crop would be a factor off. "
+                "Set output_space: voxel in the config, drop voxel_size, or "
+                "use --refine l2."
+            )
 
 
 def dispatch_parallel_tiled(
@@ -524,7 +561,7 @@ def dispatch_parallel_tiled(
         resolve_jobs,
     )
     from luxar.gsplats.fitting.downscale import normalize_downscale
-    from luxar.gsplats.tiling import compute_tile_specs
+    from luxar.gsplats.tiling import compute_tile_specs, resolve_grid_scale
 
     # Compute the tile grid on the POST-downscale shape (shape math
     # only — decimation is volume[::f]) so the parent and workers
@@ -654,6 +691,18 @@ def dispatch_parallel_tiled(
                 partition=not ctx.flat,
                 recipe=ctx.recipe,
                 recipe_params=recipe_params,
+                # The grid above is in DOWNSCALED voxels while every worker
+                # rescales its splats back to full resolution AND (with a
+                # voxel_size from --config, unless output_space is "voxel")
+                # emits physical coordinates. Both factors compose, so the
+                # merge needs their product to place the partition's split
+                # planes in the splats' own frame (#1587).
+                grid_scale=resolve_grid_scale(
+                    volume.ndim,
+                    downscale_factors=ds_factors,
+                    voxel_size=fit_config.get("voxel_size"),
+                    output_space=fit_config.get("output_space", "real"),
+                ),
             )
 
         with asection(f"Saving to {ctx.output_path.name}"):
