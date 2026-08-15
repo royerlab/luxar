@@ -371,10 +371,10 @@ def reject_bad_partition_spec(attrs: Optional[Dict[str, Any]], ndim: int) -> Non
 
     ``ndim`` is the EFFECTIVE post-transform width — see the call site.
     """
-    from ..partition import resolve_partition_spec
+    from ..partition import is_requested, resolve_partition_spec
 
     partition = (attrs or {}).get("partition")
-    if partition is None or partition is False or ndim < 2:
+    if not is_requested(partition) or ndim < 2:
         return
     resolve_partition_spec(partition)
 
