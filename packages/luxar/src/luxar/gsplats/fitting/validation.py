@@ -83,6 +83,35 @@ def _explicit_dtype_name(source_dtype: Any) -> Optional[str]:
         return str(source_dtype)
 
 
+def _explicit_source_shape(source_shape: Any) -> Optional[list[int]]:
+    """Normalize an EXPLICIT ``source_shape`` argument, or None.
+
+    This declares the grid of the ACQUISITION the fit represents, for the very
+    common case where the caller preprocessed before fitting -- a demo that
+    downscales a 5D OME-Zarr channel to 128^3 and normalizes it hands the fitter
+    an array that is no longer the data anyone means by "the source". Without a
+    way to say so, the recorded grid is the working copy and every compression
+    ratio quoted from it is against the wrong denominator.
+
+    Validated rather than trusted: this number becomes the denominator of a
+    published ratio, so a malformed one must fail here, loudly, and not surface
+    later as a plausible-looking figure nobody can reproduce.
+    """
+    if source_shape is None:
+        return None
+    try:
+        dims = [int(x) for x in source_shape]
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"source_shape must be a sequence of integers, got {source_shape!r}"
+        ) from exc
+    if not dims:
+        raise ValueError("source_shape cannot be empty")
+    if any(d <= 0 for d in dims):
+        raise ValueError(f"source_shape dimensions must be positive, got {dims}")
+    return dims
+
+
 def _resolve_source_dtype(V: Any, source_dtype: Any) -> tuple[str, Optional[int]]:
     """Resolve ``(source_dtype, source_itemsize)`` for the volume ``V``.
 
@@ -156,6 +185,7 @@ def prepare_fit_config(
     iter_callback_every: int = 25,
     seed_amps_background_relative: bool = False,
     source_dtype: Optional[str] = None,
+    source_shape: Optional[Sequence[int]] = None,
     **seed_kwargs: Any,
 ) -> FitConfig:
     """
@@ -201,6 +231,7 @@ def prepare_fit_config(
     # Capture the caller's dtype BEFORE the cast below (see the helper: after the
     # cast the original element size is gone).
     source_dtype, source_itemsize = _resolve_source_dtype(V, source_dtype)
+    source_shape = _explicit_source_shape(source_shape)
     V = np.asarray(V, dtype=np.float32)
     if V.size == 0:
         raise ValueError("Input image V cannot be empty")
@@ -380,6 +411,7 @@ def prepare_fit_config(
         V=V,
         source_dtype=source_dtype,
         source_itemsize=source_itemsize,
+        source_shape=source_shape,
         seeds=seeds,
         seed_amps_background_relative=seed_amps_background_relative,
         seed_method=seed_method,

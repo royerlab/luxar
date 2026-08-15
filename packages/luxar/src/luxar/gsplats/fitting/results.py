@@ -253,9 +253,21 @@ def _source_grid_stats(
     out: dict[str, Any] = {}
     V = getattr(config, "V", None)
     if V is not None and hasattr(V, "shape"):
-        out["source_shape"] = [int(x) for x in V.shape]
-        voxels = int(np.prod(V.shape)) if V.ndim else 0
+        # A DECLARED source grid wins over the array's own. Most producers
+        # preprocess before fitting — a demo that downscales a 5D OME-Zarr
+        # channel to 128^3 hands the fitter something that is no longer the
+        # acquisition, so measuring `V` would quote the ratio against the
+        # working copy. `source_declared` is recorded alongside so a reader can
+        # tell a measured grid from a stated one; an unmarked declaration would
+        # be indistinguishable from a measurement, which is the whole risk of
+        # letting callers name their own denominator.
+        declared = getattr(config, "source_shape", None)
+        shape = [int(x) for x in (declared if declared else V.shape)]
+        out["source_shape"] = shape
+        voxels = int(np.prod(shape)) if shape else 0
         out["source_voxels"] = voxels
+        if declared:
+            out["source_declared"] = True
         # `config.V` has already been cast to float32, so its own dtype/nbytes
         # would describe the fitter's working copy rather than the caller's
         # array. Use what validation captured before the cast, and fall back to
@@ -273,6 +285,14 @@ def _source_grid_stats(
             # pair into a compression ratio inflated by the cast. No bytes is
             # better than bytes measured on a different type — `info` already
             # stays silent when the source size is unknown.
+            #
+            # UNREACHABLE on every current path, and deliberately left rather
+            # than deleted: `config.V` is always the post-cast float32 array, so
+            # this needs `dtype == "float32"`, whose item size is never missing.
+            # Should that cast ever move, note this branch measures `V` — which
+            # a DECLARED `source_shape` makes the wrong array, not merely the
+            # wrong type. Guard on `declared` here if it becomes live; it is not
+            # guarded today because no test could prove the guard works.
             out["source_bytes"] = int(V.nbytes)
 
     Vn = getattr(preprocessed_data, "V_normalized", None)

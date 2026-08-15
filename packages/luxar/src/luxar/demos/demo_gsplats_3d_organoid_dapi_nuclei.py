@@ -203,6 +203,14 @@ CACHE_DIR.mkdir(parents=True, exist_ok=True)
 def load_dapi_data():
     """Load and preprocess DAPI microscopy data from IDR.
 
+    Returns ``(V, acquisition)``. ``V`` is the preprocessed working copy the
+    fitter is given -- one channel, downscaled to ``TARGET_SIZE``, normalized to
+    [0, 1] -- and ``acquisition`` is ``(shape, dtype)`` of the ORIGINAL stored
+    channel, or ``None`` when the array was synthesized here and so is its own
+    source. The fit stamps the acquisition rather than the working copy, or the
+    compression ratio it publishes would be quoted against a downscaled float32
+    copy of the data instead of the data.
+
     Data Source: Image Data Resource (IDR) study idr0062, Image 6001240
     Original Authors: Prisca Liberali lab, FMI
     Citation: Blin et al. (2019) + Williams et al. (2017) Nature Methods 14(8):775-781
@@ -236,6 +244,10 @@ def load_dapi_data():
                 # Load DAPI channel
                 aprint(f"Extracting T={TIME_POINT}, C={DAPI_CHANNEL} (DAPI)...")
                 V = np.array(data[TIME_POINT, DAPI_CHANNEL, :, :, :], dtype=np.float32)
+                # Captured BEFORE the cast and the downscale below: this is the
+                # grid and element type the compression ratio must be quoted
+                # against.
+                acquisition = ((z_size, y_size, x_size), str(data.dtype))
             else:
                 raise ValueError(f"Unexpected data shape: {full_shape}")
 
@@ -249,7 +261,8 @@ def load_dapi_data():
             V = V.astype(np.float32)
 
             aprint(f"✓ Loaded: {V.shape}, range [{V.min():.3f}, {V.max():.3f}]")
-            return V
+            aprint(f"✓ Acquisition: {acquisition[0]} {acquisition[1]}")
+            return V, acquisition
 
         except Exception as e:
             aprint(f"⚠ Remote loading failed: {e}")
@@ -271,7 +284,8 @@ def load_dapi_data():
 
             V = np.clip(V, 0, 1).astype(np.float32)
             aprint(f"✓ Fallback created: {V.shape}")
-            return V
+            # Synthesized here, so this array IS the source: nothing to declare.
+            return V, None
 
 
 # =============================================================================
@@ -279,8 +293,14 @@ def load_dapi_data():
 # =============================================================================
 
 
-def fit_dapi_gsplats(volume):
-    """Fit gsplats to DAPI volume (no cache check — caller handles that)."""
+def fit_dapi_gsplats(volume, acquisition=None):
+    """Fit gsplats to DAPI volume (no cache check — caller handles that).
+
+    ``acquisition`` is the ``(shape, dtype)`` of the original stored channel, as
+    returned by :func:`load_dapi_data`; ``None`` means ``volume`` is its own
+    source. It is stamped into the fit so the dataset can state its compression
+    against the acquisition rather than against the preprocessed copy.
+    """
     with asection("GSplats Fitting"):
         # Auto-detect best device (Metal on Apple Silicon for substantial speedup, chip-dependent)
         global DEVICE
@@ -305,12 +325,18 @@ def fit_dapi_gsplats(volume):
         # Fit gsplats progressively
         aprint(f"Fitting (fixed-K joint fit: seeds={MAX_SPLATS})...")
 
+        # `volume` is a downscaled, normalized float32 copy of one channel, so
+        # declaring the acquisition is what keeps the stamped compression ratio
+        # about the DATA rather than about this working copy.
+        src_shape, src_dtype = acquisition or (None, None)
         result = fit_gaussian_splats(
             volume,
             seeds=MAX_SPLATS,
             device=DEVICE,
             verbose=True,
             max_eccentricity=8.0,
+            source_shape=src_shape,
+            source_dtype=src_dtype,
         )
 
         n_splats = len(result.amplitudes)
@@ -570,8 +596,8 @@ def main():
     else:
         # --recompute path: download raw data, fit from scratch
         warn_if_no_cuda_gpu()
-        volume = load_dapi_data()
-        gsplats_data_original = fit_dapi_gsplats(volume)
+        volume, acquisition = load_dapi_data()
+        gsplats_data_original = fit_dapi_gsplats(volume, acquisition)
 
     # Optional round-trip visualisation (before centering/scaling transforms)
     if SHOW_ROUNDTRIP:

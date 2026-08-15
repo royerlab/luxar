@@ -277,3 +277,68 @@ def test_a_whitespace_padded_dtype_is_still_sized() -> None:
     V = np.zeros((2, 2), dtype=np.float32)
     assert _resolve_source_dtype(V, "uint16 ") == ("uint16", 2)
     assert _resolve_source_dtype(V, " uint16") == ("uint16", 2)
+
+
+# ── Declaring the acquisition when the caller preprocessed first ──────────────
+#
+# Most producers do not hand the fitter the acquisition. They pull one channel
+# out of a 5D store, downscale it and normalize it — so the array the fitter
+# sees is a working copy, and a ratio measured against it answers a question
+# nobody asked.
+
+
+def test_a_declared_source_grid_overrides_the_array_handed_in() -> None:
+    V = _sparse_blobs(shape=(24, 32, 32))  # the 128^3-style working copy
+    stats = _fit(V, source_shape=(96, 128, 128), source_dtype="uint16").stats
+    assert stats["source_shape"] == [96, 128, 128]
+    assert stats["source_voxels"] == 96 * 128 * 128
+    assert stats["source_bytes"] == 96 * 128 * 128 * 2
+    # The optimiser still reports what it actually saw.
+    assert stats["fitted_shape"] == [24, 32, 32]
+
+
+def test_a_declared_grid_is_marked_as_declared() -> None:
+    """A stated denominator must not be indistinguishable from a measured one."""
+    V = _sparse_blobs(shape=(24, 32, 32))
+    assert _fit(V, source_shape=(48, 64, 64)).stats["source_declared"] is True
+    assert "source_declared" not in _fit(V).stats
+
+
+@pytest.mark.parametrize(
+    "declared", [None, (96, 128, 128)], ids=["measured", "declared"]
+)
+def test_source_bytes_always_agrees_with_the_grid_it_is_quoted_against(
+    declared: object,
+) -> None:
+    """``source_bytes`` must be voxels x itemsize OF THE RECORDED GRID.
+
+    This is the invariant a compression ratio rests on. It is stated as a
+    relation rather than as a branch test on purpose: the byte count has more
+    than one origin inside the helper, and only the relation distinguishes
+    "counted the grid we published" from "counted the array we happened to
+    hold" — which for a declared grid are different arrays entirely.
+    """
+    V = _sparse_blobs(shape=(24, 32, 32))
+    stats = _fit(V, source_shape=declared, source_dtype="uint16").stats
+    assert stats["source_bytes"] == stats["source_voxels"] * 2
+    assert stats["source_voxels"] == int(np.prod(stats["source_shape"]))
+
+
+def test_an_unsizable_declared_dtype_reports_no_bytes_at_all() -> None:
+    """No number beats a number measured against the wrong array."""
+    stats = _fit(
+        _sparse_blobs(shape=(24, 32, 32)),
+        source_shape=(96, 128, 128),
+        source_dtype="not-a-dtype",
+    ).stats
+    assert stats["source_dtype"] == "not-a-dtype"
+    assert "source_bytes" not in stats
+
+
+@pytest.mark.parametrize(
+    "bad", [(), (0, 8, 8), (-4, 8, 8), ("a", 8, 8)], ids=["empty", "zero", "neg", "str"]
+)
+def test_a_malformed_declared_grid_is_refused(bad: object) -> None:
+    """It becomes the denominator of a published ratio — fail here, not later."""
+    with pytest.raises(ValueError):
+        _fit(_sparse_blobs(shape=(8, 8, 8)), source_shape=bad)
