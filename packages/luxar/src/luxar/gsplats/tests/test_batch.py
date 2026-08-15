@@ -1827,17 +1827,19 @@ class TestContentSubmitDryRun:
         assert "content plan" in res.output.lower()
         assert "boxes" in res.output.lower()
 
-    def test_content_plan_threads_axes_into_load_volume(
+    def test_content_plan_threads_axes_into_the_plan_read(
         self, tmp_path: Path, monkeypatch
     ) -> None:
-        """The content-plan scan must load with the user's --axes spec, not the
+        """The content-plan scan must read with the user's --axes spec, not the
         positional heuristic — else an --axes dataset is scanned with a wrong-
-        shaped/ordered volume and the box plan is wrong. Pre-fix the two
-        max-projection load_volume calls omitted axes (received axes=None)."""
+        shaped/ordered volume and the box plan is wrong. Every plan read goes
+        through `planning._pinned_slice_volume`, which pins the slice by LABEL,
+        so the spec has to arrive there: as the `axes` string AND as the
+        `axes_labels` the pin is actually built from."""
         import zarr
         from typer.testing import CliRunner
 
-        import luxar.cli.gsplat_config as gc
+        import luxar.cli.gsplat_ops.batch.planning as planning
         from luxar.cli.gsplat_commands import app_gsplat
 
         rng = np.random.default_rng(1)
@@ -1855,14 +1857,14 @@ class TestContentSubmitDryRun:
         )
         z[:] = V
 
-        seen_axes: list = []
-        real_load = gc.load_volume
+        seen_reads: list = []
+        real_read = planning._pinned_slice_volume
 
         def _spy(*a, **kw):
-            seen_axes.append(kw.get("axes"))
-            return real_load(*a, **kw)
+            seen_reads.append((kw.get("axes"), kw.get("axes_labels")))
+            return real_read(*a, **kw)
 
-        monkeypatch.setattr(gc, "load_volume", _spy)
+        monkeypatch.setattr(planning, "_pinned_slice_volume", _spy)
 
         out = tmp_path / "batch_out"
         res = CliRunner().invoke(
@@ -1896,9 +1898,18 @@ class TestContentSubmitDryRun:
             ],
         )
         assert res.exit_code == 0, res.output
-        assert "z,y,x" in seen_axes, (
-            f"content-plan load_volume never received axes='z,y,x'; saw {seen_axes} "
+        assert seen_reads, (
+            "the plan never read a slice through _pinned_slice_volume (the read "
+            "seam moved, so this test can no longer see what the plan asked for)"
+        )
+        assert all(axes == "z,y,x" for axes, _ in seen_reads), (
+            f"a content-plan read did not carry axes='z,y,x'; saw {seen_reads} "
             "(the --axes spec was not threaded into the plan scan)"
+        )
+        assert all(labels == ["z", "y", "x"] for _, labels in seen_reads), (
+            f"a content-plan read did not carry axes_labels=['z', 'y', 'x']; saw "
+            f"{seen_reads} (the pin is built from those labels, so the plan would "
+            "slice by the positional heuristic instead of the user's --axes)"
         )
 
 
