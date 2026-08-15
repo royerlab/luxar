@@ -1097,11 +1097,12 @@ def rescale_and_save(
         # plain GSplatData from the concatenated top-level arrays instead RESET
         # `truncation_radius` to the default (#1624): `truncate:` is a documented
         # YAML key (`gsplat fit --dump-config` emits it) that lands on the result
-        # in `fitting/results.py`, so `fit --tile k/M --downscale N --config
-        # 'truncate: 3.5'` stored 2.75 — a wrong radius in the tile's own store,
-        # on the plain non-progressive path too, and one the merge's `concatenate`
-        # requires the non-empty tiles to AGREE on (`_data/composition.py`), so a
-        # downscaled tile also disagreed with an un-downscaled sibling.
+        # in `fitting/results.py`, so `fit --tile k/M --downscale N` with a
+        # `--config` holding `truncate: 3.5` stored 2.75 — a wrong radius in the
+        # tile's own store, on the plain non-progressive path too, and one the
+        # merge's `concatenate` requires the non-empty tiles to AGREE on
+        # (`_data/composition.py`), so a downscaled tile also disagreed with an
+        # un-downscaled sibling.
         # `transform`'s diagonal fast path multiplies centers by these factors and
         # the packed Cholesky by the same per-row `tril_scales` vector as
         # `rescale_centers` / `rescale_cholesky_packed`. It also maps per sub-LOD,

@@ -178,7 +178,8 @@ def test_downscale_rescale_keeps_a_non_default_truncation_radius(
 
     ``truncate:`` is a documented YAML key (``gsplat fit --dump-config`` emits
     it) that lands on the result in ``fitting/results.py``, so this is reachable
-    with one flag: ``fit --tile k/M --downscale 2 --config 'truncate: 3.5'``.
+    with one flag: ``fit --tile k/M --downscale 2`` and a ``--config`` file
+    holding ``truncate: 3.5``.
 
     FAILS pre-fix: the rescale rebuilt a plain ``GSplatData`` from the top-level
     arrays without passing the radius, so the store recorded the DEFAULT 2.75
