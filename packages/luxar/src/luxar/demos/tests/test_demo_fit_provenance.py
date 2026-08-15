@@ -14,7 +14,9 @@ whitelist is where source-grid stamps land as well, so a suppressing demo also
 forfeits any compression figure the fitter learns to record.
 
 The one legitimate use is a store that never came from a fit at all, which is
-why the exemption below is keyed to a reason rather than merely allowed.
+why the exemption below is keyed to a stated reason AND to a call-site count
+rather than merely allowed: clearance for one sentinel save is not clearance for
+the file it happens to live in.
 """
 
 from __future__ import annotations
@@ -23,9 +25,13 @@ import ast
 from collections.abc import Iterable
 from pathlib import Path
 
-from luxar.demos import registry
+from ._scanned_modules import DEMOS_DIR, scanned_demo_modules
 
-DEMO_PATHS = sorted(registry._DEMOS_DIR.glob("demo_*.py"))
+#: The demos PLUS the shared helpers they delegate to — the same set the other
+#: demo guards scan. Not a ``demo_*.py`` glob: ``_interop_common.py`` already
+#: saves gsplat stores, so an allowlist keyed on the file name would let a
+#: suppressing save escape simply by living in a helper.
+SCANNED_PATHS = scanned_demo_modules()
 
 #: Call sites allowed to pass ``include_fitting_info=False``: file name ->
 #: (number of allowed call sites, why there is no fit to record).
@@ -44,8 +50,8 @@ _NO_FIT_TO_RECORD: dict[str, tuple[int, str]] = {
 }
 
 
-def _suppressing_modules(paths: Iterable[Path] = DEMO_PATHS) -> dict[str, int]:
-    """Map demo file name -> count of ``include_fitting_info=False`` call sites."""
+def _suppressing_modules(paths: Iterable[Path] = SCANNED_PATHS) -> dict[str, int]:
+    """Map module file name -> count of ``include_fitting_info=False`` call sites."""
     found: dict[str, int] = {}
     for path in paths:
         tree = ast.parse(path.read_text(), filename=str(path))
@@ -79,7 +85,7 @@ def test_no_demo_discards_the_provenance_of_a_real_fit() -> None:
 def test_every_exemption_states_why_there_is_no_fit() -> None:
     """A bare exemption is how this list would rot into a general opt-out."""
     for name, (count, reason) in _NO_FIT_TO_RECORD.items():
-        assert (registry._DEMOS_DIR / name).exists(), (
+        assert (DEMOS_DIR / name).exists(), (
             f"{name} is exempted but no longer exists -- drop the entry"
         )
         assert count >= 1, f"{name}: an exemption for zero call sites is dead"
@@ -100,7 +106,7 @@ def test_the_detector_sees_a_planted_suppression(tmp_path: Path) -> None:
         "result.save(third, include_fitting_info=False)\n"
     )
     assert _suppressing_modules([planted]) == {"demo_planted.py": 2}
-    assert DEMO_PATHS, "no demo modules were scanned at all"
+    assert SCANNED_PATHS, "no demo modules were scanned at all"
 
 
 def test_suppression_really_drops_the_keys_rather_than_moving_them() -> None:
