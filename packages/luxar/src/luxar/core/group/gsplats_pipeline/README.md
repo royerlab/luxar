@@ -131,6 +131,58 @@ branches, because the graft branch reaches its own copy only *below* that method
 branches, one public method gave two different verdicts for the same mistake
 depending on whether the file happened to be matrix-shaped.
 
+Excluding a key from the gate does not excuse its VALUE, and `partition` is the
+one excluded key with a value worth judging. It gets an explicit
+`partition.resolve_partition_spec` call — the same function the leaf adder calls,
+here for its verdict alone — at each of the two doors that build a wrapper before
+the first leaf write (#1550). Without it an invalid spec (`partition="nonsense"`,
+`{"max_elements": 0}`) rode the exclusion straight down into `child_0` /
+`part_0` and was refused only after the `kind=lod` / `kind=partition` wrapper
+existed, which then survived `finalize()`. Note this one is NOT an entry-level
+call like the pair above: on the `lod_group=` door it sits INSIDE
+`_reject_before_wrapper`, in the slot directly below the node-attrs gate and so
+below the `dim_order` spec, rank and colours checks — because that is the flat
+path's own order (the leaf validates node attrs at its entry and resolves the
+spec inside its partition branch, further down), and precedence parity with the
+flat path is the whole point. On the graft door (`from_io`'s
+`_reject_a_bad_partition_spec_on_a_graft`) there is nothing above it to be below,
+so it joins the entry pair. Two values are skipped at both doors, because the
+leaf never judges them either: `False` (the explicit no-partition bypass, which
+every adder normalises away before resolving) and a sub-2-D width (where
+`warn_if_partition_needs_more_dims` DROPS the request with a warning).
+
+A VALID spec has one conflict of its own, at BOTH doors: `partition=` cannot ride
+a node that also carries an additive ladder, because the multi-LOD writer has no
+`partition` parameter at all — so the key reached `validate_render_attrs` as an
+unknown node attribute, on the multi-substitutive route from inside `child_0`
+with the wrapper already written, and on the graft door from inside `part_0` with
+the `kind=partition` already written. One reason template
+(`partition_beside_a_ladder_reason`) with a structure and a remedy per door, the
+same convention `labels_on_wrapper_reason` keeps: the `additive_lod=` door says
+"drop one of the two", the file/graft door says `gsplat flatten`, because there
+is no `additive_lod=` in an `add_gsplats_from_file` call to drop.
+`resolve_partition_beside_an_additive_ladder` holds the data door's half, above
+the route branch so both routes answer alike; `_reject_a_partition_beside_a_stored_ladder`
+holds the file door's, above the spec-shape gate at both of its call sites so the
+two doors rank the two faults the same way.
+
+`partition=False` is not a request and is never refused — but it stranded the
+same wrappers all the same, arriving at the multi-LOD writer as an unknown node
+attribute. It is DELETED instead, and only when that writer is the destination:
+`False` is the `resolve_auto_partition` bypass everywhere a leaf adder resolves
+it, so stripping it earlier would silently re-enable a compiler-level
+`auto_partition_max_elements`.
+
+The file door's half reads the ladder off the STORE, which makes it the one of
+the two that can be told to look at the wrong thing: an `additive_lod=False` in
+the same call is the documented "collapse the ladder" spelling, and
+`resolve_additive_axis_gsplats` flattens every level to a single sub-LOD before
+the data door asks the same question — so that kwarg is skipped here, or the gate
+refuses a laddered store that would have partitioned perfectly well. Only the
+`False` spelling, not a `recompute` dict that happens to resolve to one rung:
+telling `{"n_lods": 1, "recompute": True}` apart from `{"n_lods": 2}` needs the
+resolved rung count rather than the spec, the same missing query #1632 is about.
+
 ### `from_io.py` — load/fit then delegate
 
 Both functions produce a `GSplatData` and hand it to

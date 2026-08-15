@@ -42,6 +42,12 @@ This module hosts:
 * :data:`PartitionSpec` — the value-vocabulary type alias for the
   ``partition=`` convenience kwarg on ``add_points`` / ``add_lines`` /
   ``add_gsplats``.
+* :func:`resolve_partition_spec` — the validator for that vocabulary, shared by
+  all four adders and by both gsplats pre-wrapper gates (``lod_group=`` and the
+  graft door).
+* :func:`is_requested` — the "was this structural knob actually asked for?"
+  predicate that vocabulary needs, shared with ``substitutive_lod=`` /
+  ``additive_lod=``.
 * :data:`DEFAULT_MAX_ELEMENTS` — the cap used when the user passes
   ``partition=True`` without a dict.
 """
@@ -84,6 +90,80 @@ PartitionSpec = Union[None, bool, dict]
 #: a single tile is still a comfortable WebGL batch, small enough that
 #: partitioning is worth it for the 10M+ node sizes the feature targets.
 DEFAULT_MAX_ELEMENTS: int = 1_000_000
+
+
+def is_requested(value: Any) -> bool:
+    """Whether a structural knob was actually asked for.
+
+    ``False`` is an explicit no-op sentinel on every one of them —
+    ``partition=False`` is what ``_add_mesh_partition`` hands each part (a part
+    must never recurse into another partition) and the ``resolve_auto_partition``
+    bypass a caller uses to opt out of a compiler-level
+    ``auto_partition_max_elements``, and ``substitutive_lod=False`` /
+    ``additive_lod=False`` are the resolvers' documented "no ladder" spelling —
+    so it must read as *not requested* here.
+
+    Tested with ``is`` rather than ``in (None, False)``, because the latter
+    compares by EQUALITY: ``0 == False``, so ``partition=0`` read as "not
+    requested" in the mesh composition guards while the real dispatch
+    (``partition is not None and partition is not False``) read it as requested
+    and silently dropped the split behind a ladder. One helper so the guards and
+    the dispatch cannot drift apart — the drift itself was the bug. It lives here
+    beside :func:`resolve_partition_spec` because the two answer the two halves of
+    the same vocabulary ("is a split wanted?" then "what split?"), and because
+    the gsplats ``partition=``-beside-a-ladder gates
+    (``gsplats_pipeline/from_data.py`` / ``from_io.py``) need the first half one
+    level above the leaf that resolves the second (#1550).
+    """
+    return value is not None and value is not False
+
+
+def resolve_partition_spec(partition: Any) -> Tuple[int, str]:
+    """Validate a non-``None`` ``partition=`` and return ``(max_elements, rule)``.
+
+    One spelling of the :data:`PartitionSpec` vocabulary for all four adders,
+    which each carried a byte-identical inline copy. Factored out for #1550: the
+    gsplats ``lod_group=`` and graft pre-wrapper gates
+    (``gsplats_pipeline/from_data.py::_reject_before_wrapper`` and
+    ``from_io.py::graft_gsplat_node``) have to judge the same spec one level
+    ABOVE the leaf that consumes it, and further copies there are exactly how the
+    wordings drift apart.
+
+    ``False`` is a member of :data:`PartitionSpec` but NOT of this function's
+    accepted set, on purpose: it is the explicit no-partition bypass, so by the
+    time a spec is being resolved into a cap and a rule the decision to partition
+    has already been taken and a ``False`` here means a caller skipped its
+    normalisation (``resolve_auto_partition`` in the adders, an explicit skip in
+    the two gates). Refusing it keeps that mistake loud rather than quietly
+    partitioning at the default cap.
+
+    For Mesh, ``max_elements`` counts **faces**, not vertices. The BSP recurses
+    on face centroids — one triangle is one indivisible unit of the split — so
+    faces are the quantity the cap can actually bound. A part's vertex count is
+    whatever its faces reference (at most ``3 * max_elements``, in practice far
+    less).
+
+    Raises:
+        ValueError: on an out-of-range ``max_elements`` or an unknown ``rule``.
+        TypeError: on anything that is not ``True`` or a dict. The leaf adders'
+            own ``except (ValueError, TypeError)`` funnel converts it to a
+            ``ValueError``, so the caller sees one exception type either way.
+    """
+    if partition is True:
+        return DEFAULT_MAX_ELEMENTS, "median"
+    if isinstance(partition, dict):
+        max_elements = int(partition.get("max_elements", DEFAULT_MAX_ELEMENTS))
+        if max_elements < 1:
+            raise ValueError(f"partition max_elements must be >= 1, got {max_elements}")
+        rule = str(partition.get("rule", "median"))
+        if rule not in ("median", "midpoint", "sah"):
+            raise ValueError(
+                f"partition rule must be 'median', 'midpoint', or 'sah'; got {rule!r}"
+            )
+        return max_elements, rule
+    raise TypeError(
+        f"partition must be None, True, or dict; got {type(partition).__name__}"
+    )
 
 
 # ────────────────────────────────────────────────────────────────────────
