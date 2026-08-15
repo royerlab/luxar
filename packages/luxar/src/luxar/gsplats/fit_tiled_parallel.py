@@ -243,6 +243,7 @@ def fit_tiled_parallel(
     partition: bool = False,
     recipe: Optional[str] = None,
     recipe_params: "Optional[Any]" = None,
+    downscale_factors: Optional[tuple[int, ...]] = None,
 ) -> "Any":  # GSplatData (flat) or a GSplatNode (partition)
     """Fit all tiles via concurrent worker subprocesses, then merge.
 
@@ -254,8 +255,11 @@ def fit_tiled_parallel(
     The workers re-invoke single-tile mode (``fit --tile i/M``), which already
     translates centers to global coordinates and — when ``--downscale`` is in
     play — rescales them back to original coordinates.  The merge therefore does
-    **not** rescale again; ``volume_shape`` here is the (post-downscale) shape
-    used only for stats and the empty-result fallback.
+    **not** rescale again; ``volume_shape`` here is the (post-downscale) shape,
+    which is what the stats and the empty-result fallback want, and is also the
+    shape the partition's split planes are computed on — so under ``--downscale``
+    the two frames disagree and ``downscale_factors`` must be supplied to
+    reconcile them (issue #1587).
 
     Parameters
     ----------
@@ -273,6 +277,12 @@ def fit_tiled_parallel(
         Forwarded to :func:`merge_tile_results`.
     keep_tiles : bool, default False
         Keep the per-tile temp outputs after a successful merge.
+    downscale_factors : tuple of int, optional
+        The resolved ``--downscale`` factors ``volume_shape`` was decimated by,
+        or ``None`` when not downscaling.  Forwarded to
+        :func:`merge_tile_results`, where it lifts the partition's split planes
+        out of the downscaled grid frame into the workers' full-resolution
+        splat frame (#1587).  Nothing else consumes it.
 
     Returns
     -------
@@ -399,6 +409,7 @@ def fit_tiled_parallel(
         partition=partition,
         recipe=recipe,
         recipe_params=recipe_params,
+        downscale_factors=downscale_factors,
     )
 
     if not keep_tiles:

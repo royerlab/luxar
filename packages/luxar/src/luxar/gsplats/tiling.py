@@ -193,7 +193,9 @@ def compute_tile_specs(
     return specs
 
 
-def grid_bsp_tree(specs: Sequence[TileSpec]) -> dict | None:
+def grid_bsp_tree(
+    specs: Sequence[TileSpec], *, scale: Sequence[float] | None = None
+) -> dict | None:
     """Split-plane tree over a uniform tile grid, in the serialized ``bsp_tree`` form.
 
     Lets the viewer order uniform-tiled partition parts back-to-front by
@@ -220,6 +222,23 @@ def grid_bsp_tree(specs: Sequence[TileSpec]) -> dict | None:
     ----------
     specs : sequence of TileSpec
         A full grid as returned by :func:`compute_tile_specs`.
+    scale : sequence of float, optional
+        Per-axis factor mapping the specs' voxel frame onto the frame the
+        SPLATS live in. ``None`` (the default) means the two frames agree.
+
+        This exists for ``--downscale`` (issue #1587). The parallel tiled path
+        deliberately computes its grid on the POST-downscale shape — that is how
+        the parent and its ``fit --tile i/M`` workers agree on the tile count M
+        — while each worker rescales its own splats back to full resolution
+        before writing. Without a factor here, every plane of the resulting
+        ``kind=partition`` would be off by the downscale factor and would no
+        longer lie between the parts it separates, so the viewer's back-to-front
+        part ordering (#1555) would be computed against nonsense. Passing the
+        resolved downscale factors maps a tile spanning
+        ``[origin[d], origin[d] + shape[d])`` to
+        ``[origin[d] * f[d], (origin[d] + shape[d]) * f[d])``, which is exactly
+        the convention :func:`~luxar.gsplats.fitting.downscale.rescale_centers`
+        applies to the centers.
 
     Returns
     -------
@@ -227,11 +246,25 @@ def grid_bsp_tree(specs: Sequence[TileSpec]) -> dict | None:
         The serialized tree, or ``None`` when ``specs`` is empty or the grid
         subdivides an axis beyond the third — the serialized format admits split
         axes ``0``/``1``/``2`` only.
+
+    Raises
+    ------
+    ValueError
+        If ``scale`` is given with a length other than the grid's ndim.
     """
     if not specs:
         return None
 
     ndim = len(specs[0].grid_index)
+    if scale is None:
+        factors = (1.0,) * ndim
+    else:
+        factors = tuple(float(f) for f in scale)
+        if len(factors) != ndim:
+            raise ValueError(
+                f"scale has length {len(factors)} but the tile grid has "
+                f"{ndim} dimensions"
+            )
     n_cells = [max(s.grid_index[d] for s in specs) + 1 for d in range(ndim)]
     if any(n_cells[d] > 1 for d in range(3, ndim)):
         return None
@@ -241,8 +274,8 @@ def grid_bsp_tree(specs: Sequence[TileSpec]) -> dict | None:
     hi_coord: list[dict[int, float]] = [{} for _ in range(ndim)]
     for spec in specs:
         for d, k in enumerate(spec.grid_index):
-            lo_coord[d][k] = float(spec.origin[d])
-            hi_coord[d][k] = float(spec.origin[d]) + float(spec.shape[d])
+            lo_coord[d][k] = float(spec.origin[d]) * factors[d]
+            hi_coord[d][k] = (float(spec.origin[d]) + float(spec.shape[d])) * factors[d]
     flat_of_cell = {tuple(s.grid_index): int(s.index) for s in specs}
 
     def build(ranges: list[tuple[int, int]]) -> dict:

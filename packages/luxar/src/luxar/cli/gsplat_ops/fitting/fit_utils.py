@@ -654,6 +654,11 @@ def dispatch_parallel_tiled(
                 partition=not ctx.flat,
                 recipe=ctx.recipe,
                 recipe_params=recipe_params,
+                # The grid above is in DOWNSCALED voxels while every worker
+                # rescales its splats back to full resolution, so the merge
+                # needs the factors to place the partition's split planes in
+                # the splats' own frame (#1587).
+                downscale_factors=ds_factors,
             )
 
         with asection(f"Saving to {ctx.output_path.name}"):

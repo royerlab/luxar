@@ -6776,3 +6776,101 @@ class TestInfoVolumeTruncation:
         r = runner.invoke(app, ["gsplat", "info", str(path)])
         assert r.exit_code == 0, f"failed:\n{r.stdout}"
         assert "Volume Distribution (2.75σ)" in _plain(r.stdout)
+
+
+class TestParallelTiledDownscaleFactorsThreading:
+    """``--downscale`` factors must reach the merge (issue #1587).
+
+    ``dispatch_parallel_tiled`` deliberately computes its tile grid on the
+    POST-downscale shape while every worker rescales its splats back to full
+    resolution.  The merge builds the partition's split planes from that grid,
+    so it needs the factors to state them in the splats' own frame — otherwise
+    every plane is a factor too small and the viewer's back-to-front part
+    ordering (#1555) is computed against planes that separate nothing.
+
+    Patched at the ``fit_tiled_parallel`` boundary: the real typer command,
+    volume load, tiling resolution and grid math all run.
+    """
+
+    @staticmethod
+    def _volume(path: Path) -> None:
+        v = np.zeros((48, 48), np.float32)
+        yy, xx = np.ogrid[:48, :48]
+        for cy, cx in [(12, 12), (36, 36), (12, 36), (36, 12)]:
+            v += np.exp(-((yy - cy) ** 2 + (xx - cx) ** 2) / 20.0).astype(np.float32)
+        np.save(path, v)
+
+    @staticmethod
+    def _one_splat_result() -> "GSplatData":
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        chol = np.zeros((1, 3), dtype=np.float32)  # packed 2D: [l00, l10, l11]
+        chol[0, 0] = chol[0, 2] = 1.0
+        return GSplatData(
+            centers=np.full((1, 2), 1.0, dtype=np.float32),
+            amplitudes=np.ones((1,), dtype=np.float32),
+            cholesky_factors=chol,
+            stats={"time_seconds": 0.0},
+        )
+
+    def _run(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        extra: "list[str]",
+    ) -> "dict[str, Any]":
+        pytest.importorskip("torch", reason="the fit CLI imports the torch fitter")
+        captured: dict[str, Any] = {}
+
+        def _fake_parallel(**kwargs: Any) -> "GSplatData":
+            captured.update(kwargs)
+            return self._one_splat_result()
+
+        monkeypatch.setattr(
+            "luxar.gsplats.fit_tiled_parallel.fit_tiled_parallel", _fake_parallel
+        )
+        vol = tmp_path / "vol.npy"
+        self._volume(vol)
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "fit",
+                str(vol),
+                str(tmp_path / f"out{len(extra)}.gsplats.zarr"),
+                "--tiling",
+                "uniform",
+                "--tile-size",
+                "24",
+                "--overlap",
+                "4",
+                "-j",
+                "2",
+                "--seeds",
+                "10",
+                "--device",
+                "cpu",
+                *extra,
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert captured, "fit_tiled_parallel was never reached"
+        return captured
+
+    def test_downscale_factors_reach_the_merge(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        captured = self._run(runner, tmp_path, monkeypatch, ["--downscale", "2"])
+        # The grid IS in downscaled voxels (48 -> 24 per axis)...
+        assert captured["volume_shape"] == (24, 24)
+        # ...so the factors that lift it back must travel with it.
+        assert captured["downscale_factors"] == (2, 2)
+
+    def test_no_downscale_threads_no_factors(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Without ``--downscale`` the two frames already agree — no factors."""
+        captured = self._run(runner, tmp_path, monkeypatch, [])
+        assert captured["volume_shape"] == (48, 48)
+        assert captured["downscale_factors"] is None

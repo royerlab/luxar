@@ -1414,3 +1414,215 @@ class TestGridBspTree:
         specs = compute_tile_specs((16, 16, 16, 64), (16, 16, 16, 16), 0)
         assert len({s.grid_index[3] for s in specs}) > 1
         assert grid_bsp_tree(specs) is None
+
+
+class TestGridBspTreeScale:
+    """The ``scale`` parameter: the grid's frame need not be the splats' frame.
+
+    Under ``--downscale`` the parallel tiled path computes its grid on the
+    POST-downscale shape (so parent and workers agree on the tile count) while
+    each worker rescales its splats back to full resolution. ``scale`` is what
+    lifts the planes into that same full-resolution frame (issue #1587).
+    """
+
+    @staticmethod
+    def _splits(node: dict) -> list[tuple[int, float]]:
+        """Every internal node's ``(axis, split)`` in a fixed traversal order."""
+        if "part" in node:
+            return []
+        return (
+            [(int(node["axis"]), float(node["split"]))]
+            + TestGridBspTreeScale._splits(node["left"])
+            + TestGridBspTreeScale._splits(node["right"])
+        )
+
+    def test_scale_none_is_identical_to_no_scale_at_all(self) -> None:
+        from luxar.gsplats.tiling import grid_bsp_tree
+
+        specs = compute_tile_specs((100, 80, 80), 40, 8)
+        assert grid_bsp_tree(specs, scale=None) == grid_bsp_tree(specs)
+        # An all-ones scale is likewise a no-op.
+        assert grid_bsp_tree(specs, scale=(1, 1, 1)) == grid_bsp_tree(specs)
+
+    def test_a_uniform_scale_multiplies_every_split(self) -> None:
+        from luxar.gsplats.tiling import grid_bsp_tree
+
+        specs = compute_tile_specs((25, 20, 20), 10, 2)
+        plain = grid_bsp_tree(specs)
+        scaled = grid_bsp_tree(specs, scale=(4, 4, 4))
+        assert plain is not None and scaled is not None
+        # Same structure and labels...
+        assert self._labels_of(plain) == self._labels_of(scaled)
+        # ...but every plane four times further out.
+        for (ax_a, s_a), (ax_b, s_b) in zip(self._splits(plain), self._splits(scaled)):
+            assert ax_a == ax_b
+            assert s_b == pytest.approx(4.0 * s_a)
+
+    def test_per_axis_factors_scale_their_own_axis_only(self) -> None:
+        from luxar.gsplats.tiling import grid_bsp_tree
+
+        factors = (1, 2, 4)
+        specs = compute_tile_specs((25, 20, 20), 10, 2)
+        plain = grid_bsp_tree(specs)
+        scaled = grid_bsp_tree(specs, scale=factors)
+        assert plain is not None and scaled is not None
+        seen = set()
+        for (ax_a, s_a), (ax_b, s_b) in zip(self._splits(plain), self._splits(scaled)):
+            assert ax_a == ax_b
+            assert s_b == pytest.approx(factors[ax_a] * s_a)
+            seen.add(ax_a)
+        # The non-uniformity is actually exercised: more than one axis splits,
+        # and at least one of them has a factor != 1.
+        assert len(seen) > 1
+        assert any(factors[ax] != 1 for ax in seen)
+
+    def test_a_wrong_length_scale_is_refused(self) -> None:
+        from luxar.gsplats.tiling import grid_bsp_tree
+
+        specs = compute_tile_specs((25, 20, 20), 10, 2)
+        with pytest.raises(ValueError, match="scale has length 2"):
+            grid_bsp_tree(specs, scale=(4, 4))
+
+    @staticmethod
+    def _labels_of(node: dict) -> list[int]:
+        if "part" in node:
+            return [int(node["part"])]
+        return TestGridBspTreeScale._labels_of(
+            node["left"]
+        ) + TestGridBspTreeScale._labels_of(node["right"])
+
+
+def _core_region(spec, factors: tuple[int, ...], n: int, seed: int):
+    """``n`` splats inside ``spec``'s CORE, in FULL-RESOLUTION coordinates.
+
+    The core is the tile minus its overlap band, so the synthetic parts are
+    genuinely disjoint and an exact separating plane must exist — which is what
+    lets a test assert separation rather than the weaker "cut lands in the band"
+    property that overlapping tiles are limited to.
+    """
+    from luxar.gsplats.gsplat_data import GSplatData
+
+    lo = np.array(
+        [
+            (spec.origin[d] + spec.overlap_low[d]) * factors[d]
+            for d in range(len(factors))
+        ],
+        dtype=float,
+    )
+    hi = np.array(
+        [
+            (spec.origin[d] + spec.shape[d] - spec.overlap_high[d]) * factors[d]
+            for d in range(len(factors))
+        ],
+        dtype=float,
+    )
+    rng = np.random.default_rng(seed)
+    chol = np.zeros((n, 6), dtype=np.float32)
+    chol[:, [0, 2, 5]] = 1.0  # packed-3D diagonal; must be strictly positive
+    return GSplatData(
+        centers=rng.uniform(lo, hi, size=(n, 3)).astype(np.float32),
+        amplitudes=np.ones(n, dtype=np.float32),
+        cholesky_factors=chol,
+    )
+
+
+@pytest.mark.skipif(not HAS_TORCH, reason="torch not available")
+class TestDownscaledPartitionPlanes:
+    """``merge_tile_results`` must place the split planes in the SPLATS' frame.
+
+    The parallel tiled path hands in a grid computed on the downscaled shape
+    while its workers write splats already rescaled to full resolution. Without
+    ``downscale_factors`` every plane is a factor too small and no longer lies
+    between the parts it separates (#1587).
+    """
+
+    FACTORS = (4, 4, 4)
+    GRID_SHAPE = (24, 24, 24)  # the post-downscale shape the parent computes
+    TILE_SIZE = 16
+    OVERLAP = 4
+
+    def _specs(self):
+        return compute_tile_specs(self.GRID_SHAPE, self.TILE_SIZE, self.OVERLAP)
+
+    def _merge(self, downscale_factors):
+        from luxar.gsplats.fit_tiled_gsplats import merge_tile_results
+
+        specs = self._specs()
+        assert len(specs) > 1
+        results = [_core_region(s, self.FACTORS, 6, 100 + s.index) for s in specs]
+        return merge_tile_results(
+            results,
+            volume_shape=self.GRID_SHAPE,
+            tile_size=self.TILE_SIZE,
+            overlap=self.OVERLAP,
+            num_tiles=len(specs),
+            progressive=False,
+            cull_retention=None,
+            elapsed=0.0,
+            verbose=False,
+            partition=True,
+            downscale_factors=downscale_factors,
+        )
+
+    @staticmethod
+    def _part_centers(node) -> list:
+        return [child.additive_sublods[0].centers for child in node.children]
+
+    @staticmethod
+    def _leaf_parts(sub: dict) -> list[int]:
+        if "part" in sub:
+            return [int(sub["part"])]
+        return TestDownscaledPartitionPlanes._leaf_parts(
+            sub["left"]
+        ) + TestDownscaledPartitionPlanes._leaf_parts(sub["right"])
+
+    @classmethod
+    def _separation_failures(cls, tree: dict, centers: list) -> list[str]:
+        """Internal nodes whose plane does not separate their two subtrees."""
+        bad: list[str] = []
+
+        def walk(node: dict) -> None:
+            if "part" in node:
+                return
+            axis, split = int(node["axis"]), float(node["split"])
+            left = np.concatenate(
+                [centers[i][:, axis] for i in cls._leaf_parts(node["left"])]
+            )
+            right = np.concatenate(
+                [centers[i][:, axis] for i in cls._leaf_parts(node["right"])]
+            )
+            if left.max() > split or right.min() < split:
+                bad.append(
+                    f"axis={axis} split={split} left.max={left.max()} "
+                    f"right.min={right.min()}"
+                )
+            walk(node["left"])
+            walk(node["right"])
+
+        walk(tree)
+        return bad
+
+    def test_planes_separate_the_parts_when_factors_are_threaded(self) -> None:
+        node = self._merge(self.FACTORS)
+        assert node.bsp_tree is not None
+        centers = self._part_centers(node)
+        assert len(centers) == len(self._specs())
+        assert self._separation_failures(node.bsp_tree, centers) == []
+
+    def test_omitting_the_factors_misplaces_every_plane(self) -> None:
+        """The regression guard: the un-threaded tree is in the wrong frame."""
+        good = self._merge(self.FACTORS)
+        bad = self._merge(None)
+        assert good.bsp_tree is not None and bad.bsp_tree is not None
+
+        # Every plane is short by the downscale factor...
+        good_splits = TestGridBspTreeScale._splits(good.bsp_tree)
+        bad_splits = TestGridBspTreeScale._splits(bad.bsp_tree)
+        assert len(bad_splits) == len(good_splits) > 0
+        for (ax_g, s_g), (ax_b, s_b) in zip(good_splits, bad_splits):
+            assert ax_g == ax_b
+            assert s_g == pytest.approx(self.FACTORS[ax_g] * s_b)
+
+        # ...and consequently separates nothing.
+        failures = self._separation_failures(bad.bsp_tree, self._part_centers(bad))
+        assert len(failures) == len(bad_splits), failures
