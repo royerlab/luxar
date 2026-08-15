@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * The auto line-primitive policy (#1352 follow-up): the effective-load
  * rule, per-node resolution precedence, policy parsing, and the settings

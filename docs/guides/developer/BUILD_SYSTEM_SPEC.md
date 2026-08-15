@@ -245,10 +245,11 @@ MIN_NODE_MINOR := 22
 
 | Command | Description |
 |---------|-------------|
-| `make check-all` | Run all quality checks (Python, TypeScript, Rust, Go). **Not read-only** — `hatch run check` begins with `format`, so this rewrites `packages/luxar/src` and `scripts`. Use the scoped `lint-*` / `type-check-*` / `check-typescript` / `check-rust` targets for a read-only verdict. |
+| `make check-all` | Run all quality checks (Python, TypeScript, Rust, Go) — **static only, runs no tests** (`hatch run check-static` + `pnpm check:static`; `make test-all` is the single place the suites execute). **Not read-only** — `check-static` begins with `format`, so this rewrites `packages/luxar/src` and `scripts`. Use the scoped `lint-*` / `type-check-*` / `check-typescript` / `check-rust` targets for a read-only verdict. |
 | `make check-typescript` | Run all TypeScript checks (typecheck, lint, test) |
 | `make check-rust` | Run Rust type/lint checks (cargo check + clippy) |
 | `make check-knip` | **Report only, non-gating** — full knip (unused files/exports/types + `@internal` tag hints). The enforced subset (`files,dependencies`) runs inside `make check-all`; the full run has a standing backlog, so it never fails the build. |
+| `make test-fast` | Inner loop, **not a gate**: Python under xdist with `-m 'not slow'` plus the TypeScript units, no coverage. Scope it with `PYTEST_ARGS` — which *replaces* the default paths (`make test-fast PYTEST_ARGS='packages/luxar/src/luxar/encoding'`); options-only args fall through to pytest's `testpaths`. `LUXAR_PYTEST_JOBS` sets the worker count. |
 | `make test-all` | Run all tests (Python + Rust/WASM + TypeScript, plus Go launcher tests when that toolchain is available). CUDA extension tests are part of the Python suite — they live under pytest's `testpaths` and skip themselves without a GPU. |
 | `make test-cov-all` | Run all tests with coverage (Python, minus `-m slow`, + TypeScript) |
 | `make test-python` | Run Python tests only |

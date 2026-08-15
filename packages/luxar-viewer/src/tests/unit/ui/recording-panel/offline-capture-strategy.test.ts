@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Tests for OfflineCaptureStrategy — the frame-by-frame offline capture
  * orchestrator (EXR sequences + smooth turntable).

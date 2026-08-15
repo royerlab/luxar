@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Unit tests for `DataLoadingMonitor.retryFailedLoads` — the Retry-button
  * orchestration behind the Overview tab's failed-loads banner: empty

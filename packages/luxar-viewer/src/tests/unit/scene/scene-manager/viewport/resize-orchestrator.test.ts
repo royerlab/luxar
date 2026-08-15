@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Unit tests for the ResizeOrchestrator extracted from SceneManager.
  *

@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Property-based invariant fuzzing for AdaptiveDPRManager.
  *

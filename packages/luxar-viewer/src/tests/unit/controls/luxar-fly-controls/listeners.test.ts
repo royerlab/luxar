@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Unit tests for luxar-fly-controls/listeners.ts.
  *

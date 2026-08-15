@@ -15,8 +15,15 @@ import { vi } from 'vitest';
  * Mock window.matchMedia
  *
  * Used for HDR detection and color space queries
+ *
+ * No-op outside a DOM environment: this hangs the mock off `window`, which
+ * does not exist under `environment: 'node'`, and the unguarded assignment
+ * threw `TypeError: Cannot set properties of undefined`. Anything that reads
+ * `matchMedia` needs a document anyway, so those files carry a
+ * `@vitest-environment jsdom` docblock and still get the mock.
  */
 export function installMatchMediaMock(): void {
+  if (typeof window === 'undefined') return;
   (globalThis as any).window.matchMedia = vi.fn().mockImplementation((query: string) => ({
     matches: false, // Default to false (no HDR/P3 support in tests)
     media: query,
@@ -103,9 +110,22 @@ export function installAnimationFrameMock(): void {
  * Used for high-precision timing
  */
 export function installPerformanceMock(): void {
-  (globalThis as any).performance = {
-    now: vi.fn(() => Date.now()),
-  };
+  const existing = (globalThis as any).performance;
+  const now = vi.fn(() => Date.now());
+  if (!existing) {
+    (globalThis as any).performance = { now };
+    return;
+  }
+  // Override ONLY `now`, keeping the rest of the real Performance object.
+  //
+  // Replacing the whole global wholesale used to be harmless under jsdom, but
+  // under `environment: 'node'` it breaks `fetch`: undici calls
+  // `performance.markResourceTiming` when a response body finishes, and a
+  // `{ now }` stub does not have it — which surfaced as 10 `TypeError:
+  // markResourceTiming is not a function` unhandled errors from
+  // config/e2e-server-identity.test.ts. `now` is a non-writable accessor on the
+  // real object, so it needs defineProperty rather than assignment.
+  Object.defineProperty(existing, 'now', { value: now, configurable: true, writable: true });
 }
 
 /**

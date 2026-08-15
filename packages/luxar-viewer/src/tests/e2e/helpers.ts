@@ -110,11 +110,18 @@ export function captureConsoleMessages(page: Page): {
 /**
  * NOTE: Manual screenshot helpers removed - use Playwright's built-in screenshot system instead.
  *
- * Playwright automatically captures screenshots for every test (configured in playwright.config.ts).
- * Screenshots are saved to test-results/ and included in the HTML report.
+ * Playwright captures screenshots, video and traces ON FAILURE ONLY
+ * (`screenshot: 'only-on-failure'`, `video`/`trace: 'on-first-retry'` in
+ * playwright.config.ts). Recording them for passing tests too cost ~330-430 s
+ * per run for artifacts nobody read.
  *
- * If you need a screenshot in a test, Playwright will capture it automatically.
- * To force a screenshot at a specific point: await page.screenshot({ path: 'test-results/my-screenshot.png' });
+ * A failing test therefore still produces a screenshot in test-results/, and
+ * under `--retries` the retry produces a full trace and video as well. To get
+ * the same artifacts for a PASSING test while debugging, re-run that spec with
+ * `--trace on --video on --screenshot on`.
+ *
+ * To capture a screenshot at a specific point regardless of outcome:
+ * `await page.screenshot({ path: 'test-results/my-screenshot.png' });`
  */
 
 /**

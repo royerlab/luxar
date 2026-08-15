@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Stress / lifecycle tests for SceneLoader: repeated loadScene → dispose
  * cycles must not accumulate leaked state or in-flight requests.

@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Unit tests for FocusManager — outside-click + canvas-refocus owner
  * extracted from the rendering-controls facade.

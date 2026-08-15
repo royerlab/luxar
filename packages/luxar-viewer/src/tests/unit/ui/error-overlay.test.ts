@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 // [ui.md/O2][P10] Split from `helpers.test.ts`: showError / clearError
 // tests for the `ui/error-overlay` module. The help-overlay helpers
 // (`ui/help-overlay`) live in `help-overlay.test.ts`.

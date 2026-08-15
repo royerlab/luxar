@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Tests for the browser tab title helpers.
  *

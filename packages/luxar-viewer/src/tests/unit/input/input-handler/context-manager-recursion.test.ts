@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Tests for the re-entrance guard added to
  * `InputContextManager.handleKeyEvent`. A binding handler that

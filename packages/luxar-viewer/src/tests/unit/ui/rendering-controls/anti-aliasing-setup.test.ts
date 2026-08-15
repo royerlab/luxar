@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Unit tests for ui/rendering-controls/setup/anti-aliasing-setup.ts.
  *
