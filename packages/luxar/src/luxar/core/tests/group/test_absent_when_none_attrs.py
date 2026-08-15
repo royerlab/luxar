@@ -34,8 +34,8 @@ strip fails and the flat cases above do not.
 The last two classes are scope controls rather than regression cases. They pass
 before and after the fix by construction — their job is to kill an OVER-broad
 strip, which would swallow the Nones that are supposed to be loud, and to pin
-that the leaf key set is the same one the gsplats pipeline derives its wider set
-from rather than a hand-copied second list.
+that the gsplats pipeline's wider set keeps agreeing, key for key, with the leaf
+set it is derived from.
 """
 
 from __future__ import annotations
@@ -276,9 +276,13 @@ class TestTheStripRunsAboveEveryStructuralBranch:
             **structure,
         )
 
-        assert len(tree) > 1, (
-            f"{route} wrote a single node, so this case would pass without ever "
-            f"exercising a structural branch: {sorted(tree)}"
+        # The parent plus at least TWO children: a wrapper over a single child
+        # is not a split either, and only a real split puts the stripped attrs
+        # on more than one node.
+        assert len(tree) >= 3, (
+            f"{route} wrote {len(tree)} node(s), expected a parent with at least "
+            f"two children, so this case would pass without ever exercising a "
+            f"structural branch: {sorted(tree)}"
         )
 
         lutless = {
@@ -390,7 +394,11 @@ class TestARenderAttrOutsideTheSetStillRefusesItsNone:
 
 
 class TestTheLeafSetIsTheOnePipelineDerivesFrom:
-    """Scope control: one definition of the rule, not two lists free to drift."""
+    """Scope control: the wider pipeline set must keep AGREEING with this one.
+
+    It bounds drift rather than forbidding a second list outright — see the
+    measurements in the case below for exactly which change is caught and when.
+    """
 
     def test_the_leaf_set_is_the_two_silently_wrong_render_attrs(self) -> None:
         assert set(ABSENT_WHEN_NONE_RENDER_ATTRS) == {"colormap", "coverage_fraction"}
@@ -400,11 +408,15 @@ class TestTheLeafSetIsTheOnePipelineDerivesFrom:
 
         The CONCATENATION, not a subset relation: ``set(RENDER) <= set(ATTRS)``
         holds for any value of either tuple as long as the derivation exists, so
-        it can never fail — and it would go on passing against exactly the drift
-        this class exists to catch, a hand-typed literal of today's seven keys.
-        Asserting the identity against the components means a key added to (or
-        removed from) either source without the other side agreeing is reported
-        here rather than shipping as two lists that quietly disagree.
+        it can never fail. Comparing the pipeline tuple's VALUE against its two
+        component sources is strictly stronger, but it does not catch a
+        hand-copied list on the day the copy is written — measured: replacing
+        the derivation in ``from_data.py`` with a hand-typed 7-tuple of today's
+        keys in today's order still passes, because the value is unchanged.
+        What it does catch is the first CHANGE to either component afterwards:
+        measured, that same hand-typed literal plus one key added to
+        ``GATE_FORWARDED_LEAF_PARAMS`` fails here, so a copy cannot survive its
+        first divergence from the sources it was copied from.
         """
         assert ABSENT_WHEN_NONE_ATTRS == (
             GATE_FORWARDED_LEAF_PARAMS

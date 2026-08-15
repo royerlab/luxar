@@ -66,7 +66,9 @@ the top of `add_gsplats_from_data_impl` — and at the top of
 it:
 
 1. `strip_absent_attr_kwargs(attrs, ABSENT_WHEN_NONE_ATTRS)` (the shared helper
-   in `core/group/compositing.py`, re-exported here) deletes every
+   in `core/group/compositing.py`, which `from_data.py` and `from_io.py` each
+   import from there directly; only the `ABSENT_WHEN_NONE_ATTRS` tuple is
+   defined here and imported by `from_io.py`) deletes every
    `ABSENT_WHEN_NONE_ATTRS` key valued `None`:
    - `labels`, `image_labels`, `partition`, `colors` — named params of the leaf
      `Group.add_gsplats` defaulting to `None`, so `None` already means "absent"
