@@ -159,16 +159,10 @@ def test_stamps_reach_the_fitting_group_on_disk(tmp_path: Path) -> None:
     assert stored > 0
     assert attrs["source_bytes"] / stored > 0
 
-    # And `gsplat info` reads them back out of `fitting/` and reports them —
-    # the stamp is only worth writing if the read path surfaces it.
-    from typer.testing import CliRunner
-
-    from luxar.cli import app
-
-    result = CliRunner().invoke(app, ["gsplat", "info", str(out), "--no-histograms"])
-    assert result.exit_code == 0, result.output
-    assert "Source volume: 24 x 32 x 32 uint16" in result.output, result.output
-    assert "compression:" in result.output, result.output
+    # That `gsplat info` then SURFACES these is asserted in the CLI package
+    # (`cli/tests/test_gsplat_info_source_grid.py`): a domain test may not
+    # import `luxar.cli` — the import-linter layer contract forbids it, and it
+    # is checked in its own CI step rather than by the test run.
 
 
 def test_a_caller_that_already_cast_can_name_the_stored_dtype() -> None:
@@ -265,39 +259,10 @@ def test_load_volume_reports_the_stored_dtype(tmp_path: Path) -> None:
     assert info["source_dtype"] == "uint16"
 
 
-def test_cli_fit_stamps_the_stored_dtype_not_the_loaders_cast(tmp_path: Path) -> None:
-    """End to end through the command: a uint16 file must not record float32.
-
-    This is the whole point of the stamp — a compression ratio quoted against
-    the float working copy is exactly 2x too flattering on 16-bit data.
-    """
-    from typer.testing import CliRunner
-
-    from luxar.cli import app
-
-    src = tmp_path / "vol.npy"
-    V = _sparse_blobs(shape=(16, 16, 16), n=10)
-    np.save(src, V)
-    out = tmp_path / "cli.gsplats.zarr"
-    result = CliRunner().invoke(
-        app,
-        [
-            "gsplat",
-            "fit",
-            str(src),
-            str(out),
-            "--iters",
-            "20",
-            "--seeds",
-            "80",
-            "--device",
-            "cpu",
-        ],
-    )
-    assert result.exit_code == 0, result.output
-    attrs = json.loads((out / "fitting" / ".zattrs").read_text())
-    assert attrs["source_dtype"] == "uint16"
-    assert attrs["source_bytes"] == V.size * 2
+# The end-to-end `gsplat fit` counterpart of the test above — that a fit driven
+# from a uint16 FILE records uint16 and not the loader's float32 — lives in
+# `cli/tests/test_gsplat_info_source_grid.py`, for the layering reason given at
+# `test_stamps_reach_the_fitting_group_on_disk`.
 
 
 def test_an_artifact_larger_than_its_source_is_not_reported_as_0_to_1(
