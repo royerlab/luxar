@@ -31,9 +31,9 @@ import zipfile
 from pathlib import Path, PurePosixPath
 from typing import Any, Dict, Optional
 
-from luxar._zarr_compat import NODE_ATTR_DOCS, attrs_from_node_doc
+from luxar._zarr_compat import NODE_ATTR_DOCS, NODE_GROUP_DOCS, attrs_from_node_doc
 
-__all__ = ["extract_compressed_zarr", "read_archive_root_attrs"]
+__all__ = ["extract_compressed_zarr", "read_archive_root_attrs", "resolve_store_path"]
 
 #: Reject archives with more members than this (archive-bomb guard).
 _MAX_MEMBERS = 5_000_000
@@ -165,6 +165,119 @@ def extract_compressed_zarr(compressed_path: Path) -> Path:
     except BaseException:
         shutil.rmtree(temp_dir, ignore_errors=True)
         raise
+
+
+#: Suffixes a user-supplied path may carry to mean "the store is inside here".
+_COMPRESSED_SUFFIXES = (".zip", ".tar.gz")
+
+
+def _zip_is_flat_store(path: Path) -> bool:
+    """Whether a zip holds the store AT ITS ROOT rather than one directory deep.
+
+    Decided from the central directory alone (``infolist()`` parses the index; no
+    member payload is decompressed), on two conditions that must BOTH hold:
+
+    * a zarr GROUP document sits at depth 0 — ``.zgroup`` (format 2) or
+      ``zarr.json`` (format 3), the names :data:`NODE_GROUP_DOCS` carries. Only a
+      group document counts: ``.zattrs`` also sits beside an ARRAY and may be a
+      stray, so it says nothing about a store root being here. That name pins a
+      group exactly only at format 2 — format 3's ``zarr.json`` marks a node of
+      either kind, so a depth-0 ``zarr.json`` describing an ARRAY reads as flat
+      here and then fails at ``open_group`` with ``ContainsArrayError``, which is
+      what that input already did, so the imprecision is in the naming rather
+      than in the behaviour.
+    * no member lies under a top-level ``*.gsplats.zarr/`` directory, so the
+      nested layout ``_compress_zarr`` writes keeps winning even in the odd
+      archive that carries both (the extractor prefers that directory, and this
+      resolver must not disagree with it).
+
+    A corrupt archive raises here (``zipfile.BadZipFile``) exactly as it would
+    have from the extraction path.
+    """
+    with zipfile.ZipFile(path, "r") as zip_ref:
+        has_root_group_doc = False
+        for info in zip_ref.infolist():
+            name = info.filename
+            parts = PurePosixPath(name).parts
+            if not parts:
+                continue
+            if len(parts) > 1 and parts[0].endswith(".gsplats.zarr"):
+                return False
+            if (
+                len(parts) == 1
+                and not info.is_dir()
+                and not _zip_member_is_symlink(info)
+                and parts[0] in NODE_GROUP_DOCS
+            ):
+                has_root_group_doc = True
+        return has_root_group_doc
+
+
+def resolve_store_path(
+    path: Path, *, flat_zip_in_place: bool = False
+) -> tuple[Path, Optional[Path]]:
+    """Resolve a user-supplied path to something ``open_group`` can open.
+
+    ``_compress_zarr`` nests the store one directory deep inside the archive
+    (``<name>.gsplats.zarr/.zgroup``, …), so handing the archive itself to
+    ``open_group`` finds no group at the store root. Extraction resolves that
+    root; the caller owns the returned temp directory and must remove it.
+
+    A ``.tar.gz`` is always extracted: zarr has no tar store, so a flat
+    ``.tar.gz`` is unresolvable by either route and stays unsupported.
+
+    Args:
+        path: An existing ``.gsplats.zarr`` directory, or a ``.zip`` /
+            ``.tar.gz`` archive holding one.
+        flat_zip_in_place: Opt in to handling a FLAT zip — one whose store sits
+            at the archive ROOT, as ``zip -r x.gsplats.zarr.zip .`` from inside a
+            store or a zarr-native ``ZipStore`` write produces — by returning the
+            archive itself, which ``open_group`` opens as a ``ZipStore``
+            (:func:`_zip_is_flat_store` decides, from the zip index only).
+            Otherwise a flat zip takes the extraction path, where the
+            "sole top-level directory" fallback picks an ARRAY sub-directory and
+            ``open_group`` raises ``ContainsArrayError``.
+
+            Only :func:`~luxar.gsplats.io.inspect_gsplats.inspect_gsplats_zarr`
+            opts in, and there it is pure regression-avoidance: it reads metadata
+            only, which zarr's ``ZipStore`` has always been able to do for a flat
+            zip, so refusing it would be a NEW failure. ``load_gsplat_node``
+            deliberately does NOT opt in. Accepting a flat zip there would newly
+            succeed on a shape two downstream steps do not handle — the
+            appearance peek (:func:`read_archive_root_attrs`) refuses a depth-0
+            root by design (:func:`_root_attrs_rank`, the #1608 contract), so a
+            rebuild would silently drop the authored appearance; and
+            ``luxar gsplat info`` uses the loader only as a gate before
+            re-resolving with :func:`extract_compressed_zarr`, which would report
+            one part of a partition as the whole dataset. Granting the loader
+            that capability is left to a separate follow-up.
+
+    Returns:
+        ``(store_path, temp_dir)`` — ``temp_dir`` is ``None`` when there is
+        nothing to clean up, i.e. for a directory store and for an in-place flat
+        zip.
+
+    Raises:
+        ValueError: For a regular file that is not one of the two archive
+            formats, or on an unsafe/unusable archive (see
+            :func:`extract_compressed_zarr`).
+    """
+    if (
+        flat_zip_in_place
+        and _is_zip(path)
+        and path.is_file()
+        and _zip_is_flat_store(path)
+    ):
+        return path, None
+    if any(str(path).endswith(suffix) for suffix in _COMPRESSED_SUFFIXES):
+        zarr_path = extract_compressed_zarr(path)
+        return zarr_path, zarr_path.parent
+    if path.is_file():
+        raise ValueError(
+            f"Expected a zarr directory or compressed archive (.zip/.tar.gz), "
+            f"got regular file: {path}"
+        )
+    return path, None
 
 
 def _root_attrs_rank(name: str) -> Optional[int]:

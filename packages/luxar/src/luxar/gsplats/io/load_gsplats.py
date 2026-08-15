@@ -8,7 +8,7 @@ from typing import Any, Dict
 
 from luxar._zarr_compat import open_group as zc_open_group
 from luxar.gsplats import GSplatData
-from luxar.gsplats.io._archive import extract_compressed_zarr, read_archive_root_attrs
+from luxar.gsplats.io._archive import read_archive_root_attrs, resolve_store_path
 
 
 def load_gsplats(
@@ -117,21 +117,9 @@ def load_gsplat_node(
     if not path.exists():
         raise FileNotFoundError(f"GSplats zarr not found: {path}")
 
-    # Handle compressed archives
-    temp_dir = None
-    zarr_path = path
-
-    compressed_suffixes = (".zip", ".tar.gz")
-    is_compressed = any(str(path).endswith(s) for s in compressed_suffixes)
-    if is_compressed:
-        # Compressed archive - extract to temp
-        zarr_path = extract_compressed_zarr(path)
-        temp_dir = zarr_path.parent
-    elif path.is_file():
-        raise ValueError(
-            f"Expected a zarr directory or compressed archive (.zip/.tar.gz), "
-            f"got regular file: {path}"
-        )
+    # Archive resolution is shared with inspect_gsplats_zarr, but this caller
+    # deliberately does NOT opt into `flat_zip_in_place` (see its docstring).
+    zarr_path, temp_dir = resolve_store_path(path)
 
     try:
         # Open zarr store

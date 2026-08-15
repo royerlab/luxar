@@ -80,7 +80,15 @@ print(format_gsplats_info(info))
 leaf's fields (`n_splats`, `ndim`, `ordering`, `chunk_size`,
 `amplitude_range`, `center_bounds`), plus tree-shape metadata
 (`n_additive_sublods_default`, `kind`, and `n_substitutive` or `n_parts`) so
-multi-LOD and partitioned datasets are visible at a glance.
+multi-LOD and partitioned datasets are visible at a glance. Like
+`load_gsplats()` it accepts a `.gsplats.zarr.zip` / `.gsplats.zarr.tar.gz`
+archive as well as a directory; `storage_bytes` then measures the archive file
+itself, and `compression_ratio` is `None` (not `1.0`) whenever that size cannot
+be measured. "Without loading arrays" refers to the array data: a directory
+store and a *flat* zip (store at the archive root) are read in place, while a
+nested archive — what `save_gsplats(..., compress=…)` writes — is extracted to a
+temp directory for the duration of the call, so inspecting one costs its
+uncompressed size in temp space.
 
 ### Convenience Methods
 
@@ -384,7 +392,9 @@ print(format_gsplats_info(info))
 # Access specific fields
 print(f"Splats: {info['n_splats']}")
 print(f"Ordering: {info['ordering']}")
-print(f"Compression: {info['compression_ratio']}x")
+# `compression_ratio` is None when the on-disk size could not be measured.
+if info["compression_ratio"] is not None:
+    print(f"Compression: {info['compression_ratio']}x")
 ```
 
 ### Migrate a Legacy Dataset to v3.3
