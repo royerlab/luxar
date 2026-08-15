@@ -116,7 +116,18 @@ per-case explanation.
 
 ## Add-Path Anatomy
 
-Each `*_impl` walks the same ordered decision tree:
+Each `*_impl` walks the same ordered decision tree. Above all of it, as the first
+statement of every one of the four bodies, sits
+`strip_absent_attr_kwargs(attrs, ABSENT_WHEN_NONE_RENDER_ATTRS)`: a
+present-but-`None` `colormap` or `coverage_fraction` is deleted so it means
+*absent* rather than a value (#1574 — a `None` colormap otherwise survives step 3
+and step 5 untouched and is rewritten by `sync_custom_colormap_attr` into a
+LUT-less `'custom'` the viewer renders as viridis). Once here rather than at each
+consumer, because steps 3, 5 and 10, every structural branch and both
+`sync_custom_colormap_attr` call sites read the same dict. Only render attrs are
+in the set: the structural keys whose `None` also means absent (`colors`,
+`labels`, `image_labels`, `partition`) are named parameters of all four `*_impl`
+signatures and can never reach `**attrs`.
 
 1. **Coerce + shape-check** the primary array to `(N, D)`.
 2. **Apply `dim_order`** (`apply_dim_order_positions`, plus

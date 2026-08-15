@@ -25,12 +25,14 @@ from arbol import aprint
 from ...points import Points
 from ..auto_partition import resolve_auto_partition
 from ..compositing import (
+    ABSENT_WHEN_NONE_RENDER_ATTRS,
     COMPOSITING_ATTRS,
     funnel_add_error,
     is_broadcast_color,
     position_bounds_from_array,
     reject_lines_only_join,
     slice_optional_array,
+    strip_absent_attr_kwargs,
     sync_custom_colormap_attr,
     unnest_add_error,
     validate_points_channels_before_split,
@@ -78,6 +80,16 @@ def add_points_impl(
             "LOD ladders — is not implemented). Use one or the other."
         )
     try:
+        # "An explicit None means absent" (#1574), applied ONCE here rather than
+        # at each consumer: the colours gate below, the entry attrs gate, the
+        # three structural branches and the flat write all read this same dict,
+        # and ``sync_custom_colormap_attr`` alone has two call sites in this
+        # module. Above every one of them, so no route can see the raw None.
+        # Only render attrs are in the set — the structural keys whose None also
+        # means absent (``colors``/``labels``/``image_labels``/``partition``) are
+        # named params of this function and can never reach ``**attrs``.
+        strip_absent_attr_kwargs(attrs, ABSENT_WHEN_NONE_RENDER_ATTRS)
+
         # Fail-fast pre-write gate: reject invalid names (empty/'/'/dot-
         # prefixed — an empty name resolves to the zarr ROOT group and would
         # clobber the scene root) and duplicate siblings BEFORE any zarr

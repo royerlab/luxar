@@ -11,14 +11,15 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 import numpy as np
 
+from ..compositing import strip_absent_attr_kwargs
 from .from_data import (
+    ABSENT_WHEN_NONE_ATTRS,
     GRAFT_REMEDY,
     GRAFT_STRUCTURE,
     add_gsplats_from_data_impl,
     labels_on_a_laddered_leaf_reason,
     labels_on_wrapper_reason,
     reject_data_owned_channels,
-    strip_absent_attr_kwargs,
 )
 
 if TYPE_CHECKING:
@@ -62,7 +63,7 @@ def add_gsplats_from_file_impl(
     # outrank this function's own checks on BOTH, which is the same precedence
     # ``add_gsplats_from_data_impl`` gives it. Below the existence check, because
     # a missing file is not an attrs question at all.
-    strip_absent_attr_kwargs(attrs)
+    strip_absent_attr_kwargs(attrs, ABSENT_WHEN_NONE_ATTRS)
     reject_data_owned_channels(name, attrs)
 
     # Classical (photogrammetric) splat files — INRIA/SuperSplat .ply,
@@ -208,7 +209,7 @@ def _reject_labels_on_a_grafted_wrapper(
       value is neither.
 
       This check runs at the TOP of ``graft_gsplat_node`` — below only the
-      #1496 normalisation pair (:func:`~luxar.core.group.gsplats_pipeline.from_data.strip_absent_attr_kwargs`
+      #1496 normalisation pair (:func:`~luxar.core.group.compositing.strip_absent_attr_kwargs`
       and :func:`~luxar.core.group.gsplats_pipeline.from_data.reject_data_owned_channels`,
       which touch none of the faults listed next) — so a call
       that ALSO trips an unrelated fault (an unknown attr, a bad node name, a
@@ -249,7 +250,7 @@ def _reject_labels_on_a_grafted_wrapper(
     # ``add_gsplats_from_data_impl``, which strips again at the top of its body.
     # Kept so this function's own ``is not None`` test reads the same normalised
     # attrs its callers will, rather than depending on either of them.
-    strip_absent_attr_kwargs(attrs)
+    strip_absent_attr_kwargs(attrs, ABSENT_WHEN_NONE_ATTRS)
     # ``labels`` before ``image_labels`` (the leaf adders' signature order), so a
     # call passing both is answered deterministically — same tie-break as the
     # ``lod_group=`` half of the gate.
@@ -409,7 +410,7 @@ def graft_gsplat_node(
     # underneath strip it a third time. It is kept as the entry-level statement of
     # intent — the pair is one rule and reads as one — not because anything
     # depends on it; if you delete it, nothing observable changes.
-    strip_absent_attr_kwargs(attrs)
+    strip_absent_attr_kwargs(attrs, ABSENT_WHEN_NONE_ATTRS)
     reject_data_owned_channels(name, attrs)
     _reject_labels_on_a_grafted_wrapper(name, node, attrs)
 
