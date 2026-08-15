@@ -430,7 +430,7 @@
     "packages/luxar/src/luxar/gsplats/interop/inria_export.py::_select_3d": [
       13
     ],
-    "packages/luxar/src/luxar/gsplats/io/inspect_gsplats.py::inspect_gsplats_zarr": [
+    "packages/luxar/src/luxar/gsplats/io/inspect_gsplats.py::_inspect_store": [
       16
     ],
     "packages/luxar/src/luxar/gsplats/io/load_gsplats.py::load_gsplat_node": [
