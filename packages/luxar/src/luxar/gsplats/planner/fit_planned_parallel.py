@@ -46,7 +46,7 @@ def _default_worker_cmd_builder(
     *,
     preset: str = "standard",
     device: Optional[str] = None,
-    floor: Optional[str] = None,
+    floor: "Optional[str | float]" = None,
     channel: Optional[int] = None,
     timepoint: Optional[int] = None,
     array_key: Optional[str] = None,
@@ -59,6 +59,13 @@ def _default_worker_cmd_builder(
     rebuilds the fit config from ``--preset`` exactly as the parent did, fits the
     single box, and writes its global-coordinate splats to ``out`` (or a sibling
     ``.empty`` marker for a 0-splat box).
+
+    ``floor`` is expected to be the parent's already-RESOLVED background level (a
+    number, or ``"none"`` when suppression is off) rather than a spec like
+    ``auto``/``pNN``: abutting boxes that each re-estimate their own pedestal
+    subtract different levels and show brightness steps at box boundaries
+    (#1174). A spec is still accepted and forwarded verbatim — the worker then
+    resolves it against its whole (t, c) volume, never the box crop.
     """
     argv0 = luxar_argv0()
 

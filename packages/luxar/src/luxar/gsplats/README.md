@@ -214,7 +214,7 @@ merged = GSplatData.concatenate(all_tile_results)
 
 **Key properties:**
 - Overlap must satisfy `overlap <= tile_size // 2` to avoid triple tile overlap.
-- The background floor (`floor`, default `"auto"`) is resolved once against the whole volume (never per tile) and subtracted from each raw tile before apodization; on the floor-subtracted data the cosine windows guarantee seamless blending without post-merge pruning. (This applies to uniform/apodized tiling; the content-adaptive planner currently hands each unapodized box the raw floor spec, so its boxes still estimate per box.)
+- The background floor (`floor`, default `"auto"`) is resolved once against the whole volume (never per tile) and subtracted from each raw tile before apodization; on the floor-subtracted data the cosine windows guarantee seamless blending without post-merge pruning. The content-adaptive planner resolves it the same way — one whole-volume level, handed to the density scan and to every box (#1174) — but its boxes are unapodized and the level reaches them as the fit's `floor` argument, so a box lying entirely above the pedestal still normalizes against its own crop minimum (`image_min = max(level, min(crop))`) rather than the level.
 - `fit_tile` rejects explicit seed arrays (use int count, float ratio, or None).
 - zarr arrays are supported for out-of-core processing -- only one tile is materialized at a time.
 
