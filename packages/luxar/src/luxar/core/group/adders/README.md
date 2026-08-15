@@ -344,9 +344,13 @@ only re-emit the advisory.)
 
 **Sibling modules** (`core/group/`):
 - `auto_partition.resolve_auto_partition`
-- `partition` — BSP kernels (`median_bsp_partition`, `midpoint_bsp_partition`,
-  `sah_bsp_partition`, `median_bsp_polylines`, `midpoint_bsp_polylines`,
-  `DEFAULT_MAX_ELEMENTS`, `warn_if_oversized_single_part`)
+- `partition` — the `partition=` spec validator (`resolve_partition_spec`, one
+  spelling of the value vocabulary for all four adders and for the gsplats
+  pre-wrapper gates — no adder resolves `DEFAULT_MAX_ELEMENTS` itself any more),
+  the BSP kernels (`median_bsp_partition`, `midpoint_bsp_partition`,
+  `sah_bsp_partition`, `median_bsp_polylines`, `midpoint_bsp_polylines`) and the
+  two advisories (`warn_if_partition_needs_more_dims`, which DROPS the request
+  below 2 spatial dims, and `warn_if_oversized_single_part`)
 - `compositing` — `COMPOSITING_ATTRS`, `position_bounds_from_array`,
   `slice_optional_array`, `is_broadcast_color`,
   `validate_points_channels_before_split`,

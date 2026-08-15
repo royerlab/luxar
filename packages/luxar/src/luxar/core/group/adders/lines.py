@@ -269,33 +269,14 @@ def add_lines_impl(
         if partition is not None:
             from ..lod.lines import identify_polylines
             from ..partition import (
-                DEFAULT_MAX_ELEMENTS,
                 median_bsp_polylines,
                 midpoint_bsp_polylines,
+                resolve_partition_spec,
                 sah_bsp_partition,
                 warn_if_oversized_single_part,
             )
 
-            if partition is True:
-                max_elements = DEFAULT_MAX_ELEMENTS
-                partition_rule = "median"
-            elif isinstance(partition, dict):
-                max_elements = int(partition.get("max_elements", DEFAULT_MAX_ELEMENTS))
-                if max_elements < 1:
-                    raise ValueError(
-                        f"partition max_elements must be >= 1, got {max_elements}"
-                    )
-                partition_rule = str(partition.get("rule", "median"))
-                if partition_rule not in ("median", "midpoint", "sah"):
-                    raise ValueError(
-                        f"partition rule must be 'median', 'midpoint', or 'sah'; "
-                        f"got {partition_rule!r}"
-                    )
-            else:
-                raise TypeError(
-                    f"partition must be None, True, or dict; "
-                    f"got {type(partition).__name__}"
-                )
+            max_elements, partition_rule = resolve_partition_spec(partition)
 
             if image_labels is not None:
                 raise ValueError(

@@ -16,9 +16,13 @@ from .from_data import (
     ABSENT_WHEN_NONE_ATTRS,
     GRAFT_REMEDY,
     GRAFT_STRUCTURE,
+    STORED_LADDER_REMEDY,
+    STORED_LADDER_STRUCTURE,
     add_gsplats_from_data_impl,
     labels_on_a_laddered_leaf_reason,
     labels_on_wrapper_reason,
+    partition_beside_a_ladder_reason,
+    reject_bad_partition_spec,
     reject_data_owned_channels,
 )
 
@@ -97,6 +101,15 @@ def add_gsplats_from_file_impl(
     if is_matrix_shaped(node):
         from luxar.gsplats.gsplat_data import GSplatData
 
+        # The stored-ladder half of the #1550 gate, on the branch that never
+        # reaches ``graft_gsplat_node``. Not for stranding — the data door
+        # refuses before anything is written either way — but for the WORDING:
+        # its own refusal names ``additive_lod=`` and tells the caller to drop
+        # one of the two, and there is no ``additive_lod=`` in an
+        # ``add_gsplats_from_file`` call and nothing to drop. Same question, same
+        # template, this door's own remedy ('gsplat flatten').
+        _reject_a_partition_beside_a_stored_ladder(name, node, attrs)
+
         return add_gsplats_from_data_impl(
             group,
             name=name,
@@ -148,6 +161,99 @@ def add_gsplats_from_file_impl(
     return graft_gsplat_node(
         group, name=name, node=node, parent=parent, extend_to_all=extend_to_all, **attrs
     )
+
+
+def _reject_a_partition_beside_a_stored_ladder(
+    name: str, node: Any, attrs: Dict[str, Any]
+) -> None:
+    """The file door's half of the #1550 partition-vs-ladder gate.
+
+    The conflict itself is judged by ``add_gsplats_from_data_impl``, which the
+    graft reaches PER LEAF — after :func:`graft_gsplat_node` has built its
+    ``kind=partition`` / ``kind=lod`` wrapper from the on-disk tree. So a
+    perfectly valid spec stranded here exactly as it did on the ``lod_group=``
+    door: measured against a ``kind=partition`` of two 2-sublod leaves,
+    ``add_gsplats_from_file("g", …, partition={"max_elements": 4})`` gave ``Could
+    not add gsplats 'part_0': partition= is not supported alongside …`` with ``g``
+    surviving ``finalize()`` as a childless ``kind=partition``. That is the most
+    commonly produced store shape in the whole gsplat pipeline — ``gsplat lod
+    --recipe tiles|overview|adaptive`` and ``batch-fit merge --recipe stream`` all
+    emit it, stream ladders being on by default — and the ladder is knowable up
+    front from ``iter_leaves``, so the question belongs in the same slot as
+    :func:`_reject_a_bad_partition_spec_on_a_graft`.
+
+    ABOVE that spec-shape gate, so the two doors agree: on the data door the
+    conflict is hoisted above ``_reject_before_wrapper`` (which holds the shape
+    check), so a bad-spec-plus-ladder call hears about the conflict there and must
+    hear about it here too. It is also the more fundamental of the two — if
+    ``partition=`` cannot be honoured on this node at all, whether the spec is
+    well-formed is moot.
+
+    ``False`` is not judged here at all: it is the no-partition bypass, and the
+    per-leaf :func:`~.from_data.resolve_partition_beside_an_additive_ladder`
+    deletes it once it reaches a laddered leaf, so the graft succeeds instead of
+    stranding (measured pre-fix: the same childless ``kind=partition``, this time
+    from ``Unknown node attribute 'partition'``).
+
+    An ``additive_lod=False`` in the same call is likewise not judged, and for the
+    reason the data door reads the RESOLVED result rather than the store: that is
+    the documented "collapse the ladder" spelling, and
+    ``resolve_additive_axis_gsplats(False)`` flattens every level to a single
+    sub-LOD before the data door asks this same question — so the store's ladder
+    is not the one that would be written and there is no conflict left to refuse.
+    Measured: a laddered leaf file and a laddered ``kind=partition`` both split
+    into real parts with that kwarg, so judging the STORE alone refused two calls
+    that work. A ``recompute`` dict resolving to a single rung
+    (``{"n_lods": 1, "recompute": True}``) is the same shape and is NOT covered
+    here — telling it apart from ``{"n_lods": 2}`` needs the resolved rung count
+    rather than the spec, which is the design question #1632 owns.
+    """
+    from luxar.gsplats.tree import iter_leaves
+
+    from ..partition import is_requested
+
+    if not is_requested(attrs.get("partition")):
+        return
+    if attrs.get("additive_lod") is False:
+        return
+    if not any(len(leaf.additive_sublods) > 1 for leaf in iter_leaves(node)):
+        return
+    raise ValueError(
+        f"Could not add gsplats '{name}': "
+        + partition_beside_a_ladder_reason(
+            STORED_LADDER_STRUCTURE, STORED_LADDER_REMEDY
+        )
+    )
+
+
+def _reject_a_bad_partition_spec_on_a_graft(
+    name: str, node: Any, attrs: Dict[str, Any]
+) -> None:
+    """The graft door's half of the #1550 partition-spec gate.
+
+    ``partition`` is not a kwarg this door consumes: it rides in ``child_attrs``
+    all the way down to each part's own ``add_gsplats``, where it drives that
+    leaf's BSP split. So an invalid spec was judged one level down — measured,
+    ``Could not add gsplats 'part_0': partition must be None, True, or dict; got
+    str`` — by which point :func:`graft_gsplat_node` had already built the
+    ``kind=partition`` wrapper from the on-disk tree, and that childless wrapper
+    survived ``finalize()``. Identical shape, and the identical fix, to the
+    ``lod_group=`` door (``from_data._reject_before_wrapper``): the same
+    ``reject_bad_partition_spec``, for its verdict alone.
+
+    The ndim is the STORED tree's — every leaf of a tree shares one
+    (``node_ndim``) — because that is the width each part would be split on, and
+    it is what makes the sub-2-D skip mean the same thing here as there. The
+    ``Could not add gsplats '<name>': `` prefix is applied by hand for the reason
+    :func:`add_gsplats_from_file_impl`'s dimension-count check gives: this module
+    has no funnel of its own.
+    """
+    from luxar.gsplats.tree import node_ndim
+
+    try:
+        reject_bad_partition_spec(attrs, node_ndim(node))
+    except (ValueError, TypeError) as e:
+        raise ValueError(f"Could not add gsplats '{name}': {e}") from e
 
 
 def _reject_labels_on_a_grafted_wrapper(
@@ -412,6 +518,8 @@ def graft_gsplat_node(
     # depends on it; if you delete it, nothing observable changes.
     strip_absent_attr_kwargs(attrs, ABSENT_WHEN_NONE_ATTRS)
     reject_data_owned_channels(name, attrs)
+    _reject_a_partition_beside_a_stored_ladder(name, node, attrs)
+    _reject_a_bad_partition_spec_on_a_graft(name, node, attrs)
     _reject_labels_on_a_grafted_wrapper(name, node, attrs)
 
     if isinstance(node, GSplatLeaf):

@@ -52,6 +52,42 @@ GRAFT_REMEDY = (
 )
 
 
+# The two structures that reach :func:`partition_beside_a_ladder_reason`, spelled
+# once for the reason the pair above is: the ladder can arrive two ways and only
+# one of them is a kwarg. On the ``additive_lod=`` door "drop one of the two" is
+# the remedy; on the FILE / graft door there is no ``additive_lod=`` in the call
+# to drop — the ladder is in the store — so naming it sends the reader looking
+# for something that is not there, which is the exact failure the labels pair
+# above exists to avoid.
+LADDER_STRUCTURE = "an additive_lod= ladder"
+LADDER_REMEDY = (
+    "Drop one of the two, or partition the data yourself and add each part with "
+    "its own ladder."
+)
+STORED_LADDER_STRUCTURE = "the additive ladder this .gsplats.zarr already carries"
+STORED_LADDER_REMEDY = (
+    "Collapse the ladder first ('gsplat flatten' rewrites the file as a single "
+    "unladdered leaf, which partitions normally)."
+)
+
+
+def partition_beside_a_ladder_reason(structure: str, remedy: str) -> str:
+    """Why ``partition=`` and an additive ladder cannot ride the same node.
+
+    ONE template for both doors, for the reason :func:`labels_on_wrapper_reason`
+    is one: the obstacle is identical — ``add_gsplats_multi_lod_impl`` writes
+    every laddered leaf and has no ``partition`` parameter at all — and only the
+    caller's own escape hatch differs. Both come from the module constants above.
+    """
+    return (
+        f"partition= is not supported alongside {structure}. A laddered leaf is "
+        "written by add_gsplats_multi_lod_impl, which cannot also split it into "
+        "parts, and the two are different decompositions of the same splats — a "
+        "prefix ordering and a BSP split — that nothing downstream carries "
+        f"together. {remedy}"
+    )
+
+
 def labels_on_wrapper_reason(kwarg: str, structure: str, remedy: str) -> str:
     """Why per-element labels cannot ride into a multi-child gsplats wrapper.
 
@@ -254,6 +290,120 @@ def reject_data_owned_channels(name: str, attrs: Dict[str, Any]) -> None:
             )
 
 
+def reject_bad_partition_spec(attrs: Optional[Dict[str, Any]], ndim: int) -> None:
+    """Judge ``partition``'s VALUE, which the node-attrs gate cannot (#1550).
+
+    ``partition`` is in :data:`GATE_FORWARDED_LEAF_PARAMS`, so its KEY is
+    excluded from ``validate_render_attrs`` — deliberately, since that exclusion
+    is what lets a valid spec ride into each substitutive child, where it drives
+    that child's own BSP split. An INVALID one rode it too, unread, and was
+    refused only from inside ``child_0``, after ``add_lod_group`` had created
+    the ``kind=lod`` wrapper.
+
+    Calls the leaf adder's own validator for the verdict alone — the resolved
+    cap and rule belong to the child that actually splits — so the message and
+    exception type are byte-identical to the flat path's. Its own function
+    rather than three lines inline purely to keep :func:`_reject_before_wrapper`
+    under the C901 limit the complexity ratchet enforces; it is also the graft
+    door's gate (``from_io.graft_gsplat_node``, which builds its wrapper from the
+    on-disk tree before the first leaf write and had the identical bug).
+
+    Two values are skipped, because the leaf never judges them either and a gate
+    that refuses what the flat path accepts is its own regression:
+
+    * ``False`` is a first-class member of the :data:`~luxar.core.group.partition.PartitionSpec`
+      vocabulary — the explicit no-partition bypass ``resolve_auto_partition``
+      normalises to ``None`` (and the recursion guard the partition wrappers use),
+      so it is the only way to opt a ``lod_group=`` ladder out of a compiler-level
+      ``auto_partition_max_elements``. Every leaf adder normalises it away before
+      resolving, so it must be normalised away here too.
+    * ``ndim < 2`` is where the leaf DROPS the partition request with a warning
+      (``warn_if_partition_needs_more_dims``) BEFORE it resolves the spec, so a
+      1-dimension scene accepts even a nonsense spec. Skipped silently: the child
+      still emits that warning, and a second copy from here would only double it.
+
+    ``ndim`` is the EFFECTIVE post-transform width — see the call site.
+    """
+    from ..partition import is_requested, resolve_partition_spec
+
+    partition = (attrs or {}).get("partition")
+    if not is_requested(partition) or ndim < 2:
+        return
+    resolve_partition_spec(partition)
+
+
+def resolve_partition_beside_an_additive_ladder(
+    name: str,
+    attrs: Dict[str, Any],
+    result: Any,  # GSplatData
+) -> None:
+    """Refuse a REAL ``partition=`` beside an additive ladder; DROP a ``False`` one.
+
+    ``add_gsplats_multi_lod_impl`` — the writer every multi-rung level goes
+    through — has no ``partition`` parameter, so the key stays in ``**attrs`` and
+    reaches ``validate_render_attrs`` as an unknown node attribute. On the
+    multi-substitutive route that fired from inside ``child_0`` with the
+    ``kind=lod`` wrapper already on disk, so a VALID spec stranded exactly like an
+    invalid one did (#1550): ``Could not add gsplats 'child_0': Unknown node
+    attribute 'partition'. Did you mean 'absorption'?``, ``g`` surviving
+    ``finalize()``. Refused here instead, above both routes, so the two report the
+    same thing and nothing is written.
+
+    ``False`` is NOT a request, so it is not refused — but it stranded the very
+    same wrapper, and for the very same reason: measured, ``lod_group=True,
+    additive_lod={"n_lods": 2}, partition=False`` gave ``Could not add gsplats
+    'child_0': Unknown node attribute 'partition'`` with ``g`` on disk as a
+    childless ``kind=lod`` group, where the single-substitutive twin merely
+    refused (naming ``'g'``, writing nothing). So it is DELETED instead, and the
+    call succeeds on both routes — which is what the bypass means: ``False`` opts
+    out of a compiler-level ``auto_partition_max_elements``, so honouring it is
+    writing no partition, which is exactly what this destination does.
+
+    The scope of that deletion is narrow on purpose. ``False`` is load-bearing
+    wherever a LEAF adder resolves it — ``resolve_auto_partition`` reads
+    ``user_partition is False`` to bypass the compiler threshold, so stripping the
+    key at this adder's entry (the way an explicit ``None`` is stripped) would
+    silently re-enable auto-partitioning on every un-laddered route. It is dropped
+    only when the multi-LOD writer is THIS call's destination
+    (``n_substitutive <= 1 < n_additive_sublods``) — a writer that cannot
+    partition at all, so there is no auto-partition left to bypass. A
+    multi-substitutive call keeps the key and hands it to each child, where the
+    recursion asks this same question per level: a laddered level drops it, an
+    un-laddered one still gets its bypass.
+
+    Called from ABOVE the route branch rather than from the pre-wrapper gate's
+    partition slot, which costs it the precedence its siblings have — a call also
+    carrying a bad node attr, a bad ``dim_order`` or colours+colormap hears about
+    this conflict where the same call without ``additive_lod=`` hears about the
+    other fault. That is the deliberate trade, not an oversight: the two routes
+    below MUST answer identically (that divergence is half of what #1550 fixes),
+    and only the multi-substitutive one has a pre-wrapper gate to sit in — the
+    multi-additive route's attrs gate lives inside the writer, so a check placed
+    "at the same slot" there would still outrank nothing. Every combination
+    refuses with an EMPTY store either way, so what is at stake is which fault is
+    named first, and answering the same on both routes is worth more than
+    matching the flat path on a call the flat path cannot make. Pinned by
+    ``TestTheLadderConflictOutranksTheOtherPreWrapperFaults``.
+    """
+    from ..partition import is_requested
+
+    partition = attrs.get("partition")
+    if not is_requested(partition):
+        if (
+            partition is False
+            and result.n_substitutive <= 1
+            and result.n_additive_sublods > 1
+        ):
+            del attrs["partition"]
+        return
+    if not any(len(level.additive_sublods) > 1 for level in result.substitutive_levels):
+        return
+    raise ValueError(
+        f"Could not add gsplats '{name}': "
+        + partition_beside_a_ladder_reason(LADDER_STRUCTURE, LADDER_REMEDY)
+    )
+
+
 def _reject_before_wrapper(
     group: "Group",
     *,
@@ -341,6 +491,20 @@ def _reject_before_wrapper(
     function has and the attrs gate outranks it the same way the leaf adder's
     own attrs gate outranks its channel-validator wrappers).
 
+    Immediately below it sits the ``partition``-SPEC check (#1550), the one
+    thing the attrs gate cannot reach: ``partition`` is in
+    :data:`GATE_FORWARDED_LEAF_PARAMS`, so its key is excluded from
+    ``validate_render_attrs`` — deliberately, since that is what lets a VALID
+    spec ride into each child's own BSP split — which left an INVALID one
+    (``partition="nonsense"``, ``{"max_elements": 0}``) judged one level down,
+    inside ``child_0``, with the wrapper already written. Same stranding shape,
+    closed the same way by :func:`reject_bad_partition_spec`, which calls
+    ``partition.resolve_partition_spec`` — the very function the leaf adder
+    calls — for its verdict alone. Directly
+    below the attrs gate because that is the flat path's own order — the leaf
+    validates node attrs at its entry and resolves the spec inside its
+    partition branch, further down.
+
     ``labels`` / ``image_labels`` are the ONE check here with no flat-path
     counterpart (#1471), which is why they come LAST. Both ride into every child
     unsliced through ``child_attrs``, so a real ladder — whose levels are merged
@@ -385,11 +549,17 @@ def _reject_before_wrapper(
         # safe: ``AdditiveSubLOD`` accepts 1-D centers, so a bare ``IndexError``
         # would otherwise escape this funnel.
         validate_array_rank(centers, "centers")
+        # The width the CHILDREN will actually be handed, which is what decides
+        # whether a partition can run at all (see the ``partition``-spec check
+        # below): the incoming column count, unless a ``dim_order`` reallocates
+        # it to the scene's own ``ndim``.
+        effective_ndim = int(centers.shape[1])
         if dim_order is not None:
             # Same order as the flat path, which applies dim_order to the centers
             # (spec + fill) before it embeds the Cholesky factors (fill_sigma) —
             # and does both BEFORE it reaches its colours/colormap gate.
             scene = group._find_scene()
+            effective_ndim = int(scene._dimensions.ndim)
             validate_dim_order_spec(scene, dim_order, centers.shape[1], fill)
             validate_fill_sigma_keys(scene, dim_order, fill_sigma)
         # Asked of EVERY level's ladder, not just ``result.colors`` (which is the
@@ -473,6 +643,11 @@ def _reject_before_wrapper(
             if k not in GATE_FORWARDED_LEAF_PARAMS
         }
         validate_render_attrs(attrs_for_gate, reserved_attrs=GSPLATS_RESERVED_ATTRS)
+        # …and immediately after it, the one thing that exclusion leaves
+        # unjudged: ``partition``'s VALUE (#1550). Same stranding shape this
+        # function exists to prevent, one key over — see the helper, which also
+        # states why ``False`` and a sub-2-D width are skipped rather than judged.
+        reject_bad_partition_spec(attrs, effective_ndim)
         # The leaf's WHOLE colours validator, run against EVERY rung of EVERY
         # level, for the same reason the colours/colormap question above is asked
         # of every level — and below the width, because that is where the flat
@@ -596,6 +771,13 @@ def add_gsplats_from_data_impl(
         result, lod_group
     )
     result = resolve_additive_axis_gsplats(result, additive_lod)
+    # ``partition=`` and an additive ladder are mutually exclusive on this door,
+    # and the answer must be the same on both routes below — hence above the
+    # branch, beside the other structural-kwarg refusals (#1550). Also DELETES a
+    # ``partition=False`` bound for the multi-LOD writer, which is the one
+    # destination where that bypass has nothing to bypass and everything to
+    # strand; see the helper for why the deletion cannot be hoisted to the strip.
+    resolve_partition_beside_an_additive_ladder(name, attrs, result)
 
     # Multi-substitutive → kind=lod Group with one gsplats child per level
     if result.n_substitutive > 1:
