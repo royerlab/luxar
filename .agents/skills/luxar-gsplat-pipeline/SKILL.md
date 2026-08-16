@@ -14,7 +14,7 @@ description: >-
 # Luxar GSplat pipeline
 
 Luxar fits **Gaussian splats** to scientific volumes and serves them to a WebGL
-viewer. The standalone artifact is a `.gsplats.zarr` (format v3.3 — a node tree;
+viewer. The standalone artifact is a `.gsplats.zarr` (format v3.4 — a node tree;
 older v3.x files are still read transparently).
 All commands below are subcommands of `luxar gsplat`.
 
@@ -100,6 +100,34 @@ luxar gsplat fit volume.tiff out.gsplats.zarr --floor p10     # subtract 10th pe
 luxar gsplat cal volume.tiff cal.json --floor none            # legacy (no floor)
 ```
 
+## Traps that cost real time
+
+Each of these has burned a whole fit cycle. Check them before you launch a long run.
+
+- **`--seeds` is a whole-volume budget, but only for the CLI.** `luxar gsplat fit
+  --seeds K` divides K across the tiles it makes. The *Python* `fit_tiled_gsplats`
+  does NOT — an integer `seeds` there is handed to every tile unchanged, so N tiles
+  fit ~N × seeds splats. And `--tiling auto` is the DEFAULT, so a gigavoxel volume
+  tiles whether or not you asked (the whole-volume threshold is 64 Mvoxel).
+- **`--cal` / `--k-star-ref` / `--feature-*` apply ONLY to `--tiling content`.**
+  Under `--tiling none|uniform` they are ignored — the CLI prints a `⚠ … apply only
+  to --tiling content` line, but in a long arbol log that scrolls past. The symptom
+  is a fit that lands at a few hundred splats when you asked for K* = 128,000,
+  because `seeds` silently fell back to `auto`. A `cal --auto-region` K* is
+  *region-scoped* anyway: transfer it with `--cal` + `--tiling content`, never by
+  passing it to `--seeds`.
+- **`fit` has no `--overwrite`** (`lod`, `additive`, `transform` etc. do). `rm -rf`
+  the output first, or a chained script dies mid-run on a stale store.
+- **A/B two fits only at equal splat count.** Splat count dominates every quality
+  metric, so comparing a 1.4 M-splat variant against a 2.7 M-splat one measures the
+  count, not the variable you changed. Fix the seed budget on both arms.
+- **Size VRAM for the per-splat intermediates, not the volume tensor.** A 3.2 Gvoxel
+  whole-volume fit asked for 95 GiB after the volume itself came to 12.9 GB. Tile it.
+- **Score against the ORIGINAL, and on the foreground.** Global PSNR on a
+  97–99%-empty stack is flattered by the empty part and barely moves; foreground
+  (say, above 10% of max) and a dim band (1–10%) are where the answer lives. Never
+  score a floored/denoised fit against its own preprocessed input.
+
 ## Choosing a LOD recipe (`lod --recipe`)
 
 Recipes are scale-ordered — pick by element count `N`:
@@ -171,7 +199,7 @@ luxar gsplat slice in.gsplats.zarr out.gsplats.zarr "0:50, :, 10:90"
 luxar gsplat transform in.gsplats.zarr out.gsplats.zarr --scale 4,1,1,1 --center
 luxar gsplat merge a.gsplats.zarr b.gsplats.zarr -o merged.gsplats.zarr
 luxar gsplat partition in.gsplats.zarr part.gsplats.zarr --parts 4 --rule sah
-luxar gsplat migrate-format legacy.gsplats.zarr v3.gsplats.zarr      # legacy -> v3.3
+luxar gsplat migrate-format legacy.gsplats.zarr v3.gsplats.zarr      # legacy -> v3.4
 ```
 
 ## Python fitting API
@@ -243,6 +271,12 @@ does (a) for you and writes a ready-to-serve scene.
 - The `lod` command **rejects an existing partition** — to add LOD to tiled output,
   use `fit --recipe` / `batch-fit merge --recipe` (per-part LOD as it streams), or
   `gsplat additive` to ladder every leaf of an existing tree structure-preservingly.
-- LOD switch thresholds are auto-derived as viewport-relative `coverage_fraction`
-  = `sqrt(N_i/N_finest)` (no threshold knob; self-calibrates on any monitor).
-- See `docs/specs/GSPLATS_ZARR_FORMAT.md` for the v3.3 node-tree format.
+- LOD switch thresholds are auto-derived by SCREEN-AREA occupancy halving and
+  stamped `selector="screen-area"`: each `coverage_fraction` is a literal screen-area
+  fraction (projected bbox rect area / viewport area), so a whole-object `levels`
+  ladder shows full detail while the object occupies at least half the screen and
+  steps one level coarser per halving. No threshold knob; identical on any monitor.
+  (`adaptive` and `overview` are partition-bound and keep the fills-screen anchor.)
+  Legacy stores and explicit `coverage_fractions=[...]` lists keep the older
+  `selector="coverage"` diagonal metric; the viewer reads both.
+- See `docs/specs/GSPLATS_ZARR_FORMAT.md` for the v3.4 node-tree format.
