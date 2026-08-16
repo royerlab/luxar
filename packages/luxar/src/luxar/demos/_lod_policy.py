@@ -43,6 +43,17 @@ if TYPE_CHECKING:
 #: step does not have in hand.
 DemoRecipe = Literal["stream", "levels", "adaptive"]
 
+#: Recipes whose artifact is a node TREE with no flat matrix form.
+#:
+#: This is not a detail of the writer — it decides how the demo READS its own
+#: cache back. ``GSplatData.load`` (and therefore
+#: :func:`luxar.utils.data_fetch.load_dataset_gsplats`) refuses a
+#: ``kind=partition`` store outright, so a demo choosing one of these must graft
+#: the PATH with :meth:`~luxar.core.group.Group.add_gsplats_from_file` instead.
+#: Getting this wrong breaks the demo's DEFAULT path while leaving the
+#: ``--recompute`` path — the one an author exercises — perfectly green.
+TREE_RECIPES: frozenset[str] = frozenset({"adaptive"})
+
 #: Per-recipe parameters, so two demos choosing ``levels`` cannot drift apart.
 #:
 #: ``n_lods=4`` throughout: four rungs is the shipped default and what every

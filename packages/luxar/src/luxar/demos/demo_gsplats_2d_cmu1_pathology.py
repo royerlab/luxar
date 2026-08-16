@@ -115,8 +115,8 @@ from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import UIConfig, ViewerConfig
 from luxar.demos import (
     MissingDependencyError,
+    ensure_dataset,
     launch_viewer,
-    load_dataset_gsplats,
     parse_demo_flags,
     require_module,
     warn_if_no_cuda_gpu,
@@ -391,30 +391,34 @@ def fit_channel_tiled(
 def fit_all_channels(
     images: list[np.ndarray],
     acquisition: tuple | None = None,
-) -> list[GSplatData]:
-    """Fit 2D gsplats to all RGB channels using tiled fitting."""
+) -> tuple[list[Path], list[GSplatData]]:
+    """Fit 2D gsplats to all RGB channels using tiled fitting.
+
+    Always fits: this runs only on the ``--recompute`` path (``main`` takes the
+    manifest fetch otherwise), so a "reuse the cache" branch here would be dead
+    code — and reading the cache back is not free anyway, since the artifact is
+    a ``kind=partition`` tree with no flat ``GSplatData`` form.
+
+    Returns:
+        ``(cache_paths, gsplats)`` — the written artifacts, and the in-memory
+        fits the round-trip comparison renders from.
+    """
     with asection("Tiled fitting of 2D GSplats per channel"):
+        cache_paths: list[Path] = []
         gsplats_list = []
 
         for i, (image, ch_config) in enumerate(zip(images, CHANNELS)):
             ch_name = ch_config["name"]
             cache_file = CACHE_DIR / f"cmu1_ch{i}.gsplats.zarr.zip"
 
-            # Check per-channel cache
-            if cache_file.exists() and not RECOMPUTE:
-                with asection(f"Channel {i}: {ch_name} (cached)"):
-                    gsplats = GSplatData.load(cache_file, include_stats=False)
-                    aprint(f"Loaded {len(gsplats.amplitudes):,} splats from cache")
-                    gsplats_list.append(gsplats)
-                    continue
-
             with asection(f"Channel {i}: {ch_name}"):
                 gsplats = fit_channel_tiled(
                     image, ch_name, cache_file, acquisition=acquisition
                 )
+                cache_paths.append(cache_file)
                 gsplats_list.append(gsplats)
 
-        return gsplats_list
+        return cache_paths, gsplats_list
 
 
 # =============================================================================
@@ -423,12 +427,20 @@ def fit_all_channels(
 
 
 def create_luxar_scene(
-    gsplats_list: list[GSplatData], output_path: Path | None = None
+    cache_paths: list[Path], output_path: Path | None = None
 ) -> Path:
     """Create Luxar scene with per-channel 2D gsplats as separate layers.
 
+    Each channel is **grafted from its artifact** rather than loaded into a
+    ``GSplatData`` first. The cache carries the ``adaptive`` topology — spatial
+    tiles, each picking its own detail level, which is what a 46000x33000 slide
+    that is panned and zoomed rather than orbited wants — and that is a
+    ``kind=partition`` tree with no flat matrix form.
+    ``add_gsplats_from_file`` is the entry point that grafts one whole.
+
     Args:
-        gsplats_list: List of per-channel GSplatData objects (one per RGB channel).
+        cache_paths: Per-channel ``.gsplats.zarr[.zip]`` artifacts, in channel
+            order (red, green, blue).
         output_path: Output .zarr path (default: demos output dir).
 
     Returns:
@@ -497,41 +509,34 @@ Controls:
   - Mouse drag to pan, scroll to zoom
             """
 
-            # Compute shared centroid across ALL channels so they stay aligned
-            with asection("Computing shared centroid"):
-                all_centers = [g.centers for g in gsplats_list]
-                all_amps = [g.amplitudes for g in gsplats_list]
-                total_amp = sum(a.sum() for a in all_amps)
-                if total_amp > 0:
-                    shared_centroid = (
-                        sum(c.T @ a for c, a in zip(all_centers, all_amps)) / total_amp
-                    )
-                else:
-                    shared_centroid = np.mean(
-                        np.concatenate(all_centers, axis=0), axis=0
-                    )
-                aprint(f"  Shared centroid: {shared_centroid}")
+            # Coordinates stay in slide pixels — no re-centring on a shared
+            # centroid, which this demo used to do "so channels stay aligned".
+            # They are aligned by construction: all three are fits of the SAME
+            # image on the same pixel grid, so subtracting one common offset
+            # from all three never changed their relative position. Framing is
+            # unaffected too (the viewer targets the bounding-box centre, not
+            # the origin), and `unit="px"` now reads as true slide coordinates.
+            # The old per-channel `scale_intensity(0.1)` is gone with it: a
+            # colormapped gsplat layer is windowed by the node's own
+            # `amplitude_data_range`, so a global amplitude scale cancels and
+            # the render is identical either way.
 
             # Add each channel as a layer-enabled gsplats node
-            for i, (gsplats, ch_config) in enumerate(
-                zip(gsplats_list, CHANNELS[: len(gsplats_list)])
+            for i, (cache_path, ch_config) in enumerate(
+                zip(cache_paths, CHANNELS[: len(cache_paths)])
             ):
                 ch_name = ch_config["name"]
                 colormap = CHANNEL_COLORMAPS[i]
 
                 with asection(f"Adding {ch_name} (layer)"):
-                    # Transform: shared centroid so channels stay aligned
-                    gsplats = gsplats.translate(-shared_centroid)
-                    gsplats = gsplats.scale_intensity(0.1)
-
-                    n_splats = len(gsplats.amplitudes)
-
-                    scene.add_gsplats(
+                    scene.add_gsplats_from_file(
                         name=f"gsplats_{colormap}",
-                        centers=gsplats.centers,
-                        amplitudes=gsplats.amplitudes,
-                        cholesky_factors=gsplats.cholesky_factors,
-                        dim_order=["x", "y"],
+                        path=str(cache_path),
+                        # No `dim_order`: grafting a multi-part subtree refuses
+                        # it (the file is already a full node tree, so there is
+                        # nothing left to remap). Nothing is lost — the old
+                        # ["x", "y"] was the identity anyway, the scene
+                        # declaring x then y in exactly that column order.
                         opacity=1.0,
                         # Stays additive while the other bioimaging gsplat
                         # demos are volumetric: this fit is strictly 2D, so
@@ -547,7 +552,7 @@ Controls:
                         layer=True,
                         colormap=colormap,
                     )
-                    aprint(f"  Added {n_splats:,} splats with colormap='{colormap}'")
+                    aprint(f"  Grafted {cache_path.name} with colormap='{colormap}'")
 
             # --- Overlays ---
             # Title
@@ -668,21 +673,14 @@ def main():
             aprint(f"No scene found at {output_path}. Run without --serve-only first.")
         return
 
-    # Try the manifest-driven fetch (checksum-verified cache -> in-repo -> Zenodo)
-    precomputed = load_dataset_gsplats(
-        "gsplats_cmu1_pathology",
-        [
-            "cmu1_ch0.gsplats.zarr.zip",
-            "cmu1_ch1.gsplats.zarr.zip",
-            "cmu1_ch2.gsplats.zarr.zip",
-        ],
-        recompute=RECOMPUTE,
-    )
-
+    # Manifest-driven fetch (checksum-verified cache -> in-repo -> Zenodo).
+    # PATHS, not GSplatData: the artifacts are `adaptive` partitions, which are
+    # grafted rather than loaded (see `create_luxar_scene`).
     images = None
+    gsplats_list: list[GSplatData] = []
 
-    if precomputed is not None:
-        gsplats_list = precomputed
+    if not RECOMPUTE:
+        cache_paths = ensure_dataset("gsplats_cmu1_pathology")
     else:
         # --recompute path: download raw data, fit from scratch
         warn_if_no_cuda_gpu()
@@ -693,7 +691,7 @@ def main():
             return
 
         # Tiled fitting per channel
-        gsplats_list = fit_all_channels(images, acquisition=acquisition)
+        cache_paths, gsplats_list = fit_all_channels(images, acquisition=acquisition)
 
     # Optional round-trip visualisation
     if SHOW_ROUNDTRIP:
@@ -706,7 +704,7 @@ def main():
             )
 
     # Create scene with per-channel layers
-    scene_path = create_luxar_scene(gsplats_list, output_path)
+    scene_path = create_luxar_scene(cache_paths, output_path)
 
     # Summary
     if images is not None:

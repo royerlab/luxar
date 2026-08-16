@@ -479,6 +479,14 @@ def load_dataset_gsplats(
           files is fine; anything else raises rather than fetching the wrong data.
         * **Non-gsplat payloads.** Use :func:`ensure_dataset`, which returns paths
           and assumes nothing about the format.
+        * **Multi-part artifacts.** A ``kind=partition`` store — what
+          :func:`luxar.demos._lod_policy.save_with_lod` writes for the
+          ``adaptive`` recipe, and what ``gsplat lod --recipe
+          tiles|overview|adaptive`` writes — has no flat ``GSplatData`` form and
+          is meant to be GRAFTED whole. Fetch the paths with
+          :func:`ensure_dataset` and hand them to
+          :meth:`~luxar.core.group.Group.add_gsplats_from_file`. This function
+          says so rather than letting the shape error surface bare.
         * **Datasets whose bucket is not ``zenodo``.** ``gsplats_tribolium``,
           ``gsplats_acto3d_heart``, ``gsplats_tng_cosmic_web`` and
           ``milky_way_gaia_3m`` are marked ``local-compute`` and no longer ship
@@ -530,7 +538,24 @@ def load_dataset_gsplats(
     results: list[Any] = []
     with asection(f"Loading gsplats ({name})") if verbose else _null_ctx():
         for path in selected:
-            gsplats = GSplatData.load(path, include_stats=False)
+            try:
+                gsplats = GSplatData.load(path, include_stats=False)
+            except ValueError as exc:
+                if "matrix-shaped" not in str(exc):
+                    raise
+                # A partition / multi-part LOD store. The bare shape error names
+                # an internal method and leaves the caller nowhere to go, and
+                # this is a mistake a demo makes by CHANGING its cache recipe —
+                # so point at the entry point that does handle one.
+                raise ValueError(
+                    f"{path.name} is a multi-part gsplats store (a partition, or "
+                    "a lod group with non-leaf children), which has no flat "
+                    "GSplatData form and cannot be loaded by "
+                    f"load_dataset_gsplats: {exc}\n"
+                    "Graft it instead: take the paths from ensure_dataset("
+                    f"{name!r}) and pass each to Group.add_gsplats_from_file(), "
+                    "which loads a multi-part subtree whole."
+                ) from exc
             if verbose:
                 aprint(f"Loaded {path.name}: {len(gsplats.amplitudes):,} splats")
             results.append(gsplats)

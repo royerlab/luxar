@@ -13,8 +13,20 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import numpy as np
+import pytest
+
 from luxar.demos import registry
-from luxar.demos._lod_policy import _RECIPE_DEFAULTS, DemoRecipe
+from luxar.demos._lod_policy import (
+    _RECIPE_DEFAULTS,
+    TREE_RECIPES,
+    DemoRecipe,
+    save_with_lod,
+)
+
+#: How a demo may read a cached artifact back. ``GSplatData.load`` flattens and
+#: so cannot see a partition; ``load_dataset_gsplats`` ends in that same call.
+_FLAT_LOADERS = ("GSplatData.load", "load_dataset_gsplats")
 
 _FIT_CALLS = {
     "fit_gaussian_splats",
@@ -53,7 +65,9 @@ _NOT_YET_ROUTED = {
 
 
 def _demo_sources() -> dict[str, str]:
-    return {p.name: p.read_text() for p in sorted(registry._DEMOS_DIR.glob("demo_*.py"))}
+    return {
+        p.name: p.read_text() for p in sorted(registry._DEMOS_DIR.glob("demo_*.py"))
+    }
 
 
 def _fitting_demos() -> dict[str, str]:
@@ -88,9 +102,7 @@ def _policy_recipes(src: str) -> list[str]:
 
 def test_every_fitting_demo_chooses_a_topology_or_is_listed() -> None:
     unrouted = {
-        name
-        for name, src in _fitting_demos().items()
-        if "save_with_lod" not in src
+        name for name, src in _fitting_demos().items() if "save_with_lod" not in src
     }
     accounted = set(_NO_CACHED_ARTIFACT) | _NOT_YET_ROUTED
     assert unrouted <= accounted, (
@@ -119,8 +131,7 @@ def test_every_chosen_recipe_is_one_the_policy_defines() -> None:
     for name, src in sorted(_fitting_demos().items()):
         for recipe in _policy_recipes(src):
             assert recipe in known, (
-                f"{name}: unknown recipe {recipe!r}; the policy defines "
-                f"{sorted(known)}"
+                f"{name}: unknown recipe {recipe!r}; the policy defines {sorted(known)}"
             )
 
 
@@ -161,6 +172,117 @@ def test_the_demo_recipe_type_and_defaults_agree() -> None:
     from typing import get_args
 
     assert set(get_args(DemoRecipe)) == set(_RECIPE_DEFAULTS)
+
+
+def test_a_demo_choosing_a_tree_recipe_does_not_read_its_cache_flat() -> None:
+    """The gate the AST checks above could not see.
+
+    ``adaptive`` writes a ``kind=partition`` store, which ``GSplatData.load``
+    refuses ("node is not matrix-shaped"). A demo that picks it and still loads
+    its cache flat is broken on its DEFAULT path — the one every user takes —
+    while ``--recompute``, the path an author runs, stays green. That is exactly
+    how it shipped to review once.
+    """
+    for name, src in sorted(_fitting_demos().items()):
+        if not (set(_policy_recipes(src)) & TREE_RECIPES):
+            continue
+        for loader in _FLAT_LOADERS:
+            assert loader not in src, (
+                f"{name} writes a {sorted(set(_policy_recipes(src)) & TREE_RECIPES)} "
+                f"artifact but reads it back through {loader}, which cannot open a "
+                "multi-part store. Fetch the PATH (ensure_dataset) and graft it with "
+                "Group.add_gsplats_from_file()."
+            )
+
+
+def _tiny_fit(rng: np.random.Generator, n: int, ndim: int):
+    """A small well-formed GSplatData — enough splats for a real BSP split."""
+    from luxar.gsplats.gsplat_data import GSplatData
+
+    tril = ndim * (ndim + 1) // 2
+    chol = np.zeros((n, tril), dtype=np.float32)
+    # Unit-diagonal Cholesky: the diagonal entries sit at the triangular-number
+    # offsets, everything off-diagonal stays 0.
+    for d in range(ndim):
+        chol[:, d * (d + 1) // 2 + d] = 1.0
+    return GSplatData(
+        centers=(rng.random((n, ndim)) * 100.0).astype(np.float32),
+        amplitudes=(rng.random(n) + 0.1).astype(np.float32),
+        cholesky_factors=chol,
+    )
+
+
+@pytest.mark.parametrize("recipe", sorted(_RECIPE_DEFAULTS))
+def test_the_tree_recipe_list_matches_what_the_builders_write(
+    recipe: str, tmp_path: Path
+) -> None:
+    """``TREE_RECIPES`` is load-bearing, so measure it rather than trust it.
+
+    A recipe added to the policy without being classified here would sail past
+    the AST gate above.
+    """
+    from luxar.gsplats.gsplat_data import GSplatData
+
+    out = tmp_path / f"{recipe}.gsplats.zarr"
+    save_with_lod(
+        _tiny_fit(np.random.default_rng(0), 600, 2), out, recipe=recipe, quiet=True
+    )
+
+    if recipe in TREE_RECIPES:
+        with pytest.raises(ValueError, match="matrix-shaped"):
+            GSplatData.load(out, include_stats=False)
+    else:
+        assert len(GSplatData.load(out, include_stats=False).amplitudes) > 0
+
+
+@pytest.mark.parametrize("recipe", sorted(_RECIPE_DEFAULTS))
+def test_every_recipe_grafts_into_a_scene_from_its_file(
+    recipe: str, tmp_path: Path
+) -> None:
+    """The load path a demo actually uses, for every topology the policy offers.
+
+    Mirrors cmu1's call shape (2D, per-channel colormapped layer), because that
+    is the one that broke: a partition reaches the scene by PATH, not by array.
+
+    Also pins the kwarg asymmetry that came with it — a grafted subtree refuses
+    ``dim_order``, since the file is already authored in its own dims. cmu1
+    passed one, so this is the second half of the same defect.
+    """
+    from luxar import Dimension, Dimensions, LuxarZarrCompiler
+
+    artifact = tmp_path / f"{recipe}.gsplats.zarr"
+    save_with_lod(
+        _tiny_fit(np.random.default_rng(1), 600, 2), artifact, recipe=recipe, quiet=True
+    )
+
+    def _scene(tag: str):
+        compiler = LuxarZarrCompiler(tmp_path / f"scene_{recipe}_{tag}.luxar.zarr")
+        return compiler, compiler.create_scene(
+            dimensions=Dimensions(
+                [
+                    Dimension("x", unit="px", display=True),
+                    Dimension("y", unit="px", display=True),
+                ]
+            )
+        )
+
+    compiler, scene = _scene("ok")
+    with compiler:
+        scene.add_gsplats_from_file(
+            name="ch",
+            path=str(artifact),
+            opacity=1.0,
+            blending_mode="additive",
+            layer=True,
+            colormap="red",
+        )
+
+    if recipe in TREE_RECIPES:
+        compiler, scene = _scene("dimorder")
+        with pytest.raises(ValueError, match="dim_order"), compiler:
+            scene.add_gsplats_from_file(
+                name="ch", path=str(artifact), dim_order=["x", "y"]
+            )
 
 
 def test_source_tree_is_the_one_being_tested() -> None:
