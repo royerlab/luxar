@@ -96,7 +96,10 @@ def _default_worker_cmd_builder(
         ("--preset", preset or None),
         ("--config", str(config) if config else None),
         ("--iters", None if iters is None else str(iters)),
-        ("--loss", loss or None),
+        # `is None`, not truthiness: an empty `--loss ""` is a usage error the
+        # parent raises on, and swallowing it here would let `-j N` quietly fit
+        # with the default loss where `-j 1` fails.
+        ("--loss", None if loss is None else str(loss)),
         ("--lr", None if lr is None else str(lr)),
         ("--cull-retention", None if cull_retention is None else str(cull_retention)),
         ("--device", device or None),

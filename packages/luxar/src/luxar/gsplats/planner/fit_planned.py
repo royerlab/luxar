@@ -115,6 +115,7 @@ def _fit_one_box(
     from luxar.gsplats.fit_gsplats import fit_gaussian_splats
     from luxar.gsplats.gsplat_data import GSplatData
     from luxar.gsplats.utils.trils import tril_size
+    from luxar.io._compiler.gsplat_tree import json_safe_value
 
     # The content pipeline is voxel-space end to end: plan boxes, padded
     # bounds, and the keep-core mask below are all voxel coordinates. A
@@ -179,25 +180,39 @@ def _fit_one_box(
     # shape they were rendered at) alive past the release below.
     box_stats.pop("movie_frames", None)
     box_stats.pop("movie_shape", None)
-    # The fit's source/fitted grid stamps describe the PADDED CROP (they become
-    # each partition part's on-disk `lod_stats`, which `gsplat info` prints as the
-    # part's source grid). Two independent things invalidate them: a halo, which
-    # makes the crop strictly larger than the region this part represents, and the
-    # core-keep mask, which is a spatial restriction like a bbox crop. Not
-    # `_is_crop`, whose "did the mask remove anything" meaning misses the halo:
-    # every splat can land in the core and the crop still be 18³ for a 12³ part.
+    # The fit's source/fitted grid stamps describe the PADDED CROP, and they become
+    # each partition part's on-disk `lod_stats` — the provenance a reader asks for
+    # the part's own source grid (`gsplat info`'s source block reads exactly this
+    # key set, off a flat leaf's stats). Two independent things invalidate them: a
+    # halo, which makes the crop strictly larger than the region this part
+    # represents, and the core-keep mask, which is a spatial restriction like a
+    # bbox crop. Not `_is_crop`, whose "did the mask remove anything" meaning
+    # misses the halo: every splat can land in the core and the crop still be 18³
+    # for a 12³ part.
     n_kept = int(np.count_nonzero(keep))
     padded_is_larger = (pz0, pz1, py0, py1, px0, px1) != (z0, z1, y0, y1, x0, x1)
     if padded_is_larger or n_kept < int(keep.size):
         for key in _REGION_SCOPED_STATS_KEYS:
             box_stats.pop(key, None)
     box_stats["n_splats"] = n_kept
+    # ...and the same RAW `lod_stats` write is why non-finite values cannot ride
+    # along either: zarr emits them as bare `Infinity`/`NaN` tokens that a strict
+    # parser (the viewer's `JSON.parse`) refuses. A signal-free crop really does
+    # fit to `psnr_db = inf`, and a content `batch-fit` reuses ONE box plan for
+    # every (t, c), so a box with no signal at some timepoint is ordinary rather
+    # than pathological. Filtered with the same helper the root `pipeline/` bucket
+    # uses (`split_fitting_info`), which also coerces numpy scalars.
+    safe_stats: dict[str, Any] = {}
+    for key, value in box_stats.items():
+        ok, converted = json_safe_value(value)
+        if ok:
+            safe_stats[key] = converted
     out = GSplatData(
         centers=c[keep],
         amplitudes=a[keep],
         cholesky_factors=k[keep],
         colors=colors,
-        stats=box_stats,
+        stats=safe_stats,
         truncation_radius=gd.truncation_radius,
     )
 

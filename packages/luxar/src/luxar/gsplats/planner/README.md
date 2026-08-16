@@ -40,14 +40,19 @@ fit_planned(volume, plan)        -> GSplatData|GSplatNode   # fit each box, merg
   (#1637). Its per-box stats survive too, on a **bare-leaf** partition: with
   `recipe=` each part's ladder builder writes its own per-sub-LOD stats, and on the
   flat path `concatenate` replaces them with its merge summary. Two of them are
-  re-scoped to the part: the region-scoped source/grid stamps (`source_shape` /
-  `fitted_shape` / `occupancy` / `voxels_per_splat`) are dropped — as for a
-  `--bbox` crop — whenever the padded crop is larger than the core box or the core
-  mask removed splats, and `n_splats` is restamped to the kept count. The rest
-  (`psnr_db` / `ssim` / `mse`, the `final_*` losses, the cull provenance
+  re-scoped to the part: the whole region-scoped stamp set a `--bbox` crop drops
+  (`_REGION_SCOPED_STATS_KEYS` — `source_shape` / `source_voxels` / `source_bytes`
+  / `fitted_shape` / `fitted_voxels` / `occupancy` / `voxels_per_splat` /
+  `source_declared`) goes whenever the padded crop is larger than the core box or
+  the core mask removed splats, and `n_splats` is restamped to the kept count. The
+  rest (`psnr_db` / `ssim` / `mse`, the `final_*` losses, the cull provenance
   `n_original` / `n_culled` / `amplitude_retention`) still describes the box's own
   fit — the padded crop, with the pre-mask splat set — which is the same fit
-  provenance a uniform tile-part carries.
+  provenance a uniform tile-part carries (a tile-part keeps its grid stamps too,
+  because a tile keeps every splat it fitted; a core-masked box does not).
+  Non-finite values are dropped as well: the leaf writer stamps `lod_stats` raw, so
+  a signal-free box's `psnr_db = inf` would reach a part's attrs as a bare
+  `Infinity` token that a strict JSON parser refuses.
 - **`fit_planned_parallel`** (`fit_planned_parallel.py`) — the `-j N` path: fit
   each box in its own subprocess (`fit --plan-box`), then merge identically. A box
   that fits 0 splats writes a sibling `<output>.empty` marker (skipped at merge).

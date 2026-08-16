@@ -1104,8 +1104,8 @@ class TestPlannedFitTruncationRadius:
 
         ...even when the core mask dropped nothing. Gating on "the mask removed
         splats" kept an 18³ `source_shape`/`fitted_shape` (and its `occupancy` /
-        `voxels_per_splat`) on a part representing 12³ — and `gsplat info` prints
-        exactly those keys as the part's source grid.
+        `voxels_per_splat`) on a part representing 12³ — the key set a reader asks
+        for the part's own source grid (`gsplat info`'s source block).
         """
         from luxar.gsplats import fit_gsplats
         from luxar.gsplats._data.filtering import _REGION_SCOPED_STATS_KEYS
@@ -1150,6 +1150,57 @@ class TestPlannedFitTruncationRadius:
         assert full.n_splats == 3
         assert full.stats["fitted_shape"] == [18, 18, 18]
         assert full.stats["occupancy"] == 0.5
+
+    def test_box_stats_are_json_safe(self, monkeypatch, tmp_path):
+        """A non-finite box stat must not reach a part's attrs.
+
+        The leaf writer stamps `lod_stats` RAW, so an `inf` would be written as a
+        bare `Infinity` token that a strict JSON parser (the viewer's) refuses. A
+        signal-free crop really does fit to `psnr_db = inf`, and a content
+        `batch-fit` reuses one box plan across every (t, c), so such a box is
+        ordinary. numpy scalars are coerced by the same filter.
+        """
+        import json
+
+        from luxar.gsplats import fit_gsplats
+        from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+        from luxar.gsplats.planner.fit_planned import _fit_one_box
+
+        def _fake_fit(sub, **kwargs):
+            return GSplatData(
+                centers=np.full((2, 3), 3.0, np.float32),
+                amplitudes=np.ones((2,), np.float32),
+                cholesky_factors=np.tile(
+                    np.array([1, 0, 1, 0, 0, 1], np.float32), (2, 1)
+                ),
+                stats={
+                    "psnr_db": float("inf"),
+                    "final_rel_l2": float("nan"),
+                    "final_loss": np.float32(0.25),
+                    "iterations": 5,
+                },
+            )
+
+        monkeypatch.setattr(fit_gsplats, "fit_gaussian_splats", _fake_fit)
+        box = PlanBox(box=[0, 12, 0, 12, 0, 12], n_features=50, budget=120)
+        out = _fit_one_box(np.zeros((24, 24, 24), np.float32), box, 0, 0)
+
+        assert "psnr_db" not in out.stats  # inf: dropped, not persisted
+        assert "final_rel_l2" not in out.stats  # nan: likewise
+        assert out.stats["final_loss"] == pytest.approx(0.25)
+        assert type(out.stats["final_loss"]) is float  # numpy scalar coerced
+        assert out.stats["iterations"] == 5
+
+        # And the written store parses under a strict JSON reader.
+        path = tmp_path / "box.gsplats.zarr"
+        write_gsplats_tree(path, out.tree)
+
+        def _reject(token: str) -> None:
+            raise AssertionError(f"non-JSON token {token!r} in the store")
+
+        for meta in path.rglob("zarr.json"):
+            json.loads(meta.read_text(), parse_constant=_reject)
 
     def test_content_and_uniform_flat_leaves_compose(self):
         """The reported symptom: "Truncation radius mismatch" on concatenate."""
