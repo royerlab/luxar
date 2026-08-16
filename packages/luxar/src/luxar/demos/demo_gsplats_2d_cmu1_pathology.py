@@ -157,8 +157,11 @@ OVERLAP = 512  # Overlap for Hann cosine apodization (seamless stitching)
 SEEDS_PER_TILE = 500000  # Seeds per tile
 N_ITERS = 6_000
 
+# Manifest key for the precomputed per-channel artifacts
+DATASET = "gsplats_cmu1_pathology"
+
 # Cache location
-CACHE_DIR = Path.home() / ".cache" / "luxar" / "gsplats_cmu1_pathology"
+CACHE_DIR = Path.home() / ".cache" / "luxar" / DATASET
 
 # Parse command-line flags
 FLAGS = parse_demo_flags()
@@ -313,6 +316,25 @@ def load_cmu1_image() -> tuple:
         del data  # Free memory
 
     return channels, acquisition
+
+
+def resolve_data() -> list[Path]:
+    """Resolve the per-channel gsplat artifacts: cache -> in-repo copy -> Zenodo.
+
+    Colormaps are assigned by POSITION downstream, so an out-of-order fetch
+    would paint hematoxylin red. ``ensure_dataset`` promises exactly the
+    manifest's file list, in manifest order; this makes the demo check that
+    promise rather than depend on it silently — a rename or an added sidecar
+    trips it just as a reordering does.
+    """
+    cache_paths = ensure_dataset(DATASET)
+    expected = [f"cmu1_ch{i}.gsplats.zarr.zip" for i in range(N_CHANNELS)]
+    if [p.name for p in cache_paths] != expected:
+        raise RuntimeError(
+            f"Manifest file list for {DATASET} is {[p.name for p in cache_paths]}, "
+            f"which does not match the expected {expected} exactly."
+        )
+    return cache_paths
 
 
 # =============================================================================
@@ -680,16 +702,7 @@ def main():
     gsplats_list: list[GSplatData] = []
 
     if not RECOMPUTE:
-        cache_paths = ensure_dataset("gsplats_cmu1_pathology")
-        # Colormaps are assigned by POSITION below, so an out-of-order fetch
-        # would paint hematoxylin red. ensure_dataset promises manifest order;
-        # this makes the demo say so rather than depend on it silently.
-        expected = [f"cmu1_ch{i}.gsplats.zarr.zip" for i in range(N_CHANNELS)]
-        if [p.name for p in cache_paths] != expected:
-            raise RuntimeError(
-                f"Channel order from the manifest is {[p.name for p in cache_paths]}, "
-                f"expected {expected}."
-            )
+        cache_paths = resolve_data()
     else:
         # --recompute path: download raw data, fit from scratch
         warn_if_no_cuda_gpu()
