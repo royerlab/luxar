@@ -165,12 +165,11 @@ if (existsSync(LIB_DIR)) {
   const shimSpecifier = /["'`](\.{1,2}\/(?:\.\.\/)*wasm\/luxar_wasm\.js)["'`]/g;
   const stripComments = (code) =>
     code.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(?<!:)\/\/[^\n]*/g, '');
-  const entryChunk = resolve(LIB_DIR, 'luxar-viewer.js');
-  let entrySpecifierCount = 0;
+  let totalSpecifierCount = 0;
   for (const file of collectJsFiles(LIB_DIR)) {
     const code = stripComments(readFileSync(file, 'utf8'));
     const specifiers = [...code.matchAll(shimSpecifier)].map((m) => m[1]);
-    if (file === entryChunk) entrySpecifierCount = specifiers.length;
+    totalSpecifierCount += specifiers.length;
     if (specifiers.length === 0) continue;
     // Existence alone is not enough: only `dist/lib/**` is published, so a
     // specifier that escapes LIB_DIR is unreachable for a consumer even when it
@@ -197,10 +196,15 @@ if (existsSync(LIB_DIR)) {
   // The scan is text-level, so it self-disables the moment the loader stops
   // spelling its specifiers as literals (a concatenation refactor, a rename, an
   // over-eager comment strip) — every chunk then matches nothing and passes
-  // vacuously. Pin the one chunk #1649 is about: it MUST name a candidate.
-  if (existsSync(entryChunk) && entrySpecifierCount === 0) {
+  // vacuously. Trip on the WHOLE-BUILD total rather than on one named chunk:
+  // which chunk carries the loader is a code-splitting detail (the root already
+  // holds several non-worker chunks besides the entry, and `initWasm` could
+  // become a dynamic import), and any of those layouts is still CORRECT — the
+  // per-chunk check above would verify it. Zero specifiers anywhere is the only
+  // state that actually means "this scan sees nothing".
+  if (totalSpecifierCount === 0) {
     fail(
-      'dist/lib/luxar-viewer.js names no bundle-relative WASM shim specifier, ' +
+      'No chunk under dist/lib names a bundle-relative WASM shim specifier, ' +
         'so this layout check is blind. Either the loader no longer spells its ' +
         'candidates as string literals (the scan cannot follow a concatenated ' +
         'or renamed specifier) or the shim path changed — update the scan in ' +

@@ -76,11 +76,19 @@ const WASM_SHIM_RELATIVE_SPECIFIERS = ['../wasm/luxar_wasm.js', './wasm/luxar_wa
  * so reordering the list would make every ordinary load spend a 404 before
  * reaching the artifact.
  *
+ * The result is deduplicated, so it is not always two entries: `new URL()`
+ * clamps at the URL root, so a chunk served AT the root (`dist/lib/*` copied
+ * to a site root, the common unbundled deployment) resolves both specifiers
+ * to the same href. Keeping the duplicate would cost nothing on the success
+ * path but would make a genuine failure report `tried, in order: X, X`.
+ *
  * @param baseUrl Absolute URL of the chunk to resolve against.
- * @returns Absolute candidate hrefs, most-likely first.
+ * @returns Absolute candidate hrefs, most-likely first, without duplicates.
  */
 export function wasmShimCandidateUrls(baseUrl: string): string[] {
-  return WASM_SHIM_RELATIVE_SPECIFIERS.map((specifier) => new URL(specifier, baseUrl).href);
+  return [
+    ...new Set(WASM_SHIM_RELATIVE_SPECIFIERS.map((specifier) => new URL(specifier, baseUrl).href)),
+  ];
 }
 
 /**
@@ -103,11 +111,15 @@ export type WasmShimModule = { default: () => Promise<unknown> } & Record<string
  *
  * Two rules, both load-bearing:
  * - A candidate must expose a callable `default` to count as a hit. A host that
- *   answers the entry chunk's 404 with a JS-typed SPA fallback page returns a
- *   module with no `default`, which would otherwise end the loop and then blow
- *   up on `wasmModule.default()` — #1649's exact symptom, surviving on that host
- *   class. The check only reads a property, so nothing is instantiated and the
- *   "commit to the winner" rule below is untouched.
+ *   answers the entry chunk's miss with a 200 carrying an empty body, or a
+ *   JavaScript stub/redirect module standing in for the absent artifact, yields
+ *   a namespace whose `default` is missing or is not a function; ending the loop
+ *   there would blow up on `wasmModule.default()` before the real candidate is
+ *   ever tried — #1649's exact symptom, surviving on that host class. (An HTML
+ *   error page is a different case and needs no help here: HTML does not parse
+ *   as an ES module, so it REJECTS the import and the `catch` arm above already
+ *   moves on.) The check only reads a property, so nothing is instantiated and
+ *   the "commit to the winner" rule below is untouched.
  * - Only the IMPORT is retried. Once a candidate wins, the caller runs
  *   `default()` and the staleness check against that module alone: re-running
  *   them elsewhere could instantiate the binary twice, and would hide a

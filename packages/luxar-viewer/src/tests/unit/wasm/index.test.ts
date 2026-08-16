@@ -230,6 +230,16 @@ describe('wasmShimCandidateUrls', () => {
     expect(candidates[1]).toBe(`https://example.com/app/assets/${SHIM}`);
     expect(candidates).toHaveLength(2);
   });
+
+  it('collapses to ONE candidate when the chunk sits at the URL root', () => {
+    // dist/lib/* copied to a site root — the common unbundled deployment.
+    // `new URL()` clamps at the root, so '../wasm/…' and './wasm/…' resolve to
+    // the same href. Without the dedupe a genuine failure (CSP, wrong MIME)
+    // would report `tried, in order: X, X` and send the reader looking for two
+    // different layouts.
+    const candidates = wasmShimCandidateUrls('https://cdn.example/luxar-viewer.js');
+    expect(candidates).toEqual([`https://cdn.example/${SHIM}`]);
+  });
 });
 
 describe('importFirstWasmShim', () => {
@@ -270,15 +280,33 @@ describe('importFirstWasmShim', () => {
     expect(tried).toEqual([A, B]);
   });
 
-  it('falls through when a candidate imports but has no callable default', async () => {
-    // A host that answers the 404 with a JS-typed SPA fallback page: the import
-    // SUCCEEDS and yields a module with no `default`. Ending the walk there
-    // would blow up on `wasmModule.default()` and never try the real path.
+  it('falls through when a candidate imports but has no default at all', async () => {
+    // A host answering the miss with a 200 carrying an empty body, or a JS stub
+    // module standing in for the absent artifact: the import SUCCEEDS and
+    // yields a namespace with no `default`. Ending the walk there would blow up
+    // on `wasmModule.default()` and never try the real path. (An HTML error
+    // page is NOT this case — it fails to parse as a module and is handled by
+    // the import-rejection arm above.)
     const second = shim();
     const tried: string[] = [];
     const mod = await importFirstWasmShim([A, B], async (url) => {
       tried.push(url);
       return url === A ? { notDefault: 1 } : second;
+    });
+    expect(mod).toBe(second);
+    expect(tried).toEqual([A, B]);
+  });
+
+  it('falls through when a candidate has a default that is not callable', async () => {
+    // The "callable" half of the rule, which a `default !== undefined` check
+    // would pass: a redirect/stub module can export a non-function default
+    // (a string, a config object). It would be accepted as the winner and then
+    // throw `default is not a function` on the very next line of initWasm.
+    const second = shim();
+    const tried: string[] = [];
+    const mod = await importFirstWasmShim([A, B], async (url) => {
+      tried.push(url);
+      return url === A ? { default: 'not the shim' } : second;
     });
     expect(mod).toBe(second);
     expect(tried).toEqual([A, B]);
@@ -310,11 +338,32 @@ describe('importFirstWasmShim', () => {
     expect(error.errors).toEqual([errA, errB]);
   });
 
+  it('aggregates a SHAPE rejection together with an import rejection', async () => {
+    // The mixed walk is what makes the shape rejection worth recording: with
+    // only candidate 1 having pushed an error, the walk would fall to the
+    // single-error branch and rethrow candidate 1's 404 bare, blaming the one
+    // URL that was never the problem. Every failed candidate must appear.
+    const errB = new Error('404');
+    const rejected = importFirstWasmShim([A, B], async (url) => {
+      if (url === A) return { notDefault: 1 };
+      throw errB;
+    });
+    const error = (await rejected.catch((e: unknown) => e)) as AggregateError;
+    expect(error).toBeInstanceOf(AggregateError);
+    expect(error.errors).toHaveLength(2);
+    expect((error.errors[0] as Error).message).toContain(A);
+    expect((error.errors[0] as Error).message).toMatch(/not a wasm-bindgen shim/);
+    expect(error.errors[1]).toBe(errB);
+    expect(error.message).toContain(`${A}, ${B}`);
+  });
+
   it('throws a real Error when the candidate list is empty', async () => {
-    // `throw lastError` on an empty list would throw `undefined`, which the
-    // fallback path logs as an unreadable warning.
-    await expect(importFirstWasmShim([], async () => shim())).rejects.toThrow(
-      /No WASM shim candidate URL/
-    );
+    // `throw errors[0]` on an empty list would throw `undefined`, which the
+    // fallback path logs as an unreadable warning. Assert on the VALUE, not via
+    // `rejects.toThrow(/…/)` — that matcher passes on an `undefined` rejection,
+    // i.e. it is vacuous against the exact regression this pins.
+    const err = await importFirstWasmShim([], async () => shim()).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toMatch(/No WASM shim candidate URL/);
   });
 });

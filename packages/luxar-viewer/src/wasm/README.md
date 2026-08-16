@@ -41,10 +41,15 @@ are one level down, while the library build's entry chunk (`luxar-viewer.js`)
 is at the root itself — so `initWasm` tries an ordered candidate list rather
 than a single literal: `../wasm/luxar_wasm.js` first (the app build and both
 worker chunks, so the hot paths still cost one request), then
-`./wasm/luxar_wasm.js` (the library entry chunk). A candidate counts as a hit
-only if it exposes a callable `default`, so a host that answers the 404 with a
-JS-typed SPA fallback page falls through instead of ending the walk on a module
-that cannot initialize. Only the import is retried; once a candidate wins,
+`./wasm/luxar_wasm.js` (the library entry chunk). The list is deduplicated after
+resolution, so it is not always two requests: a chunk served at the URL root
+(`dist/lib/*` copied to a site root) resolves both specifiers to the same href.
+A candidate counts as a hit only if it exposes a **callable** `default`, so a
+200 with an empty body — or a JavaScript stub/redirect module served in place of
+the absent artifact — falls through instead of ending the walk on a module that
+cannot initialize. (An HTML error page needs no such help: it does not parse as
+an ES module, so the import itself rejects.) Only the import is retried; once a
+candidate wins,
 initialization and the staleness check run against it alone. On the Vite dev
 server none of that applies: the module is served from `/src/wasm/index.ts`
 while `make build-wasm` writes to `public/wasm/`, so the URL is resolved off the
@@ -52,11 +57,19 @@ origin as `/wasm/luxar_wasm.js` — a SINGLE candidate, since the bundle-relativ
 ones could only add guaranteed 404s. Use `setWasmJsUrl` only when shipping WASM
 files from a non-standard location.
 
-Dev-tree gotcha: if you serve the whole `dist/` after running both `pnpm build`
-and `pnpm build:lib`, the app build's `dist/wasm/` is candidate 1 for
-`dist/lib/luxar-viewer.js` and shadows the freshly copied `dist/lib/wasm/`. The
-symptom is a "Loaded WASM module is stale" throw plus the TypeScript fallback,
-from an artifact that looks correctly placed.
+Dev-tree gotcha, and only under one precondition: if you serve the whole `dist/`
+after running both `pnpm build` and `pnpm build:lib`, the app build's
+`dist/wasm/` is the FIRST candidate for `dist/lib/luxar-viewer.js` and shadows
+the freshly copied `dist/lib/wasm/`. Back to back that is benign — both scripts
+begin with `pnpm build:wasm` and copy the same `public/wasm/`, so the two
+artifacts are byte-identical. It only bites when `public/wasm/` changed between
+the two builds, and then the likely outcome is the silent one:
+`assertRequiredWasmExports` compares export NAMES only, so an older binary with
+the same export set loads and runs, and you profile or debug the wrong build
+with nothing on the console. It turns loud — a "Loaded WASM module is stale"
+throw plus the TypeScript fallback, from an artifact that looks correctly placed
+— only when the shadowing build predates a kernel since added to
+`required-exports.ts`.
 
 ## WasmModule API
 
