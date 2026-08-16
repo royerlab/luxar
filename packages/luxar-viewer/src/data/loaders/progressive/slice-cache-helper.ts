@@ -54,7 +54,12 @@ export interface SliceViewLike {
  *   reach from `step` (0.25×step via `tolerance-computer.ts`), NOT from the
  *   ride-along `tolerance` value — key on `step`, drop the ride-along.
  * - Non-displayed continuous/spatial dims: key on position + tolerance +
- *   spatial (the tolerance value genuinely selects the decoded set here).
+ *   spatial. Keying on the tolerance here is CONSERVATIVE rather than
+ *   demonstrated: since #1183 no query path derives its continuous reach from
+ *   the ride-along (gsplats/lines recompute via `tolerance-computer.ts`;
+ *   points-with-config and `fallbackQueryTolerance` both use the node's
+ *   `maxRadius`), so it is kept only because it is not PROVEN irrelevant for
+ *   every geometry/loader — not because it selects the decoded set.
  *
  * This is never NARROWER than the decoded-set determinant (it drops only fields
  * that provably cannot change the loaded elements), so it upholds the loaders'

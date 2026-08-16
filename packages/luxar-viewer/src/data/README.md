@@ -1197,22 +1197,24 @@ favour of a single `SceneLoader.getCacheStats()` snapshot.
 
 ### Spatial-query API (loaders/spatial-query/spatial-query-builder.ts)
 
-| Symbol                                            | Description                                                          |
-| ------------------------------------------------- | -------------------------------------------------------------------- |
-| `class SpatialQueryBuilder`                       | Canonical chunk-bounds query API used by all three geometry loaders. |
-| `interface ChunkSpatialIndex`                     | Canonical index shape: `{chunkBounds, chunkCount, metadata}`.        |
-| `executeSpatialQuery(params)`                     | AABB scan (lower-level helper).                                      |
-| `chunkIndicesToRanges(indices, chunkSize, total)` | Convert chunk indices to load ranges.                                |
-| `mergeRanges(ranges)`                             | Merge overlapping or adjacent ranges.                                |
-| `buildQueryPosition(viewState, ndim)`             | Pad/truncate `viewState.slicePosition` to `ndim`.                    |
-| `shouldExtendVisibility(extendDims, viewState)`   | True if any extend-to-all dim is currently hidden.                   |
-| `createLoadAllRange(totalElements)`               | Single range covering the whole dataset.                             |
+| Symbol                                            | Description                                                                             |
+| ------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `class SpatialQueryBuilder`                       | Canonical chunk-bounds query API used by all three geometry loaders.                    |
+| `interface ChunkSpatialIndex`                     | Canonical index shape: `{chunkBounds, chunkCount, metadata}`.                           |
+| `executeSpatialQuery(params)`                     | AABB scan (lower-level helper).                                                         |
+| `chunkIndicesToRanges(indices, chunkSize, total)` | Convert chunk indices to load ranges.                                                   |
+| `mergeRanges(ranges)`                             | Merge overlapping or adjacent ranges.                                                   |
+| `buildQueryPosition(viewState, ndim)`             | Pad/truncate `viewState.slicePosition` to `ndim`.                                       |
+| `shouldExtendVisibility(extendDims, viewState)`   | True if any extend-to-all dim is currently hidden.                                      |
+| `createLoadAllRange(totalElements)`               | Single range covering the whole dataset.                                                |
+| `formatTolerance(t)`                              | Format one tolerance for the `?debug` query log (sub-0.01 → exponential, `1e10` → `∞`). |
 
 ### Tolerance computer (loaders/spatial-query/tolerance-computer.ts)
 
-| Symbol                                                               | Description                                                                                  |
-| -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| `computeTolerance(geometryType, displayDims, ndim, dims?, options?)` | Geometry-aware per-dimension tolerance. Used by `SpatialQueryBuilder`'s geometry-aware path. |
+| Symbol                                                               | Description                                                                                    |
+| -------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `computeTolerance(geometryType, displayDims, ndim, dims?, options?)` | Geometry-aware per-dimension tolerance. Used by `SpatialQueryBuilder`'s geometry-aware path.   |
+| `gsplatsContinuousDimTolerance(dimInfo)`                             | The gsplats hidden-continuous float-safety epsilon, `max(1e-3 × step, 2.75e-5)` — not a reach. |
 
 ### Monitor Port (scene-loader-monitor-port.ts)
 

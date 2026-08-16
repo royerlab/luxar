@@ -11,13 +11,25 @@
  *   visibility, and compaction in a single pass
  */
 
-import { MAX_SUPPORTED_DIMS } from '../../config/constants';
+import {
+  GSPLAT_CHOLESKY_EPSILON as CHOLESKY_EPSILON,
+  MAX_SUPPORTED_DIMS,
+} from '../../config/constants';
 
 /** Maximum packed Cholesky size for MAX_SUPPORTED_DIMS. */
 const MAX_PACKED_CHOLESKY_SIZE = (MAX_SUPPORTED_DIMS * (MAX_SUPPORTED_DIMS + 1)) / 2;
 
-/** Epsilon for degenerate diagonal detection during Cholesky factorization. */
-const CHOLESKY_EPSILON = 1e-10;
+// `CHOLESKY_EPSILON` (imported above as the local kernel name) is the epsilon for
+// degenerate diagonal detection during Cholesky factorization. It is the ONLY thing
+// that decides how wide a hidden dim with an all-zero covariance block still
+// renders: the Crout step below floors such a pivot at `sqrt(CHOLESKY_EPSILON)`, so
+// the splat keeps a σ of 1e-5 along that axis and attenuates to zero only at
+// `truncation_radius × 1e-5`. The gsplats chunk-fetch epsilon has to cover that
+// band, which is why the value lives in `config/constants.ts` (the
+// mirrored-constant home the loaders read) and is imported here rather than
+// duplicated. The Rust twin (`wasm/rust/src/common.rs`) is the backend that
+// actually runs and keeps its own copy; the two are pinned equal by
+// `tests/unit/data/loaders/spatial-query/tolerance-computer.test.ts`.
 
 /**
  * RELATIVE floor for degenerate-variance detection, applied against the largest

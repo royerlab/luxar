@@ -119,7 +119,7 @@ const ranges = await new SpatialQueryBuilder(chunkIndex, viewState, {
   totalElements: attrs.n_splats,
   chunkSize: attrs.chunk_size,
   extendDims: attrs.extend_to_all,
-  toleranceOptions: { gsplatsDefaultTolerance: 3.0 }, // optional tuning
+  // toleranceOptions is optional; gsplats has no continuous-dim knob (see below).
 }).execute();
 ```
 
@@ -168,11 +168,38 @@ quarter-cell `0.25 × step`, while the **membership** role
 the lines projection-clipping path) uses the half-cell `0.5 × step`, matching
 the points/gsplats projection gates:
 
-| Geometry  | Hidden spatial dim                                              | Hidden discrete dim (query)   | Discrete membership gate        |
-| --------- | --------------------------------------------------------------- | ----------------------------- | ------------------------------- |
-| `points`  | `maxRadius` (discrete rule if `spatialExtendDims[d]` false)     | `0.25 × step` (0.25 fallback) | 0.5 absolute (projection stage) |
-| `lines`   | 0 (segment bounds already include line width)                   | `0.25 × step` (0.25 fallback) | `0.5 × step` via `discreteRole` |
-| `gsplats` | `step × gsplatsDefaultTolerance` (default 3 σ; or 3.0 fallback) | `0.25 × step` (0.25 fallback) | `step × 0.5` (projection stage) |
+| Geometry  | Hidden spatial dim                                            | Hidden discrete dim (query)   | Discrete membership gate        |
+| --------- | ------------------------------------------------------------- | ----------------------------- | ------------------------------- |
+| `points`  | `maxRadius` (discrete rule if `spatialExtendDims[d]` false)   | `0.25 × step` (0.25 fallback) | 0.5 absolute (projection stage) |
+| `lines`   | 0 (segment bounds already include line width)                 | `0.25 × step` (0.25 fallback) | `0.5 × step` via `discreteRole` |
+| `gsplats` | `max(1e-3 × step, 2.75e-5)` float-safety epsilon, not a reach | `0.25 × step` (0.25 fallback) | `step × 0.5` (projection stage) |
+
+GSplats' continuous arm is near-zero on purpose: the chunk bounds already carry
+the `truncation_radius · σ` expansion on hidden continuous dims
+(`packages/luxar/src/luxar/io/_ordering/gsplats.py`) and the hidden-dim cutoff on
+the read side is that same radius — the projection kernel's shifted-Gaussian
+attenuation `(e^{-m²/2} − c)/(1 − c)` in
+`packages/luxar-viewer/src/wasm/typescript/gsplats-processing.ts`
+(`project_gsplats_nd_to_3d`) is clamped at 0 and reaches exactly 0 at
+`m = truncation_radius`; the shader's `uTruncate` discard is the displayed-dim
+counterpart and plays no part here. So a chunk a zero-tolerance query misses
+contains only splats that would not render. That holds under a precondition — the
+write side's barrier set must agree with the `discrete` set read here, which it
+does for a scene that declares dimensions but not necessarily for a standalone
+`.gsplats.zarr` whose barriers are value-detected; see
+[spatial-query/README.md](spatial-query/README.md) for the full statement.
+The epsilon (`gsplatsContinuousDimTolerance`) exists so a continuous dim with ZERO
+variance still matches its query: its bounds get no σ expansion, and float32
+storage of the bound (the dominant term, ≈1.9e-7 at a coordinate of 5.3 — the
+`start + k × step` arithmetic drift is secondary) puts them off the float64 query
+position. Its second term covers the band such a splat still RENDERS in, because
+the read side regularizes a degenerate pivot rather than using a raw zero: an
+ABSOLUTE ≈2.75e-5, which therefore dominates below `step = 2.75e-2` and spans many
+cells on a micro-step axis (≈27 at `step = 1e-6`). That is deliberate — the
+rendered band does not shrink with the declared step, and a sub-cell cap would hide
+content the renderer shows; see
+[spatial-query/README.md](spatial-query/README.md). It replaced a `step × 3.0`
+reach that was documented as "3σ" but was a multiple of the navigation step.
 
 The quarter-cell query reach sits deliberately below the half-cell membership
 gates: chunk bounds are epsilon-padded on the write side
