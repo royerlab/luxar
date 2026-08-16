@@ -494,7 +494,7 @@ that type's per-element extent**:
 |---|---|---|
 | Points | `maxRadius` | quarter-cell (`discreteDimTolerance`) |
 | Lines | **`0`** — "bounds already include width" | quarter-cell, or **half-cell** when `discreteRole: 'membership'` |
-| GSplats | `step × 3.0` (3σ) | quarter-cell |
+| GSplats | float-safety epsilon `max(1e-3 × step, 2.75e-5)` — the chunk bounds already carry the `truncation_radius · σ` extent | quarter-cell |
 
 ⚠️ **Mesh must NOT copy the Lines row.** Lines can use `0` because segment clipping *interpolates
 through* the slab — a segment crossing the slice yields a clipped intersection even at zero thickness.
@@ -510,7 +510,10 @@ Mesh therefore adds a fourth arm to `computeHiddenDimTolerance`:
   (deliberately `< 0.5 × step`) and would drop on-grid geometry. **This is the dominant real case** —
   a mesh's hidden dimensions are almost always time or channel.
 - **Continuous hidden spatial dims** → `step × meshSlabTolerance`, default `1.0` (one cell), exposed
-  via `ToleranceOptions` as the mesh sibling of `gsplatsDefaultTolerance`.
+  via `ToleranceOptions`. Mesh is the only type with a *tunable* continuous arm: a mesh has no
+  per-element extent, so the slab thickness is invented rather than measured. GSplats has no
+  equivalent knob — its chunk bounds already carry the real `truncation_radius · σ` extent, so its
+  continuous arm is a fixed float-safety epsilon (`gsplatsContinuousDimTolerance`).
 
 Be honest about what the second bullet means: with per-vertex cull there is no such thing as a true
 cut, so a continuous hidden dimension renders a **thick slab** ("the surface near this slice"), not a

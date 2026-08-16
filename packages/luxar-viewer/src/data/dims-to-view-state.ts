@@ -66,6 +66,26 @@ export function simpleDimsToViewState(
       // where a stable constant is all that's required.
       return 0.5;
     }
+    // Continuous / spatial: no QUERY path reads this value any more. Every one
+    // recomputes it: gsplats/lines/points-with-config via `computeTolerance`,
+    // and `fallbackQueryTolerance` (the points path when a node has no
+    // `EffectiveRadiusConfig`) now uses the node's own `maxRadius` instead of
+    // the ride-along (issue #1183).
+    //
+    // The MAGNITUDE is still read, though — by two non-query consumers, unlike
+    // the discrete case above where both collapse it away: `buildSliceViewSig`
+    // keys a continuous dim on the raw tolerance, and `viewStatesEqual` skips a
+    // tolerance difference only for a discrete non-spatial dim. So a divergence
+    // between this builder and the init-time one would cost SliceCache misses
+    // and progressive-loader resets — not wrong data.
+    //
+    // It NAMES a different constant than the init-time builder
+    // (`ViewStateManager.buildToleranceArray`, which uses
+    // `config.dataLoading.spatial.defaultTolerance`), and today the two are inert
+    // only because they agree NUMERICALLY: `scene.userData.maxRadius` is never set
+    // in production, so `zarr-loader.ts` passes
+    // `config.dataLoading.spatial.defaultMaxRadius`, and both config values are
+    // 0.1. Change either config value and the churn above becomes real.
     return maxRadius;
   });
 

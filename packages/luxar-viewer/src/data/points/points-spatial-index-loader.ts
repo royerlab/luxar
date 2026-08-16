@@ -65,6 +65,7 @@ import {
   LoaderEventEmitter,
   warnExtendToAllNoDimensions,
   announceExtendToAllOnce,
+  formatTolerance,
 } from '../loaders';
 import type { ZarrSceneAttrs } from '../../types/zarr';
 import type { PointsMetadata } from '../../types/points';
@@ -894,7 +895,7 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
       );
       log.info(
         Modules.SPATIAL_INDEX_LOADER,
-        `Query tolerance (with discrete awareness): [${queryTolerance.map((t) => t.toFixed(3)).join(', ')}]`
+        `Query tolerance (with discrete awareness): [${queryTolerance.map(formatTolerance).join(', ')}]`
       );
     } else {
       // No effective-radius config: uniform fallback. Discrete non-spatial dims
