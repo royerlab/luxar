@@ -19,6 +19,12 @@ The manifest records, per dataset:
                   Zenodo record's single license field; that is why records are
                   grouped by license family).
   * ``record``  — (zenodo only) which Zenodo record groups this dataset.
+  * ``acquisition`` — what the dataset as a whole was fitted FROM, and either its
+                  stored size (``comparable: true`` + ``stored_bytes``) or the
+                  ``reason`` no honest ratio exists. Dataset-level rather than
+                  per-archive because a dataset is often several archives (one
+                  per channel) fitted from a single file. Gated by
+                  ``demos/tests/test_manifest_acquisition.py``.
   * ``files``   — basenames + sha256 (git-LFS oid) + byte size, so a fetched copy
                   is checksum-verified.
   * ``dir``     — the in-repo subdir relative to ``demos/data/`` (empty string =

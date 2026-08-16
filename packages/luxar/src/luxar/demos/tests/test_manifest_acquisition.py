@@ -25,12 +25,44 @@ def _datasets() -> dict[str, Any]:
     return json.loads(_MANIFEST.read_text())["datasets"]
 
 
+#: Hosted datasets that ship no Gaussian splats, so no fit denominator applies.
+#:
+#: The selector below is FAIL-CLOSED against this list rather than keyed on a
+#: `gsplats` name prefix: `h2afva` is a gsplat timelapse whose manifest key
+#: carries no such prefix, and a prefix test let the largest hosted dataset of
+#: the set out of this gate entirely, untracked. Anything hosted and not named
+#: here is in scope, so a new dataset joins the gate instead of escaping it on a
+#: naming accident.
+_NOT_GSPLAT_DATASETS = {
+    "desi_galaxies": "DESI DR1 large-scale-structure catalogue, shipped as points",
+    "census_umap_1m": "precomputed CELLxGENE Census UMAP coordinates (npz)",
+    "3d_umap_coords_human": "precomputed multiome peak UMAP coordinates (parquet)",
+    "3d_umap_coords_mouse": "precomputed multiome peak UMAP coordinates (parquet)",
+}
+
+
+def _ships_gsplats(entry: dict[str, Any]) -> bool:
+    """Whether a manifest entry's own archives are Gaussian splats."""
+    files = list(entry.get("files", []))
+    for variant in entry.get("variants", {}).values():
+        files.extend(variant.get("files", []))
+    return any(".gsplats.zarr" in f.get("name", "") for f in files)
+
+
+def _hosted() -> dict[str, Any]:
+    return {
+        name: entry
+        for name, entry in _datasets().items()
+        if entry.get("bucket") == "zenodo"
+    }
+
+
 def _hosted_gsplat_datasets() -> dict[str, Any]:
     """Zenodo-hosted gsplat datasets -- the ones a record will describe."""
     return {
         name: entry
-        for name, entry in _datasets().items()
-        if name.startswith("gsplats") and entry.get("bucket") == "zenodo"
+        for name, entry in _hosted().items()
+        if name not in _NOT_GSPLAT_DATASETS
     }
 
 
@@ -42,11 +74,16 @@ def _hosted_gsplat_datasets() -> dict[str, Any]:
 #: `gsplats_flylight_mcfo` is deliberately absent: it is `bucket=local-compute`
 #: (built on the user's machine, not redistributable), so no record describes it
 #: and it owes no denominator. It needs no naming here either — the selector is
-#: by bucket, so if it is ever promoted to `zenodo` it joins the hosted set with
-#: no acquisition block and this gate goes red on its own.
+#: by bucket and fail-closed, so if it is ever promoted to `zenodo` it joins the
+#: hosted set with no acquisition block and this gate goes red on its own.
 _NOT_YET_DECLARED = {
-    # Owned by another agent while its fit is still in flight.
+    # Refit still in flight.
     "gsplats_flylight_mcfo_63x",
+    # The two variants are different temporal subsets of one acquisition (51tp
+    # is every fifth frame, fitted independently), so what the dataset as a
+    # whole was fitted from needs stating per variant, not once. Declared with
+    # the refit that replaces the superseded 51tp build.
+    "h2afva",
     # Cache-only datasets: hosted, but no in-repo copy to probe, so their
     # acquisitions are declared when their sources are next opened.
     "gsplats_3d_drosophila_gastrulation",
@@ -157,10 +194,29 @@ def test_every_acquisition_describes_its_source() -> None:
         )
 
 
+def test_the_non_gsplat_exclusions_do_not_go_stale() -> None:
+    """The one way out of this gate is a named list, and it has to stay true."""
+    hosted = _hosted()
+    for name, reason in sorted(_NOT_GSPLAT_DATASETS.items()):
+        assert name in hosted, f"{name} is no longer a hosted dataset — drop it"
+        assert len(reason) > 20, f"{name}: say what it ships instead of splats"
+        assert not _ships_gsplats(hosted[name]), (
+            f"{name} ships a .gsplats.zarr archive — it owes a denominator, so "
+            "remove it from _NOT_GSPLAT_DATASETS"
+        )
+
+
 def test_the_detector_actually_finds_datasets() -> None:
     """A selector that matched nothing would pass every assertion above."""
     hosted = _hosted_gsplat_datasets()
     assert len(hosted) >= 15, f"only found {len(hosted)} hosted gsplat datasets"
+    # And it is not keyed on the name: `h2afva` is a gsplat timelapse whose key
+    # has no `gsplats` prefix, and a regression to prefix matching would drop
+    # the largest hosted dataset of the set without a word.
+    assert any(not name.startswith("gsplats") for name in hosted), (
+        "every selected dataset is `gsplats*`-named — the selector has fallen "
+        "back to the name prefix and lets h2afva out"
+    )
     declared = [n for n, e in hosted.items() if "acquisition" in e]
     assert len(declared) >= 10, f"only {len(declared)} declare an acquisition"
     assert any(
