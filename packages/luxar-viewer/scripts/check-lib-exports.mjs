@@ -156,10 +156,11 @@ function collectJsFiles(dir) {
 }
 
 if (existsSync(LIB_DIR)) {
-  // The lib build sets `minify: false`, so a comment that merely MENTIONS
-  // '../wasm/luxar_wasm.js' ships verbatim inside the chunk — the loader's own
-  // JSDoc does exactly that. Strip comments first and accept only quoted string
-  // literals, or the check would pass on prose alone. The `(?<!:)` keeps the
+  // The lib build sets `minify: false`, so every comment in the loader ships
+  // verbatim inside the chunk: today none of them spells a relative shim path
+  // in quotes (the JSDoc writes it with an ellipsis), but one sentence away
+  // they would, and the check would then pass on prose alone. Strip comments
+  // first and accept only quoted string literals. The `(?<!:)` keeps the
   // line-comment strip off the '//' in a 'https://…' string literal, which
   // would otherwise truncate the rest of that line.
   const shimSpecifier = /["'`](\.{1,2}\/(?:\.\.\/)*wasm\/luxar_wasm\.js)["'`]/g;

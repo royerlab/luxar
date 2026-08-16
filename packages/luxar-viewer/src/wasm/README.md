@@ -39,9 +39,11 @@ bundlers (Vite, Rollup, webpack 5). The compiled artifact always lands in a
 one of two depths — `assets/index-*.js` and the library build's worker chunks
 are one level down, while the library build's entry chunk (`luxar-viewer.js`)
 is at the root itself — so `initWasm` tries an ordered candidate list rather
-than a single literal: `../wasm/luxar_wasm.js` first (the app build and both
-worker chunks, so the hot paths still cost one request), then
-`./wasm/luxar_wasm.js` (the library entry chunk). The list is deduplicated after
+than a single literal: the shim one directory ABOVE the chunk first (the app
+build and both worker chunks, so the hot paths still cost one request), then the
+shim BESIDE the chunk (the library entry chunk). In built terms those are
+`dist/wasm/luxar_wasm.js` and `dist/lib/wasm/luxar_wasm.js`; the specifiers
+themselves are in `WASM_SHIM_RELATIVE_SPECIFIERS`. The list is deduplicated after
 resolution, so it is not always two requests: a chunk served at the URL root
 (`dist/lib/*` copied to a site root) resolves both specifiers to the same href.
 A candidate counts as a hit only if it exposes a **callable** `default`, so a
@@ -49,8 +51,8 @@ A candidate counts as a hit only if it exposes a **callable** `default`, so a
 the absent artifact — falls through instead of ending the walk on a module that
 cannot initialize. (An HTML error page needs no such help: it does not parse as
 an ES module, so the import itself rejects.) Only the import is retried; once a
-candidate wins,
-initialization and the staleness check run against it alone. On the Vite dev
+candidate wins, initialization and the staleness check run against it alone. On
+the Vite dev
 server none of that applies: the module is served from `/src/wasm/index.ts`
 while `make build-wasm` writes to `public/wasm/`, so the URL is resolved off the
 origin as `/wasm/luxar_wasm.js` — a SINGLE candidate, since the bundle-relative
