@@ -591,6 +591,9 @@ _SOURCE_STAMP = {
     "source_dtype": "uint16",
     "source_voxels": 64**3,
     "source_bytes": 2 * 64**3,
+    # What that acquisition occupied on disk, compressed — region-scoped like
+    # the decoded size it sits beside.
+    "source_stored_bytes": 1_000_000,
     "fitted_shape": [64, 64, 64],
     "fitted_voxels": 64**3,
     "occupancy": 0.01,

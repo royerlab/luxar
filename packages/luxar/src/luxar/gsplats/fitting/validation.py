@@ -161,6 +161,33 @@ def _explicit_source_shape(source_shape: Any) -> Optional[list[int]]:
     return dims
 
 
+def _explicit_source_stored_bytes(value: Any) -> Optional[int]:
+    """Normalize an EXPLICIT ``source_stored_bytes``, or None.
+
+    The size the acquisition actually OCCUPIES -- the compressed file you
+    download, not the array it decodes to. Both are wanted: a ratio against the
+    decoded array says how much the splat representation beats raw voxels, and a
+    ratio against the stored file says how much smaller the thing you download
+    became. Quoting only the first invites reading it as the second, which
+    flatters the splats by the source codec's own factor.
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise ValueError(f"source_stored_bytes must be an integer, got {value!r}")
+    try:
+        size = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"source_stored_bytes must be an integer, got {value!r}"
+        ) from exc
+    if size != value or size <= 0:
+        raise ValueError(
+            f"source_stored_bytes must be a positive integer, got {value!r}"
+        )
+    return size
+
+
 def _resolve_source_dtype(V: Any, source_dtype: Any) -> tuple[str, Optional[int]]:
     """Resolve ``(source_dtype, source_itemsize)`` for the volume ``V``.
 
@@ -236,6 +263,7 @@ def prepare_fit_config(
     seed_amps_background_relative: bool = False,
     source_dtype: Optional[str] = None,
     source_shape: Optional[Sequence[int]] = None,
+    source_stored_bytes: Optional[int] = None,
     **seed_kwargs: Any,
 ) -> FitConfig:
     """
@@ -282,6 +310,7 @@ def prepare_fit_config(
     # cast the original element size is gone).
     source_dtype, source_itemsize = _resolve_source_dtype(V, source_dtype)
     source_shape = _explicit_source_shape(source_shape)
+    source_stored_bytes = _explicit_source_stored_bytes(source_stored_bytes)
     V = np.asarray(V, dtype=np.float32)
     if V.size == 0:
         raise ValueError("Input image V cannot be empty")
@@ -464,6 +493,7 @@ def prepare_fit_config(
         source_dtype=source_dtype,
         source_itemsize=source_itemsize,
         source_shape=source_shape,
+        source_stored_bytes=source_stored_bytes,
         seeds=seeds,
         seed_amps_background_relative=seed_amps_background_relative,
         seed_method=seed_method,
