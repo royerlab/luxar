@@ -382,6 +382,31 @@ class TestFitTiledParallel:
         # temp dir cleaned up by default
         assert not (tmp_path / "tiles").exists()
 
+    def test_says_it_carries_no_quality_metrics(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture
+    ) -> None:
+        """The sequential path scores its merge; this one cannot, and says so.
+
+        The volume lives in the workers, so there is nothing here to score
+        against — an unexplained missing PSNR is the very thing the sequential
+        path's scoring exists to end, so the gap is named with its recourse.
+        """
+        m = self._specs_count()
+        fit_tiled_parallel(
+            num_tiles=m,
+            jobs=2,
+            tmp_dir=tmp_path / "tiles",
+            worker_cmd_builder=_fake_worker_builder(n_per_tile=5),
+            volume_shape=(40, 40),
+            tile_size=16,
+            overlap=4,
+            progressive=False,
+            cull_retention=None,
+        )
+        out = capsys.readouterr().out
+        assert "No merged quality metrics" in out
+        assert "gsplat compare" in out
+
     def test_keep_tiles(self, tmp_path: Path) -> None:
         m = self._specs_count()
         fit_tiled_parallel(

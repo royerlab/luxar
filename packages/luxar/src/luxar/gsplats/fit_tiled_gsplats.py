@@ -18,6 +18,7 @@ level with a printed note.
 
 from __future__ import annotations
 
+import os
 import time
 from typing import Any, Optional, Sequence
 
@@ -42,12 +43,43 @@ from luxar.gsplats.tiling import (
     resolve_grid_scale,
 )
 
-#: Ceiling, in GiB, on the two full-size float32 volumes a merged-quality score
-#: needs resident at once (the reconstruction and the reference). Above it the
-#: score is SKIPPED — and says so out loud, because an archive that silently
-#: carries no PSNR is the failure this scoring exists to end. Override with
-#: ``LUXAR_TILED_QUALITY_MAX_GB`` when the device can take more.
+#: Ceiling, in GiB, on the memory a merged-quality score may hold resident.
+#: Above it the score is SKIPPED — and says so out loud, because an archive that
+#: silently carries no PSNR is the failure this scoring exists to end. Override
+#: with ``LUXAR_TILED_QUALITY_MAX_GB`` when the machine can take more, or set it
+#: to ``0`` to decline scoring outright.
 _QUALITY_BUDGET_GB = 24.0
+
+#: Full-size float32 volumes live at the scoring peak, which sits inside SSIM
+#: rather than at the render: the reconstruction and the reference, plus the ~6
+#: convolution intermediates :func:`luxar.gsplats.metrics._ssim_nd` keeps live
+#: (its ``_SSIM_PEAK_TENSOR_COUNT``, the same count that function's own tiled
+#: fallback is sized by — and that fallback only engages on CUDA, so on CPU this
+#: is the true peak). Counting only the reconstruction and the reference
+#: under-reports it fourfold, and the shortfall does not merely cost a metric:
+#: scoring runs BEFORE the archive is written, so thrashing or an OOM kill here
+#: loses the whole fit.
+_QUALITY_PEAK_VOLUMES = 8
+
+
+def _quality_budget_gb() -> float:
+    """Resident-memory ceiling for scoring — the env override, or the default.
+
+    A malformed override falls back to the default with a note rather than
+    raising: this runs after every tile has been fitted, so an unparseable
+    environment variable must not be what loses a finished fit.
+    """
+    raw = os.environ.get("LUXAR_TILED_QUALITY_MAX_GB")
+    if raw is None:
+        return _QUALITY_BUDGET_GB
+    try:
+        return float(raw)
+    except ValueError:
+        aprint(
+            f"⚠️  Ignoring LUXAR_TILED_QUALITY_MAX_GB={raw!r} (not a number) — "
+            f"using the {_QUALITY_BUDGET_GB:g} GiB default"
+        )
+        return _QUALITY_BUDGET_GB
 
 
 def _to_voxel_frame(merged: GSplatData, scale: Optional[Sequence[float]]) -> GSplatData:
@@ -88,22 +120,31 @@ def _stamp_merged_quality(
     into the merged one, and none of them can speak for the archive that
     actually ships. Without this a tiled archive carries no PSNR at all — which
     is exactly what a published dataset is asked for.
-    """
-    import os
 
+    The reference is ``volume`` exactly as the caller handed it in: the pedestal
+    the tiles subtracted is NOT put back and per-tile denoising is not applied to
+    it, so the score is against the acquisition — the same basis
+    ``luxar gsplat compare`` uses, and the same one the non-tiled path scores a
+    floor-suppressed fit against (its consequences are issue #1173's, not this
+    function's; matching it is what keeps the two paths' numbers comparable). A
+    lazy source is materialized here — during the fit it is only ever read
+    tile-by-tile — which is what the budget below bounds.
+    """
     if merged.n_splats == 0:
         return
-    budget_gb = float(os.environ.get("LUXAR_TILED_QUALITY_MAX_GB", _QUALITY_BUDGET_GB))
-    needed_gb = 2 * 4 * float(np.prod(volume_shape)) / 1024**3
+    budget_gb = _quality_budget_gb()
+    needed_gb = _QUALITY_PEAK_VOLUMES * 4 * float(np.prod(volume_shape)) / 1024**3
     if needed_gb > budget_gb:
-        if verbose:
-            aprint(
-                f"Merged quality metrics skipped: scoring {volume_shape} needs "
-                f"~{needed_gb:.1f} GiB for the reconstruction plus the reference, "
-                f"over the {budget_gb:.0f} GiB budget. Raise "
-                "LUXAR_TILED_QUALITY_MAX_GB to score it anyway, or run "
-                "`luxar gsplat compare` afterwards."
-            )
+        # Said out loud even under `verbose=False`, like the failure path below
+        # and the norm-range declines above: a quiet run still ends up with an
+        # archive carrying no PSNR, and nothing downstream can say why.
+        aprint(
+            f"Merged quality metrics skipped: scoring {volume_shape} peaks at "
+            f"~{needed_gb:.1f} GiB (the reconstruction, the reference, and "
+            f"SSIM's intermediates), over the {budget_gb:g} GiB budget. Raise "
+            "LUXAR_TILED_QUALITY_MAX_GB to score it anyway, or run "
+            "`luxar gsplat compare` afterwards."
+        )
         return
 
     try:
@@ -802,6 +843,11 @@ def fit_tiled(
             # on whatever the tiles used rather than re-detecting.
             device=fit_kwargs.get("device"),
             verbose=verbose,
+        )
+    elif verbose:
+        aprint(
+            "No merged quality metrics: a partition has nowhere to persist fit "
+            "stats. Score the written archive with `luxar gsplat compare`."
         )
     return merged
 

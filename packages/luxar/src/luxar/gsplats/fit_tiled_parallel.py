@@ -433,7 +433,16 @@ def fit_tiled_parallel(
     # No merged quality score here, unlike the in-process `fit_tiled`: the
     # WORKERS hold the volume, not this parent (see `source_dtype` above), so
     # there is nothing to score the reconstruction against without re-reading
-    # the source. Score such a result afterwards with `luxar gsplat compare`.
+    # the source. Say so rather than shipping an unexplained gap — an archive
+    # that silently carries no PSNR is the failure the sequential path's scoring
+    # exists to end.
+    if verbose:
+        aprint(
+            "No merged quality metrics on the parallel tiled path: the tile "
+            "workers hold the volume, not this process. Score the written "
+            "archive with `luxar gsplat compare`."
+        )
+
     if not keep_tiles:
         shutil.rmtree(tmp_dir, ignore_errors=True)
     else:
