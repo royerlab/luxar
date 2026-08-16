@@ -178,6 +178,24 @@ def _compute_foreground_psnr_chunked(
     return 10.0 * math.log10(data_range**2 / mse), threshold, fraction
 
 
+def _final_foreground_score(
+    cached_rendered_np: Optional[np.ndarray],
+    V_original: np.ndarray,
+) -> tuple[float, float, float]:
+    """Foreground score for the last completed pass, or ``nan`` if there was none.
+
+    Taken once at the end rather than per pass: only the final value is
+    stamped, and the patience check steers on the global PSNR. The caller
+    passes the render ``prev_psnr`` was measured from, so the two figures agree
+    on which pass they describe.
+    """
+    if cached_rendered_np is None:  # no pass completed — nothing was rendered
+        return float("nan"), float("nan"), 0.0
+    return _compute_foreground_psnr_chunked(
+        torch.from_numpy(cached_rendered_np), V_original
+    )
+
+
 def fit_progressive_gaussian_splats(
     V: np.ndarray,
     max_splats: int = 50000,
@@ -570,17 +588,10 @@ def fit_progressive_gaussian_splats(
             break
         pass_i += 1
 
-    # Score the foreground before the last pass's render is freed. Taken once
-    # at the end rather than per pass: only the final value is stamped, and the
-    # patience check steers on the global PSNR.  ``cached_rendered_np`` is the
-    # render `prev_psnr` was measured from, so the two figures agree on which
-    # pass they describe.
-    if cached_rendered_np is not None:
-        fg_psnr, fg_threshold, fg_fraction = _compute_foreground_psnr_chunked(
-            torch.from_numpy(cached_rendered_np), V_original
-        )
-    else:  # no pass completed — nothing was rendered to score
-        fg_psnr, fg_threshold, fg_fraction = float("nan"), float("nan"), 0.0
+    # Score the foreground before the last pass's render is freed.
+    fg_psnr, fg_threshold, fg_fraction = _final_foreground_score(
+        cached_rendered_np, V_original
+    )
 
     # Free cached render (CPU numpy) from the last pass
     del cached_rendered_np
