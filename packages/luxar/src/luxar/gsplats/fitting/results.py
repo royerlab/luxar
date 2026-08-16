@@ -4,7 +4,7 @@ Result finalization for Gaussian splat fitting.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Sequence
+from typing import TYPE_CHECKING, Any, Optional, Sequence
 
 if TYPE_CHECKING:
     import torch
@@ -454,8 +454,12 @@ def finalize_results(
                 f"Rescaled splats to original coordinates (downscale factors={factors})"
             )
 
-    # Convert to physical coordinates if requested
+    # Convert to physical coordinates if requested. The pre-conversion arrays
+    # are kept: they are the only ones that live on `config.V`'s grid, and the
+    # quality metrics below have to render against exactly that grid.
+    voxel_space_arrays: Optional[tuple[np.ndarray, np.ndarray]] = None
     if config.output_space == "real" and config.voxel_size is not None:
+        voxel_space_arrays = (centers_np, cholesky_packed)
         vs = config.voxel_size  # (d,)
         d = centers_np.shape[1] if len(centers_np) > 0 else config.V.ndim
         # Scale centers: voxel indices → physical coordinates
@@ -517,48 +521,60 @@ def finalize_results(
     )
 
     # Compute round-trip quality metrics (PSNR, SSIM, MSE).
-    # Skip when output_space="real" — the GSplatData is in physical coordinates
-    # which don't match config.V.shape (voxel grid).
-    is_voxel_space = not (
-        config.output_space == "real" and config.voxel_size is not None
-    )
-    if is_voxel_space:
-        try:
-            import torch
+    #
+    # `result` may be in PHYSICAL coordinates, which do not match
+    # `config.V.shape`. This used to skip the metrics entirely — and since
+    # `output_space="real"` is the DEFAULT, every fit that passed a voxel_size
+    # (ten of the demos) silently produced an archive with no PSNR at all, which
+    # is the one number a published dataset most needs. The conversion is a pure
+    # per-axis scale of centers and Cholesky rows with amplitudes untouched, so
+    # the pre-conversion arrays describe the SAME mixture on `config.V`'s own
+    # grid: score that copy instead of giving up.
+    if voxel_space_arrays is None:
+        scored = result
+    else:
+        scored = GSplatData(
+            centers=voxel_space_arrays[0].astype(np.float32),
+            amplitudes=amps_np.astype(np.float32),
+            cholesky_factors=voxel_space_arrays[1].astype(np.float32),
+            truncation_radius=config.truncate,
+        )
+    try:
+        import torch
 
-            from luxar.gsplats.metrics import compute_quality_metrics
-            from luxar.gsplats.rendering.volume_rendering import render_to_volume_tensor
+        from luxar.gsplats.metrics import compute_quality_metrics
+        from luxar.gsplats.rendering.volume_rendering import render_to_volume_tensor
 
-            with torch.no_grad():
-                device = str(preprocessed_data.V_tensor.device)
-                rendered = render_to_volume_tensor(
-                    result,
-                    shape=config.V.shape,
-                    device=device,
-                    truncate=config.truncate,
-                )
-                ref = torch.from_numpy(config.V.astype(np.float32)).to(rendered.device)
-                quality = compute_quality_metrics(rendered, ref)
-                del rendered, ref
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-            stats["mse"] = quality["mse"]
-            stats["psnr_db"] = quality["psnr_db"]
-            stats["ssim"] = quality["ssim"]
-            # Foreground PSNR is the honest score on sparse volumes, where the
-            # global figure is mostly a report on reconstructed emptiness.
-            stats["foreground_psnr_db"] = quality["foreground_psnr_db"]
-            stats["foreground_threshold"] = quality["foreground_threshold"]
-            stats["foreground_fraction"] = quality["foreground_fraction"]
-            if config.verbose:
-                aprint(
-                    f"Quality: PSNR={quality['psnr_db']:.1f} dB, "
-                    f"foreground PSNR={quality['foreground_psnr_db']:.1f} dB "
-                    f"(over {quality['foreground_fraction'] * 100:.2f}% of voxels), "
-                    f"SSIM={quality['ssim']:.4f}, MSE={quality['mse']:.2e}"
-                )
-        except Exception as exc:
-            if config.verbose:
-                aprint(f"Note: post-fit quality metrics skipped ({exc})")
+        with torch.no_grad():
+            device = str(preprocessed_data.V_tensor.device)
+            rendered = render_to_volume_tensor(
+                scored,
+                shape=config.V.shape,
+                device=device,
+                truncate=config.truncate,
+            )
+            ref = torch.from_numpy(config.V.astype(np.float32)).to(rendered.device)
+            quality = compute_quality_metrics(rendered, ref)
+            del rendered, ref
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        stats["mse"] = quality["mse"]
+        stats["psnr_db"] = quality["psnr_db"]
+        stats["ssim"] = quality["ssim"]
+        # Foreground PSNR is the honest score on sparse volumes, where the
+        # global figure is mostly a report on reconstructed emptiness.
+        stats["foreground_psnr_db"] = quality["foreground_psnr_db"]
+        stats["foreground_threshold"] = quality["foreground_threshold"]
+        stats["foreground_fraction"] = quality["foreground_fraction"]
+        if config.verbose:
+            aprint(
+                f"Quality: PSNR={quality['psnr_db']:.1f} dB, "
+                f"foreground PSNR={quality['foreground_psnr_db']:.1f} dB "
+                f"(over {quality['foreground_fraction'] * 100:.2f}% of voxels), "
+                f"SSIM={quality['ssim']:.4f}, MSE={quality['mse']:.2e}"
+            )
+    except Exception as exc:
+        if config.verbose:
+            aprint(f"Note: post-fit quality metrics skipped ({exc})")
 
     return result

@@ -1129,8 +1129,15 @@ def test_postfit_metrics_present(
     assert result.stats["mse"] >= 0.0
 
 
-def test_postfit_metrics_skipped_for_physical_coords() -> None:
-    """Post-fit metrics should be skipped when output is in physical coordinates."""
+def test_postfit_metrics_present_for_physical_coords() -> None:
+    """Physical output coordinates must not cost a fit its quality metrics.
+
+    This used to assert the opposite — that the metrics were skipped — which
+    quietly made a defect a contract: ``output_space="real"`` is the default, so
+    every fit passing a ``voxel_size`` produced an archive with no PSNR. The
+    metrics are now scored on the pre-conversion (voxel-grid) arrays. See
+    ``test_results_quality_real_space.py`` for the equivalence check.
+    """
     V = np.random.rand(16, 16).astype(np.float32)
     config = FitConfig(
         V=V,
@@ -1194,7 +1201,9 @@ def test_postfit_metrics_skipped_for_physical_coords() -> None:
     )
 
     result = finalize_results(opt, config, ppd)
-    # Should NOT have PSNR/SSIM/MSE since output is in physical space
-    assert "psnr_db" not in result.stats
-    assert "ssim" not in result.stats
-    assert "mse" not in result.stats
+    for key in ("psnr_db", "ssim", "mse", "foreground_psnr_db"):
+        assert key in result.stats, f"missing post-fit metric: {key}"
+    # And the caller still gets physical coordinates back: voxel_size is 0.5 per
+    # axis, so the returned centers must be HALF the voxel indices they came
+    # from, not the indices the scoring copy used.
+    assert result.centers.max() <= 0.5 * np.array(config.V.shape).max()
