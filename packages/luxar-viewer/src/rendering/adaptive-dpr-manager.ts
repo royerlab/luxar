@@ -149,6 +149,14 @@ const CADENCE_TRUST_INTERVALS = 2;
 const MIN_FRAMES_TO_RERUN_PROBE = 2;
 
 /**
+ * Why a tick's FPS window is unrepresentative of steady-state render
+ * cost, or null when it is trustworthy. Both causes suppress LEARNING
+ * identically (see evaluateAndAdjust); the distinction is carried only
+ * so the scale-down log can name the real one.
+ */
+type SuppressionCause = 'load' | 'cadence' | null;
+
+/**
  * Manages adaptive pixel ratio for performance optimization
  */
 export class AdaptiveDPRManager {
@@ -501,8 +509,16 @@ export class AdaptiveDPRManager {
     // - The cadence was only just RECLASSIFIED from dead time to frame
     //   rate by the gap detector, so the window can be made entirely of
     //   absorbed dead time (see CADENCE_TRUST_INTERVALS).
+    //
+    // Which of the two it was is kept (not just the boolean) so the
+    // scale-down log names the actual cause: both roads lead to an
+    // unprobed reduction, and a line that blames data loading for what
+    // was really an untrusted cadence sends a reader debugging this
+    // machinery straight to the wrong subsystem.
     const cadenceUntrusted = this.nonStallIntervals < CADENCE_TRUST_INTERVALS;
-    const suppressed = (this.loadActivityPredicate?.() ?? false) || cadenceUntrusted;
+    const suppressedBy: SuppressionCause =
+      (this.loadActivityPredicate?.() ?? false) ? 'load' : cadenceUntrusted ? 'cadence' : null;
+    const suppressed = suppressedBy !== null;
 
     // Feed the refresh-cap estimator — but only clean, full-span
     // windows, so partial post-reset windows and load jank don't
@@ -581,14 +597,15 @@ export class AdaptiveDPRManager {
       // ascent" — enough of those and the ledger demotes the operating
       // ceiling to exactly 1.0 (HiDPI is a luxury this scene has proven
       // it can't sustain). The demotion clamp IS this tick's reduction.
-      // Load-suppressed samples never count: jank isn't the ascent's
-      // fault.
+      // Unrepresentative samples never count — neither load jank nor
+      // absorbed dead time is the ascent's fault.
       if (!suppressed && this.boundsLedger.recordSlowSample(timestamp)) {
         this.applyCeilingDemotion(fps);
       } else {
         // Performance is poor - scale down (and arm a probe so we can
         // verify the move actually helped — unless the sample is
-        // load-suppressed, in which case the reduction applies unprobed).
+        // unrepresentative, whether from data loading or an untrusted
+        // cadence, in which case the reduction applies unprobed).
         //
         // Known limitation, measured: on a HITCH-HEAVY cadence the walk
         // can still reach minDPR with no probe ever ratifying it, because
@@ -607,7 +624,7 @@ export class AdaptiveDPRManager {
         // bounded by minDPR and lifts again at the normal hysteresis rate
         // (measured: 16 scale-ups in the 60s after the hitches stop,
         // exactly as many as from a shallower start).
-        this.scaleDown(timestamp, fps, suppressed);
+        this.scaleDown(timestamp, fps, suppressedBy);
       }
       this.hysteresis.recordLow();
     } else if (fps > upThreshold) {
@@ -750,11 +767,13 @@ export class AdaptiveDPRManager {
   /**
    * Scale DPR down for better performance, arming a probe so we
    * verify the move actually helped (see U-shape comment at the top
-   * of this file). Load-suppressed scale-downs apply WITHOUT a probe:
-   * the reduction still helps a janky load, but jank-polluted FPS
-   * samples must never become floor evidence.
+   * of this file). A scale-down taken on an UNREPRESENTATIVE window
+   * applies WITHOUT a probe — the reduction still helps a janky load or
+   * a stuttering loop, but such FPS samples must never become floor
+   * evidence. `suppressedBy` names which cause it was (see
+   * SuppressionCause) purely so the log line is honest about it.
    */
-  private scaleDown(timestamp: number, fps: number, suppressed: boolean): void {
+  private scaleDown(timestamp: number, fps: number, suppressedBy: SuppressionCause): void {
     const proposed = this.currentDPR * this.config.scaleDownFactor;
     // Block scaleDown from moving TO OR BELOW the U-shape floor. The
     // ledger's to-or-below early-return (rather than clamping to the
@@ -776,12 +795,18 @@ export class AdaptiveDPRManager {
       LogEmoji.PERFORMANCE,
       Modules.ADAPTIVE_DPR,
       `Scaled down: DPR ${previousDPR.toFixed(2)} → ${newDPR.toFixed(2)} ` +
-        `(FPS: ${fps.toFixed(1)}, ${suppressed ? 'load-suppressed, unprobed' : 'probing for U-shape'})`
+        `(FPS: ${fps.toFixed(1)}, ${
+          suppressedBy === 'load'
+            ? 'load-suppressed, unprobed'
+            : suppressedBy === 'cadence'
+              ? 'untrusted cadence, unprobed'
+              : 'probing for U-shape'
+        })`
     );
 
     // Arm the probe so the next evaluateAndAdjust pass after
     // config.probeWindowMs judges whether this move helped.
-    if (!suppressed) {
+    if (suppressedBy === null) {
       this.probeController.arm({
         previousDPR,
         previousFPS: fps,
