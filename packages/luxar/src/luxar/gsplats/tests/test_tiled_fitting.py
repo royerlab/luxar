@@ -1983,14 +1983,20 @@ class TestResolveGridScale:
         ],
     )
     def test_a_frame_the_tree_cannot_state_is_refused(self, kwargs: "Any") -> None:
-        """Neither term is validated upstream for finiteness.
+        """``voxel_size`` is not validated upstream for finiteness at all.
 
         ``fitting.validation`` tests ``voxel_size <= 0``, which is False for
-        ``NaN``, and nothing checks a YAML ``downscale:`` before it reaches
-        here. An unrefused ``NaN``/``0`` would become a ``NaN``/collapsed split
-        plane in the serialized tree — a silently unorderable partition — or, on
-        the batch path, get recorded on the manifest for a merge days later to
-        trip over. Refused where the offending term can still be named.
+        ``NaN``. An unrefused ``NaN``/``0`` would become a ``NaN``/collapsed
+        split plane in the serialized tree — a silently unorderable partition —
+        or, on the batch path, get recorded on the manifest for a merge days
+        later to trip over. Refused where the offending term can still be named.
+
+        The ``downscale_factors`` cases are defence in depth for a direct
+        caller: both in-tree producers now normalise first (the single-fit
+        ``-j N`` path through ``normalize_downscale``, and the batch planner,
+        which since #1624 validates the key itself and does not pass this term at
+        all). This is a public entry point, so it still refuses rather than
+        trusting them.
         """
         from luxar.gsplats.tiling import resolve_grid_scale
 
