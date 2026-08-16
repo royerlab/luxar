@@ -208,24 +208,39 @@ luxar gsplat additive sub.gsplats.zarr pyr.gsplats.zarr --target-ms 200   # ~200
 | `--coarsen-dims` | all | center-column indices coarsening may merge over (rest = hard barriers) |
 
 ### LOD switch tuning (any kind=lod group)
-Auto-derived, no knob: each child's `coverage_fraction` = `sqrt(N_i / N_finest)`
-(a viewport-relative value; coarsest 0.0, finest 1.0). The viewer multiplies it by
-half of the live viewport's fitted screen axis (the smaller of its width/height),
-so the finest level shows at any normal full-frame view (projected size ≳ half
-the fitted screen axis) and coarser levels step in as it shrinks below that —
-self-calibrating on any monitor or aspect ratio.
+Auto-derived, no knob, and COUNT-INDEPENDENT: thresholds come from SCREEN-AREA
+occupancy halving and are stamped `selector="screen-area"`. Each
+`coverage_fraction` is a literal screen-area fraction (projected bbox rect area /
+viewport area): the coarsest child gets `0.0` (always-eligible floor), the finest
+gets `0.5` — so a WHOLE-OBJECT ladder holds full detail while the object occupies
+at least half the screen — and each level between halves once more
+(…, 1/8, 1/4, 1/2). Element counts are read only for the ladder's LENGTH.
+
+The metric is an NDC-area fraction, so it is RESOLUTION-independent — the same
+framing reads the same fraction on any monitor size, and the projected rect is
+clipped to the viewport first so it tops out at exactly 1.0. It is **not**
+aspect-independent: `fov` is vertical, so a wider viewport shows more world
+horizontally and the same object covers a smaller area fraction. Resizing between
+square and ultrawide does move the switch points.
+
+The retired `sqrt(N_i/N_finest)` derivation was a diagonal metric spaced by a
+count ratio; it held the most expensive level across nearly the whole usable zoom
+range on dense additive data, which is why the anchor is now occupancy, not count.
 
 The `adaptive` and `overview` recipes are the exception: their ladders are bound
-to a spatial partition (a tile projects to a fraction of the whole object), so
-they are scaled to anchor the finest at `4.0` = `SCREEN_FILL_DIAGONAL_RATIO /
-FILL_FACTOR` — approximately the switch point a screen-filling tile needs (exact
-only near aspect ratio sqrt(3) ~= 1.73; the real screen-filling metric ranges
-~2.8 at 1:1 to ~7.4 at an ultrawide 32:9 — see `lod-group-registry.ts`'s
-`FILL_FACTOR` doc) — and what `overview`'s "coarse overview, fine tiles on zoom"
-means. An explicit `coverage_fractions=[...]` list may use the same `[0, 4]`
-range. The former `extent`/`count` methods and the
-`--lod-method` / `--extent-percentile` / `--extent-anisotropy` /
-`--base-pixel-size` flags have been removed.
+to a spatial partition, so they keep the FILLS-SCREEN anchor
+(`partitioned_coverage_fractions`, finest = area 1.0 = the tile alone fills the
+screen). For `adaptive` that is geometry — each lod group's bbox is one BSP tile,
+so it projects to a fraction of the whole object. For `overview` it is the
+recipe's contract: the coarse cap is what you see at the opening framing and the
+fine partition is the zoom-in branch, so it deliberately does NOT show full detail
+at a normal full-frame view. Use `levels` if you want that.
+
+Legacy stores and explicit `coverage_fractions=[...]` lists keep the older
+`selector="coverage"` diagonal metric (thresholds in `[0, 4]`); the viewer reads
+both. The former `extent`/`count` methods and the `--lod-method` /
+`--extent-percentile` / `--extent-anisotropy` / `--base-pixel-size` flags have
+been removed.
 
 ### Quality stamps
 | Flag | Default | Meaning |

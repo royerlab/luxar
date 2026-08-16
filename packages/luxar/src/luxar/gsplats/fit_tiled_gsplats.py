@@ -401,6 +401,7 @@ def _tiled_source_grid_stats(
     source_shape: Optional[Sequence[int]],
     source_dtype: Optional[str],
     source_itemsize: Optional[int],
+    source_stored_bytes: Optional[int] = None,
 ) -> dict[str, Any]:
     """Source-grid stamps for a MERGED tiled fit.
 
@@ -413,9 +414,16 @@ def _tiled_source_grid_stats(
     ``fitted_shape`` is the whole volume, not a tile: the tiles cover it, so the
     grid the optimiser collectively saw is the volume itself.
     """
-    from luxar.gsplats.fitting.validation import _explicit_source_shape
+    from luxar.gsplats.fitting.validation import (
+        _explicit_source_shape,
+        _explicit_source_stored_bytes,
+    )
 
     declared = _explicit_source_shape(source_shape)
+    # Normalized through the same gate the single-volume fit uses: this becomes
+    # a published denominator either way, and a bare `int()` here would take
+    # "1000" and round 1.5 to 1 on the one producer that skipped the check.
+    stored_bytes = _explicit_source_stored_bytes(source_stored_bytes)
     dtype, itemsize = source_dtype, source_itemsize
     if itemsize is None and dtype:
         # A caller holding only the dtype NAME (the parallel orchestrator, whose
@@ -444,6 +452,8 @@ def _tiled_source_grid_stats(
         out["source_declared"] = True
     if itemsize:
         out["source_bytes"] = voxels * int(itemsize)
+    if stored_bytes:
+        out["source_stored_bytes"] = stored_bytes
     return out
 
 
@@ -467,6 +477,7 @@ def fit_tiled(
     # describe the merged result, so the merge is where they are applied.
     source_shape: Optional[Sequence[int]] = None,
     source_dtype: Optional[str] = None,
+    source_stored_bytes: Optional[int] = None,
     **fit_kwargs: Any,
 ) -> "Any":
     """Fit Gaussian splats to a large volume using tiled decomposition.
@@ -652,6 +663,7 @@ def fit_tiled(
         source_shape=source_shape,
         source_dtype=merged_dtype,
         source_itemsize=merged_itemsize,
+        source_stored_bytes=source_stored_bytes,
         tile_size=tile_size,
         overlap=overlap,
         num_tiles=len(specs),
@@ -693,6 +705,7 @@ def merge_tile_results(
     source_shape: Optional[Sequence[int]] = None,
     source_dtype: Optional[str] = None,
     source_itemsize: Optional[int] = None,
+    source_stored_bytes: Optional[int] = None,
 ) -> "Any":
     """Merge per-tile fit results into a single (optionally multi-LOD) dataset.
 
@@ -862,7 +875,11 @@ def merge_tile_results(
     )
     merged.stats.update(
         _tiled_source_grid_stats(
-            volume_shape, source_shape, source_dtype, source_itemsize
+            volume_shape,
+            source_shape,
+            source_dtype,
+            source_itemsize,
+            source_stored_bytes,
         )
     )
 

@@ -71,10 +71,12 @@ export {
   mergeRanges,
   shouldExtendVisibility,
   createLoadAllRange,
+  formatTolerance,
 } from './spatial-query/spatial-query-builder';
 
 export {
   computeTolerance,
+  gsplatsContinuousDimTolerance,
   type DimensionInfo,
   type ToleranceOptions,
 } from './spatial-query/tolerance-computer';

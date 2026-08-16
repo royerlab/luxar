@@ -122,11 +122,91 @@ path via `discreteDimMembershipTolerance`) is the half-cell `0.5 × step`
 matching the points/gsplats projection visibility gates. Hidden **spatial/continuous** dims stay
 geometry-specific:
 
-| Geometry  | Hidden spatial dim                                                            | Hidden discrete dim             |
-| --------- | ----------------------------------------------------------------------------- | ------------------------------- |
-| `points`  | `maxRadius` (so points whose radius intersects the slice load)                | `0.25 × step` (fallback `0.25`) |
-| `lines`   | `0` (segment bounds already include line-width extent)                        | `0.25 × step` (fallback `0.25`) |
-| `gsplats` | `step × gsplatsDefaultTolerance` (default 3σ), else `gsplatsDefaultTolerance` | `0.25 × step` (fallback `0.25`) |
+| Geometry  | Hidden spatial dim                                                | Hidden discrete dim             |
+| --------- | ----------------------------------------------------------------- | ------------------------------- |
+| `points`  | `maxRadius` (so points whose radius intersects the slice load)    | `0.25 × step` (fallback `0.25`) |
+| `lines`   | `0` (segment bounds already include line-width extent)            | `0.25 × step` (fallback `0.25`) |
+| `gsplats` | `max(1e-3 × step, 2.75e-5)` — a float-safety epsilon, not a reach | `0.25 × step` (fallback `0.25`) |
+
+The gsplats continuous value is deliberately near-zero
+(`gsplatsContinuousDimTolerance`). Chunk bounds already carry the ellipsoidal
+`truncation_radius · σ` expansion on every continuous dim
+(`packages/luxar/src/luxar/io/_ordering/gsplats.py`, with
+`coverage_sigma = truncation_radius`), and the hidden-dimension cutoff on the read
+side is that same radius: the projection kernel
+(`packages/luxar-viewer/src/wasm/typescript/gsplats-processing.ts`, function
+`project_gsplats_nd_to_3d`, and its Rust twin) attenuates by
+`(e^{-m²/2} − c)/(1 − c)` with `c = e^{-T²/2}`, clamped at 0 and therefore exactly
+0 at `m = T = truncation_radius`. (The shader's `uTruncate`/`uTruncateSq` discard
+is the DISPLAYED-dimension cutoff; it never sees a hidden dimension.) So a chunk
+that misses a zero-tolerance query holds only splats the projection would
+attenuate to nothing, and any wider reach is pure over-fetch. (This was
+`step × 3.0`, documented as "3σ" although it was a multiple of the navigation STEP
+and unrelated to the covariance.)
+
+**Precondition.** `compute_chunk_bounds_gsplats` expands the dims NOT in its
+`slice_dims` argument and gives the ones that ARE only a tight
+`_BARRIER_BOUND_EPS` pad, so the claim above holds while the write side's barrier
+set equals the set this module reads as `discrete`. It does for a scene that
+declares its dimensions (`packages/luxar/src/luxar/io/_compiler/geometry_writers/gsplats.py` uses
+`discrete and not display`). With `scene_dimensions` absent the writer falls back
+to the value-based `detect_barrier_dims` in
+`packages/luxar/src/luxar/io/_ordering/compound.py`, whose own
+docstring calls a false positive a correctness bug — a really-spatial axis with
+integer, low-cardinality values gets tight bounds while this side epsilon-only,
+and a σ-extended splat near a chunk edge can be dropped. The disagreement predates
+this rule, but the old `step × 3.0` reach (a bare `3.0` with no dimension
+metadata) MASKED it by covering those tight bounds; a `1e-3 × step` epsilon does
+not. The robust fix is plumbing rather than a wider reach: the writer already
+publishes the set it used as the ordering `slice_dims` attr
+(`packages/luxar/src/luxar/io/_compiler/gsplat_assembly.py`) and the
+tolerance computer does not read it.
+
+The epsilon itself covers two hazards, and has exactly one term for each.
+(1) A continuous dim along which the splats have zero variance (a stacked axis
+declared continuous) gets bounds that are float-EXACT at the axis value, because
+the write side epsilon-pads discrete dims only; at a literal `0` tolerance
+membership would be an exact float comparison. The dominant perturbation there is
+that the bound is stored as **float32** (`chunk_bounds` is `dtype=np.float32`)
+while the query is a float64 — ≈1.9e-7 at a coordinate of 5.3; the
+`start + k × step` arithmetic drift in the query position is secondary (≈9e-16).
+(2) The read side does not actually use a zero variance: `computeMarginalCholesky`
+regularizes a degenerate pivot to `sqrt(CHOLESKY_EPSILON)` = 1e-5 for an all-zero
+hidden block, so such a splat still renders out to
+`truncation_radius × 1e-5` ≈ 2.75e-5 — which term 1 falls below for any
+`step < 2.75e-2`.
+
+So there are two regimes with one crossover, at `step = 2.75e-2`: the
+`_BARRIER_BOUND_EPS` mirror `1e-3 × step` above it, the ABSOLUTE 2.75e-5 band
+below. Below the crossover the epsilon spans many CELLS (≈27.5 at `step = 1e-6`)
+and that is deliberate: the kernel's regularization floor is an absolute variance
+backstop, so the rendered band does not shrink with the declared step, and a cap
+at a fraction of a cell (tried and removed in review) would hide content the
+renderer genuinely shows — at `step = 1e-6` a `0.25 × step` ceiling gives 2.5e-7
+against a 2.75e-5 render band, narrower even than the old `step × 3` rule. The
+quarter-cell rationale belongs to the DISCRETE arm, where over-reach bleeds a
+neighbouring category; on a continuous axis it is a bandwidth question only (and
+mesh already gets a full cell there). The property that holds at every step is the
+one that matters: the epsilon is never smaller than the band a degenerate axis can
+render in, so the query cannot miss renderable content. What that bounds is the
+DISTANCE, not the fraction of a node fetched: if the dim's real σ is micro-scale
+too (`step = σ = 1e-9`, a metre-declared axis with nanometre structure) the needed
+window is `T · σ = 2.75e-9`, so the epsilon over-fetches by ~1e4 and can pull the
+whole node — the one regime where this is worse than the old `step × 3`, and one
+the σ-plumbing below fixes. The real fix is a
+scale-aware regularization floor in the kernel, or plumbing the splats' actual σ
+into the query — not a wider or narrower constant.
+
+Three documented limits stay: coordinates far from the origin (an expansion below
+half a float32 ULP rounds away, so with `T = 2.75` any
+`σ_d ≲ (1.1–2.2)e-8 × |coord|` behaves like zero variance), a degenerate dim
+alongside another hidden dim of very large σ (the regularizer's relative floor
+`σ_max × 1e-6` renders `T × σ_max × 1e-6`, which exceeds the epsilon once
+`σ_max > max(1e-3 × step / (T × 1e-6), 10)`, i.e. `≈363.6 × step` or the absolute
+10 — the two branches agreeing exactly at the crossover, where the unrounded
+coefficient gives 10), and a
+node whose `truncation_radius` is well above the default (the band scales with it,
+while this call site sees only a `DimensionInfo` and must use the default).
 
 Points decide "spatial vs discrete" from `options.spatialExtendDims` (the
 per-dimension flag array carried by `EffectiveRadiusConfig`) rather than the

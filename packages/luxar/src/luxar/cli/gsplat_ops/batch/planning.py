@@ -722,10 +722,15 @@ def _validate_merge_refine_frame(
     :func:`_validate_merge_refine_source`: that one asks whether the source's
     AXES can be mapped, this one whether its COORDINATES can. A per-part re-fit
     reads the part's ``bsp_tree`` cell as VOXEL INDICES into the source, so a
-    ``grid_scale`` (a ``voxel_size`` / ``downscale`` in the run's ``--config``)
-    puts every crop a factor off — exactly the reason ``gsplat fit`` refuses
-    ``--refine volume`` under the same conditions
+    ``grid_scale`` — for a batch run, a ``voxel_size`` in the run's ``--config``
+    with the default ``output_space: real`` — puts every crop a factor off,
+    exactly the reason ``gsplat fit`` refuses ``--refine volume`` under the same
+    conditions
     (:func:`~luxar.cli.gsplat_ops.fitting.fit_utils.reject_rescaled_volume_refit`).
+    A config ``downscale:`` is deliberately NOT a term in this factor: every
+    batch task rescales its splats back to the FULL-resolution frame the planner
+    tiled (see :func:`resolve_uniform_grid_scale`), so it cannot mis-frame a
+    crop, and counting it would refuse a re-fit that works.
     Checked at plan time so a typo costs nothing; the merge front door checks it
     again off the same recorded factor.
     """
@@ -738,17 +743,183 @@ def _validate_merge_refine_frame(
         raise typer.BadParameter(f"--merge-refine volume: {problem}")
 
 
+def validate_config_downscale(fit: FitConfig, ndim: int) -> Optional[Tuple[int, ...]]:
+    """Normalize a ``downscale:`` in the run's fit config, or reject it as a usage error.
+
+    ``batch-fit`` forwards its ``--config``/``--preset`` VERBATIM to every array
+    task, so this key reaches the workers whether or not the planner looks at it.
+    A MALFORMED value (``0``, ``2.5``, a wrong-length list) is therefore a
+    plan-time usage error in every mode: the resolver that used to catch it no
+    longer sees this key at all (see :func:`resolve_uniform_grid_scale`), and
+    without this check it would reach every task as a raw traceback at fit time.
+
+    Called EARLY — before any voxel is read and before anything is written —
+    because it needs only the merged config and ``ndim``. Checking it alongside
+    the decomposition instead made a malformed value in a CONTENT run surface
+    only after the shared box plan had been scanned (a max-projection over up to
+    ``--plan-samples`` timepoints, tens of GB on a real timelapse), the output
+    directory created and ``plan.json`` written: measured, the "Plan: 6 boxes …
+    → out-c/plan.json" line printed and the file existed before the refusal.
+
+    Guarantees ONLY that the value is well-formed; whether the run's
+    decomposition can actually complete with it is
+    :func:`refuse_downscale_grid_mismatch`'s question, asked once the tile grid
+    is known. Returns the per-axis factors, or ``None`` for an absent value and
+    for a documented no-op (``downscale: 1``, ``[1, 1, 1]`` — all-ones, nothing
+    is decimated). Raises :class:`typer.BadParameter` on a malformed one.
+    """
+    from luxar.cli.gsplat_config import load_fit_config
+    from luxar.gsplats.fitting.downscale import normalize_downscale
+
+    try:
+        config = load_fit_config(preset=fit.preset, config_path=fit.config)
+    except Exception as exc:
+        raise typer.BadParameter(
+            f"could not read the fit config for this run (--preset "
+            f"{fit.preset!r}, --config {str(fit.config) if fit.config else None!r}): "
+            f"{exc}"
+        ) from exc
+    raw = config.get("downscale")
+    if raw is None:
+        return None
+    try:
+        factors = normalize_downscale(raw, ndim)
+    except (TypeError, ValueError) as exc:
+        # TypeError as well as ValueError: a float (`downscale: 2.5`) is neither
+        # an int nor iterable, so it never reaches the function's own checks.
+        raise typer.BadParameter(
+            f"config `downscale: {raw!r}` is invalid: {exc}"
+        ) from exc
+    return tuple(factors) if factors is not None else None
+
+
+def refuse_downscale_grid_mismatch(
+    factors: Optional[Tuple[int, ...]],
+    *,
+    mode: str,
+    spatial: Tuple[int, ...],
+    tile_size: int,
+    tile_overlap: int,
+    total_tasks: int,
+) -> None:
+    """Refuse a config ``downscale:`` whose workers would re-tile a DIFFERENT grid.
+
+    Each uniform array task is a ``fit --tile k/M`` run that decimates its own
+    volume and then recomputes the tile grid on the DECIMATED shape, while the
+    planner tiled the FULL-RESOLUTION one (#1624). When those two grids disagree
+    the run cannot complete: measured on a 32^3 store with ``--tile-size 12
+    --overlap 2``, the plan builds 64 tiles per slot and a ``downscale: 2`` worker
+    sees 8, so tiles 8..63 exit 1 with "tile index out of range"
+    (``fit_single_tile``) and no merge ever happens.
+
+    A decimating value is NOT fatal per se, so the disagreement is measured
+    directly rather than inferred from a tile count: both grids are built with
+    :func:`~luxar.gsplats.tiling.compute_tile_specs` (the planner's on ``spatial``,
+    the worker's on the decimated shape, same ``tile_size``/``tile_overlap``) and
+    they AGREE when they hold the same number of tiles and every worker origin,
+    multiplied per axis by ``factors`` — which is exactly what
+    ``rescale_and_save`` does to that tile's splats — is the corresponding planner
+    origin. Three shapes are measured to complete correctly and pass that test
+    (or skip it), instead of being refused:
+
+    * a factor that decimates only axes holding a SINGLE tile at full resolution.
+      Measured: spatial ``(40, 8, 8)`` with ``--tile-size 12 --overlap 0`` and
+      ``downscale: [1, 2, 2]`` gives 4 planner tiles and 4 worker tiles on the
+      decimated ``(40, 4, 4)``, and all four real ``fit --tile k/4`` workers exit
+      0 with their splats in the correct full-resolution slabs; spatial
+      ``(10, 24, 24)`` with ``--tile-size 12 --overlap 2`` and
+      ``downscale: [2, 1, 1]`` gives 9 tiles on both sides with identical origins
+      after the worker's rescale.
+    * ``mode == "content"`` — a content task is ``fit --tiling content --plan
+      plan.json --plan-box K``, which never re-tiles (it bounds-checks ``K``
+      against the same plan JSON the planner wrote) and whose ``_fit_one_box``
+      crops the FULL-resolution volume; ``finalize_results`` then rescales the
+      crop's splats back to full resolution before the box origin is added, so
+      the centers land in the same global range as without the key.
+    * a single-tile plan — the worker's decimated volume still yields exactly one
+      tile at the same origin, so ``--tile 0/1`` passes its bounds check and the
+      splats come back at full resolution. (Not special-cased: it is the
+      grid comparison's trivial pass.)
+
+    ``factors`` is what :func:`validate_config_downscale` already normalized from
+    the same config, so the value's well-formedness is settled before this runs
+    and ``None`` (absent, or an all-ones no-op) returns silently.
+    """
+    if factors is None or mode == "content":
+        return
+    from luxar.gsplats.tiling import compute_tile_specs
+
+    # `downscale_volume` decimates by strided slicing, so the worker's shape is
+    # the CEIL of the division, and its grid is built on that.
+    decimated_shape = tuple(-(-s // f) for s, f in zip(spatial, factors))
+    planned = compute_tile_specs(spatial, tile_size, tile_overlap)
+    worker = compute_tile_specs(decimated_shape, tile_size, tile_overlap)
+    rescaled = [tuple(o * f for o, f in zip(spec.origin, factors)) for spec in worker]
+    if len(worker) == len(planned) and all(
+        got == tuple(want.origin) for got, want in zip(rescaled, planned)
+    ):
+        return  # the worker re-tiles the SAME grid: nothing to refuse
+    if len(worker) < len(planned):
+        # `ceil(s / f)` is monotone per axis, so a genuine disagreement with
+        # fewer worker tiles is the out-of-range case — and this range is
+        # non-empty exactly because the count is strictly smaller.
+        detail = (
+            f"seeing only {len(worker)} tiles — so each slot's tiles "
+            f"{len(worker)}..{len(planned) - 1} exit with 'tile index out of "
+            f"range' and no merge ever happens"
+        )
+    else:
+        # Equal counts but different origins. `ceil(s / f) <= s` per axis makes
+        # the worker's tile count monotone non-increasing, so nothing reaches
+        # here today; the branch exists so the message can never assert an EMPTY
+        # tile range, which is exactly how the first version of this gate went
+        # wrong (it printed "tiles 4..3" for an anisotropic factor whose two
+        # grids in fact agreed).
+        detail = (
+            f"seeing {len(worker)} tiles whose origins are not the planned ones "
+            f"once rescaled — so each task fits and saves a different "
+            f"sub-volume than the merge expects"
+        )
+    raise typer.BadParameter(
+        f"config `downscale:` (per-axis factors {factors}) cannot be used with "
+        f"this uniform batch: the plan tiles the full-resolution shape "
+        f"{tuple(spatial)} into {len(planned)} tiles per slot ({total_tasks} "
+        f"tasks in all), but every `fit --tile k/M` worker decimates its own "
+        f"volume to {decimated_shape} first and re-tiles THAT, {detail}. Use "
+        f"`gsplat fit -j N --downscale ...` (one fit whose tile grid is computed "
+        f"AFTER the downscale), or decimate the store first and run batch-fit on "
+        f"that. (`--tiling content` never re-tiles, and a factor that decimates "
+        f"only single-tile axes leaves the grid unchanged, so both complete fine "
+        f"with this key.)"
+    )
+
+
 def resolve_uniform_grid_scale(fit: FitConfig, ndim: int) -> Optional[List[float]]:
     """The frame factor to record on the manifest for a uniform batch (#1587).
 
     Resolved HERE, at plan time, because this is where the workers' merged fit
     config is in hand: every array task is a ``fit --tile k/M`` run with this
-    run's ``--preset`` and (verbatim) its ``--config``, so a ``voxel_size`` /
-    ``downscale`` in that config moves the tasks' splats out of the manifest's
-    voxel tile grid. Doing it at MERGE time instead would mean re-reading a YAML
-    that may have moved (planes silently dropped) or been replaced by an
-    unrelated same-named file (planes silently wrong), and would put a
-    ``luxar.cli`` import inside ``luxar.gsplats``.
+    run's ``--preset`` and (verbatim) its ``--config``, so a ``voxel_size`` with
+    the default ``output_space: real`` in that config moves the tasks' splats out
+    of the manifest's voxel tile grid. Doing it at MERGE time instead would mean
+    re-reading a YAML that may have moved (planes silently dropped) or been
+    replaced by an unrelated same-named file (planes silently wrong), and would
+    put a ``luxar.cli`` import inside ``luxar.gsplats``.
+
+    A config ``downscale:`` is deliberately NOT composed in, unlike in the
+    single-fit ``fit --tiling uniform -j N --downscale`` parent that
+    :func:`~luxar.gsplats.tiling.resolve_grid_scale`'s downscale term exists for
+    (#1587). There the parent's grid IS built on the decimated shape, so a tile
+    origin ``o`` lands at ``o * f``. In a BATCH run the planner tiles the
+    FULL-resolution shape and every task rescales back to it — the ``--tile k/M``
+    worker in ``rescale_and_save``, the ``--plan-box K`` worker in
+    ``finalize_results`` — so the splats never leave the grid's frame and the
+    term would simply be wrong. Measured: recording ``[2, 2, 2]`` for a
+    single-tile batch left the split planes unchanged but falsely refused
+    ``--merge-refine volume`` (:func:`_validate_merge_refine_frame`). Where a
+    decimating value genuinely cannot complete — a uniform plan whose workers
+    would re-tile a different grid — it is refused outright by
+    :func:`refuse_downscale_grid_mismatch`, not recorded.
 
     Returns the per-axis factor, or ``None`` when the two frames already agree
     (the common case — recorded as an absent ``grid_scale``). Raises
@@ -769,7 +940,10 @@ def resolve_uniform_grid_scale(fit: FitConfig, ndim: int) -> Optional[List[float
     try:
         scale = resolve_grid_scale(
             ndim,
-            downscale_factors=config.get("downscale"),
+            # No `downscale_factors=`: a batch task rescales its splats back to
+            # the full-resolution frame this planner tiled, so the term does not
+            # apply here (see the docstring). It stays load-bearing for the
+            # single-fit `-j N` caller, whose grid IS the decimated one.
             voxel_size=config.get("voxel_size"),
             output_space=config.get("output_space", "real"),
         )
@@ -1153,6 +1327,15 @@ def plan_batch(
 
     rep_c = c_indices[0]
 
+    # A `downscale:` in the forwarded fit config is VALIDATED here, ahead of
+    # everything expensive, because the value's well-formedness needs only the
+    # merged config and len(spatial). Doing it alongside the decomposition below
+    # made a malformed value in a content run surface only after the box plan had
+    # been scanned and plan.json written. Whether the decomposition can complete
+    # with a well-formed value is a separate, later question (see
+    # `refuse_downscale_grid_mismatch`).
+    downscale_factors = validate_config_downscale(fit, len(spatial))
+
     # The frame the tasks will emit in, resolved once and recorded on the
     # manifest for the merge (#1587). Uniform only: a content merge takes its
     # split planes from the shared plan's own boxes, not from a rebuilt grid.
@@ -1303,6 +1486,20 @@ def plan_batch(
         tile_voxels = tile_size ** len(spatial) if needs_tiling else total_voxels
 
     total_tasks = n_t * n_c * n_tiles
+
+    # The already-validated `downscale:` is now checked against the decomposition
+    # it has to agree with: a uniform worker re-tiles its own decimated volume, so
+    # the two grids are compared directly and only a genuine disagreement is
+    # refused. Still ahead of the manifest and of every task, so a fatal one costs
+    # no submission.
+    refuse_downscale_grid_mismatch(
+        downscale_factors,
+        mode=mode,
+        spatial=tuple(spatial),
+        tile_size=tile_size_resolved,
+        tile_overlap=tile_overlap,
+        total_tasks=total_tasks,
+    )
 
     _announce_seed_split(mode, fit_args, n_tiles)
 

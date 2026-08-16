@@ -575,6 +575,7 @@ the artifact alone:
   "source_dtype": "uint16",
   "source_voxels": 24576,
   "source_bytes": 49152,
+  "source_stored_bytes": 6144,
   "fitted_shape": [12, 16, 16],
   "fitted_voxels": 3072,
   "occupancy": 0.02197,
@@ -591,7 +592,14 @@ saw — a producer that pulls one channel out of a 5D store and downscales it
 before fitting must declare the acquisition, or the ratio would be quoted
 against its own working copy. Absent means measured; readers that quote the
 ratio should carry the distinction, because a stated denominator is a claim and
-a measured one is an observation. `fitted_*` is the grid actually optimised
+a measured one is an observation. `source_stored_bytes` is what that
+acquisition **occupies** as opposed to what it decodes to — the compressed file
+you download — and it is optional and never inferred, because the source
+codec's own factor is precisely what is unknown: `source_bytes / <store size>`
+credits the splats with it, while `source_stored_bytes / <store size>` does not,
+and on real microscopy the two differ by more than an order of magnitude.
+Absent means unknown, and a reader should then quote one ratio rather than
+guess the other. `fitted_*` is the grid actually optimised
 against, which differs when
 the fit downscaled first; collapsing the two would overstate compression by the
 downscale factor cubed. `occupancy` is the fraction of fitted voxels carrying

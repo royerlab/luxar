@@ -136,6 +136,29 @@ describe('validateCache', () => {
     expect(result.errors).toContainEqual(expect.stringContaining('cache.opfsOperationTimeoutMs'));
   });
 
+  // ---- opfsTimeoutTripThreshold ----------------------------------------
+
+  it('rejects non-integer, zero, negative, and non-finite opfsTimeoutTripThreshold', () => {
+    for (const bad of [0, -1, 1.5, NaN, Infinity]) {
+      const cfg = cloneConfig();
+      cfg.cache.opfsTimeoutTripThreshold = bad;
+      const result = invokeValidator(validateCache, cfg);
+      expect(result.valid, `threshold=${bad} must be rejected`).toBe(false);
+      expect(result.errors).toContainEqual(
+        expect.stringContaining('cache.opfsTimeoutTripThreshold')
+      );
+    }
+  });
+
+  it('accepts integer opfsTimeoutTripThreshold >= 1', () => {
+    for (const good of [1, 3, 10]) {
+      const cfg = cloneConfig();
+      cfg.cache.opfsTimeoutTripThreshold = good;
+      const result = invokeValidator(validateCache, cfg);
+      expect(result.valid, `threshold=${good} must be accepted`).toBe(true);
+    }
+  });
+
   it('rejects Infinity cache.opfsOperationTimeoutMs', () => {
     const cfg = cloneConfig();
     cfg.cache.opfsOperationTimeoutMs = Number.POSITIVE_INFINITY;

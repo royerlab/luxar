@@ -254,6 +254,7 @@ cache: {
   l1MaxSizeMB: 100,           // L1 in-memory LRU — CEILING; heap-aware sizing may scale it down
   l2MaxSizeMB: 2048,          // L2: persistent OPFS cache (disk, fixed — not heap-sized)
   opfsOperationTimeoutMs: 10000, // Per-OPFS-operation deadline (ms)
+  opfsTimeoutTripThreshold: 3, // Consecutive timeouts before the L2 circuit breaker trips
   externalDatasetTtlMs: null, // Optional TTL (ms) for non-local datasets; null = no expiry
   debug: false                // Enable cache debug logging
 }

@@ -375,7 +375,7 @@ configureDepthSort({
   getCamera: () => sceneManager.camera, // GETTER, not captured reference
   requestRender: () => animationController.requestRender(),
   requestReprocess: () => sceneLoader.updateView({}),
-  isLoadInProgress: () => sceneLoader.isLoadInProgress(),
+  isLoadInProgress: () => sceneLoader.isUpdateInProgress(),
   getProfiler: () => updateProfiler ?? null,
 });
 

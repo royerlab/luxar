@@ -169,7 +169,22 @@ export class ViewStateManager {
         // Discrete dimensions need exact matching
         tolerance[i] = 0;
       } else {
-        // Continuous non-displayed dimensions get default tolerance
+        // Continuous non-displayed dimensions get default tolerance.
+        // NOTE: this names a different constant than the navigation-time builder
+        // (`simpleDimsToViewState`, which uses `maxRadius` here). No QUERY consumer
+        // reads the continuous ride-along any more (issue #1183):
+        // `fallbackQueryTolerance` used to take `tolerance[d] ?? maxRadius` and now
+        // always uses the node's own `max_radius`, while
+        // gsplats/lines/points-with-config recompute via `computeTolerance`. But the
+        // MAGNITUDE is still read for a continuous dim by two non-query consumers —
+        // `buildSliceViewSig` keys on the raw value, and `viewStatesEqual` skips a
+        // tolerance difference only for a discrete non-spatial dim — so the two
+        // builders are inert today only because they agree NUMERICALLY:
+        // `scene.userData.maxRadius` is never set in production, so
+        // `zarr-loader.ts` hands that builder
+        // `config.dataLoading.spatial.defaultMaxRadius`, and both config values are
+        // 0.1. A future divergence would cost SliceCache misses and
+        // progressive-loader resets, not wrong data.
         tolerance[i] = config.dataLoading.spatial.defaultTolerance;
       }
     }

@@ -171,6 +171,56 @@ def test_an_artifact_larger_than_its_source_is_not_reported_as_0_to_1(
     assert "0.25:1" in out, out
 
 
+def test_both_compression_ratios_are_printed_with_their_bases_named(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Two denominators, and the report must say which is which.
+
+    ``source_bytes`` is the DECODED array while the store it is divided by is
+    compressed, so that ratio credits the splats with the source codec's own
+    factor — measured on the DAPI acquisition the two bases differ by ~35x. An
+    unlabelled number invites reading the first as the second, so both are
+    printed and each names its basis.
+    """
+    from types import SimpleNamespace
+
+    from luxar.cli.gsplat_ops.inspect_commands import _print_source_grid, _store_size
+
+    store = tmp_path / "both.gsplats.zarr"
+    store.mkdir()
+    (store / "chunk").write_bytes(b"\0" * 4096)
+    stats = {
+        "source_shape": [96, 128, 128],
+        "source_voxels": 96 * 128 * 128,
+        "source_dtype": "uint16",
+        "source_bytes": 2 * 96 * 128 * 128,
+        "fitted_shape": [24, 32, 32],
+        "fitted_voxels": 24 * 32 * 32,
+    }
+    data = SimpleNamespace(
+        stats={**stats, "source_stored_bytes": 40960},
+        amplitudes=np.zeros(64, dtype=np.float32),
+    )
+    keys = _print_source_grid(data, _store_size(store))
+    out = capsys.readouterr().out
+    assert "stored source: 40.0 KB (as downloaded)" in out, out
+    assert "768:1 vs raw voxels" in out, out
+    assert "10:1 vs the stored source" in out, out
+    # Reported here, so the catch-all metadata dump must not quote it again
+    # under a raw key name with no basis attached.
+    assert "source_stored_bytes" in keys, keys
+
+    # The negative control: without the stored size there is exactly one ratio,
+    # never a second one inferred from the decoded size.
+    _print_source_grid(
+        SimpleNamespace(stats=stats, amplitudes=np.zeros(64, dtype=np.float32)),
+        _store_size(store),
+    )
+    one = capsys.readouterr().out
+    assert "vs raw voxels" in one, one
+    assert "stored source" not in one, one
+
+
 def test_a_downscaled_tiled_fit_records_the_grid_it_was_given_not_the_decimated_copy(
     tmp_path: Path,
 ) -> None:

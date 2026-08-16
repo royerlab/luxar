@@ -189,6 +189,27 @@ export function createLoadAllRange(totalElements: number): LoadRange[] {
   return [{ start: 0, end: totalElements }];
 }
 
+/**
+ * Render one tolerance for the `?debug` query log.
+ *
+ * Two decimals for the common case (`0.25`, `1.00`), `∞` for the extend-to-all
+ * sentinel — but anything BELOW the two-decimal resolution is printed in
+ * exponential form instead. This log is the one surface that would reveal an
+ * "empty node because nothing matched" bug, and the gsplats continuous arm is a
+ * ~1e-3…1e-5 epsilon: at `toFixed(2)` every such value printed `0.00`,
+ * indistinguishable from Lines' true `0`, from a NaN, or from a zeroed array. A
+ * literal `0` still prints `0.00`, so the distinction is visible.
+ *
+ * One cosmetic wart, left alone: a value just under the threshold rounds across it
+ * at one significant digit — `0.009999` prints `1.0e-2`. It is still unmistakably
+ * non-zero, which is the whole point of the branch.
+ */
+export function formatTolerance(t: number): string {
+  if (t > 1e9) return '∞';
+  if (Number.isFinite(t) && t !== 0 && Math.abs(t) < 0.01) return t.toExponential(1);
+  return t.toFixed(2);
+}
+
 // ============================================================================
 // SpatialQueryBuilder
 // ============================================================================
@@ -297,10 +318,7 @@ export class SpatialQueryBuilder {
     const queryTolerance = this.resolveTolerance();
 
     log.query(this.logModule, `Query: pos=[${queryPosition.map((p) => p.toFixed(2)).join(', ')}]`);
-    log.info(
-      this.logModule,
-      `Query: tol=[${queryTolerance.map((t) => (t > 1e9 ? '∞' : t.toFixed(2))).join(', ')}]`
-    );
+    log.info(this.logModule, `Query: tol=[${queryTolerance.map(formatTolerance).join(', ')}]`);
 
     const chunkIndices = executeSpatialQuery(
       {

@@ -240,7 +240,7 @@ DATASETS: dict[str, dict] = {
         license="cc-by-4.0",
         source=(
             "Janelia FlyLight Gen1 MCFO, line VT019012, slide 20140423_20_D5, "
-            "63x confocal"
+            "63x confocal (stitched unaligned_stack.h5j)"
         ),
         attribution=(
             "Janelia FlyLight Project Team, HHMI Janelia Research Campus — "

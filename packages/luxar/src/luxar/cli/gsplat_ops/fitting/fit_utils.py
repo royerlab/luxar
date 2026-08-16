@@ -1164,20 +1164,28 @@ def rescale_and_save(
     """
     # Rescale tiled results back to original coordinates if downscaled
     if tiled_downscale_factors is not None and result.n_splats > 0:
-        from luxar.gsplats.fitting.downscale import (
-            rescale_centers,
-            rescale_cholesky_packed,
-        )
-        from luxar.gsplats.gsplat_data import GSplatData
+        import numpy as np
 
-        result = GSplatData(
-            centers=rescale_centers(result.centers, tiled_downscale_factors),
-            amplitudes=result.amplitudes,
-            cholesky_factors=rescale_cholesky_packed(
-                result.cholesky_factors, tiled_downscale_factors
-            ),
-            colors=result.colors,
-            stats=result.stats,
+        # A per-axis rescale IS a diagonal linear transform, and going through
+        # `transform` carries everything the leaf holds through it. Rebuilding a
+        # plain GSplatData from the concatenated top-level arrays instead RESET
+        # `truncation_radius` to the default (#1624): `truncate:` is a documented
+        # YAML key (`gsplat fit --dump-config` emits it) that lands on the result
+        # in `fitting/results.py`, so `fit --tile k/M --downscale N` with a
+        # `--config` holding `truncate: 3.5` stored 2.75 — a wrong radius in the
+        # tile's own store, on the plain non-progressive path too, and one the
+        # merge's `concatenate` requires the non-empty tiles to AGREE on
+        # (`_data/composition.py`), so a downscaled tile also disagreed with an
+        # un-downscaled sibling.
+        # `transform`'s diagonal fast path multiplies centers by these factors and
+        # the packed Cholesky by the same per-row `tril_scales` vector as
+        # `rescale_centers` / `rescale_cholesky_packed`. It also maps per sub-LOD,
+        # which keeps an additive ladder's rungs (colors, stats, radius) intact;
+        # that is a by-construction guarantee rather than a fixed symptom — every
+        # fitter reachable here flattens first (`fit_progressive_gsplats` returns
+        # `final_result.flattened()`), so no ladder arrives at this line today.
+        result = result.transform(
+            np.diag(np.asarray(tiled_downscale_factors, dtype=np.float64))
         )
         aprint(f"Rescaled {result.n_splats} splats to original coordinates")
 

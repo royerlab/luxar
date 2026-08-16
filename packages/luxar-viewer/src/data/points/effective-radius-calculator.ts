@@ -238,15 +238,44 @@ export function calculateSpatialQueryTolerance(
  * Query tolerance for the Points loader when NO {@link EffectiveRadiusConfig}
  * is available (root `scene_dimensions` absent, or a root-attr read failed).
  *
- * A uniform fallback that mirrors {@link calculateSpatialQueryTolerance}'s
- * first branches: `1e10` for displayed dims and the `extend_to_all` sentinel,
- * `maxRadius` for non-displayed spatial/continuous dims. Discrete non-spatial
- * dims use the shared quarter-cell reach ({@link discreteDimTolerance},
- * `0.25×step`) — crucially NOT the ride-along `viewState.tolerance`, which the
- * nav and init viewState builders set inconsistently (`0.5` vs `0`). The
- * SliceCache key deliberately drops that ride-along, so the QUERY must be
- * independent of it too; otherwise a cache hit could serve a decode fetched at
- * a different discrete reach.
+ * A uniform fallback that mirrors {@link calculateSpatialQueryTolerance}
+ * branch for branch: `1e10` for displayed dims and the `extend_to_all`
+ * sentinel, the shared quarter-cell reach ({@link discreteDimTolerance},
+ * `0.25×step`) for discrete non-spatial dims, and `maxRadius` for
+ * spatial/continuous dims.
+ *
+ * NEITHER arm reads the ride-along `viewState.tolerance` (issue #1183). For the
+ * discrete arm that has always been true — the nav and init viewState builders
+ * set it inconsistently (`0.5` vs `0`), and the SliceCache key deliberately
+ * drops it, so a query that depended on it could take a cache hit on a decode
+ * fetched at a different reach. The continuous arm now matches: it used to read
+ * `viewState.tolerance[d] ?? maxRadius`, but the ride-along there is a
+ * scene/config constant (`config.dataLoading.spatial.defaultTolerance` from
+ * `ViewStateManager.buildToleranceArray`, or the scene-level `maxRadius` from
+ * `simpleDimsToViewState`) with nothing to do with THIS node, whereas the
+ * `maxRadius` argument is the node's own `max_radius` attr WHEN IT DECLARES ONE:
+ * the call site resolves
+ * `this.node.attrs.max_radius ?? appConfig.dataLoading.spatial.defaultMaxRadius`
+ * (`points-spatial-index-loader.ts`), so on a node without the attr it is the same
+ * config default the ride-along carried and the flip is a no-op there. Where the
+ * attr IS present it is precisely the
+ * quantity `io/_ordering/points.py` expanded its chunk bounds by (when radii are
+ * present; with radii absent those bounds under-expand and this reach is what
+ * covers them — see `computePointsHiddenTolerance` in
+ * `loaders/spatial-query/tolerance-computer.ts`). Its sibling
+ * {@link calculateSpatialQueryTolerance} already says so in as many words
+ * ("ALWAYS use maxRadius for spatial dimensions, ignore tolerance array").
+ *
+ * State the cost of the flip plainly: it is not free. Where the ride-along was the
+ * `0.1` default and the node's `max_radius` is larger, the query now FETCHES MORE
+ * — up to the node's own radius reach on every hidden spatial dim — and where the
+ * two differ it can also cost a duplicate SliceCache entry (the key still carries
+ * the ride-along). Neither is a stale serve, and the correctness reason wins: a
+ * scene/config constant cannot know a node's extent, so the old rule under-reached
+ * exactly the nodes whose points are bigger than the default.
+ *
+ * The `extend_to_all` sentinel branch stays AHEAD of both arms, so a `>= 1e9`
+ * ride-along still wins and loads everything.
  */
 export function fallbackQueryTolerance(
   viewState: ViewState,
@@ -261,7 +290,7 @@ export function fallbackQueryTolerance(
     } else if (dimInfo?.discrete && !dimInfo?.spatial) {
       queryTolerance[d] = discreteDimTolerance(dimInfo);
     } else {
-      queryTolerance[d] = viewState.tolerance[d] ?? maxRadius;
+      queryTolerance[d] = maxRadius;
     }
   }
   return queryTolerance;

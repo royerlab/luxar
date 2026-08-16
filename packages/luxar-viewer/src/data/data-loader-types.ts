@@ -42,6 +42,9 @@ export interface LoaderConfig {
   /** Disable only the SliceCache / S-cache (L0/L1/L2 stay on). */
   noSliceCache?: boolean;
 
+  /** Disable only the L2 OPFS persistent tier (L0/L1/S-cache stay on). */
+  noOpfs?: boolean;
+
   /**
    * Explicit total in-memory cache pool (L0+L1+S-cache) in MB, from
    * `?cacheBudgetMB=` / the native launcher. Used where `performance.memory` is

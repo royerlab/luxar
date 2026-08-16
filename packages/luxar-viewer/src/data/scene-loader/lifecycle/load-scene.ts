@@ -133,6 +133,21 @@ export interface LoadSceneCtx {
   getFailedLoadsProvider(): FailedLoadsProviderPort;
   /** Kick the GSplats LOD refinement loop after initial load. */
   scheduleGSplatsRefinement(): Promise<void>;
+  /**
+   * Drain any view-state queued while the serialization lock was held,
+   * re-entering `updateView` with it. Only used by the post-load refinement
+   * kick's rejection handler — see the comment at that call site.
+   *
+   * @returns True when a state was drained (the re-entered pass then settles
+   *   the parked waiters itself); false when nothing was queued.
+   */
+  drainPendingViewState(): boolean;
+  /**
+   * Settle callers parked in `updateView`'s supersede branch. Only used by the
+   * post-load refinement kick's rejection handler, for the case where nothing
+   * was queued and so no re-entered pass will resolve them.
+   */
+  resolvePassWaiters(): void;
 
   // Resource-write setters — orchestrator nulls/sets its own fields.
   /**
@@ -255,6 +270,7 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
   const cacheResult = await setupCaches(ctx.normalizeURL(url), {
     noCache: ctx.config.noCache,
     noSliceCache: ctx.config.noSliceCache,
+    noOpfs: ctx.config.noOpfs,
     cacheDebug: ctx.config.cacheDebug,
     clearCache: ctx.config.clearCache,
     noPrefetch: ctx.config.noPrefetch,
@@ -477,11 +493,30 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
         Modules.SCENE_LOADER,
         `Post-load progressive refinement failed: ${(error as Error).message}`
       );
-      // Belt-and-braces lock recovery (mirrors queue-next.ts): each loop
-      // releases the lock in its own finally, so a rejection here means the
-      // orchestrator glue died outside them — without this release the lock
-      // taken above is held forever and every future updateView freezes.
+      // Belt-and-braces lock recovery (mirrors queue-next.ts and
+      // SceneLoader.kickRefinementIfIdle): each loop releases the lock in its
+      // own finally, so a rejection here means the orchestrator glue died
+      // outside them — a double fault, not an expected path. Without this
+      // release the lock taken above is held forever and every future
+      // updateView freezes.
+      //
+      // Draining matters as much as releasing, because the pending slot is
+      // routinely occupied in exactly this window: this kick fires from inside
+      // `loadScene` before it returns, so the init pipeline's first
+      // `updateAllNDNodes` → `updateView` lands while the kick holds the lock,
+      // takes updateView's supersede branch and parks its state via
+      // `setPending`. A filled slot that nothing drains strands the user's
+      // initial slice AND latches `isLoadPassInProgress()` true forever (every
+      // polling E2E helper then burns its full timeout). drain() is a no-op
+      // when nothing was queued.
       ctx.setUpdateInProgress(false);
+      // When nothing was queued during the failed run, no re-entry will resolve
+      // parked waiters — settle them here. When a state WAS drained, the
+      // re-entered pass carries them to its own commit (queueNext settles them
+      // when no pending state is left), which is what a waiter means: resolving
+      // here as well would release the pacing gate before the view the caller
+      // asked for has landed. Same shape as `finalReleaseLock`.
+      if (!ctx.drainPendingViewState()) ctx.resolvePassWaiters();
     });
   }
 

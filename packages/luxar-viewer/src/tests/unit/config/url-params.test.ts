@@ -16,6 +16,7 @@ describe('readUrlParams', () => {
       debug: false,
       noCache: false,
       noSliceCache: false,
+      noOpfs: false,
       cacheDebug: false,
       clearCache: false,
       lodFade: true, // LOD cross-fade is ON by default (opt-out via ?no-lod-fade)
@@ -201,11 +202,12 @@ describe('readUrlParams', () => {
 
   it('treats valueless flags as boolean true', () => {
     const params = readUrlParams(
-      '?debug&no-cache&no-slice-cache&cache-debug&clear-cache&no-prefetch&prefetch-debug&cache-stats&webgpu-force-webgl'
+      '?debug&no-cache&no-slice-cache&no-opfs&cache-debug&clear-cache&no-prefetch&prefetch-debug&cache-stats&webgpu-force-webgl'
     );
     expect(params.debug).toBe(true);
     expect(params.noCache).toBe(true);
     expect(params.noSliceCache).toBe(true);
+    expect(params.noOpfs).toBe(true);
     expect(params.cacheDebug).toBe(true);
     expect(params.clearCache).toBe(true);
     expect(params.noPrefetch).toBe(true);

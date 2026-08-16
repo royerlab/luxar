@@ -74,7 +74,7 @@ group table.
 | `debug`            | `boolean`             | `false`         | Exposes `window.__luxarDebug` for Playwright / dev console.                                                                                                                                                  |
 | `loaderConfig`     | `LoaderConfig`        | —               | Cache and prefetch flags (`noCache`, `cacheDebug`, `clearCache`, `noPrefetch`, `prefetchDebug`).                                                                                                             |
 | `updateBrowserUrl` | `boolean`             | `false`         | Opt in to mirroring picked datasets into the browser URL. `bootstrapStandalone()` sets this to `true`.                                                                                                       |
-| `wasmPath`         | `string`              | —               | Override for bundlers that don't resolve `import.meta.url` for WASM (webpack 4, Parcel 1, etc.).                                                                                                             |
+| `wasmPath`         | `string`              | —               | Override for bundlers that don't resolve `import.meta.url` for WASM (webpack 4, Parcel 1, etc.). Serving the published package unbundled usually costs one benign 404 before the next candidate wins.        |
 | `workerPath`       | `string`              | —               | Same, for the data worker.                                                                                                                                                                                   |
 | `renderer`         | `'webgl' \| 'webgpu'` | `'webgl'`       | Force the rendering backend. `'webgpu'` uses `WebGPURenderer` + TSL `NodeMaterial`, falling back to WebGL2 when no adapter.                                                                                  |
 | `webgpuForceWebGL` | `boolean`             | `false`         | Diagnostic: with `renderer: 'webgpu'`, route through Three.js's internal WebGL2 backend while keeping the WebGPU/TSL API surface.                                                                            |
@@ -681,6 +681,7 @@ monitor.element; // the widget element (mounted by the control rail)
 - `?debug` — Expose `window.__luxarDebug` for Playwright / dev console
 - `?no-cache` — Disable all cache tiers (S-cache + L0 + L1 + L2) for this session
 - `?no-slice-cache` — Disable only S-cache; L0/L1/L2 remain active
+- `?no-opfs` — Disable only the L2 persistent (OPFS) tier; L0/L1/S-cache remain active. For environments whose OPFS stalls; the automatic circuit breaker covers the un-flagged case
 - `?cache-debug` — Verbose cache logging
 - `?clear-cache` — Clear stored cache tiers before loading; the per-load S-cache starts empty
 - `?cache-stats` — Open the data-loading monitor on its Cache tab after initialization

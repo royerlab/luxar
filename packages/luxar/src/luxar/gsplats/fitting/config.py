@@ -284,6 +284,9 @@ class FitConfig:
     #: Declared grid of the ACQUISITION, when the caller preprocessed before
     #: fitting. `None` means the array handed in IS the source.
     source_shape: Optional[list[int]] = None
+    #: Bytes the acquisition OCCUPIES on disk (compressed), as opposed to
+    #: the decoded `source_bytes`. Enables the second, apples-to-apples ratio.
+    source_stored_bytes: Optional[int] = None
 
 
 @dataclass

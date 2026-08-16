@@ -31,6 +31,8 @@ export interface CacheSetupFlags {
   noCache?: boolean;
   /** Disable ONLY the SliceCache (`?no-slice-cache`); L0/L1/L2 stay on. */
   noSliceCache?: boolean;
+  /** Disable ONLY the L2 OPFS tier (`?no-opfs`); L0/L1/S-cache stay on. */
+  noOpfs?: boolean;
   cacheDebug?: boolean;
   clearCache?: boolean;
   noPrefetch?: boolean;
@@ -83,6 +85,7 @@ export interface CacheSetupResult {
 export async function setupCaches(url: string, flags: CacheSetupFlags): Promise<CacheSetupResult> {
   const noCache = flags.noCache ?? false;
   const noSliceCache = flags.noSliceCache ?? false;
+  const noOpfs = flags.noOpfs ?? false;
   const cacheDebug = flags.cacheDebug ?? false;
   const clearCache = flags.clearCache ?? false;
   const noPrefetch = flags.noPrefetch ?? false;
@@ -164,9 +167,13 @@ export async function setupCaches(url: string, flags: CacheSetupFlags): Promise<
       l2MaxSize: appConfig.cache.l2MaxSizeMB * 1024 * 1024,
       debug: cacheDebug || appConfig.cache.debug,
       noCache,
+      noOpfs,
       clearCache,
     });
     await cachingStore.init();
+    if (noOpfs) {
+      log.info(Modules.SCENE_LOADER, 'L2 OPFS tier disabled via ?no-opfs URL parameter');
+    }
 
     const prefetcher = new ChunkPrefetcher(cachingStore, {
       maxConcurrent: appConfig.dataLoading.network.maxConcurrent,

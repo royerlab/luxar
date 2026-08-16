@@ -110,6 +110,12 @@ export interface UrlParams {
   noCache: boolean;
   /** Disable only the SliceCache / S-cache (`?no-slice-cache`). */
   noSliceCache: boolean;
+  /**
+   * Disable only the L2 OPFS persistent tier (`?no-opfs`); L0/L1/S-cache
+   * stay on. The deterministic sibling of the OPFS circuit breaker — use
+   * it in environments whose OPFS is known to stall (automated Chromium).
+   */
+  noOpfs: boolean;
   /** Verbose cache logging (`?cache-debug`). */
   cacheDebug: boolean;
   /** Clear caches on init (`?clear-cache`). */
@@ -272,6 +278,7 @@ export function readUrlParams(search?: string): UrlParams {
     debug: params.has('debug'),
     noCache: params.has('no-cache'),
     noSliceCache: params.has('no-slice-cache'),
+    noOpfs: params.has('no-opfs'),
     cacheDebug: params.has('cache-debug'),
     clearCache: params.has('clear-cache'),
     lodFade: !params.has('no-lod-fade'),

@@ -159,6 +159,7 @@ function makeContext(
     currentFov: 47,
     isAnimating: false,
     initialized: true,
+    isLoading: false,
     dims: null,
     ...overrides,
   };
@@ -327,6 +328,22 @@ describe('computeDebugState', () => {
       const state = computeDebugState(makeContext(scene, { isAnimating: true, initialized: true }));
       expect(state.isAnimating).toBe(true);
       expect(state.initialized).toBe(true);
+    });
+
+    // #1639 — the snapshot never carried `isLoading`, while the E2E data-wait
+    // helpers had always polled it. `!undefined` is `true`, so every one of
+    // those helpers resolved on the first poll and gated on nothing. The field
+    // must be PRESENT and must mirror the context both ways: an assertion on
+    // the `true` case alone would also pass for a hardcoded constant.
+    it('reports isLoading, mirroring the context value both ways', () => {
+      const loading = computeDebugState(makeContext(new THREE.Scene(), { isLoading: true }));
+      expect(loading.isLoading).toBe(true);
+
+      // `toBe(false)` is a presence check too: the pre-fix snapshot reported
+      // `undefined`, which the helpers read identically to `false` but which
+      // this assertion rejects.
+      const idle = computeDebugState(makeContext(new THREE.Scene(), { isLoading: false }));
+      expect(idle.isLoading).toBe(false);
     });
   });
 
