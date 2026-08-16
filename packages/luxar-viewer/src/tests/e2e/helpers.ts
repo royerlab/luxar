@@ -600,7 +600,15 @@ export async function waitForNavigationCompleteOrThrow(page: Page, timeout = 150
  * Wait for render frames to stabilize
  *
  * Useful for visual regression tests that need stable screenshots.
- * Tries to wait for frame counter if available, otherwise uses time-based wait.
+ * Waits for the frame counter to ADVANCE by `minFrames` if available, otherwise
+ * uses a state-based wait + time buffer.
+ *
+ * **Best-effort, like {@link waitForNextRender}** — if the frame counter cannot
+ * be read or never advances, the fallback returns after the state wait plus a
+ * `minFrames * 100`ms buffer, which on a starved page can be worth far fewer
+ * than `minFrames` frames. Since the callers are almost all screenshot
+ * comparisons, that give-up emits one `console.warn` naming which branch it
+ * took rather than passing off a possibly pre-render capture in silence.
  *
  * @param page - Playwright page
  * @param minFrames - Minimum number of frames to render (used as multiplier for fallback)
@@ -688,7 +696,20 @@ export async function waitForRenderStable(
     { timeout }
   );
   // Additional buffer for GPU to render frames
-  await page.waitForTimeout(minFrames * 100);
+  const buffer = minFrames * 100;
+  await page.waitForTimeout(buffer);
+
+  // Report the give-up rather than handing a screenshot test a capture that may
+  // predate the paint it was pacing itself on.
+  const branch =
+    start === null
+      ? `the frame counter could not be read within ${evaluateTimeout}ms`
+      : `the frame counter was readable but never advanced by ${minFrames} within ${Math.min(timeout, 3000)}ms`;
+  console.warn(
+    `[⚠️] [E2E waitForRenderStable] asked for ${minFrames} frame(s) at timeout=${timeout}ms, ` +
+      `but ${branch}; took the state-based fallback + ${buffer}ms buffer instead, ` +
+      `so ${minFrames} frame(s) were NOT observed`
+  );
 }
 
 /**
