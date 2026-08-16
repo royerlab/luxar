@@ -681,6 +681,15 @@ def main():
 
     if not RECOMPUTE:
         cache_paths = ensure_dataset("gsplats_cmu1_pathology")
+        # Colormaps are assigned by POSITION below, so an out-of-order fetch
+        # would paint hematoxylin red. ensure_dataset promises manifest order;
+        # this makes the demo say so rather than depend on it silently.
+        expected = [f"cmu1_ch{i}.gsplats.zarr.zip" for i in range(N_CHANNELS)]
+        if [p.name for p in cache_paths] != expected:
+            raise RuntimeError(
+                f"Channel order from the manifest is {[p.name for p in cache_paths]}, "
+                f"expected {expected}."
+            )
     else:
         # --recompute path: download raw data, fit from scratch
         warn_if_no_cuda_gpu()

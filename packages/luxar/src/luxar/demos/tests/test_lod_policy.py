@@ -285,6 +285,59 @@ def test_every_recipe_grafts_into_a_scene_from_its_file(
             )
 
 
+def test_a_multi_part_adaptive_tree_grafts_with_its_colormap(tmp_path: Path) -> None:
+    """The many-part shape the real datasets have.
+
+    ``save_with_lod`` caps tiles at 250,000 splats, so a test-sized fit always
+    comes out as ONE part — which would leave the interesting case (a partition
+    with many children, each its own level ladder) untested. Build that shape
+    directly and check both that it grafts and that the per-channel colormap
+    reaches the levels, since ``colormap`` is copied down to the leaves while
+    ``blending_mode`` stays on the wrapper.
+    """
+    from luxar import Dimension, Dimensions, LuxarZarrCompiler
+    from luxar._zarr_compat import open_group
+    from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+    from luxar.gsplats.lod import RecipeParams, build_recipe
+
+    tree = build_recipe(
+        _tiny_fit(np.random.default_rng(3), 1600, 2),
+        "adaptive",
+        # Four parts is enough to be multi-part; the per-part reduction and the
+        # zarr group count both scale with it, so do not raise this casually.
+        RecipeParams(n_lods=4, max_elements=400, compression_factor=4, levels=2),
+    )
+    artifact = tmp_path / "multi.gsplats.zarr"
+    write_gsplats_tree(artifact, tree)
+
+    scene_path = tmp_path / "scene_multi.luxar.zarr"
+    with LuxarZarrCompiler(scene_path) as compiler:
+        scene = compiler.create_scene(
+            dimensions=Dimensions(
+                [
+                    Dimension("x", unit="px", display=True),
+                    Dimension("y", unit="px", display=True),
+                ]
+            )
+        )
+        scene.add_gsplats_from_file(
+            name="ch",
+            path=str(artifact),
+            opacity=1.0,
+            blending_mode="additive",
+            layer=True,
+            colormap="red",
+        )
+
+    root = open_group(str(scene_path), mode="r")["ch"]
+    assert dict(root.attrs).get("kind") == "partition"
+    parts = sorted(root.group_keys())
+    assert len(parts) > 1, f"expected a multi-part graft, got {parts}"
+    levels = sorted(root[parts[0]].group_keys())
+    assert levels, "a part with no levels means the ladder was dropped"
+    assert dict(root[parts[0]][levels[0]].attrs).get("colormap") == "red"
+
+
 def test_source_tree_is_the_one_being_tested() -> None:
     """Guard against the AST scan reading an installed copy instead of the repo."""
     assert (Path(registry._DEMOS_DIR) / "_lod_policy.py").exists()
