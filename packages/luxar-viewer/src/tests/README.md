@@ -51,7 +51,7 @@ document opts in with a docblock on its **first line**:
 // @vitest-environment jsdom
 ```
 
-Constructing a jsdom document costs ~1.8 s of CPU per file and only ~124 of
+Constructing a jsdom document costs ~1.8 s of CPU per file and only ~125 of
 the unit files touch one, so the rest would be paying for a DOM they never
 use. Forgetting the docblock is not silent — the file fails with
 `ReferenceError: document is not defined`. Mocks that need a DOM

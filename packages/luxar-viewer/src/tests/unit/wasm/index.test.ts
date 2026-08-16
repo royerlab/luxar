@@ -151,6 +151,45 @@ describe('initWasm URL resolution on the dev server origin', () => {
       vi.unstubAllGlobals();
     }
   });
+
+  it('reports "resolution failed before the import" when the origin is not a usable URL base', async () => {
+    // Where `'null'` comes from in practice: an opaque origin serialises to the
+    // STRING "null" — a dev build opened from `file://`, inside a sandboxed
+    // iframe, or in a `data:` document. It is truthy, so the guard passes, and
+    // `new URL('/wasm/luxar_wasm.js', 'null')` then throws
+    // `TypeError: Invalid URL` before `wasmJsUrl` is ever assigned. That is the
+    // one path that reaches the placeholder arm of the catch's message, and the
+    // placeholder is what a reader keys on to tell "the artifact isn't there"
+    // apart from "the loader never computed a URL" — the exact confusion that
+    // kept #1642 invisible.
+    //
+    // This is deliberately NOT a claim that falling back is the ideal outcome
+    // for a `file://` dev build; only that the diagnostic says WHICH of the two
+    // failure classes happened.
+    vi.stubGlobal('location', { origin: 'null' });
+    try {
+      // The override is module-level state shared by every test in this file.
+      setWasmJsUrl('');
+
+      // `console.log` is spied purely to keep the two remediation `log.info`
+      // lines out of the reporter. Both are restored before any assertion.
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const info = vi.spyOn(console, 'log').mockImplementation(() => {});
+      const wasm = await initWasm();
+      const calls = warn.mock.calls;
+      warn.mockRestore();
+      info.mockRestore();
+
+      expect(wasm).toBeInstanceOf(TypeScriptFallback);
+
+      expect(calls.length).toBeGreaterThan(0);
+      const [message] = calls[0] as [string, unknown];
+      expect(message).toContain('Failed to load WASM module');
+      expect(message).toContain('<URL resolution failed before the import>');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });
 
 describe('assertRequiredWasmExports', () => {

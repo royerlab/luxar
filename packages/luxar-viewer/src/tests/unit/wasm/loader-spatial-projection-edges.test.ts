@@ -10,21 +10,24 @@
  *   - [wasm.md G31][P5] extract_3d_positions displayDims[j] >= ndim → OOB
  *                       read → undefined → Float32Array stores NaN.
  *
- * Pure math / pure module API — no mocks.
+ * Pure math / pure module API. The only test doubles are `console` spies, used
+ * to read back the URL the loader resolved from its own fallback warning.
  *
  * Note on G23/G24: these were written to discriminate WHERE the load failed
  * (import resolved but `default()` missing, vs. the URL never being honoured),
  * but no vitest environment can actually resolve `initWasm`'s dynamic import —
  * the `new Function('url', 'return import(url)')` indirection is not serviceable
  * by vitest's VM module runner (`ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING`), so
- * even a `data:` URL throws before `default()` is reached. What survives is the
- * weaker but real contract asserted below: every one of these URLs lands in the
- * documented TypeScript fallback, and the override is module-local mutable
- * state. Loading the compiled kernels for real goes through
+ * even a `data:` URL throws before `default()` is reached. The URL the loader
+ * resolved is therefore observable only through the message its `catch` logs,
+ * which is what the G23/G24 tests below assert on: the override reaches the
+ * resolution step, a second override is read at call time rather than memoised
+ * at module init, and every one of these URLs lands in the documented
+ * TypeScript fallback. Loading the compiled kernels for real goes through
  * `src/tests/helpers/wasm-artifact.ts`.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { initWasm, isWasmSupported, setWasmJsUrl } from '../../../wasm';
 import { TypeScriptFallback } from '../../../wasm/typescript';
 import { extract_3d_positions } from '../../../wasm/typescript/projection';
@@ -59,15 +62,31 @@ describe('initWasm + setWasmJsUrl — URL pass-through discriminator [wasm.md G2
   it('[G23][G24] override URL pointing at a partial shim (no `default`) still falls back', async () => {
     // Originally written as a discriminator: a data: URL that imports fine
     // (defining `foo` but not `default`) would fail at `wasmModule.default()`,
-    // proving the override reached the import. Under vitest it cannot prove
-    // that — the dynamic import itself is unserviceable (see the docblock), so
-    // the failure happens one step earlier. The assertion is still the contract
-    // that matters: an override naming something that is not a loadable WASM
-    // shim must land in the TypeScript fallback rather than propagate.
-    setWasmJsUrl('data:text/javascript,export const foo = 1');
+    // proving the override reached the import. Under vitest the dynamic import
+    // itself is unserviceable (see the docblock), so the failure happens one
+    // step earlier and `default()` is never reached. Two things are pinned
+    // instead: the fallback warning names the `data:` URL, which is what proves
+    // the override reached the resolution step at all (the pass-through this
+    // describe block is named for); and an override naming something that is
+    // not a loadable WASM shim lands in the TypeScript fallback rather than
+    // propagating.
+    const overrideUrl = 'data:text/javascript,export const foo = 1';
+    setWasmJsUrl(overrideUrl);
     try {
+      // `console.log` is spied purely to keep the two remediation `log.info`
+      // lines out of the reporter. Restore both BEFORE any expect so a failing
+      // assertion cannot leak a spy.
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const info = vi.spyOn(console, 'log').mockImplementation(() => {});
       const wasm = await initWasm();
+      const calls = warn.mock.calls;
+      warn.mockRestore();
+      info.mockRestore();
+
       expect(wasm).toBeInstanceOf(TypeScriptFallback);
+      expect(calls.length).toBeGreaterThan(0);
+      const [message] = calls[0] as [string, unknown];
+      expect(message).toContain(overrideUrl);
     } finally {
       setWasmJsUrl('');
     }
@@ -91,18 +110,37 @@ describe('initWasm + setWasmJsUrl — URL pass-through discriminator [wasm.md G2
     }
   });
 
-  it('[G24] non-empty override is reflected immediately (state is module-local, not cached on first use)', async () => {
-    // Pin that setWasmJsUrl mutates module-local state at call time, not on
-    // first initWasm. A regression that captured the URL inside initWasm
-    // would still work but a regression that memoised it in module init
-    // would fail this sequencing test.
+  it('[G24] non-empty override is read at call time, not memoised on first use', async () => {
+    // Pin that each initWasm re-reads the override. The fallback warning names
+    // the URL the loader resolved, so the two calls must name missing-1.js and
+    // missing-2.js in that order — a regression that memoised the URL (at
+    // module init, or on the first initWasm) would name missing-1.js twice and
+    // fail here. `instanceof TypeScriptFallback` alone cannot discriminate:
+    // every URL lands in the fallback under vitest (see the docblock).
     setWasmJsUrl('http://localhost:0/missing-1.js');
-    const w1 = await initWasm();
-    setWasmJsUrl('http://localhost:0/missing-2.js');
-    const w2 = await initWasm();
-    setWasmJsUrl('');
-    expect(w1).toBeInstanceOf(TypeScriptFallback);
-    expect(w2).toBeInstanceOf(TypeScriptFallback);
+    try {
+      // `console.log` is spied purely to keep the two remediation `log.info`
+      // lines out of the reporter. Restore both BEFORE any expect so a failing
+      // assertion cannot leak a spy.
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const info = vi.spyOn(console, 'log').mockImplementation(() => {});
+      const w1 = await initWasm();
+      setWasmJsUrl('http://localhost:0/missing-2.js');
+      const w2 = await initWasm();
+      const calls = warn.mock.calls;
+      warn.mockRestore();
+      info.mockRestore();
+
+      expect(w1).toBeInstanceOf(TypeScriptFallback);
+      expect(w2).toBeInstanceOf(TypeScriptFallback);
+      expect(calls.length).toBeGreaterThanOrEqual(2);
+      const [first] = calls[0] as [string, unknown];
+      const [second] = calls[1] as [string, unknown];
+      expect(first).toContain('missing-1.js');
+      expect(second).toContain('missing-2.js');
+    } finally {
+      setWasmJsUrl('');
+    }
   });
 });
 

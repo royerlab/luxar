@@ -132,8 +132,13 @@ export function setWasmJsUrl(url: string | undefined): void {
  *
  * ## Load Order
  *
- * 1. Try to load compiled WASM from wasm/luxar_wasm_bg.wasm (resolved relative to bundle)
- * 2. If fails (not built or browser incompatibility), use TypeScript fallback
+ * 1. Resolve the JS shim URL, first match wins: an explicit
+ *    {@link setWasmJsUrl} override; else, in a dev build with a `location`
+ *    global, `/wasm/luxar_wasm.js` on the dev-server origin; else
+ *    `../wasm/luxar_wasm.js` relative to this bundle (`import.meta.url`).
+ * 2. Import that shim and load its `luxar_wasm_bg.wasm` binary.
+ * 3. If any of that fails (not built, stale build, browser incompatibility, or
+ *    a URL that could not be resolved at all), use the TypeScript fallback.
  *
  * @returns Promise resolving to WasmModule interface
  */

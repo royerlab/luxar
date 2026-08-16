@@ -32,10 +32,15 @@ const wasm = await initWasm();
 const count = wasm.clip_segments_batch(/* ... */);
 ```
 
-The default URL resolution (`new URL('../wasm/luxar_wasm.js', import.meta.url)`)
-works for the standalone Vite app and most consumer bundlers (Vite, Rollup,
-webpack 5). Use `setWasmJsUrl` only when shipping WASM files from a
-non-standard location.
+`initWasm` resolves the shim URL first-match-wins: a `setWasmJsUrl` override; else,
+in a **dev build** with a `location` global, `/wasm/luxar_wasm.js` on the dev-server
+origin (the dev server serves `public/wasm/` from the root, so the bundle-relative
+path would 404 there); else `new URL('../wasm/luxar_wasm.js', import.meta.url)`,
+which works for the standalone Vite app and most consumer bundlers (Vite, Rollup,
+webpack 5). The dev-origin branch reads the bare `location` global only under
+`typeof`, so a host without one — Node, SSR, the `node` test environment — falls
+through to the bundle-relative path rather than throwing (#1642). Use `setWasmJsUrl`
+only when shipping WASM files from a non-standard location.
 
 ## WasmModule API
 
@@ -134,13 +139,18 @@ Build output goes to `public/wasm/`:
 - `luxar_wasm.js` — JavaScript bindings
 - `luxar_wasm.d.ts` — TypeScript type definitions
 
-If WASM is not built, `initWasm()` logs a warning with build instructions and falls back to TypeScript.
+If WASM is not built, `initWasm()` logs a warning with build instructions and falls back to
+TypeScript. The warning names the URL it tried, or says resolution failed before the import —
+"the artifact isn't there" and "the loader never computed a URL" read identically otherwise.
 
 ### Loading the built artifact directly
 
 Tests and benchmarks that need the compiled kernels rather than the fallback can't use
-`initWasm()` (it resolves a browser URL and substitutes `TypeScriptFallback` when that fails). They
-all go through one shared loader, `src/tests/helpers/wasm-artifact.ts`:
+`initWasm()`: it reaches the shim through a `new Function('url', 'return import(url)')`
+indirection that vitest's VM module runner does not service
+(`ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING`), so under vitest every `initWasm()` ends in
+`TypeScriptFallback` in **any** environment, whatever URL it resolved. They all go through
+one shared loader, `src/tests/helpers/wasm-artifact.ts`:
 
 ```typescript
 import {
