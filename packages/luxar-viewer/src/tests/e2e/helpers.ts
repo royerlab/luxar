@@ -526,21 +526,27 @@ export async function waitForDimensionSystemReady(page: Page, timeout = 10000): 
 }
 
 /**
- * Wait for navigation to complete by detecting loading state change
+ * Wait for nD navigation to complete: poll until `getState().isLoading` is
+ * false.
  *
- * This is more robust than waitForTimeout because it:
- * 1. Waits for isLoading to become true (navigation started)
- * 2. Then waits for isLoading to become false (navigation finished)
+ * There is no "wait for the navigation to START" phase — the helper only ever
+ * waits for `isLoading` to be false, so it resolves on the first poll if the
+ * loader is already idle. That is the intended behaviour on both sides of the
+ * race: a same-task trigger (a keyboard nav) sets the flag synchronously,
+ * before this helper gets to poll, while a cached path may never toggle it true
+ * at all (see the comment in `spatial-index-accuracy.spec.ts`). Waiting for
+ * `true` first would hang in the second case.
  *
- * @param page - Playwright page
- * @param timeout - Maximum wait time in ms
- */
-/**
- * Wait for nD navigation to complete.
+ * The only preliminary wait is for the flag to EXIST (`typeof isLoading ===
+ * 'boolean'`), i.e. for the debug interface to be installed; if that never
+ * happens the helper sleeps 300 ms and returns.
  *
  * **Silent on timeout** — returns normally even if `isLoading` never
  * cleared. Use {@link waitForNavigationCompleteOrThrow} for tests
  * that depend on navigation actually finishing.
+ *
+ * @param page - Playwright page
+ * @param timeout - Maximum wait time in ms
  */
 export async function waitForNavigationComplete(page: Page, timeout = 15000): Promise<void> {
   const startTime = Date.now();

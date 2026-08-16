@@ -391,6 +391,75 @@ describe('SceneLoader', () => {
     });
   });
 
+  // #1639 — `isLoadPassInProgress()` is what the debug snapshot's `isLoading`
+  // reports, so its scope has to be exactly "data is still arriving for the
+  // current view". The serialization lock is broader than that: the update tail
+  // and the post-load kick hand it to the progressive-LOD refinement run, which
+  // only releases it after every additive ladder has drained — long after the
+  // view committed. These tests pin the subtraction, and pin that
+  // `isUpdateInProgress()` (adaptive DPR, init pipeline) keeps the broad meaning.
+  describe('isLoadPassInProgress — refinement is excluded', () => {
+    /** The two private flags the two accessors are composed from. */
+    type LockFlags = { _updateInProgress: boolean; _refining: boolean };
+
+    it('is true during a load pass and false during a refinement hold', () => {
+      const flags = sceneLoader as unknown as LockFlags;
+
+      expect(sceneLoader.isLoadPassInProgress()).toBe(false);
+      expect(sceneLoader.isUpdateInProgress()).toBe(false);
+
+      // An updateView sweep: lock held, not refining.
+      flags._updateInProgress = true;
+      expect(sceneLoader.isLoadPassInProgress()).toBe(true);
+      expect(sceneLoader.isUpdateInProgress()).toBe(true);
+
+      // The same lock, now handed to refinement — the load pass is over.
+      flags._refining = true;
+      expect(sceneLoader.isLoadPassInProgress()).toBe(false);
+      // …but the broader accessor its existing consumers read is unchanged.
+      expect(sceneLoader.isUpdateInProgress()).toBe(true);
+    });
+
+    it('scheduleGSplatsRefinement holds _refining for the whole run', async () => {
+      const flags = sceneLoader as unknown as LockFlags;
+      // Mirror the hand-off the real kick sites perform: the lock is already
+      // held when the orchestrator is entered.
+      flags._updateInProgress = true;
+
+      const run = (
+        sceneLoader as unknown as { scheduleGSplatsRefinement: () => Promise<void> }
+      ).scheduleGSplatsRefinement();
+
+      // Set SYNCHRONOUSLY, before the first await — otherwise a poll landing in
+      // the gap between the hand-off and the first phase would read a load pass.
+      expect(flags._refining).toBe(true);
+      expect(sceneLoader.isLoadPassInProgress()).toBe(false);
+
+      await run;
+
+      // Cleared on the way out (the `finally`), so the next real load pass is
+      // visible again.
+      expect(flags._refining).toBe(false);
+    });
+
+    it('dispose clears the lock a mid-refinement teardown would latch', async () => {
+      const flags = sceneLoader as unknown as LockFlags;
+      // The state a loader disposed mid-refinement is in: lock held, refining.
+      // The refinement phases bail on `_disposed` WITHOUT running
+      // `finalReleaseLock`, so without an explicit clear in dispose() both flags
+      // stay set forever and every poll of the manager aggregate reads busy.
+      flags._updateInProgress = true;
+      flags._refining = true;
+
+      await sceneLoader.dispose();
+
+      expect(flags._updateInProgress).toBe(false);
+      expect(flags._refining).toBe(false);
+      expect(sceneLoader.isLoadPassInProgress()).toBe(false);
+      expect(sceneLoader.isUpdateInProgress()).toBe(false);
+    });
+  });
+
   describe('updateView — does NOT abort the background deepen prefetch', () => {
     beforeEach(async () => {
       await sceneLoader.loadScene('http://localhost:8000/test.zarr');

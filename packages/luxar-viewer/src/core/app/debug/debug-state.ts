@@ -153,6 +153,37 @@ export interface DebugState {
   cameraFov: number;
   isAnimating: boolean;
   initialized: boolean;
+  /**
+   * Whether a LOAD PASS is in flight on at least one registered scene loader:
+   * an `updateView` sweep (fetch / decode / upload) up to its geometry commit,
+   * or a failed-loader retry sweep, which takes the same lock.
+   *
+   * It does NOT cover, and must not be read as covering:
+   *   - the INITIAL `loadScene` — that path only touches the loader's lock at
+   *     its very end (to hand it to the post-load refinement kick). For the
+   *     first load `initialized` is the flag to wait on; for an in-page DATASET
+   *     SWITCH neither helps, because `initialized` stays true and the fresh
+   *     loader is registered before its `loadScene` runs, so `isLoading` reads
+   *     false throughout the switch's load.
+   *   - lazy substitutive-LOD / deferred-partition `ensureLoaded` promotions,
+   *     which run outside any `updateView` cycle and surface as content-change
+   *     notifications instead.
+   *   - the progressive-LOD refinement drain, which inherits the same lock
+   *     after the current view has committed. Excluded deliberately: this is
+   *     first-commit latency, not full-ladder latency — see
+   *     `SceneLoader.isLoadPassInProgress`.
+   *
+   * The E2E "wait for data" helpers in `tests/e2e/helpers.ts` poll this field
+   * to decide when a load has settled — `waitForDataLoaded`,
+   * `waitForDimensionNavigation`, `waitForSpatialQuery`,
+   * `waitForSpatialQueryOrThrow`, `waitForNavigationComplete`,
+   * `waitForNavigationCompleteOrThrow`, and the state-based fallbacks in
+   * `waitForRenderStable` / `waitForNextRender` (eight in all) — as do
+   * `tests/e2e/real-dataset-loading.spec.ts` and the two capture specs under
+   * `tests/screenshots/`. So it must always be a real boolean rather than
+   * absent: `!undefined` is `true`, which would gate on nothing.
+   */
+  isLoading: boolean;
 }
 
 /**
@@ -191,6 +222,14 @@ export interface DebugStateContext {
   currentFov: number;
   isAnimating: boolean;
   initialized: boolean;
+  /**
+   * Whether a load pass is in flight on any registered scene loader — see
+   * {@link DebugState.isLoading} for the exact scope (and what it excludes).
+   * Passed in like `isAnimating` and `initialized` rather than read from a
+   * singleton here, so this helper stays pure; the production caller supplies
+   * `SceneLoaderManager.getInstance().isAnyLoadPassInProgress()` per snapshot.
+   */
+  isLoading: boolean;
   dims: SimpleDims | null;
   /** Optional pool-stats provider so the debug state can surface byte usage. */
   gpuPoolStats?: () => GPUPoolDebugStats | undefined;
@@ -418,6 +457,7 @@ export function computeDebugState(ctx: DebugStateContext): DebugState {
     cameraFov: ctx.currentFov,
     isAnimating: ctx.isAnimating,
     initialized: ctx.initialized,
+    isLoading: ctx.isLoading,
   };
 }
 

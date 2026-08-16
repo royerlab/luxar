@@ -250,6 +250,23 @@ export class SceneLoader {
   // Serialized update queue: prevents concurrent updateView calls from corrupting shared buffers
   // When a new update arrives while one is in progress, we store the latest and process it after
   private _updateInProgress = false;
+  /**
+   * True for the duration of a progressive-LOD refinement run
+   * (`scheduleGSplatsRefinement`).
+   *
+   * Refinement does not take the serialization lock — it INHERITS it: the
+   * update tail (`update-view/queue-next.ts`) and the post-load kick
+   * (`lifecycle/load-scene.ts`) hand `_updateInProgress = true` straight to the
+   * orchestrator, whose final (mesh) phase releases it. So the lock stays
+   * latched for the whole additive-ladder drain, which happens strictly AFTER
+   * the current view has already been committed to the GPU.
+   *
+   * This flag marks that stretch so consumers meaning "is data still arriving
+   * for the current view" can subtract it — see
+   * {@link isLoadPassInProgress}. Consumers that mean "is the loader busy at
+   * all" keep reading {@link isUpdateInProgress}.
+   */
+  private _refining = false;
   private _updateVersion = 0; // For logging/debugging
 
   /**
@@ -262,6 +279,36 @@ export class SceneLoader {
    */
   public isUpdateInProgress(): boolean {
     return this._updateInProgress;
+  }
+
+  /**
+   * Whether a LOAD PASS is in flight: an `updateView` sweep (fetch / decode /
+   * upload) up to its geometry commit, or a failed-loader retry sweep, which
+   * takes the same lock. The "has the data for the current view arrived yet?"
+   * question.
+   *
+   * Deliberately EXCLUDES the progressive-LOD refinement drain, even though it
+   * holds the same lock (see `_refining`). Refinement runs after the current
+   * view has already been committed, so folding it in would turn this into
+   * full-ladder latency instead of first-commit latency. That is the same
+   * distinction `update-view/queue-next.ts` already draws where it resolves the
+   * pass waiters at refinement ENTRY rather than completion — the pacing gate
+   * there needs first-commit latency too.
+   *
+   * Also outside its scope: the initial `loadScene` (which only touches the
+   * lock at its very end, to hand it to the post-load refinement kick) and
+   * lazy substitutive-LOD / deferred-partition `ensureLoaded` promotions, which
+   * run outside any `updateView` cycle and surface as content-change
+   * notifications instead.
+   *
+   * {@link isUpdateInProgress} keeps its existing, broader meaning ("the
+   * serialization lock is held, refinement included") for its existing
+   * consumers — the adaptive-DPR manager and `core/app/init/pipeline.ts`, both
+   * of which want to discount loading-time frame jank for as long as the
+   * loader is doing work of any kind.
+   */
+  public isLoadPassInProgress(): boolean {
+    return this._updateInProgress && !this._refining;
   }
 
   // At most ONE lock-busy re-check of kickRefinementIfIdle is in flight at a
@@ -1060,131 +1107,142 @@ export class SceneLoader {
    * lock release on normal completion — live in that module.
    */
   private async scheduleGSplatsRefinement(): Promise<void> {
-    // Orchestrate progressive refinement across all three leaf types in
-    // sequence: gsplats first (its progressive-loader was the original
-    // template), then points, then lines. Each phase holds the
-    // serialization lock; on cancellation (user navigated during the
-    // refinement) the cancelling phase hands the lock to
-    // retriggerUpdate's rAF and the orchestrator exits early so the
-    // later phases don't fire on stale state. On normal completion of
-    // the FINAL phase, the lock is released.
-    let cancelled = false;
-    const onCancel = (pendingState: Partial<ViewState>) => {
-      cancelled = true;
-      // scheduleFrame: rAF while visible, timer in hidden tabs (rAF is
-      // suspended there — the hand-off used to stall until foregrounded),
-      // synchronous in non-browser contexts.
-      scheduleFrame(() => {
+    // Mark the whole run as REFINEMENT, not as a load pass. The lock this run
+    // holds was handed over by an update tail / post-load kick that had already
+    // committed the current view, so `isLoadPassInProgress()` must not see it
+    // (see the `_refining` field). Cleared in the `finally` below so every exit
+    // path — early return, cancellation hand-off, disposal, throw — clears it.
+    this._refining = true;
+    try {
+      // Orchestrate progressive refinement across all three leaf types in
+      // sequence: gsplats first (its progressive-loader was the original
+      // template), then points, then lines. Each phase holds the
+      // serialization lock; on cancellation (user navigated during the
+      // refinement) the cancelling phase hands the lock to
+      // retriggerUpdate's rAF and the orchestrator exits early so the
+      // later phases don't fire on stale state. On normal completion of
+      // the FINAL phase, the lock is released.
+      let cancelled = false;
+      const onCancel = (pendingState: Partial<ViewState>) => {
+        cancelled = true;
+        // scheduleFrame: rAF while visible, timer in hidden tabs (rAF is
+        // suspended there — the hand-off used to stall until foregrounded),
+        // synchronous in non-browser contexts.
+        scheduleFrame(() => {
+          this._updateInProgress = false;
+          this.updateView(pendingState);
+        });
+      };
+      // Per-run abort controller, published as THIS loader's live update
+      // controller: the supersede branch in `updateView` (and `dispose`) abort
+      // `_updateAbortController`, so an incoming view-state cancels in-flight
+      // refinement chunk reads MID-PASS instead of waiting for the pass to
+      // finish (previously refinement passed no signal at all). The refinement
+      // catches treat the resulting AbortError as cancellation (no failure
+      // recorded); the loop's next-pass pending check performs the hand-off.
+      const refinementController = new AbortController();
+      this._updateAbortController = refinementController;
+      // Intermediate phases shouldn't release the lock — only the last
+      // phase running to completion does.
+      const noopReleaseLock = () => {
+        /* lock stays held; next phase owns it */
+      };
+      const finalReleaseLock = () => {
         this._updateInProgress = false;
-        this.updateView(pendingState);
+        // dispose() flushes waiters itself; never re-enter a dead loader.
+        if (this._disposed) return;
+        // A view-state queued DURING the last refinement pass (after the
+        // loop's final loop-top pending check) would otherwise be stranded
+        // here — and with it any parked queued-updateView waiters, freezing
+        // the dimension-animation pacing gate permanently (waitForUpdate
+        // never settles). Mirror queueNext's contract: drain the pending
+        // state into a fresh pass (whose own queueNext carries/settles the
+        // waiters), else settle the waiters now. Intermediate phases don't
+        // need this — the NEXT phase's loop-top pending check rescues them.
+        if (this.viewStateQueue.hasPending()) {
+          this.viewStateQueue.drain((state) => this.updateView(state));
+        } else {
+          this.resolvePassWaiters();
+        }
+      };
+
+      await runGSplatsRefinement({
+        rootGroup: this.rootGroup,
+        viewStateQueue: this.viewStateQueue,
+        gsplatLoaders: this.gsplatLoaders,
+        deriveNodeViewState: (path, attrs, opts) => this.deriveNodeViewState(path, attrs, opts),
+        processGSplats: (path, data, viewState, session) =>
+          this.processGSplatsData(path, data, viewState, session),
+        commitGSplats: (staged, session) => this.commitGSplatsGeometry(staged, session),
+        updateVisibleCountsInMonitor: () => this.updateVisibleCountsInMonitor(),
+        releaseLock: noopReleaseLock,
+        retriggerUpdate: onCancel,
+        isActive: () => !this._disposed,
+        signal: refinementController.signal,
+        profiler: this.profiler,
       });
-    };
-    // Per-run abort controller, published as THIS loader's live update
-    // controller: the supersede branch in `updateView` (and `dispose`) abort
-    // `_updateAbortController`, so an incoming view-state cancels in-flight
-    // refinement chunk reads MID-PASS instead of waiting for the pass to
-    // finish (previously refinement passed no signal at all). The refinement
-    // catches treat the resulting AbortError as cancellation (no failure
-    // recorded); the loop's next-pass pending check performs the hand-off.
-    const refinementController = new AbortController();
-    this._updateAbortController = refinementController;
-    // Intermediate phases shouldn't release the lock — only the last
-    // phase running to completion does.
-    const noopReleaseLock = () => {
-      /* lock stays held; next phase owns it */
-    };
-    const finalReleaseLock = () => {
-      this._updateInProgress = false;
-      // dispose() flushes waiters itself; never re-enter a dead loader.
-      if (this._disposed) return;
-      // A view-state queued DURING the last refinement pass (after the
-      // loop's final loop-top pending check) would otherwise be stranded
-      // here — and with it any parked queued-updateView waiters, freezing
-      // the dimension-animation pacing gate permanently (waitForUpdate
-      // never settles). Mirror queueNext's contract: drain the pending
-      // state into a fresh pass (whose own queueNext carries/settles the
-      // waiters), else settle the waiters now. Intermediate phases don't
-      // need this — the NEXT phase's loop-top pending check rescues them.
-      if (this.viewStateQueue.hasPending()) {
-        this.viewStateQueue.drain((state) => this.updateView(state));
-      } else {
-        this.resolvePassWaiters();
-      }
-    };
+      if (cancelled || this._disposed) return;
 
-    await runGSplatsRefinement({
-      rootGroup: this.rootGroup,
-      viewStateQueue: this.viewStateQueue,
-      gsplatLoaders: this.gsplatLoaders,
-      deriveNodeViewState: (path, attrs, opts) => this.deriveNodeViewState(path, attrs, opts),
-      processGSplats: (path, data, viewState, session) =>
-        this.processGSplatsData(path, data, viewState, session),
-      commitGSplats: (staged, session) => this.commitGSplatsGeometry(staged, session),
-      updateVisibleCountsInMonitor: () => this.updateVisibleCountsInMonitor(),
-      releaseLock: noopReleaseLock,
-      retriggerUpdate: onCancel,
-      isActive: () => !this._disposed,
-      signal: refinementController.signal,
-      profiler: this.profiler,
-    });
-    if (cancelled || this._disposed) return;
+      await runPointsRefinement({
+        rootGroup: this.rootGroup,
+        viewStateQueue: this.viewStateQueue,
+        pointsLoaders: this.loaders,
+        deriveNodeViewState: (path, attrs, opts) =>
+          this.deriveNodeViewState(path, attrs as never, opts) as never,
+        updatePointsGeometry: (path, data, session) =>
+          this.updatePointsGeometry(path, data, session),
+        updateVisibleCountsInMonitor: () => this.updateVisibleCountsInMonitor(),
+        releaseLock: noopReleaseLock,
+        retriggerUpdate: onCancel,
+        isActive: () => !this._disposed,
+        signal: refinementController.signal,
+        profiler: this.profiler,
+      });
+      if (cancelled || this._disposed) return;
 
-    await runPointsRefinement({
-      rootGroup: this.rootGroup,
-      viewStateQueue: this.viewStateQueue,
-      pointsLoaders: this.loaders,
-      deriveNodeViewState: (path, attrs, opts) =>
-        this.deriveNodeViewState(path, attrs as never, opts) as never,
-      updatePointsGeometry: (path, data, session) => this.updatePointsGeometry(path, data, session),
-      updateVisibleCountsInMonitor: () => this.updateVisibleCountsInMonitor(),
-      releaseLock: noopReleaseLock,
-      retriggerUpdate: onCancel,
-      isActive: () => !this._disposed,
-      signal: refinementController.signal,
-      profiler: this.profiler,
-    });
-    if (cancelled || this._disposed) return;
+      await runLinesRefinement({
+        rootGroup: this.rootGroup,
+        viewStateQueue: this.viewStateQueue,
+        linesLoaders: this.linesLoaders,
+        deriveNodeViewState: (path, attrs, opts) =>
+          this.deriveNodeViewState(path, attrs as never, opts) as never,
+        processLines: (path, data, viewState, session) =>
+          this.processLinesData(path, data, viewState, session),
+        commitLines: (staged, session) => this.commitLinesGeometry(staged, session),
+        updateVisibleCountsInMonitor: () => this.updateVisibleCountsInMonitor(),
+        releaseLock: noopReleaseLock,
+        retriggerUpdate: onCancel,
+        isActive: () => !this._disposed,
+        signal: refinementController.signal,
+        profiler: this.profiler,
+      });
+      if (cancelled || this._disposed) return;
 
-    await runLinesRefinement({
-      rootGroup: this.rootGroup,
-      viewStateQueue: this.viewStateQueue,
-      linesLoaders: this.linesLoaders,
-      deriveNodeViewState: (path, attrs, opts) =>
-        this.deriveNodeViewState(path, attrs as never, opts) as never,
-      processLines: (path, data, viewState, session) =>
-        this.processLinesData(path, data, viewState, session),
-      commitLines: (staged, session) => this.commitLinesGeometry(staged, session),
-      updateVisibleCountsInMonitor: () => this.updateVisibleCountsInMonitor(),
-      releaseLock: noopReleaseLock,
-      retriggerUpdate: onCancel,
-      isActive: () => !this._disposed,
-      signal: refinementController.signal,
-      profiler: this.profiler,
-    });
-    if (cancelled || this._disposed) return;
-
-    // Mesh runs LAST and therefore owns `finalReleaseLock`. Order within the four
-    // phases is otherwise historical (gsplats was the template), but the final slot
-    // is not arbitrary: whichever phase runs last must release the serialization
-    // lock, and a mesh reveal is the cheapest of the four to interrupt — its levels
-    // are already-decoded whole-node payloads, so a cancelled pass loses at most one
-    // projection rather than an in-flight chunk fetch.
-    await runMeshRefinement({
-      rootGroup: this.rootGroup,
-      viewStateQueue: this.viewStateQueue,
-      meshLoaders: this.meshLoaders,
-      deriveNodeViewState: (path, attrs, opts) =>
-        this.deriveNodeViewState(path, attrs as never, opts) as never,
-      processMesh: (path, data, viewState, attrs) =>
-        this.processMeshData(path, data, viewState, attrs),
-      commitMesh: (staged, session) => this.commitMeshGeometry(staged, session),
-      updateVisibleCountsInMonitor: () => this.updateVisibleCountsInMonitor(),
-      releaseLock: finalReleaseLock,
-      retriggerUpdate: onCancel,
-      isActive: () => !this._disposed,
-      signal: refinementController.signal,
-      profiler: this.profiler,
-    });
+      // Mesh runs LAST and therefore owns `finalReleaseLock`. Order within the four
+      // phases is otherwise historical (gsplats was the template), but the final slot
+      // is not arbitrary: whichever phase runs last must release the serialization
+      // lock, and a mesh reveal is the cheapest of the four to interrupt — its levels
+      // are already-decoded whole-node payloads, so a cancelled pass loses at most one
+      // projection rather than an in-flight chunk fetch.
+      await runMeshRefinement({
+        rootGroup: this.rootGroup,
+        viewStateQueue: this.viewStateQueue,
+        meshLoaders: this.meshLoaders,
+        deriveNodeViewState: (path, attrs, opts) =>
+          this.deriveNodeViewState(path, attrs as never, opts) as never,
+        processMesh: (path, data, viewState, attrs) =>
+          this.processMeshData(path, data, viewState, attrs),
+        commitMesh: (staged, session) => this.commitMeshGeometry(staged, session),
+        updateVisibleCountsInMonitor: () => this.updateVisibleCountsInMonitor(),
+        releaseLock: finalReleaseLock,
+        retriggerUpdate: onCancel,
+        isActive: () => !this._disposed,
+        signal: refinementController.signal,
+        profiler: this.profiler,
+      });
+    } finally {
+      this._refining = false;
+    }
   }
 
   /**
@@ -1800,6 +1858,14 @@ export class SceneLoader {
     // Signal any in-flight progressive-refinement loop to abort before we
     // start nulling the fields it reads.
     this._disposed = true;
+
+    // Release the serialization lock explicitly. The refinement phases bail on
+    // `_disposed` WITHOUT running `finalReleaseLock`, so a loader disposed
+    // mid-refinement would otherwise leave both flags latched forever — and
+    // anything polling the aggregate (`__luxarDebug.getState().isLoading`)
+    // would then never see idle again.
+    this._updateInProgress = false;
+    this._refining = false;
 
     // Stop the scene-identity watchdog first: its verdicts are about THIS
     // dataset, and a probe landing mid-teardown must not raise a banner

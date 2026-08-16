@@ -183,6 +183,49 @@ describe('SceneLoaderManager', () => {
     void loader3;
   });
 
+  // #1639 — the debug snapshot's `isLoading` flag is sourced from this
+  // aggregate, so it has to answer for EVERY registered loader: a viewer can
+  // hold several, and a snapshot reading only the default would report "idle"
+  // while a sibling loader was still fetching/decoding.
+  describe('isAnyLoadPassInProgress', () => {
+    /** Force a loader's in-flight answer without driving a real updateView. */
+    function setLoadPassInProgress(loader: unknown, inProgress: boolean): void {
+      (loader as { isLoadPassInProgress: () => boolean }).isLoadPassInProgress = () => inProgress;
+    }
+
+    it('is false when no loader is registered', () => {
+      const manager = SceneLoaderManager.getInstance();
+      expect(manager.getLoaderCount()).toBe(0);
+      expect(manager.isAnyLoadPassInProgress()).toBe(false);
+    });
+
+    it('is false when every registered loader is idle', () => {
+      const manager = SceneLoaderManager.getInstance();
+      // Freshly-created loaders have no sweep in flight — read them as-is
+      // rather than stubbing, so the idle case exercises the real method.
+      manager.createLoader('idle-a');
+      manager.createLoader('idle-b', undefined, false);
+      expect(manager.isAnyLoadPassInProgress()).toBe(false);
+    });
+
+    it('is true when ANY ONE of several loaders is mid-load-pass', () => {
+      const manager = SceneLoaderManager.getInstance();
+      manager.createLoader('first');
+      const second = manager.createLoader('second', undefined, false);
+      manager.createLoader('third', undefined, false);
+
+      // The busy loader is deliberately NOT the default one: the aggregate
+      // must not be satisfiable by consulting `getDefaultLoader()` alone.
+      setLoadPassInProgress(second, true);
+      expect(manager.getDefaultLoader()).not.toBe(second);
+      expect(manager.isAnyLoadPassInProgress()).toBe(true);
+
+      // …and it drops back to false once that sweep finishes.
+      setLoadPassInProgress(second, false);
+      expect(manager.isAnyLoadPassInProgress()).toBe(false);
+    });
+  });
+
   // Regression: MED-37 — default election after destruction must follow
   // Map insertion order (oldest remaining loader wins). This is the
   // documented contract on `detachLoader` in scene-loader-manager.ts.

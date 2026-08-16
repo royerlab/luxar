@@ -224,6 +224,34 @@ export class SceneLoaderManager {
   }
 
   /**
+   * Whether ANY registered loader has a LOAD PASS in flight — an `updateView`
+   * sweep (fetch/decode/upload) up to its geometry commit. See
+   * {@link SceneLoader.isLoadPassInProgress} for the exact scope, in
+   * particular why the progressive-LOD refinement drain is excluded.
+   *
+   * Consumed by the debug snapshot (`__luxarDebug.getState().isLoading`,
+   * built in `core/app/debug/debug-interface.ts`), which the E2E "wait for
+   * data" helpers poll to decide when a load has settled.
+   *
+   * The answer is "any loader", not "the default loader", because this
+   * manager's contract admits several: `createLoader`/`createLoaderAsync` take
+   * an id, `getAllLoaders()` returns a map, and the default is merely one
+   * elected entry. So the aggregate answers for all of them rather than
+   * trusting the default slot to be the only busy one. (Production registers
+   * exactly one, under `'default'` — a dataset switch disposes the outgoing
+   * loader before constructing its replacement, so the two never overlap.)
+   *
+   * @returns True if at least one loader is mid-load-pass; false when idle or
+   *   when no loader is registered.
+   */
+  isAnyLoadPassInProgress(): boolean {
+    for (const loader of this.loaders.values()) {
+      if (loader.isLoadPassInProgress()) return true;
+    }
+    return false;
+  }
+
+  /**
    * Destroy a specific loader (best-effort, non-awaiting).
    *
    * Synchronously removes the loader from the manager (so subsequent
