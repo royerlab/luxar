@@ -43,7 +43,10 @@ const EXPECTATIONS_STAMP_PATH = resolve(FIXTURES_DIR, '.expectations-inputs.sha2
  *   - `encoding/` — array encodings (e.g. #448's uint16 per-axis fixed-point
  *     for COORDINATE positions, the miss that motivated this check);
  *   - `io/` — the LuxarZarrCompiler machinery (`io/_compiler` chunking,
- *     spatial ordering, gsplat assembly/tree) every fixture byte flows through.
+ *     spatial ordering, gsplat assembly/tree) every fixture byte flows through;
+ *   - `typing_utils/` — the constants those two READ, so a one-line edit there
+ *     silently changes the bytes (`TARGET_CHUNK_BYTES` sets every chunk shape,
+ *     `DEFAULT_POINT_RADIUS` the pad on a no-radii chunk's stored bounds).
  * Deliberately NOT the whole `luxar/` package: fitting/CLI/demo code does not
  * affect compiled-fixture bytes, and over-widening would regenerate the
  * ~minute-long fixture set on every unrelated Python edit.
@@ -51,6 +54,7 @@ const EXPECTATIONS_STAMP_PATH = resolve(FIXTURES_DIR, '.expectations-inputs.sha2
 const FIXTURE_INPUT_SOURCE_DIRS = [
   resolve(PROJECT_ROOT, 'packages/luxar/src/luxar/encoding'),
   resolve(PROJECT_ROOT, 'packages/luxar/src/luxar/io'),
+  resolve(PROJECT_ROOT, 'packages/luxar/src/luxar/typing_utils'),
 ];
 
 const EXPECTED_FIXTURES = parseGeneratedFixtureNames(GENERATOR_PATH);

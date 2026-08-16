@@ -47,6 +47,7 @@ import type { GPUBufferPool } from '../../../rendering/gpu-buffer-pool';
 import type { NodeFactory } from '../../../rendering/node-factory';
 import { syncPointMaterialWithGeometry } from '../../../rendering/material-sync-helpers';
 import { invalidateRenderObjectFor } from './invalidate-render-object';
+import { DEFAULT_POINT_RADIUS } from '../../../config/constants';
 
 // Re-export so callers can import this name from the commit module while
 // the implementation lives in the rendering layer.
@@ -117,10 +118,11 @@ export function commitPointsGeometry(
   // boundingBox carries the rendered disc extent (the three-geometry
   // invariant — see create-points-node.ts). Uint8 radii normalize to
   // [0, max_radius]; Float32 radii are already world units, so max_radius
-  // is the correct world-space max for both. No radii → 0.5 fill default.
+  // is the correct world-space max for both. No radii → the DEFAULT_POINT_RADIUS
+  // fill default.
   const attrs = points.userData.attrs;
   const maxRadius = (attrs?.max_radius as number | undefined) ?? 1.0;
-  const footprintRadius = data.radii ? maxRadius : 0.5;
+  const footprintRadius = data.radii ? maxRadius : DEFAULT_POINT_RADIUS;
 
   // Lazy projected-centers provider for the depth-sort coordinator
   // (invoked only when the node actually registers — order-dependent

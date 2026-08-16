@@ -9,7 +9,10 @@ asserts its own value and names the other file — the same convention used for
 
 import math
 
-from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
+from luxar.typing_utils.constants import (
+    DEFAULT_POINT_RADIUS,
+    DEFAULT_TRUNCATION_RADIUS,
+)
 
 
 class TestDefaultTruncationRadius:
@@ -71,3 +74,36 @@ class TestDefaultTruncationRadius:
         t_star = math.sqrt(2.0 * math.log(100.0))
         # The lift's value is the round number NEAR the exact coincidence.
         assert abs(LIFT_TRUNCATION_RADIUS - t_star) < 0.05
+
+
+class TestDefaultPointRadius:
+    """The radius a point is drawn with when a node stores no ``radii``."""
+
+    def test_value(self) -> None:
+        # MIRROR: DEFAULT_POINT_RADIUS in
+        # packages/luxar-viewer/src/config/constants.ts must hold this value.
+        # If you change one, change the other — a viewer test pins that side.
+        assert DEFAULT_POINT_RADIUS == 0.5
+
+    def test_authoring_default_is_the_same_constant(self) -> None:
+        # The authoring default (what add_points materializes when the caller
+        # supplies no radii) and the bounds default (what the spatial index
+        # expands a no-radii chunk by) are the same number BY CONSTRUCTION —
+        # the adder imports the constant rather than restating 0.5.
+        from luxar.core.group.adders.points import (
+            DEFAULT_POINT_RADIUS as ADDER_DEFAULT,
+        )
+
+        assert ADDER_DEFAULT is DEFAULT_POINT_RADIUS
+
+    def test_no_radii_chunk_bounds_use_it(self) -> None:
+        # The write-side guarantee: a chunk bound is never tighter than the
+        # footprint the renderer draws.
+        import numpy as np
+
+        from luxar.io.ordering import compute_chunk_bounds_points
+
+        positions = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
+        bounds = compute_chunk_bounds_points(positions, radii=None, chunk_size=1)
+        assert bounds[0, 0, 0] == -DEFAULT_POINT_RADIUS
+        assert bounds[0, 0, 1] == DEFAULT_POINT_RADIUS

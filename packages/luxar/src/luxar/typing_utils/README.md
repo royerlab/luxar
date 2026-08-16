@@ -74,7 +74,7 @@ Constant values used throughout Luxar.
 - **Rendering**: `OPACITY_MIN/MAX`, `ABSORPTION_MIN`/`DEFAULT_ABSORPTION`, `GAMMA_MIN/MAX`, `DEFAULT_BLENDING_MODE`, `SHARPNESS_MIN/MAX`
 - **Chunks**: `TARGET_CHUNK_BYTES`, `MIN_CHUNK_BYTES`, `MAX_CHUNK_BYTES` (byte-based single source of truth). Legacy element-count constants (`CHUNK_SIZE_*`, `DEFAULT_CHUNK_SIZE`) have been removed; use the byte-based names directly.
 - **Memory**: `KB_TO_BYTES`, `MB_TO_BYTES`, `GB_TO_BYTES`
-- **Limits**: `MAX_POINTS_RECOMMENDED`, `MAX_POINTS_WARNING`, `MIN_POINT_RADIUS`, `MAX_POINT_RADIUS`
+- **Limits**: `MAX_POINTS_RECOMMENDED`, `MAX_POINTS_WARNING`, `MIN_POINT_RADIUS`, `MAX_POINT_RADIUS`, `DEFAULT_POINT_RADIUS` (the radius a point with no `radii` array is authored, bounded and drawn at; mirrored in the viewer's `packages/luxar-viewer/src/config/constants.ts`)
 - **Categorical**: `MIN_CATEGORIES`, `MAX_CATEGORY_LABEL_LENGTH`, `CATEGORICAL_STEP`
 - **Node Types**: `NODE_TYPE_SCENE`, `NODE_TYPE_POINTS`, `NODE_TYPE_LINES`, `NODE_TYPE_GSPLATS`
 

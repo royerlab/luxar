@@ -707,7 +707,10 @@ fewer requests because most arrays pack several index chunks per zarr chunk.
 - **Chunks:** `(chunk_rows,)` — byte-based / spatial-index-aligned
 - **Compression:** Blosc with zstd, level 9 (width-aware shuffle policy)
 - **Description:** Point radii in scene units
-- **Default:** 0.5 if not provided (see `DEFAULT_POINT_RADIUS` in `core/scene.py`)
+- **Default:** 0.5 if not provided (`DEFAULT_POINT_RADIUS` in
+  `typing_utils/constants.py`, mirrored in the viewer's `config/constants.ts`).
+  The same value is what the viewer draws a radii-less node with and what the
+  spatial index expands a no-radii chunk's bounds by.
 - **Validation:** All values must be positive
 - **Shader contract:** radii do NOT scale with the node's `transform` — a
   node-level scale repositions point centers but leaves the rendered disc
@@ -1254,7 +1257,7 @@ consumers must treat missing and `"none"` identically.
 - **Compression:** Blosc with zstd, level 9 (width-aware shuffle policy)
 - **Description:** Bounding box [min, max] for each dimension of each chunk
 - **Example:** For chunk 5 in a 4D dataset: `chunk_bounds[5, :, :]` = `[[x_min, x_max], [y_min, y_max], [z_min, z_max], [t_min, t_max]]`
-- **Note:** Bounds include point radii extent to ensure hyperspheres are found
+- **Note:** Bounds include point radii extent to ensure hyperspheres are found. A node with no `radii/` array is bounded by `DEFAULT_POINT_RADIUS` (0.5) — the radius it will be drawn at — not by zero. Discrete/barrier axes get no radius extent at all, only a tiny float-boundary epsilon, so a categorical value never bleeds into its neighbour.
 
 #### Per-Element Labels (CSR-style)
 
