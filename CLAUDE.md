@@ -262,7 +262,26 @@ luxar gsplat fit --dump-config --preset hifi > config.yaml  # Generate config te
 # localized-Gaussian basis, so the floor is subtracted (clip at 0) before
 # normalization; output amplitudes are background-relative. auto = histogram-mode
 # estimate (capped at the median; a no-op on clean data with no pedestal).
-luxar gsplat fit volume.tiff splats.gsplats.zarr                 # --floor auto (default)
+#
+# STAY ON `auto` UNLESS YOU HAVE MEASURED OTHERWISE. A `pN` floor subtracts the
+# Nth percentile OF ALL VOXELS, which on sparse data lands wherever the sparsity
+# puts it, not where the noise ends: on a 99.9%-empty light-sheet brain, p99 sat
+# at 1.34% of max — inside real signal. Measured on one crop at a fixed seed
+# budget, scored against the UNFLOORED original (foreground = >10% of max, the
+# dim band = 1-10%):
+#
+#   floor   splats   global   foreground   dim-band mass recovered
+#   none    47,172   41.90    28.49 dB     42.0%
+#   auto    46,020   41.76    28.24 dB     40.7%   <- within 0.25 dB of none
+#   p95     39,859   40.33    27.04 dB     23.0%
+#   p99     15,483   35.81    18.86 dB      0.6%   <- erases the dim band
+#
+# A high floor also LOOKS better in a MIP (the haze is gone, the render is
+# crisper than its own source) — that is the trap. Judge a floor on foreground /
+# dim-band PSNR against unfloored data, never on how the render looks. Handle
+# residual haze with the display window / opacity, not by destroying data at fit
+# time. And never port a floor choice between datasets without retesting.
+luxar gsplat fit volume.tiff splats.gsplats.zarr                 # --floor auto (default, recommended)
 luxar gsplat fit volume.tiff splats.gsplats.zarr --floor p10     # subtract 10th percentile
 luxar gsplat fit volume.tiff splats.gsplats.zarr --floor 110     # subtract a fixed value
 luxar gsplat fit volume.tiff splats.gsplats.zarr --floor none    # disable (hard-min, legacy)

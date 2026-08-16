@@ -7,11 +7,12 @@ microscope. MCFO is a stochastic three-epitope label: each cell that flips out
 expresses a random combination of HA / V5 / FLAG tags, so individual neurons
 come up in distinguishable colours against an almost entirely empty volume.
 
-This is the **sparse-and-huge** shape. The source mosaic is 2573 x 2707 x 463
-voxels — 3.22 Gvoxel per channel, 12.9 Gvoxel over the four channels — of which
-roughly **0.03% carries signal**. Fitted to 418,722 Gaussian splats that is
-about **7,700:1** against the source voxels, which is the regime splats are for:
-the empty 99.97% costs nothing.
+This is the **sparse-and-huge** shape. The source is 2573 x 2707 x 463 voxels —
+3.22 Gvoxel per channel, 12.9 Gvoxel over the four channels — of which only
+**0.014%** rises above 1% of the peak intensity (the volume's own 99th
+percentile sits at 0.05% of peak). Fitted to **653,759 Gaussian splats** that is
+about **4,900:1** against the source voxels, which is the regime splats are for:
+the empty 99.99% costs nothing.
 
 WHY THE COMPOSITE IS FITTED ONCE, NOT PER CHANNEL:
     A neuron's MCFO hue is the RATIO of the three channels at the SAME voxels.
@@ -19,7 +20,8 @@ WHY THE COMPOSITE IS FITTED ONCE, NOT PER CHANNEL:
     co-locate, and every axon renders candy-striped. So the fit runs on the
     per-voxel maximum of the three (gain-balanced at p99.99 first, or whichever
     channel is brightest wins nearly every voxel), and each splat then reads its
-    colour from the three channels at its own centre.
+    colour from the three channels at its own centre. Result here: a near-even
+    41 / 27 / 31 % three-way colour split, and 0.06% of splats uncoloured.
 
 DATA SOURCE & CITATIONS:
     Janelia FlyLight Gen1 MCFO collection, driver line VT019012, slide code
@@ -41,76 +43,89 @@ DATA SOURCE & CITATIONS:
       collections for targeted expression in the Drosophila nervous system."
       bioRxiv 198648 (2017). doi:10.1101/198648
 
-VOXEL SIZE:
-    Recorded by the instrument, not inferred: the LSM metadata gives
-    ``VoxelSizeX/Y`` = 1.8826889e-07 m and ``VoxelSizeZ`` = 3.8e-07 m, i.e.
-    **0.18826889 um** laterally and **0.38 um** axially. The scale applied in
-    step 9 rounds the lateral pitch to 0.1883 um (a 0.017% error, ~0.08 um over
-    the full 475 um width — far below the ~0.4 um optical resolution).
+WHY JANELIA'S STITCHED PRODUCT, NOT THE RAW TILES:
+    FlyLight distributes each 63x brain three ways, and none is both stitched
+    and 16-bit:
 
-    The shipped centres are therefore already in micrometres, and the brain
-    measures 475 x 501 x 168 um: the right envelope for an adult Drosophila
-    central brain plus optic lobes, which is an independent check that the
-    calibration and the axis permutation are both right.
+        *.lsm.bz2            per-tile, 16-bit, ~7.2 GB for the ten files
+        unaligned_stack.h5j  stitched, 8-bit HEVC, 199 MB   <- used here
+        aligned_stack.h5j    stitched + template-aligned, 8-bit
+
+    This demo takes the stitched H5J. Re-stitching the raw tiles ourselves was
+    tried and abandoned: the raw LSMs carry NO stage coordinates (``Positions``,
+    ``TilePositions`` and ``OriginX/Y/Z`` are all zero), and once placement is
+    recovered by registration the result still shows two artefacts that
+    Janelia's pipeline — "stitched AND distortion corrected" — already solves:
+
+    * **Ghosting.** The five tile positions are separate acquisitions and the
+      sample deforms between them. Residual misalignment measured in four
+      sub-blocks per overlapping pair VARIES by 4.2-7.5 voxels across a single
+      overlap, so no per-tile translation can align them; it needs a non-rigid
+      fit.
+    * **Coverage seams.** Blending N overlapping tiles averages N independent
+      noise realisations, so doubly-covered regions are quieter by ~sqrt(2)
+      (measured 1.442 against 1.414 predicted). Coverage count is
+      piecewise-constant with rectangular boundaries, so the fit sees
+      box-shaped steps.
+
+    The cost of the H5J is dynamic range in the dim tail, not resolution: the
+    raw tiles union to 462 x 2712 x 2577 against the H5J's 463 x 2707 x 2573,
+    i.e. the same voxel grid to within 0.2%, at the same 0.19 um sampling.
+
+VOXEL SIZE:
+    0.19 x 0.19 um laterally, 0.38 um axially, from the H5J metadata
+    (``voxel_size``) — recorded by the instrument, not inferred. The shipped
+    centres are already in micrometres and the brain measures 663 x 303 x 167
+    um, the right envelope for an adult Drosophila central brain plus optic
+    lobes, which independently checks both the calibration and the orientation.
 
 PIPELINE (how the bundled gsplats were produced — provenance, NOT re-run here):
-    1. Pull the 10 raw ``.lsm.bz2`` tiles for this specimen from the public S3
-       bucket (~7.2 GB compressed; 5 tile positions x 2 acquisitions).
-    2. Recover tile placement. The raw LSMs carry NO stage coordinates —
-       ``Positions``, ``TilePositions`` and ``OriginX/Y/Z`` are all zero — so the
-       mosaic geometry exists only in Janelia's stitched H5J. Each tile is
-       registered against that H5J, which is used purely as a COORDINATE
-       reference; its lossy 8-bit voxels never enter the output.
-    3. Blend to a 16-bit mosaic with a separable Hann feather (a plain max keeps
-       the brighter tile's shading step at the seam; a plain mean halves
-       single-tile-thick coverage).
-    4. Gain-balance the three signal channels at p99.99 and take the per-voxel
-       maximum as the fit target. The fourth channel (nc82 neuropil reference)
-       is EXCLUDED — it is 10-19% occupied, i.e. not sparse, and would dominate.
-    5. ``gsplat cal --auto-region --feature-metric edges --k-star-metric gain``
-       -> K* ~ 27.9k on a 320^3 content-rich region (a real held-out peak: the
-       curve turns over, unlike stitched/denoised data which never peaks).
-    6. ``gsplat fit --tiling content --cal … --flat --floor p99`` -> 418,722
-       splats over 66 content-balanced boxes. ``--floor p99`` rather than
-       ``auto``: auto removes the pedestal but leaves neuropil autofluorescence,
-       which fills the brain silhouette and saturates in every blending mode.
-    7. Colour each splat by sampling the three channels at its own centre.
-    8. ``gsplat lod --recipe stream --target-ms 200`` -> progressive ladder.
-    9. ``gsplat transform --rotate-y 90`` -> face-on default view, then a second
-       ``gsplat transform --scale 0.1883,0.1883,0.38 --center`` -> physical
-       micrometres. Two calls, not one: a single invocation applies ``--scale``
-       BEFORE ``--rotate-*``, which would put the axial pitch on a lateral axis.
+    1. Fetch ``VT019012-20140423_20_D5-f-63x-brain-GAL4-unaligned_stack.h5j``
+       (199 MB) from the public S3 bucket.
+    2. Decode it. H5J is an HDF5 container holding one H.265 elementary stream
+       per channel, padded to macroblock bounds; decode with ffmpeg, crop the
+       padding (``pad_right``/``pad_bottom``), write zarr.
+    3. Gain-balance the three signal channels at p99.99 and take the per-voxel
+       maximum as the fit target. Channel_3 (nc82 neuropil reference) is
+       EXCLUDED — at 10-19% occupancy it is not sparse and would dominate.
+    4. ``gsplat cal --auto-region --feature-metric edges --k-star-metric gain``
+       -> a region-scoped density (K* 128,000, confidence 13.35 dB).
+    5. ``gsplat fit --tiling content --cal … --flat --floor auto`` -> 653,759
+       splats over 75 content-balanced boxes.
+    6. Colour each splat by sampling the three channels at its own centre.
+    7. ``gsplat lod --recipe stream --target-ms 200`` -> progressive ladder.
+    8. ``gsplat transform --rotate-y 90`` (face-on), then a SECOND call for
+       ``--scale 0.19,0.19,0.38``: one invocation applies ``--scale`` BEFORE
+       ``--rotate-*``, which would put the axial pitch on a lateral axis.
+    9. ``gsplat transform --rotate-z 48.84`` -> level. The specimen sits
+       diagonally on the imaging canvas (the canvas is square because it is the
+       union of five square tile positions, not because the brain is). The
+       angle is the amplitude-weighted principal axis of the splat cloud in the
+       view plane; levelling takes the bounding box from 483 x 508 to 663 x 303
+       um, so the viewer frames the brain instead of empty corners.
 
-KNOWN LIMITATION — RESIDUAL GHOSTING:
-    Thin neurites show some doubling where tiles overlap. On five of the seven
-    overlaps that is NOT fixable by better translation (see below); the demo
-    ships with the seams knowingly.
+    The shipped centres are therefore in micrometres about an arbitrary origin
+    (the brain's centre lands near (5, 36, 43) um, not at 0) — which is why the
+    camera below is derived from the loaded bounds rather than hard-coded.
 
-    Each of the 5 tile positions is a separate acquisition and the sample
-    deforms between them. Measuring the residual misalignment in four
-    independent sub-blocks per overlapping pair (7 pairs) splits them cleanly
-    into two regimes, in y:
+WHY ``--floor auto`` AND NOT A PERCENTILE:
+    A ``pN`` floor subtracts the Nth percentile of ALL voxels, which on sparse
+    data lands wherever the sparsity puts it rather than where the noise ends.
+    Measured on this specimen, at a fixed seed budget, every fit scored against
+    the UNFLOORED original (foreground = above 10% of max; dim band = 1-10%,
+    where thin faint neurites live):
 
-        left_dorsal      + ventral            spread 7.5   [ 2.2, -0.2, -5.2, -0.5]
-        left_dorsal      + left_optic_lobe    spread 7.0   [ 4.0,  0.2,  7.2,  0.5]
-        left_dorsal      + right_dorsal       spread 5.2   [-2.2, -1.8, -7.0, -3.0]
-        right_dorsal     + ventral            spread 5.2   [ 2.2, -1.0,  4.2,  0.5]
-        right_dorsal     + right_optic_lobe   spread 4.2   [-0.2, -1.2, -4.5, -3.5]
-        right_optic_lobe + ventral            spread 2.8   [12.8, 10.0, 12.8, 10.0]
-        left_optic_lobe  + ventral            spread 0.5   [-8.8, -8.8, -9.2, -9.2]
+        floor   splats   global   foreground   dim-band mass recovered
+        none    47,172   41.90    28.49 dB     42.0%
+        auto    46,020   41.76    28.24 dB     40.7%
+        p95     39,859   40.33    27.04 dB     23.0%
+        p99     15,483   35.81    18.86 dB      0.6%
 
-    The five pairs that include a dorsal tile have residuals that VARY by
-    4.2-7.5 voxels across a single overlap — a rigid model predicts the same
-    residual everywhere, so no per-tile offset can align those. The two
-    optic-lobe/ventral pairs are the opposite case: nearly constant (spread 0.5
-    and 2.8) but offset by a large 9-13 voxels, which IS rigidly correctable and
-    is not corrected here.
-    Janelia's own pipeline advertises "stitched AND distortion corrected"
-    precisely because the correction it applies is non-rigid.
-
-    Removing it properly needs a piecewise/elastic fit, or accepting Janelia's
-    8-bit stitched product (geometrically correct, but lossy). This demo keeps
-    the full 16-bit dynamic range and lives with the seams.
+    ``auto`` is within 0.25 dB of no floor at all, so pedestal removal is
+    essentially free; all the damage comes from raising the floor. A p99-floored
+    fit also LOOKS better in a MIP (the haze is gone and the render is crisper
+    than its own source) — that is the trap. Judge a floor on foreground /
+    dim-band PSNR against unfloored data, never on how the render looks.
 
 USAGE:
     python demo_gsplats_3d_flylight_mcfo_63x_brain.py [--no-serve] [--serve-only]
@@ -127,13 +142,13 @@ DEMO_META = {
     "key": "gsplats_3d_flylight_mcfo_63x_brain",
     "title": "3D Drosophila Whole Brain (FlyLight MCFO, 63x)",
     "description": (
-        "A whole fly brain's individually-coloured neurons as 419k Gaussian "
-        "splats — 7,700:1 against a 3.2 Gvoxel, 99.97%-empty confocal mosaic."
+        "A whole fly brain's individually-coloured neurons as 654k Gaussian "
+        "splats — 4,900:1 against a 3.2 Gvoxel, 99.99%-empty confocal stack."
     ),
     "category": "microscopy",
     "geometry": "gsplats",
     "requirements": {
-        "download_mb": 5,
+        "download_mb": 8,
         "compute": "light",
         "gpu": "none",
         # Ships in-repo under git-LFS, like every other bundled gsplat demo.
@@ -145,13 +160,14 @@ DEMO_META = {
     "outputs": ["gsplats_3d_flylight_mcfo_63x_brain"],
 }
 
+import math
 from pathlib import Path
 
 import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.core.viewer_config import ViewerConfig
+from luxar.core.viewer_config import CameraConfig, ViewerConfig
 from luxar.demos import ensure_dataset, launch_viewer, parse_demo_flags
 from luxar.gsplats.io.load_gsplats import load_gsplat_node
 from luxar.gsplats.tree import center_bounds
@@ -165,22 +181,39 @@ DATASET = "gsplats_flylight_mcfo_63x"
 
 SCENE_NAME = "gsplats_3d_flylight_mcfo_63x_brain.luxar.zarr"
 
-# Physical voxel size (X, Y, Z) in microns, from the LSM metadata. Already baked
-# into the shipped centers by pipeline step 9; kept here because the dimension
+# Physical voxel size (X, Y, Z) in microns, from the H5J metadata. Already baked
+# into the shipped centers by pipeline step 8; kept here because the dimension
 # RANGES are read off the data but the UNITS are ours to declare.
-VOXEL_UM = (0.1883, 0.1883, 0.38)
+VOXEL_UM = (0.19, 0.19, 0.38)
 
 # The DISPLAY RANGE the Layers panel shows, dialled in against THIS store.
 #
 # `intensity`/`offset` are the stored form of that window, not a gain:
 #     intensity = 1 / (hi - lo)        offset = -lo / (hi - lo)
-# so a 0-1.101 window is intensity 0.908, NOT 1.101. Passing the max directly
-# stores a window ~8x too narrow and the scene renders blown out.
+# so a 0-2.723 window is intensity 0.367, NOT 2.723. Passing the max directly
+# stores a window ~7x too narrow and the scene renders blown out.
 #
 # The window is in STORED-AMPLITUDE units, so it is only meaningful for this
 # exact store — any refit or rescale moves it. Re-tune in the panel and copy the
 # numbers back here if the data is ever rebuilt.
-DISPLAY_LO, DISPLAY_HI = 0.0, 1.101
+DISPLAY_LO, DISPLAY_HI = 0.0, 2.723
+
+# Opacity is the exposure lever and wants to be tiny; scaling the amplitudes
+# instead does nothing, because the viewer normalises by the stored maximum.
+# Absorption is much higher here (0.81) than on a hazier volume: with the
+# background gone, depth cueing can be strong without muddying anything.
+OPACITY = 0.02
+ABSORPTION = 0.81
+
+# Camera framing. The viewer's default fits the bounding box with margin, which
+# leaves the brain small; place the camera explicitly so it FILLS the canvas:
+#     visible_height = 2 d tan(fov/2),  visible_width = that * aspect
+# => d = (W / fill) / (2 tan(fov/2) * aspect)
+# Computed at a conservative 1.4 aspect, so a wider window slightly over-fills
+# rather than leaving the brain small.
+CAMERA_FOV = 47.0
+CAMERA_FILL = 0.92
+CAMERA_ASPECT = 1.4
 
 FLAGS = parse_demo_flags()
 NO_SERVE = FLAGS["no_serve"]
@@ -206,7 +239,7 @@ def resolve_data() -> Path:
 # Scene construction
 # =============================================================================
 def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
-    """Build the 3D scene from the pre-fitted, physically-scaled gsplats."""
+    """Build the 3D scene from the pre-fitted, levelled, physically-scaled gsplats."""
     with asection("Creating FlyLight MCFO whole-brain scene"):
         node, _ = load_gsplat_node(str(data_path))
         bmin, bmax = center_bounds(node)
@@ -234,21 +267,37 @@ def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
         )
 
         span = DISPLAY_HI - DISPLAY_LO
+        cx, cy, cz = ((float(bmin[i]) + float(bmax[i])) / 2 for i in range(3))
+        width = float(bmax[0] - bmin[0])
+        height = float(bmax[1] - bmin[1])
+        vh = 2.0 * math.tan(math.radians(CAMERA_FOV / 2.0))
+        distance = max(
+            (width / CAMERA_FILL) / (vh * CAMERA_ASPECT), (height / CAMERA_FILL) / vh
+        )
+        aprint(f"Camera: fov {CAMERA_FOV}, distance {distance:.0f} um")
 
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(
                 dimensions=dims,
-                viewer_config=ViewerConfig(tone_mapping="ACES"),
+                viewer_config=ViewerConfig(
+                    tone_mapping="ACES",
+                    camera=CameraConfig(
+                        position=(cx, cy, cz + distance),
+                        target=(cx, cy, cz),
+                        up=(0.0, 1.0, 0.0),
+                        fov=CAMERA_FOV,
+                    ),
+                ),
             )
             scene.attrs["title"] = "GSplats: Drosophila Whole Brain (FlyLight MCFO)"
             scene.attrs["description"] = (
                 "A whole female Drosophila central brain and optic lobes labelled by "
                 "MultiColor FlpOut, so individually-resolved neurons carry distinct "
-                "hues. Ten raw 63x confocal tiles were registered, blended into a "
-                "2573x2707x463 16-bit mosaic, and fitted as 418,722 Gaussian splats "
-                "— about 7,700:1 against a volume that is 99.97% empty. Colour is "
-                "sampled per-splat from the three MCFO channels. Press L for the "
-                "Layers panel."
+                "hues. Janelia's stitched 63x confocal stack — 2573x2707x463, with "
+                "99.99% of it below 1% of peak — fitted as 653,759 Gaussian splats, "
+                "roughly 4,900:1. "
+                "Colour is sampled per-splat from the three MCFO channels. Press L "
+                "for the Layers panel."
             )
 
             with asection("Adding gsplats"):
@@ -256,18 +305,12 @@ def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
                     name="mcfo_neurons",
                     path=str(data_path),
                     # `volumetric` — emission–absorption. The neurons are sparse
-                    # but the brain is 168 um deep, so additive summing along the
+                    # but the brain is 167 um deep, so additive summing along the
                     # ray saturates every dense arbor to white and the MCFO hues,
                     # which are the whole point of the label, disappear.
                     blending_mode="volumetric",
-                    # ~10x lower than the bioimaging default of 1.0: volumetric
-                    # alpha is optical depth and ACCUMULATES along the ray, so the
-                    # intuitive value over-attenuates badly at this depth.
-                    absorption=0.10,
-                    # Tiny on purpose — this is the exposure lever. Scaling the
-                    # amplitudes instead does nothing, because the viewer
-                    # normalises by the stored maximum.
-                    opacity=0.02,
+                    absorption=ABSORPTION,
+                    opacity=OPACITY,
                     # Per-splat RGB is already baked from the three channels, so
                     # no colormap: a LUT would overwrite the MCFO hues with a
                     # scalar ramp.
@@ -286,7 +329,7 @@ def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
                 blend_mode="difference",
             )
             scene.add_text(
-                "Janelia FlyLight • 63x confocal • VT019012 • 418,722 splats",
+                "Janelia FlyLight • 63x confocal • VT019012 • 653,759 splats",
                 position=(0.98, 0.97),
                 font_size=0.015,
                 anchor="bottom-right",

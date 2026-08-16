@@ -68,8 +68,34 @@ therefore background-relative. `--floor` is ON by default (`auto`):
 `cal` applies the same `--floor` up front so K* is measured on floor-suppressed
 data, matching how you fit.
 
+**Stay on `auto` unless you have measured otherwise.** A `pNN` floor subtracts a
+percentile of *all* voxels, so on sparse data it lands wherever the sparsity puts
+it rather than where the noise ends — on a 99.9%-empty light-sheet brain, `p99`
+sat at 1.34% of max, inside real signal. Measured on one crop at a fixed seed
+budget, every fit scored against the **unfloored** original (foreground = above
+10% of max; dim band = 1–10%, where thin faint neurites live):
+
+| floor | splats | global | foreground | dim-band mass recovered |
+|-------|--------|--------|------------|-------------------------|
+| none  | 47,172 | 41.90  | 28.49 dB   | 42.0% |
+| auto  | 46,020 | 41.76  | 28.24 dB   | 40.7% |
+| p95   | 39,859 | 40.33  | 27.04 dB   | 23.0% |
+| p99   | 15,483 | 35.81  | **18.86 dB** | **0.6%** |
+
+`auto` is within 0.25 dB of no floor at all, so pedestal removal is essentially
+free; all the damage comes from raising the floor. `p99` also produced a third of
+the splats from the same seeds — the structure was clipped to zero before fitting
+began.
+
+A high floor **looks better in a MIP** (the haze is gone and the render is
+crisper than its own source). That is the trap: judge a floor on foreground /
+dim-band PSNR against unfloored data, never on how the render looks. Handle
+residual haze with the viewer's display window and opacity, not by destroying
+data at fit time — and never port a floor choice between datasets without
+retesting it there.
+
 ```bash
-luxar gsplat fit volume.tiff out.gsplats.zarr                 # --floor auto (default)
+luxar gsplat fit volume.tiff out.gsplats.zarr                 # --floor auto (default, recommended)
 luxar gsplat fit volume.tiff out.gsplats.zarr --floor p10     # subtract 10th percentile
 luxar gsplat cal volume.tiff cal.json --floor none            # legacy (no floor)
 ```
