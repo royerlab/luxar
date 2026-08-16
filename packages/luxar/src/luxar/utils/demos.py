@@ -686,8 +686,9 @@ def voxel_sampled_payload_agreement(
         centers: ``(N, D)`` splat centers. EVERY column takes part in the voxel
             key: a stacked/nD fit puts the spatial dims first and the stacked
             axis LAST, so keying on three columns alone would fold every
-            timepoint of a voxel together and reject an aligned sidecar. Rows
-            with a non-finite center are excluded (they cannot be judged).
+            timepoint of a voxel together and reject an aligned sidecar. A row
+            that has no integer voxel — a non-finite center, or a magnitude at
+            or above ``_VOXEL_KEY_LIMIT`` — is excluded (it cannot be judged).
         payload: ``(N,)`` or ``(N, C)`` per-splat values sampled at those centers.
         min_pairs: Minimum number of same-voxel pairs required to return a
             verdict. Clamped to at least 1: with zero pairs there is nothing to

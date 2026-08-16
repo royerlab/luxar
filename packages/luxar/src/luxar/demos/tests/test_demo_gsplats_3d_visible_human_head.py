@@ -511,6 +511,7 @@ class TestShippedLfsPairIsGuardedToo:
           * the ``gsplats_visible_human_head/`` row in ``demos/data/README.md``
           * the ``gsplats_3d_visible_human_head`` entry in
             ``scripts/gallery/generate_gallery_datasets.py``'s ``UNBUILDABLE_IDS``
+            (and the ``unbuildable`` sentence in ``scripts/gallery/README.md``)
 
         Nothing else pins those, so without this tripwire they would quietly stay
         wrong forever. Swap this test for ``assert _colors_match_fit(...)`` then.
