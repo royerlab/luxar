@@ -154,9 +154,12 @@ export interface DebugState {
   isAnimating: boolean;
   initialized: boolean;
   /**
-   * Whether a LOAD PASS is in flight on at least one registered scene loader:
+   * Whether a LOAD PASS is outstanding on at least one registered scene loader:
    * an `updateView` sweep (fetch / decode / upload) up to its geometry commit,
-   * or a failed-loader retry sweep, which takes the same lock.
+   * a failed-loader retry sweep, which takes the same lock, or a view-state
+   * QUEUED behind either (the requested slice has not begun loading, so it is
+   * still an unfinished pass — without it a nav that lands during a refinement
+   * hold would read idle immediately).
    *
    * It does NOT cover, and must not be read as covering:
    *   - the INITIAL `loadScene` — that path only touches the loader's lock at

@@ -23,6 +23,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { SceneLoader, type LoaderConfig, type ViewState } from '../../../data';
+import type { ViewStateQueue } from '../../../data/scene-loader/view-state/view-state-queue';
 import { releaseDepthSortNode } from '../../../rendering/depth-sort-coordinator';
 import * as THREE from 'three';
 import { getPointTexture } from '../../../rendering/point-geometry';
@@ -392,13 +393,15 @@ describe('SceneLoader', () => {
   });
 
   // #1639 — `isLoadPassInProgress()` is what the debug snapshot's `isLoading`
-  // reports, so its scope has to be exactly "data is still arriving for the
-  // current view". The serialization lock is broader than that: the update tail
-  // and the post-load kick hand it to the progressive-LOD refinement run, which
-  // only releases it after every additive ladder has drained — long after the
-  // view committed. These tests pin the subtraction, and pin that
-  // `isUpdateInProgress()` (adaptive DPR, init pipeline) keeps the broad meaning.
-  describe('isLoadPassInProgress — refinement is excluded', () => {
+  // reports, so its scope has to be exactly "data is still arriving for the view
+  // the user asked for". The serialization lock is both too broad and too
+  // narrow for that: the update tail and the post-load kick hand it to the
+  // progressive-LOD refinement run, which only releases it after every additive
+  // ladder has drained (long after the view committed), while a view-state
+  // QUEUED behind that hold has not started loading at all yet. These tests pin
+  // the subtraction and the addition, and pin that `isUpdateInProgress()`
+  // (adaptive DPR, init pipeline) keeps its broad "the lock is held" meaning.
+  describe('isLoadPassInProgress — refinement excluded, queued state included', () => {
     /** The two private flags the two accessors are composed from. */
     type LockFlags = { _updateInProgress: boolean; _refining: boolean };
 
@@ -442,12 +445,14 @@ describe('SceneLoader', () => {
       expect(flags._refining).toBe(false);
     });
 
-    it('dispose clears the lock a mid-refinement teardown would latch', async () => {
+    it('dispose leaves a torn-down loader reading idle, whatever state it was in', async () => {
       const flags = sceneLoader as unknown as LockFlags;
-      // The state a loader disposed mid-refinement is in: lock held, refining.
-      // The refinement phases bail on `_disposed` WITHOUT running
-      // `finalReleaseLock`, so without an explicit clear in dispose() both flags
-      // stay set forever and every poll of the manager aggregate reads busy.
+      // Defence in depth, not a production bug fix: every SceneLoaderManager
+      // disposal path detaches the loader before disposing it, so the aggregate
+      // cannot observe a disposed loader anyway. This pins that a disposed
+      // loader is self-consistently idle regardless — a phase that bails before
+      // `finalReleaseLock` runs leaves the lock set, and nothing later clears
+      // it.
       flags._updateInProgress = true;
       flags._refining = true;
 
@@ -457,6 +462,29 @@ describe('SceneLoader', () => {
       expect(flags._refining).toBe(false);
       expect(sceneLoader.isLoadPassInProgress()).toBe(false);
       expect(sceneLoader.isUpdateInProgress()).toBe(false);
+    });
+
+    it('counts a view-state queued behind a refinement hold as a load pass', () => {
+      const flags = sceneLoader as unknown as LockFlags;
+      const queue = (sceneLoader as unknown as { viewStateQueue: ViewStateQueue }).viewStateQueue;
+
+      // The steady state right after a commit on any laddered dataset: the
+      // update tail handed the lock to the refinement orchestrator.
+      flags._updateInProgress = true;
+      flags._refining = true;
+      expect(sceneLoader.isLoadPassInProgress()).toBe(false);
+
+      // A keyboard nav lands: updateView takes its supersede branch, parks the
+      // state and returns without touching either flag. The slice the user
+      // asked for has NOT begun loading, so this must not read idle.
+      queue.setPending({ slicePosition: [1, 0, 0] });
+      expect(sceneLoader.isLoadPassInProgress()).toBe(true);
+
+      // Cleared at the moment the next pass starts (queueNext / the refinement
+      // loop's cancellation check / finalReleaseLock's drain all take it), so
+      // the queued clause cannot latch busy once a pass is running.
+      expect(queue.takePending()).not.toBeNull();
+      expect(sceneLoader.isLoadPassInProgress()).toBe(false);
     });
   });
 
@@ -1056,6 +1084,7 @@ describe('SceneLoader', () => {
   describe('kickRefinementIfIdle — refinement after deferred-group activation', () => {
     interface KickInternals {
       _updateInProgress: boolean;
+      _refining: boolean;
       _disposed: boolean;
       _refinementKickPending: boolean;
       gsplatLoaders: Map<string, unknown>;
@@ -1159,6 +1188,35 @@ describe('SceneLoader', () => {
         expect(spy).toHaveBeenCalledTimes(1);
       } finally {
         vi.useRealTimers();
+        internals._updateInProgress = false;
+        internals.gsplatLoaders.clear();
+      }
+    });
+
+    it('treats a live refinement as busy even after the lock has opened', async () => {
+      // `finalReleaseLock` clears `_updateInProgress` while `_refining` is still
+      // set (the orchestrator's `finally` clears that one level up, when the
+      // phase's await unwinds). A microtask queued at exactly that instant — a
+      // deferred lod_group `ensureLoaded` continuation is one — must not read
+      // the open lock as idle and start a SECOND refinement run on top of the
+      // first; it re-checks on the timer instead.
+      vi.useFakeTimers();
+      const { internals, spy } = stubOrchestrator();
+      internals.gsplatLoaders.set('/g/part_0', { hasMoreLODs: true });
+      internals._updateInProgress = false; // lock already released…
+      internals._refining = true; // …but the run is still draining
+      try {
+        sceneLoader.kickRefinementIfIdle();
+        expect(spy).not.toHaveBeenCalled();
+        expect(internals._refinementKickPending).toBe(true); // re-check armed
+        // The first run finishes; the pending re-check kicks exactly once.
+        internals._refining = false;
+        await vi.runOnlyPendingTimersAsync();
+        expect(spy).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+        internals._refining = false;
+        internals._refinementKickPending = false;
         internals._updateInProgress = false;
         internals.gsplatLoaders.clear();
       }

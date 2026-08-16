@@ -224,10 +224,12 @@ export class SceneLoaderManager {
   }
 
   /**
-   * Whether ANY registered loader has a LOAD PASS in flight — an `updateView`
-   * sweep (fetch/decode/upload) up to its geometry commit. See
-   * {@link SceneLoader.isLoadPassInProgress} for the exact scope, in
-   * particular why the progressive-LOD refinement drain is excluded.
+   * Whether ANY registered loader has a LOAD PASS outstanding — an `updateView`
+   * sweep (fetch/decode/upload) up to its geometry commit, or a sweep that is
+   * queued and has not started yet. See
+   * {@link SceneLoader.isLoadPassInProgress} for the exact scope, in particular
+   * why the progressive-LOD refinement drain is excluded and why the queued
+   * slot counts.
    *
    * Consumed by the debug snapshot (`__luxarDebug.getState().isLoading`,
    * built in `core/app/debug/debug-interface.ts`), which the E2E "wait for

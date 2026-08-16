@@ -282,18 +282,38 @@ export class SceneLoader {
   }
 
   /**
-   * Whether a LOAD PASS is in flight: an `updateView` sweep (fetch / decode /
-   * upload) up to its geometry commit, or a failed-loader retry sweep, which
-   * takes the same lock. The "has the data for the current view arrived yet?"
-   * question.
+   * Whether a LOAD PASS is in flight. Three parts:
    *
-   * Deliberately EXCLUDES the progressive-LOD refinement drain, even though it
-   * holds the same lock (see `_refining`). Refinement runs after the current
-   * view has already been committed, so folding it in would turn this into
-   * full-ladder latency instead of first-commit latency. That is the same
-   * distinction `update-view/queue-next.ts` already draws where it resolves the
-   * pass waiters at refinement ENTRY rather than completion — the pacing gate
-   * there needs first-commit latency too.
+   *   1. a RUNNING sweep — an `updateView` pass (fetch / decode / upload) up to
+   *      its geometry commit, or a failed-loader retry sweep, which takes the
+   *      same lock;
+   *   2. MINUS the progressive-LOD refinement drain, which inherits that same
+   *      lock (see `_refining`);
+   *   3. PLUS a sweep that is QUEUED but has not started yet.
+   *
+   * Together they answer "has the data for the view the user asked for arrived
+   * yet?".
+   *
+   * Refinement is excluded because it runs after the current view has already
+   * been committed, so folding it in would turn this into full-ladder latency
+   * instead of first-commit latency. That is the same distinction
+   * `update-view/queue-next.ts` already draws where it resolves the pass waiters
+   * at refinement ENTRY rather than completion — the pacing gate there needs
+   * first-commit latency too.
+   *
+   * The queued slot counts because the refinement exclusion would otherwise
+   * open a hole big enough to drive a test through. The steady state on any
+   * laddered dataset right after a commit is "lock held, `_refining` true"; an
+   * `updateView` arriving then takes the supersede branch above, parks its state
+   * with `viewStateQueue.setPending` and returns without touching either flag.
+   * The requested slice has not begun loading, yet both flags still describe
+   * the refinement that preceded it — so without this clause a poller would
+   * read idle and conclude the new slice had rendered. `hasPending()` is true
+   * across exactly that window: the slot is filled in the supersede branch and
+   * cleared by `takePending()` at the moment the next pass starts (`queueNext`
+   * before it re-enters `updateView`, the refinement loop's own loop-top
+   * cancellation check before it hands off, or `finalReleaseLock`'s drain), so
+   * the flag cannot latch busy after a pass begins.
    *
    * Also outside its scope: the initial `loadScene` (which only touches the
    * lock at its very end, to hand it to the post-load refinement kick) and
@@ -308,7 +328,7 @@ export class SceneLoader {
    * loader is doing work of any kind.
    */
   public isLoadPassInProgress(): boolean {
-    return this._updateInProgress && !this._refining;
+    return (this._updateInProgress && !this._refining) || this.viewStateQueue.hasPending();
   }
 
   // At most ONE lock-busy re-check of kickRefinementIfIdle is in flight at a
@@ -1060,11 +1080,22 @@ export class SceneLoader {
    * LODs or this loader is disposed). A plain timer, deliberately NOT
    * ``scheduleFrame``: that helper runs synchronously when rAF is missing,
    * which would turn this lock-held re-check into unbounded recursion.
+   *
+   * "Busy" is the lock OR a live refinement, not the lock alone: the final
+   * refinement phase's ``finalReleaseLock`` opens the lock while ``_refining``
+   * is still set (the flag is cleared one level up, in the orchestrator's
+   * ``finally``, once the phase's await unwinds). A microtask already queued at
+   * that instant — a deferred ``lod_group`` ``ensureLoaded`` continuation is
+   * exactly one — would read the open lock as idle and start a SECOND
+   * refinement run on top of the first. The two runs share one ``_refining``
+   * boolean, so the first run's ``finally`` would clear it mid-flight and
+   * ``isLoadPassInProgress()`` would report a load pass for the whole remaining
+   * drain.
    */
   kickRefinementIfIdle(): void {
     if (this._disposed) return;
     if (!this.anyLoaderHasMoreLODs()) return;
-    if (this._updateInProgress) {
+    if (this._updateInProgress || this._refining) {
       if (this._refinementKickPending) return;
       this._refinementKickPending = true;
       setTimeout(() => {
@@ -1859,13 +1890,22 @@ export class SceneLoader {
     // start nulling the fields it reads.
     this._disposed = true;
 
-    // Release the serialization lock explicitly. The refinement phases bail on
-    // `_disposed` WITHOUT running `finalReleaseLock`, so a loader disposed
-    // mid-refinement would otherwise leave both flags latched forever — and
-    // anything polling the aggregate (`__luxarDebug.getState().isLoading`)
-    // would then never see idle again.
+    // Release the serialization lock explicitly — defence in depth. Only the
+    // lock can genuinely latch: an early update phase bailing before
+    // `finalReleaseLock` runs leaves it set, and nothing later clears it
+    // (`_refining` is not in that class — the refinement orchestrator's
+    // `finally` clears it on every exit path, `_disposed` early returns
+    // included; it is cleared here only for symmetry). A latched lock is
+    // invisible to `isAnyLoadPassInProgress()` in production, because every
+    // `SceneLoaderManager` disposal path detaches the loader from its map
+    // before calling `dispose()` — but that is the manager's ordering hiding
+    // this loader's state, not this loader being correct, so clear it here
+    // rather than depend on it. Same reasoning for the queued view-state: a
+    // disposed loader never runs its pending pass, and `hasPending()` now
+    // counts towards `isLoadPassInProgress()`.
     this._updateInProgress = false;
     this._refining = false;
+    this.viewStateQueue.takePending();
 
     // Stop the scene-identity watchdog first: its verdicts are about THIS
     // dataset, and a probe landing mid-teardown must not raise a banner
