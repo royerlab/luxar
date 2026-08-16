@@ -122,6 +122,11 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
     // Helper function to get current state snapshot.
     // Implementation lives in `./debug-state.ts` so the
     // scene-walking logic can be unit-tested directly.
+    //
+    // `isLoading` is read from the loader manager INSIDE the getter, per
+    // snapshot — capturing it once here would freeze it at install time (when
+    // nothing is loading yet) and hand every polling E2E helper a permanent
+    // "idle".
     getState: () =>
       computeDebugState({
         scene: ports.sceneManager.scene,
@@ -129,6 +134,7 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
         currentFov: ports.sceneManager.currentFov,
         isAnimating: ports.animationController.isActive,
         initialized: ports.isInitialized(),
+        isLoading: SceneLoaderManager.getInstance().isAnyLoadPassInProgress(),
         dims: sceneDimsManager.getDims(),
       }),
 
