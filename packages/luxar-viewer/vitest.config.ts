@@ -11,8 +11,9 @@ export default defineConfig({
     // wasm+cache subset, same 798 passed / 2 skipped either way:
     //     jsdom  127.15 s  (environment 75.72 s)
     //     node    13.85 s  (environment 12 ms)
-    // Across the whole suite only 125 of 559 files need a document, so the
-    // other 434 were paying for a DOM they never touched.
+    // Across the whole suite only 125 of 559 files need a browser global (a
+    // document in most cases), so the other 434 were paying for a DOM they
+    // never touched.
     //
     // Inverting the default (rather than listing directories) is deliberate:
     // the need is not directory-aligned — `ui/` is 65% jsdom while
