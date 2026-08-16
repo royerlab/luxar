@@ -148,6 +148,7 @@ class GaussianSplatFitter:
         seed_amps_background_relative: bool = False,
         source_dtype: Optional[str] = None,
         source_shape: Optional[Sequence[int]] = None,
+        source_stored_bytes: Optional[int] = None,
         **seed_kwargs: Any,
     ) -> GSplatData:
         """
@@ -232,6 +233,7 @@ class GaussianSplatFitter:
             iter_callback_every=iter_callback_every,
             source_dtype=source_dtype,
             source_shape=source_shape,
+            source_stored_bytes=source_stored_bytes,
             **seed_kwargs,
         )
 
@@ -331,6 +333,7 @@ def fit_gaussian_splats(
     # Element type of the volume as it was ACQUIRED / stored on disk
     source_dtype: Optional[str] = None,
     source_shape: Optional[Sequence[int]] = None,
+    source_stored_bytes: Optional[int] = None,
     **seed_kwargs: Any,
 ) -> GSplatData:
     """
@@ -704,6 +707,7 @@ def fit_gaussian_splats(
             iter_callback_every=iter_callback_every,
             source_dtype=source_dtype,
             source_shape=source_shape,
+            source_stored_bytes=source_stored_bytes,
             **seed_kwargs,
         )
 
