@@ -123,9 +123,20 @@ describe('initWasm URL resolution without a DOM', () => {
       expect(message).toContain('Failed to load WASM module');
       // Resolution completed via `import.meta.url` with no DOM present.
       expect(message).toMatch(/src\/wasm\/luxar_wasm\.js/);
+      // Catches a regression to `wasmJsUrls = [wasmShimCandidateUrls(…)[0]]`:
+      // candidate 0 alone satisfies the assertion above, but the whole point of
+      // the DOM-less fall-through is that it reaches the LIST. Measured here, the
+      // two candidates are `…/src/wasm/luxar_wasm.js` and
+      // `…/src/wasm/wasm/luxar_wasm.js`, so the second has a distinct spelling.
+      expect(message).toMatch(/src\/wasm\/wasm\/luxar_wasm\.js/);
       // Pre-fix the swallowed error was exactly `ReferenceError: self is not
       // defined`; assert on the error object itself, not on stringified text.
       expect(error).toBeInstanceOf(Error);
+      // Cardinality pin, the error-type half: `importFirstWasmShim` rethrows a
+      // bare single error only when exactly ONE URL was tried, so an
+      // AggregateError proves >1 candidate was walked. Measured: AggregateError
+      // carrying 2 sub-errors.
+      expect(error).toBeInstanceOf(AggregateError);
       expect(error).not.toBeInstanceOf(ReferenceError);
     } finally {
       warn.mockRestore();
@@ -177,6 +188,12 @@ describe('initWasm URL resolution on the dev server origin', () => {
       // `scripts/build-wasm.sh` never writes, 404 in dev, and silently drop the
       // dev server onto the TypeScript backend with the suite still green.
       expect(message).toContain('http://dev.test/wasm/luxar_wasm.js');
+      // Cardinality pin the other way: this branch is documented as a SINGLE
+      // candidate ("the bundle-relative ones would only add guaranteed 404s"),
+      // and the `toContain` above passes just as well if a regression APPENDED
+      // them. The bundle-relative candidates resolve under `/src/wasm/` here, so
+      // their absence is what pins the list at one entry.
+      expect(message).not.toContain('/src/wasm/');
     } finally {
       warn.mockRestore();
       info.mockRestore();
@@ -189,7 +206,7 @@ describe('initWasm URL resolution on the dev server origin', () => {
     // STRING "null" — a dev build opened from `file://`, inside a sandboxed
     // iframe, or in a `data:` document. It is truthy, so the guard passes, and
     // `new URL('/wasm/luxar_wasm.js', 'null')` then throws
-    // `TypeError: Invalid URL` before `wasmJsUrl` is ever assigned. That is the
+    // `TypeError: Invalid URL` before `wasmJsUrls` is ever assigned. That is the
     // one path that reaches the placeholder arm of the catch's message, and the
     // placeholder is what a reader keys on to tell "the artifact isn't there"
     // apart from "the loader never computed a URL" — the exact confusion that

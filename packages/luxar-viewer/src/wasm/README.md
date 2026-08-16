@@ -175,9 +175,12 @@ Build output goes to `public/wasm/`:
 - `luxar_wasm.d.ts` — TypeScript type definitions
 
 If WASM is not built, `initWasm()` logs a warning with build instructions and falls back to
-TypeScript. The warning names the candidate URLs it tried, or says resolution failed before the
-import — "the artifact isn't there" and "the loader never computed a URL" read identically
-otherwise.
+TypeScript. The warning names the candidate URLs it RESOLVED, in order, or says resolution failed
+before the import — "the artifact isn't there" and "the loader never computed a URL" read
+identically otherwise. It deliberately does not claim each listed candidate was fetched and
+rejected: the same `catch` also covers a failure AFTER one of them loaded fine — `default()`
+throwing, or `assertRequiredWasmExports` rejecting a stale artifact — and the swallowed `error`
+(logged alongside) is what says which happened.
 
 ### Loading the built artifact directly
 

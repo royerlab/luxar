@@ -275,10 +275,14 @@ export function setWasmJsUrl(url: string | undefined): void {
  * @returns Promise resolving to WasmModule interface
  */
 export async function initWasm(): Promise<WasmModule> {
-  // Declared outside the try so the catch can name the candidates it actually
-  // tried; an absent artifact and a loader that never computed a URL at all are
-  // otherwise indistinguishable in the log, which is exactly how #1642 (a bare
-  // `self` dereference in a DOM-less host) stayed invisible.
+  // Declared outside the try so the catch can report the candidate list this
+  // load RESOLVED. It is deliberately NOT phrased as "the candidates it tried":
+  // the same catch also covers a post-import failure — `default()` throwing, or
+  // `assertRequiredWasmExports` rejecting a stale artifact — and in those cases
+  // one of the listed candidates DID load. What the list is always good for is
+  // telling an absent artifact apart from a loader that never computed a URL at
+  // all, which is exactly how #1642 (a bare `self` dereference in a DOM-less
+  // host) stayed invisible.
   let wasmJsUrls: string[] | undefined;
   try {
     // Compute the WASM shim URL(s). The correct base differs by build:
@@ -349,10 +353,24 @@ export async function initWasm(): Promise<WasmModule> {
     // Return the WASM module (it already implements WasmModule interface)
     return wasmModule as unknown as WasmModule;
   } catch (error) {
-    // WASM not available - use TypeScript fallback
+    // WASM not available - use TypeScript fallback.
+    //
+    // The message states what the list IS (the resolved candidates, in order)
+    // rather than claiming each was fetched and failed: only the exhausted-walk
+    // case is a per-URL failure, while `default()` throwing and a stale-artifact
+    // rejection both happen AFTER one candidate loaded fine.
+    //
+    // `%` is doubled because this string is console.warn's FIRST argument, i.e. a
+    // format string: `new URL()` preserves percent-escapes present in the base,
+    // so a path containing `%d`/`%s` would consume `error` as its substitution
+    // and drop it from the log entirely. Console collapses `%%` back to a single
+    // `%` whenever any extra argument is present, and `error` always is.
+    const candidates = wasmJsUrls
+      ? `candidates, in order: ${wasmJsUrls.join(', ').replace(/%/g, '%%')}`
+      : '<URL resolution failed before the import>';
     log.warning(
       Modules.WASM,
-      `Failed to load WASM module from ${wasmJsUrls?.join(', ') ?? '<URL resolution failed before the import>'}, using TypeScript fallback`,
+      `Failed to load WASM module (${candidates}), using TypeScript fallback`,
       error
     );
     log.info(Modules.WASM, 'To build WASM module: pnpm build:wasm (or make build-wasm)');
