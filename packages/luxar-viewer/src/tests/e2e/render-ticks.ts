@@ -28,7 +28,7 @@
  */
 
 import type { Page } from '@playwright/test';
-import { evaluateWithDeadline } from './helpers';
+import { raceEvaluate } from './helpers';
 
 /**
  * Per-tick bound inside {@link flushRenderTicks} — it caps the kick evaluate
@@ -71,8 +71,9 @@ export const TICK_TIMEOUT_MS = 3000;
  * probe, taken before the budget starts) + {@link FLUSH_BUDGET_MS} = 15 s. A
  * {@link reportFlushVerdict} call afterwards adds at most another
  * {@link COUNTER_PROBE_TIMEOUT_MS}, for 20 s total across both — comfortably
- * inside the 60 s per-test budget alongside ONE `page.goto` plus
- * `waitForLuxarReady`. 10 s is ~10x the measured cost of the largest flush any
+ * inside a per-test budget of `playwright.config.ts`'s 60 s (120 s in
+ * `webgl-errors.spec.ts`, which raises it at the describe level) alongside ONE
+ * `page.goto` plus `waitForLuxarReady`. 10 s is ~10x the measured cost of the largest flush any
  * call site asks for (10 ticks at ~114 ms each is ~1.1 s). A test that loads
  * five scenes in one body cannot afford 20 s five times over, which is what
  * `budgetMs` is for.
@@ -179,7 +180,7 @@ export interface FlushReport {
  *
  * Every wait here is bounded twice: individually by {@link TICK_TIMEOUT_MS}
  * (`page.waitForFunction` honours its `timeout` unlike `page.evaluate`, whose
- * evaluates go through `evaluateWithDeadline`), and in aggregate by `budgetMs`.
+ * evaluates go through `raceEvaluate`), and in aggregate by `budgetMs`.
  *
  * @param page - Playwright page
  * @param ticks - How many render ticks to drive; must be >= 1
@@ -210,8 +211,8 @@ export async function flushRenderTicks(
   // answer is WRAPPED so that `null` can mean only "the deadline won": a bare
   // `number | null` would make an unanswered probe and a renderer without a
   // numeric counter indistinguishable, which is exactly the sentinel contract
-  // `evaluateWithDeadline` documents.
-  const counter = await evaluateWithDeadline<{ frame: number | null } | null>(
+  // `raceEvaluate` documents.
+  const counter = await raceEvaluate<{ frame: number | null } | null>(
     page.evaluate(() => {
       const info = (window as any).__luxarDebug?.renderer?.info;
       const frame = info?.render?.frame ?? info?.frame;
@@ -278,7 +279,7 @@ export async function flushRenderTicks(
     // re-arms the controller's ~2 s idle timeout, which is what keeps the loop
     // alive for the whole flush. Outcomes are counted rather than swallowed so
     // the diagnostics can say how many kicks the page actually answered.
-    const outcome = await evaluateWithDeadline<KickOutcome>(
+    const outcome = await raceEvaluate<KickOutcome>(
       page
         .evaluate(() => {
           (window as any).__luxarDebug?.renderOnce?.();
@@ -393,7 +394,7 @@ export async function flushRenderTicks(
 export async function reportFlushVerdict(page: Page, report: FlushReport): Promise<void> {
   if (report.landed > 0) return;
 
-  const probe = await evaluateWithDeadline<{
+  const probe = await raceEvaluate<{
     frame: number | null;
     contextLost: boolean | null;
     visibility: string | null;

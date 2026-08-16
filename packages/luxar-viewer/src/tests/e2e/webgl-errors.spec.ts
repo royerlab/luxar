@@ -11,7 +11,7 @@
  */
 
 import { test, expect } from './fixtures';
-import { evaluateWithDeadline, waitForLuxarReady } from './helpers';
+import { raceEvaluate, waitForLuxarReady } from './helpers';
 import { flushRenderTicks, reportFlushVerdict } from './render-ticks';
 
 // Test all example datasets for WebGL errors
@@ -39,13 +39,15 @@ const DATASETS = [
 // evaluate, never on an assertion. Bounding those evaluates (in the helper) is
 // the fix; the 120 s budget here is headroom on a loaded box, not the cure.
 //
-// Pre-existing limitation the waits below inherit: the animation loop auto-pauses
-// after ~2s of inactivity and `waitForNextRender`'s kick is a single
-// `renderOnce()`, so a request for 5 or 10 frames routinely lands on the
-// state-based fallback and these detectors see fewer frames than they ask for —
-// the helper's warning line in the run output is the signal that it happened.
-// Making it strict was tried and turns the healthy case red, so the frame-count
-// contract of this file is a separate question from the hang fixed here.
+// The frame-count contract that limitation described is no longer inherited from
+// `waitForNextRender`: this file does not call it any more. The detectors drive
+// their own ticks through `flushRenderTicks` (`./render-ticks`), which confirms
+// each one against the renderer's frame counter and reports a shortfall instead
+// of falling silently through to a state-based fallback. It still does not THROW
+// on a shortfall — making the wait strict was tried and turns the healthy case
+// red — but a weak detector run is now visible in the output, and
+// `reportFlushVerdict` fails only on the evidence that the renderer really is
+// not drawing.
 test.describe.configure({ mode: 'default', timeout: 120000 });
 
 // A timed-out test never reaches its own `expect` or the `console.log` dumps
@@ -170,15 +172,16 @@ test.describe('WebGL Error Detection - Critical', () => {
       // loops over all five DATASETS, so every per-call bound is paid five
       // times. At the default the flush pair alone would be up to 5 x
       // (COUNTER_PROBE_TIMEOUT_MS 5 s + FLUSH_BUDGET_MS 10 s + a verdict probe
-      // 5 s) = 100 s, i.e. the whole 60 s test budget again, merely relocated
-      // out of a bare evaluate and into the flush. At 2 s it is 5 x (5 + 2 + 5)
-      // = 60 s. Honestly: that is still the entire budget, so a fully starved
-      // page exhausts this test no matter what the flush is bounded to — it
-      // performs five `page.goto` + `waitForLuxarReady` scene loads in ONE
-      // test, and a per-call bound cannot fix a per-test structure. Splitting
-      // it per dataset would; the `WebGL Error Detection - All Datasets`
-      // describe block below already does exactly that, and is out of scope
-      // here.
+      // 5 s) = 100 s of this file's 120 s budget (the describe-level
+      // `timeout` above), leaving 20 s for five `page.goto` +
+      // `waitForLuxarReady` scene loads — i.e. the opaque timeout merely
+      // relocated out of a bare evaluate and into the flush. At 2 s it is
+      // 5 x (5 + 2 + 5) = 60 s. Honestly: that is still HALF the budget on top
+      // of five scene loads, so a fully starved page exhausts this test no
+      // matter what the flush is bounded to — a per-call bound cannot fix a
+      // per-test structure. Splitting it per dataset would; the `WebGL Error
+      // Detection - All Datasets` describe block below already does exactly
+      // that, and is out of scope here.
       const flush = await flushRenderTicks(page, 3, 2000);
 
       if (webglErrors.length > 0) {
@@ -236,7 +239,7 @@ test.describe('WebGL Error Detection - Critical', () => {
         contextLost: gl.isContextLost(),
       };
     });
-    const glErrors = await evaluateWithDeadline<Awaited<typeof glProbe> | null>(
+    const glErrors = await raceEvaluate<Awaited<typeof glProbe> | null>(
       glProbe,
       PROBE_TIMEOUT_MS,
       null
@@ -372,7 +375,7 @@ test.describe('WebGL Error Detection - Critical', () => {
 
       return issues;
     });
-    const bufferInfo = await evaluateWithDeadline<Awaited<typeof bufferProbe> | null>(
+    const bufferInfo = await raceEvaluate<Awaited<typeof bufferProbe> | null>(
       bufferProbe,
       PROBE_TIMEOUT_MS,
       null
@@ -468,7 +471,7 @@ test.describe('WebGL Error Detection - All Datasets', () => {
  * addresses), and it starved this file on an IDLE box, so the worst case is
  * worse than anything measured here — while still being small enough that the
  * failure names the probe instead of arriving as an opaque test timeout inside
- * the 60 s per-test budget. It is deliberately NOT proof that the page is dead:
+ * this file's 120 s per-test budget. It is deliberately NOT proof that the page is dead:
  * that starvation was measured to outlast any bound that fits in the test
  * budget (a trivial evaluate unanswered for 5 s, twelve times in a row, while
  * the page went on rendering), so each of the two call sites above says only

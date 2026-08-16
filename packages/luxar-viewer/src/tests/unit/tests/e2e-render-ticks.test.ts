@@ -731,7 +731,9 @@ describe('render-ticks bounds arithmetic', () => {
   it('keeps the documented worst case inside the 60 s per-test budget', async () => {
     // Baseline probe + flush + verdict probe is the whole cost of one
     // flush/verdict pair, and it has to leave room for page.goto and
-    // waitForLuxarReady inside `playwright.config.ts`'s 60 s `timeout`.
+    // waitForLuxarReady inside the smallest per-test budget any caller runs
+    // under — `playwright.config.ts`'s 60 s `timeout` (`webgl-errors.spec.ts`,
+    // the only caller today, raises its own to 120 s).
     expect(COUNTER_PROBE_TIMEOUT_MS * 2 + FLUSH_BUDGET_MS).toBeLessThanOrEqual(20000);
     // The counter probes are deliberately tighter than the 15 s the spec's two
     // DETECTOR probes get: a missed counter probe only downgrades a verdict to

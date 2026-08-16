@@ -5,28 +5,30 @@
  * never answers can only be stopped by the whole Playwright test budget —
  * the symptom the issue reported was a spec sitting for the two minutes ITS
  * run allowed inside a bare evaluate and being reported as `Tearing down
- * "page" exceeded the test timeout`. `evaluateWithDeadline` is the bound, and
- * `getConsoleMessages` (which the shared fixture runs in teardown for every
- * spec that imports `test` from `./fixtures`) is its first consumer, reached
- * through `assertNoConsoleErrors`.
+ * "page" exceeded the test timeout`. `raceEvaluate` is the bound (its own
+ * promise/timer contract is covered in `e2e-helpers-race-evaluate.test.ts`,
+ * so this file does not repeat it), and `getConsoleMessages` — which the
+ * shared fixture runs in teardown for every spec that imports `test` from
+ * `./fixtures` — is the consumer covered here, reached through
+ * `assertNoConsoleErrors`.
  *
  * Four assertions here would go red against the unbounded code, because a
- * wedged page never settles at all: "resolves with onTimeout when the
- * deadline wins", "throws, naming the timeout, when the page never answers",
- * "does NOT resolve with empty buckets when the page never answers" (the one
- * that matters most — empty buckets would make the fixture's console-error
- * gate a vacuous pass for every spec that uses it), and the default-deadline
- * test.
+ * wedged page never settles at all: "throws, naming the timeout, when the
+ * page never answers", "does NOT resolve with empty buckets when the page
+ * never answers" (the one that matters most — empty buckets would make the
+ * fixture's console-error gate a vacuous pass for every spec that uses it),
+ * "propagates the deadline failure out through assertNoConsoleErrors" (the
+ * premise of the whole design — that is the call the fixture teardown makes),
+ * and the default-deadline test.
  * The rest guard adjacent contracts rather than the bound itself: the
- * pass-through and rejection paths, the `clearTimeout` on the evaluation
- * path, and the in-page function's promise never to return `null` (which is
- * what makes `null` usable as the deadline sentinel).
+ * pass-through path, and the in-page function's promise never to return
+ * `null` (which is what makes `null` usable as the deadline sentinel).
  *
  * No browser here: `page` is a one-method fake cast to Playwright's `Page`.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import type { Page } from '@playwright/test';
-import { assertNoConsoleErrors, evaluateWithDeadline, getConsoleMessages } from '../../e2e/helpers';
+import { assertNoConsoleErrors, getConsoleMessages } from '../../e2e/helpers';
 
 /** A `page` whose `evaluate` resolves with `value`. */
 function answeringPage(value: unknown): Page {
@@ -40,60 +42,6 @@ function wedgedPage(): Page {
 
 afterEach(() => {
   vi.useRealTimers();
-});
-
-describe('evaluateWithDeadline', () => {
-  it('resolves with the evaluation when it settles before the deadline', async () => {
-    vi.useFakeTimers();
-    const result = await evaluateWithDeadline(Promise.resolve('answer'), 10000, 'sentinel');
-    expect(result).toBe('answer');
-    // The deadline timer must not outlive the race: a dangling handle keeps
-    // the Node process alive past the end of the run.
-    expect(vi.getTimerCount()).toBe(0);
-  });
-
-  it('resolves with onTimeout when the deadline wins', async () => {
-    vi.useFakeTimers();
-    const settled = evaluateWithDeadline(new Promise<string>(() => {}), 10000, 'sentinel');
-    await vi.advanceTimersByTimeAsync(10000);
-    expect(await settled).toBe('sentinel');
-    // Consistency check only, NOT a clearTimeout guard: the one-shot timer has
-    // already fired on this path, so it would read 0 either way. The assertion
-    // on the evaluation path above is the one that catches a missing clear.
-    expect(vi.getTimerCount()).toBe(0);
-  });
-
-  it('propagates a rejection that arrives before the deadline', async () => {
-    vi.useFakeTimers();
-    await expect(
-      evaluateWithDeadline(Promise.reject(new Error('boom')), 10000, 'sentinel')
-    ).rejects.toThrow('boom');
-    expect(vi.getTimerCount()).toBe(0);
-  });
-
-  it('does not emit an unhandledRejection when the evaluation rejects after the deadline', async () => {
-    // Real timers on purpose: unhandledRejection is decided by Node's own
-    // macrotask bookkeeping, which fake timers do not drive.
-    const unhandled: unknown[] = [];
-    const onUnhandled = (reason: unknown) => unhandled.push(reason);
-    process.on('unhandledRejection', onUnhandled);
-
-    let rejectLate: (reason: Error) => void = () => {};
-    const late = new Promise<string>((_resolve, reject) => {
-      rejectLate = reject;
-    });
-
-    try {
-      expect(await evaluateWithDeadline(late, 5, 'sentinel')).toBe('sentinel');
-      // The race is already settled; Promise.race has nonetheless attached a
-      // handler to `late`, so this rejection stays handled.
-      rejectLate(new Error('late boom'));
-      await new Promise((resolve) => setTimeout(resolve, 50));
-      expect(unhandled).toEqual([]);
-    } finally {
-      process.off('unhandledRejection', onUnhandled);
-    }
-  });
 });
 
 describe('getConsoleMessages deadline', () => {

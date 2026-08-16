@@ -309,68 +309,6 @@ export async function waitForUIState(
 }
 
 /**
- * Bound a single in-page evaluation with a deadline.
- *
- * WHY: `page.evaluate` carries no timeout of its own. Neither
- * `actionTimeout` nor `setDefaultTimeout` reaches it, so an evaluate the
- * page never answers can only be stopped by the whole test budget —
- * Playwright then reports `Test timeout of 60000ms exceeded` (or
- * `Tearing down "page" exceeded the test timeout`) pending on whatever
- * line dispatched it, minutes after the real problem started. That is
- * the wedge issue #1651 was filed for, and it is main-thread task
- * starvation rather than anything GL-specific: instrumented on an idle
- * box, a trivial `page.evaluate(() => 'ok')` went unanswered for 5 s
- * twelve times in a row while `requestAnimationFrame` kept ticking
- * (34 → 157) and the renderer's own counter advanced 426 → 672, with
- * `visibilityState === 'visible'` and the WebGL context never lost. An
- * in-page `setInterval(…, 1000)` fired twice in 28 s over the same
- * window. So a saturated software-rendering rAF loop starves the
- * lower-priority task sources — in-page timers and Playwright's
- * `Runtime.callFunctionOn` round trip — for tens of seconds, while
- * rendering continues throughout; which probe is being dispatched makes
- * no difference.
- *
- * This bounds ONE wait rather than a whole helper: hand it an
- * already-started evaluation plus a value to fall back to, and decide at
- * the call site what a missed deadline means. The evaluation is not
- * cancelled (Playwright offers no way to cancel one) — it is merely no
- * longer waited on, and a rejection arriving after the deadline stays
- * handled by the already-settled race instead of becoming an
- * unhandledRejection.
- *
- * NOTE: a sibling change (#1652) introduces an equivalent wrapper for the
- * render-pacing helpers (`waitForRenderStable` / `waitForNextRender`) for
- * the same reason; if both land, the two should be collapsed into one.
- *
- * @param evaluation - An already-started `page.evaluate(...)` promise.
- * @param timeout - Deadline in milliseconds.
- * @param onTimeout - Value to resolve with when the deadline wins. Use a
- *   sentinel the in-page function can never return, so the caller can
- *   tell a real answer from a missed deadline.
- * @returns The evaluation's result, or `onTimeout` if the deadline won.
- */
-export async function evaluateWithDeadline<T>(
-  evaluation: Promise<T>,
-  timeout: number,
-  onTimeout: T
-): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      evaluation,
-      new Promise<T>((resolve) => {
-        timer = setTimeout(() => resolve(onTimeout), timeout);
-      }),
-    ]);
-  } finally {
-    // Always clear the timer, on both paths: a dangling handle keeps the
-    // Node process alive past the end of the run when the evaluation is
-    // the one that won the race.
-    clearTimeout(timer);
-  }
-}
-
-/**
  * Get browser console messages (CRITICAL for E2E validation)
  *
  * Retrieves all console messages from the browser's console interceptor.
@@ -398,7 +336,8 @@ export async function evaluateWithDeadline<T>(
  * WHY 45 s: Playwright gives the After Hooks phase a FRESH timeout slot
  * (`afterHooksSlot = { timeout: calculateMaxTimeout(project.timeout,
  * testInfo.timeout) }` in its worker), so fixture teardown always has the
- * full per-test timeout available — 60 s here — no matter how much the test
+ * full per-test timeout available — the config's 60 s, or more in a file that
+ * raises its own — no matter how much the test
  * body already used. 45 s lands inside that slot — which is what makes the
  * failure attributable to this probe by name instead of arriving as `Tearing
  * down "page" exceeded the test timeout` — while still leaving a wide margin
@@ -466,7 +405,7 @@ export async function getConsoleMessages(
   // Race against `null` as the sentinel: the in-page function above always
   // returns an object (empty buckets when there is no interceptor), so a
   // `null` here can only mean the deadline won.
-  const buckets = await evaluateWithDeadline<Awaited<typeof probe> | null>(probe, timeout, null);
+  const buckets = await raceEvaluate<Awaited<typeof probe> | null>(probe, timeout, null);
 
   if (buckets === null) {
     // Deliberately NOT empty buckets: the fixture teardown feeds this
@@ -856,12 +795,30 @@ export async function waitForRenderStable(
  * `timeout` value the caller passed. Read a helper's `timeout` parameter as
  * "the cap on each individual wait", never as "the cap on the call".
  *
+ * WHAT STARVES IT is main-thread task starvation, not anything GL-specific,
+ * so no probe is exempt from needing a bound (#1651). Instrumented on an
+ * idle box, a trivial `page.evaluate(() => 'ok')` went unanswered for its
+ * 5 s deadline twelve times in a row while `requestAnimationFrame` kept
+ * ticking (34 → 157) and the renderer's own counter advanced 426 → 672,
+ * with `visibilityState === 'visible'` and the WebGL context never lost; an
+ * in-page `setInterval(..., 1000)` fired twice over a 28 s window inside that
+ * stall. A saturated software-rendering rAF loop starves the lower-priority
+ * task sources — in-page timers and Playwright's `Runtime.callFunctionOn`
+ * round trip — for tens of seconds while rendering continues throughout.
+ * Corollary for `onTimeout`: pass a sentinel the in-page function can never
+ * return, so the caller can tell a real answer from a missed deadline, and
+ * decide at the call site what a missed deadline MEANS — a detector whose
+ * answer the test asserts on must say it could not run rather than fall back
+ * to a value that reads as a pass.
+ *
  * The timer is always cleared, so a resolved race leaves no handle keeping the
  * Node process alive. A rejection that arrives after the deadline is absorbed
  * by `Promise.race` (which has already settled) rather than going unhandled.
  *
- * Exported for unit testing (`src/tests/unit/tests/e2e-helpers-race-evaluate.test.ts`);
- * specs should use the wait helpers built on it rather than calling it directly.
+ * Unit-tested in `src/tests/unit/tests/e2e-helpers-race-evaluate.test.ts`.
+ * Prefer a wait helper built on it where one fits; a spec holding its own
+ * `page.evaluate` calls it directly (see `webgl-errors.spec.ts`), because a
+ * bare evaluate has no other bound.
  *
  * @param evaluation - The already-started `page.evaluate` promise.
  * @param timeout - Deadline in ms.
