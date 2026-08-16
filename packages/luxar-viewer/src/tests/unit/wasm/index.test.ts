@@ -21,6 +21,7 @@ import {
   getFallback,
   setWasmJsUrl,
   assertRequiredWasmExports,
+  wasmShimCandidateUrls,
 } from '../../../wasm';
 import { TypeScriptFallback } from '../../../wasm/typescript';
 
@@ -183,5 +184,41 @@ describe('getFallback', () => {
     const a = getFallback();
     const b = getFallback();
     expect(a).not.toBe(b);
+  });
+});
+
+describe('wasmShimCandidateUrls', () => {
+  // The WASM artifact always lands in a `wasm/` directory at the OUTPUT ROOT,
+  // but the chunk carrying the loader sits at two different depths depending
+  // on the build, so a single bundle-relative literal cannot reach it from
+  // both. These bases are the real measured layouts, not hypotheticals.
+  const SHIM = 'wasm/luxar_wasm.js';
+
+  it('reaches the artifact from the library ENTRY chunk at the output root', () => {
+    // dist/lib/luxar-viewer.js — '../wasm/…' escapes dist/lib/ and 404s here,
+    // which is exactly the embedder-visible bug (#1649): compiled kernels in
+    // the workers, silent TypeScript fallback on the main thread.
+    const candidates = wasmShimCandidateUrls('https://cdn.example/pkg/dist/lib/luxar-viewer.js');
+    expect(candidates).toContain(`https://cdn.example/pkg/dist/lib/${SHIM}`);
+  });
+
+  it('reaches the artifact from a library worker chunk under assets/', () => {
+    // dist/lib/assets/data-worker-*.js — one level deeper, so the SAME target
+    // is reached by the other candidate.
+    const candidates = wasmShimCandidateUrls(
+      'https://cdn.example/pkg/dist/lib/assets/data-worker-abc123.js'
+    );
+    expect(candidates).toContain(`https://cdn.example/pkg/dist/lib/${SHIM}`);
+  });
+
+  it('tries the app-build depth FIRST', () => {
+    // dist/assets/index-*.js — the hot path. Pin the ordering, not just
+    // membership: '../wasm/…' resolving first is what keeps the app build (and
+    // both worker chunks) from paying a failed import on every single load, so
+    // a silent reorder must fail here rather than quietly cost a 404.
+    const candidates = wasmShimCandidateUrls('https://example.com/app/assets/index-abc.js');
+    expect(candidates[0]).toBe(`https://example.com/app/${SHIM}`);
+    expect(candidates[1]).toBe(`https://example.com/app/assets/${SHIM}`);
+    expect(candidates).toHaveLength(2);
   });
 });

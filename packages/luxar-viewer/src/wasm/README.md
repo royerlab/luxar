@@ -32,10 +32,19 @@ const wasm = await initWasm();
 const count = wasm.clip_segments_batch(/* ... */);
 ```
 
-The default URL resolution (`new URL('../wasm/luxar_wasm.js', import.meta.url)`)
-works for the standalone Vite app and most consumer bundlers (Vite, Rollup,
-webpack 5). Use `setWasmJsUrl` only when shipping WASM files from a
-non-standard location.
+By default the shim URL is resolved relative to the bundled chunk
+(`import.meta.url`), which works for the standalone Vite app and most consumer
+bundlers (Vite, Rollup, webpack 5). The compiled artifact always lands in a
+`wasm/` directory at the output root, but the chunk carrying the loader sits at
+one of two depths — `assets/index-*.js` and the library build's worker chunks
+are one level down, while the library build's entry chunk (`luxar-viewer.js`)
+is at the root itself — so `initWasm` tries an ordered candidate list rather
+than a single literal: `../wasm/luxar_wasm.js` first (the app build and both
+worker chunks, so the hot paths still cost one request), then
+`./wasm/luxar_wasm.js` (the library entry chunk). Only the import is retried;
+once a candidate loads, initialization and the staleness check run against it
+alone. Use `setWasmJsUrl` only when shipping WASM files from a non-standard
+location.
 
 ## WasmModule API
 

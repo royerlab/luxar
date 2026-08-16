@@ -47,11 +47,14 @@ export interface LuxarAppOptions {
   /**
    * Absolute URL to the WASM JS shim (`luxar_wasm.js`).
    *
-   * Defaults to `new URL('../wasm/luxar_wasm.js', import.meta.url)` —
-   * resolved relative to the bundled JS, which works for Vite, Rollup,
-   * webpack 5, and most modern bundlers. Embedders whose bundlers don't
-   * support `import.meta.url` for asset URLs (or who ship the WASM files
-   * from a non-default location) override this.
+   * Defaults to `wasm/luxar_wasm.js` resolved relative to the bundled JS
+   * (`import.meta.url`), which works for Vite, Rollup, webpack 5, and most
+   * modern bundlers. Because the chunk carrying the loader sits at a
+   * different depth in the app build (`assets/…`) than in the library
+   * build's entry chunk (the output root), the loader tries
+   * `../wasm/luxar_wasm.js` then `./wasm/luxar_wasm.js` until one imports.
+   * Embedders whose bundlers don't support `import.meta.url` for asset URLs
+   * (or who ship the WASM files from a non-default location) override this.
    */
   wasmPath?: string;
 
