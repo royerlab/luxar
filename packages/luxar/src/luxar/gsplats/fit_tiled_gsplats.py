@@ -42,6 +42,109 @@ from luxar.gsplats.tiling import (
     resolve_grid_scale,
 )
 
+#: Ceiling, in GiB, on the two full-size float32 volumes a merged-quality score
+#: needs resident at once (the reconstruction and the reference). Above it the
+#: score is SKIPPED — and says so out loud, because an archive that silently
+#: carries no PSNR is the failure this scoring exists to end. Override with
+#: ``LUXAR_TILED_QUALITY_MAX_GB`` when the device can take more.
+_QUALITY_BUDGET_GB = 24.0
+
+
+def _to_voxel_frame(merged: GSplatData, scale: Optional[Sequence[float]]) -> GSplatData:
+    """The same mixture expressed on the tile grid's own voxel frame.
+
+    A real-space tiled fit emits physical coordinates, so the merged splats do
+    not sit on ``volume_shape``'s grid and cannot be rendered against it. The
+    frames differ by one per-axis factor (see :func:`resolve_grid_scale`), which
+    scales centers directly and Cholesky ROW ``i`` by ``scale[i]`` — so dividing
+    both undoes it exactly. Amplitudes are untouched by the conversion.
+    """
+    if scale is None:
+        return merged
+    vs = np.asarray(scale, dtype=np.float64)
+    d = merged.centers.shape[1] if merged.n_splats else len(vs)
+    tril_scales = np.concatenate([[vs[i]] * (i + 1) for i in range(d)])
+    return GSplatData(
+        centers=(merged.centers / vs).astype(np.float32),
+        amplitudes=merged.amplitudes,
+        cholesky_factors=(merged.cholesky_factors / tril_scales).astype(np.float32),
+        truncation_radius=merged.truncation_radius,
+    )
+
+
+def _stamp_merged_quality(
+    merged: GSplatData,
+    volume: Any,
+    *,
+    volume_shape: tuple[int, ...],
+    grid_scale: Optional[Sequence[float]],
+    device: Optional[str],
+    verbose: bool,
+) -> None:
+    """Score the MERGED reconstruction against the whole volume, in place.
+
+    Each tile already scores itself, but those numbers are about crops of an
+    apodized decomposition: the tiles overlap, so their errors do not compose
+    into the merged one, and none of them can speak for the archive that
+    actually ships. Without this a tiled archive carries no PSNR at all — which
+    is exactly what a published dataset is asked for.
+    """
+    import os
+
+    if merged.n_splats == 0:
+        return
+    budget_gb = float(os.environ.get("LUXAR_TILED_QUALITY_MAX_GB", _QUALITY_BUDGET_GB))
+    needed_gb = 2 * 4 * float(np.prod(volume_shape)) / 1024**3
+    if needed_gb > budget_gb:
+        if verbose:
+            aprint(
+                f"Merged quality metrics skipped: scoring {volume_shape} needs "
+                f"~{needed_gb:.1f} GiB for the reconstruction plus the reference, "
+                f"over the {budget_gb:.0f} GiB budget. Raise "
+                "LUXAR_TILED_QUALITY_MAX_GB to score it anyway, or run "
+                "`luxar gsplat compare` afterwards."
+            )
+        return
+
+    try:
+        import torch
+
+        from luxar.gsplats.metrics import compute_quality_metrics
+        from luxar.gsplats.rendering.volume_rendering import render_to_volume_tensor
+
+        scored = _to_voxel_frame(merged, grid_scale)
+        with torch.no_grad():
+            rendered = render_to_volume_tensor(
+                scored,
+                shape=volume_shape,
+                device=device,
+                truncate=scored.truncation_radius,
+            )
+            ref = torch.as_tensor(
+                np.asarray(volume, dtype=np.float32), device=rendered.device
+            )
+            quality = compute_quality_metrics(rendered, ref)
+            del rendered, ref
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        merged.stats["mse"] = quality["mse"]
+        merged.stats["psnr_db"] = quality["psnr_db"]
+        merged.stats["ssim"] = quality["ssim"]
+        merged.stats["foreground_psnr_db"] = quality["foreground_psnr_db"]
+        merged.stats["foreground_threshold"] = quality["foreground_threshold"]
+        merged.stats["foreground_fraction"] = quality["foreground_fraction"]
+        if verbose:
+            aprint(
+                f"Merged quality: PSNR={quality['psnr_db']:.1f} dB, "
+                f"foreground PSNR={quality['foreground_psnr_db']:.1f} dB "
+                f"(over {quality['foreground_fraction'] * 100:.2f}% of voxels), "
+                f"SSIM={quality['ssim']:.4f}"
+            )
+    except Exception as exc:  # pragma: no cover - device/memory dependent
+        # Loud even when quiet: a missing PSNR is invisible downstream, and the
+        # archive is usually written seconds later.
+        aprint(f"⚠️  Merged quality metrics failed ({exc}) — archive carries no PSNR")
+
 
 def _tile_norm_range(
     volume: Any,
@@ -657,7 +760,12 @@ def fit_tiled(
     from luxar.gsplats.fitting.validation import _resolve_source_dtype
 
     merged_dtype, merged_itemsize = _resolve_source_dtype(volume, source_dtype)
-    return merge_tile_results(
+    grid_scale = resolve_grid_scale(
+        len(volume_shape),
+        voxel_size=voxel_size,
+        output_space=output_space,
+    )
+    merged = merge_tile_results(
         results,
         volume_shape=volume_shape,
         source_shape=source_shape,
@@ -678,12 +786,24 @@ def fit_tiled(
         # The grid above is in voxels; with a voxel_size and real-space output
         # every tile's splats were offset by `origin * voxel_size`, so the
         # partition's split planes need the same factor (#1587).
-        grid_scale=resolve_grid_scale(
-            len(volume_shape),
-            voxel_size=voxel_size,
-            output_space=output_space,
-        ),
+        grid_scale=grid_scale,
     )
+    # Flat merges only: a partition has nowhere to persist fit stats (the tree
+    # writer reads them off a flat leaf), the same reason `applied_floor` is
+    # in-memory there. The caller's array is still in hand here, which is what
+    # makes scoring the WHOLE reconstruction possible at all.
+    if not partition:
+        _stamp_merged_quality(
+            merged,
+            volume,
+            volume_shape=volume_shape,
+            grid_scale=grid_scale,
+            # `device` rides in **fit_kwargs (it is a per-tile fit knob); score
+            # on whatever the tiles used rather than re-detecting.
+            device=fit_kwargs.get("device"),
+            verbose=verbose,
+        )
+    return merged
 
 
 def merge_tile_results(

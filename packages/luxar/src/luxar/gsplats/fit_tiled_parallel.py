@@ -430,6 +430,10 @@ def fit_tiled_parallel(
         source_dtype=source_dtype,
     )
 
+    # No merged quality score here, unlike the in-process `fit_tiled`: the
+    # WORKERS hold the volume, not this parent (see `source_dtype` above), so
+    # there is nothing to score the reconstruction against without re-reading
+    # the source. Score such a result afterwards with `luxar gsplat compare`.
     if not keep_tiles:
         shutil.rmtree(tmp_dir, ignore_errors=True)
     else:
