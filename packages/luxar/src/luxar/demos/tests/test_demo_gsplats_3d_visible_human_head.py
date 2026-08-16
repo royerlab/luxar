@@ -15,6 +15,7 @@ import numpy as np
 import pytest
 import zarr
 
+from luxar.demos import voxel_sampled_payload_agreement
 from luxar.gsplats.gsplat_data import GSplatData
 
 pytest.importorskip("scipy")
@@ -154,3 +155,262 @@ class TestSampleColors:
         np.testing.assert_allclose(cols[0], [1.0, 0.0, 0.0])
         np.testing.assert_allclose(cols[1], [0.0, 0.0, 1.0])  # rounds to (1,1,1)
         np.testing.assert_allclose(cols[2], [0.0, 0.0, 1.0])  # clamped to (1,1,1)
+
+
+def _scattered_gsplat_data(n: int, extent: float, seed: int = 0) -> GSplatData:
+    """Splats scattered over a small voxel grid — no GPU fit needed."""
+    rng = np.random.default_rng(seed)
+    return GSplatData(
+        centers=rng.uniform(0.0, extent, (n, 3)).astype(np.float32),
+        amplitudes=rng.uniform(0.2, 1.0, n).astype(np.float32),
+        cholesky_factors=np.tile([1, 0, 1, 0, 0, 1], (n, 1)).astype(np.float32),
+    )
+
+
+class TestColorSidecarOrdering:
+    """The colors sidecar must be sampled in the SAVED store's splat order.
+
+    ``GSplatData.save`` reorders splats spatially, so colors sampled at the
+    in-memory fit's centers describe different splats than the ones ``load``
+    hands back — every splat would render some other splat's color. See #1670.
+    """
+
+    @staticmethod
+    def _through_sidecar(colors: np.ndarray, tmp_path, name: str) -> np.ndarray:
+        """Colors as the uint8 sidecar round-trip returns them.
+
+        Written and read through the demo's OWN ``_save_colors_u8`` /
+        ``_load_colors_f32`` rather than a re-implementation of the quantization
+        here — a local copy of the rounding rule would keep agreeing with a
+        changed one only by luck.
+        """
+        p = tmp_path / name
+        _save_colors_u8(colors, p)
+        return _load_colors_f32(p)
+
+    def test_colors_align_with_the_returned_fit_not_the_input(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        n = 6000
+        rng = np.random.default_rng(7)
+        rgb_vol = rng.uniform(0.0, 1.0, (16, 16, 16, 3)).astype(np.float32)
+        fit = _scattered_gsplat_data(n, extent=15.49)
+        monkeypatch.setattr(_demo, "CACHE_FIT", tmp_path / _demo.FIT_FILE)
+        monkeypatch.setattr(_demo, "CACHE_COLORS", tmp_path / _demo.COLORS_FILE)
+
+        stored, colors = _demo.save_and_sample_colors(fit, rgb_vol)
+
+        # Non-vacuity: the writer really did permute this input. Without it the
+        # pre/post-save samplings would agree and prove nothing.
+        moved = np.any(np.rint(stored.centers) != np.rint(fit.centers), axis=1)
+        assert int(moved.sum()) > n // 2, "hilbert ordering did not permute the input"
+
+        # An INDEPENDENT nearest-voxel sampling at the returned centers, taken
+        # through the sidecar's own quantization. Comparing the returned `colors`
+        # against `_load_colors_f32(CACHE_COLORS)` instead would be vacuous:
+        # `save_and_sample_colors` RETURNS exactly that read-back.
+        expected = self._through_sidecar(
+            sample_colors(rgb_vol, stored.centers), tmp_path, "expected.npz"
+        )
+        # Aligned with the fit that is RETURNED (== what the cache reloads)...
+        np.testing.assert_array_equal(colors, expected)
+        # ...and the sidecar ON DISK carries those same rows.
+        np.testing.assert_array_equal(_load_colors_f32(_demo.CACHE_COLORS), expected)
+        # ...and NOT the pre-save sampling the old code persisted.
+        assert not np.array_equal(
+            expected,
+            self._through_sidecar(
+                sample_colors(rgb_vol, fit.centers), tmp_path, "presave.npz"
+            ),
+        )
+
+    def test_guard_accepts_the_aligned_pair_and_rejects_a_permuted_one(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        n = 6000
+        rng = np.random.default_rng(8)
+        rgb_vol = rng.uniform(0.0, 1.0, (16, 16, 16, 3)).astype(np.float32)
+        fit = _scattered_gsplat_data(n, extent=15.49, seed=1)
+        monkeypatch.setattr(_demo, "CACHE_FIT", tmp_path / _demo.FIT_FILE)
+        monkeypatch.setattr(_demo, "CACHE_COLORS", tmp_path / _demo.COLORS_FILE)
+
+        stored, colors = _demo.save_and_sample_colors(fit, rgb_vol)
+        assert _demo._colors_match_fit(stored, colors, "aligned")
+        # A permuted sidecar (the #1670 bug) and a wrong-length one are refused.
+        permuted = colors[rng.permutation(n)]
+        assert not _demo._colors_match_fit(stored, permuted, "permuted")
+        assert not _demo._colors_match_fit(stored, colors[:-1], "truncated")
+
+    def test_a_pair_too_sparse_to_judge_is_accepted(self) -> None:
+        """Unverifiable is NOT a failure — the guard must accept and move on.
+
+        A fit whose splats never share a voxel gives the helper no evidence
+        (``None``). Rejecting there would refit every sparse dataset forever, so
+        this branch is load-bearing; it is also the one a stubbed test uses.
+        """
+        # One splat per voxel on a coarse lattice → no same-voxel pair at all.
+        grid = (
+            np.stack(np.meshgrid(*[np.arange(6.0)] * 3, indexing="ij"), axis=-1)
+            .reshape(-1, 3)
+            .astype(np.float32)
+        )
+        fit = GSplatData(
+            centers=grid,
+            amplitudes=np.ones(len(grid), dtype=np.float32),
+            cholesky_factors=np.tile([1, 0, 1, 0, 0, 1], (len(grid), 1)).astype(
+                np.float32
+            ),
+        )
+        rng = np.random.default_rng(9)
+        colors = rng.uniform(0.0, 1.0, (len(grid), 3)).astype(np.float32)
+        assert voxel_sampled_payload_agreement(fit.centers, colors) is None, (
+            "fixture must be unverifiable for this branch to be exercised"
+        )
+        assert _demo._colors_match_fit(fit, colors, "unverifiable")
+
+
+def _same_voxel_pairs(centers: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """``(order, collides)`` — the guard's own pair structure, recomputed here.
+
+    Mirrors ``voxel_sampled_payload_agreement``: sort by voxel key (every center
+    column), then take adjacent equal-voxel positions. Needed so a test can break
+    an EXACT number of pairs.
+    """
+    voxels = np.rint(centers).astype(np.int64)
+    order = np.lexsort(voxels.T[::-1])
+    v = voxels[order]
+    return order, np.flatnonzero((v[1:] == v[:-1]).all(axis=1))
+
+
+def _lone_pairs(collides: np.ndarray) -> np.ndarray:
+    """Colliding positions whose voxel holds EXACTLY two splats.
+
+    Breaking one of those breaks exactly one pair; in a 3-splat voxel the middle
+    splat belongs to two pairs, so editing it would move the score by two.
+    """
+    isolated = ~np.isin(collides - 1, collides) & ~np.isin(collides + 1, collides)
+    return collides[isolated]
+
+
+class TestColorAgreementThreshold:
+    """``MIN_COLOR_AGREEMENT`` must be the value the guard actually decides on.
+
+    Without this, the constant survived being set to 0.5 with every test green.
+    """
+
+    @staticmethod
+    def _saved_pair(tmp_path, monkeypatch, tag: str):
+        rng = np.random.default_rng(41)
+        rgb_vol = rng.uniform(0.0, 1.0, (16, 16, 16, 3)).astype(np.float32)
+        fit = _scattered_gsplat_data(6000, extent=15.49, seed=3)
+        monkeypatch.setattr(_demo, "CACHE_FIT", tmp_path / (tag + _demo.FIT_FILE))
+        monkeypatch.setattr(_demo, "CACHE_COLORS", tmp_path / (tag + _demo.COLORS_FILE))
+        return _demo.save_and_sample_colors(fit, rgb_vol)
+
+    def _pair_with_broken(self, tmp_path, monkeypatch, n_broken: int):
+        """A saved pair with EXACTLY ``n_broken`` same-voxel pairs disagreeing."""
+        stored, colors = self._saved_pair(tmp_path, monkeypatch, "probe-")
+        order, collides = _same_voxel_pairs(stored.centers)
+        lone = _lone_pairs(collides)
+        assert len(lone) >= n_broken, "not enough two-splat voxels to break"
+        broken = colors.copy()
+        for c in lone[:n_broken]:
+            broken[order[c + 1]] = 1.0 - colors[order[c]]  # a different row
+        return stored, broken
+
+    def _tolerated_breaks(self, tmp_path, monkeypatch) -> int:
+        """How many broken pairs the constant still tolerates, for this fixture.
+
+        Counted on the SAVED fit (the writer permutes, so the pre-save centers are
+        the wrong thing to count), hence the throwaway save.
+        """
+        stored, _ = self._saved_pair(tmp_path, monkeypatch, "count-")
+        _, collides = _same_voxel_pairs(stored.centers)
+        return int(np.floor((1.0 - _demo.MIN_COLOR_AGREEMENT) * len(collides)))
+
+    def test_just_above_the_threshold_is_accepted(self, tmp_path, monkeypatch) -> None:
+        n_broken = self._tolerated_breaks(tmp_path, monkeypatch)
+        stored, broken = self._pair_with_broken(tmp_path, monkeypatch, n_broken)
+        measured = voxel_sampled_payload_agreement(stored.centers, broken)
+        assert measured is not None and measured >= _demo.MIN_COLOR_AGREEMENT
+        assert _demo._colors_match_fit(stored, broken, "just above")
+
+    def test_just_below_the_threshold_is_rejected(self, tmp_path, monkeypatch) -> None:
+        n_broken = self._tolerated_breaks(tmp_path, monkeypatch) + 1
+        stored, broken = self._pair_with_broken(tmp_path, monkeypatch, n_broken)
+        measured = voxel_sampled_payload_agreement(stored.centers, broken)
+        assert measured is not None and measured < _demo.MIN_COLOR_AGREEMENT
+        assert not _demo._colors_match_fit(stored, broken, "just below")
+
+    def test_a_near_miss_reordering_is_rejected(self, tmp_path, monkeypatch) -> None:
+        """An ABSOLUTE pin, independent of what the constant currently says.
+
+        0.90 agreement is where a near-miss reordering lands — morton instead of
+        hilbert measured 0.898 on the CT demo's shipped pair — and that is a
+        genuinely misindexed sidecar. Lowering the constant under 0.90 (the sort
+        of "make the gate less fussy" edit that looks harmless) turns this red.
+        """
+        stored, _ = self._saved_pair(tmp_path, monkeypatch, "nm-")
+        _, collides = _same_voxel_pairs(stored.centers)
+        stored, broken = self._pair_with_broken(
+            tmp_path, monkeypatch, int(round(0.10 * len(collides)))
+        )
+        measured = voxel_sampled_payload_agreement(stored.centers, broken)
+        assert measured is not None and abs(measured - 0.90) < 0.01
+        assert not _demo._colors_match_fit(stored, broken, "near miss")
+
+
+class TestRejectedPairFallsThroughToRefit:
+    """A rejected (fit, colors) pair must trigger a REFIT, not render nonsense.
+
+    The user-visible point of #1670 — and the state this demo is in today, since
+    its shipped sidecar is misordered. Detecting the mismatch is only half of it:
+    ``load_or_build`` has to actually fall through to download-and-refit.
+    """
+
+    @staticmethod
+    def _sentinel_setup(tmp_path, monkeypatch, *, permute: bool):
+        n = 6000
+        rng = np.random.default_rng(42)
+        rgb_vol = rng.uniform(0.0, 1.0, (16, 16, 16, 3)).astype(np.float32)
+        fit = _scattered_gsplat_data(n, extent=15.49, seed=5)
+        monkeypatch.setattr(_demo, "CACHE_FIT", tmp_path / _demo.FIT_FILE)
+        monkeypatch.setattr(_demo, "CACHE_COLORS", tmp_path / _demo.COLORS_FILE)
+        _, colors = _demo.save_and_sample_colors(fit, rgb_vol)
+        if permute:
+            _save_colors_u8(colors[rng.permutation(n)], _demo.CACHE_COLORS)
+
+        monkeypatch.setattr(_demo, "RECOMPUTE", False)
+        # The shipped LFS assets must not rescue (or mask) the outcome.
+        monkeypatch.setattr(_demo, "LFS_FIT", tmp_path / "absent.gsplats.zarr.zip")
+        monkeypatch.setattr(_demo, "LFS_COLORS", tmp_path / "absent.npz")
+        monkeypatch.setattr(_demo, "warn_if_no_cuda_gpu", lambda: None)
+
+        sentinel_fit = _scattered_gsplat_data(4, extent=1.0, seed=6)
+        sentinel_colors = np.zeros((4, 3), dtype=np.float32)
+        monkeypatch.setattr(_demo, "download_head_slices", lambda: tmp_path)
+        monkeypatch.setattr(_demo, "assemble_volume", lambda *a, **k: (None, None))
+        monkeypatch.setattr(
+            _demo, "fit_head", lambda *a, **k: (sentinel_fit, sentinel_colors)
+        )
+        return colors, sentinel_fit, sentinel_colors
+
+    def test_permuted_sidecar_falls_through_to_the_refit(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        _, sentinel_fit, sentinel_colors = self._sentinel_setup(
+            tmp_path, monkeypatch, permute=True
+        )
+        got_fit, got_colors = _demo.load_or_build()
+        assert got_fit is sentinel_fit, "a rejected pair was rendered anyway"
+        assert got_colors is sentinel_colors
+
+    def test_aligned_sidecar_is_used_instead_of_refitting(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        colors, sentinel_fit, _ = self._sentinel_setup(
+            tmp_path, monkeypatch, permute=False
+        )
+        got_fit, got_colors = _demo.load_or_build()
+        assert got_fit is not sentinel_fit, "an aligned pair triggered a refit"
+        np.testing.assert_array_equal(got_colors, colors)

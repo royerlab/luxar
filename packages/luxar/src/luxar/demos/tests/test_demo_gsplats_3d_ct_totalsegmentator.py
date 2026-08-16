@@ -15,6 +15,7 @@ import numpy as np
 import pytest
 import zarr
 
+from luxar.demos import voxel_sampled_payload_agreement
 from luxar.gsplats.gsplat_data import GSplatData
 
 pytest.importorskip("scipy")
@@ -217,3 +218,285 @@ class TestLabelRoundtrip:
         loaded = _load_labels(p)
         assert loaded.dtype == np.int32
         np.testing.assert_array_equal(loaded, labels)
+
+
+def _scattered_gsplat_data(n: int, extent: float, seed: int = 0) -> GSplatData:
+    """Splats scattered over a small voxel grid — no GPU fit needed."""
+    rng = np.random.default_rng(seed)
+    return GSplatData(
+        centers=rng.uniform(0.0, extent, (n, 3)).astype(np.float32),
+        amplitudes=rng.uniform(0.2, 1.0, n).astype(np.float32),
+        cholesky_factors=np.tile([1, 0, 1, 0, 0, 1], (n, 1)).astype(np.float32),
+    )
+
+
+class TestLabelSidecarOrdering:
+    """The labels sidecar must be sampled in the SAVED store's splat order.
+
+    ``GSplatData.save`` reorders splats spatially, so labels sampled at the
+    in-memory fit's centers describe different splats than the ones ``load``
+    hands back — every color, layer and tooltip would be wrong. See issue #1670.
+    """
+
+    def test_labels_align_with_the_returned_fit_not_the_input(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        n = 6000
+        rng = np.random.default_rng(7)
+        label_vol = rng.integers(0, 118, (16, 16, 16)).astype(np.int32)
+        fit = _scattered_gsplat_data(n, extent=15.49)
+        monkeypatch.setattr(_demo, "CACHE_FIT", tmp_path / _demo.FIT_FILE)
+        monkeypatch.setattr(_demo, "CACHE_LABELS", tmp_path / _demo.LABELS_FILE)
+
+        stored, labels = _demo.save_and_sample_labels(fit, label_vol)
+
+        # Non-vacuity: the writer really did permute this input. Without it the
+        # pre/post-save samplings would agree and prove nothing.
+        moved = np.any(np.rint(stored.centers) != np.rint(fit.centers), axis=1)
+        assert int(moved.sum()) > n // 2, "hilbert ordering did not permute the input"
+
+        # Aligned with the fit that is RETURNED (== what the cache reloads)...
+        np.testing.assert_array_equal(labels, sample_labels(label_vol, stored.centers))
+        # ...and NOT with the pre-save sampling the old code persisted.
+        assert not np.array_equal(labels, sample_labels(label_vol, fit.centers))
+        # The sidecar on disk carries those same rows.
+        np.testing.assert_array_equal(_load_labels(_demo.CACHE_LABELS), labels)
+
+    def test_guard_accepts_the_aligned_pair_and_rejects_a_permuted_one(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        n = 6000
+        rng = np.random.default_rng(8)
+        label_vol = rng.integers(0, 118, (16, 16, 16)).astype(np.int32)
+        fit = _scattered_gsplat_data(n, extent=15.49, seed=1)
+        monkeypatch.setattr(_demo, "CACHE_FIT", tmp_path / _demo.FIT_FILE)
+        monkeypatch.setattr(_demo, "CACHE_LABELS", tmp_path / _demo.LABELS_FILE)
+
+        stored, labels = _demo.save_and_sample_labels(fit, label_vol)
+        assert _demo._labels_match_fit(stored, labels, "aligned")
+        # A permuted sidecar (the #1670 bug) and a wrong-length one are refused.
+        permuted = labels[rng.permutation(n)]
+        assert not _demo._labels_match_fit(stored, permuted, "permuted")
+        assert not _demo._labels_match_fit(stored, labels[:-1], "truncated")
+
+    def test_shipped_pair_is_accepted(self) -> None:
+        """The pair actually in Git LFS must pass the guard it is checked by.
+
+        A guard nobody can satisfy is a guard that always refits. Only the ACCEPT
+        verdict is asserted: the numbers themselves (agreement, splat count) are
+        properties of the artifact and must be free to change when it is
+        regenerated.
+        """
+        from luxar.demos import is_lfs_pointer
+
+        for path in (_demo.LFS_FIT, _demo.LFS_LABELS):
+            if not path.exists() or is_lfs_pointer(path):
+                pytest.skip(f"{path.name} not materialized (run `git lfs pull`)")
+        fit = GSplatData.load(_demo.LFS_FIT, include_stats=False)
+        labels = _load_labels(_demo.LFS_LABELS)
+        assert _demo._labels_match_fit(fit, labels, "shipped")
+
+
+def _same_voxel_pairs(centers: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """``(order, collides)`` — the guard's own pair structure, recomputed here.
+
+    Mirrors ``voxel_sampled_payload_agreement``: sort by voxel key (every center
+    column), then take adjacent equal-voxel positions. Needed so a test can break
+    an EXACT number of pairs.
+    """
+    voxels = np.rint(centers).astype(np.int64)
+    order = np.lexsort(voxels.T[::-1])
+    v = voxels[order]
+    return order, np.flatnonzero((v[1:] == v[:-1]).all(axis=1))
+
+
+def _lone_pairs(collides: np.ndarray) -> np.ndarray:
+    """Colliding positions whose voxel holds EXACTLY two splats.
+
+    Breaking one of those breaks exactly one pair; in a 3-splat voxel the middle
+    splat belongs to two pairs, so editing it would move the score by two.
+    """
+    isolated = ~np.isin(collides - 1, collides) & ~np.isin(collides + 1, collides)
+    return collides[isolated]
+
+
+class TestLabelAgreementThreshold:
+    """``MIN_LABEL_AGREEMENT`` must be the value the guard actually decides on.
+
+    Without this, the constant survived being set to 0.5 with every test green.
+    """
+
+    @staticmethod
+    def _pair_with_broken(
+        tmp_path, monkeypatch, n_broken: int
+    ) -> tuple[GSplatData, np.ndarray]:
+        n = 6000
+        rng = np.random.default_rng(31)
+        label_vol = rng.integers(0, 118, (16, 16, 16)).astype(np.int32)
+        fit = _scattered_gsplat_data(n, extent=15.49, seed=3)
+        monkeypatch.setattr(_demo, "CACHE_FIT", tmp_path / _demo.FIT_FILE)
+        monkeypatch.setattr(_demo, "CACHE_LABELS", tmp_path / _demo.LABELS_FILE)
+        stored, labels = _demo.save_and_sample_labels(fit, label_vol)
+
+        order, collides = _same_voxel_pairs(stored.centers)
+        lone = _lone_pairs(collides)
+        assert len(lone) >= n_broken, "not enough two-splat voxels to break"
+        broken = labels.copy()
+        for c in lone[:n_broken]:
+            broken[order[c + 1]] = (int(labels[order[c]]) + 1) % 118
+        return stored, broken
+
+    @staticmethod
+    def _tolerated_breaks(tmp_path, monkeypatch) -> int:
+        """How many broken pairs the constant still tolerates, for this fixture.
+
+        Derived from the SAVED fit's own pair count (the writer permutes, so the
+        pre-save centers are the wrong thing to count), hence the throwaway save.
+        """
+        monkeypatch.setattr(_demo, "CACHE_FIT", tmp_path / ("probe-" + _demo.FIT_FILE))
+        monkeypatch.setattr(
+            _demo, "CACHE_LABELS", tmp_path / ("probe-" + _demo.LABELS_FILE)
+        )
+        stored, _ = _demo.save_and_sample_labels(
+            _scattered_gsplat_data(6000, extent=15.49, seed=3),
+            np.zeros((16, 16, 16), dtype=np.int32),
+        )
+        _, collides = _same_voxel_pairs(stored.centers)
+        return int(np.floor((1.0 - _demo.MIN_LABEL_AGREEMENT) * len(collides)))
+
+    def test_just_above_the_threshold_is_accepted(self, tmp_path, monkeypatch) -> None:
+        n_broken = self._tolerated_breaks(tmp_path, monkeypatch)
+        stored, broken = self._pair_with_broken(tmp_path, monkeypatch, n_broken)
+        measured = voxel_sampled_payload_agreement(stored.centers, broken)
+        assert measured is not None and measured >= _demo.MIN_LABEL_AGREEMENT
+        assert _demo._labels_match_fit(stored, broken, "just above")
+
+    def test_just_below_the_threshold_is_rejected(self, tmp_path, monkeypatch) -> None:
+        n_broken = self._tolerated_breaks(tmp_path, monkeypatch) + 1
+        stored, broken = self._pair_with_broken(tmp_path, monkeypatch, n_broken)
+        measured = voxel_sampled_payload_agreement(stored.centers, broken)
+        assert measured is not None and measured < _demo.MIN_LABEL_AGREEMENT
+        assert not _demo._labels_match_fit(stored, broken, "just below")
+
+    def test_a_near_miss_reordering_is_rejected(self, tmp_path, monkeypatch) -> None:
+        """An ABSOLUTE pin, independent of what the constant currently says.
+
+        0.90 agreement is where a near-miss reordering lands — morton instead of
+        hilbert measured 0.898 on the shipped CT pair — and that is a genuinely
+        misindexed sidecar. Lowering the constant under 0.90 (the sort of "make
+        the gate less fussy" edit that looks harmless) turns this red.
+        """
+        monkeypatch.setattr(_demo, "CACHE_FIT", tmp_path / ("nm-" + _demo.FIT_FILE))
+        monkeypatch.setattr(
+            _demo, "CACHE_LABELS", tmp_path / ("nm-" + _demo.LABELS_FILE)
+        )
+        stored, _ = _demo.save_and_sample_labels(
+            _scattered_gsplat_data(6000, extent=15.49, seed=3),
+            np.zeros((16, 16, 16), dtype=np.int32),
+        )
+        _, collides = _same_voxel_pairs(stored.centers)
+        stored, broken = self._pair_with_broken(
+            tmp_path, monkeypatch, int(round(0.10 * len(collides)))
+        )
+        measured = voxel_sampled_payload_agreement(stored.centers, broken)
+        assert measured is not None and abs(measured - 0.90) < 0.01
+        assert not _demo._labels_match_fit(stored, broken, "near miss")
+
+
+class TestRawCentersArePrecondition:
+    """The guard MUST run on the centers straight off ``load``.
+
+    ``voxel_sampled_payload_agreement`` reads the payload's nearest-voxel sampling
+    invariant off the voxel each center rounds to, so ANY coordinate change
+    invalidates it. ``create_luxar_scene`` re-centres the fit
+    (``center_at_centroid``) before rendering — checking THAT fit would reject a
+    perfectly aligned pair. Measured on the real shipped CT pair the recentred
+    agreement is 0.9848, already under the 0.99 gate; on this synthetic pair it
+    collapses much further.
+    """
+
+    def test_centring_the_fit_destroys_the_verdict(self) -> None:
+        n = 6000
+        rng = np.random.default_rng(32)
+        label_vol = rng.integers(0, 118, (16, 16, 16)).astype(np.int32)
+        fit = _scattered_gsplat_data(n, extent=15.49, seed=4)
+        labels = sample_labels(label_vol, fit.centers)
+
+        raw = voxel_sampled_payload_agreement(fit.centers, labels)
+        assert raw == 1.0
+
+        recentred = voxel_sampled_payload_agreement(
+            fit.center_at_centroid().centers, labels
+        )
+        assert recentred is not None
+        assert recentred < _demo.MIN_LABEL_AGREEMENT
+
+        # ...so the guard must be handed the RAW fit. Checking a transformed one
+        # would refuse a perfectly good pair.
+        assert _demo._labels_match_fit(fit, labels, "raw")
+        assert not _demo._labels_match_fit(
+            fit.center_at_centroid(), labels, "recentred"
+        )
+
+
+class TestRejectedPairFallsThroughToRefit:
+    """A rejected (fit, labels) pair must trigger a REFIT, not render nonsense.
+
+    The user-visible point of #1670: detecting the mismatch is only half of it —
+    ``load_or_build`` has to actually fall through to download-and-refit.
+    """
+
+    @staticmethod
+    def _sentinel_setup(tmp_path, monkeypatch, *, permute: bool):
+        """Cache an aligned pair (optionally permuting the sidecar), stub the refit."""
+        n = 6000
+        rng = np.random.default_rng(33)
+        label_vol = rng.integers(0, 118, (16, 16, 16)).astype(np.int32)
+        fit = _scattered_gsplat_data(n, extent=15.49, seed=5)
+        monkeypatch.setattr(_demo, "CACHE_FIT", tmp_path / _demo.FIT_FILE)
+        monkeypatch.setattr(_demo, "CACHE_LABELS", tmp_path / _demo.LABELS_FILE)
+        stored, labels = _demo.save_and_sample_labels(fit, label_vol)
+        if permute:
+            _save_labels_u8(labels[rng.permutation(n)], _demo.CACHE_LABELS)
+
+        monkeypatch.setattr(_demo, "RECOMPUTE", False)
+        # The shipped LFS assets must not rescue (or mask) the outcome.
+        monkeypatch.setattr(_demo, "LFS_FIT", tmp_path / "absent.gsplats.zarr.zip")
+        monkeypatch.setattr(_demo, "LFS_LABELS", tmp_path / "absent.npz")
+        # The manifest fetch resolves to the cached fit, as ensure_dataset would.
+        monkeypatch.setattr(
+            _demo,
+            "load_dataset_gsplats",
+            lambda *a, **k: [GSplatData.load(_demo.CACHE_FIT, include_stats=False)],
+        )
+        monkeypatch.setattr(_demo, "warn_if_no_cuda_gpu", lambda: None)
+
+        sentinel_fit = _scattered_gsplat_data(4, extent=1.0, seed=6)
+        sentinel_labels = np.zeros(4, dtype=np.int32)
+        monkeypatch.setattr(
+            _demo, "load_ct_and_labels", lambda: (None, None, None, None)
+        )
+        monkeypatch.setattr(
+            _demo, "fit_atlas", lambda *a, **k: (sentinel_fit, sentinel_labels)
+        )
+        return labels, sentinel_fit, sentinel_labels
+
+    def test_permuted_sidecar_falls_through_to_the_refit(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        _, sentinel_fit, sentinel_labels = self._sentinel_setup(
+            tmp_path, monkeypatch, permute=True
+        )
+        got_fit, got_labels = _demo.load_or_build()
+        assert got_fit is sentinel_fit, "a rejected pair was rendered anyway"
+        assert got_labels is sentinel_labels
+
+    def test_aligned_sidecar_is_used_instead_of_refitting(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        labels, sentinel_fit, _ = self._sentinel_setup(
+            tmp_path, monkeypatch, permute=False
+        )
+        got_fit, got_labels = _demo.load_or_build()
+        assert got_fit is not sentinel_fit, "an aligned pair triggered a refit"
+        np.testing.assert_array_equal(got_labels, labels)

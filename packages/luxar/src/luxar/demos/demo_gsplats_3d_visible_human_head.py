@@ -35,13 +35,26 @@ U.S. National Library of Medicine — The Visible Human Project® (Male).
 
 SELF-CONTAINED / CACHING
 ------------------------
-On a fresh machine this demo bootstraps itself with no manual steps:
-  1. Fast path: a precomputed fit + per-splat colors shipped via Git LFS
-     (``demos/data/gsplats_visible_human_head/``).
-  2. If those assets aren't pulled, it AUTOMATICALLY downloads the 377 color
-     slices (~1.1 GB) to ``~/.cache/luxar/gsplats_visible_human_head/``, builds
-     the masked RGB volume, fits luminance on the GPU, samples colors, and caches
-     the result — so subsequent runs are instant.
+The colors sidecar is indexed positionally against the fit, and ``save()``
+reorders splats spatially — so the colors are sampled from the SAVED store's own
+order (save → reload → sample), never from the in-memory fit. On load the pair is
+verified against that invariant (splats sharing a voxel must share a color); a
+mismatched pair is reported and refitted rather than rendered.
+
+NO WORKING FAST PATH TODAY (#1670): the shipped ``vh_head_colors.npz`` was
+sampled in the pre-save splat order and does NOT correspond to the shipped
+``vh_head.gsplats.zarr.zip`` (measured same-voxel agreement 0.00097 over
+1,911,192 splats). The guard therefore REJECTS the shipped pair and every run
+falls through to the download-and-refit path below, until the artifact is
+regenerated. So on a fresh machine this demo bootstraps itself with no manual
+steps, but not instantly:
+  1. It downloads the 377 color slices (~1.1 GB) to
+     ``~/.cache/luxar/gsplats_visible_human_head/``, builds the masked RGB
+     volume, fits luminance on the GPU, samples colors, and caches the result —
+     so subsequent runs load that (verified) local pair instantly.
+  2. The shipped Git LFS assets in ``demos/data/gsplats_visible_human_head/``
+     become the fast path again as soon as the sidecar is regenerated against
+     the store it ships with.
 ``--recompute`` forces the download + build + fit path.
 
 USAGE
@@ -59,7 +72,14 @@ DEMO_META = {
     "category": "medical",
     "geometry": "gsplats",
     "requirements": {
-        "download_mb": 25,
+        # 1100, not 25: the shipped `vh_head_colors.npz` sidecar does not
+        # correspond to the shipped fit (#1670), so the guard rejects the pair
+        # and the DEFAULT path is the full ~1.1 GB cryosection download + refit.
+        # Restore 25 once the artifact is regenerated (and the shipped pair
+        # passes `_colors_match_fit`). Read by `luxar demo run-all`, whose
+        # `--max-download-mb` default of 200 now skips this demo — correctly, it
+        # really does download 1.1 GB unattended.
+        "download_mb": 1100,
         "compute": "medium",
         "gpu": "optional",
         "local_data": "git-lfs",
@@ -80,6 +100,7 @@ from luxar.demos import (
     is_lfs_pointer,
     launch_viewer,
     parse_demo_flags,
+    voxel_sampled_payload_agreement,
     warn_if_no_cuda_gpu,
 )
 from luxar.encoding import EncodingMode
@@ -119,6 +140,17 @@ PSNR_PATIENCE = 0.1
 # Display brightness: volumetric compositing bounds the sum, but this dense
 # head still reads hot, so scale amplitudes down to keep the core from clipping.
 SCENE_INTENSITY = 0.008
+
+# Minimum same-voxel color agreement for a cached/shipped (fit, colors) pair to be
+# trusted. Aligned data scores exactly 1.000. DO NOT LOOSEN THIS — the gate is
+# deliberately tight, because the interesting failures are NEAR MISSES rather
+# than full shuffles: a different space-filling curve, or a changed within-voxel
+# tie-break, lands at 0.90-0.98 (measured on the CT demo's shipped pair: morton
+# instead of hilbert 0.898, roll-by-one 0.955, adjacent-pair swap 0.978). Only a
+# FULL shuffle falls to the payload's own chance level Σp² — ~0.001 for sampled
+# RGB, but 0.027 for the CT demo's 117 organ labels, so the floor is
+# payload-dependent and is not what the threshold is set against.
+MIN_COLOR_AGREEMENT = 0.99
 
 # Physical voxel spacing of the NLM VHM color cryosections: 1.0 mm axial (slice
 # spacing) vs ~0.33 mm in-plane. The assembly resamples to physically-cubic
@@ -330,6 +362,62 @@ def _load_colors_f32(path: Path) -> np.ndarray:
     return c.astype(np.float32) / 255.0 if c.dtype == np.uint8 else c.astype(np.float32)
 
 
+def _colors_match_fit(fit: GSplatData, colors: np.ndarray, source: str) -> bool:
+    """Is this (fit, colors) pair positionally aligned? Reports why if not.
+
+    The colors are indexed positionally against the fit, so a sidecar written in a
+    different splat order than the store is silently wrong — every splat renders
+    some other splat's color. Both were sampled nearest-voxel, so splats sharing a
+    voxel must share a color — see ``voxel_sampled_payload_agreement``.
+    """
+    if len(colors) != len(fit.centers):
+        aprint(
+            f"{source}: {len(colors):,} colors for {len(fit.centers):,} splats "
+            "— the sidecar does not belong to this fit."
+        )
+        return False
+    agreement = voxel_sampled_payload_agreement(fit.centers, colors)
+    if agreement is None:
+        return True  # too few same-voxel splats to judge — accept
+    if agreement < MIN_COLOR_AGREEMENT:
+        aprint(
+            f"{source}: same-voxel color agreement {agreement:.3f} < "
+            f"{MIN_COLOR_AGREEMENT} — the colors are not in the fit's splat order."
+        )
+        return False
+    return True
+
+
+def save_and_sample_colors(
+    fit: GSplatData, rgb_vol: np.ndarray
+) -> tuple[GSplatData, np.ndarray]:
+    """Cache the fit, then sample the per-splat colors in the STORE's own order.
+
+    ``GSplatData.save`` reorders splats spatially (``ordering="hilbert"``), so
+    sampling the RGB volume at the in-memory fit's centers would produce a sidecar
+    that no longer lines up with what ``load`` hands back. Saving first and
+    sampling the RELOADED centers makes the pair aligned by construction under any
+    writer ordering, and makes this path return exactly what the cached path will
+    load next run — including the uint8 quantization of the colors.
+    Returns ``(stored_fit, colors)``.
+    """
+    CACHE_FIT.parent.mkdir(parents=True, exist_ok=True)
+    fit.save(
+        CACHE_FIT,
+        encoding_mode=EncodingMode.MEMORY,  # uint8 Cholesky — smallest on-disk
+        include_fitting_info=True,
+        compress="zip",
+        zip_deflate=True,
+    )
+    stored = GSplatData.load(CACHE_FIT, include_stats=False)
+    with asection("Sampling per-splat colors from the RGB volume"):
+        colors = sample_colors(rgb_vol, stored.centers)
+    _save_colors_u8(colors, CACHE_COLORS)
+    # Read the sidecar back so the recompute path matches the shipped/cached path
+    # exactly (both render the quantized colors).
+    return stored, _load_colors_f32(CACHE_COLORS)
+
+
 def fit_head(rgb_vol: np.ndarray, acquisition=None) -> tuple[GSplatData, np.ndarray]:
     """Fit luminance, sample per-splat colors, cache both. Returns (fit, colors)."""
     global DEVICE
@@ -359,22 +447,7 @@ def fit_head(rgb_vol: np.ndarray, acquisition=None) -> tuple[GSplatData, np.ndar
         )
         aprint(f"Fitted {len(result.amplitudes):,} splats")
 
-    with asection("Sampling per-splat colors from the RGB volume"):
-        colors = sample_colors(rgb_vol, result.centers)
-
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    result.save(
-        CACHE_FIT,
-        encoding_mode=EncodingMode.MEMORY,  # uint8 Cholesky — smallest on-disk
-        include_fitting_info=True,
-        compress="zip",
-        zip_deflate=True,
-    )
-    _save_colors_u8(colors, CACHE_COLORS)
-    # Round-trip through uint8 so the recompute path matches the shipped/cached
-    # path exactly (both render the quantized colors).
-    colors = np.clip(np.rint(colors * 255.0), 0, 255).astype(np.float32) / 255.0
-    return result, colors
+    return save_and_sample_colors(result, rgb_vol)
 
 
 def load_or_build() -> tuple[GSplatData, np.ndarray]:
@@ -384,8 +457,11 @@ def load_or_build() -> tuple[GSplatData, np.ndarray]:
         if CACHE_FIT.exists() and CACHE_COLORS.exists():
             aprint("  Using cached fit + colors")
             fit = GSplatData.load(CACHE_FIT, include_stats=False)
-            return fit, _load_colors_f32(CACHE_COLORS)
-        # shipped LFS assets
+            colors = _load_colors_f32(CACHE_COLORS)
+            if _colors_match_fit(fit, colors, f"{CACHE_FIT} + {CACHE_COLORS}"):
+                return fit, colors
+        # shipped LFS assets (also retried when the cached pair was rejected —
+        # the copy overwrites a cache that has already been judged unusable)
         if (
             LFS_FIT.exists()
             and LFS_COLORS.exists()
@@ -399,10 +475,22 @@ def load_or_build() -> tuple[GSplatData, np.ndarray]:
             shutil.copy2(LFS_FIT, CACHE_FIT)
             shutil.copy2(LFS_COLORS, CACHE_COLORS)
             fit = GSplatData.load(CACHE_FIT, include_stats=False)
-            return fit, _load_colors_f32(CACHE_COLORS)
+            colors = _load_colors_f32(CACHE_COLORS)
+            if _colors_match_fit(fit, colors, f"{LFS_FIT} + {LFS_COLORS}"):
+                return fit, colors
+        # A rejected pair triggers a FULL refit, not a cheap re-sample of the
+        # assembled volume at the stored centers, even though that would be far
+        # cheaper (no fit, just the ~1.1 GB assembly). The reason is that a
+        # re-sample cannot be VERIFIED by this guard: splats sharing a voxel share
+        # an index in any coordinate frame whatsoever, so a re-sample taken in the
+        # wrong frame (a different crop box, a different resample factor — exactly
+        # the parameters that drift between the shipped artifact and today's code)
+        # still scores agreement 1.0. It would need its own, separate guard; until
+        # one exists, refitting is the only outcome this file can vouch for.
         aprint(
-            "Precomputed fit not available (Git LFS assets not pulled). "
-            "Falling back to download + fit (one-time; result is cached)."
+            "Precomputed fit not available (Git LFS assets not pulled, or the "
+            "cached/shipped fit and its colors sidecar disagree). Falling back to "
+            "download + fit (one-time; result is cached)."
         )
 
     warn_if_no_cuda_gpu()
