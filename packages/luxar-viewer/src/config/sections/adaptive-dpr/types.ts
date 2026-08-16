@@ -77,8 +77,9 @@ export interface AdaptiveDPRConfig {
    *  that would otherwise poison samples.
    *
    *  This threshold is necessary but NOT sufficient: the interval must
-   *  ALSO be a large outlier (≥4×) against the median of the recent
-   *  inter-frame intervals (see rendering/adaptive-dpr/stall-detector.ts).
+   *  ALSO be a large outlier (strictly more than 4×) against the median
+   *  of the recent inter-frame intervals (see
+   *  rendering/adaptive-dpr/stall-detector.ts).
    *  A 5s gap in a 60fps stream is a 300× outlier and resets; a 2s
    *  interval in a stream whose recent intervals are all ~2s is simply
    *  the frame rate and is kept, so the manager still scales down below
@@ -86,11 +87,15 @@ export interface AdaptiveDPRConfig {
    *  A genuine slowdown costs one or two misread intervals while the
    *  median follows the new cadence.
    *
-   *  Residual limitation: the rule only sees inter-frame intervals, so a
-   *  BURST cadence (a ~2s dead period followed by a run of ~100ms
-   *  frames, repeating) converges to "this is the frame rate"; windows
-   *  landing inside a fast burst then read as healthy even though the
-   *  user perceives ~1fps. That is a limit of the 1s FPS window, not of
-   *  the threshold. */
+   *  Residual limitation: the rule only sees inter-frame intervals, and
+   *  the median has a 5-interval memory, so a dead period ALTERNATING
+   *  one-for-one with a SINGLE fast frame (~2s / ~100ms / ~2s / ~100ms)
+   *  makes the dead intervals the majority — they become the median and
+   *  are kept as "the frame rate", and a window landing on the fast
+   *  frame reads as healthy even though the user perceives ~0.5fps.
+   *  That is a limit of the 1s FPS window, not of the threshold. Two or
+   *  more fast frames between dead periods fail the other way: the
+   *  median stays fast, so the dead time is correctly discarded on every
+   *  cycle and the window never accumulates. */
   gapResetMs: number;
 }

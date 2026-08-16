@@ -1006,6 +1006,75 @@ describe('AdaptiveDPRManager — gap detection & load suppression', () => {
     }
   });
 
+  it('a stall burst absorbed as the frame rate is UNTRUSTED for learning', () => {
+    // The detector compares against a 5-interval median, so the THIRD
+    // consecutive dead interval IS the median and is reclassified as the
+    // frame rate — on a window holding nothing but dead time. Trusting
+    // that window armed a probe, settled it against a baseline measured
+    // on the SAME dead time, and pinned a U-shape floor (0.90, with
+    // exponential backoff) onto a session rendering at a healthy 60fps
+    // either side of the burst.
+    const m = new AdaptiveDPRManager();
+    try {
+      m.setRenderer(renderer);
+      let t = 0;
+      for (let i = 0; i < 61; i++) {
+        m.recordFrame(t);
+        t += 1000 / 60;
+      }
+      expect(m.getCurrentDPR()).toBe(1.0);
+
+      // Three 5s dead intervals in a row.
+      for (let i = 0; i < 3; i++) {
+        t += 5000;
+        m.recordFrame(t);
+      }
+      // A reduction applies — fewer pixels never hurt a stuttering
+      // loop, and it is one multiplicative step, not a walk...
+      expect(m.getCurrentDPR()).toBeCloseTo(0.7, 5);
+      // ...but nothing is LEARNED from a window made only of dead time.
+      expect(m.getState().probing).toBe(false);
+      expect(m.getState().dprFloor).toBe(0.5);
+
+      // Healthy 60fps again for 10s: scale-up restores the DPR and the
+      // floor is still untouched, so no backoff ladder was started.
+      for (let i = 0; i < 600; i++) {
+        m.recordFrame(t);
+        t += 1000 / 60;
+      }
+      expect(m.getCurrentDPR()).toBeCloseTo(1.0, 2);
+      expect(m.getState().dprFloor).toBe(0.5);
+    } finally {
+      restore();
+    }
+  });
+
+  it('a genuine slowdown loses only the FIRST scale-down to the untrusted window', () => {
+    // The other side of the cadence-trust gate: it must cost a
+    // genuinely slow scene at most one unratified step. The reduction
+    // still applies immediately either way — only the probe waits.
+    // The production 0.9 step is used so the SECOND reduction (0.81) is
+    // still clear of minDPR and the probe is not blocked by the floor.
+    const m = new AdaptiveDPRManager({ scaleDownFactor: 0.9 });
+    try {
+      m.setRenderer(renderer);
+      // 0.5fps from cold. Interval 1 is a cold-memory stall, interval 2
+      // is absorbed as the frame rate but untrusted, interval 3 is
+      // trusted and the normal probe machinery engages.
+      let t = 0;
+      m.recordFrame(t);
+      m.recordFrame((t += 2000));
+      m.recordFrame((t += 2000));
+      expect(m.getCurrentDPR()).toBeCloseTo(0.9, 5); // applied...
+      expect(m.getState().probing).toBe(false); // ...unratified
+
+      m.recordFrame((t += 2000));
+      expect(m.getState().probing).toBe(true); // normal machinery, next interval
+    } finally {
+      restore();
+    }
+  });
+
   it('load-suppressed low FPS scales down WITHOUT arming a probe', () => {
     const m = new AdaptiveDPRManager();
     try {
@@ -1022,6 +1091,71 @@ describe('AdaptiveDPRManager — gap detection & load suppression', () => {
       // ...but jank samples never become probe/floor evidence.
       expect(m.getState().probing).toBe(false);
       expect(m.getState().dprFloor).toBe(0.5);
+    } finally {
+      restore();
+    }
+  });
+
+  it('a content change keeps the cadence memory, so the next ordinary interval is not dead time', () => {
+    // A content change is NOT a frame-stream boundary: frames keep
+    // arriving at whatever rate they were arriving at. Wiping the
+    // cadence would drop the detector onto its cold-memory fallback —
+    // the absolute gapResetMs floor alone — so for any loop slower than
+    // 1000/gapResetMs fps the very next ORDINARY interval reads as dead
+    // time, throwing the freshly-restarted window away a second time.
+    const m = new AdaptiveDPRManager();
+    try {
+      m.setRenderer(renderer);
+      // Converge on 0.5fps: 2000ms intervals are "normal" for this scene.
+      let t = 0;
+      for (let i = 0; i < 6; i++) {
+        m.recordFrame(t);
+        t += 2000;
+      }
+      m.notifyContentChanged(t);
+      // Two more frames at the SAME cadence. The window was cleared by
+      // the content change, so this pair is all it has — and it must
+      // survive: 2000ms is the frame rate here, not a stall.
+      m.recordFrame(t);
+      m.recordFrame(t + 2000);
+      expect(m.getCurrentFPS()).toBeCloseTo(0.5, 3);
+
+      // Positive control — a PAUSE is a real stream boundary and does
+      // still forget the cadence, so the same pair is thrown away.
+      m.notifyPaused();
+      m.recordFrame(t + 4000);
+      m.recordFrame(t + 6000);
+      expect(m.getCurrentFPS()).toBe(0);
+    } finally {
+      restore();
+    }
+  });
+
+  it('per-frame content churn at 0.5fps no longer walks the DPR to minDPR unratified', () => {
+    // LOD-level swaps and `luxar-layers-changed` fire a content change
+    // per frame, coalesced to one per contentChangeRecheckMs (5s) — only
+    // ~2.5 frames at 0.5fps. Every armed probe used to be voided before
+    // it could settle and the DPR walked, unratified, all the way to
+    // minDPR while no floor was ever learned. Two things fix it and both
+    // are load-bearing: the content change must not void a probe the
+    // loop is too slow to re-run, AND it must not wipe the cadence
+    // memory (which would fire a gap reset two frames later and void the
+    // probe anyway — measured, that is what made the gate inert).
+    const m = new AdaptiveDPRManager({ scaleDownFactor: 0.9 });
+    try {
+      m.setRenderer(renderer);
+      let t = 0;
+      while (t < 120_000) {
+        m.recordFrame(t);
+        m.notifyContentChanged(t);
+        t += 2000; // 0.5fps
+      }
+      // A verdict was reached (the floor is evidence, not a guess)...
+      expect(m.getState().dprFloor).toBeGreaterThan(0.5);
+      // ...and the DPR settled well clear of minDPR instead of walking
+      // to it. Measured 0.90 here; pre-fix it bottomed out at 0.508
+      // (native 2) / minDPR with no floor at all.
+      expect(m.getCurrentDPR()).toBeGreaterThan(0.6);
     } finally {
       restore();
     }

@@ -121,4 +121,30 @@ describe('StallDetector', () => {
     expect(d.isStall(2000)).toBe(true); // cold: floor only
     expect(feed(d, 2000, 4)).not.toContain(true); // memory works, 1× median
   });
+
+  it.each([
+    ['NaN', NaN],
+    ['Infinity', Infinity],
+    ['-Infinity', -Infinity],
+  ])('treats a %s knob as absent rather than propagating it', (_label, bad) => {
+    // `Math.max(2, NaN)` is NaN and `Math.max(2, Infinity)` is Infinity,
+    // so a plain clamp lets both through. A NaN/Infinity windowSize
+    // means the ring NEVER trims (unbounded growth plus an O(n log n)
+    // median every frame) and a NaN outlierFactor makes every comparison
+    // false, so the detector never fires at all. Both must behave
+    // exactly like the defaults.
+    const outlier = new StallDetector(350, bad);
+    feed(outlier, FRAME_60, 10);
+    expect(outlier.isStall(5000)).toBe(true); // 300× — a stall, as with factor 4
+    expect(outlier.isStall(FRAME_60)).toBe(false);
+
+    const window = new StallDetector(350, 4, bad);
+    feed(window, FRAME_60, 10);
+    // Default window of 5: a sustained 2s cadence converges after
+    // exactly two misreads (3 of 5 → median 2000). A shorter ring
+    // converges sooner, an untrimmed one never converges at all.
+    const verdicts = feed(window, 2000, 8);
+    expect(verdicts.slice(0, 2)).toEqual([true, true]);
+    expect(verdicts.slice(2)).not.toContain(true);
+  });
 });

@@ -38,10 +38,19 @@
  * drives — that is what makes it converge. A session that genuinely
  * slows down spends a couple of intervals being (harmlessly) misread as
  * stalling, the median follows the new cadence, and adaptation resumes.
- * The caller clears it only at genuine session boundaries (display
- * change, disable, pause, content change, dispose), where the previous
- * cadence no longer describes anything.
+ * The caller clears it only where the frame STREAM itself breaks and
+ * resume dead time is expected next — display change, disable, pause,
+ * dispose. A scene-content change is deliberately NOT one of those:
+ * frames keep arriving at whatever rate they were arriving at, and a
+ * cold memory falls back to the absolute floor alone, which misreads the
+ * very next ordinary interval of any loop slower than `1000/minGapMs`
+ * fps as dead time.
  */
+/** Default outlier ratio an interval must exceed to be dead time. */
+const DEFAULT_OUTLIER_FACTOR = 4;
+/** Default number of recent intervals the median is taken over. */
+const DEFAULT_WINDOW_SIZE = 5;
+
 export class StallDetector {
   /** Most recent inter-frame intervals, oldest first (≤ windowSize). */
   private readonly recent: number[] = [];
@@ -61,11 +70,31 @@ export class StallDetector {
    *   median, so every call would take the cold-memory path and the
    *   absolute-threshold-only rule this class exists to replace would be
    *   silently back. `outlierFactor` is likewise clamped to at least 1.
+   *
+   * A NON-FINITE knob is treated as ABSENT and falls back to the default
+   * BEFORE the clamp, because `Math.max` propagates NaN rather than
+   * rejecting it: `Math.max(2, NaN)` is NaN, and a NaN `windowSize`
+   * would leave `recent.length > NaN` permanently false — the ring
+   * never trims, so it grows without bound and pays an O(n log n) median
+   * on every frame — while a NaN `outlierFactor` makes every comparison
+   * false and the detector never fires at all. ±Infinity is just as
+   * bad (an infinite ring, or a factor nothing can exceed), so the guard
+   * is `Number.isFinite`, not an `isNaN` check.
    */
-  constructor(minGapMs: number, outlierFactor = 4, windowSize = 5) {
+  constructor(
+    minGapMs: number,
+    outlierFactor = DEFAULT_OUTLIER_FACTOR,
+    windowSize = DEFAULT_WINDOW_SIZE
+  ) {
     this.minGapMs = minGapMs;
-    this.outlierFactor = Math.max(1, outlierFactor);
-    this.windowSize = Math.max(2, Math.floor(windowSize));
+    this.outlierFactor = Math.max(
+      1,
+      Number.isFinite(outlierFactor) ? outlierFactor : DEFAULT_OUTLIER_FACTOR
+    );
+    this.windowSize = Math.max(
+      2,
+      Math.floor(Number.isFinite(windowSize) ? windowSize : DEFAULT_WINDOW_SIZE)
+    );
   }
 
   /**
@@ -99,9 +128,9 @@ export class StallDetector {
   }
 
   /**
-   * Forget the cadence (display change, disable, pause, content change,
-   * dispose). NOT called by the gap reset itself — see the class
-   * comment.
+   * Forget the cadence (display change, disable, pause, dispose). NOT
+   * called by the gap reset itself, nor by a content change — see the
+   * class comment.
    */
   clear(): void {
     this.recent.length = 0;

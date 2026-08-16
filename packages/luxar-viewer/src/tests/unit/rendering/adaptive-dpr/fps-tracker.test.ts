@@ -84,11 +84,14 @@ describe('FPSTracker', () => {
   it('clamps minRetainedSamples below 2 (the floor is an invariant, not a preference)', () => {
     // A caller passing 0/1 would silently restore the undefined-estimate
     // failure the retention floor exists to prevent, so the ctor refuses.
-    for (const bad of [0, 1, -5, 1.9, Number.NaN]) {
+    // ±Infinity is the other half of the hazard: it clamps "upward" and
+    // would mean NEVER trim, i.e. a window that no longer slides — the
+    // estimate would report the whole session's average forever.
+    for (const bad of [0, 1, -5, 1.9, Number.NaN, Infinity, -Infinity]) {
       const tracker = new FPSTracker(1000, bad);
       pushAt(tracker, 0, 4, 2000); // every sample older than the window
-      expect(tracker.sampleCount()).toBe(2);
-      expect(tracker.getFPS()).toBeCloseTo(0.5, 3);
+      expect(tracker.sampleCount(), `minRetainedSamples=${bad}`).toBe(2);
+      expect(tracker.getFPS(), `minRetainedSamples=${bad}`).toBeCloseTo(0.5, 3);
     }
   });
 

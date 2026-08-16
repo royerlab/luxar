@@ -22,6 +22,9 @@
  * frame rates many more samples fit inside the window, so the retention
  * floor never binds and behaviour is byte-identical.
  */
+/** Samples `getFPS()`/`span()` need to report anything at all. */
+const DEFAULT_MIN_RETAINED_SAMPLES = 2;
+
 export class FPSTracker {
   private timestamps: number[] = [];
   private startIndex = 0;
@@ -35,13 +38,21 @@ export class FPSTracker {
    *   anything at all; see the class comment). CLAMPED to at least 2:
    *   the retention floor is a correctness invariant, not a preference,
    *   and a caller passing 0 or 1 would silently restore the
-   *   undefined-estimate failure it exists to prevent.
+   *   undefined-estimate failure it exists to prevent. A NON-FINITE
+   *   value is treated as ABSENT and falls back to the default before
+   *   the clamp (`Math.max` propagates NaN, and `Infinity` would mean
+   *   "never trim" — an unbounded window that is no longer sliding).
    */
   constructor(
     private readonly windowMs: number,
-    minRetainedSamples: number = 2
+    minRetainedSamples: number = DEFAULT_MIN_RETAINED_SAMPLES
   ) {
-    this.minRetainedSamples = Math.max(2, Math.floor(minRetainedSamples) || 2);
+    this.minRetainedSamples = Math.max(
+      DEFAULT_MIN_RETAINED_SAMPLES,
+      Math.floor(
+        Number.isFinite(minRetainedSamples) ? minRetainedSamples : DEFAULT_MIN_RETAINED_SAMPLES
+      )
+    );
   }
 
   /**
