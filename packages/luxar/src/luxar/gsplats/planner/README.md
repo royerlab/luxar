@@ -32,10 +32,38 @@ fit_planned(volume, plan)        -> GSplatData|GSplatNode   # fit each box, merg
   on a halo-padded crop, keep the core, merge. `partition=True` (default) returns
   a `kind=partition` `GSplatNode` (one part per box); `recipe=`/`recipe_params=`
   give each part its own per-part LOD (`fit --recipe`). `partition=False` (`--flat`)
-  concatenates into one flat leaf.
+  concatenates into one flat leaf. Each box is carried through the merge as the
+  `GSplatData` it was fitted as (`_fit_one_box` returns the dataset, not bare
+  arrays), so the fit's `truncation_radius` — a `truncate:` in the config — survives;
+  rebuilding from arrays reset the radius to the default and a content result then
+  refused to `GSplatData.concatenate` with a uniform-tiled one fitted the same way
+  (#1637). Its per-box stats survive too, on a **bare-leaf** partition: with
+  `recipe=` each part's ladder builder writes its own per-sub-LOD stats, and on the
+  flat path `concatenate` replaces them with its merge summary. Two of them are
+  re-scoped to the part: the whole region-scoped stamp set a `--bbox` crop drops
+  (`_REGION_SCOPED_STATS_KEYS` — `source_shape` / `source_voxels` / `source_bytes`
+  / `fitted_shape` / `fitted_voxels` / `occupancy` / `voxels_per_splat` /
+  `source_declared`) goes whenever the padded crop is larger than the core box or
+  the core mask removed splats, and `n_splats` is restamped to the kept count. The
+  rest (`psnr_db` / `ssim` / `mse`, the `final_*` losses, the cull provenance
+  `n_original` / `n_culled` / `amplitude_retention`) still describes the box's own
+  fit — the padded crop, with the pre-mask splat set — which is the same fit
+  provenance a uniform tile-part carries (a tile-part keeps its grid stamps too,
+  because a tile keeps every splat it fitted; a core-masked box does not).
+  Non-finite values are dropped as well: the leaf writer stamps `lod_stats` raw, so
+  a signal-free box's `psnr_db = inf` would reach a part's attrs as a bare
+  `Infinity` token that a strict JSON parser refuses.
 - **`fit_planned_parallel`** (`fit_planned_parallel.py`) — the `-j N` path: fit
   each box in its own subprocess (`fit --plan-box`), then merge identically. A box
   that fits 0 splats writes a sibling `<output>.empty` marker (skipped at merge).
+  `_default_worker_cmd_builder` forwards the run's fit configuration (`--preset`,
+  `--config`, `--iters`, `--loss`, `--lr`, `--cull-retention`) **verbatim** — an
+  absent flag stays absent — so a box worker resolves the same fit config as the
+  sequential path (`--seeds` excepted: a content box's budget comes from the plan).
+  `truncate:` is settable only through a YAML `--config` (no preset sets it, and
+  there is no `--truncate` flag), so without the forwarding `-j N` silently fitted
+  at the 2.75 default; and substituting `standard` for an absent `--preset` made a
+  box resolve 5000 iterations where `-j 1` resolves 1000 (#1637).
 
 Both drivers expect the background floor to arrive as a **concrete level** (or
 `"none"`): the CLI resolves `--floor` once against the whole volume and hands the

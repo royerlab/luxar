@@ -125,7 +125,6 @@ def run_content_fit(
       ``flat``.
     """
     from luxar.cli.gsplat_config import load_fit_config, load_volume
-    from luxar.gsplats.gsplat_data import GSplatData
     from luxar.gsplats.planner import FitPlan, fit_planned, plan_volume
     from luxar.gsplats.planner.fit_planned import _fit_one_box
 
@@ -203,16 +202,17 @@ def run_content_fit(
             vol, fk.get("floor", "auto"), guard_numeric=False, verbose=False
         )
         cap = int(fitplan.density.get("saturation_cap", 0)) if fitplan.density else 0
-        c, a, k = _fit_one_box(
+        box_result = _fit_one_box(
             vol, fitplan.boxes[plan_box], int(fitplan.overlap), cap, **fk
         )
         output.parent.mkdir(parents=True, exist_ok=True)
-        if c.shape[0] == 0:
+        if box_result.n_splats == 0:
             Path(str(output) + ".empty").write_text("")  # writer rejects empty stores
         else:
-            GSplatData(centers=c, amplitudes=a, cholesky_factors=k).save(
-                output, include_fitting_info=False
-            )
+            # Save the fitted dataset AS IS: rebuilding it from bare arrays
+            # dropped the fit's truncation_radius (a `truncate: 3.5` config
+            # stored the 2.75 default) and its per-box stats (#1637).
+            box_result.save(output, include_fitting_info=False)
         return
 
     # ── resolve density ──
@@ -365,7 +365,21 @@ def run_content_fit(
         builder = _default_worker_cmd_builder(
             input_path,
             plan_json_path,
-            preset=preset or "standard",
+            # VERBATIM, not `preset or "standard"`: the sequential path hands
+            # `load_fit_config` the CLI value as-is, and defaulting to "standard"
+            # here would layer that preset's n_iters (5000 vs 1000) and
+            # cull_retention on every box — `-j N` fitting differently from
+            # `-j 1` (#1637).
+            preset=preset,
+            # The run's fit configuration, so a box worker resolves the same fit
+            # config as the sequential path. `truncate:` lives only in a YAML
+            # --config (no preset sets it, and there is no --truncate flag), so
+            # without this the boxes silently fit at the default (#1637).
+            config=config,
+            iters=iters,
+            loss=loss,
+            lr=lr,
+            cull_retention=cull_retention,
             device=device,
             # The RESOLVED level, not the spec: each worker would otherwise
             # re-estimate on its own box crop (#1174).
