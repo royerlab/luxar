@@ -365,11 +365,16 @@ def run_content_fit(
         builder = _default_worker_cmd_builder(
             input_path,
             plan_json_path,
-            preset=preset or "standard",
-            # The run's fit configuration, so a box worker fits with the same
-            # parameters as the sequential path. A `truncate:`/`n_iters:` lives
-            # only in a YAML --config (no preset sets them), so without this the
-            # boxes silently fit at the defaults (#1637).
+            # VERBATIM, not `preset or "standard"`: the sequential path hands
+            # `load_fit_config` the CLI value as-is, and defaulting to "standard"
+            # here would layer that preset's n_iters (5000 vs 1000) and
+            # cull_retention on every box — `-j N` fitting differently from
+            # `-j 1` (#1637).
+            preset=preset,
+            # The run's fit configuration, so a box worker resolves the same fit
+            # config as the sequential path. `truncate:` lives only in a YAML
+            # --config (no preset sets it, and there is no --truncate flag), so
+            # without this the boxes silently fit at the default (#1637).
             config=config,
             iters=iters,
             loss=loss,

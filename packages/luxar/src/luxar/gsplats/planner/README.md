@@ -39,17 +39,26 @@ fit_planned(volume, plan)        -> GSplatData|GSplatNode   # fit each box, merg
   refused to `GSplatData.concatenate` with a uniform-tiled one fitted the same way
   (#1637). Its per-box stats survive too, on a **bare-leaf** partition: with
   `recipe=` each part's ladder builder writes its own per-sub-LOD stats, and on the
-  flat path `concatenate` replaces them with its merge summary. They describe the
-  core-kept part, not the padded crop — the region-scoped source/grid stamps are
-  dropped (as for a `--bbox` crop) and `n_splats` restamped wherever the core mask
-  removed splats.
+  flat path `concatenate` replaces them with its merge summary. Two of them are
+  re-scoped to the part: the region-scoped source/grid stamps (`source_shape` /
+  `fitted_shape` / `occupancy` / `voxels_per_splat`) are dropped — as for a
+  `--bbox` crop — whenever the padded crop is larger than the core box or the core
+  mask removed splats, and `n_splats` is restamped to the kept count. The rest
+  (`psnr_db` / `ssim` / `mse`, the `final_*` losses, the cull provenance
+  `n_original` / `n_culled` / `amplitude_retention`) still describes the box's own
+  fit — the padded crop, with the pre-mask splat set — which is the same fit
+  provenance a uniform tile-part carries.
 - **`fit_planned_parallel`** (`fit_planned_parallel.py`) — the `-j N` path: fit
   each box in its own subprocess (`fit --plan-box`), then merge identically. A box
   that fits 0 splats writes a sibling `<output>.empty` marker (skipped at merge).
-  `_default_worker_cmd_builder` forwards the run's fit configuration (`--config`,
-  `--iters`, `--loss`, `--lr`, `--cull-retention`) so a box fits with the same
-  parameters as the sequential path — `truncate:`/`n_iters:` live only in a YAML
-  `--config`, so without it `-j N` silently fitted at the defaults (#1637).
+  `_default_worker_cmd_builder` forwards the run's fit configuration (`--preset`,
+  `--config`, `--iters`, `--loss`, `--lr`, `--cull-retention`) **verbatim** — an
+  absent flag stays absent — so a box worker resolves the same fit config as the
+  sequential path (`--seeds` excepted: a content box's budget comes from the plan).
+  `truncate:` is settable only through a YAML `--config` (no preset sets it, and
+  there is no `--truncate` flag), so without the forwarding `-j N` silently fitted
+  at the 2.75 default; and substituting `standard` for an absent `--preset` made a
+  box resolve 5000 iterations where `-j 1` resolves 1000 (#1637).
 
 Both drivers expect the background floor to arrive as a **concrete level** (or
 `"none"`): the CLI resolves `--floor` once against the whole volume and hands the

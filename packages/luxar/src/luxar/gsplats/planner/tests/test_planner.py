@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import sys
 import textwrap
+import time
 from pathlib import Path
 
 import numpy as np
@@ -335,11 +336,19 @@ def _toy_plan(n_boxes: int = 3, budget: int = 100, width: int = 16) -> FitPlan:
     )
 
 
+#: Per-box fit time the fake box worker records in its store's stats — far larger
+#: than any (instant) merge of fake boxes can take, so a merge that reported the
+#: SUM of the boxes' own times instead of wall clock is unmistakable.
+_FAKE_BOX_TIME_SECONDS = 1000.0
+
+
 def _fake_box_builder(n_per_box: int = 5, truncation_radius: float | None = None):
     """Worker builder writing ``n_per_box`` deterministic splats — no torch/GPU.
 
     ``truncation_radius`` stands in for a box worker whose fit config asked for a
     non-default ``truncate`` (the real worker stamps it on the store it saves).
+    Each box also records its own ``time_seconds`` fit stat, as a real box worker
+    does.
     """
     radius = (
         ""
@@ -358,7 +367,9 @@ def _fake_box_builder(n_per_box: int = 5, truncation_radius: float | None = None
             amps = rng.random(k).astype(np.float32) + 0.1
             chol = np.tile(np.array([1, 0, 1, 0, 0, 1], np.float32), (k, 1))
             GSplatData(centers=centers, amplitudes=amps,
-                       cholesky_factors=chol{radius}).save(r"{out_path}")
+                       cholesky_factors=chol{radius},
+                       stats={{"time_seconds": {_FAKE_BOX_TIME_SECONDS!r}}},
+                       ).save(r"{out_path}")
             """
         )
         return [sys.executable, "-c", script]
@@ -413,9 +424,9 @@ class TestDefaultWorkerCmdBuilder:
         assert "--floor" not in [str(c) for c in b2(0, tmp_path / "box0.gsplats.zarr")]
 
     def test_forwards_the_runs_fit_configuration(self, tmp_path):
-        # `truncate:`/`n_iters:` are settable ONLY through a YAML --config (no
-        # preset sets them), so an unforwarded config made every `-j N` box fit
-        # (and stamp) different parameters than `-j 1` (#1637).
+        # `truncate:` is settable ONLY through a YAML --config (no preset sets it,
+        # there is no --truncate flag), so an unforwarded config made every `-j N`
+        # box fit (and stamp) different parameters than `-j 1` (#1637).
         from luxar.gsplats.planner.fit_planned_parallel import (
             _default_worker_cmd_builder,
         )
@@ -423,6 +434,7 @@ class TestDefaultWorkerCmdBuilder:
         b = _default_worker_cmd_builder(
             "in.zarr",
             "plan.json",
+            preset="draft",
             config=tmp_path / "fit.yaml",
             iters=7,
             loss="mse",
@@ -430,6 +442,7 @@ class TestDefaultWorkerCmdBuilder:
             cull_retention=0.9,
         )
         cmd = [str(c) for c in b(0, tmp_path / "box0.gsplats.zarr")]
+        assert cmd[cmd.index("--preset") + 1] == "draft"
         assert cmd[cmd.index("--config") + 1] == str(tmp_path / "fit.yaml")
         assert cmd[cmd.index("--iters") + 1] == "7"
         assert cmd[cmd.index("--loss") + 1] == "mse"
@@ -438,13 +451,23 @@ class TestDefaultWorkerCmdBuilder:
         # A content box's budget comes from the PLAN, never from --seeds.
         assert "--seeds" not in cmd
         # Nothing supplied -> no flags (the worker resolves its own defaults).
+        # `--preset` included: a "standard" default would layer that preset's
+        # n_iters (5000) / cull_retention on a box the sequential path fits with
+        # `load_fit_config(preset=None)` (1000 iterations).
         bare = [
             str(c)
             for c in _default_worker_cmd_builder("in.zarr", "plan.json")(
                 0, tmp_path / "box0.gsplats.zarr"
             )
         ]
-        for flag in ("--config", "--iters", "--loss", "--lr", "--cull-retention"):
+        for flag in (
+            "--preset",
+            "--config",
+            "--iters",
+            "--loss",
+            "--lr",
+            "--cull-retention",
+        ):
             assert flag not in bare
         # A zero cull retention ("keep every splat") is a value, not an absence.
         zero = _default_worker_cmd_builder("in.zarr", "plan.json", cull_retention=0.0)
@@ -604,19 +627,21 @@ class TestContentFitSharedFloor:
         assert all(isinstance(f, float) for f in seen), seen
         assert seen == [pytest.approx(expected), pytest.approx(expected)]
 
-    def test_parallel_worker_argv_carries_a_number_not_a_spec(
-        self, tmp_path, monkeypatch
-    ):
-        """The -j>1 box subprocesses must be handed the level, not 'auto'."""
+    @staticmethod
+    def _capture_worker_argvs(tmp_path, monkeypatch, volume, **run_kwargs) -> list:
+        """Run a 2-box content fit with ``-j 2``, capturing each worker's argv.
+
+        Only ``fit_planned_parallel`` is faked out (no subprocess is spawned), so
+        the argv comes from the REAL builder ``run_content_fit`` constructs — this
+        is the seam that covers the CLI call site forwarding the run's floor and
+        fit configuration to the box workers.
+        """
         import importlib
 
         from luxar.cli.gsplat_ops.planner import run_content_fit
-        from luxar.gsplats.fitting.preprocessing import resolve_volume_floor
         from luxar.gsplats.gsplat_data import GSplatData
 
         fpp = importlib.import_module("luxar.gsplats.planner.fit_planned_parallel")
-        V = _pedestal_blobs()
-        expected = resolve_volume_floor(V, "auto", guard_numeric=True)
         argvs: list = []
 
         def _fake_parallel(plan, *, jobs, tmp_dir, worker_cmd_builder, **kwargs):
@@ -630,7 +655,7 @@ class TestContentFitSharedFloor:
 
         monkeypatch.setattr(fpp, "fit_planned_parallel", _fake_parallel)
 
-        z, y, x = V.shape
+        z, y, x = volume.shape
         plan = FitPlan(
             volume_shape=[z, y, x],
             boxes=[
@@ -648,20 +673,71 @@ class TestContentFitSharedFloor:
         run_content_fit(
             tmp_path / "unused.npy",
             tmp_path / "out.gsplats.zarr",
-            volume=V,
+            volume=volume,
             k_star_ref=4000,
             n_features_ref=200,
             plan=plan_json,
-            floor="auto",
             jobs="2",
             flat=True,
-            preset="draft",
             device="cpu",
             verbose=False,
+            **run_kwargs,
+        )
+        return argvs
+
+    def test_parallel_worker_argv_carries_a_number_not_a_spec(
+        self, tmp_path, monkeypatch
+    ):
+        """The -j>1 box subprocesses must be handed the level, not 'auto'."""
+        from luxar.gsplats.fitting.preprocessing import resolve_volume_floor
+
+        V = _pedestal_blobs()
+        expected = resolve_volume_floor(V, "auto", guard_numeric=True)
+        argvs = self._capture_worker_argvs(
+            tmp_path, monkeypatch, V, floor="auto", preset="draft"
         )
         assert len(argvs) == 2
         levels = [float(a[a.index("--floor") + 1]) for a in argvs]
         assert levels == [pytest.approx(expected), pytest.approx(expected)]
+
+    def test_parallel_worker_argv_carries_the_runs_fit_configuration(
+        self, tmp_path, monkeypatch
+    ):
+        """The CLI call site must forward the run's fit config to each box worker.
+
+        Every builder-level assertion stays green if the ``config=``/``iters=``/
+        ``cull_retention=`` kwargs are deleted from the ``run_content_fit`` call
+        site — this is where that is caught. ``truncate:`` is YAML-only, so an
+        unforwarded ``--config`` left every ``-j N`` box fitted at the 2.75 default
+        (#1637), and a ``preset or "standard"`` default made a box resolve 5000
+        iterations where ``-j 1`` resolves 1000.
+        """
+        V = _pedestal_blobs(shape=(16, 16, 32))
+        cfg = tmp_path / "fit.yaml"
+        cfg.write_text("truncate: 3.5\nn_iters: 11\n")
+        argvs = self._capture_worker_argvs(
+            tmp_path,
+            monkeypatch,
+            V,
+            floor="none",
+            config=cfg,
+            iters=9,  # a CLI override outranks the config's n_iters: 11
+            cull_retention=0.5,
+        )
+        assert len(argvs) == 2
+        for argv in argvs:
+            assert argv[argv.index("--config") + 1] == str(cfg)
+            assert argv[argv.index("--iters") + 1] == "9"
+            assert float(argv[argv.index("--cull-retention") + 1]) == pytest.approx(0.5)
+            # No --preset was asked for, so none is forwarded: "standard" would
+            # layer 5000 iterations / cull_retention 0.999 on a box the sequential
+            # path fits with `load_fit_config(preset=None)`.
+            assert "--preset" not in argv
+        # An explicit preset IS forwarded, verbatim.
+        with_preset = self._capture_worker_argvs(
+            tmp_path, monkeypatch, V, floor="none", preset="draft"
+        )
+        assert all(a[a.index("--preset") + 1] == "draft" for a in with_preset)
 
     def test_bad_floor_spec_is_rejected_before_the_volume_is_read(self, tmp_path):
         """An invalid spec is a usage error, paid for with zero volume reads.
@@ -888,7 +964,9 @@ class TestPlannedFitTruncationRadius:
         from luxar.gsplats.planner import fit_planned
 
         V, plan = self._tiny_volume_and_plan()
+        t0 = time.perf_counter()
         merged = fit_planned(V, plan, truncate=3.5, **_FAST_FIT)
+        wall = time.perf_counter() - t0
 
         assert merged.n_splats > 0
         assert merged.truncation_radius == pytest.approx(3.5)
@@ -899,7 +977,9 @@ class TestPlannedFitTruncationRadius:
         assert merged.stats["n_boxes_fit"] >= 1
         assert merged.stats["overlap"] == plan.overlap
         assert list(merged.stats["volume_shape"]) == list(V.shape)
-        assert merged.stats["time_seconds"] > 0
+        # Wall clock for the fit loop, so it is bounded by the wall clock of the
+        # whole call — the SUM of the boxes' own fit times need not be.
+        assert 0 < merged.stats["time_seconds"] <= wall
 
     def test_partition_parts_keep_the_configured_radius_and_box_stats(self, tmp_path):
         """Sequential ``partition=True``: every part leaf carries ``truncate``."""
@@ -925,23 +1005,28 @@ class TestPlannedFitTruncationRadius:
             assert box_stats["n_splats"] == leaf.n_splats
             if not any(k in box_stats for k in _REGION_SCOPED_STATS_KEYS):
                 n_cropped += 1
-        # A core-keep mask that dropped splats is a spatial restriction, so the
-        # padded crop's grid stamps must not survive on that part (the rule
-        # itself is pinned by test_core_mask_rescopes_the_box_stats below). The
-        # halo makes it happen for at least one box here.
+        # A box is fitted on a halo-padded crop and then core-masked, so the
+        # crop's grid stamps describe a bigger region than the part (the rule
+        # itself is pinned by test_core_mask_rescopes_the_box_stats and
+        # test_a_halo_alone_rescopes_the_box_stats below). This plan has a halo,
+        # so it happens for at least one box here.
         assert n_cropped > 0
 
         # ... and the radius survives the partition WRITE (the default output),
         # read back through the library's own reader.
         out = tmp_path / "part.gsplats.zarr"
         write_gsplats_tree(out, node)
-        assert sorted(p.name for p in out.iterdir() if p.name.startswith("part_"))
+        parts = sorted(p.name for p in out.iterdir() if p.name.startswith("part_"))
+        assert len(parts) == len(leaves)  # one part per fitted box, all written
         reloaded, _ = load_gsplat_node(out)
         stored_leaves = _leaf_nodes(reloaded)
         assert len(stored_leaves) == len(leaves)
         for leaf in stored_leaves:
             for sub in leaf.additive_sublods:
                 assert sub.truncation_radius == pytest.approx(3.5)
+            # A per-box fit stat reaches the part ON DISK, not just in memory
+            # (the writer persists a sub-LOD's stats as the leaf's `lod_stats`).
+            assert "final_loss" in leaf.additive_sublods[0].stats
 
     def test_zero_budget_box_carries_the_configured_radius(self):
         """The early-out has no fit to read the radius off — resolve it anyway."""
@@ -1005,13 +1090,66 @@ class TestPlannedFitTruncationRadius:
         # own fit and must survive.
         assert "final_loss" in out.stats
 
-        # Negative control: no halo and a box covering the whole volume drops
-        # nothing, so the source stamp is still true and must be kept.
+        # Negative control: the padded crop EQUALS the core box (no halo, box
+        # covering the whole volume) and nothing is dropped, so the crop's grid
+        # stamps still describe this part exactly and must be kept.
         whole = PlanBox(box=[0, 24, 0, 24, 0, 24], n_features=50, budget=120)
         full = _fit_one_box(V, whole, 0, 0, **_FAST_FIT)
         assert full.stats["n_splats"] == full.n_splats
         assert full.stats["fitted_shape"] == [24, 24, 24]
         assert "occupancy" in full.stats
+
+    def test_a_halo_alone_rescopes_the_box_stats(self, monkeypatch):
+        """A padded crop LARGER than the core invalidates the grid stamps...
+
+        ...even when the core mask dropped nothing. Gating on "the mask removed
+        splats" kept an 18³ `source_shape`/`fitted_shape` (and its `occupancy` /
+        `voxels_per_splat`) on a part representing 12³ — and `gsplat info` prints
+        exactly those keys as the part's source grid.
+        """
+        from luxar.gsplats import fit_gsplats
+        from luxar.gsplats._data.filtering import _REGION_SCOPED_STATS_KEYS
+        from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.planner.fit_planned import _fit_one_box
+
+        V = np.zeros((24, 24, 24), np.float32)
+        crop_stats = {
+            "source_shape": [18, 18, 18],
+            "fitted_shape": [18, 18, 18],
+            "occupancy": 0.5,
+            "voxels_per_splat": 43.2,
+            "final_loss": 0.25,
+        }
+
+        def _fake_fit(sub, **kwargs):
+            # Crop-local centres at 3.0: with the crop origin at 0 every splat
+            # lands inside a 12³ core, so the mask drops NOTHING.
+            n = 3
+            return GSplatData(
+                centers=np.full((n, 3), 3.0, np.float32),
+                amplitudes=np.ones((n,), np.float32),
+                cholesky_factors=np.tile(
+                    np.array([1, 0, 1, 0, 0, 1], np.float32), (n, 1)
+                ),
+                stats=dict(crop_stats),
+            )
+
+        monkeypatch.setattr(fit_gsplats, "fit_gaussian_splats", _fake_fit)
+
+        # Halo present (crop 18³ ⊃ core 12³), mask dropped nothing -> gone.
+        box = PlanBox(box=[0, 12, 0, 12, 0, 12], n_features=50, budget=120)
+        out = _fit_one_box(V, box, 6, 0)
+        assert out.n_splats == 3  # nothing was dropped by the core mask
+        assert [k for k in _REGION_SCOPED_STATS_KEYS if k in out.stats] == []
+        assert out.stats["final_loss"] == 0.25  # this box's own fit, still true
+
+        # Negative control: the same halo CLAMPS to the core (the box is the whole
+        # volume), so the stamps describe this part and must survive.
+        whole = PlanBox(box=[0, 24, 0, 24, 0, 24], n_features=50, budget=120)
+        full = _fit_one_box(V, whole, 6, 0)
+        assert full.n_splats == 3
+        assert full.stats["fitted_shape"] == [18, 18, 18]
+        assert full.stats["occupancy"] == 0.5
 
     def test_content_and_uniform_flat_leaves_compose(self):
         """The reported symptom: "Truncation radius mismatch" on concatenate."""
@@ -1073,12 +1211,16 @@ class TestPlannedFitTruncationRadius:
 
     def test_parallel_flat_merge_keeps_the_boxes_radius(self, tmp_path):
         """``fit -j N --flat``: the reloaded boxes' radius survives the merge."""
+        from luxar.gsplats.gsplat_data import GSplatData
+
         plan = _toy_plan(n_boxes=2)
+        boxes_dir = tmp_path / "boxes"
         merged = fit_planned_parallel(
             plan,
             jobs=2,
-            tmp_dir=tmp_path / "boxes",
+            tmp_dir=boxes_dir,
             worker_cmd_builder=_fake_box_builder(5, truncation_radius=3.5),
+            keep_boxes=True,  # so the boxes' own recorded fit time can be read
             verbose=False,
         )
         assert merged.n_splats == 10
@@ -1090,12 +1232,18 @@ class TestPlannedFitTruncationRadius:
         assert merged.stats["parallel_jobs"] == 2
         assert merged.stats["overlap"] == int(plan.overlap)
         assert "elapsed_seconds" in merged.stats
-        # One meaning for `time_seconds`: wall clock, as the uniform tiled merge
-        # stamps it. Concatenate's SUM of the boxes' own times would exceed a
-        # concurrent run (and is absent entirely for these fake boxes).
+        # Each box really did record its own (huge) fit time in its store, so the
+        # SUM would be 2000s+ ...
+        box_time = GSplatData.load(
+            boxes_dir / "box_0.gsplats.zarr", include_stats=True
+        ).stats["time_seconds"]
+        assert box_time == pytest.approx(_FAKE_BOX_TIME_SECONDS)
+        # ... but `time_seconds` has ONE meaning, wall clock, as the uniform tiled
+        # merge stamps it (concurrent boxes make the sum exceed the run).
         assert merged.stats["time_seconds"] == pytest.approx(
             merged.stats["elapsed_seconds"]
         )
+        assert merged.stats["time_seconds"] < 60.0
 
 
 class TestMaxPaddedBoxVoxels:

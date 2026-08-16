@@ -43,7 +43,7 @@ def _default_worker_cmd_builder(
     input_path: str | Path,
     plan_json_path: str | Path,
     *,
-    preset: str = "standard",
+    preset: Optional[str] = None,
     config: "Optional[str | Path]" = None,
     iters: Optional[int] = None,
     loss: Optional[str] = None,
@@ -60,20 +60,24 @@ def _default_worker_cmd_builder(
     --plan-box i ...`` argv.
 
     The worker re-reads the existing ``plan_json`` (it does not re-scan/plan),
-    rebuilds the fit config from ``--preset`` exactly as the parent did, fits the
-    single box, and writes its global-coordinate splats to ``out`` (or a sibling
-    ``.empty`` marker for a 0-splat box).
+    rebuilds the fit config from the forwarded flags exactly as the parent did,
+    fits the single box, and writes its global-coordinate splats to ``out`` (or a
+    sibling ``.empty`` marker for a 0-splat box).
 
-    ``config`` / ``iters`` / ``loss`` / ``lr`` / ``cull_retention`` are the run's
-    fit configuration, forwarded so ``-j N`` fits with the SAME parameters as
-    ``-j 1`` (mirroring the uniform-tiled sibling
-    :func:`luxar.gsplats.fit_tiled_parallel.build_worker_cmd`). Several are
-    settable ONLY through a YAML ``--config``: ``truncate:`` (no preset sets it, so
-    an unforwarded config left every box fitted at 3.5 but stamped with the 2.75
-    default — #1637) and ``n_iters:`` among them. ``--seeds`` is deliberately NOT
+    ``preset`` / ``config`` / ``iters`` / ``loss`` / ``lr`` / ``cull_retention``
+    are the run's fit configuration, forwarded so ``-j N`` resolves the same fit
+    config as ``-j 1`` (mirroring the uniform-tiled sibling
+    :func:`luxar.gsplats.fit_tiled_parallel.build_worker_cmd`). ``truncate:`` is
+    settable ONLY through a YAML ``--config`` (no preset sets it and there is no
+    ``--truncate`` flag), so an unforwarded config left every box both fitted and
+    stamped at the 2.75 default whatever the config said — #1637. ``--seeds`` is
+    deliberately NOT
     forwarded: a content box's budget comes from the plan, and ``run_content_fit``
-    pops it. Each is omitted from the argv when ``None`` (as ``device``/``floor``
-    already are), leaving the worker to resolve its own default.
+    pops it. Each of these is omitted from the argv when ``None`` (as
+    ``device``/``floor`` already are), leaving the worker to resolve its own
+    default — ``preset=None`` included, because a preset the user did not ask for
+    would layer its own ``n_iters``/``cull_retention`` on top of the config and
+    make the worker fit with different parameters than the sequential path.
 
     ``floor`` is expected to be the parent's already-RESOLVED background level (a
     number, or ``"none"`` when suppression is off) rather than a spec like
@@ -89,6 +93,7 @@ def _default_worker_cmd_builder(
     # more of the fit config is a row instead of another rung of complexity.
     # ``None`` means "omit" — the worker then resolves its own default.
     optional: list[tuple[str, Optional[str]]] = [
+        ("--preset", preset or None),
         ("--config", str(config) if config else None),
         ("--iters", None if iters is None else str(iters)),
         ("--loss", loss or None),
@@ -118,8 +123,6 @@ def _default_worker_cmd_builder(
             str(plan_json_path),
             "--plan-box",
             str(box_idx),
-            "--preset",
-            preset,
             *extra,
         ]
 

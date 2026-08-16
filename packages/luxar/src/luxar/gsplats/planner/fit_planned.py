@@ -71,17 +71,9 @@ def _box_truncation_radius(fit_kwargs: "dict[str, Any]") -> float:
     """The truncation radius this box's fit config asks for.
 
     ``fit_gaussian_splats`` stamps ``truncation_radius=config.truncate`` on its
-    result, so the fitted radius is simply the ``truncate`` fit kwarg. Resolved
-    here (rather than read off a result) because the zero-budget early-out of
-    :func:`_fit_one_box` has no fit to read it off, and still has to answer with
-    the radius the config asked for.
-
-    Not needed to keep a merge working: ``GSplatData.concatenate`` drops empty
-    datasets BEFORE its radius check, and neither driver hands an empty region to
-    a merge (``fit_planned`` skips a non-positive budget, ``fit_planned_parallel``
-    skips an ``.empty`` marker). The early-out is only reachable through
-    ``--plan-box K`` on a zero-budget box — where a caller that SAVED that dataset
-    would otherwise record a radius its config never asked for.
+    result, so the fitted radius is simply the ``truncate`` fit kwarg — resolved
+    from the kwargs here because the zero-budget early-out of
+    :func:`_fit_one_box` has no fit result to read it off.
     """
     from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
 
@@ -119,7 +111,7 @@ def _fit_one_box(
     ``GSplatData.concatenate`` with a uniform-tiled one fitted from the same
     config ("Truncation radius mismatch") — issue #1637.
     """
-    from luxar.gsplats._data.filtering import _REGION_SCOPED_STATS_KEYS, _is_crop
+    from luxar.gsplats._data.filtering import _REGION_SCOPED_STATS_KEYS
     from luxar.gsplats.fit_gsplats import fit_gaussian_splats
     from luxar.gsplats.gsplat_data import GSplatData
     from luxar.gsplats.utils.trils import tril_size
@@ -149,10 +141,11 @@ def _fit_one_box(
 
     budget = _scaled_budget(box, overlap, V.shape, cap)
     if budget <= 0:
-        # An empty box still has to speak for the config: reachable only via
-        # `--plan-box K` on a zero-budget box, where a caller that SAVED this
-        # dataset would record a radius its config never asked for (#1637). The
-        # merges never see it (they skip zero-budget boxes / `.empty` markers).
+        # An empty box still answers with the radius the config asked for, rather
+        # than the default (#1637). Nothing on the current paths reads it: both
+        # drivers skip zero-budget boxes, and a `--plan-box K` worker on such a
+        # box writes an `.empty` marker instead of a store. It is here so an
+        # in-process caller of `_fit_one_box` gets a consistent answer.
         return GSplatData(
             centers=np.zeros((0, ndim), np.float32),
             amplitudes=np.zeros((0,), np.float32),
@@ -186,13 +179,16 @@ def _fit_one_box(
     # shape they were rendered at) alive past the release below.
     box_stats.pop("movie_frames", None)
     box_stats.pop("movie_shape", None)
-    # The core-keep mask is a SPATIAL restriction of the padded crop this box was
-    # fitted on, exactly like a bbox crop — so the fit's source/fitted grid stamps
-    # describe a region these splats no longer represent (they become each
-    # partition part's on-disk `lod_stats`). Drop them by the same rule
-    # `slice_by` uses, and restamp the count, which does not survive either.
+    # The fit's source/fitted grid stamps describe the PADDED CROP (they become
+    # each partition part's on-disk `lod_stats`, which `gsplat info` prints as the
+    # part's source grid). Two independent things invalidate them: a halo, which
+    # makes the crop strictly larger than the region this part represents, and the
+    # core-keep mask, which is a spatial restriction like a bbox crop. Not
+    # `_is_crop`, whose "did the mask remove anything" meaning misses the halo:
+    # every splat can land in the core and the crop still be 18³ for a 12³ part.
     n_kept = int(np.count_nonzero(keep))
-    if _is_crop(box.box, int(keep.size), n_kept):
+    padded_is_larger = (pz0, pz1, py0, py1, px0, px1) != (z0, z1, y0, y1, x0, x1)
+    if padded_is_larger or n_kept < int(keep.size):
         for key in _REGION_SCOPED_STATS_KEYS:
             box_stats.pop(key, None)
     box_stats["n_splats"] = n_kept
