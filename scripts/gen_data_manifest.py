@@ -116,6 +116,11 @@ DATASETS: dict[str, dict] = {
         license="cc0-1.0",
         source="scikit-image (data.kidney)",
         attribution="scikit-image sample data (CC0).",
+        acquisition=dict(
+            description="the scikit-image `kidney` sample, all 3 channels of which are fitted",
+            comparable=True,
+            stored_bytes=None,
+        ),
     ),
     "gsplats_cells3d": dict(
         bucket="zenodo",
@@ -123,6 +128,11 @@ DATASETS: dict[str, dict] = {
         license="cc0-1.0",
         source="scikit-image (data.cells3d) — Allen Institute for Cell Science",
         attribution="scikit-image sample data.",
+        acquisition=dict(
+            description="the scikit-image `cells3d` sample, both channels of which are fitted",
+            comparable=True,
+            stored_bytes=None,
+        ),
     ),
     "gsplats_cmu1_pathology": dict(
         bucket="zenodo",
@@ -130,6 +140,15 @@ DATASETS: dict[str, dict] = {
         license="cc0-1.0",
         source="OpenSlide test data (Aperio CMU-1.svs)",
         attribution="OpenSlide CMU-1 (CC0 1.0 public domain).",
+        acquisition=dict(
+            description="Aperio CMU-1.svs, a ~169 MB multi-resolution slide pyramid",
+            comparable=False,
+            reason=(
+                "the file stores every pyramid level and the fit reads one, then "
+                "resizes it, so its size would price the levels that were never "
+                "fitted rather than the compression of the one that was"
+            ),
+        ),
     ),
     "gsplats_cryoem_virus": dict(
         bucket="zenodo",
@@ -137,6 +156,11 @@ DATASETS: dict[str, dict] = {
         license="cc0-1.0",
         source="EMDB EMD-5384",
         attribution="EMDB is public domain / CC0. Map: EMD-5384.",
+        acquisition=dict(
+            description="EMD-5384 `emd_5384.map.gz` -- the whole map, as downloaded",
+            comparable=True,
+            stored_bytes=None,
+        ),
     ),
     "gsplats_ct_totalsegmentator": dict(
         bucket="zenodo",
@@ -144,6 +168,15 @@ DATASETS: dict[str, dict] = {
         license="cc-by-4.0",
         source="TotalSegmentator (Wasserthal et al. 2023)",
         attribution="TotalSegmentator (Wasserthal et al. 2023; CC BY 4.0).",
+        acquisition=dict(
+            description="a TotalSegmentator subset, repacked locally into an npz",
+            comparable=False,
+            reason=(
+                "the download is a multi-scan subset and the demo repacks selected "
+                "scans into its own npz, so neither the download nor the repack is "
+                "the same array the fit represents"
+            ),
+        ),
     ),
     "gsplats_milkyway_dust": dict(
         bucket="zenodo",
@@ -151,6 +184,19 @@ DATASETS: dict[str, dict] = {
         license="cc-by-4.0",
         source="Zenodo 3993082 (3D dust map)",
         attribution="doi:10.5281/zenodo.3993082 (CC BY 4.0).",
+        acquisition=dict(
+            description=(
+                "the `mean` array inside Zenodo 3993082 `mean_std.h5`, measured "
+                "with its own HDF5 storage size"
+            ),
+            comparable=True,
+            stored_bytes=None,
+            note=(
+                "the FILE is 2.4 GB but holds mean AND std, and the fit reads only "
+                "the mean, so the file size is not the denominator -- h5py's "
+                "per-dataset get_storage_size() is"
+            ),
+        ),
     ),
     "desi_galaxies": dict(
         bucket="zenodo",
@@ -165,6 +211,11 @@ DATASETS: dict[str, dict] = {
         license="cc-by-4.0",
         source="Zenodo 6460303 (mskcc_confocal C. elegans)",
         attribution="Santella, Kovacevic, Bao, Hirsch — doi:10.5281/zenodo.6460303 (CC BY 4.0).",
+        acquisition=dict(
+            description="the Zenodo TIFF timelapse, every timepoint of which is fitted",
+            comparable=True,
+            stored_bytes=None,
+        ),
     ),
     "gsplats_visible_human_head": dict(
         bucket="zenodo",
@@ -172,6 +223,15 @@ DATASETS: dict[str, dict] = {
         license="pd-nlm",
         source="NLM Visible Human Project (Male head, PNG)",
         attribution="U.S. NLM Visible Human Project (public domain; acknowledge NLM, no endorsement implied).",
+        acquisition=dict(
+            description="377 RGB cryosection photographs (Visible Human Project)",
+            comparable=False,
+            reason=(
+                "the fit converts colour photographs to a single greyscale volume "
+                "and crops it to content, so a ratio against the stored photographs "
+                "would price a colour conversion, not compression"
+            ),
+        ),
     ),
     "gsplats_nexrad_supercell": dict(
         bucket="zenodo",
@@ -187,6 +247,16 @@ DATASETS: dict[str, dict] = {
             "implied). Derived product: regridded and Gaussian-fitted, not "
             "original NOAA data."
         ),
+        acquisition=dict(
+            description="82 NEXRAD Level II scans (~800 MB gzipped)",
+            comparable=False,
+            reason=(
+                "the scans are polar sweeps carrying several moments and elevation "
+                "angles, of which the demo re-grids ONE moment inside one box, so "
+                "the figure would price dropping the other moments and the "
+                "polar-to-Cartesian resampling"
+            ),
+        ),
     ),
     "gsplats_multichannel": dict(
         bucket="zenodo",
@@ -194,6 +264,11 @@ DATASETS: dict[str, dict] = {
         license="cc-by-4.0",
         source="IDR idr0062 (image 6001240; Nessys, Blin et al. 2019)",
         attribution="IDR idr0062 (Blin et al., PLOS Biol 2019; CC BY 4.0).",
+        acquisition=dict(
+            description="IDR 6001240 OME-Zarr, the two fitted channels' own stored chunks",
+            comparable=True,
+            stored_bytes=None,
+        ),
     ),
     "gsplats_dapi": dict(
         bucket="zenodo",
@@ -201,6 +276,11 @@ DATASETS: dict[str, dict] = {
         license="cc-by-4.0",
         source="IDR idr0062 (image 6001240; Nessys, Blin et al. 2019)",
         attribution="IDR idr0062 (Blin et al., PLOS Biol 2019; CC BY 4.0).",
+        acquisition=dict(
+            description="IDR 6001240 OME-Zarr, the fitted channel's own stored chunks",
+            comparable=True,
+            stored_bytes=None,
+        ),
     ),
     "census_umap_1m": dict(
         bucket="zenodo",
@@ -233,6 +313,11 @@ DATASETS: dict[str, dict] = {
         license="cc-by-sa-4.0",
         source="OpenCell (CZ Biohub) MAP4",
         attribution="OpenCell / CZ Biohub — Cho et al., Science 2022, doi:10.1126/science.abi6983 (CC BY-SA 4.0).",
+        acquisition=dict(
+            description="the OpenCell MAP4 TIFF, both channels of which are fitted",
+            comparable=True,
+            stored_bytes=None,
+        ),
     ),
     "gsplats_flylight_mcfo_63x": dict(
         bucket="zenodo",
@@ -256,6 +341,11 @@ DATASETS: dict[str, dict] = {
         license="cc-by-sa-4.0",
         source="Zenodo 1211599 (zebrafish light-sheet)",
         attribution="Pia Aanstad — doi:10.5281/zenodo.1211599 (CC BY-SA 4.0).",
+        acquisition=dict(
+            description="the LSM timelapse, every fitted timepoint's own stored bytes",
+            comparable=True,
+            stored_bytes=None,
+        ),
     ),
     # -- Heavy timelapses computed on obsidian -------------------------------
     "gsplats_4d_neuromast_2ch": dict(
