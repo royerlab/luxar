@@ -208,7 +208,7 @@ spheres spaced ~2.5σ apart, which beads by construction. Diagnose by measuring 
 fitted shapes — a median axis ratio near 1.0-1.3 with σ ≈ 1 voxel means the
 optimizer never moved them, not that the basis cannot represent the structure.
 
-Three defaults must move TOGETHER; any one alone underperforms:
+Six defaults must move TOGETHER; any one alone underperforms:
 
 ```python
 result = fit_gaussian_splats(

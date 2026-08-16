@@ -20,7 +20,10 @@ off-diagonals zeroed, undoing the shapes the extra iterations bought — a 5000
 iteration fit with relocation on *lost* 1.1 dB. And `max_eccentricity` (default
 10.0, an axis ratio of sqrt(10)) is inert at 1000 iterations but binds once
 converged: 14.9% of splats pile against that ceiling, costing 2.65 dB. The demo
-now sets all four knobs together in `NEURON_FIT_SCHEDULE`.
+now sets six knobs together in `NEURON_FIT_SCHEDULE` — those three plus
+`l1_diag` (whose default pulls shapes back toward isotropy) and the two patience
+defaults, which at 15 and 300 decay the shape learning rate and stop the fit
+long before 10,000 iterations are ever reached.
 
 Measured on the annotated sample — skeleton points dipping below 25% of their
 local ridge, and foreground PSNR against the raw data:

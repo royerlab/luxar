@@ -1135,6 +1135,8 @@ def test_fit_cache_key_tracks_the_optimiser_schedule() -> None:
 
     for knob, other in (
         ("n_iters", 5_000),
+        ("patience", 15),
+        ("early_stop_patience", 300),
         ("enable_dynamic_ops", True),
         ("max_eccentricity", 10.0),
         ("l1_diag", 1e-4),
@@ -1159,21 +1161,54 @@ def test_fit_cache_key_ignores_schedule_dict_ordering() -> None:
 
 
 def test_neuron_schedule_overrides_the_defaults_that_cause_beading() -> None:
-    """Guard the four knobs, each of which was measured to matter.
+    """Guard every knob in the schedule, each of which was measured to matter.
 
     ``fit_gaussian_splats`` defaults to n_iters=1000 — below the CLI's own
     ``draft`` preset — which leaves splats at their isotropic seed shape and
-    renders thin axons as bead chains.
+    renders thin axons as bead chains. The two patience knobs are in here for a
+    reason that is easy to overlook: at the defaults (15 and 300) the fit decays
+    its shape learning rate and then stops long before iteration 10,000, so
+    reverting either one quietly undoes most of what ``n_iters`` bought.
     """
     s = _demo.NEURON_FIT_SCHEDULE
     assert s["n_iters"] >= 5_000, "1000 (the API default) leaves splats at seed shape"
+    assert s["patience"] >= 200, "15 decays the shape LR away before shapes settle"
+    assert s["early_stop_patience"] >= 2_000, "300 stops the fit before convergence"
     assert s["enable_dynamic_ops"] is False, "relocation re-isotropises splats mid-fit"
     assert s["max_eccentricity"] is None, "the default 10.0 caps the axis ratio"
     assert s["l1_diag"] == 0.0, "the default penalty pulls shapes toward isotropy"
 
 
+def test_every_schedule_knob_is_a_real_fitter_parameter() -> None:
+    """A typo in the schedule would be SWALLOWED, not raised.
+
+    ``fit_volume`` splats the schedule into ``fit_gaussian_splats``, which ends
+    in ``**seed_kwargs`` and forwards anything it does not recognise on to the
+    seeder — where an unknown key is a ``UserWarning``, not an error. Buried in
+    a verbose multi-minute fit that reads as "the retune did nothing", which is
+    the same silent failure the cache-key digest exists to prevent.
+    """
+    import inspect
+
+    from luxar.gsplats import fit_gaussian_splats
+
+    named = {
+        name
+        for name, p in inspect.signature(fit_gaussian_splats).parameters.items()
+        if p.kind is not inspect.Parameter.VAR_KEYWORD
+    }
+    unknown = sorted(set(_demo.NEURON_FIT_SCHEDULE) - named)
+    assert not unknown, f"not fit_gaussian_splats parameters: {unknown}"
+
+
 def test_fit_volume_forwards_the_schedule_to_the_fitter(tmp_path, monkeypatch) -> None:
-    """A schedule that never reaches the fitter would be silent and useless."""
+    """A schedule that never reaches the fitter would be silent and useless.
+
+    The acquisition dtype travels the same route and fails the same way: both
+    components arrive here already widened to float32, so a declaration that
+    stops short of the fitter leaves the recorded provenance describing the
+    working copy and overstating compression by the cast.
+    """
     seen: dict = {}
 
     class _Result:
@@ -1199,10 +1234,12 @@ def test_fit_volume_forwards_the_schedule_to_the_fitter(tmp_path, monkeypatch) -
         0.99,
         "neurons",
         schedule=_demo.NEURON_FIT_SCHEDULE,
+        source_dtype="uint16",
     )
 
     for knob, value in _demo.NEURON_FIT_SCHEDULE.items():
         assert seen[knob] == value, f"{knob} never reached fit_gaussian_splats"
+    assert seen["source_dtype"] == "uint16", "the acquisition dtype was dropped"
 
 
 def test_fit_volume_without_a_schedule_passes_no_overrides(

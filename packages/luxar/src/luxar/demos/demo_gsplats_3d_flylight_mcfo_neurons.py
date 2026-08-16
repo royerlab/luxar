@@ -154,8 +154,9 @@ sigma = 1.0 voxel, and the fitted result measured sigma 0.87-1.16 voxels with a
 median axis ratio of 1.30. A 1-voxel-wide axon rebuilt from 1-voxel spheres
 spaced 2.5 sigma apart beads by construction.
 
-Three knobs, measured on this sample (skeleton dips <25%, and foreground PSNR
-against the raw data):
+Six defaults have to move together (``NEURON_FIT_SCHEDULE``). The three that
+dominate, measured cumulatively on this sample (skeleton dips <25%, and
+foreground PSNR against the raw data):
 
     shipped originally  1000 iters                    22.2%   22.94 dB
     + 5000 iters                                      16.6%   21.86 dB
@@ -366,9 +367,11 @@ FLOOR = "auto"
 # API's default is 1000 — BELOW the CLI's own ``draft`` preset (2000) and a
 # fifth of ``standard`` (5000). At 1000 the splats never leave their isotropic
 # seed shape, so a 1-voxel-wide axon is rebuilt as a chain of 1-voxel spheres
-# and reads as beaded. The other three exist because raising ``n_iters`` alone
-# is NOT enough: relocation resets shapes back to isotropic, and the default
-# eccentricity cap then clips what convergence finally earned.
+# and reads as beaded. The other five exist because raising ``n_iters`` alone is
+# NOT enough: the two patience defaults decay the shape LR and stop the fit long
+# before 10,000 iterations are ever reached, relocation resets shapes back to
+# isotropic, and the eccentricity cap and L1 diagonal penalty then clip and pull
+# back what convergence finally earned.
 NEURON_FIT_SCHEDULE = {
     "n_iters": 10_000,
     "patience": 200,  # plateau LR decay, vs 15 — 15 decays away the shape LR
@@ -1046,12 +1049,20 @@ def fetch_neuropil(sample: str):
 
 
 def load_fisbe_sample(sample: str):
-    """Load the three MCFO signal channels and their per-voxel maximum."""
+    """Load the three MCFO channels, their per-voxel maximum, and the source dtype.
+
+    The channels are widened to float32 to be fitted, and after that cast the
+    ACQUISITION's element size is unrecoverable. So it is carried out
+    separately: everything downstream that says what was compressed — the fit's
+    own recorded provenance, the summary's ratio — otherwise measures the
+    float32 working copy and flatters itself by the cast's 2x.
+    """
     store_path = fetch_sample(sample)
 
     with asection(f"Loading {sample}"):
         raw = zarr.open(str(store_path), mode="r")["volumes"]["raw"]
         aprint(f"raw: shape={raw.shape} dtype={raw.dtype}")
+        source_dtype = str(raw.dtype)
         if raw.shape[0] != 3:
             raise RuntimeError(f"Expected 3 MCFO channels, got {raw.shape[0]}")
 
@@ -1074,7 +1085,7 @@ def load_fisbe_sample(sample: str):
         extent = tuple(round(n * s, 1) for n, s in zip(combined.shape, VOXEL_SIZE_ZYX))
         aprint(f"  composite mean={combined.mean():.6f}")
         aprint(f"  physical extent (Z, Y, X): {extent} um")
-        return channels, combined
+        return channels, combined, source_dtype
 
 
 # =============================================================================
@@ -1082,7 +1093,9 @@ def load_fisbe_sample(sample: str):
 # =============================================================================
 
 
-def fit_cache_key(seeds: int, floor, retention: float, schedule=None) -> str:
+def fit_cache_key(
+    seeds: int, floor, retention: float, schedule: dict | None = None
+) -> str:
     """Short digest of everything that changes a fit's result.
 
     Cache filenames keyed only by sample would silently reuse an incompatible
@@ -1102,7 +1115,7 @@ def fit_cache_key(seeds: int, floor, retention: float, schedule=None) -> str:
 
 
 def _fit_cache_path(
-    component: str, seeds: int, floor, retention: float, schedule=None
+    component: str, seeds: int, floor, retention: float, schedule: dict | None = None
 ) -> Path:
     """Cache path for one fitted component, keyed by its fit parameters."""
     key = fit_cache_key(seeds, floor, retention, schedule)
@@ -1126,13 +1139,19 @@ def fit_volume(
     floor,
     retention: float,
     label: str,
-    schedule=None,
+    schedule: dict | None = None,
+    source_dtype: str | None = None,
 ):
     """Fit one volume to splats, using the cache when present.
 
     ``schedule`` carries the optimiser overrides (iterations, and what may
     happen to splat shapes); ``None`` means the library defaults, which is what
     the neuropil wants and what the neurons emphatically do not.
+
+    ``source_dtype`` is what the volume was ACQUIRED as. Both components reach
+    here already widened to float32 — the MCFO channels from uint16, the
+    neuropil from the decoder's uint8 — so without it the recorded provenance
+    would quote compression against the working copy rather than the data.
     """
     if cache_file.exists() and not RECOMPUTE:
         aprint(f"Loading cached {label} fit")
@@ -1156,6 +1175,7 @@ def fit_volume(
         device=_device(),
         verbose=True,
         voxel_size=VOXEL_SIZE_ZYX,
+        source_dtype=source_dtype,
         **(schedule or {}),
     )
     aprint(f"  Fitted {len(result.amplitudes):,} splats (from {seeds:,} seeds)")
@@ -1514,7 +1534,7 @@ def main():
 
     # Colouring needs the individual channels, so the sample is loaded even
     # when the fit itself is cached.
-    channels, combined = load_fisbe_sample(SAMPLE)
+    channels, combined, source_dtype = load_fisbe_sample(SAMPLE)
 
     with asection("Fitting neurons"):
         neurons = fit_volume(
@@ -1527,6 +1547,7 @@ def main():
             CULL_RETENTION,
             "neurons",
             schedule=NEURON_FIT_SCHEDULE,
+            source_dtype=source_dtype,
         )
 
     neuropil = None
@@ -1541,6 +1562,7 @@ def main():
                     "auto",
                     0.95,
                     "neuropil",
+                    source_dtype=str(ref.dtype),
                 )
 
     with asection("Colouring neurons from MCFO channels"):
@@ -1558,8 +1580,11 @@ def main():
         # 15 floats per splat: the 11 the other gsplat demos count (3 centers +
         # 6 Cholesky + amplitude + pad) plus the 4 baked RGBA columns, which are
         # part of what ships for this scene — colour is per-splat here, not a
-        # colormap applied at render time.
-        aprint(f"  Compression: {(combined.size * 4) / (len(amps) * 15 * 4):.0f}:1")
+        # colormap applied at render time. The numerator is the ACQUISITION's
+        # element size, not ``combined``'s: the composite is a float32 working
+        # copy of uint16 data, and measuring it doubles the ratio for free.
+        source_bytes = combined.size * np.dtype(source_dtype).itemsize
+        aprint(f"  Compression: {source_bytes / (len(amps) * 15 * 4):.0f}:1")
 
     scene_path = create_luxar_scene(
         centers, amps, chol, rgba, output_path, has_neuropil=neuropil is not None
