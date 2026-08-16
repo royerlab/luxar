@@ -34,13 +34,22 @@ fit_planned(volume, plan)        -> GSplatData|GSplatNode   # fit each box, merg
   give each part its own per-part LOD (`fit --recipe`). `partition=False` (`--flat`)
   concatenates into one flat leaf. Each box is carried through the merge as the
   `GSplatData` it was fitted as (`_fit_one_box` returns the dataset, not bare
-  arrays), so the fit's `truncation_radius` — a `truncate:` in the config — and its
-  per-box stats survive; rebuilding from arrays reset the radius to the default and
-  a content result then refused to `GSplatData.concatenate` with a uniform-tiled
-  one fitted the same way (#1637).
+  arrays), so the fit's `truncation_radius` — a `truncate:` in the config — survives;
+  rebuilding from arrays reset the radius to the default and a content result then
+  refused to `GSplatData.concatenate` with a uniform-tiled one fitted the same way
+  (#1637). Its per-box stats survive too, on a **bare-leaf** partition: with
+  `recipe=` each part's ladder builder writes its own per-sub-LOD stats, and on the
+  flat path `concatenate` replaces them with its merge summary. They describe the
+  core-kept part, not the padded crop — the region-scoped source/grid stamps are
+  dropped (as for a `--bbox` crop) and `n_splats` restamped wherever the core mask
+  removed splats.
 - **`fit_planned_parallel`** (`fit_planned_parallel.py`) — the `-j N` path: fit
   each box in its own subprocess (`fit --plan-box`), then merge identically. A box
   that fits 0 splats writes a sibling `<output>.empty` marker (skipped at merge).
+  `_default_worker_cmd_builder` forwards the run's fit configuration (`--config`,
+  `--iters`, `--loss`, `--lr`, `--cull-retention`) so a box fits with the same
+  parameters as the sequential path — `truncate:`/`n_iters:` live only in a YAML
+  `--config`, so without it `-j N` silently fitted at the defaults (#1637).
 
 Both drivers expect the background floor to arrive as a **concrete level** (or
 `"none"`): the CLI resolves `--floor` once against the whole volume and hands the

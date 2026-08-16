@@ -412,6 +412,45 @@ class TestDefaultWorkerCmdBuilder:
         b2 = _default_worker_cmd_builder("in.zarr", "plan.json")
         assert "--floor" not in [str(c) for c in b2(0, tmp_path / "box0.gsplats.zarr")]
 
+    def test_forwards_the_runs_fit_configuration(self, tmp_path):
+        # `truncate:`/`n_iters:` are settable ONLY through a YAML --config (no
+        # preset sets them), so an unforwarded config made every `-j N` box fit
+        # (and stamp) different parameters than `-j 1` (#1637).
+        from luxar.gsplats.planner.fit_planned_parallel import (
+            _default_worker_cmd_builder,
+        )
+
+        b = _default_worker_cmd_builder(
+            "in.zarr",
+            "plan.json",
+            config=tmp_path / "fit.yaml",
+            iters=7,
+            loss="mse",
+            lr=0.02,
+            cull_retention=0.9,
+        )
+        cmd = [str(c) for c in b(0, tmp_path / "box0.gsplats.zarr")]
+        assert cmd[cmd.index("--config") + 1] == str(tmp_path / "fit.yaml")
+        assert cmd[cmd.index("--iters") + 1] == "7"
+        assert cmd[cmd.index("--loss") + 1] == "mse"
+        assert float(cmd[cmd.index("--lr") + 1]) == pytest.approx(0.02)
+        assert float(cmd[cmd.index("--cull-retention") + 1]) == pytest.approx(0.9)
+        # A content box's budget comes from the PLAN, never from --seeds.
+        assert "--seeds" not in cmd
+        # Nothing supplied -> no flags (the worker resolves its own defaults).
+        bare = [
+            str(c)
+            for c in _default_worker_cmd_builder("in.zarr", "plan.json")(
+                0, tmp_path / "box0.gsplats.zarr"
+            )
+        ]
+        for flag in ("--config", "--iters", "--loss", "--lr", "--cull-retention"):
+            assert flag not in bare
+        # A zero cull retention ("keep every splat") is a value, not an absence.
+        zero = _default_worker_cmd_builder("in.zarr", "plan.json", cull_retention=0.0)
+        cmd_zero = [str(c) for c in zero(0, tmp_path / "box0.gsplats.zarr")]
+        assert float(cmd_zero[cmd_zero.index("--cull-retention") + 1]) == 0.0
+
 
 def _pedestal_blobs(shape=(32, 32, 64), pedestal=5.0, step=12.0, seed=0):
     """Blobs on a background pedestal that STEPS across the x midpoint.
@@ -860,9 +899,13 @@ class TestPlannedFitTruncationRadius:
         assert merged.stats["n_boxes_fit"] >= 1
         assert merged.stats["overlap"] == plan.overlap
         assert list(merged.stats["volume_shape"]) == list(V.shape)
+        assert merged.stats["time_seconds"] > 0
 
-    def test_partition_parts_keep_the_configured_radius_and_box_stats(self):
+    def test_partition_parts_keep_the_configured_radius_and_box_stats(self, tmp_path):
         """Sequential ``partition=True``: every part leaf carries ``truncate``."""
+        from luxar.gsplats._data.filtering import _REGION_SCOPED_STATS_KEYS
+        from luxar.gsplats.io.load_gsplats import load_gsplat_node
+        from luxar.gsplats.io.save_gsplats import write_gsplats_tree
         from luxar.gsplats.planner import fit_planned
 
         V, plan = self._tiny_volume_and_plan()
@@ -870,13 +913,35 @@ class TestPlannedFitTruncationRadius:
 
         leaves = _leaf_nodes(node)
         assert leaves
+        n_cropped = 0
         for leaf in leaves:
             for sub in leaf.additive_sublods:
                 assert sub.truncation_radius == pytest.approx(3.5)
-            # The per-box fit stats ride along with the part they describe.
+            # The per-box fit stats ride along with the part they describe...
             box_stats = leaf.additive_sublods[0].stats
-            assert box_stats.get("n_splats", 0) > 0
             assert "final_loss" in box_stats
+            # ... but the count must describe THIS part, not the padded crop it
+            # was fitted on (it becomes the part's on-disk `lod_stats`).
+            assert box_stats["n_splats"] == leaf.n_splats
+            if not any(k in box_stats for k in _REGION_SCOPED_STATS_KEYS):
+                n_cropped += 1
+        # A core-keep mask that dropped splats is a spatial restriction, so the
+        # padded crop's grid stamps must not survive on that part (the rule
+        # itself is pinned by test_core_mask_rescopes_the_box_stats below). The
+        # halo makes it happen for at least one box here.
+        assert n_cropped > 0
+
+        # ... and the radius survives the partition WRITE (the default output),
+        # read back through the library's own reader.
+        out = tmp_path / "part.gsplats.zarr"
+        write_gsplats_tree(out, node)
+        assert sorted(p.name for p in out.iterdir() if p.name.startswith("part_"))
+        reloaded, _ = load_gsplat_node(out)
+        stored_leaves = _leaf_nodes(reloaded)
+        assert len(stored_leaves) == len(leaves)
+        for leaf in stored_leaves:
+            for sub in leaf.additive_sublods:
+                assert sub.truncation_radius == pytest.approx(3.5)
 
     def test_zero_budget_box_carries_the_configured_radius(self):
         """The early-out has no fit to read the radius off — resolve it anyway."""
@@ -892,6 +957,61 @@ class TestPlannedFitTruncationRadius:
         # Nothing configured -> the documented default.
         bare = _fit_one_box(V, box, 0, 0)
         assert bare.truncation_radius == pytest.approx(DEFAULT_TRUNCATION_RADIUS)
+
+    def test_flat_merge_stamps_wall_clock_time(self, monkeypatch):
+        """``time_seconds`` is elapsed, not concatenate's SUM of box times."""
+        import importlib
+
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        fp = importlib.import_module("luxar.gsplats.planner.fit_planned")
+
+        def _one_splat(volume, box, overlap, cap, **fit_kwargs):
+            z0, z1, y0, y1, x0, x1 = box.box
+            return GSplatData(
+                centers=np.array(
+                    [[(z0 + z1) / 2, (y0 + y1) / 2, (x0 + x1) / 2]], np.float32
+                ),
+                amplitudes=np.ones((1,), np.float32),
+                cholesky_factors=np.array([[1, 0, 1, 0, 0, 1]], np.float32),
+                # A per-box fit time far larger than this (instant) merge can take.
+                stats={"time_seconds": 1000.0},
+            )
+
+        monkeypatch.setattr(fp, "_fit_one_box", _one_splat)
+        plan = _toy_plan(n_boxes=3)
+        V = np.zeros(tuple(int(s) for s in plan.volume_shape), np.float32)
+        merged = fp.fit_planned(V, plan)
+
+        assert merged.n_splats == 3
+        # Summing the boxes would give 3000s; wall clock here is a fraction of one.
+        assert merged.stats["time_seconds"] < 60.0
+
+    def test_core_mask_rescopes_the_box_stats(self):
+        """The kept subset's stats must describe IT, not the padded crop."""
+        from luxar.gsplats._data.filtering import _REGION_SCOPED_STATS_KEYS
+        from luxar.gsplats.planner.fit_planned import _fit_one_box
+
+        V = _corner_blobs((24, 24, 24), n=4, corner=20)
+        box = PlanBox(box=[0, 12, 0, 12, 0, 12], n_features=50, budget=120)
+
+        # Halo padding: the crop is 18^3, so splats fitted outside the 12^3 core
+        # are dropped and the crop's grid stamps no longer hold.
+        out = _fit_one_box(V, box, 6, 0, **_FAST_FIT)
+        assert 0 < out.n_splats
+        assert out.stats["n_splats"] == out.n_splats
+        assert [k for k in _REGION_SCOPED_STATS_KEYS if k in out.stats] == []
+        # Fit-quality / normalization metadata legitimately describes this box's
+        # own fit and must survive.
+        assert "final_loss" in out.stats
+
+        # Negative control: no halo and a box covering the whole volume drops
+        # nothing, so the source stamp is still true and must be kept.
+        whole = PlanBox(box=[0, 24, 0, 24, 0, 24], n_features=50, budget=120)
+        full = _fit_one_box(V, whole, 0, 0, **_FAST_FIT)
+        assert full.stats["n_splats"] == full.n_splats
+        assert full.stats["fitted_shape"] == [24, 24, 24]
+        assert "occupancy" in full.stats
 
     def test_content_and_uniform_flat_leaves_compose(self):
         """The reported symptom: "Truncation radius mismatch" on concatenate."""
@@ -970,6 +1090,12 @@ class TestPlannedFitTruncationRadius:
         assert merged.stats["parallel_jobs"] == 2
         assert merged.stats["overlap"] == int(plan.overlap)
         assert "elapsed_seconds" in merged.stats
+        # One meaning for `time_seconds`: wall clock, as the uniform tiled merge
+        # stamps it. Concatenate's SUM of the boxes' own times would exceed a
+        # concurrent run (and is absent entirely for these fake boxes).
+        assert merged.stats["time_seconds"] == pytest.approx(
+            merged.stats["elapsed_seconds"]
+        )
 
 
 class TestMaxPaddedBoxVoxels:

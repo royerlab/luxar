@@ -44,6 +44,11 @@ def _default_worker_cmd_builder(
     plan_json_path: str | Path,
     *,
     preset: str = "standard",
+    config: "Optional[str | Path]" = None,
+    iters: Optional[int] = None,
+    loss: Optional[str] = None,
+    lr: Optional[float] = None,
+    cull_retention: Optional[float] = None,
     device: Optional[str] = None,
     floor: "Optional[str | float]" = None,
     channel: Optional[int] = None,
@@ -59,6 +64,17 @@ def _default_worker_cmd_builder(
     single box, and writes its global-coordinate splats to ``out`` (or a sibling
     ``.empty`` marker for a 0-splat box).
 
+    ``config`` / ``iters`` / ``loss`` / ``lr`` / ``cull_retention`` are the run's
+    fit configuration, forwarded so ``-j N`` fits with the SAME parameters as
+    ``-j 1`` (mirroring the uniform-tiled sibling
+    :func:`luxar.gsplats.fit_tiled_parallel.build_worker_cmd`). Several are
+    settable ONLY through a YAML ``--config``: ``truncate:`` (no preset sets it, so
+    an unforwarded config left every box fitted at 3.5 but stamped with the 2.75
+    default — #1637) and ``n_iters:`` among them. ``--seeds`` is deliberately NOT
+    forwarded: a content box's budget comes from the plan, and ``run_content_fit``
+    pops it. Each is omitted from the argv when ``None`` (as ``device``/``floor``
+    already are), leaving the worker to resolve its own default.
+
     ``floor`` is expected to be the parent's already-RESOLVED background level (a
     number, or ``"none"`` when suppression is off) rather than a spec like
     ``auto``/``pNN``: abutting boxes that each re-estimate their own pedestal
@@ -68,8 +84,29 @@ def _default_worker_cmd_builder(
     """
     argv0 = luxar_argv0()
 
+    # The optional flags, resolved ONCE (nothing here depends on the box): a
+    # (flag, value-or-None) table rather than a branch per flag, so forwarding one
+    # more of the fit config is a row instead of another rung of complexity.
+    # ``None`` means "omit" — the worker then resolves its own default.
+    optional: list[tuple[str, Optional[str]]] = [
+        ("--config", str(config) if config else None),
+        ("--iters", None if iters is None else str(iters)),
+        ("--loss", loss or None),
+        ("--lr", None if lr is None else str(lr)),
+        ("--cull-retention", None if cull_retention is None else str(cull_retention)),
+        ("--device", device or None),
+        ("--floor", None if floor is None else str(floor)),
+        ("--channel", None if channel is None else str(channel)),
+        ("--timepoint", None if timepoint is None else str(timepoint)),
+        ("--array-key", array_key or None),
+        ("--axes", axes or None),
+    ]
+    extra = [
+        part for flag, value in optional if value is not None for part in (flag, value)
+    ]
+
     def builder(box_idx: int, out_path: Path) -> list[str]:
-        cmd = [
+        return [
             *argv0,
             "gsplat",
             "fit",
@@ -83,20 +120,8 @@ def _default_worker_cmd_builder(
             str(box_idx),
             "--preset",
             preset,
+            *extra,
         ]
-        if device:
-            cmd += ["--device", device]
-        if floor is not None:
-            cmd += ["--floor", str(floor)]
-        if channel is not None:
-            cmd += ["--channel", str(channel)]
-        if timepoint is not None:
-            cmd += ["--timepoint", str(timepoint)]
-        if array_key:
-            cmd += ["--array-key", array_key]
-        if axes:
-            cmd += ["--axes", axes]
-        return cmd
 
     return builder
 
@@ -284,6 +309,12 @@ def fit_planned_parallel(
                 "volume_shape": list(plan.volume_shape),
                 "parallel_jobs": int(jobs),
                 "elapsed_seconds": float(elapsed),
+                # Overwrite `concatenate`'s SUM of the boxes' own times with true
+                # wall clock, as the uniform tiled merge does
+                # (`merge_tile_results`): one key must not mean "summed fit time"
+                # here and "elapsed" there — and concurrent boxes make the sum
+                # exceed the run.
+                "time_seconds": float(elapsed),
             }
         )
 

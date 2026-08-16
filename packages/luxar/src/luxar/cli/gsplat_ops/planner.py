@@ -366,6 +366,15 @@ def run_content_fit(
             input_path,
             plan_json_path,
             preset=preset or "standard",
+            # The run's fit configuration, so a box worker fits with the same
+            # parameters as the sequential path. A `truncate:`/`n_iters:` lives
+            # only in a YAML --config (no preset sets them), so without this the
+            # boxes silently fit at the defaults (#1637).
+            config=config,
+            iters=iters,
+            loss=loss,
+            lr=lr,
+            cull_retention=cull_retention,
             device=device,
             # The RESOLVED level, not the spec: each worker would otherwise
             # re-estimate on its own box crop (#1174).

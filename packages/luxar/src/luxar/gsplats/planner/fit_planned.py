@@ -18,11 +18,15 @@ padded crop, and the keep-core mask — they can never drift.
 from __future__ import annotations
 
 import gc
-from typing import Any, Callable, Optional, Tuple
+import time
+from typing import TYPE_CHECKING, Any, Callable, Optional, Tuple
 
 import numpy as np
 
 from .spec import FitPlan, PlanBox
+
+if TYPE_CHECKING:
+    from luxar.gsplats.gsplat_data import GSplatData
 
 ProgressCallback = Callable[[int, int, str], None]
 
@@ -69,8 +73,15 @@ def _box_truncation_radius(fit_kwargs: "dict[str, Any]") -> float:
     ``fit_gaussian_splats`` stamps ``truncation_radius=config.truncate`` on its
     result, so the fitted radius is simply the ``truncate`` fit kwarg. Resolved
     here (rather than read off a result) because the zero-budget early-out of
-    :func:`_fit_one_box` must return an empty dataset with the SAME radius the
-    config asked for, without running a fit.
+    :func:`_fit_one_box` has no fit to read it off, and still has to answer with
+    the radius the config asked for.
+
+    Not needed to keep a merge working: ``GSplatData.concatenate`` drops empty
+    datasets BEFORE its radius check, and neither driver hands an empty region to
+    a merge (``fit_planned`` skips a non-positive budget, ``fit_planned_parallel``
+    skips an ``.empty`` marker). The early-out is only reachable through
+    ``--plan-box K`` on a zero-budget box — where a caller that SAVED that dataset
+    would otherwise record a radius its config never asked for.
     """
     from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
 
@@ -86,7 +97,7 @@ def _fit_one_box(
     overlap: int,
     cap: int,
     **fit_kwargs: Any,
-) -> "Any":
+) -> GSplatData:
     """Fit a single plan box and return its core-kept splats in GLOBAL coords.
 
     Crops a halo-padded region, fits it with the (padded-scaled, capped) budget,
@@ -108,6 +119,7 @@ def _fit_one_box(
     ``GSplatData.concatenate`` with a uniform-tiled one fitted from the same
     config ("Truncation radius mismatch") — issue #1637.
     """
+    from luxar.gsplats._data.filtering import _REGION_SCOPED_STATS_KEYS, _is_crop
     from luxar.gsplats.fit_gsplats import fit_gaussian_splats
     from luxar.gsplats.gsplat_data import GSplatData
     from luxar.gsplats.utils.trils import tril_size
@@ -137,8 +149,10 @@ def _fit_one_box(
 
     budget = _scaled_budget(box, overlap, V.shape, cap)
     if budget <= 0:
-        # An empty box still has to speak for the config: a default-radius empty
-        # would not concatenate with its fitted siblings (#1637).
+        # An empty box still has to speak for the config: reachable only via
+        # `--plan-box K` on a zero-budget box, where a caller that SAVED this
+        # dataset would record a radius its config never asked for (#1637). The
+        # merges never see it (they skip zero-budget boxes / `.empty` markers).
         return GSplatData(
             centers=np.zeros((0, ndim), np.float32),
             amplitudes=np.zeros((0,), np.float32),
@@ -161,13 +175,27 @@ def _fit_one_box(
     )
     # Slice FIRST, then drop `gd`: keeping the whole inner result alive just to
     # read slices out of it would defeat the per-box memory release below.
+    # Defensive: `fit_gaussian_splats` produces no colors today, so this branch is
+    # unreachable — kept so a future coloured fit is masked, not silently dropped.
     colors = None if gd.colors is None else np.asarray(gd.colors)[keep]
     box_stats = dict(gd.stats)
-    # The napari capture buffers are per-optimisation scratch (the writer excludes
-    # them anyway); copying the references would hold a box's frames — and the
-    # crop shape they were rendered at — past the release below.
+    # The napari capture buffers are per-optimisation scratch: the LEAF writer
+    # stamps `lod_stats` RAW (io/_compiler/gsplat_tree.py), so under
+    # `--napari-movie` these frame buffers would be handed to the attrs JSON
+    # encoder — and holding the references would keep a box's frames (and the crop
+    # shape they were rendered at) alive past the release below.
     box_stats.pop("movie_frames", None)
     box_stats.pop("movie_shape", None)
+    # The core-keep mask is a SPATIAL restriction of the padded crop this box was
+    # fitted on, exactly like a bbox crop — so the fit's source/fitted grid stamps
+    # describe a region these splats no longer represent (they become each
+    # partition part's on-disk `lod_stats`). Drop them by the same rule
+    # `slice_by` uses, and restamp the count, which does not survive either.
+    n_kept = int(np.count_nonzero(keep))
+    if _is_crop(box.box, int(keep.size), n_kept):
+        for key in _REGION_SCOPED_STATS_KEYS:
+            box_stats.pop(key, None)
+    box_stats["n_splats"] = n_kept
     out = GSplatData(
         centers=c[keep],
         amplitudes=a[keep],
@@ -250,6 +278,7 @@ def fit_planned(
     region_boxes: list[int] = []
     n = len(plan.boxes)
     n_fit = 0
+    t0 = time.perf_counter()
     for i, b in enumerate(plan.boxes):
         if b.budget <= 0:
             continue
@@ -271,6 +300,7 @@ def fit_planned(
 
             aprint(f"  box {i + 1}/{n}: kept {n_kept:,} splats")
 
+    elapsed = time.perf_counter() - t0
     if not regions:
         raise ValueError("fit_planned produced no splats (all boxes empty?)")
 
@@ -300,6 +330,10 @@ def fit_planned(
             "n_boxes_fit": n_fit,
             "overlap": pad,
             "volume_shape": list(V.shape),
+            # Overwrite `concatenate`'s SUM of the boxes' own times with true
+            # wall clock, as the uniform tiled merge does (`merge_tile_results`):
+            # one key must not mean "summed fit time" here and "elapsed" there.
+            "time_seconds": float(elapsed),
         }
     )
     return merged
