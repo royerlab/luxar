@@ -159,21 +159,22 @@ export async function initWasm(): Promise<WasmModule> {
     //     /wasm/. Resolve against the origin in that case so dev picks up the
     //     built WASM instead of silently falling back to the (slower)
     //     TypeScript implementation. `location` (bare, not `self.location`) is
-    //     present in both window and dedicated-worker scopes and is read
-    //     through `typeof` so a DOM-less host never throws here: in Node/SSR
-    //     there is no dev-server origin at all, so such a host falls through to
-    //     the bundle-relative path below, which is the only resolution that
-    //     could mean anything there.
+    //     present in both window and dedicated-worker scopes, and the read is
+    //     reached only in a dev build AND only through `typeof`, so a production
+    //     bundle in a non-browser host never touches `location` at all. A dev
+    //     build in a host that merely LACKS the global falls through to the
+    //     bundle-relative path below — in Node/SSR there is no dev-server origin
+    //     to resolve against, so that is the only resolution that could mean
+    //     anything there.
     //
     // Embedders whose bundlers don't support `import.meta.url` resolution
     // can override the URL via {@link setWasmJsUrl} (forwarded by
     // LuxarAppOptions.wasmPath); the override takes precedence over both.
     const wasmRelativePath = '../wasm/luxar_wasm.js';
     const isDev = Boolean((import.meta as { env?: { DEV?: boolean } }).env?.DEV);
-    const hasLocation = typeof location !== 'undefined' && Boolean(location?.origin);
     if (wasmJsUrlOverride) {
       wasmJsUrl = wasmJsUrlOverride;
-    } else if (isDev && hasLocation) {
+    } else if (isDev && typeof location !== 'undefined' && location?.origin) {
       // public/ is served at the server root in dev regardless of the
       // production-only relative `base`.
       wasmJsUrl = new URL('/wasm/luxar_wasm.js', location.origin).href;

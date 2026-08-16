@@ -70,6 +70,10 @@ describe('initWasm URL resolution without a DOM', () => {
     // there genuinely is no DOM here. Asserting it keeps the test from turning
     // vacuous if the file is ever re-pinned to jsdom: under jsdom both globals
     // exist and the dev-origin branch — not the branch under test — would run.
+    // It also catches a `location` stub leaked from a sibling test: the
+    // dev-origin case below supplies one via `vi.stubGlobal` and must restore it
+    // in a `finally`, so this assertion is what keeps the two tests' shared
+    // global state from turning into a hidden ordering dependency.
     expect(typeof self).toBe('undefined');
     expect(typeof location).toBe('undefined');
 
@@ -104,6 +108,48 @@ describe('initWasm URL resolution without a DOM', () => {
     // defined`; assert on the error object itself, not on stringified text.
     expect(error).toBeInstanceOf(Error);
     expect(error).not.toBeInstanceOf(ReferenceError);
+  });
+});
+
+describe('initWasm URL resolution on the dev server origin', () => {
+  it('resolves /wasm/luxar_wasm.js against location.origin when a location exists', async () => {
+    // `import.meta.env.DEV` is true under vitest, so with a `location` in scope
+    // this is the dev-origin branch of `initWasm` — the assertion below is not
+    // vacuous, and this is the only test that exercises the TRUE side of
+    // `isDev && typeof location !== 'undefined' && location?.origin`.
+    //
+    // The stub must be undone in a `finally`: `unstubGlobals` is NOT enabled in
+    // `vitest.config.ts`, so a leaked `location` would silently break the
+    // `typeof location === 'undefined'` precondition of the #1642 test above.
+    vi.stubGlobal('location', { origin: 'http://dev.test' });
+    try {
+      // The override is module-level state shared by every test in this file.
+      setWasmJsUrl('');
+
+      // `console.log` is spied purely to keep the two remediation `log.info`
+      // lines out of the reporter.
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const info = vi.spyOn(console, 'log').mockImplementation(() => {});
+      const wasm = await initWasm();
+      const calls = warn.mock.calls;
+      warn.mockRestore();
+      info.mockRestore();
+
+      // Landing in the TypeScript fallback is EXPECTED and is not what this test
+      // is about — vitest's VM module runner cannot service the loader's
+      // `new Function('url', 'return import(url)')` import, whatever the URL.
+      expect(wasm).toBeInstanceOf(TypeScriptFallback);
+
+      expect(calls.length).toBeGreaterThan(0);
+      const [message] = calls[0] as [string, unknown];
+      // The whole point: the leading-slash, origin-relative resolution. A
+      // relative `wasm/luxar_wasm.js` would resolve to /src/wasm/…, which
+      // `scripts/build-wasm.sh` never writes, 404 in dev, and silently drop the
+      // dev server onto the TypeScript backend with the suite still green.
+      expect(message).toContain('http://dev.test/wasm/luxar_wasm.js');
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
 
