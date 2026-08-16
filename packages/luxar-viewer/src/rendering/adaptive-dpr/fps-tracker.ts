@@ -22,6 +22,7 @@
  * frame rates many more samples fit inside the window, so the retention
  * floor never binds and behaviour is byte-identical.
  */
+
 /** Samples `getFPS()`/`span()` need to report anything at all. */
 const DEFAULT_MIN_RETAINED_SAMPLES = 2;
 

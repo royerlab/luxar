@@ -135,7 +135,17 @@ export function setupPerformanceControls(context: PerformanceSetupContext): Perf
   // (notifyPaused), so currentFPS === 0 is an unambiguous "not
   // rendering" sentinel — display it as such instead of a frozen
   // last-window number pretending to be live.
-  const formatFPS = (fps: number): string => (fps > 0 ? Math.round(fps).toString() : 'idle');
+  //
+  // Sub-1fps rates are REAL (the FPS window keeps a two-sample minimum,
+  // so a software-rasterized scene reports 0.4fps rather than 0) and
+  // must not round to the "0" that means the opposite. Below 0.1fps —
+  // one frame every ten seconds — a second decimal keeps "0.0" off the
+  // row too.
+  const formatFPS = (fps: number): string => {
+    if (!(fps > 0)) return 'idle';
+    if (fps >= 1) return Math.round(fps).toString();
+    return fps.toFixed(fps >= 0.1 ? 1 : 2);
+  };
 
   const updateVisibility = (adaptiveEnabled: boolean): void => {
     if (adaptiveEnabled) {

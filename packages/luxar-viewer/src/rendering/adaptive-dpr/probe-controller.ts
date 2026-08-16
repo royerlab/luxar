@@ -23,6 +23,15 @@ export interface PendingProbe {
   probedDPR: number;
   /** Timestamp the probe was armed. */
   startTime: number;
+  /**
+   * True once a scene-content change has run through this probe's
+   * measurement window (set by markContentConfounded). The baseline was
+   * measured on the OLD content and the settle sample on the NEW one, so
+   * the before/after comparison is CONFOUNDED: it says nothing about
+   * what the DPR change did. The caller must not act on the direction of
+   * such a verdict — see AdaptiveDPRManager.applyProbeVerdict.
+   */
+  contentConfounded?: boolean;
 }
 
 export type ProbeVerdict =
@@ -105,6 +114,18 @@ export class ProbeController {
    */
   void_(): void {
     this.pending = null;
+  }
+
+  /**
+   * Mark the in-flight probe as spanning a scene-content change (no-op
+   * when none is pending). Used when the caller decides to KEEP the
+   * probe across the change — a loop too slow to run a replacement
+   * experiment prefers a contaminated verdict to no verdict at all — so
+   * that the settle can be applied with the reduced confidence it
+   * deserves.
+   */
+  markContentConfounded(): void {
+    if (this.pending) this.pending.contentConfounded = true;
   }
 
   /**

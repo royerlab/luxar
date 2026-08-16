@@ -78,7 +78,7 @@ export interface AdaptiveDPRConfig {
    *
    *  This threshold is necessary but NOT sufficient: the interval must
    *  ALSO be a large outlier (strictly more than 4×) against the median
-   *  of the recent inter-frame intervals (see
+   *  of the four PRECEDING inter-frame intervals (see
    *  rendering/adaptive-dpr/stall-detector.ts).
    *  A 5s gap in a 60fps stream is a 300× outlier and resets; a 2s
    *  interval in a stream whose recent intervals are all ~2s is simply
@@ -87,15 +87,18 @@ export interface AdaptiveDPRConfig {
    *  A genuine slowdown costs one or two misread intervals while the
    *  median follows the new cadence.
    *
-   *  Residual limitation: the rule only sees inter-frame intervals, and
-   *  the median has a 5-interval memory, so a dead period ALTERNATING
-   *  one-for-one with a SINGLE fast frame (~2s / ~100ms / ~2s / ~100ms)
-   *  makes the dead intervals the majority — they become the median and
-   *  are kept as "the frame rate", and a window landing on the fast
-   *  frame reads as healthy even though the user perceives ~0.5fps.
-   *  That is a limit of the 1s FPS window, not of the threshold. Two or
-   *  more fast frames between dead periods fail the other way: the
-   *  median stays fast, so the dead time is correctly discarded on every
-   *  cycle and the window never accumulates. */
+   *  Residual limitations, both from seeing only inter-frame intervals:
+   *  a dead period ALTERNATING one-for-one with a SINGLE fast frame
+   *  (~2s / ~100ms / ~2s / ~100ms) makes the dead intervals half of the
+   *  four-interval memory, so the median lands between the phases and
+   *  they are kept as "the frame rate" — the FPS window then mixes real
+   *  dead time with render cost. The manager still adapts (measured, the
+   *  reported rate is far below the down threshold either way) but it
+   *  cannot report the rate the user perceives. Two or more fast frames
+   *  between dead periods fail the other way: the median stays fast, the
+   *  dead time is correctly discarded every cycle, and the window
+   *  accumulates nothing but those few fast frames — so a recurring
+   *  hitch pattern like 16.7/16.7/400ms reads a healthy 60fps at ~6.9
+   *  perceived fps. */
   gapResetMs: number;
 }

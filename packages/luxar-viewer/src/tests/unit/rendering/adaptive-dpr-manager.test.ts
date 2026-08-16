@@ -1006,12 +1006,59 @@ describe('AdaptiveDPRManager — gap detection & load suppression', () => {
     }
   });
 
+  it.each([
+    [
+      'a native-DPR change',
+      (m: AdaptiveDPRManager) => {
+        setNativeDPR(1.5);
+        m.getState(); // any public read syncs the display
+      },
+    ],
+    [
+      'setEnabled(false)',
+      (m: AdaptiveDPRManager) => {
+        m.setEnabled(false);
+        m.setEnabled(true);
+      },
+    ],
+    ['dispose()', (m: AdaptiveDPRManager) => m.dispose()],
+  ])('%s forgets the cadence too, not only notifyPaused', (_label, boundary) => {
+    // Four documents state the contract "the cadence memory is cleared
+    // wherever the frame STREAM breaks — pause, display change, disable,
+    // dispose", but only the pause door was pinned: removing the
+    // stallDetector.clear() call from any of the other three left every
+    // test green. Each is observable the same way — a converged slow
+    // cadence must read as DEAD TIME again once the memory is cold.
+    const m = new AdaptiveDPRManager();
+    try {
+      m.setRenderer(renderer);
+      let t = 0;
+      for (let i = 0; i < 6; i++) {
+        m.recordFrame(t);
+        t += 2000; // converge on 0.5fps: 2000ms is "normal" here
+      }
+      // Negative control: with the memory intact the pair below survives.
+      m.recordFrame(t);
+      m.recordFrame(t + 2000);
+      expect(m.getCurrentFPS()).toBeCloseTo(0.5, 3);
+
+      boundary(m);
+
+      m.recordFrame(t + 4000);
+      m.recordFrame(t + 6000);
+      expect(m.getCurrentFPS()).toBe(0);
+    } finally {
+      restore();
+    }
+  });
+
   it('a stall burst absorbed as the frame rate is UNTRUSTED for learning', () => {
-    // The detector compares against a 5-interval median, so the THIRD
-    // consecutive dead interval IS the median and is reclassified as the
-    // frame rate — on a window holding nothing but dead time. Trusting
-    // that window armed a probe, settled it against a baseline measured
-    // on the SAME dead time, and pinned a U-shape floor (0.90, with
+    // The detector compares each interval against the median of its four
+    // PRECEDING neighbours, so by the THIRD consecutive dead interval
+    // half that memory is dead time and the interval is reclassified as
+    // the frame rate — on a window holding nothing but dead time.
+    // Trusting that window armed a probe, settled it against a baseline
+    // measured on the SAME dead time, and pinned a U-shape floor (with
     // exponential backoff) onto a session rendering at a healthy 60fps
     // either side of the burst.
     const m = new AdaptiveDPRManager();
@@ -1049,6 +1096,44 @@ describe('AdaptiveDPRManager — gap detection & load suppression', () => {
     }
   });
 
+  it('a burst of SHORT (400ms) hitches teaches nothing either — the bound in wall clock', () => {
+    // The cadence-trust bound is counted in INTERVALS, so at 400ms a
+    // burst of four is only 1.6s of wall clock — far less protection than
+    // the 20s that four 5s gaps buy. What keeps a short burst harmless is
+    // that a probe ALSO needs its own window and a representative span
+    // before it can pin anything. Measured with the production 0.9 step:
+    // eight consecutive 400ms hitches (3.2s) leave the floor untouched
+    // and the DPR lifts again; twelve (4.8s) do pin one, at which point
+    // the "burst" is a slow regime worth learning from. All the other
+    // stall tests use 5000ms gaps, so this length is its own case.
+    const m = new AdaptiveDPRManager({ scaleDownFactor: 0.9 });
+    try {
+      m.setRenderer(renderer);
+      let t = 0;
+      for (let i = 0; i < 1200; i++) {
+        m.recordFrame(t);
+        t += 1000 / 60; // 20s of healthy 60fps
+      }
+      for (let i = 0; i < 8; i++) {
+        t += 400;
+        m.recordFrame(t);
+      }
+      expect(m.getState().dprFloor).toBe(0.5); // nothing learned...
+      expect(m.getCurrentDPR()).toBeLessThan(1.0); // ...but pixels were shed
+
+      // Healthy again: the transient reduction lifts, floor still clean.
+      const end = t + 20_000;
+      while (t < end) {
+        m.recordFrame(t);
+        t += 1000 / 60;
+      }
+      expect(m.getCurrentDPR()).toBeCloseTo(1.0, 2);
+      expect(m.getState().dprFloor).toBe(0.5);
+    } finally {
+      restore();
+    }
+  });
+
   it('a genuine slowdown loses only the FIRST scale-down to the untrusted window', () => {
     // The other side of the cadence-trust gate: it must cost a
     // genuinely slow scene at most one unratified step. The reduction
@@ -1070,6 +1155,80 @@ describe('AdaptiveDPRManager — gap detection & load suppression', () => {
 
       m.recordFrame((t += 2000));
       expect(m.getState().probing).toBe(true); // normal machinery, next interval
+    } finally {
+      restore();
+    }
+  });
+
+  it('a stall RECURRING faster than evaluationIntervalMs still lets the loop evaluate', () => {
+    // A gap reset pushes the evaluation clock forward so dead time can't
+    // count as progress toward the next evaluation. Pinned to the frame's
+    // own timestamp, an outlier hitch recurring more often than
+    // evaluationIntervalMs (500ms) re-pinned the clock before it could
+    // ever mature, so no evaluation with data ever ran — no scale-down,
+    // no scale-up, no probe settle — for as long as the pattern lasted.
+    // Measured on the cadence below (16.7/16.7/400ms, ~6.9 perceived
+    // fps): ZERO evaluations in 43s before, ~50 after.
+    //
+    // The load-activity predicate is the observable: the manager polls it
+    // once per evaluation that has a frame rate to judge.
+    const m = new AdaptiveDPRManager();
+    try {
+      m.setRenderer(renderer);
+      let evaluations = 0;
+      m.setLoadActivityPredicate(() => {
+        evaluations++;
+        return false;
+      });
+      // Warm a fast median so every 400ms gap stays an outlier...
+      let t = 0;
+      for (let i = 0; i < 600; i++) {
+        m.recordFrame(t);
+        t += 1000 / 60;
+      }
+      evaluations = 0;
+      // ...then 40 cycles of [400ms dead time, two 60fps frames]: a
+      // 433ms period, inside the 500ms evaluation interval.
+      for (let i = 0; i < 40; i++) {
+        t += 400;
+        m.recordFrame(t);
+        t += 1000 / 60;
+        m.recordFrame(t);
+        t += 1000 / 60;
+        m.recordFrame(t);
+      }
+
+      expect(evaluations).toBeGreaterThan(0);
+    } finally {
+      restore();
+    }
+  });
+
+  it('a slow window between recurring stalls still sheds pixels', () => {
+    // The consequence of the clock fix: with the frames BETWEEN the gaps
+    // slow enough to matter (~30fps, below the 45fps down threshold), the
+    // loop must actually adapt and not just tick. Pre-fix the DPR sat at
+    // native forever on this cadence.
+    const m = new AdaptiveDPRManager();
+    try {
+      m.setRenderer(renderer);
+      let t = 0;
+      for (let i = 0; i < 60; i++) {
+        m.recordFrame(t);
+        t += 1000 / 60;
+      }
+      // 30 cycles of [400ms dead time, two 33ms frames]: a 466ms period,
+      // again inside the evaluation interval.
+      for (let i = 0; i < 30; i++) {
+        t += 400;
+        m.recordFrame(t);
+        t += 33;
+        m.recordFrame(t);
+        t += 33;
+        m.recordFrame(t);
+      }
+
+      expect(m.getCurrentDPR()).toBeLessThan(1.0);
     } finally {
       restore();
     }
@@ -1136,11 +1295,13 @@ describe('AdaptiveDPRManager — gap detection & load suppression', () => {
     // per frame, coalesced to one per contentChangeRecheckMs (5s) — only
     // ~2.5 frames at 0.5fps. Every armed probe used to be voided before
     // it could settle and the DPR walked, unratified, all the way to
-    // minDPR while no floor was ever learned. Two things fix it and both
-    // are load-bearing: the content change must not void a probe the
-    // loop is too slow to re-run, AND it must not wipe the cadence
-    // memory (which would fire a gap reset two frames later and void the
-    // probe anyway — measured, that is what made the gate inert).
+    // minDPR. Three things fix it and all are load-bearing: the content
+    // change must not void a probe the loop is too slow to re-run, it
+    // must not wipe the cadence memory (which would fire a gap reset two
+    // frames later and void the probe anyway — measured, that is what
+    // made the gate inert), and the verdict that probe finally produces
+    // is CONFOUNDED (its baseline was measured on the old content), so it
+    // may only conclude "stop here for now".
     const m = new AdaptiveDPRManager({ scaleDownFactor: 0.9 });
     try {
       m.setRenderer(renderer);
@@ -1150,12 +1311,161 @@ describe('AdaptiveDPRManager — gap detection & load suppression', () => {
         m.notifyContentChanged(t);
         t += 2000; // 0.5fps
       }
-      // A verdict was reached (the floor is evidence, not a guess)...
-      expect(m.getState().dprFloor).toBeGreaterThan(0.5);
-      // ...and the DPR settled well clear of minDPR instead of walking
-      // to it. Measured 0.90 here; pre-fix it bottomed out at 0.508
-      // (native 2) / minDPR with no floor at all.
-      expect(m.getCurrentDPR()).toBeGreaterThan(0.6);
+      // The walk stopped two steps in — measured 0.81 of the native 1.0
+      // here — instead of bottoming out at minDPR (pre-fix: 0.508 at
+      // native 2 / minDPR, with no floor at all).
+      expect(m.getCurrentDPR()).toBeCloseTo(0.81, 5);
+      // Every DPR the renderer ever saw was a REDUCTION: a confounded
+      // verdict must never revert upward (a swap to a heavier LOD level
+      // reads as 'rejected' and used to add pixels back to a scene that
+      // had just got heavier).
+      const applied = appliedDPRs(renderer);
+      expect(applied).toEqual([...applied].sort((a, b) => b - a));
+      // And NOTHING durable was learned from a confounded window: the
+      // provisional floor carries the 5s content-change TTL rather than
+      // the 30s floorTtlMs, so 120s of churn later the ledger is back at
+      // minDPR with no backoff ladder started.
+      expect(m.getState().dprFloor).toBe(0.5);
+    } finally {
+      restore();
+    }
+  });
+
+  it('a probe settled across a content change keeps the DPR and only holds briefly', () => {
+    // The confounded-verdict contract, on one probe rather than a 120s
+    // churn episode: keep the reduction (fewer pixels never hurt a
+    // stuttering loop), never revert upward, and hold the walk with a
+    // PROVISIONAL floor carrying the short contentChangeRecheckMs TTL —
+    // not the 30s floorTtlMs, whose blocksScaleDownTo would make
+    // scale-down impossible for half a minute at a time.
+    const restore2 = setNativeDPR(2.0);
+    const m = new AdaptiveDPRManager({ scaleDownFactor: 0.9 });
+    try {
+      m.setRenderer(renderer);
+      // 0.5fps: interval 1 is a cold-memory stall, 2 is absorbed but
+      // untrusted (2.0 → 1.8 unprobed), 3 is trusted and both steps down
+      // again and arms the probe at DPR 1.62.
+      let t = 0;
+      for (let i = 0; i < 4; i++) {
+        m.recordFrame(t);
+        t += 2000;
+      }
+      expect(m.getCurrentDPR()).toBeCloseTo(1.62, 5);
+      expect(m.getState().probing).toBe(true);
+
+      // Content changes mid-probe. At 0.5fps the loop cannot re-run the
+      // experiment (fewer than two frames per probe window), so the probe
+      // is KEPT — and marked confounded.
+      m.notifyContentChanged(t);
+      m.recordFrame(t);
+      t += 2000;
+      m.recordFrame(t); // settles the probe (age > probeWindowMs)
+
+      expect(m.getState().probing).toBe(false);
+      // Kept, NOT reverted to the pre-probe 1.8: every DPR the renderer
+      // saw is a reduction on the one before it.
+      expect(m.getCurrentDPR()).toBeCloseTo(1.62, 5);
+      const applied = appliedDPRs(renderer);
+      expect(applied).toEqual([...applied].sort((a, b) => b - a));
+      expect(m.getState().dprFloor).toBeCloseTo(1.62, 5); // held for now...
+
+      // ...and released once the short TTL expires. Content has stopped
+      // churning, so the hold lifts too and the walk resumes WITH
+      // ratification (a fresh probe is armed).
+      const end = t + 12_000;
+      while (t < end) {
+        m.recordFrame(t);
+        t += 2000;
+      }
+      // A fresh probe stepped to 1.46 and was judged on its OWN evidence
+      // (rejected, reverted, 30s floor) — the normal machinery, back.
+      expect(Math.min(...appliedDPRs(renderer))).toBeLessThan(1.62);
+      expect(m.getState().dprFloor).toBeCloseTo(1.46, 2);
+    } finally {
+      restore2();
+      restore();
+    }
+  });
+
+  it('a content change at a HEALTHY frame rate still voids the probe outright', () => {
+    // The gate is a slow-loop concession, not a new default: when the
+    // loop can fit MIN_FRAMES_TO_RERUN_PROBE frames into a probe window
+    // it can simply run the experiment again, so the contaminated one is
+    // discarded unjudged (the historical behaviour). Nothing is learned
+    // and the DPR stays where the scale-down put it.
+    const m = new AdaptiveDPRManager();
+    try {
+      m.setRenderer(renderer);
+      let t = 0;
+      for (let i = 0; i < 14; i++) {
+        m.recordFrame(t);
+        t += 50; // 20fps < the 45fps down threshold, ~30 frames/probe window
+      }
+      expect(m.getState().probing).toBe(true);
+      const reduced = m.getCurrentDPR();
+
+      m.notifyContentChanged(t);
+      expect(m.getState().probing).toBe(false); // voided, not kept
+      expect(m.getCurrentDPR()).toBe(reduced);
+      expect(m.getState().dprFloor).toBe(0.5);
+    } finally {
+      restore();
+    }
+  });
+
+  it.each([
+    ['1fps — 1.5 frames per probe window, too few to re-run', 1000, true],
+    ['2fps — 3 frames per probe window, enough to re-run', 500, false],
+  ])('the probe-rerun gate turns over between %s', (_label, frameMs, keptAcrossChange) => {
+    // The gate is a threshold on FRAMES PER PROBE WINDOW
+    // (MIN_FRAMES_TO_RERUN_PROBE = 2, the ProbeController's own settle
+    // minimum), and it turns over between these two cadences: 1.5 frames
+    // per 1500ms window is too few to judge a replacement experiment,
+    // 3 is plenty. Straddling the threshold pins it from both sides.
+    const m = new AdaptiveDPRManager({ scaleDownFactor: 0.9 });
+    try {
+      m.setRenderer(renderer);
+      let t = 0;
+      for (let i = 0; i < 4; i++) {
+        m.recordFrame(t);
+        t += frameMs;
+      }
+      expect(m.getState().probing).toBe(true);
+
+      m.notifyContentChanged(t);
+      expect(m.getState().probing).toBe(keptAcrossChange);
+    } finally {
+      restore();
+    }
+  });
+
+  it('a content change with an UNKNOWN frame rate voids the probe (historical behaviour)', () => {
+    // `getFPS()` is 0 with fewer than two samples in the window: nothing
+    // says the loop is too slow to re-run the experiment, so the void
+    // stands. Pins the `fps <= 0` half of the gate, which the
+    // frames-per-window arithmetic alone cannot express — zero frames per
+    // probe window would otherwise KEEP the probe.
+    const m = new AdaptiveDPRManager({ scaleDownFactor: 0.9 });
+    try {
+      m.setRenderer(renderer);
+      // 0.5fps until a probe is armed.
+      m.recordFrame(0);
+      m.recordFrame(2000);
+      m.recordFrame(4000);
+      m.recordFrame(6000);
+      expect(m.getState().probing).toBe(true);
+
+      // First change: the loop is measurably slow (0.5fps), so the probe
+      // is kept — and the FPS window is cleared.
+      m.notifyContentChanged(6000);
+      expect(m.getState().probing).toBe(true);
+
+      // One frame is not a frame rate. The next change (past the 5s
+      // coalescing window) therefore knows nothing and voids the probe.
+      m.recordFrame(12_000);
+      expect(m.getCurrentFPS()).toBe(0);
+      m.notifyContentChanged(12_000);
+      expect(m.getState().probing).toBe(false);
     } finally {
       restore();
     }
