@@ -596,3 +596,41 @@ def test_the_stored_size_reaches_the_fitting_group(tmp_path: Path) -> None:
         shutil.rmtree(out)
     _fit(_sparse_blobs(shape=(16, 16, 16)), source_stored_bytes=4242).save(out)
     assert (read_node_attrs(out / "fitting") or {})["source_stored_bytes"] == 4242
+
+
+def test_the_merge_holds_the_stored_size_to_the_same_bar_as_the_fit() -> None:
+    """The tiled producer publishes the same denominator, so it checks it too.
+
+    ``merge_tile_results`` is a public entry point in its own right, and a bare
+    ``int()`` there would take ``"1000"`` and silently round 1.5 to 1 — a
+    published ratio quietly built on a value the single-volume fit refuses.
+    """
+    from luxar.gsplats.fit_tiled_gsplats import merge_tile_results
+    from luxar.gsplats.gsplat_data import GSplatData
+
+    tile = GSplatData(
+        centers=np.zeros((3, 3), dtype=np.float32),
+        amplitudes=np.ones(3, dtype=np.float32),
+        cholesky_factors=np.tile(np.array([1, 0, 1, 0, 0, 1], np.float32), (3, 1)),
+    )
+
+    def _merge(stored: object):
+        return merge_tile_results(
+            [tile],
+            volume_shape=(16, 16, 16),
+            tile_size=16,
+            overlap=0,
+            num_tiles=1,
+            progressive=False,
+            cull_retention=None,
+            elapsed=0.0,
+            verbose=False,
+            source_dtype="uint16",
+            source_stored_bytes=stored,
+        )
+
+    assert _merge(4242).stats["source_stored_bytes"] == 4242
+    assert "source_stored_bytes" not in _merge(None).stats
+    for bad in (0, -5, 1.5, True, "1000"):
+        with pytest.raises(ValueError):
+            _merge(bad)

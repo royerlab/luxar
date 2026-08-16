@@ -383,9 +383,16 @@ def _tiled_source_grid_stats(
     ``fitted_shape`` is the whole volume, not a tile: the tiles cover it, so the
     grid the optimiser collectively saw is the volume itself.
     """
-    from luxar.gsplats.fitting.validation import _explicit_source_shape
+    from luxar.gsplats.fitting.validation import (
+        _explicit_source_shape,
+        _explicit_source_stored_bytes,
+    )
 
     declared = _explicit_source_shape(source_shape)
+    # Normalized through the same gate the single-volume fit uses: this becomes
+    # a published denominator either way, and a bare `int()` here would take
+    # "1000" and round 1.5 to 1 on the one producer that skipped the check.
+    stored_bytes = _explicit_source_stored_bytes(source_stored_bytes)
     dtype, itemsize = source_dtype, source_itemsize
     if itemsize is None and dtype:
         # A caller holding only the dtype NAME (the parallel orchestrator, whose
@@ -414,8 +421,8 @@ def _tiled_source_grid_stats(
         out["source_declared"] = True
     if itemsize:
         out["source_bytes"] = voxels * int(itemsize)
-    if source_stored_bytes:
-        out["source_stored_bytes"] = int(source_stored_bytes)
+    if stored_bytes:
+        out["source_stored_bytes"] = stored_bytes
     return out
 
 

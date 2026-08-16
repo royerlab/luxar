@@ -208,7 +208,9 @@ def load_dapi_data():
     [0, 1] -- and ``acquisition`` is ``(shape, dtype, stored_bytes)`` of the
     ORIGINAL stored channel -- the grid and element type it was acquired at, and
     what it OCCUPIES in the store (compressed), which are different numbers and
-    give different compression ratios, or ``None`` when the array was synthesized here and so is its own
+    give different compression ratios. ``stored_bytes`` is ``None`` when the
+    store cannot report a size, and ``acquisition`` itself is ``None`` when the
+    array was synthesized here and so is its own
     source. The fit stamps the acquisition rather than the working copy, or the
     compression ratio it publishes would be quoted against a downscaled float32
     copy of the data instead of the data.
@@ -253,11 +255,22 @@ def load_dapi_data():
                 # the zarr chunks themselves. The decoded size is voxels x
                 # itemsize, but nobody downloads the decoded array -- so both
                 # are recorded and `gsplat info` quotes a ratio against each.
+                # Pro-rated by voxel share: zarr sizes the whole 5D array and
+                # this is one channel of it, so it assumes the channels
+                # compress alike.
                 try:
-                    nb = data.nbytes_stored()
-                    stored = int(nb * (z_size * y_size * x_size) / max(data.size, 1))
+                    nb = int(data.nbytes_stored())
                 except Exception:  # older zarr, or a store that cannot report it
-                    stored = None
+                    nb = 0
+                # A store that cannot walk its own chunks -- an HTTP mapper with
+                # no directory listing, which is exactly what IDR serves --
+                # returns 0 rather than raising, and pro-rating 0 gives 0, which
+                # the fit refuses as a denominator. Unknown is a legitimate
+                # answer: `info` then quotes only the ratio it can stand behind,
+                # which is the whole point of never inferring this number.
+                stored = (
+                    int(nb * (z_size * y_size * x_size) / max(data.size, 1)) or None
+                )
                 acquisition = ((z_size, y_size, x_size), str(data.dtype), stored)
             else:
                 raise ValueError(f"Unexpected data shape: {full_shape}")
@@ -307,8 +320,9 @@ def load_dapi_data():
 def fit_dapi_gsplats(volume, acquisition=None):
     """Fit gsplats to DAPI volume (no cache check — caller handles that).
 
-    ``acquisition`` is the ``(shape, dtype)`` of the original stored channel, as
-    returned by :func:`load_dapi_data`; ``None`` means ``volume`` is its own
+    ``acquisition`` is the ``(shape, dtype, stored_bytes)`` of the original
+    stored channel, as returned by :func:`load_dapi_data` (its last element is
+    ``None`` when the store could not be sized); ``None`` means ``volume`` is its own
     source. It is stamped into the fit so the dataset can state its compression
     against the acquisition rather than against the preprocessed copy.
     """
