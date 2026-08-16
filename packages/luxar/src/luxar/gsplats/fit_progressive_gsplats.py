@@ -134,10 +134,16 @@ def _compute_foreground_psnr_chunked(
 ) -> tuple[float, float, float]:
     """Foreground PSNR, chunked like :func:`_compute_psnr_chunked`.
 
-    The progressive fitter runs on volumes too large to hold twice on the GPU,
+    The progressive fitter works on volumes too large to hold several copies of,
     so it cannot call :func:`~luxar.gsplats.metrics.compute_foreground_psnr`
-    directly. Same definition: error averaged over ``original > otsu`` only,
-    ``data_range`` from the whole volume.
+    directly: that one masks the whole volume at once (a full-size mask plus two
+    boolean-indexed copies), on top of the target and the render already
+    resident. Chunking bounds those to ``chunk_voxels``. Same definition: error
+    averaged over ``original > otsu`` only, ``data_range`` from the whole volume.
+
+    ``rendered_gpu`` follows :func:`_compute_psnr_chunked`'s signature, but the
+    fitter calls this one with its CPU-cached render (the GPU copy is already
+    freed by then), so in practice the work happens on the host.
 
     Returns ``(psnr_db, threshold, foreground_fraction)``.
     """

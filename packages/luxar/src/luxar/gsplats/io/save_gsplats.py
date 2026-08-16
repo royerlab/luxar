@@ -216,6 +216,12 @@ def split_fitting_info(
     historically dropped on save (a silent lossy round-trip). Header keys the
     loader stamps itself (:data:`_HEADER_STATS_KEYS`), private ``_``-prefixed
     scratch keys, and non-JSON-serializable values are excluded.
+
+    ``fitting_info`` is held to the same JSON rule: a non-finite metric (``nan``
+    foreground PSNR on a volume with no foreground, ``+inf`` global PSNR on an
+    exact reconstruction) is DROPPED rather than written, because zarr emits it
+    as a bare ``NaN`` / ``Infinity`` token that invalidates the entire metadata
+    document for a strict parser.
     """
     if not stats:
         return None, None, None, None
@@ -224,6 +230,16 @@ def split_fitting_info(
     provenance_info: Optional[Dict[str, Any]] = None
     if include_fitting_info:
         fitting_info = {k: v for k, v in stats.items() if k in _FITTING_INFO_KEYS}
+        # Same JSON discipline the ``pipeline_info`` loop below applies, and for
+        # the same reason: zarr serializes a non-finite float as a bare ``NaN`` /
+        # ``Infinity`` token, which is not JSON. A single such value anywhere in
+        # the tree makes the WHOLE metadata document unreadable to a strict
+        # parser (the viewer's ``JSON.parse``, jq, any non-Python reader) — and
+        # quality metrics reach non-finite on ordinary inputs: a constant or
+        # signal-free volume has no foreground, so ``foreground_psnr_db`` is
+        # ``nan`` and ``psnr_db`` is ``+inf``. Drop those keys rather than
+        # corrupt the store; ``foreground_fraction: 0.0`` still says why.
+        _, fitting_info = json_safe_value(fitting_info)
         if "config" in stats:
             fitting_config = stats["config"]
     if include_provenance and "provenance" in stats:

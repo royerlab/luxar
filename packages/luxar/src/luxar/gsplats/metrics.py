@@ -378,8 +378,10 @@ def compute_psnr(
 # Foreground PSNR
 # ---------------------------------------------------------------------------
 
-#: Histogram resolution for :func:`otsu_threshold`. 256 is skimage's default;
-#: the two agree to within one bin, which ``test_metrics.py`` pins.
+#: Histogram resolution for :func:`otsu_threshold`. 256 is skimage's default, so
+#: the two pick the SAME bin, not merely a neighbouring one — ``test_metrics.py``
+#: pins that exactly, because a one-bin tolerance survives the index swap that is
+#: the porting error worth guarding against.
 _OTSU_BINS = 256
 
 

@@ -592,9 +592,10 @@ ssim = compute_ssim(pred_tensor, target_tensor, window_size=11)
 
 ### Read the foreground number, not just the global one
 
-On sparse volumes the global PSNR is dominated by background: a fit that
-discards 90% of the signal in a 99.9%-empty light-sheet stack still scores
-**37 dB globally** while scoring **0.9 dB on the foreground**. Quote both --
+On sparse volumes the global PSNR is dominated by background: on a synthetic
+99.9%-empty volume (the shape a light-sheet stack has), a fit that discards 90%
+of the signal still scores **37 dB globally** while scoring **0.9 dB on the
+foreground**. Quote both --
 the global figure alone is close to a report on how well the emptiness was
 reproduced.
 
