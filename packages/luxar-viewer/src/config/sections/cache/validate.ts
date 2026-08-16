@@ -46,6 +46,17 @@ export function validateCache(config: AppConfig, errors: string[], _warnings: st
     );
   }
 
+  // R1: opfsTimeoutTripThreshold arms the L2 circuit breaker. It counts
+  // CONSECUTIVE timeouts, so it must be a whole number >= 1; a fractional
+  // value could never be reached exactly and 0/negative would trip the
+  // breaker before any evidence of a stall.
+  const tripThreshold = cache.opfsTimeoutTripThreshold;
+  if (!Number.isInteger(tripThreshold) || tripThreshold < 1) {
+    errors.push(
+      `Invalid cache.opfsTimeoutTripThreshold: ${tripThreshold} (must be an integer >= 1; 3 recommended)`
+    );
+  }
+
   // R1: the background L2 write queue caps. Concurrency 0/negative would stall
   // all persistence; a 0/negative depth would drop every write. NaN passes
   // `<= 0` (always false), so reject it explicitly.

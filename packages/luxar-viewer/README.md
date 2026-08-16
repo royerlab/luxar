@@ -681,6 +681,7 @@ monitor.element; // the widget element (mounted by the control rail)
 - `?debug` — Expose `window.__luxarDebug` for Playwright / dev console
 - `?no-cache` — Disable all cache tiers (S-cache + L0 + L1 + L2) for this session
 - `?no-slice-cache` — Disable only S-cache; L0/L1/L2 remain active
+- `?no-opfs` — Disable only the L2 persistent (OPFS) tier; L0/L1/S-cache remain active. For environments whose OPFS stalls; the automatic circuit breaker covers the un-flagged case
 - `?cache-debug` — Verbose cache logging
 - `?clear-cache` — Clear stored cache tiers before loading; the per-load S-cache starts empty
 - `?cache-stats` — Open the data-loading monitor on its Cache tab after initialization

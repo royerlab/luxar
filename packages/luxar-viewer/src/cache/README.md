@@ -100,6 +100,7 @@ Override cache behavior via URL parameters:
 
 - `?no-cache` - Disable all caching (S-cache + L0 + L1 + L2) for this session
 - `?no-slice-cache` - Disable only the SliceCache (S-cache); L0/L1/L2 stay on
+- `?no-opfs` - Disable only the L2 OPFS tier; L0/L1/S-cache stay on. The deterministic sibling of the OPFS circuit breaker, for environments whose OPFS is known to stall (automated Chromium). A deliberate disable does NOT raise the `opfs-unavailable` badge
 - `?cache-debug` - Enable verbose cache logging for all layers
 - `?clear-cache` - Clear all persistent/persisted caches (L0 + L1 + L2) before loading dataset (the in-memory S-cache is created fresh per load)
 - `?no-prefetch` - Disable prefetching (caches still active)
@@ -208,16 +209,16 @@ summarising the cache's operational state. Each badge is also exposed
 on `CacheMetrics.status: CacheStatusBadge[]` so programmatic consumers
 (debug snapshots, E2E tests) can assert on the same set.
 
-| Badge                          | Meaning                                                       | Source                                                                                                      |
-| ------------------------------ | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `cache-enabled`                | Caching is wired and operational.                             | `telemetryState.kind === 'enabled'`                                                                         |
-| `no-cache`                     | The `?no-cache` URL flag is set; all tiers disabled.          | `telemetryState.kind === 'disabled-no-cache'`                                                               |
-| `disabled-config`              | App config disabled caching (e.g. `cache.enabled: false`).    | `telemetryState.kind === 'disabled-config'`                                                                 |
-| `opfs-unavailable`             | OPFS is absent OR mounts read-only; L2 is disabled.           | OPFS provider absent, or the init write probe failed (WebKit/WKWebView has no main-thread `createWritable`) |
-| `quota-constrained`            | L2 has skipped at least one write because of browser quota.   | `l2.quotaWriteSkipped > 0`                                                                                  |
-| `cache-errors-detected`        | L2 has accumulated I/O / corruption failures.                 | `l2.writeFailures + corruptedEntries + metadataParseFailures > 0`                                           |
-| `unvalidated-external-dataset` | External dataset, no TTL configured — entries may stay stale. | `health.unvalidatedExternalDataset === true`                                                                |
-| `provider-missing`             | Telemetry says cache is enabled but no provider is attached.  | classifier/provider contradiction                                                                           |
+| Badge                          | Meaning                                                       | Source                                                                                                                                                                                                                                                                |
+| ------------------------------ | ------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cache-enabled`                | Caching is wired and operational.                             | `telemetryState.kind === 'enabled'`                                                                                                                                                                                                                                   |
+| `no-cache`                     | The `?no-cache` URL flag is set; all tiers disabled.          | `telemetryState.kind === 'disabled-no-cache'`                                                                                                                                                                                                                         |
+| `disabled-config`              | App config disabled caching (e.g. `cache.enabled: false`).    | `telemetryState.kind === 'disabled-config'`                                                                                                                                                                                                                           |
+| `opfs-unavailable`             | OPFS is absent OR mounts read-only; L2 is disabled.           | OPFS provider absent, the init write probe failed (WebKit/WKWebView has no main-thread `createWritable`), or the circuit breaker tripped after `opfsTimeoutTripThreshold` consecutive OPFS timeouts (#1645). A DELIBERATE `?no-opfs` / `?no-cache` does NOT raise it. |
+| `quota-constrained`            | L2 has skipped at least one write because of browser quota.   | `l2.quotaWriteSkipped > 0`                                                                                                                                                                                                                                            |
+| `cache-errors-detected`        | L2 has accumulated I/O / corruption failures.                 | `l2.writeFailures + corruptedEntries + metadataParseFailures > 0`                                                                                                                                                                                                     |
+| `unvalidated-external-dataset` | External dataset, no TTL configured — entries may stay stale. | `health.unvalidatedExternalDataset === true`                                                                                                                                                                                                                          |
+| `provider-missing`             | Telemetry says cache is enabled but no provider is attached.  | classifier/provider contradiction                                                                                                                                                                                                                                     |
 
 Several badges may coexist — for example, a Luxar dataset on a near-full
 browser disk can show `cache-enabled` + `quota-constrained` simultaneously.

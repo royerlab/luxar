@@ -2068,6 +2068,38 @@ describe('MultiLevelCachingStore', () => {
       expect(mocks.fetchedUrls.filter((u) => u.includes('test')).length).toBe(2);
     });
 
+    it('should skip ONLY the L2 tier with ?no-opfs (#1645)', async () => {
+      // The deterministic sibling of the OPFS circuit breaker: no OPFSStore is
+      // ever constructed (so nothing can stall), while L1 keeps serving. A
+      // DELIBERATE disable must not raise the degradation badges — neither
+      // `opfs-unavailable` nor `unvalidated-external-dataset` (with no
+      // persistent tier there are no entries that could go stale).
+      const initSpy = vi.spyOn(OPFSStore.prototype, 'init');
+      try {
+        const noOpfsStore = new MultiLevelCachingStore('https://example.com/test.zarr', {
+          noOpfs: true,
+        });
+        await noOpfsStore.init();
+        expect(initSpy).not.toHaveBeenCalled();
+
+        mocks.fetchedUrls.length = 0;
+        const result1 = await noOpfsStore.get('test');
+        const result2 = await noOpfsStore.get('test');
+        expect(result1).toEqual(new Uint8Array([1, 2, 3, 4, 5]));
+        expect(result2).toEqual(new Uint8Array([1, 2, 3, 4, 5]));
+        // L1 still serves the repeat: exactly ONE fetch, unlike ?no-cache's two.
+        expect(mocks.fetchedUrls.filter((u) => u.includes('test')).length).toBe(1);
+
+        const stats = noOpfsStore.getStats();
+        expect(stats.l2.count).toBe(0);
+        expect(stats.l2.writes).toBe(0);
+        expect(stats.health.opfsAvailable).toBe(true);
+        expect(stats.health.unvalidatedExternalDataset).toBe(false);
+      } finally {
+        initSpy.mockRestore();
+      }
+    });
+
     it('should enable debug logging with ?cache-debug', async () => {
       // Debug logging is routed through `log.info`, which calls `console.log`
       // (the central log utility's standardised channel for INFO-level output).
