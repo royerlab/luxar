@@ -92,6 +92,7 @@ const EMPTY_PARAMS: UrlParams = {
   debug: false,
   noCache: false,
   noSliceCache: false,
+  noOpfs: false,
   cacheDebug: false,
   clearCache: false,
   lodFade: true,
@@ -492,6 +493,7 @@ describe('bootstrapStandalone', () => {
       expect(lc.noCache).toBe(true);
       expect(lc.noPrefetch).toBe(true);
       expect(lc.noSliceCache).toBe(false); // untouched preference stays default
+      expect(lc.noOpfs).toBe(false); // param-only flag defaults off
       expect(lc.cacheBudgetMB).toBe(512);
     });
 
@@ -539,6 +541,14 @@ describe('bootstrapStandalone', () => {
         urlParams: { ...EMPTY_PARAMS, noSliceCache: true },
       });
       expect(initOptions().loaderConfig.noSliceCache).toBe(true);
+    });
+
+    it('?no-opfs passes straight through to the loader config (param-only, no setting)', async () => {
+      await bootstrapStandalone({
+        canvas: CANVAS,
+        urlParams: { ...EMPTY_PARAMS, noOpfs: true },
+      });
+      expect(initOptions().loaderConfig.noOpfs).toBe(true);
     });
   });
 });

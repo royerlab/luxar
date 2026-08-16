@@ -178,6 +178,69 @@ export class OPFSStore {
   // store's init/clear/write operations are still outstanding.
   private pendingDispose: Promise<void> | null = null;
 
+  // Circuit breaker: consecutive OPFS-timeout count and the sticky trip
+  // flag. Lifecycle state like `disposed` — deliberately NOT reset by
+  // doClear()'s counter block, and doInit() refuses to resurrect a
+  // tripped store: the stall is environmental (session-wide), and a
+  // page reload constructs a fresh store, which is the natural reset.
+  private consecutiveTimeouts = 0;
+  private breakerTripped = false;
+
+  /**
+   * Run one OPFS operation under the per-op timeout, feeding the
+   * circuit breaker. Counts ONLY the `OPFS timeout` rejection: any
+   * other settlement (success or a fast error such as NotFoundError)
+   * proves the backend is responsive and resets the count — the
+   * breaker targets systemic stalls, not error rate. Applied to the
+   * three hot real-I/O sites (get/set/delete) only: the init canary's
+   * catch already degrades the store itself, the delete-barrier awaits
+   * a delete whose own timeout already counted, and the dispose drain
+   * runs on an already-dead store.
+   */
+  private async timed<T>(promise: Promise<T>, label: string): Promise<T> {
+    try {
+      const result = await withTimeout(promise, config.cache.opfsOperationTimeoutMs, label);
+      this.consecutiveTimeouts = 0;
+      return result;
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      if (msg.startsWith('OPFS timeout')) {
+        this.consecutiveTimeouts++;
+        if (
+          !this.breakerTripped &&
+          this.consecutiveTimeouts >= config.cache.opfsTimeoutTripThreshold
+        ) {
+          this.tripBreaker(label);
+        }
+      } else {
+        this.consecutiveTimeouts = 0;
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Disable the L2 tier for the rest of this store's lifetime after
+   * repeated consecutive timeouts. Nulling `opfsRoot` reuses the
+   * init-failure degradation path — every entry point already
+   * short-circuits on it, so all later ops are instant no-ops instead
+   * of serial full-timeout burns, and `getStats().available` flips the
+   * existing `opfs-unavailable` badge. The pending debounced metadata
+   * save is cancelled so its timer cannot fire a full-index write
+   * against the hung backend and stall dispose().
+   */
+  private tripBreaker(label: string): void {
+    this.breakerTripped = true;
+    this.metadata.cancelPendingSave();
+    this.opfsRoot = null;
+    log.warning(
+      Modules.CACHE,
+      `OPFSStore circuit breaker tripped after ${this.consecutiveTimeouts} consecutive ` +
+        `OPFS timeouts (last: ${label}) — disabling the L2 disk cache for this session. ` +
+        'L0/L1 in-memory tiers continue to serve.'
+    );
+  }
+
   constructor(datasetId: string, baseUrl: string, maxSize: number) {
     this.datasetId = datasetId;
     this.baseUrl = baseUrl;
@@ -234,6 +297,10 @@ export class OPFSStore {
   }
 
   private async doInit(): Promise<void> {
+    // A tripped breaker is sticky for the instance lifetime — nothing
+    // calls init() twice in production, but this makes stickiness
+    // structural rather than incidental.
+    if (this.breakerTripped) return;
     try {
       const root = await navigator.storage.getDirectory();
       // dispose() may land during any of these awaits. Re-check after each so
@@ -383,15 +450,13 @@ export class OPFSStore {
       return undefined;
     }
 
-    const timeoutMs = config.cache.opfsOperationTimeoutMs;
     try {
-      const data = await withTimeout(
+      const data = await this.timed(
         (async () => {
           const fileHandle = await this.buckets.navigateToFile(this.opfsRoot!, key, false);
           const file = await fileHandle.getFile();
           return new Uint8Array(await file.arrayBuffer());
         })(),
-        timeoutMs,
         `get(${key})`
       );
 
@@ -592,10 +657,9 @@ export class OPFSStore {
     // A single broken write counts exactly 1 in `writeFailures`; that invariant
     // is now STRUCTURAL (the non-stale path returns) rather than flag-guarded, so
     // don't reintroduce an "already counted" flag.
-    const timeoutMs = config.cache.opfsOperationTimeoutMs;
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        await withTimeout(
+        await this.timed(
           (async () => {
             const fileHandle = await this.buckets.navigateToFile(this.opfsRoot!, key, true);
             const writable = await fileHandle.createWritable();
@@ -610,7 +674,6 @@ export class OPFSStore {
             await writable.write(bytes);
             await writable.close();
           })(),
-          timeoutMs,
           `set(${key})`
         );
 
@@ -727,7 +790,7 @@ export class OPFSStore {
     });
 
     try {
-      await withTimeout(real, config.cache.opfsOperationTimeoutMs, `delete(${key})`);
+      await this.timed(real, `delete(${key})`);
     } catch (error) {
       // Timeout: the caller unblocks, but `real` stays outstanding in
       // pendingDeletes and continues to gate any replacement write until the
@@ -958,10 +1021,17 @@ export class OPFSStore {
      * S2: `true` when OPFS was reachable on init and the store is
      * still alive. `false` when init couldn't acquire a directory
      * handle (browser without OPFS support, private mode in some
-     * configs) or after dispose(). Drives the `opfs-unavailable`
-     * status badge.
+     * configs), after the circuit breaker trips, or after dispose().
+     * Drives the `opfs-unavailable` status badge.
      */
     available: boolean;
+    /**
+     * `true` once the circuit breaker disabled the tier after
+     * consecutive OPFS timeouts. Distinguishes "gave up after repeated
+     * stalls" from "never had OPFS" in debug snapshots and tests; the
+     * monitor badge keys on `available` alone.
+     */
+    breakerTripped: boolean;
   } {
     return {
       size: this.totalSize,
@@ -978,6 +1048,7 @@ export class OPFSStore {
       metadataParseFailures: this.metadata.parseFailures,
       orphanedFilesRemoved: this.metadata.orphansRemoved,
       available: this.opfsRoot !== null && !this.disposed,
+      breakerTripped: this.breakerTripped,
     };
   }
 

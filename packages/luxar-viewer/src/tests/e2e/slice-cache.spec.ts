@@ -72,7 +72,11 @@ test.describe('SliceCache (S-cache)', () => {
   test('scrub-back revisits are served from the S-cache (hits > 0, entries stored)', async ({
     page,
   }) => {
-    await page.goto(`/?src=${DATASET}&debug`);
+    // `&no-opfs` on every load: this spec never asserts the L2 OPFS tier, and
+    // automated Chromium's OPFS stalls systemically (10s per op — issue #1645),
+    // starving scene readiness past the test budget. The circuit breaker only
+    // helps un-flagged real sessions (it still pays ~3 timeouts per fresh page).
+    await page.goto(`/?src=${DATASET}&debug&no-opfs`);
     await waitForLuxarReady(page);
     await page.waitForTimeout(1500);
 
@@ -93,7 +97,7 @@ test.describe('SliceCache (S-cache)', () => {
   });
 
   test('?no-slice-cache disables ONLY the S-cache (L0/L1/L2 stay active)', async ({ page }) => {
-    await page.goto(`/?src=${DATASET}&debug&no-slice-cache`);
+    await page.goto(`/?src=${DATASET}&debug&no-slice-cache&no-opfs`);
     await waitForLuxarReady(page);
     await page.waitForTimeout(1000);
 
@@ -111,7 +115,7 @@ test.describe('SliceCache (S-cache)', () => {
   test('scrubbing with ?no-slice-cache still renders every frame (bypass is safe)', async ({
     page,
   }) => {
-    await page.goto(`/?src=${DATASET}&debug&no-slice-cache`);
+    await page.goto(`/?src=${DATASET}&debug&no-slice-cache&no-opfs`);
     await waitForLuxarReady(page);
     await page.waitForTimeout(1500);
 
@@ -136,7 +140,7 @@ test.describe('Data Loading Monitor — S-cache section', () => {
   test('SLICE CACHE section renders with live values and collapse toggles by mouse + keyboard', async ({
     page,
   }) => {
-    await page.goto(`/?src=${DATASET}&debug`);
+    await page.goto(`/?src=${DATASET}&debug&no-opfs`);
     await waitForLuxarReady(page);
     await page.waitForTimeout(1500);
     // Generate some cache traffic first so values are non-trivial.
@@ -176,7 +180,7 @@ test.describe('Data Loading Monitor — S-cache section', () => {
   test('Clear button empties the S-cache without collapsing the section state', async ({
     page,
   }) => {
-    await page.goto(`/?src=${DATASET}&debug`);
+    await page.goto(`/?src=${DATASET}&debug&no-opfs`);
     await waitForLuxarReady(page);
     await page.waitForTimeout(1500);
     await goToFrame(page, 1);
@@ -205,7 +209,7 @@ test.describe('Data Loading Monitor — S-cache section', () => {
   test('tab-switch entrance animation is one-shot (marker cleared by live rebuilds)', async ({
     page,
   }) => {
-    await page.goto(`/?src=${DATASET}&debug`);
+    await page.goto(`/?src=${DATASET}&debug&no-opfs`);
     await waitForLuxarReady(page);
     await page.keyboard.press('m');
     await page.waitForTimeout(300);

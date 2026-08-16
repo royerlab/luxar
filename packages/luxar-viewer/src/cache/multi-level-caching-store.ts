@@ -41,6 +41,12 @@ export interface MultiLevelCachingStoreOptions {
   debug?: boolean;
   /** Disable both cache tiers (e.g. driven by `?no-cache`). Default false. */
   noCache?: boolean;
+  /**
+   * Skip the L2 OPFS tier entirely (e.g. driven by `?no-opfs`); L1 stays
+   * on. The deterministic sibling of the OPFSStore circuit breaker for
+   * environments whose OPFS is known to stall. Default false.
+   */
+  noOpfs?: boolean;
   /** Clear caches on init (e.g. driven by `?clear-cache`). Default false. */
   clearCache?: boolean;
   /**
@@ -69,6 +75,8 @@ export class MultiLevelCachingStore implements AsyncReadable {
   private baseUrl: string;
   private l2MaxSize: number;
   private enabled: boolean;
+  // Deliberate L2 skip (?no-opfs): distinct from `enabled` (which kills L1 too).
+  private noOpfs = false;
   private debug: boolean;
   private shouldClearOnInit: boolean;
   // S4: increments each time `?clear-cache` triggers a clearAll on
@@ -163,6 +171,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
     this.baseUrl = baseUrl;
 
     this.enabled = !(options?.noCache ?? false);
+    this.noOpfs = options?.noOpfs ?? false;
     this.debug = options?.debug ?? false;
     this.shouldClearOnInit = options?.clearCache ?? false;
 
@@ -256,6 +265,15 @@ export class MultiLevelCachingStore implements AsyncReadable {
   async init(): Promise<void> {
     if (!this.enabled) {
       this.log('Caching disabled');
+      return;
+    }
+    if (this.noOpfs) {
+      // L2 deliberately skipped: l2Store stays null, which every consumer
+      // tolerates (the read cascade falls through to the network, clearL2
+      // no-ops). Note this also skips ?clear-cache's L2 wipe — a no-opfs
+      // session never reads the persisted directory, so it stays inert
+      // until the next normal session clears or validates it.
+      this.log('L2 OPFS tier disabled (noOpfs)');
       return;
     }
 
@@ -823,7 +841,10 @@ export class MultiLevelCachingStore implements AsyncReadable {
     // expected, so report `true` so the UI doesn't surface a
     // misleading badge.
     const l2Stats = this.l2Store?.getStats();
-    const opfsAvailable = this.enabled ? (l2Stats?.available ?? false) : true;
+    // A DELIBERATE disable (?no-cache / ?no-opfs) reports true: the
+    // opfs-unavailable badge is reserved for unrequested degradation
+    // (init failure, circuit-breaker trip).
+    const opfsAvailable = this.enabled && !this.noOpfs ? (l2Stats?.available ?? false) : true;
 
     return {
       l1: this.l1Cache.getStats(),

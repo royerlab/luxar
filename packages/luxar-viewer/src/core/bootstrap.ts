@@ -253,6 +253,10 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
       // can force-enable past the other). Value-typed params use `??`.
       noCache: urlParams.noCache || !userSettings.caching.enabled,
       noSliceCache: urlParams.noSliceCache || !userSettings.caching.sliceCache,
+      // Param-only (no settings toggle): a diagnostic/E2E kill switch like
+      // cacheDebug; the persistent "no caching" preference already exists
+      // coarser as caching.enabled.
+      noOpfs: urlParams.noOpfs,
       cacheDebug: urlParams.cacheDebug,
       clearCache: urlParams.clearCache,
       noPrefetch: urlParams.noPrefetch || !userSettings.caching.prefetch,
