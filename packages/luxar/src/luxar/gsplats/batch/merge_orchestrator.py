@@ -337,9 +337,13 @@ def volume_refit_frame_error(
     (#1587). A per-part re-fit crops the source to the part's own cell of the
     partition's ``bsp_tree`` and uses that cell as VOXEL INDICES into the
     volume, which only holds while the tile grid and the splats share a frame.
-    A recorded ``grid_scale`` says they do not: a ``voxel_size`` (with the
-    default ``output_space: real``) or a ``downscale`` in the run's ``--config``
-    moved every task's splats off the grid.
+    A recorded ``grid_scale`` says they do not — for a planned run, a
+    ``voxel_size`` (with the default ``output_space: real``) in the run's
+    ``--config`` moved every task's splats off the grid. A ``downscale:`` there
+    is NOT such a cause: every task rescales back to the full-resolution frame
+    the planner tiled, so the planner records nothing for it (#1624). A
+    hand-written manifest can still state any factor, which is why this stays a
+    check on the recorded VALUE rather than on how it came about.
 
     Both signs fail, differently, and neither is caught downstream. With a
     factor above 1 each crop is too large and the re-fit's own frame heuristic
@@ -357,8 +361,8 @@ def volume_refit_frame_error(
         return None
     return (
         f"this batch's tasks emitted their splats in a frame scaled by "
-        f"{factors} relative to the tile grid (a voxel_size with "
-        "output_space='real', and/or a downscale, in the run's --config). Each "
+        f"{factors} relative to the tile grid (on a planned run, from a "
+        "voxel_size with output_space='real' in the run's --config). Each "
         "part's crop of the volume is taken in VOXELS from that grid, so every "
         "crop would be a factor off — the same reason `gsplat fit` refuses "
         "--refine volume there. Merge with --recipe levels --refine l2, or "

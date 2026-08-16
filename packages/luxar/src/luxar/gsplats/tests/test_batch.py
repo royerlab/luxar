@@ -2837,6 +2837,14 @@ class TestUniformSlotBspTreeFrame:
     config is in hand — and recorded on the manifest as ``grid_scale``; the
     merge only reads it. So the tests come in two halves: what the planner
     records, and what the merge does with what it finds recorded.
+
+    ``voxel_size`` is the ONLY term this factor has on the batch path. A config
+    ``downscale:`` is not one: every task rescales its splats back to the
+    full-resolution frame this planner tiled, so it never moves them off the
+    grid (#1624). Where a decimating value cannot complete at all — a multi-tile
+    uniform plan, which is exactly this class's 64-tile setup — it is refused at
+    plan time instead; ``test_batch_run.py`` covers the single-tile and content
+    plans that DO complete with one and record no frame.
     """
 
     SPATIAL_SHAPE = (32, 32, 32)
@@ -2948,21 +2956,49 @@ class TestUniformSlotBspTreeFrame:
         # A `--preset` alone likewise carries no spacing.
         assert self._plan(tmp_path, preset="draft").grid_scale is None
 
-    def test_a_downscale_composes_the_same_term(self, tmp_path: Path) -> None:
-        """``downscale:`` is a documented YAML key and rides the same door.
+    def test_a_decimating_downscale_is_refused_for_this_multi_tile_plan(
+        self, tmp_path: Path
+    ) -> None:
+        """``downscale:`` is a documented YAML key, but not one THIS plan can use.
 
-        Recorded for convention parity with the single-fit path (where a
-        ``--downscale`` tiled fit is the original #1587 symptom) — NOT because a
-        batch run with a ``downscale:`` in its ``--config`` works today. It does
-        not, for a reason upstream of this tree: the planner builds its tasks on
-        the FULL-resolution shape while each ``fit --tile k/M`` worker recomputes
-        the grid on the decimated one, so the tile counts disagree and most tasks
-        exit before any merge exists. This asserts only what the planner writes
-        down.
+        There is nothing for this tree to reconcile, because the run never gets
+        as far as a merge: the planner builds its tasks on the FULL-resolution
+        shape while each ``fit --tile k/M`` worker recomputes the grid on its own
+        decimated one, so the tile counts disagree. Measured on this 32^3 store
+        with ``--tile-size 12 --overlap 2``: the plan builds 64 tiles per slot
+        and a ``downscale: 2`` worker (volume ``(16, 16, 16)``) sees 8, so tiles
+        8..63 exit 1 with "tile index out of range". Refused at plan time
+        instead (#1624) — before a task is submitted or a tile is written —
+        rather than recorded as a frame the merge would never be reached to
+        apply. The message must carry both counts: that difference IS the
+        diagnosis, and neither number is visible from the config.
+
+        FAILS pre-fix: the plan succeeded and recorded ``[2.0, 2.0, 2.0]``.
         """
+        import typer
+
         config = tmp_path / "ds.yaml"
         config.write_text("downscale: 2\n")
-        assert self._plan(tmp_path, config=config).grid_scale == [2.0, 2.0, 2.0]
+        with pytest.raises(typer.BadParameter) as excinfo:
+            self._plan(tmp_path, config=config)
+        message = str(excinfo.value)
+        assert "downscale" in message
+        assert "64 tiles" in message  # what this plan built
+        assert "only 8" in message  # what a worker would see
+        assert "(16, 16, 16)" in message  # its decimated volume
+
+    def test_a_no_op_downscale_still_plans(self, tmp_path: Path) -> None:
+        """Non-vacuity control: the refusal is value-scoped, not "any downscale key".
+
+        ``downscale: 1`` (and its per-axis spelling) decimates nothing — the
+        grids already agree — so it must plan silently and record no frame,
+        exactly as a config without the key at all, in the very multi-tile setup
+        a decimating value is refused for.
+        """
+        for spelling in ("downscale: 1\n", "downscale: [1, 1, 1]\n"):
+            config = tmp_path / "noop.yaml"
+            config.write_text(spelling)
+            assert self._plan(tmp_path, config=config).grid_scale is None
 
     def test_the_recorded_config_path_is_resolved(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
