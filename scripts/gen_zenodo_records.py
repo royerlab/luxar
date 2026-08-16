@@ -50,9 +50,32 @@ def _attrs(zf: zipfile.ZipFile, root: str, node: str = "") -> dict[str, Any]:
             raw = json.loads(zf.read(candidate))
         except KeyError:
             continue
+        except (ValueError, UnicodeDecodeError):
+            # Present but not JSON: not a store this script can describe. The
+            # alternative is a traceback halfway through a record, which is the
+            # one failure mode the corrupt-archive handling exists to avoid.
+            continue
         attrs = raw.get("attributes", raw) if candidate.endswith("zarr.json") else raw
         return attrs if isinstance(attrs, dict) else {}
     return {}
+
+
+def _as_int(value: Any) -> Optional[int]:
+    """*value* as an int, or ``None`` for anything that is not one."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _finite(value: Any) -> bool:
+    """True for a real measurement: a number, not a bool, not nan/inf."""
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and value == value
+        and value not in (float("inf"), float("-inf"))
+    )
 
 
 def _describe_topology(root_attrs: dict[str, Any], groups: set[str]) -> str:
@@ -63,7 +86,7 @@ def _describe_topology(root_attrs: dict[str, Any], groups: set[str]) -> str:
     between the two is exactly the sort of thing worth seeing in the record.
     """
     kind = root_attrs.get("kind")
-    rungs = root_attrs.get("n_additive_sublods")
+    rungs = _as_int(root_attrs.get("n_additive_sublods"))
     if kind == "partition":
         parts = len({g.split("/")[0] for g in groups if g.startswith("part")})
         has_levels = any("/child_" in g for g in groups)
@@ -78,7 +101,7 @@ def _describe_topology(root_attrs: dict[str, Any], groups: set[str]) -> str:
         if laddered:
             detail += ", each progressively streamed"
         return detail
-    if rungs and int(rungs) > 1:
+    if rungs and rungs > 1:
         return f"progressive ladder, {rungs} steps"
     return "single level"
 
@@ -94,16 +117,62 @@ def _read_archive(path: Path) -> Optional[dict[str, Any]]:
             names = zf.namelist()
             if not names:
                 return None
-            inner = [n for n in names if n.endswith(".gsplats.zarr.zip")]
+            inner = sorted(n for n in names if n.endswith(".gsplats.zarr.zip"))
             if inner:
-                with zipfile.ZipFile(io.BytesIO(zf.read(inner[0]))) as frame:
-                    info = _read_store(frame)
-                if info is not None:
-                    info["frames"] = len(inner)
-                return info
+                return _read_bundle(zf, inner)
             return _read_store(zf)
     except (zipfile.BadZipFile, OSError):
         return None
+
+
+def _read_bundle(zf: zipfile.ZipFile, inner: list[str]) -> Optional[dict[str, Any]]:
+    """Aggregate a bundle over ALL its frames rather than describing the first.
+
+    Every figure in a record is a statement about the *archive*, so it has to
+    cover the whole archive: the first frame's splat count understates a
+    400-frame bundle 400-fold, and its ``source_bytes`` divided by the whole
+    bundle's stored size would price one frame's compression as the bundle's.
+    Counts are therefore summed -- only when every frame carries one, since a
+    partial sum published as a total is the same falsehood -- and the qualities,
+    which are inherently per frame, are reported as the range across frames.
+    """
+    frames = []
+    for name in inner:
+        try:
+            with zipfile.ZipFile(io.BytesIO(zf.read(name))) as frame:
+                info = _read_store(frame)
+        except (zipfile.BadZipFile, OSError, KeyError):
+            info = None
+        if info is not None:
+            frames.append(info)
+    if not frames:
+        return None
+    complete = len(frames) == len(inner)
+    out = dict(frames[0])
+    out["frames"] = len(inner)
+    out["n_splats"] = _total(frames, "n_splats") if complete else None
+    out["source_bytes"] = _total(frames, "source_bytes") if complete else None
+    out["psnr_db"] = _span(frames, "psnr_db") if complete else None
+    out["foreground_psnr_db"] = (
+        _span(frames, "foreground_psnr_db") if complete else None
+    )
+    return out
+
+
+def _total(frames: list[dict[str, Any]], key: str) -> Optional[int]:
+    """Sum of *key* over frames, or ``None`` unless every frame carries it."""
+    values = [f.get(key) for f in frames]
+    if any(not isinstance(v, int) or isinstance(v, bool) for v in values):
+        return None
+    return sum(values)  # type: ignore[arg-type]
+
+
+def _span(frames: list[dict[str, Any]], key: str) -> Optional[tuple[float, float]]:
+    """``(lo, hi)`` of *key* over frames, or ``None`` unless all measured it."""
+    values = [f.get(key) for f in frames]
+    if any(not _finite(v) for v in values):
+        return None
+    return (min(values), max(values))  # type: ignore[type-var]
 
 
 def _read_store(zf: zipfile.ZipFile) -> Optional[dict[str, Any]]:
@@ -142,11 +211,36 @@ def _read_store(zf: zipfile.ZipFile) -> Optional[dict[str, Any]]:
     }
 
 
-def _locate(dataset: str, entry: dict[str, Any], file_name: str) -> Optional[Path]:
-    """Find an archive in the repo copy or the local cache."""
-    subdir = entry.get("dir", dataset)
-    for base in (DATA_DIR, CACHE_DIR):
-        candidate = (base / subdir / file_name) if subdir else (base / file_name)
+def _files_of(entry: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    """``(variant, file spec)`` per declared file; variant ``""`` when there are none.
+
+    The variant name has to travel with the file: a variant's archives sit one
+    level deeper on disk, exactly as ``ensure_dataset`` resolves them. Reading
+    only ``entry["files"]`` makes a variant-only dataset -- h2afva, whose record
+    is the timelapse -- render as "no files uploaded yet" with its whole file
+    table missing.
+    """
+    files = entry.get("files") or []
+    if files:
+        return [("", spec) for spec in files]
+    return [
+        (name, spec)
+        for name, variant in (entry.get("variants") or {}).items()
+        for spec in (variant.get("files") or [])
+    ]
+
+
+def _locate(
+    dataset: str, entry: dict[str, Any], variant: str, file_name: str
+) -> Optional[Path]:
+    """Find an archive in the repo copy or the local cache.
+
+    The two roots namespace differently, as ``ensure_dataset`` does: in-repo by
+    the manifest ``dir``, the cache by the DATASET NAME, and both by the variant.
+    """
+    for base, subdir in ((DATA_DIR, entry.get("dir", dataset)), (CACHE_DIR, dataset)):
+        parts = [p for p in (subdir, variant, file_name) if p]
+        candidate = base.joinpath(*parts)
         if candidate.exists():
             return candidate
     return None
@@ -173,25 +267,34 @@ def _ratio(numerator: Optional[int], denominator: Optional[int]) -> str:
 
 
 def _db(value: Any) -> str:
-    if not isinstance(value, (int, float)):
-        return _ABSENT
-    if value != value or value in (float("inf"), float("-inf")):  # nan / inf
+    """A dB figure, a ``lo–hi`` range for a per-frame one, or absent."""
+    if isinstance(value, tuple):
+        lo, hi = value
+        if not (_finite(lo) and _finite(hi)):
+            return _ABSENT
+        return f"{lo:.1f}" if f"{lo:.1f}" == f"{hi:.1f}" else f"{lo:.1f}–{hi:.1f}"
+    if not _finite(value):
         return _ABSENT
     return f"{value:.1f}"
 
 
-def _dataset_rows(dataset: str, entry: dict[str, Any]) -> list[dict[str, str]]:
+def _dataset_rows(dataset: str, entry: dict[str, Any]) -> list[dict[str, Any]]:
     rows = []
-    for spec in entry.get("files", []):
-        path = _locate(dataset, entry, spec["name"])
+    for variant, spec in _files_of(entry):
+        path = _locate(dataset, entry, variant, spec["name"])
         info = _read_archive(path) if path else None
         stored = spec.get("bytes")
-        name = spec["name"]
+        name = f"{variant}/{spec['name']}" if variant else spec["name"]
         if info and info.get("frames"):
             name += f" ({info['frames']} frames)"
         rows.append(
             {
                 "is_gsplat": info is not None,
+                # A declared fit whose bytes are not on THIS machine (an unpulled
+                # LFS file, an archive not fetched yet) must not be mistaken for
+                # "this is not a fit": it belongs in the splat table with its
+                # figures absent, and `--check` has to say it went unexamined.
+                "is_fit": spec["name"].endswith(".gsplats.zarr.zip"),
                 "file": name,
                 "splats": f"{info['n_splats']:,}"
                 if info and isinstance(info.get("n_splats"), int)
@@ -206,7 +309,7 @@ def _dataset_rows(dataset: str, entry: dict[str, Any]) -> list[dict[str, str]]:
     return rows
 
 
-def _acquisition_line(entry: dict[str, Any], total_stored: int) -> str:
+def _acquisition_line(entry: dict[str, Any], total_stored: Optional[int]) -> str:
     acq = entry.get("acquisition")
     if not acq:
         return ""
@@ -219,6 +322,10 @@ def _acquisition_line(entry: dict[str, Any], total_stored: int) -> str:
     stored = acq.get("stored_bytes")
     if not stored:
         return f"- Fitted from {description}.\n"
+    if not total_stored:
+        # No single total to divide by: size VARIANTS are alternative downloads
+        # of the same data, so summing them would price the same frames twice.
+        return f"- Fitted from {description} ({_mib(stored)} stored).\n"
     return (
         f"- Fitted from {description} ({_mib(stored)} stored). "
         f"All files here total {_mib(total_stored)}, i.e. "
@@ -259,19 +366,27 @@ def render_record(key: str, manifest: dict[str, Any]) -> str:
 
     for name, entry in sorted(datasets.items()):
         rows = _dataset_rows(name, entry)
-        total = sum(f.get("bytes", 0) for f in entry.get("files", []))
+        variants = entry.get("variants") or {}
+        total = (
+            None if variants else sum(f.get("bytes", 0) for f in entry.get("files", []))
+        )
         out.append(f"\n## `{name}`\n")
         out.append(f"\n{entry.get('source', '')}\n")
         out.append(f"\n- Licence: **{entry.get('license', _ABSENT)}**\n")
         out.append(f"- Attribution: {entry.get('attribution', _ABSENT)}\n")
         out.append(_acquisition_line(entry, total))
+        for vname, variant in variants.items():
+            default = " (default)" if variant.get("default") else ""
+            out.append(f"- Variant `{vname}`{default}: {variant.get('note', '')}\n")
         if not rows:
             out.append("\n_No files uploaded yet._\n")
             continue
         # Only a splat fit has splats, levels and a reconstruction quality. The
         # point-cloud and tabular datasets get a plain file list; a table of
         # dashes would imply those figures exist and were merely not measured.
-        if any(row["is_gsplat"] for row in rows):
+        # A fit whose archive is not readable here still belongs in the splat
+        # table -- demoting it to the plain list would state the opposite.
+        if any(row["is_gsplat"] or row["is_fit"] for row in rows):
             out.append(
                 "\n| File | Splats | Size | Detail levels | PSNR (dB) | "
                 "Foreground PSNR (dB) | vs raw voxels |\n"
@@ -306,9 +421,10 @@ def render_record(key: str, manifest: dict[str, Any]) -> str:
     return "".join(out)
 
 
-def _gaps(manifest: dict[str, Any]) -> list[str]:
-    """Figures a record would currently have to print as absent."""
-    problems = []
+def _gaps(manifest: dict[str, Any]) -> tuple[list[str], list[str]]:
+    """Figures a record would print as absent, and the rows nothing was read for."""
+    problems: list[str] = []
+    unread: list[str] = []
     for name, entry in sorted(manifest["datasets"].items()):
         if entry.get("bucket") != "zenodo":
             continue
@@ -318,6 +434,11 @@ def _gaps(manifest: dict[str, Any]) -> list[str]:
             # reconstruction quality. Demanding one would make this list
             # permanently non-empty and therefore useless as a work list.
             if not row["is_gsplat"]:
+                # A declared fit that is simply not on this machine was never
+                # examined. Dropping it silently would let the count below read
+                # as completeness while a dozen rows went unchecked.
+                if row["is_fit"]:
+                    unread.append(f"{name}/{row['file']}")
                 continue
             missing = [
                 label
@@ -331,9 +452,9 @@ def _gaps(manifest: dict[str, Any]) -> list[str]:
             ]
             if missing:
                 problems.append(f"{name}/{row['file']}: no {', '.join(missing)}")
-        if not entry.get("files"):
+        if not _files_of(entry):
             problems.append(f"{name}: no files uploaded")
-    return problems
+    return problems, unread
 
 
 def main() -> int:
@@ -349,10 +470,19 @@ def main() -> int:
 
     manifest = json.loads(MANIFEST.read_text())
     if args.check:
-        problems = _gaps(manifest)
+        problems, unread = _gaps(manifest)
         for problem in problems:
             print(problem)
         print(f"\n{len(problems)} archive(s) would publish an incomplete row.")
+        if unread:
+            # Saying so is the point: without it the count above reads as a
+            # clean bill of health on a machine that holds none of the data.
+            print(
+                f"{len(unread)} declared archive(s) are not on this machine, so "
+                "nothing was read for them (`git lfs pull`, or fetch the demo):"
+            )
+            for item in unread:
+                print(f"  {item}")
         return 1 if problems else 0
 
     keys = [args.record] if args.record else list(manifest["records"])
