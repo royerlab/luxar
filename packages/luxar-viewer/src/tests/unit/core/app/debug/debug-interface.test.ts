@@ -29,10 +29,14 @@ import * as THREE from 'three';
 vi.mock('../../../../../utils/console-interceptor', () => ({
   consoleInterceptor: { patch: vi.fn() },
 }));
+// Mutable stand-in for the manager's live loading answer, so a test can flip
+// it BETWEEN two getState() calls and prove the field is read per snapshot.
+const managerState = vi.hoisted(() => ({ loadPassInProgress: false }));
 vi.mock('../../../../../data/scene-loader-manager', () => ({
   SceneLoaderManager: {
     getInstance: vi.fn(() => ({
       getDefaultLoader: vi.fn(() => null),
+      isAnyLoadPassInProgress: vi.fn(() => managerState.loadPassInProgress),
     })),
   },
 }));
@@ -100,10 +104,12 @@ function makePorts(overrides: Partial<Parameters<typeof installDebugInterface>[0
 describe('installDebugInterface', () => {
   beforeEach(() => {
     delete (window as { __luxarDebug?: unknown }).__luxarDebug;
+    managerState.loadPassInProgress = false;
   });
 
   afterEach(() => {
     delete (window as { __luxarDebug?: unknown }).__luxarDebug;
+    managerState.loadPassInProgress = false;
   });
 
   describe('debug=false short-circuit', () => {
@@ -255,6 +261,27 @@ describe('installDebugInterface', () => {
       // in debug-state.test.ts.
       expect(state).toBeDefined();
       expect(typeof state).toBe('object');
+    });
+
+    // #1639 — the snapshot never carried the `isLoading` flag the E2E
+    // data-wait helpers have always polled, so `!state.isLoading` was
+    // `!undefined` and every one of them resolved on its first poll. Pin the
+    // WIRING here (the pure helper's own forwarding is covered in
+    // debug-state.test.ts): the field must come from the loader manager and be
+    // re-read on EVERY snapshot, so a captured-once refactor fails.
+    it('sources isLoading from SceneLoaderManager on each snapshot', () => {
+      installDebugInterface(makePorts());
+      const dbg = window.__luxarDebug!;
+
+      expect((dbg.getState!() as { isLoading?: boolean }).isLoading).toBe(false);
+
+      // A load starts AFTER install: a value captured at install time would
+      // still report false here.
+      managerState.loadPassInProgress = true;
+      expect((dbg.getState!() as { isLoading?: boolean }).isLoading).toBe(true);
+
+      managerState.loadPassInProgress = false;
+      expect((dbg.getState!() as { isLoading?: boolean }).isLoading).toBe(false);
     });
 
     it('forwards isAnimating from animationController.isActive', () => {
