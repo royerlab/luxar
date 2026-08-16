@@ -36,6 +36,22 @@ export const MAX_SUPPORTED_DIMS = 16;
 export const GSPLAT_DEFAULT_TRUNCATION_RADIUS = 2.75;
 
 /**
+ * World-space radius used for EVERY point when a points node stores no `radii`
+ * array.
+ *
+ * Both the geometry fill (the per-point radius attribute handed to the shader)
+ * and the world-space footprint the bounding box is padded by read this, so a
+ * radii-less node draws discs of exactly this size.
+ *
+ * MIRROR: `DEFAULT_POINT_RADIUS` in
+ * `packages/luxar/src/luxar/typing_utils/constants.py` must hold the same
+ * value — the Python writer expands a no-radii chunk's spatial bounds by it, so
+ * that the stored bound is never tighter than the footprint drawn here. Both
+ * sides are pinned by tests that name each other.
+ */
+export const DEFAULT_POINT_RADIUS = 0.5;
+
+/**
  * Absolute degeneracy floor used by the marginal-Cholesky factorization when the
  * covariance block being factorized is entirely zero (a SCALELESS Σ_S, which has
  * no diagonal to anchor the relative floor to). Such a pivot is floored at

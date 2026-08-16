@@ -38,7 +38,7 @@ adders/
 - `add_points_partition_wrapper_impl(group, *, name, pos_arr, parts, ...)` → `Group`
 - `add_points_multi_lod_wrapper_impl(group, *, name, pos_arr, levels, ...)` → `Points`
 
-`DEFAULT_POINT_RADIUS = 0.5` is applied when `radii` is not supplied.
+`DEFAULT_POINT_RADIUS` (`= 0.5`) is applied when `radii` is not supplied. The constant lives in `luxar.typing_utils.constants` and is imported here — it is also the radius the viewer draws a radii-less node with, and the extent the spatial index expands a no-radii chunk's bounds by (`luxar.io.ordering.compute_chunk_bounds_points`), so authoring, bounds and rendering agree by construction.
 
 ### `lines.py`
 

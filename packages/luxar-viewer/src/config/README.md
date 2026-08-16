@@ -556,3 +556,7 @@ From `./url-params.ts`:
 From `./constants.ts`:
 
 - `MAX_SUPPORTED_DIMS = 16` — mirrored in Rust as the WASM ABI cap on nD.
+- `DEFAULT_POINT_RADIUS = 0.5` — the radius a points node with no `radii` array
+  is drawn at; mirrored in Python as `DEFAULT_POINT_RADIUS`
+  (`packages/luxar/src/luxar/typing_utils/constants.py`), which the writer pads a
+  no-radii chunk's spatial bounds by.

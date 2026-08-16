@@ -39,6 +39,7 @@ import {
   writeSortedIndexIdentityRange,
 } from '../element-storage';
 import { clampPointCapacity } from '../element-texture-layout';
+import { DEFAULT_POINT_RADIUS } from '../../config/constants';
 import type { LoadedPointsData } from '../../data/data-loader-types';
 import type { PooledBuffer } from './pool-stats';
 import { chooseCapacity } from './capacity';
@@ -406,7 +407,7 @@ export class PointsBufferAdapter {
       );
     } else {
       radiiF32 = new Float32Array(count);
-      radiiF32.fill(0.5);
+      radiiF32.fill(DEFAULT_POINT_RADIUS);
     }
 
     let sharpnessF32: Float32Array;
