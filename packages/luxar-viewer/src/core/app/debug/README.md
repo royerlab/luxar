@@ -112,8 +112,12 @@ back-compat, and the `isAnimating` / `initialized` / `isLoading` flags.
 
 `isLoading` is true while a LOAD PASS is in flight on any registered scene
 loader — an `updateView` sweep (fetch/decode/upload) up to its geometry commit,
-or a failed-loader retry, which takes the same lock. Three things are outside
-that scope:
+a failed-loader retry (which takes the same lock), or a view-state that is
+QUEUED behind either and has not begun loading yet. That third clause is why
+subtracting the refinement drain below opens no hole: a nav arriving during a
+refinement hold parks in the queue without touching the lock, so without it the
+flag would read idle while the requested slice had not started. Three things are
+outside that scope:
 
 - the **initial `loadScene`**, which only touches the loader's lock at its very
   end (handing it to the post-load refinement kick). Wait on `initialized` for

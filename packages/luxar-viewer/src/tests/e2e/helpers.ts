@@ -532,10 +532,13 @@ export async function waitForDimensionSystemReady(page: Page, timeout = 10000): 
  * There is no "wait for the navigation to START" phase — the helper only ever
  * waits for `isLoading` to be false, so it resolves on the first poll if the
  * loader is already idle. That is the intended behaviour on both sides of the
- * race: a same-task trigger (a keyboard nav) sets the flag synchronously,
- * before this helper gets to poll, while a cached path may never toggle it true
- * at all (see the comment in `spatial-index-accuracy.spec.ts`). Waiting for
- * `true` first would hang in the second case.
+ * race: a same-task trigger (a keyboard nav) sets the flag synchronously —
+ * `SceneLoader.updateView` takes the lock before its first await — so it is
+ * already true before this helper gets to poll, while a fully cache-served pass
+ * may never be OBSERVED true at all: polling is discrete (`waitForFunction` on
+ * rAF below, then a 100 ms loop), so such a pass can start and finish between
+ * two polls. That is why the callers in `spatial-index-accuracy.spec.ts` prefer
+ * this silent variant. Waiting for `true` first would hang in the second case.
  *
  * The only preliminary wait is for the flag to EXIST (`typeof isLoading ===
  * 'boolean'`), i.e. for the debug interface to be installed; if that never

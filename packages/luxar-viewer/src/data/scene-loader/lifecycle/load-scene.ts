@@ -133,6 +133,18 @@ export interface LoadSceneCtx {
   getFailedLoadsProvider(): FailedLoadsProviderPort;
   /** Kick the GSplats LOD refinement loop after initial load. */
   scheduleGSplatsRefinement(): Promise<void>;
+  /**
+   * Drain any view-state queued while the serialization lock was held,
+   * re-entering `updateView` with it. Only used by the post-load refinement
+   * kick's rejection handler — see the comment at that call site.
+   */
+  drainPendingViewState(): void;
+  /**
+   * Settle callers parked in `updateView`'s supersede branch. Only used by the
+   * post-load refinement kick's rejection handler, for the case where nothing
+   * was queued and so no re-entered pass will resolve them.
+   */
+  resolvePassWaiters(): void;
 
   // Resource-write setters — orchestrator nulls/sets its own fields.
   /**
@@ -477,11 +489,28 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
         Modules.SCENE_LOADER,
         `Post-load progressive refinement failed: ${(error as Error).message}`
       );
-      // Belt-and-braces lock recovery (mirrors queue-next.ts): each loop
-      // releases the lock in its own finally, so a rejection here means the
-      // orchestrator glue died outside them — without this release the lock
-      // taken above is held forever and every future updateView freezes.
+      // Belt-and-braces lock recovery (mirrors queue-next.ts and
+      // SceneLoader.kickRefinementIfIdle): each loop releases the lock in its
+      // own finally, so a rejection here means the orchestrator glue died
+      // outside them — a double fault, not an expected path. Without this
+      // release the lock taken above is held forever and every future
+      // updateView freezes.
+      //
+      // Draining matters as much as releasing, because the pending slot is
+      // routinely occupied in exactly this window: this kick fires from inside
+      // `loadScene` before it returns, so the init pipeline's first
+      // `updateAllNDNodes` → `updateView` lands while the kick holds the lock,
+      // takes updateView's supersede branch and parks its state via
+      // `setPending`. A filled slot that nothing drains strands the user's
+      // initial slice AND latches `isLoadPassInProgress()` true forever (every
+      // polling E2E helper then burns its full timeout). drain() is a no-op
+      // when nothing was queued.
       ctx.setUpdateInProgress(false);
+      ctx.drainPendingViewState();
+      // Belt-and-braces: when nothing was queued during the failed run, no
+      // re-entry will resolve parked waiters — settle them here (resolve-only;
+      // harmless if the drain re-enters and resolves again).
+      ctx.resolvePassWaiters();
     });
   }
 

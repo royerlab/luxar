@@ -447,6 +447,7 @@ describe('SceneLoader', () => {
 
     it('dispose leaves a torn-down loader reading idle, whatever state it was in', async () => {
       const flags = sceneLoader as unknown as LockFlags;
+      const queue = (sceneLoader as unknown as { viewStateQueue: ViewStateQueue }).viewStateQueue;
       // Defence in depth, not a production bug fix: every SceneLoaderManager
       // disposal path detaches the loader before disposing it, so the aggregate
       // cannot observe a disposed loader anyway. This pins that a disposed
@@ -455,18 +456,32 @@ describe('SceneLoader', () => {
       // it.
       flags._updateInProgress = true;
       flags._refining = true;
+      // …and a QUEUED view-state is the third input to the predicate, so a
+      // disposal must clear it too: a disposed loader never runs its pending
+      // pass, so a slot left filled reads busy forever. Parked through the real
+      // supersede branch (the lock is held), which also leaves a pass waiter
+      // for dispose() to flush.
+      const parked = sceneLoader.updateView({ slicePosition: [1, 0, 0, 0] });
+      expect(queue.hasPending()).toBe(true);
 
       await sceneLoader.dispose();
 
       expect(flags._updateInProgress).toBe(false);
       expect(flags._refining).toBe(false);
+      expect(queue.hasPending()).toBe(false);
       expect(sceneLoader.isLoadPassInProgress()).toBe(false);
       expect(sceneLoader.isUpdateInProgress()).toBe(false);
+      // dispose() flushes parked waiters (resolve-only), so this cannot hang.
+      await parked;
     });
 
-    it('counts a view-state queued behind a refinement hold as a load pass', () => {
+    it('counts a view-state queued behind a refinement hold as a load pass', async () => {
       const flags = sceneLoader as unknown as LockFlags;
-      const queue = (sceneLoader as unknown as { viewStateQueue: ViewStateQueue }).viewStateQueue;
+      const internals = sceneLoader as unknown as {
+        viewStateQueue: ViewStateQueue;
+        resolvePassWaiters(): void;
+      };
+      const queue = internals.viewStateQueue;
 
       // The steady state right after a commit on any laddered dataset: the
       // update tail handed the lock to the refinement orchestrator.
@@ -474,16 +489,89 @@ describe('SceneLoader', () => {
       flags._refining = true;
       expect(sceneLoader.isLoadPassInProgress()).toBe(false);
 
-      // A keyboard nav lands: updateView takes its supersede branch, parks the
-      // state and returns without touching either flag. The slice the user
-      // asked for has NOT begun loading, so this must not read idle.
-      queue.setPending({ slicePosition: [1, 0, 0] });
+      // A keyboard nav lands: driven through the REAL supersede branch (which
+      // runs synchronously, before updateView's first await), so this pins the
+      // writer as well as the predicate — updateView parks the state and
+      // returns without touching either flag. The slice the user asked for has
+      // NOT begun loading, so this must not read idle.
+      const parked = sceneLoader.updateView({ slicePosition: [1, 0, 0] });
       expect(sceneLoader.isLoadPassInProgress()).toBe(true);
 
       // Cleared at the moment the next pass starts (queueNext / the refinement
       // loop's cancellation check / finalReleaseLock's drain all take it), so
       // the queued clause cannot latch busy once a pass is running.
       expect(queue.takePending()).not.toBeNull();
+      expect(sceneLoader.isLoadPassInProgress()).toBe(false);
+
+      // Unpark the caller (no real pass will run here) and drop the simulated
+      // hold so the shared afterEach dispose sees a clean loader.
+      internals.resolvePassWaiters();
+      await parked;
+      flags._updateInProgress = false;
+      flags._refining = false;
+    });
+  });
+
+  // The post-load refinement kick in `lifecycle/load-scene.ts` fires from
+  // inside `loadScene`, holding the serialization lock. Its `.catch` is the
+  // belt-and-braces double-fault path (each refinement loop releases the lock
+  // in its own `finally`), and it must be symmetric with its two siblings —
+  // `update-view/queue-next.ts` and `kickRefinementIfIdle` — because the
+  // pending slot is routinely occupied in exactly this window: the init
+  // pipeline's first `updateAllNDNodes` → `updateView` lands while the kick
+  // holds the lock and parks its state. A slot nothing drains stranded the
+  // user's initial slice, and now also latches `isLoadPassInProgress()` true.
+  describe('post-load refinement kick — a rejection drains the pending slot', () => {
+    it('releases the lock, drains the queued view-state and settles waiters', async () => {
+      const internals = sceneLoader as unknown as {
+        makeNodeBuildCtx(): unknown;
+        scheduleGSplatsRefinement(): Promise<void>;
+        gsplatLoaders: Map<string, unknown>;
+        viewStateQueue: ViewStateQueue;
+        _updateInProgress: boolean;
+      };
+
+      // Register a progressive loader mid-load so the post-load kick fires at
+      // all: `makeNodeBuildCtx()` is called once, immediately before the
+      // recursive node walk that would normally register it.
+      const realMakeNodeBuildCtx = internals.makeNodeBuildCtx.bind(internals);
+      vi.spyOn(internals, 'makeNodeBuildCtx').mockImplementation(() => {
+        internals.gsplatLoaders.set('progressive-stub', { hasMoreLODs: true });
+        return realMakeNodeBuildCtx();
+      });
+
+      const updateViewSpy = vi.spyOn(sceneLoader, 'updateView');
+      const navState = { slicePosition: [1, 0, 0, 0] };
+      let parked: Promise<void> | null = null;
+      vi.spyOn(internals, 'scheduleGSplatsRefinement').mockImplementation(async () => {
+        // The lock is held by the kick, so this takes updateView's supersede
+        // branch and parks the state — the real init-pipeline race.
+        parked = sceneLoader.updateView(navState);
+        // Drop the stub so the drained re-entry is an ordinary (loader-free)
+        // pass and cannot kick refinement a second time.
+        internals.gsplatLoaders.clear();
+        throw new Error('orchestrator glue died outside the refinement finallys');
+      });
+
+      await sceneLoader.loadScene('http://localhost:8000/test.zarr');
+      // The rejection handler runs on a microtask after the kick's promise
+      // settles, and `drain` re-enters updateView one microtask later — a
+      // macrotask hop flushes both.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(parked).not.toBeNull();
+      // Drained: the slot the parked nav filled is empty again…
+      expect(internals.viewStateQueue.hasPending()).toBe(false);
+      // …because it was re-entered as a fresh pass with that exact state.
+      expect(updateViewSpy).toHaveBeenCalledTimes(2);
+      expect(updateViewSpy.mock.calls[1][0]).toEqual(navState);
+      // Waiters settled (the handler resolves them outright, which also covers
+      // the nothing-was-queued case; the re-entered pass would too).
+      await parked!;
+      // The lock the kick took is released, and the drained pass released its
+      // own — a torn-down double fault leaves the loader idle, not latched.
+      await updateViewSpy.mock.results[1].value;
+      expect(internals._updateInProgress).toBe(false);
       expect(sceneLoader.isLoadPassInProgress()).toBe(false);
     });
   });

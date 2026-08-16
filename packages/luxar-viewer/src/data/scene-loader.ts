@@ -709,6 +709,8 @@ export class SceneLoader {
       getFailedLoaderPaths: () => Array.from(this.failedLoaders.keys()),
       getFailedLoadsProvider: () => this.getFailedLoadsProvider(),
       scheduleGSplatsRefinement: () => this.scheduleGSplatsRefinement(),
+      drainPendingViewState: () => this.viewStateQueue.drain((state) => this.updateView(state)),
+      resolvePassWaiters: () => this.resolvePassWaiters(),
       setDatasetAbortController: (c) => {
         this._datasetAbortController = c;
       },

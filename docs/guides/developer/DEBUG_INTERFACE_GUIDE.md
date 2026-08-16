@@ -72,7 +72,7 @@ object is never created, so there is zero overhead in production.
 
 | Method | Return type | Description |
 |---|---|---|
-| `getState()` | `object` | JSON-serializable snapshot of current state (point counts per cloud, camera position/FOV, dimension info, animation status, initialization status, and `isLoading` — true while a load pass, i.e. an `updateView` fetch/decode/upload sweep up to its geometry commit, is in flight on any registered scene loader; see the scope notes below). |
+| `getState()` | `object` | JSON-serializable snapshot of current state (point counts per cloud, camera position/FOV, dimension info, animation status, initialization status, and `isLoading` — true while a load pass, i.e. an `updateView` fetch/decode/upload sweep up to its geometry commit, is in flight on any registered scene loader, or a view-state is queued behind one; see the scope notes below). |
 | `renderOnce()` | `void` | Kicks the animation loop to force a single render frame. Useful for stable screenshots. |
 | `getSceneLoader()` | `SceneLoaderManager` | Returns the singleton scene loader manager for inspecting loaded data. |
 
@@ -165,8 +165,13 @@ boolean in every snapshot, not merely absent when nothing is loading: `!undefine
 is `true`, which gates on nothing.
 
 `isLoading` is scoped to a load pass — an `updateView` sweep (fetch / decode /
-upload) up to its geometry commit, or a failed-loader retry, which takes the same
-lock. It deliberately does **not** cover:
+upload) up to its geometry commit, a failed-loader retry (which takes the same
+lock), or a view-state that is **queued** behind either and has not begun
+loading yet. That last clause is what keeps the refinement exclusion below from
+opening a hole: a nav arriving during a refinement hold parks in the queue
+without touching the lock, so an `isLoading: true` with no fetch in flight is
+the expected reading on any laddered dataset. It deliberately does **not**
+cover:
 
 - the **initial `loadScene`** (that path only touches the loader's lock at its
   very end, to hand it to the post-load refinement kick). Wait on `initialized`
