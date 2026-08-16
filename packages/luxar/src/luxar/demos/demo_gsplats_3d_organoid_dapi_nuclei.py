@@ -205,8 +205,10 @@ def load_dapi_data():
 
     Returns ``(V, acquisition)``. ``V`` is the preprocessed working copy the
     fitter is given -- one channel, downscaled to ``TARGET_SIZE``, normalized to
-    [0, 1] -- and ``acquisition`` is ``(shape, dtype)`` of the ORIGINAL stored
-    channel, or ``None`` when the array was synthesized here and so is its own
+    [0, 1] -- and ``acquisition`` is ``(shape, dtype, stored_bytes)`` of the
+    ORIGINAL stored channel -- the grid and element type it was acquired at, and
+    what it OCCUPIES in the store (compressed), which are different numbers and
+    give different compression ratios, or ``None`` when the array was synthesized here and so is its own
     source. The fit stamps the acquisition rather than the working copy, or the
     compression ratio it publishes would be quoted against a downscaled float32
     copy of the data instead of the data.
@@ -247,7 +249,16 @@ def load_dapi_data():
                 # Captured BEFORE the cast and the downscale below: this is the
                 # grid and element type the compression ratio must be quoted
                 # against.
-                acquisition = ((z_size, y_size, x_size), str(data.dtype))
+                # Third element: what the channel OCCUPIES in the store, from
+                # the zarr chunks themselves. The decoded size is voxels x
+                # itemsize, but nobody downloads the decoded array -- so both
+                # are recorded and `gsplat info` quotes a ratio against each.
+                try:
+                    nb = data.nbytes_stored()
+                    stored = int(nb * (z_size * y_size * x_size) / max(data.size, 1))
+                except Exception:  # older zarr, or a store that cannot report it
+                    stored = None
+                acquisition = ((z_size, y_size, x_size), str(data.dtype), stored)
             else:
                 raise ValueError(f"Unexpected data shape: {full_shape}")
 
@@ -328,7 +339,7 @@ def fit_dapi_gsplats(volume, acquisition=None):
         # `volume` is a downscaled, normalized float32 copy of one channel, so
         # declaring the acquisition is what keeps the stamped compression ratio
         # about the DATA rather than about this working copy.
-        src_shape, src_dtype = acquisition or (None, None)
+        src_shape, src_dtype, src_stored = acquisition or (None, None, None)
         result = fit_gaussian_splats(
             volume,
             seeds=MAX_SPLATS,
@@ -337,6 +348,7 @@ def fit_dapi_gsplats(volume, acquisition=None):
             max_eccentricity=8.0,
             source_shape=src_shape,
             source_dtype=src_dtype,
+            source_stored_bytes=src_stored,
         )
 
         n_splats = len(result.amplitudes)

@@ -156,6 +156,7 @@ _FITTING_INFO_KEYS = (
     "source_dtype",
     "source_voxels",
     "source_bytes",
+    "source_stored_bytes",
     "fitted_shape",
     "fitted_voxels",
     "occupancy",

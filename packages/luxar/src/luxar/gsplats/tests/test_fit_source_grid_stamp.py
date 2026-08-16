@@ -553,3 +553,46 @@ def test_the_merge_sizes_a_source_grid_from_the_dtype_name_alone() -> None:
         source_dtype="not-a-dtype",
     )
     assert "source_bytes" not in unsizable.stats
+
+
+# ── Two ratios, because the two sides of one ratio measure unlike things ──────
+#
+# `source_bytes` is the DECODED array while the splat store on disk is
+# compressed, so that ratio credits the splats with whatever the source codec
+# was already achieving. Measured on DAPI the two differ by ~35x, which is the
+# whole reason both are recorded rather than either alone.
+
+
+def test_the_stored_source_size_is_recorded_beside_the_decoded_one() -> None:
+    stats = _fit(
+        _sparse_blobs(shape=(24, 32, 32)),
+        source_shape=(96, 128, 128),
+        source_dtype="uint16",
+        source_stored_bytes=1_000_000,
+    ).stats
+    assert stats["source_bytes"] == 96 * 128 * 128 * 2  # decoded
+    assert stats["source_stored_bytes"] == 1_000_000  # as downloaded
+    assert stats["source_bytes"] != stats["source_stored_bytes"], (
+        "the two sizes collapsed — one of them is not measuring what it claims"
+    )
+
+
+def test_the_stored_size_is_absent_rather_than_guessed() -> None:
+    """Never infer it from the decoded size: the codec's factor is unknown."""
+    assert "source_stored_bytes" not in _fit(_sparse_blobs(shape=(16, 16, 16))).stats
+
+
+@pytest.mark.parametrize(
+    "bad", [0, -5, 1.5, True, "1000"], ids=["zero", "neg", "frac", "bool", "str"]
+)
+def test_a_malformed_stored_size_is_refused(bad: object) -> None:
+    with pytest.raises(ValueError):
+        _fit(_sparse_blobs(shape=(8, 8, 8)), source_stored_bytes=bad)
+
+
+def test_the_stored_size_reaches_the_fitting_group(tmp_path: Path) -> None:
+    out = tmp_path / "stored.gsplats.zarr"
+    if out.exists():
+        shutil.rmtree(out)
+    _fit(_sparse_blobs(shape=(16, 16, 16)), source_stored_bytes=4242).save(out)
+    assert (read_node_attrs(out / "fitting") or {})["source_stored_bytes"] == 4242
