@@ -538,9 +538,16 @@ def finalize_results(
             stats["mse"] = quality["mse"]
             stats["psnr_db"] = quality["psnr_db"]
             stats["ssim"] = quality["ssim"]
+            # Foreground PSNR is the honest score on sparse volumes, where the
+            # global figure is mostly a report on reconstructed emptiness.
+            stats["foreground_psnr_db"] = quality["foreground_psnr_db"]
+            stats["foreground_threshold"] = quality["foreground_threshold"]
+            stats["foreground_fraction"] = quality["foreground_fraction"]
             if config.verbose:
                 aprint(
                     f"Quality: PSNR={quality['psnr_db']:.1f} dB, "
+                    f"foreground PSNR={quality['foreground_psnr_db']:.1f} dB "
+                    f"(over {quality['foreground_fraction'] * 100:.2f}% of voxels), "
                     f"SSIM={quality['ssim']:.4f}, MSE={quality['mse']:.2e}"
                 )
         except Exception as exc:

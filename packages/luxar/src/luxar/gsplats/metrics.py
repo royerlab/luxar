@@ -375,6 +375,120 @@ def compute_psnr(
 
 
 # ---------------------------------------------------------------------------
+# Foreground PSNR
+# ---------------------------------------------------------------------------
+
+#: Histogram resolution for :func:`otsu_threshold`. 256 is skimage's default;
+#: the two agree to within one bin, which ``test_metrics.py`` pins.
+_OTSU_BINS = 256
+
+
+def otsu_threshold(target: torch.Tensor, bins: int = _OTSU_BINS) -> float:
+    """Otsu's between-class-variance threshold, on the input device.
+
+    Reimplemented here rather than delegating to ``skimage.filters`` because
+    scikit-image lives in the ``demos`` extra, and the existing
+    ``calibration.content._otsu_threshold`` degrades to ``V.min()`` when the
+    import fails. A silent fallback is tolerable for a seeding heuristic and
+    is not tolerable for a published metric: it would make the *definition* of
+    foreground depend on which extras happened to be installed. This version
+    has no optional dependency, so the number means one thing everywhere.
+
+    Follows scikit-image's formulation exactly (cumulative class weights and
+    means over histogram bin *centres*, threshold taken at the argmax of the
+    between-class variance) so the two are numerically interchangeable.
+
+    Returns ``target.min()`` for a constant volume, which selects nothing under
+    the strict ``>`` that :func:`compute_foreground_psnr` applies.
+    """
+    flat = target.reshape(-1).to(torch.float32)
+    lo = float(flat.min().item())
+    hi = float(flat.max().item())
+    if not math.isfinite(lo) or not math.isfinite(hi) or hi <= lo:
+        return lo
+
+    counts = torch.histc(flat, bins=bins, min=lo, max=hi)
+    edges = torch.linspace(lo, hi, bins + 1, device=counts.device)
+    centres = (edges[:-1] + edges[1:]) / 2.0
+
+    weight1 = torch.cumsum(counts, 0)
+    weight2 = torch.flip(torch.cumsum(torch.flip(counts, [0]), 0), [0])
+    # Bins are non-empty by construction only in aggregate; guard the divisions
+    # so an empty leading/trailing class yields 0 variance rather than a NaN
+    # that would poison the argmax.
+    cw = counts * centres
+    mean1 = torch.cumsum(cw, 0) / weight1.clamp(min=1e-12)
+    mean2 = torch.flip(torch.cumsum(torch.flip(cw, [0]), 0), [0]) / weight2.clamp(
+        min=1e-12
+    )
+    variance = weight1[:-1] * weight2[1:] * (mean1[:-1] - mean2[1:]) ** 2
+    variance = torch.nan_to_num(variance, nan=0.0, posinf=0.0, neginf=0.0)
+    return float(centres[int(torch.argmax(variance).item())].item())
+
+
+def compute_foreground_psnr(
+    pred: torch.Tensor,
+    target: torch.Tensor,
+    data_range: float | None = None,
+    threshold: float | None = None,
+) -> Tuple[float, float, float]:
+    """PSNR restricted to foreground voxels of *target*.
+
+    Global PSNR is dominated by background on sparse volumes -- a light-sheet
+    stack that is 97.8% empty scores well for reconstructing the emptiness --
+    so the foreground number is the one that says whether the *signal* survived
+    the fit. Reported alongside, never instead of, the global figure.
+
+    The error is averaged over foreground voxels only, but ``data_range`` is
+    taken from the **whole** target, matching
+    :func:`luxar.gsplats.calibration.metrics.held_out_psnr_foreground` so the
+    two are comparable. Using the foreground's own range instead would shrink
+    the reference and silently inflate the result.
+
+    Parameters
+    ----------
+    pred, target : torch.Tensor
+        Same shape. Foreground is defined on *target*, never on *pred*: a fit
+        that hallucinates signal must be scored against where the signal
+        actually is.
+    data_range : float, optional
+        Defaults to ``target.max() - target.min()`` over the whole volume.
+    threshold : float, optional
+        Foreground is ``target > threshold``. Defaults to Otsu.
+
+    Returns
+    -------
+    (psnr_db, threshold, fraction)
+        ``fraction`` is the share of voxels counted as foreground -- report it,
+        because a PSNR over 0.01% of the volume means something very different
+        from one over 40%. ``psnr_db`` is ``nan`` when the foreground is empty.
+    """
+    if pred.shape != target.shape:
+        raise ValueError(f"Shape mismatch: pred {pred.shape} vs target {target.shape}")
+
+    if threshold is None:
+        threshold = otsu_threshold(target)
+
+    mask = target > threshold
+    n_fg = int(mask.sum().item())
+    fraction = n_fg / max(target.numel(), 1)
+    if n_fg == 0:
+        return float("nan"), float(threshold), fraction
+
+    mse = torch.mean((pred[mask] - target[mask]) ** 2).item()
+    if mse == 0.0:
+        return float("inf"), float(threshold), fraction
+
+    if data_range is None:
+        data_range = float((target.max() - target.min()).item())
+    if data_range == 0.0:
+        return float("inf"), float(threshold), fraction
+
+    psnr = 10.0 * math.log10(data_range**2 / mse)
+    return psnr, float(threshold), fraction
+
+
+# ---------------------------------------------------------------------------
 # Aggregate
 # ---------------------------------------------------------------------------
 
@@ -402,7 +516,10 @@ def compute_quality_metrics(
     Returns
     -------
     dict
-        Keys: ``mse``, ``psnr_db``, ``ssim``, ``rel_l2``, ``max_abs_error``.
+        Keys: ``mse``, ``psnr_db``, ``ssim``, ``rel_l2``, ``max_abs_error``,
+        ``foreground_psnr_db``, ``foreground_threshold``,
+        ``foreground_fraction``.  The foreground trio is the honest score on
+        sparse data -- see :func:`compute_foreground_psnr`.
     """
     if pred.shape != target.shape:
         raise ValueError(f"Shape mismatch: pred {pred.shape} vs target {target.shape}")
@@ -421,6 +538,9 @@ def compute_quality_metrics(
     ssim = compute_ssim(
         pred, target, window_size=ssim_window_size, data_range=data_range
     )
+    fg_psnr_db, fg_threshold, fg_fraction = compute_foreground_psnr(
+        pred, target, data_range=data_range
+    )
 
     return {
         "mse": mse,
@@ -428,4 +548,7 @@ def compute_quality_metrics(
         "ssim": ssim,
         "rel_l2": rel_l2,
         "max_abs_error": max_abs_error,
+        "foreground_psnr_db": fg_psnr_db,
+        "foreground_threshold": fg_threshold,
+        "foreground_fraction": fg_fraction,
     }

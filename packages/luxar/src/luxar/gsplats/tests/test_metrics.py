@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 import pytest
 import torch
 
@@ -9,9 +11,11 @@ from luxar.gsplats.metrics import (
     _should_tile_ssim,
     _ssim_nd,
     _ssim_nd_tiled,
+    compute_foreground_psnr,
     compute_psnr,
     compute_quality_metrics,
     compute_ssim,
+    otsu_threshold,
 )
 
 # ---------------------------------------------------------------------------
@@ -142,7 +146,16 @@ class TestQualityMetrics:
     ) -> None:
         a, b = identical_2d
         m = compute_quality_metrics(a, b)
-        expected_keys = {"mse", "psnr_db", "ssim", "rel_l2", "max_abs_error"}
+        expected_keys = {
+            "mse",
+            "psnr_db",
+            "ssim",
+            "rel_l2",
+            "max_abs_error",
+            "foreground_psnr_db",
+            "foreground_threshold",
+            "foreground_fraction",
+        }
         assert set(m.keys()) == expected_keys
 
     def test_identical_metrics(
@@ -337,3 +350,212 @@ class TestShouldTile:
     def test_small_volume_no_tile(self, device: torch.device) -> None:
         # 32^3 * 4 bytes * 8 ≈ 1 MB — should never exceed 50% GPU memory
         assert _should_tile_ssim((32, 32, 32), device) is False
+
+
+# ---------------------------------------------------------------------------
+# Foreground PSNR
+# ---------------------------------------------------------------------------
+
+
+class TestOtsuThreshold:
+    """The reimplementation must agree with scikit-image, or the metric drifts.
+
+    ``otsu_threshold`` exists so the foreground definition carries no optional
+    dependency (scikit-image is in the ``demos`` extra, and the calibration
+    helper silently degrades to ``V.min()`` without it). That is only safe if
+    it computes the same number, so this pins the equivalence rather than
+    trusting the port.
+    """
+
+    @pytest.mark.parametrize(
+        "name",
+        ["bimodal", "sparse", "uniform", "blob", "wide_range"],
+    )
+    def test_matches_skimage_exactly(self, name: str) -> None:
+        skimage_filters = pytest.importorskip("skimage.filters")
+        import numpy as np
+
+        rng = np.random.default_rng(0)
+        arrays = {
+            "bimodal": np.concatenate(
+                [rng.normal(0.1, 0.02, 20000), rng.normal(0.8, 0.05, 2000)]
+            ).astype(np.float32),
+            # The case that matters for Luxar: a mostly-empty light-sheet stack.
+            "sparse": np.concatenate(
+                [
+                    np.zeros(49000, np.float32),
+                    rng.uniform(0.3, 1.0, 1000).astype(np.float32),
+                ]
+            ),
+            "uniform": rng.uniform(0, 1, 20000).astype(np.float32),
+            "blob": np.exp(
+                -((np.mgrid[0:30, 0:30, 0:30] - 15).__pow__(2).sum(axis=0) / 40)
+            ).astype(np.float32),
+            "wide_range": rng.integers(0, 4096, 20000).astype(np.float32),
+        }
+        arr = arrays[name]
+        expected = float(skimage_filters.threshold_otsu(arr))
+        actual = otsu_threshold(torch.from_numpy(arr.ravel()))
+        # Exact, not "within a bin": the port picks the same histogram bin, so
+        # only float noise should separate them. A one-bin tolerance is too
+        # slack to be worth writing -- it survives swapping the cumulative
+        # class indices, which is precisely the porting error to guard against.
+        bin_width = (float(arr.max()) - float(arr.min())) / 256
+        assert abs(actual - expected) <= bin_width * 1e-3, (
+            f"{name}: ours {actual} vs skimage {expected} "
+            f"(should be the same bin; bin width {bin_width})"
+        )
+
+    def test_constant_volume_selects_nothing(self) -> None:
+        """A flat volume has no foreground; the strict ``>`` must yield none."""
+        const = torch.full((100,), 3.0)
+        assert otsu_threshold(const) == 3.0
+        psnr, _, fraction = compute_foreground_psnr(const, const)
+        assert fraction == 0.0
+        assert psnr != psnr  # nan: undefined, not a free "perfect" score
+
+
+class TestForegroundPSNR:
+    def test_ignores_background_error(self) -> None:
+        """Error placed only in background must not move the foreground score.
+
+        This is the whole point of the metric, and it is the assertion that
+        fails if the mask is ever dropped or inverted.
+        """
+        target = torch.zeros(32, 32, 32)
+        target[10:20, 10:20, 10:20] = 1.0
+
+        exact = target.clone()
+        dirty = target.clone()
+        dirty[0:5, 0:5, 0:5] = 0.4  # background-only corruption
+
+        fg_exact, _, _ = compute_foreground_psnr(exact, target)
+        fg_dirty, _, _ = compute_foreground_psnr(dirty, target)
+        assert fg_exact == float("inf")
+        assert fg_dirty == float("inf"), "background error leaked into foreground"
+
+        # ... while the global PSNR does degrade, proving the two differ.
+        assert compute_psnr(dirty, target) < float("inf")
+
+    def test_is_harsher_than_global_on_sparse_data(self) -> None:
+        """On a sparse volume the global figure flatters; foreground must not."""
+        target = torch.zeros(64, 64, 64)
+        target[30:34, 30:34, 30:34] = 1.0
+        pred = target.clone()
+        pred[30:34, 30:34, 30:34] = 0.1  # lose 90% of the signal
+
+        global_psnr = compute_psnr(pred, target)
+        fg_psnr, _, fraction = compute_foreground_psnr(pred, target)
+        assert global_psnr > 30.0, "sanity: global PSNR is indeed flattering here"
+        assert fg_psnr < 5.0, "foreground PSNR must expose the lost signal"
+        assert fraction < 0.001
+
+    def test_data_range_comes_from_the_whole_volume(self) -> None:
+        """Using the foreground's own range would silently inflate the score.
+
+        Foreground values here span [0.9, 1.0] but the volume spans [0, 1]; the
+        result must reflect the wider reference.
+        """
+        target = torch.zeros(16, 16, 16)
+        target[4:8, 4:8, 4:8] = torch.linspace(0.9, 1.0, 64).reshape(4, 4, 4)
+        pred = target + 0.01
+
+        fg_psnr, _, _ = compute_foreground_psnr(pred, target)
+        expected = 10.0 * math.log10(1.0**2 / (0.01**2))
+        assert fg_psnr == pytest.approx(expected, abs=0.2)
+
+        narrow = compute_foreground_psnr(pred, target, data_range=0.1)[0]
+        assert narrow < fg_psnr - 15.0, "the two conventions must be far apart"
+
+    def test_foreground_defined_on_target_not_prediction(self) -> None:
+        """A fit that invents signal is scored where the signal really is."""
+        target = torch.zeros(16, 16, 16)
+        target[2:5, 2:5, 2:5] = 1.0
+        hallucinating = target.clone()
+        hallucinating[10:14, 10:14, 10:14] = 1.0  # signal that is not there
+
+        _, _, fraction = compute_foreground_psnr(hallucinating, target)
+        real_fraction = float((target > 0).float().mean())
+        assert fraction == pytest.approx(real_fraction, abs=1e-6)
+
+    def test_explicit_threshold_overrides_otsu(self) -> None:
+        target = torch.zeros(10, 10, 10)
+        target[0:5] = 0.5
+        target[5:] = 1.0
+        # A threshold above 0.5 must halve the foreground.
+        _, thr, fraction = compute_foreground_psnr(target, target, threshold=0.75)
+        assert thr == 0.75
+        assert fraction == pytest.approx(0.5)
+
+    def test_shape_mismatch_rejected(self) -> None:
+        with pytest.raises(ValueError, match="Shape mismatch"):
+            compute_foreground_psnr(torch.zeros(4, 4), torch.zeros(4, 5))
+
+    def test_aggregate_reports_the_trio(self) -> None:
+        """compute_quality_metrics must carry all three, or the stamp is partial."""
+        target = torch.zeros(16, 16, 16)
+        target[4:8, 4:8, 4:8] = 1.0
+        pred = target * 0.8
+
+        metrics = compute_quality_metrics(pred, target)
+        for key in (
+            "foreground_psnr_db",
+            "foreground_threshold",
+            "foreground_fraction",
+        ):
+            assert key in metrics, f"{key} missing from the aggregate"
+
+        standalone = compute_foreground_psnr(pred, target)[0]
+        assert metrics["foreground_psnr_db"] == pytest.approx(standalone)
+        assert metrics["foreground_psnr_db"] < metrics["psnr_db"]
+
+
+class TestChunkedForegroundPSNRParity:
+    """The progressive fitter has its own chunked copy; the two must agree.
+
+    ``fit_progressive_gsplats`` cannot hold two copies of a large volume on the
+    GPU, so it reimplements the metric chunk-wise. Two implementations of one
+    published number is exactly the kind of pair that drifts apart silently,
+    so the equivalence is pinned rather than assumed.
+    """
+
+    @pytest.mark.parametrize("chunk_voxels", [7, 1000, 10_000_000])
+    def test_matches_the_direct_implementation(self, chunk_voxels: int) -> None:
+        import numpy as np
+
+        from luxar.gsplats.fit_progressive_gsplats import (
+            _compute_foreground_psnr_chunked,
+        )
+
+        rng = np.random.default_rng(1)
+        target = np.zeros((16, 16, 16), np.float32)
+        target[4:10, 4:10, 4:10] = rng.uniform(0.5, 1.0, (6, 6, 6)).astype(np.float32)
+        pred = (target + rng.normal(0, 0.05, target.shape)).astype(np.float32)
+
+        direct, thr_d, frac_d = compute_foreground_psnr(
+            torch.from_numpy(pred), torch.from_numpy(target)
+        )
+        chunked, thr_c, frac_c = _compute_foreground_psnr_chunked(
+            torch.from_numpy(pred), target, chunk_voxels=chunk_voxels
+        )
+
+        # A chunk size of 7 forces many partial batches, so this also covers the
+        # accumulation being over the right denominator (foreground count, not
+        # total voxels) in every chunk.
+        assert chunked == pytest.approx(direct, abs=1e-4)
+        assert thr_c == pytest.approx(thr_d)
+        assert frac_c == pytest.approx(frac_d)
+
+    def test_empty_foreground_is_nan_not_zero(self) -> None:
+        import numpy as np
+
+        from luxar.gsplats.fit_progressive_gsplats import (
+            _compute_foreground_psnr_chunked,
+        )
+
+        flat = np.full((8, 8, 8), 2.0, np.float32)
+        psnr, _, fraction = _compute_foreground_psnr_chunked(
+            torch.from_numpy(flat), flat
+        )
+        assert fraction == 0.0
+        assert psnr != psnr  # nan

@@ -307,6 +307,9 @@ def info_dataset(
                 "n_iters",
                 "final_loss",
                 "psnr_db",
+                "foreground_psnr_db",
+                "foreground_threshold",
+                "foreground_fraction",
                 "ssim",
                 "mse",
                 "convergence_time",
@@ -746,6 +749,16 @@ def compare_quality(
             aprint("")
             aprint(f"  MSE:             {metrics['mse']:.6g}")
             aprint(f"  PSNR:            {metrics['psnr_db']:.2f} dB")
+            if "foreground_psnr_db" in metrics:
+                # The share is not decoration: on a 99%-empty volume the global
+                # PSNR above is largely a score for reproducing the emptiness,
+                # and this line says how little of the volume the honest number
+                # was taken over.
+                aprint(
+                    f"  PSNR foreground: {metrics['foreground_psnr_db']:.2f} dB "
+                    f"(over {metrics['foreground_fraction'] * 100:.2f}% of voxels, "
+                    f"Otsu > {metrics['foreground_threshold']:.4g})"
+                )
             aprint(f"  SSIM:            {metrics['ssim']:.4f}")
             aprint(f"  Rel L2:          {metrics['rel_l2']:.6g}")
             aprint(f"  Max Abs Error:   {metrics['max_abs_error']:.6g}")

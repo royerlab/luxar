@@ -140,6 +140,13 @@ _FITTING_INFO_KEYS = (
     "psnr_db",
     "ssim",
     "mse",
+    # Foreground PSNR, plus the two numbers needed to interpret it. Global PSNR
+    # on a sparse volume is dominated by background, so it is not the figure to
+    # publish alone; the threshold and the foreground share say what the score
+    # was actually taken over, which a bare dB value cannot.
+    "foreground_psnr_db",
+    "foreground_threshold",
+    "foreground_fraction",
     # What the splats represent. These describe the fit's INPUT, so they belong
     # beside the fit's other statistics rather than in the pipeline bucket that
     # catches everything else. Without them a stored dataset cannot say how much

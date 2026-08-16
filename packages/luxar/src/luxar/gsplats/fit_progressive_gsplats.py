@@ -127,6 +127,57 @@ def _compute_psnr_chunked(
     return 10.0 * math.log10(data_range**2 / mse)
 
 
+def _compute_foreground_psnr_chunked(
+    rendered_gpu: torch.Tensor,
+    original_np: np.ndarray,
+    chunk_voxels: int = 50_000_000,
+) -> tuple[float, float, float]:
+    """Foreground PSNR, chunked like :func:`_compute_psnr_chunked`.
+
+    The progressive fitter runs on volumes too large to hold twice on the GPU,
+    so it cannot call :func:`~luxar.gsplats.metrics.compute_foreground_psnr`
+    directly. Same definition: error averaged over ``original > otsu`` only,
+    ``data_range`` from the whole volume.
+
+    Returns ``(psnr_db, threshold, foreground_fraction)``.
+    """
+    from .metrics import otsu_threshold
+
+    flat_original = original_np.ravel()
+    # A view when already float32, so this does not double peak RAM.
+    threshold = otsu_threshold(torch.from_numpy(flat_original))
+
+    n = flat_original.size
+    flat_rendered = rendered_gpu.reshape(-1)
+    sse = 0.0
+    n_fg = 0
+    for i in range(0, n, chunk_voxels):
+        end = min(i + chunk_voxels, n)
+        chunk_orig = torch.from_numpy(flat_original[i:end]).to(rendered_gpu.device)
+        mask = chunk_orig > threshold
+        count = int(mask.sum().item())
+        if count:
+            sse += (
+                (flat_rendered[i:end][mask] - chunk_orig[mask]).square_().sum().item()
+            )
+            n_fg += count
+        del chunk_orig, mask
+
+    fraction = n_fg / max(n, 1)
+    if n_fg == 0:
+        return float("nan"), threshold, fraction
+
+    mse = sse / n_fg
+    if mse == 0.0:
+        return float("inf"), threshold, fraction
+
+    data_range = float(original_np.max()) - float(original_np.min())
+    if data_range == 0.0:
+        return float("inf"), threshold, fraction
+
+    return 10.0 * math.log10(data_range**2 / mse), threshold, fraction
+
+
 def fit_progressive_gaussian_splats(
     V: np.ndarray,
     max_splats: int = 50000,
@@ -519,6 +570,18 @@ def fit_progressive_gaussian_splats(
             break
         pass_i += 1
 
+    # Score the foreground before the last pass's render is freed. Taken once
+    # at the end rather than per pass: only the final value is stamped, and the
+    # patience check steers on the global PSNR.  ``cached_rendered_np`` is the
+    # render `prev_psnr` was measured from, so the two figures agree on which
+    # pass they describe.
+    if cached_rendered_np is not None:
+        fg_psnr, fg_threshold, fg_fraction = _compute_foreground_psnr_chunked(
+            torch.from_numpy(cached_rendered_np), V_original
+        )
+    else:  # no pass completed — nothing was rendered to score
+        fg_psnr, fg_threshold, fg_fraction = float("nan"), float("nan"), 0.0
+
     # Free cached render (CPU numpy) from the last pass
     del cached_rendered_np
     if torch.cuda.is_available():
@@ -534,6 +597,9 @@ def fit_progressive_gaussian_splats(
         "n_splats": total_splats,
         "time_seconds": total_time,
         "psnr_db": prev_psnr,
+        "foreground_psnr_db": fg_psnr,
+        "foreground_threshold": fg_threshold,
+        "foreground_fraction": fg_fraction,
         "stop_reason": stop_reason,
         "max_splats": max_splats,
         "max_splats_per_pass": max_splats_per_pass,
