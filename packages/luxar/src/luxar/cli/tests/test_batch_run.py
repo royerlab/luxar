@@ -844,9 +844,12 @@ def test_batch_plan_accepts_a_downscale_confined_to_single_tile_axes(
     the only rescaled axis has origin 0 in every tile. Every task then rescales
     its splats back to full resolution, so the run completes.
 
-    Not a regression test against the base (which had no gate at all): it guards
-    this gate's own first version, whose `n_tiles <= 1` proxy refused this plan,
-    with a message whose tile range degenerated to the empty "tiles 4..3".
+    The `grid_scale is None` half IS a regression test against the base, which
+    recorded `[2.0, 1.0, 1.0]` here and so mis-scaled this plan's split planes
+    (and falsely refused `--merge-refine volume`). The "plan does not raise" half
+    is not — the base had no gate to raise — it guards this gate's own first
+    version, whose `n_tiles <= 1` proxy refused this plan, with a message whose
+    tile range degenerated to the empty "tiles 4..3".
     """
     src = tmp_path / "movie.zarr"
     _make_timelapse_zarr(src)
