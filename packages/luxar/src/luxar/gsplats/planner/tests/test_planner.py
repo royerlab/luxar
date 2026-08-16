@@ -1199,7 +1199,12 @@ class TestPlannedFitTruncationRadius:
         def _reject(token: str) -> None:
             raise AssertionError(f"non-JSON token {token!r} in the store")
 
-        for meta in path.rglob("zarr.json"):
+        # Both spellings: zarr format 3 writes one `zarr.json` per node, format 2
+        # (`LUXAR_ZARR_FORMAT=2`) a `.zattrs`. Globbing only the current default
+        # would leave this examining NOTHING — and passing — under the other.
+        metas = [*path.rglob("zarr.json"), *path.rglob(".zattrs")]
+        assert metas, "no metadata documents found to check"
+        for meta in metas:
             json.loads(meta.read_text(), parse_constant=_reject)
 
     def test_content_and_uniform_flat_leaves_compose(self):
@@ -1283,18 +1288,45 @@ class TestPlannedFitTruncationRadius:
         assert merged.stats["parallel_jobs"] == 2
         assert merged.stats["overlap"] == int(plan.overlap)
         assert "elapsed_seconds" in merged.stats
-        # Each box really did record its own (huge) fit time in its store, so the
-        # SUM would be 2000s+ ...
+        # Each box really did record its own (huge) fit time in its store ...
         box_time = GSplatData.load(
             boxes_dir / "box_0.gsplats.zarr", include_stats=True
         ).stats["time_seconds"]
         assert box_time == pytest.approx(_FAKE_BOX_TIME_SECONDS)
-        # ... but `time_seconds` has ONE meaning, wall clock, as the uniform tiled
-        # merge stamps it (concurrent boxes make the sum exceed the run).
+        # ... and whatever a box recorded, `time_seconds` on the merge means one
+        # thing: wall clock, as the uniform tiled merge stamps it. (Nothing has to
+        # be overwritten HERE — a reloaded box brings back its leaf `lod_stats`
+        # but not its top-level stats, so `concatenate` has no box times to sum;
+        # `test_flat_merge_stamps_wall_clock_time` covers the sequential branch
+        # where it does and the overwrite is load-bearing.)
         assert merged.stats["time_seconds"] == pytest.approx(
             merged.stats["elapsed_seconds"]
         )
         assert merged.stats["time_seconds"] < 60.0
+
+    def test_parallel_partition_parts_keep_the_box_stats_and_radius(self, tmp_path):
+        """``fit -j N`` (the default partition): each part carries its own box.
+
+        The radius and the per-box fit stats reach a part by a different route
+        than the sequential path's in-memory hand-off — through the box store: the
+        leaf writer stamps a box's stats as its `lod_stats`, and the reload
+        restores them onto the sub-LOD even though the top-level `stats` (which
+        would need `include_stats=True`) comes back empty.
+        """
+        node = fit_planned_parallel(
+            _toy_plan(n_boxes=2),
+            jobs=2,
+            tmp_dir=tmp_path / "boxes",
+            worker_cmd_builder=_fake_box_builder(5, truncation_radius=3.5),
+            partition=True,
+            verbose=False,
+        )
+        leaves = _leaf_nodes(node)
+        assert len(leaves) == 2
+        for leaf in leaves:
+            sub = leaf.additive_sublods[0]
+            assert sub.truncation_radius == pytest.approx(3.5)
+            assert sub.stats["time_seconds"] == pytest.approx(_FAKE_BOX_TIME_SECONDS)
 
 
 class TestMaxPaddedBoxVoxels:

@@ -315,11 +315,14 @@ def fit_planned_parallel(
                 "volume_shape": list(plan.volume_shape),
                 "parallel_jobs": int(jobs),
                 "elapsed_seconds": float(elapsed),
-                # Overwrite `concatenate`'s SUM of the boxes' own times with true
-                # wall clock, as the uniform tiled merge does
+                # Wall clock, as the uniform tiled merge stamps it
                 # (`merge_tile_results`): one key must not mean "summed fit time"
-                # here and "elapsed" there — and concurrent boxes make the sum
-                # exceed the run.
+                # here and "elapsed" there — and concurrent boxes make a sum
+                # exceed the run. Here it is the SOLE writer rather than an
+                # overwrite, unlike the sequential twin: a reloaded box brings
+                # back its leaf `lod_stats` but not its top-level `stats` (that
+                # needs `include_stats=True`), so `concatenate` sees no box
+                # times to sum in the first place.
                 "time_seconds": float(elapsed),
             }
         )
