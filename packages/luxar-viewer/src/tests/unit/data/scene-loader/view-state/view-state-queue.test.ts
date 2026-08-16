@@ -69,18 +69,23 @@ describe('ViewStateQueue.drain', () => {
     queue = new ViewStateQueue();
   });
 
-  it('does nothing when no state is queued', async () => {
+  it('does nothing, and reports false, when no state is queued', async () => {
     const trigger = vi.fn().mockResolvedValue(undefined);
-    queue.drain(trigger);
+    // The return value is what the lock-recovery handlers branch on: false
+    // means nothing will re-enter updateView, so they must settle any parked
+    // pass waiters themselves.
+    expect(queue.drain(trigger)).toBe(false);
     await Promise.resolve();
     expect(trigger).not.toHaveBeenCalled();
   });
 
-  it('fires triggerUpdate with the queued state on a microtask', async () => {
+  it('fires triggerUpdate with the queued state on a microtask, and reports true', async () => {
     const trigger = vi.fn().mockResolvedValue(undefined);
     const state = { slicePosition: [1, 2, 3, 4] };
     queue.setPending(state);
-    queue.drain(trigger);
+    // True means a re-entered pass is coming and will settle the parked
+    // waiters at its own commit — the callers must NOT settle them early.
+    expect(queue.drain(trigger)).toBe(true);
     // Drain runs on a microtask — has not fired yet.
     expect(trigger).not.toHaveBeenCalled();
     await Promise.resolve();

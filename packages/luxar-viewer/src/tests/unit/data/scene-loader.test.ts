@@ -565,8 +565,10 @@ describe('SceneLoader', () => {
       // …because it was re-entered as a fresh pass with that exact state.
       expect(updateViewSpy).toHaveBeenCalledTimes(2);
       expect(updateViewSpy.mock.calls[1][0]).toEqual(navState);
-      // Waiters settled (the handler resolves them outright, which also covers
-      // the nothing-was-queued case; the re-entered pass would too).
+      // The parked waiter settles — here through the re-entered pass's own
+      // queueNext (the handler only resolves waiters itself when nothing was
+      // queued, so it can't release the pacing gate ahead of the commit the
+      // caller asked for).
       await parked!;
       // The lock the kick took is released, and the drained pass released its
       // own — a torn-down double fault leaves the loader idle, not latched.

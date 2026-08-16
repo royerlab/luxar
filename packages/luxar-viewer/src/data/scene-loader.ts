@@ -1122,12 +1122,13 @@ export class SceneLoader {
       // re-enter it or the viewer strands the user's latest slice. drain() is
       // a no-op when nothing was queued.
       this._updateInProgress = false;
-      this.viewStateQueue.drain((state) => this.updateView(state));
-      // Belt-and-braces: if no state was queued, nothing will re-enter
-      // updateView, so settle any queued-update waiters here rather than
-      // leaving them parked (resolve-only; a queued state's re-entry would
-      // have resolved them anyway).
-      this.resolvePassWaiters();
+      // If no state was queued, nothing will re-enter updateView, so settle any
+      // queued-update waiters here rather than leaving them parked. A drained
+      // state's re-entry settles them itself, at its commit — resolving here as
+      // well would release the pacing gate early (see `finalReleaseLock`).
+      if (!this.viewStateQueue.drain((state) => this.updateView(state))) {
+        this.resolvePassWaiters();
+      }
     });
   }
 

@@ -126,11 +126,14 @@ export function queueNext(ctx: QueueNextCtx): void {
       // Releasing twice is harmless (idempotent boolean), and draining is a
       // no-op when nothing queued during the failed run.
       ctx.setUpdateInProgress(false);
-      ctx.viewStateQueue.drain((state) => ctx.updateView(state));
-      // Belt-and-braces: when nothing was queued during the failed run,
-      // no re-entry will resolve parked waiters — settle them here
-      // (resolve-only; harmless if drain re-enters and resolves again).
-      ctx.resolvePassWaiters();
+      // When nothing was queued during the failed run, no re-entry will
+      // resolve parked waiters — settle them here. When a state WAS drained,
+      // the re-entered pass carries them to its own commit instead; resolving
+      // them here too would release the pacing gate before the view they
+      // asked for landed.
+      if (!ctx.viewStateQueue.drain((state) => ctx.updateView(state))) {
+        ctx.resolvePassWaiters();
+      }
     });
   } else {
     // No pending update, no refinement needed - release the lock now

@@ -137,8 +137,11 @@ export interface LoadSceneCtx {
    * Drain any view-state queued while the serialization lock was held,
    * re-entering `updateView` with it. Only used by the post-load refinement
    * kick's rejection handler — see the comment at that call site.
+   *
+   * @returns True when a state was drained (the re-entered pass then settles
+   *   the parked waiters itself); false when nothing was queued.
    */
-  drainPendingViewState(): void;
+  drainPendingViewState(): boolean;
   /**
    * Settle callers parked in `updateView`'s supersede branch. Only used by the
    * post-load refinement kick's rejection handler, for the case where nothing
@@ -506,11 +509,13 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
       // polling E2E helper then burns its full timeout). drain() is a no-op
       // when nothing was queued.
       ctx.setUpdateInProgress(false);
-      ctx.drainPendingViewState();
-      // Belt-and-braces: when nothing was queued during the failed run, no
-      // re-entry will resolve parked waiters — settle them here (resolve-only;
-      // harmless if the drain re-enters and resolves again).
-      ctx.resolvePassWaiters();
+      // When nothing was queued during the failed run, no re-entry will resolve
+      // parked waiters — settle them here. When a state WAS drained, the
+      // re-entered pass carries them to its own commit (queueNext settles them
+      // when no pending state is left), which is what a waiter means: resolving
+      // here as well would release the pacing gate before the view the caller
+      // asked for has landed. Same shape as `finalReleaseLock`.
+      if (!ctx.drainPendingViewState()) ctx.resolvePassWaiters();
     });
   }
 
