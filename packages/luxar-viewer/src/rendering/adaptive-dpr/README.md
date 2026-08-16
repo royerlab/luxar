@@ -9,7 +9,8 @@ callbacks).
 
 | Module                      | Owns                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `fps-tracker.ts`            | Sliding-window FPS estimation: O(1) trim/compaction, interval-normalized FPS, sample count / span for probe quality gates                                                                                                                                                                                                                                                                                                                                                                           |
+| `fps-tracker.ts`            | Sliding-window FPS estimation: O(1) trim/compaction, interval-normalized FPS, sample count / span for probe quality gates. The window is a maximum AGE, not a sample budget — trimming stops at `minRetainedSamples` (default 2) so the estimate stays defined below one frame per window instead of collapsing to "not enough data" at the frame rates that need adapting most                                                                                                                     |
+| `stall-detector.ts`         | Telling DEAD TIME (GC pause, synchronous decode, idle resume) apart from a genuinely slow FRAME RATE: an interval counts as dead time only when it clears the absolute `gapResetMs` floor AND is ≥4× the median of the last 5 inter-frame intervals. Its cadence memory deliberately survives the gap reset it drives — that is what lets a session that genuinely slows down converge after one or two misread intervals — and is cleared only at session boundaries                               |
 | `refresh-rate-estimator.ts` | The display's achievable rAF cap (high-water mark, fallback lower bound, sustained-uniform-low throttle downshift) that the relative FPS thresholds derive from — plus the one-shot sub-throttle DISTRESS verdict (a sustained plateau below ~22fps can't be a real display mode — 23.976Hz film/TV modes are the slowest genuine regime, so instead of latching the cap onto it, which would invert the thresholds and park the DPR at native, the manager answers with a ceiling demotion to 1.0) |
 | `hysteresis-tracker.ts`     | The sustained-high scale-up streak, with a mid-band grace so isolated dropped-frame samples don't restart the wait                                                                                                                                                                                                                                                                                                                                                                                  |
 | `probe-controller.ts`       | U-shape probe lifecycle: arm on scale-down, settle after the probe window on a CLEAN sample (accept / reject vs. the pre-change baseline / inconclusive-void), void on pause or display change                                                                                                                                                                                                                                                                                                      |
@@ -17,11 +18,14 @@ callbacks).
 
 State classification (the manager's contract with its hooks):
 
-- **Session state** (FPS window, hysteresis streak, pending probe, the
-  estimator's sample-stream transients — recent window / plateau clock /
-  unconsumed distress latch) is cheap,
+- **Session state** (FPS window, the stall detector's cadence memory, hysteresis
+  streak, pending probe, the estimator's sample-stream transients — recent
+  window / plateau clock / unconsumed distress latch) is cheap,
   display-and-moment specific, and cleared aggressively — on pause, on a
-  native-DPR change, on disable.
+  native-DPR change, on disable, on a content change. The one deliberate
+  exception is the cadence memory's survival of the frame-gap reset it drives:
+  that reset is not a session boundary, and forgetting the cadence there is what
+  made the old rule unable to converge.
 - **Learned state** (the bounds ledger) is expensive evidence and survives
   pauses and idle restores; only a display change or disable wipes it, and
   TTLs decay it.

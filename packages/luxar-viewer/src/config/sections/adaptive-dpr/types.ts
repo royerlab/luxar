@@ -71,10 +71,26 @@ export interface AdaptiveDPRConfig {
    *  most this far in the future, and are coalesced within it, ms
    *  (default: 5000). */
   contentChangeRecheckMs: number;
-  /** A gap between frames larger than this resets the FPS window and
-   *  voids any pending probe, ms (default: 350). Covers GC/decode
-   *  stalls and idle-resume gaps that would otherwise poison samples.
-   *  Trade-off: below ~1000/gapResetMs fps the manager holds state
-   *  instead of adapting (adaptivity is moot that slow anyway). */
+  /** Absolute floor for treating a gap between frames as DEAD TIME, ms
+   *  (default: 350). Dead time resets the FPS window and voids any
+   *  pending probe — it covers GC/decode stalls and idle-resume gaps
+   *  that would otherwise poison samples.
+   *
+   *  This threshold is necessary but NOT sufficient: the interval must
+   *  ALSO be a large outlier (≥4×) against the median of the recent
+   *  inter-frame intervals (see rendering/adaptive-dpr/stall-detector.ts).
+   *  A 5s gap in a 60fps stream is a 300× outlier and resets; a 2s
+   *  interval in a stream whose recent intervals are all ~2s is simply
+   *  the frame rate and is kept, so the manager still scales down below
+   *  ~1000/gapResetMs fps instead of going structurally inert there.
+   *  A genuine slowdown costs one or two misread intervals while the
+   *  median follows the new cadence.
+   *
+   *  Residual limitation: the rule only sees inter-frame intervals, so a
+   *  BURST cadence (a ~2s dead period followed by a run of ~100ms
+   *  frames, repeating) converges to "this is the frame rate"; windows
+   *  landing inside a fast burst then read as healthy even though the
+   *  user perceives ~1fps. That is a limit of the 1s FPS window, not of
+   *  the threshold. */
   gapResetMs: number;
 }

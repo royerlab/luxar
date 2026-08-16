@@ -412,11 +412,11 @@ The `GPUBufferPool` manages geometry reuse for Points, Lines, and GSplats, elimi
 
 ### 8. Adaptive DPR Manager
 
-The `AdaptiveDPRManager` dynamically adjusts device pixel ratio based on real-time FPS, trading resolution for frame rate when needed. It is a facade over pure, timestamp-driven modules in `adaptive-dpr/` (FPS tracker, refresh-rate estimator, hysteresis tracker, probe controller, bounds ledger — see that folder's README).
+The `AdaptiveDPRManager` dynamically adjusts device pixel ratio based on real-time FPS, trading resolution for frame rate when needed. It is a facade over pure, timestamp-driven modules in `adaptive-dpr/` (FPS tracker, stall detector, refresh-rate estimator, hysteresis tracker, probe controller, bounds ledger — see that folder's README).
 
 **Control loop:**
 
-- Samples FPS using a 1-second sliding window, evaluated every 500 ms; a frame gap > `gapResetMs` (stall, idle-resume) resets the window so dead time never reads as low FPS
+- Samples FPS using a 1-second sliding window, evaluated every 500 ms; a frame gap counts as dead time (window reset, pending probe voided) only when it is BOTH > `gapResetMs` and ≥4× the median of the recent inter-frame intervals, so an isolated stall or idle-resume is still discarded while a genuinely slow cadence is kept and the loop keeps adapting below ~1000/`gapResetMs` fps (a software rasterizer at 0.5 fps used to sit at native DPR forever); the sliding window likewise retains a two-sample minimum so the estimate stays defined slower than the window itself. Residual limitation: a burst cadence (dead time between fast runs) converges to "this is the frame rate", and windows landing inside a fast burst read as healthy
 - Thresholds are RELATIVE to the display's estimated achievable rAF rate: scale down below `scaleDownFpsRatio × cap`, count toward scale-up above `scaleUpFpsRatio × cap` (works unchanged on 30/60/120/144 Hz; the estimator holds a high-water mark, lower-bounded by `refreshRateFallback` until genuine rAF throttling is detected)
 - Scale-up fires after `hysteresisSeconds` of sustained high FPS, with a small mid-band grace so isolated dropped-frame samples don't restart the wait
 - The DPR walks multiplicatively below the LIVE `window.devicePixelRatio` (re-read on every evaluation and public read; a monitor/zoom change rebases all learned state and clamps an engaged override — no supersampling on a lower-DPI display) and stops strictly above `max(minDPR, learned floor)`

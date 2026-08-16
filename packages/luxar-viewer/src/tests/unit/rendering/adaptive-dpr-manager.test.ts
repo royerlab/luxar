@@ -58,6 +58,11 @@ function makeRenderer(): DPRRenderer & { setAdaptivePixelRatio: ReturnType<typeo
   } as DPRRenderer & { setAdaptivePixelRatio: ReturnType<typeof vi.fn> };
 }
 
+/** Every DPR the manager pushed to the renderer, in order. */
+function appliedDPRs(renderer: ReturnType<typeof makeRenderer>): number[] {
+  return renderer.setAdaptivePixelRatio.mock.calls.map((c) => c[0] as number);
+}
+
 /** Simulate `frameCount` frames over `durationMs` so the FPS computes deterministically. */
 function pushFrames(
   manager: AdaptiveDPRManager,
@@ -727,6 +732,280 @@ describe('AdaptiveDPRManager — gap detection & load suppression', () => {
     }
   });
 
+  it('adapts to a SUSTAINED frame rate slower than gapResetMs (software-rasterizer regime)', () => {
+    // Regression for the structurally-inert adaptive DPR measured under
+    // ANGLE/SwiftShader: below ~1000/gapResetMs fps EVERY interval looks
+    // like a stall, so the pre-fix code cleared the window and pushed
+    // lastEvaluationTime to `timestamp` on every single frame —
+    // evaluateAndAdjust never ran and the DPR stayed parked at native
+    // for the whole episode, exactly where shedding pixels helps most.
+    const m = new AdaptiveDPRManager(); // production gapResetMs (350)
+    try {
+      m.setRenderer(renderer);
+      // ~1.4fps: every 700ms interval is longer than gapResetMs. The
+      // first one has no cadence to be an outlier against (cold memory →
+      // the absolute floor decides alone) so it still resets the window;
+      // from the second on the median IS 700ms, the interval is no
+      // longer an outlier, and the samples are kept — so the third frame
+      // completes a 700ms window at ~1.4fps and the evaluation fires.
+      let t = 0;
+      for (let i = 0; i < 3; i++) {
+        m.recordFrame(t);
+        t += 700;
+      }
+      expect(m.getCurrentFPS()).toBeCloseTo(1000 / 700, 2);
+      // One multiplicative step off native: 1.0 × 0.7 (mock factor).
+      expect(m.getCurrentDPR()).toBeCloseTo(0.7, 5);
+      expect(renderer.setAdaptivePixelRatio).toHaveBeenLastCalledWith(0.7);
+    } finally {
+      restore();
+    }
+  });
+
+  it('a ONE-OFF long stall still resets the window and causes no scale-down', () => {
+    // The behaviour the gap reset exists for must survive the
+    // sustained-slow fix: an isolated 5s stall between healthy 60fps
+    // stretches is dead time, not a frame rate. Without the reset the
+    // window would blend the stall into the estimate (~0.2fps) and
+    // ratchet a scale-down on a scene that renders perfectly fine.
+    const m = new AdaptiveDPRManager();
+    try {
+      m.setRenderer(renderer);
+      let t = 0;
+      for (let i = 0; i < 61; i++) {
+        m.recordFrame(t);
+        t += 1000 / 60;
+      }
+      // One 5s stall (tab switch / synchronous decode).
+      t += 5000;
+      m.recordFrame(t);
+      expect(m.getCurrentFPS()).toBe(0); // window cleared, sampling fresh
+      t += 1000 / 60;
+
+      for (let i = 0; i < 60; i++) {
+        m.recordFrame(t);
+        t += 1000 / 60;
+      }
+      expect(m.getCurrentDPR()).toBe(1.0);
+      expect(renderer.setAdaptivePixelRatio).not.toHaveBeenCalled();
+    } finally {
+      restore();
+    }
+  });
+
+  it('catches a later isolated stall once the cadence is fast again', () => {
+    // A sustained slow cadence stops being read as dead time (it IS the
+    // frame rate); once the scene lightens, the cadence memory follows
+    // it back down, so a later isolated stall is again a large outlier
+    // and is discarded rather than folded into the estimate.
+    const m = new AdaptiveDPRManager();
+    try {
+      m.setRenderer(renderer);
+      // Phase 1 — sustained ~1.4fps: the manager adapts (see above).
+      let t = 0;
+      for (let i = 0; i < 3; i++) {
+        m.recordFrame(t);
+        t += 700;
+      }
+      expect(m.getCurrentDPR()).toBeCloseTo(0.7, 5);
+
+      // Phase 2 — the scene lightens to a healthy 60fps for 2s.
+      for (let i = 0; i < 120; i++) {
+        m.recordFrame(t);
+        t += 1000 / 60;
+      }
+      const beforeStall = m.getCurrentDPR();
+      renderer.setAdaptivePixelRatio.mockClear();
+
+      // Phase 3 — one isolated 5s stall. With the reset re-armed the
+      // window is cleared; without it the stall would read as 0.2fps and
+      // ratchet another scale-down.
+      t += 5000;
+      m.recordFrame(t);
+      expect(m.getCurrentFPS()).toBe(0);
+      t += 1000 / 60;
+      for (let i = 0; i < 30; i++) {
+        m.recordFrame(t);
+        t += 1000 / 60;
+      }
+      expect(m.getCurrentDPR()).toBe(beforeStall);
+      expect(renderer.setAdaptivePixelRatio).not.toHaveBeenCalled();
+    } finally {
+      restore();
+    }
+  });
+
+  it('TWO consecutive hitches inside a healthy session change nothing (F2 regression)', () => {
+    // Regression for the discarded "only the first over-threshold
+    // interval of a run is a stall" rule: with that rule the SECOND
+    // 400ms hitch was declared the frame rate, the window kept the dead
+    // time, and a clean 60fps session scaled DPR down (2.0 → 1.8 as
+    // measured, with the probe then RATIFYING it against a 0.2fps
+    // baseline). Under the outlier rule both hitches are ~24× the 16.7ms
+    // median, so both are dead time and nothing moves.
+    const m = new AdaptiveDPRManager();
+    try {
+      m.setRenderer(renderer);
+      let t = 0;
+      for (let i = 0; i < 120; i++) {
+        m.recordFrame(t);
+        t += 1000 / 60;
+      }
+      t += 400; // hitch #1
+      m.recordFrame(t);
+      t += 400; // hitch #2, back to back
+      m.recordFrame(t);
+      t += 1000 / 60;
+      for (let i = 0; i < 240; i++) {
+        m.recordFrame(t);
+        t += 1000 / 60;
+      }
+
+      expect(m.getCurrentDPR()).toBe(1.0);
+      expect(renderer.setAdaptivePixelRatio).not.toHaveBeenCalled();
+      expect(m.getState().dprFloor).toBe(0.5); // nothing learned either
+    } finally {
+      restore();
+    }
+  });
+
+  it.each([
+    ['400/300ms (~2.9fps)', 400, 300],
+    ['500/100ms (~3.3fps)', 500, 100],
+    ['2000/100ms (~0.95fps)', 2000, 100],
+  ])('adapts to an ALTERNATING slow cadence — %s (F1 regression)', (_label, slowMs, fastMs) => {
+    // The cadence-fragility class: with the discarded "first of a run"
+    // rule, every sub-threshold interval re-armed the reset AND pushed
+    // lastEvaluationTime forward, so these three cadences produced
+    // ZERO DPR changes over minutes — the 2000/100 one being the same
+    // class as the originally reported 0.48fps episode. The outlier
+    // rule converges after one or two intervals and then adapts.
+    const m = new AdaptiveDPRManager();
+    try {
+      m.setRenderer(renderer);
+      // Warm the cadence memory with a healthy 60fps stretch first —
+      // the adversarial start, since a fast median makes the first
+      // slow intervals look like stalls.
+      let t = 0;
+      for (let i = 0; i < 120; i++) {
+        m.recordFrame(t);
+        t += 1000 / 60;
+      }
+      for (let i = 0; i < 20; i++) {
+        t += i % 2 === 0 ? slowMs : fastMs;
+        m.recordFrame(t);
+      }
+
+      // The loop ran and shed pixels. (Whether the reduction STANDS is
+      // the U-shape probe's business — these synthetic streams keep the
+      // exact same cadence after the scale-down, so some of them are
+      // legitimately probe-rejected and reverted. What must never
+      // happen again is the pre-fix outcome: zero applies, ever.)
+      expect(appliedDPRs(renderer).length).toBeGreaterThan(0);
+      expect(Math.min(...appliedDPRs(renderer))).toBeLessThan(1.0);
+    } finally {
+      restore();
+    }
+  });
+
+  it('adapts to a uniform 0.5fps stream — slower than the FPS window itself (F3)', () => {
+    // Pins the FPS tracker's retention floor at the MANAGER level. At a
+    // 2000ms cadence the previous frame is twice the window's age when
+    // the next arrives, so age-only trimming leaves ONE sample and
+    // getFPS() returns 0 — evaluateAndAdjust bails on "not enough data"
+    // and the DPR never moves, which is exactly the measured 0.48fps
+    // episode. Reverting FPSTracker.minRetainedSamples must fail HERE,
+    // not only in the tracker's own unit test.
+    const m = new AdaptiveDPRManager();
+    try {
+      m.setRenderer(renderer);
+      let t = 0;
+      for (let i = 0; i < 12; i++) {
+        m.recordFrame(t);
+        t += 2000; // 0.5fps
+      }
+
+      expect(m.getCurrentFPS()).toBeCloseTo(0.5, 3);
+      expect(appliedDPRs(renderer)).toContain(0.7); // 1.0 × scaleDownFactor
+      expect(Math.min(...appliedDPRs(renderer))).toBeLessThan(1.0);
+    } finally {
+      restore();
+    }
+  });
+
+  it('recovers: DPR walks back up when the scene lightens, and a later stall is still caught', () => {
+    const m = new AdaptiveDPRManager();
+    try {
+      m.setRenderer(renderer);
+      // Phase 1 — 0.5fps: three frames are enough to scale down and arm
+      // a probe (the third completes a 2s window at 0.5fps).
+      let t = 0;
+      m.recordFrame(t);
+      m.recordFrame((t += 2000));
+      m.recordFrame((t += 2000));
+      const reduced = m.getCurrentDPR();
+      expect(reduced).toBeCloseTo(0.7, 5);
+
+      // Phase 2 — the scene lightens to 60fps for 6s: the pending probe
+      // settles (hugely improved → accepted), then the sustained-high
+      // streak clears hysteresisSeconds and the DPR walks back up.
+      for (let i = 0; i < 360; i++) {
+        t += 1000 / 60;
+        m.recordFrame(t);
+      }
+      expect(m.getCurrentDPR()).toBeGreaterThan(reduced);
+
+      // Phase 3 — one isolated 5s stall is again a large outlier against
+      // the now-fast median: window cleared, no reduction ratcheted.
+      const beforeStall = m.getCurrentDPR();
+      renderer.setAdaptivePixelRatio.mockClear();
+      t += 5000;
+      m.recordFrame(t);
+      expect(m.getCurrentFPS()).toBe(0); // window cleared → dead time dropped
+      t += 1000 / 60;
+      for (let i = 0; i < 30; i++) {
+        m.recordFrame(t);
+        t += 1000 / 60;
+      }
+      expect(m.getCurrentDPR()).toBe(beforeStall);
+      expect(renderer.setAdaptivePixelRatio).not.toHaveBeenCalled();
+    } finally {
+      restore();
+    }
+  });
+
+  it('a session boundary forgets the cadence, so the first long interval after it is dead time again', () => {
+    // The cadence memory survives the gap reset it drives (that is what
+    // makes it converge) but NOT a real session boundary: after a pause
+    // the pre-pause cadence describes nothing, and the first long
+    // interval may well be resume dead time the pause hook mis-timed.
+    const m = new AdaptiveDPRManager();
+    try {
+      m.setRenderer(renderer);
+      // Converge on 0.5fps: 2000ms intervals are "normal" for this scene.
+      let t = 0;
+      for (let i = 0; i < 6; i++) {
+        m.recordFrame(t);
+        t += 2000;
+      }
+      // Negative control: with the memory intact, the next 2000ms
+      // interval is the frame rate and the window keeps both samples.
+      m.recordFrame(t);
+      m.recordFrame(t + 2000);
+      expect(m.getCurrentFPS()).toBeCloseTo(0.5, 3);
+
+      // Same two frames, but across a pause: cadence forgotten → the
+      // cold-memory rule falls back to the absolute floor → dead time →
+      // the window is thrown away.
+      m.notifyPaused();
+      m.recordFrame(t + 4000);
+      m.recordFrame(t + 6000);
+      expect(m.getCurrentFPS()).toBe(0);
+    } finally {
+      restore();
+    }
+  });
+
   it('load-suppressed low FPS scales down WITHOUT arming a probe', () => {
     const m = new AdaptiveDPRManager();
     try {
@@ -1348,6 +1627,35 @@ describe('AdaptiveDPRManager — sustained distress demotes the ceiling to 1.0',
       // the latch. Scale-down thresholds stay armed against it.
       expect(s.refreshRateCap).toBeGreaterThanOrEqual(60);
       expect(r.setAdaptivePixelRatio).toHaveBeenCalledWith(1.0);
+    } finally {
+      restore();
+    }
+  });
+
+  it('a SUB-2fps scene reaches the distress verdict too (the regime the gap reset used to hide)', () => {
+    // The whole point of the sustained-slow gap-reset fix: below
+    // ~1000/gapResetMs fps the manager used to evaluate exactly never,
+    // so this path — the one built for scenes too slow for any real
+    // display mode — was structurally unreachable at the frame rates
+    // that need it MOST. A software-rasterized 1.4fps scene must now
+    // walk the same route as the 10fps one above: ceiling demoted to
+    // 1.0, DPR clamped there, cap left at the fallback so scale-down
+    // stays armed.
+    const restore = setNativeDPR(2.0);
+    const m = new AdaptiveDPRManager(); // production gapResetMs (350)
+    const r = makeRenderer();
+    m.setRenderer(r);
+    try {
+      let t = 0;
+      for (let i = 0; i < 60; i++) {
+        m.recordFrame(t);
+        t += 700; // ~1.4fps — EVERY interval exceeds gapResetMs
+      }
+      const s = m.getState();
+      expect(s.currentFPS).toBeCloseTo(1000 / 700, 2);
+      expect(s.dprCeiling).toBe(1.0);
+      expect(s.currentDPR).toBe(1.0);
+      expect(s.refreshRateCap).toBeGreaterThanOrEqual(60);
     } finally {
       restore();
     }

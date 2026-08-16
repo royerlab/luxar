@@ -48,9 +48,9 @@
  *   when scene content changes.
  *
  * The control loop is decomposed into pure, timestamp-driven modules
- * under ./adaptive-dpr/ (FPS tracker, refresh-rate estimator,
- * hysteresis tracker, probe controller, bounds ledger — see that
- * folder's README); this class is the orchestrating facade and owns
+ * under ./adaptive-dpr/ (FPS tracker, stall detector, refresh-rate
+ * estimator, hysteresis tracker, probe controller, bounds ledger — see
+ * that folder's README); this class is the orchestrating facade and owns
  * everything environmental (live devicePixelRatio, renderer, config,
  * callbacks, pause/idle/resume hooks).
  */
@@ -65,6 +65,7 @@ import { ProbeController } from './adaptive-dpr/probe-controller';
 import { BoundsLedger } from './adaptive-dpr/bounds-ledger';
 import { HysteresisTracker } from './adaptive-dpr/hysteresis-tracker';
 import { RefreshRateEstimator } from './adaptive-dpr/refresh-rate-estimator';
+import { StallDetector } from './adaptive-dpr/stall-detector';
 
 /**
  * Interface for the renderer manager that can set pixel ratio
@@ -121,6 +122,15 @@ export class AdaptiveDPRManager {
   private isEnabled: boolean;
   private lastEvaluationTime: number = 0;
   private isReducedResolution: boolean = false;
+
+  // Tells dead time apart from a slow frame rate (see
+  // adaptive-dpr/stall-detector.ts): an interval is a STALL only when it
+  // is both over `gapResetMs` and a large outlier against the recent
+  // cadence. Its cadence memory deliberately survives the gap reset it
+  // drives (that is what makes it converge) and is cleared only at
+  // genuine session boundaries. Constructed in the ctor once config is
+  // merged.
+  private stallDetector: StallDetector;
 
   // U-shape probe lifecycle (see adaptive-dpr/probe-controller.ts), the
   // learned floor it feeds (see adaptive-dpr/bounds-ledger.ts), the
@@ -196,6 +206,7 @@ export class AdaptiveDPRManager {
       graceSamples: this.config.midbandGraceSamples,
     });
     this.refreshRateEstimator = new RefreshRateEstimator(this.config.refreshRateFallback);
+    this.stallDetector = new StallDetector(this.config.gapResetMs);
     // Initial enabled state from config. At runtime, this is overridden by
     // renderingControls.defaults.adaptiveDPREnabled (persisted per-scene in localStorage).
     this.isEnabled = this.config.enabled;
@@ -249,6 +260,7 @@ export class AdaptiveDPRManager {
     this.hysteresis.clear();
     this.refreshRateEstimator.clear();
     this.fpsTracker.clear();
+    this.stallDetector.clear();
     this.restingAtNative = false;
     this.lastOperatingDPR = null;
 
@@ -300,8 +312,33 @@ export class AdaptiveDPRManager {
     // a spurious, probe-ratified scale-down — so reset the session
     // state and start sampling fresh. An in-flight probe is voided (not
     // judged): the experiment's data is contaminated, learn nothing.
+    //
+    // "Long after" is an OUTLIER test, not an absolute one (see
+    // adaptive-dpr/stall-detector.ts): the interval must clear
+    // `gapResetMs` AND be several times the recent inter-frame median.
+    // A plain absolute threshold made adaptation structurally inert
+    // exactly where shedding pixels matters most — below
+    // ~1000/gapResetMs fps (2.9fps at the 350ms default) EVERY interval
+    // exceeds it, so the tracker was cleared on every frame AND
+    // `lastEvaluationTime` was pushed to `timestamp`, leaving the
+    // `>= evaluationIntervalMs` test below comparing 0 against 500;
+    // evaluateAndAdjust never ran and a software-rasterized 0.5fps scene
+    // sat at native DPR forever. Under the outlier rule a genuine
+    // slowdown costs one or two misread intervals while the median
+    // follows the new cadence, after which the samples are kept and the
+    // normal machinery scales down (the FPS tracker's minimum retention
+    // keeps the estimate defined at those rates). Isolated stalls in a
+    // healthy session — one, or several in a row — stay outliers against
+    // the fast median and are still discarded.
+    //
+    // Residual limitation: the test only sees inter-frame intervals, so
+    // a BURST cadence (say a 2s dead period followed by a run of 100ms
+    // frames, repeating) converges to "this is the frame rate" and the
+    // dead time is kept. Windows landing inside a fast burst then read
+    // as healthy even though the user sees ~1fps — the 1s FPS window,
+    // not the detector, is the limit there.
     const last = this.fpsTracker.lastTimestamp;
-    if (last !== null && timestamp - last > this.config.gapResetMs) {
+    if (last !== null && this.stallDetector.isStall(timestamp - last)) {
       this.fpsTracker.clear();
       this.probeController.void_();
       this.hysteresis.clear();
@@ -310,6 +347,8 @@ export class AdaptiveDPRManager {
       // "sustained" throttle/distress verdict (learned state survives).
       this.refreshRateEstimator.noteSessionInterrupted();
       this.lastEvaluationTime = timestamp;
+      // NB: the detector's cadence memory is deliberately NOT cleared
+      // here — surviving its own reset is what lets it converge.
     }
 
     this.fpsTracker.push(timestamp);
@@ -670,6 +709,7 @@ export class AdaptiveDPRManager {
       this.boundsLedger.reset();
       this.refreshRateEstimator.clear();
       this.fpsTracker.clear();
+      this.stallDetector.clear();
       this.restingAtNative = false;
       this.lastOperatingDPR = null;
 
@@ -825,6 +865,7 @@ export class AdaptiveDPRManager {
    */
   notifyPaused(): void {
     this.fpsTracker.clear();
+    this.stallDetector.clear();
     this.hysteresis.clear();
     this.probeController.void_();
     // The estimator's SESSION transients (recent window, uniform-low
@@ -941,6 +982,7 @@ export class AdaptiveDPRManager {
     // earned on the old workload. Clear SESSION state, exactly like
     // notifyPaused — learned bounds were already softened above.
     this.fpsTracker.clear();
+    this.stallDetector.clear();
     this.probeController.void_();
     this.hysteresis.clear();
     log.info(
@@ -962,6 +1004,7 @@ export class AdaptiveDPRManager {
    */
   dispose(): void {
     this.fpsTracker.clear();
+    this.stallDetector.clear();
     this.onDPRChange = null;
     this.renderer = null;
     log.info(Modules.ADAPTIVE_DPR, 'Disposed');
