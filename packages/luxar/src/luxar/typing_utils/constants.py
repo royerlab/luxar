@@ -159,6 +159,29 @@ NODE_TYPE_MESH: Final[str] = "mesh"
 MIN_POINT_RADIUS: Final[float] = 0.001  # Minimum visible radius
 MAX_POINT_RADIUS: Final[float] = 1000.0  # Maximum practical radius
 
+#: The radius, in world units, that the renderer draws every point with when a
+#: points node stores no ``radii`` array. It is therefore also the extent the
+#: WRITE side must expand such a chunk's spatial bounds by: for a radii-less
+#: node the pad IS the footprint, so the stored bound is exactly the set of
+#: query positions from which a point in the chunk can be seen — never tighter
+#: (the reader cannot miss a drawn disc) and never arbitrarily looser. (The
+#: claim is scoped to this no-radii case: with per-point uint8-encoded radii the
+#: encoder rounds, so a stored radius can exceed the one the bounds were
+#: computed from by up to one quantum.) It is likewise the radius
+#: :func:`luxar.core.group.adders.points.add_points_impl` materializes when the
+#: caller supplies none, which is what makes the two agree by construction.
+#:
+#: MIRROR: ``DEFAULT_POINT_RADIUS`` in
+#: ``packages/luxar-viewer/src/config/constants.ts`` must hold the same value —
+#: that is the constant every viewer site stands in for a missing radii array
+#: with. Two fill a per-point radius array
+#: (``rendering/node-factory/create-points-node.ts`` and
+#: ``rendering/gpu-buffer-pool/points-adapter.ts``); the third,
+#: ``data/scene-loader/commit/commit-points-geometry.ts``, uses it as the scalar
+#: footprint it pads the bounding box by. Both sides are pinned by tests that
+#: name each other.
+DEFAULT_POINT_RADIUS: Final[float] = 0.5
+
 #: GSplat truncation radius ``T``, in sigmas: the Mahalanobis distance beyond
 #: which a splat's shifted Gaussian is exactly zero. The kernel is
 #: ``max(0, exp(-D²/2) - C) / (1 - C)`` with ``C = exp(-T²/2)``, so ``T`` sets

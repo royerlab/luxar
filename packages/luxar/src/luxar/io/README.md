@@ -200,7 +200,7 @@ This ensures:
 - `sort_points_compound()`: Compound ordering for Points
 - `sort_splats_spatial()`: Simple spatial ordering for GSplats
 - `sort_segments_compound()`: Compound ordering for Lines segments
-- `compute_chunk_bounds_points()`: Chunk bounds with radius extent
+- `compute_chunk_bounds_points()`: Chunk bounds with radius extent (`radii=None` ⇒ the renderer's `DEFAULT_POINT_RADIUS`, so the bound is never tighter than the drawn disc)
 - `compute_chunk_bounds_gsplats()`: Chunk bounds with ellipsoidal extent
 - `morton_encode_nd()`: Morton (Z-order) encoding
 - `morton_encode_128bit()`: Morton encoding for 128-bit coordinates

@@ -22,6 +22,7 @@ from typing import (
 import numpy as np
 from arbol import aprint
 
+from ....typing_utils.constants import DEFAULT_POINT_RADIUS
 from ...points import Points
 from ..auto_partition import resolve_auto_partition
 from ..compositing import (
@@ -45,8 +46,10 @@ if TYPE_CHECKING:
     from ..group import Group
 
 
-# Default radius used when radii are not provided
-DEFAULT_POINT_RADIUS = 0.5
+# DEFAULT_POINT_RADIUS — the radius applied when `radii` is not supplied — is
+# imported above from `luxar.typing_utils.constants`, which owns it: the spatial
+# index expands a no-radii chunk's bounds by the same number, so the two agree by
+# construction. It stays importable from this module for existing callers.
 
 
 def add_points_impl(
