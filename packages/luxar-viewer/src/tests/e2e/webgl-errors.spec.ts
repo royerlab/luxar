@@ -22,6 +22,67 @@ const DATASETS = [
   'http://localhost:9000/datasets/examples/transform_example.luxar.zarr',
 ];
 
+// Opt out of the config's `fullyParallel: true`: this file is resource-bound and
+// self-contends. Its ten tests perform ~14 scene loads between them, each from
+// the single GIL-bound dataset server on port 9000, written through OPFS and
+// rendered in its own WebGL context, so four at a time queue on all three. Not
+// merely a restored constraint: the file used to run sequentially against a
+// TWO-worker pool and now does so against a four-worker one, so ambient load
+// from the other three workers is worse than what it goes back to. `default`
+// rather than `serial` so one failure does not skip the rest — each test is an
+// independent detector and we want all ten verdicts.
+//
+// Contention alone was not the failure. Under load the app drops from ~30 FPS to
+// ~4, and an unbounded `page.evaluate` in `waitForNextRender` then outlived the
+// test budget — the timeouts reproduce at one worker and land pending on an
+// evaluate, never on an assertion. Bounding those evaluates (in the helper) is
+// the fix; the 120 s budget here is headroom on a loaded box, not the cure.
+//
+// Pre-existing limitation the waits below inherit: the animation loop auto-pauses
+// after ~2s of inactivity and `waitForNextRender`'s kick is a single
+// `renderOnce()`, so a request for 5 or 10 frames routinely lands on the
+// state-based fallback and these detectors see fewer frames than they ask for —
+// the helper's warning line in the run output is the signal that it happened.
+// Making it strict was tried and turns the healthy case red, so the frame-count
+// contract of this file is a separate question from the hang fixed here.
+test.describe.configure({ mode: 'default', timeout: 120000 });
+
+// A timed-out test never reaches its own `expect` or the `console.log` dumps
+// that sit after the wait, and the shared fixture skips its teardown check for
+// `timedOut` — so a run that dies on the clock cannot say whether the detector
+// actually saw a GL error. `afterEach` still runs after a timeout and gets its
+// own budget, so mirror the WebGL-error text into a per-test array here and
+// report it on any unexpected status. Purely additive: the per-test listeners
+// and assertions below are the thing under test and are untouched.
+const observedWebglText: string[] = [];
+
+test.beforeEach(({ page }) => {
+  observedWebglText.length = 0;
+  page.on('console', (msg) => {
+    const text = msg.text();
+    if (
+      text.includes('GL_INVALID') ||
+      text.includes('GL_OUT_OF_MEMORY') ||
+      (text.toLowerCase().includes('vertex buffer') && text.includes('big enough'))
+    ) {
+      observedWebglText.push(text);
+    }
+  });
+});
+
+test.afterEach(() => {
+  const info = test.info();
+  if (info.status === info.expectedStatus) return;
+  // A skipped test observed nothing by construction; reporting "no WebGL-error
+  // text was seen" for one reads as a detector verdict it never rendered.
+  if (info.status === 'skipped') return;
+  const verdict =
+    observedWebglText.length === 0
+      ? 'no GL_INVALID* / GL_OUT_OF_MEMORY / vertex-buffer text was seen before it ended'
+      : `${observedWebglText.length} WebGL-error line(s) seen, first: ${observedWebglText[0]}`;
+  console.log(`\n[webgl-errors] "${info.title}" ended as ${info.status}: ${verdict}\n`);
+});
+
 test.describe('WebGL Error Detection - Critical', () => {
   test('should render without GL_INVALID_OPERATION errors', async ({ page }) => {
     const webglErrors: string[] = [];
