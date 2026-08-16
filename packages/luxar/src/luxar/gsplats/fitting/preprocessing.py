@@ -1421,9 +1421,11 @@ def _denoise_probe_correction(
     probe makes ``auto`` return 0.0009765625 — finite, plausible, and floor
     suppression effectively off for the whole run; a NaN ``pNN`` level instead
     makes every tile all-NaN and the fit dies later blaming the input data; and a
-    ``-inf`` raises out of ``np.histogram``. With the probe finite (and
-    ``level_raw`` finite by construction) the level cannot be non-finite, so there
-    is no second test. Today's kernels emit none of this; it is insurance.
+    ``-inf`` raises out of ``np.histogram``. With the probe finite the only way
+    out is a non-finite ``level_raw``, which needs a non-finite INPUT volume — a
+    ``pNN`` spec over a NaN-bearing volume already resolves to NaN in
+    :func:`resolve_volume_floor`, tiled or not, so there is nothing here for a
+    second test to improve. Today's kernels emit none of this; it is insurance.
     """
     from luxar.gsplats.preprocessing.denoise_pipeline import denoise_volume_array
 
