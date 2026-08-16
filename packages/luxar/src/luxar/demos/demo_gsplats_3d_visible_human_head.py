@@ -82,6 +82,7 @@ from luxar.demos import (
     parse_demo_flags,
     warn_if_no_cuda_gpu,
 )
+from luxar.demos._lod_policy import save_with_lod
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.utils.paths import get_demos_output_dir
@@ -363,8 +364,10 @@ def fit_head(rgb_vol: np.ndarray, acquisition=None) -> tuple[GSplatData, np.ndar
         colors = sample_colors(rgb_vol, result.centers)
 
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    result.save(
+    save_with_lod(
+        result,
         CACHE_FIT,
+        recipe="levels",
         encoding_mode=EncodingMode.MEMORY,  # uint8 Cholesky — smallest on-disk
         include_fitting_info=True,
         compress="zip",

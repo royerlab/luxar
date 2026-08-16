@@ -121,6 +121,7 @@ from luxar.demos import (
     require_module,
     warn_if_no_cuda_gpu,
 )
+from luxar.demos._lod_policy import save_with_lod
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.utils.download import download_with_checksum
@@ -374,8 +375,10 @@ def fit_channel_tiled(
 
     # Cache result
     aprint(f"  Caching to {cache_file.name}")
-    result.save(
+    save_with_lod(
+        result,
         cache_file,
+        recipe="adaptive",
         encoding_mode=EncodingMode.MEMORY,
         include_fitting_info=True,
         compress="zip",
