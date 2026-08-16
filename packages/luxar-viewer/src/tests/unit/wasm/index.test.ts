@@ -12,6 +12,12 @@
  * `assertRequiredWasmExports` is covered directly here because the artifact
  * it rejects (a stale build missing a newer kernel) cannot be synthesized in
  * jsdom — the stub below stands in for one.
+ *
+ * The shim URL resolution (`wasmShimCandidateUrls`) and the candidate walk
+ * (`importFirstWasmShim`) are likewise covered directly rather than through
+ * `initWasm`: `import.meta.env.DEV` is true under vitest, so EVERY in-suite
+ * `initWasm()` takes the single-candidate dev-server branch and never reaches
+ * the candidate list at all.
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -21,6 +27,8 @@ import {
   getFallback,
   setWasmJsUrl,
   assertRequiredWasmExports,
+  wasmShimCandidateUrls,
+  importFirstWasmShim,
 } from '../../../wasm';
 import { TypeScriptFallback } from '../../../wasm/typescript';
 
@@ -183,5 +191,179 @@ describe('getFallback', () => {
     const a = getFallback();
     const b = getFallback();
     expect(a).not.toBe(b);
+  });
+});
+
+describe('wasmShimCandidateUrls', () => {
+  // The WASM artifact always lands in a `wasm/` directory at the OUTPUT ROOT,
+  // but the chunk carrying the loader sits at two different depths depending
+  // on the build, so a single bundle-relative literal cannot reach it from
+  // both. These bases are the real measured layouts, not hypotheticals.
+  const SHIM = 'wasm/luxar_wasm.js';
+
+  it('reaches the artifact from the library ENTRY chunk at the output root', () => {
+    // dist/lib/luxar-viewer.js — '../wasm/…' escapes dist/lib/ and 404s here,
+    // which is exactly the embedder-visible bug (#1649): compiled kernels in
+    // the workers, silent TypeScript fallback on the main thread.
+    const candidates = wasmShimCandidateUrls('https://cdn.example/pkg/dist/lib/luxar-viewer.js');
+    expect(candidates).toContain(`https://cdn.example/pkg/dist/lib/${SHIM}`);
+  });
+
+  it('reaches the artifact from a library worker chunk under assets/', () => {
+    // dist/lib/assets/data-worker-*.js — one level deeper, so the SAME target
+    // is reached by the other candidate. This depth already worked with the
+    // single pre-fix '../wasm/…' literal: it pins pre-existing behaviour that
+    // the multi-candidate list must not regress, not the bug itself.
+    const candidates = wasmShimCandidateUrls(
+      'https://cdn.example/pkg/dist/lib/assets/data-worker-abc123.js'
+    );
+    expect(candidates).toContain(`https://cdn.example/pkg/dist/lib/${SHIM}`);
+  });
+
+  it('tries the app-build depth FIRST', () => {
+    // dist/assets/index-*.js — the hot path. Pin the ordering, not just
+    // membership: '../wasm/…' resolving first is what keeps the app build (and
+    // both worker chunks) from paying a failed import on every single load, so
+    // a silent reorder must fail here rather than quietly cost a 404.
+    const candidates = wasmShimCandidateUrls('https://example.com/app/assets/index-abc.js');
+    expect(candidates[0]).toBe(`https://example.com/app/${SHIM}`);
+    expect(candidates[1]).toBe(`https://example.com/app/assets/${SHIM}`);
+    expect(candidates).toHaveLength(2);
+  });
+
+  it('collapses to ONE candidate when the chunk sits at the URL root', () => {
+    // dist/lib/* copied to a site root — the common unbundled deployment.
+    // `new URL()` clamps at the root, so '../wasm/…' and './wasm/…' resolve to
+    // the same href. Without the dedupe a genuine failure (CSP, wrong MIME)
+    // would report `tried, in order: X, X` and send the reader looking for two
+    // different layouts.
+    const candidates = wasmShimCandidateUrls('https://cdn.example/luxar-viewer.js');
+    expect(candidates).toEqual([`https://cdn.example/${SHIM}`]);
+  });
+});
+
+describe('importFirstWasmShim', () => {
+  // The candidate walk itself, driven by a stub importer. `initWasm` cannot
+  // reach it in this environment (see the file docblock), so without these
+  // tests a revert to "import candidate 0 and hope" passes every gate.
+  const A = 'https://cdn.example/pkg/dist/wasm/luxar_wasm.js';
+  const B = 'https://cdn.example/pkg/dist/lib/wasm/luxar_wasm.js';
+
+  /** A minimal wasm-bindgen-shaped namespace: the loader only needs `default`. */
+  function shim(): { default: () => Promise<unknown> } {
+    return { default: async () => ({}) };
+  }
+
+  it('returns the FIRST candidate that loads, without touching the rest', async () => {
+    const tried: string[] = [];
+    const first = shim();
+    const mod = await importFirstWasmShim([A, B], async (url) => {
+      tried.push(url);
+      return first;
+    });
+    expect(mod).toBe(first);
+    // Short-circuit, in order: the app build and both worker chunks resolve on
+    // candidate 0, so a second request on the hot path would be pure waste.
+    expect(tried).toEqual([A]);
+  });
+
+  it('falls through to the next candidate when the first import rejects', async () => {
+    // The library ENTRY chunk (#1649): '../wasm/…' escapes dist/lib/ and 404s.
+    const second = shim();
+    const tried: string[] = [];
+    const mod = await importFirstWasmShim([A, B], async (url) => {
+      tried.push(url);
+      if (url === A) throw new Error('404');
+      return second;
+    });
+    expect(mod).toBe(second);
+    expect(tried).toEqual([A, B]);
+  });
+
+  it('falls through when a candidate imports but has no default at all', async () => {
+    // A host answering the miss with a 200 carrying an empty body, or a JS stub
+    // module standing in for the absent artifact: the import SUCCEEDS and
+    // yields a namespace with no `default`. Ending the walk there would blow up
+    // on `wasmModule.default()` and never try the real path. (An HTML error
+    // page is NOT this case — it fails to parse as a module and is handled by
+    // the import-rejection arm above.)
+    const second = shim();
+    const tried: string[] = [];
+    const mod = await importFirstWasmShim([A, B], async (url) => {
+      tried.push(url);
+      return url === A ? { notDefault: 1 } : second;
+    });
+    expect(mod).toBe(second);
+    expect(tried).toEqual([A, B]);
+  });
+
+  it('falls through when a candidate has a default that is not callable', async () => {
+    // The "callable" half of the rule, which a `default !== undefined` check
+    // would pass: a redirect/stub module can export a non-function default
+    // (a string, a config object). It would be accepted as the winner and then
+    // throw `default is not a function` on the very next line of initWasm.
+    const second = shim();
+    const tried: string[] = [];
+    const mod = await importFirstWasmShim([A, B], async (url) => {
+      tried.push(url);
+      return url === A ? { default: 'not the shim' } : second;
+    });
+    expect(mod).toBe(second);
+    expect(tried).toEqual([A, B]);
+  });
+
+  it('rethrows the ORIGINAL error object when only one candidate was tried', async () => {
+    // The override and dev-server branches pass a single URL; their failure log
+    // must stay exactly what it has always been, not an AggregateError wrapper.
+    const cause = new Error('blocked by CSP');
+    await expect(
+      importFirstWasmShim([A], async () => {
+        throw cause;
+      })
+    ).rejects.toBe(cause);
+  });
+
+  it('aggregates every candidate error, naming each URL in order', async () => {
+    // Reporting only the LAST error blames dist/assets/wasm/luxar_wasm.js — a
+    // directory that exists in no layout — for a real failure on candidate 0.
+    const errA = new Error('served as text/plain');
+    const errB = new Error('404');
+    const rejected = importFirstWasmShim([A, B], async (url) => {
+      throw url === A ? errA : errB;
+    });
+    await expect(rejected).rejects.toBeInstanceOf(AggregateError);
+    const error = (await rejected.catch((e: unknown) => e)) as AggregateError;
+    expect(error.message).toContain(A);
+    expect(error.message).toContain(B);
+    expect(error.errors).toEqual([errA, errB]);
+  });
+
+  it('aggregates a SHAPE rejection together with an import rejection', async () => {
+    // The mixed walk is what makes the shape rejection worth recording: with
+    // only candidate 1 having pushed an error, the walk would fall to the
+    // single-error branch and rethrow candidate 1's 404 bare, blaming the one
+    // URL that was never the problem. Every failed candidate must appear.
+    const errB = new Error('404');
+    const rejected = importFirstWasmShim([A, B], async (url) => {
+      if (url === A) return { notDefault: 1 };
+      throw errB;
+    });
+    const error = (await rejected.catch((e: unknown) => e)) as AggregateError;
+    expect(error).toBeInstanceOf(AggregateError);
+    expect(error.errors).toHaveLength(2);
+    expect((error.errors[0] as Error).message).toContain(A);
+    expect((error.errors[0] as Error).message).toMatch(/not a wasm-bindgen shim/);
+    expect(error.errors[1]).toBe(errB);
+    expect(error.message).toContain(`${A}, ${B}`);
+  });
+
+  it('throws a real Error when the candidate list is empty', async () => {
+    // `throw errors[0]` on an empty list would throw `undefined`, which the
+    // fallback path logs as an unreadable warning. Assert on the VALUE, not via
+    // `rejects.toThrow(/…/)` — that matcher passes on an `undefined` rejection,
+    // i.e. it is vacuous against the exact regression this pins.
+    const err = await importFirstWasmShim([], async () => shim()).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toMatch(/No WASM shim candidate URL/);
   });
 });

@@ -33,16 +33,142 @@ export type { WasmModule } from './types';
 /**
  * Optional override for the WASM JS shim URL.
  *
- * The default resolution (`new URL('../wasm/luxar_wasm.js', import.meta.url)`)
- * works for the standalone Vite app and most consumer bundlers (Vite,
- * Rollup, webpack 5). Bundlers that don't support the `import.meta.url`
- * pattern, or consumers that ship the WASM files from a non-default
- * location, can call {@link setWasmJsUrl} once at startup with an explicit
- * absolute URL.
+ * The default resolution walks a short list of `import.meta.url`-relative
+ * candidates (see {@link wasmShimCandidateUrls}) that covers both depths a
+ * chunk carrying this module can sit at, and works for the standalone Vite
+ * app and most consumer bundlers (Vite, Rollup, webpack 5). Bundlers that
+ * don't support the `import.meta.url` pattern, or consumers that ship the
+ * WASM files from a non-default location, can call {@link setWasmJsUrl} once
+ * at startup with an explicit absolute URL.
  *
  * Set via `LuxarAppOptions.wasmPath` from `LuxarApp.init`.
  */
 let wasmJsUrlOverride: string | undefined;
+
+/**
+ * Bundle-relative specifiers for the wasm-bindgen JS shim, in the order they
+ * are tried. One literal cannot serve every build, because the WASM artifact
+ * always lands in a `wasm/` directory at the OUTPUT ROOT while the chunk that
+ * carries this module sits at one of two different depths:
+ *
+ *   • `dist/assets/index-*.js` (app build) and `dist/lib/assets/*-worker-*.js`
+ *     (library build's worker chunks) are one level down, so `wasm/` is a
+ *     sibling of `assets/` and `../wasm/…` is right;
+ *   • `dist/lib/luxar-viewer.js` (the library build's ENTRY chunk) sits AT the
+ *     output root, where `../wasm/…` escapes `dist/lib/` entirely and 404s —
+ *     `./wasm/…` is right.
+ *
+ * `../` is listed first because every hot path (the app build, and the library
+ * build's data/sort workers) resolves on it, so the common case still costs
+ * exactly one request; only the library entry chunk pays a failed import
+ * before finding its shim.
+ */
+const WASM_SHIM_RELATIVE_SPECIFIERS = ['../wasm/luxar_wasm.js', './wasm/luxar_wasm.js'] as const;
+
+/**
+ * Resolve the bundle-relative WASM shim candidates against a base URL,
+ * yielding absolute hrefs in try order.
+ *
+ * `initWasm` calls this with `import.meta.url` — i.e. the URL of the chunk
+ * this module was bundled into — and imports the candidates in order until
+ * one loads. The order is part of the contract: the first entry is the one
+ * that resolves for the app build and for the library build's worker chunks,
+ * so reordering the list would make every ordinary load spend a 404 before
+ * reaching the artifact.
+ *
+ * The result is deduplicated, so it is not always two entries: `new URL()`
+ * clamps at the URL root, so a chunk served AT the root (`dist/lib/*` copied
+ * to a site root, the common unbundled deployment) resolves both specifiers
+ * to the same href. Keeping the duplicate would cost nothing on the success
+ * path but would make a genuine failure report `tried, in order: X, X`.
+ *
+ * @param baseUrl Absolute URL of the chunk to resolve against.
+ * @returns Absolute candidate hrefs, most-likely first, without duplicates.
+ */
+export function wasmShimCandidateUrls(baseUrl: string): string[] {
+  return [
+    ...new Set(WASM_SHIM_RELATIVE_SPECIFIERS.map((specifier) => new URL(specifier, baseUrl).href)),
+  ];
+}
+
+/**
+ * The wasm-bindgen JS shim's namespace, as far as the loader cares: a
+ * `default()` that instantiates the binary, plus the per-kernel wrappers
+ * {@link assertRequiredWasmExports} inspects by name. Exported because it is
+ * {@link importFirstWasmShim}'s return type — a private alias in a public
+ * signature trips the TypeDoc warning ratchet.
+ */
+export type WasmShimModule = { default: () => Promise<unknown> } & Record<string, unknown>;
+
+/**
+ * Import the first URL that yields something shaped like the wasm-bindgen
+ * shim, trying the candidates in order.
+ *
+ * Split out of {@link initWasm} and given an injectable importer because
+ * `initWasm` cannot reach this loop under vitest: `import.meta.env.DEV` is true
+ * there, so every in-suite `initWasm()` takes the single-candidate dev-server
+ * branch and a regression back to "use candidate 0 only" would pass every gate.
+ *
+ * Two rules, both load-bearing:
+ * - A candidate must expose a callable `default` to count as a hit. A host that
+ *   answers the entry chunk's miss with a 200 carrying an empty body, or a
+ *   JavaScript stub/redirect module standing in for the absent artifact, yields
+ *   a namespace whose `default` is missing or is not a function; ending the loop
+ *   there would blow up on `wasmModule.default()` before the real candidate is
+ *   ever tried — #1649's exact symptom, surviving on that host class. (An HTML
+ *   error page is a different case and needs no help here: HTML does not parse
+ *   as an ES module, so it REJECTS the import and the `catch` arm above already
+ *   moves on.) The check only reads a property, so nothing is instantiated and
+ *   the "commit to the winner" rule below is untouched.
+ * - Only the IMPORT is retried. Once a candidate wins, the caller runs
+ *   `default()` and the staleness check against that module alone: re-running
+ *   them elsewhere could instantiate the binary twice, and would hide a
+ *   genuinely stale artifact behind the next candidate's 404.
+ *
+ * @param urls Candidate hrefs in try order (see {@link wasmShimCandidateUrls}).
+ * @param importModule Dynamic-import indirection. {@link initWasm} passes a
+ *   `new Function`-built importer so neither TypeScript nor Vite resolves the
+ *   specifier at build time.
+ * @returns The winning candidate's module namespace.
+ * @throws The single candidate's own error when only one URL was tried (so the
+ *   override and dev-server paths log exactly what they always did), otherwise
+ *   an `AggregateError` naming every URL in order — attributing a real failure
+ *   (shim served as `text/plain`, blocked by CSP, corrupt) to the LAST
+ *   candidate would point at a directory that exists in no layout.
+ */
+export async function importFirstWasmShim(
+  urls: readonly string[],
+  importModule: (url: string) => Promise<unknown>
+): Promise<WasmShimModule> {
+  const errors: unknown[] = [];
+  for (const url of urls) {
+    let candidate: unknown;
+    try {
+      candidate = await importModule(url);
+    } catch (importError) {
+      errors.push(importError);
+      continue;
+    }
+    if (typeof (candidate as { default?: unknown } | undefined)?.default === 'function') {
+      return candidate as WasmShimModule;
+    }
+    errors.push(
+      new Error(`Module at ${url} is not a wasm-bindgen shim: no callable default export`)
+    );
+  }
+  if (errors.length === 0) {
+    // An empty candidate list is a caller bug, not a load failure; rethrowing
+    // `undefined` here would surface as an unreadable fallback warning.
+    throw new Error('No WASM shim candidate URL was resolved');
+  }
+  if (errors.length === 1) {
+    throw errors[0];
+  }
+  throw new AggregateError(
+    errors,
+    `Failed to load the WASM shim from any candidate URL (tried, in order: ${urls.join(', ')})`
+  );
+}
 
 /**
  * Reject a module that imported and initialised fine but predates one of the
@@ -132,48 +258,62 @@ export function setWasmJsUrl(url: string | undefined): void {
  *
  * ## Load Order
  *
- * 1. Try to load compiled WASM from wasm/luxar_wasm_bg.wasm (resolved relative to bundle)
- * 2. If fails (not built or browser incompatibility), use TypeScript fallback
+ * 1. Try to load the compiled WASM shim, in candidate order: an explicit
+ *    {@link setWasmJsUrl} override, else `/wasm/luxar_wasm.js` on a dev
+ *    server, else each bundle-relative candidate from
+ *    {@link wasmShimCandidateUrls} until one imports as a shim
+ *    ({@link importFirstWasmShim})
+ * 2. If all fail (not built, wrong layout, browser incompatibility), use the
+ *    TypeScript fallback
  *
  * @returns Promise resolving to WasmModule interface
  */
 export async function initWasm(): Promise<WasmModule> {
   try {
-    // Compute WASM module URL. The correct base differs by build:
+    // Compute the WASM shim URL(s). The correct base differs by build:
     //
-    //   • Production / library build: this module is bundled into
-    //     assets/index-*.js and the WASM files live at wasm/ (sibling of
-    //     assets/), so the import.meta.url-relative '../wasm/luxar_wasm.js'
-    //     resolves correctly. Using a variable prevents Vite from trying to
+    //   • Production app / library build: this module is bundled into a chunk
+    //     and the WASM files live in wasm/ at the output root — but the chunk
+    //     itself sits at one of two depths (assets/*.js vs the library entry
+    //     chunk at the root), so there is no single relative literal that
+    //     works for both. Try the candidates in order instead; see
+    //     WASM_SHIM_RELATIVE_SPECIFIERS for which build lands on which.
+    //     Resolving through a variable also prevents Vite from trying to
     //     resolve the path as a source asset at build time.
     //
     //   • Vite dev server: this module is served from /src/wasm/index.ts, so
-    //     the same relative path would resolve to /src/wasm/luxar_wasm.js —
-    //     but `make build-wasm` writes the compiled module to public/wasm/,
-    //     which the dev server serves at /wasm/. Resolve against the origin
-    //     in that case so dev picks up the built WASM instead of silently
-    //     falling back to the (slower) TypeScript implementation.
+    //     any bundle-relative path would resolve under /src/wasm/ — but
+    //     `make build-wasm` writes the compiled module to public/wasm/, which
+    //     the dev server serves at /wasm/. Resolve against the origin in that
+    //     case (a SINGLE candidate: dev serves public/ at the root, so the
+    //     bundle-relative ones would only add guaranteed 404s) so dev picks up
+    //     the built WASM instead of silently falling back to the (slower)
+    //     TypeScript implementation.
     //
     // Embedders whose bundlers don't support `import.meta.url` resolution
     // can override the URL via {@link setWasmJsUrl} (forwarded by
     // LuxarAppOptions.wasmPath); the override takes precedence over both.
-    const wasmRelativePath = '../wasm/luxar_wasm.js';
     const isDev = Boolean((import.meta as { env?: { DEV?: boolean } }).env?.DEV);
-    let wasmJsUrl: string;
+    let wasmJsUrls: string[];
     if (wasmJsUrlOverride) {
-      wasmJsUrl = wasmJsUrlOverride;
+      wasmJsUrls = [wasmJsUrlOverride];
     } else if (isDev) {
       // public/ is served at the server root in dev regardless of the
       // production-only relative `base`.
-      wasmJsUrl = new URL('/wasm/luxar_wasm.js', self.location.origin).href;
+      wasmJsUrls = [new URL('/wasm/luxar_wasm.js', self.location.origin).href];
     } else {
-      wasmJsUrl = new URL(wasmRelativePath, import.meta.url).href;
+      wasmJsUrls = wasmShimCandidateUrls(import.meta.url);
     }
 
     // Use Function constructor to avoid TypeScript compile-time module resolution
     // This allows the code to compile even when WASM module doesn't exist yet
-    const importWasm = new Function('url', 'return import(url)');
-    const wasmModule = await importWasm(wasmJsUrl);
+    const importWasm = new Function('url', 'return import(url)') as (
+      url: string
+    ) => Promise<unknown>;
+    // Candidate walking, the shim shape check and error attribution all live in
+    // importFirstWasmShim so they can be unit-tested with a stub importer —
+    // this branch is unreachable under vitest (import.meta.env.DEV is true).
+    const wasmModule = await importFirstWasmShim(wasmJsUrls, importWasm);
 
     // Initialize WASM (loads the .wasm binary), then reject mixed/stale dev
     // artifacts before returning them as the WasmModule interface. This check
