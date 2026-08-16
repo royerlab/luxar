@@ -280,7 +280,28 @@ luxar gsplat fit --dump-config --preset hifi > config.yaml  # Generate config te
 # localized-Gaussian basis, so the floor is subtracted (clip at 0) before
 # normalization; output amplitudes are background-relative. auto = histogram-mode
 # estimate (capped at the median; a no-op on clean data with no pedestal).
-luxar gsplat fit volume.tiff splats.gsplats.zarr                 # --floor auto (default)
+#
+# STAY ON `auto` UNLESS YOU HAVE MEASURED OTHERWISE. A `pN` floor subtracts the
+# Nth percentile OF ALL VOXELS, which on sparse data lands wherever the sparsity
+# puts it, not where the noise ends. On a 96x640x640 crop of a sparse light-sheet
+# brain (1.01% of voxels foreground = >10% of max; 12.9% in the dim band 1-10%),
+# p99 sat at 1.34% of THAT CROP's max — squarely inside signal. (Over the whole
+# stack the same percentile is 0.05% of peak: a pN floor moves with whatever you
+# point it at, which is the problem.) Every arm at a fixed seed budget, scored
+# against the UNFLOORED original:
+#
+#   floor   splats   global   foreground   dim-band mass recovered
+#   none    47,172   41.90    28.49 dB     42.0%
+#   auto    46,020   41.76    28.24 dB     40.7%   <- within 0.25 dB of none
+#   p95     39,859   40.33    27.04 dB     23.0%
+#   p99     15,483   35.81    18.86 dB      0.6%   <- erases the dim band
+#
+# A high floor also LOOKS better in a MIP (the haze is gone, the render is
+# crisper than its own source) — that is the trap. Judge a floor on foreground /
+# dim-band PSNR against unfloored data, never on how the render looks. Handle
+# residual haze with the display window / opacity, not by destroying data at fit
+# time. And never port a floor choice between datasets without retesting.
+luxar gsplat fit volume.tiff splats.gsplats.zarr                 # --floor auto (default, recommended)
 luxar gsplat fit volume.tiff splats.gsplats.zarr --floor p10     # subtract 10th percentile
 luxar gsplat fit volume.tiff splats.gsplats.zarr --floor 110     # subtract a fixed value
 luxar gsplat fit volume.tiff splats.gsplats.zarr --floor none    # disable (hard-min, legacy)
@@ -464,7 +485,7 @@ luxar gsplat cal volume.tiff cal.json --floor none               # legacy (no fl
 
 # Canonical end-to-end pipeline: cal → fit (at K*) → lod (--recipe flat|stream|tiles|overview|adaptive|levels)
 # `lod` operates on a pre-fitted .gsplats.zarr (output of `fit`); use `cal` upstream
-# to pick K* in a principled way. .gsplats.zarr is format v3.3 (a node tree —
+# to pick K* in a principled way. .gsplats.zarr is format v3.4 (a node tree —
 # a detached scene gsplat-node subtree the viewer loads directly) — see
 # docs/specs/GSPLATS_ZARR_FORMAT.md.
 
