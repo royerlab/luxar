@@ -153,8 +153,14 @@ const MIN_FRAMES_TO_RERUN_PROBE = 2;
  * cost, or null when it is trustworthy. Both causes suppress LEARNING
  * identically (see evaluateAndAdjust); the distinction is carried only
  * so the scale-down log can name the real one.
+ *
+ * Exported deliberately, despite having no caller outside this file:
+ * `scaleDown` is private but still documented (`excludePrivate: false`) and
+ * names this type in its signature, and a documented member referencing a
+ * non-exported symbol trips the TypeDoc warning ratchet (86/86 with the
+ * export). Do not un-export it as cleanup.
  */
-type SuppressionCause = 'load' | 'cadence' | null;
+export type SuppressionCause = 'load' | 'cadence' | null;
 
 /**
  * Manages adaptive pixel ratio for performance optimization
