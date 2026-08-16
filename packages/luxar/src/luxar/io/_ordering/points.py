@@ -39,6 +39,29 @@ def sort_points_compound(
     return _compound_sort(positions, slice_dims, ordering_dims, method)
 
 
+def _store_outward_f32(lo: float, hi: float) -> tuple[np.float32, np.float32]:
+    """Narrow a float64 interval to float32 OUTWARD (``lo`` down, ``hi`` up).
+
+    ``chunk_bounds`` is a float32 array, but every pad added below is a small
+    ABSOLUTE quantity (``DEFAULT_POINT_RADIUS``, a per-point radius,
+    ``_BARRIER_BOUND_EPS``) while the coordinate it is added to can be large.
+    Past ``|x| ~ 2**23`` a 0.5 pad is under half a float32 ULP, so a
+    round-to-nearest store throws it away entirely and the stored bound is
+    TIGHTER than the footprint the renderer draws — precisely what the pad
+    exists to prevent, and worse than the old scale-relative fudge, which always
+    survived. Stepping one ULP outward whenever the cast moved a bound the wrong
+    way restores the guarantee: if a pad ``r`` was lost to rounding then ``r``
+    was below half an ULP, so one ULP outward is strictly more than ``r``.
+    """
+    lo32 = np.float32(lo)
+    if float(lo32) > lo:
+        lo32 = np.nextafter(lo32, np.float32(-np.inf))
+    hi32 = np.float32(hi)
+    if float(hi32) < hi:
+        hi32 = np.nextafter(hi32, np.float32(np.inf))
+    return lo32, hi32
+
+
 def compute_chunk_bounds_points(
     positions: np.ndarray,
     radii: Optional[np.ndarray | float],
@@ -49,10 +72,14 @@ def compute_chunk_bounds_points(
 
     The pad IS the footprint: ``[min - r, max + r]`` is exactly the set of query
     positions for which some point in the chunk can still be visible, so the
-    bound is right in both directions rather than merely wide enough. (With
-    per-point uint8-encoded radii the encoder's rounding can move a stored radius
-    by up to one quantum after these bounds are computed, so the "never tighter"
-    half holds only up to that sub-quantum slack.)
+    bound is right in both directions rather than merely wide enough. The
+    interval is computed in float64 and narrowed to the float32 store with
+    OUTWARD rounding (see :func:`_store_outward_f32`), so the "never tighter"
+    half holds at every coordinate magnitude — not only where a 0.5 pad happens
+    to survive a round-to-nearest store. (With per-point uint8-encoded radii the
+    encoder's rounding can move a stored radius by up to one quantum AFTER these
+    bounds are computed, so that half of the claim holds only up to that
+    sub-quantum slack.)
 
     ``radii=None`` does not mean "no extent" — a points node that stores no radii
     array is drawn with the renderer's default radius, so the bounds are expanded
@@ -63,11 +90,17 @@ def compute_chunk_bounds_points(
     effective-radius cull (``data/points/effective-radius-calculator.ts`` and
     ``data/points/projection.ts`` both gate on ``radii``), and its hidden-dim
     query tolerance falls back to ``defaultMaxRadius = 0.1`` because no
-    ``max_radius`` attr is stamped without radii. An honest (wider) bound
-    therefore costs a few more fetched chunks, every point of which is drawn —
-    the right trade against the old under-fetch. Shrinking that tolerance to a
-    float-safety epsilon now that the bounds are honest is issue #1655 items 2
-    and 3; nothing on the reader side changes here.
+    ``max_radius`` attr is stamped without radii. An honest (wider) bound is
+    therefore paid in over-DRAW, not merely over-fetch: nothing culls the extra
+    points, so every point of every chunk the window touches is rendered. And
+    the cost is relative to the AXIS, not to the pad — the selection window on a
+    hidden continuous axis grows from ``chunk_extent + 2*(0.01 + 0.1)`` to
+    ``chunk_extent + 2*(0.5 + 0.1)``, a few percent on an axis spanning ~100
+    units but EVERY chunk on an axis spanning ~1 unit. It is still the right
+    trade against the old under-fetch, which dropped points with nothing to
+    notice. Shrinking that tolerance to a float-safety epsilon now that the
+    bounds are honest is issue #1655 items 2 and 3; nothing on the reader side
+    changes here.
 
     CRITICAL: Radius expansion is only applied to SPATIAL dimensions, not discrete
     dimensions. Discrete dimensions (slice_dims) represent categorical values like
@@ -114,26 +147,30 @@ def compute_chunk_bounds_points(
         else:
             radii_scalar = float(radii)
 
-        # Compute bounds for each dimension separately
+        # Compute bounds for each dimension separately. The pad is added in
+        # float64 and stored with outward rounding — see _store_outward_f32.
         for d in range(ndim):
+            coords = chunk_positions[:, d].astype(np.float64, copy=False)
             if d in discrete_dims:
                 # DISCRETE dimension: No radius expansion!
                 # Just use exact min/max of coordinate values, padded only by a
                 # tiny float-boundary epsilon (the reader's tolerance owns the
                 # query reach — see _BARRIER_BOUND_EPS).
-                mins_d = chunk_positions[:, d].min() - _BARRIER_BOUND_EPS
-                maxs_d = chunk_positions[:, d].max() + _BARRIER_BOUND_EPS
+                mins_d = coords.min() - _BARRIER_BOUND_EPS
+                maxs_d = coords.max() + _BARRIER_BOUND_EPS
             else:
                 # SPATIAL dimension: Include radius extent
                 if radii_scalar is not None:
-                    mins_d = chunk_positions[:, d].min() - radii_scalar
-                    maxs_d = chunk_positions[:, d].max() + radii_scalar
+                    mins_d = coords.min() - radii_scalar
+                    maxs_d = coords.max() + radii_scalar
                 else:
                     assert chunk_radii is not None
-                    mins_d = (chunk_positions[:, d] - chunk_radii).min()
-                    maxs_d = (chunk_positions[:, d] + chunk_radii).max()
+                    r = np.asarray(chunk_radii).astype(np.float64, copy=False)
+                    mins_d = (coords - r).min()
+                    maxs_d = (coords + r).max()
 
-            chunk_bounds[chunk_idx, d, 0] = mins_d
-            chunk_bounds[chunk_idx, d, 1] = maxs_d
+            lo32, hi32 = _store_outward_f32(float(mins_d), float(maxs_d))
+            chunk_bounds[chunk_idx, d, 0] = lo32
+            chunk_bounds[chunk_idx, d, 1] = hi32
 
     return chunk_bounds

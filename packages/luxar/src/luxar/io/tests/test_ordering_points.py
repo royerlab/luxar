@@ -105,6 +105,30 @@ class TestChunkBoundsPoints:
 
         np.testing.assert_array_equal(implicit, explicit)
 
+    def test_no_radii_pad_survives_the_float32_store_at_large_coordinates(
+        self,
+    ) -> None:
+        """A 0.5 pad must still widen the bound where it is under half an ULP.
+
+        ``chunk_bounds`` is float32. Past ``|x| ~ 2**23`` the ULP exceeds 1, so a
+        round-to-nearest store of ``min - 0.5`` / ``max + 0.5`` lands back on the
+        unpadded coordinate and the stored bound is TIGHTER than the disc the
+        renderer draws — strictly worse than the old scale-relative fudge, which
+        always survived. A points node authored in nm over a ~10 mm field sits
+        exactly here. Outward rounding in the store closes it.
+        """
+        # ULP is 2.0 at 2e7, so both pads round away without the fix.
+        lo, hi = 2.0e7, 2.0e7 + 10.0
+        positions = np.array([[lo, lo, lo], [hi, hi, hi]], dtype=np.float32)
+
+        bounds = compute_chunk_bounds_points(positions, radii=None, chunk_size=2)
+
+        assert bounds.dtype == np.float32
+        assert bounds.shape == (1, 3, 2)
+        for dim in range(3):
+            assert bounds[0, dim, 0] < positions[:, dim].min()
+            assert bounds[0, dim, 1] > positions[:, dim].max()
+
     def test_chunk_bounds_basic_with_radii(self) -> None:
         """Test chunk bounds with uniform radii."""
         positions = np.array(

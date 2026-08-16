@@ -164,21 +164,23 @@ MAX_POINT_RADIUS: Final[float] = 1000.0  # Maximum practical radius
 #: WRITE side must expand such a chunk's spatial bounds by: for a radii-less
 #: node the pad IS the footprint, so the stored bound is exactly the set of
 #: query positions from which a point in the chunk can be seen — never tighter
-#: (the reader cannot miss a drawn disc) and never arbitrarily looser. (The
-#: claim is scoped to this no-radii case: with per-point uint8-encoded radii the
-#: encoder rounds, so a stored radius can exceed the one the bounds were
-#: computed from by up to one quantum.) It is likewise the radius
+#: (the reader cannot miss a drawn disc) and never arbitrarily looser. That
+#: holds at any coordinate magnitude: the float32 bounds array is written with
+#: outward rounding, so a pad smaller than half an ULP cannot vanish into the
+#: store. (The claim is scoped to this no-radii case: with per-point
+#: uint8-encoded radii the encoder rounds, so a stored radius can exceed the one
+#: the bounds were computed from by up to one quantum.) It is likewise the radius
 #: :func:`luxar.core.group.adders.points.add_points_impl` materializes when the
 #: caller supplies none, which is what makes the two agree by construction.
 #:
 #: MIRROR: ``DEFAULT_POINT_RADIUS`` in
 #: ``packages/luxar-viewer/src/config/constants.ts`` must hold the same value —
 #: that is the constant every viewer site stands in for a missing radii array
-#: with. Two fill a per-point radius array
-#: (``rendering/node-factory/create-points-node.ts`` and
-#: ``rendering/gpu-buffer-pool/points-adapter.ts``); the third,
-#: ``data/scene-loader/commit/commit-points-geometry.ts``, uses it as the scalar
-#: footprint it pads the bounding box by. Both sides are pinned by tests that
+#: with. ``rendering/node-factory/create-points-node.ts`` uses it BOTH ways — it
+#: fills the per-point radius array and seeds the scalar footprint the bounding
+#: box is padded by; ``rendering/gpu-buffer-pool/points-adapter.ts`` only fills
+#: the array, and ``data/scene-loader/commit/commit-points-geometry.ts`` only
+#: supplies the scalar footprint. Both sides are pinned by tests that
 #: name each other.
 DEFAULT_POINT_RADIUS: Final[float] = 0.5
 

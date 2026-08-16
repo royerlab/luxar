@@ -438,8 +438,7 @@ export function generateSyntheticPoints(spec: SyntheticSceneSpec): SyntheticPoin
     radii,
     sharpness,
     pointCount: count,
-    // An empty scene has no radii to take a max over; the value is inert at
-    // zero points, so any positive placeholder does.
+    // 0.5 mirrors createPointsGeometry's no-radii footprint default.
     maxRadius: count > 0 ? maxRadius : 0.5,
     boundsMin: min,
     boundsMax: max,
