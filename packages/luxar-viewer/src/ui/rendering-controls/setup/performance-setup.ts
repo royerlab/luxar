@@ -17,6 +17,7 @@ import type GUI from '../../gui';
 import type { RenderingSettings } from '../../../config';
 import { FOLDER_ICONS } from '../folder-icons';
 import type { AdaptiveDPRManager } from '../../../rendering/adaptive-dpr-manager';
+import { formatFPSReading } from '../../performance-monitor';
 import { log, Modules } from '../../../utils/log';
 
 export interface PerformanceSetupContext {
@@ -135,7 +136,13 @@ export function setupPerformanceControls(context: PerformanceSetupContext): Perf
   // (notifyPaused), so currentFPS === 0 is an unambiguous "not
   // rendering" sentinel — display it as such instead of a frozen
   // last-window number pretending to be live.
-  const formatFPS = (fps: number): string => (fps > 0 ? Math.round(fps).toString() : 'idle');
+  //
+  // Everything above 0 is formatted by the SHARED reading formatter the
+  // rail gauge uses, so the two readouts can never disagree about the
+  // same rate: sub-1fps rates are real (the FPS window keeps a
+  // two-sample minimum, so a software-rasterized scene reports 0.4fps
+  // rather than 0) and must not round to the "0" that means the opposite.
+  const formatFPS = (fps: number): string => (fps > 0 ? formatFPSReading(fps) : 'idle');
 
   const updateVisibility = (adaptiveEnabled: boolean): void => {
     if (adaptiveEnabled) {

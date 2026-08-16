@@ -11,23 +11,64 @@
  * to bound memory. FPS is interval-normalized — (samples − 1) intervals
  * over the observed span — so it is not quantized to integer frame
  * counts.
+ *
+ * The window is a MAXIMUM AGE, not a minimum sample budget: below
+ * `1000/windowMs` fps the previous frame is already older than the
+ * window when the next one arrives, so age-only trimming would leave a
+ * single sample and `getFPS()` would report 0 ("not enough data") —
+ * undefined precisely at the frame rates where shedding pixels matters
+ * most. `minRetainedSamples` keeps the estimate defined there by
+ * refusing to trim below the two samples `getFPS()` needs. At healthy
+ * frame rates many more samples fit inside the window, so the retention
+ * floor never binds and behaviour is byte-identical.
  */
+
+/** Samples `getFPS()`/`span()` need to report anything at all. */
+const DEFAULT_MIN_RETAINED_SAMPLES = 2;
+
 export class FPSTracker {
   private timestamps: number[] = [];
   private startIndex = 0;
+  private readonly minRetainedSamples: number;
 
   /**
    * @param windowMs - Sliding sample window (frames older than
    *   `newest - windowMs` fall out of the estimate)
+   * @param minRetainedSamples - Samples never trimmed away regardless of
+   *   age (default 2 — the minimum `getFPS()`/`span()` need to report
+   *   anything at all; see the class comment). CLAMPED to at least 2:
+   *   the retention floor is a correctness invariant, not a preference,
+   *   and a caller passing 0 or 1 would silently restore the
+   *   undefined-estimate failure it exists to prevent. A NON-FINITE
+   *   value is treated as ABSENT and falls back to the default before
+   *   the clamp (`Math.max` propagates NaN, and `Infinity` would mean
+   *   "never trim" — an unbounded window that is no longer sliding).
    */
-  constructor(private readonly windowMs: number) {}
+  constructor(
+    private readonly windowMs: number,
+    minRetainedSamples: number = DEFAULT_MIN_RETAINED_SAMPLES
+  ) {
+    this.minRetainedSamples = Math.max(
+      DEFAULT_MIN_RETAINED_SAMPLES,
+      Math.floor(
+        Number.isFinite(minRetainedSamples) ? minRetainedSamples : DEFAULT_MIN_RETAINED_SAMPLES
+      )
+    );
+  }
 
-  /** Record a frame timestamp and trim samples older than the window. */
+  /**
+   * Record a frame timestamp and trim samples older than the window,
+   * stopping at `minRetainedSamples` so a frame rate slower than the
+   * window itself still yields a defined estimate.
+   */
   push(timestamp: number): void {
     this.timestamps.push(timestamp);
 
     const cutoff = timestamp - this.windowMs;
-    while (this.startIndex < this.timestamps.length && this.timestamps[this.startIndex] < cutoff) {
+    while (
+      this.sampleCount() > this.minRetainedSamples &&
+      this.timestamps[this.startIndex] < cutoff
+    ) {
       this.startIndex++;
     }
 
