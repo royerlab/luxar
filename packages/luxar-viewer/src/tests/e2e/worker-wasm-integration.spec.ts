@@ -173,7 +173,7 @@ test.describe('WASM Integration E2E', () => {
 
     // Verify WASM module status via console logs
     // Either: [emoji] [WASM] Loaded compiled WASM module (success)
-    // Or:     [emoji] [WASM] Failed to load WASM module, using TypeScript fallback
+    // Or:     [emoji] [WASM] Failed to load WASM module from <url>, using TypeScript fallback
     // Or:     No WASM messages at all (WASM binary not built — TypeScript path used implicitly)
     const messages = await getConsoleMessages(page);
     const wasmMessages = messages.all.filter((m) => m.includes('[WASM]'));

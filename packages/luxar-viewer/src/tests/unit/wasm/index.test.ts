@@ -1,17 +1,22 @@
-// @vitest-environment jsdom
 /**
  * Unit tests for the WASM loader module.
  *
- * `initWasm` is hard to exercise on the WASM-loaded path inside jsdom (no
- * binary, no Vite resolution), so the dynamic-import branch always
- * throws and falls through to the TypeScript fallback. We verify the
- * fallback path lands a working WasmModule, that isWasmSupported
- * detects WebAssembly correctly, and that getFallback returns a fresh
- * TypeScriptFallback every call.
+ * `initWasm`'s success path cannot be exercised under vitest in ANY
+ * environment: the loader reaches the shim through a
+ * `new Function('url', 'return import(url)')` indirection, which vitest's VM
+ * module runner does not service (`ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING`).
+ * So the dynamic import always throws and falls through to the TypeScript
+ * fallback, and pinning a file to jsdom buys no compiled-kernel coverage —
+ * anything that wants the real kernels loads the built artifact through
+ * `src/tests/helpers/wasm-artifact.ts` instead. What we verify here is the
+ * loader's own logic: that the fallback path lands a working WasmModule, that
+ * URL resolution survives a host with no DOM globals (#1642), that
+ * isWasmSupported detects WebAssembly correctly, and that getFallback returns a
+ * fresh TypeScriptFallback every call.
  *
- * `assertRequiredWasmExports` is covered directly here because the artifact
- * it rejects (a stale build missing a newer kernel) cannot be synthesized in
- * jsdom — the stub below stands in for one.
+ * `assertRequiredWasmExports` is covered directly here because the artifact it
+ * rejects (a stale build missing a newer kernel) cannot be loaded under vitest
+ * either — the stub below stands in for one.
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -45,7 +50,7 @@ describe('initWasm', () => {
   });
 
   it('falls back to TypeScriptFallback when the WASM bundle cannot load', async () => {
-    // jsdom has no fetch'able WASM; the dynamic import always throws.
+    // Under vitest the dynamic import always throws, whatever the environment.
     const wasm = await initWasm();
     expect(wasm).toBeInstanceOf(TypeScriptFallback);
   });
@@ -56,6 +61,49 @@ describe('initWasm', () => {
     expect(wasm).toBeInstanceOf(TypeScriptFallback);
     // Reset so subsequent tests in the run don't see the override.
     setWasmJsUrl('');
+  });
+});
+
+describe('initWasm URL resolution without a DOM', () => {
+  it('resolves through import.meta.url instead of dereferencing a browser global (#1642)', async () => {
+    // Precondition. This file runs in vitest's default `node` environment, so
+    // there genuinely is no DOM here. Asserting it keeps the test from turning
+    // vacuous if the file is ever re-pinned to jsdom: under jsdom both globals
+    // exist and the dev-origin branch — not the branch under test — would run.
+    expect(typeof self).toBe('undefined');
+    expect(typeof location).toBe('undefined');
+
+    // The override is module-level state SHARED by every test in this file, and
+    // other tests here set one; clear it so the default resolution path runs.
+    setWasmJsUrl('');
+
+    // `initWasm` swallows every failure, so no try/finally is needed to restore.
+    // `console.log` is spied purely to keep the two remediation `log.info` lines
+    // out of the reporter.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const info = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const wasm = await initWasm();
+    const calls = warn.mock.calls;
+    warn.mockRestore();
+    info.mockRestore();
+
+    // Landing in the TypeScript fallback is EXPECTED here and is not what this
+    // test is about: vitest's VM module runner cannot service the loader's
+    // `new Function('url', 'return import(url)')` import in any environment.
+    // What is pinned is that the loader got as far as computing a URL rather
+    // than dying on a missing browser global.
+    expect(wasm).toBeInstanceOf(TypeScriptFallback);
+
+    expect(calls.length).toBeGreaterThan(0);
+    const [message, error] = calls[0] as [string, unknown];
+    // Keep the grep-able prefix: tools and docs key on this exact substring.
+    expect(message).toContain('Failed to load WASM module');
+    // Resolution completed via `import.meta.url` with no DOM present.
+    expect(message).toMatch(/src\/wasm\/luxar_wasm\.js/);
+    // Pre-fix the swallowed error was exactly `ReferenceError: self is not
+    // defined`; assert on the error object itself, not on stringified text.
+    expect(error).toBeInstanceOf(Error);
+    expect(error).not.toBeInstanceOf(ReferenceError);
   });
 });
 
@@ -134,7 +182,7 @@ describe('setWasmJsUrl', () => {
     setWasmJsUrl('http://localhost:0/missing.js');
     setWasmJsUrl('');
     // After reset, initWasm goes through the default-URL path. The
-    // dynamic import still fails in jsdom and we fall back to TS, but
+    // dynamic import still fails under vitest and we fall back to TS, but
     // crucially the loader does not throw with an empty/invalid URL.
     const wasm = await initWasm();
     expect(wasm).toBeInstanceOf(TypeScriptFallback);

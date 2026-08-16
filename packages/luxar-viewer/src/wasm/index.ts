@@ -138,6 +138,11 @@ export function setWasmJsUrl(url: string | undefined): void {
  * @returns Promise resolving to WasmModule interface
  */
 export async function initWasm(): Promise<WasmModule> {
+  // Declared outside the try so the catch can name the URL it actually tried;
+  // an absent artifact and a loader that never computed a URL at all are
+  // otherwise indistinguishable in the log, which is exactly how #1642 (a bare
+  // `self` dereference in a DOM-less host) stayed invisible.
+  let wasmJsUrl: string | undefined;
   try {
     // Compute WASM module URL. The correct base differs by build:
     //
@@ -147,25 +152,31 @@ export async function initWasm(): Promise<WasmModule> {
     //     resolves correctly. Using a variable prevents Vite from trying to
     //     resolve the path as a source asset at build time.
     //
-    //   • Vite dev server: this module is served from /src/wasm/index.ts, so
-    //     the same relative path would resolve to /src/wasm/luxar_wasm.js —
-    //     but `make build-wasm` writes the compiled module to public/wasm/,
-    //     which the dev server serves at /wasm/. Resolve against the origin
-    //     in that case so dev picks up the built WASM instead of silently
-    //     falling back to the (slower) TypeScript implementation.
+    //   • Vite dev server, WHEN a `location` global exists: this module is
+    //     served from /src/wasm/index.ts, so the same relative path would
+    //     resolve to /src/wasm/luxar_wasm.js — but `make build-wasm` writes the
+    //     compiled module to public/wasm/, which the dev server serves at
+    //     /wasm/. Resolve against the origin in that case so dev picks up the
+    //     built WASM instead of silently falling back to the (slower)
+    //     TypeScript implementation. `location` (bare, not `self.location`) is
+    //     present in both window and dedicated-worker scopes and is read
+    //     through `typeof` so a DOM-less host never throws here: in Node/SSR
+    //     there is no dev-server origin at all, so such a host falls through to
+    //     the bundle-relative path below, which is the only resolution that
+    //     could mean anything there.
     //
     // Embedders whose bundlers don't support `import.meta.url` resolution
     // can override the URL via {@link setWasmJsUrl} (forwarded by
     // LuxarAppOptions.wasmPath); the override takes precedence over both.
     const wasmRelativePath = '../wasm/luxar_wasm.js';
     const isDev = Boolean((import.meta as { env?: { DEV?: boolean } }).env?.DEV);
-    let wasmJsUrl: string;
+    const hasLocation = typeof location !== 'undefined' && Boolean(location?.origin);
     if (wasmJsUrlOverride) {
       wasmJsUrl = wasmJsUrlOverride;
-    } else if (isDev) {
+    } else if (isDev && hasLocation) {
       // public/ is served at the server root in dev regardless of the
       // production-only relative `base`.
-      wasmJsUrl = new URL('/wasm/luxar_wasm.js', self.location.origin).href;
+      wasmJsUrl = new URL('/wasm/luxar_wasm.js', location.origin).href;
     } else {
       wasmJsUrl = new URL(wasmRelativePath, import.meta.url).href;
     }
@@ -191,7 +202,11 @@ export async function initWasm(): Promise<WasmModule> {
     return wasmModule as unknown as WasmModule;
   } catch (error) {
     // WASM not available - use TypeScript fallback
-    log.warning(Modules.WASM, 'Failed to load WASM module, using TypeScript fallback', error);
+    log.warning(
+      Modules.WASM,
+      `Failed to load WASM module from ${wasmJsUrl ?? '<URL resolution failed before the import>'}, using TypeScript fallback`,
+      error
+    );
     log.info(Modules.WASM, 'To build WASM module: pnpm build:wasm (or make build-wasm)');
     log.info(
       Modules.WASM,

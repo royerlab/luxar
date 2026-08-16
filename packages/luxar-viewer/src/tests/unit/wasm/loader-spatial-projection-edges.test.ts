@@ -1,19 +1,27 @@
-// @vitest-environment jsdom
 /**
  * Edge-case tests for WASM loader (index.ts) and TypeScript-fallback
  * projection helpers. Closes wasm.md gap cluster:
  *   - [wasm.md G22][P5] isWasmSupported with WebAssembly.instantiate set to a
  *                       TRUTHY non-function (the documented threat at L118).
- *   - [wasm.md G23][P5] initWasm: dynamic import resolves but `default()` is
- *                       missing → falls back gracefully (proves the override
- *                       URL is actually exercised — discriminator from G24).
- *   - [wasm.md G24][P5] setWasmJsUrl: a non-empty override flows through to
- *                       the dynamic import — proven by a partial-shim data:
- *                       URL that resolves but fails the `default()` call.
+ *   - [wasm.md G23][P5] initWasm: a shim URL that is not a loadable WASM module
+ *                       → falls back gracefully instead of propagating.
+ *   - [wasm.md G24][P5] setWasmJsUrl: a non-empty override is read at call
+ *                       time, not memoised at module init.
  *   - [wasm.md G31][P5] extract_3d_positions displayDims[j] >= ndim → OOB
  *                       read → undefined → Float32Array stores NaN.
  *
  * Pure math / pure module API — no mocks.
+ *
+ * Note on G23/G24: these were written to discriminate WHERE the load failed
+ * (import resolved but `default()` missing, vs. the URL never being honoured),
+ * but no vitest environment can actually resolve `initWasm`'s dynamic import —
+ * the `new Function('url', 'return import(url)')` indirection is not serviceable
+ * by vitest's VM module runner (`ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING`), so
+ * even a `data:` URL throws before `default()` is reached. What survives is the
+ * weaker but real contract asserted below: every one of these URLs lands in the
+ * documented TypeScript fallback, and the override is module-local mutable
+ * state. Loading the compiled kernels for real goes through
+ * `src/tests/helpers/wasm-artifact.ts`.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -48,32 +56,31 @@ describe('isWasmSupported — truthy non-function instantiate [wasm.md G22]', ()
 });
 
 describe('initWasm + setWasmJsUrl — URL pass-through discriminator [wasm.md G23, G24]', () => {
-  it('[G23][G24] override URL with a partial-shim data: URL → import resolves but `default()` missing → fall back', async () => {
-    // The audit notes that a bad URL and the default both fall back to TS,
-    // so the existing test "URL override → still TypeScriptFallback" doesn't
-    // PROVE the override was honored. Here we install a data: URL that
-    // imports successfully (defining `foo` but not `default`); then
-    // `wasmModule.default()` throws because `default` is undefined.
-    // This proves the override URL was exercised — a regression that
-    // ignored the override would have imported the non-existent default
-    // wasm path and failed earlier.
-    //
-    // jsdom CAN import data: URLs in its dynamic import, so this discriminates.
+  it('[G23][G24] override URL pointing at a partial shim (no `default`) still falls back', async () => {
+    // Originally written as a discriminator: a data: URL that imports fine
+    // (defining `foo` but not `default`) would fail at `wasmModule.default()`,
+    // proving the override reached the import. Under vitest it cannot prove
+    // that — the dynamic import itself is unserviceable (see the docblock), so
+    // the failure happens one step earlier. The assertion is still the contract
+    // that matters: an override naming something that is not a loadable WASM
+    // shim must land in the TypeScript fallback rather than propagate.
     setWasmJsUrl('data:text/javascript,export const foo = 1');
     try {
       const wasm = await initWasm();
-      // The init must fall through to TS fallback because `default` is missing.
       expect(wasm).toBeInstanceOf(TypeScriptFallback);
     } finally {
       setWasmJsUrl('');
     }
   });
 
-  it('[G23] initialized stale shim missing a required kernel falls back immediately', async () => {
-    // This mimics a pre-cap-suppression gitignored public/wasm build: the JS
-    // shim imports and its default initializer succeeds, but the newer kernel
-    // export is absent. The loader must reject it now rather than returning a
-    // partial module that throws TypeError during a later projection.
+  it('[G23] shim URL missing a required kernel falls back to a complete module', async () => {
+    // Written to mimic a stale gitignored public/wasm build: a shim whose
+    // default initializer succeeds but whose newer kernel export is absent,
+    // which `assertRequiredWasmExports` must reject rather than hand back a
+    // partial module that throws TypeError during a later projection. That
+    // rejection is covered directly in `index.test.ts` — here the import never
+    // resolves under vitest, so what is asserted is the end state: whatever the
+    // reason, the caller receives a module with every kernel present.
     setWasmJsUrl('data:text/javascript,export default async function init() {}');
     try {
       const wasm = await initWasm();
