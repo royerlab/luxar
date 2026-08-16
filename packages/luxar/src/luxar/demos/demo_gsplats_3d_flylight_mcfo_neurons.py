@@ -136,6 +136,58 @@ splat's colour from the channels at its own centre, balancing the channels by
 their own robust maxima first (unbalanced, the brightest channel wins 96% of
 splats and the whole brain reads red).
 
+6. THE PYTHON API'S DEFAULTS ARE NOT THE CLI'S PRESETS — and thin filaments bead
+--------------------------------------------------------------------------------
+
+Axons in the first version of this demo rendered as chains of beads. Some of
+that is REAL: MCFO axons have varicosities, and walking the filament skeleton
+shows the *original data* dipping below half its local ridge on 35.9% of the
+skeleton and below a quarter on 11.9%. But the fit doubled the deep dips, to
+22.2%.
+
+The cause is that ``fit_gaussian_splats`` defaults to ``n_iters=1000`` — below
+the CLI's ``draft`` preset (2000) and a fifth of ``standard`` (5000). Calling
+the Python API without a schedule is therefore NOT "the default quality"; it is
+below the lowest preset the CLI will give you. At 1000 iterations the splats
+here never left their seed shape: edge seeding initialises them isotropic at
+sigma = 1.0 voxel, and the fitted result measured sigma 0.87-1.16 voxels with a
+median axis ratio of 1.30. A 1-voxel-wide axon rebuilt from 1-voxel spheres
+spaced 2.5 sigma apart beads by construction.
+
+Three knobs, measured on this sample (skeleton dips <25%, and foreground PSNR
+against the raw data):
+
+    shipped originally  1000 iters                    22.2%   22.94 dB
+    + 5000 iters                                      16.6%   21.86 dB
+    + no relocation     enable_dynamic_ops=False      16.0%   23.54 dB
+    + 10000 iters       NEURON_FIT_SCHEDULE           16.5%   25.85 dB
+      20000 iters       (not used: +0.21 dB, +46% time) 16.3%  26.06 dB
+
+The two effects decouple, which is why the schedule stops at 10000: BEADING
+converges by 5000 (16.6 -> 16.5 -> 16.3 is noise) while FIDELITY keeps climbing
+to 10000 and then flattens.
+
+Relocation is why raising ``n_iters`` alone LOSES a dB: it periodically resets
+splats to isotropic sigma=0.5 with off-diagonals zeroed, undoing the shapes the
+extra iterations just bought. And ``max_eccentricity`` (default 10.0, an axis
+ratio of sqrt(10)) is inert at 1000 iterations but binds once converged — 14.9%
+of splats pile up against that ceiling, costing 2.65 dB.
+
+What does NOT work, all measured rather than assumed:
+
+  - MORE SPLATS. Doubling seeds to 2.4M made the geometry WORSE (splat spacing
+    2.45 -> 3.22 sigma), because finer subdivision shrinks sigma faster than it
+    shrinks the gaps. It bought 0.4 dB for 73% more data.
+  - FEWER SPLATS. 300k seeds gave the tightest spacing measured (2.03 sigma) and
+    the roundest-to-longest shapes (2.75), and beading still got worse — below
+    ~1.2M the thin branches lose coverage for a different reason.
+  - A WIDER RENDER CUTOFF. Widening truncation from 2.75 to 6.0 sigma moved the
+    deep dips by 1.2 points: the splats genuinely do not reach each other.
+
+The residual ~4 points of beading over the data's own is the honest cost of a
+localized-Gaussian basis on a filament, and it is now much closer to the
+varicosity the specimen actually has.
+
 DATA SOURCE & CITATIONS:
 ========================
 
@@ -305,7 +357,32 @@ CULL_RETENTION = 0.9999
 # placed, taking most of the neurites with it.
 FLOOR = "auto"
 
+# How long the neurons are optimised, and what is allowed to happen to their
+# SHAPE while they are — see finding 6. Every one of these overrides a
+# ``fit_gaussian_splats`` default, and together they are worth ~3 dB of
+# foreground PSNR and a third of the beading on thin axons.
+#
+# ``n_iters`` is the one that matters most, and the trap is that the Python
+# API's default is 1000 — BELOW the CLI's own ``draft`` preset (2000) and a
+# fifth of ``standard`` (5000). At 1000 the splats never leave their isotropic
+# seed shape, so a 1-voxel-wide axon is rebuilt as a chain of 1-voxel spheres
+# and reads as beaded. The other three exist because raising ``n_iters`` alone
+# is NOT enough: relocation resets shapes back to isotropic, and the default
+# eccentricity cap then clips what convergence finally earned.
+NEURON_FIT_SCHEDULE = {
+    "n_iters": 10_000,
+    "patience": 200,  # plateau LR decay, vs 15 — 15 decays away the shape LR
+    "early_stop_patience": 2000,  # vs 300, which stops before shapes settle
+    "enable_dynamic_ops": False,  # relocation re-isotropises splats mid-fit
+    "max_eccentricity": None,  # default 10.0 caps the axis ratio at sqrt(10)
+    "l1_diag": 0.0,  # default penalty "encourages ... more isotropic splats"
+}
+
 # Neuropil. Fewer splats than the neurons need, because it is a smooth medium.
+# Deliberately left on the stock schedule: it is a diffuse counterstain with no
+# filaments to bead, the chosen "solid brain" look depends on its current
+# character, and a converged fit of 600k seeds would cost more time than the
+# neurons' own.
 NEUROPIL_SEEDS = 600_000
 NEUROPIL_ALPHA = 0.12  # optical depth per splat — see finding 4
 NEUROPIL_AMP = 0.6
@@ -1005,7 +1082,7 @@ def load_fisbe_sample(sample: str):
 # =============================================================================
 
 
-def fit_cache_key(seeds: int, floor, retention: float) -> str:
+def fit_cache_key(seeds: int, floor, retention: float, schedule=None) -> str:
     """Short digest of everything that changes a fit's result.
 
     Cache filenames keyed only by sample would silently reuse an incompatible
@@ -1013,14 +1090,22 @@ def fit_cache_key(seeds: int, floor, retention: float) -> str:
     constants are exactly what this demo invites you to tune. Folding them into
     the name means changing one produces a different file, so the refit is
     automatic rather than dependent on remembering ``--recompute``.
+
+    ``schedule`` is in here for the same reason and is easy to forget, because
+    unlike seeds/floor/retention it does not change the splat COUNT — only the
+    shapes. A key blind to it would hand back the old under-converged, beaded
+    fit and make an edit to :data:`NEURON_FIT_SCHEDULE` look like a no-op.
     """
-    payload = f"v1|{seeds}|{floor}|{retention}|{tuple(VOXEL_SIZE_ZYX)}"
+    shape = "|".join(f"{k}={schedule[k]}" for k in sorted(schedule or {}))
+    payload = f"v2|{seeds}|{floor}|{retention}|{tuple(VOXEL_SIZE_ZYX)}|{shape}"
     return hashlib.sha256(payload.encode()).hexdigest()[:10]
 
 
-def _fit_cache_path(component: str, seeds: int, floor, retention: float) -> Path:
+def _fit_cache_path(
+    component: str, seeds: int, floor, retention: float, schedule=None
+) -> Path:
     """Cache path for one fitted component, keyed by its fit parameters."""
-    key = fit_cache_key(seeds, floor, retention)
+    key = fit_cache_key(seeds, floor, retention, schedule)
     return CACHE_DIR / f"{SAMPLE}_{component}_{key}.gsplats.zarr.zip"
 
 
@@ -1035,9 +1120,20 @@ def _device():
 
 
 def fit_volume(
-    volume, cache_file: Path, seeds: int, floor, retention: float, label: str
+    volume,
+    cache_file: Path,
+    seeds: int,
+    floor,
+    retention: float,
+    label: str,
+    schedule=None,
 ):
-    """Fit one volume to splats, using the cache when present."""
+    """Fit one volume to splats, using the cache when present.
+
+    ``schedule`` carries the optimiser overrides (iterations, and what may
+    happen to splat shapes); ``None`` means the library defaults, which is what
+    the neuropil wants and what the neurons emphatically do not.
+    """
     if cache_file.exists() and not RECOMPUTE:
         aprint(f"Loading cached {label} fit")
         try:
@@ -1050,6 +1146,8 @@ def fit_volume(
     from luxar.gsplats import fit_gaussian_splats
 
     aprint(f"Fitting {label} (seeds={seeds:,}, floor={floor}, retention={retention})")
+    if schedule:
+        aprint(f"  schedule: {schedule}")
     result = fit_gaussian_splats(
         volume,
         seeds=seeds,
@@ -1058,6 +1156,7 @@ def fit_volume(
         device=_device(),
         verbose=True,
         voxel_size=VOXEL_SIZE_ZYX,
+        **(schedule or {}),
     )
     aprint(f"  Fitted {len(result.amplitudes):,} splats (from {seeds:,} seeds)")
 
@@ -1420,11 +1519,14 @@ def main():
     with asection("Fitting neurons"):
         neurons = fit_volume(
             combined,
-            _fit_cache_path("neurons", SEEDS, FLOOR, CULL_RETENTION),
+            _fit_cache_path(
+                "neurons", SEEDS, FLOOR, CULL_RETENTION, NEURON_FIT_SCHEDULE
+            ),
             SEEDS,
             FLOOR,
             CULL_RETENTION,
             "neurons",
+            schedule=NEURON_FIT_SCHEDULE,
         )
 
     neuropil = None
