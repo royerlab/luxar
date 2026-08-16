@@ -317,14 +317,14 @@
       "bucket": "zenodo",
       "record": "cc-by",
       "license": "cc-by-4.0",
-      "source": "Janelia FlyLight Gen1 MCFO, line VT019012, slide 20140423_20_D5, 63x confocal",
+      "source": "Janelia FlyLight Gen1 MCFO, line VT019012, slide 20140423_20_D5, 63x confocal (stitched unaligned_stack.h5j)",
       "attribution": "Janelia FlyLight Project Team, HHMI Janelia Research Campus \u2014 Meissner et al., eLife 12:e80660 (2023), doi:10.7554/eLife.80660; MCFO method: Nern, Pfeiffer & Rubin, PNAS 112(22) (2015), doi:10.1073/pnas.1506763112; VT driver lines: Tirian & Dickson, bioRxiv 198648 (2017), doi:10.1101/198648. Imagery CC BY 4.0.",
       "dir": "gsplats_flylight_mcfo_63x",
       "files": [
         {
           "name": "flylight_mcfo_63x.gsplats.zarr.zip",
-          "sha256": "258971bbe5a69a0defe105b0c9fb97ed5b2144b86ef5743ea42ee3a8efd70ac3",
-          "bytes": 5203144
+          "sha256": "167461b170c40295cba791616e480b8d80de39df6b532f06bb2c877b7f5b382d",
+          "bytes": 8150095
         }
       ]
     },
