@@ -70,44 +70,57 @@ describe('initWasm URL resolution without a DOM', () => {
     // there genuinely is no DOM here. Asserting it keeps the test from turning
     // vacuous if the file is ever re-pinned to jsdom: under jsdom both globals
     // exist and the dev-origin branch — not the branch under test — would run.
-    // It also catches a `location` stub leaked from a sibling test: the
-    // dev-origin case below supplies one via `vi.stubGlobal` and must restore it
-    // in a `finally`, so this assertion is what keeps the two tests' shared
-    // global state from turning into a hidden ordering dependency.
     expect(typeof self).toBe('undefined');
     expect(typeof location).toBe('undefined');
 
-    // The override is module-level state SHARED by every test in this file, and
-    // other tests here set one; clear it so the default resolution path runs.
-    setWasmJsUrl('');
-
-    // `initWasm` swallows every failure, so no try/finally is needed to restore.
     // `console.log` is spied purely to keep the two remediation `log.info` lines
-    // out of the reporter.
+    // out of the reporter. Both spies are installed before the `try` and
+    // restored inline before the assertions (so a failure reads a live console)
+    // AND in the `finally` (so a rejection from `initWasm` cannot leak them);
+    // `mockRestore` is idempotent, so running it twice is harmless.
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const info = vi.spyOn(console, 'log').mockImplementation(() => {});
-    const wasm = await initWasm();
-    const calls = warn.mock.calls;
-    warn.mockRestore();
-    info.mockRestore();
+    try {
+      // The override is module-level state SHARED by every test in this file,
+      // and other tests here set one; clear it so the default resolution path
+      // runs.
+      setWasmJsUrl('');
 
-    // Landing in the TypeScript fallback is EXPECTED here and is not what this
-    // test is about: vitest's VM module runner cannot service the loader's
-    // `new Function('url', 'return import(url)')` import in any environment.
-    // What is pinned is that the loader got as far as computing a URL rather
-    // than dying on a missing browser global.
-    expect(wasm).toBeInstanceOf(TypeScriptFallback);
+      const wasm = await initWasm();
+      // Filter to the loader's OWN warning rather than indexing by position:
+      // any unrelated `console.warn` inside the spy window would otherwise
+      // shift the index and silently assert against the wrong message.
+      const failures = warn.mock.calls.filter(([m]) =>
+        String(m).includes('Failed to load WASM module')
+      );
+      warn.mockRestore();
+      info.mockRestore();
 
-    expect(calls.length).toBeGreaterThan(0);
-    const [message, error] = calls[0] as [string, unknown];
-    // Keep the grep-able prefix: tools and docs key on this exact substring.
-    expect(message).toContain('Failed to load WASM module');
-    // Resolution completed via `import.meta.url` with no DOM present.
-    expect(message).toMatch(/src\/wasm\/luxar_wasm\.js/);
-    // Pre-fix the swallowed error was exactly `ReferenceError: self is not
-    // defined`; assert on the error object itself, not on stringified text.
-    expect(error).toBeInstanceOf(Error);
-    expect(error).not.toBeInstanceOf(ReferenceError);
+      // Landing in the TypeScript fallback is EXPECTED here and is not what
+      // this test is about: vitest's VM module runner cannot service the
+      // loader's `new Function('url', 'return import(url)')` import in any
+      // environment. What is pinned is that the loader got as far as computing a
+      // URL rather than dying on a missing browser global.
+      expect(wasm).toBeInstanceOf(TypeScriptFallback);
+
+      expect(failures.length).toBeGreaterThan(0);
+      const [message, error] = failures[0] as [string, unknown];
+      // These tests are the pin on this message's shape: repo-wide, nothing
+      // outside this file and its sibling keys on `Failed to load WASM module`.
+      // The substring the E2E specs do depend on is `TypeScript fallback`
+      // (`src/tests/e2e/worker-wasm-integration.spec.ts`), which the message
+      // still ends with.
+      expect(message).toContain('Failed to load WASM module');
+      // Resolution completed via `import.meta.url` with no DOM present.
+      expect(message).toMatch(/src\/wasm\/luxar_wasm\.js/);
+      // Pre-fix the swallowed error was exactly `ReferenceError: self is not
+      // defined`; assert on the error object itself, not on stringified text.
+      expect(error).toBeInstanceOf(Error);
+      expect(error).not.toBeInstanceOf(ReferenceError);
+    } finally {
+      warn.mockRestore();
+      info.mockRestore();
+    }
   });
 });
 
@@ -122,16 +135,23 @@ describe('initWasm URL resolution on the dev server origin', () => {
     // `vitest.config.ts`, so a leaked `location` would silently break the
     // `typeof location === 'undefined'` precondition of the #1642 test above.
     vi.stubGlobal('location', { origin: 'http://dev.test' });
+    // `console.log` is spied purely to keep the two remediation `log.info`
+    // lines out of the reporter. Both spies are installed before the `try` and
+    // restored inline before the assertions AND in the `finally`, so neither a
+    // failing assertion nor a rejection can leak one; `mockRestore` is
+    // idempotent.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const info = vi.spyOn(console, 'log').mockImplementation(() => {});
     try {
       // The override is module-level state shared by every test in this file.
       setWasmJsUrl('');
 
-      // `console.log` is spied purely to keep the two remediation `log.info`
-      // lines out of the reporter.
-      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-      const info = vi.spyOn(console, 'log').mockImplementation(() => {});
       const wasm = await initWasm();
-      const calls = warn.mock.calls;
+      // Filter to the loader's own warning rather than indexing by position:
+      // an unrelated `console.warn` in the spy window would shift the index.
+      const failures = warn.mock.calls.filter(([m]) =>
+        String(m).includes('Failed to load WASM module')
+      );
       warn.mockRestore();
       info.mockRestore();
 
@@ -140,14 +160,16 @@ describe('initWasm URL resolution on the dev server origin', () => {
       // `new Function('url', 'return import(url)')` import, whatever the URL.
       expect(wasm).toBeInstanceOf(TypeScriptFallback);
 
-      expect(calls.length).toBeGreaterThan(0);
-      const [message] = calls[0] as [string, unknown];
+      expect(failures.length).toBeGreaterThan(0);
+      const [message] = failures[0] as [string, unknown];
       // The whole point: the leading-slash, origin-relative resolution. A
       // relative `wasm/luxar_wasm.js` would resolve to /src/wasm/…, which
       // `scripts/build-wasm.sh` never writes, 404 in dev, and silently drop the
       // dev server onto the TypeScript backend with the suite still green.
       expect(message).toContain('http://dev.test/wasm/luxar_wasm.js');
     } finally {
+      warn.mockRestore();
+      info.mockRestore();
       vi.unstubAllGlobals();
     }
   });
@@ -167,26 +189,35 @@ describe('initWasm URL resolution on the dev server origin', () => {
     // for a `file://` dev build; only that the diagnostic says WHICH of the two
     // failure classes happened.
     vi.stubGlobal('location', { origin: 'null' });
+    // `console.log` is spied purely to keep the two remediation `log.info`
+    // lines out of the reporter. Both spies are installed before the `try` and
+    // restored inline before the assertions AND in the `finally`, so neither a
+    // failing assertion nor a rejection can leak one; `mockRestore` is
+    // idempotent.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const info = vi.spyOn(console, 'log').mockImplementation(() => {});
     try {
       // The override is module-level state shared by every test in this file.
       setWasmJsUrl('');
 
-      // `console.log` is spied purely to keep the two remediation `log.info`
-      // lines out of the reporter. Both are restored before any assertion.
-      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-      const info = vi.spyOn(console, 'log').mockImplementation(() => {});
       const wasm = await initWasm();
-      const calls = warn.mock.calls;
+      // Filter to the loader's own warning rather than indexing by position:
+      // an unrelated `console.warn` in the spy window would shift the index.
+      const failures = warn.mock.calls.filter(([m]) =>
+        String(m).includes('Failed to load WASM module')
+      );
       warn.mockRestore();
       info.mockRestore();
 
       expect(wasm).toBeInstanceOf(TypeScriptFallback);
 
-      expect(calls.length).toBeGreaterThan(0);
-      const [message] = calls[0] as [string, unknown];
+      expect(failures.length).toBeGreaterThan(0);
+      const [message] = failures[0] as [string, unknown];
       expect(message).toContain('Failed to load WASM module');
       expect(message).toContain('<URL resolution failed before the import>');
     } finally {
+      warn.mockRestore();
+      info.mockRestore();
       vi.unstubAllGlobals();
     }
   });

@@ -10,8 +10,10 @@
  *   - [wasm.md G31][P5] extract_3d_positions displayDims[j] >= ndim → OOB
  *                       read → undefined → Float32Array stores NaN.
  *
- * Pure math / pure module API. The only test doubles are `console` spies, used
- * to read back the URL the loader resolved from its own fallback warning.
+ * Pure math / pure module API. The test doubles are `console` spies, used to
+ * read back the URL the loader resolved from its own fallback warning, and the
+ * two `[G22]` tests' temporary replacement of `WebAssembly.instantiate` with a
+ * truthy non-function, each restored in a `finally`.
  *
  * Note on G23/G24: these were written to discriminate WHERE the load failed
  * (import resolved but `default()` missing, vs. the URL never being honoured),
@@ -72,22 +74,30 @@ describe('initWasm + setWasmJsUrl — URL pass-through discriminator [wasm.md G2
     // propagating.
     const overrideUrl = 'data:text/javascript,export const foo = 1';
     setWasmJsUrl(overrideUrl);
+    // `console.log` is spied purely to keep the two remediation `log.info`
+    // lines out of the reporter. Both spies are installed before the `try` and
+    // restored inline before the assertions (so a failure reads a live console)
+    // AND in the `finally` (so a rejection cannot leak them); `mockRestore` is
+    // idempotent.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const info = vi.spyOn(console, 'log').mockImplementation(() => {});
     try {
-      // `console.log` is spied purely to keep the two remediation `log.info`
-      // lines out of the reporter. Restore both BEFORE any expect so a failing
-      // assertion cannot leak a spy.
-      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-      const info = vi.spyOn(console, 'log').mockImplementation(() => {});
       const wasm = await initWasm();
-      const calls = warn.mock.calls;
+      // Filter to the loader's own warning rather than indexing by position:
+      // an unrelated `console.warn` in the spy window would shift the index.
+      const failures = warn.mock.calls.filter(([m]) =>
+        String(m).includes('Failed to load WASM module')
+      );
       warn.mockRestore();
       info.mockRestore();
 
       expect(wasm).toBeInstanceOf(TypeScriptFallback);
-      expect(calls.length).toBeGreaterThan(0);
-      const [message] = calls[0] as [string, unknown];
+      expect(failures.length).toBeGreaterThan(0);
+      const [message] = failures[0] as [string, unknown];
       expect(message).toContain(overrideUrl);
     } finally {
+      warn.mockRestore();
+      info.mockRestore();
       setWasmJsUrl('');
     }
   });
@@ -118,27 +128,36 @@ describe('initWasm + setWasmJsUrl — URL pass-through discriminator [wasm.md G2
     // fail here. `instanceof TypeScriptFallback` alone cannot discriminate:
     // every URL lands in the fallback under vitest (see the docblock).
     setWasmJsUrl('http://localhost:0/missing-1.js');
+    // `console.log` is spied purely to keep the two remediation `log.info`
+    // lines out of the reporter. Both spies are installed before the `try` and
+    // restored inline before the assertions (so a failure reads a live console)
+    // AND in the `finally` (so a rejection cannot leak them); `mockRestore` is
+    // idempotent.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const info = vi.spyOn(console, 'log').mockImplementation(() => {});
     try {
-      // `console.log` is spied purely to keep the two remediation `log.info`
-      // lines out of the reporter. Restore both BEFORE any expect so a failing
-      // assertion cannot leak a spy.
-      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-      const info = vi.spyOn(console, 'log').mockImplementation(() => {});
       const w1 = await initWasm();
       setWasmJsUrl('http://localhost:0/missing-2.js');
       const w2 = await initWasm();
-      const calls = warn.mock.calls;
+      // Filter to the loader's OWN warnings before indexing: the order is the
+      // point of this test, and an unrelated `console.warn` landing between the
+      // two calls would shift both indices and assert against the wrong message.
+      const failures = warn.mock.calls.filter(([m]) =>
+        String(m).includes('Failed to load WASM module')
+      );
       warn.mockRestore();
       info.mockRestore();
 
       expect(w1).toBeInstanceOf(TypeScriptFallback);
       expect(w2).toBeInstanceOf(TypeScriptFallback);
-      expect(calls.length).toBeGreaterThanOrEqual(2);
-      const [first] = calls[0] as [string, unknown];
-      const [second] = calls[1] as [string, unknown];
+      expect(failures.length).toBeGreaterThanOrEqual(2);
+      const [first] = failures[0] as [string, unknown];
+      const [second] = failures[1] as [string, unknown];
       expect(first).toContain('missing-1.js');
       expect(second).toContain('missing-2.js');
     } finally {
+      warn.mockRestore();
+      info.mockRestore();
       setWasmJsUrl('');
     }
   });

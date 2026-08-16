@@ -151,11 +151,17 @@ export async function initWasm(): Promise<WasmModule> {
   try {
     // Compute WASM module URL. The correct base differs by build:
     //
-    //   • Production / library build: this module is bundled into
-    //     assets/index-*.js and the WASM files live at wasm/ (sibling of
-    //     assets/), so the import.meta.url-relative '../wasm/luxar_wasm.js'
-    //     resolves correctly. Using a variable prevents Vite from trying to
-    //     resolve the path as a source asset at build time.
+    //   • Production APP build: this module lands in a chunk under assets/ and
+    //     the WASM files live at wasm/ (sibling of assets/), so the
+    //     import.meta.url-relative '../wasm/luxar_wasm.js' resolves correctly.
+    //     Using a variable prevents Vite from trying to resolve the path as a
+    //     source asset at build time. The LIBRARY build differs: its entry chunk
+    //     dist/lib/luxar-viewer.js sits at the package ROOT, so this path
+    //     resolves one level above dist/lib/wasm/ and the main thread falls back
+    //     while the worker chunks (under assets/) still get WASM. One literal
+    //     cannot serve both depths, so an embedder consuming the package
+    //     unbundled should set LuxarAppOptions.wasmPath ({@link setWasmJsUrl})
+    //     until that is fixed; see #1649.
     //
     //   • Vite dev server, WHEN a `location` global exists: this module is
     //     served from /src/wasm/index.ts, so the same relative path would
