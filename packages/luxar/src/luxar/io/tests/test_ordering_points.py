@@ -113,9 +113,11 @@ class TestChunkBoundsPoints:
         ``chunk_bounds`` is float32. Past ``|x| ~ 2**23`` the ULP exceeds 1, so a
         round-to-nearest store of ``min - 0.5`` / ``max + 0.5`` lands back on the
         unpadded coordinate and the stored bound is TIGHTER than the disc the
-        renderer draws — strictly worse than the old scale-relative fudge, which
-        always survived. A points node authored in nm over a ~10 mm field sits
-        exactly here. Outward rounding in the store closes it.
+        renderer draws. The removed scale-relative fudge was no safer here — 1%
+        of this chunk's 10-unit range is 0.1 against a half-ULP of 1.0, so it
+        rounded away too; the outward store is what closes the hole, for the
+        authored-radius paths as much as for this one. A points node authored in
+        nm over a ~10 mm field sits exactly here.
         """
         # ULP is 2.0 at 2e7, so both pads round away without the fix.
         lo, hi = 2.0e7, 2.0e7 + 10.0
@@ -128,6 +130,23 @@ class TestChunkBoundsPoints:
         for dim in range(3):
             assert bounds[0, dim, 0] < positions[:, dim].min()
             assert bounds[0, dim, 1] > positions[:, dim].max()
+
+    def test_authored_radius_pad_survives_the_float32_store_too(self) -> None:
+        """The outward store is not specific to the no-radii default.
+
+        An authored radius is padded in exactly the same place, so a small
+        radius on large coordinates lost its pad the same way. Pins both the
+        broadcast-scalar and the per-point array paths.
+        """
+        lo, hi = 2.0e7, 2.0e7 + 10.0
+        positions = np.array([[lo, lo, lo], [hi, hi, hi]], dtype=np.float32)
+        per_point = np.full(2, 0.05, dtype=np.float32)
+
+        for radii in (0.05, per_point):
+            bounds = compute_chunk_bounds_points(positions, radii=radii, chunk_size=2)
+            for dim in range(3):
+                assert bounds[0, dim, 0] < positions[:, dim].min()
+                assert bounds[0, dim, 1] > positions[:, dim].max()
 
     def test_chunk_bounds_basic_with_radii(self) -> None:
         """Test chunk bounds with uniform radii."""

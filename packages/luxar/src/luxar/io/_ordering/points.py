@@ -48,10 +48,13 @@ def _store_outward_f32(lo: float, hi: float) -> tuple[np.float32, np.float32]:
     Past ``|x| ~ 2**23`` a 0.5 pad is under half a float32 ULP, so a
     round-to-nearest store throws it away entirely and the stored bound is
     TIGHTER than the footprint the renderer draws — precisely what the pad
-    exists to prevent, and worse than the old scale-relative fudge, which always
-    survived. Stepping one ULP outward whenever the cast moved a bound the wrong
-    way restores the guarantee: if a pad ``r`` was lost to rounding then ``r``
-    was below half an ULP, so one ULP outward is strictly more than ``r``.
+    exists to prevent. The hole is not new and is not specific to the default
+    radius: the removed scale-relative fudge vanished the same way whenever 1%
+    of a chunk's own range fell under half an ULP (0.1 against a half-ULP of 1.0
+    at ``|x| = 2e7``, say), and so does an authored per-point radius. Stepping
+    one ULP outward whenever the cast moved a bound the wrong way closes it for
+    every path at once: if a pad ``r`` was lost to rounding then ``r`` was below
+    half an ULP, so one ULP outward is strictly more than ``r``.
     """
     lo32 = np.float32(lo)
     if float(lo32) > lo:
