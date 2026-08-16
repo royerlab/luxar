@@ -156,7 +156,8 @@ adaptiveDPR: {
 
   // Session hygiene
   contentChangeRecheckMs: 5000, // Content-change coalescing / early re-probe
-  gapResetMs: 350               // Frame gap that resets the FPS window
+  gapResetMs: 350               // Absolute floor for calling a frame gap DEAD TIME
+                                // (must ALSO be >4x the recent inter-frame median)
 }
 ```
 

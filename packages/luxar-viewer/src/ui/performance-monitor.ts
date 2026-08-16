@@ -24,6 +24,29 @@ type PerfMode = 'fps' | 'ms' | 'graph';
 const MODES: PerfMode[] = ['fps', 'ms', 'graph'];
 
 /**
+ * Format an FPS reading for a numeric readout.
+ *
+ * Sub-1fps rates are REAL — a software-rasterized scene on a heavy volume
+ * genuinely renders at 0.4fps — and rounding them to `0` reads as "not
+ * rendering at all", the opposite claim, in exactly the regime where the
+ * number matters. Below 0.1fps (one frame every ten seconds) a second
+ * decimal keeps "0.0" off the readout too. Two decimals is where it
+ * stops: under 0.005fps (one frame every 200 seconds) the reading does
+ * round to "0.00", and a wider string would not fit the 38px rail
+ * square. Nothing reaches that — the FPS window would have to hold two
+ * frames more than three minutes apart — and at that point "0" is the
+ * honest answer anyway.
+ *
+ * Shared with the Performance panel's Current FPS row so the rail gauge
+ * and the panel can never disagree about the same rate.
+ */
+export function formatFPSReading(fps: number): string {
+  if (fps >= 1) return Math.round(fps).toString();
+  if (!(fps > 0)) return '0';
+  return fps.toFixed(fps >= 0.1 ? 1 : 2);
+}
+
+/**
  * Hook the {@link PerformanceMonitor} uses to keep the render loop running while
  * it is visible. The monitor needs continuous frames to measure FPS/frame-time,
  * so it `request()`s a keep-alive when shown and `release()`s it when hidden or
@@ -150,9 +173,14 @@ export class PerformanceMonitor {
       return;
     }
     if (this.mode === 'fps') {
-      const fps = Math.round(this.fps);
-      this.numEl.textContent = `${fps}`;
-      this.numEl.dataset.level = fps >= 50 ? 'good' : fps >= 30 ? 'ok' : 'bad';
+      const fps = this.fps;
+      this.numEl.textContent = formatFPSReading(fps);
+      // Band the colour by the number the readout actually SHOWS, not by the
+      // raw rate: the text rounds at/above 1fps, so classifying 49.6 raw would
+      // paint a displayed "50" amber. (A sub-1 rate rounds to 0 and stays
+      // 'bad', which is what a fraction of a frame per second is.)
+      const shown = Math.round(fps);
+      this.numEl.dataset.level = shown >= 50 ? 'good' : shown >= 30 ? 'ok' : 'bad';
       this.unitEl.textContent = 'fps';
     } else {
       this.numEl.textContent = this.msEma.toFixed(1);
