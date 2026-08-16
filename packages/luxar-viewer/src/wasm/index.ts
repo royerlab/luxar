@@ -84,6 +84,81 @@ export function wasmShimCandidateUrls(baseUrl: string): string[] {
 }
 
 /**
+ * The wasm-bindgen JS shim's namespace, as far as the loader cares: a
+ * `default()` that instantiates the binary, plus the per-kernel wrappers
+ * {@link assertRequiredWasmExports} inspects by name. Exported because it is
+ * {@link importFirstWasmShim}'s return type — a private alias in a public
+ * signature trips the TypeDoc warning ratchet.
+ */
+export type WasmShimModule = { default: () => Promise<unknown> } & Record<string, unknown>;
+
+/**
+ * Import the first URL that yields something shaped like the wasm-bindgen
+ * shim, trying the candidates in order.
+ *
+ * Split out of {@link initWasm} and given an injectable importer because
+ * `initWasm` cannot reach this loop under vitest: `import.meta.env.DEV` is true
+ * there, so every in-suite `initWasm()` takes the single-candidate dev-server
+ * branch and a regression back to "use candidate 0 only" would pass every gate.
+ *
+ * Two rules, both load-bearing:
+ * - A candidate must expose a callable `default` to count as a hit. A host that
+ *   answers the entry chunk's 404 with a JS-typed SPA fallback page returns a
+ *   module with no `default`, which would otherwise end the loop and then blow
+ *   up on `wasmModule.default()` — #1649's exact symptom, surviving on that host
+ *   class. The check only reads a property, so nothing is instantiated and the
+ *   "commit to the winner" rule below is untouched.
+ * - Only the IMPORT is retried. Once a candidate wins, the caller runs
+ *   `default()` and the staleness check against that module alone: re-running
+ *   them elsewhere could instantiate the binary twice, and would hide a
+ *   genuinely stale artifact behind the next candidate's 404.
+ *
+ * @param urls Candidate hrefs in try order (see {@link wasmShimCandidateUrls}).
+ * @param importModule Dynamic-import indirection. {@link initWasm} passes a
+ *   `new Function`-built importer so neither TypeScript nor Vite resolves the
+ *   specifier at build time.
+ * @returns The winning candidate's module namespace.
+ * @throws The single candidate's own error when only one URL was tried (so the
+ *   override and dev-server paths log exactly what they always did), otherwise
+ *   an `AggregateError` naming every URL in order — attributing a real failure
+ *   (shim served as `text/plain`, blocked by CSP, corrupt) to the LAST
+ *   candidate would point at a directory that exists in no layout.
+ */
+export async function importFirstWasmShim(
+  urls: readonly string[],
+  importModule: (url: string) => Promise<unknown>
+): Promise<WasmShimModule> {
+  const errors: unknown[] = [];
+  for (const url of urls) {
+    let candidate: unknown;
+    try {
+      candidate = await importModule(url);
+    } catch (importError) {
+      errors.push(importError);
+      continue;
+    }
+    if (typeof (candidate as { default?: unknown } | undefined)?.default === 'function') {
+      return candidate as WasmShimModule;
+    }
+    errors.push(
+      new Error(`Module at ${url} is not a wasm-bindgen shim: no callable default export`)
+    );
+  }
+  if (errors.length === 0) {
+    // An empty candidate list is a caller bug, not a load failure; rethrowing
+    // `undefined` here would surface as an unreadable fallback warning.
+    throw new Error('No WASM shim candidate URL was resolved');
+  }
+  if (errors.length === 1) {
+    throw errors[0];
+  }
+  throw new AggregateError(
+    errors,
+    `Failed to load the WASM shim from any candidate URL (tried, in order: ${urls.join(', ')})`
+  );
+}
+
+/**
  * Reject a module that imported and initialised fine but predates one of the
  * `REQUIRED_WASM_EXPORTS` kernels. The list itself lives in
  * `./required-exports.ts` because the vitest global setup shares it; see the
@@ -174,7 +249,8 @@ export function setWasmJsUrl(url: string | undefined): void {
  * 1. Try to load the compiled WASM shim, in candidate order: an explicit
  *    {@link setWasmJsUrl} override, else `/wasm/luxar_wasm.js` on a dev
  *    server, else each bundle-relative candidate from
- *    {@link wasmShimCandidateUrls} until one imports
+ *    {@link wasmShimCandidateUrls} until one imports as a shim
+ *    ({@link importFirstWasmShim})
  * 2. If all fail (not built, wrong layout, browser incompatibility), use the
  *    TypeScript fallback
  *
@@ -219,26 +295,13 @@ export async function initWasm(): Promise<WasmModule> {
 
     // Use Function constructor to avoid TypeScript compile-time module resolution
     // This allows the code to compile even when WASM module doesn't exist yet
-    const importWasm = new Function('url', 'return import(url)');
-    // Retry the IMPORT only. Once a candidate's shim module resolves we commit
-    // to it: re-running default()/the staleness check against another URL could
-    // instantiate the binary twice, and would hide a genuinely stale artifact
-    // behind whatever 404 the next candidate produces. If every candidate
-    // fails, rethrow the LAST error so the catch below still reports a real
-    // cause rather than a synthesized one.
-    let wasmModule: { default: () => Promise<unknown> } | undefined;
-    let lastImportError: unknown;
-    for (const url of wasmJsUrls) {
-      try {
-        wasmModule = await importWasm(url);
-        break;
-      } catch (importError) {
-        lastImportError = importError;
-      }
-    }
-    if (!wasmModule) {
-      throw lastImportError;
-    }
+    const importWasm = new Function('url', 'return import(url)') as (
+      url: string
+    ) => Promise<unknown>;
+    // Candidate walking, the shim shape check and error attribution all live in
+    // importFirstWasmShim so they can be unit-tested with a stub importer —
+    // this branch is unreachable under vitest (import.meta.env.DEV is true).
+    const wasmModule = await importFirstWasmShim(wasmJsUrls, importWasm);
 
     // Initialize WASM (loads the .wasm binary), then reject mixed/stale dev
     // artifacts before returning them as the WasmModule interface. This check

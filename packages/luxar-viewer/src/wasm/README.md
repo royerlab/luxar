@@ -41,10 +41,22 @@ are one level down, while the library build's entry chunk (`luxar-viewer.js`)
 is at the root itself — so `initWasm` tries an ordered candidate list rather
 than a single literal: `../wasm/luxar_wasm.js` first (the app build and both
 worker chunks, so the hot paths still cost one request), then
-`./wasm/luxar_wasm.js` (the library entry chunk). Only the import is retried;
-once a candidate loads, initialization and the staleness check run against it
-alone. Use `setWasmJsUrl` only when shipping WASM files from a non-standard
-location.
+`./wasm/luxar_wasm.js` (the library entry chunk). A candidate counts as a hit
+only if it exposes a callable `default`, so a host that answers the 404 with a
+JS-typed SPA fallback page falls through instead of ending the walk on a module
+that cannot initialize. Only the import is retried; once a candidate wins,
+initialization and the staleness check run against it alone. On the Vite dev
+server none of that applies: the module is served from `/src/wasm/index.ts`
+while `make build-wasm` writes to `public/wasm/`, so the URL is resolved off the
+origin as `/wasm/luxar_wasm.js` — a SINGLE candidate, since the bundle-relative
+ones could only add guaranteed 404s. Use `setWasmJsUrl` only when shipping WASM
+files from a non-standard location.
+
+Dev-tree gotcha: if you serve the whole `dist/` after running both `pnpm build`
+and `pnpm build:lib`, the app build's `dist/wasm/` is candidate 1 for
+`dist/lib/luxar-viewer.js` and shadows the freshly copied `dist/lib/wasm/`. The
+symptom is a "Loaded WASM module is stale" throw plus the TypeScript fallback,
+from an artifact that looks correctly placed.
 
 ## WasmModule API
 
@@ -183,7 +195,9 @@ helper (and `src/wasm/index.ts`, the production loader) both mentions `luxar_was
 ```
 wasm/
 ├── index.ts              — Loader (initWasm, isWasmSupported, getFallback,
-│                           setWasmJsUrl, isWasmFallback)
+│                           setWasmJsUrl, isWasmFallback,
+│                           wasmShimCandidateUrls, importFirstWasmShim,
+│                           assertRequiredWasmExports)
 ├── types.ts              — WasmModule interface (unified API)
 ├── required-exports.ts   — Kernels a stale build may lack; shared by the
 │                           loader's staleness check and the vitest global setup

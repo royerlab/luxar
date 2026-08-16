@@ -54,6 +54,15 @@ in the parent README's "Embedding" section. Checks:
 4. `three` is externalized: the bundle text must not contain a
    `class WebGLRenderer` definition. A bundled `three` would be a
    multi-MB regression and break peer-dep semantics.
+5. Every emitted chunk that spells out a bundle-relative WASM shim
+   specifier can actually reach `dist/lib/wasm/luxar_wasm.js` from its own
+   directory. The entry chunk sits at the output root and the worker
+   chunks under `assets/`, so one relative literal cannot serve both
+   (#1649), and getting it wrong is silent — the import 404s and the
+   viewer drops to the TypeScript fallback. The entry chunk is also
+   required to name at least one specifier, since this is a text-level
+   scan that would otherwise pass vacuously once the paths stop being
+   literals.
 
 Exits non-zero on any failure with a per-issue diagnostic.
 

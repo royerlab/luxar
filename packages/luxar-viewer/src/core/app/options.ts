@@ -52,7 +52,9 @@ export interface LuxarAppOptions {
    * modern bundlers. Because the chunk carrying the loader sits at a
    * different depth in the app build (`assets/…`) than in the library
    * build's entry chunk (the output root), the loader tries
-   * `../wasm/luxar_wasm.js` then `./wasm/luxar_wasm.js` until one imports.
+   * `../wasm/luxar_wasm.js` then `./wasm/luxar_wasm.js` until one imports
+   * (on the Vite dev server neither applies: the shim is fetched from
+   * `/wasm/luxar_wasm.js` off the origin, as a single candidate).
    * Embedders whose bundlers don't support `import.meta.url` for asset URLs
    * (or who ship the WASM files from a non-default location) override this.
    */

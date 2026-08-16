@@ -123,8 +123,10 @@ if (existsSync(jsPath)) {
 // the worker chunks at dist/lib/assets/. `wasm/` is emitted at the output root
 // (publicDir copy), so a chunk under assets/ needs '../wasm/…' while the entry
 // chunk needs './wasm/…'. Getting this wrong is invisible at runtime — the
-// import 404s and the viewer silently drops to the TypeScript fallback — and
-// `build:lib` is not run by PR CI, so this script is the only gate on it.
+// import 404s and the viewer silently drops to the TypeScript fallback. The
+// ordinary typescript-tests job never builds the library at all; `build:lib`
+// runs in the `release-readiness` job (and in publish-npm.yml on a tag), where
+// this script is the only thing that inspects the shipped layout.
 //
 // This is a TEXT-level layout check: it sees the specifiers a chunk literally
 // spells out, so it cannot see a URL assembled at runtime (a `wasmPath`
@@ -135,7 +137,11 @@ const wasmArtifact = resolve(LIB_DIR, 'wasm/luxar_wasm.js');
 if (!existsSync(wasmArtifact)) {
   // Without the publicDir copy every chunk is broken and the per-chunk scan
   // below would have nothing to resolve against — i.e. it would pass vacuously.
-  fail('Missing WASM shim: dist/lib/wasm/luxar_wasm.js (publicDir copy not emitted?)');
+  fail(
+    'Missing WASM shim: dist/lib/wasm/luxar_wasm.js — either the artifact was ' +
+      'never built (run pnpm build:wasm / make build-wasm, which writes ' +
+      'public/wasm/) or the publicDir copy was not emitted.'
+  );
 }
 
 /** Recursively collect every `.js` file under `dir`. */
@@ -150,34 +156,56 @@ function collectJsFiles(dir) {
 }
 
 if (existsSync(LIB_DIR)) {
-  // The lib build sets `minify: false`, so JSDoc that merely MENTIONS
-  // '../wasm/luxar_wasm.js' ships verbatim inside the chunk. Strip block
-  // comments first and accept only quoted string literals, or the check would
-  // pass on prose alone.
+  // The lib build sets `minify: false`, so a comment that merely MENTIONS
+  // '../wasm/luxar_wasm.js' ships verbatim inside the chunk — the loader's own
+  // JSDoc does exactly that. Strip comments first and accept only quoted string
+  // literals, or the check would pass on prose alone. The `(?<!:)` keeps the
+  // line-comment strip off the '//' in a 'https://…' string literal, which
+  // would otherwise truncate the rest of that line.
   const shimSpecifier = /["'`](\.{1,2}\/(?:\.\.\/)*wasm\/luxar_wasm\.js)["'`]/g;
+  const stripComments = (code) =>
+    code.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(?<!:)\/\/[^\n]*/g, '');
+  const entryChunk = resolve(LIB_DIR, 'luxar-viewer.js');
+  let entrySpecifierCount = 0;
   for (const file of collectJsFiles(LIB_DIR)) {
-    const code = readFileSync(file, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    const code = stripComments(readFileSync(file, 'utf8'));
     const specifiers = [...code.matchAll(shimSpecifier)].map((m) => m[1]);
+    if (file === entryChunk) entrySpecifierCount = specifiers.length;
     if (specifiers.length === 0) continue;
-    const reachable = specifiers.some((spec) => {
+    // Existence alone is not enough: only `dist/lib/**` is published, so a
+    // specifier that escapes LIB_DIR is unreachable for a consumer even when it
+    // happens to land on something locally — a sibling app build leaves a
+    // `dist/wasm/` behind, which is exactly what the broken '../wasm/…' from
+    // the entry chunk resolves onto in a dev tree. Report the two rejection
+    // reasons apart, or the developer runs `ls`, sees that file and concludes
+    // the checker is broken.
+    const verdicts = specifiers.map((spec) => {
       const target = resolve(dirname(file), spec);
-      // Existence alone is not enough: only `dist/lib/**` is published, so a
-      // specifier that escapes LIB_DIR is unreachable for a consumer even
-      // when it happens to land on something locally — a sibling app build
-      // leaves a `dist/wasm/` behind, which is exactly what the broken
-      // '../wasm/…' from the entry chunk resolves onto in a dev tree.
-      return target.startsWith(LIB_DIR + sep) && existsSync(target);
+      if (!target.startsWith(LIB_DIR + sep)) return `${spec} (outside dist/lib, not published)`;
+      return existsSync(target) ? null : `${spec} (no such file)`;
     });
-    if (!reachable) {
+    if (verdicts.every((v) => v !== null)) {
       const rel = file.slice(LIB_DIR.length + 1);
       fail(
         `dist/lib/${rel} references the WASM shim but none of its specifiers ` +
-          `resolve to an existing file (tried: ${specifiers.join(', ')}). ` +
-          'The shim lives at dist/lib/wasm/luxar_wasm.js; a chunk at the ' +
-          "output root needs './wasm/…' while one under assets/ needs " +
-          "'../wasm/…'."
+          `reach it (${verdicts.join(', ')}). The shim lives at ` +
+          'dist/lib/wasm/luxar_wasm.js; a chunk at the output root needs ' +
+          "'./wasm/…' while one under assets/ needs '../wasm/…'."
       );
     }
+  }
+  // The scan is text-level, so it self-disables the moment the loader stops
+  // spelling its specifiers as literals (a concatenation refactor, a rename, an
+  // over-eager comment strip) — every chunk then matches nothing and passes
+  // vacuously. Pin the one chunk #1649 is about: it MUST name a candidate.
+  if (existsSync(entryChunk) && entrySpecifierCount === 0) {
+    fail(
+      'dist/lib/luxar-viewer.js names no bundle-relative WASM shim specifier, ' +
+        'so this layout check is blind. Either the loader no longer spells its ' +
+        'candidates as string literals (the scan cannot follow a concatenated ' +
+        'or renamed specifier) or the shim path changed — update the scan in ' +
+        'this script alongside src/wasm/index.ts.'
+    );
   }
 }
 
