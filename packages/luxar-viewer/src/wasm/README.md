@@ -32,10 +32,46 @@ const wasm = await initWasm();
 const count = wasm.clip_segments_batch(/* ... */);
 ```
 
-The default URL resolution (`new URL('../wasm/luxar_wasm.js', import.meta.url)`)
-works for the standalone Vite app and most consumer bundlers (Vite, Rollup,
-webpack 5). Use `setWasmJsUrl` only when shipping WASM files from a
-non-standard location.
+By default the shim URL is resolved relative to the bundled chunk
+(`import.meta.url`), which works for the standalone Vite app and most consumer
+bundlers (Vite, Rollup, webpack 5). The compiled artifact always lands in a
+`wasm/` directory at the output root, but the chunk carrying the loader sits at
+one of two depths — `assets/index-*.js` and the library build's worker chunks
+are one level down, while the library build's entry chunk (`luxar-viewer.js`)
+is at the root itself — so `initWasm` tries an ordered candidate list rather
+than a single literal: the shim one directory ABOVE the chunk first (the app
+build and both worker chunks, so the hot paths still cost one request), then the
+shim BESIDE the chunk (the library entry chunk). In built terms those are
+`dist/wasm/luxar_wasm.js` and `dist/lib/wasm/luxar_wasm.js`; the specifiers
+themselves are in `WASM_SHIM_RELATIVE_SPECIFIERS`. The list is deduplicated after
+resolution, so it is not always two requests: a chunk served at the URL root
+(`dist/lib/*` copied to a site root) resolves both specifiers to the same href.
+A candidate counts as a hit only if it exposes a **callable** `default`, so a
+200 with an empty body — or a JavaScript stub/redirect module served in place of
+the absent artifact — falls through instead of ending the walk on a module that
+cannot initialize. (An HTML error page needs no such help: it does not parse as
+an ES module, so the import itself rejects.) Only the import is retried; once a
+candidate wins, initialization and the staleness check run against it alone. On
+the Vite dev
+server none of that applies: the module is served from `/src/wasm/index.ts`
+while `make build-wasm` writes to `public/wasm/`, so the URL is resolved off the
+origin as `/wasm/luxar_wasm.js` — a SINGLE candidate, since the bundle-relative
+ones could only add guaranteed 404s. Use `setWasmJsUrl` only when shipping WASM
+files from a non-standard location.
+
+Dev-tree gotcha, and only under one precondition: if you serve the whole `dist/`
+after running both `pnpm build` and `pnpm build:lib`, the app build's
+`dist/wasm/` is the FIRST candidate for `dist/lib/luxar-viewer.js` and shadows
+the freshly copied `dist/lib/wasm/`. Back to back that is benign — both scripts
+begin with `pnpm build:wasm` and copy the same `public/wasm/`, so the two
+artifacts are byte-identical. It only bites when `public/wasm/` changed between
+the two builds, and then the likely outcome is the silent one:
+`assertRequiredWasmExports` compares export NAMES only, so an older binary with
+the same export set loads and runs, and you profile or debug the wrong build
+with nothing on the console. It turns loud — a "Loaded WASM module is stale"
+throw plus the TypeScript fallback, from an artifact that looks correctly placed
+— only when the shadowing build predates a kernel since added to
+`required-exports.ts`.
 
 ## WasmModule API
 
@@ -174,7 +210,9 @@ helper (and `src/wasm/index.ts`, the production loader) both mentions `luxar_was
 ```
 wasm/
 ├── index.ts              — Loader (initWasm, isWasmSupported, getFallback,
-│                           setWasmJsUrl, isWasmFallback)
+│                           setWasmJsUrl, isWasmFallback,
+│                           wasmShimCandidateUrls, importFirstWasmShim,
+│                           assertRequiredWasmExports)
 ├── types.ts              — WasmModule interface (unified API)
 ├── required-exports.ts   — Kernels a stale build may lack; shared by the
 │                           loader's staleness check and the vitest global setup
