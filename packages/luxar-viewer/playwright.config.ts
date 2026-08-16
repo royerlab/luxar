@@ -53,7 +53,10 @@ export default defineConfig({
   // per-test `page` fixture, no file creates a shared page in `beforeAll`, and
   // there is no `test.describe.serial` anywhere. What genuinely cannot share is
   // a handful of RESOURCE-bound files — a spawned `luxar serve`, concurrent
-  // `hatch` invocations, FPS benchmarks — and those opt OUT locally with
+  // `hatch` invocations, FPS benchmarks, and files that are simultaneously GPU-
+  // context- and dataset-server-bound (webgl-errors.spec.ts: ~14 scene loads
+  // over the port-9000 server, each with its own WebGL context and OPFS
+  // write-through) — and those opt OUT locally with
   // `test.describe.configure({ mode: 'default' })`, which pins the file to one
   // worker without `'serial'`'s skip-the-rest-after-a-failure behaviour. The
   // perf benches, which do want that, keep `'serial'`.
