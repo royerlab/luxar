@@ -39,7 +39,9 @@ export const ALLOW_CONSOLE_ERRORS = 'allow-console-errors';
  * Console error patterns the auto-fixture treats as environmental
  * flakiness rather than test failures.
  *
- * Every E2E spec uses this fixture. Specs that also make their own
+ * The 58 of the 66 E2E specs that import `test` from here use this
+ * fixture; the other 8 import `@playwright/test` directly.
+ * Specs that also make their own
  * explicit `assertNoConsoleErrors(page)` call keep
  * that explicit contract (it runs strictly with no allow-list and
  * fails first if anything unexpected appears); the auto-fixture

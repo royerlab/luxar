@@ -309,23 +309,124 @@ export async function waitForUIState(
 }
 
 /**
+ * Bound a single in-page evaluation with a deadline.
+ *
+ * WHY: `page.evaluate` carries no timeout of its own. Neither
+ * `actionTimeout` nor `setDefaultTimeout` reaches it, so an evaluate the
+ * page never answers can only be stopped by the whole test budget —
+ * Playwright then reports `Test timeout of 60000ms exceeded` (or
+ * `Tearing down "page" exceeded the test timeout`) pending on whatever
+ * line dispatched it, minutes after the real problem started. That is
+ * the wedge issue #1651 was filed for, and it is main-thread task
+ * starvation rather than anything GL-specific: instrumented on an idle
+ * box, a trivial `page.evaluate(() => 'ok')` went unanswered for 5 s
+ * twelve times in a row while `requestAnimationFrame` kept ticking
+ * (34 → 157) and the renderer's own counter advanced 426 → 672, with
+ * `visibilityState === 'visible'` and the WebGL context never lost. An
+ * in-page `setInterval(…, 1000)` fired twice in 28 s over the same
+ * window. So a saturated software-rendering rAF loop starves the
+ * lower-priority task sources — in-page timers and Playwright's
+ * `Runtime.callFunctionOn` round trip — for tens of seconds, while
+ * rendering continues throughout; which probe is being dispatched makes
+ * no difference.
+ *
+ * This bounds ONE wait rather than a whole helper: hand it an
+ * already-started evaluation plus a value to fall back to, and decide at
+ * the call site what a missed deadline means. The evaluation is not
+ * cancelled (Playwright offers no way to cancel one) — it is merely no
+ * longer waited on, and a rejection arriving after the deadline stays
+ * handled by the already-settled race instead of becoming an
+ * unhandledRejection.
+ *
+ * NOTE: a sibling change (#1652) introduces an equivalent wrapper for the
+ * render-pacing helpers (`waitForRenderStable` / `waitForNextRender`) for
+ * the same reason; if both land, the two should be collapsed into one.
+ *
+ * @param evaluation - An already-started `page.evaluate(...)` promise.
+ * @param timeout - Deadline in milliseconds.
+ * @param onTimeout - Value to resolve with when the deadline wins. Use a
+ *   sentinel the in-page function can never return, so the caller can
+ *   tell a real answer from a missed deadline.
+ * @returns The evaluation's result, or `onTimeout` if the deadline won.
+ */
+export async function evaluateWithDeadline<T>(
+  evaluation: Promise<T>,
+  timeout: number,
+  onTimeout: T
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      evaluation,
+      new Promise<T>((resolve) => {
+        timer = setTimeout(() => resolve(onTimeout), timeout);
+      }),
+    ]);
+  } finally {
+    // Always clear the timer, on both paths: a dangling handle keeps the
+    // Node process alive past the end of the run when the evaluation is
+    // the one that won the race.
+    clearTimeout(timer);
+  }
+}
+
+/**
  * Get browser console messages (CRITICAL for E2E validation)
  *
  * Retrieves all console messages from the browser's console interceptor.
  * This is ESSENTIAL for detecting errors in data loading, decoding, and rendering.
  *
+ * Deadline-bounded (#1651). This helper runs from the shared fixture's
+ * teardown (`assertNoConsoleErrors`) for the specs that import `test` from
+ * `./fixtures` — 58 of the 66, the other 8 importing `@playwright/test`
+ * directly and getting no fixture teardown — so an unanswered probe used to
+ * burn the ENTIRE remaining test budget and be reported as `Tearing down
+ * "page" exceeded the test timeout` pending on the evaluate below. Failing
+ * in `timeout` ms with a message that says what went unanswered is
+ * strictly more informative.
+ *
+ * WHAT THE DEFAULT COSTS, honestly: a deadline here cannot distinguish a
+ * page that will never answer from one that would have answered late, so
+ * ANY value can cut short a stall that would have ended, turning a test
+ * that used to pass into one that fails. That is a real cost rather than a
+ * hypothetical — the stalls measured for #1651 lasted tens of seconds (a
+ * trivial `page.evaluate` unanswered for 5 s twelve times running, ~78 s in
+ * all, while the page went on rendering). The bound is worth paying anyway
+ * because the alternative failure is opaque, but it is a trade, not a free
+ * win.
+ *
+ * WHY 45 s: Playwright gives the After Hooks phase a FRESH timeout slot
+ * (`afterHooksSlot = { timeout: calculateMaxTimeout(project.timeout,
+ * testInfo.timeout) }` in its worker), so fixture teardown always has the
+ * full per-test timeout available — 60 s here — no matter how much the test
+ * body already used. 45 s lands inside that slot — which is what makes the
+ * failure attributable to this probe by name instead of arriving as `Tearing
+ * down "page" exceeded the test timeout` — while still leaving a wide margin
+ * for a page that recovers late. It also bounds the mid-test call sites,
+ * where the probe shares the body's budget rather than getting a fresh slot.
+ * The work itself is a walk over at most
+ * `DEFAULT_MAX_BUFFER_SIZE` buffered messages
+ * (`src/utils/console-interceptor.ts`), so a live page answers in
+ * milliseconds and never approaches this.
+ *
  * @param page - Playwright page
+ * @param timeout - Deadline for the in-page probe, in ms
  * @returns Object with errors, warnings, and info messages
+ * @throws If the page does not answer the probe within `timeout` ms
  */
-export async function getConsoleMessages(page: Page): Promise<{
+export async function getConsoleMessages(
+  page: Page,
+  timeout = 45000
+): Promise<{
   errors: string[];
   warnings: string[];
   logs: string[];
   all: string[];
 }> {
-  return await page.evaluate(() => {
+  const probe = page.evaluate(() => {
     const debug = (window as any).__luxarDebug;
     if (!debug || !debug.consoleInterceptor) {
+      // Legitimate "no interceptor installed" answer, not a wedge.
       return { errors: [], warnings: [], logs: [], all: [] };
     }
 
@@ -361,6 +462,25 @@ export async function getConsoleMessages(page: Page): Promise<{
 
     return { errors, warnings, logs, all };
   });
+
+  // Race against `null` as the sentinel: the in-page function above always
+  // returns an object (empty buckets when there is no interceptor), so a
+  // `null` here can only mean the deadline won.
+  const buckets = await evaluateWithDeadline<Awaited<typeof probe> | null>(probe, timeout, null);
+
+  if (buckets === null) {
+    // Deliberately NOT empty buckets: the fixture teardown feeds this
+    // into assertNoConsoleErrors, so returning `{errors: [], ...}` here
+    // would silently turn the console-error gate into a vacuous pass for
+    // every spec that imports `test` from `./fixtures`.
+    throw new Error(
+      `getConsoleMessages: the page never answered the console-buffer probe within ${timeout} ms — ` +
+        'its main thread is saturated and starving the evaluate round trip, so the console-error ' +
+        'check could not run. See issue #1651.'
+    );
+  }
+
+  return buckets;
 }
 
 /**
