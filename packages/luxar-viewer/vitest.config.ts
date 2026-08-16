@@ -17,10 +17,13 @@ export default defineConfig({
     //
     // Inverting the default (rather than listing directories) is deliberate:
     // the need is not directory-aligned — `ui/` is 65% jsdom while
-    // `rendering/` and `data/` are 92-94% node — and a missing docblock fails
-    // loudly with `ReferenceError: document is not defined` rather than
-    // silently running in the wrong environment. To regenerate the list after
-    // a large refactor: `vitest run --environment node` and take the failures.
+    // `rendering/` and `data/` are 92-94% node — and a missing docblock normally
+    // fails loudly with `ReferenceError: document is not defined` rather than
+    // silently running in the wrong environment. The exception is a global read
+    // through `typeof` behind a non-browser branch, which degrades quietly (see
+    // #1642), so the empirical list is derived, not trusted. To regenerate it
+    // after a large refactor: `vitest run --environment node` and take the
+    // failures.
     environment: 'node',
     globals: true,
     globalSetup: ['./src/tests/global-setup.ts'],

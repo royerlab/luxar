@@ -250,6 +250,50 @@ describe('initWasm URL resolution on the dev server origin', () => {
   });
 });
 
+describe('initWasm fallback warning', () => {
+  it('doubles % in the reported URLs so the swallowed error is not eaten as a substitution', async () => {
+    // The warning's message is `console.warn`'s FIRST argument, i.e. a format
+    // string, and a percent-escape can genuinely reach it: `new URL()` only
+    // uppercases escapes it ADDS, so one already present in the base survives
+    // into the resolved candidate. An unescaped `%d` there consumes the trailing
+    // `error` argument — `console.warn('a %d0', err)` prints `a NaN0` and drops
+    // `err` entirely, i.e. the exception vanishes from the one diagnostic #1642
+    // added it to. Doubling every `%` neutralises that; console collapses `%%`
+    // back to a single `%` whenever an extra argument is present, and `error`
+    // always is.
+    const overrideUrl = 'http://localhost:0/a%d0%9f/luxar_wasm.js';
+    setWasmJsUrl(overrideUrl);
+    // `console.log` is spied purely to keep the two remediation `log.info` lines
+    // out of the reporter. Both spies are restored inline before the assertions
+    // AND in the `finally`; `mockRestore` is idempotent.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const info = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      await initWasm();
+      const failures = warn.mock.calls.filter(([m]) =>
+        String(m).includes('Failed to load WASM module')
+      );
+      warn.mockRestore();
+      info.mockRestore();
+
+      expect(failures.length).toBeGreaterThan(0);
+      const [message, error] = failures[0] as [string, unknown];
+      expect(message).toContain(overrideUrl.replace(/%/g, '%%'));
+      // The raw spelling must NOT appear: it is the one that would be read as a
+      // substitution. Asserting its absence is what fails if the escape is
+      // dropped — the doubled `toContain` above would then be the only pin, and
+      // nothing else in the suite exercises a URL containing a `%` at all.
+      expect(message).not.toContain(overrideUrl);
+      // The argument the escape exists to protect.
+      expect(error).toBeInstanceOf(Error);
+    } finally {
+      warn.mockRestore();
+      info.mockRestore();
+      setWasmJsUrl('');
+    }
+  });
+});
+
 describe('assertRequiredWasmExports', () => {
   it('accepts a module exposing every required kernel', () => {
     expect(() => assertRequiredWasmExports(stubModule())).not.toThrow();
