@@ -345,18 +345,25 @@ class TestColorAgreementThreshold:
     def test_a_near_miss_reordering_is_rejected(self, tmp_path, monkeypatch) -> None:
         """An ABSOLUTE pin, independent of what the constant currently says.
 
-        0.90 agreement is where a near-miss reordering lands — morton instead of
-        hilbert measured 0.898 on the CT demo's shipped pair — and that is a
-        genuinely misindexed sidecar. Lowering the constant under 0.90 (the sort
-        of "make the gate less fussy" edit that looks harmless) turns this red.
+        A near-miss reordering — a genuinely misindexed sidecar that happens to
+        keep most same-voxel pairs together — lands JUST under the gate. Measured
+        on the CT demo's shipped pair (660,934 splats) by permuting its aligned
+        sidecar the way each mistake would have written it: the writer's own
+        morton order instead of hilbert scores 0.901, a roll-by-one 0.955, an
+        adjacent-pair swap 0.962. So the pin is set at ~0.972, just ABOVE the
+        worst of them: any constant at or below 0.972 accepts this pair and turns
+        the test red, which is what stops the gate being lowered under a real
+        near miss (0.90 — the level pinned before — was under three of them).
         """
         stored, _ = self._saved_pair(tmp_path, monkeypatch, "nm-")
         _, collides = _same_voxel_pairs(stored.centers)
         stored, broken = self._pair_with_broken(
-            tmp_path, monkeypatch, int(round(0.10 * len(collides)))
+            tmp_path, monkeypatch, int(np.floor(0.028 * len(collides)))
         )
         measured = voxel_sampled_payload_agreement(stored.centers, broken)
-        assert measured is not None and abs(measured - 0.90) < 0.01
+        # Strictly above 0.97, so `MIN_COLOR_AGREEMENT = 0.97` ACCEPTS this and
+        # goes red rather than passing on a rounding coincidence.
+        assert measured is not None and 0.970 < measured < 0.975
         assert not _demo._colors_match_fit(stored, broken, "near miss")
 
 
@@ -414,3 +421,109 @@ class TestRejectedPairFallsThroughToRefit:
         got_fit, got_colors = _demo.load_or_build()
         assert got_fit is not sentinel_fit, "an aligned pair triggered a refit"
         np.testing.assert_array_equal(got_colors, colors)
+
+
+class TestShippedLfsPairIsGuardedToo:
+    """The SHIPPED (Git LFS) branch of ``load_or_build`` must run the guard too.
+
+    ``load_or_build`` has two accept doors — the processed cache and the packaged
+    LFS assets — and each one calls ``_colors_match_fit`` separately. The cache
+    door is covered above; without these two the LFS call could be replaced by
+    ``if True:`` with the whole suite still green, because every other test points
+    ``LFS_*`` at absent paths so that branch never runs. That is not academic
+    here: today the shipped pair is the one that must be REFUSED (#1670).
+    """
+
+    @staticmethod
+    def _lfs_setup(tmp_path, monkeypatch, *, permute: bool):
+        """Materialize an LFS-shaped pair under tmp_path and stub the refit."""
+        n = 6000
+        rng = np.random.default_rng(43)
+        rgb_vol = rng.uniform(0.0, 1.0, (16, 16, 16, 3)).astype(np.float32)
+        fit = _scattered_gsplat_data(n, extent=15.49, seed=7)
+
+        # Build the pair straight into the "shipped" location.
+        lfs_dir = tmp_path / "lfs"
+        lfs_dir.mkdir()
+        monkeypatch.setattr(_demo, "CACHE_FIT", lfs_dir / _demo.FIT_FILE)
+        monkeypatch.setattr(_demo, "CACHE_COLORS", lfs_dir / _demo.COLORS_FILE)
+        _, colors = _demo.save_and_sample_colors(fit, rgb_vol)
+        if permute:
+            _save_colors_u8(colors[rng.permutation(n)], lfs_dir / _demo.COLORS_FILE)
+            colors = _load_colors_f32(lfs_dir / _demo.COLORS_FILE)
+        monkeypatch.setattr(_demo, "LFS_FIT", lfs_dir / _demo.FIT_FILE)
+        monkeypatch.setattr(_demo, "LFS_COLORS", lfs_dir / _demo.COLORS_FILE)
+
+        # …and empty the processed cache the LFS branch copies INTO, so the cache
+        # door misses and the LFS door is the one under test. CACHE_DIR must move
+        # too: the branch mkdirs it before `shutil.copy2`.
+        cache_dir = tmp_path / "cache"
+        monkeypatch.setattr(_demo, "CACHE_DIR", cache_dir)
+        monkeypatch.setattr(_demo, "CACHE_FIT", cache_dir / _demo.FIT_FILE)
+        monkeypatch.setattr(_demo, "CACHE_COLORS", cache_dir / _demo.COLORS_FILE)
+
+        monkeypatch.setattr(_demo, "RECOMPUTE", False)
+        monkeypatch.setattr(_demo, "warn_if_no_cuda_gpu", lambda: None)
+        sentinel_fit = _scattered_gsplat_data(4, extent=1.0, seed=8)
+        sentinel_colors = np.zeros((4, 3), dtype=np.float32)
+        monkeypatch.setattr(_demo, "download_head_slices", lambda: tmp_path)
+        monkeypatch.setattr(_demo, "assemble_volume", lambda *a, **k: (None, None))
+        monkeypatch.setattr(
+            _demo, "fit_head", lambda *a, **k: (sentinel_fit, sentinel_colors)
+        )
+        return colors, sentinel_fit, sentinel_colors
+
+    def test_a_permuted_shipped_sidecar_falls_through_to_the_refit(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        _, sentinel_fit, sentinel_colors = self._lfs_setup(
+            tmp_path, monkeypatch, permute=True
+        )
+        got_fit, got_colors = _demo.load_or_build()
+        assert got_fit is sentinel_fit, "a rejected SHIPPED pair was rendered anyway"
+        assert got_colors is sentinel_colors
+
+    def test_an_aligned_shipped_sidecar_is_used_instead_of_refitting(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        colors, sentinel_fit, _ = self._lfs_setup(tmp_path, monkeypatch, permute=False)
+        got_fit, got_colors = _demo.load_or_build()
+        assert got_fit is not sentinel_fit, "an aligned SHIPPED pair triggered a refit"
+        np.testing.assert_array_equal(got_colors, colors)
+
+    def test_the_shipped_pair_is_currently_rejected(self) -> None:
+        """TRIPWIRE — the shipped artifact is misordered, and this pins that.
+
+        ``vh_head_colors.npz`` was sampled in the pre-save splat order and does
+        NOT correspond to the ``vh_head.gsplats.zarr.zip`` beside it (#1670), so
+        the guard refuses the pair and the demo's DEFAULT path is a ~1.1 GB
+        download plus a 4M-splat refit.
+
+        WHEN THIS TEST GOES RED the artifact has been regenerated — that is good
+        news, and it is the signal to REVERT every claim that documents today's
+        slow path back to the fast-path wording:
+
+          * ``DEMO_META["requirements"]["download_mb"]`` 1100 → 25
+          * ``DEMO_META["requirements"]["compute"]`` "heavy" → "medium"
+          * the "NO WORKING FAST PATH TODAY (#1670)" block in the demo's module
+            docstring
+          * the **Requires** paragraph in ``demos/README.md``
+          * the ``gsplats_visible_human_head/`` row in ``demos/data/README.md``
+          * the ``gsplats_3d_visible_human_head`` entry in
+            ``scripts/gallery/generate_gallery_datasets.py``'s ``UNBUILDABLE_IDS``
+
+        Nothing else pins those, so without this tripwire they would quietly stay
+        wrong forever. Swap this test for ``assert _colors_match_fit(...)`` then.
+        """
+        from luxar.demos import is_lfs_pointer
+
+        for path in (_demo.LFS_FIT, _demo.LFS_COLORS):
+            if not path.exists() or is_lfs_pointer(path):
+                pytest.skip(f"{path.name} not materialized (run `git lfs pull`)")
+        fit = GSplatData.load(_demo.LFS_FIT, include_stats=False)
+        colors = _load_colors_f32(_demo.LFS_COLORS)
+        assert not _demo._colors_match_fit(fit, colors, "shipped"), (
+            "the shipped pair now PASSES the guard — see this test's docstring: "
+            "revert download_mb, compute, the docstring, both READMEs and the "
+            "gallery UNBUILDABLE_IDS entry to the fast-path wording"
+        )

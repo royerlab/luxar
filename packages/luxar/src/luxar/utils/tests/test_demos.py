@@ -890,6 +890,52 @@ class TestVoxelSampledPayloadAgreement:
         ]
         assert default.default >= 1024
 
+    def test_min_pairs_zero_on_a_pair_free_input_is_unverifiable_not_a_crash(
+        self,
+    ) -> None:
+        """`min_pairs=0` must not divide by zero.
+
+        With no colliding pair the final ``count / n_pairs`` is ``0 / 0``, so an
+        unclamped floor of 0 raised ``ZeroDivisionError`` on exactly the input the
+        helper is supposed to answer ``None`` for.
+        """
+        centers = (
+            np.stack(np.meshgrid(*[np.arange(6.0)] * 3, indexing="ij"), axis=-1)
+            .reshape(-1, 3)
+            .astype(np.float32)
+        )
+        labels = np.arange(len(centers), dtype=np.int32)
+        assert voxel_sampled_payload_agreement(centers, labels, min_pairs=0) is None
+        assert voxel_sampled_payload_agreement(centers, labels, min_pairs=-5) is None
+
+    def test_min_pairs_one_still_judges_a_single_pair(self) -> None:
+        """The clamp lowers the floor to 1, it does not disable the verdict."""
+        centers = np.array([[0.0, 0.0, 0.0], [0.1, 0.1, 0.1]], dtype=np.float32)
+        assert (
+            voxel_sampled_payload_agreement(
+                centers, np.array([7, 7], dtype=np.int32), min_pairs=0
+            )
+            == 1.0
+        )
+        assert (
+            voxel_sampled_payload_agreement(
+                centers, np.array([7, 8], dtype=np.int32), min_pairs=0
+            )
+            == 0.0
+        )
+
+    def test_zero_column_centers_raise_valueerror(self) -> None:
+        """An ``(N, 0)`` array is 2-D but carries no voxel key.
+
+        It used to reach ``np.lexsort`` and raise a bare ``TypeError: need
+        sequence of keys with len > 0`` — an internal-looking crash where the
+        documented contract is ``ValueError``.
+        """
+        with pytest.raises(ValueError, match="at least one column"):
+            voxel_sampled_payload_agreement(
+                np.zeros((10, 0), dtype=np.float32), np.zeros(10, dtype=np.int32)
+            )
+
     def test_length_mismatch_raises(self) -> None:
         centers = self._colliding_centers(n=100)
         with pytest.raises(ValueError, match="length mismatch"):

@@ -670,9 +670,9 @@ def voxel_sampled_payload_agreement(
 
     HOW STRONG THE VERDICT IS depends on the payload's own value diversity, not
     on this function: a shuffled sidecar still scores at that payload's chance
-    level ``Σ p_v²`` (0.027 for the CT's 117 organ labels, ~0.001 for sampled
-    RGB), so a payload that is NEARLY CONSTANT scores near 1.0 however badly it
-    is permuted. A caller whose payload has little diversity must not rely on
+    level ``Σ p_v²`` (measured on the two shipped payloads: 0.027 for the CT's
+    117 organ labels, 1.4e-05 for the Visible Human's sampled uint8 RGB), so a
+    payload that is NEARLY CONSTANT scores near 1.0 however badly it is permuted. A caller whose payload has little diversity must not rely on
     this check. NaN is likewise invisible to it: ``NaN == NaN`` is False, so a
     float payload using NaN as "no data" scores ~0 even when perfectly aligned
     (neither Luxar caller can hit that — int labels and uint8-derived colours).
@@ -690,7 +690,9 @@ def voxel_sampled_payload_agreement(
             with a non-finite center are excluded (they cannot be judged).
         payload: ``(N,)`` or ``(N, C)`` per-splat values sampled at those centers.
         min_pairs: Minimum number of same-voxel pairs required to return a
-            verdict.
+            verdict. Clamped to at least 1: with zero pairs there is nothing to
+            divide by, so "no evidence" must stay ``None`` rather than raise
+            ``ZeroDivisionError``.
 
     Returns:
         The agreement fraction in ``[0, 1]``, or ``None`` when fewer than
@@ -699,7 +701,7 @@ def voxel_sampled_payload_agreement(
 
     Raises:
         ValueError: if ``centers`` and ``payload`` have different lengths, or
-            ``centers`` is not 2-D.
+            ``centers`` is not 2-D, or ``centers`` has no columns.
     """
     centers = np.asarray(centers)
     payload = np.asarray(payload)
@@ -709,15 +711,25 @@ def voxel_sampled_payload_agreement(
         )
     if centers.ndim != 2:
         raise ValueError(f"centers must be 2-D (N, D), got shape {centers.shape}")
+    if centers.shape[1] == 0:
+        # No columns is no voxel key at all. Rejected explicitly because the
+        # lexsort below raises a bare `TypeError: need sequence of keys with
+        # len > 0` there, which reads as an internal bug rather than as the
+        # caller's malformed input.
+        raise ValueError(f"centers must have at least one column, got {centers.shape}")
+    # A caller-supplied floor of 0 would let a pair-free input reach the final
+    # division; one pair is the least that can be judged.
+    min_pairs = max(int(min_pairs), 1)
 
     # A center that has no int64 voxel — NaN, ±inf, or a magnitude that overflows
-    # the cast — must be excluded BEFORE the cast: `astype(np.int64)` warns bare
-    # there ("invalid value encountered in cast", fatal under `-W error`) and
-    # collapses every such row onto ONE sentinel voxel, inventing collisions
-    # between splats that share nothing. Dropping them costs nothing: they are
-    # unjudgeable, and finite in-range data is unaffected.
-    with np.errstate(invalid="ignore"):
-        judgeable = np.isfinite(centers) & (np.abs(centers) < _VOXEL_KEY_LIMIT)
+    # the cast — must be excluded BEFORE the cast below: `astype(np.int64)` warns
+    # bare on such a row ("invalid value encountered in cast", fatal under
+    # `-W error`) and collapses every one of them onto ONE sentinel voxel,
+    # inventing collisions between splats that share nothing. Dropping them costs
+    # nothing: they are unjudgeable, and finite in-range data is unaffected. This
+    # test itself is warning-free (`isfinite`/`abs` on a float array are total),
+    # so it needs no `errstate` of its own.
+    judgeable = np.isfinite(centers) & (np.abs(centers) < _VOXEL_KEY_LIMIT)
     keep = np.flatnonzero(judgeable.all(axis=1))
 
     # Sort by voxel index so same-voxel splats become adjacent (O(N log N)).

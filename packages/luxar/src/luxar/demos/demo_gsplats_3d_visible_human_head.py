@@ -80,7 +80,12 @@ DEMO_META = {
         # `--max-download-mb` default of 200 now skips this demo — correctly, it
         # really does download 1.1 GB unattended.
         "download_mb": 1100,
-        "compute": "medium",
+        # "heavy", not "medium", for the same reason and with the same expiry:
+        # the default path today is a progressive fit of up to 4M splats over a
+        # ~10 GB RGB volume, not a cached load. Restore "medium" together with
+        # the 25 above once the artifact is regenerated.
+        "compute": "heavy",
+        # Still "optional": the fit genuinely runs on CPU (slowly).
         "gpu": "optional",
         "local_data": "git-lfs",
     },
@@ -145,11 +150,15 @@ SCENE_INTENSITY = 0.008
 # trusted. Aligned data scores exactly 1.000. DO NOT LOOSEN THIS — the gate is
 # deliberately tight, because the interesting failures are NEAR MISSES rather
 # than full shuffles: a different space-filling curve, or a changed within-voxel
-# tie-break, lands at 0.90-0.98 (measured on the CT demo's shipped pair: morton
-# instead of hilbert 0.898, roll-by-one 0.955, adjacent-pair swap 0.978). Only a
-# FULL shuffle falls to the payload's own chance level Σp² — ~0.001 for sampled
-# RGB, but 0.027 for the CT demo's 117 organ labels, so the floor is
-# payload-dependent and is not what the threshold is set against.
+# tie-break, lands at 0.90-0.97 (measured on the CT demo's shipped pair, whose
+# aligned sidecar can be permuted the way each mistake would have written it:
+# the writer's own morton order instead of hilbert 0.901, roll-by-one 0.955,
+# adjacent-pair swap 0.962 — the worst case the constant has to stay above).
+# Only a FULL shuffle falls to the payload's own chance level Σp², which is
+# payload-dependent and is NOT what the threshold is set against: 1.4e-05 for
+# this demo's sampled uint8 RGB (measured over the 1,911,192 rows of the shipped
+# `vh_head_colors.npz`; an actual full shuffle of it scores 2.85e-05), against
+# 0.027 for the CT demo's 117 organ labels.
 MIN_COLOR_AGREEMENT = 0.99
 
 # Physical voxel spacing of the NLM VHM color cryosections: 1.0 mm axial (slice

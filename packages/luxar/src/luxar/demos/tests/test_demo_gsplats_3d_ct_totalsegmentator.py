@@ -279,6 +279,32 @@ class TestLabelSidecarOrdering:
         assert not _demo._labels_match_fit(stored, permuted, "permuted")
         assert not _demo._labels_match_fit(stored, labels[:-1], "truncated")
 
+    def test_a_pair_too_sparse_to_judge_is_accepted(self) -> None:
+        """Unverifiable is NOT a failure — the guard must accept and move on.
+
+        A fit whose splats never share a voxel gives the helper no evidence
+        (``None``). Rejecting there would refit every sparse dataset forever, so
+        this branch is load-bearing; it is also the one a stubbed test uses.
+        """
+        # One splat per voxel on a coarse lattice → no same-voxel pair at all.
+        grid = (
+            np.stack(np.meshgrid(*[np.arange(6.0)] * 3, indexing="ij"), axis=-1)
+            .reshape(-1, 3)
+            .astype(np.float32)
+        )
+        fit = GSplatData(
+            centers=grid,
+            amplitudes=np.ones(len(grid), dtype=np.float32),
+            cholesky_factors=np.tile([1, 0, 1, 0, 0, 1], (len(grid), 1)).astype(
+                np.float32
+            ),
+        )
+        labels = np.random.default_rng(9).integers(0, 118, len(grid)).astype(np.int32)
+        assert voxel_sampled_payload_agreement(fit.centers, labels) is None, (
+            "fixture must be unverifiable for this branch to be exercised"
+        )
+        assert _demo._labels_match_fit(fit, labels, "unverifiable")
+
     def test_shipped_pair_is_accepted(self) -> None:
         """The pair actually in Git LFS must pass the guard it is checked by.
 
@@ -381,10 +407,15 @@ class TestLabelAgreementThreshold:
     def test_a_near_miss_reordering_is_rejected(self, tmp_path, monkeypatch) -> None:
         """An ABSOLUTE pin, independent of what the constant currently says.
 
-        0.90 agreement is where a near-miss reordering lands — morton instead of
-        hilbert measured 0.898 on the shipped CT pair — and that is a genuinely
-        misindexed sidecar. Lowering the constant under 0.90 (the sort of "make
-        the gate less fussy" edit that looks harmless) turns this red.
+        A near-miss reordering — a genuinely misindexed sidecar that happens to
+        keep most same-voxel pairs together — lands JUST under the gate. Measured
+        on the shipped CT pair (660,934 splats) by permuting its aligned sidecar
+        the way each mistake would have written it: the writer's own morton order
+        instead of hilbert scores 0.901, a roll-by-one 0.955, an adjacent-pair
+        swap 0.962. So the pin is set at ~0.972, just ABOVE the worst of them:
+        any constant at or below 0.972 accepts this pair and turns the test red,
+        which is what stops the gate being lowered under a real near miss (0.90
+        — the level pinned before — was under three of them).
         """
         monkeypatch.setattr(_demo, "CACHE_FIT", tmp_path / ("nm-" + _demo.FIT_FILE))
         monkeypatch.setattr(
@@ -396,10 +427,12 @@ class TestLabelAgreementThreshold:
         )
         _, collides = _same_voxel_pairs(stored.centers)
         stored, broken = self._pair_with_broken(
-            tmp_path, monkeypatch, int(round(0.10 * len(collides)))
+            tmp_path, monkeypatch, int(np.floor(0.028 * len(collides)))
         )
         measured = voxel_sampled_payload_agreement(stored.centers, broken)
-        assert measured is not None and abs(measured - 0.90) < 0.01
+        # Strictly above 0.97, so `MIN_LABEL_AGREEMENT = 0.97` ACCEPTS this and
+        # goes red rather than passing on a rounding coincidence.
+        assert measured is not None and 0.970 < measured < 0.975
         assert not _demo._labels_match_fit(stored, broken, "near miss")
 
 
@@ -499,4 +532,72 @@ class TestRejectedPairFallsThroughToRefit:
         )
         got_fit, got_labels = _demo.load_or_build()
         assert got_fit is not sentinel_fit, "an aligned pair triggered a refit"
+        np.testing.assert_array_equal(got_labels, labels)
+
+
+class TestShippedLfsPairIsGuardedToo:
+    """The SHIPPED (Git LFS) branch of ``load_or_build`` must run the guard too.
+
+    ``load_or_build`` has two accept doors — the manifest-fetched cache and the
+    packaged LFS assets — and each one calls ``_labels_match_fit`` separately.
+    The manifest-cache door is covered above; without these two the LFS call
+    could be replaced by ``if True:`` with the whole suite still green, because
+    every other test points ``LFS_*`` at absent paths so that branch never runs.
+    """
+
+    @staticmethod
+    def _lfs_setup(tmp_path, monkeypatch, *, permute: bool):
+        """Materialize an LFS-shaped pair under tmp_path and stub the refit."""
+        n = 6000
+        rng = np.random.default_rng(34)
+        label_vol = rng.integers(0, 118, (16, 16, 16)).astype(np.int32)
+        fit = _scattered_gsplat_data(n, extent=15.49, seed=7)
+
+        # Build the pair straight into the "shipped" location.
+        lfs_dir = tmp_path / "lfs"
+        lfs_dir.mkdir()
+        monkeypatch.setattr(_demo, "CACHE_FIT", lfs_dir / _demo.FIT_FILE)
+        monkeypatch.setattr(_demo, "CACHE_LABELS", lfs_dir / _demo.LABELS_FILE)
+        _, labels = _demo.save_and_sample_labels(fit, label_vol)
+        if permute:
+            _save_labels_u8(labels[rng.permutation(n)], lfs_dir / _demo.LABELS_FILE)
+        monkeypatch.setattr(_demo, "LFS_FIT", lfs_dir / _demo.FIT_FILE)
+        monkeypatch.setattr(_demo, "LFS_LABELS", lfs_dir / _demo.LABELS_FILE)
+
+        # …and make the manifest-fetch door miss, so the LFS door is the one
+        # under test: no fetched dataset and no cached sidecar.
+        monkeypatch.setattr(_demo, "CACHE_FIT", tmp_path / "cache" / _demo.FIT_FILE)
+        monkeypatch.setattr(
+            _demo, "CACHE_LABELS", tmp_path / "cache" / _demo.LABELS_FILE
+        )
+        monkeypatch.setattr(_demo, "load_dataset_gsplats", lambda *a, **k: None)
+
+        monkeypatch.setattr(_demo, "RECOMPUTE", False)
+        monkeypatch.setattr(_demo, "warn_if_no_cuda_gpu", lambda: None)
+        sentinel_fit = _scattered_gsplat_data(4, extent=1.0, seed=8)
+        sentinel_labels = np.zeros(4, dtype=np.int32)
+        monkeypatch.setattr(
+            _demo, "load_ct_and_labels", lambda: (None, None, None, None)
+        )
+        monkeypatch.setattr(
+            _demo, "fit_atlas", lambda *a, **k: (sentinel_fit, sentinel_labels)
+        )
+        return labels, sentinel_fit, sentinel_labels
+
+    def test_a_permuted_shipped_sidecar_falls_through_to_the_refit(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        _, sentinel_fit, sentinel_labels = self._lfs_setup(
+            tmp_path, monkeypatch, permute=True
+        )
+        got_fit, got_labels = _demo.load_or_build()
+        assert got_fit is sentinel_fit, "a rejected SHIPPED pair was rendered anyway"
+        assert got_labels is sentinel_labels
+
+    def test_an_aligned_shipped_sidecar_is_used_instead_of_refitting(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        labels, sentinel_fit, _ = self._lfs_setup(tmp_path, monkeypatch, permute=False)
+        got_fit, got_labels = _demo.load_or_build()
+        assert got_fit is not sentinel_fit, "an aligned SHIPPED pair triggered a refit"
         np.testing.assert_array_equal(got_labels, labels)

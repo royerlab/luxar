@@ -144,11 +144,14 @@ SCENE_INTENSITY = 0.012  # Display brightness (dense body — dial down; see VH 
 # Minimum same-voxel label agreement for a cached/shipped (fit, labels) pair to be
 # trusted. Aligned data scores exactly 1.000. DO NOT LOOSEN THIS — the gate is
 # deliberately tight, because the interesting failures are NEAR MISSES rather
-# than full shuffles: measured on the shipped pair, a different space-filling
-# curve (morton instead of hilbert) scores 0.898, a roll-by-one 0.955 and an
-# adjacent-pair swap 0.978 — all just under 0.99. A full shuffle only falls to
-# the payload's own chance level Σp², which for these 117 organ labels is 0.027
-# (not ~0.001; that is the figure for a sampled-RGB payload).
+# than full shuffles. Measured on the shipped pair (660,934 splats), permuting
+# the aligned sidecar the way each mistake would have written it: a different
+# space-filling curve (the writer's own morton order instead of hilbert) scores
+# 0.901, a roll-by-one 0.955, an adjacent-pair swap 0.962 — all just under 0.99,
+# and the last of them is the worst case the constant has to stay above. A full
+# shuffle only falls to the payload's own chance level Σp², which for these 117
+# organ labels is 0.027 (not 1.4e-05; that is the figure measured for the
+# Visible Human demo's sampled-RGB payload).
 MIN_LABEL_AGREEMENT = 0.99
 
 # TotalSegmentator v2 `total` task — 117 structures (label index → name).
