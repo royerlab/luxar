@@ -127,6 +127,28 @@ describe('PerformanceMonitor', () => {
       }
     });
 
+    it('bands the colour by the SHOWN rate, so a displayed "50" is not amber', () => {
+      // The readout rounds; the colour band must agree with it. 49.6fps shows
+      // as "50", so classifying the raw rate would put a green number's worth
+      // of frames behind an amber "50".
+      const now = vi.spyOn(performance, 'now');
+      try {
+        monitor.show();
+        now.mockReturnValue(1000);
+        frame(); // opens the window (and renders — lastRender = 1000)
+        now.mockReturnValue(1100); // <200ms later, so no render steals lastRender
+        for (let i = 0; i < 23; i++) frame();
+        now.mockReturnValue(1504); // 25 frames over 504ms = 49.60fps
+        frame();
+        expect(num()).toBe('50');
+        expect(document.body.querySelector<HTMLElement>('.luxar-perf__num')?.dataset.level).toBe(
+          'good'
+        );
+      } finally {
+        now.mockRestore();
+      }
+    });
+
     it('hide() unsubscribes so later frames no longer update it', () => {
       monitor.show();
       frame();
