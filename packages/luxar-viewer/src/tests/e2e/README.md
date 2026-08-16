@@ -80,6 +80,7 @@ e2e/
 ├── fixtures.ts          # Re-extended `test` fixture; auto console-error guard
 ├── helpers.ts           # ~40 Playwright helper utilities (wait/get/assert)
 ├── global-setup.ts      # Pre-flight: servers, datasets, fixtures; makes dirs
+├── render-ticks.ts      # Confirmed render-tick flushing for detector specs
 ├── harnesses/
 │   └── tsl-harness.ts   # TSL ↔ GLSL parity harness (loaded by tsl-harness.html)
 ├── *.spec.ts            # Playwright specs (one per feature area)
@@ -91,12 +92,23 @@ A spec's filename hints at its scope: `basic-rendering`,
 the parent README's "Running E2E tests in chunks" section for a
 suggested grouping.
 
+`render-ticks.ts` is for the detector specs that need their draws to have
+actually happened: `flushRenderTicks(page, n)` kicks the renderer and confirms
+each tick against the renderer's own frame counter (bounded per tick _and_ in
+aggregate), and `reportFlushVerdict(page, report)` decides — from a follow-up
+probe rather than from the tick count — whether a flush that confirmed nothing
+is worth failing the run over (#1651). It lives outside `helpers.ts` so it can
+be unit-tested against a fake page; see
+`src/tests/unit/tests/e2e-render-ticks.test.ts`.
+
 ## Shared Fixture (`fixtures.ts`)
 
 `fixtures.ts` exports a `test` that re-extends `@playwright/test`'s
-`test` so **every spec auto-asserts no console errors after each
-test**. There are no direct `@playwright/test` imports across the
-suite — new specs must use:
+`test` so **a spec that imports it auto-asserts no console errors after
+each test**. 58 of the 66 specs do; the other 8 (the perf benches, the TSL
+parity/codegen harnesses, `lift-parity` and `renderer-url-param`) import
+`test` from `@playwright/test` directly and get no fixture teardown. New
+specs must use:
 
 ```ts
 import { test, expect } from './fixtures';
@@ -178,15 +190,16 @@ exports group into the categories below.
 
 ### Console and error assertions
 
-| Helper                                                                 | Use when                                                                                                                                                                          |
-| ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `captureConsoleMessages(page)`                                         | Attach a synchronous capture object that accumulates `errors` / `warnings` / `logs`.                                                                                              |
-| `getConsoleMessages(page)`                                             | Read the viewer's debug interceptor (formatted, captured in-app).                                                                                                                 |
-| `assertConsoleContains(page, pattern)` / `assertConsoleDoesNotContain` | Positive / negative assertion on the captured stream.                                                                                                                             |
-| `assertNoConsoleErrors(page, allow)`                                   | Strict no-error gate against an allow-list — called automatically by the [shared fixture](#shared-fixture-fixturests), and explicitly by specs that want a tighter gate mid-test. |
-| `assertNoShaderErrors(page)`                                           | Read the debug renderer for shader-compile / link failures specifically.                                                                                                          |
-| `getWebGLErrors(page)`                                                 | Drain accumulated WebGL errors from the renderer.                                                                                                                                 |
-| `waitForWebGLError(page, pattern)`                                     | Block until a matching WebGL error appears (used by `webgl-errors.spec.ts`).                                                                                                      |
+| Helper                                                                 | Use when                                                                                                                                                                                              |
+| ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `captureConsoleMessages(page)`                                         | Attach a synchronous capture object that accumulates `errors` / `warnings` / `logs`.                                                                                                                  |
+| `raceEvaluate(evaluation, timeout, onTimeout)`                         | Bound one already-started `page.evaluate` — it carries no timeout of its own, so otherwise only the whole test budget stops it (#1640, #1651). Pass a sentinel the in-page function can never return. |
+| `getConsoleMessages(page, timeout?)`                                   | Read the viewer's debug interceptor (formatted, captured in-app). Deadline-bounded (45 s): throws when the page never answers, rather than fabricating empty buckets.                                 |
+| `assertConsoleContains(page, pattern)` / `assertConsoleDoesNotContain` | Positive / negative assertion on the captured stream.                                                                                                                                                 |
+| `assertNoConsoleErrors(page, allow)`                                   | Strict no-error gate against an allow-list — called automatically by the [shared fixture](#shared-fixture-fixturests), and explicitly by specs that want a tighter gate mid-test.                     |
+| `assertNoShaderErrors(page)`                                           | Read the debug renderer for shader-compile / link failures specifically.                                                                                                                              |
+| `getWebGLErrors(page)`                                                 | Drain accumulated WebGL errors from the renderer.                                                                                                                                                     |
+| `waitForWebGLError(page, pattern)`                                     | Block until a matching WebGL error appears (used by `webgl-errors.spec.ts`).                                                                                                                          |
 
 ### Cache, UI, and input
 
@@ -221,7 +234,7 @@ Helpers follow a few conventions worth matching:
 
 - All async helpers take `page: Page` as the first argument.
 - Wait helpers expose an explicit `timeout` parameter (default 45 s
-  for top-level readiness, 5–15 s otherwise) and throw with a
+  for top-level readiness and for `getConsoleMessages`, 5–15 s otherwise) and throw with a
   message that names the expected condition.
 - Helpers that read the debug interface go through `getLuxarState`
   rather than poking `window.__luxarDebug` directly — the wrapper
