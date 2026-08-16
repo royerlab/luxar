@@ -14,6 +14,7 @@ Tests for the Gaussian splat fitting pipeline.
 - **test_visualization.py** - Compression analysis display, napari optimization movie (mocked).
 - **test_sorting.py** - Z-order Morton code sorting of splats and optimizer state.
 - **test_downscale.py** - Volume downscaling, coordinate rescaling, packed Cholesky rescaling.
+- **test_floor_denoise_basis.py** - Background-floor resolution on the denoised basis: the two probe regimes (exact whole-volume probe vs bounded crop), the percentile/`auto` regime rule, graceful degradation, probe sampling.
 
 ## Running
 
