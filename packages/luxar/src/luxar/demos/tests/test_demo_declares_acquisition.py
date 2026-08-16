@@ -29,9 +29,15 @@ FIT_CALLS = {
 #: not that declaring would be inconvenient.
 _IS_ITS_OWN_SOURCE = {
     "demo_gsplats_4d_nexrad_supercell.py": (
-        "the fitted volume is GRIDDED from radar sweeps rather than loaded, so "
-        "there is no stored array behind it: the float32 grid it builds is the "
-        "source, and its own dtype is the honest one"
+        "there IS a download (82 Level II scans, 800 MB gzipped) but it is not "
+        "an array of this volume: it is polar sweeps carrying several moments "
+        "and elevation angles, of which the demo re-grids ONE moment inside one "
+        "box. Quoting 800 MB against the splats would credit the fit for "
+        "dropping the other moments and for the polar-to-Cartesian resampling "
+        "-- a format-conversion ratio, not a compression one. The Cartesian "
+        "grid it builds is float32 by construction (not a cast) and its size is "
+        "set by --grid-m, so measuring the array handed to the fitter is both "
+        "the honest denominator and what the default already records"
     ),
     "demo_quantum_orbitals.py": (
         "the volume is evaluated from a closed-form wavefunction, so it has no "
@@ -40,6 +46,15 @@ _IS_ITS_OWN_SOURCE = {
 }
 
 #: Demos still to be wired. SHRINKS to empty; entries are work, not exemptions.
+#:
+#: These fit AND preprocess first, so a dataset regenerated from one today would
+#: publish a compression ratio against the working copy — the same defect the
+#: wired demos had. None is shipped in ``demos/data`` and none is assigned to a
+#: Zenodo record (all ``record: None``), which is why they are not urgent.
+#:
+#: WATCH ``gsplats_flylight_mcfo``: it is a manifest entry with ``files: []``,
+#: i.e. awaiting upload. Wire ``demo_gsplats_3d_flylight_mcfo_neurons.py``
+#: BEFORE that dataset is uploaded, or it goes to Zenodo with an inflated ratio.
 _NOT_YET_DECLARING = {
     "demo_gsplats_3d_acto3d_heart.py",
     # Not among the 14 shipped datasets, but it fits, so it is in scope. Found

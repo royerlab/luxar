@@ -11,8 +11,8 @@ export default defineConfig({
     // wasm+cache subset, same 798 passed / 2 skipped either way:
     //     jsdom  127.15 s  (environment 75.72 s)
     //     node    13.85 s  (environment 12 ms)
-    // Across the whole suite only 125 of 559 files need a browser global (a
-    // document in most cases), so the other 434 were paying for a DOM they
+    // Across the whole suite only 125 of 561 files need a browser global (a
+    // document in most cases), so the other 436 were paying for a DOM they
     // never touched.
     //
     // Inverting the default (rather than listing directories) is deliberate:
@@ -35,7 +35,7 @@ export default defineConfig({
     // Worker threads, not forked processes. A thread reuses the host process's
     // heap and module machinery instead of paying a full V8 + Vite-runtime
     // bootstrap per worker, which is most of the fixed cost when the suite is
-    // 559 small files.
+    // 561 small files.
     pool: 'threads',
     // Cap worker concurrency ON CI ONLY. The `maxWorkers: 4` that used to apply
     // everywhere was a response to `[vitest-pool-runner]: Timeout waiting for

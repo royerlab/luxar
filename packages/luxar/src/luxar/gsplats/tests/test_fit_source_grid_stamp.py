@@ -553,3 +553,84 @@ def test_the_merge_sizes_a_source_grid_from_the_dtype_name_alone() -> None:
         source_dtype="not-a-dtype",
     )
     assert "source_bytes" not in unsizable.stats
+
+
+# ── Two ratios, because the two sides of one ratio measure unlike things ──────
+#
+# `source_bytes` is the DECODED array while the splat store on disk is
+# compressed, so that ratio credits the splats with whatever the source codec
+# was already achieving. Measured on DAPI the two differ by ~35x, which is the
+# whole reason both are recorded rather than either alone.
+
+
+def test_the_stored_source_size_is_recorded_beside_the_decoded_one() -> None:
+    stats = _fit(
+        _sparse_blobs(shape=(24, 32, 32)),
+        source_shape=(96, 128, 128),
+        source_dtype="uint16",
+        source_stored_bytes=1_000_000,
+    ).stats
+    assert stats["source_bytes"] == 96 * 128 * 128 * 2  # decoded
+    assert stats["source_stored_bytes"] == 1_000_000  # as downloaded
+    assert stats["source_bytes"] != stats["source_stored_bytes"], (
+        "the two sizes collapsed — one of them is not measuring what it claims"
+    )
+
+
+def test_the_stored_size_is_absent_rather_than_guessed() -> None:
+    """Never infer it from the decoded size: the codec's factor is unknown."""
+    assert "source_stored_bytes" not in _fit(_sparse_blobs(shape=(16, 16, 16))).stats
+
+
+@pytest.mark.parametrize(
+    "bad", [0, -5, 1.5, True, "1000"], ids=["zero", "neg", "frac", "bool", "str"]
+)
+def test_a_malformed_stored_size_is_refused(bad: object) -> None:
+    with pytest.raises(ValueError):
+        _fit(_sparse_blobs(shape=(8, 8, 8)), source_stored_bytes=bad)
+
+
+def test_the_stored_size_reaches_the_fitting_group(tmp_path: Path) -> None:
+    out = tmp_path / "stored.gsplats.zarr"
+    if out.exists():
+        shutil.rmtree(out)
+    _fit(_sparse_blobs(shape=(16, 16, 16)), source_stored_bytes=4242).save(out)
+    assert (read_node_attrs(out / "fitting") or {})["source_stored_bytes"] == 4242
+
+
+def test_the_merge_holds_the_stored_size_to_the_same_bar_as_the_fit() -> None:
+    """The tiled producer publishes the same denominator, so it checks it too.
+
+    ``merge_tile_results`` is a public entry point in its own right, and a bare
+    ``int()`` there would take ``"1000"`` and silently round 1.5 to 1 — a
+    published ratio quietly built on a value the single-volume fit refuses.
+    """
+    from luxar.gsplats.fit_tiled_gsplats import merge_tile_results
+    from luxar.gsplats.gsplat_data import GSplatData
+
+    tile = GSplatData(
+        centers=np.zeros((3, 3), dtype=np.float32),
+        amplitudes=np.ones(3, dtype=np.float32),
+        cholesky_factors=np.tile(np.array([1, 0, 1, 0, 0, 1], np.float32), (3, 1)),
+    )
+
+    def _merge(stored: object):
+        return merge_tile_results(
+            [tile],
+            volume_shape=(16, 16, 16),
+            tile_size=16,
+            overlap=0,
+            num_tiles=1,
+            progressive=False,
+            cull_retention=None,
+            elapsed=0.0,
+            verbose=False,
+            source_dtype="uint16",
+            source_stored_bytes=stored,
+        )
+
+    assert _merge(4242).stats["source_stored_bytes"] == 4242
+    assert "source_stored_bytes" not in _merge(None).stats
+    for bad in (0, -5, 1.5, True, "1000"):
+        with pytest.raises(ValueError):
+            _merge(bad)

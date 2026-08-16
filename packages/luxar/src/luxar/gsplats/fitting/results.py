@@ -237,6 +237,7 @@ SOURCE_GRID_VOLUME_KEYS = (
     "source_dtype",
     "source_voxels",
     "source_bytes",
+    "source_stored_bytes",
     "source_declared",
     "fitted_shape",
     "fitted_voxels",
@@ -318,6 +319,12 @@ def _source_grid_stats(
         out["source_voxels"] = voxels
         if declared:
             out["source_declared"] = True
+        stored = getattr(config, "source_stored_bytes", None)
+        if stored:
+            # What the acquisition OCCUPIES, beside what it decodes to. `info`
+            # quotes both ratios: against raw voxels the splats look best, and
+            # against the stored file is what a reader downloading it compares.
+            out["source_stored_bytes"] = int(stored)
         # `config.V` has already been cast to float32, so its own dtype/nbytes
         # would describe the fitter's working copy rather than the caller's
         # array. Use what validation captured before the cast, and fall back to

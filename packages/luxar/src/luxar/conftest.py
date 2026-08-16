@@ -172,13 +172,16 @@ def find_repo_relative_file(rel_path: Path, start: Path) -> Path | None:
 def read_ts_number_const(source: str, name: str) -> float:
     """Parse ``const NAME = <number>;`` out of TypeScript source text.
 
-    Tolerates ``export const``, a plain ``const``, and an optional ``: number``
-    type annotation. Raises ``AssertionError`` (not a parse exception) so a
-    failure reads as a normal, informative test failure.
+    Tolerates ``export const``, a plain ``const``, an optional ``: number``
+    type annotation, and exponential literals (``1e-3``, ``2.5E+6``) — a
+    float-safety epsilon is normally spelled that way, and matching only
+    fixed-point notation would fail the parse rather than the comparison.
+    Raises ``AssertionError`` (not a parse exception) so a failure reads as a
+    normal, informative test failure.
     """
     m = re.search(
         rf"^\s*(?:export\s+)?const\s+{name}\s*(?::\s*number\s*)?=\s*"
-        r"([0-9]*\.?[0-9]+)\s*;",
+        r"([0-9]*\.?[0-9]+(?:[eE][+-]?[0-9]+)?)\s*;",
         source,
         re.MULTILINE,
     )

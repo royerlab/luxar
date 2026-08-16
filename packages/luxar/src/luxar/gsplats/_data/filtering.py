@@ -31,6 +31,12 @@ _REGION_SCOPED_STATS_KEYS = (
     "source_declared",
     "source_voxels",
     "source_bytes",
+    # The size the WHOLE acquisition occupies on disk. Region-scoped for the
+    # same reason as the decoded size, and doubly so once the grid it belongs
+    # to has gone: `info`'s source block bails out without a `source_shape`, so
+    # a survivor would surface as a bare number in "Additional Metadata"
+    # claiming the original download for a crop of it.
+    "source_stored_bytes",
     "fitted_shape",
     "fitted_voxels",
     "occupancy",

@@ -82,3 +82,11 @@ allocation: because this reference is the uncapped `ndim > 16` backend
 here), the buffers grow on demand when the continuous hidden-dim count
 exceeds 16, and the `ndim <= 16` path stays allocation-free. The Rust
 side (`src/wasm/rust/src/common.rs`) must mirror this value.
+
+`CHOLESKY_EPSILON = 1e-10` comes from the same place: `gsplats-processing.ts`
+imports `GSPLAT_CHOLESKY_EPSILON` from `../../config/constants.ts` under the
+kernel-local name, because the loaders' gsplats chunk-fetch epsilon must cover
+the band this constant makes a degenerate hidden dimension render in. The Rust
+side keeps an independent copy (separate language) and is pinned against the
+config value by
+`src/tests/unit/data/loaders/spatial-query/tolerance-computer.test.ts`.

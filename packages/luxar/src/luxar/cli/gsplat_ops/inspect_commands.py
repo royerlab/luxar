@@ -1085,6 +1085,7 @@ _SOURCE_GRID_STATS_KEYS = (
     "source_dtype",
     "source_voxels",
     "source_bytes",
+    "source_stored_bytes",
     "fitted_shape",
     "fitted_voxels",
     "occupancy",
@@ -1158,17 +1159,35 @@ def _print_source_grid(data: Any, stored_bytes: int) -> tuple[str, ...]:
     per_splat = _voxels_per_splat(stats, n_splats)
     if per_splat is not None:
         aprint(f"  voxels/splat: {per_splat:,.0f}")
+    src_stored = stats.get("source_stored_bytes")
+    if src_stored:
+        aprint(f"  stored source: {format_memory_size(src_stored)} (as downloaded)")
+
+    def _ratio(n: int, d: int) -> str:
+        r = n / d
+        # A whole-number ratio reads best, but a stored artifact LARGER than its
+        # source is a real outcome (few voxels, many splats) and must not round
+        # to a nonsensical "0:1".
+        return f"{r:,.0f}" if r >= 10 else f"{r:.2g}"
+
+    # TWO ratios, each labelled with its basis. `source_bytes` is the DECODED
+    # array while the splat store on disk is compressed, so that ratio compares
+    # unlike things and flatters the splats by whatever the source codec was
+    # already achieving. It is still the number volumetric compression is
+    # normally quoted against, so both are printed rather than either alone:
+    # quoting only the first invites reading it as the second.
     src_bytes = stats.get("source_bytes")
-    if src_bytes:
-        stored = stored_bytes
-        if stored:
-            ratio = src_bytes / stored
-            # A whole-number ratio reads best, but a stored artifact LARGER than
-            # its source is a real outcome (few voxels, many splats) and must not
-            # round to a nonsensical "0:1".
-            shown = f"{ratio:,.0f}" if ratio >= 10 else f"{ratio:.2g}"
-            aprint(
-                f"  compression: {shown}:1 "
-                f"({format_memory_size(src_bytes)} -> {format_memory_size(stored)})"
-            )
+    lines = []
+    if src_bytes and stored_bytes:
+        lines.append(
+            f"{_ratio(src_bytes, stored_bytes)}:1 vs raw voxels "
+            f"({format_memory_size(src_bytes)} -> {format_memory_size(stored_bytes)})"
+        )
+    if src_stored and stored_bytes:
+        lines.append(
+            f"{_ratio(src_stored, stored_bytes)}:1 vs the stored source "
+            f"({format_memory_size(src_stored)} -> {format_memory_size(stored_bytes)})"
+        )
+    for i, line in enumerate(lines):
+        aprint(f"  compression: {line}" if i == 0 else f"               {line}")
     return _SOURCE_GRID_STATS_KEYS

@@ -52,10 +52,16 @@ export class ViewStateQueue {
    * Process any pending view-state queued during a retry / refinement
    * loop. Fires on a microtask so the caller's promise resolves first,
    * then re-enters `updateView` via the supplied trigger callback.
+   *
+   * @returns True when a state was queued and a re-entry has been scheduled;
+   *   false when the slot was empty and nothing will run. Callers that also
+   *   settle `_passWaiters` need this: the re-entered pass carries the parked
+   *   waiters to its own commit, so resolving them as well would release them
+   *   before the view they asked for has landed.
    */
-  drain(triggerUpdate: (state: Partial<ViewState>) => Promise<unknown>): void {
+  drain(triggerUpdate: (state: Partial<ViewState>) => Promise<unknown>): boolean {
     const pendingState = this.takePending();
-    if (pendingState === null) return;
+    if (pendingState === null) return false;
     Promise.resolve().then(() => {
       triggerUpdate(pendingState).catch((err) => {
         log.warning(
@@ -64,6 +70,7 @@ export class ViewStateQueue {
         );
       });
     });
+    return true;
   }
 
   /**

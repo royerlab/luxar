@@ -28,6 +28,17 @@ export interface CacheConfig {
    */
   opfsOperationTimeoutMs: number;
   /**
+   * Consecutive OPFS-timeout count that trips the L2 circuit breaker.
+   * A systemically stalled OPFS backend (seen under automated Chromium)
+   * would otherwise burn the full per-op timeout serially on EVERY
+   * chunk; after this many timeouts in a row with no settlement in
+   * between, the store disables itself for the session (sticky —
+   * reload constructs a fresh store). Successes AND fast rejections
+   * reset the count: both prove OPFS is responsive, and the breaker
+   * targets stalls, not error rate. Default: 3.
+   */
+  opfsTimeoutTripThreshold: number;
+  /**
    * Max L2 (OPFS) writes running concurrently in the background write queue.
    * L2 writes are deferred off the fetch critical path; this caps how many run
    * at once so they don't stampede the single OPFS backend (each write balloons

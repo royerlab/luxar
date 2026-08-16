@@ -255,6 +255,19 @@ def resolve_denoise_h(ctx: FitPipelineCtx, volume: "Any") -> Optional[float]:
     on ``ctx.denoise_effective_h`` and then either denoises the full volume
     now (non-tiled fitting, :func:`maybe_denoise_full_volume`) or passes
     ``h`` + params through to ``fit_tile`` (tiled fitting, per-tile denoise).
+
+    The non-tiled path then resolves the background floor on DENOISED data as a
+    matter of ordering (the fit sees the denoised volume). The uniform tiled
+    paths get there by correcting the whole-volume level onto the denoised basis
+    with a bounded probe
+    (:func:`~luxar.gsplats.fitting.preprocessing.resolve_volume_floor_denoised`,
+    #1178), which has three documented exceptions: a volume ABOVE the probe
+    budget keeps its raw-basis level under the default ``--floor auto`` (the
+    histogram-mode shift is not measurable on a bounded crop — a ``pNN`` spec is
+    corrected there), a probe that cannot be read or denoised keeps it too, and
+    ``batch-fit`` hands its tasks a numeric level resolved from the raw input
+    (see :func:`resolve_shared_floor`). The first two print a note; the third is a
+    known gap, tracked separately rather than announced per task.
     """
     if not ctx.denoise:
         return None
@@ -300,6 +313,13 @@ def maybe_denoise_full_volume(
 
     For tiled paths, denoise is deferred to per-tile (see ``fit_tile``);
     the volume is returned unchanged.
+
+    Ordering note: the non-tiled fit therefore resolves its ``--floor`` from the
+    DENOISED volume (``_normalize_data`` runs on what this returns), always and
+    exactly. The tiled paths cannot reorder the passes that way, so they aim at
+    the same basis with a denoise-corrected whole-volume estimator instead
+    (#1178) — exactly within the probe budget, and above it only for a ``pNN``
+    spec (see :func:`resolve_denoise_h`).
     """
     if ctx.denoise and ctx.denoise_effective_h is not None and not is_tiled:
         from luxar.gsplats.preprocessing.denoise_pipeline import (
@@ -781,6 +801,26 @@ def resolve_shared_floor(
     task — all subtract one identical pedestal instead of each re-estimating its
     own.
 
+    The level is resolved on the RAW volume. ``--tiling content`` is unaffected
+    because it ignores ``--denoise`` outright (warned about in ``fit``).
+    ``batch-fit`` under ``--denoise`` does NOT get a denoised-basis level in
+    either mode, and that is a known gap rather than a covered case: the plan
+    resolves the level from the RAW ``input_path`` (``batch/planning.py``,
+    :func:`~luxar.cli.gsplat_ops.batch.planning._resolve_and_record_floor`)
+    before the denoise job has written anything, and the default on-the-fly mode
+    then forwards that raw-basis NUMBER to tasks which denoise each tile
+    themselves — a numeric spec being precisely what
+    :func:`~luxar.gsplats.fitting.preprocessing.resolve_volume_floor_denoised`
+    passes through uncorrected. Out of scope for #1178 and tracked separately.
+    The paths that DO resolve on the denoised basis — uniform tiling, sequential
+    and ``-j``/``--tile k/M`` alike (for any volume-derived spec within the
+    denoise probe's budget, and above it for a ``pNN`` spec only) — call
+    :func:`~luxar.gsplats.fitting.preprocessing.resolve_volume_floor_denoised`
+    instead of this function (see :func:`fit_single_tile` and
+    :func:`luxar.gsplats.fit_tiled_gsplats.fit_tiled`). Add
+    ``denoise_h``/``denoise_params`` passthrough here if a consumer of this
+    function ever gains denoising.
+
     Parameters
     ----------
     volume
@@ -960,12 +1000,36 @@ def fit_single_tile(
     # otherwise never mention the floor. A volume-derived spec (``auto``/``pNN``)
     # is still resolved against this whole volume WITH the guard, because it
     # becomes a level here for the first time.
-    from luxar.gsplats.fitting.preprocessing import resolve_volume_floor
+    # With --denoise the tile is denoised BEFORE the level is subtracted, so a
+    # volume-derived spec is resolved on the DENOISED basis (#1178) — the same
+    # correction `fit_tiled` applies, from the same deterministic probe of the
+    # same whole volume, so this worker and its siblings still agree on one
+    # level. The denoise keys are PEEKED at: they stay in `fit_config` for
+    # `fit_tile` (which pops them) to denoise the tile with.
+    from luxar.gsplats.fitting.preprocessing import resolve_volume_floor_denoised
     from luxar.gsplats.fitting.validation import _validate_floor
 
     floor_spec = fit_config.get("floor", "auto")
     _validate_floor(floor_spec)
-    resolved_floor = resolve_volume_floor(volume, floor_spec, guard_numeric=False)
+    resolved_floor = resolve_volume_floor_denoised(
+        volume,
+        floor_spec,
+        denoise_h=fit_config.get("_denoise_h"),
+        denoise_params=fit_config.get("_denoise_params"),
+        guard_numeric=False,
+        # Log the raw level and the measured denoise shift — but ONLY where
+        # denoising made this a new resolution to report. With `--denoise` off
+        # this worker's log stays byte-identical to what it printed before #1178
+        # (and it would not be read anyway: `build_worker_cmd` hardcodes
+        # ``--quiet`` and the parent discards a successful worker's stdout).
+        # Gated on a volume-derived spec too: an absolute level is not resolved
+        # here, and `warn_if_level_erases_volume` below is the line that matters
+        # for one of those.
+        verbose=bool(fit_config.get("verbose", False))
+        and floor_spec_needs_volume(floor_spec)
+        and fit_config.get("_denoise_h") is not None
+        and fit_config.get("_denoise_params") is not None,
+    )
     if resolved_floor is not None and not floor_spec_needs_volume(floor_spec):
         warn_if_level_erases_volume(
             volume,
@@ -1100,20 +1164,28 @@ def rescale_and_save(
     """
     # Rescale tiled results back to original coordinates if downscaled
     if tiled_downscale_factors is not None and result.n_splats > 0:
-        from luxar.gsplats.fitting.downscale import (
-            rescale_centers,
-            rescale_cholesky_packed,
-        )
-        from luxar.gsplats.gsplat_data import GSplatData
+        import numpy as np
 
-        result = GSplatData(
-            centers=rescale_centers(result.centers, tiled_downscale_factors),
-            amplitudes=result.amplitudes,
-            cholesky_factors=rescale_cholesky_packed(
-                result.cholesky_factors, tiled_downscale_factors
-            ),
-            colors=result.colors,
-            stats=result.stats,
+        # A per-axis rescale IS a diagonal linear transform, and going through
+        # `transform` carries everything the leaf holds through it. Rebuilding a
+        # plain GSplatData from the concatenated top-level arrays instead RESET
+        # `truncation_radius` to the default (#1624): `truncate:` is a documented
+        # YAML key (`gsplat fit --dump-config` emits it) that lands on the result
+        # in `fitting/results.py`, so `fit --tile k/M --downscale N` with a
+        # `--config` holding `truncate: 3.5` stored 2.75 — a wrong radius in the
+        # tile's own store, on the plain non-progressive path too, and one the
+        # merge's `concatenate` requires the non-empty tiles to AGREE on
+        # (`_data/composition.py`), so a downscaled tile also disagreed with an
+        # un-downscaled sibling.
+        # `transform`'s diagonal fast path multiplies centers by these factors and
+        # the packed Cholesky by the same per-row `tril_scales` vector as
+        # `rescale_centers` / `rescale_cholesky_packed`. It also maps per sub-LOD,
+        # which keeps an additive ladder's rungs (colors, stats, radius) intact;
+        # that is a by-construction guarantee rather than a fixed symptom — every
+        # fitter reachable here flattens first (`fit_progressive_gsplats` returns
+        # `final_result.flattened()`), so no ladder arrives at this line today.
+        result = result.transform(
+            np.diag(np.asarray(tiled_downscale_factors, dtype=np.float64))
         )
         aprint(f"Rescaled {result.n_splats} splats to original coordinates")
 

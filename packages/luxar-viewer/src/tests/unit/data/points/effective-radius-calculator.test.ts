@@ -97,31 +97,62 @@ describe('fallbackQueryTolerance — config-null query reach', () => {
     expect(t[3]).toBe(1e10); // extend_to_all sentinel wins over the discrete rule
   });
 
-  it('non-displayed spatial/continuous dims fall back to maxRadius (ride-along kept when present)', () => {
-    // A 4D view where dim 3 is spatial (not discrete) and non-displayed. Unlike
-    // discrete dims, the SliceCache key KEEPS a continuous dim's tolerance, so
-    // the query legitimately uses `tolerance[d] ?? maxRadius` (unchanged
-    // behaviour): the ride-along when present, else maxRadius.
-    const spatialDims = [
-      dims![0],
-      dims![1],
-      dims![2],
-      { name: 'W', unit: '', scale: 1, spatial: true, discrete: false },
-    ];
-    // No ride-along at dim 3 → maxRadius.
+  const spatialDims = [
+    dims![0],
+    dims![1],
+    dims![2],
+    { name: 'W', unit: '', scale: 1, spatial: true, discrete: false },
+  ];
+
+  it('non-displayed spatial/continuous dims use the node maxRadius — the ride-along is IGNORED', () => {
+    // Issue #1183. This arm used to read `viewState.tolerance[d] ?? maxRadius`,
+    // so a scene/config constant unrelated to this node decided its fetch reach.
+    // `maxRadius` here is the node's own `max_radius` attr — exactly the
+    // quantity `io/_ordering/points.py` expanded its chunk bounds by — so the
+    // reach must be that, whether or not a ride-along happens to be present.
+    // (Same stance the discrete arm above already takes, and the same stance
+    // `calculateSpatialQueryTolerance` states in as many words. Ignoring the
+    // ride-along can only cost a duplicate SliceCache entry: the key keeps it.)
     const noTol = makeViewState({
       slicePosition: [0, 0, 0, 5],
       tolerance: [0, 0, 0],
       dimensions: spatialDims,
     });
     expect(fallbackQueryTolerance(noTol, 4, 7)[3]).toBe(7);
-    // Ride-along present → used verbatim (kept in the key, so no collision).
-    const withTol = makeViewState({
+    // Ride-along present and SMALLER than maxRadius: pre-fix this returned 2 and
+    // under-fetched, dropping points whose radius crossed the slice from up to 7
+    // away. It must be the node's 7.
+    const smallTol = makeViewState({
       slicePosition: [0, 0, 0, 5],
       tolerance: [0, 0, 0, 2],
       dimensions: spatialDims,
     });
-    expect(fallbackQueryTolerance(withTol, 4, 7)[3]).toBe(2);
+    expect(fallbackQueryTolerance(smallTol, 4, 7)[3]).toBe(7);
+    // Ride-along present and LARGER: also ignored (it is not this node's extent),
+    // so a mutation that swapped the branch for `Math.max` is caught too.
+    const bigTol = makeViewState({
+      slicePosition: [0, 0, 0, 5],
+      tolerance: [0, 0, 0, 900],
+      dimensions: spatialDims,
+    });
+    expect(fallbackQueryTolerance(bigTol, 4, 7)[3]).toBe(7);
+    // Builder-independent, exactly like the discrete arm: the two viewState
+    // producers disagree only nominally (both emit 0.1 in production), and
+    // neither value reaches the query.
+    expect(fallbackQueryTolerance(smallTol, 4, 7)[3]).toBe(fallbackQueryTolerance(noTol, 4, 7)[3]);
+  });
+
+  it('the extend_to_all sentinel still wins over the continuous arm', () => {
+    // The `>= 1e9` branch sits AHEAD of the spatial/continuous arm; making that
+    // arm ignore the ride-along must not swallow the sentinel, which is itself a
+    // ride-along value.
+    const extendAll = makeViewState({
+      slicePosition: [0, 0, 0, 5],
+      tolerance: [0, 0, 0, 1e10],
+      dimensions: spatialDims,
+    });
+    expect(fallbackQueryTolerance(extendAll, 4, 7)[3]).toBe(1e10);
+    expect(fallbackQueryTolerance(extendAll, 4, 7)[3]).not.toBe(7);
   });
 });
 

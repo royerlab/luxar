@@ -36,6 +36,28 @@ export const MAX_SUPPORTED_DIMS = 16;
 export const GSPLAT_DEFAULT_TRUNCATION_RADIUS = 2.75;
 
 /**
+ * Absolute degeneracy floor used by the marginal-Cholesky factorization when the
+ * covariance block being factorized is entirely zero (a SCALELESS Σ_S, which has
+ * no diagonal to anchor the relative floor to). Such a pivot is floored at
+ * `sqrt(CHOLESKY_EPSILON)` = 1e-5, so a hidden dimension with an all-zero
+ * covariance block still renders out to `truncation_radius × 1e-5`.
+ *
+ * Lives here rather than in a kernel because the loaders' chunk-fetch epsilon
+ * (`data/loaders/spatial-query/tolerance-computer.ts`) must cover the band the
+ * kernel that actually runs renders, and importing a kernel module into the
+ * loaders layer would drag its top-level workspace allocations along with it.
+ * The TypeScript reference kernel (`src/wasm/typescript/gsplats-processing.ts`,
+ * the >16D / WASM-missing backend) imports THIS constant, so it cannot desync.
+ *
+ * MIRROR: `CHOLESKY_EPSILON` in `src/wasm/rust/src/common.rs` (the production
+ * backend) must hold the same value — it is a separate language and keeps its own
+ * copy. Pinned by
+ * `src/tests/unit/data/loaders/spatial-query/tolerance-computer.test.ts`, which
+ * parses that declaration and compares it against this value.
+ */
+export const GSPLAT_CHOLESKY_EPSILON = 1e-10;
+
+/**
  * Largest vertex count a mesh node may declare, `2^27`.
  *
  * This is the pick vote-key stride: mesh's pick `elementId` is `gl_VertexID`
