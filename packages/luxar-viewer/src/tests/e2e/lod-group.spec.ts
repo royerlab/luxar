@@ -34,7 +34,11 @@ const FIXTURE =
 
 test.describe('lod_group node', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto(`/?src=${FIXTURE}&debug`);
+    // `&no-opfs` on every load: this spec never asserts the L2 OPFS tier, and
+    // automated Chromium's OPFS stalls systemically (10s per op — issue #1645),
+    // starving scene readiness past the test budget. The circuit breaker only
+    // helps un-flagged real sessions (it still pays ~3 timeouts per fresh page).
+    await page.goto(`/?src=${FIXTURE}&debug&no-opfs`);
     await waitForLuxarReady(page);
     // Three meshes (one per LOD child) should attach to the scene
     // graph; wait for them to settle.
@@ -356,7 +360,7 @@ const VOLUMETRIC_FIXTURE =
 
 test.describe('lod_group node — volumetric blendable', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto(`/?src=${VOLUMETRIC_FIXTURE}&debug`);
+    await page.goto(`/?src=${VOLUMETRIC_FIXTURE}&debug&no-opfs`);
     await waitForLuxarReady(page);
     await page.waitForFunction(
       () => {

@@ -255,6 +255,7 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
   const cacheResult = await setupCaches(ctx.normalizeURL(url), {
     noCache: ctx.config.noCache,
     noSliceCache: ctx.config.noSliceCache,
+    noOpfs: ctx.config.noOpfs,
     cacheDebug: ctx.config.cacheDebug,
     clearCache: ctx.config.clearCache,
     noPrefetch: ctx.config.noPrefetch,

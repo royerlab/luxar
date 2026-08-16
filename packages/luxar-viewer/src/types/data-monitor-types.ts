@@ -683,11 +683,13 @@ export interface CacheStatsProvider {
       lastValidatedAt: number | null;
       unvalidatedExternalDataset: boolean;
       /**
-       * S2: `true` when OPFS L2 storage is operational or caching is
-       * disabled (no L2 expected). `false` only when L2 was expected
-       * but could not be initialised. Older providers omit the field
-       * entirely; consumers treat the absent case as "unknown / assume
-       * available".
+       * S2: `true` when OPFS L2 storage is operational, or when the tier
+       * was deliberately skipped (`?no-cache` / `?no-opfs` — no L2
+       * expected). `false` only for UNREQUESTED degradation: L2 was
+       * expected but could not be initialised, or the OPFS circuit
+       * breaker disabled it after repeated timeouts. Older providers omit
+       * the field entirely; consumers treat the absent case as "unknown /
+       * assume available".
        */
       opfsAvailable?: boolean;
     };
