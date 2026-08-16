@@ -86,7 +86,14 @@ def _fitting_demos() -> dict[str, str]:
 
 
 def _policy_recipes(src: str) -> list[str]:
-    """The ``recipe=`` literals passed to ``save_with_lod`` in *src*."""
+    """The ``recipe=`` literals passed to ``save_with_lod`` in *src*.
+
+    ``recipe`` is keyword-only on :func:`save_with_lod`, so a real call always
+    contributes one entry here — which makes a non-empty result the definition
+    of "routed" everywhere below. A substring test for the helper's NAME would
+    instead be satisfied by the import line alone, passing a demo that imports
+    the policy and then still writes its cache with a bare ``.save()``.
+    """
     recipes = []
     for node in ast.walk(ast.parse(src)):
         if (
@@ -100,9 +107,28 @@ def _policy_recipes(src: str) -> list[str]:
     return recipes
 
 
+def _bare_saves(src: str) -> int:
+    """Count ``<something>.save(...)`` calls — a cache write that skipped the policy.
+
+    ``numpy.save`` is excluded by name: the sidecar writers spell it ``np.save``
+    / ``np.savez_compressed`` and have nothing to do with a gsplat archive.
+    """
+    n = 0
+    for node in ast.walk(ast.parse(src)):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
+            continue
+        if node.func.attr != "save":
+            continue
+        value = node.func.value
+        if isinstance(value, ast.Name) and value.id in ("np", "numpy"):
+            continue
+        n += 1
+    return n
+
+
 def test_every_fitting_demo_chooses_a_topology_or_is_listed() -> None:
     unrouted = {
-        name for name, src in _fitting_demos().items() if "save_with_lod" not in src
+        name for name, src in _fitting_demos().items() if not _policy_recipes(src)
     }
     accounted = set(_NO_CACHED_ARTIFACT) | _NOT_YET_ROUTED
     assert unrouted <= accounted, (
@@ -118,11 +144,30 @@ def test_the_pending_list_shrinks_and_does_not_go_stale() -> None:
     fitting = _fitting_demos()
     for name in sorted(_NOT_YET_ROUTED):
         assert name in fitting, f"{name} no longer fits — drop it from the list"
-        assert "save_with_lod" not in fitting[name], (
+        assert not _policy_recipes(fitting[name]), (
             f"{name} now chooses a topology — remove it from _NOT_YET_ROUTED"
         )
     for name in sorted(_NO_CACHED_ARTIFACT):
         assert name in fitting, f"{name} no longer fits — drop the exemption"
+
+
+def test_a_routed_demo_writes_every_archive_through_the_policy() -> None:
+    """One policy save does not licence a second, bare one in the same demo.
+
+    A demo with several archives (cmu1's three channels, nexrad's per-frame
+    files) would otherwise satisfy the gate above with a single routed call
+    while its remaining cache writes kept whatever topology their fitter
+    produced — the defect the policy exists to remove, hidden behind a demo
+    that looks routed.
+    """
+    for name, src in sorted(_fitting_demos().items()):
+        if not _policy_recipes(src):
+            continue
+        assert _bare_saves(src) == 0, (
+            f"{name} chooses a topology but still writes {_bare_saves(src)} "
+            "archive(s) with a bare .save() — route those through "
+            "luxar.demos._lod_policy.save_with_lod too."
+        )
 
 
 def test_every_chosen_recipe_is_one_the_policy_defines() -> None:
@@ -160,11 +205,33 @@ def test_the_detector_actually_finds_routed_demos() -> None:
     """A scan that matched nothing would pass every assertion above."""
     fitting = _fitting_demos()
     assert len(fitting) >= 10, f"only found {len(fitting)} fitting demos"
-    routed = {n for n, s in fitting.items() if "save_with_lod" in s}
+    routed = {n for n, s in fitting.items() if _policy_recipes(s)}
     assert len(routed) >= 5, f"only {len(routed)} demos routed through the policy"
     assert any(_policy_recipes(fitting[n]) for n in routed), (
         "no recipe literal parsed out — the recipe assertions are vacuous"
     )
+
+
+def test_the_routing_detectors_are_not_fooled_by_the_import_line() -> None:
+    """Run both detectors over planted sources, since both gate everything else.
+
+    The import-only case is the one that matters: it is what a half-finished
+    migration looks like, and a name-substring test reads it as routed.
+    """
+    import_only = (
+        "from luxar.demos._lod_policy import save_with_lod\n"
+        "result.save(cache_file, compress='zip')\n"
+    )
+    assert _policy_recipes(import_only) == []
+    assert _bare_saves(import_only) == 1
+
+    routed_plus_bare = (
+        "save_with_lod(a, p0, recipe='stream')\n"
+        "b.save(p1, compress='zip')\n"
+        "np.save(p2, arr)\n"  # a sidecar, not an archive
+    )
+    assert _policy_recipes(routed_plus_bare) == ["stream"]
+    assert _bare_saves(routed_plus_bare) == 1
 
 
 def test_the_demo_recipe_type_and_defaults_agree() -> None:
