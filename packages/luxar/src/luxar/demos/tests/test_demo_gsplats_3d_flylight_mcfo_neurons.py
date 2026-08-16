@@ -1121,6 +1121,161 @@ def test_fit_cache_key_is_stable_for_identical_parameters() -> None:
     )
 
 
+def test_fit_cache_key_tracks_the_optimiser_schedule() -> None:
+    """The schedule changes splat SHAPES while leaving the count identical.
+
+    That is what makes it easy to miss: seeds, floor and retention are all
+    unchanged when the schedule is retuned, so a key blind to it hands back the
+    old under-converged, beaded fit and the retune looks like a no-op.
+    """
+    args = (1_200_000, "auto", 0.9999)
+    bare = _demo.fit_cache_key(*args)
+    tuned = _demo.fit_cache_key(*args, _demo.NEURON_FIT_SCHEDULE)
+    assert tuned != bare, "schedule ignored — a retuned fit would reuse the old file"
+
+    for knob, other in (
+        ("n_iters", 5_000),
+        ("patience", 15),
+        ("early_stop_patience", 300),
+        ("enable_dynamic_ops", True),
+        ("max_eccentricity", 10.0),
+        ("l1_diag", 1e-4),
+    ):
+        variant = dict(_demo.NEURON_FIT_SCHEDULE)
+        variant[knob] = other
+        assert _demo.fit_cache_key(*args, variant) != tuned, f"{knob} ignored"
+
+
+def test_fit_cache_key_ignores_schedule_dict_ordering() -> None:
+    """Same knobs in a different insertion order are the same fit.
+
+    Digesting ``str(dict)`` would key on insertion order and force a needless
+    (very expensive) refit after a purely cosmetic edit.
+    """
+    args = (1_200_000, "auto", 0.9999)
+    reordered = dict(reversed(list(_demo.NEURON_FIT_SCHEDULE.items())))
+    assert list(reordered) != list(_demo.NEURON_FIT_SCHEDULE)
+    assert _demo.fit_cache_key(*args, reordered) == _demo.fit_cache_key(
+        *args, _demo.NEURON_FIT_SCHEDULE
+    )
+
+
+def test_neuron_schedule_overrides_the_defaults_that_cause_beading() -> None:
+    """Guard every knob in the schedule, each of which was measured to matter.
+
+    ``fit_gaussian_splats`` defaults to n_iters=1000 — below the CLI's own
+    ``draft`` preset — which leaves splats at their isotropic seed shape and
+    renders thin axons as bead chains. The two patience knobs are in here for a
+    reason that is easy to overlook: at the defaults (15 and 300) the fit decays
+    its shape learning rate and then stops long before iteration 10,000, so
+    reverting either one quietly undoes most of what ``n_iters`` bought.
+    """
+    s = _demo.NEURON_FIT_SCHEDULE
+    assert s["n_iters"] >= 5_000, "1000 (the API default) leaves splats at seed shape"
+    assert s["patience"] >= 200, "15 decays the shape LR away before shapes settle"
+    assert s["early_stop_patience"] >= 2_000, "300 stops the fit before convergence"
+    assert s["enable_dynamic_ops"] is False, "relocation re-isotropises splats mid-fit"
+    assert s["max_eccentricity"] is None, "the default 10.0 caps the axis ratio"
+    assert s["l1_diag"] == 0.0, "the default penalty pulls shapes toward isotropy"
+
+
+def test_every_schedule_knob_is_a_real_fitter_parameter() -> None:
+    """A typo in the schedule would be SWALLOWED, not raised.
+
+    ``fit_volume`` splats the schedule into ``fit_gaussian_splats``, which ends
+    in ``**seed_kwargs`` and forwards anything it does not recognise on to the
+    seeder — where an unknown key is a ``UserWarning``, not an error. Buried in
+    a verbose multi-minute fit that reads as "the retune did nothing", which is
+    the same silent failure the cache-key digest exists to prevent.
+    """
+    import inspect
+
+    from luxar.gsplats import fit_gaussian_splats
+
+    named = {
+        name
+        for name, p in inspect.signature(fit_gaussian_splats).parameters.items()
+        if p.kind is not inspect.Parameter.VAR_KEYWORD
+    }
+    unknown = sorted(set(_demo.NEURON_FIT_SCHEDULE) - named)
+    assert not unknown, f"not fit_gaussian_splats parameters: {unknown}"
+
+
+def test_fit_volume_forwards_the_schedule_to_the_fitter(tmp_path, monkeypatch) -> None:
+    """A schedule that never reaches the fitter would be silent and useless.
+
+    The acquisition dtype travels the same route and fails the same way: both
+    components arrive here already widened to float32, so a declaration that
+    stops short of the fitter leaves the recorded provenance describing the
+    working copy and overstating compression by the cast.
+    """
+    seen: dict = {}
+
+    class _Result:
+        amplitudes = np.zeros(3, dtype=np.float32)
+
+        def save(self, *a, **k):
+            seen["saved"] = True
+
+    def _fake_fit(volume, **kwargs):
+        seen.update(kwargs)
+        return _Result()
+
+    import luxar.gsplats as _gs
+
+    monkeypatch.setattr(_gs, "fit_gaussian_splats", _fake_fit)
+    monkeypatch.setattr(_demo, "CACHE_DIR", tmp_path)
+
+    _demo.fit_volume(
+        np.zeros((4, 4, 4), dtype=np.float32),
+        tmp_path / "absent.gsplats.zarr.zip",
+        1000,
+        "auto",
+        0.99,
+        "neurons",
+        schedule=_demo.NEURON_FIT_SCHEDULE,
+        source_dtype="uint16",
+    )
+
+    for knob, value in _demo.NEURON_FIT_SCHEDULE.items():
+        assert seen[knob] == value, f"{knob} never reached fit_gaussian_splats"
+    assert seen["source_dtype"] == "uint16", "the acquisition dtype was dropped"
+
+
+def test_fit_volume_without_a_schedule_passes_no_overrides(
+    tmp_path, monkeypatch
+) -> None:
+    """The neuropil is deliberately left on the library defaults."""
+    seen: dict = {}
+
+    class _Result:
+        amplitudes = np.zeros(3, dtype=np.float32)
+
+        def save(self, *a, **k):
+            pass
+
+    def _fake_fit(volume, **kwargs):
+        seen.update(kwargs)
+        return _Result()
+
+    import luxar.gsplats as _gs
+
+    monkeypatch.setattr(_gs, "fit_gaussian_splats", _fake_fit)
+    monkeypatch.setattr(_demo, "CACHE_DIR", tmp_path)
+
+    _demo.fit_volume(
+        np.zeros((4, 4, 4), dtype=np.float32),
+        tmp_path / "absent2.gsplats.zarr.zip",
+        1000,
+        "auto",
+        0.95,
+        "neuropil",
+    )
+
+    for knob in _demo.NEURON_FIT_SCHEDULE:
+        assert knob not in seen, f"{knob} leaked into the neuropil fit"
+
+
 def test_fit_cache_paths_differ_between_components_and_settings() -> None:
     neurons = _demo._fit_cache_path("neurons", 1_200_000, "p99", 0.999)
     neuropil = _demo._fit_cache_path("neuropil", 600_000, "auto", 0.95)
