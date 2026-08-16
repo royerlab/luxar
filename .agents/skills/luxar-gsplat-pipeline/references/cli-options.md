@@ -214,8 +214,14 @@ occupancy halving and are stamped `selector="screen-area"`. Each
 viewport area): the coarsest child gets `0.0` (always-eligible floor), the finest
 gets `0.5` — so a WHOLE-OBJECT ladder holds full detail while the object occupies
 at least half the screen — and each level between halves once more
-(…, 1/8, 1/4, 1/2). Because the metric is an NDC-area fraction it is identical on
-any monitor or aspect ratio. Element counts are read only for the ladder's LENGTH.
+(…, 1/8, 1/4, 1/2). Element counts are read only for the ladder's LENGTH.
+
+The metric is an NDC-area fraction, so it is RESOLUTION-independent — the same
+framing reads the same fraction on any monitor size, and the projected rect is
+clipped to the viewport first so it tops out at exactly 1.0. It is **not**
+aspect-independent: `fov` is vertical, so a wider viewport shows more world
+horizontally and the same object covers a smaller area fraction. Resizing between
+square and ultrawide does move the switch points.
 
 The retired `sqrt(N_i/N_finest)` derivation was a diagonal metric spaced by a
 count ratio; it held the most expensive level across nearly the whole usable zoom

@@ -70,10 +70,13 @@ data, matching how you fit.
 
 **Stay on `auto` unless you have measured otherwise.** A `pNN` floor subtracts a
 percentile of *all* voxels, so on sparse data it lands wherever the sparsity puts
-it rather than where the noise ends — on a 99.9%-empty light-sheet brain, `p99`
-sat at 1.34% of max, inside real signal. Measured on one crop at a fixed seed
-budget, every fit scored against the **unfloored** original (foreground = above
-10% of max; dim band = 1–10%, where thin faint neurites live):
+it rather than where the noise ends. On one crop of a sparse light-sheet brain,
+`p99` sat at **1.34% of that crop's max** — inside real signal. Note it is a
+crop figure: over the whole stack the same percentile is 0.05% of peak. A `pNN`
+floor moves with whatever you point it at, which is the whole problem. Measured
+on that crop at a fixed seed budget, every fit scored against the **unfloored**
+original (foreground = above 10% of max; dim band = 1–10%, where thin faint
+neurites live):
 
 | floor | splats | global | foreground | dim-band mass recovered |
 |-------|--------|--------|------------|-------------------------|
@@ -275,7 +278,11 @@ does (a) for you and writes a ready-to-serve scene.
   stamped `selector="screen-area"`: each `coverage_fraction` is a literal screen-area
   fraction (projected bbox rect area / viewport area), so a whole-object `levels`
   ladder shows full detail while the object occupies at least half the screen and
-  steps one level coarser per halving. No threshold knob; identical on any monitor.
+  steps one level coarser per halving. No threshold knob, and RESOLUTION-independent
+  (an NDC-area fraction, so the same framing reads the same on any monitor size).
+  It is NOT aspect-independent: `fov` is vertical, so widening the viewport widens
+  the visible world and lowers the area fraction — resizing square→ultrawide does
+  move the switch points.
   (`adaptive` and `overview` are partition-bound and keep the fills-screen anchor.)
   Legacy stores and explicit `coverage_fractions=[...]` lists keep the older
   `selector="coverage"` diagonal metric; the viewer reads both.

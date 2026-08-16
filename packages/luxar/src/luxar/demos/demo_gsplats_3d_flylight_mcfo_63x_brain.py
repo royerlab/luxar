@@ -205,12 +205,32 @@ DISPLAY_LO, DISPLAY_HI = 0.0, 2.723
 OPACITY = 0.02
 ABSORPTION = 0.81
 
-# Camera framing. The viewer's default fits the bounding box with margin, which
-# leaves the brain small; place the camera explicitly so it FILLS the canvas:
-#     visible_height = 2 d tan(fov/2),  visible_width = that * aspect
-# => d = (W / fill) / (2 tan(fov/2) * aspect)
-# Computed at a conservative 1.4 aspect, so a wider window slightly over-fills
-# rather than leaving the brain small.
+# Camera framing. The viewer's default frames a cube of the box's LARGEST
+# dimension and adds 20% margin (`calculateCameraDistance`), which on a 663 x 303
+# brain leaves it small; place the camera explicitly instead.
+#
+#     visible_height(d) = 2 d tan(fov/2)      visible_width(d) = that * aspect
+#
+# Two corrections over the naive fit:
+#
+# 1. Measure at the NEAR FACE, not the target plane. The frustum narrows towards
+#    the camera, so the widest part of a 167 um-deep object to worry about is its
+#    camera-facing side at `d - depth/2`. Fitting at the centre plane over-fills
+#    the near face and clips its corners (7% of the width, here, before this).
+#    Hence the `+ depth/2` term.
+# 2. `fill` is a fraction of the frame the object should occupy, so the extent is
+#    divided by it BEFORE the fit.
+#
+# WHAT THE ASPECT MEANS. `fov` is VERTICAL, so visible width scales with the live
+# viewport aspect while a baked distance cannot. This brain is 2.19:1 — far wider
+# than any window — so width binds at every realistic aspect and no single
+# distance can fill it everywhere. `CAMERA_ASPECT` is therefore a declared
+# calibration point, not a safety margin: at exactly this aspect the brain
+# occupies `CAMERA_FILL` of the width; a WIDER window leaves margin, a NARROWER
+# one crops the outer optic lobes. 1.4 is the landscape floor this demo is
+# calibrated for. Framing for a square window instead would put the camera at
+# ~912 um — indistinguishable from the viewer's own default, which is what the
+# explicit camera exists to improve on.
 CAMERA_FOV = 47.0
 CAMERA_FILL = 0.92
 CAMERA_ASPECT = 1.4
@@ -218,6 +238,22 @@ CAMERA_ASPECT = 1.4
 FLAGS = parse_demo_flags()
 NO_SERVE = FLAGS["no_serve"]
 SERVE_ONLY = FLAGS["serve_only"]
+
+
+# =============================================================================
+# Camera
+# =============================================================================
+def camera_distance(width: float, height: float, half_depth: float) -> float:
+    """Distance from the bbox CENTRE that fills ``CAMERA_FILL`` of the frame.
+
+    The fit is done at the object's camera-facing side (``half_depth`` in front
+    of the centre) and the half-depth added back, so it is the NEAR face —
+    where the frustum is narrowest — that lands inside the frame.
+    """
+    vh = 2.0 * math.tan(math.radians(CAMERA_FOV / 2.0))
+    fit_w = (width / CAMERA_FILL) / (vh * CAMERA_ASPECT)
+    fit_h = (height / CAMERA_FILL) / vh
+    return max(fit_w, fit_h) + half_depth
 
 
 # =============================================================================
@@ -270,11 +306,12 @@ def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
         cx, cy, cz = ((float(bmin[i]) + float(bmax[i])) / 2 for i in range(3))
         width = float(bmax[0] - bmin[0])
         height = float(bmax[1] - bmin[1])
-        vh = 2.0 * math.tan(math.radians(CAMERA_FOV / 2.0))
-        distance = max(
-            (width / CAMERA_FILL) / (vh * CAMERA_ASPECT), (height / CAMERA_FILL) / vh
+        half_depth = float(bmax[2] - bmin[2]) / 2.0
+        distance = camera_distance(width, height, half_depth)
+        aprint(
+            f"Camera: fov {CAMERA_FOV}, distance {distance:.0f} um "
+            f"(near face at {distance - half_depth:.0f} um)"
         )
-        aprint(f"Camera: fov {CAMERA_FOV}, distance {distance:.0f} um")
 
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(

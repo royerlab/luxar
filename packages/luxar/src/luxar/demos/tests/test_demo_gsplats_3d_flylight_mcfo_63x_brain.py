@@ -112,13 +112,75 @@ class TestCameraFramesTheBrain:
 
         # ...and close enough that the object really does fill the frame at the
         # design aspect. A default-framed camera sits much further back.
-        distance = float(position[2] - target[2])
-        visible_h = 2.0 * distance * math.tan(math.radians(cam["fov"] / 2.0))
-        visible_w = visible_h * _demo.CAMERA_ASPECT
+        #
+        # Measured at the NEAR FACE, where the frustum is narrowest — the
+        # centre-plane fit this replaced put the near corners ~7% outside the
+        # frame, and a centre-plane assertion could not see that.
         width, height = float(bmax[0] - bmin[0]), float(bmax[1] - bmin[1])
+        half_depth = float(bmax[2] - bmin[2]) / 2.0
+        near = float(position[2] - target[2]) - half_depth
+        visible_h = 2.0 * near * math.tan(math.radians(cam["fov"] / 2.0))
+        visible_w = visible_h * _demo.CAMERA_ASPECT
         assert max(width / visible_w, height / visible_h) == pytest.approx(
             _demo.CAMERA_FILL, rel=1e-6
         )
+
+    def test_near_face_corners_are_inside_the_frame(self, tmp_path) -> None:
+        """Project the actual bbox corners; none may fall outside the frustum.
+
+        Independent of the distance formula — it re-derives nothing, it just
+        asks whether the eight corners land in view. The pre-fix centre-plane
+        camera fails this on the four near corners.
+        """
+        import math
+
+        src = _tiny_store(tmp_path / "tiny.gsplats.zarr")
+        out = _demo.create_luxar_scene(src, tmp_path / "scene.luxar.zarr")
+
+        root = zarr.open_group(str(out), mode="r")
+        cam = dict(root.attrs)["viewer_config"]["camera"]
+        bounds = dict(root.attrs)["position_bounds"]
+        bmin = np.asarray(bounds["min"], dtype=float)
+        bmax = np.asarray(bounds["max"], dtype=float)
+        eye = np.asarray(cam["position"], dtype=float)
+
+        tan_half = math.tan(math.radians(cam["fov"] / 2.0))
+        worst_x = worst_y = 0.0
+        for xi in (bmin[0], bmax[0]):
+            for yi in (bmin[1], bmax[1]):
+                for zi in (bmin[2], bmax[2]):
+                    depth = eye[2] - zi  # camera looks down -Z at the target
+                    assert depth > 0, "a bbox corner is behind the camera"
+                    half_h = depth * tan_half
+                    worst_y = max(worst_y, abs(yi - eye[1]) / half_h)
+                    worst_x = max(
+                        worst_x, abs(xi - eye[0]) / (half_h * _demo.CAMERA_ASPECT)
+                    )
+        # <= 1.0 means inside; CAMERA_FILL is the headroom the framing asked for.
+        assert max(worst_x, worst_y) <= 1.0
+        assert max(worst_x, worst_y) == pytest.approx(_demo.CAMERA_FILL, rel=1e-6)
+
+    def test_framing_is_calibrated_at_the_declared_aspect(self) -> None:
+        """`CAMERA_ASPECT` is a declared calibration point, not a fudge factor.
+
+        Pin the documented consequence: at exactly the declared aspect a
+        width-bound object occupies `CAMERA_FILL` of the width; wider viewports
+        leave margin. A change to either constant that silently broke that
+        relationship would otherwise only show up on screen.
+        """
+        import math
+
+        width, height, half_depth = 663.0, 303.0, 83.3
+        d = _demo.camera_distance(width, height, half_depth)
+        near = d - half_depth
+        visible_h = 2.0 * near * math.tan(math.radians(_demo.CAMERA_FOV / 2.0))
+
+        assert width / (visible_h * _demo.CAMERA_ASPECT) == pytest.approx(
+            _demo.CAMERA_FILL
+        )
+        assert height / visible_h < _demo.CAMERA_FILL  # width is what binds
+        # A wider window leaves margin rather than cropping.
+        assert width / (visible_h * (_demo.CAMERA_ASPECT + 0.4)) < _demo.CAMERA_FILL
 
 
 class TestServeCallSite:
