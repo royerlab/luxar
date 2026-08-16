@@ -15,12 +15,14 @@ from arbol import aprint
 from ...gsplats import GSplats
 from ..auto_partition import resolve_auto_partition
 from ..compositing import (
+    ABSENT_WHEN_NONE_RENDER_ATTRS,
     COMPOSITING_ATTRS,
     funnel_add_error,
     is_broadcast_color,
     position_bounds_from_array,
     reject_lines_only_join,
     slice_optional_array,
+    strip_absent_attr_kwargs,
     sync_custom_colormap_attr,
     unnest_add_error,
     validate_gsplats_channels_before_split,
@@ -52,6 +54,22 @@ def add_gsplats_impl(
     **attrs: Any,
 ) -> Union[GSplats, "Group"]:
     try:
+        # "An explicit None means absent" (#1574), applied ONCE here rather than
+        # at each consumer, so neither the flat write nor the partition branch
+        # (nor this module's one ``sync_custom_colormap_attr`` call) can see the
+        # raw None. The partition branch matters as much as the flat write:
+        # it forwards this same dict on to every ``part_i``, so a strip scoped
+        # to the flat path leaves the raw None in each part's write — measured,
+        # all four parts ship the LUT-less ``'custom'``.
+        # This is also what makes the leaf agree with the pipeline door above it:
+        # ``add_gsplats_from_data`` strips the same way before delegating here,
+        # so a ``colormap=None`` no longer means one thing through the data door
+        # and another through this one. Only render attrs are in the set — the
+        # structural keys whose None also means absent
+        # (``colors``/``labels``/``image_labels``/``partition``) are named params
+        # of this function and can never reach ``**attrs``.
+        strip_absent_attr_kwargs(attrs, ABSENT_WHEN_NONE_RENDER_ATTRS)
+
         # Fail-fast pre-write gate: reject invalid names (empty/'/'/dot-
         # prefixed — an empty name resolves to the zarr ROOT group and would
         # clobber the scene root) and duplicate siblings BEFORE any zarr
@@ -155,33 +173,14 @@ def add_gsplats_impl(
 
         if partition is not None:
             from ..partition import (
-                DEFAULT_MAX_ELEMENTS,
                 median_bsp_partition,
                 midpoint_bsp_partition,
+                resolve_partition_spec,
                 sah_bsp_partition,
                 warn_if_oversized_single_part,
             )
 
-            if partition is True:
-                max_elements = DEFAULT_MAX_ELEMENTS
-                partition_rule = "median"
-            elif isinstance(partition, dict):
-                max_elements = int(partition.get("max_elements", DEFAULT_MAX_ELEMENTS))
-                if max_elements < 1:
-                    raise ValueError(
-                        f"partition max_elements must be >= 1, got {max_elements}"
-                    )
-                partition_rule = str(partition.get("rule", "median"))
-                if partition_rule not in ("median", "midpoint", "sah"):
-                    raise ValueError(
-                        f"partition rule must be 'median', 'midpoint', or 'sah'; "
-                        f"got {partition_rule!r}"
-                    )
-            else:
-                raise TypeError(
-                    f"partition must be None, True, or dict; "
-                    f"got {type(partition).__name__}"
-                )
+            max_elements, partition_rule = resolve_partition_spec(partition)
 
             if image_labels is not None:
                 raise ValueError(

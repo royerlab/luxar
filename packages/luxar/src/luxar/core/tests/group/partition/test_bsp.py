@@ -23,9 +23,67 @@ from luxar.core.group import Group
 from luxar.core.group.partition import (
     DEFAULT_MAX_ELEMENTS,
     midpoint_bsp_partition,
+    resolve_partition_spec,
     validate_partition_group,
 )
 from luxar.io.compiler import LuxarZarrCompiler
+
+# ────────────────────────────────────────────────────────────────────────
+# resolve_partition_spec — the ``partition=`` value vocabulary
+# ────────────────────────────────────────────────────────────────────────
+
+
+class TestResolvePartitionSpec:
+    """The shared spec validator, exercised directly (#1550).
+
+    Every branch was reachable only through an adder until this function was
+    factored out of their four byte-identical inline copies, and the
+    ``True -> (DEFAULT_MAX_ELEMENTS, "median")`` default in particular was pinned
+    nowhere — the end-to-end callers all pass a dict or read the resolved cap off
+    disk. It now has a fifth caller that is not an adder at all (the gsplats
+    ``lod_group=`` / graft pre-wrapper gates), so its contract is worth stating
+    once here rather than inferring it from five call sites.
+    """
+
+    @pytest.mark.parametrize(
+        "spec,expected",
+        [
+            (True, (DEFAULT_MAX_ELEMENTS, "median")),
+            ({}, (DEFAULT_MAX_ELEMENTS, "median")),
+            ({"max_elements": 7}, (7, "median")),
+            ({"rule": "midpoint"}, (DEFAULT_MAX_ELEMENTS, "midpoint")),
+            ({"max_elements": 7, "rule": "sah"}, (7, "sah")),
+        ],
+    )
+    def test_the_accepted_vocabulary(self, spec: object, expected: tuple) -> None:
+        assert resolve_partition_spec(spec) == expected
+
+    def test_max_elements_below_one_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="max_elements must be >= 1"):
+            resolve_partition_spec({"max_elements": 0})
+
+    def test_an_unknown_rule_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="rule must be"):
+            resolve_partition_spec({"rule": "bogus"})
+
+    @pytest.mark.parametrize("spec", ["nonsense", 3, False])
+    def test_anything_but_true_or_a_dict_raises_type_error(self, spec: object) -> None:
+        """Including ``False`` — and that is the CALLERS' job to prevent.
+
+        ``False`` is a member of the ``PartitionSpec`` vocabulary (the explicit
+        no-partition bypass ``resolve_auto_partition`` normalises to ``None``),
+        but it is deliberately not a member of THIS function's: by the time a
+        spec is being resolved into a cap and a rule, the decision to partition
+        has already been taken, so a ``False`` here means a caller skipped the
+        normalisation. Every caller normalises it away first — measured as a live
+        regression when the gsplats ``lod_group=`` gate did not (#1550).
+
+        ``TypeError``, not ``ValueError``: the adders' own ``except (ValueError,
+        TypeError)`` funnel converts it, so the caller sees one type either way.
+        """
+        with pytest.raises(TypeError, match="partition must be None, True, or dict"):
+            resolve_partition_spec(spec)
+
 
 # ────────────────────────────────────────────────────────────────────────
 # midpoint_bsp_partition — pure algorithm

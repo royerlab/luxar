@@ -17,6 +17,7 @@ from pathlib import Path
 import numpy as np
 import zarr
 
+from luxar._zarr_compat import is_consolidated
 from luxar.encoding import EncodingMode
 from luxar.gsplats.io import save_gsplats
 from luxar.typing_utils._format_contract import GSPLATS_FORMAT_VERSION
@@ -187,7 +188,10 @@ class TestFormatCompliance:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "test.gsplats.zarr"
             save_gsplats(path=path, **create_test_splats_3d(50))
-            assert (path / ".zmetadata").exists()
+            # Via the facade: format 2 writes a separate `.zmetadata`, format 3
+            # embeds `consolidated_metadata` in the root document. Naming the
+            # v2 document meant this passed only while every store was v2.
+            assert is_consolidated(path)
 
     def test_3d_specific_values(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

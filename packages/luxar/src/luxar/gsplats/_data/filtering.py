@@ -13,6 +13,82 @@ if TYPE_CHECKING:
     from luxar.gsplats.gsplat_data import GSplatData
 
 
+#: Source-provenance ``stats`` keys that describe the REGION the splats
+#: represent. A bbox crop keeps only part of that region, so carrying them over
+#: would make ``gsplat info`` quote a compression ratio (and an occupancy) for a
+#: volume this artifact no longer represents — inflated by the crop factor. They
+#: are dropped instead: staying silent about an unknown source grid is what
+#: ``info`` already does for a dataset fitted before these stamps existed.
+#: ``source_dtype`` is deliberately EXEMPT — the element type of the source
+#: volume is unchanged by a crop, so it remains true. ``voxels_per_splat`` IS
+#: region-scoped: it is a ratio over the fitted grid, so after a crop it
+#: describes a region the object no longer represents — and its ``fitted_voxels``
+#: denominator has just been dropped, leaving it unanchored.
+_REGION_SCOPED_STATS_KEYS = (
+    "source_shape",
+    # Goes with the grid it qualifies: on its own it is a flag saying a shape that
+    # is no longer there was declared.
+    "source_declared",
+    "source_voxels",
+    "source_bytes",
+    "fitted_shape",
+    "fitted_voxels",
+    "occupancy",
+    "voxels_per_splat",
+)
+
+
+def _is_crop(bbox: object, n_before: int, n_after: int) -> bool:
+    """Whether a filter actually RESTRICTED the region the splats represent.
+
+    A bbox that excluded nothing (``slice_by([slice(None)] * ndim)``, or a
+    ``--bbox`` enclosing the whole volume — the natural spelling when one axis of
+    a scripted sweep is unbounded) leaves an artifact representing exactly the
+    same content, so its source stamp is still true and must survive. Only a
+    bbox that removed splats invalidates it.
+    """
+    return bbox is not None and n_after < n_before
+
+
+def _stats_after_filter(result: "GSplatData", *, cropped: bool) -> "GSplatData":
+    """Drop the region-scoped source stamps from ``result`` when ``cropped``.
+
+    A non-spatial filter (amplitude/scale/mass/... thresholds) does NOT change
+    which region the splats represent, so it keeps the whole stamp; only a
+    bbox/slice restriction that actually excluded splats invalidates it (see
+    :func:`_is_crop`).
+
+    Mutates the stats dicts IN PLACE rather than copying: every call site hands
+    over a result it has just built, never a caller's object (``filter()`` and the
+    ``_map_*`` rebuilds all copy ``stats``).
+
+    Cleans the TOP-LEVEL stats and every additive sub-LOD's, because the writer
+    persists a sub-LOD's dict as the leaf's ``lod_stats`` — a crop that fixed only
+    the top level would leave the uncropped stamp on disk one level down. On a
+    single leaf those are the SAME dict (``GSplatData.__init__`` aliases it) and
+    the extra pass is a no-op; a ladder needs it, and a progressive fit builds one
+    whose every sub-LOD carries that pass's full fit stats.
+    """
+    if not cropped:
+        return result
+    for stats in (result.stats, *(lod.stats for lod in _all_sublods(result))):
+        for key in _REGION_SCOPED_STATS_KEYS:
+            stats.pop(key, None)
+    return result
+
+
+def _all_sublods(result: "GSplatData") -> list:
+    """Every additive sub-LOD of every substitutive level.
+
+    ``substitutive_levels`` is a view rebuilt from the node, but it shares the
+    ``AdditiveSubLOD`` objects themselves, so mutating their ``stats`` reaches
+    what gets written.
+    """
+    return [
+        lod for level in result.substitutive_levels for lod in level.additive_sublods
+    ]
+
+
 class FilteringMixin(_GSplatDataOps):
     """``filter`` / ``filter_by`` / ``slice_by`` and the threshold resolver."""
 
@@ -209,7 +285,8 @@ class FilteringMixin(_GSplatDataOps):
                     "truncate": truncate,
                 }
             )
-            return result
+            # Nothing to remove from an empty dataset, so no bbox can be a crop.
+            return _stats_after_filter(result, cropped=_is_crop(bbox, 0, 0))
 
         # Validate sigma_axis usage
         if (sigma_min is not None or sigma_max is not None) and sigma_axis is None:
@@ -272,7 +349,11 @@ class FilteringMixin(_GSplatDataOps):
                     "truncate": truncate,
                 }
             )
-            return out
+            # A crop restricts WHICH REGION the splats represent (the per-level
+            # recursion above cannot fix the rebuilt top-level stats).
+            return _stats_after_filter(
+                out, cropped=_is_crop(bbox, self.n_splats, out.n_splats)
+            )
 
         mask = np.ones(self.n_splats, dtype=bool)
         criteria: dict[str, object] = {}
@@ -422,7 +503,12 @@ class FilteringMixin(_GSplatDataOps):
                 "truncate": truncate,
             }
         )
-        return result
+        # A bbox crop that actually excluded splats invalidates the source-region
+        # stamps inherited from the fit (see _stats_after_filter / _is_crop); a
+        # non-spatial threshold, or a bbox that removed nothing, keeps them.
+        return _stats_after_filter(
+            result, cropped=_is_crop(bbox, self.n_splats, result.n_splats)
+        )
 
     def slice_by(self, slices: list[slice]) -> "GSplatData":
         """Slice splats by coordinate ranges per dimension (numpy-style).

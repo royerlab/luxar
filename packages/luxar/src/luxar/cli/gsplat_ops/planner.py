@@ -18,7 +18,11 @@ import numpy as np
 import typer
 from arbol import aprint, asection
 
-from .fitting.fit_utils import _invocation_token
+from .fitting.fit_utils import (
+    _invocation_token,
+    resolve_shared_floor,
+    validate_floor_spec,
+)
 
 if TYPE_CHECKING:
     from luxar.gsplats.calibration import SplatDensity
@@ -121,7 +125,6 @@ def run_content_fit(
       ``flat``.
     """
     from luxar.cli.gsplat_config import load_fit_config, load_volume
-    from luxar.gsplats.gsplat_data import GSplatData
     from luxar.gsplats.planner import FitPlan, fit_planned, plan_volume
     from luxar.gsplats.planner.fit_planned import _fit_one_box
 
@@ -165,6 +168,13 @@ def run_content_fit(
         fk["verbose"] = False
         return fk
 
+    # Validate the EFFECTIVE floor spec BEFORE the volume is read: a typo
+    # (`--floor potato`), an out-of-range percentile (`--floor p150`) or a
+    # negative `floor:` in a YAML --config must cost no read and surface as a
+    # usage error, not a bare ValueError from inside the fit. (`--floor` itself
+    # is not validated by Typer: it is a free-form string spec.)
+    validate_floor_spec(_fit_kwargs().get("floor", "auto"))
+
     # ── worker mode: fit ONE box of an existing plan (a -j parallel subprocess) ──
     if plan_box is not None:
         if output is None:
@@ -179,17 +189,30 @@ def run_content_fit(
         vol = _load_vol()
         fk = _fit_kwargs()
         fk["device"] = device
+        # The parent resolved the level and forwarded it as a number — echoed
+        # back untouched here (already guarded, so no re-read). A worker invoked
+        # by hand (or from a manifest written before the level was resolved at
+        # plan time) still carries a SPEC: resolve it against this whole
+        # (t, c) volume, never the box crop, so the deterministic sampler makes
+        # every box agree on one level anyway. EXCEPTION: a NEGATIVE resolved
+        # level cannot be expressed as a concrete --floor, so resolve_shared_floor
+        # hands the SPEC back and `_fit_one_box` re-resolves it against this box's
+        # crop — per-box pedestals, for that one case only.
+        _, fk["floor"] = resolve_shared_floor(
+            vol, fk.get("floor", "auto"), guard_numeric=False, verbose=False
+        )
         cap = int(fitplan.density.get("saturation_cap", 0)) if fitplan.density else 0
-        c, a, k = _fit_one_box(
+        box_result = _fit_one_box(
             vol, fitplan.boxes[plan_box], int(fitplan.overlap), cap, **fk
         )
         output.parent.mkdir(parents=True, exist_ok=True)
-        if c.shape[0] == 0:
+        if box_result.n_splats == 0:
             Path(str(output) + ".empty").write_text("")  # writer rejects empty stores
         else:
-            GSplatData(centers=c, amplitudes=a, cholesky_factors=k).save(
-                output, include_fitting_info=False
-            )
+            # Save the fitted dataset AS IS: rebuilding it from bare arrays
+            # dropped the fit's truncation_radius (a `truncate: 3.5` config
+            # stored the 2.75 default) and its per-box stats (#1637).
+            box_result.save(output, include_fitting_info=False)
         return
 
     # ── resolve density ──
@@ -211,6 +234,31 @@ def run_content_fit(
         )
 
     vol = _load_vol()
+
+    # ── background floor: ONE level for the whole volume ──
+    # Boxes are core-kept and abutting, so a per-box estimate (what forwarding
+    # the spec into `fit_gaussian_splats` produces — it resolves against the box
+    # CROP) makes neighbouring boxes subtract different pedestals and normalize
+    # by different ranges: visible brightness steps at box boundaries (#1174).
+    # Resolved ONCE here instead, before anything is scanned or fitted, then
+    # handed to the density scan, the sequential boxes, AND the -j box
+    # subprocesses' argv. The spec comes out of the merged fit config, so a
+    # `floor:` in --config/--preset is honoured rather than overridden.
+    box_fit_kwargs = _fit_kwargs()
+    floor_level, floor_forward = resolve_shared_floor(
+        vol,
+        box_fit_kwargs.get("floor", "auto"),
+        guard_numeric=True,
+        scope="every box",
+        verbose=verbose,
+    )
+    # Normally a concrete number (or "none"), which is what fit_planned requires.
+    # The one exception is a NEGATIVE resolved level, which cannot be expressed as
+    # a concrete floor: the SPEC is forwarded and each box re-resolves it against
+    # its own crop, so that case degenerates to the per-box pedestals #1174 is
+    # about. Accepted rather than refused, because dark-frame-corrected data fit
+    # fine before and refusing would make it unfittable.
+    box_fit_kwargs["floor"] = floor_forward
 
     # ── obtain a plan: load --plan, or scan + plan ──
     created_plan = False
@@ -234,22 +282,18 @@ def run_content_fit(
                 "will be mis-scaled. Use matching metrics."
             )
         with _section("Scanning content + planning"):
-            from luxar.gsplats.fitting.preprocessing import _resolve_floor
-
             t0 = time.perf_counter()
             # Scan the SAME floor-suppressed volume the boxes will fit: cal
             # records `density.feature_threshold` on the floor-subtracted volume,
             # so scanning the raw (pedestal-carrying) volume would count the whole
-            # background as signal and flatten the content field. Subtract the
-            # fit's own floor here so the scan scale matches the calibration.
+            # background as signal and flatten the content field. `floor_level`
+            # is the very level every box subtracts, so plan and fits share one
+            # basis by construction (it used to be re-resolved here, which also
+            # forced a full-array np.percentile for `--floor pNN`).
             scan_vol = vol
-            # `floor=None` means "not overridden" — the per-box worker then
-            # defaults to "auto", so the scan must resolve "auto" too (matching
-            # what the boxes will actually fit).
-            scan_floor = _resolve_floor(vol, "auto" if floor is None else floor)
-            if scan_floor is not None:
+            if floor_level is not None:
                 scan_vol = np.clip(
-                    np.asarray(vol, dtype=np.float32) - scan_floor, 0.0, None
+                    np.asarray(vol, dtype=np.float32) - floor_level, 0.0, None
                 )
             fitplan = plan_volume(
                 scan_vol,
@@ -321,9 +365,25 @@ def run_content_fit(
         builder = _default_worker_cmd_builder(
             input_path,
             plan_json_path,
-            preset=preset or "standard",
+            # VERBATIM, not `preset or "standard"`: the sequential path hands
+            # `load_fit_config` the CLI value as-is, and defaulting to "standard"
+            # here would layer that preset's n_iters (5000 vs 1000) and
+            # cull_retention on every box — `-j N` fitting differently from
+            # `-j 1` (#1637).
+            preset=preset,
+            # The run's fit configuration, so a box worker resolves the same fit
+            # config as the sequential path. `truncate:` lives only in a YAML
+            # --config (no preset sets it, and there is no --truncate flag), so
+            # without this the boxes silently fit at the default (#1637).
+            config=config,
+            iters=iters,
+            loss=loss,
+            lr=lr,
+            cull_retention=cull_retention,
             device=device,
-            floor=floor,
+            # The RESOLVED level, not the spec: each worker would otherwise
+            # re-estimate on its own box crop (#1174).
+            floor=floor_forward,
             channel=channel,
             timepoint=timepoint,
             array_key=array_key,
@@ -346,7 +406,7 @@ def run_content_fit(
                 verbose=verbose,
             )
     else:
-        fk = _fit_kwargs()
+        fk = box_fit_kwargs  # already carries the one resolved floor level
         with _section(f"Fitting {fitplan.n_boxes} boxes"):
 
             def _prog(i: int, n: int, msg: str) -> None:

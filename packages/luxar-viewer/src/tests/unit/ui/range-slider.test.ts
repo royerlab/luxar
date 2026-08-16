@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Unit tests for RangeSlider — dual-thumb slider used by the layers
  * panel for the [min, max] display-range control.

@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import List, Optional, Tuple
 
+from luxar._zarr_compat import read_array_meta
 from luxar.cli.gsplat_ops.recipe_shared import measure_store_bytes
 
 
@@ -26,10 +26,20 @@ def measure_tiles_bytes_per_splat(
             continue
         tile_bytes = measure_store_bytes(tile)
         tile_splats = 0
-        for zarray in tile.rglob("centers/.zarray"):
+        # Glob the array DIRECTORY and read its metadata through the facade:
+        # only format 2 has a `.zarray`, so globbing that name measured zero
+        # splats in every format-3 tile — which is not an error here, it just
+        # skips the tile and silently drops the caller back to the analytic
+        # bytes/splat estimate. Both formats spell `shape` the same way.
+        for node in tile.rglob("centers"):
+            if not node.is_dir():
+                continue
+            meta = read_array_meta(node)
+            if meta is None:
+                continue
             try:
-                tile_splats += int(json.loads(zarray.read_text())["shape"][0])
-            except (OSError, ValueError, KeyError, IndexError, TypeError):
+                tile_splats += int(meta["shape"][0])
+            except (ValueError, KeyError, IndexError, TypeError):
                 continue
         if tile_bytes > 0 and tile_splats > 0:
             total_bytes += tile_bytes

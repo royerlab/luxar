@@ -60,6 +60,14 @@ function isHatchAvailable(): boolean {
   }
 }
 
+// Opt out of the config's `fullyParallel: true`.
+//
+// `beforeAll` runs once per WORKER, and it spawns a real `luxar serve`. Letting
+// these two tests land on different workers would start two servers (and two
+// hatch environments) for one file's worth of assertions. `default` — not
+// `serial` — because a failure here should not skip the sibling test.
+test.describe.configure({ mode: 'default' });
+
 test.describe('Luxar Serve Integration', () => {
   let serverProcess: ChildProcess | null = null;
 

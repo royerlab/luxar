@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Unit tests for config/user-settings.ts — the persisted global viewer
  * preferences behind the Settings popover.

@@ -4,10 +4,16 @@
 Splits a volume into overlapping tiles with cosine (Hann) apodization,
 fits Gaussian splats independently per tile, and concatenates results.
 The background floor is resolved once against the whole volume and
-subtracted from each raw tile *before* apodization (floor subtraction and
+subtracted from each tile *before* apodization (floor subtraction and
 windowing do not commute); on the floor-subtracted data the Hann
 partition-of-unity property then ensures seamless blending without
-post-merge pruning.
+post-merge pruning. When per-tile denoising is active, the level is resolved
+on the DENOISED basis (``resolve_volume_floor_denoised``), because that is
+the data it is subtracted from — matching what the non-tiled path, which
+denoises the whole volume first, estimates (#1178). That match is exact for a
+volume within the denoise probe's budget; above it, only a ``pNN`` floor is
+corrected onto the denoised basis and the default ``auto`` keeps its raw-basis
+level with a printed note.
 """
 
 from __future__ import annotations
@@ -19,7 +25,13 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar.gsplats.fit_gsplats import fit_gaussian_splats
-from luxar.gsplats.fitting.preprocessing import resolve_volume_floor
+from luxar.gsplats.fitting.preprocessing import (
+    NORM_RANGE_MIN_SPAN,
+    _floor_spec_is_volume_derived,
+    resolve_volume_floor_denoised,
+    resolve_volume_norm_range,
+)
+from luxar.gsplats.fitting.results import stamp_voxels_per_splat
 from luxar.gsplats.fitting.validation import _validate_floor
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.tiling import (
@@ -27,7 +39,113 @@ from luxar.gsplats.tiling import (
     compute_tile_specs,
     cosine_window,
     grid_bsp_tree,
+    resolve_grid_scale,
 )
+
+
+def _tile_norm_range(
+    volume: Any,
+    fit_kwargs: dict[str, Any],
+    applied_floor: "float | None",
+    verbose: bool = False,
+) -> "tuple[float, float] | None":
+    """Shared ``(image_min, image_max)`` for every tile of ``volume``.
+
+    The top comes from :func:`resolve_volume_norm_range` (whole volume, shifted
+    into post-floor terms). The bottom is pinned at **zero**, which is where the
+    array each tile fitter actually sees starts: the floor subtraction clips at
+    0 and the Hann window then tapers every overlapped face down to 0.
+
+    Pinning matters whenever the applied floor sits below the volume minimum —
+    ``--floor none``, a floor the guard refused, or an explicit level under the
+    pedestal. A positive ``image_min`` would then subtract a constant from BOTH
+    sides of an overlap: ``(V*w_A - m) + (V*w_B - m) = V - 2m`` against ``V - m``
+    in the tile interior, i.e. exactly the box-shaped seam this is meant to
+    remove — and it would clip the taper away entirely below ``m``.
+
+    Returns ``None`` — meaning "no shared scale; let each tile derive its own,
+    as it did before there was a shared one" — in the three cases where the
+    measurement carries no usable scale:
+
+    * A non-finite top. ``NaN`` compares False against everything, so it would
+      otherwise sail through as a "valid" scale and turn every tile's normalized
+      array into NaN, past the raw-tile NaN check that already ran. (A ``-inf``
+      *low* is not a case: the low end is discarded by the zero pin, and a tile
+      actually holding it is rejected by that same check.)
+    * A top at or below zero. The sample saw no signal at all — an empty or
+      fully-masked region of a large volume the bounded sample happened to land
+      in, or background-subtracted data whose positive structure it missed.
+      Sharing it would hand every tile ``intensity_range <= 0``: at exactly zero
+      :func:`~luxar.gsplats.fitting.preprocessing._normalize_data` fills the tile
+      with a uniform 0.5 and fits a fabricated flat field, and below zero it
+      inverts the sign and zeroes the real signal. A tile that genuinely holds
+      nothing is skipped by the near-zero guard in :func:`fit_tile` either way,
+      so nothing is lost by declining here.
+    * The applied floor reaches the sampled top, so the shifted top is nothing
+      but :func:`resolve_volume_norm_range`'s degenerate epsilon. Reachable
+      through an unguarded numeric ``--floor``: the single-tile CLI worker
+      resolves with ``guard_numeric=False`` on purpose, so one level resolved by
+      its parent still applies to a dim timepoint, and the bounded sample can
+      under-report the max. A tile that really is below the floor clips to zero
+      and is skipped by the near-zero guard — but a tile holding the signal the
+      sample missed would be normalized by ~1e-12 and come back ~1e12 times too
+      dark, which is far worse than losing cross-tile comparability where the
+      shared measurement is meaningless anyway.
+
+    That last test is deliberately narrow: it catches the epsilon the shift
+    manufactures, not every unhelpfully small range. A volume that is honestly
+    this dim (a float stack topping out at 1e-13, floor or not) keeps its shared
+    scale, because normalizing by its own true extent is exactly right.
+    """
+    _, hi = resolve_volume_norm_range(
+        volume,
+        fit_kwargs.get("norm_percentile", 0.0),
+        subtract=applied_floor,
+        verbose=verbose,
+    )
+    if not np.isfinite(hi):
+        aprint(
+            f"Whole-volume intensity range is not finite ({hi}) — tiles fall "
+            "back to their own scale."
+        )
+        return None
+    if hi <= 0.0:
+        aprint(
+            f"Whole-volume intensity range has no positive extent ({hi:g}) — "
+            "tiles fall back to their own scale."
+        )
+        return None
+    if applied_floor is not None and hi <= NORM_RANGE_MIN_SPAN:
+        aprint(
+            f"Whole-volume intensity range collapsed under the floor "
+            f"({applied_floor:g}) — tiles fall back to their own scale."
+        )
+        return None
+    return (0.0, hi)
+
+
+def _ensure_tile_norm_range(
+    volume: Any,
+    fit_kwargs: dict[str, Any],
+    applied_floor: "float | None",
+    verbose: bool = False,
+) -> None:
+    """Resolve the shared range into ``fit_kwargs`` unless someone already has.
+
+    The orchestrator resolves it once and passes it down, so a per-tile worker
+    does not re-read the volume; a standalone :func:`fit_tile` has nobody to
+    inherit from and resolves it itself. The answer may legitimately be ``None``
+    — no usable shared scale, each tile derives its own (see
+    :func:`_tile_norm_range`) — which a plain ``norm_range is None`` test cannot
+    tell from "nobody has looked yet", hence the private already-resolved
+    marker. It is popped rather than forwarded, like the other
+    underscore-prefixed tile-internal keys.
+    """
+    already_resolved = fit_kwargs.pop("_norm_range_resolved", False)
+    if not already_resolved and fit_kwargs.get("norm_range") is None:
+        fit_kwargs["norm_range"] = _tile_norm_range(
+            volume, fit_kwargs, applied_floor, verbose=verbose
+        )
 
 
 def fit_tile(
@@ -43,8 +161,9 @@ def fit_tile(
 ) -> GSplatData:
     """Fit Gaussian splats on a single tile of a larger volume.
 
-    Extracts the tile subvolume, subtracts the background floor (resolved
-    against the *whole* volume, never the tile), applies cosine apodization,
+    Extracts the tile subvolume, optionally denoises it, subtracts the
+    background floor (resolved against the *whole* volume, never the tile, and
+    on the denoised basis when denoising is active), applies cosine apodization,
     fits splats, and translates centers to global volume coordinates. This is
     the atomic unit for tiled fitting — each call is independent and
     Slurm-ready.
@@ -82,13 +201,22 @@ def fit_tile(
         semantics.
         ``floor`` (default ``"auto"``) is intercepted here: a spec string is
         resolved once against the whole ``volume`` via
-        :func:`~luxar.gsplats.fitting.preprocessing.resolve_volume_floor`
+        :func:`~luxar.gsplats.fitting.preprocessing.resolve_volume_floor_denoised`
         (so independent tile workers agree on one level), with the
-        "would erase all signal" guard applied. A numeric value is taken at
+        "would erase all signal" guard applied. With ``_denoise_h`` /
+        ``_denoise_params`` in ``fit_kwargs`` that resolution happens on the
+        DENOISED basis — the tile is denoised before the level is subtracted, so
+        a raw-basis level would remove a different pedestal than the non-tiled
+        path does (#1178) — wherever that shift is measurable: always within the
+        denoise probe's budget, and above it for a ``pNN`` spec only (see
+        :func:`~luxar.gsplats.fitting.preprocessing.resolve_volume_floor_denoised`).
+        A numeric value is taken at
         face value — the caller is expected to have guarded it (as
-        :func:`fit_tiled` and the single-tile CLI worker do with
-        ``guard_numeric=True``). The level is subtracted from the raw tile
-        *before* apodization; the inner fit then runs with ``floor="none"``
+        :func:`fit_tiled` does with ``guard_numeric=True``; the single-tile CLI
+        worker deliberately does NOT, so one level resolved by its parent
+        applies unchanged to a dim timepoint). The level is subtracted from the
+        tile — after any denoising, before apodization; the two do not commute
+        the other way — and the inner fit then runs with ``floor="none"``
         and the applied level is recorded in
         ``result.stats["applied_floor"]``.
 
@@ -124,7 +252,38 @@ def fit_tile(
     floor_spec = fit_kwargs.pop("floor", "auto")
     if isinstance(floor_spec, str):
         _validate_floor(floor_spec)
-    applied_floor = resolve_volume_floor(volume, floor_spec)
+    # Denoising is applied to the tile BELOW, before the level is subtracted, so
+    # a volume-derived spec must be resolved on the DENOISED basis or this path
+    # removes a different pedestal than `--tiling none` does (#1178). The
+    # denoise keys are only PEEKED at here: they are popped further down, after
+    # the tile has been extracted.
+    # Deliberately no `verbose=`: this is the PER-TILE door, so anything logged
+    # here is logged once per tile. The two callers that resolve a spec once per
+    # RUN do the announcing — `fit_tiled` below, and the standalone
+    # `fit_single_tile` worker, which resolves the level itself and hands this
+    # function the number. Same log surface as before #1178.
+    applied_floor = resolve_volume_floor_denoised(
+        volume,
+        floor_spec,
+        denoise_h=fit_kwargs.get("_denoise_h"),
+        denoise_params=fit_kwargs.get("_denoise_params"),
+    )
+
+    # Resolve the INTENSITY SCALE against the whole volume too, for the same
+    # reason the floor is: a tile normalized by its own extremes is fitted
+    # under criteria (convergence tolerance, seeding and culling thresholds)
+    # that are all absolute in the normalized [0, 1] range, so the same
+    # physical structure is resolved to a different accuracy in each tile.
+    # Only resolve it when the caller has not already done so — see
+    # `_ensure_tile_norm_range`. A standalone worker resolving its own is
+    # exactly where you want the resolved number logged, to confirm that every
+    # worker of a `--tile k/M` run agreed on it.
+    _ensure_tile_norm_range(
+        volume,
+        fit_kwargs,
+        applied_floor,
+        verbose=bool(fit_kwargs.get("verbose", False)),
+    )
 
     # 1. Extract tile subvolume (materializes from zarr if needed)
     tile_data = np.asarray(volume[spec.slices], dtype=np.float32)
@@ -237,6 +396,57 @@ def fit_tile(
     return result
 
 
+def _tiled_source_grid_stats(
+    volume_shape: tuple[int, ...],
+    source_shape: Optional[Sequence[int]],
+    source_dtype: Optional[str],
+    source_itemsize: Optional[int],
+) -> dict[str, Any]:
+    """Source-grid stamps for a MERGED tiled fit.
+
+    A tiled fit needs its own record because the per-tile stamps describe crops:
+    each tile is handed a sub-volume and honestly records that, so no tile knows
+    the grid the merged result stands for. (``GSplatData.concatenate`` drops tile
+    stats rather than promoting one, which is the only reason the merged result
+    was not already claiming a single tile's crop as its source.)
+
+    ``fitted_shape`` is the whole volume, not a tile: the tiles cover it, so the
+    grid the optimiser collectively saw is the volume itself.
+    """
+    from luxar.gsplats.fitting.validation import _explicit_source_shape
+
+    declared = _explicit_source_shape(source_shape)
+    dtype, itemsize = source_dtype, source_itemsize
+    if itemsize is None and dtype:
+        # A caller holding only the dtype NAME (the parallel orchestrator, whose
+        # volume lives in the worker subprocesses) still gets a byte count: no
+        # size means no compression ratio at all in `info`.
+        try:
+            itemsize = int(np.dtype(dtype).itemsize)
+        except TypeError:  # an unrecognized dtype name — record it without a size
+            itemsize = None
+
+    shape = [int(x) for x in (declared if declared else volume_shape)]
+    voxels = int(np.prod(shape)) if shape else 0
+    out: dict[str, Any] = {
+        "source_shape": shape,
+        "source_voxels": voxels,
+    }
+    if dtype:
+        out["source_dtype"] = dtype
+    out.update(
+        {
+            "fitted_shape": [int(x) for x in volume_shape],
+            "fitted_voxels": int(np.prod(volume_shape)) if volume_shape else 0,
+        }
+    )
+    if declared:
+        out["source_declared"] = True
+    if itemsize:
+        out["source_bytes"] = voxels * int(itemsize)
+    return out
+
+
 def fit_tiled(
     volume: Any,
     tile_size: int | Sequence[int] = 256,
@@ -252,6 +462,11 @@ def fit_tiled(
     partition: bool = False,
     recipe: Optional[str] = None,
     recipe_params: "Optional[Any]" = None,
+    # Taken explicitly rather than left in **fit_kwargs: forwarded to the tiles,
+    # they would declare the WHOLE acquisition as each crop's source. They
+    # describe the merged result, so the merge is where they are applied.
+    source_shape: Optional[Sequence[int]] = None,
+    source_dtype: Optional[str] = None,
     **fit_kwargs: Any,
 ) -> "Any":
     """Fit Gaussian splats to a large volume using tiled decomposition.
@@ -259,9 +474,14 @@ def fit_tiled(
     Splits the volume into overlapping tiles with cosine apodization
     (Hann window), fits each tile independently, and merges results.
     The background floor (``floor`` in ``fit_kwargs``, default ``"auto"``)
-    is resolved once against the whole volume and subtracted from each raw
-    tile before windowing; on the floor-subtracted data the Hann
-    partition-of-unity property guarantees seamless blending.
+    is resolved once against the whole volume and subtracted from each tile
+    before windowing; on the floor-subtracted data the Hann
+    partition-of-unity property guarantees seamless blending. When per-tile
+    denoising is active (``_denoise_h`` / ``_denoise_params``), the level is
+    resolved on the denoised basis, matching the non-tiled path (#1178) — with
+    the one documented exception that the default ``"auto"`` spec on a volume
+    above the denoise probe's budget keeps its raw-basis level, since the
+    histogram-mode shift is not measurable on a bounded crop.
 
     When ``progressive=True``, each tile is fitted using progressive
     residual decomposition, producing a multi-LOD result where LODs are
@@ -295,6 +515,17 @@ def fit_tiled(
         splats that account for this fraction of total amplitude (0--1).
         Per-tile culling is disabled automatically; only the merged result
         is culled.  Set to ``None`` to disable.
+    source_shape : sequence of int, optional
+        Grid of the ACQUISITION, when ``volume`` is already a preprocessed copy
+        of it — a caller that decimated before tiling must declare it, or the
+        merged result records the working copy as its source and the compression
+        ratio is quoted against a grid the data never had. ``None`` measures
+        ``volume`` itself, which is right whenever nothing was preprocessed.
+    source_dtype : str, optional
+        Element type the volume was STORED in, for the same reason as in
+        :func:`~luxar.gsplats.fit_gsplats.fit_gaussian_splats`. Applied to the
+        MERGED result rather than forwarded to the tiles: a tile would use it to
+        describe its own crop.
     **fit_kwargs
         All other keyword arguments forwarded to the per-tile fitting function
         (e.g. ``seeds``, ``n_iters``, ``preset``, ``device``,
@@ -331,13 +562,49 @@ def fit_tiled(
     # path, which warns and ignores such a floor).
     floor_spec = fit_kwargs.pop("floor", "auto")
     _validate_floor(floor_spec)
-    applied_floor = resolve_volume_floor(volume, floor_spec, guard_numeric=True)
+    # Every tile is denoised before the level is subtracted, so a volume-derived
+    # spec is resolved on the DENOISED basis (#1178) — otherwise this path
+    # removes a different pedestal than `--tiling none` does on the same input.
+    # PEEK at the denoise keys: `fit_kwargs` is forwarded to `fit_tile`, which
+    # pops them itself.
+    applied_floor = resolve_volume_floor_denoised(
+        volume,
+        floor_spec,
+        denoise_h=fit_kwargs.get("_denoise_h"),
+        denoise_params=fit_kwargs.get("_denoise_params"),
+        guard_numeric=True,
+        # Log the DENOISED basis the level was resolved on (raw level + the
+        # measured shift) — the one number the summary line below cannot show.
+        # Gated on a VOLUME-DERIVED spec (`auto`/`pNN`) and on denoising actually
+        # being active, so `--denoise` off, and any absolute level, print exactly
+        # what they printed before #1178. `isinstance(str)` would not do: the CLI
+        # hands `--floor 110` down as the STRING "110", which is an absolute the
+        # summary line below already echoes.
+        verbose=(
+            verbose
+            and _floor_spec_is_volume_derived(floor_spec)
+            and fit_kwargs.get("_denoise_h") is not None
+            and fit_kwargs.get("_denoise_params") is not None
+        ),
+    )
     if verbose and applied_floor is not None:
         aprint(
             f"Floor suppression: subtracting background level "
             f"{applied_floor:.6g} from every tile"
         )
     fit_kwargs["floor"] = applied_floor if applied_floor is not None else "none"
+
+    # Same treatment for the intensity scale: resolve ONCE here so every tile
+    # shares it, rather than letting each tile normalize by its own extremes.
+    # `fit_tile` would resolve it per tile otherwise — identical result, but a
+    # bounded volume read per tile instead of one. The marker says "already
+    # looked", so a declined range (None, see `_tile_norm_range`) costs one read
+    # here rather than one per tile.
+    if fit_kwargs.get("norm_range") is None:
+        fit_kwargs["_norm_range_resolved"] = True
+        fit_kwargs["norm_range"] = _tile_norm_range(
+            volume, fit_kwargs, applied_floor, verbose=verbose
+        )
 
     volume_shape = tuple(volume.shape)
     specs = compute_tile_specs(volume_shape, tile_size, overlap)
@@ -373,9 +640,18 @@ def fit_tiled(
                 results.append(tile_result)
 
     elapsed = time.perf_counter() - t0
+    # Resolved HERE, where the caller's array is still in hand: after the tiles
+    # are fitted only their crops remain, and the merge cannot recover the
+    # element type the volume was stored in.
+    from luxar.gsplats.fitting.validation import _resolve_source_dtype
+
+    merged_dtype, merged_itemsize = _resolve_source_dtype(volume, source_dtype)
     return merge_tile_results(
         results,
         volume_shape=volume_shape,
+        source_shape=source_shape,
+        source_dtype=merged_dtype,
+        source_itemsize=merged_itemsize,
         tile_size=tile_size,
         overlap=overlap,
         num_tiles=len(specs),
@@ -387,6 +663,14 @@ def fit_tiled(
         recipe=recipe,
         recipe_params=recipe_params,
         applied_floor=applied_floor,
+        # The grid above is in voxels; with a voxel_size and real-space output
+        # every tile's splats were offset by `origin * voxel_size`, so the
+        # partition's split planes need the same factor (#1587).
+        grid_scale=resolve_grid_scale(
+            len(volume_shape),
+            voxel_size=voxel_size,
+            output_space=output_space,
+        ),
     )
 
 
@@ -405,6 +689,10 @@ def merge_tile_results(
     recipe: Optional[str] = None,
     recipe_params: "Optional[Any]" = None,
     applied_floor: "float | None" = None,
+    grid_scale: "tuple[float, ...] | None" = None,
+    source_shape: Optional[Sequence[int]] = None,
+    source_dtype: Optional[str] = None,
+    source_itemsize: Optional[int] = None,
 ) -> "Any":
     """Merge per-tile fit results into a single (optionally multi-LOD) dataset.
 
@@ -442,8 +730,8 @@ def merge_tile_results(
     verbose : bool, default True
         Print a summary line via arbol.
     applied_floor : float or None, default None
-        The background level subtracted from every raw tile before
-        apodization. Supplied by the sequential :func:`fit_tiled` path; the
+        The background level subtracted from every tile (after any denoising)
+        before apodization. Supplied by the sequential :func:`fit_tiled` path; the
         subprocess-based paths leave it ``None`` (a worker records the level
         it applied in its own tile's in-memory stats, which do not survive
         the reload at merge). Recorded in the flat merged result's stats;
@@ -451,6 +739,26 @@ def merge_tile_results(
         stamped into the returned node's ``meta["applied_floor"]``
         (in-memory bookkeeping only — the tree writer does not persist this
         key).
+    grid_scale : tuple of float or None, default None
+        Per-axis factor mapping the tile grid's VOXEL frame (``volume_shape``,
+        ``tile_size``, ``overlap``) onto the frame ``results`` carry their
+        centers in — the product of the ``--downscale`` factors and, when the
+        fit emitted real-space output, the ``voxel_size`` (issue #1587). Build
+        it with :func:`~luxar.gsplats.tiling.resolve_grid_scale`. Consumed only
+        by the partition's split planes
+        (:func:`~luxar.gsplats.tiling.grid_bsp_tree`), which would otherwise be
+        a factor too small and would no longer separate the parts they label.
+        ``None`` when the grid and the splats share one frame.
+    source_shape, source_dtype, source_itemsize : optional
+        What the merged result is a representation of, stamped by
+        :func:`_tiled_source_grid_stats` — no tile can say, since each was handed
+        a crop. ``source_shape`` is for a caller that decimated before tiling
+        (``volume_shape`` is then the fitted grid, not the acquisition); the
+        dtype/itemsize are the element type the volume was STORED in, without
+        which no compression ratio can be quoted. Only the flat merge carries
+        them: a ``partition=True`` tree has nowhere to persist fit stats (the
+        writer takes them from a flat leaf's ``stats``), which is also why
+        ``applied_floor`` above is in-memory only there.
 
     Returns
     -------
@@ -507,8 +815,13 @@ def merge_tile_results(
             # both callers guarantee by inserting a 0-splat placeholder for a tile
             # that fit nothing; a length mismatch means that no longer holds, so
             # drop the tree rather than mislabel it.
+            # `scale` lifts the (possibly downscaled) voxel grid into the
+            # splats' own frame — see `grid_scale` above (#1587).
             bsp_tree=(
-                grid_bsp_tree(compute_tile_specs(volume_shape, tile_size, overlap))
+                grid_bsp_tree(
+                    compute_tile_specs(volume_shape, tile_size, overlap),
+                    scale=grid_scale,
+                )
                 if len(results) == num_tiles
                 else None
             ),
@@ -547,6 +860,11 @@ def merge_tile_results(
             "applied_floor": applied_floor,
         }
     )
+    merged.stats.update(
+        _tiled_source_grid_stats(
+            volume_shape, source_shape, source_dtype, source_itemsize
+        )
+    )
 
     if verbose:
         lod_info = f", {merged.n_additive_sublods} LODs" if has_lods else ""
@@ -564,6 +882,10 @@ def merge_tile_results(
                 f"Post-fit culling: {n_before} -> {merged.n_splats} splats "
                 f"(retained {cull_retention * 100:.0f}% of amplitude)"
             )
+
+    # Density counts the splats actually DELIVERED, so it is set after the cull
+    # above rather than beside the other source-grid stamps.
+    stamp_voxels_per_splat(merged.stats, merged.n_splats)
 
     return merged
 

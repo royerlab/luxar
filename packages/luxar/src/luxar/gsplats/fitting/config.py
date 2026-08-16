@@ -164,6 +164,14 @@ class FitConfig:
     # pedestal is clipped to 0 before fitting. "auto" | "none" | "pN" | float.
     floor: str | float | None = "auto"
 
+    # Explicit (image_min, image_max) for normalization, overriding the values
+    # `norm_percentile` would derive from THIS array. Set by the tiled fitter to
+    # a level resolved against the WHOLE volume, so every tile maps the same
+    # physical intensity to the same normalized value — the amplitude-scale
+    # counterpart of the globally-resolved `floor`. Leave None for a
+    # whole-volume fit, where the array already IS the volume.
+    norm_range: Optional[tuple[float, float]] = None
+
     # Metal acceleration (with defaults - must come after required fields)
     use_metal: bool = True  # Enable Metal acceleration when available (macOS + MPS)
     metal_intensity_floor: float = 1e-5  # Early culling threshold for Metal kernels
@@ -180,10 +188,42 @@ class FitConfig:
         None  # Additional parameters for seed generation
     )
 
+    # Amplitude convention of a ``seeds=GSplatData`` warm start (#1172). The
+    # door carries both kinds and they differ by exactly the background floor,
+    # so only the CALLER knows which one it is holding:
+    #
+    # * False (default) — RAW-IMAGE-SAMPLED, e.g. ``generate_seeds()`` output
+    #   (the documented explicit-seeding workflow): amplitudes read off the
+    #   original volume, pedestal included. Rescaled as
+    #   ``(a - image_min) / intensity_range``.
+    # * True — BACKGROUND-RELATIVE, e.g. a previous fit's output or a
+    #   ``.gsplats.zarr`` WRITTEN BY a fit (``gsplat fit`` / ``gsplat lod``):
+    #   ``finalize_results`` scales by ``intensity_range`` and never adds
+    #   ``image_min`` back. Rescaled as ``a / intensity_range``; subtracting
+    #   ``image_min`` again would remove the floor twice and zero every
+    #   sub-floor seed.
+    #
+    # An IMPORTED store (``gsplat import``, opacity mapped into ~[0, 1]) or an
+    # intensity-rescaled one (``gsplat transform --normalize-intensity`` /
+    # ``--scale-intensity``) carries neither convention exactly, so its warm
+    # start is approximate whichever value is declared.
+    #
+    # Only consulted when ``seeds`` is a GSplatData.
+    seed_amps_background_relative: bool = False
+
     # Pre-initialized parameters (for GSplatData seeds or moment pursuit)
     # If set, these override the default initialization
     init_L: Optional[np.ndarray] = None  # Shape (N, d, d) - Cholesky factors
-    init_amps: Optional[np.ndarray] = None  # Shape (N,) - amplitudes
+    # Shape (N,) - amplitudes, in RAW IMAGE INTENSITY units (the same scale as
+    # ``V``, pedestal included), which is what the seeding methods produce.
+    # preprocess_data rescales them to the optimizer's [0, 1] scale as
+    # ``(a - image_min) / intensity_range``, so a background floor is removed
+    # exactly once. Amplitudes coming out of a PREVIOUS fit are already
+    # background-relative (see finalize_results) and must NOT be passed here —
+    # pass the whole GSplatData as ``seeds=`` together with
+    # ``seed_amps_background_relative=True``, which skips the ``- image_min``
+    # term (#1172).
+    init_amps: Optional[np.ndarray] = None
 
     # Amplitude constraint (prevents explosion with few splats)
     amp_max: Optional[float] = None  # Maximum amplitude value if specified
@@ -235,6 +275,15 @@ class FitConfig:
     # must not raise.
     iter_callback: Optional[IterCallback] = None
     iter_callback_every: int = 25  # call cadence (capped to >= eval interval)
+    # The caller's array as handed in, BEFORE `V` was cast to float32. Recorded
+    # because it is the honest denominator of a compression ratio: a uint16
+    # source cast to float32 doubles in size, and quoting the cast size would
+    # overstate compression by 2x. `None` when unknown.
+    source_dtype: Optional[str] = None
+    source_itemsize: Optional[int] = None
+    #: Declared grid of the ACQUISITION, when the caller preprocessed before
+    #: fitting. `None` means the array handed in IS the source.
+    source_shape: Optional[list[int]] = None
 
 
 @dataclass
@@ -278,7 +327,10 @@ class PreprocessedData:
     # Pre-initialized model parameters (set during preprocessing)
     # These are processed copies - FitConfig is not mutated
     init_L: Optional[np.ndarray] = None  # Shape (N, d, d) - Cholesky factors
-    init_amps: Optional[np.ndarray] = None  # Shape (N,) - amplitudes
+    # Shape (N,) - amplitudes, already rescaled to the optimizer's normalized
+    # [0, 1] scale (whichever input convention they arrived in - see
+    # FitConfig.init_amps and preprocessing._InitContext).
+    init_amps: Optional[np.ndarray] = None
 
     # Downscale factors applied during preprocessing (for rescaling in finalize_results)
     downscale_factors: Optional[tuple[int, ...]] = None

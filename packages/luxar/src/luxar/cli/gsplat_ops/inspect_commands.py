@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 import typer
 from arbol import aprint, asection
@@ -57,8 +57,16 @@ def _ascii_histogram(
     return "\n".join(lines)
 
 
-def _compute_splat_volumes(cholesky_factors: "np.ndarray", ndim: int) -> "np.ndarray":
-    """Compute volumes at 3-sigma for each splat."""
+def _compute_splat_volumes(
+    cholesky_factors: "np.ndarray", ndim: int, truncate: float
+) -> "np.ndarray":
+    """Compute volumes at ``truncate``-sigma for each splat.
+
+    ``truncate`` is REQUIRED and comes from the dataset's own
+    ``truncation_radius``: this used to be a hardcoded 3, so a dataset fitted at
+    the canonical 2.75 was measured at a support it never had (the report was
+    ``(3/2.75)**ndim`` too large — 30% at 3D).
+    """
     import numpy as np
 
     # Extract diagonal elements from packed Cholesky factors
@@ -70,10 +78,10 @@ def _compute_splat_volumes(cholesky_factors: "np.ndarray", ndim: int) -> "np.nda
     det_L = np.prod(diag_elements, axis=1)
     det_Sigma = det_L**2
 
-    # Volume of nD ellipsoid at 3-sigma
-    # V = (2π)^(n/2) * det(Σ)^(1/2) * 3^n / Γ(n/2 + 1)
-    # For simplicity, use det(Σ)^(1/2) * 3^n as proxy
-    volumes: np.ndarray = np.abs(det_Sigma) ** 0.5 * (3**ndim)
+    # Volume of nD ellipsoid at T-sigma (T = the dataset's truncation radius)
+    # V = (2π)^(n/2) * det(Σ)^(1/2) * T^n / Γ(n/2 + 1)
+    # For simplicity, use det(Σ)^(1/2) * T^n as proxy
+    volumes: np.ndarray = np.abs(det_Sigma) ** 0.5 * (float(truncate) ** ndim)
 
     return volumes
 
@@ -120,7 +128,8 @@ def info_dataset(
     - Number of splats and dimensions
     - Bounding box in each dimension
     - Amplitude distribution with statistics and histogram
-    - Volume distribution (size at 3-sigma) with statistics and histogram
+    - Volume distribution (size at the dataset's own truncation radius, in
+      sigmas) with statistics and histogram
     - Color information (if present)
     - Metadata (fitting info, provenance, etc.)
 
@@ -177,12 +186,14 @@ def info_dataset(
         aprint("DATASET INFORMATION")
         aprint("═" * 70)
 
+        stored_bytes = _store_size(path)
         aprint(f"\nFile: {path.name}")
-        aprint(f"Size: {format_memory_size(path.stat().st_size)}")
+        aprint(f"Size: {format_memory_size(stored_bytes)}")
 
         aprint(f"\nSplats: {n_splats:,}")
         aprint(f"Dimensions: {ndim}D")
         aprint(f"Has Colors: {'Yes' if data.colors is not None else 'No'}")
+        source_grid_keys = _print_source_grid(data, stored_bytes)
 
         # ================================================================
         # Bounding Box
@@ -237,18 +248,24 @@ def info_dataset(
             )
 
         # ================================================================
-        # Volume Statistics (3-sigma)
+        # Volume Statistics (at the dataset's own truncation radius)
         # ================================================================
+        # `:g` so the canonical 2.75 reads "2.75" and an integral 3.0 reads "3".
+        truncate = data.truncation_radius
         aprint("\n" + "─" * 70)
-        aprint("VOLUME ANALYSIS (3-Sigma)")
+        aprint(f"VOLUME ANALYSIS ({truncate:g}-Sigma)")
         aprint("─" * 70)
 
-        volumes = _compute_splat_volumes(data.cholesky_factors, ndim)
+        volumes = _compute_splat_volumes(data.cholesky_factors, ndim, truncate)
         _print_statistics_table(volumes, "Volume")
 
         if show_histograms:
             aprint(
-                _ascii_histogram(volumes, bins=bins, title="Volume Distribution (3σ)")
+                _ascii_histogram(
+                    volumes,
+                    bins=bins,
+                    title=f"Volume Distribution ({truncate:g}σ)",
+                )
             )
 
         # ================================================================
@@ -310,8 +327,13 @@ def info_dataset(
                         aprint(f"  {key}: {value}")
                     displayed_keys.add(key)
 
-            # Display remaining metadata
-            remaining = set(data.stats.keys()) - displayed_keys
+            # Display remaining metadata. The source-volume block above already
+            # reported its own keys (and RECOMPUTED voxels/splat from the stored
+            # splats), so re-dumping them here would quote one quantity twice with
+            # two different numbers. Only the keys it actually reported are
+            # suppressed: when that block bailed out (no `source_shape`) it
+            # returns nothing and the stamps still surface here.
+            remaining = set(data.stats.keys()) - displayed_keys - set(source_grid_keys)
             if remaining:
                 aprint("\nAdditional Metadata:")
                 for key in sorted(remaining):
@@ -339,7 +361,7 @@ def info_dataset(
         aprint(f"\n✓ Dataset contains {n_splats:,} Gaussian splats in {ndim}D")
         aprint(f"✓ Total amplitude: {total_amp:.4e}")
         aprint(f"✓ Bounding box volume: {total_volume:.4e}")
-        aprint(f"✓ Mean splat volume (3σ): {np.mean(volumes):.4e}")
+        aprint(f"✓ Mean splat volume ({truncate:g}σ): {np.mean(volumes):.4e}")
 
         # Pruning recommendation
         n_for_95pct = np.searchsorted(cumsum_norm, 0.95) + 1
@@ -796,7 +818,10 @@ def _print_gsplat_tree_summary(path: Path) -> None:
         aprint("DATASET INFORMATION (node tree)")
         aprint("═" * 70)
         aprint(f"\nFile: {path.name}")
-        aprint(f"Size: {format_memory_size(path.stat().st_size)}")
+        # Same measurement as the flat report's "Size:" line — a directory store's
+        # own stat() is the ~4 KB directory entry, not the chunks in it, and a
+        # partition is the shape most likely to BE a directory.
+        aprint(f"Size: {format_memory_size(_store_size(path))}")
         kind = (
             "partition"
             if isinstance(node, GSplatPartition)
@@ -1031,3 +1056,119 @@ def register_inspect_commands(app: typer.Typer) -> None:
     app.command("view")(quick_view)
     app.command("compare")(compare_quality)
     app.command("annotate-quality")(annotate_quality)
+
+
+def _store_size(path: Path) -> int:
+    """Bytes a dataset occupies: an archive's own size, a directory store's total.
+
+    ``Path.stat().st_size`` on a `.gsplats.zarr` directory reports the directory
+    entry (typically 4 KB), not the chunks inside it — off by orders of magnitude,
+    and it would contradict the compression line printed from the same number.
+    """
+    try:
+        if path.is_file():
+            return path.stat().st_size
+        return sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
+    except OSError:
+        return 0
+
+
+#: ``stats`` keys :func:`_print_source_grid` reports itself. ``info``'s
+#: "Additional Metadata" dump skips exactly these once the source block has run,
+#: so one quantity is never quoted twice in one report: the block RECOMPUTES
+#: ``voxels/splat`` from the splats actually stored, and on any dataset whose
+#: count changed after the fit (post-fit culling is on by default) the stamped
+#: ``voxels_per_splat`` disagrees with it.
+_SOURCE_GRID_STATS_KEYS = (
+    "source_shape",
+    "source_declared",
+    "source_dtype",
+    "source_voxels",
+    "source_bytes",
+    "fitted_shape",
+    "fitted_voxels",
+    "occupancy",
+    "voxels_per_splat",
+)
+
+
+def _voxels_per_splat(stats: dict, n_splats: int) -> Optional[float]:
+    """Voxels per splat for the splats actually IN the file, else the stamp.
+
+    Recomputed rather than read from ``voxels_per_splat``: post-fit culling (on
+    by default) and any later ``cull``/``decimate`` change the count without
+    restamping, and a figure that contradicts the "Splats:" line printed just
+    above would be worse than none. The stamp is the fallback for a store that
+    carries it without a ``fitted_voxels`` denominator (a third-party stamp),
+    which would otherwise go unreported.
+    """
+    fitted_voxels = stats.get("fitted_voxels")
+    if fitted_voxels and n_splats:
+        return float(fitted_voxels) / n_splats
+    stamped = stats.get("voxels_per_splat")
+    return float(stamped) if stamped else None
+
+
+def _print_source_grid(data: Any, stored_bytes: int) -> tuple[str, ...]:
+    """Report what the splats are a representation of, when the fit recorded it.
+
+    Silent for a dataset fitted before these stamps existed: the source grid is
+    genuinely unknown there, and a compression ratio invented from the bounding
+    box would be a guess presented as a measurement.
+
+    ``stored_bytes`` is the size the caller already measured for its "Size:"
+    line, handed over rather than re-measured: a directory store is sized by
+    walking every chunk file, and the two numbers must be the same one anyway.
+
+    Returns the ``stats`` keys this block has now reported —
+    :data:`_SOURCE_GRID_STATS_KEYS` when it ran, empty when it bailed out. The
+    caller suppresses exactly those from its catch-all metadata dump, so bailing
+    out here leaves them to be printed there rather than dropping them.
+    """
+    stats = getattr(data, "stats", None) or {}
+    shape = stats.get("source_shape")
+    if not shape:
+        return ()
+    voxels = stats.get("source_voxels")
+    dtype = stats.get("source_dtype")
+    aprint(
+        f"Source volume: {' x '.join(str(int(s)) for s in shape)}"
+        + (f" {dtype}" if dtype else "")
+        + (f" ({voxels:,} voxels)" if voxels else "")
+        # A grid the producer STATED (because it preprocessed before fitting) is
+        # not a grid measured from the array the fitter saw, and the compression
+        # ratio printed below rests on it. Saying so beside the number is the
+        # only place a reader of this report would look.
+        + (" [declared by the producer]" if stats.get("source_declared") else "")
+    )
+    fitted = stats.get("fitted_shape")
+    if fitted and list(fitted) != list(shape):
+        aprint(
+            "  fitted at:   "
+            + " x ".join(str(int(s)) for s in fitted)
+            + " (downscaled before fitting)"
+        )
+    occ = stats.get("occupancy")
+    if occ is not None:
+        aprint(
+            f"  occupancy:   {100 * float(occ):.3f}% of voxels above "
+            "1% of the intensity range"
+        )
+    n_splats = len(data.amplitudes) if data.amplitudes is not None else 0
+    per_splat = _voxels_per_splat(stats, n_splats)
+    if per_splat is not None:
+        aprint(f"  voxels/splat: {per_splat:,.0f}")
+    src_bytes = stats.get("source_bytes")
+    if src_bytes:
+        stored = stored_bytes
+        if stored:
+            ratio = src_bytes / stored
+            # A whole-number ratio reads best, but a stored artifact LARGER than
+            # its source is a real outcome (few voxels, many splats) and must not
+            # round to a nonsensical "0:1".
+            shown = f"{ratio:,.0f}" if ratio >= 10 else f"{ratio:.2g}"
+            aprint(
+                f"  compression: {shown}:1 "
+                f"({format_memory_size(src_bytes)} -> {format_memory_size(stored)})"
+            )
+    return _SOURCE_GRID_STATS_KEYS

@@ -458,7 +458,7 @@
       "license": "cc-by-nc-3.0-igo",
       "source": "ESA Gaia DR3 archive",
       "reason": "CC BY-NC (non-commercial) \u2014 incompatible with a cleanly-reusable host.",
-      "strategy": "Query the ESA Gaia archive and build the point cloud client-side (no GPU); cache locally. Requires the ESA/Gaia/DPAC acknowledgement.",
+      "strategy": "Rebuild by hand with scripts/generate_galaxy_simple.py (queries the ESA Gaia archive, no GPU) into ~/.cache/luxar/, or place a copy there; building it automatically on first run is royerlab/luxar#1575. Requires the ESA/Gaia/DPAC acknowledgement.",
       "dir": "",
       "files": [
         {
@@ -509,6 +509,17 @@
           "bytes": 5516346
         }
       ]
+    },
+    "gsplats_flylight_mcfo": {
+      "bucket": "local-compute",
+      "redistribute": true,
+      "license": "cc-by-4.0",
+      "source": "FISBe v1.0 (Zenodo 10875063) / Janelia FlyLight Gen1 MCFO",
+      "attribution": "FISBe (Mais et al., CVPR 2024; doi:10.5281/zenodo.10875063, CC BY 4.0). Imagery from the FlyLight Project Team, Janelia Research Campus, HHMI; cite Meissner et al. eLife 2023 12:e80660 and Tirian & Dickson 2017 for the VT line.",
+      "reason": "CC BY 4.0 and redistributable, but no Zenodo record is published yet.",
+      "strategy": "Range-extract one sample (~415 MB) from the 7.1 GB Zenodo archive + fit locally (GPU). The archive is never fetched whole.",
+      "dir": "gsplats_flylight_mcfo",
+      "files": []
     },
     "gsplats_tribolium": {
       "bucket": "local-compute",

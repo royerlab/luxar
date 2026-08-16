@@ -621,6 +621,27 @@ class TestNodeNameValidation:
             with pytest.raises(ValidationError, match="cannot start with '.'"):
                 validate_node_name(name)
 
+    def test_zarr_v3_reserved_json_name_rejected(self) -> None:
+        """Format 3's reserved document is `zarr.json` — NOT dot-prefixed.
+
+        The dot rule above covered every reserved key while Luxar wrote format
+        2. Format 3 moved node metadata into `zarr.json`, which that rule does
+        not catch, so a node could take the name and collide. Measured before
+        this guard: the write died inside zarr with `ValueError: delete_dir was
+        passed a prefix='zarr.json' that is a file` — the deep-internal-error
+        failure this function exists to convert into a clear one.
+        """
+        from luxar.validation.base import validate_node_name
+
+        for name in ("zarr.json", "Zarr.JSON", "ZARR.json"):
+            with pytest.raises(ValidationError, match="reserves 'zarr.json'"):
+                validate_node_name(name)
+
+        # Neighbours that merely LOOK reserved stay legal — the guard must not
+        # quietly annex a namespace users are entitled to.
+        for name in ("zarr.json.bak", "zarrjson", "my_zarr.json_data", "zarr"):
+            validate_node_name(name)
+
     def test_control_characters_rejected(self) -> None:
         from luxar.validation.base import validate_node_name
 

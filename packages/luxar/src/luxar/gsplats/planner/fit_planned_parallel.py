@@ -27,7 +27,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-import numpy as np
 from arbol import aprint, asection
 
 from luxar.gsplats.batch.task_pool import cancel_pool_on_interrupt
@@ -44,9 +43,14 @@ def _default_worker_cmd_builder(
     input_path: str | Path,
     plan_json_path: str | Path,
     *,
-    preset: str = "standard",
+    preset: Optional[str] = None,
+    config: "Optional[str | Path]" = None,
+    iters: Optional[int] = None,
+    loss: Optional[str] = None,
+    lr: Optional[float] = None,
+    cull_retention: Optional[float] = None,
     device: Optional[str] = None,
-    floor: Optional[str] = None,
+    floor: "Optional[str | float]" = None,
     channel: Optional[int] = None,
     timepoint: Optional[int] = None,
     array_key: Optional[str] = None,
@@ -56,14 +60,61 @@ def _default_worker_cmd_builder(
     --plan-box i ...`` argv.
 
     The worker re-reads the existing ``plan_json`` (it does not re-scan/plan),
-    rebuilds the fit config from ``--preset`` exactly as the parent did, fits the
-    single box, and writes its global-coordinate splats to ``out`` (or a sibling
-    ``.empty`` marker for a 0-splat box).
+    rebuilds the fit config from the forwarded flags exactly as the parent did,
+    fits the single box, and writes its global-coordinate splats to ``out`` (or a
+    sibling ``.empty`` marker for a 0-splat box).
+
+    ``preset`` / ``config`` / ``iters`` / ``loss`` / ``lr`` / ``cull_retention``
+    are the run's fit configuration, forwarded so ``-j N`` resolves the same fit
+    config as ``-j 1`` (mirroring the uniform-tiled sibling
+    :func:`luxar.gsplats.fit_tiled_parallel.build_worker_cmd`). ``truncate:`` is
+    settable ONLY through a YAML ``--config`` (no preset sets it and there is no
+    ``--truncate`` flag), so an unforwarded config left every box both fitted and
+    stamped at the 2.75 default whatever the config said — #1637. ``--seeds`` is
+    deliberately NOT
+    forwarded: a content box's budget comes from the plan, and ``run_content_fit``
+    pops it. Each of these is omitted from the argv when ``None`` (as
+    ``device``/``floor`` already are), leaving the worker to resolve its own
+    default — ``preset=None`` included, because a preset the user did not ask for
+    would layer its own ``n_iters``/``cull_retention`` on top of the config and
+    make the worker fit with different parameters than the sequential path.
+
+    ``floor`` is expected to be the parent's already-RESOLVED background level (a
+    number, or ``"none"`` when suppression is off) rather than a spec like
+    ``auto``/``pNN``: abutting boxes that each re-estimate their own pedestal
+    subtract different levels and show brightness steps at box boundaries
+    (#1174). A spec is still accepted and forwarded verbatim — the worker then
+    resolves it against its whole (t, c) volume, never the box crop.
     """
     argv0 = luxar_argv0()
 
+    # The optional flags, resolved ONCE (nothing here depends on the box): a
+    # (flag, value-or-None) table rather than a branch per flag, so forwarding one
+    # more of the fit config is a row instead of another rung of complexity.
+    # ``None`` means "omit" — the worker then resolves its own default.
+    optional: list[tuple[str, Optional[str]]] = [
+        ("--preset", preset or None),
+        ("--config", str(config) if config else None),
+        ("--iters", None if iters is None else str(iters)),
+        # `is None`, not truthiness: an empty `--loss ""` is a usage error the
+        # parent raises on, and swallowing it here would let `-j N` quietly fit
+        # with the default loss where `-j 1` fails.
+        ("--loss", None if loss is None else str(loss)),
+        ("--lr", None if lr is None else str(lr)),
+        ("--cull-retention", None if cull_retention is None else str(cull_retention)),
+        ("--device", device or None),
+        ("--floor", None if floor is None else str(floor)),
+        ("--channel", None if channel is None else str(channel)),
+        ("--timepoint", None if timepoint is None else str(timepoint)),
+        ("--array-key", array_key or None),
+        ("--axes", axes or None),
+    ]
+    extra = [
+        part for flag, value in optional if value is not None for part in (flag, value)
+    ]
+
     def builder(box_idx: int, out_path: Path) -> list[str]:
-        cmd = [
+        return [
             *argv0,
             "gsplat",
             "fit",
@@ -75,22 +126,8 @@ def _default_worker_cmd_builder(
             str(plan_json_path),
             "--plan-box",
             str(box_idx),
-            "--preset",
-            preset,
+            *extra,
         ]
-        if device:
-            cmd += ["--device", device]
-        if floor is not None:
-            cmd += ["--floor", str(floor)]
-        if channel is not None:
-            cmd += ["--channel", str(channel)]
-        if timepoint is not None:
-            cmd += ["--timepoint", str(timepoint)]
-        if array_key:
-            cmd += ["--array-key", array_key]
-        if axes:
-            cmd += ["--axes", axes]
-        return cmd
 
     return builder
 
@@ -264,15 +301,13 @@ def fit_planned_parallel(
             region_labels=region_boxes,
         )
     else:
-        result = GSplatData(
-            centers=np.concatenate([r.centers for r in regions]).astype(np.float32),
-            amplitudes=np.concatenate([r.amplitudes for r in regions]).astype(
-                np.float32
-            ),
-            cholesky_factors=np.concatenate(
-                [r.cholesky_factors for r in regions]
-            ).astype(np.float32),
-            stats={
+        # `concatenate` keeps the reloaded boxes' shared truncation_radius; a
+        # manual re-`GSplatData(...)` of the three arrays reset it to the default
+        # (#1637). It REPLACES stats with its own summary, so the planned-fit
+        # keys are applied afterwards.
+        result = GSplatData.concatenate(regions)
+        result.stats.update(
+            {
                 "planned_fit": True,
                 "n_boxes": len(plan.boxes),
                 "n_boxes_fit": n_boxes_fit,
@@ -280,7 +315,16 @@ def fit_planned_parallel(
                 "volume_shape": list(plan.volume_shape),
                 "parallel_jobs": int(jobs),
                 "elapsed_seconds": float(elapsed),
-            },
+                # Wall clock, as the uniform tiled merge stamps it
+                # (`merge_tile_results`): one key must not mean "summed fit time"
+                # here and "elapsed" there — and concurrent boxes make a sum
+                # exceed the run. Here it is the SOLE writer rather than an
+                # overwrite, unlike the sequential twin: a reloaded box brings
+                # back its leaf `lod_stats` but not its top-level `stats` (that
+                # needs `include_stats=True`), so `concatenate` sees no box
+                # times to sum in the first place.
+                "time_seconds": float(elapsed),
+            }
         )
 
     if not keep_boxes:

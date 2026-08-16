@@ -18,7 +18,7 @@ from .fit_utils import (
     fit_sequential_tiled,
     fit_single_tile,
     maybe_denoise_full_volume,
-    reject_downscaled_volume_refit,
+    reject_rescaled_volume_refit,
     rescale_and_save,
     resolve_denoise_h,
     validate_and_build_recipe,
@@ -27,6 +27,53 @@ from .fit_utils import (
 from .fit_utils import (
     resolve_tiling as _resolve_tiling_impl,
 )
+
+
+def _stamp_source_dtype(fit_config: dict, source_info: dict) -> None:
+    """Carry the loader-observed source dtype into the fit config.
+
+    ``fit_config`` is forwarded (as ``**fit_config``) by every fit branch to
+    ``fit_gaussian_splats``, so a tile worker stamps the same source dtype as a
+    whole-volume fit. The CLI's ``load_volume`` returns float32 whatever the file
+    holds, so this is the only place the on-disk element type still exists.
+
+    A dtype the USER put in the config wins, and there is no CLI flag to override
+    it: ``load_fit_config`` passes arbitrary YAML keys through, so a
+    ``source_dtype: uint16`` in a ``--config`` file is a deliberate statement
+    about a file whose stored type the loader can no longer see (a float32 .npy
+    exported from a 16-bit acquisition). Only a TRUTHY existing value counts as a
+    choice — ``get_fit_defaults()`` injects a signature-derived
+    ``source_dtype: None``, which must still be filled in from the loader.
+    """
+    if fit_config.get("source_dtype"):
+        return
+    if source_info.get("source_dtype"):
+        fit_config["source_dtype"] = source_info["source_dtype"]
+
+
+def _declare_pre_downscale_source(
+    fit_config: dict, original_shape: "tuple[int, ...]", *, single_tile: bool
+) -> None:
+    """Declare the pre-downscale grid when the CLI decimates before tiling.
+
+    The tiled fitter measures the array it is HANDED, and on the tiled paths the
+    command downscales the volume itself first. Left alone the merged result
+    would therefore record the decimated working copy as its source — a
+    compression ratio quoted against a grid the acquisition never had, with
+    ``fitted_shape`` equal to it so ``info`` cannot even show the decimation.
+    (The whole-volume path has no such problem: ``fit_gaussian_splats``
+    downscales internally, so it measures the caller's array.)
+
+    Not for ``--tile i/M``: that writes ONE crop, whose source is its own
+    sub-volume, not the whole acquisition.
+
+    A ``source_shape`` already in the config is a deliberate statement by the
+    user (``--config`` passes arbitrary keys through) and wins, exactly as
+    :func:`_stamp_source_dtype` treats ``source_dtype``.
+    """
+    if single_tile or fit_config.get("source_shape"):
+        return
+    fit_config["source_shape"] = [int(s) for s in original_shape]
 
 
 def run_fit_volume(
@@ -109,7 +156,12 @@ def run_fit_volume(
         "(default: auto). auto = histogram-mode estimate (capped at median; "
         "no-op on clean data) | pN = Nth percentile (e.g. p10) | <float> = "
         "fixed value | none = disable (hard-min normalization). Unset lets a "
-        "`floor:` in --config/preset apply, else defaults to auto.",
+        "`floor:` in --config/preset apply, else defaults to auto. Under any "
+        "--tiling the spec is resolved against the WHOLE volume — never a tile "
+        "or box crop — so every tile/box works from the same level. (Uniform "
+        "tiles subtract it before apodization, so their boundaries match; a "
+        "--tiling content box whose crop lies entirely above the level still "
+        "normalizes against its own crop minimum.)",
     ),
     seed_method: Optional[str] = typer.Option(
         None, "--seed-method", help="Seed generation method"
@@ -509,8 +561,20 @@ def run_fit_volume(
         with asection(f"Fitting Gaussian Splats: {input_path.name}"):
             # 1. Load volume
             with asection("Loading volume"):
+                # `load_volume` returns float32 whatever the file holds, so the
+                # stored element type is knowable only from it. It is what the
+                # fit records as its source size, and hence the denominator of
+                # any compression ratio quoted about the result: a 16-bit
+                # acquisition measured as float32 would report half the real
+                # compression.
+                source_info: dict = {}
                 volume = load_volume(
-                    input_path, channel, timepoint, array_key, axes=axes
+                    input_path,
+                    channel,
+                    timepoint,
+                    array_key,
+                    axes=axes,
+                    info=source_info,
                 )
                 aprint(f"Volume shape: {volume.shape}")
 
@@ -681,10 +745,17 @@ def run_fit_volume(
             fit_config, parsed_seeds, effective_downscale = assemble_fit_config(
                 ctx, is_tiled
             )
+            _stamp_source_dtype(fit_config, source_info)
 
             # A per-tile volume re-fit needs the tile grid and the splats in ONE
-            # coordinate frame, which --downscale breaks (see the helper).
-            reject_downscaled_volume_refit(recipe_params, effective_downscale)
+            # coordinate frame, which --downscale and a real-space voxel_size
+            # each break independently (see the helper).
+            reject_rescaled_volume_refit(
+                recipe_params,
+                effective_downscale,
+                voxel_size=fit_config.get("voxel_size"),
+                output_space=fit_config.get("output_space", "real"),
+            )
 
             # 5b. Parallel tiled fitting: spawn one subprocess per tile (branch
             # BEFORE the in-memory downscale below — see dispatch_parallel_tiled).
@@ -710,6 +781,9 @@ def run_fit_volume(
                     aprint(
                         f"Downscaled volume: {original_shape} -> {volume.shape} "
                         f"(factors={tiled_downscale_factors})"
+                    )
+                    _declare_pre_downscale_source(
+                        fit_config, original_shape, single_tile=tile is not None
                     )
 
             # 6. Fit
@@ -750,7 +824,11 @@ def run_fit_volume(
         time_s = result.stats.get("time_seconds", 0) if is_leaf else 0
         aprint(f"\nDone: {n_splats:,} splats in {time_s:.1f}s")
 
-    except typer.Exit:
+    except (typer.Exit, typer.BadParameter):
+        # BadParameter is a usage error (e.g. an invalid --floor spec, rejected
+        # before anything is read): let Typer render it as one instead of burying
+        # it under a traceback from the generic handler below. Kept in the same
+        # handler as Exit so this stays one branch (the C901 ratchet counts them).
         raise
     except Exception as e:
         aprint(f"Error: {e}")

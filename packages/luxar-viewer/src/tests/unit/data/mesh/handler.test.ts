@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Smoke tests for the Mesh handler — mirrors `points/handler.test.ts`,
  * `lines/handler.test.ts` and `gsplats/handler.test.ts` so all four geometry

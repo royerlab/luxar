@@ -277,7 +277,13 @@ class DirectoryListingStaticFiles(StaticFiles):
                     # Check if it's a zarr directory
                     if item.is_dir() and item.name.endswith(".zarr"):
                         item_type = "zarr"
-                    elif item.is_dir() and (item / ".zgroup").exists():
+                    # Fallback for a zarr store whose directory is not named
+                    # `*.zarr`. BOTH root-group documents count: format 2 writes
+                    # `.zgroup`, format 3 writes `zarr.json`, and Luxar now
+                    # emits 3 while existing stores stay 2.
+                    elif item.is_dir() and (
+                        (item / ".zgroup").exists() or (item / "zarr.json").exists()
+                    ):
                         item_type = "zarr"
 
                     entries.append(

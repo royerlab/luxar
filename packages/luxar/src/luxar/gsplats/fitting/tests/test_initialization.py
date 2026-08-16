@@ -327,3 +327,70 @@ def test_initialization_different_devices() -> None:
         # Device check: for CPU it's "cpu", for CUDA it's "cuda:0", for MPS it's "mps:0"
         actual_device = str(centers.device)
         assert device_str in actual_device or actual_device.startswith(device_str)
+
+
+def _with_normalized(config, peak: float, poison: float | None = None):
+    """PreprocessedData whose normalized array peaks at ``peak``.
+
+    Stands in for a tile normalized against a SUPPLIED whole-volume range: that
+    range is a bounded-sample estimate, so the array can legitimately hold a
+    voxel above it and ``_normalize_data`` deliberately leaves it unclipped.
+    """
+    V_normalized = (config.V / (config.V.max() + 1e-12) * peak).astype(np.float32)
+    if poison is not None:
+        V_normalized[0, 0] = poison
+    return PreprocessedData(
+        d=2,
+        N=5,
+        seed_centers=(np.random.rand(5, 2).astype(np.float32) * 30),
+        V_normalized=V_normalized,
+        V_tensor=torch.from_numpy(V_normalized).to(config.device),
+        image_min=0.0,
+        image_max=1.0,
+        intensity_range=1.0,
+        max_abs_error=0.01,
+    )
+
+
+def test_auto_amp_max_tracks_a_normalized_peak_above_one(basic_config) -> None:
+    """A shared whole-volume scale can put a voxel above 1.0; the cap must follow.
+
+    ``torch.clamp`` has zero gradient above its max, so a 1.0 cap would pin the
+    brightest splats and stop them learning — flattening exactly the peak the
+    unclipped shared scale exists to preserve.
+    """
+    components = initialize_optimization(
+        basic_config, _with_normalized(basic_config, 1.4)
+    )
+    assert components.model is not None
+    assert components.model.amp_max == pytest.approx(1.4, rel=1e-4)
+
+
+def test_auto_amp_max_stays_one_for_a_self_normalized_array(basic_config) -> None:
+    """Negative control: a range derived from the array itself peaks at 1.0."""
+    components = initialize_optimization(
+        basic_config, _with_normalized(basic_config, 1.0)
+    )
+    assert components.model is not None
+    assert components.model.amp_max == pytest.approx(1.0)
+
+
+def test_auto_amp_max_ignores_a_non_finite_peak(basic_config) -> None:
+    """A NaN/inf voxel must not become the cap — clamping to NaN would turn
+    every amplitude NaN."""
+    for poison in (float("nan"), float("inf")):
+        components = initialize_optimization(
+            basic_config, _with_normalized(basic_config, 1.0, poison=poison)
+        )
+        assert components.model is not None
+        assert components.model.amp_max == pytest.approx(1.0)
+
+
+def test_explicit_amp_max_is_not_raised_by_the_peak(basic_config) -> None:
+    """An explicit cap is the caller's call — the auto path must not override it."""
+    import dataclasses
+
+    config = dataclasses.replace(basic_config, amp_max=0.5)
+    components = initialize_optimization(config, _with_normalized(config, 1.4))
+    assert components.model is not None
+    assert components.model.amp_max == pytest.approx(0.5)

@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Unit tests for Dimension Sliders.
  * Tests critical fix: memory leaks from slider/dropdown event listeners.

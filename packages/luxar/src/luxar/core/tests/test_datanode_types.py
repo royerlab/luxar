@@ -11,14 +11,13 @@ from luxar.core.mesh import Mesh
 from luxar.core.points import Points
 
 
-# [Python-R1/core-MAJOR / feedback_geometry_symmetry] Points / Lines /
-# GSplats / Mesh expose a parallel "common interface" of properties
-# (n_elements, has_colors, has_labels, has_image_labels) and follow the
-# same metadata-key convention. The original tests in this file exercise
-# Lines and GSplats individually; Points and Mesh have no dedicated
-# coverage at the class level. A drift in any one type (e.g., a refactor
-# that renamed has_colors to has_color on Lines but not Points) would
-# have no symmetric test to surface it.
+# Geometry-type symmetry: Points / Lines / GSplats / Mesh expose a parallel
+# "common interface" of properties (n_elements, has_colors, has_labels,
+# has_image_labels) and follow the same metadata-key convention. The
+# original tests in this file exercise Lines and GSplats individually;
+# Points and Mesh have no dedicated coverage at the class level. A drift in
+# any one type (e.g., a refactor that renamed has_colors to has_color on
+# Lines but not Points) would have no symmetric test to surface it.
 #
 # The parametrize matrix below builds a minimal-metadata instance of
 # each type and asserts the four common properties are wired up to the

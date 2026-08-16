@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Unit tests for core/app/dataset/browser-shortcut.ts (G5).
  *

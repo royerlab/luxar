@@ -15,6 +15,18 @@ hatch run python -m ruff check .  # Lint
 hatch run mypy packages/luxar/src/luxar/  # Type check
 ```
 
+The hatch env pins `OMP/OPENBLAS/MKL/NUMEXPR_NUM_THREADS=1` (see the note in
+`pyproject.toml`) — the test suite is thousands of tiny tensor ops and loses
+several-fold to fork-join overhead otherwise. That pin also applies to real work
+run through hatch, so for a CPU fit, a demo, or a benchmark, export the width
+you want — an explicit value wins. Set `MKL_NUM_THREADS` too, not just
+`OMP_NUM_THREADS`: torch takes its intra-op count from MKL here, so overriding
+OMP alone still leaves `torch.get_num_threads() == 1`.
+```bash
+OMP_NUM_THREADS=16 MKL_NUM_THREADS=16 \
+  hatch run luxar gsplat fit vol.tiff out.gsplats.zarr --device cpu
+```
+
 ### TypeScript (use pnpm, from packages/luxar-viewer/)
 ```bash
 pnpm dev          # Dev server (port 5173)
@@ -39,15 +51,21 @@ make clean-setup  # Remove ALL dev tools to simulate fresh machine
 make install-demo-deps  # Install the demo extras (demos + gsplats + io)
 
 # Quality & Testing
+make test-fast    # INNER LOOP: Python (-m 'not slow', xdist) + TS units, no coverage.
+                  # ~6-7 min whole-suite; SCOPE it for a real loop:
+                  #   make test-fast PYTEST_ARGS='packages/luxar/src/luxar/encoding'
+                  # Not a gate — no slow tests, no coverage thresholds, no E2E.
+                  # LUXAR_PYTEST_JOBS=12 to tune (I/O-bound, so it buys little).
 make test-all     # All tests (Python incl. CUDA + WASM/Rust + TypeScript + Go launcher)
 make test-cov-all # Coverage: Python (minus `-m slow`) + TypeScript
 make test-python  # Python tests only
 make test-e2e     # Full Playwright E2E suite (~17 min)
 make test-e2e-smoke  # E2E smoke subset (the specs CI would run)
 make test-perf-e2e   # Opt-in Playwright performance suite
-# check-all is NOT read-only: `hatch run check` begins with `format`, so it
+# check-all is NOT read-only: `check-static` begins with `format`, so it
 # REWRITES packages/luxar/src and scripts. When other agents/people are editing
 # the same tree, use the read-only scoped targets instead (listed right below it).
+# It runs NO tests — `make test-all` is the single place those execute.
 make check-all    # All quality checks (Python, TypeScript, Rust, Go) — reformats
 make lint-python        # read-only: ruff check
 make check-complexity   # read-only: ruff C901 ratcheted against scripts/complexity_baseline.json
@@ -222,7 +240,7 @@ See `docs/guides/developer/BUILD_SYSTEM_SPEC.md` for complete documentation.
 
 ### Luxar CLI
 ```bash
-luxar demo                       # List the 84 bundled demos (table)
+luxar demo                       # List the 85 bundled demos (table)
 luxar demo run lorenz            # Run a demo by key/index (forwards -- args)
 luxar demo stop                  # Stop running demos and free their ports (--dry-run lists)
 luxar demo cache list            # Inventory / clear demo caches (cache clear …)
@@ -418,9 +436,22 @@ luxar gsplat convert splats.gsplats.zarr scene.luxar.zarr --center
 # bright structure from clipping flat) — prefer it, and set it EXPLICITLY so the
 # compiler's LUT notice (which only fires when nothing was chosen) stays quiet:
 luxar gsplat convert splats.gsplats.zarr scene.luxar.zarr --colormap plasma --tone-mapping ACES
-# Reach for Neutral only in the narrower case where the colormap carries an exact
-# scientific color encoding that must survive to the screen (ACES shifts hues):
-luxar gsplat convert splats.gsplats.zarr scene.luxar.zarr --colormap plasma --tone-mapping Neutral
+# When the colormap carries an exact scientific color encoding that must survive
+# to the screen (ACES shifts hues), pick by RANGE. Inside [0, 1] `None` is an
+# exact passthrough (exposure/offset/gamma still apply — the shader runs
+# them before the tone-mapping switch). Neutral is NOT a passthrough: even below
+# its knee it subtracts an offset taken from the channel MINIMUM, so anything
+# but a fully saturated colour moves, dulling the encoding you meant to protect:
+luxar gsplat convert splats.gsplats.zarr scene.luxar.zarr --colormap plasma --tone-mapping None
+# Over range NO operator is faithful, and they fail differently: Neutral keeps
+# the HSV hue angle exactly but sheds chroma (at peak 100 a saturated colour
+# comes out at saturation 0.06, essentially white), while a `None` clamp
+# distorts BOTH — it holds full saturation only where the darkest channel is
+# already 0 ((100, 0, 0) -> (1, 0, 0); (2, 0.5, 0.5) -> (1, 0.5, 0.5) drops
+# saturation 0.75 -> 0.5), SHIFTS hue when channels clip unequally ((2, 1, 0)
+# goes hue 30deg -> 60deg) and flattens everything above 1.0. Bring the scene
+# back into [0, 1] with --intensity/exposure and use `None`, or accept ACES's
+# filmic rolloff. Decide with an actual render, not from first principles.
 
 # Render gsplats back to volume for quality comparison
 luxar gsplat render splats.gsplats.zarr rendered.npy --shape 128,128,128
@@ -454,7 +485,7 @@ luxar gsplat cal volume.tiff cal.json --floor none               # legacy (no fl
 
 # Canonical end-to-end pipeline: cal → fit (at K*) → lod (--recipe flat|stream|tiles|overview|adaptive|levels)
 # `lod` operates on a pre-fitted .gsplats.zarr (output of `fit`); use `cal` upstream
-# to pick K* in a principled way. .gsplats.zarr is format v3.3 (a node tree —
+# to pick K* in a principled way. .gsplats.zarr is format v3.4 (a node tree —
 # a detached scene gsplat-node subtree the viewer loads directly) — see
 # docs/specs/GSPLATS_ZARR_FORMAT.md.
 
@@ -997,28 +1028,66 @@ pnpm agent:debug
 ## Critical Gotchas
 
 ### zarr library version vs zarr on-disk FORMAT (two separate axes)
-Luxar runs on **zarr-python 3** (`zarr>=3.2,<4`) but writes **zarr format 2** on
-disk. Never conflate the two. Both are pinned in one place —
-`packages/luxar/src/luxar/_zarr_compat.py` (`ZARR_FORMAT = 2`) — and all writing
-goes through its helpers rather than `zarr.*` directly:
+Luxar runs on **zarr-python 3** (`zarr>=3.2,<4`) and writes **zarr format 3** by
+default, while READING both formats. Never conflate the two axes. Both are pinned
+in one place — `packages/luxar/src/luxar/_zarr_compat.py` — and all writing goes
+through its helpers rather than `zarr.*` directly:
 
 ```python
 from luxar._zarr_compat import open_group, create_array, consolidate, memory_group
 ```
 
+**A tree holding BOTH formats is the normal steady state.** Existing
+`.luxar.zarr` / `.gsplats.zarr` stores stay format 2 and are not rewritten; only
+new output is format 3. Set `LUXAR_ZARR_FORMAT=2` to write format 2 for a tool
+that cannot read 3 (an env var, not a flag, because the writing process is often
+a batch-fit worker or Slurm task rather than the one you invoked).
+
 Why it matters, concretely:
-- **zarr 3 defaults to format 3.** A bare `zarr.group()` / `zarr.open_group(mode="w")`
-  produces a v3 store: one `zarr.json` per node, `c/0/0` chunk keys, and
-  `consolidate` writing `consolidated_metadata` *inside* `zarr.json` instead of a
-  `.zmetadata` document. Luxar's readers, the `.zmetadata`-means-save-complete
-  sentinel, and the whole TypeScript viewer all expect v2. Tests get format 2 from
-  an autouse session fixture in `luxar/conftest.py`; production is explicit.
+- **Never name a metadata document.** `.zgroup` / `.zattrs` / `.zarray` /
+  `.zmetadata` exist only at format 2; format 3 has one `zarr.json` per node with
+  attributes nested under `attributes`, `c/0/0` chunk keys, and consolidated
+  metadata *inside* the root `zarr.json`. Use the facade's bi-format readers —
+  `read_array_meta`, `read_node_attrs`, `is_consolidated`, `read_consolidated_attrs`
+  — for anything that inspects a store on disk. Every bug found during the
+  format-3 migration was a literal document name, and **not one of them raised**:
+  a validator that passed a corrupt tile, a cache probe that served stale data
+  forever, a dataset browser that could not see v3 stores, an encoding classifier
+  that answered "unclassifiable", a batch measurement that silently fell back to
+  its analytic estimate. The failure mode is always a plausible wrong answer, so
+  grep for the document names rather than trusting the test suite to go red.
+- **numcodecs objects are format-2 currency.** A format-3 array REJECTS them
+  (`TypeError: 'Blosc' object is not iterable`). `create_array` translates
+  compressors and filters to `zarr.codecs` equivalents, keyed on the format of
+  the GROUP being written — not the global default, since writing into a legacy
+  v2 store while the default is 3 is routine. There is no zlib codec in
+  zarr-python 3 at all; use gzip. `numcodecs>=0.16` is a DIRECT dependency for
+  this reason: below it zarr's format-3 `BloscCodec` cannot forward the evolved
+  `typesize` to blosc, so the measured byte shuffle silently becomes a no-op
+  (~12.5% larger chunks) while the metadata still records the shuffle that never
+  happened. Assert compression on the stored BYTES, not on the recorded config.
 - **An omitted compressor is not "no compressor".** zarr 3's `compressors`
-  defaults to `"auto"` = Blosc/lz4/clevel-5. Some Luxar arrays must be RAW and the
-  rest carry a measured zstd-9 policy, so `create_array` takes `compressor`
-  explicitly; an AST test fails the build if a production call site omits it.
+  defaults to `"auto"`, which is Blosc/lz4/clevel-5 at format 2 but zstd at
+  format 3 — not the same bytes. Some Luxar arrays must be RAW and the rest carry
+  a measured zstd-9 policy, so `create_array` takes `compressor` explicitly; an
+  AST test fails the build if a production call site omits it.
 - **`data=` and `shape=` are mutually exclusive in zarr 3** (zarr 2 allowed both).
   `create_array` accepts both and forwards only what zarr 3 permits.
+- **Edit a store in place through the facade, never `zarr.open_group`.** Format 3
+  allows a consolidated index on ANY group, and the facade's deliberate
+  `use_consolidated=False` bypasses only the ROOT one. Re-opening an
+  already-consolidated store with plain zarr hands back nodes built FROM the root
+  index, so re-consolidating serializes that stale tree out as a NESTED index —
+  after which reads return pre-edit attributes even though every document on disk
+  is correct. Silent, as usual. The facade's tree carries no index to
+  re-serialize, leaving exactly one at the root (the format-2 invariant
+  everything already assumes).
+- **Consolidating a v3 store warns**, and `ZarrUserWarning` subclasses
+  `UserWarning` — so under `-W error` (which several tests use around a whole
+  compile) saving FAILS with "Could not finalize Zarr store". Suppressed inside
+  `_zarr_compat.consolidate()`. Never "fix" it by not consolidating: the viewer
+  builds its entire scene graph from that index and has no directory-walk
+  fallback, so the store would load as an empty scene.
 - Reading is version-agnostic: zarr-python 3 opens v2 *and* v3, which is the point
   of being on 3.x — 2.18 could not open a v3 store at all.
 
@@ -1224,12 +1293,32 @@ release-prep. See `changelog.d/README.md`. (Not every PR needs one.)
 
 ## Pre-commit Checklist
 
+While iterating, use the fast loop — it deselects `slow`, runs pytest under
+xdist and skips coverage:
+
 ```bash
-make test-all                    # All tests pass
-make check-all                   # Linting, type checking
+make test-fast                                                  # whole suite, ~6-7 min
+make test-fast PYTEST_ARGS='packages/luxar/src/luxar/encoding'  # scoped, ~35 s
+make test-fast PYTEST_ARGS='-k colormap'
+```
+
+Scope it if you want a real edit-run-edit loop: with `slow` deselected the
+remaining Python suite is I/O-bound on zarr small-file writes, so more workers
+barely help (`LUXAR_PYTEST_JOBS=12` buys ~11% over the default 6).
+
+`test-fast` is NOT a gate: no `slow` tests, no coverage thresholds, no E2E.
+Before pushing, run the real thing:
+
+```bash
+make test-all                    # All tests pass (Python incl. slow, Rust/WASM, TS, Go)
+make check-all                   # Linting, type checking — static only, runs no tests
 make check-docs                  # Documentation gate (required check in CI)
 pnpm run format                  # Format TypeScript (from luxar-viewer/)
 ```
+
+`check-all` deliberately runs no tests: `test-all` is the single place they
+execute. For one command covering everything *including* coverage, use
+`hatch run check` and `pnpm run check:ci` (what CI runs) directly.
 
 Before PR/merge:
 - Full E2E suite: `cd packages/luxar-viewer && pnpm test:e2e`

@@ -68,6 +68,22 @@ therefore background-relative. `--floor` is ON by default (`auto`):
 `cal` applies the same `--floor` up front so K* is measured on floor-suppressed
 data, matching how you fit.
 
+Under **any** tiling (`uniform`, `content`, `--tile k/M`, `-j N`) the spec is
+resolved against the **whole volume**, never against a tile or box crop — which
+would make abutting regions fit against different baselines and show brightness
+steps at their boundaries. `uniform` and `content` resolve it once in the parent
+and hand every tile/box the concrete level; the uniform `-j N`/`--tile k/M`
+workers instead each resolve the spec themselves against that same whole volume,
+which agrees because the sampler is deterministic. `batch-fit` extends this
+across time: one global level for the whole timelapse, resolved at plan time as
+the **minimum** of the levels measured on a bounded set of evenly spaced `(t, c)`
+slices spanning the whole store — up to 4 timepoints (always including `t=0` and
+`t=T-1` when `T > 1`) x up to 4 channel-like coordinates — and recorded in the
+manifest. A minimum cannot clip a **sampled** timepoint/channel to zero and so
+lose that slice; a dimmer NON-sampled slice still can, since bounded sampling
+bounds only what it samples, so pass `--floor none` or an explicit numeric
+`--floor N` when a particular slice must survive.
+
 **Stay on `auto` unless you have measured otherwise.** A `pNN` floor subtracts a
 percentile of *all* voxels, so on sparse data it lands wherever the sparsity puts
 it rather than where the noise ends. On a 96x640x640 crop of a sparse light-sheet

@@ -44,6 +44,50 @@ DC-offset (clip at 0) before normalization, so amplitudes are background-relativ
 `auto` = histogram-mode estimate (capped at median; no-op on clean data);
 `pNN` = subtract that percentile; a number = fixed value; `none` = disable.
 
+The spec is resolved to **one global level for the whole timelapse** at plan time,
+recorded in the manifest (`floor_level`), and handed as a concrete number to every
+`(t, c)` task and every tile/box. It is deliberately *not* re-estimated per
+timepoint or per tile: that would be a time-varying pedestal, i.e. brightness
+flicker across the merged partition.
+
+That one level is the **minimum** of the levels resolved on a bounded set of at
+most 16 evenly spaced `(t, c)` slices spanning the store's **full** extent: up to 4
+timepoints x up to 4 channel-like coordinates, capped independently so neither axis
+starves the other. `T > 1` always samples at least two timepoints **including the
+endpoints `t=0` and `t=T-1`** (under a monotone pedestal drift the dimmest pedestal
+is at an end, which is what makes the minimum a lower bound for the run), and
+`C > 1` at least two channel-like coordinates. A minimum because the two errors are
+not symmetric: under `clip(V - level, 0)` a too-LOW level is a recoverable
+under-subtraction, while a too-HIGH one destroys signal — a level above some
+`(t, c)`'s maximum clips that whole sub-volume to zero, which the tile worker
+reports as a legitimate empty tile, so the slice goes silently missing from the
+merge while `status` says success. Spanning the full extent (not the selection)
+also means `--timepoints 0:50` and `0:100` resolve the *same* level, so a resumed
+or extended run matches the tiles already on disk. Only a bounded sample of a
+lazily-opened, axis-pinned view of each sampled slice is read (the whole-volume
+sample budget divided among them — 2M voxels each at the 16-slice cap), so on the
+normal (label-pinnable) path the floor resolution never materializes a timepoint —
+not while planning, not on `submit --dry-run`, not on a resume re-plan. (A store whose
+discovered labels cannot be pinned falls back to an eager per-slice read,
+announced as it happens. The *content* box scan's **materialization** is unchanged:
+it still reads up to `--plan-samples` whole timepoints to max-project — only which
+timepoints it reads is fixed, since it now pins them by label too.)
+
+**Residual risk:** bounded sampling bounds only the slices it samples. A dimmer
+NON-sampled slice — a blank/bleached/bad frame between two samples of a long movie,
+or a channel-like coordinate above the cap of 4 — can still clip to all zeros, fit 0
+splats and vanish from the merge while `status` reports success. Use `--floor none`,
+or an explicit numeric `--floor N` low enough for the dimmest slice, when a
+particular slice must be guaranteed to survive.
+
+Two edge cases are announced loudly rather than fudged: a level the "would erase
+all signal" guard rejects on any sampled slice disables suppression for the whole
+run, and a *negative* resolved level (dark-frame-corrected data) cannot be
+forwarded as a concrete `--floor`, so the spec is forwarded and each task resolves
+it itself — pedestals may then differ across the run, and the manifest records
+`floor_level=None`. A resumed run whose `manifest.json` predates `floor_level`
+likewise keeps its recorded spec, so it reproduces what it was planned with.
+
 ## Shared denoising (NLM)
 `--denoise`, `--denoise-h`, `--denoise-2d`, `--denoise-patch-size` (3),
 `--denoise-search-distance` (5), `--denoise-backend` (auto).

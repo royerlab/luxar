@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Unit tests for the small orphan modules `ui/loading-indicator.ts` and
  * `ui/ui-cleanup.ts`.

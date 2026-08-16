@@ -122,7 +122,7 @@ from luxar import Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import (
     launch_viewer,
-    load_precomputed_gsplats,
+    load_dataset_gsplats,
     parse_demo_flags,
     warn_if_no_cuda_gpu,
 )
@@ -183,6 +183,13 @@ def load_multichannel_data():
     biasing K* upward.  Native resolution at this image (≤20M voxels) is
     plenty tractable.
 
+    Returns:
+        tuple: ``(volumes, source_dtype)`` -- one volume per channel, and the
+        element type the store holds, to be declared to the fit so compression is
+        quoted against the acquisition and not the float32 working copy. The
+        dtype is ``None`` on the synthetic fallback path, whose arrays are built
+        here and so are their own source.
+
     Data Source: Image Data Resource (IDR) study idr0062, Image 6001240
     Original Authors: Prisca Liberali lab, FMI
     Citation: Blin et al. (2019) + Williams et al. (2017) Nature Methods 14(8):775-781
@@ -237,7 +244,7 @@ def load_multichannel_data():
                 aprint(f"  {ch_name}: {V.shape}, range [{V.min():.3f}, {V.max():.3f}]")
 
             aprint(f"Loaded {len(volumes)} channels")
-            return volumes
+            return volumes, str(data.dtype)
 
         except Exception as e:
             aprint(f"Remote loading failed: {e}")
@@ -265,7 +272,8 @@ def load_multichannel_data():
                 volumes.append(V)
                 aprint(f"  {ch_config['name']}: {V.shape}")
 
-            return volumes
+            # Synthesized here, so these arrays ARE their own source.
+            return volumes, None
 
 
 # =============================================================================
@@ -273,7 +281,7 @@ def load_multichannel_data():
 # =============================================================================
 
 
-def fit_channel(volume, channel_name, cache_file):
+def fit_channel(volume, channel_name, cache_file, source_dtype=None):
     """Fit gsplats to a single channel (always fits — caller handles precomputed)."""
     # Auto-detect best device
     global DEVICE
@@ -296,6 +304,9 @@ def fit_channel(volume, channel_name, cache_file):
     result = fit_gaussian_splats(
         volume,
         seeds=MAX_SPLATS,
+        # The grid is the acquisition's; only the element type was changed
+        # on the way here, and that is the denominator of the ratio.
+        source_dtype=source_dtype,
         device=DEVICE,
         verbose=True,
     )
@@ -316,7 +327,7 @@ def fit_channel(volume, channel_name, cache_file):
     return result
 
 
-def fit_all_channels(volumes):
+def fit_all_channels(volumes, source_dtype=None):
     """Fit gsplats to all channels."""
     with asection("Fitting GSplats per channel"):
         gsplats_list = []
@@ -326,7 +337,9 @@ def fit_all_channels(volumes):
             cache_file = CACHE_DIR / f"organoids_ch{i}.gsplats.zarr.zip"
 
             with asection(f"Channel {i}: {ch_name}"):
-                gsplats = fit_channel(volume, ch_name, cache_file)
+                gsplats = fit_channel(
+                    volume, ch_name, cache_file, source_dtype=source_dtype
+                )
                 gsplats_list.append(gsplats)
 
         return gsplats_list
@@ -523,8 +536,8 @@ def main():
             aprint("Run without --serve-only to generate first")
             return
 
-    # Try loading precomputed data (from Git LFS / local cache)
-    precomputed = load_precomputed_gsplats(
+    # Try the manifest-driven fetch (checksum-verified cache -> in-repo -> Zenodo)
+    precomputed = load_dataset_gsplats(
         "gsplats_multichannel",
         [
             "organoids_ch0.gsplats.zarr.zip",
@@ -540,13 +553,13 @@ def main():
     else:
         # --recompute path: download raw data, fit from scratch
         warn_if_no_cuda_gpu()
-        volumes = load_multichannel_data()
+        volumes, source_dtype = load_multichannel_data()
 
         if len(volumes) < 2:
             aprint("Error: Need at least 2 channels for this demo")
             return
 
-        gsplats_list = fit_all_channels(volumes)
+        gsplats_list = fit_all_channels(volumes, source_dtype=source_dtype)
 
     # Optional round-trip visualisation
     if SHOW_ROUNDTRIP:

@@ -148,7 +148,7 @@ from arbol import Arbol, aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.demos import (
     launch_viewer,
-    load_precomputed_gsplats,
+    load_dataset_gsplats,
     parse_demo_flags,
     require_module,
     warn_if_no_cuda_gpu,
@@ -226,6 +226,11 @@ DEVICE = None
 def load_kidney():
     """Load kidney dataset from scikit-image.
 
+    Also returns the element type the data was STORED in. This demo shares its
+    cache with ``demo_gsplats_3d_kidney_multichannel_layers`` -- whichever runs
+    with ``--recompute`` last writes the shipped files -- so both must declare
+    it, or the dataset's provenance depends on which one was run.
+
     Returns:
         list[np.ndarray]: One 3D volume per channel, shape (Z, Y, X), float32 [0, 1].
     """
@@ -267,7 +272,7 @@ def load_kidney():
             )
 
         aprint(f"Loaded {len(volumes)} channels")
-        return volumes
+        return volumes, str(raw.dtype)
 
 
 # =============================================================================
@@ -275,7 +280,7 @@ def load_kidney():
 # =============================================================================
 
 
-def fit_channel(volume, channel_name, cache_file):
+def fit_channel(volume, channel_name, cache_file, source_dtype=None):
     """Fit gsplats to a single channel, using cache if available.
 
     Args:
@@ -311,6 +316,9 @@ def fit_channel(volume, channel_name, cache_file):
         volume,
         lr=0.01,
         seeds=MAX_SPLATS,
+        # The grid is the acquisition's; only the element type was changed on
+        # the way here, and that is the denominator of the compression ratio.
+        source_dtype=source_dtype,
         device=DEVICE,
         verbose=True,
         boundary_penalty=0.1,
@@ -335,7 +343,7 @@ def fit_channel(volume, channel_name, cache_file):
     return result
 
 
-def fit_all_channels(volumes):
+def fit_all_channels(volumes, source_dtype=None):
     """Fit gsplats to all channels."""
     with asection("Fitting GSplats per channel"):
         gsplats_list = []
@@ -345,7 +353,9 @@ def fit_all_channels(volumes):
             cache_file = CACHE_DIR / f"kidney_ch{i}.gsplats.zarr.zip"
 
             with asection(f"Channel {i}: {ch_name} ({ch_config['stain']})"):
-                gsplats = fit_channel(volume, ch_name, cache_file)
+                gsplats = fit_channel(
+                    volume, ch_name, cache_file, source_dtype=source_dtype
+                )
                 gsplats_list.append(gsplats)
 
         return gsplats_list
@@ -549,8 +559,8 @@ def main():
             aprint(f"No scene found at {output_path}. Run without --serve-only first.")
         return
 
-    # Try loading precomputed data from Git LFS / local cache
-    gsplats_list = load_precomputed_gsplats(
+    # Try the manifest-driven fetch (checksum-verified cache -> in-repo -> Zenodo)
+    gsplats_list = load_dataset_gsplats(
         _PRECOMPUTED_DEMO_NAME,
         _PRECOMPUTED_FILE_NAMES,
         recompute=RECOMPUTE,
@@ -563,10 +573,10 @@ def main():
         warn_if_no_cuda_gpu()
 
         # Load data
-        volumes = load_kidney()
+        volumes, source_dtype = load_kidney()
 
         # Fit gsplats per channel (with caching)
-        gsplats_list = fit_all_channels(volumes)
+        gsplats_list = fit_all_channels(volumes, source_dtype=source_dtype)
 
     # Optional round-trip visualisation
     if SHOW_ROUNDTRIP:

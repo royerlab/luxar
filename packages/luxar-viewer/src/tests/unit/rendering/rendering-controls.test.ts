@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Comprehensive tests for RenderingControls class
  * Tests cover all synchronization bugs found and fixed

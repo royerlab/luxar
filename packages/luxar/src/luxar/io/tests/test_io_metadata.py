@@ -14,24 +14,35 @@ def test_compressor_and_format(tmp_path) -> None:
     root = zarr.open_group(store, mode="r")
     # Public API, and cross-checked on disk. `root._version` was a zarr-2 private
     # attribute that zarr 3 does not have; `metadata.zarr_format` is the supported
-    # spelling. The `.zgroup` check is the stronger half of the pair — it asserts
-    # what actually LANDED, which is what the viewer reads, rather than what the
-    # in-memory handle believes.
-    assert root.metadata.zarr_format == ZARR_FORMAT == 2
-    assert json.loads((store / ".zgroup").read_text())["zarr_format"] == 2
-    assert not (store / "zarr.json").exists()
+    # spelling. The on-disk half is the stronger one — it asserts what actually
+    # LANDED, which is what the viewer reads, rather than what the in-memory
+    # handle believes.
+    #
+    # Pinned to `ZARR_FORMAT` rather than to a literal 2 or 3: the assertion
+    # being made is "the writer emits the format it says it emits, and both
+    # documents agree", which is what can actually regress. A literal would have
+    # to be edited again on the next format bump, and — worse — an edit that
+    # changed only the literal would still pass while the two halves disagreed.
+    assert root.metadata.zarr_format == ZARR_FORMAT
+    if ZARR_FORMAT == 2:
+        assert json.loads((store / ".zgroup").read_text())["zarr_format"] == 2
+        assert not (store / "zarr.json").exists()
+    else:
+        assert json.loads((store / "zarr.json").read_text())["zarr_format"] == 3
+        assert not (store / ".zgroup").exists()
 
-    comp = root["LorenzAttractor"]["positions"].compressor
-    from numcodecs import Blosc
-
+    from luxar.conftest import array_compressor
     from luxar.encoding.compression import resolve_compressor
 
-    assert isinstance(comp, Blosc)
+    positions = root["LorenzAttractor"]["positions"]
+    comp = array_compressor(positions)
+    assert comp is not None, "positions must be compressed, not stored raw"
     # DEFAULT_COMP is the width-aware sentinel: the stored compressor must
-    # match the per-dtype policy for the array's actual stored dtype.
-    expected = resolve_compressor(
-        DEFAULT_COMP, root["LorenzAttractor"]["positions"].dtype
-    )
+    # match the per-dtype policy for the array's actual stored dtype. The
+    # policy is stated in numcodecs terms, and `array_compressor` normalises
+    # format 3's codec objects back to them, so the SAME expectation holds for
+    # both formats — the measured shuffle policy is format-independent.
+    expected = resolve_compressor(DEFAULT_COMP, positions.dtype)
     assert comp.cname == expected.cname
     assert comp.clevel == expected.clevel
     assert comp.shuffle == expected.shuffle

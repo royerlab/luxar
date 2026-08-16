@@ -140,6 +140,26 @@ _FITTING_INFO_KEYS = (
     "psnr_db",
     "ssim",
     "mse",
+    # What the splats represent. These describe the fit's INPUT, so they belong
+    # beside the fit's other statistics rather than in the pipeline bucket that
+    # catches everything else. Without them a stored dataset cannot say how much
+    # it compressed: the source grid appears nowhere else on disk, and it is not
+    # recoverable from the producing script either, because the fitted grid is
+    # derived at run time from downscale factors and voxel spacing.
+    "source_shape",
+    # Whether that grid was DECLARED by the caller rather than measured from the
+    # array handed in. It belongs beside the grid it qualifies: dropped from this
+    # list it lands in `pipeline/` instead, and a reader looking at
+    # `fitting/source_shape` would have no way to tell a stated denominator from
+    # a measured one — the whole point of stamping it.
+    "source_declared",
+    "source_dtype",
+    "source_voxels",
+    "source_bytes",
+    "fitted_shape",
+    "fitted_voxels",
+    "occupancy",
+    "voxels_per_splat",
 )
 
 
@@ -393,6 +413,7 @@ def write_gsplats_tree(
     compressor: Optional[Any] = DEFAULT_COMP,
     zip_deflate: bool = False,
     barrier_dims: Optional[Sequence[int]] = None,
+    root_attrs: Optional[Dict[str, Any]] = None,
 ) -> None:
     """Write a :class:`~luxar.gsplats.tree.GSplatNode` subtree as ``.gsplats.zarr``.
 
@@ -402,6 +423,14 @@ def write_gsplats_tree(
     plus optional ``fitting/`` / ``provenance/`` / ``pipeline/`` groups
     (``pipeline/`` carries the reduction/topology stats — see
     :func:`split_fitting_info`).
+
+    ``root_attrs`` seeds the root group through the walker's LOWEST-precedence
+    caller-attrs channel, so structural attrs and a node's own ``meta`` still
+    win. A structure-only rebuild uses it to carry the SOURCE root's authored
+    appearance (see :data:`~luxar.core.group.compositing.
+    AUTHORED_APPEARANCE_ATTRS`) onto the result, which would otherwise be
+    silently dropped — the reduction builds fresh nodes that know nothing about
+    the input's appearance.
 
     ``barrier_dims`` names categorical/barrier center columns (time, channel) so
     chunk ordering groups by them first and per-slice reads stay local. When
@@ -437,6 +466,7 @@ def write_gsplats_tree(
             ordering_ctx=ordering_ctx,
             store=root,
             barrier_dims=barrier_dims,
+            attrs=dict(root_attrs) if root_attrs else None,
         )
 
         # Self-identifying v3.0 header (the node's own type/kind/position_bounds attrs

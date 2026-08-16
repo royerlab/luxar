@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Tests for LuxarApp - the main application coordinator
  *

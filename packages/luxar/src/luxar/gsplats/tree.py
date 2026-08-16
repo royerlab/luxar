@@ -280,7 +280,9 @@ def center_bounds(node: GSplatNode) -> Optional[Tuple[np.ndarray, np.ndarray]]:
     Returns ``(min, max)`` float arrays of shape ``(d,)``, or ``None`` if the
     subtree holds zero splats. This is a center-only bound. The serializer's
     ``position_bounds`` is the verbatim center bounds (matching the scene path);
-    only ``chunk_bounds`` widen each chunk by the 3σ ellipsoidal extent.
+    only ``chunk_bounds`` widen each chunk by the ellipsoidal extent at the
+    dataset's own ``truncation_radius`` (the support it was fitted and is
+    rendered at).
     """
     mins: List[np.ndarray] = []
     maxs: List[np.ndarray] = []

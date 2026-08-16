@@ -65,8 +65,11 @@ the top of `add_gsplats_from_data_impl` — and at the top of
 `add_gsplats_from_file_impl` and of `graft_gsplat_node` in `from_io.py` — settle
 it:
 
-1. `strip_absent_attr_kwargs(attrs)` deletes every `ABSENT_WHEN_NONE_ATTRS` key
-   valued `None`:
+1. `strip_absent_attr_kwargs(attrs, ABSENT_WHEN_NONE_ATTRS)` (the shared helper
+   in `core/group/compositing.py`, which `from_data.py` and `from_io.py` each
+   import from there directly; only the `ABSENT_WHEN_NONE_ATTRS` tuple is
+   defined here and imported by `from_io.py`) deletes every
+   `ABSENT_WHEN_NONE_ATTRS` key valued `None`:
    - `labels`, `image_labels`, `partition`, `colors` — named params of the leaf
      `Group.add_gsplats` defaulting to `None`, so `None` already means "absent"
      one level down;
@@ -106,13 +109,17 @@ it:
    `colors=None` is passed and accepted), so its message carries an extra clause
    saying so.
 
-`ABSENT_WHEN_NONE_ATTRS` is *derived* from `GATE_FORWARDED_LEAF_PARAMS`, the
-node-attrs gate's own exclusion tuple, so the two cannot drift; they differ
-because they answer different questions. The gate's set is "leaf named params
-this adder forwards onward STRUCTURALLY" — `colors`, `truncation_radius`,
+`ABSENT_WHEN_NONE_ATTRS` is *derived* from two sources, so no part of it can
+drift. From `GATE_FORWARDED_LEAF_PARAMS`, the node-attrs gate's own exclusion
+tuple: the two answer different questions, and the gate's set is "leaf named
+params this adder forwards onward STRUCTURALLY" — `colors`, `truncation_radius`,
 `colormap` and `coverage_fraction` are deliberately **not** in it, because a
 non-`None` value of each must still be judged (a collision, a legitimate
-override, a colormap name to validate, a real threshold).
+override, a colormap name to validate, a real threshold). And from
+`compositing.ABSENT_WHEN_NONE_RENDER_ATTRS`, for the last two: their `None` is a
+render fault every adder shares, not this module's property, so since #1574 the
+four leaf adders strip the same tuple at their own entries and this set adds to
+it rather than restating it.
 
 Both calls sit at the adder ENTRY, so they outrank everything below —
 `_reject_before_wrapper`'s `dim_order` spec validators and rank guard, and the
@@ -123,6 +130,58 @@ branches, because the graft branch reaches its own copy only *below* that method
 `dim_order` refusal and stored-column-count check — so with the pair left to the
 branches, one public method gave two different verdicts for the same mistake
 depending on whether the file happened to be matrix-shaped.
+
+Excluding a key from the gate does not excuse its VALUE, and `partition` is the
+one excluded key with a value worth judging. It gets an explicit
+`partition.resolve_partition_spec` call — the same function the leaf adder calls,
+here for its verdict alone — at each of the two doors that build a wrapper before
+the first leaf write (#1550). Without it an invalid spec (`partition="nonsense"`,
+`{"max_elements": 0}`) rode the exclusion straight down into `child_0` /
+`part_0` and was refused only after the `kind=lod` / `kind=partition` wrapper
+existed, which then survived `finalize()`. Note this one is NOT an entry-level
+call like the pair above: on the `lod_group=` door it sits INSIDE
+`_reject_before_wrapper`, in the slot directly below the node-attrs gate and so
+below the `dim_order` spec, rank and colours checks — because that is the flat
+path's own order (the leaf validates node attrs at its entry and resolves the
+spec inside its partition branch, further down), and precedence parity with the
+flat path is the whole point. On the graft door (`from_io`'s
+`_reject_a_bad_partition_spec_on_a_graft`) there is nothing above it to be below,
+so it joins the entry pair. Two values are skipped at both doors, because the
+leaf never judges them either: `False` (the explicit no-partition bypass, which
+every adder normalises away before resolving) and a sub-2-D width (where
+`warn_if_partition_needs_more_dims` DROPS the request with a warning).
+
+A VALID spec has one conflict of its own, at BOTH doors: `partition=` cannot ride
+a node that also carries an additive ladder, because the multi-LOD writer has no
+`partition` parameter at all — so the key reached `validate_render_attrs` as an
+unknown node attribute, on the multi-substitutive route from inside `child_0`
+with the wrapper already written, and on the graft door from inside `part_0` with
+the `kind=partition` already written. One reason template
+(`partition_beside_a_ladder_reason`) with a structure and a remedy per door, the
+same convention `labels_on_wrapper_reason` keeps: the `additive_lod=` door says
+"drop one of the two", the file/graft door says `gsplat flatten`, because there
+is no `additive_lod=` in an `add_gsplats_from_file` call to drop.
+`resolve_partition_beside_an_additive_ladder` holds the data door's half, above
+the route branch so both routes answer alike; `_reject_a_partition_beside_a_stored_ladder`
+holds the file door's, above the spec-shape gate at both of its call sites so the
+two doors rank the two faults the same way.
+
+`partition=False` is not a request and is never refused — but it stranded the
+same wrappers all the same, arriving at the multi-LOD writer as an unknown node
+attribute. It is DELETED instead, and only when that writer is the destination:
+`False` is the `resolve_auto_partition` bypass everywhere a leaf adder resolves
+it, so stripping it earlier would silently re-enable a compiler-level
+`auto_partition_max_elements`.
+
+The file door's half reads the ladder off the STORE, which makes it the one of
+the two that can be told to look at the wrong thing: an `additive_lod=False` in
+the same call is the documented "collapse the ladder" spelling, and
+`resolve_additive_axis_gsplats` flattens every level to a single sub-LOD before
+the data door asks the same question — so that kwarg is skipped here, or the gate
+refuses a laddered store that would have partitioned perfectly well. Only the
+`False` spelling, not a `recompute` dict that happens to resolve to one rung:
+telling `{"n_lods": 1, "recompute": True}` apart from `{"n_lods": 2}` needs the
+resolved rung count rather than the spec, the same missing query #1632 is about.
 
 ### `from_io.py` — load/fit then delegate
 
@@ -177,7 +236,7 @@ Both functions produce a `GSplatData` and hand it to
   is the remedy the message names. Both doors of the gate share one message
   template, `from_data.labels_on_wrapper_reason(kwarg, structure, remedy)`, with
   the two `*_STRUCTURE` / `*_REMEDY` constants beside it, so the wording cannot
-  drift apart. `from_data.strip_absent_attr_kwargs` runs first on both and
+  drift apart. `compositing.strip_absent_attr_kwargs` runs first on both and
   DELETES a present-but-`None` key: the leaf adders bind both as named params
   defaulting to `None`, but inside `**attrs` a `None`-valued key is still an
   unknown attr to `validate_render_attrs` (which matches by name, never by

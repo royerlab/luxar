@@ -6,12 +6,13 @@ before every test in the package. Tests using `np.random.*` (without an
 explicit `default_rng(seed)`) inherit determinism for free. Tests that
 already create their own seeded `default_rng` are unaffected.
 
-Also pins zarr's ambient default format to 2 for the whole session (see
-``_zarr_format_2_by_default``), and holds a couple of small
-cross-language-constant-lock helpers (``find_repo_relative_file`` /
-``read_ts_number_const``) shared by the handful of Python tests that read a
-numeric constant straight out of a TypeScript source file rather than trust a
-prose comment to stay in sync.
+Also pins zarr's ambient default format to whatever Luxar writes for the whole
+session (see ``_zarr_format_follows_luxar``), and holds a few small shared test
+helpers: ``array_compressor`` reads an array's compressor without the caller
+knowing which zarr format wrote it, and ``find_repo_relative_file`` /
+``read_ts_number_const`` let the handful of cross-language constant-lock tests
+read a number straight out of a TypeScript source rather than trust a prose
+comment to stay in sync.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any, NamedTuple
 
 import numpy as np
 import pytest
@@ -26,37 +28,44 @@ import zarr
 
 
 @pytest.fixture(scope="session", autouse=True)
-def _zarr_format_2_by_default() -> Iterator[None]:
-    """Make bare ``zarr.group()`` / ``zarr.open_group(mode="w")`` write format 2.
+def _zarr_format_follows_luxar() -> Iterator[None]:
+    """Make a bare ``zarr.group()`` write whatever format Luxar itself writes.
 
-    Luxar runs on zarr-python 3 but WRITES zarr format 2 (see
-    :mod:`luxar._zarr_compat`). zarr 3's own default is format 3, so ~700 test
-    call sites that construct a store directly — rather than through Luxar's
-    writers — would silently produce format-3 fixtures. Those then fail in
-    confusing ways: ``consolidate`` puts ``consolidated_metadata`` inside
-    ``zarr.json`` instead of emitting a ``.zmetadata`` document, so Luxar's
-    "``.zmetadata`` means the save completed" sentinel reports the store as
-    incomplete, and any assertion on ``.zarray`` / ``.zattrs`` finds nothing.
+    ~700 test call sites construct a store directly rather than through Luxar's
+    writers, and zarr's own ambient default is independent of Luxar's. Left
+    alone, those fixtures would be a different format from production output and
+    would fail in confusing, non-local ways — ``consolidate`` puts
+    ``consolidated_metadata`` inside ``zarr.json`` at format 3 versus emitting a
+    ``.zmetadata`` document at format 2, so a completion-sentinel check reports
+    the wrong answer, and any assertion naming ``.zarray`` / ``.zattrs`` finds
+    nothing.
 
-    A fixture is the right lever because a test fixture SHOULD look like real
-    Luxar output. Crucially, this cannot paper over a production regression:
+    It tracks :data:`luxar._zarr_compat.ZARR_FORMAT` rather than naming a
+    format, for two reasons. It cannot go stale: this fixture previously pinned
+    2 with a docstring explaining that 2 was what Luxar wrote, and the day that
+    changed the explanation silently became false. And it makes the override
+    testable end to end — ``LUXAR_ZARR_FORMAT=2 hatch run test`` now exercises
+    the whole format-2 path, writers and readers together, instead of only the
+    handful of places that pass ``zarr_format=2`` by hand.
+
+    Crucially this cannot paper over a production regression:
     :mod:`luxar._zarr_compat` passes ``zarr_format`` explicitly and never reads
-    this config, and
-    ``tests/test_zarr_compat.py::test_open_group_writes_v2_even_when_the_global_default_is_3``
-    pins exactly that independence by flipping the default to 3 and asserting the
-    facade still writes 2.
+    this config, and ``test_zarr_compat.py`` pins that independence by flipping
+    the ambient default to the OTHER format and asserting the facade ignores it.
 
     KNOWN LIMIT — it covers this PROCESS only. Anything that writes a store from a
     subprocess, or from a script run outside pytest, gets zarr's own default
     instead. That is not hypothetical: it is exactly how
     ``packages/luxar-viewer/tests/fixtures/generate_test_data.py`` came to emit
-    two format-3 fixtures, since it is a standalone script rather than a test. Any
-    such writer must go through :mod:`luxar._zarr_compat` or pass ``zarr_format=``
-    itself, which
+    two format-3 fixtures back when Luxar wrote 2, since it is a standalone
+    script rather than a test. Any such writer must go through
+    :mod:`luxar._zarr_compat` or pass ``zarr_format=`` itself, which
     ``test_zarr_compat.py::test_no_writer_creates_a_store_without_pinning_the_format``
     enforces across the package, the scripts, the examples and the generators.
     """
-    with zarr.config.set({"default_zarr_format": 2}):
+    from luxar import _zarr_compat
+
+    with zarr.config.set({"default_zarr_format": _zarr_compat.ZARR_FORMAT}):
         yield
 
 
@@ -70,6 +79,82 @@ def _seed_numpy_global_rng() -> None:
     `np.random.randn`, etc.).
     """
     np.random.seed(0xC0FFEE)
+
+
+class CompressorView(NamedTuple):
+    """A zarr array's compressor, normalised across both formats.
+
+    ``shuffle`` is the numcodecs integer (0 none / 1 byte / 2 bit), because that
+    is what the compressor POLICY is stated in
+    (:mod:`luxar.encoding.compression`) and what tests compare against.
+    """
+
+    cname: str
+    clevel: int
+    shuffle: int
+
+
+#: v3 spells blosc's shuffle as a NAME; numcodecs spells it as an int, and the
+#: policy (:mod:`luxar.encoding.compression`) is stated in the ints.
+_V3_SHUFFLE_INTS = {"noshuffle": 0, "shuffle": 1, "bitshuffle": 2}
+
+
+def array_compressor(array: Any) -> CompressorView | None:
+    """The blosc compressor of ``array``, from a format-2 or format-3 store.
+
+    ``None`` means stored RAW. A non-blosc compressor RAISES rather than
+    answering, in both formats: every caller asserts against the blosc-shaped
+    policy, and callers read ``None`` as "stored uncompressed", so quietly
+    returning it for a zstd-compressed array would turn a compression
+    regression into a passing test.
+
+    Read through ``.compressors`` for BOTH formats. The singular
+    ``.compressor`` is zarr-2-shaped and doubly unusable: it is deprecated (it
+    warns on every format-2 read) and it RAISES on a format-3 array —
+    ``TypeError: `compressor` is not available for Zarr format 3 arrays.`` —
+    rather than returning ``None``, so even ``getattr(array, "compressor",
+    None)`` does not absorb it, getattr's default covering only
+    ``AttributeError``.
+
+    What differs between the formats is only the SPELLING of what
+    ``.compressors`` holds, and both are normalised here. Measured, for the
+    same logical array:
+
+    ========  ==================================  ==============================
+    stored    format 2                            format 3
+    ========  ==================================  ==============================
+    raw       ``()``                              ``()``
+    blosc     ``(Blosc(cname='zstd', ...),)``     ``(BloscCodec(cname=..., ...),)``
+    zstd      ``(Zstd(level=9),)``                ``(ZstdCodec(level=9, ...),)``
+    ========  ==================================  ==============================
+
+    So ``()`` unambiguously means RAW in both — the mandatory ``bytes`` codec
+    lives in ``.serializer``, never here — and an entry without a ``cname`` is
+    always a real non-blosc compressor rather than structural noise to skip.
+    ``cname``/``shuffle`` are plain values at format 2 and enums at format 3,
+    hence the ``.value`` unwrapping.
+    """
+    codecs = tuple(getattr(array, "compressors", ()) or ())
+    for codec in codecs:
+        cname = getattr(codec, "cname", None)
+        if cname is None:
+            continue  # a real non-blosc compressor; reported below
+        shuffle = getattr(codec, "shuffle", 0)
+        shuffle = getattr(shuffle, "value", shuffle)  # v3 enum -> its name
+        return CompressorView(
+            cname=str(getattr(cname, "value", cname)),
+            clevel=int(codec.clevel),
+            shuffle=(
+                _V3_SHUFFLE_INTS[shuffle] if isinstance(shuffle, str) else int(shuffle)
+            ),
+        )
+    if codecs:
+        raise TypeError(
+            f"array is compressed by {codecs!r}, which is not blosc; "
+            f"array_compressor only describes the blosc-shaped policy, and "
+            f"returning None here would report it as stored RAW"
+        )
+    return None
 
 
 def find_repo_relative_file(rel_path: Path, start: Path) -> Path | None:

@@ -5,13 +5,17 @@ an additive ladder writes ``additive_<i>/`` subgroups under the root leaf. Color
 SDR/HDR is auto-detected (no explicit ``color_mode`` knob).
 """
 
+import shutil
 import tempfile
+import zipfile
 from pathlib import Path
 
 import numpy as np
 import pytest
 import zarr
 
+from luxar._zarr_compat import read_consolidated_attrs
+from luxar.conftest import array_compressor
 from luxar.encoding import EncodingMode
 from luxar.gsplats import GSplatData
 from luxar.gsplats.io import (
@@ -47,6 +51,50 @@ def create_test_splats_3d(n_splats: int = 100) -> dict:
     }
 
 
+def _zip_store_flat(store: Path, archive: Path) -> Path:
+    """Zip a store's files with the store root AT THE ARCHIVE ROOT.
+
+    The "flat" archive shape: ``.zgroup``/``zarr.json`` and ``centers/…`` sit at
+    depth 0, as ``zip -r x.gsplats.zarr.zip .`` from inside a store produces.
+    """
+    with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zip_ref:
+        for f in sorted(store.rglob("*")):
+            if f.is_file():
+                zip_ref.write(f, arcname=str(f.relative_to(store)))
+    return archive
+
+
+def _luxar_temp_dirs() -> set:
+    """The extractor's temp directories currently present, as a set of paths."""
+    return set(Path(tempfile.gettempdir()).glob("luxar_gsplat_*"))
+
+
+def _confine_temp_dirs(tmp_path: Path, monkeypatch) -> None:
+    """Point BOTH ``mkdtemp`` and :func:`_luxar_temp_dirs` at this test's own dir.
+
+    Without this the probe globs the machine-global ``/tmp`` and any concurrent
+    process extracting a gsplats archive inside the window fails the "nothing was
+    extracted" / "the temp dir was removed" assertions (reproduced with a
+    background loop; this repo is routinely worked in several worktrees at once).
+    ``tempfile.mkdtemp()`` honours ``tempfile.tempdir``, and so does
+    ``tempfile.gettempdir()``, so setting it confines the extractor and the probe
+    together.
+    """
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+
+
+def _uncompressed_model_bytes(n_splats: int, ndim: int = 3) -> int:
+    """The inspector's own uncompressed-size model, in exact bytes.
+
+    Deliberately recomputed from the fixture's shape rather than from the info
+    dict's ROUNDED ``uncompressed_mb``: dividing the rounded value back out makes
+    the expectation circular AND fixture-size-dependent (at 1000-2000 splats the
+    rounding error alone is ~5%).
+    """
+    chol = ndim * (ndim + 1) // 2
+    return n_splats * (ndim * 4 + 4 + chol * 4)
+
+
 class TestSaveGsplats:
     """Test save_gsplats function (v3.0 leaf root)."""
 
@@ -79,12 +127,10 @@ class TestSaveGsplats:
             root = zarr.open_group(str(path), mode="r")
             content_hash = root.attrs["content_hash"]
             assert isinstance(content_hash, str) and len(content_hash) > 0
-            # The hash must also land in consolidated metadata (the viewer
-            # reads .zmetadata for structure and .zattrs for validation).
-            import json
-
-            zmeta = json.loads((path / ".zmetadata").read_text())
-            assert zmeta["metadata"][".zattrs"]["content_hash"] == content_hash
+            # The hash must also land in consolidated metadata: the viewer
+            # builds its scene graph from that index, so a hash present only on
+            # the node itself would never be seen.
+            assert read_consolidated_attrs(path)["/"]["content_hash"] == content_hash
 
     def test_resave_changes_content_hash(self) -> None:
         # Identical data re-saved must yield a DIFFERENT hash (the timestamp
@@ -745,25 +791,350 @@ class TestInspectGsplats:
             assert "hilbert" in formatted
             assert "45.3" in formatted
 
+    @pytest.mark.parametrize(
+        "compress,suffix", [("zip", ".zip"), ("tar.gz", ".tar.gz")]
+    )
+    def test_inspect_archive_matches_directory(
+        self, compress: str, suffix: str
+    ) -> None:
+        # An archive nests its store one directory deep, so handing the archive
+        # itself to open_group used to raise GroupNotFoundError (#1625).
+        with tempfile.TemporaryDirectory() as tmpdir:
+            splats = create_test_splats_3d(100)
+            directory = Path(tmpdir) / "d.gsplats.zarr"
+            archive = Path(tmpdir) / f"a.gsplats.zarr{suffix}"
+            save_gsplats(path=directory, **splats, ordering="none")
+            save_gsplats(path=archive, **splats, ordering="none", compress=compress)
+
+            info = inspect_gsplats_zarr(archive)
+            reference = inspect_gsplats_zarr(directory)
+            assert info["n_splats"] == reference["n_splats"] == 100
+            assert info["ndim"] == reference["ndim"] == 3
+            # Compare the WHOLE dict, not just the headline pair: resolving to the
+            # wrong node inside the archive (a child group, an array subdirectory)
+            # would keep n_splats plausible while everything else drifted. Only the
+            # size/measurement keys legitimately differ — the archive is measured as
+            # one compressed file, the directory as a file walk — and `timestamp`
+            # comes from two separate save calls.
+            measured = {"storage_bytes", "storage_mb", "compression_ratio", "timestamp"}
+            assert {k: v for k, v in info.items() if k not in measured} == {
+                k: v for k, v in reference.items() if k not in measured
+            }
+
+    @pytest.mark.parametrize("n_splats", [1000, 20000])
+    def test_inspect_archive_size_is_the_archive_file(self, n_splats: int) -> None:
+        # A single-file archive's own st_size IS its on-disk size; summing zero
+        # there reported "0 bytes, 1.0x compression" (#1625).
+        with tempfile.TemporaryDirectory() as tmpdir:
+            archive = Path(tmpdir) / "a.gsplats.zarr.zip"
+            save_gsplats(
+                path=archive,
+                **create_test_splats_3d(n_splats),
+                ordering="none",
+                compress="zip",
+            )
+            info = inspect_gsplats_zarr(archive)
+
+            assert info["storage_bytes"] == archive.stat().st_size > 0
+            # A real measurement, not the old `total_bytes > 0 else 1.0` guard.
+            # Checked against the unrounded byte model (see
+            # `_uncompressed_model_bytes`) so the expectation holds at ANY fixture
+            # size; the field itself is rounded to 2 dp, hence `abs=`.
+            expected = _uncompressed_model_bytes(n_splats) / info["storage_bytes"]
+            assert info["compression_ratio"] == pytest.approx(expected, abs=0.005)
+            assert info["compression_ratio"] > 1.0
+
+    @pytest.mark.parametrize("write_format", (2, 3), ids=("v2", "v3"))
+    def test_inspect_flat_zip_reports_the_archive_size(
+        self, tmp_path: Path, monkeypatch, write_format: int
+    ) -> None:
+        # The FLAT archive shape: the store sits at the archive ROOT, so the
+        # store-root resolution step never bites and this used to inspect fine —
+        # while reporting `storage_bytes: 0` and a fabricated `compression_ratio:
+        # 1.0` (exactly the case #1625 used to demonstrate the size bug). It must
+        # keep working AND now report a real size.
+        #
+        # Both on-disk formats: the flat-store classifier matches the group
+        # document BY NAME (`.zgroup` at 2, `zarr.json` at 3), so pinning only
+        # the ambient format leaves half of `NODE_GROUP_DOCS` untested.
+        from luxar._zarr_compat import ZARR_FORMAT, set_zarr_format
+
+        _confine_temp_dirs(tmp_path, monkeypatch)
+        n_splats = 20000
+        original = ZARR_FORMAT
+        set_zarr_format(write_format)
+        try:
+            store = tmp_path / "d.gsplats.zarr"
+            save_gsplats(path=store, **create_test_splats_3d(n_splats), ordering="none")
+        finally:
+            set_zarr_format(original)
+        archive = _zip_store_flat(store, tmp_path / "flat.gsplats.zarr.zip")
+
+        before = _luxar_temp_dirs()
+        info = inspect_gsplats_zarr(archive)
+        # A flat zip is opened in place as a ZipStore — nothing is extracted.
+        assert _luxar_temp_dirs() - before == set()
+
+        assert info["n_splats"] == n_splats
+        assert info["ndim"] == 3
+        assert info["storage_bytes"] == archive.stat().st_size > 0
+        expected = _uncompressed_model_bytes(n_splats) / info["storage_bytes"]
+        assert info["compression_ratio"] == pytest.approx(expected, abs=0.005)
+        assert info["compression_ratio"] != 1.0
+
+    def test_inspect_nested_archive_removes_its_temp_dir(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        # Cleanup was unverified: neutering the `shutil.rmtree` left the whole
+        # suite green. A nested archive IS extracted, so its temp directory must be
+        # gone afterwards.
+        _confine_temp_dirs(tmp_path, monkeypatch)
+        archive = tmp_path / "a.gsplats.zarr.zip"
+        save_gsplats(
+            path=archive,
+            **create_test_splats_3d(100),
+            ordering="none",
+            compress="zip",
+        )
+        before = _luxar_temp_dirs()
+        assert inspect_gsplats_zarr(archive)["n_splats"] == 100
+        assert _luxar_temp_dirs() - before == set()
+
+    def test_inspect_removes_temp_dir_when_inspection_raises(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        # The cleanup is in a `finally`, so it must also survive the raising path:
+        # an archive of a plain zarr group is a resolvable store that is not a
+        # gsplats store.
+        from luxar._zarr_compat import open_group as zc_open_group
+
+        _confine_temp_dirs(tmp_path, monkeypatch)
+        store = tmp_path / "bad.gsplats.zarr"
+        zc_open_group(str(store), mode="w")
+        archive = tmp_path / "bad.gsplats.zarr.zip"
+        with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zip_ref:
+            for f in sorted(store.rglob("*")):
+                if f.is_file():
+                    zip_ref.write(f, arcname=f"{store.name}/{f.relative_to(store)}")
+
+        before = _luxar_temp_dirs()
+        with pytest.raises(ValueError, match="format_type"):
+            inspect_gsplats_zarr(archive)
+        assert _luxar_temp_dirs() - before == set()
+
+    def test_inspect_reports_an_unmeasurable_size_as_absent(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        # Drive the inspector's OWN `except` arm — mutating it to bogus values
+        # stayed green before this test, because the formatter test below only
+        # pins the presentation, on a hand-built dict. A directory store whose
+        # walk raises is the reachable case: unreadable permissions, a vanished
+        # file, a stale mount. This does NOT also close the `if total_bytes > 0
+        # else None` ternary: a real store always has bytes, so that `else` is
+        # unreachable through inspect and no test here can drive it.
+        real_rglob = Path.rglob
+        store = tmp_path / "d.gsplats.zarr"
+        save_gsplats(path=store, **create_test_splats_3d(100), ordering="none")
+
+        def boom(self: Path, pattern, *args, **kwargs):
+            if self == store:
+                raise OSError("permission denied")
+            return real_rglob(self, pattern, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "rglob", boom)
+        info = inspect_gsplats_zarr(store)
+
+        # The inspection itself still succeeds — only the size is unknown.
+        assert info["n_splats"] == 100
+        assert info["storage_bytes"] is None
+        assert info["storage_mb"] is None
+        # Not a fabricated 1.0: a ratio against an unmeasurable size is not a
+        # measurement.
+        assert info["compression_ratio"] is None
+        # And with no size at all the formatter omits the whole line rather than
+        # printing "None MB".
+        assert "Size:" not in format_gsplats_info(info)
+
+    def test_format_info_without_compression_ratio(self) -> None:
+        # Inspect CAN produce `compression_ratio=None` (the test 30 lines above
+        # does); what it cannot produce is this COMBINATION — a known
+        # `storage_mb` with no ratio — because the only route to a `None` ratio
+        # also loses the size, and then the formatter omits the line entirely.
+        # So the branch is exercised directly, on a hand-built dict: it must
+        # print the size line with no compression figure.
+        line = format_gsplats_info(
+            {
+                "n_splats": 100,
+                "ndim": 3,
+                "ordering": "none",
+                "has_colors": False,
+                "storage_mb": 1.5,
+                "uncompressed_mb": 3.0,
+                "compression_ratio": None,
+            }
+        )
+        assert "Size: 1.5 MB (3.0 MB uncompressed)" in line
+        assert "compression" not in line
+
+    def test_inspect_directory_size_walks_recursively(self) -> None:
+        # Unchanged behaviour for a directory store: the recursive file walk.
+        # Kept as an honest negative control — a directory was always walked, so
+        # this cannot fail pre-fix; it guards the walk against a future
+        # regression while the archive tests above carry the #1625 claim.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "test.gsplats.zarr"
+            save_gsplats(path=path, **create_test_splats_3d(100), ordering="none")
+            info = inspect_gsplats_zarr(path)
+            expected = sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
+            assert info["storage_bytes"] == expected > 0
+
+    def test_inspect_format_output_archive_size_nonzero(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            archive = Path(tmpdir) / "a.gsplats.zarr.zip"
+            save_gsplats(
+                path=archive,
+                **create_test_splats_3d(20000),
+                ordering="none",
+                compress="zip",
+            )
+            info = inspect_gsplats_zarr(archive)
+            formatted = format_gsplats_info(info)
+            assert "0.0 MB (" not in formatted
+            # Assert against what the formatter actually consumes. Recomputing
+            # `st_size / MB` here and formatting it to 1 dp disagrees with the
+            # code's `round(..., 2)`-then-`:.1f` for any value in a
+            # [x.x45, x.x50) band, so it could fail on correct code after a
+            # fixture or encoder change.
+            assert f"Size: {info['storage_mb']:.1f} MB" in formatted
+            assert info["storage_bytes"] == archive.stat().st_size > 0
+
+    def test_inspect_rejects_non_archive_regular_file(self) -> None:
+        # Same clear error the loader gives, instead of a zarr-level failure.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "notes.txt"
+            path.write_text("not a zarr store")
+            with pytest.raises(ValueError, match="regular file"):
+                inspect_gsplats_zarr(path)
+
+
+class TestFlatZipClassifier:
+    """The two rules of ``_archive._zip_is_flat_store``, plus the opt-in gate.
+
+    The rules are exercised on the private classifier directly. That is the
+    honest unit under test: each rule decides between "open the archive in place"
+    and "extract it", and the observable difference for a SYNTHETIC archive (no
+    real store inside either candidate root) is an unrelated zarr error either
+    way. Both rules survived deletion with the whole `gsplats/io` suite green
+    before these tests existed.
+    """
+
+    @staticmethod
+    def _write_zip(path: Path, members: list[tuple[str, str]]) -> None:
+        """Write a zip with ``(name, text)`` members in exactly the given order."""
+        with zipfile.ZipFile(path, "w") as zip_ref:
+            for name, text in members:
+                zip_ref.writestr(name, text)
+
+    @pytest.mark.parametrize("doc", [".zgroup", "zarr.json"])
+    def test_a_nested_store_beats_a_stray_root_group_doc(
+        self, tmp_path: Path, doc: str
+    ) -> None:
+        """A ``*.gsplats.zarr/`` directory wins even with a group doc at depth 0.
+
+        The extractor prefers that directory, so classifying this archive flat
+        would open a DIFFERENT node than the extractor resolves — the two must
+        not disagree. The stray is written FIRST so an order-dependent
+        implementation fails here.
+        """
+        from luxar.gsplats.io._archive import _zip_is_flat_store
+
+        archive = tmp_path / "both.gsplats.zarr.zip"
+        self._write_zip(
+            archive,
+            [
+                (doc, '{"zarr_format": 2, "node_type": "group"}'),
+                (f"x.gsplats.zarr/{doc}", '{"zarr_format": 2, "node_type": "group"}'),
+                ("x.gsplats.zarr/centers/.zarray", "{}"),
+            ],
+        )
+        assert _zip_is_flat_store(archive) is False
+
+    def test_a_root_zattrs_is_not_a_root_group_doc(self, tmp_path: Path) -> None:
+        """A depth-0 ``.zattrs`` does NOT mark a store root (``NODE_GROUP_DOCS``).
+
+        ``.zattrs`` also sits beside an ARRAY and may simply be a stray, so it
+        says nothing about a group being here — what
+        ``zip -r out.gsplats.zarr.zip mystore .zattrs`` produces is the nested
+        (extract-me) shape, not a flat store.
+        """
+        from luxar.gsplats.io._archive import _zip_is_flat_store
+
+        archive = tmp_path / "stray_attrs.gsplats.zarr.zip"
+        self._write_zip(
+            archive,
+            [
+                (".zattrs", '{"opacity": 0.5}'),
+                ("mystore/.zgroup", '{"zarr_format": 2}'),
+                ("mystore/.zattrs", '{"format_type": "gsplats_zarr"}'),
+            ],
+        )
+        assert _zip_is_flat_store(archive) is False
+
+    def test_opening_a_flat_zip_in_place_stays_opt_in(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """``resolve_store_path``'s default must not open a flat zip in place.
+
+        The loader relies on that default: opting in there would newly succeed on
+        a shape two downstream steps do not handle (see ``resolve_store_path``'s
+        ``flat_zip_in_place`` docstring). Pinned at the seam itself because
+        flipping the default to ``True`` otherwise leaves the whole `gsplats/io`
+        suite green.
+        """
+        from luxar.gsplats.io._archive import resolve_store_path
+
+        _confine_temp_dirs(tmp_path, monkeypatch)
+        store = tmp_path / "d.gsplats.zarr"
+        save_gsplats(path=store, **create_test_splats_3d(50), ordering="none")
+        archive = _zip_store_flat(store, tmp_path / "flat.gsplats.zarr.zip")
+
+        # Opted in: the archive itself, and nothing to clean up.
+        assert resolve_store_path(archive, flat_zip_in_place=True) == (archive, None)
+
+        # Default: the extraction path instead. Which member the extractor's
+        # "sole top-level directory" fallback lands on (or whether it finds none
+        # and raises) depends on `iterdir()` order, so only the seam is pinned —
+        # the archive was NOT handed to `open_group` in place.
+        resolved: Path | None = None
+        temp_dir: Path | None = None
+        try:
+            resolved, temp_dir = resolve_store_path(archive)
+        except ValueError:
+            pass  # extraction ran and removed its own temp dir before raising
+        try:
+            assert resolved != archive
+        finally:
+            if temp_dir is not None:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+
 
 class TestCompression:
     """Blosc compression + chunk sizing (v3.0 leaf-root paths)."""
 
     def test_default_compression_applied(self):
-        from numcodecs import Blosc
 
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "test.gsplats.zarr"
             save_gsplats(path=path, **create_test_splats_3d(100))
             centers = zarr.open(str(path), mode="r")["centers"]
-            assert isinstance(centers.compressor, Blosc)
-            assert centers.compressor.cname == "zstd"
+            comp = array_compressor(centers)
+            assert comp is not None and comp.cname == "zstd"
 
     def test_compression_disabled(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "test.gsplats.zarr"
             save_gsplats(path=path, compressor=None, **create_test_splats_3d(100))
-            assert zarr.open(str(path), mode="r")["centers"].compressor is None
+            assert array_compressor(zarr.open(str(path), mode="r")["centers"]) is None
 
     def test_chunk_capping_small_array(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -781,15 +1152,19 @@ class TestCompression:
             )
 
     def test_gsplatdata_save_default_compression(self):
-        from numcodecs import Blosc
 
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "test.gsplats.zarr"
             GSplatData(**create_test_splats_3d(100)).save(path)
-            assert isinstance(zarr.open(str(path), mode="r")["centers"].compressor, Blosc)
+            # `array_compressor` is the bi-format spelling of "is this Blosc?":
+            # it RAISES for a real non-blosc compressor and answers None only
+            # for a genuinely raw array, so a non-None view IS the isinstance
+            # check. Asking `.compressor` directly would raise at format 3.
+            assert (
+                array_compressor(zarr.open(str(path), mode="r")["centers"]) is not None
+            )
 
     def test_multi_lod_compression(self):
-        from numcodecs import Blosc
 
         from luxar.gsplats.gsplat_data import AdditiveSubLOD
 
@@ -809,8 +1184,8 @@ class TestCompression:
             GSplatData(additive_sublods=lods).save(path)
             root = zarr.open(str(path), mode="r")
             # Additive ladder → additive_<i>/ subgroups under the leaf root.
-            assert isinstance(root["additive_0/centers"].compressor, Blosc)
-            assert isinstance(root["additive_1/centers"].compressor, Blosc)
+            assert array_compressor(root["additive_0/centers"]) is not None
+            assert array_compressor(root["additive_1/centers"]) is not None
             assert root["additive_0/centers"].chunks[0] <= 50
             assert root["additive_1/centers"].chunks[0] <= 80
 
@@ -967,12 +1342,15 @@ def test_save_explicit_none_compressor_disables_compression():
         # Explicit None → no compression.
         raw = Path(tmp) / "raw.gsplats.zarr"
         data.save(raw, ordering="none", compressor=None)
-        assert zarr.open_group(str(raw), mode="r")["centers"].compressor is None
+        assert array_compressor(zarr.open_group(str(raw), mode="r")["centers"]) is None
 
         # Unspecified → default Blosc (compression still on by default).
         comp = Path(tmp) / "comp.gsplats.zarr"
         data.save(comp, ordering="none")
-        assert zarr.open_group(str(comp), mode="r")["centers"].compressor is not None
+        assert (
+            array_compressor(zarr.open_group(str(comp), mode="r")["centers"])
+            is not None
+        )
 
 
 class TestCompressedLoadSecurity:
@@ -1066,6 +1444,420 @@ class TestCompressedLoadSecurity:
         with pytest.raises(ValueError, match="link|escape|device"):
             detect_legacy_format(evil)
         assert not target.exists(), "migrate path allowed a symlink escape"
+
+
+class TestArchiveRootAttrsPeek:
+    """Reading a compressed store's ROOT ``.zattrs`` without extracting it
+    (``luxar.gsplats.io._archive.read_archive_root_attrs``).
+
+    Regression for #1604: a ``.gsplats.zarr.zip`` / ``.tar.gz`` is a first-class
+    input to the rebuild commands, so the authored-appearance carry has to be
+    able to see inside one — and the old "peeking would extract GBs again"
+    reasoning was simply wrong (it is one member). The peek must find the ROOT
+    ``.zattrs`` *specifically*: a child group's attrs is a different object, and
+    handing it to the writer would author an appearance nobody asked for.
+    """
+
+    @staticmethod
+    def _write_zip(path: Path, members: list[tuple[str, str]]) -> None:
+        """Write a zip with ``(name, text)`` members in exactly the given order."""
+        import zipfile
+
+        with zipfile.ZipFile(path, "w") as zip_ref:
+            for name, text in members:
+                zip_ref.writestr(name, text)
+
+    @staticmethod
+    def _write_targz(path: Path, members: list[tuple[str, str]]) -> None:
+        """Write a tar.gz with ``(name, text)`` members in exactly the given order."""
+        import io
+        import tarfile
+
+        with tarfile.open(path, "w:gz") as tar_ref:
+            for name, text in members:
+                payload = text.encode("utf-8")
+                info = tarfile.TarInfo(name)
+                info.size = len(payload)
+                tar_ref.addfile(info, io.BytesIO(payload))
+
+    def _write(self, path: Path, fmt: str, members: list[tuple[str, str]]) -> None:
+        if fmt == "zip":
+            self._write_zip(path, members)
+        else:
+            self._write_targz(path, members)
+
+    @pytest.mark.parametrize("fmt", ["zip", "tar.gz"])
+    def test_reads_a_real_archived_store(self, tmp_path: Path, fmt: str) -> None:
+        """The attrs a real ``save(compress=...)`` wrote come back off the archive.
+
+        Covers the production nesting (``<name>.gsplats.zarr/.zattrs``) that
+        ``_compress_zarr`` produces for both formats.
+        """
+        from luxar.gsplats.io._archive import read_archive_root_attrs
+
+        data = GSplatData(**create_test_splats_3d(16))
+        archive = tmp_path / f"peek.gsplats.zarr.{fmt}"
+        data.save(archive, compress=fmt, root_attrs={"opacity": 0.75, "gamma": 1.3})
+
+        attrs = read_archive_root_attrs(archive)
+        assert attrs["format_type"] == "gsplats_zarr"
+        assert attrs["opacity"] == 0.75
+        assert attrs["gamma"] == 1.3
+
+    @pytest.mark.parametrize("fmt", ["zip", "tar.gz"])
+    @pytest.mark.parametrize("write_format", (2, 3), ids=("v2", "v3"))
+    def test_peek_reads_an_archive_of_either_on_disk_format(
+        self, tmp_path: Path, fmt: str, write_format: int
+    ) -> None:
+        """The peek finds the root attrs whichever format wrote the archive.
+
+        The document is named differently per format — ``.zattrs`` at 2, inside
+        ``zarr.json`` at 3 — and the member is matched BY NAME, so recognising
+        only one of them made every archive of the other format peek as ``{}``.
+        That is indistinguishable from "this dataset authored no appearance", so
+        `gsplat lod` silently dropped the whole authored appearance of an
+        archived input instead of failing.
+
+        The sibling test above uses the ambient write format, which pins only
+        whichever one CI happens to run; this pins both explicitly.
+        """
+        from luxar._zarr_compat import ZARR_FORMAT, set_zarr_format
+        from luxar.gsplats.io._archive import read_archive_root_attrs
+
+        original = ZARR_FORMAT
+        set_zarr_format(write_format)
+        try:
+            data = GSplatData(**create_test_splats_3d(16))
+            archive = tmp_path / f"peek_v{write_format}.gsplats.zarr.{fmt}"
+            data.save(archive, compress=fmt, root_attrs={"blending_mode": "volumetric"})
+        finally:
+            set_zarr_format(original)
+
+        attrs = read_archive_root_attrs(archive)
+        # Not vacuous: a peek that found nothing also returns a dict.
+        assert attrs, f"format {write_format} {fmt} archive peeked as empty"
+        assert attrs["blending_mode"] == "volumetric"
+        # The structural key proves the ROOT was read, not some child node.
+        assert attrs["format_type"] == "gsplats_zarr"
+
+    #: The two store layouts ``extract_compressed_zarr`` accepts, as the archive
+    #: member path of each one's ROOT ``.zattrs``: the ``*.gsplats.zarr``-named
+    #: top-level directory ``_compress_zarr`` writes, and the extractor's fallback
+    #: — the sole top-level directory, whatever it is called (what you get from
+    #: ``tar czf x.gsplats.zarr.tar.gz mystore``).
+    ROOT_LAYOUTS = ["x.gsplats.zarr/.zattrs", "mystore/.zattrs"]
+
+    @pytest.mark.parametrize("fmt", ["zip", "tar.gz"])
+    @pytest.mark.parametrize("root", ROOT_LAYOUTS)
+    def test_a_deeper_zattrs_never_wins(
+        self, tmp_path: Path, fmt: str, root: str
+    ) -> None:
+        """A child group's ``.zattrs`` is not read as the root's, even listed first.
+
+        Run for both store layouts the extractor accepts. The child member is
+        deliberately written BEFORE the root so a first-match-wins implementation
+        fails here.
+        """
+        from luxar.gsplats.io._archive import read_archive_root_attrs
+
+        parent = root[: -len(".zattrs")]
+        archive = tmp_path / f"nested.gsplats.zarr.{fmt}"
+        self._write(
+            archive,
+            fmt,
+            [
+                (f"{parent}lod_0/.zattrs", '{"whose": "child"}'),
+                (root, '{"whose": "root"}'),
+            ],
+        )
+        assert read_archive_root_attrs(archive) == {"whose": "root"}
+
+    @pytest.mark.parametrize("fmt", ["zip", "tar.gz"])
+    @pytest.mark.parametrize("root", ROOT_LAYOUTS)
+    def test_the_stores_root_wins_over_a_shallower_stray(
+        self, tmp_path: Path, fmt: str, root: str
+    ) -> None:
+        """A stray top-level ``.zattrs`` does not outrank the store's own root.
+
+        ``extract_compressed_zarr`` defines the store as a top-level DIRECTORY, so
+        that directory's ``.zattrs`` is the root even though a loose member sits
+        one level shallower; reading the stray instead would author an appearance
+        from something that is not the dataset. Both layouts matter, and the
+        unnamed fallback is the sharp one: a ranking that merely preferred the
+        ``*.gsplats.zarr`` name and then went shallowest-first hands back the
+        stray's attrs there, while the real load succeeds with the store's. The
+        stray is written FIRST so first-match-wins fails too.
+        """
+        from luxar.gsplats.io._archive import read_archive_root_attrs
+
+        archive = tmp_path / f"stray.gsplats.zarr.{fmt}"
+        self._write(
+            archive,
+            fmt,
+            [
+                (".zattrs", '{"whose": "stray"}'),
+                (root, '{"whose": "store"}'),
+            ],
+        )
+        assert read_archive_root_attrs(archive) == {"whose": "store"}
+
+    @pytest.mark.parametrize("fmt", ["zip", "tar.gz"])
+    def test_a_depth_zero_only_archive_is_empty(self, tmp_path: Path, fmt: str) -> None:
+        """A flat archive whose only ``.zattrs`` is at the root yields ``{}``.
+
+        Not a regression in disguise: such an archive is unreachable through the
+        loader — ``extract_compressed_zarr`` raises "No .gsplats.zarr directory
+        found" for it, and the peek only ever runs alongside a load that
+        succeeded. Treating a depth-0 member as a store root is what would let a
+        stray outrank a real one (see the test above), so it is refused outright.
+        """
+        from luxar.gsplats.io._archive import read_archive_root_attrs
+
+        archive = tmp_path / f"flat.gsplats.zarr.{fmt}"
+        self._write(archive, fmt, [(".zattrs", '{"whose": "stray"}')])
+        assert read_archive_root_attrs(archive) == {}
+
+    @pytest.mark.parametrize("fmt", ["zip", "tar.gz"])
+    def test_a_junk_sibling_directory_makes_the_unnamed_fallback_ambiguous(
+        self, tmp_path: Path, fmt: str
+    ) -> None:
+        """Two top-level directories and no ``*.gsplats.zarr`` name → ``{}``.
+
+        The extractor's fallback is the SOLE top-level directory; with two of
+        them it picks by ``iterdir()`` order, which no archive index can predict.
+        A junk sibling listed first (``tar czf b.gsplats.zarr.tar.gz notes
+        mystore``) would otherwise hand back ``notes``'s attrs while the load
+        really read ``mystore`` — authoring an appearance from a node that is not
+        the dataset. Carrying nothing is the status quo; guessing is not.
+        """
+        from luxar.gsplats.io._archive import read_archive_root_attrs
+
+        archive = tmp_path / f"siblings.gsplats.zarr.{fmt}"
+        self._write(
+            archive,
+            fmt,
+            [
+                ("notes/.zattrs", '{"whose": "junk"}'),
+                ("mystore/.zattrs", '{"whose": "store"}'),
+            ],
+        )
+        assert read_archive_root_attrs(archive) == {}
+
+    @staticmethod
+    def _write_with_empty_dir(
+        path: Path, fmt: str, dir_name: str, files: list[tuple[str, str]]
+    ) -> None:
+        """Write an archive with an EMPTY explicit directory entry, plus files.
+
+        A tar spells a directory as its own ``DIRTYPE`` header; a zip spells one
+        as a member name ending in ``/``. Both are written here so the rule is
+        exercised through each spelling.
+        """
+        import io
+        import tarfile
+        import zipfile
+
+        bare = dir_name.rstrip("/")
+        if fmt == "zip":
+            with zipfile.ZipFile(path, "w") as zip_ref:
+                zip_ref.writestr(zipfile.ZipInfo(f"{bare}/"), "")
+                for name, text in files:
+                    zip_ref.writestr(name, text)
+        else:
+            with tarfile.open(path, "w:gz") as tar_ref:
+                dir_info = tarfile.TarInfo(bare)
+                dir_info.type = tarfile.DIRTYPE
+                tar_ref.addfile(dir_info)
+                for name, text in files:
+                    payload = text.encode("utf-8")
+                    member = tarfile.TarInfo(name)
+                    member.size = len(payload)
+                    tar_ref.addfile(member, io.BytesIO(payload))
+
+    @pytest.mark.parametrize("fmt", ["zip", "tar.gz"])
+    def test_an_empty_stray_directory_does_not_suppress_the_carry(
+        self, tmp_path: Path, fmt: str
+    ) -> None:
+        """An EMPTY top-level directory beside the store is not a rival store.
+
+        ``zip -r out.gsplats.zarr.zip mystore notes`` with an empty ``notes/`` has
+        exactly one store in it. An empty directory can never be the node a
+        SUCCESSFUL load read — ``zarr.open_group`` on one raises, so if the
+        extractor lands there the whole load fails and no rebuild (hence no carry)
+        happens at all. Counting it as a top-level directory could therefore never
+        prevent a wrong carry, only manufacture false ambiguity and silently drop
+        a correct one that the directory-store path keeps.
+        """
+        from luxar.gsplats.io._archive import read_archive_root_attrs
+
+        archive = tmp_path / f"empty_stray.gsplats.zarr.{fmt}"
+        self._write_with_empty_dir(
+            archive, fmt, "notes", [("mystore/.zattrs", '{"whose": "store"}')]
+        )
+        assert read_archive_root_attrs(archive) == {"whose": "store"}
+
+    @pytest.mark.parametrize("fmt", ["zip", "tar.gz"])
+    def test_a_named_store_still_wins_over_a_junk_sibling(
+        self, tmp_path: Path, fmt: str
+    ) -> None:
+        """The uniqueness rule constrains the FALLBACK tier only.
+
+        A top-level ``*.gsplats.zarr`` directory is the extractor's own first
+        preference, so peek and extraction agree on it no matter what else the
+        archive contains — the junk sibling must not suppress it.
+        """
+        from luxar.gsplats.io._archive import read_archive_root_attrs
+
+        archive = tmp_path / f"named_siblings.gsplats.zarr.{fmt}"
+        self._write(
+            archive,
+            fmt,
+            [
+                ("notes/.zattrs", '{"whose": "junk"}'),
+                ("x.gsplats.zarr/.zattrs", '{"whose": "store"}'),
+            ],
+        )
+        assert read_archive_root_attrs(archive) == {"whose": "store"}
+
+    @pytest.mark.parametrize("fmt", ["zip", "tar.gz"])
+    def test_a_flat_dump_of_a_tree_stores_contents_is_empty(
+        self, tmp_path: Path, fmt: str
+    ) -> None:
+        """An archive of a tree store's CONTENTS never yields a child's attrs.
+
+        ``tar czf b.gsplats.zarr.tar.gz -C store .`` puts the store root's own
+        ``.zattrs``/``.zgroup`` at depth 0 (where the extractor cannot see a store
+        at all) and its ``child_<i>/`` groups at depth 1 — so every depth-1
+        candidate is a CHILD group, exactly what the ranking exists to keep out of
+        the authored appearance. What refuses it is the several-top-level-
+        directories rule, which is why a real tree shape (a ``kind=lod`` /
+        ``kind=partition`` group always has at least two children) is used here.
+        """
+        from luxar.gsplats.io._archive import read_archive_root_attrs
+
+        archive = tmp_path / f"contents.gsplats.zarr.{fmt}"
+        self._write(
+            archive,
+            fmt,
+            [
+                (".zattrs", '{"whose": "root"}'),
+                (".zgroup", '{"zarr_format": 2}'),
+                ("child_0/.zattrs", '{"whose": "child_0"}'),
+                ("child_1/.zattrs", '{"whose": "child_1"}'),
+            ],
+        )
+        assert read_archive_root_attrs(archive) == {}
+
+    @staticmethod
+    def _write_with_symlink(
+        path: Path,
+        fmt: str,
+        link: tuple[str, str],
+        extra: list[tuple[str, str]],
+    ) -> None:
+        """Write an archive whose ``link`` member is a real SYMLINK, plus files.
+
+        Both formats spell a symlink differently — a unix mode in the zip's
+        external attrs, a ``SYMTYPE`` header in the tar — so the guard has to be
+        exercised through each spelling separately.
+        """
+        import io
+        import stat
+        import tarfile
+        import zipfile
+
+        name, target = link
+        if fmt == "zip":
+            with zipfile.ZipFile(path, "w") as zip_ref:
+                info = zipfile.ZipInfo(name)
+                info.external_attr = (stat.S_IFLNK | 0o777) << 16
+                zip_ref.writestr(info, target)
+                for member_name, text in extra:
+                    zip_ref.writestr(member_name, text)
+        else:
+            with tarfile.open(path, "w:gz") as tar_ref:
+                info_tar = tarfile.TarInfo(name)
+                info_tar.type = tarfile.SYMTYPE
+                info_tar.linkname = target
+                tar_ref.addfile(info_tar)
+                for member_name, text in extra:
+                    payload = text.encode("utf-8")
+                    member = tarfile.TarInfo(member_name)
+                    member.size = len(payload)
+                    tar_ref.addfile(member, io.BytesIO(payload))
+
+    @pytest.mark.parametrize("fmt", ["zip", "tar.gz"])
+    def test_a_symlinked_zattrs_member_is_never_read(
+        self, tmp_path: Path, fmt: str
+    ) -> None:
+        """A ``.zattrs`` member that is a SYMLINK is skipped, not followed.
+
+        The module's whole threat model is that no link is ever followed, for
+        BOTH formats. An in-archive link is the sharp case: ``extractfile``
+        happily resolves ``x.gsplats.zarr/.zattrs -> child/.zattrs`` inside the
+        tar, so dropping the regular-file check silently promotes a CHILD group's
+        attrs to the root's. An out-of-archive link is the other half: a symlink
+        member's payload is its TARGET PATH, so following one leaks an arbitrary
+        file's location into the attrs and hands the reader a path where a JSON
+        object belongs. Third archive: a real ``*.gsplats.zarr`` root still wins
+        even with a link listed before it.
+        """
+        from luxar.gsplats.io._archive import read_archive_root_attrs
+
+        shadows_child = tmp_path / f"shadow.gsplats.zarr.{fmt}"
+        self._write_with_symlink(
+            shadows_child,
+            fmt,
+            ("x.gsplats.zarr/.zattrs", "child/.zattrs"),
+            [("x.gsplats.zarr/child/.zattrs", '{"whose": "child"}')],
+        )
+        assert read_archive_root_attrs(shadows_child) == {}
+
+        only_link = tmp_path / f"link.gsplats.zarr.{fmt}"
+        self._write_with_symlink(
+            only_link, fmt, ("x.gsplats.zarr/.zattrs", "/etc/passwd"), []
+        )
+        assert read_archive_root_attrs(only_link) == {}
+
+        with_real = tmp_path / f"link_plus_real.gsplats.zarr.{fmt}"
+        self._write_with_symlink(
+            with_real,
+            fmt,
+            ("notes/.zattrs", "/etc/passwd"),
+            [("x.gsplats.zarr/.zattrs", '{"whose": "store"}')],
+        )
+        assert read_archive_root_attrs(with_real) == {"whose": "store"}
+
+    def test_non_archive_and_missing_paths_are_empty(self, tmp_path: Path) -> None:
+        """A plain file, a directory and a missing path all yield ``{}``.
+
+        ``read_authored_appearance`` funnels every non-directory input here, so
+        "not an archive" has to be a quiet empty answer rather than a raise.
+        """
+        from luxar.gsplats.io._archive import read_archive_root_attrs
+        from luxar.gsplats.io.load_gsplats import read_authored_appearance
+
+        plain = tmp_path / "notes.txt"
+        plain.write_text("not an archive")
+        missing = tmp_path / "gone.gsplats.zarr.zip"
+
+        assert read_archive_root_attrs(plain) == {}
+        assert read_archive_root_attrs(tmp_path) == {}
+        assert read_archive_root_attrs(missing) == {}
+        assert read_authored_appearance(plain) == {}
+        assert read_authored_appearance(missing) == {}
+
+    @pytest.mark.parametrize("fmt", ["zip", "tar.gz"])
+    def test_oversized_attrs_member_refused(
+        self, tmp_path: Path, fmt: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A ``.zattrs`` far too big for attrs is refused, not read into memory."""
+        from luxar.gsplats.io import _archive
+
+        monkeypatch.setattr(_archive, "_MAX_ATTRS_BYTES", 8)
+        archive = tmp_path / f"fat.gsplats.zarr.{fmt}"
+        self._write(archive, fmt, [("x.gsplats.zarr/.zattrs", '{"opacity": 0.75}')])
+        assert _archive.read_archive_root_attrs(archive) == {}
 
 
 def test_write_gsplats_tree_stamps_child_index_on_children() -> None:

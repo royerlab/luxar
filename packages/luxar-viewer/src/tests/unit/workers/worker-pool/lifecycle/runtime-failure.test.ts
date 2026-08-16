@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Tests for WorkerPool's runtime-error handling: a worker that
  * crashes after init via `onerror` / `onmessageerror` should be

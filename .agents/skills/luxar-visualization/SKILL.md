@@ -163,9 +163,11 @@ Two things this formula gets wrong if you write it from intuition:
   the width, a WIDER window leaves margin, a NARROWER one crops. (That is the
   direction — it is easy to write it backwards.) The design aspect is a declared
   calibration point, not a safety margin, so say which one you picked. Framing for
-  a square viewport is the no-crop-ever choice, but for a wide object it usually
-  lands within a few percent of the viewer's own default, which defeats the
-  purpose of baking a camera at all — check before choosing it.
+  a square viewport is the no-crop-ever choice; it still beats the viewer's own
+  default (which fits a cube of the LARGEST dimension into 75% of the frame and
+  then adds 20% margin, so roughly `1.6 · maxDim / (2 tan(fov/2))`) by ~1.3-1.5x,
+  but on a wide object it leaves the thing filling only ~2/3 of the width at a
+  normal landscape aspect. Work out both numbers before choosing.
 - **Fit at the NEAR FACE, not the target plane.** The frustum narrows towards the
   camera, so a deep object's camera-facing side has the least room: fit at
   `d - depth/2` and add the half-depth back. Fitting at the centre plane silently

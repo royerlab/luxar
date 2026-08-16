@@ -1,15 +1,23 @@
 """Tests for :mod:`luxar._zarr_compat` — the zarr-format seam.
 
-Luxar runs on zarr-python 3 but WRITES zarr format 2. These tests pin the parts
-of that arrangement that would otherwise fail silently: a store that quietly
-became format 3, a compressor that quietly became Blosc when RAW was meant, and
-a production writer that quietly stopped naming its compressor at all.
+Luxar writes zarr format 3 by default and can still be told to write format 2,
+while READING both unconditionally. These tests pin the parts of that
+arrangement that would otherwise fail silently: a store that quietly came out in
+the wrong format, a compressor that quietly became Blosc when RAW was meant, a
+codec that quietly failed to translate between the two formats' spellings, and a
+production writer that quietly stopped naming its compressor at all.
+
+Most of the format assertions are parameterized over BOTH formats rather than
+pinning the current default. That is the actual contract now — existing stores
+stay format 2 and new ones are format 3, so both are live at once — and it also
+means the file does not have to be rewritten the next time the default moves.
 """
 
 from __future__ import annotations
 
 import ast
 import json
+import warnings
 import zipfile
 from pathlib import Path
 
@@ -22,48 +30,202 @@ from luxar import _zarr_compat as zc
 
 PROD_ROOT = Path(__file__).resolve().parents[1]
 
+#: The root metadata document each format writes, for on-disk assertions.
+ROOT_DOC = {2: ".zgroup", 3: "zarr.json"}
+
+#: What ``compressor="auto"`` resolves to per format. NOT the same compressor:
+#: "auto" means "whatever zarr would have picked", and zarr picked differently
+#: in the two formats (Blosc/lz4/5 at 2, zstd at 3). Anything whose bytes matter
+#: names its compressor; this is only for fixtures that never did.
+AUTO_COMPRESSOR = {2: "blosc", 3: "zstd"}
+
+
+@pytest.fixture(params=(2, 3), ids=("v2", "v3"))
+def write_format(request: pytest.FixtureRequest):
+    """Run a test once per write format, restoring the default afterwards.
+
+    Uses the real override rather than monkeypatching the module attribute, so
+    every test that takes this fixture is also a test that the override works.
+    """
+    original = zc.ZARR_FORMAT
+    zc.set_zarr_format(request.param)
+    try:
+        yield request.param
+    finally:
+        zc.set_zarr_format(original)
+
+
+@pytest.fixture
+def v3_writes():
+    """Pin format-3 writes for one test, restoring the default afterwards.
+
+    A bare `set_zarr_format(3)` in a test body leaks into every test that runs
+    after it in the same process, which is invisible while the default already is
+    3 and confusing under `LUXAR_ZARR_FORMAT=2`.
+    """
+    original = zc.ZARR_FORMAT
+    zc.set_zarr_format(3)
+    try:
+        yield 3
+    finally:
+        zc.set_zarr_format(original)
+
+
+def _array_meta(path: Path, name: str) -> dict:
+    """An array's raw metadata document, in whichever format it was written.
+
+    Deliberately read off disk rather than through zarr's API: these tests are
+    about what LANDS there, and zarr would normalise away the very differences
+    being asserted.
+    """
+    v2 = path / name / ".zarray"
+    if v2.exists():
+        return json.loads(v2.read_text())
+    return json.loads((path / name / "zarr.json").read_text())
+
+
+def _only_chunk(path: Path, name: str) -> bytes:
+    """The single stored chunk of a one-chunk array, in whichever format.
+
+    The formats key chunks differently — ``codes/0`` at format 2, ``codes/c/0``
+    at format 3 — so this collects every non-metadata file under the array and
+    insists there is exactly one, rather than naming a layout.
+    """
+    array_dir = path / name
+    chunks = sorted(
+        f
+        for f in array_dir.rglob("*")
+        if f.is_file() and f.name not in (".zarray", ".zattrs", "zarr.json")
+    )
+    assert len(chunks) == 1, f"expected one chunk under {array_dir}, got {chunks}"
+    return chunks[0].read_bytes()
+
+
+def _shuffle_sensitive_codes() -> np.ndarray:
+    """A deterministic uint16 ramp whose bytes compress better byte-shuffled.
+
+    Quantization codes in a real store are Hilbert-ordered, so the high byte is
+    nearly constant while the low byte churns — precisely what a byte shuffle
+    separates. A flat ``arange`` would compress the same either way and would
+    make an assertion on the shuffled bytes vacuous.
+    """
+    steps = np.random.default_rng(0xC0FFEE).integers(-5, 6, size=4096)
+    return (np.cumsum(steps) % 65536).astype(np.uint16)
+
+
+def _compressor_view(meta: dict) -> dict | None:
+    """The array's compressor as a comparable dict, from either format.
+
+    Format 2 records a single ``compressor`` object keyed by ``id``; format 3
+    records an ordered ``codecs`` chain whose members are ``{name,
+    configuration}`` and which always contains the mandatory ``bytes`` codec.
+    Normalised to ``{"name": ..., **configuration}`` so assertions read the same
+    either way. ``None`` means stored RAW.
+    """
+    if "compressor" in meta:  # format 2
+        comp = meta["compressor"]
+        if comp is None:
+            return None
+        return {"name": comp["id"], **{k: v for k, v in comp.items() if k != "id"}}
+    compressors = [
+        c
+        for c in meta.get("codecs", [])
+        if c.get("name") not in ("bytes", "transpose")
+        and c.get("name") not in _FILTER_NAMES
+    ]
+    if not compressors:
+        return None
+    first = compressors[0]
+    return {"name": first["name"], **first.get("configuration", {})}
+
+
+#: Array-to-array codecs are FILTERS, not compressors; they must not be mistaken
+#: for one when reading a format-3 chain.
+_FILTER_NAMES = {"luxar_delta_v1"}
+
+
+def _filter_names(meta: dict) -> list[str]:
+    """The array's filters by name, from either format."""
+    if "filters" in meta:  # format 2
+        return [f["id"] for f in (meta["filters"] or [])]
+    return [c["name"] for c in meta.get("codecs", []) if c["name"] in _FILTER_NAMES]
+
 
 # ---------------------------------------------------------------------------
 # The format we write
 # ---------------------------------------------------------------------------
 
 
-def test_zarr_format_is_2() -> None:
-    """The declared write-format. Flipping this is a deliberate, reviewed act."""
-    assert zc.ZARR_FORMAT == 2
+def test_the_default_write_format_is_3() -> None:
+    """The declared default. Changing it is a deliberate, reviewed act."""
+    assert zc.DEFAULT_ZARR_FORMAT == 3
 
 
-def test_open_group_creates_a_format_2_store(tmp_path: Path) -> None:
-    """A created store must be v2 on disk: `.zgroup` present, no `zarr.json`."""
+def test_format_2_remains_producible() -> None:
+    """The escape hatch must exist, and must be the only other option.
+
+    Format 2 stays writable for a tool that cannot read 3; nothing else is, so
+    a typo'd override fails loudly instead of picking a format nobody supports.
+    """
+    assert zc.SUPPORTED_ZARR_FORMATS == (2, 3)
+    with pytest.raises(ValueError):
+        zc.set_zarr_format(1)
+
+
+def test_open_group_creates_the_selected_format(
+    tmp_path: Path, write_format: int
+) -> None:
+    """A created store must be the requested format on disk, and only that one.
+
+    Asserting the OTHER format's document is absent matters as much as asserting
+    its own is present: `mode="a"` on an existing store can write a second root
+    beside the first, leaving both documents and a store whose format depends on
+    which reader looks.
+    """
     p = tmp_path / "s.zarr"
     zc.open_group(p, mode="w")
-    assert json.loads((p / ".zgroup").read_text())["zarr_format"] == 2
-    assert not (p / "zarr.json").exists()
+    doc = p / ROOT_DOC[write_format]
+    assert json.loads(doc.read_text())["zarr_format"] == write_format
+    other = ROOT_DOC[2 if write_format == 3 else 3]
+    assert not (p / other).exists(), f"also wrote {other}"
 
 
-def test_open_group_writes_v2_even_when_the_global_default_is_3(
-    tmp_path: Path,
+def test_open_group_ignores_the_ambient_default(
+    tmp_path: Path, write_format: int
 ) -> None:
     """The facade must not depend on ``zarr.config``'s ambient default.
 
-    Setting ``default_zarr_format=2`` globally would be an easier fix than
+    Setting ``default_zarr_format`` globally would be an easier fix than
     threading ``zarr_format`` through, but it makes correctness depend on import
-    order and on nobody else touching the config. This asserts the facade is
-    explicit: with the global default set to 3 — the value zarr 3 ships — the
-    store must STILL come out as format 2.
+    order and on nobody else touching the config. The ambient default is set to
+    the OPPOSITE format here; the store must still come out as asked.
     """
-    with zarr.config.set({"default_zarr_format": 3}):
+    opposite = 2 if write_format == 3 else 3
+    with zarr.config.set({"default_zarr_format": opposite}):
         p = tmp_path / "cfg.zarr"
         zc.open_group(p, mode="w")
-        assert (p / ".zgroup").exists(), "wrote a v3 store under a v3 default"
-        assert json.loads((p / ".zgroup").read_text())["zarr_format"] == 2
+        doc = p / ROOT_DOC[write_format]
+        assert doc.exists(), f"ambient default {opposite} won over the facade"
+        assert json.loads(doc.read_text())["zarr_format"] == write_format
 
 
-def test_memory_group_and_create_root_group_are_format_2(tmp_path: Path) -> None:
-    """The other two group constructors must pin the format too, not just `open_group`."""
-    assert zc.memory_group().metadata.zarr_format == 2
+def test_every_group_constructor_pins_the_format(
+    tmp_path: Path, write_format: int
+) -> None:
+    """All three constructors must pin it, not just `open_group`.
+
+    They are separate code paths and only one of them is exercised by most
+    tests, so a constructor that quietly followed zarr's default would go
+    unnoticed until something read the store back.
+    """
+    assert zc.memory_group().metadata.zarr_format == write_format
     store = zc.open_store(tmp_path / "r.zarr", mode="w")
-    assert zc.create_root_group(store).metadata.zarr_format == 2
+    assert zc.create_root_group(store).metadata.zarr_format == write_format
+    p = tmp_path / "og.zarr"
+    zc.open_group(p, mode="w")
+    assert json.loads((p / ROOT_DOC[write_format]).read_text())["zarr_format"] == (
+        write_format
+    )
 
 
 def test_read_is_version_agnostic(tmp_path: Path) -> None:
@@ -84,16 +246,9 @@ def test_read_is_version_agnostic(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _zarray(group: zarr.Group, path: Path, name: str) -> dict:
-    """Read an array's raw v2 `.zarray` document straight off disk.
-
-    Deliberately not via zarr's own API: these tests are about what LANDS on
-    disk, and zarr would happily normalise away the difference being asserted.
-    """
-    return json.loads((path / name / ".zarray").read_text())
-
-
-def test_compressor_none_stores_raw_not_blosc(tmp_path: Path) -> None:
+def test_compressor_none_stores_raw_not_blosc(
+    tmp_path: Path, write_format: int
+) -> None:
     """``None`` must mean RAW.
 
     This is the sharp edge of the zarr-3 API: ``compressors`` defaults to
@@ -106,10 +261,43 @@ def test_compressor_none_stores_raw_not_blosc(tmp_path: Path) -> None:
     zc.create_array(
         g, "blob", data=np.arange(16, dtype=np.uint8), chunks=(16,), compressor=None
     )
-    assert _zarray(g, p, "blob")["compressor"] is None
+    assert _compressor_view(_array_meta(p, "blob")) is None
 
 
-def test_compressor_object_is_used_verbatim(tmp_path: Path) -> None:
+def test_array_compressor_never_reports_a_compressed_array_as_raw(
+    tmp_path: Path, write_format: int
+) -> None:
+    """``array_compressor(a) is None`` must mean RAW in BOTH formats.
+
+    Tests assert ``is None`` to mean "stored uncompressed" (the packed
+    image-label byte blobs are the real case), so anything else answering None
+    turns a compression regression into a green test.
+
+    Format 3 got this wrong: the helper skipped every codec without a ``cname``
+    on the theory that it was the mandatory ``bytes`` codec, and fell through to
+    ``None``. Measured, ``.compressors`` holds ONLY bytes-to-bytes compressors —
+    the ``bytes`` codec is in ``.serializer`` — so the skip was reached solely by
+    a real non-blosc compressor, and a zstd-compressed array read back as raw
+    while the identical format-2 array raised.
+    """
+    from numcodecs import Zstd
+
+    from luxar.conftest import array_compressor
+
+    p = tmp_path / "mixed.zarr"
+    g = zc.open_group(p, mode="w")
+    data = np.arange(16, dtype=np.uint16)
+    zc.create_array(g, "raw", data=data, chunks=(16,), compressor=None)
+    zc.create_array(g, "zstd", data=data, chunks=(16,), compressor=Zstd(level=9))
+
+    opened = zc.open_group(p, mode="r")
+    assert array_compressor(opened["raw"]) is None
+    # Loud, in whichever way the format expresses it — never a quiet None.
+    with pytest.raises((TypeError, AttributeError)):
+        array_compressor(opened["zstd"])
+
+
+def test_compressor_object_is_used_verbatim(tmp_path: Path, write_format: int) -> None:
     """A numcodecs codec must reach `.zarray` unaltered — this is Luxar's zstd-9 policy."""
     p = tmp_path / "z.zarr"
     g = zc.open_group(p, mode="w")
@@ -120,42 +308,93 @@ def test_compressor_object_is_used_verbatim(tmp_path: Path) -> None:
         chunks=(16,),
         compressor=Blosc(cname="zstd", clevel=9, shuffle=Blosc.SHUFFLE),
     )
-    c = _zarray(g, p, "codes")["compressor"]
-    assert (c["id"], c["cname"], c["clevel"], c["shuffle"]) == ("blosc", "zstd", 9, 1)
+    c = _compressor_view(_array_meta(p, "codes"))
+    assert c is not None
+    # Format 2 spells shuffle as numcodecs' integer, format 3 as a name; both
+    # must mean BYTE shuffle, which is the half of the policy that is measured.
+    shuffle = c["shuffle"]
+    assert (c["name"], c["cname"], c["clevel"]) == ("blosc", "zstd", 9)
+    assert shuffle in (1, "shuffle"), f"lost byte shuffle: {shuffle!r}"
 
 
-def test_compressor_auto_matches_zarr2s_implicit_default(tmp_path: Path) -> None:
-    """``"auto"`` is the compatibility escape hatch, and it must stay lz4/5.
+def test_the_recorded_shuffle_is_the_one_the_chunk_got(
+    tmp_path: Path, write_format: int
+) -> None:
+    """The stored CHUNK must be what the policy's compressor produces.
 
-    Test fixtures that never named a compressor relied on zarr 2's default. If
-    zarr's ``"auto"`` ever drifts, those fixtures change bytes — this is where
-    that shows up.
+    The test above reads the recorded configuration, which is exactly what a
+    lost shuffle does NOT disturb — and format 3 can lose it. zarr's format-3
+    ``BloscCodec`` hands numcodecs the SERIALIZED BYTE buffer rather than the
+    typed array, so blosc infers ``typesize=1`` and the byte shuffle degrades to
+    a no-op unless zarr can forward ``typesize`` explicitly — which it only does
+    for ``numcodecs >= 0.16`` (hence the direct floor in ``pyproject.toml``).
+    Below it, ``zarr.json`` still says ``typesize: 2, shuffle: shuffle`` while
+    the bytes are the unshuffled ones; nothing raises, the round-trip is fine
+    (blosc records its own parameters in the frame header, so a reader is
+    unaffected), and the store is simply larger. Measured on a 200k-point scene:
+    12.5% of the chunk bytes, more than the delta filter was added to win.
+
+    So this asserts on the BYTES, which is the only place the difference is
+    visible, and it does so for both formats — the chunk is byte-identical to
+    the numcodecs encoding either way, which is the property that makes a
+    format-2 store and a format-3 one cost the same.
+    """
+    codes = _shuffle_sensitive_codes()
+    policy = Blosc(cname="zstd", clevel=9, shuffle=Blosc.SHUFFLE)
+    shuffled = bytes(policy.encode(codes))
+    plain = bytes(Blosc(cname="zstd", clevel=9, shuffle=Blosc.NOSHUFFLE).encode(codes))
+    # Non-vacuity: on data the shuffle cannot help, storing the unshuffled bytes
+    # would satisfy the assertion below by accident.
+    assert len(shuffled) < len(plain), "sample data must reward the byte shuffle"
+
+    p = tmp_path / "policy.zarr"
+    g = zc.open_group(p, mode="w")
+    zc.create_array(g, "codes", data=codes, chunks=(codes.size,), compressor=policy)
+    assert _only_chunk(p, "codes") == shuffled, (
+        f"format {write_format} stored {len(_only_chunk(p, 'codes'))} bytes; the "
+        f"byte-shuffled policy encoding is {len(shuffled)} and the unshuffled one "
+        f"{len(plain)} — a match with the latter means the shuffle was dropped"
+    )
+
+
+def test_compressor_auto_is_the_formats_own_default(
+    tmp_path: Path, write_format: int
+) -> None:
+    """``"auto"`` is the compatibility escape hatch, and it is FORMAT-dependent.
+
+    It means "whatever zarr would have picked", which is not the same compressor
+    in the two formats: Blosc/lz4/5 at format 2, zstd at format 3. Test fixtures
+    that never named a compressor get that, and if zarr's choice drifts their
+    bytes change — this is where that shows up. Anything whose bytes matter
+    names its compressor instead.
     """
     p = tmp_path / "a.zarr"
     g = zc.open_group(p, mode="w")
     zc.create_array(
         g, "x", data=np.arange(8, dtype=np.float32), chunks=(8,), compressor="auto"
     )
-    c = _zarray(g, p, "x")["compressor"]
-    assert c is not None and c["id"] == "blosc"
-    assert (c["cname"], c["clevel"]) == ("lz4", 5)
+    c = _compressor_view(_array_meta(p, "x"))
+    assert c is not None, '"auto" must not mean RAW'
+    assert c["name"] == AUTO_COMPRESSOR[write_format]
 
 
-def test_the_compressor_DEFAULT_is_auto_not_raw(tmp_path: Path) -> None:
-    """Omitting ``compressor`` must behave like zarr 2's implicit default.
+def test_the_compressor_DEFAULT_is_auto_not_raw(
+    tmp_path: Path, write_format: int
+) -> None:
+    """Omitting ``compressor`` must mean "auto", never RAW.
 
     Distinct from the ``compressor="auto"`` test above, which passes the value
     explicitly and so cannot notice the DEFAULT changing. Mutation testing found
     that gap: flipping the default to ``None`` left the whole suite green while
-    silently turning ~79 test fixtures from Blosc to RAW — a byte change with no
-    failing test anywhere.
+    silently turning ~79 test fixtures from compressed to RAW — a byte change
+    with no failing test anywhere.
     """
     p = tmp_path / "default.zarr"
     g = zc.open_group(p, mode="w")
     zc.create_array(g, "d", data=np.arange(8, dtype=np.float32), chunks=(8,))
-    c = _zarray(g, p, "d")["compressor"]
+    c = _compressor_view(_array_meta(p, "d"))
     assert c is not None, "the default must not be RAW"
-    assert (c["id"], c["cname"], c["clevel"]) == ("blosc", "lz4", 5)
+    assert c["name"] == AUTO_COMPRESSOR[write_format]
 
 
 def test_chunks_true_is_translated_and_never_reaches_zarr(tmp_path: Path) -> None:
@@ -184,27 +423,63 @@ def test_chunks_true_is_translated_and_never_reaches_zarr(tmp_path: Path) -> Non
     assert c.chunks == (8,)
 
 
-def test_a_numcodecs_filter_lands_in_the_v2_filters_field(tmp_path: Path) -> None:
-    """``luxar_delta_v1`` rides in the v2 ``.zarray`` ``filters`` list.
+def test_a_filter_lands_where_its_format_records_filters(
+    tmp_path: Path, write_format: int
+) -> None:
+    """``luxar_delta_v1`` must reach the metadata under the SAME name either way.
 
-    The viewer resolves it by that exact shape (zarrita maps a v2 filter ``id``
-    to the codec name ``numcodecs.<id>``), so the field must not migrate into a
-    v3-style codec pipeline while we still write format 2.
+    The two formats file a filter differently — format 2 in the ``.zarray``
+    ``filters`` list, format 3 as an array-to-array member of the ``zarr.json``
+    ``codecs`` chain — and the viewer resolves each through a different zarrita
+    registry namespace. What must not vary is the NAME, because a single
+    TypeScript codec serves both.
+
+    Writers always hand the facade a numcodecs filter, so at format 3 this is
+    also the test that the translation happened at all: an untranslated
+    numcodecs object does not survive into a format-3 chain.
     """
-    from numcodecs import Delta
+    from luxar.encoding._encoders.delta_codec import LuxarDelta
 
     p = tmp_path / "f.zarr"
     g = zc.open_group(p, mode="w")
+    codes = np.arange(24, dtype=np.uint16).reshape(8, 3)
     zc.create_array(
         g,
         "d",
-        data=np.arange(16, dtype=np.uint16),
-        chunks=(16,),
+        data=codes,
+        chunks=(8, 3),
         compressor=None,
-        filters=[Delta(dtype="<u2")],
+        filters=[LuxarDelta(cols=3, bits=16)],
     )
-    filters = _zarray(g, p, "d")["filters"]
-    assert filters and filters[0]["id"] == "delta"
+    assert _filter_names(_array_meta(p, "d")) == ["luxar_delta_v1"]
+    # ...and it must still decode, which a name alone does not prove.
+    assert np.array_equal(zc.open_group(p, mode="r")["d"][:], codes)
+
+
+def test_a_filter_with_no_format_3_twin_is_refused(tmp_path: Path) -> None:
+    """A filter that cannot be translated must fail the WRITE, not be dropped.
+
+    Dropping it would produce codes no reader can invert: a store that looks
+    valid and decodes to garbage. numcodecs' own ``Delta`` is the case in point
+    — it is a legitimate format-2 filter with no registered format-3 codec.
+    """
+    from numcodecs import Delta
+
+    original = zc.ZARR_FORMAT
+    zc.set_zarr_format(3)
+    try:
+        g = zc.open_group(tmp_path / "orphan.zarr", mode="w")
+        with pytest.raises(ValueError, match="no format-3 codec registered"):
+            zc.create_array(
+                g,
+                "d",
+                data=np.arange(16, dtype=np.uint16),
+                chunks=(16,),
+                compressor=None,
+                filters=[Delta(dtype="<u2")],
+            )
+    finally:
+        zc.set_zarr_format(original)
 
 
 # ---------------------------------------------------------------------------
@@ -296,23 +571,132 @@ def test_close_is_a_no_op_for_a_local_store(tmp_path: Path) -> None:
     zc.close(zc.open_group(tmp_path / "c.zarr", mode="w"))
 
 
-def test_consolidate_writes_zmetadata_indexing_arrays(tmp_path: Path) -> None:
-    """``.zmetadata`` is load-bearing, not an optimisation.
+def test_consolidate_indexes_the_arrays_in_either_format(
+    tmp_path: Path, write_format: int
+) -> None:
+    """Consolidated metadata is load-bearing, not an optimisation.
 
     The viewer's scene loader builds its whole graph from the store's
     ``contents()`` listing, which comes from this document, and has no
-    directory-walking fallback.
+    directory-walking fallback. The two formats put it in different places —
+    format 2 in a separate ``.zmetadata``, format 3 in a
+    ``consolidated_metadata`` member of the root ``zarr.json`` — and zarrita
+    reads both, so what must hold either way is that the array is INDEXED.
+
+    Format 3's consolidated metadata is a zarr-python extension rather than part
+    of the v3 spec (zarr warns about exactly that). It stays load-bearing here
+    regardless, because the viewer's reader implements it.
     """
     p = tmp_path / "cm.zarr"
     g = zc.open_group(p, mode="w")
     zc.create_array(g, "a", data=np.arange(4, dtype=np.float32), compressor=None)
     zc.consolidate(g)
-    meta = json.loads((p / ".zmetadata").read_text())
-    assert meta["zarr_consolidated_format"] == 1
-    assert "a/.zarray" in meta["metadata"]
-    # v2 document names only — a v3 consolidation would key on `zarr.json`.
-    suffixes = {k.rsplit("/", 1)[-1] for k in meta["metadata"]}
-    assert suffixes <= {".zgroup", ".zattrs", ".zarray"}, suffixes
+
+    assert zc.is_consolidated(p), "the completion sentinel must see it"
+    if write_format == 2:
+        meta = json.loads((p / ".zmetadata").read_text())
+        assert meta["zarr_consolidated_format"] == 1
+        assert "a/.zarray" in meta["metadata"]
+        suffixes = {k.rsplit("/", 1)[-1] for k in meta["metadata"]}
+        assert suffixes <= {".zgroup", ".zattrs", ".zarray"}, suffixes
+    else:
+        root = json.loads((p / "zarr.json").read_text())
+        indexed = root["consolidated_metadata"]["metadata"]
+        assert "a" in indexed, sorted(indexed)
+        assert indexed["a"]["node_type"] == "array"
+        assert not (p / ".zmetadata").exists(), "wrote a v2 sidecar too"
+
+
+def test_consolidate_is_silent(tmp_path: Path, write_format: int) -> None:
+    """Consolidating must not emit a warning, in either format.
+
+    zarr-python warns that format-3 consolidated metadata is a zarr-python
+    extension. Unsuppressed it fires on EVERY save, and — because
+    ``ZarrUserWarning`` subclasses ``UserWarning`` — any caller that promotes
+    warnings to errors cannot save at all: ``LuxarZarrCompiler.finalize``
+    catches it and re-raises ``Could not finalize Zarr store``. Several tests
+    legitimately assert warning-freedom around a whole compile
+    (``warnings.simplefilter("error", UserWarning)``), so this is not a
+    hypothetical.
+
+    Asserted as "no warning AND still consolidated", because silencing it by
+    not consolidating would produce a store the viewer loads as an empty scene.
+
+    Matched on the warning CATEGORY, not its wording: the suppression itself is
+    keyed on the message text, so a reworded zarr warning would slip past it —
+    and a test keyed on the same text would slip past in exactly the same way,
+    agreeing with the bug instead of catching it.
+    """
+    p = tmp_path / "quiet.zarr"
+    g = zc.open_group(p, mode="w")
+    zc.create_array(g, "a", data=np.arange(4, dtype=np.float32), compressor=None)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        zc.consolidate(g)
+
+    assert zc.is_consolidated(p), "must still write the index"
+    offending = [w for w in caught if issubclass(w.category, UserWarning)]
+    assert not offending, [f"{w.category.__name__}: {w.message}" for w in offending]
+
+
+def _consolidated_index_holders(store_dir: Path, fmt: int) -> list[str]:
+    """Store-relative dirs carrying a consolidated index ( ``"."`` = the root)."""
+    out: list[str] = []
+    if fmt == 2:
+        for doc in sorted(store_dir.rglob(".zmetadata")):
+            out.append(str(doc.parent.relative_to(store_dir)))
+    else:
+        for doc in sorted(store_dir.rglob("zarr.json")):
+            if json.loads(doc.read_text()).get("consolidated_metadata") is not None:
+                out.append(str(doc.parent.relative_to(store_dir)))
+    return out
+
+
+def test_editing_in_place_leaves_exactly_one_index(
+    tmp_path: Path, write_format: int
+) -> None:
+    """An in-place edit through the facade must not leave a NESTED index behind.
+
+    Format 3 permits a consolidated index on ANY group, and the facade's
+    deliberate ``use_consolidated=False`` bypasses only the ROOT one — a nested
+    index is still honoured. Re-opening an already-consolidated store with plain
+    ``zarr.open_group`` returns nodes built FROM the root index, so
+    re-consolidating serializes that stale tree back out beneath the root; reads
+    afterwards return the PRE-EDIT attributes while every document on disk is
+    correct, and nothing raises.
+
+    Re-opening through the facade carries no index to re-serialize. Pinned as
+    "exactly one index, at the root" (the format-2 invariant the rest of the
+    codebase assumes) AND "the edit is what reads back", because the count alone
+    would still pass if the single remaining index were stale.
+    """
+    p = tmp_path / "edit.zarr"
+    root = zc.open_group(p, mode="w")
+    child = root.create_group("part_0").create_group("child_0")
+    child.attrs["coverage_fraction"] = 0.25
+    child.attrs["keep"] = "me"
+    zc.create_array(
+        child, "a", data=np.arange(4, dtype=np.uint8), chunks=(4,), compressor=None
+    )
+    zc.consolidate(root)
+    assert _consolidated_index_holders(p, write_format) == ["."]
+
+    # The edit-in-place cycle Luxar's own tools perform (annotate-quality,
+    # doctor --fix, the migrate fixtures).
+    reopened = zc.open_group(p, mode="r+")
+    del reopened["part_0"]["child_0"].attrs["coverage_fraction"]
+    reopened["part_0"]["child_0"].attrs["min_pixel_size"] = 100.0
+    zc.consolidate(reopened)
+
+    assert _consolidated_index_holders(p, write_format) == ["."], (
+        "a nested consolidated index survived; reads will prefer it over the "
+        "per-node documents and serve pre-edit attributes"
+    )
+    after = dict(zc.open_group(p, mode="r")["part_0"]["child_0"].attrs)
+    assert "coverage_fraction" not in after, after
+    assert after["min_pixel_size"] == 100.0
+    assert after["keep"] == "me", "untouched attrs must survive the round trip"
 
 
 def test_append_to_an_existing_v3_store_does_not_shadow_it(tmp_path: Path) -> None:
@@ -339,31 +723,181 @@ def test_append_to_an_existing_v3_store_does_not_shadow_it(tmp_path: Path) -> No
     assert reader.attrs["origin"] == "other-tool", "clobbered the foreign attrs"
 
 
-def test_append_still_creates_format_2_when_there_is_nothing_there(
-    tmp_path: Path,
+def test_document_readers_resolve_a_mixed_store_the_way_zarr_does(
+    tmp_path: Path, v3_writes: int
+) -> None:
+    """With BOTH formats' documents present, the readers must answer format 3.
+
+    zarr resolves such a node as format 3 (it warns, then uses `zarr.json`), so a
+    document-level reader that consulted `.zattrs`/`.zarray` first would report a
+    pre-migration view of a store that every OPENER — the viewer included — reads
+    as v3. Silent, and the shape it hands back is what `batch-fit validate`
+    checks tiles against.
+
+    Luxar's writers do not produce this state (see the shadow-root test above);
+    an interrupted in-place migration or a half-finished copy does.
+    """
+    p = tmp_path / "mixed.zarr"
+    g = zc.open_group(p, mode="w")
+    g.attrs["kind"] = "v3-truth"
+    zc.create_array(g, "a", data=np.arange(6, dtype=np.uint8), compressor=None)
+    zc.consolidate(g)
+
+    # Drop a stale v2 root beside it, as an interrupted migration would leave.
+    (p / ".zgroup").write_text(json.dumps({"zarr_format": 2}))
+    (p / ".zattrs").write_text(json.dumps({"kind": "v2-STALE"}))
+    (p / ".zmetadata").write_text(
+        json.dumps({"metadata": {".zattrs": {"kind": "v2-STALE"}}})
+    )
+    (p / "a" / ".zarray").write_text(json.dumps({"shape": [999], "dtype": "|u1"}))
+
+    attrs = zc.read_node_attrs(p)
+    assert attrs is not None and attrs["kind"] == "v3-truth", (
+        f"read_node_attrs answered the stale v2 view: {attrs!r}"
+    )
+    meta = zc.read_array_meta(p / "a")
+    assert meta is not None and meta["shape"] == [6], (
+        f"read_array_meta answered the stale v2 shape: {meta and meta.get('shape')!r}"
+    )
+    # The consolidated reader answers the same store as the per-node one. It has
+    # its own document (`.zmetadata` vs the index inside `zarr.json`), so a
+    # v2-first order here would have the two facade readers disagreeing about one
+    # store while every opener sees only the v3 view.
+    consolidated = zc.read_consolidated_attrs(p)
+    assert consolidated["/"]["kind"] == "v3-truth", (
+        f"read_consolidated_attrs answered the stale v2 index: {consolidated!r}"
+    )
+    # ...and each agrees with what an auto-detecting opener sees.
+    opened = zarr.open_group(str(p), mode="r")
+    assert opened.metadata.zarr_format == 3
+    assert opened.attrs["kind"] == attrs["kind"]
+
+
+def test_a_present_v3_document_is_never_second_guessed_by_a_v2_one(
+    tmp_path: Path, v3_writes: int
+) -> None:
+    """A `zarr.json` that is unusable answers for the node ANYWAY.
+
+    Ordering alone is not enough: a v3 document that says GROUP, or one too
+    corrupt to parse, would otherwise fall through to a stale `.zarray`/`.zattrs`
+    and hand back a plausible pre-migration view. Both of those ARE the
+    corruption `batch-fit validate` is looking for — it reads `read_array_meta`
+    for exactly that verdict — so falling back would let a broken tile pass.
+    """
+    root = tmp_path / "shapes.zarr"
+    g = zc.open_group(root, mode="w")
+    g.create_group("child")
+    (root / "child" / ".zarray").write_text(json.dumps({"shape": [777]}))
+    assert zc.read_array_meta(root / "child") is None, (
+        "a v3 GROUP document fell through to a stale .zarray"
+    )
+
+    corrupt = tmp_path / "corrupt.zarr"
+    corrupt.mkdir()
+    (corrupt / "zarr.json").write_text('{"zarr_format": 3, "node_type": "arr')
+    (corrupt / ".zarray").write_text(json.dumps({"shape": [555]}))
+    (corrupt / ".zattrs").write_text(json.dumps({"kind": "v2-STALE"}))
+    assert zc.read_array_meta(corrupt) is None, (
+        "an unparseable v3 document fell through to a stale .zarray"
+    )
+    assert zc.read_node_attrs(corrupt) is None, (
+        "an unparseable v3 document fell through to stale .zattrs"
+    )
+
+    # A single-format v2 node is untouched by any of this.
+    v2 = tmp_path / "v2array"
+    v2.mkdir()
+    (v2 / ".zarray").write_text(json.dumps({"shape": [3]}))
+    (v2 / ".zattrs").write_text(json.dumps({"kind": "leaf"}))
+    assert (zc.read_array_meta(v2) or {})["shape"] == [3]
+    assert zc.read_node_attrs(v2) == {"kind": "leaf"}
+
+
+def test_a_document_name_demotes_but_never_promotes(tmp_path: Path) -> None:
+    """`doc_name` vetoes an unwrap; it never forces one.
+
+    The content signal alone (`zarr_format: 3`) mis-reads a format-2 document
+    whose USER attributes carry that key — it would answer `{}` and drop every
+    authored value. Naming the document it came from settles that, and
+    `read_node_attrs` always can.
+
+    The asymmetry is the point: promoting on the name would answer `{}` for any
+    non-v3 body served from a `zarr.json` address, which no real writer produces
+    but fakes and misconfigured proxies do — trading a reachable failure for a
+    silent one.
+    """
+    # Demote: a v2 attrs document that merely LOOKS v3 comes back verbatim.
+    confusing = {"zarr_format": 3, "kind": "leaf", "mine": 1}
+    assert zc.attrs_from_node_doc(confusing) == {}, "the content sniff still guesses"
+    assert zc.attrs_from_node_doc(confusing, doc_name=".zattrs") == confusing
+
+    # Never promote: a flat body named `zarr.json` is still returned verbatim.
+    flat = {"kind": "leaf"}
+    assert zc.attrs_from_node_doc(flat, doc_name="zarr.json") == flat
+
+    # A real v3 record still unwraps, named or not.
+    v3 = {"zarr_format": 3, "node_type": "group", "attributes": {"k": "v"}}
+    assert zc.attrs_from_node_doc(v3) == {"k": "v"}
+    assert zc.attrs_from_node_doc(v3, doc_name="zarr.json") == {"k": "v"}
+
+    # End to end: `read_node_attrs` names the document, so a v2 store whose
+    # attrs carry `zarr_format` keeps them.
+    d = tmp_path / "confusing.zarr"
+    d.mkdir()
+    (d / ".zgroup").write_text(json.dumps({"zarr_format": 2}))
+    (d / ".zattrs").write_text(json.dumps(confusing))
+    assert zc.read_node_attrs(d) == confusing
+
+
+def test_is_consolidated_ignores_a_stale_v2_index_beside_a_v3_root(
+    tmp_path: Path, v3_writes: int
+) -> None:
+    """An unfinished v3 save must not read as finished because of a leftover
+    `.zmetadata`.
+
+    This is the completion sentinel `batch-fit` uses to tell a written tile from
+    an interrupted one, so answering "yes" for a store whose v3 root carries no
+    consolidated index would let a half-written tile into a merge.
+    """
+    p = tmp_path / "unfinished.zarr"
+    g = zc.open_group(p, mode="w")  # created, never consolidated
+    zc.create_array(g, "a", data=np.arange(3, dtype=np.uint8), compressor=None)
+    assert not zc.is_consolidated(p), "a fresh unconsolidated v3 store is not finished"
+
+    (p / ".zmetadata").write_text(json.dumps({"metadata": {}}))
+    assert not zc.is_consolidated(p), (
+        "a stale v2 index made an unfinished v3 store report as complete"
+    )
+
+
+def test_append_still_pins_the_format_when_there_is_nothing_there(
+    tmp_path: Path, write_format: int
 ) -> None:
     """The other half of the `mode="a"` rule: creating still pins the format.
 
-    Guards against "fixing" the shadowing bug by dropping `zarr_format` from `"a"`
-    altogether, which would silently start emitting format-3 stores whenever a
-    writer used create-or-open. Includes the pre-made-empty-directory case, since
-    a caller making its output dir first must not change the format.
+    Guards against "fixing" the shadowing bug by dropping `zarr_format` from
+    `"a"` altogether, which would silently hand every create-or-open writer
+    zarr's ambient default instead of Luxar's. Includes the
+    pre-made-empty-directory case, since a caller making its output dir first
+    must not change the format.
     """
+    doc = ROOT_DOC[write_format]
+
     fresh = tmp_path / "fresh.zarr"
     zc.open_group(fresh, mode="a")
-    assert json.loads((fresh / ".zgroup").read_text())["zarr_format"] == 2
+    assert json.loads((fresh / doc).read_text())["zarr_format"] == write_format
 
     premade = tmp_path / "premade.zarr"
     premade.mkdir()
     zc.open_group(premade, mode="a")
-    assert json.loads((premade / ".zgroup").read_text())["zarr_format"] == 2
+    assert json.loads((premade / doc).read_text())["zarr_format"] == write_format
 
 
 @pytest.mark.parametrize("mode", ["w", "a"])
 def test_creating_a_fresh_zipped_store_still_pins_the_format(
-    tmp_path: Path, mode: str
+    tmp_path: Path, mode: str, write_format: int
 ) -> None:
-    """A brand-new ``.zarr.zip`` must come out format 2 in both creating modes.
+    """A brand-new ``.zarr.zip`` must come out in the selected format.
 
     This guards an ORDERING dependency inside :func:`open_group`: it constructs the
     store before consulting :func:`_metadata_docs_exist`, and for a zip that helper
@@ -380,10 +914,12 @@ def test_creating_a_fresh_zipped_store_still_pins_the_format(
 
     with zipfile.ZipFile(p) as zf:
         names = zf.namelist()
-    assert any(n.endswith(".zgroup") for n in names), (
-        f"fresh zipped store is not format 2; archive holds {names[:5]}"
+    doc = ROOT_DOC[write_format]
+    assert any(n.endswith(doc) for n in names), (
+        f"fresh zipped store is not format {write_format}; archive holds {names[:5]}"
     )
-    assert not any(n.endswith("zarr.json") for n in names)
+    other = ROOT_DOC[2 if write_format == 3 else 3]
+    assert not any(n.endswith(other) for n in names)
 
 
 def test_open_store_honours_mode(tmp_path: Path) -> None:
@@ -398,7 +934,9 @@ def test_open_store_honours_mode(tmp_path: Path) -> None:
         zarr.create_group(store=zc.open_store(tmp_path / "refuse.zarr", mode="r"))
 
 
-def test_reads_do_not_trust_stale_consolidated_metadata(tmp_path: Path) -> None:
+def test_reads_do_not_trust_stale_consolidated_metadata(
+    tmp_path: Path, write_format: int
+) -> None:
     """A deleted array must read as ABSENT, not as present-per-the-stale-index.
 
     zarr 2 only consulted ``.zmetadata`` through the separate
@@ -417,7 +955,7 @@ def test_reads_do_not_trust_stale_consolidated_metadata(tmp_path: Path) -> None:
     zc.consolidate(g)
 
     shutil.rmtree(p / "doomed")  # simulate a partial/interrupted write
-    assert (p / ".zmetadata").is_file(), "the stale index must still be present"
+    assert zc.is_consolidated(p), "the stale index must still be present"
 
     reopened = zc.open_group(p, mode="r")
     assert "doomed" not in reopened, "read answered from the stale consolidated index"

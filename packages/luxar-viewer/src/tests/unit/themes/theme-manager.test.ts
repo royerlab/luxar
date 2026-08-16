@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Unit tests for ThemeManager
  * Tests singleton pattern, theme switching, CSS variable injection, and observer pattern

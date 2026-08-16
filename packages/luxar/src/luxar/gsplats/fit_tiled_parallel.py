@@ -243,6 +243,9 @@ def fit_tiled_parallel(
     partition: bool = False,
     recipe: Optional[str] = None,
     recipe_params: "Optional[Any]" = None,
+    grid_scale: Optional[tuple[float, ...]] = None,
+    source_shape: Optional[Sequence[int]] = None,
+    source_dtype: Optional[str] = None,
 ) -> "Any":  # GSplatData (flat) or a GSplatNode (partition)
     """Fit all tiles via concurrent worker subprocesses, then merge.
 
@@ -254,8 +257,11 @@ def fit_tiled_parallel(
     The workers re-invoke single-tile mode (``fit --tile i/M``), which already
     translates centers to global coordinates and — when ``--downscale`` is in
     play — rescales them back to original coordinates.  The merge therefore does
-    **not** rescale again; ``volume_shape`` here is the (post-downscale) shape
-    used only for stats and the empty-result fallback.
+    **not** rescale again; ``volume_shape`` here is the (post-downscale) shape,
+    which is what the stats and the empty-result fallback want, and is also the
+    shape the partition's split planes are computed on — so under ``--downscale``
+    (and/or a ``voxel_size`` with real-space output) the two frames disagree and
+    ``grid_scale`` must be supplied to reconcile them (issue #1587).
 
     Parameters
     ----------
@@ -273,6 +279,26 @@ def fit_tiled_parallel(
         Forwarded to :func:`merge_tile_results`.
     keep_tiles : bool, default False
         Keep the per-tile temp outputs after a successful merge.
+    grid_scale : tuple of float, optional
+        Per-axis factor from the ``volume_shape`` grid's VOXEL frame to the
+        frame the workers write their splats in — the ``--downscale`` factors
+        times the ``voxel_size`` when the fit emits real-space centers, as
+        resolved by :func:`~luxar.gsplats.tiling.resolve_grid_scale`; ``None``
+        when the two frames already agree.  Forwarded to
+        :func:`merge_tile_results`, where it lifts the partition's split planes
+        into the workers' splat frame (#1587).  Nothing else consumes it.
+    source_shape : sequence of int, optional
+        Grid of the volume the merged result represents, when that is NOT
+        ``volume_shape`` — i.e. when the caller decimated before tiling, since
+        ``volume_shape`` is then the (post-downscale) grid the workers fit.
+        Recorded as the source with ``source_declared``; leave ``None`` when the
+        two are the same grid, or the stamp would claim a measurement was a
+        declaration.
+    source_dtype : str, optional
+        Element type the volume was STORED in. The workers hold the volume, not
+        this process, so it cannot be observed here — without it the merged
+        result records a source grid with no byte count and ``info`` prints no
+        compression ratio at all.
 
     Returns
     -------
@@ -399,6 +425,9 @@ def fit_tiled_parallel(
         partition=partition,
         recipe=recipe,
         recipe_params=recipe_params,
+        grid_scale=grid_scale,
+        source_shape=source_shape,
+        source_dtype=source_dtype,
     )
 
     if not keep_tiles:

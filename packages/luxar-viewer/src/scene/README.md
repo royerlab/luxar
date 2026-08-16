@@ -1054,6 +1054,9 @@ _For implementation details, see the source files in this directory._
   pinned byte-for-byte by the 10 M-segment bench contract), plus
   `generateSyntheticPoints` / `generateSyntheticGSplats` built on a
   shared gaussian-blob cluster sampler (`sampleClusteredPositions`).
+  `syntheticLinesBoundsDiagonal` reports the generation volume's
+  diagonal so the injector can size its line primitive by rendered
+  width the way a compiled node does (`types/line-primitive.ts`).
   GSplats get valid lower-triangular Cholesky factors with varied
   scale, anisotropy, and orientation so depth-sorted 'normal'
   blending is order-dependent; the injector emits the production

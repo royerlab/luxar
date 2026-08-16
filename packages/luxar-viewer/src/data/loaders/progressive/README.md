@@ -17,6 +17,10 @@ sizing).
 This folder holds no loader of its own — it is a pure helper module
 imported by the geometry loaders two directories up (in
 `src/data/points/`, `src/data/lines/`, and `src/data/gsplats/`).
+`src/data/mesh/mesh-progressive-loader.ts` — the reveal ladder — shares
+`concat-helpers.ts` and `streaming-policy.ts` too; only the SliceCache
+helpers stay points/lines/gsplats-only, since a mesh is whole-node
+resident and has no per-slice payload to cache.
 
 ## File Structure
 

@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Edge-case tests for WASM loader (index.ts) and TypeScript-fallback
  * projection helpers. Closes wasm.md gap cluster:

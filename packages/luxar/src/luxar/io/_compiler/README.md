@@ -70,7 +70,8 @@ a non-built-in name (matplotlib/colorcet), resolves it to a `(256, 3)` uint8
 LUT, writes a `colormap_lut` dataset, and rewrites the attr value to
 `"custom"`. Built-in names are left untouched (the viewer resolves them
 directly). Emits an at-most-once `UserWarning` advising authors to pin
-`tone_mapping="Neutral"` when the scene uses a LUT but the viewer's default
+`tone_mapping="None"` — an exact passthrough, valid while the scene stays
+inside [0, 1] — when the scene uses a LUT but the viewer's default
 ACES tone-mapping would shift hues — skipped for the implicit `"gray"` default
 and whenever the author set a `tone_mapping` at all (any explicit value,
 `"ACES"` included, is a deliberate choice). The warn flag is threaded by

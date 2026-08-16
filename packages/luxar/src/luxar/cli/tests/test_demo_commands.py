@@ -36,8 +36,14 @@ class TestListAndTable:
         assert result.exit_code == 0
         assert "lorenz" in result.stdout
         # NO non-synthetic demo key may appear in a synthetic-filtered table.
-        # Token-level match (ANSI stripped): substring checks false-positive
-        # on key collisions like "galaxy" ⊂ "spiral_galaxy".
+        # Token-level match (ANSI stripped) rather than substring: keys nest
+        # ("spiral_galaxy" ⊂ "spiral_galaxy_5d", "chromatrace_choir_umap" ⊂
+        # "chromatrace_choir_umap_sequence"), and a substring check breaks on a
+        # nested pair whose SHORTER key is non-synthetic and whose LONGER one is
+        # synthetic — the printed long row would spell the short key. Only one
+        # pair straddles this filter today and it is the harmless direction
+        # ("ocean" synthetic ⊂ "ocean_currents_earth" geoscience), so a substring
+        # check would pass here while being one renamed demo from a false alarm.
         import re
 
         plain = re.sub(r"\x1b\[[0-9;]*m", "", result.stdout)
@@ -462,6 +468,352 @@ class TestCache:
         result = runner.invoke(app, ["demo", "cache", "clear", "--orphans", "--yes"])
         assert result.exit_code == 0
         assert not orphan.exists()
+
+
+class TestProtectedInputDirs:
+    """A hand-placed demo input is inventoried, but never an orphan and never cleared.
+
+    ``~/.cache/luxar/milky_way_gaia_3m/`` holds a CC BY-NC catalog the user put
+    there by hand; there is no download to get it back. Neither DEMO_META state
+    protected it before: unclaimed it read as an orphan (`clear --orphans`
+    rmtree'd it), claimed it read as a download (`clear <key>`/`--all` did).
+    """
+
+    @staticmethod
+    def _protected_name() -> str:
+        """A REAL protected name — used only where the claim state is irrelevant."""
+        from luxar.demos.registry import PROTECTED_INPUT_DIRS
+
+        assert PROTECTED_INPUT_DIRS, "nothing to protect: these tests would be vacuous"
+        return sorted(PROTECTED_INPUT_DIRS)[0]
+
+    @staticmethod
+    def _unclaimed_protected(monkeypatch) -> str:
+        """A protected name that is protected AND claimed by no demo.
+
+        Deliberately SYNTHETIC rather than derived from today's demo set: the
+        orphan route only ever sees unclaimed dirs, and if the Gaia demo one day
+        declares ``caches: ["milky_way_gaia_3m"]`` (a state the design must
+        survive, see the class docstring) a real-name search would find nothing
+        and red these cases while the behaviour was perfectly fine.
+        """
+        name = "synthetic_hand_placed_input"
+        monkeypatch.setattr(
+            "luxar.demos.registry.PROTECTED_INPUT_DIRS", frozenset({name})
+        )
+        return name
+
+    def _make_protected(self, root: Path, name: str | None = None) -> Path:
+        """A protected input directory holding one irreplaceable file."""
+        cdir = root / (name or self._protected_name())
+        cdir.mkdir()
+        payload = cdir / "catalog.zarr.zip"
+        payload.write_bytes(b"g" * 4096)
+        return payload
+
+    def test_inventory_flags_it_and_never_calls_it_an_orphan(self, tmp_path) -> None:
+        from luxar.demos import registry as demo_registry
+
+        payload = self._make_protected(tmp_path)
+        orphan = tmp_path / "orphan-xyz"
+        orphan.mkdir()
+        (orphan / "junk.bin").write_bytes(b"q" * 8)
+        # A near-miss name: protection is by EXACT directory name, so a leftover
+        # copy is still an ordinary (deletable) orphan — a substring match here
+        # would make `<name>_old` permanently unclearable.
+        nearmiss = tmp_path / f"{self._protected_name()}_old"
+        nearmiss.mkdir()
+        (nearmiss / "junk.bin").write_bytes(b"q" * 8)
+
+        entries = {
+            e.path.name: e for e in demo_registry.inventory_caches(cache_root=tmp_path)
+        }
+
+        # Inventoried (the user should see the bytes they are holding)…
+        assert set(entries) == {self._protected_name(), "orphan-xyz", nearmiss.name}
+        assert entries[self._protected_name()].size_bytes == 4096
+        # …and flagged independently of DEMO_META, so an empty `demo_keys` here
+        # no longer means "orphan" — while a real orphan beside it still is one.
+        assert entries[self._protected_name()].protected
+        assert not entries["orphan-xyz"].protected
+        assert entries["orphan-xyz"].demo_keys == ()
+        assert not entries[nearmiss.name].protected
+        assert payload.exists()
+
+    def test_a_near_miss_name_is_still_a_clearable_orphan(
+        self, runner, tmp_path, monkeypatch
+    ) -> None:
+        # The behavioural half of the exact-name rule: `<protected>_old` must go.
+        monkeypatch.setattr("luxar.demos.registry.DEMO_CACHE_ROOT", tmp_path)
+        name = self._unclaimed_protected(monkeypatch)
+        payload = self._make_protected(tmp_path, name)
+        nearmiss = tmp_path / f"{name}_old"
+        nearmiss.mkdir()
+        (nearmiss / "junk.bin").write_bytes(b"q" * 8)
+
+        result = runner.invoke(app, ["demo", "cache", "clear", "--orphans", "--yes"])
+
+        assert result.exit_code == 0
+        assert not nearmiss.exists()
+        assert payload.exists()
+
+    @staticmethod
+    def _row(stdout: str, name: str) -> str:
+        """The one `cache list` row for ``name`` (ANSI stripped)."""
+        import re
+
+        plain = re.sub(r"\x1b\[[0-9;]*m", "", stdout)
+        return next(line for line in plain.splitlines() if name in line)
+
+    def test_cache_list_shows_it_without_the_orphan_warning(
+        self, runner, tmp_path, monkeypatch
+    ) -> None:
+        # Asserted per ROW, not over the whole output: a global "no ORPHAN
+        # anywhere" only holds while the fixture root happens to have no orphan.
+        monkeypatch.setattr("luxar.demos.registry.DEMO_CACHE_ROOT", tmp_path)
+        self._make_protected(tmp_path)
+        orphan = tmp_path / "orphan-xyz"
+        orphan.mkdir()
+        (orphan / "junk.bin").write_bytes(b"q" * 8)
+
+        result = runner.invoke(app, ["demo", "cache", "list"])
+
+        assert result.exit_code == 0
+        protected_row = self._row(result.stdout, self._protected_name())
+        assert "ORPHAN" not in protected_row
+        assert "hand-placed input" in protected_row
+        assert "ORPHAN" in self._row(result.stdout, "orphan-xyz")
+
+    def test_cache_list_marks_a_claimed_protected_dir_too(
+        self, runner, tmp_path, monkeypatch
+    ) -> None:
+        # The post-#1558 state the design has to survive: a demo declares the
+        # name (so the row has an owner) and it must STILL read as a kept input,
+        # or `clear --all` looks legitimate to the reader.
+        monkeypatch.setattr("luxar.demos.registry.DEMO_CACHE_ROOT", tmp_path)
+        protected_demo, _other, name = self._claiming_pair(monkeypatch)
+        (tmp_path / name).mkdir()
+        (tmp_path / name / "catalog.zarr.zip").write_bytes(b"g" * 4096)
+
+        result = runner.invoke(app, ["demo", "cache", "list"])
+
+        assert result.exit_code == 0
+        row = self._row(result.stdout, name)
+        assert protected_demo.key in row  # the claim is still reported…
+        assert "hand-placed input" in row  # …and so is the protection
+        assert "ORPHAN" not in row
+
+    def test_clear_orphans_spares_it_and_still_clears_a_real_orphan(
+        self, runner, tmp_path, monkeypatch
+    ) -> None:
+        monkeypatch.setattr("luxar.demos.registry.DEMO_CACHE_ROOT", tmp_path)
+        # Synthetic name: the notice below is the UNCLAIMED-protected behaviour,
+        # which a real name would stop modelling the day a demo claims it.
+        payload = self._make_protected(tmp_path, self._unclaimed_protected(monkeypatch))
+        orphan = tmp_path / "orphan-dir"
+        orphan.mkdir()
+        (orphan / "junk.bin").write_bytes(b"q" * 100)
+
+        result = runner.invoke(app, ["demo", "cache", "clear", "--orphans", "--yes"])
+
+        assert result.exit_code == 0
+        assert not orphan.exists()  # the sweep still does its job…
+        assert payload.exists()  # …and the irreplaceable file survives it
+        assert payload.parent.exists()
+        assert "hand-placed" in result.stdout
+
+    @staticmethod
+    def _claiming_pair(monkeypatch) -> tuple[object, object, str]:
+        """Make some demo's cache name protected; return (protected, other, name).
+
+        No bundled demo declares ``milky_way_gaia_3m`` today (that is the whole
+        problem — it reads as an orphan), so the by-key and ``--all`` routes are
+        exercised by protecting the cache name of a demo that DOES declare one.
+        The second demo keeps the test honest: the command must still clear
+        everything else it was asked to.
+        """
+        demos = iter_demos()
+        protected_demo = next(d for d in demos if d.caches)
+        name = protected_demo.caches[0]
+        other = next(d for d in demos if d.caches and name not in d.caches)
+        monkeypatch.setattr(
+            "luxar.demos.registry.PROTECTED_INPUT_DIRS", frozenset({name})
+        )
+        return protected_demo, other, name
+
+    @pytest.mark.parametrize("route", ["by-key", "all"])
+    def test_clear_keeps_it_but_clears_the_rest_of_the_selection(
+        self, runner, tmp_path, monkeypatch, route
+    ) -> None:
+        monkeypatch.setattr("luxar.demos.registry.DEMO_CACHE_ROOT", tmp_path)
+        protected_demo, other, name = self._claiming_pair(monkeypatch)
+        kept_dir = tmp_path / name
+        kept_dir.mkdir()
+        kept = kept_dir / "catalog.zarr.zip"
+        kept.write_bytes(b"g" * 4096)
+        doomed_dir = tmp_path / other.caches[0]
+        doomed_dir.mkdir()
+        doomed = doomed_dir / "archive.zip"
+        doomed.write_bytes(b"z" * 1024)
+
+        argv = ["--all"] if route == "all" else [protected_demo.key, other.key]
+        result = runner.invoke(app, ["demo", "cache", "clear", *argv, "--yes"])
+
+        assert result.exit_code == 0
+        assert kept.exists(), "a hand-placed input must survive a cache clear"
+        # The directory too: the empty-dir sweep must not rmdir it either.
+        assert kept_dir.exists()
+        assert not doomed.exists(), "the rest of the selection must still clear"
+        assert "hand-placed" in result.stdout
+
+    def test_an_empty_protected_dir_survives_the_empty_dir_sweep(
+        self, runner, tmp_path, monkeypatch
+    ) -> None:
+        # The directory is skipped before it reaches `cache_dirs`, not merely
+        # before its files are collected: an input directory the user has created
+        # but not yet filled holds no bytes, and the sweep removes exactly those.
+        monkeypatch.setattr("luxar.demos.registry.DEMO_CACHE_ROOT", tmp_path)
+        protected_demo, _other, name = self._claiming_pair(monkeypatch)
+        kept_dir = tmp_path / name
+        kept_dir.mkdir()
+
+        result = runner.invoke(
+            app, ["demo", "cache", "clear", protected_demo.key, "--yes"]
+        )
+
+        assert result.exit_code == 0
+        assert kept_dir.exists()
+        assert "dir(s) removed" not in result.stdout
+
+    @pytest.mark.parametrize("mode", ["--dry-run", "--yes"])
+    def test_the_keep_notice_prints_in_both_preview_and_real_run(
+        self, runner, tmp_path, monkeypatch, mode
+    ) -> None:
+        # The preview has to match the run, including what it refuses to touch.
+        monkeypatch.setattr("luxar.demos.registry.DEMO_CACHE_ROOT", tmp_path)
+        protected_demo, _other, name = self._claiming_pair(monkeypatch)
+        kept_dir = tmp_path / name
+        kept_dir.mkdir()
+        kept = kept_dir / "catalog.zarr.zip"
+        kept.write_bytes(b"g" * 4096)
+
+        result = runner.invoke(
+            app, ["demo", "cache", "clear", protected_demo.key, mode]
+        )
+
+        assert result.exit_code == 0
+        assert f"Keeping {name}/" in result.stdout
+        assert kept.exists()
+        # Nothing else was selected, so the usual empty-selection line still
+        # comes out — the guard must not turn that path into a traceback.
+        assert "Nothing to clear" in result.stdout
+
+    @pytest.mark.parametrize("flags", [["--dry-run"], ["--dry-run", "--yes"]])
+    def test_a_non_empty_dry_run_previews_the_keep_notice(
+        self, runner, tmp_path, monkeypatch, flags
+    ) -> None:
+        # The other notice case selects ONLY the protected demo, so it exits at
+        # "Nothing to clear" and never reaches the `if dry_run:` branch — a preview
+        # with real work to show is where the notice could go missing. `--dry-run
+        # --yes` is included because --dry-run has to win: it is the flag people
+        # reach for precisely when they are unsure.
+        monkeypatch.setattr("luxar.demos.registry.DEMO_CACHE_ROOT", tmp_path)
+        protected_demo, other, name = self._claiming_pair(monkeypatch)
+        kept_dir = tmp_path / name
+        kept_dir.mkdir()
+        kept = kept_dir / "catalog.zarr.zip"
+        kept.write_bytes(b"g" * 4096)
+        other_dir = tmp_path / other.caches[0]
+        other_dir.mkdir()
+        spared = other_dir / "archive.zip"
+        spared.write_bytes(b"z" * 1024)
+        # An EMPTY dir inside it: the empty-directory sweep is a second deletion
+        # path that the preview must also only preview (a leaked staging dir is
+        # exactly the shape a real cache has).
+        staging = other_dir / ".archive.zip.ab12cd"
+        staging.mkdir()
+
+        result = runner.invoke(
+            app,
+            ["demo", "cache", "clear", protected_demo.key, other.key, *flags],
+        )
+
+        assert result.exit_code == 0
+        assert f"Keeping {name}/" in result.stdout
+        assert "(--dry-run: nothing deleted)" in result.stdout
+        assert kept.exists()
+        assert spared.exists(), "--dry-run must delete nothing, even with --yes"
+        assert staging.exists(), "--dry-run swept an empty directory for real"
+
+    def test_no_keep_notice_when_the_input_dir_does_not_exist(
+        self, runner, tmp_path, monkeypatch
+    ) -> None:
+        # A demo can declare the name on a machine that never received the file.
+        # Announcing a directory that isn't there is pure noise — and on the real
+        # `--all` route it would fire on every clear, everywhere.
+        monkeypatch.setattr("luxar.demos.registry.DEMO_CACHE_ROOT", tmp_path)
+        protected_demo, _other, _name = self._claiming_pair(monkeypatch)
+
+        result = runner.invoke(
+            app, ["demo", "cache", "clear", protected_demo.key, "--yes"]
+        )
+
+        assert result.exit_code == 0
+        assert "Keeping" not in result.stdout
+        assert "Nothing to clear" in result.stdout
+
+    def test_the_keep_notice_is_printed_once_per_directory(
+        self, runner, tmp_path, monkeypatch
+    ) -> None:
+        # One cache name can be claimed by several demos, which walks that one
+        # directory once per claimant. The notice is about the directory, so a
+        # selection covering both claimants still earns exactly one line.
+        monkeypatch.setattr("luxar.demos.registry.DEMO_CACHE_ROOT", tmp_path)
+        shared = next(
+            name
+            for name, n in Counter(
+                name for d in iter_demos() for name in d.caches
+            ).most_common()
+            if n > 1
+        )
+        claimants = [d.key for d in iter_demos() if shared in d.caches]
+        assert len(claimants) > 1
+        monkeypatch.setattr(
+            "luxar.demos.registry.PROTECTED_INPUT_DIRS", frozenset({shared})
+        )
+        (tmp_path / shared).mkdir()
+        (tmp_path / shared / "catalog.zarr.zip").write_bytes(b"g" * 4096)
+
+        result = runner.invoke(app, ["demo", "cache", "clear", *claimants, "--yes"])
+
+        assert result.exit_code == 0
+        assert result.stdout.count("Keeping") == 1
+
+    def test_orphans_says_nothing_about_a_claimed_protected_dir(
+        self, runner, tmp_path, monkeypatch
+    ) -> None:
+        # `--orphans` only ever targets UNCLAIMED dirs, so a claimed protected one
+        # was never a candidate: notifying about it would mean volunteering advice
+        # ("delete it by hand if you really mean to") about a directory the user
+        # neither selected nor endangered.
+        monkeypatch.setattr("luxar.demos.registry.DEMO_CACHE_ROOT", tmp_path)
+        _protected_demo, other, name = self._claiming_pair(monkeypatch)
+        kept_dir = tmp_path / name
+        kept_dir.mkdir()
+        kept = kept_dir / "catalog.zarr.zip"
+        kept.write_bytes(b"g" * 4096)
+        orphan = tmp_path / "orphan-dir"
+        orphan.mkdir()
+        (orphan / "junk.bin").write_bytes(b"q" * 100)
+
+        result = runner.invoke(
+            app, ["demo", "cache", "clear", other.key, "--orphans", "--yes"]
+        )
+
+        assert result.exit_code == 0
+        assert not orphan.exists()  # the real orphan still goes
+        assert kept.exists()  # the claimed input is still spared…
+        assert "Keeping" not in result.stdout  # …silently, as it was never at risk
 
 
 class TestBrokenMeta:
@@ -1029,6 +1381,326 @@ def test_running_registry_is_not_inventoried_as_a_cache(tmp_path: Path) -> None:
 
     entries = demo_registry.inventory_caches(cache_root=tmp_path)
     assert [e.path.name for e in entries] == ["some_cache"]
+
+
+_MAKEFILE = Path(__file__).resolve().parents[6] / "Makefile"
+
+
+_CACHE_ROOT_IN_MAKEFILE = "~/.cache/luxar"
+
+
+def _strip_make_prefixes(line: str) -> str:
+    """Drop make's per-line prefixes (``@`` quiet, ``-`` ignore-errors, ``+``).
+
+    They are make syntax, not shell syntax — and stripping them from anything but
+    the HEAD of a logical line would eat a leading ``-mindepth`` / ``-exec``.
+    """
+    while line[:1] in ("@", "-", "+"):
+        line = line[1:]
+    return line
+
+
+def _join_continuations(physical: list[str]) -> list[str]:
+    """Join trailing-backslash lines, so each result is one line make would shell."""
+    logical: list[str] = []
+    pending: list[str] = []
+    for text in physical:
+        if text.endswith("\\"):
+            pending.append(text[:-1])
+            continue
+        logical.append("".join([*pending, text]))
+        pending = []
+    if pending:
+        logical.append("".join(pending))
+    return logical
+
+
+def _recipe_lines(target: str) -> list[str]:
+    """The LOGICAL recipe lines of ``target``: continuations joined, prefixes gone.
+
+    Make gives each *logical* line its own shell, so grading the recipe means
+    reproducing that split — a single joined script hides both a failure that
+    should abort the target and state (a ``cd``) that make deliberately drops
+    between lines.
+
+    Parsing details that are all load-bearing:
+
+    * continuations are joined FIRST and the make prefixes (``@`` quiet, ``-``
+      ignore-errors, ``+`` always-run) stripped only from the head of each
+      logical line — otherwise a natural reformat that starts a continuation with
+      ``-mindepth`` loses its leading dash and the recipe is mis-graded;
+    * a ``#`` comment is not part of the recipe (a target that merely *mentions*
+      the protected name while wiping everything must not look guarded);
+    * a blank or column-0 comment line inside the block is skipped rather than
+      treated as the end of the recipe, so an interleaved comment (or
+      ``.RECIPEPREFIX``) cannot silently truncate the parse to nothing.
+    """
+    lines = _MAKEFILE.read_text(encoding="utf-8").splitlines()
+    start = next(
+        (i for i, ln in enumerate(lines) if ln.startswith(f"{target}:")),
+        None,
+    )
+    if start is None:
+        pytest.skip(f"Makefile has no {target} target")
+
+    physical: list[str] = []
+    for line in lines[start + 1 :]:
+        if not line.strip() or (not line.startswith("\t") and line.startswith("#")):
+            continue  # interleaved blank/comment, not the end of the recipe
+        if not line.startswith("\t"):
+            break  # the next target (or a variable): recipe over
+        physical.append(line[1:])
+
+    commands = []
+    for line in _join_continuations(physical):
+        head = _strip_make_prefixes(line)
+        if head.lstrip().startswith("#") or not head.strip():
+            continue
+        commands.append(head)
+    return commands
+
+
+def _clean_cache_commands() -> str:
+    """The ``clean-cache`` recipe as runnable shell (see :func:`_recipe_lines`)."""
+    return "\n".join(_recipe_lines("clean-cache"))
+
+
+def _run_clean_cache(cache_root: Path, sandbox_home: Path) -> None:
+    """Run the real recipe against ``cache_root``, with ``HOME`` sandboxed.
+
+    Substitution-then-execute is the only way to grade what the target DOES: a
+    substring assertion passes on a recipe that drops ``-mindepth 1`` (which makes
+    ``find`` match the root itself, whose name is not the excluded one, so
+    ``rm -rf`` takes the whole tree).
+
+    That makes this helper the most dangerous code in the file, so its gate is
+    POSITIVE (prove the substitution took) rather than a denylist of spellings —
+    a hoisted `$(CACHE_DIR)` would sail through a denylist, then expand to the
+    empty string in ``sh`` and turn the removal into ``find / …``. ``HOME`` and
+    ``XDG_CACHE_HOME`` are redirected into a sandbox as well, so a recipe that
+    reaches for the user's cache by some other spelling (``cd ~/.cache && find
+    luxar/ …``) can only reach the sandbox. Each logical line runs under the
+    Makefile's own ``.SHELLFLAGS`` (``bash -e -o pipefail``): without ``-e`` a
+    recipe whose removal fails would still grade green.
+    """
+    script = _clean_cache_commands().replace(_CACHE_ROOT_IN_MAKEFILE, str(cache_root))
+    assert script.strip(), "clean-cache recipe parsed to nothing"
+    assert str(cache_root) in script, "substitution did not take"
+    # No `$` and no `~` left: either would be expanded by the shell against the
+    # environment instead of pointing at the throwaway root.
+    assert "$" not in script and "~" not in script, (
+        f"unexpanded expansion left in recipe: {script}"
+    )
+    env = {
+        **os.environ,
+        "HOME": str(sandbox_home),
+        "XDG_CACHE_HOME": str(sandbox_home / ".cache"),
+    }
+    for line in script.splitlines():
+        proc = subprocess.run(
+            ["bash", "-e", "-o", "pipefail", "-c", line],
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        assert proc.returncode == 0, f"{line}\n{proc.stderr}"
+        # The recipe's last line is an `echo`, so rc alone is nearly vacuous.
+        assert proc.stderr == "", f"{line}\n{proc.stderr}"
+
+
+def _populate_cache(root: Path) -> tuple[list[Path], Path]:
+    """A protected payload per protected name + one ordinary cache dir."""
+    from luxar.demos.registry import PROTECTED_INPUT_DIRS
+
+    assert PROTECTED_INPUT_DIRS, "nothing to protect: these tests would be vacuous"
+    payloads = []
+    for name in sorted(PROTECTED_INPUT_DIRS):
+        (root / name).mkdir(parents=True)
+        payload = root / name / "catalog.zarr.zip"
+        payload.write_bytes(b"g" * 64)
+        payloads.append(payload)
+    sibling = root / "ordinary_cache"
+    sibling.mkdir(parents=True)
+    (sibling / "blob.bin").write_bytes(b"z" * 8)
+    return payloads, sibling
+
+
+def _sandbox_home(tmp: Path) -> Path:
+    """A decoy HOME beside the cache root, with a cache dir that must survive."""
+    home = tmp / "sandbox-home"
+    (home / ".cache" / "luxar" / "decoy").mkdir(parents=True)
+    (home / ".cache" / "luxar" / "decoy" / "keep.bin").write_bytes(b"k" * 4)
+    return home
+
+
+@pytest.mark.skipif(
+    not _MAKEFILE.exists(), reason="no Makefile (packaged install without repo root)"
+)
+def test_make_clean_cache_recipe_keeps_the_protected_dirs_when_run() -> None:
+    """`make clean-cache` must not delete a hand-placed input.
+
+    This is the most casual deletion route of all — a bare ``rm -rf
+    ~/.cache/luxar`` there undoes the whole guard. The recipe cannot read
+    PROTECTED_INPUT_DIRS (a clean target has to work with a broken env), so the
+    names are duplicated in the Makefile and this test is what pins the copies
+    together — by RUNNING the recipe against a throwaway root.
+    (``clean-all`` reaches the same recipe; that delegation is pinned separately
+    by :func:`test_no_other_make_recipe_removes_the_cache_root`.)
+    """
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp) / "luxar"
+        payloads, sibling = _populate_cache(root)
+        home = _sandbox_home(Path(tmp))
+
+        _run_clean_cache(root, home)
+
+        for payload in payloads:
+            assert payload.exists(), f"clean-cache destroyed {payload.parent.name}/"
+        assert not sibling.exists(), "clean-cache stopped clearing ordinary caches"
+        assert (home / ".cache" / "luxar" / "decoy" / "keep.bin").exists(), (
+            "the recipe reached outside the root it was given"
+        )
+
+
+@pytest.mark.skipif(
+    not _MAKEFILE.exists(), reason="no Makefile (packaged install without repo root)"
+)
+@pytest.mark.skipif(
+    getattr(os, "geteuid", lambda: 1)() == 0,
+    reason="root ignores the permission bits that make the removal fail",
+)
+def test_make_clean_cache_fails_loudly_when_it_cannot_remove() -> None:
+    """A clear that cannot clear must not report success.
+
+    This is what the Makefile's own ``.SHELLFLAGS`` (``bash -e -o pipefail``) buy,
+    and therefore what the runner has to reproduce: joined into one prefix-less
+    ``sh`` script the recipe ends in ``echo``, so a failed removal is swallowed and
+    a target that cleared nothing grades green.
+    """
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp) / "luxar"
+        _populate_cache(root)
+        home = _sandbox_home(Path(tmp))
+        root.chmod(0o555)  # nothing under the root can be unlinked
+        try:
+            with pytest.raises(AssertionError):
+                _run_clean_cache(root, home)
+        finally:
+            root.chmod(0o755)  # never poison the tmp teardown
+
+
+@pytest.mark.skipif(
+    not _MAKEFILE.exists(), reason="no Makefile (packaged install without repo root)"
+)
+def test_make_clean_cache_works_through_a_symlinked_cache_root() -> None:
+    """A cache root symlinked onto another disk must still be cleared.
+
+    ``find`` defaults to ``-P``, so without ``-H`` the link itself is the only
+    thing matched and the target is a silent no-op that still prints success.
+    """
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        real = Path(tmp) / "elsewhere"
+        payloads, sibling = _populate_cache(real)
+        link = Path(tmp) / "luxar"
+        link.symlink_to(real, target_is_directory=True)
+        home = _sandbox_home(Path(tmp))
+
+        _run_clean_cache(link, home)
+
+        for payload in payloads:
+            assert payload.exists()
+        assert not sibling.exists(), "a symlinked cache root was never cleared"
+
+
+@pytest.mark.skipif(
+    not _MAKEFILE.exists(), reason="no Makefile (packaged install without repo root)"
+)
+def test_make_clean_cache_recipe_shape() -> None:
+    """Belt-and-braces on the recipe text, beside the executed behaviour tests."""
+    import re
+
+    from luxar.demos.registry import PROTECTED_INPUT_DIRS
+
+    assert PROTECTED_INPUT_DIRS, "nothing to protect: this test would be vacuous"
+    commands = _clean_cache_commands()
+    for name in PROTECTED_INPUT_DIRS:
+        # Tolerant of quoting (`! -name 'x'` is the same behaviour, better hygiene).
+        assert re.search(rf"!\s+-name\s+['\"]?{re.escape(name)}['\"]?", commands), (
+            f"clean-cache does not spare {name}/ — see PROTECTED_INPUT_DIRS"
+        )
+    # A `find` that removes must be depth-bounded: unbounded, it matches the root
+    # itself (whose name is not the excluded one) and takes the whole tree.
+    removals = [ln for ln in commands.splitlines() if "rm -rf" in ln]
+    assert removals
+    for line in removals:
+        assert "find" in line, f"unguarded removal in clean-cache: {line}"
+        assert "-mindepth 1" in line and "-maxdepth 1" in line, line
+    assert not re.search(
+        r"rm\s+-rf\s+(~|\$[({]?HOME[)}]?|\$\{?XDG_CACHE_HOME\}?)/?\.?[a-z/]*"
+        r"\.?cache/luxar/?\*?(\s|$)",
+        commands,
+    ), "a blanket removal of the cache root is back in clean-cache"
+
+
+@pytest.mark.skipif(
+    not _MAKEFILE.exists(), reason="no Makefile (packaged install without repo root)"
+)
+def test_no_other_make_recipe_removes_the_cache_root() -> None:
+    """The guard is only as wide as the Makefile: no OTHER recipe may wipe the cache.
+
+    ``clean-all`` is the target people actually type, and it is one line away
+    from bypassing ``clean-cache`` entirely — so the invariant is checked over the
+    whole file, not over one recipe.
+    """
+    import re
+
+    guarded = set(_recipe_lines("clean-cache"))
+    offenders = []
+    for raw in _MAKEFILE.read_text(encoding="utf-8").splitlines():
+        if not raw.startswith("\t"):
+            continue
+        line = _strip_make_prefixes(raw[1:])
+        if line in guarded or line.lstrip().startswith("#"):
+            continue
+        if re.search(r"rm\s+-rf?.*\.cache/luxar", line):
+            offenders.append(line.strip())
+    assert not offenders, f"cache-root removal outside clean-cache: {offenders}"
+    # …and `clean-all` must still reach the guarded recipe rather than its own.
+    assert any("clean-cache" in line for line in _recipe_lines("clean-all")), (
+        "clean-all no longer delegates to clean-cache"
+    )
+
+
+def test_protected_and_non_cache_dirs_are_disjoint() -> None:
+    """A name cannot be both, and the NON_CACHE_DIRS skip runs first.
+
+    An overlapping name would be skipped outright by ``inventory_caches`` — so it
+    would vanish from the very listing the protection promises it appears in,
+    silently.
+    """
+    from luxar.demos.registry import NON_CACHE_DIRS, PROTECTED_INPUT_DIRS
+
+    assert PROTECTED_INPUT_DIRS & NON_CACHE_DIRS == frozenset()
+
+
+def test_gaia_hand_placed_catalog_dir_is_protected() -> None:
+    """PROTECTED_INPUT_DIRS names a directory the Gaia demo really reads.
+
+    The constant is a hard-coded name (deliberately independent of DEMO_META, so
+    no demo edit can disarm it), which makes it drift-prone the moment the demo
+    moves its cache file — this is the guard for that.
+    """
+    from luxar.demos.demo_gaia_milky_way_3m import CACHE_FILE
+    from luxar.demos.registry import DEMO_CACHE_ROOT, PROTECTED_INPUT_DIRS
+
+    assert CACHE_FILE.parent.name in PROTECTED_INPUT_DIRS
+    assert CACHE_FILE.parent.parent == DEMO_CACHE_ROOT
 
 
 class TestDemoStop:

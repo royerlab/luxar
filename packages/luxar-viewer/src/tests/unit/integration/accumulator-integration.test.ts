@@ -256,9 +256,9 @@ describe('Accumulator Public API', () => {
   // [R11/A-G1][P8] Three-geometry symmetry: Points coverage above is now
   // mirrored on Lines and GSplats accumulators. The three geometries share
   // the DataAccumulator contract (ensureCapacity / fill / getData /
-  // dispose); a test for one but not the others is a hidden coverage gap
-  // — see [[feedback_geometry_symmetry]]. These tests pin the public
-  // surface only (no reflection into private buffers).
+  // dispose); a test for one but not the others is a hidden coverage gap.
+  // These tests pin the public surface only (no reflection into private
+  // buffers).
 
   describe('Lines Loader Integration', () => {
     it('ensureCapacity() forwards (vertexCount, segmentCount) intact', () => {

@@ -154,6 +154,501 @@ def _select_plan_timepoints(
     return [t_indices[i] for i in idx]
 
 
+def effective_floor_spec(fit: FitConfig) -> "str | float | None":
+    """The floor spec a task would actually end up applying.
+
+    ``--floor`` unset (``None``) does NOT mean "no floor": it means "let a
+    ``floor:`` in ``--config``/the preset apply, else the ``fit_gaussian_splats``
+    default (``auto``)". Plan-time resolution has to read that same chain, or an
+    unset ``--floor`` (the batch default) would resolve the wrong spec — or
+    silently override a config's own floor.
+    """
+    if fit.floor is not None:
+        return fit.floor
+    import yaml
+
+    from luxar.cli.gsplat_config import PRESETS, load_fit_config
+
+    try:
+        merged = load_fit_config(
+            preset=fit.preset if fit.preset in PRESETS else None,
+            config_path=fit.config,
+        )
+    except (FileNotFoundError, ValueError, yaml.YAMLError):
+        # A bad --config/preset is reported by the task's own load, as before.
+        # ``yaml.YAMLError`` is NOT a ValueError, so a malformed --config would
+        # otherwise escape planning as a raw parser traceback.
+        return "auto"
+    spec = merged.get("floor", "auto")
+    if spec is None or isinstance(spec, (str, float, int)):
+        return spec
+    raise typer.BadParameter(
+        f"config `floor:` must be a string or number, got {spec!r}"
+    )
+
+
+def _floor_axis_pins(
+    axes_labels: List[str],
+    channel_shape: Tuple[int, ...],
+    *,
+    timepoint: int,
+    channel: int,
+) -> "dict[int, int]":
+    """``{axis: index}`` fixing one sampled ``(t, c)`` slice, by LABEL.
+
+    Label-driven, not positional: ``load_volume``'s 4D positional heuristic reads
+    a ``(T, Z, Y, X)`` store as ``CZYX`` and would index the TIME axis with the
+    channel, silently measuring the floor on ``t=0`` whatever timepoint was asked
+    for (#1174). The flat ``channel`` task index is decoded back into one index
+    per channel-like axis, exactly as the task argv builders do. The vocabulary is
+    :func:`luxar.io.ome_zarr.classify_axis_labels`, which goes by axis NAME, while
+    NGFF discovery derived ``channel_shape`` by axis *type* first — so the two CAN
+    disagree (an NGFF axis typed ``channel`` but named outside the vocabulary, say
+    ``stain``, is channel-like to discovery and invisible here). Only the
+    channel-side disagreement is caught here, as a COUNT mismatch against the
+    discovered ``channel_shape``, and it raises :class:`ValueError`. A time-side
+    one raises nothing — an axis typed ``time`` but named outside the vocabulary
+    is spatial to the classifier, so no time pin is emitted and the caller's own
+    spatial-shape check on the pinned view is what notices. Either outcome sends
+    the caller to its eager fallback, which is a hedge, not a guarantee that the
+    intended slice is recovered (see :func:`_pinned_slice_volume`).
+    """
+    from luxar.io.ome_zarr import classify_axis_labels
+    from luxar.io.volume import decode_flat_channel_index
+
+    time_axis, channel_axes, _ = classify_axis_labels(axes_labels)
+    if len(channel_axes) != len(channel_shape):
+        raise ValueError(
+            f"axis labels {axes_labels} name {len(channel_axes)} channel-like "
+            f"axes but the discovered channel shape is {channel_shape}"
+        )
+    pins: dict[int, int] = {}
+    coords = decode_flat_channel_index(channel, tuple(channel_shape))
+    for axis, coord in zip(channel_axes, coords, strict=True):
+        pins[axis] = int(coord)
+    if time_axis is not None:
+        pins[time_axis] = int(timepoint)
+    return pins
+
+
+def _pinned_slice_volume(
+    input_path: Path,
+    *,
+    channel: int,
+    timepoint: int,
+    array_key: Optional[str],
+    axes: Optional[str],
+    axes_labels: Optional[List[str]] = None,
+    channel_shape: Tuple[int, ...] = (),
+    spatial_shape: Optional[Tuple[int, ...]] = None,
+) -> Any:
+    """A LAZY view of one ``(t, c)`` sub-volume, when possible.
+
+    :func:`~luxar.gsplats.fitting.preprocessing.resolve_volume_floor` reads only a
+    bounded deterministic sample of whatever it is handed, so handing it a
+    lazily-opened, axis-pinned zarr view keeps plan time metadata-cheap — a
+    ``load_volume`` here ends in ``np.asarray(..., float32)`` and would
+    materialize a whole multi-GB timepoint (on a login node, and again on every
+    resume re-plan). Same construction as the merge's volume re-fit
+    (:func:`luxar.gsplats.batch.merge_orchestrator._merge_refit_volume`).
+
+    ``axes_labels`` are the labels DISCOVERED for this store (``ome_info.axes``),
+    which exist whether or not the user passed ``--axes``. If they cannot be
+    mapped onto the store (a label discovery classified differently — the NGFF
+    parser goes by axis *type*, not name — or a pinned view whose remaining shape
+    is not the discovered spatial shape), fall back to the eager
+    :func:`load_volume`. That fallback still asks for the labels it discovered,
+    so it slices the same ``(t, c)``; only if ``load_volume``'s own ``--axes``
+    vocabulary rejects one of them does it drop to the positional heuristic,
+    which may not honour ``timepoint`` at all. The fallback materializes the whole
+    slice, so a caller that samples several of them pays for each in turn — it is
+    a correctness hedge for stores whose labels do not map, not the normal path.
+    """
+    from luxar.io.volume import load_volume, open_volume_lazy, pin_volume_axes
+
+    if axes_labels is not None:
+        problem: Optional[str] = None
+        pins: dict[int, int] = {}
+        try:
+            pins = _floor_axis_pins(
+                axes_labels,
+                tuple(channel_shape),
+                timepoint=timepoint,
+                channel=channel,
+            )
+            view = pin_volume_axes(open_volume_lazy(input_path, array_key), pins)
+        except (ValueError, KeyError, TypeError) as exc:
+            problem = str(exc)
+        else:
+            if spatial_shape is None or tuple(view.shape) == tuple(spatial_shape):
+                return view
+            problem = (
+                f"pinning {pins} left shape {tuple(view.shape)}, not the "
+                f"discovered spatial shape {tuple(spatial_shape)}"
+            )
+        aprint(
+            f"Note: reading the (t={timepoint}, c={channel}) slice eagerly — a "
+            f"lazy axis-pinned view could not be built ({problem})."
+        )
+        if axes is None:
+            try:
+                return load_volume(
+                    input_path,
+                    channel=channel,
+                    timepoint=timepoint,
+                    array_key=array_key,
+                    axes=",".join(axes_labels),
+                )
+            except ValueError as exc:
+                # load_volume's --axes vocabulary is narrower than discovery's
+                # (no `view`/`angle`), so an exotic label lands here.
+                aprint(
+                    f"Note: the discovered axis labels {axes_labels} are not a "
+                    f"usable --axes spec ({exc}); falling back to the positional "
+                    f"heuristic, which may ignore the timepoint."
+                )
+    return load_volume(
+        input_path,
+        channel=channel,
+        timepoint=timepoint,
+        array_key=array_key,
+        axes=axes,
+    )
+
+
+def _materialize(view: Any) -> Any:
+    """Read a (possibly lazy, possibly axis-pinned) view as a float32 array."""
+    import numpy as _np
+
+    return _np.asarray(view[:], dtype=_np.float32)
+
+
+# Bounded, deterministic (t, c) sampling for the ONE global floor level (see
+# :func:`resolve_batch_floor`). The two axes get INDEPENDENT caps, deliberately:
+# a shared budget spent on channels first would leave a store with >= 5
+# channel-like coordinates sampling a single timepoint, which is #1174's erase
+# bug back again in the time direction. 4 timepoints x 4 channel-like
+# coordinates = at most 16 slices, and the per-slice read budget is
+# FLOOR_SAMPLE_BUDGET_VOXELS // n_pairs (2M voxels at the cap), so the TOTAL
+# voxels read never exceed the single-slice whole-volume budget.
+FLOOR_SAMPLE_MAX_SLICES = 16
+FLOOR_SAMPLE_MAX_TIMEPOINTS = 4
+FLOOR_SAMPLE_MAX_CHANNELS = 4
+
+
+def _evenly_spaced(n: int, k: int) -> List[int]:
+    """``k`` evenly spaced indices in ``range(n)``, endpoints included, unique.
+
+    Both callers pass ``k = min(n, <cap>)`` with ``n >= 1``, so ``k == 1`` only
+    happens for a single-index axis and the endpoints are always among the
+    returned indices — which is what makes a MINIMUM over the sampled slices a
+    lower bound under a monotone drift (see :func:`_floor_sample_pairs`). There is
+    deliberately no "one sample -> take the middle" rule here: for the (t, c)
+    axes a middle sample is not representative of the run's dimmest pedestal, it
+    just hides which end is.
+    """
+    if n <= 0 or k <= 0:
+        return []
+    if k >= n:
+        return list(range(n))
+    import numpy as _np
+
+    return sorted({int(i) for i in _np.linspace(0, n - 1, k).round().astype(int)})
+
+
+def _floor_sample_pairs(n_timepoints: int, n_channels: int) -> List[Tuple[int, int]]:
+    """The ``(timepoint, channel)`` slices the global floor level is measured on.
+
+    A pure, deterministic function of ``(n_timepoints, n_channels)``: the
+    cartesian product of up to :data:`FLOOR_SAMPLE_MAX_TIMEPOINTS` evenly spaced
+    timepoints and up to :data:`FLOOR_SAMPLE_MAX_CHANNELS` evenly spaced
+    channel-like coordinates (flat index), i.e. at most
+    :data:`FLOOR_SAMPLE_MAX_SLICES` slices, spanning the store's FULL extent.
+    The two axes are capped INDEPENDENTLY so neither can starve the other:
+
+    * ``n_t > 1`` always yields at least 2 timepoints, INCLUDING the endpoints
+      ``t=0`` and ``t=T-1``. That is what makes a MINIMUM over the samples a true
+      lower bound under a monotone pedestal drift (sensor warm-up, bleaching):
+      the run's dimmest pedestal is then at one of the ends, and both ends are
+      sampled. Allocating time FIRST also matters: spending a shared budget on
+      channels first made a store with >= 5 channel-like coordinates sample a
+      single timepoint, reinstating #1174's erase bug over time.
+    * ``n_c > 1`` always yields at least 2 channel-like coordinates (endpoints
+      included) — a dim channel is the other axis along which one global level
+      can erase data.
+
+    Deliberately independent of ``--timepoints``/``--channels``: the same store
+    must resolve the same level whether the user selects ``0:50`` or ``0:100``,
+    or a resumed/extended run would subtract a different pedestal than the tiles
+    already on disk.
+
+    RESIDUAL RISK — unavoidable with bounded sampling, and NOT eliminated by this
+    rule: a slice that is *not* sampled and dimmer than every sampled one (a
+    blank/bleached/bad frame inside a long movie; a channel beyond
+    :data:`FLOOR_SAMPLE_MAX_CHANNELS`) can still sit below the resolved level,
+    clip to all zeros, fit 0 splats and go silently missing from the merge. Pass
+    ``--floor none``, or an explicit numeric ``--floor N`` low enough for the
+    dimmest slice, when a particular slice must be guaranteed to survive.
+    """
+    n_c = max(1, int(n_channels))
+    n_t = max(1, int(n_timepoints))
+    times = _evenly_spaced(n_t, min(n_t, FLOOR_SAMPLE_MAX_TIMEPOINTS))
+    channels = _evenly_spaced(n_c, min(n_c, FLOOR_SAMPLE_MAX_CHANNELS))
+    return [(t, c) for c in channels for t in times]
+
+
+def resolve_batch_floor(
+    input_path: Path,
+    floor_spec: "str | float | None",
+    *,
+    n_timepoints: int = 1,
+    n_channels: int = 1,
+    array_key: Optional[str] = None,
+    axes: Optional[str] = None,
+    axes_labels: Optional[List[str]] = None,
+    channel_shape: Tuple[int, ...] = (),
+    spatial_shape: Optional[Tuple[int, ...]] = None,
+) -> "Tuple[Optional[float], Optional[str | float]]":
+    """Resolve the batch's background floor ONCE, globally for the whole run.
+
+    ``batch-fit`` uses **one global level for the whole timelapse**: it is
+    resolved here at plan time, recorded in the manifest (``floor_level``), and
+    handed as a concrete number to every ``(t, c)`` task. Forwarding the *spec*
+    instead would make each task re-estimate on its own timepoint — a
+    time-varying pedestal, i.e. brightness flicker across the merged partition
+    (issue #1174).
+
+    One global level has to be safe for the dimmest **sampled** slice, not just
+    for a typical one: the tile workers subtract it unguarded, so a level above
+    some ``(t, c)``'s maximum clips that whole sub-volume to zero — 0 splats, an
+    ``.empty`` marker, a task that exits 0 and a merge that skips it, i.e. a
+    silently MISSING slice while ``status`` reports success. Under
+    ``clip(V - level, 0)`` a too-LOW level is a recoverable under-subtraction
+    while a too-HIGH one destroys signal, so the level is biased low:
+
+    * the spec is resolved on a bounded, deterministic set of evenly spaced
+      slices spanning the store's FULL extent — over time AND over channel-like
+      coordinates, with independent caps so both axes are covered
+      (:func:`_floor_sample_pairs`, at most :data:`FLOOR_SAMPLE_MAX_SLICES`) —
+      each read through a lazy axis-pinned view with the whole-volume sample
+      budget divided among them;
+    * the global level is the **MINIMUM** of the per-slice levels, a lower bound
+      on every SAMPLED slice's pedestal. Each per-slice level is itself already
+      guarded below its own sampled max, so the minimum is below every sampled
+      max — the invariant that makes the reduction unable to erase a sampled
+      slice;
+    * if any sampled slice resolves to "subtract nothing" (a zero level, or the
+      "would erase all signal" guard refusing it), suppression is downgraded to
+      none for the whole run, loudly, rather than erasing a slice.
+
+    Because the sampled set spans the whole store rather than the selection, the
+    same store resolves the same level for ``--timepoints 0:50`` and ``0:100``.
+
+    RESIDUAL RISK: the bound holds for the sampled slices only. A dimmer
+    NON-sampled slice (a blank/bleached frame between samples, a channel above
+    the channel cap) can still be clipped to zero and vanish from the merge; see
+    :func:`_floor_sample_pairs`. ``--floor none`` or an explicit numeric
+    ``--floor N`` is the escape hatch.
+
+    A volume is only opened when the spec is volume-derived (``auto`` / ``pNN`` —
+    pass :func:`effective_floor_spec`, not the raw ``--floor``); ``none`` and a
+    numeric spec are already concrete, so they cost no read and round-trip
+    exactly as before. An explicitly disabled spec (``None``, e.g. ``floor:
+    null`` in a YAML config) emits no ``--floor`` at all, leaving the task's own
+    config to disable it.
+
+    A NEGATIVE resolved level (dark-frame-corrected data) cannot be forwarded as
+    a concrete ``--floor`` (neither the CLI nor ``fit_gaussian_splats`` accepts
+    one), so the SPEC is forwarded and each ``(t, c)`` task resolves it itself —
+    announced loudly, because pedestals may then differ across the run — and the
+    manifest records ``floor_level=None`` ("not pinned").
+
+    Returns ``(level, forward)``: the numeric level (``None`` when
+    disabled/refused/unset) and the value to put in ``fit_args["floor"]``
+    (``None`` = emit no ``--floor`` at all).
+    """
+    from luxar.cli.gsplat_ops.fitting.fit_utils import (
+        floor_spec_needs_volume,
+        resolve_shared_floor,
+        validate_floor_spec,
+    )
+    from luxar.gsplats.fitting.preprocessing import (
+        FLOOR_SAMPLE_BUDGET_VOXELS,
+        _sample_volume_for_floor,
+        resolve_volume_floor,
+    )
+
+    if floor_spec is None:
+        return None, None
+    # Validate BEFORE reading anything: a bad spec must not cost a volume read,
+    # and must surface as a usage error rather than a traceback.
+    validate_floor_spec(floor_spec)
+
+    if not floor_spec_needs_volume(floor_spec):
+        # Concrete already ("none" / a number): resolved without touching data,
+        # so nothing is guarded here — exactly as before this resolution existed.
+        return resolve_shared_floor(
+            None, floor_spec, guard_numeric=False, scope="every (t, c) task"
+        )
+
+    pairs = _floor_sample_pairs(n_timepoints, n_channels)
+    budget = max(1, int(FLOOR_SAMPLE_BUDGET_VOXELS) // len(pairs))
+    levels: List[Optional[float]] = []
+    maxima: List[float] = []
+    with asection(
+        f"Resolving background floor '{floor_spec}' (minimum over "
+        f"{len(pairs)} slices spanning T={n_timepoints}, C={n_channels})"
+    ):
+        for t, c in pairs:
+            view = _pinned_slice_volume(
+                input_path,
+                channel=c,
+                timepoint=t,
+                array_key=array_key,
+                axes=axes,
+                axes_labels=axes_labels,
+                channel_shape=channel_shape,
+                spatial_shape=spatial_shape,
+            )
+            sample = _sample_volume_for_floor(view, budget)
+            if sample is None or sample.size == 0:
+                continue
+            # `sample` is already within `budget`, so re-sampling it inside
+            # resolve_volume_floor reads it whole: one read, level + max both.
+            level_here = resolve_volume_floor(sample, floor_spec)
+            levels.append(level_here)
+            maxima.append(float(sample.max()))
+            aprint(
+                f"t={t}, c={c}: level "
+                f"{'none' if level_here is None else format(level_here, '.6g')} "
+                f"(sampled max {maxima[-1]:.6g})"
+            )
+
+        level: Optional[float] = None
+        if levels and all(item is not None for item in levels):
+            # Every per-slice level is already guarded below ITS OWN sampled max,
+            # so this minimum is below EVERY sampled max: the reduction cannot
+            # erase a sampled slice, and no extra check is needed here.
+            level = min(item for item in levels if item is not None)
+        if not levels:
+            aprint(
+                f"⚠ Background floor '{floor_spec}': not one of the "
+                f"{len(pairs)} sampled (t, c) slices could be read (all empty): "
+                f"floor suppression is DISABLED for the WHOLE run — every "
+                f"(t, c) task is given --floor none."
+            )
+            return None, "none"
+        if level is None:
+            aprint(
+                f"⚠ Background floor '{floor_spec}' resolves to no suppression on "
+                f"at least one sampled (t, c) slice (a zero level, or the 'would "
+                f"erase all signal' guard refused it): floor suppression is "
+                f"DISABLED for the WHOLE run — every (t, c) task is given "
+                f"--floor none."
+            )
+            return None, "none"
+        if level < 0.0:
+            aprint(
+                f"⚠ Background floor '{floor_spec}' resolves to a NEGATIVE level "
+                f"({level:.6g}) (dark-frame-corrected data?), which cannot be "
+                f"forwarded as a concrete --floor (neither --floor nor "
+                f"fit_gaussian_splats accepts a negative value). The SPEC is "
+                f"forwarded instead, so every (t, c) task resolves it on its own "
+                f"sub-volume and pedestals may differ across the run; the "
+                f"manifest records floor_level=None (not pinned). Pass "
+                f"--floor none to disable suppression, or an explicit "
+                f"non-negative --floor N to pin one level."
+            )
+            return level, floor_spec
+        aprint(
+            f"Floor suppression: every (t, c) task subtracts background level "
+            f"{level:.6g} (the minimum over the sampled slices)"
+        )
+    return level, level
+
+
+def _resolve_and_record_floor(
+    input_path: Path,
+    fit: FitConfig,
+    fit_args: dict,
+    *,
+    n_timepoints: int,
+    n_channels: int,
+    array_key: Optional[str],
+    axes: Optional[str],
+    axes_labels: Optional[List[str]] = None,
+    channel_shape: Tuple[int, ...] = (),
+    spatial_shape: Optional[Tuple[int, ...]] = None,
+) -> "Tuple[Optional[float], Optional[float]]":
+    """:func:`resolve_batch_floor` + write the level into ``fit_args``/the manifest.
+
+    Returns ``(level, recorded_level)``. ``recorded_level`` is the manifest's
+    ``floor_level`` and is only set when the tasks really are handed a number:
+    the ``"none"`` forward leaves nothing to subtract, and a forwarded SPEC (the
+    negative-level case) means no level is pinned at all.
+    """
+    level, forward = resolve_batch_floor(
+        input_path,
+        effective_floor_spec(fit),
+        n_timepoints=n_timepoints,
+        n_channels=n_channels,
+        array_key=array_key,
+        axes=axes,
+        axes_labels=axes_labels,
+        channel_shape=channel_shape,
+        spatial_shape=spatial_shape,
+    )
+    recorded: Optional[float] = None
+    if forward is not None:
+        fit_args["floor"] = str(forward)
+        if not isinstance(forward, str):
+            recorded = float(forward)
+    return level, recorded
+
+
+def _load_scan_volume(
+    input_path: Path,
+    timepoints: List[int],
+    *,
+    channel: int,
+    array_key: Optional[str],
+    axes: Optional[str],
+    axes_labels: Optional[List[str]] = None,
+    channel_shape: Tuple[int, ...] = (),
+    spatial_shape: Optional[Tuple[int, ...]] = None,
+) -> Any:
+    """Per-voxel MAX over ``timepoints`` of one channel — the content plan's basis.
+
+    Max-projecting the sampled timepoints makes the box plan cover any region with
+    signal at ANY of them (no holes where content moved over time). Each timepoint
+    is materialized through the SAME label-driven pinned view the floor resolution
+    uses (:func:`_pinned_slice_volume`): with no explicit ``--axes``,
+    ``load_volume``'s 4D positional heuristic reads a ``(T, Z, Y, X)`` store as
+    ``CZYX`` and ignores ``timepoint``, so every sample here used to be ``t=0``
+    and ``--plan-samples`` silently no-oped (#1174).
+    """
+    import numpy as _np
+
+    def _load(t: int) -> Any:
+        return _materialize(
+            _pinned_slice_volume(
+                input_path,
+                channel=channel,
+                timepoint=t,
+                array_key=array_key,
+                axes=axes,
+                axes_labels=axes_labels,
+                channel_shape=channel_shape,
+                spatial_shape=spatial_shape,
+            )
+        )
+
+    vol = _load(timepoints[0])
+    for t in timepoints[1:]:
+        vol = _np.maximum(vol, _load(t))
+    return vol
+
+
 def _parse_slice(s: str, max_val: int) -> list[int]:
     """Parse a Python-style ``start:stop:step`` slice (or a single index)."""
     parts = s.split(":")
@@ -216,6 +711,74 @@ def _validate_merge_refine_source(
     )
     if problem:
         raise typer.BadParameter(f"--merge-refine volume: {problem}")
+
+
+def _validate_merge_refine_frame(
+    merge: MergeConfig, grid_scale: Optional[List[float]]
+) -> None:
+    """Refuse a planned merge-time volume re-fit whose crops would be mis-framed.
+
+    The second half of the same fail-fast pair as
+    :func:`_validate_merge_refine_source`: that one asks whether the source's
+    AXES can be mapped, this one whether its COORDINATES can. A per-part re-fit
+    reads the part's ``bsp_tree`` cell as VOXEL INDICES into the source, so a
+    ``grid_scale`` (a ``voxel_size`` / ``downscale`` in the run's ``--config``)
+    puts every crop a factor off — exactly the reason ``gsplat fit`` refuses
+    ``--refine volume`` under the same conditions
+    (:func:`~luxar.cli.gsplat_ops.fitting.fit_utils.reject_rescaled_volume_refit`).
+    Checked at plan time so a typo costs nothing; the merge front door checks it
+    again off the same recorded factor.
+    """
+    if (merge.refine or "").strip() != "volume":
+        return
+    from luxar.gsplats.batch.merge_orchestrator import volume_refit_frame_error
+
+    problem = volume_refit_frame_error(grid_scale)
+    if problem:
+        raise typer.BadParameter(f"--merge-refine volume: {problem}")
+
+
+def resolve_uniform_grid_scale(fit: FitConfig, ndim: int) -> Optional[List[float]]:
+    """The frame factor to record on the manifest for a uniform batch (#1587).
+
+    Resolved HERE, at plan time, because this is where the workers' merged fit
+    config is in hand: every array task is a ``fit --tile k/M`` run with this
+    run's ``--preset`` and (verbatim) its ``--config``, so a ``voxel_size`` /
+    ``downscale`` in that config moves the tasks' splats out of the manifest's
+    voxel tile grid. Doing it at MERGE time instead would mean re-reading a YAML
+    that may have moved (planes silently dropped) or been replaced by an
+    unrelated same-named file (planes silently wrong), and would put a
+    ``luxar.cli`` import inside ``luxar.gsplats``.
+
+    Returns the per-axis factor, or ``None`` when the two frames already agree
+    (the common case — recorded as an absent ``grid_scale``). Raises
+    :class:`typer.BadParameter` when the config cannot be read or holds a frame
+    the resolver refuses: at plan time the user is still here to fix it.
+    """
+    from luxar.cli.gsplat_config import load_fit_config
+    from luxar.gsplats.tiling import resolve_grid_scale
+
+    try:
+        config = load_fit_config(preset=fit.preset, config_path=fit.config)
+    except Exception as exc:
+        raise typer.BadParameter(
+            f"could not read the fit config for this run (--preset "
+            f"{fit.preset!r}, --config {str(fit.config) if fit.config else None!r}): "
+            f"{exc}"
+        ) from exc
+    try:
+        scale = resolve_grid_scale(
+            ndim,
+            downscale_factors=config.get("downscale"),
+            voxel_size=config.get("voxel_size"),
+            output_space=config.get("output_space", "real"),
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(
+            f"the fit config for this run states a coordinate frame the tile "
+            f"grid cannot be reconciled with: {exc}"
+        ) from exc
+    return list(scale) if scale is not None else None
 
 
 def resolve_merge_recipe_args(
@@ -390,9 +953,13 @@ def _assemble_fit_args(
     if fit.iters is not None:
         fit_args["iters"] = str(fit.iters)
     if fit.config:
-        fit_args["config"] = str(fit.config)
-    if fit.floor is not None:
-        fit_args["floor"] = str(fit.floor)
+        # Resolved like every other path on the manifest (input_path, output_dir,
+        # plan_path, denoised_zarr_path): this string is handed to workers that
+        # run from a Slurm job's own working directory, so a relative spelling
+        # would resolve against the wrong CWD (or an unrelated same-named file).
+        fit_args["config"] = str(fit.config.resolve())
+    # NOTE: no "floor" here on purpose — `_resolve_and_record_floor` is the ONE
+    # writer of that key (it forwards the resolved LEVEL, not the spec, #1174).
     if fit.progressive:
         fit_args["progressive"] = ""  # boolean flag, no value
     if fit.splats_per_pass is not None:
@@ -584,15 +1151,51 @@ def plan_batch(
     plan_path_str: Optional[str] = None
     total_voxels = math.prod(spatial)
 
+    rep_c = c_indices[0]
+
+    # The frame the tasks will emit in, resolved once and recorded on the
+    # manifest for the merge (#1587). Uniform only: a content merge takes its
+    # split planes from the shared plan's own boxes, not from a rebuilt grid.
+    # Ahead of the floor resolution below because it reads only the fit config:
+    # a frame the merge cannot reconcile fails before any voxel is sampled.
+    grid_scale = (
+        resolve_uniform_grid_scale(fit, len(spatial)) if mode != "content" else None
+    )
+    _validate_merge_refine_frame(merge, grid_scale)
+
+    # 3a. Background floor: ONE level for the whole timelapse, resolved here and
+    # recorded in the manifest, so no task re-estimates its own (#1174). The
+    # basis is a bounded set of evenly spaced (t, c) slices spanning the store's
+    # FULL extent, reduced by MINIMUM — a level above some slice's maximum would
+    # clip that whole sub-volume to zero and drop it silently from the merge, so
+    # the level is made a lower bound on every SAMPLED slice's pedestal (bounded
+    # sampling cannot bound an unsampled one), and must not
+    # depend on the --timepoints/--channels selection (see resolve_batch_floor).
+    # Deliberately not the content plan's max-projection either, whose per-voxel
+    # maximum biases the background mode upward relative to any single slice.
+    floor_level, recorded_floor_level = _resolve_and_record_floor(
+        input_path,
+        fit,
+        fit_args,
+        n_timepoints=n_t_full,
+        n_channels=n_c_full,
+        array_key=array_key,
+        axes=",".join(axes_list) if axes_list else None,
+        # The DISCOVERED labels, so the representative slice is pinned by label
+        # even when the user passed no --axes (the positional 4D heuristic reads
+        # a (T, Z, Y, X) store as CZYX and would silently sample t=0).
+        axes_labels=list(ome_info.axes),
+        channel_shape=tuple(ome_info.channel_shape),
+        spatial_shape=tuple(spatial),
+    )
+
     if mode == "content":
         import numpy as _np
 
-        from luxar.cli.gsplat_config import load_volume
         from luxar.cli.gsplat_ops.planner import _resolve_density
         from luxar.gsplats.planner import plan_volume
         from luxar.gsplats.planner.fit_planned_parallel import max_padded_box_voxels
 
-        rep_c = c_indices[0]
         plan_t_samples = _select_plan_timepoints(
             t_indices, content.plan_timepoint, content.plan_samples
         )
@@ -602,22 +1205,19 @@ def plan_batch(
             else f"max-proj of {len(plan_t_samples)} timepoints"
         )
         with asection(f"Content plan (scan {scan_desc}, c={rep_c})"):
-            rep_vol = load_volume(
+            rep_vol = _load_scan_volume(
                 input_path,
+                plan_t_samples,
                 channel=rep_c,
-                timepoint=plan_t_samples[0],
                 array_key=array_key,
                 axes=",".join(axes_list) if axes_list else None,
+                # The DISCOVERED labels, so each sampled timepoint is pinned by
+                # label even with no --axes (the positional 4D heuristic reads a
+                # (T, Z, Y, X) store as CZYX and would scan t=0 every time).
+                axes_labels=list(ome_info.axes),
+                channel_shape=tuple(ome_info.channel_shape),
+                spatial_shape=tuple(spatial),
             )
-            for _t in plan_t_samples[1:]:
-                _v = load_volume(
-                    input_path,
-                    channel=rep_c,
-                    timepoint=_t,
-                    array_key=array_key,
-                    axes=",".join(axes_list) if axes_list else None,
-                )
-                rep_vol = _np.maximum(rep_vol, _v)
             density = _resolve_density(
                 content.cal,
                 content.k_star_ref,
@@ -638,17 +1238,12 @@ def plan_batch(
                     "per-box budgets will be mis-scaled. Use matching metrics."
                 )
             # Scan the floor-suppressed volume the boxes will fit: cal records
-            # `density.feature_threshold` on floor-subtracted data, and each box
-            # fits with `fit.floor`. Subtract the same floor from the (max-proj)
-            # scan volume so the content field is on the calibration's scale —
-            # otherwise the raw pedestal counts as signal and flattens the plan.
-            from luxar.gsplats.fitting.preprocessing import _resolve_floor
-
-            scan_floor = _resolve_floor(
-                rep_vol, "auto" if fit.floor is None else fit.floor
-            )
-            if scan_floor is not None:
-                rep_vol = _np.clip(rep_vol.astype(_np.float32) - scan_floor, 0.0, None)
+            # `density.feature_threshold` on floor-subtracted data, and every box
+            # subtracts `floor_level`. Using that same level here (instead of
+            # re-resolving against the max-projection, which biases the mode
+            # upward) puts plan and fits on one basis.
+            if floor_level is not None:
+                rep_vol = _np.clip(rep_vol.astype(_np.float32) - floor_level, 0.0, None)
             content_plan = plan_volume(
                 rep_vol,
                 density,
@@ -747,6 +1342,8 @@ def plan_batch(
         total_tasks=total_tasks,
         preset=fit.preset,
         fit_args=fit_args,
+        floor_level=recorded_floor_level,
+        grid_scale=grid_scale,
         gpu_name=resolved_gpu,
         estimated_seconds_per_task=est_seconds,
         timepoint_indices=t_indices if timepoints_slice else None,

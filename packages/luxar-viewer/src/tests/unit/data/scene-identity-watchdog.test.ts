@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Unit tests for the scene-identity watchdog.
  *
@@ -76,7 +77,7 @@ describe('SceneIdentityWatchdog', () => {
     expect(SceneIdentityWatchdog.isWatchable('/relative/data.zarr')).toBe(false);
   });
 
-  it('probes the trailing-slash-trimmed .zattrs with cache bypass', async () => {
+  it('probes the trailing-slash-trimmed root document with cache bypass', async () => {
     const urls: string[] = [];
     const wd = makeWatchdog(async (input, init) => {
       urls.push(String(input));
@@ -85,14 +86,16 @@ describe('SceneIdentityWatchdog', () => {
     });
     wd.start();
     await tick(5000);
-    expect(urls).toEqual(['http://127.0.0.1:8000/.zattrs']);
+    // `zarr.json` is probed FIRST because new datasets are format 3; the stub
+    // answers it, so the format-2 `.zattrs` is never requested.
+    expect(urls).toEqual(['http://127.0.0.1:8000/zarr.json']);
     wd.dispose();
   });
 
-  it('appends .zattrs to the PATH, keeping a query string and dropping a fragment', async () => {
+  it('appends the root document to the PATH, keeping a query and dropping a fragment', async () => {
     // A presigned/tokenized source carries its credentials in the query, and
     // the zarr fetch store copies them onto every key it reads — string
-    // concatenation would bury `/.zattrs` inside the query (or behind the
+    // concatenation would bury the appended path inside the query (or behind the
     // fragment) and 404 the probe into a bogus "different scene" verdict.
     const urls: string[] = [];
     const probeUrl = async (datasetUrl: string) => {
@@ -120,11 +123,74 @@ describe('SceneIdentityWatchdog', () => {
     // scene that is loading perfectly well.
     await probeUrl('https://host/scene.zarr?token=abc/');
     expect(urls).toEqual([
-      'https://host/scene.zarr/.zattrs?token=abc',
-      'https://host/scene.zarr/.zattrs?token=abc',
-      'https://host/scene.zarr/.zattrs',
-      'https://host/scene.zarr/.zattrs?token=abc/',
+      'https://host/scene.zarr/zarr.json?token=abc',
+      'https://host/scene.zarr/zarr.json?token=abc',
+      'https://host/scene.zarr/zarr.json',
+      'https://host/scene.zarr/zarr.json?token=abc/',
     ]);
+  });
+
+  it('falls back to .zattrs when the dataset is format 2', async () => {
+    // A format-2 store has no `zarr.json`, and 404 is deliberately NOT an
+    // inconclusive status — so without this fallback the probe would take the
+    // 404 as a definite answer and report `changed` on EVERY poll, driving a
+    // reload loop over a scene that never moved.
+    const urls: string[] = [];
+    const wd = makeWatchdog(async (input) => {
+      const url = String(input);
+      urls.push(url);
+      if (url.endsWith('/zarr.json')) {
+        return new Response('', { status: 404 });
+      }
+      return okResponse(ATTRS);
+    });
+    wd.start();
+    await tick(5000);
+    expect(urls).toEqual(['http://127.0.0.1:8000/zarr.json', 'http://127.0.0.1:8000/.zattrs']);
+
+    // ...and the resolved document is remembered, so the next poll costs one
+    // request rather than re-paying the 404 forever.
+    urls.length = 0;
+    await tick(5000);
+    expect(urls).toEqual(['http://127.0.0.1:8000/.zattrs']);
+    wd.dispose();
+  });
+
+  it('reads content_hash out of a format-3 envelope', async () => {
+    // Format 3 nests attributes under `attributes`. Reading the top level finds
+    // `undefined`, which does not equal the expected hash -- so an UNCHANGED
+    // scene would be reported as changed on every poll. The absence of a banner
+    // is the assertion here.
+    const wd = makeWatchdog(async () =>
+      okResponse(
+        JSON.stringify({
+          zarr_format: 3,
+          node_type: 'group',
+          attributes: { content_hash: HASH },
+        })
+      )
+    );
+    wd.start();
+    await tick(5000);
+    expect(banner.shown).toEqual([]);
+    wd.dispose();
+
+    // ...and a format-3 envelope carrying a DIFFERENT hash still trips it, so
+    // the unwrapping did not simply stop comparing.
+    banner.shown.length = 0;
+    const wd2 = makeWatchdog(async () =>
+      okResponse(
+        JSON.stringify({
+          zarr_format: 3,
+          node_type: 'group',
+          attributes: { content_hash: 'other' },
+        })
+      )
+    );
+    wd2.start();
+    await tick(5000);
+    expect(banner.shown).toEqual(['changed']);
+    wd2.dispose();
   });
 
   it('matching hash keeps quiet and clears a prior unreachable banner', async () => {

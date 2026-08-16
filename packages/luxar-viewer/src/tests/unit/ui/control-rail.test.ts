@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { ControlRail, RAIL_ICONS, type ControlRailItem } from '../../../ui/control-rail';
 

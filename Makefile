@@ -738,6 +738,35 @@ test-all:  ## Run all tests (Python+CUDA, Rust/WASM, TypeScript, Go)
 # parallel processes — both invoke PyTorch/CUDA on the same device, which
 # produces non-deterministic test failures (observed: ~200 spurious CUDA
 # extension comparison failures when run concurrently). Run sequentially.
+# NOT a gate — deselects `slow`, skips coverage thresholds, no E2E. Run
+# `make test-all` before pushing.
+#
+# Whole-suite: ~6-7 min (vs ~79 min for the old serial `hatch run test`).
+# It does NOT get much below that by adding workers: with `slow` deselected the
+# remaining Python suite is I/O-bound on zarr small-file writes, not CPU-bound
+# (measured `sys` ~1900 s against `user` ~1000 s; -n 12 buys only ~11% over
+# -n 6). For a real edit-run-edit loop, SCOPE it:
+#     make test-fast PYTEST_ARGS='packages/luxar/src/luxar/encoding'   # ~35 s
+#     make test-fast PYTEST_ARGS='-k colormap'
+# PYTEST_ARGS REPLACES the default paths rather than prepending to them —
+# appending would hand pytest the scope AND the whole tree, collecting all
+# 10286 tests and scoping nothing. Same semantics as hatch's `{args:...}`.
+# Options-only args (`-k colormap`) therefore pass no path at all, and pytest
+# falls back to `testpaths` in pyproject.toml — the same five directories.
+# Tune workers with LUXAR_PYTEST_JOBS=12 — the same variable `hatch run test`
+# reads, so one setting covers both entry points.
+test-fast:  ## Fast inner loop (no slow tests, no coverage, parallel)
+	@echo "🐍 Python (parallel, -m 'not slow')..."
+	$(HATCH) run pytest -n $(or $(LUXAR_PYTEST_JOBS),6) --dist loadfile -m 'not slow' -q \
+		-p no:cacheprovider \
+		$(or $(PYTEST_ARGS),packages/luxar/src/luxar packages/luxar/examples/tests stats scripts/gallery/tests scripts/tests)
+	@echo "📘 TypeScript unit tests..."
+	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
+		echo "📦 Installing TypeScript dependencies first..."; \
+		cd packages/luxar-viewer && pnpm install; \
+	fi
+	cd packages/luxar-viewer && pnpm test --run
+
 test-python:  ## Run Python tests only
 	$(HATCH) run test
 
@@ -779,15 +808,21 @@ run-pre-commit:  ## Run pre-commit on all files
 # stomp on a concurrently-running agent's or colleague's unsaved edits. For a
 # read-only verdict use the scoped targets instead:
 #     make lint-python type-check-python security check-typescript check-rust
-check-all:  ## All quality checks (Python/TS/Rust/Go) — WARNING: reformats tree
-	@echo "🐍 Running Python checks (ruff FORMAT+fix, mypy, import-linter, version, bandit, tests)..."
-	$(HATCH) run check
-	@echo "📘 Running TypeScript checks (CI: typecheck + lint + layers + knip + coverage)..."
+# NB: this runs the STATIC gates only. Both suites are `make test-all`'s job —
+# running `make test-all && make check-all` used to execute the Python suite
+# twice (again, with coverage, at the tail of `hatch run check`) and the
+# TypeScript suite twice (again, with coverage, at the tail of `pnpm check:ci`).
+# For one command that does everything including coverage, use
+# `hatch run check` + `pnpm run check:ci` directly, which are unchanged.
+check-all:  ## All quality checks (Python/TS/Rust/Go), no tests — WARNING: reformats tree
+	@echo "🐍 Running Python checks (ruff FORMAT+fix, mypy, import-linter, version, bandit)..."
+	$(HATCH) run check-static
+	@echo "📘 Running TypeScript checks (typecheck + lint + layers + knip)..."
 	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
 		echo "📦 Installing TypeScript dependencies first..."; \
 		cd packages/luxar-viewer && pnpm install; \
 	fi
-	cd packages/luxar-viewer && pnpm run check:ci
+	cd packages/luxar-viewer && pnpm run check:static
 	@# Rust is checked here for symmetry with format-all, which formats it.
 	@# Skips (rather than fails) when the optional toolchain is absent, matching
 	@# how the Go and WASM steps behave.
@@ -889,10 +924,22 @@ clean-viewer:  ## Clean viewer artifacts (node_modules, dist, coverage)
 	rm -rf packages/luxar-viewer/playwright-report/
 	rm -rf packages/luxar-viewer/test-results/
 
-clean-cache:  ## Clear the Luxar user cache (~/.cache/luxar)
+clean-cache:  ## Clear the Luxar user cache (~/.cache/luxar), keeping hand-placed demo inputs
 	@echo "🧹 Clearing Luxar cache..."
-	rm -rf ~/.cache/luxar
-	@echo "✅ Luxar cache cleared!"
+	@# Everything under the cache root is re-downloadable EXCEPT a hand-placed
+	@# demo input: milky_way_gaia_3m holds the CC BY-NC Gaia catalog, which is not
+	@# shipped and whose loss costs a ~90-minute ESA TAP re-query. The name is
+	@# spelled out rather than read from luxar.demos.registry.PROTECTED_INPUT_DIRS
+	@# because a clean target must work with a broken/absent env; a unit test pins
+	@# this exclusion list against that constant.
+	@# `-H` (POSIX: follow command-line operands only) is what makes a SYMLINKED
+	@# cache root — someone parking it on another disk — actually get cleared;
+	@# find's default -P would match the link alone and no-op while printing
+	@# success. Portable to BSD/macOS, unlike the trailing-slash trick.
+	@if [ -d ~/.cache/luxar ]; then \
+		find -H ~/.cache/luxar -mindepth 1 -maxdepth 1 ! -name milky_way_gaia_3m -exec rm -rf {} +; \
+	fi
+	@echo "✅ Luxar cache cleared (hand-placed demo inputs kept)."
 
 clean-examples:  ## Clean up generated datasets (examples, demos, zarr files)
 	@echo "🧹 Cleaning generated datasets..."

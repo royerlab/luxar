@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Unit tests for ui/data-loading-monitor/timing-panel.ts.
  *

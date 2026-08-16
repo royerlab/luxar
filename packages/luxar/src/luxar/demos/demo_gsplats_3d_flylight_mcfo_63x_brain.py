@@ -210,9 +210,10 @@ DISPLAY_LO, DISPLAY_HI = 0.0, 2.723
 OPACITY = 0.02
 ABSORPTION = 0.81
 
-# Camera framing. The viewer's default frames a cube of the box's LARGEST
-# dimension and adds 20% margin (`calculateCameraDistance`), which on a 663 x 303
-# brain leaves it small; place the camera explicitly instead.
+# Camera framing. The viewer's default fits a CUBE of the box's LARGEST dimension
+# into 75% of the frame and then adds a further 20% margin
+# (`calculateCameraDistance`), i.e. ~1.6 x maxDim / (2 tan(fov/2)) — about 1220 um
+# on this 663 x 303 brain, which leaves it small. Place the camera explicitly.
 #
 #     visible_height(d) = 2 d tan(fov/2)      visible_width(d) = that * aspect
 #
@@ -231,11 +232,14 @@ ABSORPTION = 0.81
 # than any window — so width binds at every realistic aspect and no single
 # distance can fill it everywhere. `CAMERA_ASPECT` is therefore a declared
 # calibration point, not a safety margin: at exactly this aspect the brain
-# occupies `CAMERA_FILL` of the width; a WIDER window leaves margin, a NARROWER
-# one crops the outer optic lobes. 1.4 is the landscape floor this demo is
-# calibrated for. Framing for a square window instead would put the camera at
-# ~912 um — indistinguishable from the viewer's own default, which is what the
-# explicit camera exists to improve on.
+# occupies `CAMERA_FILL` of the width; a WIDER window leaves more margin, a
+# NARROWER one eats into it and below ~1.29 (= 1.4 x `CAMERA_FILL`) starts
+# cropping the outer optic lobes. 1.4 is the landscape floor this demo is
+# calibrated for. Framing for a square window instead — the never-crop choice —
+# would put the camera at ~912 um: closer than the viewer's own ~1220 um default,
+# but the brain would then occupy only ~0.66 of the width at 1.4 and ~0.52 at
+# 16:9, instead of 0.92. That headroom nobody sees is most of what the explicit
+# camera is here to recover.
 CAMERA_FOV = 47.0
 CAMERA_FILL = 0.92
 CAMERA_ASPECT = 1.4
