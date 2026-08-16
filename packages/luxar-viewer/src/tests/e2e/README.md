@@ -171,12 +171,12 @@ exports group into the categories below.
 
 ### Render / animation pacing
 
-| Helper                            | Use when                                                                                 |
-| --------------------------------- | ---------------------------------------------------------------------------------------- |
-| `renderOnce`                      | Trigger a single deterministic frame and wait one paint cycle — used before screenshots. |
-| `waitForNextRender(page, frames)` | Yield until N animation frames have passed.                                              |
-| `waitForRenderStable`             | Wait until per-frame render counters stop changing (FPS-style settled detection).        |
-| `waitForAnimationStep`            | Wait for the animation manager to advance one logical step.                              |
+| Helper                            | Use when                                                                                                                                                                                                                                      |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `renderOnce`                      | Trigger a single deterministic frame and wait one paint cycle — used before screenshots.                                                                                                                                                      |
+| `waitForNextRender(page, frames)` | Best-effort yield for N animation frames. If the frame counter is unreadable or stalls, it falls back to a state wait plus a short buffer, warns once, and returns `false` — so a starved page may advance one or two frames rather than N.   |
+| `waitForRenderStable`             | Best-effort wait for the frame counter to advance by `minFrames` (default 3) — the screenshot-pacing helper. Same fallback and one-line warning as `waitForNextRender`; it returns `void`, so read the warning to know a capture was unpaced. |
+| `waitForAnimationStep`            | Wait for the animation manager to advance one logical step.                                                                                                                                                                                   |
 
 ### nD / dimension navigation
 
