@@ -204,6 +204,13 @@ describe('StallDetector', () => {
     feed(d, FRAME_60, 6);
     expect(d.isStall(5000)).toBe(true); // as with the 350ms default
     expect(d.isStall(FRAME_60)).toBe(false);
+    // -Infinity fails the OTHER way and needs its own probe: unguarded
+    // it survives `Math.max(0, ...)` as a floor of 0, which the two
+    // assertions above cannot see (a 5s gap is dead time and a 16.7ms
+    // interval is not, either way). A 100ms hiccup is what separates
+    // them — a 6× outlier against the 16.7ms median, but far under the
+    // 350ms floor, so it must NOT cost the window.
+    expect(d.isStall(100)).toBe(false);
   });
 
   it('falls back to the absolute floor when the median is not positive', () => {

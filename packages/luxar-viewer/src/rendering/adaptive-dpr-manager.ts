@@ -123,16 +123,19 @@ export type DPRChangeCallback = (dpr: number, isReducedResolution: boolean) => v
  * scene too) but nothing is learned from them. The cost on a genuine
  * slowdown is that the FIRST scale-down goes unratified — it is applied
  * immediately either way — after which the normal probe machinery
- * engages. The protection is bounded, deliberately: a burst of up to
+ * engages.
+ *
+ * The protection is bounded, deliberately: a burst of up to
  * CADENCE_TRUST_INTERVALS + 2 dead intervals teaches nothing, and past
  * that the "burst" is a sustained slow regime the manager must be free
- * to learn from. The bound is counted in INTERVALS, so what it buys in
- * wall clock depends on how long they are: four 5s gaps is 20s, four
- * 400ms hitches is 1.6s. A probe still needs its own `probeWindowMs`
- * plus a representative span before it can pin anything, so in practice
- * a burst teaches nothing until roughly five seconds of continuous dead
- * time — measured with the production 0.9 step, eight consecutive 400ms
- * hitches (3.2s) leave the floor untouched and twelve (4.8s) pin one.
+ * to learn from. The bound is counted in INTERVALS, and that is the only
+ * form the guarantee takes — what it buys in wall clock depends on how
+ * long they are (four 5s gaps is 20s, four 400ms hitches is 1.6s) and on
+ * how much of its own `probeWindowMs` plus representative span a probe
+ * can still gather afterwards. Measured with the production 0.9 step
+ * inside a 60fps session, the turnover for consecutive 400ms hitches sits
+ * at NINE: eight (3.2s) leave the floor untouched, nine (3.6s) pin a 0.81
+ * floor.
  */
 const CADENCE_TRUST_INTERVALS = 2;
 
@@ -208,22 +211,6 @@ export class AdaptiveDPRManager {
   // Coalescing clock for notifyContentChanged() — only advances on the
   // calls that are acted upon.
   private lastContentChangeAt: number | null = null;
-
-  // Timestamp of the most recent content-change NOTIFICATION, coalesced
-  // or not: the LOD level swapped either way, so this (not the
-  // coalescing clock) is what answers "is content still churning?".
-  private lastContentChangeSeenAt: number | null = null;
-
-  // True after a probe settled CONTENT-CONFOUNDED (see
-  // applyConfoundedVerdict). While content keeps churning, the reduction
-  // walk stops there: with no experiment the loop can run, another step
-  // would be one more unratified reduction on a moving target — the walk
-  // this manager was fixed to terminate. Released as soon as content
-  // stops changing, when probes can be judged again — which is why it
-  // needs no explicit reset at the session boundaries: the release is a
-  // question about the CLOCK, so a pause, a display change or a disable
-  // simply lets the next evaluation lift it.
-  private confoundedWalkHold: boolean = false;
 
   // Idle-restore state: prepareIdleFrame() snaps DPR to native for the
   // resting frame and remembers where the loop was operating so
@@ -435,28 +422,25 @@ export class AdaptiveDPRManager {
         // span the gap too — dead time must not count toward a
         // "sustained" throttle/distress verdict (learned state survives).
         this.refreshRateEstimator.noteSessionInterrupted();
-        // Dead time must not count as progress toward the next
-        // evaluation — but the pin must not RUN AWAY either. Pinning to
-        // `timestamp` outright meant a stall recurring more often than
-        // `evaluationIntervalMs` re-pinned the clock before it could
-        // mature, so no evaluation with a frame rate to judge ever ran:
-        // measured over 43s, a repeating 16.7/16.7/400ms cadence (~6.9
-        // perceived fps) and an 8×16.7+360ms one both produced ZERO.
-        // That is the same structural inertness this class was fixed
-        // for, on a different pattern. Clamping the pin to one interval
-        // before `timestamp` keeps the normal post-stall cadence (a
-        // healthy session's clock is already newer than that, so nothing
-        // moves) while guaranteeing the gate can always open again. The
-        // freshly cleared window holds a single sample, so the tick that
-        // opens it finds no frame rate — which is why such a tick must
-        // not consume the interval budget either (see below), or the
-        // gate would re-close before the real frames arrive.
-        this.lastEvaluationTime = Math.max(
-          this.lastEvaluationTime,
-          timestamp - this.config.evaluationIntervalMs
-        );
-        // NB: the detector's cadence memory is deliberately NOT cleared
-        // here — surviving its own reset is what lets it converge.
+        // NB: the evaluation clock is deliberately NOT pushed forward
+        // here. Pinning it to `timestamp` (the pre-fix line) meant a
+        // stall recurring more often than `evaluationIntervalMs` re-pinned
+        // the clock before it could mature, so no evaluation with a frame
+        // rate to judge ever ran: measured over 43s, a repeating
+        // 16.7/16.7/400ms cadence (~6.9 perceived fps) and an
+        // 8×16.7+360ms one both produced ZERO. That is the same
+        // structural inertness this class was fixed for, on a different
+        // pattern. What keeps dead time from counting as progress is the
+        // return value below: the freshly cleared window holds a single
+        // sample, so the tick that finds it has no frame rate to judge,
+        // is not an evaluation, and does not consume the interval budget.
+        // Clamping the pin to one interval before `timestamp` was tried
+        // and MEASURED INERT (identical evaluations, DPR, floor and
+        // applied-ratio counts on six cadences), because the clamped pin
+        // leaves the gate satisfied on every subsequent frame anyway.
+        //
+        // The detector's cadence memory is deliberately not cleared here
+        // either — surviving its own reset is what lets it converge.
       } else if (this.nonStallIntervals < CADENCE_TRUST_INTERVALS) {
         // Saturating count: only the distance to the trust threshold
         // matters, so it never grows past it.
@@ -564,17 +548,6 @@ export class AdaptiveDPRManager {
         'DPR ceiling demotion expired — scale-up may try above 1.0 again'
       );
     }
-    // Content stopped churning: a probe can be judged again, so the walk
-    // held by the last confounded verdict may resume — WITH ratification
-    // this time.
-    if (this.confoundedWalkHold && !this.contentChurnActive(timestamp)) {
-      this.confoundedWalkHold = false;
-      log.info(
-        Modules.ADAPTIVE_DPR,
-        'Scene content settled — resuming probe-verified scale-down from DPR ' +
-          `${this.currentDPR.toFixed(2)}`
-      );
-    }
 
     // Sustained sub-throttle DISTRESS (FPS below what any real display
     // throttle can produce, for a sustained period) demotes the ceiling
@@ -612,14 +585,30 @@ export class AdaptiveDPRManager {
       // fault.
       if (!suppressed && this.boundsLedger.recordSlowSample(timestamp)) {
         this.applyCeilingDemotion(fps);
-      } else if (!this.confoundedWalkHold) {
+      } else {
         // Performance is poor - scale down (and arm a probe so we can
         // verify the move actually helped — unless the sample is
         // load-suppressed, in which case the reduction applies unprobed).
+        //
+        // Known limitation, measured: on a HITCH-HEAVY cadence the walk
+        // can still reach minDPR with no probe ever ratifying it, because
+        // every hitch is a gap reset and a gap reset VOIDS the in-flight
+        // probe. At native 2.0 over 400 frames of 30ms with a 1.2s hitch
+        // every 40 (~17 perceived fps, 33fps between hitches — a
+        // genuinely below-threshold rate), 6 unprobed and 7 probed steps
+        // reach 0.508 and not one probe produced a verdict of any kind.
+        // Rate-limiting the reduction was tried: capping it at one
+        // UNPROBED step per untrusted episode is inert here (the loop
+        // already takes at most one — the same 6), and a latch cleared
+        // only by a settled probe cannot clear at all when hitches keep
+        // destroying probes, which froze a neighbouring 400ms-hitch
+        // cadence (~9 perceived fps) at a single step for 50s — the
+        // structural inertness this class was fixed for. The walk is
+        // bounded by minDPR and lifts again at the normal hysteresis rate
+        // (measured: 16 scale-ups in the 60s after the hitches stop,
+        // exactly as many as from a shallower start).
         this.scaleDown(timestamp, fps, suppressed);
       }
-      // (Held: the last probe's verdict was confounded by a content
-      // change and content is still churning — see confoundedWalkHold.)
       this.hysteresis.recordLow();
     } else if (fps > upThreshold) {
       // Performance is good - accumulate the sustained-high streak.
@@ -670,7 +659,7 @@ export class AdaptiveDPRManager {
 
     const { probe, fpsRatio } = verdict;
     if (probe.contentConfounded) {
-      this.applyConfoundedVerdict(verdict, timestamp);
+      this.applyConfoundedVerdict(verdict);
       return;
     }
 
@@ -732,46 +721,29 @@ export class AdaptiveDPRManager {
    *   the LOD coarsening to the DPR step and wiping the rejection-backoff
    *   streak that quiets scenes DPR reduction cannot help.
    *
-   * So a confounded probe may only conclude "stop here for now": KEEP the
-   * reduced DPR (fewer pixels never hurt a stuttering loop, which is the
-   * defensible half of the experiment), leave the backoff streak
-   * untouched, record the probed DPR as a PROVISIONAL floor carrying the
-   * short `contentChangeRecheckMs` TTL rather than the full `floorTtlMs`,
-   * and HOLD the walk for as long as content keeps churning. The hold is
-   * what actually terminates the unratified walk (measured: with the
-   * provisional floor alone, per-frame churn at 0.5fps still stepped down
-   * every ~7s and reached minDPR inside 120s), and it releases as soon as
-   * content settles, so the normal probe-verified walk resumes then.
+   * So a confounded probe teaches NOTHING — exactly like an inconclusive
+   * one: KEEP the reduced DPR (fewer pixels never hurt a stuttering loop,
+   * which is the defensible half of the experiment), no revert, no floor,
+   * no backoff movement.
+   *
+   * What this deliberately does NOT do is stop the walk. Under sustained
+   * churn no clean experiment exists, so a reduction with no verdict is
+   * all the loop can do, and walking down is the right distress response;
+   * it is bounded by `minDPR` and lifts again through the normal scale-up
+   * hysteresis once content settles. A previous revision held the walk
+   * while a churn clock ran, and that mechanism was measured to invert
+   * its own goal — its window was the same 5s constant
+   * `notifyContentChanged` coalesces on, so churn arriving just slower
+   * than the window walked FURTHER down (to minDPR) than not having it,
+   * while per-frame churn pinned a 0.33fps scene at 1.62 indefinitely.
    */
-  private applyConfoundedVerdict(
-    verdict: Extract<ProbeVerdict, { fpsRatio: number }>,
-    timestamp: number
-  ): void {
+  private applyConfoundedVerdict(verdict: Extract<ProbeVerdict, { fpsRatio: number }>): void {
     const { probe, fpsRatio } = verdict;
-    const ttlMs = this.config.contentChangeRecheckMs;
-    this.boundsLedger.recordProvisionalFloor(probe.probedDPR, timestamp, ttlMs);
-    this.confoundedWalkHold = true;
-
     log.info(
       Modules.ADAPTIVE_DPR,
       `Probe at DPR ${probe.probedDPR.toFixed(2)} settled across a content change ` +
         `(×${fpsRatio.toFixed(2)} vs the OLD content — confounded): keeping the reduction, ` +
-        'holding the walk while content churns (provisional floor ' +
-        `${this.boundsLedger.dprFloor.toFixed(2)} for ${(ttlMs / 1000).toFixed(0)}s), ` +
-        'nothing learned'
-    );
-  }
-
-  /**
-   * Is scene content still changing often enough that a fresh probe
-   * would be confounded too? Counts EVERY notification, including the
-   * ones the coalescing guard discards — the LOD level swapped either
-   * way.
-   */
-  private contentChurnActive(timestamp: number): boolean {
-    return (
-      this.lastContentChangeSeenAt !== null &&
-      timestamp - this.lastContentChangeSeenAt < this.config.contentChangeRecheckMs
+        'learning nothing (no revert, no floor, no backoff movement)'
     );
   }
 
@@ -1186,12 +1158,11 @@ export class AdaptiveDPRManager {
     if (!this.isEnabled) return;
     // Every notification contaminates an in-flight probe's before/after
     // comparison, whether or not THIS call is the one acted upon — the
-    // LOD level swapped either way. So the churn clock advances and any
-    // pending probe is marked ahead of the coalescing early-return,
-    // otherwise a probe that happened to be armed and settled BETWEEN
-    // two acted-upon calls would be mistaken for a clean experiment and
-    // could revert the DPR upward and pin a 30s floor on it.
-    this.lastContentChangeSeenAt = timestamp;
+    // LOD level swapped either way. So a pending probe is marked ahead of
+    // the coalescing early-return, otherwise a probe that happened to be
+    // armed and settled BETWEEN two acted-upon calls would be mistaken
+    // for a clean experiment and could revert the DPR upward and pin a
+    // 30s floor on it.
     this.probeController.markContentConfounded();
     if (
       this.lastContentChangeAt !== null &&
@@ -1213,15 +1184,22 @@ export class AdaptiveDPRManager {
     // `contentChangeRecheckMs`; below roughly two frames per probe
     // window, every armed probe is voided before it can ever be judged.
     // Measured at 0.5fps (native 2) with a content change every frame:
-    // the DPR walked unratified from 2.00 to 0.51 (minDPR) and no floor
-    // was ever learned; with this gate plus the cadence-memory fix below
-    // the walk stops. A verdict contaminated by a content change beats
-    // never having one, so a slow loop keeps its probe — but only as a
+    // every probe was voided and no verdict of any kind was ever
+    // produced. A verdict contaminated by a content change beats never
+    // having one, so a slow loop keeps its probe — but only as a
     // CONFOUNDED one: its before/after comparison spans two different
-    // scenes, so the settle may keep the reduction and hold, never act
-    // on the verdict's direction (see applyProbeVerdict). An unknown rate
-    // (fewer than two samples, `getFPS()` = 0) keeps the void: nothing
-    // says the loop is slow, and that is the historical behaviour.
+    // scenes, so the settle keeps the reduction and learns nothing, never
+    // acting on the verdict's direction (see applyConfoundedVerdict).
+    // That is what the gate buys, and it is not a stop to the walk — the
+    // pixel ratio still descends unratified while content churns. It
+    // buys the absence of THRASH: measured over 20 minutes of per-frame
+    // churn at 0.33fps (native 2), acting on those verdicts produced 100
+    // reductions and 98 reverts back UP (202 renderer pixel-ratio
+    // applications, each a render-target reallocation), while discarding
+    // them produced 13 monotone reductions and no revert at all. An
+    // unknown rate (fewer than two samples, `getFPS()` = 0) keeps the
+    // void: nothing says the loop is slow, and that is the historical
+    // behaviour.
     const fps = this.fpsTracker.getFPS();
     const framesPerProbeWindow = (fps * this.config.probeWindowMs) / 1000;
     if (fps <= 0 || framesPerProbeWindow >= MIN_FRAMES_TO_RERUN_PROBE) {

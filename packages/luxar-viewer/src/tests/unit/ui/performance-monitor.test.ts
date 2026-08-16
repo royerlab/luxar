@@ -108,6 +108,25 @@ describe('PerformanceMonitor', () => {
       expect(num()).not.toBe('––');
     });
 
+    it('shows a sub-1fps rate as a decimal, not as the "0" that means idle', () => {
+      // The regime this readout matters most in: a software rasterizer on
+      // a heavy scene renders at a fraction of a frame per second.
+      // Math.round() turned a real 0.4fps into `0` — which the Performance
+      // panel next door uses for "not rendering at all" — so the rail
+      // gauge and the panel disagreed about the same rate.
+      const now = vi.spyOn(performance, 'now');
+      try {
+        monitor.show();
+        now.mockReturnValue(1000); // not 0 — the window start is falsy-guarded
+        frame();
+        now.mockReturnValue(6000); // two frames over 5s = 0.4fps
+        frame();
+        expect(num()).toBe('0.4');
+      } finally {
+        now.mockRestore();
+      }
+    });
+
     it('hide() unsubscribes so later frames no longer update it', () => {
       monitor.show();
       frame();

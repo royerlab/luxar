@@ -80,35 +80,6 @@ describe('BoundsLedger — rejection backoff', () => {
     expect(ledger.backoffLevel).toBe(1);
   });
 
-  it('a provisional floor tightens the floor without touching the backoff streak', () => {
-    // Evidence too weak to escalate on (a probe whose window spanned a
-    // scene-content change): the floor holds the walk for the SHORT TTL
-    // it is given, and the rejection ladder is neither escalated nor
-    // reset — a later identical rejection must still back off from where
-    // it was.
-    const ledger = new BoundsLedger(CONFIG);
-    ledger.recordRejection(1.8, 0); // level 1
-    expect(ledger.decayIfExpired(31_000)).toBe(true);
-
-    expect(ledger.recordProvisionalFloor(1.62, 32_000, 5000)).toBe(true);
-    expect(ledger.dprFloor).toBe(1.62);
-    expect(ledger.backoffLevel).toBe(1); // untouched
-    expect(ledger.decayIfExpired(36_000)).toBe(false); // 5s TTL, not 30s
-    expect(ledger.decayIfExpired(37_001)).toBe(true);
-    // The streak survived, so repeating the ORIGINAL failed experiment
-    // still escalates rather than starting over.
-    expect(ledger.recordRejection(1.8, 40_000)).toBe(60_000);
-  });
-
-  it('a provisional floor never LOWERS an existing floor', () => {
-    const ledger = new BoundsLedger(CONFIG);
-    ledger.recordRejection(1.8, 0);
-    expect(ledger.recordProvisionalFloor(1.2, 1000, 5000)).toBe(false);
-    expect(ledger.dprFloor).toBe(1.8);
-    // ...and the stronger floor keeps its own 30s TTL.
-    expect(ledger.decayIfExpired(6001)).toBe(false);
-  });
-
   it('an accepted probe resets the rejection streak', () => {
     const ledger = new BoundsLedger(CONFIG);
     ledger.recordRejection(1.8, 0);

@@ -107,26 +107,6 @@ export class BoundsLedger {
   }
 
   /**
-   * Record a floor from evidence too weak to escalate on: the probed DPR
-   * becomes the floor for `ttlMs` only, and the rejection-backoff streak
-   * is left exactly as it is — neither escalated nor reset.
-   *
-   * The caller uses this for a verdict it cannot trust the DIRECTION of
-   * (a probe whose measurement window spans a scene-content change): the
-   * reduction stands, the downward walk stops for a short while, and
-   * nothing durable is learned. Never LOWERS an existing floor — a
-   * tighter floor is stronger evidence than this.
-   *
-   * @returns true when the floor actually moved (for logging)
-   */
-  recordProvisionalFloor(probedDPR: number, timestamp: number, ttlMs: number): boolean {
-    if (probedDPR <= this.floor) return false;
-    this.floor = probedDPR;
-    this.floorExpiresAt = timestamp + ttlMs;
-    return true;
-  }
-
-  /**
    * Record an accepted probe: the current regime responds to DPR
    * reduction after all, so the rejection streak is stale evidence.
    */

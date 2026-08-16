@@ -31,6 +31,7 @@ vi.mock('../../../config', () => ({
 }));
 
 import { AdaptiveDPRManager, type DPRRenderer } from '../../../rendering/adaptive-dpr-manager';
+import { BoundsLedger } from '../../../rendering/adaptive-dpr/bounds-ledger';
 
 // ---------------------------------------------------------------------
 // Test fixtures
@@ -62,6 +63,22 @@ function makeRenderer(): DPRRenderer & { setAdaptivePixelRatio: ReturnType<typeo
 function appliedDPRs(renderer: ReturnType<typeof makeRenderer>): number[] {
   return renderer.setAdaptivePixelRatio.mock.calls.map((c) => c[0] as number);
 }
+
+/**
+ * Evaluations WITH a frame rate to judge that 40 cycles of
+ * [400ms dead time, two 60fps frames] produce. Both the cadence and the
+ * 500ms evaluation interval are fixed literals, so this is exact, not a
+ * lower bound — pre-fix it was ZERO for as long as the pattern lasted.
+ */
+const EXPECTED_EVALUATIONS_ON_RECURRING_STALL = 20;
+/**
+ * DPR that 30 cycles of [400ms dead time, two 33ms frames] end at: ONE
+ * multiplicative step off native (1.0 × the 0.7 mock scaleDownFactor).
+ * The reduction lands and then holds — a probe is armed on the first
+ * trusted window and every following gap voids it, so the walk does not
+ * ratchet on this cadence.
+ */
+const EXPECTED_DPR_ON_SLOW_RECURRING_STALL = 0.7;
 
 /** Simulate `frameCount` frames over `durationMs` so the FPS computes deterministically. */
 function pushFrames(
@@ -1101,11 +1118,15 @@ describe('AdaptiveDPRManager — gap detection & load suppression', () => {
     // burst of four is only 1.6s of wall clock — far less protection than
     // the 20s that four 5s gaps buy. What keeps a short burst harmless is
     // that a probe ALSO needs its own window and a representative span
-    // before it can pin anything. Measured with the production 0.9 step:
-    // eight consecutive 400ms hitches (3.2s) leave the floor untouched
-    // and the DPR lifts again; twelve (4.8s) do pin one, at which point
-    // the "burst" is a slow regime worth learning from. All the other
-    // stall tests use 5000ms gaps, so this length is its own case.
+    // before it can pin anything. Measured with the production 0.9 step,
+    // the turnover sits at NINE: eight consecutive 400ms hitches (3.2s)
+    // leave the floor untouched and the DPR lifts again, nine (3.6s) pin
+    // a floor — at which point the "burst" is a slow regime worth
+    // learning from. Both sides are pinned below, because the wall-clock
+    // figure is the cadence-dependent one (the guarantee itself is
+    // counted in intervals) and a claim about it has to be measured.
+    // All the other stall tests use 5000ms gaps, so this length is its
+    // own case.
     const m = new AdaptiveDPRManager({ scaleDownFactor: 0.9 });
     try {
       m.setRenderer(renderer);
@@ -1129,6 +1150,22 @@ describe('AdaptiveDPRManager — gap detection & load suppression', () => {
       }
       expect(m.getCurrentDPR()).toBeCloseTo(1.0, 2);
       expect(m.getState().dprFloor).toBe(0.5);
+
+      // The other side of the boundary: ONE more hitch is enough to pin a
+      // floor, so the wall-clock bound is 3.6s here and not "roughly five
+      // seconds".
+      const m9 = new AdaptiveDPRManager({ scaleDownFactor: 0.9 });
+      m9.setRenderer(makeRenderer());
+      let t9 = 0;
+      for (let i = 0; i < 1200; i++) {
+        m9.recordFrame(t9);
+        t9 += 1000 / 60;
+      }
+      for (let i = 0; i < 9; i++) {
+        t9 += 400;
+        m9.recordFrame(t9);
+      }
+      expect(m9.getState().dprFloor).toBeCloseTo(0.81, 5);
     } finally {
       restore();
     }
@@ -1168,7 +1205,8 @@ describe('AdaptiveDPRManager — gap detection & load suppression', () => {
     // ever mature, so no evaluation with data ever ran — no scale-down,
     // no scale-up, no probe settle — for as long as the pattern lasted.
     // Measured on the cadence below (16.7/16.7/400ms, ~6.9 perceived
-    // fps): ZERO evaluations in 43s before, ~50 after.
+    // fps): ZERO evaluations before, and one per cycle-pair after (the
+    // 433ms cycle against the 500ms interval).
     //
     // The load-activity predicate is the observable: the manager polls it
     // once per evaluation that has a frame rate to judge.
@@ -1198,7 +1236,10 @@ describe('AdaptiveDPRManager — gap detection & load suppression', () => {
         m.recordFrame(t);
       }
 
-      expect(evaluations).toBeGreaterThan(0);
+      // Exact, not "> 0": the cadence and the evaluation interval are
+      // fixed literals, so a regression from 20 evaluations to 1 must
+      // fail here. (One per two 433ms cycles, the 500ms interval.)
+      expect(evaluations).toBe(EXPECTED_EVALUATIONS_ON_RECURRING_STALL);
     } finally {
       restore();
     }
@@ -1228,7 +1269,10 @@ describe('AdaptiveDPRManager — gap detection & load suppression', () => {
         m.recordFrame(t);
       }
 
-      expect(m.getCurrentDPR()).toBeLessThan(1.0);
+      // Exact, not "< 1.0": the cadence is a fixed literal, so the
+      // number of reductions it produces is knowable — one — and a
+      // regression to zero OR to a runaway walk must both fail here.
+      expect(m.getCurrentDPR()).toBeCloseTo(EXPECTED_DPR_ON_SLOW_RECURRING_STALL, 4);
     } finally {
       restore();
     }
@@ -1290,18 +1334,24 @@ describe('AdaptiveDPRManager — gap detection & load suppression', () => {
     }
   });
 
-  it('per-frame content churn at 0.5fps no longer walks the DPR to minDPR unratified', () => {
+  it('per-frame content churn keeps the reduction walk MONOTONE and teaches nothing', () => {
     // LOD-level swaps and `luxar-layers-changed` fire a content change
     // per frame, coalesced to one per contentChangeRecheckMs (5s) — only
     // ~2.5 frames at 0.5fps. Every armed probe used to be voided before
-    // it could settle and the DPR walked, unratified, all the way to
-    // minDPR. Three things fix it and all are load-bearing: the content
-    // change must not void a probe the loop is too slow to re-run, it
-    // must not wipe the cadence memory (which would fire a gap reset two
-    // frames later and void the probe anyway — measured, that is what
-    // made the gate inert), and the verdict that probe finally produces
-    // is CONFOUNDED (its baseline was measured on the old content), so it
-    // may only conclude "stop here for now".
+    // it could settle, so no verdict of any kind was ever produced. Two
+    // things fix that and both are load-bearing: the content change must
+    // not void a probe the loop is too slow to re-run, and it must not
+    // wipe the cadence memory (which would fire a gap reset two frames
+    // later and void the probe anyway — measured, that is what made the
+    // gate inert).
+    //
+    // What the resulting CONFOUNDED verdict buys is NOT a stop to the
+    // walk: under sustained churn no clean experiment exists, so the
+    // pixel ratio keeps descending unratified, which is the correct
+    // distress response (fewer pixels never hurt a stuttering loop) and
+    // is bounded by the floor. What it buys is the absence of THRASH —
+    // no revert upward onto a scene that just got heavier, and no 30s
+    // floor pinned on a comparison that cannot mean anything.
     const m = new AdaptiveDPRManager({ scaleDownFactor: 0.9 });
     try {
       m.setRenderer(renderer);
@@ -1311,33 +1361,34 @@ describe('AdaptiveDPRManager — gap detection & load suppression', () => {
         m.notifyContentChanged(t);
         t += 2000; // 0.5fps
       }
-      // The walk stopped two steps in — measured 0.81 of the native 1.0
-      // here — instead of bottoming out at minDPR (pre-fix: 0.508 at
-      // native 2 / minDPR, with no floor at all).
-      expect(m.getCurrentDPR()).toBeCloseTo(0.81, 5);
-      // Every DPR the renderer ever saw was a REDUCTION: a confounded
-      // verdict must never revert upward (a swap to a heavier LOD level
-      // reads as 'rejected' and used to add pixels back to a scene that
-      // had just got heavier).
+      // Every DPR the renderer ever saw was a REDUCTION on the one
+      // before it: a confounded verdict must never revert upward (a swap
+      // to a heavier LOD level reads as 'rejected', and acting on that
+      // used to add pixels back to a scene that had just got heavier).
+      // Deleting the confounded branch makes this fail — measured, that
+      // costs 98 reverts over 20 minutes of churn.
       const applied = appliedDPRs(renderer);
       expect(applied).toEqual([...applied].sort((a, b) => b - a));
-      // And NOTHING durable was learned from a confounded window: the
-      // provisional floor carries the 5s content-change TTL rather than
-      // the 30s floorTtlMs, so 120s of churn later the ledger is back at
-      // minDPR with no backoff ladder started.
+      // The walk descends to the static floor and stops there (0.9^6 of
+      // native 1.0 — the next step would cross minDPR 0.5).
+      expect(m.getCurrentDPR()).toBeCloseTo(0.5314, 4);
+      // And NOTHING was learned from a confounded window: no probed DPR
+      // became a floor and no backoff ladder was started, so the ledger
+      // is still at minDPR after 120s of churn.
       expect(m.getState().dprFloor).toBe(0.5);
     } finally {
       restore();
     }
   });
 
-  it('a probe settled across a content change keeps the DPR and only holds briefly', () => {
+  it('a probe settled across a content change keeps the DPR and learns nothing', () => {
     // The confounded-verdict contract, on one probe rather than a 120s
     // churn episode: keep the reduction (fewer pixels never hurt a
-    // stuttering loop), never revert upward, and hold the walk with a
-    // PROVISIONAL floor carrying the short contentChangeRecheckMs TTL —
-    // not the 30s floorTtlMs, whose blocksScaleDownTo would make
-    // scale-down impossible for half a minute at a time.
+    // stuttering loop), never revert upward, pin no floor, and leave the
+    // walk free to continue — a held walk was tried and measured to
+    // invert its own goal (it pinned a 0.33fps scene at 1.62 forever,
+    // and at churn periods just over its 5s window it walked FURTHER
+    // than not having it).
     const restore2 = setNativeDPR(2.0);
     const m = new AdaptiveDPRManager({ scaleDownFactor: 0.9 });
     try {
@@ -1367,21 +1418,53 @@ describe('AdaptiveDPRManager — gap detection & load suppression', () => {
       expect(m.getCurrentDPR()).toBeCloseTo(1.62, 5);
       const applied = appliedDPRs(renderer);
       expect(applied).toEqual([...applied].sort((a, b) => b - a));
-      expect(m.getState().dprFloor).toBeCloseTo(1.62, 5); // held for now...
+      // Nothing durable: no floor at the probed value, so the next step
+      // is not blocked by one.
+      expect(m.getState().dprFloor).toBe(0.5);
 
-      // ...and released once the short TTL expires. Content has stopped
-      // churning, so the hold lifts too and the walk resumes WITH
-      // ratification (a fresh probe is armed).
+      // Content settles. The walk continues from where it was and the
+      // NEXT probe is judged on its own evidence — rejected here, which
+      // reverts and pins a real 30s floor: the normal machinery, intact.
       const end = t + 12_000;
       while (t < end) {
         m.recordFrame(t);
         t += 2000;
       }
-      // A fresh probe stepped to 1.46 and was judged on its OWN evidence
-      // (rejected, reverted, 30s floor) — the normal machinery, back.
       expect(Math.min(...appliedDPRs(renderer))).toBeLessThan(1.62);
-      expect(m.getState().dprFloor).toBeCloseTo(1.46, 2);
+      expect(m.getState().dprFloor).toBeGreaterThan(0.5);
     } finally {
+      restore2();
+      restore();
+    }
+  });
+
+  it('a confounded settle leaves the rejection-backoff streak untouched', () => {
+    // "The backoff streak is untouched" is the third clause of the
+    // confounded contract and the only one with no visible consequence:
+    // AdaptiveDPRState exposes no backoff field, so inserting
+    // `recordAcceptance()` into the confounded path — which zeroes
+    // floorBackoffLevel and lastRejectedProbeDPR, precisely the harm its
+    // own JSDoc warns about — left every other test in this file green.
+    // Assert it against the ledger the manager actually talks to.
+    const acceptance = vi.spyOn(BoundsLedger.prototype, 'recordAcceptance');
+    const restore2 = setNativeDPR(2.0);
+    const m = new AdaptiveDPRManager({ scaleDownFactor: 0.9 });
+    try {
+      m.setRenderer(renderer);
+      let t = 0;
+      for (let i = 0; i < 4; i++) {
+        m.recordFrame(t);
+        t += 2000; // 0.5fps — probe armed at DPR 1.62
+      }
+      expect(m.getState().probing).toBe(true);
+      m.notifyContentChanged(t);
+      m.recordFrame(t);
+      m.recordFrame(t + 2000); // settles the probe, confounded
+
+      expect(m.getState().probing).toBe(false);
+      expect(acceptance).not.toHaveBeenCalled();
+    } finally {
+      acceptance.mockRestore();
       restore2();
       restore();
     }

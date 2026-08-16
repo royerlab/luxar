@@ -24,6 +24,24 @@ type PerfMode = 'fps' | 'ms' | 'graph';
 const MODES: PerfMode[] = ['fps', 'ms', 'graph'];
 
 /**
+ * Format an FPS reading for a numeric readout.
+ *
+ * Sub-1fps rates are REAL — a software-rasterized scene on a heavy volume
+ * genuinely renders at 0.4fps — and rounding them to `0` reads as "not
+ * rendering at all", the opposite claim, in exactly the regime where the
+ * number matters. Below 0.1fps (one frame every ten seconds) a second
+ * decimal keeps "0.0" off the readout too.
+ *
+ * Shared with the Performance panel's Current FPS row so the rail gauge
+ * and the panel can never disagree about the same rate.
+ */
+export function formatFPSReading(fps: number): string {
+  if (fps >= 1) return Math.round(fps).toString();
+  if (!(fps > 0)) return '0';
+  return fps.toFixed(fps >= 0.1 ? 1 : 2);
+}
+
+/**
  * Hook the {@link PerformanceMonitor} uses to keep the render loop running while
  * it is visible. The monitor needs continuous frames to measure FPS/frame-time,
  * so it `request()`s a keep-alive when shown and `release()`s it when hidden or
@@ -150,8 +168,8 @@ export class PerformanceMonitor {
       return;
     }
     if (this.mode === 'fps') {
-      const fps = Math.round(this.fps);
-      this.numEl.textContent = `${fps}`;
+      const fps = this.fps;
+      this.numEl.textContent = formatFPSReading(fps);
       this.numEl.dataset.level = fps >= 50 ? 'good' : fps >= 30 ? 'ok' : 'bad';
       this.unitEl.textContent = 'fps';
     } else {

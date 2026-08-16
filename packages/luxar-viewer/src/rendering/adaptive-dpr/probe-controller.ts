@@ -29,7 +29,8 @@ export interface PendingProbe {
    * measured on the OLD content and the settle sample on the NEW one, so
    * the before/after comparison is CONFOUNDED: it says nothing about
    * what the DPR change did. The caller must not act on the direction of
-   * such a verdict — see AdaptiveDPRManager.applyProbeVerdict.
+   * such a verdict — see AdaptiveDPRManager.applyConfoundedVerdict, which
+   * keeps the reduction and learns nothing.
    */
   contentConfounded?: boolean;
 }
