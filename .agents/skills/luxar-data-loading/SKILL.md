@@ -28,6 +28,26 @@ right up front avoids fitting the wrong data or blowing up RAM.
 A missing optional dependency raises an actionable error (e.g. "Install with: `pip
 install luxar[io]`").
 
+### Microscopy vendor containers
+
+The dispatch is by **file suffix**, and anything not `.npy` / `.npz` / zarr /
+`.tiff` falls through to `imageio.imread` — which either works whole-file or
+raises. Two cases worth knowing before you plan a fit:
+
+- **`.lsm` (Zeiss)** loads, via the imageio fallback. But that path reads the
+  WHOLE file eagerly: no lazy slice, no `--array-key`, and `--channel` /
+  `--timepoint` are applied *after* materialization. A 2.8 GB LSM is 2.8 GB of
+  RAM before any selection happens. Convert to zarr first if the file is large.
+- **`.h5j` (Janelia FlyLight) is NOT supported.** Despite the HDF5 extension it
+  is a container of per-channel **H.265 elementary streams**, so no array reader
+  can open it. Decode with ffmpeg, then **crop the macroblock padding** — the
+  streams are padded up to macroblock bounds and the real extent is in the
+  file's `pad_right` / `pad_bottom` attributes — and write zarr.
+
+That is the general escape hatch for any unsupported container: decode it to
+zarr yourself and feed Luxar the zarr. Doing so also buys the lazy slicing the
+imageio path does not have.
+
 ## Selecting the slice to fit (CLI flags, shared by fit/cal/compare/denoise)
 
 | Flag | Meaning |

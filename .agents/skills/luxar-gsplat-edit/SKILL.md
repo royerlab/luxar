@@ -128,7 +128,22 @@ luxar gsplat napari in.gsplats.zarr                    # napari + centers overla
   `references/edit-commands.md`.
 - The old `split` command is gone — use `partition`.
 - `transform` applies operations in a fixed order: scale → rotate → translate → center
-  → scale-intensity → normalize-intensity.
+  → scale-intensity → normalize-intensity. **The order is why anisotropic voxel
+  scaling plus a rotation needs TWO invocations**: in one call the scale lands
+  first, so `--scale 0.19,0.19,0.38 --rotate-y 90` puts the axial pitch on a
+  lateral axis. Rotate first, then scale in a second call (or vice versa —
+  whichever your frame needs). Note also that a rotation invalidates a
+  partition's `bsp_tree` split planes; anything but a quarter-turn downgrades
+  the viewer's back-to-front ordering to centroid order, which the command warns
+  about — re-partition afterwards to restore exact ordering.
+- **`merge --as-dimension` needs `-e precision` if the stacked coordinates must
+  be exact.** The default `auto` encoding quantises centers to uint16 over the
+  column's range, so `--values 0,1,2` comes back as `[0, 1.0000153, 2]`
+  (reproduced; `-e precision` gives exact `[0, 1, 2]`). Harmless for a spatial
+  axis, fatal for a **categorical** dimension: the viewer matches the slice
+  position against the stored coordinate, so the middle category silently shows
+  nothing. Carry `-e precision` through *every* stage that rewrites the store
+  (colour, lod, transform), not just the merge.
 - `cull -m auto` picks error_budget (if `--target`), else redundancy (if `--shape`),
   else cumulative.
 - `denoise` lives here too but acts on a raw VOLUME (pre-fit), not on splats.
