@@ -5,6 +5,7 @@ an additive ladder writes ``additive_<i>/`` subgroups under the root leaf. Color
 SDR/HDR is auto-detected (no explicit ``color_mode`` knob).
 """
 
+import json
 import shutil
 import tempfile
 import zipfile
@@ -2812,3 +2813,81 @@ def test_one_part_partition_nested_in_a_tiling_keeps_the_tile_anchor(
         f"nested one-part wrapper gave {covs}; the outer >=2-part tiling still "
         "binds this ladder, so the finest must be PARTITION_FINEST_AREA"
     )
+
+
+def _assert_strict_json(path: Path) -> None:
+    """Parse every metadata document under *path* with NaN/Infinity FORBIDDEN.
+
+    ``json.loads`` accepts the bare ``NaN`` / ``Infinity`` tokens Python's
+    encoder emits; nothing else does. ``parse_constant`` is the hook that fires
+    on exactly those three tokens, so raising from it reproduces what a strict
+    reader (the viewer's ``JSON.parse``, jq, any non-Python zarr client) does
+    with the same bytes.
+    """
+
+    def _reject(token: str) -> None:
+        raise AssertionError(f"non-JSON token {token!r} in {path}")
+
+    for doc in sorted(path.rglob("*")):
+        if doc.is_file() and doc.name in ("zarr.json", ".zattrs", ".zmetadata"):
+            json.loads(doc.read_text(), parse_constant=_reject)
+
+
+def test_non_finite_fit_metrics_never_reach_the_store(tmp_path: Path) -> None:
+    """A ``nan`` / ``inf`` metric must be dropped, not written.
+
+    Both are reachable from ordinary fits: a constant or signal-free volume has
+    no foreground, so ``foreground_psnr_db`` is ``nan``, and an exact
+    reconstruction gives ``psnr_db == +inf``. zarr writes either as a bare
+    ``NaN`` / ``Infinity`` token, and because the root document carries the
+    consolidated index for the WHOLE tree, one such value makes the entire store
+    unreadable to a strict parser rather than just losing that one number.
+    """
+    splats = create_test_splats_3d(20)
+    data = GSplatData(
+        **splats,
+        stats={
+            "fitter_name": "luxar.gsplats",
+            "psnr_db": float("inf"),
+            "foreground_psnr_db": float("nan"),
+            "foreground_threshold": float("nan"),
+            "foreground_fraction": 0.0,
+            "ssim": 0.5,
+        },
+    )
+    out = tmp_path / "nonfinite.gsplats.zarr"
+    data.save(out)
+
+    _assert_strict_json(out)
+
+    attrs = zarr.open_group(str(out), mode="r")["fitting"].attrs
+    assert "psnr_db" not in attrs
+    assert "foreground_psnr_db" not in attrs
+    assert "foreground_threshold" not in attrs
+    # The finite companions survive — dropping the undefined dB value must not
+    # take the numbers that explain WHY it is undefined with it.
+    assert attrs["foreground_fraction"] == 0.0
+    assert attrs["ssim"] == 0.5
+    assert attrs["fitter_name"] == "luxar.gsplats"
+
+
+def test_finite_fit_metrics_still_round_trip(tmp_path: Path) -> None:
+    """Negative control for the guard above: a normal fit loses nothing."""
+    from luxar.gsplats.io.save_gsplats import split_fitting_info
+
+    fitting_info, _, _, _ = split_fitting_info(
+        {
+            "psnr_db": 31.5,
+            "foreground_psnr_db": 18.25,
+            "foreground_threshold": 0.125,
+            "foreground_fraction": 0.0221,
+            "source_shape": (24, 32, 32),
+        }
+    )
+    assert fitting_info == {
+        "psnr_db": 31.5,
+        "foreground_psnr_db": 18.25,
+        "foreground_threshold": 0.125,
+        "foreground_fraction": 0.0221,
+        "source_shape": [24, 32, 32],
+    }

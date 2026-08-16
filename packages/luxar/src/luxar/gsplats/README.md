@@ -36,7 +36,7 @@ pip install "luxar[gsplats]"
 - **Robust Initialization**: Multiscale candidate detection with DoG and peak finding
 - **Memory Efficient**: Truncated rendering and pre-allocated buffers
 - **Tiled Fitting**: Overlapping tiles with Hann cosine apodization for volumes that exceed GPU memory
-- **Quality Metrics**: Built-in PSNR, SSIM, and MSE computation on GPU tensors
+- **Quality Metrics**: Built-in PSNR, foreground PSNR, SSIM, and MSE computation on GPU tensors
 
 ## Quick Example
 
@@ -578,6 +578,8 @@ from luxar.gsplats.metrics import compute_quality_metrics, compute_psnr, compute
 # Compute all metrics at once
 metrics = compute_quality_metrics(pred_tensor, target_tensor)
 print(f"PSNR: {metrics['psnr_db']:.2f} dB")
+print(f"PSNR (foreground): {metrics['foreground_psnr_db']:.2f} dB "
+      f"over {metrics['foreground_fraction'] * 100:.2f}% of voxels")
 print(f"SSIM: {metrics['ssim']:.4f}")
 print(f"MSE:  {metrics['mse']:.6e}")
 print(f"Relative L2: {metrics['rel_l2']:.4f}")
@@ -588,11 +590,30 @@ psnr = compute_psnr(pred_tensor, target_tensor)
 ssim = compute_ssim(pred_tensor, target_tensor, window_size=11)
 ```
 
+### Read the foreground number, not just the global one
+
+On sparse volumes the global PSNR is dominated by background: on a synthetic
+99.9%-empty volume (the shape a light-sheet stack has), a fit that discards 90%
+of the signal still scores **37 dB globally** while scoring **0.9 dB on the
+foreground**. Quote both --
+the global figure alone is close to a report on how well the emptiness was
+reproduced.
+
+Foreground is `target > otsu(target)`, defined on the *target* so a fit that
+hallucinates structure is still scored where the signal actually is. The error
+is averaged over foreground voxels only, but `data_range` comes from the whole
+volume, matching `calibration.metrics.held_out_psnr_foreground` so the two are
+comparable; using the foreground's own (narrower) range would silently inflate
+the result. `foreground_fraction` is reported alongside because a PSNR over
+0.01% of a volume means something very different from one over 40%.
+
 ### Functions
 
 - `compute_psnr(pred, target, data_range=None)` -- Peak Signal-to-Noise Ratio in dB. Returns `float('inf')` when MSE is zero.
+- `compute_foreground_psnr(pred, target, data_range=None, threshold=None)` -- PSNR over foreground voxels only. Returns `(psnr_db, threshold, fraction)`; `psnr_db` is `nan` when the foreground is empty.
+- `otsu_threshold(target, bins=256)` -- Otsu's threshold, on the input device. Reimplemented rather than delegating to scikit-image (a `demos` extra) so the foreground definition does not depend on which extras are installed; pinned to match `skimage.filters.threshold_otsu` exactly.
 - `compute_ssim(pred, target, window_size=11, data_range=None)` -- Structural Similarity Index using nD Gaussian-weighted convolution. Supports 2D, 3D, and higher (averages over 3D sub-volumes for >3D).
-- `compute_quality_metrics(pred, target, data_range=None, ssim_window_size=11)` -- Computes all metrics in one call. Returns a dict with keys: `mse`, `psnr_db`, `ssim`, `rel_l2`, `max_abs_error`.
+- `compute_quality_metrics(pred, target, data_range=None, ssim_window_size=11)` -- Computes all metrics in one call. Returns a dict with keys: `mse`, `psnr_db`, `ssim`, `rel_l2`, `max_abs_error`, `foreground_psnr_db`, `foreground_threshold`, `foreground_fraction`.
 
 ### Quality Metrics in GSplatData.stats
 

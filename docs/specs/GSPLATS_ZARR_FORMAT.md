@@ -616,6 +616,38 @@ fit**, so it predates any post-fit culling.
 Absent on datasets written before these keys existed; readers should report
 nothing rather than infer a source grid from the bounding box.
 
+**Quality metrics** (fitting/.zattrs, optional) — the round-trip score of the
+fit, measured by re-rendering the splats against the volume they were fitted to:
+
+```json
+{
+  "psnr_db": 37.0,
+  "foreground_psnr_db": 20.0,
+  "foreground_threshold": 0.1274,
+  "foreground_fraction": 0.00098,
+  "ssim": 0.9912,
+  "mse": 0.000199
+}
+```
+
+`psnr_db` / `ssim` / `mse` are taken over **every** voxel, which on sparse data
+makes them largely a score for reproducing the background: a fit that discards
+nine tenths of the signal in a 99.9%-empty volume still reports 37 dB.
+`foreground_psnr_db` is the same PSNR averaged over `target > foreground_threshold`
+only (Otsu's threshold on the **target**, so a fit that hallucinates structure is
+still scored where the signal actually is), while `data_range` stays the whole
+volume's — the convention `calibration.metrics.held_out_psnr_foreground` uses, so
+the two are comparable. Quote `foreground_fraction` with it: a dB figure taken
+over 0.01% of a volume means something quite different from one taken over 40%,
+and the bare number cannot say which.
+
+A metric that is mathematically undefined is **omitted, not written**: a volume
+with no foreground (a constant tile, a signal-free crop) has no
+`foreground_psnr_db`, and an exact reconstruction has no `psnr_db`. Writing them
+would put a bare `NaN` / `Infinity` token in the metadata document — not JSON,
+and fatal to a strict reader for the whole store rather than for that one key.
+`foreground_fraction` is still present in that case, so the artifact says why.
+
 ### Pipeline Group Attributes (Optional)
 
 The `pipeline/` group records the reduction/topology provenance of a dataset —

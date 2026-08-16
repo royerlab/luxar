@@ -307,6 +307,9 @@ def info_dataset(
                 "n_iters",
                 "final_loss",
                 "psnr_db",
+                "foreground_psnr_db",
+                "foreground_threshold",
+                "foreground_fraction",
                 "ssim",
                 "mse",
                 "convergence_time",
@@ -600,6 +603,40 @@ def quick_view(
         raise typer.Exit(1)
 
 
+def _print_quality_comparison(
+    metrics: dict[str, Any],
+    *,
+    reference_name: str,
+    ref_shape: Any,
+    gsplats_name: str,
+    n_splats: int,
+) -> None:
+    """Render the ``gsplat compare`` results table."""
+    aprint("\n" + "=" * 50)
+    aprint("QUALITY COMPARISON")
+    aprint("=" * 50)
+    aprint(f"\nReference:  {reference_name} {ref_shape}")
+    aprint(f"GSplats:    {gsplats_name} ({n_splats:,} splats)")
+    aprint("")
+    aprint(f"  MSE:             {metrics['mse']:.6g}")
+    aprint(f"  PSNR:            {metrics['psnr_db']:.2f} dB")
+    if "foreground_psnr_db" in metrics:
+        # The share is not decoration: on a 99%-empty volume the global PSNR
+        # above is largely a score for reproducing the emptiness, and this line
+        # says how little of the volume the honest number was taken over.
+        aprint(
+            f"  PSNR foreground: {metrics['foreground_psnr_db']:.2f} dB "
+            f"(over {metrics['foreground_fraction'] * 100:.2f}% of voxels, "
+            f"Otsu > {metrics['foreground_threshold']:.4g})"
+        )
+    aprint(f"  SSIM:            {metrics['ssim']:.4f}")
+    aprint(f"  Rel L2:          {metrics['rel_l2']:.6g}")
+    aprint(f"  Max Abs Error:   {metrics['max_abs_error']:.6g}")
+    if "compression_ratio" in metrics:
+        aprint(f"  Compression:     {metrics['compression_ratio']:.1f}x")
+    aprint("=" * 50)
+
+
 def compare_quality(
     gsplats_path: Path = typer.Argument(
         ..., exists=True, help="Path to .gsplats.zarr dataset (or .zip/.tar.gz)"
@@ -738,20 +775,13 @@ def compare_quality(
 
         # Print table
         if not quiet:
-            aprint("\n" + "=" * 50)
-            aprint("QUALITY COMPARISON")
-            aprint("=" * 50)
-            aprint(f"\nReference:  {reference_path.name} {ref_shape}")
-            aprint(f"GSplats:    {gsplats_path.name} ({n_splats:,} splats)")
-            aprint("")
-            aprint(f"  MSE:             {metrics['mse']:.6g}")
-            aprint(f"  PSNR:            {metrics['psnr_db']:.2f} dB")
-            aprint(f"  SSIM:            {metrics['ssim']:.4f}")
-            aprint(f"  Rel L2:          {metrics['rel_l2']:.6g}")
-            aprint(f"  Max Abs Error:   {metrics['max_abs_error']:.6g}")
-            if "compression_ratio" in metrics:
-                aprint(f"  Compression:     {metrics['compression_ratio']:.1f}x")
-            aprint("=" * 50)
+            _print_quality_comparison(
+                metrics,
+                reference_name=reference_path.name,
+                ref_shape=ref_shape,
+                gsplats_name=gsplats_path.name,
+                n_splats=n_splats,
+            )
 
         # JSON output
         if output_json is not None:
