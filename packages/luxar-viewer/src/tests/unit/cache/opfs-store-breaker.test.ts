@@ -280,6 +280,26 @@ describe('OPFSStore circuit breaker', () => {
     expect(breakerWarnings()).toBe(0);
   });
 
+  it('dispose() stays bounded when the backend stalls during its metadata flush', async () => {
+    // The teardown flush (awaitInFlight + final save) was the last unbounded
+    // OPFS await: a backend that stalls before dispose() would leave it
+    // unresolved forever, and the dataset switch waiting to take over the
+    // directory with it. It is deadline-bounded, and deliberately NOT counted
+    // by the breaker (the store is already dying).
+    const store = await makeStore('breaker-f');
+    fs.state.mode = 'ok';
+    await store.set('k', new Uint8Array([1, 2, 3]));
+
+    fs.state.mode = 'hang';
+    const t0 = performance.now();
+    await store.dispose();
+    // One 30 ms deadline, not forever (an unbounded await fails this by
+    // timing the whole test out).
+    expect(performance.now() - t0).toBeLessThan(1000);
+    expect(store.getStats().available).toBe(false);
+    expect(store.getStats().breakerTripped).toBe(false);
+  });
+
   it('clear() does not resurrect a tripped store and stats survive the counter reset', async () => {
     const store = await makeStore('breaker-e');
     fs.state.mode = 'hang';

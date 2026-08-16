@@ -844,7 +844,8 @@ export class MultiLevelCachingStore implements AsyncReadable {
     // A DELIBERATE disable (?no-cache / ?no-opfs) reports true: the
     // opfs-unavailable badge is reserved for unrequested degradation
     // (init failure, circuit-breaker trip).
-    const opfsAvailable = this.enabled && !this.noOpfs ? (l2Stats?.available ?? false) : true;
+    const l2DeliberatelyOff = !this.enabled || this.noOpfs;
+    const opfsAvailable = l2DeliberatelyOff ? true : (l2Stats?.available ?? false);
 
     return {
       l1: this.l1Cache.getStats(),
@@ -876,7 +877,11 @@ export class MultiLevelCachingStore implements AsyncReadable {
       health: {
         validationMode: validationState.mode,
         lastValidatedAt: validationState.lastValidatedAt,
-        unvalidatedExternalDataset: validationState.mode === 'none',
+        // "Entries may stay stale" only means something when entries
+        // PERSIST. With L2 deliberately off there is no persistent tier to
+        // go stale (and validation never runs, so the mode stays 'none'),
+        // so raising the badge would be a false warning.
+        unvalidatedExternalDataset: !l2DeliberatelyOff && validationState.mode === 'none',
         opfsAvailable,
       },
       clearOnInitCount: this.clearOnInitCount,

@@ -181,8 +181,11 @@ export class OPFSStore {
   // Circuit breaker: consecutive OPFS-timeout count and the sticky trip
   // flag. Lifecycle state like `disposed` — deliberately NOT reset by
   // doClear()'s counter block, and doInit() refuses to resurrect a
-  // tripped store: the stall is environmental (session-wide), and a
-  // page reload constructs a fresh store, which is the natural reset.
+  // tripped store: the stall is environmental, so re-arming the tier
+  // against the same backend would just re-burn the timeouts. The reset
+  // boundary is a FRESH store — a page reload, or a dataset switch,
+  // each of which re-probes the backend once and pays at most another
+  // threshold's worth of timeouts if it is still stalled.
   private consecutiveTimeouts = 0;
   private breakerTripped = false;
 
@@ -236,7 +239,7 @@ export class OPFSStore {
     log.warning(
       Modules.CACHE,
       `OPFSStore circuit breaker tripped after ${this.consecutiveTimeouts} consecutive ` +
-        `OPFS timeouts (last: ${label}) — disabling the L2 disk cache for this session. ` +
+        `OPFS timeouts (last: ${label}) — disabling the L2 disk cache for this dataset load. ` +
         'L0/L1 in-memory tiers continue to serve.'
     );
   }
@@ -657,6 +660,14 @@ export class OPFSStore {
     // A single broken write counts exactly 1 in `writeFailures`; that invariant
     // is now STRUCTURAL (the non-stale path returns) rather than flag-guarded, so
     // don't reintroduce an "already counted" flag.
+    //
+    // Re-check the root: the eviction/quota awaits above can span a circuit-
+    // breaker trip, which nulls `opfsRoot` while this doSet is mid-flight (the
+    // entry guard already passed). Bail rather than write through a cached
+    // bucket handle — that would burn another full `opfsOperationTimeoutMs`
+    // against the backend the breaker just gave up on, which is exactly the
+    // serial-stall cost the breaker exists to stop.
+    if (!this.opfsRoot) return;
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         await this.timed(
@@ -1177,7 +1188,8 @@ export class OPFSStore {
    *    on disk (last writer), then write the latest snapshot. The flush is
    *    unconditional (not gated on hasPendingSave) because read-driven LRU
    *    order no longer schedules its own save (see touch()); dispose is
-   *    where a read-only session's order gets persisted.
+   *    where a read-only session's order gets persisted. Deadline-bounded:
+   *    a stalled backend must not leave dispose() unresolved.
    */
   async dispose(): Promise<void> {
     if (this.pendingDispose) return this.pendingDispose;
@@ -1237,13 +1249,31 @@ export class OPFSStore {
       }
     }
 
-    await this.metadata.awaitInFlight();
-    // Gate on `initialized` so a dispose that raced an incomplete init() does
-    // not overwrite good on-disk metadata with an empty (not-yet-loaded)
-    // snapshot. A normally-initialized store has initialized === true, so its
-    // final LRU-order snapshot is still persisted as before.
-    if (this.opfsRoot && this.initialized) {
-      await this.metadata.save(this.opfsRoot, this.metadataSnapshot());
+    // Metadata flush, deadline-bounded like every other OPFS await in this
+    // store. Neither call rejects on its own (both swallow + log), so the only
+    // rejection here is the timeout — and without it these were the last
+    // unbounded OPFS awaits: a save already mid-write when the backend stalled
+    // would leave dispose() unresolved FOREVER, hanging the dataset switch that
+    // is waiting to take over the directory. Gate the save on `initialized` so
+    // a dispose that raced an incomplete init() does not overwrite good on-disk
+    // metadata with an empty (not-yet-loaded) snapshot; a normally-initialized
+    // store still persists its final LRU-order snapshot as before.
+    try {
+      await withTimeout(
+        (async () => {
+          await this.metadata.awaitInFlight();
+          if (this.opfsRoot && this.initialized) {
+            await this.metadata.save(this.opfsRoot, this.metadataSnapshot());
+          }
+        })(),
+        config.cache.opfsOperationTimeoutMs,
+        'dispose metadata flush'
+      );
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      if (msg.startsWith('OPFS timeout')) {
+        log.warning(Modules.CACHE, msg);
+      }
     }
 
     // Null the root AFTER the final save so a debounced scheduleMetadataSave()

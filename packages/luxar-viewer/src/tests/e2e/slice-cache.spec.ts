@@ -96,7 +96,12 @@ test.describe('SliceCache (S-cache)', () => {
     expect(state.totalPoints).toBeGreaterThan(0);
   });
 
-  test('?no-slice-cache disables ONLY the S-cache (L0/L1/L2 stay active)', async ({ page }) => {
+  // L2 is off here by `&no-opfs` (see above), so the claim this test can make
+  // is that the chunk-cache stack stays WIRED — unlike `?no-cache`, which
+  // tears it down entirely.
+  test('?no-slice-cache disables ONLY the S-cache (the chunk-cache stack stays wired)', async ({
+    page,
+  }) => {
     await page.goto(`/?src=${DATASET}&debug&no-slice-cache&no-opfs`);
     await waitForLuxarReady(page);
     await page.waitForTimeout(1000);

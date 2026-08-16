@@ -100,6 +100,7 @@ Override cache behavior via URL parameters:
 
 - `?no-cache` - Disable all caching (S-cache + L0 + L1 + L2) for this session
 - `?no-slice-cache` - Disable only the SliceCache (S-cache); L0/L1/L2 stay on
+- `?no-opfs` - Disable only the L2 OPFS tier; L0/L1/S-cache stay on. The deterministic sibling of the OPFS circuit breaker, for environments whose OPFS is known to stall (automated Chromium). A deliberate disable does NOT raise the `opfs-unavailable` badge
 - `?cache-debug` - Enable verbose cache logging for all layers
 - `?clear-cache` - Clear all persistent/persisted caches (L0 + L1 + L2) before loading dataset (the in-memory S-cache is created fresh per load)
 - `?no-prefetch` - Disable prefetching (caches still active)
