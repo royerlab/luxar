@@ -111,9 +111,14 @@ PIPELINE (how the bundled gsplats were produced — provenance, NOT re-run here)
 WHY ``--floor auto`` AND NOT A PERCENTILE:
     A ``pN`` floor subtracts the Nth percentile of ALL voxels, which on sparse
     data lands wherever the sparsity puts it rather than where the noise ends.
-    Measured on this specimen, at a fixed seed budget, every fit scored against
-    the UNFLOORED original (foreground = above 10% of max; dim band = 1-10%,
-    where thin faint neurites live):
+
+    The sweep below is a 96 x 640 x 640 CROP of this specimen (39 Mvoxel), not
+    the shipped 654k-splat whole-volume fit — the point is the RANKING, and the
+    crop is small enough to fit five arms at a fixed seed budget. In it, 1.01%
+    of voxels are foreground (above 10% of max) and 12.9% fall in the dim band
+    (1-10%, where thin faint neurites live), so a p99 floor lands squarely
+    inside signal — at 1.34% of the crop's max. Every arm scored against the
+    UNFLOORED original:
 
         floor   splats   global   foreground   dim-band mass recovered
         none    47,172   41.90    28.49 dB     42.0%

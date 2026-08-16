@@ -265,12 +265,12 @@ luxar gsplat fit --dump-config --preset hifi > config.yaml  # Generate config te
 #
 # STAY ON `auto` UNLESS YOU HAVE MEASURED OTHERWISE. A `pN` floor subtracts the
 # Nth percentile OF ALL VOXELS, which on sparse data lands wherever the sparsity
-# puts it, not where the noise ends: on one crop of a sparse light-sheet brain,
-# p99 sat at 1.34% of THAT CROP's max — inside real signal. (Over the whole
+# puts it, not where the noise ends. On a 96x640x640 crop of a sparse light-sheet
+# brain (1.01% of voxels foreground = >10% of max; 12.9% in the dim band 1-10%),
+# p99 sat at 1.34% of THAT CROP's max — squarely inside signal. (Over the whole
 # stack the same percentile is 0.05% of peak: a pN floor moves with whatever you
-# point it at, which is the problem.) Measured on that crop at a fixed seed
-# budget, scored against the UNFLOORED original (foreground = >10% of max, the
-# dim band = 1-10%):
+# point it at, which is the problem.) Every arm at a fixed seed budget, scored
+# against the UNFLOORED original:
 #
 #   floor   splats   global   foreground   dim-band mass recovered
 #   none    47,172   41.90    28.49 dB     42.0%

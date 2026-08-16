@@ -70,13 +70,13 @@ data, matching how you fit.
 
 **Stay on `auto` unless you have measured otherwise.** A `pNN` floor subtracts a
 percentile of *all* voxels, so on sparse data it lands wherever the sparsity puts
-it rather than where the noise ends. On one crop of a sparse light-sheet brain,
-`p99` sat at **1.34% of that crop's max** — inside real signal. Note it is a
-crop figure: over the whole stack the same percentile is 0.05% of peak. A `pNN`
-floor moves with whatever you point it at, which is the whole problem. Measured
-on that crop at a fixed seed budget, every fit scored against the **unfloored**
-original (foreground = above 10% of max; dim band = 1–10%, where thin faint
-neurites live):
+it rather than where the noise ends. On a 96x640x640 crop of a sparse light-sheet
+brain — 1.01% of its voxels foreground (above 10% of max), 12.9% in the dim band
+(1–10%, where thin faint neurites live) — `p99` sat at **1.34% of that crop's
+max**, squarely inside signal. Note it is a crop figure: over the whole stack the
+same percentile is 0.05% of peak. A `pNN` floor moves with whatever you point it
+at, which is the whole problem. Every arm at a fixed seed budget, scored against
+the **unfloored** original:
 
 | floor | splats | global | foreground | dim-band mass recovered |
 |-------|--------|--------|------------|-------------------------|

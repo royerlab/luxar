@@ -143,8 +143,9 @@ which leaves an object small; bake a `CameraConfig` derived from the LOADED boun
 
 ```python
 from luxar.core.viewer_config import CameraConfig, ViewerConfig
-# visible_height = 2·d·tan(fov/2);  visible_width = that · aspect
-# => d = max((W/fill)/(2 tan(fov/2)·aspect), (H/fill)/(2 tan(fov/2)))
+# visible_height(d) = 2·d·tan(fov/2);  visible_width(d) = that · aspect
+# Fit at the NEAR FACE, then add the half-depth back:
+# d = max((W/fill)/(2 tan(fov/2)·aspect), (H/fill)/(2 tan(fov/2))) + depth/2
 scene = compiler.create_scene(
     dimensions=dims,
     viewer_config=ViewerConfig(
@@ -154,10 +155,27 @@ scene = compiler.create_scene(
 )
 ```
 
-Compute `d` at a conservative aspect (~1.4) so a wider window slightly over-fills
-rather than leaving the object small. A test that merely asserts the camera block
-*exists* is vacuous — a silent revert to the default still loads a valid scene, so
-assert the geometry (looks at the bbox centre; the object fills the frame).
+Two things this formula gets wrong if you write it from intuition:
+
+- **`fov` is VERTICAL**, so visible width scales with the LIVE viewport aspect
+  while a baked distance cannot. A wide object therefore has no single distance
+  that fills it everywhere: at the aspect you calibrate for it occupies `fill` of
+  the width, a WIDER window leaves margin, a NARROWER one crops. (That is the
+  direction — it is easy to write it backwards.) The design aspect is a declared
+  calibration point, not a safety margin, so say which one you picked. Framing for
+  a square viewport is the no-crop-ever choice, but for a wide object it usually
+  lands within a few percent of the viewer's own default, which defeats the
+  purpose of baking a camera at all — check before choosing it.
+- **Fit at the NEAR FACE, not the target plane.** The frustum narrows towards the
+  camera, so a deep object's camera-facing side has the least room: fit at
+  `d - depth/2` and add the half-depth back. Fitting at the centre plane silently
+  pushes the near corners outside the frame.
+
+A test that merely asserts the camera block *exists* is vacuous — a silent revert
+to the default still loads a valid scene. Assert the geometry, and prefer one
+assertion that re-derives nothing: project the eight bbox corners through the
+camera and require every one inside the frustum. That catches the near-face error;
+a test that repeats the distance formula cannot.
 
 If a node's data sits diagonally in its own footprint, level it before authoring the
 camera: the amplitude-weighted principal axis of the cloud in the view plane gives
