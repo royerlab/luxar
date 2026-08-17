@@ -622,11 +622,15 @@ export function renderHierarchicalTimingPanel(
       </div>
     `;
   }
-  // `depthSortUnavailable` deliberately keeps the panel out of the empty
-  // state even with zero timings: a warm-up that fails before any data loads
-  // (CSP-blocked worker script) is exactly when there is nothing else to
-  // notice it by, and "No timing data yet" would bury the one thing worth
-  // saying.
+  // `depthSortUnavailable` deliberately keeps the panel out of the empty state
+  // even with zero timings. That window is narrower than "before any data
+  // loads": `data-loading-monitor.ts::renderPerformanceTab` short-circuits to
+  // its own "Profiler not connected" block while the profiler is null, and the
+  // profiler is only wired once a scene loader exists — so this term matters
+  // once the profiler IS connected but all three trees are still empty (a
+  // scene whose geometry never sorts, or one that has not yet recorded an
+  // update/refinement/sort sample). "No timing data yet" would bury the one
+  // thing worth saying there.
 
   // Aggregate children by node type for cleaner display
   const aggregatedRoot = createAggregatedRoot(root);

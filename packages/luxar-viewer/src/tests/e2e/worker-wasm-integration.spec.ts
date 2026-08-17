@@ -86,7 +86,20 @@ test.describe('Worker Integration E2E', () => {
     expect(initialCount).toBeGreaterThan(0);
   });
 
-  test('should fallback to main thread if worker fails', async ({ page }) => {
+  test('should fallback to main thread if worker fails', async ({ page }, testInfo) => {
+    // This test stomps EVERY worker constructor (below), and app init warms up
+    // the depth-sort worker — so `SortWorker failed to initialize` is a direct
+    // consequence of the test's own premise, not a regression. The fixture's
+    // opt-out is per-test rather than per-pattern, so annotate the one test;
+    // widening DEFAULT_ALLOWED_CONSOLE_ERRORS would hide a real broken
+    // SortWorker in the other 60-odd specs. The assertions below still pin the
+    // user-visible contract (the app initializes and renders without workers).
+    testInfo.annotations.push({
+      type: ALLOW_CONSOLE_ERRORS,
+      description:
+        'Breaks every Worker constructor on purpose; the SortWorker warm-up failure it causes is expected.',
+    });
+
     // Disable workers via the public config knob — the same switch
     // production code reads to decide "use worker or run on main thread".
     //

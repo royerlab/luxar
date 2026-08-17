@@ -56,9 +56,11 @@ describe('renderHierarchicalTimingPanel', () => {
   });
 
   it('an unavailable subsystem escapes the empty placeholder', () => {
-    // Warm-up now runs before any data loads, so a CSP-blocked worker script
-    // sets this with zero timings — precisely when 'No timing data yet'
-    // would bury the one thing worth saying.
+    // The reachable window is "profiler connected, nothing recorded yet": the
+    // monitor renders its own 'Profiler not connected' block while the profiler
+    // is null (so a pre-scene warm-up failure never gets this far), but once it
+    // is wired a scene can sit at zero updates/refinements/sorts — precisely
+    // when 'No timing data yet' would bury the one thing worth saying.
     const html = renderHierarchicalTimingPanel(makeEntry({ count: 0 }), undefined, undefined, true);
     expect(html).not.toContain('luxar-timing-panel--empty');
     expect(html).toContain('depth sort UNAVAILABLE');

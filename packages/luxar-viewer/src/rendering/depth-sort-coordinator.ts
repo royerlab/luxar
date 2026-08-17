@@ -122,6 +122,11 @@ let sortWorkerUrlOverride: string | undefined;
 /**
  * Override the URL used to construct the sort worker.
  *
+ * An INTERNAL entry point, reachable only from inside the source tree (a
+ * vendored/bundled viewer, the standalone bootstrap): it is not re-exported
+ * from `src/index.ts`, and `package.json`'s `exports` map publishes only `.`
+ * and `./styles.css`, so an npm consumer cannot import it at all.
+ *
  * Call before `LuxarApp.init()`. That window used to run to the first
  * order-dependent commit, but the worker is now warmed up during app init
  * ({@link warmUpDepthSortWorker}), so a later call would arrive after the
@@ -636,6 +641,11 @@ function noteWorkerInitFailure(error: unknown): void {
  *   retries were exhausted).
  * - `initTimeouts`: how many init attempts missed the startup deadline
  *   (`config.depthSort.workerInitTimeoutMs`, default 30 s) this session.
+ *
+ * The verdict describes INIT state only: a worker that dies AFTER a successful
+ * init keeps reporting `'ready'` while every sort silently burns the
+ * `SORT_RPC_TIMEOUT_MS` deadline instead (a code span, not a `{@link}` — it is
+ * module-private, and this function is exported).
  */
 export function getDepthSortWorkerStatus(): {
   state: 'idle' | 'ready' | 'starved' | 'failed';
@@ -740,6 +750,27 @@ function reregisterAfterLateWorkerInit(): void {
 }
 
 /**
+ * True when something on screen actually WANTS sorting right now: a tracked
+ * node that is effectively visible, still holds committed data, and whose LIVE
+ * blending mode is order-dependent.
+ *
+ * One helper for the two consumers that must not drift — the retry gate below
+ * (do not spend one of the few attempts on a scene that never sorts) and
+ * {@link isDepthSortAvailable} (do not announce a degrade about a subsystem
+ * this scene never uses).
+ */
+function anyNodeWantsSorting(): boolean {
+  for (const state of nodeStates.values()) {
+    const mesh = state.mesh;
+    if (!isEffectivelyVisible(mesh)) continue;
+    if (!hasCommittedData(mesh)) continue;
+    if (!isLiveOrderDependent(liveBlendingMode(mesh))) continue;
+    return true;
+  }
+  return false;
+}
+
+/**
  * Retry a STARVED init, at most {@link SORT_WORKER_INIT_MAX_ATTEMPTS}
  * times per session (issue #1694). Driven from the per-frame scheduler
  * rather than a timer: the frame loop is precisely where "the main thread
@@ -754,7 +785,9 @@ function reregisterAfterLateWorkerInit(): void {
  * - no offline capture may be in flight: it drains synchronously against a
  *   time bound and cannot await an init that may run to its deadline,
  * - and SOMETHING must actually want sorting right now — a visible, still
- *   committed, live-order-dependent node. An idle or all-additive scene
+ *   committed, live-order-dependent node (`anyNodeWantsSorting`, shared with
+ *   {@link isDepthSortAvailable} so the gate and the monitor's note can never
+ *   disagree about what "wants sorting" means). An idle or all-additive scene
  *   would otherwise burn the budget before the scene that needs it loads.
  *
  * Deliberately NOT gated on `requestReprocess`: a recovered worker is
@@ -771,17 +804,7 @@ function maybeRetryStarvedWorkerInit(): void {
   if (initTimeoutCount >= SORT_WORKER_INIT_MAX_ATTEMPTS) return;
   if (performance.now() < initRetryNotBeforeMs) return;
   if (captureSuppressDepth > 0) return;
-
-  let wantsSorting = false;
-  for (const state of nodeStates.values()) {
-    const mesh = state.mesh;
-    if (!isEffectivelyVisible(mesh)) continue;
-    if (!hasCommittedData(mesh)) continue;
-    if (!isLiveOrderDependent(liveBlendingMode(mesh))) continue;
-    wantsSorting = true;
-    break;
-  }
-  if (!wantsSorting) return;
+  if (!anyNodeWantsSorting()) return;
 
   // Consume the arm-flag and the cached rejection TOGETHER: this is the only
   // place the cached rejection is dropped, and consuming the flag in the same
@@ -845,15 +868,32 @@ function maybeRetryStarvedWorkerInit(): void {
  * remains the correctness path (it dedupes on `initPromise`) and still
  * covers embedders that configure late.
  *
- * This spends the FIRST of the bounded init attempts (see
- * {@link SORT_WORKER_INIT_MAX_ATTEMPTS}), before any node has committed. If it
+ * This spends the FIRST of the bounded init attempts
+ * (`SORT_WORKER_INIT_MAX_ATTEMPTS`), before any node has committed. If it
  * misses the deadline, recovery is not immediate: nothing retries here, and
- * {@link maybeRetryStarvedWorkerInit} only spends an attempt once something
- * visible actually wants sorting — which is the point, since burning the
- * budget on an empty scene would leave none for the load that needs it.
+ * `maybeRetryStarvedWorkerInit` only spends an attempt once something visible
+ * actually wants sorting — which is the point, since burning the budget on an
+ * empty scene would leave none for the load that needs it. (Both names are
+ * plain code spans, not `{@link}`s: they are module-private, and exporting
+ * THIS function promoted its links into the documented set, where an
+ * unresolvable target is a warning the TypeDoc ratchet fails on — the same
+ * hazard {@link getDepthSortWorkerStatus}'s doc calls out.)
+ *
+ * The cost is unconditional: the sort-worker chunk and its WASM are fetched on
+ * every page load, including scenes that never sort (all-additive points, an
+ * opaque mesh, `?debug` with no dataset). `?depthSort=0` is the opt-out — it
+ * spawns nothing at all.
  */
 export function warmUpDepthSortWorker(): void {
   if (!depthSortEnabled) return;
+  // No `Worker` constructor in this environment (the unit suite's default
+  // `node` env, jsdom, SSR): there is nothing to warm up, and trying anyway
+  // logs a red 'SortWorker failed to initialize ReferenceError: Worker is not
+  // defined' and latches `workerInitState` at 'failed' module-wide — for the
+  // rest of that test file, since the module is a singleton. The COMMIT path is
+  // deliberately left unguarded: a node that actually asks for sorting must
+  // still report honestly.
+  if (typeof Worker === 'undefined') return;
   void ensureWorker().catch(() => {
     // Already logged by ensureWorker; a failed warm-up must not become an
     // unhandled rejection, and the commit path will retry.
@@ -861,22 +901,30 @@ export function warmUpDepthSortWorker(): void {
 }
 
 /**
- * False only once depth sorting has GIVEN UP for this session — a dead
- * worker script, or the starved retry budget exhausted (both land in
- * `'failed'`). A `'starved'` init still reports available: a retry is armed
- * and expected to recover. Surfaced by the data-loading monitor so a
- * silently unsorted scene is impossible to mistake for a correctly sorted
- * one (issue #705).
+ * False only when BOTH halves hold: depth sorting has GIVEN UP for this
+ * session (`'failed'` — a dead worker script, or the starved retry budget
+ * exhausted) AND something visible actually wants sorting right now
+ * (`anyNodeWantsSorting`). A `'starved'` init still reports available, because
+ * a retry is armed and expected to recover.
  *
- * Note the asymmetry: the monitor's note PROVES unsorted output, but its
- * absence proves nothing. A `'starved'` init reports available while the
- * scene is drawn in identity order for the whole retry window; a sorted node
- * whose commit could not reach a HEALTHY worker (detached buffer, throwing
- * centers thunk) is likewise invisible here. {@link getDepthSortWorkerStatus}
- * is the finer-grained read.
+ * The demand half is not cosmetic. The worker is warmed up unconditionally at
+ * app init, so a CSP-blocked chunk latches `'failed'` on a scene with NO
+ * order-dependent geometry at all (all-additive points, an opaque mesh,
+ * `?debug` with no dataset) — announcing a degrade there would report on a
+ * subsystem that session never uses, and drag the performance panel out of its
+ * "No timing data yet" empty state to do it. Sharing the predicate with the
+ * retry gate is what keeps the two readings of "wants sorting" identical.
+ *
+ * Exact contract, and it is asymmetric: a SHOWN note proves that visible,
+ * committed, order-dependent geometry is being drawn in storage order. Its
+ * ABSENCE proves nothing — a `'starved'` init reports available for the whole
+ * retry window while identity order is drawn, `?depthSort=0` pins identity
+ * order and reports available by definition, and a node whose commit could not
+ * reach a HEALTHY worker (detached buffer, throwing centers thunk) is
+ * invisible here. {@link getDepthSortWorkerStatus} is the finer-grained read.
  */
 export function isDepthSortAvailable(): boolean {
-  return workerInitState !== 'failed';
+  return !(workerInitState === 'failed' && anyNodeWantsSorting());
 }
 
 /**

@@ -14,7 +14,10 @@
  * - `onmessageerror` (which the coordinator's hand-rolled race never had)
  *   settles init, permanently;
  * - `isDepthSortAvailable()` — what the data-loading monitor's footer reads —
- *   says "unavailable" only once the subsystem has actually given up.
+ *   says "unavailable" only once the subsystem has actually given up AND some
+ *   visible, committed, order-dependent node wants sorting (the warm-up spawns
+ *   unconditionally, so the verdict alone would announce a degrade on scenes
+ *   that never sort).
  *
  * Split into its own file (rather than added to depth-sort-coordinator.test.ts)
  * by TOPIC, not by tooling: that file's own `starved init retry` block
@@ -161,11 +164,17 @@ describe('SortWorker startup (warm-up, configured deadline, guard arms)', () => 
     vi.useFakeTimers({
       toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'performance', 'Date'],
     });
+    // The warm-up no-ops where there is no `Worker` constructor (this suite
+    // runs in the default `node` environment, which has none), so declare the
+    // capability. Never CALLED: the mocked `?worker` default export above is
+    // what the coordinator constructs.
+    (globalThis as { Worker?: unknown }).Worker = class {};
     vi.clearAllMocks();
   });
 
   afterEach(() => {
     vi.useRealTimers();
+    delete (globalThis as { Worker?: unknown }).Worker;
   });
 
   it('warms up at app init with no commit — and the first commit reuses that worker', async () => {
@@ -247,7 +256,10 @@ describe('SortWorker startup (warm-up, configured deadline, guard arms)', () => 
 
     // The failure is not swallowed either — it is a reported verdict.
     expect(coord.getDepthSortWorkerStatus()).toEqual({ state: 'failed', initTimeouts: 0 });
-    expect(coord.isDepthSortAvailable()).toBe(false);
+    // ...but nothing has committed, so there is no unsorted output to announce:
+    // availability is demand-aware (both arms are pinned in the dedicated case
+    // at the bottom of this file).
+    expect(coord.isDepthSortAvailable()).toBe(true);
   });
 
   it('takes the init deadline from config.depthSort.workerInitTimeoutMs', async () => {
@@ -306,12 +318,15 @@ describe('SortWorker startup (warm-up, configured deadline, guard arms)', () => 
 
     // `initTimeouts: 0` is the pin: this was classified as broken, not slow.
     expect(coord.getDepthSortWorkerStatus()).toEqual({ state: 'failed', initTimeouts: 0 });
-    expect(coord.isDepthSortAvailable()).toBe(false);
+    // Nothing wants sorting yet, so the footer stays quiet on a dead worker.
+    expect(coord.isDepthSortAvailable()).toBe(true);
     expect(terminatedWorkers).toHaveLength(1);
 
     // No retry is armed: neither elapsed time nor further frames respawn it.
     coord.noteDepthSortCommit(makeSortableMesh(2), CENTERS(), 2);
     await flush();
+    // With an order-dependent node committed, the same dead worker IS reported.
+    expect(coord.isDepthSortAvailable()).toBe(false);
     for (let frame = 0; frame < 3; frame++) {
       await vi.advanceTimersByTimeAsync(DEFAULT_INIT_DEADLINE_MS);
       coord.evaluateDepthSortPerFrame();
@@ -352,10 +367,14 @@ describe('SortWorker startup (warm-up, configured deadline, guard arms)', () => 
     expect(ready.isDepthSortAvailable()).toBe(true);
   });
 
-  it('reports depth sorting UNAVAILABLE once the session has given up', async () => {
-    // The other half of issue #705's rule: a scene drawn in storage order
-    // must never look like a correctly sorted one. A dead worker script is
-    // the terminal case — nothing later can recover it.
+  it('reports UNAVAILABLE once the session has given up — but only when a node wants sorting', async () => {
+    // The other half of issue #705's rule: a scene drawn in storage order must
+    // never look like a correctly sorted one. A dead worker script is the
+    // terminal case — nothing later can recover it. But the warm-up spawns
+    // unconditionally, so the verdict alone is not enough: on a scene with no
+    // order-dependent geometry a dead worker degrades nothing, and announcing
+    // it would report on a subsystem that scene never uses (and drag the
+    // performance panel out of its empty state to do it). BOTH arms below.
     const coord = await loadCoordinator('never-settles');
     coord.configureDepthSort({
       getCamera: () => makeCamera(),
@@ -373,6 +392,28 @@ describe('SortWorker startup (warm-up, configured deadline, guard arms)', () => 
 
     // That `onerror` latches 'failed' (rather than arming a retry) is pinned in
     // the sibling file; what this asserts is the AVAILABILITY the footer reads.
+    expect(coord.getDepthSortWorkerStatus().state).toBe('failed');
+    // Arm 1 — no demand: nothing has committed, so nothing is drawn wrong.
+    expect(coord.isDepthSortAvailable()).toBe(true);
+
+    // Arm 1b — a COMMUTATIVE node is still no demand: its ordering is
+    // irrelevant by construction, so a dead sort worker costs it nothing.
+    coord.noteDepthSortCommit(makeSortableMesh(2, 'additive'), CENTERS(), 2);
+    await flush();
+    expect(coord.isDepthSortAvailable()).toBe(true);
+
+    // Arm 2 — a visible, committed, order-dependent node IS demand: this scene
+    // really is being drawn in storage order, and the footer must say so.
+    const sorted = makeSortableMesh(2);
+    coord.noteDepthSortCommit(sorted, CENTERS(), 2);
+    await flush();
+    expect(coord.isDepthSortAvailable()).toBe(false);
+
+    // Hiding that node removes the demand again (the same effective-visibility
+    // walk the retry gate uses), so the note goes with it.
+    sorted.visible = false;
+    expect(coord.isDepthSortAvailable()).toBe(true);
+    sorted.visible = true;
     expect(coord.isDepthSortAvailable()).toBe(false);
 
     // A dispose restores a truthful, unspent verdict for the next app.
