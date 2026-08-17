@@ -14,8 +14,8 @@ bytes, which is what makes a fetched copy verifiable).
     # every crop the fit cache holds, at all 100 timepoints (what is hosted)
     python scripts/build_cell_tracking_bundle.py
 
-    # a decimated set, for a local experiment
-    python scripts/build_cell_tracking_bundle.py --stride 4
+    # one crop only, to exercise the hosted path without building 0.7 GB
+    python scripts/build_cell_tracking_bundle.py --crops 6bba_09961292
 
 Output lands in ``--out`` (default ``delme/cell_tracking_bundle/``), deliberately
 NOT under ``demos/data/``: these files are for Zenodo, and the in-repo tree is
@@ -59,12 +59,6 @@ def _sha256(path: Path) -> str:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument(
-        "--stride",
-        type=int,
-        default=1,
-        help="Keep every Nth timepoint (1 = all 100, which is what is hosted).",
-    )
     ap.add_argument("--out", type=Path, default=None)
     ap.add_argument(
         "--crops",
@@ -74,7 +68,6 @@ def main() -> int:
     args = ap.parse_args()
 
     demo = _load_demo()
-    stride = max(1, int(args.stride))
     out_dir = args.out or (REPO_ROOT / "delme" / "cell_tracking_bundle")
 
     if args.crops:
@@ -91,12 +84,12 @@ def main() -> int:
             f"caches under {demo.FITS_DIR})."
         )
 
-    timepoints = list(range(0, demo.N_TIMEPOINTS, stride))
-    print(
-        f"stride={stride} "
-        f"({len(timepoints)} of {demo.N_TIMEPOINTS} timepoints) "
-        f"crops={len(crops)} -> {out_dir}"
-    )
+    # Always the full cadence: the hosted product is deliberately ONE set at all
+    # 100 timepoints (the timelapse IS the demo's subject), and a decimated
+    # variant cannot be made by dropping timepoints anyway — lineage edges join
+    # ADJACENT frames, so keeping every Nth node discards every edge with it.
+    timepoints = list(range(demo.N_TIMEPOINTS))
+    print(f"{len(timepoints)} timepoints, crops={len(crops)} -> {out_dir}")
 
     files: list[dict] = []
     for i, name in enumerate(crops, 1):
@@ -105,8 +98,8 @@ def main() -> int:
         geff_store = demo.DATA_DIR / "train" / f"{name}.geff"
         centre = demo.crop_centre_um(image_store)
 
-        # Load the cached fits at this variant's cadence, then run the demo's own
-        # pipeline so the hosted product is byte-for-byte what a local build makes.
+        # Load the cached fits, then run the demo's own pipeline so the hosted
+        # product is byte-for-byte what a local build makes.
         from luxar.gsplats import GSplatData
 
         per_tp = [
@@ -117,8 +110,6 @@ def main() -> int:
         lod = demo.build_lod(combined)
         intensity, offset = demo.display_window(lod.amplitudes)
         tracks = demo.track_geometry(geff_store, centre, demo.N_TIMEPOINTS)
-        if tracks is not None and stride > 1:
-            tracks = _restride_tracks(tracks, stride)
 
         crop = {
             "name": name,
@@ -154,40 +145,6 @@ def main() -> int:
         "base_url stays null until then."
     )
     return 0
-
-
-def _restride_tracks(tracks: dict, stride: int) -> dict:
-    """Keep only the timepoints this variant ships, and renumber them densely.
-
-    The time column is a scene DIMENSION index, so dropping every Nth timepoint
-    without renumbering would leave the markers pointing at slices that no longer
-    exist. Line vertices are NOT dropped (that would invalidate the edge indices);
-    only edges whose endpoints both survive are kept.
-    """
-    import numpy as np
-
-    out = dict(tracks)
-
-    verts = np.asarray(tracks["line_vertices"]).copy()
-    t_col = verts.shape[1] - 1
-    keep_vertex = (verts[:, t_col].astype(np.int64) % stride) == 0
-    verts[:, t_col] = verts[:, t_col] // stride
-    out["line_vertices"] = verts
-
-    edges = np.asarray(tracks["line_indices"])
-    if len(edges):
-        both = keep_vertex[edges[:, 0]] & keep_vertex[edges[:, 1]]
-        out["line_indices"] = edges[both]
-
-    pts = np.asarray(tracks["point_positions"]).copy()
-    keep_point = (pts[:, t_col].astype(np.int64) % stride) == 0
-    pts = pts[keep_point]
-    pts[:, t_col] = pts[:, t_col] // stride
-    out["point_positions"] = pts
-    out["point_colors"] = np.asarray(tracks["point_colors"])[keep_point]
-    out["point_radii"] = np.asarray(tracks["point_radii"])[keep_point]
-    out["n_cells"] = int(keep_point.sum())
-    return out
 
 
 if __name__ == "__main__":

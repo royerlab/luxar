@@ -186,6 +186,181 @@ class TestDisplayWindow:
         assert top == pytest.approx(float(np.percentile(amps, 99.0)), rel=1e-5)
 
 
+class TestVoxelSize:
+    """Reading the crop's voxel size out of its OME-Zarr metadata.
+
+    Both nestings have to work. OME-Zarr **0.5** puts everything under an ``ome``
+    key; 0.4 puts ``multiscales`` at the top level — and a zarr v3 store written
+    by a 0.4-era tool has v3 chunks with 0.4 attributes, so the store version
+    does not settle which spelling is on disk.
+    """
+
+    @staticmethod
+    def _multiscales() -> list[dict]:
+        return [
+            {
+                "datasets": [
+                    {
+                        "path": "0",
+                        "coordinateTransformations": [
+                            {"type": "scale", "scale": [1.0, 1.625, 0.40625, 0.40625]}
+                        ],
+                    }
+                ]
+            }
+        ]
+
+    def _store(self, tmp_path, attrs: dict):
+        import zarr
+
+        path = tmp_path / "crop.zarr"
+        group = zarr.create_group(store=str(path), overwrite=True, zarr_format=3)
+        for key, value in attrs.items():
+            group.attrs[key] = value
+        return path
+
+    def test_ome_zarr_0_5_nesting_is_read(self, tmp_path) -> None:
+        path = self._store(
+            tmp_path, {"ome": {"version": "0.5", "multiscales": self._multiscales()}}
+        )
+        assert _demo.voxel_size_of(path) == pytest.approx((1.625, 0.40625, 0.40625))
+
+    def test_ome_zarr_0_4_layout_is_still_read(self, tmp_path) -> None:
+        path = self._store(tmp_path, {"multiscales": self._multiscales()})
+        assert _demo.voxel_size_of(path) == pytest.approx((1.625, 0.40625, 0.40625))
+
+    def test_the_time_axis_scale_is_dropped(self, tmp_path) -> None:
+        """The stores are TZYX; only the three spatial scales are voxel size."""
+        path = self._store(tmp_path, {"multiscales": self._multiscales()})
+        assert len(_demo.voxel_size_of(path)) == 3
+
+    def test_metadata_without_multiscales_fails_clearly(self, tmp_path) -> None:
+        """Not a KeyError from the middle of a subscript chain."""
+        path = self._store(tmp_path, {"ome": {"version": "0.5"}})
+        with pytest.raises(ValueError, match="multiscales"):
+            _demo.voxel_size_of(path)
+
+
+class TestTrackWindow:
+    """`--timepoints` has to cut the tracks, on either path."""
+
+    @staticmethod
+    def _tracks(n_timepoints: int = 6) -> dict:
+        """One cell tracked straight through, one vertex per timepoint."""
+        verts = np.zeros((n_timepoints, 4), np.float32)
+        verts[:, 3] = np.arange(n_timepoints)
+        edges = np.asarray(
+            [(t, t + 1) for t in range(n_timepoints - 1)], dtype=np.uint32
+        )
+        return {
+            "point_positions": verts,
+            "point_colors": np.zeros((n_timepoints, 3), np.float32),
+            "point_radii": np.full(n_timepoints, 1.3, np.float32),
+            "line_vertices": verts,
+            "line_colors": np.zeros((n_timepoints, 3), np.float32),
+            "line_widths": np.full(n_timepoints, 0.35, np.float32),
+            "line_indices": edges,
+            "n_lineages": 1,
+            "n_cells": n_timepoints,
+            "n_divisions": 0,
+        }
+
+    def test_markers_and_edges_are_cut_to_the_window(self) -> None:
+        got = _demo.window_tracks(self._tracks(6), 3)
+        assert got is not None
+        assert len(got["point_positions"]) == 3
+        assert got["n_cells"] == 3
+        assert np.all(got["point_positions"][:, 3] < 3)
+        # Only edges wholly inside the window survive: (0,1) and (1,2).
+        assert len(got["line_indices"]) == 2
+        assert got["line_indices"].max() < 3
+
+    def test_vertices_are_kept_so_edge_indices_stay_valid(self) -> None:
+        """Dropping vertices would renumber every edge — the classic corruption."""
+        original = self._tracks(6)
+        got = _demo.window_tracks(original, 3)
+        assert len(got["line_vertices"]) == len(original["line_vertices"])
+        assert len(got["line_widths"]) == len(got["line_vertices"])
+        assert len(got["point_radii"]) == len(got["point_positions"])
+
+    def test_a_full_window_changes_nothing(self) -> None:
+        original = self._tracks(6)
+        got = _demo.window_tracks(original, 6)
+        np.testing.assert_array_equal(got["line_indices"], original["line_indices"])
+        assert got["n_cells"] == original["n_cells"]
+
+    def test_divisions_are_recounted_inside_the_window(self) -> None:
+        """A fork past the window must not still be reported as a division."""
+        tracks = self._tracks(6)
+        # Vertex 4 gains a second parent-child link FROM vertex 3, i.e. 3 divides
+        # at t=3 — outside a 3-frame window, inside a 6-frame one.
+        tracks["line_indices"] = np.vstack(
+            [tracks["line_indices"], np.asarray([(3, 4)], np.uint32)]
+        ).astype(np.uint32)
+        assert _demo.window_tracks(tracks, 6)["n_divisions"] == 1
+        assert _demo.window_tracks(tracks, 3)["n_divisions"] == 0
+
+    def test_no_surviving_edge_means_volume_only(self) -> None:
+        """A tile with nothing left to draw returns None, as track_geometry does."""
+        assert _demo.window_tracks(self._tracks(6), 1) is None
+        assert _demo.window_tracks(None, 5) is None
+
+
+class TestTrackGeometry:
+    """GEFF graph -> the arrays the scene is authored from.
+
+    Uses the GEFF reader's own fixture writer, so what is under test is the
+    demo's column order and recentring rather than a hand-built store.
+    """
+
+    @staticmethod
+    def _store(tmp_path):
+        from luxar.gsplats.interop.tests.test_geff_interop import write_geff
+
+        # One founder dividing at t=2, exactly as the reader's fixture, at a
+        # voxel size that makes the um conversion visible.
+        return write_geff(
+            tmp_path / "c.geff",
+            node_ids=[10, 11, 12, 13, 14],
+            t=[0, 1, 2, 3, 3],
+            z=[1, 1, 1, 1, 2],
+            y=[0, 1, 2, 3, 2],
+            x=[0, 0, 0, 0, 1],
+            edges=[(10, 11), (11, 12), (12, 13), (12, 14)],
+            scale=(2.0, 0.5, 0.5),
+        )
+
+    def test_columns_are_zyx_then_time_and_recentred(self, tmp_path) -> None:
+        """The arrays are authored with `dim_order=["z","y","x","time"]`.
+
+        A swapped column order would put every marker somewhere else in the
+        embryo, silently — this pins it against the GEFF store's own values.
+        """
+        centre = np.array([2.0, 1.0, 0.5])  # um, ZYX
+        tracks = _demo.track_geometry(self._store(tmp_path), centre, 4)
+        assert tracks is not None
+        # node 14: voxel (2, 2, 1) x scale (2, .5, .5) = (4, 1, .5) um, at t=3
+        np.testing.assert_allclose(
+            tracks["line_vertices"][4], [4.0 - 2.0, 1.0 - 1.0, 0.5 - 0.5, 3.0]
+        )
+        assert tracks["line_vertices"].shape == (5, 4)
+        assert tracks["n_divisions"] == 1, "the fork at t=2 is a division"
+        assert tracks["n_cells"] == 5
+        assert tracks["n_lineages"] == 1
+
+    def test_the_time_window_is_honoured(self, tmp_path) -> None:
+        tracks = _demo.track_geometry(self._store(tmp_path), np.zeros(3), 3)
+        assert len(tracks["point_positions"]) == 3  # t=0,1,2
+        assert tracks["n_divisions"] == 0  # both daughters are at t=3
+        assert len(tracks["line_indices"]) == 2
+
+    def test_marker_and_track_sizes_match_the_constants(self, tmp_path) -> None:
+        tracks = _demo.track_geometry(self._store(tmp_path), np.zeros(3), 4)
+        assert np.all(tracks["point_radii"] == _demo.CELL_MARKER_RADIUS_UM)
+        assert np.all(tracks["line_widths"] == _demo.TRACK_WIDTH_UM)
+        assert len(tracks["line_widths"]) == len(tracks["line_vertices"])
+
+
 class TestFileManifests:
     """What the demo asks Kaggle for — split so a warm cache skips the bulk."""
 
@@ -316,7 +491,7 @@ class TestCuratedCrops:
         per_frame = drawn_per_tp * _demo.DEFAULT_N_DATASETS
         assert per_frame <= 60_000, (
             f"the whole matrix would draw ~{per_frame:,.0f} splats per frame; "
-            "140k was visibly choppy when scrubbing time"
+            "120k was visibly choppy when scrubbing time"
         )
 
 
@@ -494,6 +669,20 @@ class TestPrecomputedRoundTrip:
             )
             is None
         )
+
+    def test_a_crop_without_annotation_round_trips_as_none(self, tmp_path) -> None:
+        """`tracks: None` is what the scene builder reads as "volume only".
+
+        Saving stores empty arrays for it, so rehydrating them as a dict of empty
+        geometry would send zero-length vertices into `add_lines` instead.
+        """
+        crop = self._crop()
+        crop["tracks"] = None
+        cache_root, written = self._stage(crop, tmp_path)
+        (got,) = _demo.load_precomputed_crops(
+            ["crop_x"], manifest=self._manifest(written), cache_root=cache_root
+        )
+        assert got["tracks"] is None
 
     def test_a_missing_crop_falls_back_rather_than_half_building(
         self, tmp_path

@@ -184,7 +184,7 @@ N_TIMEPOINTS = 100  # every crop is exactly 100 timepoints
 DEFAULT_SEEDS = 60000
 
 # Grid pitch as a multiple of one crop's 104 um extent — a small gap so the tiles
-# read as nine separate embryos rather than one slab.
+# read as separate embryos rather than one slab.
 GRID_GAP_FACTOR = 1.14
 
 # Substitutive LOD. The ladder's DEPTH is this demo's single most important
@@ -433,6 +433,10 @@ def _crop_from_precomputed(dataset: str, volume: Path, tracks: Path) -> dict:
 
     n_timepoints = int(payload["n_timepoints"][0])
     intensity, offset = display_window(lod.amplitudes)
+    # A crop with no usable annotation is stored as empty arrays (see
+    # save_precomputed_crop), and must rehydrate as `None` rather than as a dict
+    # of empty geometry — that is what the scene builder reads as "volume only".
+    has_tracks = len(payload["line_vertices"]) and len(payload["line_indices"])
     return {
         "name": dataset,
         "lod": lod,
@@ -454,7 +458,9 @@ def _crop_from_precomputed(dataset: str, volume: Path, tracks: Path) -> dict:
             "n_lineages": int(payload["n_lineages"][0]),
             "n_cells": int(payload["n_cells"][0]),
             "n_divisions": int(payload["n_divisions"][0]),
-        },
+        }
+        if has_tracks
+        else None,
         "extent_um": float(payload["extent_um"][0]),
         "n_timepoints": n_timepoints,
     }
@@ -543,6 +549,16 @@ def _crop_chunk_files(dataset: str, n_timepoints: int) -> list[str]:
     return [f"train/{dataset}.zarr/0/c/{t}/0/0/0" for t in range(n_timepoints)]
 
 
+def _is_downloaded(path: Path) -> bool:
+    """Whether a competition file is present AND non-empty.
+
+    The size test is the point: an interrupted transfer can leave a 0-byte file,
+    and treating that as present would skip it in the scan below and then fail
+    when zarr tried to read it.
+    """
+    return path.is_file() and path.stat().st_size > 0
+
+
 def _fetch_file(cmd: list[str], rel: str, dest_root: Path, max_tries: int = 6) -> bool:
     """Download one competition file to ``dest_root/rel``.
 
@@ -552,7 +568,7 @@ def _fetch_file(cmd: list[str], rel: str, dest_root: Path, max_tries: int = 6) -
     429 backs off exponentially rather than failing the run.
     """
     target = dest_root / rel
-    if target.is_file() and target.stat().st_size > 0:
+    if _is_downloaded(target):
         return True
     target.parent.mkdir(parents=True, exist_ok=True)
 
@@ -574,7 +590,7 @@ def _fetch_file(cmd: list[str], rel: str, dest_root: Path, max_tries: int = 6) -
             capture_output=True,
             text=True,
         )
-        if target.is_file() and target.stat().st_size > 0:
+        if _is_downloaded(target):
             return True
         blob = (proc.stdout or "") + (proc.stderr or "")
         if attempt == max_tries:
@@ -608,7 +624,7 @@ def fetch_dataset(
     wanted = _crop_metadata_files(dataset)
     if need_images:
         wanted += _crop_chunk_files(dataset, n_timepoints)
-    missing = [p for p in wanted if not (DATA_DIR / p).is_file()]
+    missing = [p for p in wanted if not _is_downloaded(DATA_DIR / p)]
     if not missing:
         return image, geff
 
@@ -642,13 +658,29 @@ def _device() -> str:
 
 
 def voxel_size_of(image_store: Path) -> tuple[float, float, float]:
-    """Read the crop's ZYX voxel size (um) from its OME-Zarr metadata."""
+    """Read the crop's ZYX voxel size (um) from its OME-Zarr metadata.
+
+    Both metadata layouts are accepted. OME-Zarr **0.5** (which is what a zarr v3
+    store declares) nests everything under an ``ome`` key, while 0.4 puts
+    ``multiscales`` at the top level — and a zarr v3 store written by a 0.4-era
+    tool has the v3 chunk layout with the 0.4 attributes, so neither spelling can
+    be assumed from the store version alone.
+    """
     import zarr
 
     group = zarr.open_group(str(image_store), mode="r")
-    scale = group.attrs["multiscales"][0]["datasets"][0]["coordinateTransformations"][
-        0
-    ]["scale"]
+    attrs = dict(group.attrs)
+    ome = attrs.get("ome")
+    root = ome if isinstance(ome, dict) and "multiscales" in ome else attrs
+    if "multiscales" not in root:
+        raise ValueError(
+            f"{image_store} has no OME-Zarr `multiscales` metadata "
+            f"(attributes present: {sorted(attrs)}); the crop's voxel size is "
+            "read from it."
+        )
+    scale = root["multiscales"][0]["datasets"][0]["coordinateTransformations"][0][
+        "scale"
+    ]
     return tuple(float(s) for s in scale[1:])  # drop the time axis
 
 
@@ -738,6 +770,12 @@ def fit_timelapse(
                 seeds=SEEDS,
                 device=_device(),
                 voxel_size=voxel,
+                # The acquisition is uint16; this timepoint was cast to float32
+                # above, so without declaring the source dtype the stamped
+                # `source_bytes` would price the float32 working copy and halve
+                # the compression ratio the dataset publishes. The GRID is
+                # untouched, so no source_shape is needed.
+                source_dtype=str(arr.dtype),
                 verbose=False,
             )
             # Marker file: if the process dies mid-save the leftover .tmp makes
@@ -779,7 +817,7 @@ def combine_to_4d(
 
     Per timepoint, in order:
 
-    1. **Recentre** on the crop's box centre, so all nine tiles share one box.
+    1. **Recentre** on the crop's box centre, so every tile shares one box.
     2. **Drop the diffuse large-scale tail.** A fit of a densely packed nuclei
        stack puts most splats at ~1 um (median characteristic size 1.1 um, median
        nearest-neighbour spacing 1.8 um) but leaves a tail of big low-frequency
@@ -883,31 +921,60 @@ def track_geometry(
     vertices = np.column_stack([pos, graph.t.astype(np.float32)]).astype(np.float32)
     colors = palette[lineage]
 
-    # Keep only what the requested time window covers. Vertices are NOT dropped
-    # (that would invalidate every edge index); only edges with an endpoint past
-    # the window are, and the markers are filtered separately.
-    edges = graph.edge_indices()
+    return window_tracks(
+        {
+            "point_positions": vertices,
+            "point_colors": colors,
+            "point_radii": np.full(len(vertices), CELL_MARKER_RADIUS_UM, np.float32),
+            "line_vertices": vertices,
+            "line_colors": colors,
+            "line_widths": np.full(len(vertices), TRACK_WIDTH_UM, np.float32),
+            "line_indices": graph.edge_indices().astype(np.uint32),
+            "n_lineages": int(lineage.max()) + 1,
+            "n_cells": len(vertices),
+            "n_divisions": len(graph.divisions()),
+        },
+        n_timepoints,
+    )
+
+
+def window_tracks(tracks: dict | None, n_timepoints: int) -> dict | None:
+    """Restrict track geometry to the first ``n_timepoints`` frames.
+
+    Line vertices are NOT dropped — that would invalidate every edge index — so
+    only edges with an endpoint past the window are removed. The per-timepoint
+    markers carry no connectivity, so those ARE filtered, and the counts that
+    describe the window (cells, divisions) are recomputed from what survived.
+    ``None`` means nothing is left worth drawing, and the caller falls back to a
+    volume-only tile.
+
+    Both paths need this: the local one to honour ``--timepoints`` while fitting,
+    and the hosted one because the published crops are whole 100-timepoint
+    timelapses whatever window was asked for.
+    """
+    if tracks is None:
+        return None
+
+    vertex_t = np.asarray(tracks["line_vertices"])[:, -1]
+    edges = np.asarray(tracks["line_indices"])
     if len(edges):
-        in_window = (graph.t[edges[:, 0]] < n_timepoints) & (
-            graph.t[edges[:, 1]] < n_timepoints
-        )
-        edges = edges[in_window]
+        edges = edges[
+            (vertex_t[edges[:, 0]] < n_timepoints)
+            & (vertex_t[edges[:, 1]] < n_timepoints)
+        ]
     if not len(edges):
         return None
 
-    visible = graph.t < n_timepoints
-    return {
-        "point_positions": vertices[visible],
-        "point_colors": colors[visible],
-        "point_radii": np.full(int(visible.sum()), CELL_MARKER_RADIUS_UM, np.float32),
-        "line_vertices": vertices,
-        "line_colors": colors,
-        "line_widths": np.full(len(vertices), TRACK_WIDTH_UM, np.float32),
-        "line_indices": edges.astype(np.uint32),
-        "n_lineages": int(lineage.max()) + 1,
-        "n_cells": int(visible.sum()),
-        "n_divisions": len(graph.divisions()),
-    }
+    visible = np.asarray(tracks["point_positions"])[:, -1] < n_timepoints
+    out = dict(tracks)
+    out["line_indices"] = edges.astype(np.uint32)
+    for key in ("point_positions", "point_colors", "point_radii"):
+        out[key] = np.asarray(tracks[key])[visible]
+    out["n_cells"] = int(visible.sum())
+    out["n_divisions"] = int(
+        np.count_nonzero(np.bincount(edges[:, 0], minlength=len(vertex_t)) >= 2)
+    )
+    return out
 
 
 # =============================================================================
@@ -1025,8 +1092,8 @@ Navigation:
   - Mouse drag to rotate, scroll to zoom, right-click drag to pan
             """
 
-            # One `layer=True` wrapper per crop, so the Layers panel offers nine
-            # rows ("this embryo") rather than 27 ("this embryo's splats"). The
+            # One `layer=True` wrapper per crop, so the Layers panel offers one
+            # row per embryo rather than three ("this embryo's splats"). The
             # wrapper restates `volumetric` because the panel falls back to a
             # group's default (additive) when no mode is authored, which would
             # both mislabel the row and hide the absorption slider.
@@ -1152,14 +1219,27 @@ def main() -> None:
     # Falls through to fetch-and-fit when it is unavailable or --recompute is set.
     crops = load_precomputed_crops(chosen)
     if crops is not None:
-        hosted_tps = {c.get("n_timepoints") for c in crops}
+        hosted_tps = {int(c["n_timepoints"]) for c in crops}
+        hosted_max = max(hosted_tps) if hosted_tps else n_timepoints
         aprint(
             f"Using precomputed crops from the '{PRECOMPUTED_DATASET}' dataset "
             f"({', '.join(str(t) for t in sorted(hosted_tps))} timepoints each)"
         )
-        scene_path = create_luxar_scene(
-            crops, max(hosted_tps) if hosted_tps else n_timepoints, output_path
-        )
+        # `--timepoints` still has to be honoured off the hosted path. The volumes
+        # are published whole, so the window is applied to the scene instead: the
+        # time dimension stops at the requested frame (splats past it are then
+        # unreachable, the slider cannot get there) and the tracks are cut to
+        # match, so the tile is not annotated for frames it never shows.
+        scene_timepoints = min(n_timepoints, hosted_max)
+        if scene_timepoints < hosted_max:
+            aprint(
+                f"Showing the first {scene_timepoints} of {hosted_max} hosted "
+                "timepoints (--timepoints); the hosted volumes are whole "
+                "timelapses, so this trims the scene rather than the download."
+            )
+            for crop in crops:
+                crop["tracks"] = window_tracks(crop["tracks"], scene_timepoints)
+        scene_path = create_luxar_scene(crops, scene_timepoints, output_path)
         if not FLAGS["no_serve"]:
             aprint("\nLaunching viewer...")
             launch_viewer(scene_path)

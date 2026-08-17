@@ -116,6 +116,53 @@ def upload(bucket: str, path: Path, token: str) -> dict:
             return json.load(resp)
 
 
+def plan_uploads(
+    paths: list[Path], have: dict[str, tuple[str, int]]
+) -> list[tuple[Path, str, str]]:
+    """``(path, md5, action)`` per file, in name order.
+
+    An identical name+md5+size already on the deposition is a skip (that is what
+    makes an interrupted run resumable); the same name with different bytes is
+    called out as a REPLACE rather than quietly re-uploaded.
+    """
+    plan: list[tuple[Path, str, str]] = []
+    for path in sorted(paths):
+        digest = _md5(path)
+        prior = have.get(path.name)
+        if prior and prior == (digest, path.stat().st_size):
+            action = "skip (identical)"
+        elif prior:
+            action = "REPLACE (same name, different bytes)"
+        else:
+            action = "upload"
+        plan.append((path, digest, action))
+    return plan
+
+
+def transfer(plan: list[tuple[Path, str, str]], bucket: str, token: str) -> int:
+    """Upload every non-skipped file, verifying Zenodo's md5 for each."""
+    uploaded = 0
+    for path, digest, action in plan:
+        if action == "skip (identical)":
+            continue
+        print(
+            f"uploading {path.name} ({path.stat().st_size / 1e6:.1f} MB)...", flush=True
+        )
+        resp = upload(bucket, path, token)
+        got = str(resp.get("checksum", ""))
+        if got.startswith("md5:"):
+            got = got[4:]
+        if got != digest:
+            raise SystemExit(
+                f"CHECKSUM MISMATCH for {path.name}: local md5 {digest}, "
+                f"Zenodo reported {got!r}. The deposition now holds a bad copy — "
+                "delete that file on Zenodo before retrying."
+            )
+        uploaded += 1
+        print(f"  ok, md5 verified ({digest})")
+    return uploaded
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--deposition", required=True, help="Draft deposition id.")
@@ -144,19 +191,7 @@ def main() -> int:
     have = existing_files(dep)
     print(f"  already on the deposition: {len(have)} files")
 
-    plan: list[tuple[Path, str, str]] = []  # (path, md5, action)
-    for path in sorted(paths):
-        digest = _md5(path)
-        size = path.stat().st_size
-        prior = have.get(path.name)
-        if prior and prior[0] == digest and prior[1] == size:
-            action = "skip (identical)"
-        elif prior:
-            action = "REPLACE (same name, different bytes)"
-        else:
-            action = "upload"
-        plan.append((path, digest, action))
-
+    plan = plan_uploads(paths, have)
     total_new = sum(p.stat().st_size for p, _, a in plan if a != "skip (identical)")
     print(f"\nplan ({len(plan)} files, {total_new / 1e9:.2f} GB to transfer):")
     for path, digest, action in plan:
@@ -167,26 +202,7 @@ def main() -> int:
         print("This tool cannot publish; do that by hand when you are ready.")
         return 0
 
-    uploaded = 0
-    for path, digest, action in plan:
-        if action == "skip (identical)":
-            continue
-        print(
-            f"uploading {path.name} ({path.stat().st_size / 1e6:.1f} MB)...", flush=True
-        )
-        resp = upload(bucket, path, token)
-        got = str(resp.get("checksum", ""))
-        if got.startswith("md5:"):
-            got = got[4:]
-        if got != digest:
-            raise SystemExit(
-                f"CHECKSUM MISMATCH for {path.name}: local md5 {digest}, "
-                f"Zenodo reported {got!r}. The deposition now holds a bad copy — "
-                "delete that file on Zenodo before retrying."
-            )
-        uploaded += 1
-        print(f"  ok, md5 verified ({digest})")
-
+    uploaded = transfer(plan, bucket, token)
     print(
         f"\n{uploaded} file(s) uploaded and verified; {len(plan) - uploaded} skipped."
     )

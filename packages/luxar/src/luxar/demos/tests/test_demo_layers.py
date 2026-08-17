@@ -181,9 +181,9 @@ EXEMPT: dict[str, Exemption] = {
     "demo_gsplats_4d_cell_tracking_challenge.py": Exemption(
         frozenset({"'volume'", "'tracks'", "'cells'"}),
         frozenset({"crop['name']"}),
-        "Each crop of the 3x3 matrix contributes a volume, its tracks and its "
+        "Each crop of the matrix contributes a volume, its tracks and its "
         "cell markers; the useful control is the crop, so all three hang off "
-        "the per-crop layer=True group named after it (9 panel rows, not 27).",
+        "the per-crop layer=True group named after it (6 panel rows, not 18).",
     ),
 }
 

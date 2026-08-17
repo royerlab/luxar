@@ -107,15 +107,46 @@ class TestIdempotence:
 
     def test_checksum_prefix_is_optional(self) -> None:
         """Zenodo has returned both `md5:<hex>` and bare `<hex>` over time."""
-        dep = _draft(
-            files=[{"filename": "a", "checksum": "deadbeef", "filesize": 3}]
-        )
+        dep = _draft(files=[{"filename": "a", "checksum": "deadbeef", "filesize": 3}])
         assert _up.existing_files(dep)["a"] == ("deadbeef", 3)
 
     def test_key_and_size_spellings_are_accepted(self) -> None:
         """The bucket API spells them `key`/`size`, the deposition API differently."""
         dep = _draft(files=[{"key": "b", "checksum": "md5:abc", "size": 7}])
         assert _up.existing_files(dep)["b"] == ("abc", 7)
+
+    def test_the_plan_skips_identical_and_flags_changed_bytes(self, tmp_path) -> None:
+        """The resume policy: same bytes = skip, same name + new bytes = REPLACE."""
+        same = tmp_path / "same.bin"
+        same.write_bytes(b"identical")
+        changed = tmp_path / "changed.bin"
+        changed.write_bytes(b"new bytes")
+        fresh = tmp_path / "fresh.bin"
+        fresh.write_bytes(b"never seen")
+
+        have = {
+            "same.bin": (_up._md5(same), same.stat().st_size),
+            "changed.bin": ("0" * 32, 1),
+        }
+        actions = {
+            path.name: action
+            for path, _, action in _up.plan_uploads([fresh, changed, same], have)
+        }
+        assert actions == {
+            "same.bin": "skip (identical)",
+            "changed.bin": "REPLACE (same name, different bytes)",
+            "fresh.bin": "upload",
+        }
+
+    def test_a_matching_md5_with_a_different_size_is_not_skipped(
+        self, tmp_path
+    ) -> None:
+        """Both halves are checked — a truncated remote copy must be re-sent."""
+        f = tmp_path / "a.bin"
+        f.write_bytes(b"hello luxar")
+        have = {"a.bin": (_up._md5(f), f.stat().st_size + 1)}
+        ((_, _, action),) = _up.plan_uploads([f], have)
+        assert action == "REPLACE (same name, different bytes)"
 
     def test_changed_bytes_under_the_same_name_are_not_silently_skipped(
         self, tmp_path
