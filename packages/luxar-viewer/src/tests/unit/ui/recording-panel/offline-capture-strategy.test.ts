@@ -309,11 +309,21 @@ describe('OfflineCaptureStrategy', () => {
       expect(anim.startAnimation).toHaveBeenCalled();
 
       // Frames 1..5 each advance one step — without the wake-up the
-      // camera never moves and every captured frame is identical.
+      // camera never moves and every captured frame is identical. The step
+      // is 2π/6, so the six frames cover [0, 2π) and the last one stops
+      // short of the first (a turntable has to loop seamlessly).
       const driver = mockState.driverInstances.at(-1)!;
       expect(driver.captureFrame).toHaveBeenCalledTimes(6);
       expect(orbitControls.applyOrbitRotation).toHaveBeenCalledTimes(5);
-      expect(orbitControls.applyOrbitRotation).toHaveBeenCalledWith((2 * Math.PI) / 5);
+      expect(orbitControls.applyOrbitRotation).toHaveBeenCalledWith((2 * Math.PI) / 6);
+
+      // The full sweep must stop exactly one step short of a whole turn —
+      // 5 × 2π/6, never 2π.
+      const swept = orbitControls.applyOrbitRotation.mock.calls.reduce(
+        (sum: number, call: unknown[]) => sum + (call[0] as number),
+        0
+      );
+      expect(swept).toBeCloseTo(2 * Math.PI * (5 / 6), 12);
     });
 
     it('builds the overlay, drives the driver for every frame, then tears everything down', async () => {
@@ -336,10 +346,11 @@ describe('OfflineCaptureStrategy', () => {
       // finalize receives the captured-frame count.
       expect(driver.finalize).toHaveBeenCalledWith(expect.anything(), 2, expect.anything());
 
-      // Frame 0 captures the start view; frame 1 rotates by the full step
-      // (2π / (totalFrames - 1) = 2π).
+      // Frame 0 captures the start view; frame 1 rotates by one step
+      // (2π / totalFrames = π), landing half a turn away rather than back
+      // on the start pose.
       expect(orbitControls.applyOrbitRotation).toHaveBeenCalledTimes(1);
-      expect(orbitControls.applyOrbitRotation).toHaveBeenCalledWith(2 * Math.PI);
+      expect(orbitControls.applyOrbitRotation).toHaveBeenCalledWith(Math.PI);
 
       // Overlay built with modal ARIA + cancel button, and its counter
       // advanced to the final frame before teardown.

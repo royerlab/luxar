@@ -177,9 +177,13 @@ export class OfflineCaptureStrategy implements CaptureStrategy {
 
     session.pauseAutoRotate();
 
-    // Per-frame rotation step: frame 0 captures the starting view without rotation,
-    // then frames 1..N-1 each advance by one step to complete exactly 2π total.
-    const anglePerFrame = totalFrames > 1 ? (2 * Math.PI) / (totalFrames - 1) : 0;
+    // Per-frame rotation step: frame 0 captures the starting view without
+    // rotation, then frames 1..N-1 each advance by one step, so the N frames
+    // cover [0, 2π) and the LAST frame stops one step short of the first.
+    // That step is 2π/N, NOT 2π/(N-1): dividing by N-1 lands the last frame
+    // exactly back on the start pose, and a turntable is made to loop — the
+    // duplicate shows up as a one-frame hitch at every wrap.
+    const anglePerFrame = totalFrames > 0 ? (2 * Math.PI) / totalFrames : 0;
 
     log.info(
       Modules.RECORDING,

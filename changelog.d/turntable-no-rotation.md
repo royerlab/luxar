@@ -17,3 +17,9 @@ canvas, so a stopped loop left the viewer showing an essentially blank frame unt
 next mouse move. And it is what keeps the depth-sort scheduler and the LOD group
 selector — per-frame callbacks both — following the camera as it turns, rather than
 freezing them at the opening pose.
+
+Once it turned, one more thing was visible: an offline turntable stepped by
+2π/(N−1), which lands the last frame exactly back on the first, so every loop of the
+exported video hitched on a duplicated frame. The step is now 2π/N — the N frames
+cover [0, 2π) and the sweep stops one step short of home, which is what makes the
+loop seamless.
