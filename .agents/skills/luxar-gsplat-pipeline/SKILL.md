@@ -119,6 +119,83 @@ luxar gsplat fit volume.tiff out.gsplats.zarr --floor p10     # subtract 10th pe
 luxar gsplat cal volume.tiff cal.json --floor none            # legacy (no floor)
 ```
 
+## Tuning a fit
+
+### Measure, don't look
+
+A fit is tuned against numbers, not against a maximum-intensity projection — a
+render that looks *crisper than its own source* is usually one that deleted
+data. Two rules make a comparison mean something:
+
+1. **Score against the ORIGINAL**, never against the preprocessed input a
+   variant happened to use. A floored or denoised arm scored against its own
+   floored/denoised volume flatters itself by construction.
+2. **Hold the splat count fixed across arms.** Count dominates every quality
+   metric, so a 1.4 M-splat variant "beating" a 2.7 M-splat one measures the
+   count. Fix the seed budget on both.
+
+```bash
+luxar gsplat compare fitted.gsplats.zarr original.tiff --output-json metrics.json
+#   --shape, --channel/--timepoint, --device, --truncate
+```
+
+`compare` reports **global** PSNR / SSIM / MSE. On sparse data that is not the
+number to steer by: a 97–99%-empty stack is mostly empty in both volumes, so
+global PSNR barely moves however badly the structure is fitted. Split it
+yourself with `gsplat.rendering.render_to_volume` and a mask — the two bands
+that actually discriminate are the **foreground** (above ~10% of max) and the
+**dim band** (~1–10% of max, where thin faint structure lives). There is no
+built-in foreground metric; `luxar.gsplats.metrics` exposes `compute_psnr` /
+`compute_ssim` and you mask the inputs.
+
+### `--seeds` proposes; `cull_retention` disposes
+
+The final splat count is **not** `--seeds`. After fitting, a cumulative-amplitude
+cull keeps the top `cull_retention` of total amplitude and discards the rest, and
+on heavy-tailed sparse data that tail is a lot of splats.
+
+**The bare default and every preset differ here**, which surprises people:
+
+| | `n_iters` | `early_stop_patience` | `max_eccentricity` | `cull_retention` |
+| --- | --- | --- | --- | --- |
+| *(no preset)* | — | — | — | **0.95** |
+| `draft` | 2,000 | 200 | 10 | 0.999 |
+| `standard` | 5,000 | 300 | 10 | 0.999 |
+| `hifi` | 10,000 | 400 | 15 | 0.999 |
+| `ultra` / `n2s` | 20,000 | 500 | 20 / 10 | 0.999 |
+
+So a bare `fit` silently drops 5% of amplitude, while any preset keeps
+essentially everything. That difference is deliberate: `0.999` is the
+manuscript's blind-spot protocol baseline, and the old preset default of `0.95`
+made `cal` report a false "signal limited" curve. Pass
+`--cull-retention 0` to keep every splat, or a lower value as a deliberate
+size lever — but for *reducing* a finished fit prefer `decimate` (hit a target
+count) or `cull --target vol.npy` (error-budget, the principled one) over
+tightening this knob and refitting.
+
+### Symptom → knob
+
+| Symptom | Reach for |
+| --- | --- |
+| Thin/faint structure missing | `--floor auto` (see above), then raise K — not a higher floor |
+| Background haze survives | the viewer's display window + opacity, or `filter --soft-highpass p90`; **not** a higher floor |
+| Blobby, over-smoothed detail | more K first; then `--preset hifi/ultra` for iterations |
+| Elongated streak artifacts | lower `--max-eccentricity` (presets range 10–20) |
+| Result far bigger than needed | `decimate --target N` / `-f 0.1`; `cull --target vol.npy -p 95` |
+| Boxy steps at tile boundaries | suspect the SOURCE (mosaic seams, coverage count), not the fit — measure the artefact's period first |
+| Fit is slow, exploring | `--preset draft` (2k iters) for the search, one `hifi` run at the end |
+
+`--iters` has `early_stop_patience` behind it, so a preset's budget is a
+*ceiling*: a converged fit stops early and a bigger preset costs nothing extra.
+Raise iterations when the loss is still falling at the cap; raise K when it is
+not but the reconstruction is still soft.
+
+`--seed-method` (`auto`/`edges`/`grid`/`decomposition`/`peaks`, comma-combinable)
+matters most on structure the default misses: `edges` for boundaries, `peaks`
+for sparse point-like maxima, `grid` for uniform coverage, `decomposition` for
+blobs (slow). `--loss` defaults to `l1`; `poisson` suits shot-noise-dominated
+photon counts.
+
 ## Traps that cost real time
 
 Each of these has burned a whole fit cycle. Check them before you launch a long run.
