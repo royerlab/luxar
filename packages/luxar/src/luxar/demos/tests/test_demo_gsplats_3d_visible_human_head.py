@@ -241,12 +241,16 @@ class TestColorSidecarOrdering:
         assert not _demo._colors_match_fit(stored, permuted, "permuted")
         assert not _demo._colors_match_fit(stored, colors[:-1], "truncated")
 
-    def test_a_pair_too_sparse_to_judge_is_accepted(self) -> None:
+    def test_a_pair_too_sparse_to_judge_is_accepted(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         """Unverifiable is NOT a failure — the guard must accept and move on.
 
         A fit whose splats never share a voxel gives the helper no evidence
         (``None``). Rejecting there would refit every sparse dataset forever, so
-        this branch is load-bearing; it is also the one a stubbed test uses.
+        this branch is load-bearing; it is also the one a stubbed test uses. The
+        accept must be TRACED though: silently accepting is how a misordered
+        sidecar on a sparse fit would render unnoticed.
         """
         # One splat per voxel on a coarse lattice → no same-voxel pair at all.
         grid = (
@@ -267,6 +271,7 @@ class TestColorSidecarOrdering:
             "fixture must be unverifiable for this branch to be exercised"
         )
         assert _demo._colors_match_fit(fit, colors, "unverifiable")
+        assert "UNVERIFIED" in capsys.readouterr().out
 
 
 def _same_voxel_pairs(centers: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -456,7 +461,7 @@ class TestShippedLfsPairIsGuardedToo:
 
         # …and empty the processed cache the LFS branch copies INTO, so the cache
         # door misses and the LFS door is the one under test. CACHE_DIR must move
-        # too: the branch mkdirs it before `shutil.copy2`.
+        # too: the branch mkdirs it before the atomic copy.
         cache_dir = tmp_path / "cache"
         monkeypatch.setattr(_demo, "CACHE_DIR", cache_dir)
         monkeypatch.setattr(_demo, "CACHE_FIT", cache_dir / _demo.FIT_FILE)

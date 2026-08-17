@@ -226,47 +226,121 @@ describe('AdaptiveDPRManager — property/invariant fuzzing', () => {
     // For a matrix of (native, steady fps), after a long warmup the DPR
     // must stop changing: the last K evaluations produce no renderer
     // call. Catches scale-up/scale-down and ceiling/floor oscillation.
+    //
+    // The sub-2.9fps regimes are the ones the gap-reset outlier rule
+    // ACTIVATED (below 1000/gapResetMs fps every interval clears the
+    // absolute floor, so the manager used to be structurally inert
+    // there and could not oscillate for lack of running at all). They
+    // are run at native 1 and 2 only — a 0.4fps regime replays so few
+    // frames that a third native adds no coverage, only runtime.
+    const regimes: Array<[number, number]> = [];
     for (const native of [1, 2, 3]) {
-      for (const fps of [8, 20, 30, 45, 55, 90]) {
+      for (const fps of [8, 20, 30, 45, 55, 90]) regimes.push([native, fps]);
+    }
+    for (const native of [1, 2]) {
+      for (const fps of [0.4, 0.5, 1, 2, 2.5, 2.85]) regimes.push([native, fps]);
+    }
+    for (const [native, fps] of regimes) {
+      setNativeDPR(native);
+      const m = new AdaptiveDPRManager();
+      const r = makeRenderer();
+      m.setRenderer(r);
+
+      const stepMs = 1000 / fps;
+      let t = 0;
+      // Warm up for 90s of steady frames — well past every TTL that
+      // matters at this cadence except the 30s/60s learned-bound TTLs,
+      // which at a steady fps re-settle to the same fixed point.
+      const warmupEnd = 90_000;
+      while (t < warmupEnd) {
+        m.recordFrame(t);
+        t += stepMs;
+      }
+      // Now observe 20s more and count DPR changes (by the effective
+      // rendered value, so a null-override native track counts as no
+      // change).
+      let changes = 0;
+      let last = r.effective();
+      const observeEnd = t + 20_000;
+      while (t < observeEnd) {
+        m.recordFrame(t);
+        t += stepMs;
+        const eff = r.effective();
+        if (Math.abs(eff - last) > 0.001) {
+          changes++;
+          last = eff;
+        }
+      }
+      // A steady regime may still cross ONE learned-bound TTL boundary
+      // in a 20s observation (floor re-probe), so allow a small bound,
+      // not literally zero — but it must not thrash.
+      expect(changes, `native=${native} fps=${fps} oscillation`).toBeLessThanOrEqual(2);
+      m.dispose();
+    }
+    // Same CPU-bound profile as the sequence fuzzer above (30 regimes ×
+    // ~110s of replayed frames each): fast locally, but give it the same
+    // headroom so a loaded runner can't trip the default 15s cap.
+  }, 60_000);
+
+  it('a stall burst inside a healthy session never moves the learned floor', () => {
+    // The invariant whose absence let a real regression through: once a
+    // run of dead intervals is long enough that the stall detector's
+    // median absorbs it as "the frame rate", the FPS window it lands in
+    // holds NOTHING but dead time — and a window like that must never
+    // become learned evidence. Left trusted it armed a probe, settled it
+    // against a baseline measured on the same dead time, rejected it,
+    // and pinned a U-shape floor (measured: 0.90) with exponential
+    // backoff onto a session that was rendering at a healthy 60fps
+    // before and after. A transient reduction is fine (fewer pixels
+    // never hurt a stuttering loop); a learned floor is not.
+    //
+    // The guarantee is BOUNDED, and deliberately so: it covers a burst
+    // up to CADENCE_TRUST_INTERVALS + 2 = 4 dead intervals (measured —
+    // pre-fix a floor of 0.90 was pinned from FOUR). Past that, 25s of
+    // nothing but 5s intervals is not a burst any more, it is a 0.2fps
+    // regime the manager must be allowed to learn from; the boundary is
+    // asserted below rather than left to drift silently.
+    const untouched = [1, 2, 3, 4];
+    for (const native of [1, 2, 3]) {
+      for (const stalls of [...untouched, 5]) {
         setNativeDPR(native);
         const m = new AdaptiveDPRManager();
         const r = makeRenderer();
         m.setRenderer(r);
 
-        const stepMs = 1000 / fps;
+        const stepMs = 1000 / 60;
         let t = 0;
-        // Warm up for 90s of steady frames — well past every TTL that
-        // matters at this cadence except the 30s/60s learned-bound TTLs,
-        // which at a steady fps re-settle to the same fixed point.
-        const warmupEnd = 90_000;
-        while (t < warmupEnd) {
+        while (t < 20_000) {
           m.recordFrame(t);
           t += stepMs;
         }
-        // Now observe 20s more and count DPR changes (by the effective
-        // rendered value, so a null-override native track counts as no
-        // change).
-        let changes = 0;
-        let last = r.effective();
-        const observeEnd = t + 20_000;
-        while (t < observeEnd) {
+        const ctx = `native=${native} stalls=${stalls}`;
+        expect(m.getState().dprFloor, `${ctx} floor before`).toBe(0.5);
+
+        for (let i = 0; i < stalls; i++) {
+          t += 5000;
+          m.recordFrame(t);
+        }
+        const floorAfterBurst = m.getState().dprFloor;
+
+        // Healthy again for another 20s — the reduction must lift.
+        const end = t + 20_000;
+        while (t < end) {
           m.recordFrame(t);
           t += stepMs;
-          const eff = r.effective();
-          if (Math.abs(eff - last) > 0.001) {
-            changes++;
-            last = eff;
-          }
         }
-        // A steady regime may still cross ONE learned-bound TTL boundary
-        // in a 20s observation (floor re-probe), so allow a small bound,
-        // not literally zero — but it must not thrash.
-        expect(changes, `native=${native} fps=${fps} oscillation`).toBeLessThanOrEqual(2);
+
+        const s = m.getState();
+        if (untouched.includes(stalls)) {
+          expect(floorAfterBurst, `${ctx} floor right after the burst`).toBe(0.5);
+          expect(s.dprFloor, `${ctx} floor after recovery`).toBe(0.5);
+        } else {
+          // Boundary marker, not a wish: five in a row IS a frame rate.
+          expect(floorAfterBurst, `${ctx} boundary — a floor is learned`).toBeGreaterThan(0.5);
+        }
+        expect(s.currentDPR, `${ctx} DPR restored`).toBeCloseTo(native, 1);
         m.dispose();
       }
     }
-    // Same CPU-bound profile as the sequence fuzzer above (18 regimes ×
-    // ~110s of replayed frames each): fast locally, but give it the same
-    // headroom so a loaded runner can't trip the default 15s cap.
   }, 60_000);
 });

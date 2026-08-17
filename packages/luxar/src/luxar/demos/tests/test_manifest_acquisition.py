@@ -98,6 +98,9 @@ _NOT_YET_DECLARED = {
 #: multi-gigabyte download, so it happens during the refit when the source is
 #: already in hand rather than as a separate pass.
 _STORED_BYTES_PENDING = {
+    # Behind an authenticated Kaggle competition endpoint, so sizing the
+    # chunk-compressed source stores is a ~4 GB download rather than a probe.
+    "gsplats_cell_tracking",
     "gsplats_cryoem_virus",
     "gsplats_milkyway_dust",
     "gsplats_kidney",

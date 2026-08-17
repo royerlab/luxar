@@ -35,11 +35,12 @@ U.S. National Library of Medicine — The Visible Human Project® (Male).
 
 SELF-CONTAINED / CACHING
 ------------------------
-The colors sidecar is indexed positionally against the fit, and ``save()``
-reorders splats spatially — so the colors are sampled from the SAVED store's own
-order (save → reload → sample), never from the in-memory fit. On load the pair is
-verified against that invariant (splats sharing a voxel must share a color); a
-mismatched pair is reported and refitted rather than rendered.
+The colors sidecar is indexed positionally against the fit, and the cache goes
+through ``save_with_lod`` (a streaming ladder whose rungs are each written in
+hilbert order), which reorders splats — so the colors are sampled from the SAVED
+store's own order (save → reload → sample), never from the in-memory fit. On load
+the pair is verified against that invariant (splats sharing a voxel must share a
+color); a mismatched pair is reported and refitted rather than rendered.
 
 NO WORKING FAST PATH TODAY (#1670): the shipped ``vh_head_colors.npz`` was
 sampled in the pre-save splat order and does NOT correspond to the shipped
@@ -50,8 +51,9 @@ regenerated. So on a fresh machine this demo bootstraps itself with no manual
 steps, but not instantly:
   1. It downloads the 377 color slices (~1.1 GB) to
      ``~/.cache/luxar/gsplats_visible_human_head/``, builds the masked RGB
-     volume, fits luminance on the GPU, samples colors, and caches the result —
-     so subsequent runs load that (verified) local pair instantly.
+     volume, fits luminance on the GPU, caches the fit, then reloads it and
+     samples the colors from the stored splat order — so subsequent runs load
+     that (verified) local pair instantly.
   2. The shipped Git LFS assets in ``demos/data/gsplats_visible_human_head/``
      become the fast path again as soon as the sidecar is regenerated against
      the store it ships with.
@@ -108,6 +110,7 @@ from luxar.demos import (
     voxel_sampled_payload_agreement,
     warn_if_no_cuda_gpu,
 )
+from luxar.demos._lod_policy import save_with_lod
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.utils.paths import get_demos_output_dir
@@ -387,7 +390,13 @@ def _colors_match_fit(fit: GSplatData, colors: np.ndarray, source: str) -> bool:
         return False
     agreement = voxel_sampled_payload_agreement(fit.centers, colors)
     if agreement is None:
-        return True  # too few same-voxel splats to judge — accept
+        # Too little evidence to judge — accepted (rejecting would force a
+        # multi-GB refit on every sparse fit), but never silently.
+        aprint(
+            f"{source}: too few same-voxel splats to check the color order "
+            "— the pair is accepted UNVERIFIED."
+        )
+        return True
     if agreement < MIN_COLOR_AGREEMENT:
         aprint(
             f"{source}: same-voxel color agreement {agreement:.3f} < "
@@ -402,7 +411,8 @@ def save_and_sample_colors(
 ) -> tuple[GSplatData, np.ndarray]:
     """Cache the fit, then sample the per-splat colors in the STORE's own order.
 
-    ``GSplatData.save`` reorders splats spatially (``ordering="hilbert"``), so
+    The writer reorders splats — ``save_with_lod`` splits them into a streaming
+    ladder and each rung is written spatially (``ordering="hilbert"``) — so
     sampling the RGB volume at the in-memory fit's centers would produce a sidecar
     that no longer lines up with what ``load`` hands back. Saving first and
     sampling the RELOADED centers makes the pair aligned by construction under any
@@ -411,8 +421,18 @@ def save_and_sample_colors(
     Returns ``(stored_fit, colors)``.
     """
     CACHE_FIT.parent.mkdir(parents=True, exist_ok=True)
-    fit.save(
+    save_with_lod(
+        fit,
         CACHE_FIT,
+        # `stream`, not `levels`: the head IS a large orbited single object, but
+        # the scene is built from explicit `centers=`/`amplitudes=` arrays plus
+        # the per-splat colours sidecar, and `add_gsplats` writes a flat leaf —
+        # so a substitutive ladder would cost the ~38% extra bytes recorded in
+        # `_lod_policy` and be discarded before the viewer ever saw it. Carrying
+        # the levels into the scene needs the colours to live on the
+        # `GSplatData` so the whole fit can go through `add_gsplats_from_data`;
+        # until then `stream` is the honest choice.
+        recipe="stream",
         encoding_mode=EncodingMode.MEMORY,  # uint8 Cholesky — smallest on-disk
         include_fitting_info=True,
         compress="zip",
@@ -428,7 +448,7 @@ def save_and_sample_colors(
 
 
 def fit_head(rgb_vol: np.ndarray, acquisition=None) -> tuple[GSplatData, np.ndarray]:
-    """Fit luminance, sample per-splat colors, cache both. Returns (fit, colors)."""
+    """Fit luminance, cache, reload, sample colors; returns ``(stored_fit, colors)``."""
     global DEVICE
     if DEVICE is None:
         DEVICE = detect_device()
@@ -478,11 +498,16 @@ def load_or_build() -> tuple[GSplatData, np.ndarray]:
             and not is_lfs_pointer(LFS_COLORS)
         ):
             aprint("  Copying shipped fit + colors from package data to cache")
-            import shutil
+            from luxar.utils.atomic_copy import atomic_copy_file
 
             CACHE_DIR.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(LFS_FIT, CACHE_FIT)
-            shutil.copy2(LFS_COLORS, CACHE_COLORS)
+            # Atomic (temp sibling + rename), not `shutil.copy2`: a Ctrl-C
+            # mid-copy would otherwise leave a truncated file under the canonical
+            # cache name, and the cache door above calls `GSplatData.load` on it
+            # with no `try` — so a half-written zip kills every later run until
+            # the user deletes the cache by hand.
+            atomic_copy_file(LFS_FIT, CACHE_FIT)
+            atomic_copy_file(LFS_COLORS, CACHE_COLORS)
             fit = GSplatData.load(CACHE_FIT, include_stats=False)
             colors = _load_colors_f32(CACHE_COLORS)
             if _colors_match_fit(fit, colors, f"{LFS_FIT} + {LFS_COLORS}"):

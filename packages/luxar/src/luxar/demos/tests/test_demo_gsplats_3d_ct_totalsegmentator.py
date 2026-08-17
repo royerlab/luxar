@@ -279,12 +279,16 @@ class TestLabelSidecarOrdering:
         assert not _demo._labels_match_fit(stored, permuted, "permuted")
         assert not _demo._labels_match_fit(stored, labels[:-1], "truncated")
 
-    def test_a_pair_too_sparse_to_judge_is_accepted(self) -> None:
+    def test_a_pair_too_sparse_to_judge_is_accepted(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         """Unverifiable is NOT a failure — the guard must accept and move on.
 
         A fit whose splats never share a voxel gives the helper no evidence
         (``None``). Rejecting there would refit every sparse dataset forever, so
-        this branch is load-bearing; it is also the one a stubbed test uses.
+        this branch is load-bearing; it is also the one a stubbed test uses. The
+        accept must be TRACED though: silently accepting is how a misordered
+        sidecar on a sparse fit would render unnoticed.
         """
         # One splat per voxel on a coarse lattice → no same-voxel pair at all.
         grid = (
@@ -304,6 +308,7 @@ class TestLabelSidecarOrdering:
             "fixture must be unverifiable for this branch to be exercised"
         )
         assert _demo._labels_match_fit(fit, labels, "unverifiable")
+        assert "UNVERIFIED" in capsys.readouterr().out
 
     def test_shipped_pair_is_accepted(self) -> None:
         """The pair actually in Git LFS must pass the guard it is checked by.

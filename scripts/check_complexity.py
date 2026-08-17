@@ -504,8 +504,15 @@ def _print_regressions(
     report: RatchetReport,
     current: dict[str, list[int]],
     baseline: dict[str, list[int]],
+    restricted: bool = False,
 ) -> None:
-    """Print the failing keys, plus the keys that vanished in the same run."""
+    """Print the failing keys, plus the keys that vanished in the same run.
+
+    ``restricted`` carries the same meaning as in ``_print_report``: on a partial
+    scan the vanished keys merely went unread, so the closing hint must not
+    invite ``--update-baseline`` for them (writing one from a restricted run
+    drops the rest of the tree's debt).
+    """
     aprint("\n❌ Complexity regressions:\n")
     for key in report.new:
         aprint(f"  ❌ {key}: {_format_counts(current[key])} (not baselined)")
@@ -526,13 +533,24 @@ def _print_regressions(
         for key in gone:
             aprint(f"  ✨ {key}")
 
-    aprint(
-        "\n⚠️  If the function(s) above are genuinely new complexity, simplify "
-        "them (extract helpers, flatten branches) — do NOT reach for "
-        "--update-baseline to silence real debt. If they moved, were renamed, or "
-        "were otherwise legitimately re-keyed, --update-baseline IS the right "
-        "response."
+    hint = (
+        "\n⚠️  Act on the ❌ regressions at the TOP of this report: if they are "
+        "genuinely new complexity, simplify them (extract helpers, flatten "
+        "branches) — do NOT reach for --update-baseline to silence real debt."
     )
+    if gone and restricted:
+        hint += (
+            " The ✨ vanished keys just above are NOT fixed debt — this scan was "
+            "restricted, so they simply went unread; --update-baseline would drop "
+            "them from the baseline."
+        )
+    elif gone:
+        hint += (
+            " The ✨ vanished keys just above are the OPPOSITE — they dropped "
+            "below the threshold or were re-keyed (a move/rename); "
+            "--update-baseline IS the right response for those."
+        )
+    aprint(hint)
 
 
 def _print_report(
@@ -583,7 +601,7 @@ def _print_report(
         )
 
     if report.new or report.worsened:
-        _print_regressions(report, current, baseline)
+        _print_regressions(report, current, baseline, restricted)
         return 1
 
     aprint("\n✅ No new complexity regressions.")

@@ -71,10 +71,34 @@ export interface AdaptiveDPRConfig {
    *  most this far in the future, and are coalesced within it, ms
    *  (default: 5000). */
   contentChangeRecheckMs: number;
-  /** A gap between frames larger than this resets the FPS window and
-   *  voids any pending probe, ms (default: 350). Covers GC/decode
-   *  stalls and idle-resume gaps that would otherwise poison samples.
-   *  Trade-off: below ~1000/gapResetMs fps the manager holds state
-   *  instead of adapting (adaptivity is moot that slow anyway). */
+  /** Absolute floor for treating a gap between frames as DEAD TIME, ms
+   *  (default: 350). Dead time resets the FPS window and voids any
+   *  pending probe — it covers GC/decode stalls and idle-resume gaps
+   *  that would otherwise poison samples.
+   *
+   *  This threshold is necessary but NOT sufficient: the interval must
+   *  ALSO be a large outlier (strictly more than 4×) against the median
+   *  of the four PRECEDING inter-frame intervals (see
+   *  rendering/adaptive-dpr/stall-detector.ts).
+   *  A 5s gap in a 60fps stream is a 300× outlier and resets; a 2s
+   *  interval in a stream whose recent intervals are all ~2s is simply
+   *  the frame rate and is kept, so the manager still scales down below
+   *  ~1000/gapResetMs fps instead of going structurally inert there.
+   *  A genuine slowdown costs one or two misread intervals while the
+   *  median follows the new cadence.
+   *
+   *  Residual limitations, both from seeing only inter-frame intervals:
+   *  a dead period ALTERNATING one-for-one with a SINGLE fast frame
+   *  (~2s / ~100ms / ~2s / ~100ms) makes the dead intervals half of the
+   *  four-interval memory, so the median lands between the phases and
+   *  they are kept as "the frame rate" — the FPS window then mixes real
+   *  dead time with render cost. The manager still adapts (measured, the
+   *  reported rate is far below the down threshold either way) but it
+   *  cannot report the rate the user perceives. Two or more fast frames
+   *  between dead periods fail the other way: the median stays fast, the
+   *  dead time is correctly discarded every cycle, and the window
+   *  accumulates nothing but those few fast frames — so a recurring
+   *  hitch pattern like 16.7/16.7/400ms reads a healthy 60fps at ~6.9
+   *  perceived fps. */
   gapResetMs: number;
 }
