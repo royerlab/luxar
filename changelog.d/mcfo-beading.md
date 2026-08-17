@@ -8,7 +8,9 @@ doubling it, to 22.2%.
 The cause was not the data and not the splat budget. `fit_gaussian_splats`
 defaults to `n_iters=1000`, which is *below* the CLI's own `draft` preset (2000)
 and a fifth of `standard` (5000), so calling the Python API without a schedule
-is not "default quality" but below the lowest preset the CLI offers. At 1000
+is not "default quality" but below the lowest preset the CLI offers. This is not
+only a Python-API trap — `--preset` has no default either, so a bare
+`luxar gsplat fit` resolves to the same 1000 iterations. At 1000
 iterations the splats never left their seed shape: edge seeding initialises them
 isotropic at sigma = 1.0 voxel, and the fitted result measured sigma 0.87-1.16
 voxels at a median axis ratio of 1.30. A one-voxel-wide axon rebuilt out of

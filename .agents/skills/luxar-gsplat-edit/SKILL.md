@@ -121,6 +121,31 @@ luxar gsplat view in.gsplats.zarr                      # quick web viewer
 luxar gsplat napari in.gsplats.zarr                    # napari + centers overlay
 ```
 
+### `render --shape` is in the SPLATS' coordinate space, not the volume's
+
+If the fit was run with a physical `voxel_size`, the centres are in **microns**, not
+voxel indices. Rendering into the source volume's voxel shape then packs the whole
+reconstruction into a corner (a 0.44 um/voxel stack renders into the first ~44% of
+each axis) — and it fails *silently*: you get a plausible-looking array, and metrics
+that read as catastrophic reconstruction failure rather than as a units bug.
+
+Check first — `centers.max(0)` against the shape — and convert if they disagree:
+
+```python
+# centres divide by the voxel size; the Cholesky factor L divides too,
+# because Sigma = L L^T scales as the SQUARE of the length unit.
+g_vox = GSplatData(centers=g.centers / vox, cholesky_factors=g.cholesky_factors / vox,
+                   amplitudes=g.amplitudes, colors=None)
+```
+
+Scoring the result has its own two traps — global PSNR on a sparse stack is
+flattered by the empty part (one fit: 47 dB global vs 23 dB foreground), and a
+floored fit must be scored against the ORIGINAL, not against its own preprocessed
+input. Both are written up under **"Traps that cost real time"** in the
+`luxar-gsplat-pipeline` skill; they are not repeated here so the two cannot drift
+apart. Expect a total energy ratio below 1.0 against the raw data — with `--floor`
+the pedestal is gone by design.
+
 ## Notes
 
 - **Full flag tables** for every command (cull methods, filter criteria, transform
