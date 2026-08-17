@@ -119,26 +119,28 @@ frame-by-frame capture for turntable + EXR-sequence modes:
    `ExrSequenceDriver` / `VideoModeDriver`); call `driver.setup(ctx)`.
 6. Mount the modal overlay (focus trap + Escape to cancel + preview
    canvas + counter).
-6b. `animationController.startAnimation()`, then register the
-   `continuous` keep-alive callback — in that order. The rotation is
-   applied from a per-frame callback, and those only run while the rAF
-   loop is animating; the loop idle-stops after ~2 s of no interaction
-   (the normal state once the user has read the panel and confirmed the
-   dialog), and a `continuous` callback only KEEPS a running loop alive
-   — it never restarts a stopped one. Skipping the wake-up produces a
-   capture of N identical frames with no rotation at all, because the
-   capture path renders its own pipeline pass (`renderToImageData`)
-   independently of the loop.
-7. For each frame: register a per-frame callback that orbits the
+7. Wake the rAF loop (`animationController.startAnimation()`) and
+   register the `continuous` keep-alive callback.
+8. For each frame: register a per-frame callback that orbits the
    camera one step, `await requestAnimationFrame`, then call
    `driver.captureFrame(ctx, frameIndex, progress)`. Tolerate up to
    `MAX_CONSECUTIVE_ERRORS = 3` consecutive frame failures before
    bailing.
-8. Call `driver.finalize(ctx, capturedFrames, progress)`.
-9. In `finally`: call `driver.abort?(ctx, reason)` if setup ran but
-   finalize didn't succeed, remove per-frame callbacks, hide the
-   indicator + overlay, restore auto-rotate + recording state, and
-   clear the abort controller reference.
+9. Call `driver.finalize(ctx, capturedFrames, progress)`.
+10. In `finally`: call `driver.abort?(ctx, reason)` if setup ran but
+    finalize didn't succeed, remove per-frame callbacks, hide the
+    indicator + overlay, restore auto-rotate + recording state, and
+    clear the abort controller reference.
+
+Step 7's wake-up is load-bearing, not belt-and-braces: the turntable's
+rotation is applied from a per-frame callback, those only run while the
+rAF loop is animating, and the loop idle-stops after ~2 s of no
+interaction — the normal state once the user has read the panel and
+confirmed the dialog. A `continuous` callback only KEEPS a running loop
+alive; it never restarts a stopped one. Without the wake-up the capture
+still emits N well-formed frames (the capture path renders its own
+pipeline pass via `renderToImageData`, independently of the loop) —
+they are simply all the same pose.
 
 The `try { … } finally { … }` wrapping every state-mutating step is
 load-bearing: a thrown error anywhere in the loop must restore the

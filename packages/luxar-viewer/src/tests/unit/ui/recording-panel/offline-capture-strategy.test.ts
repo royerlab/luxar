@@ -137,9 +137,6 @@ function makeSceneManager(): {
 function makeAnimController({ animating = false }: { animating?: boolean } = {}): any {
   let isAnimating = animating;
   return {
-    get isActive(): boolean {
-      return isAnimating;
-    },
     startAnimation: vi.fn(() => {
       isAnimating = true;
     }),
@@ -306,18 +303,10 @@ describe('OfflineCaptureStrategy', () => {
         makeSession()
       );
 
-      // The loop must be woken BEFORE the keep-alive callback is
-      // registered — a `continuous` callback keeps a running loop alive
-      // but never restarts a stopped one.
+      // The loop has to be woken explicitly: registering a `continuous`
+      // keep-alive callback keeps a RUNNING loop alive but never
+      // restarts a stopped one.
       expect(anim.startAnimation).toHaveBeenCalled();
-      const startOrder = anim.startAnimation.mock.invocationCallOrder[0];
-      const keepAliveOrder = anim.addPerFrameCallback.mock.calls.findIndex(
-        (c: unknown[]) => c[0] === OfflineCaptureStrategy.KEEPALIVE_CALLBACK_ID
-      );
-      expect(keepAliveOrder).toBeGreaterThanOrEqual(0);
-      expect(startOrder).toBeLessThan(
-        anim.addPerFrameCallback.mock.invocationCallOrder[keepAliveOrder]
-      );
 
       // Frames 1..5 each advance one step — without the wake-up the
       // camera never moves and every captured frame is identical.
