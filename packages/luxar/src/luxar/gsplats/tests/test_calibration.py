@@ -1224,6 +1224,14 @@ class TestEstimateFloor:
         floor = estimate_floor(V, method="mode")
         assert floor == pytest.approx(30000.0, abs=2.0)
 
+    def test_degenerate_constant_band(self) -> None:
+        # The narrowest band there is: every sub-p95 voxel is the SAME high value,
+        # so the histogram has no range at all. numpy widens equal outer edges by
+        # +-0.5, which float64 bins fine, and the pedestal is recovered exactly.
+        V = np.full((16, 64, 64), 30000.0, np.float32)
+        V[0, 0, :5] = 40000.0  # a few bright voxels, still under 5% of the volume
+        assert estimate_floor(V, method="mode") == pytest.approx(30000.0, abs=1e-3)
+
     def test_unknown_method_raises(self) -> None:
         V = self._pedestal_volume()
         with pytest.raises(ValueError):

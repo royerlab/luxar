@@ -177,7 +177,11 @@ def estimate_floor(V: np.ndarray, method: str = "mode") -> float:
     # Histogram in float64: on a float32 volume whose background sits at a large
     # offset, 512 bins across the sub-p95 band are narrower than float32 spacing and
     # np.histogram raises "Too many bins for data range". float64 has the dynamic
-    # range to place them; the mode is unchanged on data float32 could already bin (#1671).
+    # range to place them, and a band that is a single repeated value is fine too —
+    # numpy widens equal outer edges by +-0.5 before binning. On data float32 could
+    # already bin the edges are merely re-rounded, so the peak bin is the same one
+    # except in a near-tie, where the winner can move a bin: a fraction of the
+    # pedestal's own noise, not a different floor (#1671).
     hist, edges = np.histogram(Vf[Vf <= hi].astype(np.float64, copy=False), bins=512)
     i = int(hist.argmax())
     mode = 0.5 * (float(edges[i]) + float(edges[i + 1]))
