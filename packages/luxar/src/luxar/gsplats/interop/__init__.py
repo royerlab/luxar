@@ -2,10 +2,12 @@
 
 Provides readers for the classical (photogrammetric) Gaussian-splat file
 formats — INRIA ``point_cloud.ply``, antimatter15 ``.splat``, Niantic
-``.spz``, and SuperSplat compressed ``.ply`` — plus a bridge to `tracksdata
-<https://github.com/royerlab/tracksdata>`_ (the Royer-lab multi-object-tracking
-data structure). Adapters import optional external dependencies lazily, so
-this package imports cleanly without the extras installed.
+``.spz``, and SuperSplat compressed ``.ply`` — plus two tracking bridges: a
+reader for **GEFF** cell-lineage graphs (:mod:`~luxar.gsplats.interop.geff`) and
+an exporter to `tracksdata <https://github.com/royerlab/tracksdata>`_ (the
+Royer-lab multi-object-tracking data structure). Adapters import optional
+external dependencies lazily, so this package imports cleanly without the extras
+installed.
 """
 
 from luxar.gsplats.interop.classical_splats import (
@@ -22,6 +24,10 @@ from luxar.gsplats.interop.classical_splats import (
     read_supersplat_ply,
     rotmat_to_quat,
 )
+from luxar.gsplats.interop.geff import (
+    TrackingGraph,
+    read_geff,
+)
 from luxar.gsplats.interop.inria_export import (
     export_inria_ply,
     gsplat_data_to_inria_ply,
@@ -34,6 +40,7 @@ from luxar.gsplats.interop.tracksdata import (
 __all__ = [
     "CLASSICAL_FORMATS",
     "ClassicalSplats",
+    "TrackingGraph",
     "classical_to_gsplat_data",
     "detect_classical_format",
     "export_inria_ply",
@@ -42,6 +49,7 @@ __all__ = [
     "import_gsplats",
     "quat_to_rotmat",
     "read_antimatter_splat",
+    "read_geff",
     "read_inria_ply",
     "read_sog",
     "read_spz",

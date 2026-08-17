@@ -69,6 +69,9 @@ Both files are **module-scoped singletons** (the `element-texture-layout.ts` pat
 - `worker` — the single persistent SortWorker (spawned on first order-dependent commit, terminated on app dispose)
 - `api` — Comlink-wrapped `SortWorkerAPI` (registerNode, sort, releaseNode, releaseAllNodes)
 - `initPromise` — cached initialization promise (deduplicated)
+- `initEpoch` — attempt epoch; every module write past an `await` inside the init closure is skipped when it no longer matches (bumped by `disposeDepthSort` and by a retry that supersedes an attempt, because the 30 s deadline timer lives in that closure and nothing outside it can cancel it)
+- `workerInitState: 'idle' | 'ready' | 'starved' | 'failed'` — the observable init verdict (`getDepthSortWorkerStatus()`)
+- `initTimeoutRetryPending` / `initTimeoutCount` / `initRetryNotBeforeMs` / `initRetryWakeTimer` — starved-retry bookkeeping: whether a retry is armed, deadline misses so far (bounds the attempts), the `performance.now()` instant the next attempt may start, and the one self-wake `setTimeout` armed alongside it
 - `nodeStates: Map<string, NodeSortState>` — per-node tracking (generation, in-flight flag, last sort pose, queued re-sort, registered flag)
 - `nextGeneration` — monotonic counter (unique across a node's LIFETIMES, not just within one)
 - Injected callbacks: `getCamera` (getter, not captured reference), `requestRender`, `requestReprocess`, `isLoadInProgress`, `getProfiler`
@@ -90,7 +93,9 @@ Both files are **module-scoped singletons** (the `element-texture-layout.ts` pat
 2. **Persist** — the worker lives across commits and frames (NOT part of the round-robin data-worker pool)
 3. **Terminate** — on `disposeDepthSort()` (app teardown / test reset)
 
-**Init-settle guard**: A worker whose script dies during async module evaluation (before `expose()`) emits an `error` event but never settles the Comlink `initialize` RPC. Left pending forever, every order-dependent commit would attach a continuation (closing over its centers provider, which for points pins the full `LoadedPointsData`), accumulating unbounded. The 30s timeout + `onerror` rejection in `ensureWorker()` guarantee the promise settles, draining all queued continuations into the documented warn-once degrade path.
+**Init-settle guard**: A worker whose script dies during async module evaluation (before `expose()`) emits an `error` event but never settles the Comlink `initialize` RPC. Left pending forever, every order-dependent commit would attach a continuation (closing over its centers provider, which for points pins the full `LoadedPointsData`), accumulating unbounded. The 30s timeout + `onerror` rejection in `ensureWorker()` guarantee the promise settles, draining all queued continuations into the documented warn-once degrade path. Settling is not the same as giving up, though — how long that degrade lasts depends on WHICH failure it was:
+
+**The settle is unconditional; the degrade is CLASSIFIED** (issue #1694). Only the deadline timer rejects with the module-private `SortWorkerInitTimeoutError`; a worker `error` event, a rejected `initialize` and a constructor throw (CSP-blocked script) stay permanently fatal. A missed deadline says nothing about the worker's health — at ~3M points the main thread stays saturated long enough during a load for worker startup to lose the race — so it is retried up to `SORT_WORKER_INIT_MAX_ATTEMPTS` (3: the initial attempt plus 2) with a `SORT_WORKER_INIT_RETRY_BASE_MS × miss` backoff on the monotonic `performance.now()` clock. The bound is what preserves the anti-leak property: each attempt opens one more 30 s window in which commits can queue continuations, and between attempts the cached rejection is still what every commit drains into. `maybeRetryStarvedWorkerInit()` runs from `evaluateDepthSortPerFrame` (past its `isLoadInProgress` early-return — the in-flight sweep IS the starvation) and declines to spend an attempt during an offline capture or when no visible, still-committed, order-dependent node wants sorting; since the on-demand loop idle-pauses after `config.animation.idleTimeoutMs`, arming a retry also arms ONE self-wake `setTimeout` (`scheduleInitRetryWake`) that requests a frame just after the backoff — re-arming itself if `requestRender` is unavailable at that instant (before `configureDepthSort`, or nulled by an offline capture). A late success runs `reregisterAfterLateWorkerInit()`: the fresh worker holds no registrations and no centers are retained, so it invalidates BOTH freshness stamps on every unregistered, still-committed, order-dependent node and requests ONE reprocess (the same recovery as the switch-to-sorted mode hook, shared via `invalidateSortedNodeCommitStamps`). `getDepthSortWorkerStatus()` reports `idle` / `ready` / `starved` (armed **or in flight**) / `failed` plus the deadline-miss count, and is exposed on `__luxarDebug`.
 
 ### Generation Contract (Spec §5)
 
@@ -151,7 +156,7 @@ Called on every non-noop commit of a sortable node (gsplats, points, lines). Alw
    - Set `current.registered = true` BEFORE the register RPC (a throwing provider leaves the node unregistered instead of stranding a phantom registration)
    - Transfer centers: `api.registerNode(transfer({ nodeId, generation, centers3, count }, [buffer.buffer]))`
    - `scheduleSort(mesh, nodeId)`
-5. Catch: once per session, log a worker-unavailable warning (every later commit lands here when the cached `initPromise` is rejected); rendering degrades gracefully to unsorted normal mode
+5. Catch: once per EPISODE (a successful — possibly retried — init re-arms the flag), log that this commit could not reach the SortWorker and the identity order is drawn, quoting `getDepthSortWorkerStatus()` rather than asserting a cause: every later commit lands here while the cached `initPromise` is rejected, but the same catch also fires for a throwing lazy centers provider or a `transfer()` of an already-detached buffer. Rendering degrades gracefully to unsorted normal mode
 
 ### Single-In-Flight Rule (scheduleSort)
 
@@ -298,7 +303,7 @@ App teardown / test reset:
 2. Abort all in-flight chunked applies: `cancelAllSortedIndexOrderingApplies()`
 3. Clear render-order frame state: `clearRenderOrderFrameState()` (module-state reset completeness — an embedder that disposes and re-inits in one page must not have the old scene pinned)
 4. Terminate worker: `worker?.terminate()`
-5. Reset module state: `worker = null`, `api = null`, `initPromise = null`, all injected callbacks `= null`, `depthSortEnabled = true`, `warnedWorkerUnavailable = false`
+5. Reset module state: `worker = null`, `api = null`, `initPromise = null` (+ `initEpoch++`, which ORPHANS an attempt still in flight — the one reset nulling a variable cannot do, since its 30 s deadline timer lives in a closure nothing here can cancel), all injected callbacks `= null`, `depthSortEnabled = true`, `warnedWorkerUnavailable = false`, the offline-capture suppression state (`captureSuppressDepth = 0`, `requestRenderBeforeCapture = null`, back-pressure bypass off), and the init-failure bookkeeping (`workerInitState = 'idle'`, `initTimeoutRetryPending = false`, `initTimeoutCount = 0`, `initRetryNotBeforeMs = 0`, pending self-wake cancelled) — so an embedder that disposes and re-inits in one page starts with a full retry budget and a truthful status
 
 ## Cross-Node (Inter-Mesh) Ordering (render-order.ts)
 

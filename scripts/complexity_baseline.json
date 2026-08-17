@@ -2,7 +2,7 @@
   "_comment": "Cyclomatic-complexity baseline for scripts/check_complexity.py. Regenerate with: hatch run check-complexity --update-baseline. Each key is '<repo-relative-path>::<function-name>' and maps to the descending-sorted complexities of the over-limit functions with that name in that file (a list, because one file may hold several same-named functions). A function not listed here, or one whose complexity exceeds its baselined value, fails the check.",
   "functions": {
     "packages/luxar/src/luxar/cli/demo_commands.py::cache_clear": [
-      30
+      29
     ],
     "packages/luxar/src/luxar/cli/demo_commands.py::demo_deps": [
       20
@@ -11,10 +11,10 @@
       11
     ],
     "packages/luxar/src/luxar/cli/gsplat_ops/batch/planning.py::_assemble_fit_args": [
-      17
+      16
     ],
     "packages/luxar/src/luxar/cli/gsplat_ops/batch/planning.py::plan_batch": [
-      19
+      18
     ],
     "packages/luxar/src/luxar/cli/gsplat_ops/batch/planning.py::resolve_merge_recipe_args": [
       16
@@ -41,7 +41,7 @@
       12
     ],
     "packages/luxar/src/luxar/cli/gsplat_ops/inspect_commands.py::compare_quality": [
-      14
+      13
     ],
     "packages/luxar/src/luxar/cli/gsplat_ops/inspect_commands.py::info_dataset": [
       20
@@ -65,7 +65,7 @@
       11
     ],
     "packages/luxar/src/luxar/cli/gsplat_ops/transforms/additive.py::run_additive_dataset": [
-      14
+      13
     ],
     "packages/luxar/src/luxar/cli/gsplat_ops/transforms/cull.py::run_cull_dataset": [
       14
@@ -113,13 +113,13 @@
       17
     ],
     "packages/luxar/src/luxar/core/group/adders/gsplats.py::add_gsplats_impl": [
-      20
+      16
     ],
     "packages/luxar/src/luxar/core/group/adders/lines.py::add_lines_impl": [
-      28
+      24
     ],
     "packages/luxar/src/luxar/core/group/adders/points.py::add_points_impl": [
-      28
+      24
     ],
     "packages/luxar/src/luxar/core/group/gsplats_pipeline/lod_dispatch.py::add_gsplats_multi_lod_impl": [
       13
@@ -168,9 +168,6 @@
     ],
     "packages/luxar/src/luxar/core/node/node.py::__init__": [
       18
-    ],
-    "packages/luxar/src/luxar/core/scene/dim_order.py::apply_dim_order": [
-      11
     ],
     "packages/luxar/src/luxar/core/viewer_config.py::__post_init__": [
       12
@@ -407,7 +404,7 @@
       14
     ],
     "packages/luxar/src/luxar/gsplats/fitting/preprocessing.py::preprocess_data": [
-      25
+      23
     ],
     "packages/luxar/src/luxar/gsplats/fitting/results.py::finalize_results": [
       19
@@ -434,7 +431,7 @@
       16
     ],
     "packages/luxar/src/luxar/gsplats/io/load_gsplats.py::load_gsplat_node": [
-      14
+      12
     ],
     "packages/luxar/src/luxar/gsplats/io/migrate.py::detect_legacy_format": [
       12
@@ -466,14 +463,11 @@
     "packages/luxar/src/luxar/gsplats/lod/additive.py::_resolve_breakpoints": [
       18
     ],
-    "packages/luxar/src/luxar/gsplats/lod/additive.py::make_additive_lod": [
-      12
-    ],
     "packages/luxar/src/luxar/gsplats/lod/substitutive.py::_reduce_one_level": [
       11
     ],
     "packages/luxar/src/luxar/gsplats/lod/substitutive.py::make_substitutive_lod": [
-      35
+      33
     ],
     "packages/luxar/src/luxar/gsplats/models/gsplats/cuda/benchmark.py::build_profile_data": [
       28
@@ -556,9 +550,6 @@
     "packages/luxar/src/luxar/io/_compiler/gsplat_tree.py::write_gsplat_node": [
       15
     ],
-    "packages/luxar/src/luxar/io/_compiler/labels/image_labels.py::normalize_image_label": [
-      12
-    ],
     "packages/luxar/src/luxar/io/_compiler/node_common.py::validate_render_attrs": [
       17
     ],
@@ -572,7 +563,7 @@
       13
     ],
     "packages/luxar/src/luxar/io/compiler.py::finalize": [
-      13
+      11
     ],
     "packages/luxar/src/luxar/io/ome_zarr.py::_parse_ngff_metadata": [
       14
@@ -604,9 +595,6 @@
     "packages/luxar/src/luxar/utils/demos.py::cached_download": [
       12
     ],
-    "packages/luxar/src/luxar/utils/demos.py::load_precomputed_bundle": [
-      12
-    ],
     "packages/luxar/src/luxar/utils/download.py::_parse_remote_zip_directory": [
       11
     ],
@@ -618,9 +606,6 @@
     ],
     "packages/luxar/src/luxar/utils/download.py::verify_file_checksum": [
       14
-    ],
-    "packages/luxar/src/luxar/utils/process.py::_teardown": [
-      12
     ],
     "packages/luxar/src/luxar/validation/base.py::validate_colors_for_writing": [
       12
