@@ -259,6 +259,29 @@ class TestCredentialNeverInTheUrl:
         assert "Authorization" not in req.headers
         assert req.get_header("Authorization") == f"Bearer {self.TOKEN}"
 
+    def test_a_filename_needing_escaping_becomes_one_clean_path_segment(
+        self, monkeypatch, tmp_path
+    ) -> None:
+        """The bucket key is a URL path segment, so it has to be escaped.
+
+        Not a credential property, but the same line: a space in the name made
+        ``http.client.putrequest`` reject the request line (``InvalidURL``) before
+        any byte went out, and a ``?``/``#`` truncated the URL — silently storing
+        the file under a shortened key, which then never matches
+        ``existing_files`` on a re-run, so an interrupted transfer stopped being
+        resumable.
+        """
+        f = tmp_path / "a b?c#d.bin"
+        f.write_bytes(b"hello luxar")
+        seen = self._capture(monkeypatch, {"checksum": "md5:abc"})
+        _up.upload("https://zenodo.org/api/files/abc", f, self.TOKEN)
+
+        (req,) = seen
+        assert req.full_url == "https://zenodo.org/api/files/abc/a%20b%3Fc%23d.bin"
+        # ...and the request line http.client would build out of it is legal.
+        conn = http.client.HTTPConnection("localhost")
+        conn.putrequest("PUT", req.selector, skip_host=True, skip_accept_encoding=True)
+
     def test_the_source_never_puts_a_token_in_a_query_string(self) -> None:
         """A grep guard, in the spirit of the no-publish ones: it cannot come back.
 

@@ -47,6 +47,7 @@ import json
 import os
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -119,7 +120,12 @@ def existing_files(dep: dict) -> dict[str, tuple[str, int]]:
 
 def upload(bucket: str, path: Path, token: str) -> dict:
     """PUT one file into the deposition's bucket and return Zenodo's response."""
-    url = f"{bucket}/{path.name}"
+    # The filename is one URL path segment, so it is percent-encoded: a space made
+    # ``http.client`` reject the request line outright (``InvalidURL``), and a ``?``
+    # or ``#`` truncated the key Zenodo stored the file under — which then never
+    # matches ``existing_files`` again, so an interrupted run stopped being
+    # resumable. Zenodo decodes the segment, so the key is still ``path.name``.
+    url = f"{bucket}/{urllib.parse.quote(path.name, safe='')}"
     size = path.stat().st_size
     with path.open("rb") as fh:
         req = urllib.request.Request(url, data=fh, method="PUT")
