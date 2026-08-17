@@ -36,6 +36,29 @@ function fail(message) {
   failures.push(message);
 }
 
+// ── 0. The extractor must actually extract ─────────────────────────────────
+// A regex that stops matching does not fail this script, it makes every check
+// below vacuous and prints a ✅ — which is exactly what the first version of
+// this file did. So pin the two minified shapes `staticImportsOf` (below) calls
+// load-bearing, plus the dynamic form that must NOT count, against a fixture.
+// This asserts on the script itself rather than on whatever the bundler
+// happened to emit today, so a build that legitimately has no chunk splits
+// cannot make it red.
+{
+  const fixture = 'import{a as b}from"./eager.js";export*from"../reexport.js";import("./lazy.js");';
+  const found = staticImportsOf(fixture);
+  const expected = ['./eager.js', '../reexport.js'];
+  const missing = expected.filter((s) => !found.has(s));
+  if (missing.length > 0 || found.has('./lazy.js')) {
+    fail(
+      `staticImportsOf() no longer parses built-chunk imports: expected ` +
+        `${expected.join(', ')} and not './lazy.js', got ${[...found].join(', ') || '(nothing)'}. ` +
+        `Every assertion below reads the same specifiers, so they would all pass vacuously. ` +
+        `Fix the regex before trusting this check.`
+    );
+  }
+}
+
 // ── 1. index.html must not preload or script-tag a lazy-only chunk ─────────
 const html = readFileSync(join(DIST, 'index.html'), 'utf8');
 for (const stem of LAZY_ONLY) {
@@ -115,8 +138,10 @@ if (entryHref) {
       continue; // not an emitted asset (e.g. an external specifier)
     }
     for (const spec of staticImportsOf(source)) {
-      if (!spec.startsWith('./') && !spec.startsWith('../')) continue;
       const dep = spec.split('/').pop();
+      // Reported before the relative-path filter below: an absolute or bare
+      // specifier is one we cannot follow, but naming the lazy chunk is a
+      // failure regardless of how the bundler spelled the path.
       for (const stem of LAZY_ONLY) {
         if (dep.includes(stem)) {
           fail(
@@ -127,6 +152,7 @@ if (entryHref) {
           );
         }
       }
+      if (!spec.startsWith('./') && !spec.startsWith('../')) continue;
       queue.push(dep);
     }
   }

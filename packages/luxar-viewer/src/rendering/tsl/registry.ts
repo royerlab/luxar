@@ -4,17 +4,22 @@
  * This is the **only** module under `src/` that may statically import
  * `three/webgpu` or `three/tsl` (transitively, via the `*-tsl` / `*.tsl`
  * modules it pulls in). Everything else reaches these classes and factories
- * through {@link module:rendering/tsl/load}, which imports this file
+ * through `rendering/tsl/load`, which imports this file
  * dynamically — so rolldown places this whole subgraph, plus the ~173 kB
  * gzipped `three-webgpu` chunk, in a lazy chunk that is fetched only when the
  * WebGPU backend is actually selected.
  *
  * That is the entire point of the file's existence, and the reason it looks
- * like a barrel with nothing of its own to say. `.dependency-cruiser.cjs`
- * enforces the rule (`no-eager-three-webgpu`), because the previous
- * arrangement — 23 production modules importing `three/webgpu` directly — cost
- * every WebGL user a download they never executed, and nothing in the repo
- * noticed for as long as it was true. See issue #1679.
+ * like a barrel with nothing of its own to say. Two gates hold it: the ESLint
+ * `no-restricted-imports` rule in `eslint.config.js`, which bans value imports
+ * of `three/webgpu` / `three/tsl` outside this file and the `*-tsl` modules it
+ * owns, and `scripts/check-eager-chunks.mjs`, which asserts against the built
+ * `dist/` that nothing eagerly reachable from the entry imports the chunk.
+ * Both are needed: the previous arrangement — 23 production modules importing
+ * `three/webgpu` directly — cost every WebGL user a download they never
+ * executed, and the last edge was not in the source at all but in how the
+ * shared `three.core.js` was chunked. Nothing in the repo noticed for as long
+ * as either was true. See issue #1679.
  *
  * Two things do NOT belong here:
  *
