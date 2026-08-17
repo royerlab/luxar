@@ -111,7 +111,16 @@ import { isEffectivelyVisible } from '../utils/object-visibility';
  */
 let sortWorkerUrlOverride: string | undefined;
 
-/** Override the URL used to construct the sort worker. Call before first use. */
+/**
+ * Override the URL used to construct the sort worker.
+ *
+ * Call before `LuxarApp.initialize()`. That window used to run to the first
+ * order-dependent commit, but the worker is now warmed up during app init
+ * ({@link warmUpDepthSortWorker}), so a later call would arrive after the
+ * spawn it is meant to redirect. `applyModuleOverrides` — the
+ * `LuxarAppOptions.workerPath` path — already runs early enough; this note
+ * is for embedders that call the setter themselves.
+ */
 export function setSortWorkerUrl(url: string): void {
   sortWorkerUrlOverride = url;
 }
@@ -123,7 +132,14 @@ export function setSortWorkerUrl(url: string): void {
  */
 let sortWorkerWasmPathOverride: string | undefined;
 
-/** Override the WASM JS-shim URL used inside the sort worker. */
+/**
+ * Override the WASM JS-shim URL used inside the sort worker.
+ *
+ * Same timing contract as {@link setSortWorkerUrl}: before
+ * `LuxarApp.initialize()`. A retry after a deadline miss re-awaits the
+ * ORIGINAL `initialize()` RPC rather than issuing a new one, so a path set
+ * between attempts would not be picked up either.
+ */
 export function setSortWorkerWasmPath(url: string): void {
   sortWorkerWasmPathOverride = url;
 }
