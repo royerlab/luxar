@@ -113,6 +113,49 @@ luxar gsplat export timelapse.gsplats.zarr t42.ply --timepoint 42
   with a tiny isotropic sigma. Partitions must be `gsplat flatten`ed first.
 - The CLI read-back-verifies every export with our own INRIA reader.
 
+## GEFF tracking graphs (reader)
+
+[GEFF](https://github.com/live-image-tracking-tools/geff) (Graph Exchange File
+Format) is the on-disk interchange format for cell-lineage graphs across the
+live-image-tracking ecosystem (ultrack, trackedit, tracksdata, traccuracy), and
+what the Biohub *Cell Tracking During Development* challenge ships its ground
+truth in. A GEFF store is a **zarr v3** group:
+
+```
+<name>.geff/
+  zarr.json                     # {"attributes": {"geff": {axes, ...}}}
+  nodes/ids                     # (N,)   node ids
+  nodes/props/{t,z,y,x}/values  # (N,)   coordinates, in VOXEL units
+  edges/ids                     # (E, 2) (source_id, target_id) pairs
+```
+
+`geff.py` reads that into a plain-NumPy `TrackingGraph` — no `geff` package, no
+`networkx` — just the `zarr` Luxar already depends on (reading a store like this
+is a large part of why the project moved to `zarr>=3.2`).
+
+| Function / method | Description |
+|---|---|
+| `read_geff(path)` → `TrackingGraph` | Node ids, timepoints, voxel-space ZYX positions, edges, and the per-axis voxel size from the GEFF axis metadata. |
+| `TrackingGraph.positions_um()` | `(N, 3)` positions in physical units — voxel coordinates × voxel size. |
+| `TrackingGraph.index_of()` | Node id → positional index. Ids are often **not** contiguous (the challenge encodes `global_t * 1e9 + cell_id`). |
+| `TrackingGraph.edge_indices()` | `(E, 2)` edges remapped to positional indices, ready for `scene.add_lines(line_type="indexed")`. Edges naming an absent node are dropped — a crop of a larger movie legitimately references cells outside its own bounds. |
+| `TrackingGraph.lineage_ids()` | `(N,)` connected-component id, so a founder and every descendant share one colour. Dense and ordered by first appearance, so it indexes a palette. |
+| `TrackingGraph.divisions()` | Positional indices of dividing cells (out-degree ≥ 2). A *merge* (in-degree ≥ 2) is deliberately not one. |
+
+```python
+from luxar.gsplats.interop import read_geff
+
+graph = read_geff("train/6bba_09961292.geff")
+positions = graph.positions_um()          # (N, 3) ZYX in um
+colors = palette[graph.lineage_ids()]     # one colour per lineage
+edges = graph.edge_indices()              # (E, 2) for indexed lines
+```
+
+Emitting the whole graph as ONE `indexed` lines node (rather than a polyline node
+per track) keeps a dense crop to a single node, and because consecutive links
+share a vertex row the joints stay continuous and a division renders as a real
+fork. `demo_gsplats_4d_cell_tracking_challenge` is the worked example.
+
 ## tracksdata bridge
 
 [`tracksdata`](https://github.com/royerlab/tracksdata) is the Royer-lab common

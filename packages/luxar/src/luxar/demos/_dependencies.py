@@ -89,6 +89,15 @@ INSTALL_SPECS: dict[str, DependencySpec] = {
         "download path.",
     ),
     "h5py": DependencySpec("h5py>=3.0.0", "demos"),
+    "kaggle": DependencySpec(
+        "kaggle>=2.2,<3",
+        "",  # intentionally not in any extra — authenticated competition fetches only
+        "Not part of any Luxar extra: only the Biohub cell-tracking demo needs "
+        "it, to reach an authenticated Kaggle COMPETITION endpoint (the arXiv "
+        "Kaggle demo reads a public dataset URL and needs nothing). >=2.2 is "
+        "where `~/.kaggle/access_token` / $KAGGLE_API_TOKEN are honoured, which "
+        "is the only token form Kaggle issues now.",
+    ),
     "imagecodecs": DependencySpec(
         "imagecodecs>=2023.1.0",
         "demos",
