@@ -349,21 +349,26 @@ export class OfflineCaptureStrategy implements CaptureStrategy {
     const counterEl = overlay.querySelector('.luxar-recording-overlay__counter');
     const labelEl = overlay.querySelector('.luxar-recording-overlay__label');
 
+    // One timestamped stem for the whole capture. `generateFilename`
+    // stamps `new Date()` on every call, so calling it per artifact —
+    // the ZIP's save-dialog name at setup, its fallback download name at
+    // finalize, the script's output base — hands out names that disagree
+    // whenever a capture crosses a second boundary.
+    const captureBase = this.hooks.generateFilename('zip').replace(/\.zip$/, '');
+
     // Build the dependency context the driver needs.
     const ctx: CaptureContext = {
       sceneManager: this.sceneManager,
       fps,
       renderFrameToCanvas: () => this.hooks.renderFrameToCanvas(),
-      generateFilename: (ext) => this.hooks.generateFilename(ext),
+      generateFilename: (ext) => `${captureBase}.${ext}`,
       generateFfmpegScript: (frames, ext) =>
         generateFfmpegScriptPure({
           fps,
           frameCount: frames,
           frameExt: ext,
           mode: recordingMode === 'turntable' ? 'turntable' : 'video',
-          // Strip the extension the panel appended: the script names its
-          // own outputs off this stem.
-          outputBase: this.hooks.generateFilename('zip').replace(/\.zip$/, ''),
+          outputBase: captureBase,
           // EXR frames are scene-linear and pre-grade, so the script has
           // to re-apply the viewer's display transform. LDR frames are
           // already graded and ignore this.

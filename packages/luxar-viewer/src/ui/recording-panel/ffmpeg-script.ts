@@ -87,10 +87,18 @@ interface ExposedChannels {
  */
 function applyEog(channel: string, grade: GradeSettings): string {
   let expr = channel;
+  let clamped = false;
   const scale = Math.pow(2, grade.exposure);
   if (scale !== 1) expr = `(${expr}*${fmt(scale)})`;
-  if (grade.offset !== 0) expr = `max(${expr}+${fmt(grade.offset)},0)`;
-  if (grade.gamma !== 1) expr = `pow(max(${expr},0),${fmt(1 / grade.gamma)})`;
+  if (grade.offset !== 0) {
+    expr = `max(${expr}+${fmt(grade.offset)},0)`;
+    clamped = true;
+  }
+  if (grade.gamma !== 1) {
+    // `pow` of a negative base is undefined; the shader's own `max` has
+    // already run when an offset was applied, so don't emit it twice.
+    expr = `pow(${clamped ? expr : `max(${expr},0)`},${fmt(1 / grade.gamma)})`;
+  }
   return expr;
 }
 
@@ -240,15 +248,17 @@ function toneMapExpressions(c: ExposedChannels, mode: ToneMapName): ExposedChann
 function buildGradeFilter(
   frameExt: string,
   grade: GradeSettings | undefined
-): { filter: string; exact: boolean } | null {
-  if (frameExt !== 'exr' || !grade) return null;
+): { filter: string; exact: 'exact' | 'no-curve' | 'unknown-grade' } | null {
+  if (frameExt !== 'exr') return null;
 
-  const channels: ExposedChannels = {
-    r: applyEog('r(X,Y)', grade),
-    g: applyEog('g(X,Y)', grade),
-    b: applyEog('b(X,Y)', grade),
-  };
-  const mapped = toneMapExpressions(channels, grade.toneMapping);
+  const channels: ExposedChannels | null = grade
+    ? {
+        r: applyEog('r(X,Y)', grade),
+        g: applyEog('g(X,Y)', grade),
+        b: applyEog('b(X,Y)', grade),
+      }
+    : null;
+  const mapped = channels && grade ? toneMapExpressions(channels, grade.toneMapping) : null;
   // zscale carries the linear→sRGB encode the shader does last — it is
   // what makes the EXR's linear floats display-referred at all.
   //
@@ -265,12 +275,38 @@ function buildGradeFilter(
   // chain exists to avoid. Falling back to a bare saturate is exactly
   // what the shader does for Linear; only the AgX look is missing, and
   // the script says so.
-  const out = mapped ?? { r: sat(channels.r), g: sat(channels.g), b: sat(channels.b) };
+  const out =
+    mapped ?? (channels ? { r: sat(channels.r), g: sat(channels.g), b: sat(channels.b) } : null);
+
+  if (!out) {
+    // The grade could not be read at all (no `getGradeSettings`). Even
+    // then the linear floats must not go out untouched — that is the
+    // 15 dB failure this chain exists to prevent — so still convert the
+    // transfer, and let the script say the curve is missing.
+    return { filter: `format=gbrpf32le,${srgb},format=yuv420p`, exact: 'unknown-grade' };
+  }
+
   return {
     filter:
       `format=gbrpf32le,geq=r='${out.r}':g='${out.g}':b='${out.b}',` + `${srgb},format=yuv420p`,
-    exact: mapped !== null,
+    exact: mapped !== null ? 'exact' : 'no-curve',
   };
+}
+
+/**
+ * Exposure / offset / gamma on their own, for the HDR10 stanza: an HDR
+ * master keeps the scene's dynamic range (no SDR tone curve) but must
+ * still honour the grade, or it comes out at a different brightness
+ * from the SDR encode beside it. Returns `null` when the grade is
+ * neutral, so the common case adds no filter at all.
+ */
+function buildEogOnlyFilter(grade: GradeSettings | undefined): string | null {
+  if (!grade) return null;
+  if (grade.exposure === 0 && grade.offset === 0 && grade.gamma === 1) return null;
+  const r = applyEog('r(X,Y)', grade);
+  const g = applyEog('g(X,Y)', grade);
+  const b = applyEog('b(X,Y)', grade);
+  return `format=gbrpf32le,geq=r='${r}':g='${g}':b='${b}',`;
 }
 
 /**
@@ -338,31 +374,52 @@ export function generateFfmpegScript(opts: FfmpegScriptOptions): string {
   }
 
   if (grade) {
-    const label = TONE_MAP_LABEL[opts.grade!.toneMapping];
     header.push(
       '#',
       '# These EXR frames are SCENE-LINEAR and ungraded: the capture keeps',
       '# unclipped HDR by bypassing the viewer’s display transform. The',
       '# filter chain below re-applies that transform so the video matches',
-      '# what you saw:',
-      `#   exposure ${fmt(opts.grade!.exposure)} EV, offset ${fmt(opts.grade!.offset)}, ` +
-        `gamma ${fmt(opts.grade!.gamma)}`,
-      `#   tone mapping: ${label}`,
+      '# what you saw:'
+    );
+    if (opts.grade) {
+      header.push(
+        `#   exposure ${fmt(opts.grade.exposure)} EV, offset ${fmt(opts.grade.offset)}, ` +
+          `gamma ${fmt(opts.grade.gamma)}`,
+        `#   tone mapping: ${TONE_MAP_LABEL[opts.grade.toneMapping]}`
+      );
+    }
+    header.push(
       '#',
       '# Vignette, detector noise and lens distortion are NOT in these',
       '# frames and cannot be put back here — the EXR capture turns them',
       '# off so the archive holds the scene, not a look.',
       '#'
     );
-    if (grade.exact) {
+    if (grade.exact === 'unknown-grade') {
+      header.push(
+        '# NOTE: the viewer’s grade could not be read at capture time, so',
+        '# the frames below are only clamped and sRGB-encoded — exposure and',
+        '# the tone-mapping curve are NOT applied. Record a PNG/WebP',
+        '# sequence for a pixel-exact match to what you saw.'
+      );
+    } else if (grade.exact === 'exact') {
       header.push(
         '# The tone map is the viewer’s own curve, written out as an exact',
         '# expression (ffmpeg’s built-in `tonemap` curves are different',
         '# functions — for ACES, `tonemap=hable` measures further from the',
-        '# viewer than applying no tone mapping at all). `geq` evaluates it',
-        '# per pixel on the CPU, so this is slower than a plain mux; drop',
-        '# the -vf chain if you would rather grade the linear frames',
-        '# yourself in a colour tool.'
+        '# viewer than applying no tone mapping at all).',
+        '#',
+        '# SLOW: `geq` evaluates that expression per pixel on one CPU core.',
+        '# Measured ~2.9 s/frame at 720p, ~7.5 s at 1080p and ~35 s at 4K,',
+        `# so these ${frameCount} frames may take a while (a plain mux is`,
+        '# ~0.02 s/frame). Faster options, in order of convenience:',
+        '#   1. Record a PNG/WebP sequence instead — those frames come out',
+        '#      of the viewer already graded, so the encode is a plain mux',
+        '#      and matches the viewer exactly. Prefer this unless you',
+        '#      specifically need the unclipped HDR these EXRs carry.',
+        '#   2. Drop the -vf chain here and grade the linear frames in a',
+        '#      colour tool (Resolve, Nuke, oiiotool) that does it on the GPU.',
+        '#   3. Keep it, and let it run — the output is the reference.'
       );
     } else {
       header.push(
@@ -419,7 +476,9 @@ export function generateFfmpegScript(opts: FfmpegScriptOptions): string {
       '# luminance the linear values map to — tune it for your display.',
       '# echo "Encoding HDR MP4 (H.265 10-bit)..."',
       `# ffmpeg -y -framerate ${fps} -start_number 0 -i '${inputPattern}' \\`,
-      '#   -vf "zscale=tin=linear:min=gbr:pin=bt709:t=smpte2084:m=bt2020nc:p=bt2020:npl=100:r=tv,format=yuv420p10le" \\',
+      // Exposure/offset/gamma still apply (they are the grade, not the
+      // display transform); the SDR tone curve deliberately does not.
+      `#   -vf "${buildEogOnlyFilter(opts.grade) ?? ''}zscale=tin=linear:min=gbr:pin=bt709:t=smpte2084:m=bt2020nc:p=bt2020:npl=100:r=tv,format=yuv420p10le" \\`,
       '#   -c:v libx265 -preset slow -crf 18 \\',
       '#   -x265-params "hdr-opt=1:repeat-headers=1:colorprim=bt2020:transfer=smpte2084:colormatrix=bt2020nc" \\',
       '#   -tag:v hvc1 -movflags +faststart \\',

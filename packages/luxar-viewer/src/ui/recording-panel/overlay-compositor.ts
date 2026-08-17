@@ -228,7 +228,10 @@ export function compositeTextOverlay(
   const wrapWidth = config.width ? config.width * metrics.vw : null;
   const lines = wrapWidth ? wrapText(ctx, text, wrapWidth) : [text];
 
-  const longestLine = Math.max(...lines.map((l) => ctx.measureText(l).width));
+  // `reduce`, not `Math.max(...)`: a wrapped overlay can produce an
+  // unbounded number of lines and spreading them all as arguments blows
+  // the stack at ~100k.
+  const longestLine = lines.reduce((w, l) => Math.max(w, ctx.measureText(l).width), 0);
   // The on-screen box is the configured width when there is one, even if
   // the text is shorter — anchoring must use the same box.
   const blockWidth = wrapWidth ?? longestLine;

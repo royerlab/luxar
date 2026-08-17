@@ -18,21 +18,25 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import * as THREE from 'three';
 
 // Shared driver-mock state. `vi.hoisted` so the factory is available to
 // the (hoisted) vi.mock calls below.
 const mockState = vi.hoisted(() => {
-  const driverInstances: Array<Record<string, ReturnType<typeof vi.fn>>> = [];
+  const driverInstances: Array<Record<string, any>> = [];
   const config = { setupOk: true, captureThrows: 0, shouldAbort: false, finalizeThrows: false };
   function makeDriver() {
     let captureCalls = 0;
-    const d = {
+    const d: Record<string, any> = {
       setup: vi.fn(async () => config.setupOk),
       captureFrame: vi.fn(async () => {
         captureCalls++;
         if (captureCalls <= config.captureThrows) throw new Error('frame fail');
       }),
-      finalize: vi.fn(async () => {
+      finalize: vi.fn(async (ctx: any) => {
+        // Keep the context so a test can exercise the hooks the real
+        // drivers use (notably generateFfmpegScript).
+        d.lastCtx = ctx;
         if (config.finalizeThrows) throw new Error('finalize fail');
       }),
       abort: vi.fn(async () => {}),
@@ -68,6 +72,16 @@ import { showToast } from '../../../../ui/toast';
 import { log } from '../../../../utils/log';
 import { LuxarOrbitControls } from '../../../../controls/luxar-orbit-controls';
 import type { RecordingOptions } from '../../../../ui/recording-panel/types';
+
+/** A fragment unique to each tone-mapping mode's emitted expression. */
+const TONE_MAP_SCRIPT_MARKER: Record<string, string> = {
+  linear: 'tone mapping: Linear',
+  reinhard: 'tone mapping: Reinhard',
+  cineon: 'tone mapping: Cineon',
+  aces: 'tone mapping: ACES Filmic',
+  agx: 'tone mapping: AgX',
+  neutral: 'tone mapping: Khronos PBR Neutral',
+};
 
 function makeOpts(overrides: Partial<RecordingOptions> = {}): RecordingOptions {
   return {
@@ -338,6 +352,55 @@ describe('OfflineCaptureStrategy', () => {
       expect(session.saveRecordingState).toHaveBeenCalledWith(
         expect.objectContaining({ scaleResolution: { targetH: 1080, align16: true } })
       );
+    });
+
+    it.each([
+      [THREE.LinearToneMapping, 'linear'],
+      [THREE.ReinhardToneMapping, 'reinhard'],
+      [THREE.CineonToneMapping, 'cineon'],
+      [THREE.ACESFilmicToneMapping, 'aces'],
+      [THREE.AgXToneMapping, 'agx'],
+      [THREE.NeutralToneMapping, 'neutral'],
+    ])('passes tone mapping %i to the EXR script as %s', async (toneMapping, expected) => {
+      // Every mode `MegaShaderMaterial.getToneMapping()` can return has to
+      // reach the script. A missing entry falls back to Neutral, which
+      // silently bakes the WRONG curve into the encode — and reads as a
+      // plausible result, since Neutral is a gentle curve.
+      const { sm } = makeSceneManager();
+      sm.postProcessing = {
+        getGradeSettings: () => ({ toneMapping, exposure: 0, offset: 0, gamma: 1 }),
+      };
+      const strat = new OfflineCaptureStrategy(sm, makeAnimController(), makeHooks());
+
+      await strat.run(makeOpts({ outputFormat: 'exr' }), 'turntable', makeSession());
+
+      const driver = mockState.driverInstances.at(-1)!;
+      const script: string = driver.lastCtx.generateFfmpegScript(8, 'exr');
+      expect(script).toContain(TONE_MAP_SCRIPT_MARKER[expected]);
+    });
+
+    it('gives every artifact of one capture the same timestamped stem', async () => {
+      // generateFilename() stamps new Date() per call, so the ZIP name,
+      // its fallback download name and the encode script's output base
+      // used to disagree whenever a capture crossed a second boundary.
+      const { sm } = makeSceneManager();
+      const hooks = makeHooks();
+      let call = 0;
+      hooks.generateFilename = vi.fn((ext: string) => `cap-${++call}.${ext}`);
+      const strat = new OfflineCaptureStrategy(sm, makeAnimController(), hooks);
+
+      await strat.run(makeOpts({ outputFormat: 'png' }), 'turntable', makeSession());
+
+      // Exactly one stem is minted; the drivers derive everything else.
+      expect(hooks.generateFilename).toHaveBeenCalledTimes(1);
+
+      // And every artifact the drivers ask for shares it: the ZIP name
+      // the driver downloads and the base the encode script names its
+      // outputs after have to be the same capture, not two timestamps.
+      const ctx = mockState.driverInstances.at(-1)!.lastCtx;
+      const zipName: string = ctx.generateFilename('zip');
+      const script: string = ctx.generateFfmpegScript(2, 'png');
+      expect(script).toContain(`"${zipName.replace(/\.zip$/, '')}-turntable.mp4"`);
     });
 
     it('warns and bails when the controls are not orbit controls', async () => {

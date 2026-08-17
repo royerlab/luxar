@@ -205,6 +205,32 @@ describe('VideoRecordingStrategy', () => {
       expect(mockAnimController.removePerFrameCallback).toHaveBeenCalledWith('recording-turntable');
     });
 
+    it('unwinds panel and renderer state even when delivery throws', async () => {
+      // A throw from the delivery half (a huge Blob, a download hook, a
+      // toast) used to skip every restore below it, leaving the panel
+      // hidden with DPR disabled, resize locked and the per-frame
+      // callbacks still registered.
+      vi.spyOn((panel as any).session, 'showConfirmationDialog').mockResolvedValue(true);
+      const canvas = mockSceneManager.renderer.domElement;
+      (canvas as any).captureStream = vi.fn(() => ({ getTracks: vi.fn(() => []) }));
+      vi.spyOn(panel as any, 'downloadBlob').mockImplementation(() => {
+        throw new Error('download blocked');
+      });
+      const restoreSpy = vi.spyOn((panel as any).session, 'restoreRecordingState');
+      vi.mocked(showToast).mockClear();
+
+      const recordingPromise = panel.startVideoRecording();
+      await new Promise((r) => setTimeout(r, 0));
+      panel.stopVideoRecording();
+      mockMediaRecorder.onstop();
+      await recordingPromise;
+
+      expect(showToast).toHaveBeenCalledWith('Recording finalize failed');
+      expect(restoreSpy).toHaveBeenCalled();
+      expect(mockAnimController.removePerFrameCallback).toHaveBeenCalledWith('recording-keepalive');
+      expect((panel as any).session.isRecording).toBe(false);
+    });
+
     // [ui.md/C2 / Phase F2c] Drives the duration-timer-cleanup path via
     // the real production code: setting `options.videoDurationLimit > 0`
     // causes VideoRecordingStrategy.run() to install a real durationTimer

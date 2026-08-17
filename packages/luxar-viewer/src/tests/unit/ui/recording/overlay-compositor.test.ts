@@ -316,6 +316,44 @@ describe('compositeTextOverlay', () => {
     expect(lines.every((l: string) => l.length <= 10)).toBe(true);
   });
 
+  it('terminates when the wrap box is narrower than a single character', () => {
+    // 0.0001 × 1000 = 0.1 px, so even one character overflows and
+    // `breakWord` cannot satisfy the width. The loop must still finish —
+    // one character per line — rather than spin or throw.
+    const fake = makeFakeCtx();
+    fake.measureText = vi.fn((t: string) => ({ width: t.length * 10 }));
+    compositeTextOverlay(
+      fake as unknown as CanvasRenderingContext2D,
+      makeTextOverlay('one two three'),
+      makeConfig({ width: 0.0001, anchor: 'top-left' }),
+      0,
+      0,
+      unitMetrics(1000, 600)
+    );
+    // 3 + 3 + 5 characters, each on its own line.
+    expect(fake.fillText).toHaveBeenCalledTimes(11);
+    const lines = fake.fillText.mock.calls.map((c) => c[0] as string);
+    expect(lines.every((l) => l.length === 1)).toBe(true);
+  });
+
+  it('honours line_height when anchoring a single line', () => {
+    // The DOM box of a single line is line-height tall, so a bottom
+    // anchor has to lift by that much — not by a hardcoded 1.2.
+    const fake = makeFakeCtx();
+    compositeTextOverlay(
+      fake as unknown as CanvasRenderingContext2D,
+      makeTextOverlay('Hi'),
+      makeConfig({ font_size: 0.1, line_height: 2, anchor: 'bottom-left' }),
+      0,
+      100,
+      unitMetrics(1000, 600)
+    );
+    // fontSize = 0.1 × 600 = 60; block = 60 × 2 = 120; bottom anchor
+    // → dy = -120, so the baseline lands at y = 100 - 120.
+    const [, , drawY] = fake.fillText.mock.calls[0];
+    expect(drawY).toBeCloseTo(-20, 5);
+  });
+
   it('keeps single-line text on one fillText call when no width is set', () => {
     const fake = makeFakeCtx();
     fake.measureText = vi.fn((t: string) => ({ width: t.length * 10 }));

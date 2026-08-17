@@ -183,9 +183,13 @@ describe('generateFfmpegScript', () => {
           grade: { toneMapping: 'reinhard', exposure: 1, offset: 0.02, gamma: 2 },
         })
       );
-      expect(script).toContain('*2'); // exp2(1)
-      expect(script).toContain('+0.02');
-      expect(script).toContain('pow(');
+      // The shader does `pow(max(c·exp2(E) + O, 0), 1/G)`, so the emitted
+      // exponent is the RECIPROCAL — 1/2 = 0.5, not 2. Asserting only
+      // that `pow(` appears lets an inverted gamma through.
+      expect(script).toContain('(r(X,Y)*2)'); // exp2(1) = 2
+      expect(script).toContain('+0.02,0)'); // offset, clamped at 0
+      expect(script).toContain(',0.5)'); // 1 / 2
+      expect(script).not.toContain(',2)0'); // guards the reciprocal
       expect(script).toContain('exposure 1 EV, offset 0.02, gamma 2');
     });
 
@@ -195,6 +199,28 @@ describe('generateFfmpegScript', () => {
       );
       // A neutral grade should leave a bare `clip(r(X,Y),0,1)`.
       expect(script).toContain('clip(r(X,Y),0,1)');
+    });
+
+    it('warns that the exact chain is slow and names the faster routes', () => {
+      // Measured: ~2.9 s/frame at 720p, ~7.5 at 1080p, ~35 at 4K against
+      // ~0.02 for a plain mux. A 4K turntable is hours, so the script has
+      // to say so rather than looking hung.
+      const script = generateFfmpegScript(
+        opts({ frameExt: 'exr', grade: { toneMapping: 'aces', ...NEUTRAL_GRADE } })
+      );
+      expect(script).toContain('SLOW');
+      expect(script).toContain('s/frame at 720p');
+      expect(script).toContain('PNG/WebP sequence instead');
+    });
+
+    it('still sRGB-encodes (and says so) when the grade could not be read', () => {
+      // A missing grade must not silently fall back to the uncorrected
+      // chain — that is the 15 dB failure. Linear floats always get at
+      // least the transfer conversion.
+      const script = generateFfmpegScript(opts({ frameExt: 'exr', grade: undefined }));
+      expect(script).toContain('t=iec61966-2-1');
+      expect(script).toContain('grade could not be read');
+      expect(script).not.toContain('geq=');
     });
 
     it('offers an HDR10 stanza that converts rather than just tagging', () => {
