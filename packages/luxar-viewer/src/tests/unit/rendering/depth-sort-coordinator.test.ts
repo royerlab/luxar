@@ -4271,8 +4271,16 @@ describe('depth-sort coordinator — starved init retry (issue #1694)', () => {
     resolveInit({ wasmFallback: true });
     await flush();
 
+    // THE pin: unguarded, the late success would have stamped 'ready' (and
+    // cleared the retry bookkeeping) for a worker that belongs to nothing.
     expect(coord.getDepthSortWorkerStatus()).toEqual({ state: 'idle', initTimeouts: 0 });
-    // …and the orphaned worker is not left running.
+    // The orphaned worker is not left running — but this line credits the
+    // DISPOSE, not the epoch guard: `disposeDepthSort()` terminated this exact
+    // worker before the resolve, so it cannot fail either way. The stale-success
+    // path's own `w.terminate()` is defensive: every epoch bump a pending
+    // SUCCESS can observe today comes from a dispose, which has already
+    // terminated the worker (the other bumper, a retry, only runs after the
+    // previous attempt REJECTED and terminated its own worker in that catch).
     expect(terminatedWorkers).toContain(staleWorker);
   });
 
@@ -4517,6 +4525,90 @@ describe('depth-sort coordinator — starved init retry (issue #1694)', () => {
     expect(coord.getDepthSortWorkerStatus()).toEqual({ state: 'ready', initTimeouts: 1 });
     expect(shown.userData.loadedViewVersion).toBeUndefined();
     expect(demoted.userData.loadedViewVersion).toBe(4);
+    expect(requestReprocess).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not spend a retry when every tracked node is COMMUTATIVE', async () => {
+    // The order-dependence gate in the "does anything want sorting?" scan, on
+    // its own: an all-additive scene never needed an ordering, so spending one
+    // of three attempts on it would burn the budget before the sorted data the
+    // retry exists for arrives. (The visibility/committed gates are pinned by
+    // the hidden-node test above; this one keeps both nodes visible and
+    // committed and varies only the blending mode.)
+    const coord = await loadCoordinator();
+    mockApi.initialize.mockImplementation(() => new Promise(() => {}));
+    useDeadlineTimers();
+    coord.configureDepthSort({
+      getCamera: () => makeCamera(),
+      requestRender: vi.fn(),
+      requestReprocess: vi.fn(),
+    });
+
+    // A `normal` node is what starts init at all (a commutative commit returns
+    // before `ensureWorker`), so it seeds the starved state and then switches
+    // to additive — the LIVE mode is what the gate reads.
+    const sorted = makeGSplatsMesh(3, 'normal');
+    const additive = makeGSplatsMesh(3, 'additive');
+    coord.noteDepthSortCommit(sorted, centers3(), 3);
+    coord.noteDepthSortCommit(additive, centers3(), 3);
+    await flush();
+    await vi.advanceTimersByTimeAsync(INIT_TIMEOUT_MS + 1);
+    expect(coord.getDepthSortWorkerStatus()).toEqual({ state: 'starved', initTimeouts: 1 });
+
+    (sorted.material as THREE.Material).userData.blendingMode = 'additive';
+    await vi.advanceTimersByTimeAsync(RETRY_BASE_MS + 1);
+    for (let frame = 0; frame < 5; frame++) {
+      coord.evaluateDepthSortPerFrame();
+      await flush();
+    }
+    expect(mockApi.initialize).toHaveBeenCalledTimes(1);
+    expect(coord.getDepthSortWorkerStatus()).toEqual({ state: 'starved', initTimeouts: 1 });
+
+    // Positive control: the moment an order-dependent node is live again the
+    // armed retry fires — proving the mode gate (not the backoff, not the
+    // budget) held it back.
+    (sorted.material as THREE.Material).userData.blendingMode = 'normal';
+    coord.evaluateDepthSortPerFrame();
+    await flush();
+    expect(mockApi.initialize).toHaveBeenCalledTimes(2);
+  });
+
+  it('leaves a COMMUTATIVE node untouched when re-registering after a late init', async () => {
+    // The order-dependence gate in the re-registration sweep. An additive node
+    // never wanted an ordering, so invalidating its stamps would buy nothing
+    // and cost a needless O(N) re-projection plus (via the cleared
+    // `loadedViewVersion`) an LOD reload of a layer that was never sorted.
+    const coord = await loadCoordinator();
+    mockApi.initialize.mockImplementation(() => new Promise(() => {}));
+    useDeadlineTimers();
+    const requestReprocess = vi.fn();
+    coord.configureDepthSort({
+      getCamera: () => makeCamera(),
+      requestRender: vi.fn(),
+      requestReprocess,
+    });
+    const sorted = makeGSplatsMesh(3, 'normal');
+    sorted.userData.loadedViewVersion = 11;
+    const additive = makeGSplatsMesh(3, 'additive');
+    additive.userData.loadedViewVersion = 11;
+    coord.noteDepthSortCommit(sorted, centers3(), 3);
+    coord.noteDepthSortCommit(additive, centers3(), 3);
+    await flush();
+    await vi.advanceTimersByTimeAsync(INIT_TIMEOUT_MS + 1);
+    expect(coord.getDepthSortWorkerStatus()).toEqual({ state: 'starved', initTimeouts: 1 });
+
+    mockApi.initialize.mockImplementation(async () => ({ wasmFallback: true }));
+    await vi.advanceTimersByTimeAsync(RETRY_BASE_MS + 1);
+    coord.evaluateDepthSortPerFrame();
+    await flush();
+
+    expect(coord.getDepthSortWorkerStatus()).toEqual({ state: 'ready', initTimeouts: 1 });
+    // The sorted node is marked for re-commit…
+    expect(sorted.userData.committedData).toBeUndefined();
+    expect(sorted.userData.loadedViewVersion).toBeUndefined();
+    // …and the additive one is untouched by it.
+    expect(additive.userData.committedData).toBeDefined();
+    expect(additive.userData.loadedViewVersion).toBe(11);
     expect(requestReprocess).toHaveBeenCalledTimes(1);
   });
 });

@@ -169,7 +169,8 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
     // worker was never spawned or its init is still in flight; `ready` =
     // sorts are flowing; `starved` = init missed its 30 s deadline (a busy
     // main thread during a multi-million-element load) and a bounded retry
-    // is armed, so sorting is off MEANWHILE, not for the session; `failed` =
+    // is armed or in flight, so sorting is off MEANWHILE, not for the
+    // session; `failed` =
     // permanently unavailable (dead/blocked worker script, or the retries
     // ran out). `initTimeouts` counts the deadline misses. Exposed because
     // the degrade used to be visible only as one console line, which is

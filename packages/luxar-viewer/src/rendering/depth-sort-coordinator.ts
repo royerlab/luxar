@@ -240,7 +240,10 @@ let warnedWorkerUnavailable = false;
 /**
  * Observable init state (see {@link getDepthSortWorkerStatus}). 'idle'
  * also covers "init in flight, never yet settled" — the terminal states
- * are what callers care about.
+ * are what callers care about. 'starved' spans a retry ARMED **and one
+ * already in flight** (it is only left when an attempt succeeds or the
+ * budget runs out): sorting is off either way, so the two need no
+ * distinction.
  */
 let workerInitState: 'idle' | 'ready' | 'starved' | 'failed' = 'idle';
 /**
@@ -547,7 +550,8 @@ function clearInitRetryWake(): void {
  * Bounded by construction: one pending wake at most, replaced on each
  * arming, cancelled when an attempt starts, when the retry is abandoned, and
  * by {@link disposeDepthSort} — so it can never outlive its arming nor wake
- * a disposed app.
+ * a disposed app. A wake that cannot be DELIVERED re-arms itself instead of
+ * being spent (see below).
  */
 function scheduleInitRetryWake(delayMs: number): void {
   clearInitRetryWake();
@@ -555,7 +559,28 @@ function scheduleInitRetryWake(delayMs: number): void {
     initRetryWakeTimer = null;
     // Read the CURRENT `requestRender` (a dispose nulls it), never a
     // captured one — an old app's closure must not be resurrected here.
-    requestRender?.();
+    if (requestRender) {
+      requestRender();
+      return;
+    }
+    // There is nobody to wake: `requestRender` is null before
+    // `configureDepthSort` has run, and {@link resortForCapture} nulls it
+    // DELIBERATELY for the duration of an offline capture. Firing into the
+    // void would consume the one wake while the retry stays armed — exactly
+    // the never-recovers hole this wake exists to close — so re-arm the same
+    // delay instead. Bounded: an undeliverable wake is a no-op tick (one
+    // timer, still at most one pending), and delivery resumes as soon as the
+    // capture's `finally` restores `requestRender`; a dispose clears
+    // `initTimeoutRetryPending`, which stops the chain for good.
+    //
+    // The LOAD case needs no such re-arm, and deliberately gets none: there
+    // `requestRender` IS wired, so the wake is delivered and the frame simply
+    // declines to spend an attempt while `isLoadInProgress`. That sweep's own
+    // commits each call the render wake-up the app installed via
+    // `SceneLoaderManager.setRequestRender` (`core/app/init/pipeline.ts`;
+    // `SceneLoader` fires it on every commit), so a natural frame — and with
+    // it another retry chance — arrives when the sweep ends.
+    if (initTimeoutRetryPending) scheduleInitRetryWake(delayMs);
   }, delayMs);
 }
 
@@ -608,8 +633,8 @@ function noteWorkerInitFailure(error: unknown): void {
  *
  * - `state`: `'idle'` = never spawned, or an init still in flight;
  *   `'ready'` = the worker initialized and sorts are flowing;
- *   `'starved'` = init missed its deadline and a bounded retry is armed
- *   (depth sorting is off MEANWHILE, not for the session);
+ *   `'starved'` = init missed its deadline and a bounded retry is armed or
+ *   in flight (depth sorting is off MEANWHILE, not for the session);
  *   `'failed'` = permanently unavailable (dead script, or the starved
  *   retries were exhausted).
  * - `initTimeouts`: how many init attempts missed the 30 s init deadline
@@ -687,15 +712,35 @@ function reregisterAfterLateWorkerInit(): void {
     // discarded sort and is re-committed by the reprocess below. Self-
     // healing waste, not corruption.
     if (state.registered) continue;
-    // No `committedData` stamp means LOD-demoted: the geometry went back to
-    // the pool and re-promotion always re-commits (the invariant the rest of
-    // this file leans on), which registers the node then. Invalidating here
-    // would only force a reload of something that is not displayed.
+    // A tracked node with no `committedData` stamp is one whose stamps were
+    // ALREADY invalidated and whose re-commit is still pending — the
+    // switch-to-sorted branch of {@link noteDepthSortBlendingModeSwitch}
+    // firing inside the retry window, or an earlier run of this very sweep.
+    // Both have already requested the reprocess that re-commits (and
+    // re-registers) the node, so there is nothing to add here.
+    // Notably NOT the LOD-demotion case, tempting as that reading is: every
+    // demotion path pairs its `clearCommittedDataStamp` with
+    // `releaseDepthSortNode` (`data/scene-loader.ts`'s `releaseLazy*`
+    // callbacks), which deletes the node from `nodeStates` entirely — a
+    // demoted level is never seen by this loop. The guard therefore stays as
+    // the defensive peer of the module's other `!hasCommittedData` skips
+    // rather than as the demotion filter.
     if (!hasCommittedData(state.mesh)) continue;
     if (!isLiveOrderDependent(liveBlendingMode(state.mesh))) continue;
     invalidateSortedNodeCommitStamps(state.mesh);
     anyInvalidated = true;
   }
+  // `requestReprocess` is `SceneLoader.updateView({})`, and by now a view
+  // sweep may well be in flight — the retry is only dispatched from a frame
+  // where none was, and the init it awaited took real time. That is not a lost
+  // call: the loader's serialization branch ABORTS the in-flight pass (its
+  // commit is skipped), parks this state as pending, and re-enters
+  // `updateView` with it as the aborted pass unwinds, so the re-commit these
+  // stamp-less nodes need always happens. The accepted cost is the aborted
+  // pass's fetch/decode work, which the winning pass redoes. Gating on
+  // `isLoadInProgress` instead would be the worse trade: the stamps are
+  // already cleared at this point, so a skipped reprocess leaves the nodes
+  // stamp-less and unsorted indefinitely — the bug itself.
   if (anyInvalidated) requestReprocess();
 }
 
@@ -1883,6 +1928,13 @@ export function disposeDepthSort(): void {
   worker = null;
   api = null;
   initPromise = null;
+  // ORPHAN any init attempt still in flight — kept adjacent to the
+  // `initPromise = null` it invalidates, because the two are one invariant.
+  // This is the reset that cannot be done by nulling a variable: the attempt's
+  // 30 s deadline timer lives in its own closure and nothing here can cancel
+  // it, so the epoch is what stops it from classifying a miss against the NEXT
+  // app's healthy worker (see {@link initEpoch} for the full failure chain).
+  initEpoch++;
   getCamera = null;
   requestRender = null;
   requestReprocess = null;
@@ -1901,10 +1953,4 @@ export function disposeDepthSort(): void {
   // The armed self-wake must not survive the app that armed it (it would
   // request a frame from a re-inited app for a retry that no longer exists).
   clearInitRetryWake();
-  // ORPHAN any init attempt still in flight. This is the one reset that
-  // cannot be done by nulling a variable: the attempt's 30 s deadline timer
-  // lives in its own closure and nothing here can cancel it, so the epoch is
-  // what stops it from classifying a miss against the NEXT app's healthy
-  // worker (see {@link initEpoch} for the full failure chain).
-  initEpoch++;
 }
