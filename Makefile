@@ -1838,10 +1838,20 @@ install-rust:  ## Install Rust and wasm-pack for WASM development
 			echo "📥 Installing wasm-pack $$WASM_PACK_PIN (this may take a minute)..."; \
 		fi; \
 		cargo install wasm-pack --version "$$WASM_PACK_PIN" --locked --force; \
-		echo "✅ wasm-pack $$WASM_PACK_PIN installed to $(HOME)/.cargo/bin"; \
-		if [ -x "$(HOME)/.cargo/bin/wasm-pack" ] && [ "$$(command -v wasm-pack)" != "$(HOME)/.cargo/bin/wasm-pack" ]; then \
-			echo "⚠️  ...but PATH resolves wasm-pack to $$(command -v wasm-pack), which shadows it."; \
-			echo "   Remove that copy, or put $(HOME)/.cargo/bin ahead of it in PATH."; \
+		# Then MEASURE, don't assume. `cargo install --force` replaces only the \
+		# copy in cargo's own install root: one earlier in PATH (Homebrew, a \
+		# distro package) survives and keeps winning, and the root itself moves \
+		# with CARGO_INSTALL_ROOT/CARGO_HOME. A pin nobody can observe is not a \
+		# pin, so re-probe PATH and fail if it does not answer with the pin. \
+		WASM_PACK_ON_PATH="$$(command -v wasm-pack || true)"; \
+		INSTALLED_WASM_PACK="$$(wasm-pack --version 2>/dev/null | awk '{print $$2}' || true)"; \
+		if [ "$$INSTALLED_WASM_PACK" = "$$WASM_PACK_PIN" ]; then \
+			echo "✅ wasm-pack $$WASM_PACK_PIN installed: $$WASM_PACK_ON_PATH"; \
+		else \
+			echo "❌ Installed wasm-pack $$WASM_PACK_PIN, but PATH answers with $${INSTALLED_WASM_PACK:-no wasm-pack at all} ($${WASM_PACK_ON_PATH:-not on PATH})."; \
+			echo "   cargo installs into $${CARGO_INSTALL_ROOT:-$${CARGO_HOME:-$(HOME)/.cargo}}/bin unless it is configured otherwise;"; \
+			echo "   put that directory ahead of the other copy in PATH, or remove the other copy."; \
+			exit 1; \
 		fi; \
 	fi; \
 	echo ""; \

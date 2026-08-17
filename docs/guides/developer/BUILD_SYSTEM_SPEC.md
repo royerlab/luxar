@@ -126,7 +126,7 @@ The Rust/WASM toolchain enables high-performance WebAssembly computations in the
 **What `make install-rust` does:**
 1. Installs Rust via rustup (if not present)
 2. Loads the cargo environment automatically
-3. Installs wasm-pack for WASM packaging
+3. Installs the pinned wasm-pack (`WASM_PACK_VERSION`) for WASM packaging
 
 **Key Design:**
 - All Rust-related make targets source `~/.cargo/env` automatically
@@ -509,7 +509,9 @@ make install-rust
 
 This command:
 1. Installs Rust via rustup (if not present)
-2. Installs wasm-pack (if not present)
+2. Installs the pinned wasm-pack (`WASM_PACK_VERSION` in the Makefile), replacing the
+   copy in cargo's install root — then re-probes PATH and fails if some other copy
+   (Homebrew, a distro package) still wins there
 3. Sources cargo environment automatically
 
 The Makefile commands (`make build-wasm`, `make build-viewer`, etc.) automatically source the cargo environment, so you don't need to run `source ~/.cargo/env` manually.
@@ -897,7 +899,7 @@ selects the full suite and the documentation gate as well.
 | Python | 3.12 | zarr 3 requires >=3.12 from 3.2 on; also stdlib `tomllib`, PEP 695 type stubs |
 | Node.js | 22.22 | jsdom 30 engines `^22.22.2 || ^24.15.0 || >=26.0.0` (undici 8 crashes on older Node); Vite 8.x needs only 20.19 |
 | Rust | stable | WASM compilation |
-| wasm-pack | 0.15.0 (pinned) | WASM packaging — `install-rust` installs exactly `WASM_PACK_VERSION` (see the Makefile) with `cargo install --locked`, replacing any other version already on the machine |
+| wasm-pack | 0.15.0 (pinned) | WASM packaging — `install-rust` installs exactly `WASM_PACK_VERSION` (see the Makefile) with `cargo install --locked --force`, then fails unless PATH answers with that version |
 
 ## Related Documentation
 

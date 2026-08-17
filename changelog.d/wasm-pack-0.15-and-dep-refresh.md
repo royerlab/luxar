@@ -12,14 +12,18 @@ the real assets rather than assumed.
 `make install-rust` now actually enforces that pin. It used to accept whatever
 `wasm-pack` it found — so a developer sitting on 0.13.0 was told "already
 installed" and stayed there, and bumping the pin changed nothing locally. It now
-compares against the pinned version and reinstalls on a mismatch, warning if
-another copy on `PATH` shadows the one it just installed. The version itself
-moves to a single `WASM_PACK_VERSION` variable at the top of the Makefile.
+compares against the pinned version and reinstalls on a mismatch — then re-probes
+`PATH` and fails outright if `PATH` still answers with something else, because
+`cargo install --force` only replaces the copy in cargo's own install root and a
+Homebrew or distro copy earlier in `PATH` keeps winning. A pin nobody can observe
+is not a pin. The version itself moves to a single `WASM_PACK_VERSION` variable at
+the top of the Makefile.
 
 Routine dependency refreshes ride along: `zarrita` 0.7.4, `mediabunny` 1.54.0,
 Vitest 4.1.10, ESLint 10.8.1, Knip 6.32.2, dependency-cruiser 18.2.0, tsx, and
 `globals`. `@typescript-eslint`'s plugin and parser had drifted onto different
-versions and now move together.
+versions and now move together. `@types/three` keeps its `~0.185.1` range and
+picks up 0.185.4 within it.
 
 `THREE_VERSION_NOTES.md` gains the explanation for something that has looked like
 an oversight for a while: `three` is pinned at `~0.184.0` while `@types/three`

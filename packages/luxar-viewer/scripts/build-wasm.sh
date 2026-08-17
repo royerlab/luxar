@@ -38,7 +38,7 @@ if ! command -v wasm-pack &> /dev/null; then
     echo "Or install manually:"
     echo "  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
     echo "  source ~/.cargo/env"
-    echo "  cargo install wasm-pack"
+    echo "  cargo install wasm-pack --locked   # 'make install-rust' installs the exact version CI uses"
     exit 1
 fi
 
