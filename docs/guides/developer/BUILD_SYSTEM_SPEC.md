@@ -126,7 +126,7 @@ The Rust/WASM toolchain enables high-performance WebAssembly computations in the
 **What `make install-rust` does:**
 1. Installs Rust via rustup (if not present)
 2. Loads the cargo environment automatically
-3. Installs wasm-pack for WASM packaging
+3. Installs the pinned wasm-pack (`WASM_PACK_VERSION`) for WASM packaging
 
 **Key Design:**
 - All Rust-related make targets source `~/.cargo/env` automatically
@@ -283,7 +283,7 @@ MIN_NODE_MINOR := 22
 | `make viewer` | Start viewer dev server (port 5173) |
 | `make build-viewer` | Build viewer for production (auto-installs Rust/wasm-pack via `install-rust` if missing) |
 | `make build-viewer-lib` | Build + verify the viewer's npm **library** bundle (`pnpm ci:release`) — the artifact `publish-npm.yml` ships, distinct from the web app bundled into the wheel |
-| `make rebuild-viewer` | Clean rebuild of viewer |
+| `make rebuild-viewer` | Clean rebuild of the viewer bundle — clears the JS/TS artifacts (`dist/`, the vite dep-optimizer cache, tsbuildinfo); leaves `public/wasm/` and the cargo target dir alone, so the Rust step is a cache hit unless its sources changed. Chain `make clean-wasm rebuild-viewer` for everything from source |
 | `make test-viewer` | Run TypeScript unit tests |
 | `make test-cov-typescript` | Run TypeScript tests with coverage |
 
@@ -509,7 +509,9 @@ make install-rust
 
 This command:
 1. Installs Rust via rustup (if not present)
-2. Installs wasm-pack (if not present)
+2. Installs the pinned wasm-pack (`WASM_PACK_VERSION` in the Makefile), replacing the
+   copy in cargo's install root — then re-probes PATH and fails if some other copy
+   (Homebrew, a distro package) still wins there
 3. Sources cargo environment automatically
 
 The Makefile commands (`make build-wasm`, `make build-viewer`, etc.) automatically source the cargo environment, so you don't need to run `source ~/.cargo/env` manually.
@@ -897,7 +899,7 @@ selects the full suite and the documentation gate as well.
 | Python | 3.12 | zarr 3 requires >=3.12 from 3.2 on; also stdlib `tomllib`, PEP 695 type stubs |
 | Node.js | 22.22 | jsdom 30 engines `^22.22.2 || ^24.15.0 || >=26.0.0` (undici 8 crashes on older Node); Vite 8.x needs only 20.19 |
 | Rust | stable | WASM compilation |
-| wasm-pack | 0.14.0 (pinned) | WASM packaging — `install-rust` installs exactly `wasm-pack 0.14.0` with `cargo install --locked` |
+| wasm-pack | 0.15.0 (pinned) | WASM packaging — `install-rust` installs exactly `WASM_PACK_VERSION` (see the Makefile) with `cargo install --locked --force`, then fails unless PATH answers with that version |
 
 ## Related Documentation
 

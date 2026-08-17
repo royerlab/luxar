@@ -32,4 +32,24 @@ export function validateDepthSort(config: AppConfig, errors: string[], warnings:
         'flying through a node will show stale behind-camera culling before a re-sort fires'
     );
   }
+
+  // 0 disables the guard (the shared withTimeout convention), so only a
+  // NEGATIVE or non-finite value is an error.
+  if (!Number.isFinite(ds.workerInitTimeoutMs) || ds.workerInitTimeoutMs < 0) {
+    errors.push(
+      `depthSort.workerInitTimeoutMs must be a finite number >= 0 (got ${ds.workerInitTimeoutMs})`
+    );
+  } else if (ds.workerInitTimeoutMs === 0) {
+    warnings.push(
+      'depthSort.workerInitTimeoutMs is 0, which disables the init deadline entirely; ' +
+        'a worker that dies during async module evaluation then never settles the init ' +
+        'promise, and every order-dependent commit parks another continuation on it ' +
+        '(each pinning its centers provider) — unbounded'
+    );
+  } else if (ds.workerInitTimeoutMs < 1000) {
+    warnings.push(
+      `depthSort.workerInitTimeoutMs (${ds.workerInitTimeoutMs}) is shorter than a cold WASM ` +
+        'instantiate; the first sort will be deferred to the post-load retry on most machines'
+    );
+  }
 }

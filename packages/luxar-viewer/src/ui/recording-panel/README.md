@@ -117,11 +117,20 @@ frame-by-frame capture for turntable + EXR-sequence modes:
    scale resolution to a 16-pixel-aligned multiple of the target.
 4. Pause auto-rotate and compute per-frame angle for the turntable.
 5. Build the per-mode driver (`ImageSequenceDriver` /
-   `ExrSequenceDriver` / `VideoModeDriver`); call `driver.setup(ctx)`.
+   `ExrSequenceDriver` / `VideoModeDriver`).
 6. Mount the modal overlay (focus trap + Escape to cancel + preview
    canvas + counter).
-7. Wake the rAF loop (`animationController.startAnimation()`) and
-   register the `continuous` keep-alive callback.
+7. Enter the `try`, raise `isLoopRenderSuppressed`, call
+   `driver.setup(ctx)`, then wake the rAF loop
+   (`animationController.startAnimation()`) and register the
+   `continuous` keep-alive callback. Only the driver's _construction_
+   is pre-overlay; `setup` runs inside the `try` on purpose, so a
+   throw from it is unwound by the `finally` that removes the overlay
+   mounted in step 6. The suppression flag is raised _inside_ the
+   `try` for the same reason, and it is the strictest case: it
+   suppresses the loop's render globally, so escaping steps 3–6 with
+   it stuck true would leave a dark viewport with no recovery but a
+   reload.
 8. For each frame: register a per-frame callback that orbits the
    camera one step, `await requestAnimationFrame`, then call
    `driver.captureFrame(ctx, frameIndex, progress)`. Tolerate up to
@@ -130,8 +139,8 @@ frame-by-frame capture for turntable + EXR-sequence modes:
 9. Call `driver.finalize(ctx, capturedFrames, progress)`.
 10. In `finally`: call `driver.abort?(ctx, reason)` if setup ran but
     finalize didn't succeed, remove per-frame callbacks, hide the
-    indicator + overlay, restore auto-rotate + recording state, and
-    clear the abort controller reference.
+    indicator + overlay, restore auto-rotate + recording state, wake
+    the loop once more, and clear the abort controller reference.
 
 Step 7's wake-up is load-bearing, not belt-and-braces: the turntable's
 rotation is applied from a per-frame callback, those only run while the
@@ -143,12 +152,60 @@ still emits N well-formed frames (the capture path renders its own
 pipeline pass via `renderToImageData`, independently of the loop) —
 they are simply all the same pose.
 
-The `try { … } finally { … }` wrapping every state-mutating step is
-load-bearing: a thrown error anywhere in the loop must restore the
-DPR lock, resize listener, panel visibility, overlay state, and
-recording flags. The driver's own abort handler runs from the same
-finally so per-driver resources (ZIP streams, mediabunny encoders)
-are torn down without orphan files.
+The loop runs, but its **own** render does not: `core/app/init/pipeline`
+gives the animation controller a render-skip predicate keyed on
+`RecordingPanel.isLoopRenderSuppressed()`. Every tick still updates the
+controls and every per-frame callback — that is the whole reason the
+loop has to run — but skips `postProcessing.render()`, whose output the
+capture would discard anyway. It also removes a visible artifact: the
+drivers' per-frame readback is asynchronous, so the loop interleaves
+with it, and an EXR capture holds global raw-HDR shader flags across
+that await —
+a loop render landing inside the window painted a blown-out frame
+through the translucent overlay, once per captured frame. The predicate
+is offline-only: the real-time MediaRecorder path records the canvas the
+loop paints, so suppressing its render there would yield an empty video.
+
+What the user sees behind the scrim for the duration is a DARK viewport,
+not a frozen frame: step 3's resolution scaling already resized the
+render target (which clears the canvas) and nothing repaints it after
+that. The overlay's preview canvas is the progress feedback — it shows
+each captured frame, except on the EXR path, which never calls
+`setPreview` and therefore shows the counter alone. Do not "fix" the
+dark viewport by rendering into it mid-capture: that is the flicker
+described above.
+
+Step 10's second wake-up closes the tail: `restoreRecordingState()`
+resizes the render target back (clearing the canvas) after the keep-alive
+is gone, so without it a still-stopped loop — or one the idle timer halts
+in the gap right after the resize — leaves the viewer blank until the
+next mouse move. By then `isLoopRenderSuppressed` is false, so that frame
+is a real render. The early-bail paths (disposed during the opening rAF
+window, non-orbit controls) restore the same state and owe the same
+repaint, so the non-orbit-controls bail wakes the loop too. No wake-up
+ever fires on a disposed session — which is what makes the disposed bail
+the exception, since a dispose is the only production way to reach it:
+`runDisposePipeline` disposes the AnimationController before the
+RecordingPanel, and panel dispose only ABORTS an in-flight capture, whose
+finally resumes a tick later — restarting the loop there would render
+against a disposed pipeline.
+
+The `try { … } finally { … }` around steps 7–9 is load-bearing: a thrown
+error anywhere in the capture loop must restore the DPR lock, resize
+listener, panel visibility, overlay state, and recording flags. The
+driver's own abort handler runs from the same finally so per-driver
+resources (ZIP streams, mediabunny encoders) are torn down without
+orphan files.
+
+It does not reach back over steps 3–6 — the `finally` closes over
+bindings those steps create — so a throw there still strands the
+recording flags and the saved renderer state. That window is
+synchronous DOM construction with no production-reachable throw (the
+confirmation dialog in step 1 already assigns `innerHTML`, so an
+environment that forbids it fails before any state is mutated), which
+is why it is documented rather than guarded. The one flag whose stuck
+value would be worse than a locked panel — `isLoopRenderSuppressed` —
+is raised inside the `try` instead, per step 7.
 
 ## Overlay compositing units
 

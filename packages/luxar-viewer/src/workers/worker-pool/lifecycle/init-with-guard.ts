@@ -22,38 +22,59 @@
  * init-race-vs-permanent-handler swap from the original.
  */
 
-import type { Remote } from 'comlink';
-import type { DataWorkerAPI, WorkerInitResult } from '../../data-worker';
+import { WorkerInitTimeoutError } from '../errors';
 
-export function initializeWithGuard(
+/**
+ * The only shape this guard needs from a Comlink-wrapped worker API.
+ * Structural on purpose: the data worker and the SORT worker both expose
+ * an `initialize(wasmPath?)`, and sharing this guard is what keeps their
+ * startup semantics from drifting apart (the sort coordinator used to
+ * hand-roll its own race, and its copy never grew the `onmessageerror`
+ * arm or the `preventDefault`).
+ */
+export interface GuardedInitApi<TResult> {
+  initialize(wasmPath?: string): Promise<TResult>;
+}
+
+/**
+ * `label` names the worker in every rejection message — the pool passes
+ * `Worker <n>`, the sort coordinator passes `SortWorker`.
+ *
+ * The timeout arm rejects with {@link WorkerInitTimeoutError}, the other two
+ * with a plain `Error`. That split is load-bearing for callers that retry:
+ * see the error's own doc for why a deadline miss is not evidence of a
+ * broken worker.
+ */
+export function initializeWithGuard<TResult>(
   worker: Worker,
-  api: Remote<DataWorkerAPI>,
-  workerNumber: number,
+  api: GuardedInitApi<TResult>,
+  label: string,
   timeoutMs: number,
   attachPermanentHandlers: () => void,
   wasmPath?: string
-): Promise<WorkerInitResult> {
-  return new Promise<WorkerInitResult>((resolve, reject) => {
+): Promise<TResult> {
+  return new Promise<TResult>((resolve, reject) => {
     let settled = false;
-    const settle = (kind: 'ok' | 'err', payload?: WorkerInitResult | Error): void => {
+    const settle = (kind: 'ok' | 'err', payload?: TResult | Error): void => {
       if (settled) return;
       settled = true;
       if (timer !== undefined) clearTimeout(timer);
       // Restore the permanent runtime handlers; the early ones below
       // are scoped to the init race only.
       attachPermanentHandlers();
-      if (kind === 'ok') resolve(payload as WorkerInitResult);
+      if (kind === 'ok') resolve(payload as TResult);
       else reject(payload as Error);
     };
     // Mirror withTimeout() semantics: 0/negative/non-finite disables the
-    // guard. `config/validation.ts` documents this convention for all
-    // worker timeouts ("0 disables, but the guard is recommended"); the
+    // guard. `config/sections/data-loading/performance/validate.ts`
+    // documents this convention for worker init timeouts ("0 disables, but
+    // the guard is recommended"); the
     // pre-fix `setTimeout(..., 0)` instead fired on the next macrotask
     // and rejected real async inits immediately.
     const timer: ReturnType<typeof setTimeout> | undefined =
       timeoutMs > 0 && Number.isFinite(timeoutMs)
         ? setTimeout(() => {
-            settle('err', new Error(`Worker ${workerNumber} init exceeded ${timeoutMs}ms`));
+            settle('err', new WorkerInitTimeoutError(label, timeoutMs));
           }, timeoutMs)
         : undefined;
     // Override the permanent handlers for the duration of init so an
@@ -61,15 +82,21 @@ export function initializeWithGuard(
     // init promise rather than getting swallowed by the can't-find-
     // worker-in-pool branch of handleWorkerFailure.
     worker.onerror = (event) => {
-      const message = event instanceof ErrorEvent ? event.message : 'unknown error';
-      settle('err', new Error(`Worker ${workerNumber} runtime error during init: ${message}`));
+      // Duck-typed rather than `event instanceof ErrorEvent`, for the same
+      // reason `preventDefault` below is: that global does not exist in every
+      // host this runs in (the unit suite's default `node` environment, for
+      // one), and a bare reference to a missing global throws a
+      // ReferenceError OUT of the handler — leaving the init promise unsettled,
+      // which is precisely what this guard exists to prevent.
+      const message =
+        typeof (event as { message?: unknown }).message === 'string'
+          ? (event as { message: string }).message
+          : 'unknown error';
+      settle('err', new Error(`${label} runtime error during init: ${message}`));
       if (typeof event.preventDefault === 'function') event.preventDefault();
     };
     worker.onmessageerror = () => {
-      settle(
-        'err',
-        new Error(`Worker ${workerNumber} produced an unserializable message during init`)
-      );
+      settle('err', new Error(`${label} produced an unserializable message during init`));
     };
     api.initialize(wasmPath).then(
       (result) => settle('ok', result),

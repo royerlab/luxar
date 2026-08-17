@@ -23,17 +23,17 @@
  * through constructors.
  *
  * Responsibilities:
- * - Owns the single persistent Comlink SortWorker (spawn on first
- *   order-dependent commit, terminate on app teardown). NOT part of the
- *   round-robin data-worker pool — node registrations and their
+ * - Owns the single persistent Comlink SortWorker (spawn at app init via
+ *   {@link warmUpDepthSortWorker}, terminate on app teardown). NOT part of
+ *   the round-robin data-worker pool — node registrations and their
  *   transferred center buffers must live in exactly one worker.
  * - Classifies an init failure, because the two causes need opposite
  *   answers (issue #1694). The init promise always SETTLES (the anti-leak
- *   contract — see {@link SORT_WORKER_INIT_TIMEOUT_MS}), but a DEAD worker
- *   script fails permanently while a STARVED one — init losing the race
- *   against the deadline because the main thread was busy committing
- *   millions of elements — is retried a bounded number of times from the
- *   per-frame scheduler. {@link getDepthSortWorkerStatus} makes the
+ *   contract — the deadline is `config.depthSort.workerInitTimeoutMs`), but
+ *   a DEAD worker script fails permanently while a STARVED one — init
+ *   losing the race against the deadline because the main thread was busy
+ *   committing millions of elements — is retried a bounded number of times
+ *   from the per-frame scheduler. {@link getDepthSortWorkerStatus} makes the
  *   resulting degrade state observable instead of console-only.
  * - Tracks the per-node **generation** counter: bumped on every non-noop
  *   commit (`noteDepthSortCommit`), never on stamp-only noops. An ordering
@@ -100,6 +100,8 @@ import {
 import { config } from '../config';
 import type { UpdateProfiler } from '../profiling/update-profiler';
 import { withTimeout } from '../workers/worker-pool/timeout/with-timeout';
+import { initializeWithGuard } from '../workers/worker-pool/lifecycle/init-with-guard';
+import { WorkerInitTimeoutError } from '../workers/worker-pool/errors';
 import { log, Modules } from '../utils/log';
 // Ancestor-aware visibility (the single parent-chain walk, shared with the pick
 // pass and the LOD registry/eviction pass). `mesh.visible` alone misses a hidden
@@ -117,7 +119,22 @@ import { isEffectivelyVisible } from '../utils/object-visibility';
  */
 let sortWorkerUrlOverride: string | undefined;
 
-/** Override the URL used to construct the sort worker. Call before first use. */
+/**
+ * Override the URL used to construct the sort worker.
+ *
+ * An INTERNAL entry point, reachable only from inside the source tree (a
+ * vendored/bundled viewer, the standalone bootstrap): it is not re-exported
+ * from `src/index.ts`, and `package.json`'s `exports` map publishes only `.`
+ * and `./styles.css`, so an npm consumer cannot import it at all.
+ *
+ * Call before `LuxarApp.init()`. That window used to run to the first
+ * order-dependent commit, but the worker is now warmed up during app init
+ * ({@link warmUpDepthSortWorker}), so a later call would arrive after the
+ * spawn it is meant to redirect. `LuxarAppOptions.workerPath` deliberately
+ * does NOT reach here (it names the DATA worker bundle, a different chunk —
+ * see `applyModuleOverrides`), so relocating the sort worker means calling
+ * this setter yourself, before `init()`.
+ */
 export function setSortWorkerUrl(url: string): void {
   sortWorkerUrlOverride = url;
 }
@@ -129,7 +146,12 @@ export function setSortWorkerUrl(url: string): void {
  */
 let sortWorkerWasmPathOverride: string | undefined;
 
-/** Override the WASM JS-shim URL used inside the sort worker. */
+/**
+ * Override the WASM JS-shim URL used inside the sort worker.
+ *
+ * Same timing contract as {@link setSortWorkerUrl}: before
+ * `LuxarApp.init()`.
+ */
 export function setSortWorkerWasmPath(url: string): void {
   sortWorkerWasmPathOverride = url;
 }
@@ -195,10 +217,11 @@ let initPromise: Promise<void> | null = null;
  * matches.
  *
  * This is the `worker === w` guard's precedent generalized, and it is not
- * optional: the 30 s deadline lives in a `setTimeout` inside the init
- * closure and only `w.onerror` / `initialize` settling clears it, so
- * NOTHING outside the attempt can cancel that timer. Without an epoch, app
- * A's orphan timer firing 30 s after `disposeDepthSort()` would classify a
+ * optional: the init deadline (`config.depthSort.workerInitTimeoutMs`) lives
+ * in a `setTimeout` inside the init closure and only `w.onerror` /
+ * `initialize` settling clears it, so NOTHING outside the attempt can cancel
+ * that timer. Without an epoch, app A's orphan timer firing one deadline
+ * after `disposeDepthSort()` would classify a
  * deadline miss against app B's HEALTHY worker: `workerInitState` flips to
  * 'starved' with a retry armed, the next frame's retry nulls B's RESOLVED
  * `initPromise` and spawns a third worker over the live one (B's worker
@@ -340,43 +363,15 @@ export function setDepthSortEnabled(enabled: boolean): void {
 }
 
 /**
- * Init settle guard: a worker whose script dies during ASYNC module
- * evaluation (before `expose()` runs) emits an `error` event but never
- * settles the Comlink `initialize` RPC — and every order-dependent
- * commit attaches a continuation (closing over its centers provider,
- * which for points pins the full `LoadedPointsData`) to the cached
- * `initPromise`. Left pending forever, those closures accumulate one
- * per commit, unbounded. The timeout + onerror below guarantee the
- * promise SETTLES, draining all queued continuations into the
- * warn-once degrade path.
- *
- * The settle contract is unconditional, but the DEGRADE is not (issue
- * #1694): only the deadline miss is retryable.
- * - A dead script (`onerror`), a rejected `initialize`, or a constructor
- *   throw is PERMANENT: nothing about waiting longer would help, so the
- *   cached rejection stands for the session.
- * - Missing the deadline means only that init did not finish in 30 s. At
- *   ~3M points the main thread is saturated long enough during a load for
- *   worker startup to lose that race, and the old unconditional
- *   stays-failed degrade then disabled depth sorting for the whole
- *   session over a condition that would have cleared in seconds. That
- *   case is retried, BOUNDED (see {@link SORT_WORKER_INIT_MAX_ATTEMPTS}),
- *   so the unbounded closure pile-up this timeout exists to stop cannot
- *   come back: between attempts the cached rejection is still what every
- *   commit sees, and only a finite number of fresh pending promises can
- *   ever exist.
- */
-const SORT_WORKER_INIT_TIMEOUT_MS = 30_000;
-
-/**
  * Total init attempts for a STARVED (deadline-missing) worker, including
  * the first — so 3 means the initial attempt plus 2 retries. Bounded on
- * purpose: each attempt opens a fresh 30 s window during which commits
- * attach continuations to a pending promise, and an unbounded retry loop
- * would restore exactly the leak the deadline was added to prevent. Three
- * attempts span at worst ~96 s of wall clock (three 30 s deadlines plus the
- * 2 s and 4 s backoffs between them), which comfortably outlives a
- * load-induced main-thread stall while staying a fixed, small ceiling.
+ * purpose: each attempt opens one more deadline-long window during which
+ * commits attach continuations to a pending promise, and an unbounded retry
+ * loop would restore exactly the leak the deadline was added to prevent.
+ * Three attempts span at worst three init deadlines plus the 2 s and 4 s
+ * backoffs between them (~96 s of wall clock at the default 30 s deadline),
+ * which comfortably outlives a load-induced main-thread stall while staying
+ * a fixed, small ceiling.
  */
 const SORT_WORKER_INIT_MAX_ATTEMPTS = 3;
 
@@ -399,23 +394,45 @@ const SORT_WORKER_INIT_RETRY_BASE_MS = 2_000;
 const SORT_WORKER_INIT_RETRY_WAKE_SLACK_MS = 50;
 
 /**
- * The one retryable init failure: the Comlink `initialize` RPC did not
- * settle within {@link SORT_WORKER_INIT_TIMEOUT_MS}. A distinct type
- * because the deadline timer is the ONLY failure source that means
- * "too slow" rather than "broken" — every other path (worker `onerror`,
- * a rejected `initialize`, a constructor throw) rejects with a plain
- * Error and degrades permanently.
- */
-class SortWorkerInitTimeoutError extends Error {}
-
-/**
  * Per-sort RPC deadline (see scheduleSort). Generous — a sort is
  * O(N + buckets) over at most a few million centers, milliseconds on any
  * live worker; the deadline only trips on a crashed/wedged worker thread.
  */
 const SORT_RPC_TIMEOUT_MS = 30_000;
 
-/** Lazily spawn + initialize the persistent sort worker. */
+/**
+ * Spawn + initialize the persistent sort worker.
+ *
+ * Init settle guard: a worker whose script dies during ASYNC module
+ * evaluation (before `expose()` runs) emits an `error` event but never
+ * settles the Comlink `initialize` RPC — and every order-dependent
+ * commit attaches a continuation (closing over its centers provider,
+ * which for points pins the full `LoadedPointsData`) to the cached
+ * `initPromise`. Left pending forever, those closures accumulate one
+ * per commit, unbounded. The shared `initializeWithGuard` races the RPC
+ * against the `config.depthSort.workerInitTimeoutMs` deadline AND the
+ * worker's own `error` / `messageerror` events, so the promise SETTLES on
+ * every attempt, draining all queued continuations into the warn-once
+ * degrade path. (It is shared with the data pool precisely so the two
+ * startup paths cannot drift; the coordinator's hand-rolled copy never
+ * grew the `messageerror` arm.)
+ *
+ * The settle contract is unconditional, but the DEGRADE is not (issue
+ * #1694): only the deadline miss is retryable.
+ * - A dead script (`error`/`messageerror`), a rejected `initialize`, or a
+ *   constructor throw is PERMANENT: nothing about waiting longer would
+ *   help, so the cached rejection stands for the session.
+ * - Missing the deadline means only that init did not finish in time. At
+ *   ~3M points the main thread is saturated long enough during a load for
+ *   worker startup to lose that race, and the old unconditional
+ *   stays-failed degrade then disabled depth sorting for the whole
+ *   session over a condition that would have cleared in seconds. That
+ *   case is retried, BOUNDED (see {@link SORT_WORKER_INIT_MAX_ATTEMPTS}),
+ *   so the unbounded closure pile-up the deadline exists to stop cannot
+ *   come back: between attempts the cached rejection is still what every
+ *   commit sees, and only a finite number of fresh pending promises can
+ *   ever exist.
+ */
 function ensureWorker(): Promise<void> {
   if (initPromise) return initPromise;
   // Snapshot for the epoch guard on every write past the awaits below — see
@@ -437,34 +454,19 @@ function ensureWorker(): Promise<void> {
     worker = w;
     api = wrap<SortWorkerAPI>(w);
     try {
-      const result = await new Promise<Awaited<ReturnType<SortWorkerAPI['initialize']>>>(
-        (resolve, reject) => {
-          const timer = setTimeout(
-            () =>
-              reject(
-                new SortWorkerInitTimeoutError(
-                  `SortWorker initialize timed out after ${SORT_WORKER_INIT_TIMEOUT_MS}ms`
-                )
-              ),
-            SORT_WORKER_INIT_TIMEOUT_MS
-          );
-          w.onerror = (event: ErrorEvent) => {
-            clearTimeout(timer);
-            reject(new Error(`SortWorker failed during startup: ${event.message ?? 'unknown'}`));
-          };
-          api!.initialize(sortWorkerWasmPathOverride).then(
-            (r) => {
-              clearTimeout(timer);
-              resolve(r);
-            },
-            (err: unknown) => {
-              clearTimeout(timer);
-              reject(err instanceof Error ? err : new Error(String(err)));
-            }
-          );
-        }
+      const result = await initializeWithGuard(
+        w,
+        api!,
+        'SortWorker',
+        config.depthSort.workerInitTimeoutMs,
+        // The guard's own handlers are scoped to the init race; this runs on
+        // settle, and the coordinator has no permanent ones to restore.
+        () => {
+          w.onerror = null;
+          w.onmessageerror = null;
+        },
+        sortWorkerWasmPathOverride
       );
-      w.onerror = null;
       if (epoch !== initEpoch) {
         // Stale attempt: whatever started it is gone (a dispose, or a retry
         // that superseded it) while this init was awaited. Terminate the
@@ -507,7 +509,7 @@ function ensureWorker(): Promise<void> {
         api = null;
       }
       // Epoch guard (see {@link initEpoch}): a STALE attempt's failure —
-      // classically its orphaned 30 s deadline firing long after a dispose —
+      // classically its orphaned init deadline firing long after a dispose —
       // must not classify, log, or arm anything against the attempt that is
       // current now. The worker above is still terminated; only the
       // bookkeeping is skipped.
@@ -591,7 +593,7 @@ function scheduleInitRetryWake(delayMs: number): void {
  * failure says the script will never run.
  */
 function noteWorkerInitFailure(error: unknown): void {
-  if (error instanceof SortWorkerInitTimeoutError) {
+  if (error instanceof WorkerInitTimeoutError) {
     initTimeoutCount++;
     if (initTimeoutCount < SORT_WORKER_INIT_MAX_ATTEMPTS) {
       initTimeoutRetryPending = true;
@@ -602,7 +604,7 @@ function noteWorkerInitFailure(error: unknown): void {
       scheduleInitRetryWake(backoffMs + SORT_WORKER_INIT_RETRY_WAKE_SLACK_MS);
       log.warning(
         Modules.WORKER_POOL,
-        `SortWorker init missed its ${SORT_WORKER_INIT_TIMEOUT_MS}ms deadline ` +
+        `SortWorker init missed its ${config.depthSort.workerInitTimeoutMs}ms deadline ` +
           `(attempt ${initTimeoutCount}/${SORT_WORKER_INIT_MAX_ATTEMPTS}) — the main thread was ` +
           'likely starved by a large load; depth sorting is off (identity order drawn) until a ' +
           `retry succeeds, next attempt in ${backoffMs}ms`
@@ -637,10 +639,13 @@ function noteWorkerInitFailure(error: unknown): void {
  *   in flight (depth sorting is off MEANWHILE, not for the session);
  *   `'failed'` = permanently unavailable (dead script, or the starved
  *   retries were exhausted).
- * - `initTimeouts`: how many init attempts missed the 30 s init deadline
- *   (`SORT_WORKER_INIT_TIMEOUT_MS`) this session. Deliberately NOT an
- *   `{@link}`: that constant is module-private, and a doc link to it trips
- *   the TypeDoc warning ratchet.
+ * - `initTimeouts`: how many init attempts missed the startup deadline
+ *   (`config.depthSort.workerInitTimeoutMs`, default 30 s) this session.
+ *
+ * The verdict describes INIT state only: a worker that dies AFTER a successful
+ * init keeps reporting `'ready'` while every sort silently burns the
+ * `SORT_RPC_TIMEOUT_MS` deadline instead (a code span, not a `{@link}` — it is
+ * module-private, and this function is exported).
  */
 export function getDepthSortWorkerStatus(): {
   state: 'idle' | 'ready' | 'starved' | 'failed';
@@ -745,6 +750,27 @@ function reregisterAfterLateWorkerInit(): void {
 }
 
 /**
+ * True when something on screen actually WANTS sorting right now: a tracked
+ * node that is effectively visible, still holds committed data, and whose LIVE
+ * blending mode is order-dependent.
+ *
+ * One helper for the two consumers that must not drift — the retry gate below
+ * (do not spend one of the few attempts on a scene that never sorts) and
+ * {@link isDepthSortAvailable} (do not announce a degrade about a subsystem
+ * this scene never uses).
+ */
+function anyNodeWantsSorting(): boolean {
+  for (const state of nodeStates.values()) {
+    const mesh = state.mesh;
+    if (!isEffectivelyVisible(mesh)) continue;
+    if (!hasCommittedData(mesh)) continue;
+    if (!isLiveOrderDependent(liveBlendingMode(mesh))) continue;
+    return true;
+  }
+  return false;
+}
+
+/**
  * Retry a STARVED init, at most {@link SORT_WORKER_INIT_MAX_ATTEMPTS}
  * times per session (issue #1694). Driven from the per-frame scheduler
  * rather than a timer: the frame loop is precisely where "the main thread
@@ -757,9 +783,11 @@ function reregisterAfterLateWorkerInit(): void {
  * - the backoff must have elapsed (a retry issued into the same stall
  *   would just miss the deadline again),
  * - no offline capture may be in flight: it drains synchronously against a
- *   time bound and cannot await a 30 s init,
+ *   time bound and cannot await an init that may run to its deadline,
  * - and SOMETHING must actually want sorting right now — a visible, still
- *   committed, live-order-dependent node. An idle or all-additive scene
+ *   committed, live-order-dependent node (`anyNodeWantsSorting`, shared with
+ *   {@link isDepthSortAvailable} so the gate and the monitor's note can never
+ *   disagree about what "wants sorting" means). An idle or all-additive scene
  *   would otherwise burn the budget before the scene that needs it loads.
  *
  * Deliberately NOT gated on `requestReprocess`: a recovered worker is
@@ -776,17 +804,7 @@ function maybeRetryStarvedWorkerInit(): void {
   if (initTimeoutCount >= SORT_WORKER_INIT_MAX_ATTEMPTS) return;
   if (performance.now() < initRetryNotBeforeMs) return;
   if (captureSuppressDepth > 0) return;
-
-  let wantsSorting = false;
-  for (const state of nodeStates.values()) {
-    const mesh = state.mesh;
-    if (!isEffectivelyVisible(mesh)) continue;
-    if (!hasCommittedData(mesh)) continue;
-    if (!isLiveOrderDependent(liveBlendingMode(mesh))) continue;
-    wantsSorting = true;
-    break;
-  }
-  if (!wantsSorting) return;
+  if (!anyNodeWantsSorting()) return;
 
   // Consume the arm-flag and the cached rejection TOGETHER: this is the only
   // place the cached rejection is dropped, and consuming the flag in the same
@@ -831,6 +849,80 @@ function maybeRetryStarvedWorkerInit(): void {
       // the retry or marked the worker permanently failed.
     }
   );
+}
+
+/**
+ * Spawn + initialize the sort worker AHEAD of any data, at app init.
+ *
+ * The worker used to be spawned lazily by the first order-dependent commit
+ * — which is the worst possible moment, because that commit lands exactly
+ * when the main thread and the data-worker pool are saturated decoding the
+ * scene. Starting here instead means `initWasm()` runs while the app is
+ * still idle and finishes long before a million-element commit exists.
+ *
+ * Deliberately NOT folded into {@link configureDepthSort}: that function is
+ * pure wiring, every unit test calls it, and spawning there would change
+ * observable behaviour across the whole suite.
+ *
+ * Fire-and-forget and idempotent — the commit path's own `ensureWorker()`
+ * remains the correctness path (it dedupes on `initPromise`) and still
+ * covers embedders that configure late.
+ *
+ * This spends the FIRST of the bounded init attempts
+ * (`SORT_WORKER_INIT_MAX_ATTEMPTS`), before any node has committed. If it
+ * misses the deadline, recovery is not immediate: nothing retries here, and
+ * `maybeRetryStarvedWorkerInit` only spends an attempt once something visible
+ * actually wants sorting — which is the point, since burning the budget on an
+ * empty scene would leave none for the load that needs it. (Both names stay
+ * code spans: they are module-private, and a doc link from an EXPORTED symbol
+ * to one of those trips the TypeDoc warning ratchet.)
+ *
+ * The cost is unconditional: the sort-worker chunk and its WASM are fetched on
+ * every page load, including scenes that never sort (all-additive points, an
+ * opaque mesh, `?debug` with no dataset). `?depthSort=0` is the opt-out — it
+ * spawns nothing at all.
+ */
+export function warmUpDepthSortWorker(): void {
+  if (!depthSortEnabled) return;
+  // No `Worker` constructor in this environment (the unit suite's default
+  // `node` env, jsdom, SSR): there is nothing to warm up, and trying anyway
+  // logs a red 'SortWorker failed to initialize ReferenceError: Worker is not
+  // defined' and latches `workerInitState` at 'failed' module-wide — for the
+  // rest of that test file, since the module is a singleton. The COMMIT path is
+  // deliberately left unguarded: a node that actually asks for sorting must
+  // still report honestly.
+  if (typeof Worker === 'undefined') return;
+  void ensureWorker().catch(() => {
+    // Already logged by ensureWorker; a failed warm-up must not become an
+    // unhandled rejection, and the commit path will retry.
+  });
+}
+
+/**
+ * False only when BOTH halves hold: depth sorting has GIVEN UP for this
+ * session (`'failed'` — a dead worker script, or the starved retry budget
+ * exhausted) AND something visible actually wants sorting right now
+ * (`anyNodeWantsSorting`). A `'starved'` init still reports available, because
+ * a retry is armed and expected to recover.
+ *
+ * The demand half is not cosmetic. The worker is warmed up unconditionally at
+ * app init, so a CSP-blocked chunk latches `'failed'` on a scene with NO
+ * order-dependent geometry at all (all-additive points, an opaque mesh,
+ * `?debug` with no dataset) — announcing a degrade there would report on a
+ * subsystem that session never uses, and drag the performance panel out of its
+ * "No timing data yet" empty state to do it. Sharing the predicate with the
+ * retry gate is what keeps the two readings of "wants sorting" identical.
+ *
+ * Exact contract, and it is asymmetric: a SHOWN note proves that visible,
+ * committed, order-dependent geometry is being drawn in storage order. Its
+ * ABSENCE proves nothing — a `'starved'` init reports available for the whole
+ * retry window while identity order is drawn, `?depthSort=0` pins identity
+ * order and reports available by definition, and a node whose commit could not
+ * reach a HEALTHY worker (detached buffer, throwing centers thunk) is
+ * invisible here. {@link getDepthSortWorkerStatus} is the finer-grained read.
+ */
+export function isDepthSortAvailable(): boolean {
+  return !(workerInitState === 'failed' && anyNodeWantsSorting());
 }
 
 /**
@@ -1931,7 +2023,7 @@ export function disposeDepthSort(): void {
   // ORPHAN any init attempt still in flight — kept adjacent to the
   // `initPromise = null` it invalidates, because the two are one invariant.
   // This is the reset that cannot be done by nulling a variable: the attempt's
-  // 30 s deadline timer lives in its own closure and nothing here can cancel
+  // init deadline timer lives in its own closure and nothing here can cancel
   // it, so the epoch is what stops it from classifying a miss against the NEXT
   // app's healthy worker (see {@link initEpoch} for the full failure chain).
   initEpoch++;

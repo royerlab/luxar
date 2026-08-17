@@ -9,13 +9,17 @@ download-cap wording drift from what the registry / CLI report.
 
 from __future__ import annotations
 
+import difflib
 import inspect
 import re
 
 import pytest
+from rich.console import Console
 
 from luxar.cli import demo_commands
-from luxar.cli.demo_commands import _needs_glyphs
+from luxar.cli.demo_commands import _starter_key
+from luxar.cli.demo_render import STATUS_BUILT, STATUS_CACHED, render_catalogue
+from luxar.demos import registry
 from luxar.demos.registry import iter_demos
 from luxar.utils.paths import get_project_root
 
@@ -30,52 +34,106 @@ def _readme_text() -> str:
     return readme.read_text(encoding="utf-8")
 
 
-def _sample_rows(text: str) -> list[tuple[int, str, str, str, str]]:
-    """Parse the illustrative ``luxar demo`` sample table.
-
-    The fenced block runs from the ``🎬 [Luxar]`` banner to the ``Run one:``
-    footer; each data row is ``index key geom category needs [status]``.
-    """
-    block = re.search(r"🎬 \[Luxar\].*?\n(.*?)\nRun one:", text, re.DOTALL)
+def _sample_block(text: str) -> list[str]:
+    """The fenced sample listing, from the banner to the last footer line."""
+    block = re.search(
+        r"```\n(\U0001F3AC \d+ Luxar demos.*?\n Stop  [^\n]*)\n```", text, re.DOTALL
+    )
     assert block, "illustrative `luxar demo` sample table not found in README"
-    rows: list[tuple[int, str, str, str, str]] = []
-    for line in block.group(1).splitlines():
-        m = re.match(r"\s*(\d+)\s+([A-Za-z0-9_]+)\s+(\S+)\s+(\S+)\s+(.*)$", line)
-        if m:
-            idx, key, geom, cat, tail = m.groups()
-            rows.append((int(idx), key, geom, cat, tail))
-    return rows
+    return block.group(1).splitlines()
 
 
-# STATUS words that may trail the NEEDS column in the illustrative table.
-_STATUS_WORDS = ("output ✓", "cached", "")
+def _renderer_lines() -> set[str]:
+    """Every line the real catalogue can emit, over all three rail states.
+
+    The rail is per-machine, so a README row is accepted if it matches under
+    ANY uniform status assignment. Everything else — section rules and their
+    counts, column alignment, requirement words, legend, footer — is identical
+    across the three, so this stays an exact check on all of it.
+    """
+    demos = iter_demos()
+    lines: set[str] = set()
+    for status in (STATUS_BUILT, STATUS_CACHED, ""):
+        console = Console(width=200, no_color=True, soft_wrap=True)
+        with console.capture() as capture:
+            render_catalogue(
+                console,
+                demos,
+                {d.key: status for d in demos},
+                example_key=_starter_key(demos),
+            )
+        lines |= {
+            re.sub(r"\x1b\[[0-9;]*m", "", ln) for ln in capture.get().splitlines()
+        }
+    return lines
 
 
-def _needs_from_tail(tail: str) -> str:
-    """Strip the trailing STATUS word to isolate the NEEDS column of a row."""
-    stripped = tail.strip()
-    for status in _STATUS_WORDS:
-        if status and stripped.endswith(status):
-            return stripped[: len(stripped) - len(status)].strip()
-    return stripped
+def test_sample_block_is_verbatim_renderer_output() -> None:
+    """Every sample line must be a line the renderer actually produces.
+
+    Stronger than parsing the rows field by field, and it catches the classes
+    that field checks structurally cannot: a section rule citing an invented
+    demo count, a demo filed under a category it is not in (the CATEGORY column
+    is gone, so nothing else checks that association any more), and footer
+    padding that drifts when the layout constants change.
+    """
+    real = _renderer_lines()
+    checked = 0
+    for line in _sample_block(_readme_text()):
+        # The summary counts how much of the catalogue THIS machine has built,
+        # so it is illustrative; `test_sample_summary_is_self_consistent` covers
+        # it instead. " ..." marks the elided middle of the listing.
+        if not line.strip() or line.startswith("\U0001f3ac") or line.strip() == "...":
+            continue
+        checked += 1
+        assert line in real, (
+            "README sample line is not renderer output:\n"
+            f"  README: |{line}|\n"
+            + "\n".join(
+                f"  near  : |{n}|"
+                for n in difflib.get_close_matches(line, real, n=1, cutoff=0.5)
+            )
+        )
+    assert checked >= 10, f"only {checked} sample lines checked; block looks truncated"
 
 
-def test_sample_table_rows_match_registry() -> None:
-    by_key = {r.key: r for r in iter_demos()}
-    rows = _sample_rows(_readme_text())
-    # The illustrative table shows five numbered rows; a dropped/corrupted row
-    # (bad index, hyphenated key) fails the row regex and shrinks this count.
-    assert len(rows) >= 5, f"expected >=5 sample rows, parsed {len(rows)}"
-    for idx, key, geom, cat, tail in rows:
-        assert key in by_key, f"README sample row cites unknown demo key {key!r}"
-        r = by_key[key]
-        assert idx == r.index, f"{key}: README index {idx} != registry {r.index}"
-        assert geom == r.geometry, f"{key}: geometry {geom!r} != {r.geometry!r}"
-        assert cat == r.category, f"{key}: category {cat!r} != {r.category!r}"
-        # Exact NEEDS match (not a prefix) so a row cannot over- or under-claim
-        # requirements and stay green.
-        assert _needs_from_tail(tail) == _needs_glyphs(r), (
-            f"{key}: README NEEDS {_needs_from_tail(tail)!r} != {_needs_glyphs(r)!r}"
+def test_sample_summary_is_self_consistent() -> None:
+    """The illustrative counts must at least add up to the real demo count."""
+    summary = next(
+        ln for ln in _sample_block(_readme_text()) if ln.startswith("\U0001f3ac")
+    )
+    total = int(re.search(r"(\d+) Luxar demos", summary).group(1))
+    assert total == len(iter_demos()), f"sample banner says {total} demos"
+    parts = [int(n) for n in re.findall(r"\u00b7\s+(\d+) ", summary)]
+    assert sum(parts) == total, f"{parts} do not sum to {total}: {summary!r}"
+
+
+def test_sample_table_shows_every_rail_state() -> None:
+    """The sample must illustrate all three rail states, or the legend is moot."""
+    rails = {
+        ln[1]
+        for ln in _sample_block(_readme_text())
+        if re.match(r"^ [\u2713\u2022 ] *\d+  ", ln)
+    }
+    assert rails == {"\u2713", "\u2022", " "}, f"sample rails {rails} miss a state"
+
+
+def test_documented_filter_vocabularies_match_the_schema() -> None:
+    """`demo list -c/-g` advertises exactly the values the schema allows.
+
+    These are hand-transcribed lists in a table, so they rot the moment a new
+    category or geometry lands — `mesh` was already missing from the geometry
+    row when this check was written.
+    """
+    text = _readme_text()
+    for label, allowed in (
+        ("Filter by category", registry.CATEGORY_VALUES),
+        ("Filter by geometry", registry.GEOMETRY_VALUES),
+    ):
+        row = next(ln for ln in text.splitlines() if label in ln)
+        listed = set(re.findall(r"`([a-z+]+)`", row.split(label, 1)[1]))
+        assert listed == set(allowed), (
+            f"{label}: README lists {sorted(listed)}, schema allows {sorted(allowed)}"
         )
 
 
@@ -102,7 +160,9 @@ def test_demo_count_matches_registry() -> None:
     # count explicitly (the same staleness class as issue #718).
     text = _readme_text()
     n = len(iter_demos())
-    assert f"[Luxar] {n} demos" in text, f"README sample banner should read {n} demos"
+    assert f"🎬 {n} Luxar demos" in text, (
+        f"README sample banner should read {n} Luxar demos"
+    )
     assert f"{n} bundled demos" in text, (
         f"README quick-start should say {n} bundled demos"
     )

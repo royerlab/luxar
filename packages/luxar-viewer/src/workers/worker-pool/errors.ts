@@ -31,6 +31,34 @@ export class WorkerTimeoutError extends Error {
 }
 
 /**
+ * Thrown when a worker's `initialize()` does not answer within its init
+ * deadline — as opposed to answering with a failure, or the worker dying
+ * outright. Carries the guard's label and the deadline.
+ *
+ * Distinct from the other init failures ON PURPOSE, and for the same reason
+ * {@link WorkerTimeoutError} is excluded from
+ * {@link isWorkerInfrastructureError} below: a deadline miss does NOT
+ * establish that the worker is broken. It cannot distinguish a wedged
+ * thread from one whose reply is merely queued behind a saturated main
+ * thread — and on a large scene the second is the common case, because the
+ * Comlink reply has to be dispatched on the very thread that is busy
+ * decoding. Callers that can retry should treat this as transient; an
+ * `onerror` or an explicit `initialize()` rejection is the permanent signal.
+ *
+ * Constructed only on the main thread (inside the init guard), so it never
+ * crosses the Comlink boundary and `instanceof` stays reliable.
+ */
+export class WorkerInitTimeoutError extends Error {
+  constructor(
+    public readonly label: string,
+    public readonly timeoutMs: number
+  ) {
+    super(`${label} init exceeded ${timeoutMs}ms`);
+    this.name = 'WorkerInitTimeoutError';
+  }
+}
+
+/**
  * Thrown when a worker call is aborted via the caller-supplied
  * AbortSignal — either because the signal was already aborted when
  * `runWithTimeout` was called or because it fired before the worker

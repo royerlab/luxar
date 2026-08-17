@@ -35,6 +35,44 @@ describe('validateDepthSort', () => {
     }
   });
 
+  it('errors on a negative or non-finite worker init timeout', () => {
+    for (const bad of [-1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const cfg = cloneConfig();
+      cfg.depthSort.workerInitTimeoutMs = bad;
+      const result = invokeValidator(validateDepthSort, cfg);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(
+        expect.stringContaining('depthSort.workerInitTimeoutMs')
+      );
+    }
+  });
+
+  it('accepts 0 for the worker init timeout, but warns about the pile-up it re-opens', () => {
+    // Unlike the two thresholds, 0 is MEANINGFUL here: it disables the
+    // deadline (the shared withTimeout convention), it does not break the
+    // scheduler — erroring on it would contradict init-with-guard.ts. It is
+    // not free, though: the deadline is what guarantees the init promise
+    // settles, and without it a worker that dies during async module
+    // evaluation parks an unbounded pile of commit continuations.
+    const cfg = cloneConfig();
+    cfg.depthSort.workerInitTimeoutMs = 0;
+    const result = invokeValidator(validateDepthSort, cfg);
+    expect(result.valid).toBe(true);
+    expect(result.warnings).toContainEqual(
+      expect.stringContaining('depthSort.workerInitTimeoutMs')
+    );
+  });
+
+  it('warns on a worker init timeout shorter than a cold WASM instantiate', () => {
+    const cfg = cloneConfig();
+    cfg.depthSort.workerInitTimeoutMs = 50;
+    const result = invokeValidator(validateDepthSort, cfg);
+    expect(result.valid).toBe(true);
+    expect(result.warnings).toContainEqual(
+      expect.stringContaining('depthSort.workerInitTimeoutMs')
+    );
+  });
+
   it('warns (but stays valid) on design-defeating coarse thresholds', () => {
     const cfg = cloneConfig();
     cfg.depthSort.angleThresholdDeg = 90;

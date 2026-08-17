@@ -12,8 +12,11 @@
  * be running (see the wake-up in `runOfflineCaptureLoop`). Each frame
  * is:
  * 1. Camera orbited by one step (quaternion rotation, same as auto-rotate)
- * 2. Scene rendered (full pipeline)
- * 3. Pixels read back (synchronous GPU stall — intentional)
+ * 2. Scene rendered (full pipeline, into the capture's own target)
+ * 3. Pixels read back asynchronously (PBO fence on WebGL2, mapAsync on
+ *    WebGPU) — the rAF loop keeps ticking through the await, which is
+ *    why the loop's own render is suppressed for the whole capture
+ *    (see the render-skip predicate wired in `core/app/init/pipeline`)
  * 4. Frame stored / encoded
  * 5. Brief yield to keep the browser responsive
  *
@@ -27,10 +30,19 @@
  * Critical correctness invariants:
  * 1. AbortController is assigned BEFORE any state mutation — dispose()
  *    during the early state-save / rAF window must abort the session.
- * 2. The post-saveRecordingState body is wrapped in try/finally so an
+ * 2. The body from driver.setup onward is wrapped in try/finally so an
  *    exception from driver.setup, driver.captureFrame, driver.finalize,
  *    or any DOM/state mutation cannot leave the panel with a stuck
  *    overlay, hidden panels, scaled renderer, or stale recording flags.
+ *    The earlier window — panel hide / saveRecordingState through the
+ *    overlay construction — is NOT covered (the finally closes over
+ *    bindings that window creates), which is why
+ *    isLoopRenderSuppressed is raised inside the try: a stuck value
+ *    there blanks the whole viewport, where the other flags only lock
+ *    further captures or leave the panel looking wrong. That window is
+ *    synchronous DOM construction with no production-reachable throw —
+ *    showConfirmationDialog above it already assigns innerHTML, so an
+ *    environment that forbids it fails before any state is mutated.
  * 3. The finally block is idempotent — every removal/restore handles
  *    the "wasn't set" case gracefully.
  */
@@ -184,6 +196,14 @@ export class OfflineCaptureStrategy implements CaptureStrategy {
 
     const bailEarly = (): void => {
       session.restoreRecordingState();
+      // Same repaint guarantee as the main teardown: restoreRecordingState
+      // resizes the render target back, which clears the canvas, and no
+      // keep-alive is registered on this path — so a stopped loop would
+      // leave the viewer blank until the next mouse move. Skipped when the
+      // session is disposed (see the note in the finally).
+      if (!session.isDisposed()) {
+        this.animationController.startAnimation();
+      }
       if (this.sessionAbort === sessionAbort) {
         this.sessionAbort = null;
       }
@@ -407,6 +427,16 @@ export class OfflineCaptureStrategy implements CaptureStrategy {
     let finalizeSucceeded = false;
 
     try {
+      // The loop's own render is redundant from here on — the capture
+      // renders its own pipeline pass per frame (see the render-skip
+      // predicate wired in `core/app/init/pipeline`). Set INSIDE the try so
+      // the finally below always clears it: the flag suppresses the loop's
+      // render globally, so escaping with it stuck true blanks the viewport
+      // until a page reload. Nothing between the recording flags above and
+      // this point can paint a frame — the REC indicator, the overlay and the
+      // driver context are all built synchronously, and the last yield is the
+      // rAF well above them.
+      session.isLoopRenderSuppressed = true;
       const setupOk = await driver.setup(ctx);
       if (!setupOk) {
         return;
@@ -488,6 +518,12 @@ export class OfflineCaptureStrategy implements CaptureStrategy {
       log.error(Modules.RECORDING, `Offline ${mode} capture failed: ${err}`);
       showToast('Recording failed');
     } finally {
+      // Clear the render-skip flag FIRST: it globally suppresses the
+      // loop's render, and a driver abort that never settles would
+      // otherwise leave the viewer frozen with no recovery but a reload.
+      // Only this flag — the mutual-exclusion flags below must survive
+      // the abort await.
+      session.isLoopRenderSuppressed = false;
       if (setupCompleted && !finalizeSucceeded) {
         try {
           const reason = sessionAbort.signal.aborted
@@ -504,11 +540,33 @@ export class OfflineCaptureStrategy implements CaptureStrategy {
       this.animationController.removePerFrameCallback(keepAliveId);
       session.hideRecordingIndicator();
       session.isRecording = false;
+      // NOT cleared before the abort await above: `ScreenshotStrategy`
+      // gates mutual exclusion on this flag, so a screenshot started
+      // mid-teardown would overwrite and then null the single
+      // `savedRecordingState` slot, leaving `restoreRecordingState()`
+      // below a no-op — the viewer stuck at capture resolution with
+      // resize locked until a page reload.
       session.isOfflineCaptureActive = false;
       session.isEXRSequenceRecording = false;
       cleanupOfflineOverlay();
       session.restoreAutoRotate();
       session.restoreRecordingState();
+      // Guarantee exactly one repaint after teardown. restoreRecordingState
+      // resizes the render target back, which clears the canvas, and the
+      // keep-alive callback is already gone by now — so a loop that is
+      // still stopped (or that the idle timer stops in the gap right after
+      // the resize) leaves the viewer blank until the next mouse move.
+      // The render-skip predicate reads `isLoopRenderSuppressed`, cleared
+      // at the top of this finally, so this frame is a real render.
+      //
+      // Never on a disposed session: dispose() tears the AnimationController
+      // down BEFORE the RecordingPanel (see `runDisposePipeline`), and
+      // RecordingPanel.dispose() only ABORTS an in-flight capture — a loop
+      // parked on an await resumes here a tick later. Waking it then would
+      // restart the rAF loop against a disposed PostProcessingManager.
+      if (!session.isDisposed()) {
+        this.animationController.startAnimation();
+      }
       if (this.sessionAbort === sessionAbort) {
         this.sessionAbort = null;
       }
