@@ -84,15 +84,17 @@ in vec4 v_clipSpace;
 
 // vars
 vec4 DiffuseColor;
-float nodeVar2;
-float nodeVar3;
+vec2 nodeVar0;
+vec2 nodeVar2;
+float nodeVar4;
+float nodeVar5;
 float gsplatPickMahalSq;
 float gsplatPickIntensity;
 float gsplatPickBrightness;
 vec4 Output;
-vec4 nodeVar7;
-float nodeVar8;
-vec4 nodeVar82;
+vec4 nodeVar9;
+float nodeVar10;
+vec4 nodeVar84;
 vec3 positionView;
 
 // codes
@@ -103,10 +105,12 @@ void main() {
 	// flow
 	// code
 
-	nodeVar2 = ( ( vec2( vec2( gl_FragCoord.xy.x, nodeUniform2.y - gl_FragCoord.xy.y ).x, ( nodeUniform2.y - vec2( gl_FragCoord.xy.x, nodeUniform2.y - gl_FragCoord.xy.y ).y ) ) - nodeVarying2 ).x * nodeVarying1.x );
-	nodeVar3 = ( ( ( vec2( vec2( gl_FragCoord.xy.x, nodeUniform2.y - gl_FragCoord.xy.y ).x, ( nodeUniform2.y - vec2( gl_FragCoord.xy.x, nodeUniform2.y - gl_FragCoord.xy.y ).y ) ) - nodeVarying2 ).y - ( nodeVarying1.y * nodeVar2 ) ) * nodeVarying1.z );
+	nodeVar0 = vec2( vec2( gl_FragCoord.xy.x, nodeUniform2.y - gl_FragCoord.xy.y ).x, ( nodeUniform2.y - vec2( gl_FragCoord.xy.x, nodeUniform2.y - gl_FragCoord.xy.y ).y ) );
+	nodeVar2 = ( nodeVar0 - nodeVarying2 );
+	nodeVar4 = ( nodeVar2.x * nodeVarying1.x );
+	nodeVar5 = ( ( nodeVar2.y - ( nodeVarying1.y * nodeVar4 ) ) * nodeVarying1.z );
 	gsplatPickMahalSq = 0.0;
-	gsplatPickMahalSq = ( ( nodeVar2 * nodeVar2 ) + ( nodeVar3 * nodeVar3 ) );
+	gsplatPickMahalSq = ( ( nodeVar4 * nodeVar4 ) + ( nodeVar5 * nodeVar5 ) );
 	gsplatPickIntensity = 0.0;
 	gsplatPickIntensity = ( ( nodeVarying0 * nodeUniform3 ) * max( ( exp( ( gsplatPickMahalSq * -0.5 ) ) - nodeUniform4 ), 0.0 ) );
 	gsplatPickBrightness = 0.0;
@@ -129,24 +133,24 @@ void main() {
 
 	DiffuseColor = vec4( nodeVarying3, nodeVarying4.x, gsplatPickBrightness, nodeVarying4.y );
 	DiffuseColor.w = ( DiffuseColor.w * nodeUniform8 );
-	nodeVar7 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
-	Output = nodeVar7;
+	nodeVar9 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
+	Output = nodeVar9;
 
 	if ( ( int( nodeUniform9 ) == 1 ) ) {
 
-		nodeVar82 = ( cameraProjectionMatrixInverse * v_clipSpace );
-		positionView = ( nodeVar82.xyz / vec3( nodeVar82.w ) );
-		nodeVar8 = ( ( positionView.z + cameraNear ) / ( cameraNear - cameraFar ) );
+		nodeVar84 = ( cameraProjectionMatrixInverse * v_clipSpace );
+		positionView = ( nodeVar84.xyz / vec3( nodeVar84.w ) );
+		nodeVar10 = ( ( positionView.z + cameraNear ) / ( cameraNear - cameraFar ) );
 
 	} else {
 
-		nodeVar8 = ( 1.0 - gsplatPickBrightness );
+		nodeVar10 = ( 1.0 - gsplatPickBrightness );
 
 	}
 
-	gl_FragDepth = nodeVar8;
+	gl_FragDepth = nodeVar10;
 
 	// result
-	fragColor = nodeVar7;
+	fragColor = nodeVar9;
 
 }

@@ -11,10 +11,16 @@
  * `src/tests/__codegen__/`.
  *
  * Two purposes:
- *   1. **Regression detection.** Every commit that touches the TSL
- *      graph re-runs this spec. If the generated code diverges from
+ *   1. **Regression detection.** If the generated code diverges from
  *      the snapshot (e.g. a supposedly equivalent change adds an `if`
- *      branch or duplicates a `pow()`), the diff is the alarm.
+ *      branch or duplicates a `pow()`), the diff is the alarm. Note
+ *      WHERE that alarm rings: this spec belongs to the FULL E2E suite
+ *      (`pnpm test:e2e` / `make test-e2e`), not to CI's PR checks — the
+ *      `e2e-tests` job in `.github/workflows/ci.yml` is disabled
+ *      (`if: false`), and even re-enabled it runs only the five
+ *      interaction specs of `pnpm test:e2e:smoke`, which do not include
+ *      this file. So a TSL change is gated by whoever runs the full
+ *      suite before merging, not by the commit itself.
  *   2. **Optimization evidence.** Commits that intentionally change
  *      generated code update the snapshot and the diff goes into the
  *      commit body — concrete proof that, e.g., `forceSinglePass` or
@@ -135,10 +141,21 @@ function mainFlowLines(source: string): FlowLine[] {
  * Keyed on the explicit `.toVar('name')` names the pick factories declare, so it is
  * independent of the generated `nodeVarN` numbering.
  *
+ * Two assertions, deliberately kept separate because they have different reach:
+ *   - EVERY assignment sits at brace depth 0 — the dead declaration initialiser
+ *     included.
+ *   - the first READ comes after the first REAL assignment, where "real" excludes
+ *     that dead initialiser. The distinction is what makes this half able to fail
+ *     at all: a var declared `float(0.0).toVar(name)` makes three emit a
+ *     `NAME = 0.0;` line at the var's first build site, which matches the
+ *     assignment regex, so comparing the first read against the first assignment
+ *     of ANY kind is an identity no defect can break.
+ *
  * A declaration with no initializer is NOT counted as a reference: generated GLSL
  * hoists `float NAME;` above `main()` (so it never reaches this helper), but WGSL
  * declares `var NAME : f32;` inside the entry function, and counting that as the first
- * read would fail the helper on correct code.
+ * read would fail the helper on correct code. Assignment lines are not counted as
+ * reads either — a write is not a read, and the dead initialiser is nothing but one.
  */
 function assertAssignedInUnconditionalFlow(
   shader: string,
@@ -163,11 +180,22 @@ function assertAssignedInUnconditionalFlow(
     const declarationOnly = new RegExp(
       `^\\s*(?:var\\s+)?(?:\\w+\\s+)?${name}\\s*(?::\\s*\\w+\\s*)?;\\s*$`
     );
+    // The DEAD INITIALISER: because these vars are declared `float(0.0).toVar(name)`
+    // / `bool(false).toVar(name)`, three emits `NAME = 0.0;` / `NAME = false;` at the
+    // var's first build site. It writes the declaration DEFAULT, not the value the
+    // prologue computes, so a reader that follows it is still reading nothing. (A real
+    // assignment whose RHS is literally `0.0` would be misclassified here; none of the
+    // pinned shared values has one — every one assigns an expression.)
+    const deadInitialiser = new RegExp(
+      `^\\s*(?:var\\s+)?(?:\\w+\\s+)?${name}\\s*(?::\\s*\\w+\\s*)?=\\s*(?:0\\.0|0|false)\\s*;\\s*$`
+    );
 
     const assignments = flow.filter((line) => assignment.test(line.text));
+    const realAssignments = assignments.filter((line) => !deadInitialiser.test(line.text));
     expect(
-      assignments.length,
-      `${shader}: "${name}" is never assigned inside main() — the shared fragment value is gone, or was renamed.`
+      realAssignments.length,
+      `${shader}: "${name}" is never assigned inside main() — the shared fragment value is gone, ` +
+        'was renamed, or is left holding its declaration default.'
     ).toBeGreaterThan(0);
 
     for (const line of assignments) {
@@ -175,18 +203,31 @@ function assertAssignedInUnconditionalFlow(
         line.depth,
         `${shader}: "${name}" is assigned at brace depth ${line.depth} (line ${line.lineNumber}: ` +
           `"${line.text.trim()}"). A value shared between colorNode and depthNode must be ` +
-          'assigned in unconditional top-level flow — see the fragment prologue in the factory.'
+          'assigned in unconditional top-level flow — see the fragment prologue in the factory. ' +
+          'This rule is deliberately stronger than strictly necessary: assigning at top level ' +
+          'and then REFINING inside a branch is legitimate and already ships elsewhere ' +
+          '(`profile` in picking/line/pick-capsule.tsl.ts), but for a value shared across two ' +
+          'entry points the guard demands the stronger form, because which flow gets built ' +
+          'first is not under our control.'
       ).toBe(0);
     }
 
-    const firstReference = flow.find(
-      (line) => reference.test(line.text) && !declarationOnly.test(line.text)
+    const firstRead = flow.find(
+      (line) =>
+        reference.test(line.text) && !declarationOnly.test(line.text) && !assignment.test(line.text)
     );
     expect(
-      firstReference?.lineNumber,
-      `${shader}: "${name}" is read at line ${firstReference?.lineNumber} before its first ` +
-        `assignment at line ${assignments[0].lineNumber} — that read sees an unassigned variable.`
-    ).toBe(assignments[0].lineNumber);
+      firstRead,
+      `${shader}: "${name}" is assigned but never read inside main() — a reader was removed or renamed.`
+    ).toBeTruthy();
+    expect(
+      firstRead?.lineNumber ?? 0,
+      `${shader}: "${name}" is READ at line ${firstRead?.lineNumber} (` +
+        `"${firstRead?.text.trim()}") before the fragment prologue assigns it at line ` +
+        `${realAssignments[0].lineNumber} — so that read sees the declaration default ` +
+        '(0 / false), not the computed value. Either the prologue call was dropped from this ' +
+        'entry point, or a reader was moved above it.'
+    ).toBeGreaterThan(realAssignments[0].lineNumber);
   }
 }
 
@@ -433,27 +474,36 @@ test.describe('TSL → generated-shader snapshots', () => {
     expect(both).toContain('65536');
   });
 
-  test('gsplat-pick and mesh-pick assign every shared fragment value in unconditional flow', async ({
+  test('pick shaders assign every named shared fragment value in unconditional flow', async ({
     page,
   }) => {
-    // Both factories have a BRANCHING `depthNode` (the `uSurfaceDepth` convention
-    // selector), and mesh has a second branch one level deeper (the `uAlphaCutout`
-    // arm of the brightness select). Three lowers each to a real `if`/`else`, so a
-    // shared fragment value that is first BUILT there is assigned inside an arm — and
-    // three only re-hoists such an assignment for readers that are themselves inside a
-    // block. Every top-level reader then sees 0: the pick pass discards every fragment
-    // and the buffer comes back empty (which is exactly what r185 did before the
-    // shared values were moved into an unconditional prologue).
+    // The gsplat and mesh factories have a BRANCHING `depthNode` (the `uSurfaceDepth`
+    // convention selector), and mesh has a second branch one level deeper (the
+    // `uAlphaCutout` arm of the brightness select). Three lowers each to a real
+    // `if`/`else`, so a shared fragment value that is first BUILT there is assigned
+    // inside an arm — and three only re-hoists such an assignment for readers that are
+    // themselves inside a block. Every top-level reader then sees 0: the pick pass
+    // discards every fragment and the buffer comes back empty (which is exactly what
+    // r185 did before the shared values were moved into an unconditional prologue).
+    //
+    // The line and capsule-line pick factories are here for the opposite reason: their
+    // `depthNode` is branchless TODAY, which is what lets them keep a bare shared
+    // `.toVar()` with no prologue, and each one says so at the site. This holds them
+    // to it — add a branch there and the shared assignment moves into an arm.
     //
     // The snapshots pin this only implicitly — the difference is one indentation level
     // inside a 150-line file, which is the last thing a reviewer notices. This names it.
     //
-    // HONESTY NOTE — this guard is INERT at the currently pinned three r184. r184 emits
+    // HONESTY NOTE — the two halves of the check have different reach at the currently
+    // pinned three r184. The READ-ORDER half is LIVE here: it fails whenever a reader is
+    // emitted before the prologue assigned the value. Drop the `fragmentPrologue()` call
+    // from mesh's `colorNode`, or move its `Discard`s above it, and at r184
+    // `meshPickNearFade` is read while still holding its 0.0 declaration default — `0 <
+    // 0.01` holds, every fragment of the pick pass discards — with every assignment
+    // still at brace depth 0. The BRACE-DEPTH half is what is inert at r184: r184 emits
     // the COLOUR flow first, and with colour first even the pre-fix free-standing
-    // `.toVar()`s were built at top level, so a green run here proves only that the
-    // named vars still exist and are still read after their assignment; it would NOT
-    // have caught the bug. It becomes a live regression gate the moment the runtime
-    // moves to r185, whose depth-first order is what produced the zero-pixel pick pass
+    // `.toVar()`s were built at top level. It becomes live the moment the runtime moves
+    // to r185, whose depth-first order is what produced the zero-pixel pick pass
     // (issue #1683).
     await bootHarness(page);
 
@@ -466,6 +516,14 @@ test.describe('TSL → generated-shader snapshots', () => {
         shader: 'mesh-pick',
         vars: ['meshPickCoverage', 'meshPickNearFade', 'meshPickCutout', 'meshPickBrightness'],
       },
+      // These two are declared `brightnessShared().toVar(name)` — the RHS is the real
+      // computation, so there is no dead initialiser at all and the read-order half is
+      // fully live for them, not just for a dropped prologue call.
+      { shader: 'line-pick', vars: ['lineBrightness'] },
+      { shader: 'line-capsule-pick-sideon', vars: ['lineCapsulePickBrightness'] },
+      // `point-pick` is deliberately absent: its shared brightness is an UNNAMED
+      // `.toVar()`, so it surfaces as `nodeVarN` in the generated code and there is no
+      // stable name to key on. Naming it there would let it join this list.
     ] as const;
 
     for (const { shader, vars } of shared) {

@@ -1060,7 +1060,8 @@ by behavior tests instead — e.g. §8's stored-normal view-space-transform chec
 `#define` (the sibling `line-max`, `point-max`, `gsplat-normal-premult`) or a runtime-uniform branch the
 TSL path bakes per graph (`gsplat-opaque`, from gsplat's runtime `uProjectionMode` split). Note the
 harness (`tsl-codegen-snapshot.spec.ts`) asserts **both stages** of every variant unconditionally, so
-each variant is a `.vertex` + `.fragment` snapshot pair — the shipped inventory is exactly 30 such pairs.
+each variant is a `.vertex` + `.fragment` snapshot pair — the shipped inventory is 37 such pairs, i.e.
+74 files under `src/tests/__codegen__/`.
 Mesh's per-mode emissions (§6.2) are therefore separately snapshotted — and note the mesh **default is
 `opaque`**, unlike the siblings whose default is the alpha-weighted `additive`. New variants — six, i.e.
 twelve snapshot files: `mesh` (the `opaque` default — alpha cutout, §6.2), `mesh-additive` (the

@@ -431,8 +431,15 @@ export function gsplatPickWebGPUFactory(
     // see shader-tsl.ts. For picking they currently coincide (uResolution
     // is re-stamped to the pick target dims), but screenSize is exact by
     // construction in every configuration.
-    const fragCoordBL: TSLNode = vec2(screenCoordinate.x, screenSize.y.sub(screenCoordinate.y));
-    const d: TSLNode = vec2(fragCoordBL.sub(vCenterScreen));
+    // `.toVar()` on these two for the same reason as the vertex prologue's house rule
+    // (every value a STATEMENT): as free expressions they are re-expanded at each of
+    // their ~6 downstream uses, which inlines the whole un-flip twice per Mahalanobis
+    // term. Materialising them changes no arithmetic, only how often it is written out.
+    const fragCoordBL: TSLNode = vec2(
+      screenCoordinate.x,
+      screenSize.y.sub(screenCoordinate.y)
+    ).toVar();
+    const d: TSLNode = vec2(fragCoordBL.sub(vCenterScreen)).toVar();
     const y0: TSLNode = d.x.mul(vL2D.x).toVar();
     const y1: TSLNode = d.y.sub(vL2D.y.mul(y0)).mul(vL2D.z).toVar();
     mahalSq.assign(y0.mul(y0).add(y1.mul(y1)));
