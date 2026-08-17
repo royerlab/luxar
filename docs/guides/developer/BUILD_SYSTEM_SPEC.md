@@ -283,7 +283,7 @@ MIN_NODE_MINOR := 22
 | `make viewer` | Start viewer dev server (port 5173) |
 | `make build-viewer` | Build viewer for production (auto-installs Rust/wasm-pack via `install-rust` if missing) |
 | `make build-viewer-lib` | Build + verify the viewer's npm **library** bundle (`pnpm ci:release`) — the artifact `publish-npm.yml` ships, distinct from the web app bundled into the wheel |
-| `make rebuild-viewer` | Clean rebuild of viewer |
+| `make rebuild-viewer` | Clean rebuild of the viewer bundle — clears the JS/TS artifacts (`dist/`, the vite dep-optimizer cache, tsbuildinfo); leaves `public/wasm/` and the cargo target dir alone, so the Rust step is a cache hit unless its sources changed. Chain `make clean-wasm rebuild-viewer` for everything from source |
 | `make test-viewer` | Run TypeScript unit tests |
 | `make test-cov-typescript` | Run TypeScript tests with coverage |
 

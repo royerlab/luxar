@@ -85,9 +85,9 @@ API surface from under us.
 These are the Three.js surfaces the viewer uses directly:
 
 - `WebGLRenderer` for the default GLSL rendering path.
-- `WebGPURenderer` for the opt-in TSL rendering path. Loaded lazily — see
-  `src/rendering/tsl/README.md`; it is imported only when the WebGPU backend is
-  actually selected.
+- `WebGPURenderer` (from `three/webgpu`) for the opt-in TSL rendering path —
+  constructed in `src/scene/scene-manager/render-pipeline/renderer-setup.ts`
+  once the backend is selected.
 - `ShaderMaterial` with `glslVersion: THREE.GLSL3` for WebGL shaders.
 - `NodeMaterial` / TSL for WebGPU shaders.
 - `WebGLRenderTarget` with `HalfFloatType` for HDR scene and post-processing

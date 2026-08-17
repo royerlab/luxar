@@ -1849,8 +1849,8 @@ install-rust:  ## Install Rust and wasm-pack for WASM development
 			echo "✅ wasm-pack $$WASM_PACK_PIN installed: $$WASM_PACK_ON_PATH"; \
 		else \
 			echo "❌ Installed wasm-pack $$WASM_PACK_PIN, but PATH answers with $${INSTALLED_WASM_PACK:-no wasm-pack at all} ($${WASM_PACK_ON_PATH:-not on PATH})."; \
-			echo "   cargo installs into $${CARGO_INSTALL_ROOT:-$${CARGO_HOME:-$(HOME)/.cargo}}/bin unless it is configured otherwise;"; \
-			echo "   put that directory ahead of the other copy in PATH, or remove the other copy."; \
+			echo "   cargo installs into $${CARGO_INSTALL_ROOT:-$${CARGO_HOME:-$$HOME/.cargo}}/bin unless it is configured otherwise;"; \
+			echo "   put that directory on PATH ahead of any other wasm-pack (or remove the other copy)."; \
 			exit 1; \
 		fi; \
 	fi; \
