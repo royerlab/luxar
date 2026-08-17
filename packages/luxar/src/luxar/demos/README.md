@@ -55,7 +55,7 @@ channel through a 3-D volume share the implementation in
 images, over sampled timepoints, or with demo-specific titles for a
 single-channel volume.
 
-The LOD topology a fitting demo's cached artifact ships with is chosen in
+The LOD topology a fitting demo writes its cached artifact with is chosen in
 `_lod_policy.py`, not left to whichever fitter the demo happened to call
 (`fit_gaussian_splats` returns one additive sub-LOD, the progressive fitter
 several, which is how five shipped archives ended up with no ladder at all).
@@ -64,9 +64,17 @@ Demos call `save_with_lod(result, cache_file, recipe=...)` in place of
 demos asking for `levels` cannot drift apart. `adaptive` is the one that changes
 how a demo READS its cache back — it writes a `kind=partition` tree, which has
 no flat `GSplatData` form, so those demos fetch paths with `ensure_dataset` and
-graft each with `add_gsplats_from_file`. `tests/test_lod_policy.py` holds the
-gate: a fitting demo either routes every archive through the policy or appears
-on the shrinking pending list with a reason.
+graft each with `add_gsplats_from_file`. Anything costlier than `stream` is also
+conditional on how the demo BUILDS its scene: `add_gsplats_from_data` and
+`add_gsplats_from_file` carry a stored topology through, while plain
+`add_gsplats(centers=…, amplitudes=…)` writes a flat leaf, so a demo that
+rebuilds from arrays would pay `levels`' extra ~38% and then discard it.
+`tests/test_lod_policy.py` holds both gates: a fitting demo either routes every
+archive through the policy or appears on the shrinking pending list with a
+reason, and a demo choosing `levels`/`adaptive` must reach the scene through an
+adder that preserves it. The choice applies from the next refit onwards — the
+hosted archives keep whatever topology they were written with until they are
+refitted and reuploaded, since the manifest pins their checksums.
 
 The three network demos (`caida_as_topology`, `huri_interactome`,
 `ppi_flow_field`) share `_graph_common.py`, but not all of it. All three use the

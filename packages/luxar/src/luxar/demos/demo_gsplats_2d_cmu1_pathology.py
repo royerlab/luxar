@@ -454,11 +454,19 @@ def create_luxar_scene(
     """Create Luxar scene with per-channel 2D gsplats as separate layers.
 
     Each channel is **grafted from its artifact** rather than loaded into a
-    ``GSplatData`` first. The cache carries the ``adaptive`` topology — spatial
-    tiles, each picking its own detail level, which is what a 46000x33000 slide
-    that is panned and zoomed rather than orbited wants — and that is a
-    ``kind=partition`` tree with no flat matrix form.
+    ``GSplatData`` first. A ``--recompute`` writes the ``adaptive`` topology —
+    spatial tiles, each picking its own detail level, which is what a
+    46000x33000 slide that is panned and zoomed rather than orbited wants — and
+    that is a ``kind=partition`` tree with no flat matrix form, so
     ``add_gsplats_from_file`` is the entry point that grafts one whole.
+
+    Grafting is deliberately shape-agnostic, because the two paths do not agree
+    yet: the hosted archives were written before the recipe was chosen and are
+    still flat leaves, and they stay that way until they are refitted and
+    reuploaded (the manifest pins their checksums). ``add_gsplats_from_file``
+    routes a matrix-shaped file down the ordinary data path and a partition
+    through the graft, so the default path renders either one — it just does not
+    get spatial tiles until the published bytes catch up.
 
     Args:
         cache_paths: Per-channel ``.gsplats.zarr[.zip]`` artifacts, in channel

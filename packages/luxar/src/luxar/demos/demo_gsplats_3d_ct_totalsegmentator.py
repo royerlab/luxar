@@ -608,7 +608,14 @@ def fit_atlas(
     save_with_lod(
         result,
         CACHE_FIT,
-        recipe="levels",
+        # `stream`, not `levels`, even though the atlas is a large orbited
+        # object: this demo does not hand its fit to the scene whole. It masks
+        # `centers`/`amplitudes`/`cholesky_factors` per tissue supergroup and
+        # calls `add_gsplats` with explicit arrays, and that adder writes a flat
+        # leaf — measured, `kind` absent and no child groups — so a substitutive
+        # ladder in the archive would be dropped before it reached the viewer
+        # while still costing the ~38% extra bytes recorded in `_lod_policy`.
+        recipe="stream",
         encoding_mode=EncodingMode.MEMORY,
         include_fitting_info=True,
         compress="zip",

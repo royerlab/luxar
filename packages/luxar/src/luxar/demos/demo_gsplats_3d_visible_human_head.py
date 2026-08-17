@@ -367,7 +367,15 @@ def fit_head(rgb_vol: np.ndarray, acquisition=None) -> tuple[GSplatData, np.ndar
     save_with_lod(
         result,
         CACHE_FIT,
-        recipe="levels",
+        # `stream`, not `levels`: the head IS a large orbited single object, but
+        # the scene is built from explicit `centers=`/`amplitudes=` arrays plus
+        # the per-splat colours sidecar, and `add_gsplats` writes a flat leaf —
+        # so a substitutive ladder would cost the ~38% extra bytes recorded in
+        # `_lod_policy` and be discarded before the viewer ever saw it. Carrying
+        # the levels into the scene needs the colours to live on the
+        # `GSplatData` so the whole fit can go through `add_gsplats_from_data`;
+        # until then `stream` is the honest choice.
+        recipe="stream",
         encoding_mode=EncodingMode.MEMORY,  # uint8 Cholesky — smallest on-disk
         include_fitting_info=True,
         compress="zip",

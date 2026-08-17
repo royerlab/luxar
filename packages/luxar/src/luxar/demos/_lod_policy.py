@@ -26,6 +26,10 @@ Measured cost of ``levels`` over ``stream``, on ct_atlas (660,934 splats):
 6,966 KB → 9,635 KB, i.e. +38%. Do not extrapolate that from a small fit — the
 same comparison on a 743-splat fit reads 3.6x, which is per-zarr-group overhead
 rather than data.
+
+A recipe costlier than ``stream`` is only worth choosing if the demo's SCENE can
+carry it, and that depends on which adder the demo builds with — see
+:data:`TOPOLOGY_PRESERVING_ADDERS`.
 """
 
 from __future__ import annotations
@@ -53,6 +57,34 @@ DemoRecipe = Literal["stream", "levels", "adaptive"]
 #: Getting this wrong breaks the demo's DEFAULT path while leaving the
 #: ``--recompute`` path — the one an author exercises — perfectly green.
 TREE_RECIPES: frozenset[str] = frozenset({"adaptive"})
+
+#: Scene adders that carry a stored topology into the scene.
+#:
+#: ``add_gsplats_from_data`` is handed the whole ``GSplatData``, whose matrix form
+#: holds the substitutive levels, and re-emits them as a ``kind=lod`` group;
+#: ``add_gsplats_from_file`` grafts the stored subtree node-for-node. The third
+#: adder, plain ``add_gsplats(centers=…, amplitudes=…)``, is handed loose arrays
+#: — every one of which is a view of the FINEST level only — so it writes a flat
+#: leaf. Measured on a 4,000-splat fit: the same archive added via
+#: ``add_gsplats`` gives a node with no ``kind`` and no child groups whether it
+#: was written ``stream`` or ``levels``, while the ``levels`` archive is 4.1x the
+#: bytes on disk (the small-fit figure — +38% on a real one, above).
+#:
+#: So a demo that rebuilds its scene from arrays gets nothing for the extra bytes
+#: and should stay on ``stream``. It is not a rule the choice below can enforce
+#: on its own — the archive is written in the fit step and read in the scene step,
+#: often hundreds of lines apart — so ``tests/test_lod_policy.py`` gates it.
+TOPOLOGY_PRESERVING_ADDERS: frozenset[str] = frozenset(
+    {"add_gsplats_from_data", "add_gsplats_from_file"}
+)
+
+#: Recipes whose extra bytes only pay off if the topology reaches the scene.
+#:
+#: ``stream`` is excluded because a prefix ladder is the same splats regrouped —
+#: it costs essentially nothing, so it is the right floor even for a demo whose
+#: scene flattens it (the archive is still downloadable and ``luxar gsplat view``
+#: honours the ladder).
+SCENE_TOPOLOGY_RECIPES: frozenset[str] = frozenset({"levels", "adaptive"})
 
 #: Per-recipe parameters, so two demos choosing ``levels`` cannot drift apart.
 #:

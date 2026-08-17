@@ -19,6 +19,8 @@ import pytest
 from luxar.demos import registry
 from luxar.demos._lod_policy import (
     _RECIPE_DEFAULTS,
+    SCENE_TOPOLOGY_RECIPES,
+    TOPOLOGY_PRESERVING_ADDERS,
     TREE_RECIPES,
     DemoRecipe,
     save_with_lod,
@@ -105,6 +107,31 @@ def _policy_recipes(src: str) -> list[str]:
                 if kw.arg == "recipe" and isinstance(kw.value, ast.Constant):
                     recipes.append(kw.value.value)
     return recipes
+
+
+def _scene_adders(src: str) -> set[str]:
+    """The ``add_gsplats*`` methods *src* builds its scene with.
+
+    Parsed, not substring-matched, for the reason :func:`_policy_recipes` gives
+    in reverse: ``"add_gsplats" in src`` is true of every demo here, since
+    ``add_gsplats_from_data`` contains it. Only the resolved attribute name
+    tells the flattening adder from the two that preserve a topology.
+    """
+    out = set()
+    for node in ast.walk(ast.parse(src)):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        name = (
+            func.attr
+            if isinstance(func, ast.Attribute)
+            else func.id
+            if isinstance(func, ast.Name)
+            else None
+        )
+        if name is not None and name.startswith("add_gsplats"):
+            out.add(name)
+    return out
 
 
 def _bare_saves(src: str) -> int:
@@ -260,6 +287,64 @@ def test_a_demo_choosing_a_tree_recipe_does_not_read_its_cache_flat() -> None:
                 "multi-part store. Fetch the PATH (ensure_dataset) and graft it with "
                 "Group.add_gsplats_from_file()."
             )
+
+
+def test_a_costly_recipe_is_only_chosen_where_the_scene_can_carry_it() -> None:
+    """The other half of "does the topology survive the round trip?".
+
+    ``test_a_demo_choosing_a_tree_recipe_does_not_read_its_cache_flat`` catches
+    the loud failure: ``adaptive`` plus a flat READ raises. This catches the
+    silent one. A demo can read its archive back perfectly and still throw the
+    topology away at the next step, by rebuilding the scene from loose
+    ``centers=``/``amplitudes=`` arrays — every one of which is a view of the
+    finest level. ``add_gsplats`` then writes a flat leaf and the extra bytes
+    (+38% for ``levels`` on a real fit) buy nothing. Nothing raises; the demo
+    simply pays for a ladder no viewer will ever be offered.
+    """
+    for name, src in sorted(_fitting_demos().items()):
+        costly = set(_policy_recipes(src)) & SCENE_TOPOLOGY_RECIPES
+        if not costly:
+            continue
+        adders = _scene_adders(src)
+        flattening = adders - TOPOLOGY_PRESERVING_ADDERS
+        assert not flattening, (
+            f"{name} writes {sorted(costly)} but builds its scene with "
+            f"{sorted(flattening)}, which flattens to a single leaf — the extra "
+            "bytes are spent and then discarded. Either hand the whole "
+            "GSplatData to add_gsplats_from_data / graft the path with "
+            "add_gsplats_from_file, or choose 'stream'."
+        )
+
+
+def test_the_scene_adder_detector_tells_the_three_adders_apart() -> None:
+    """A substring test would read all three as the flattening one."""
+    assert _scene_adders("scene.add_gsplats(name='g', centers=c)") == {"add_gsplats"}
+    assert _scene_adders("scene.add_gsplats_from_data(name='g', result=r)") == {
+        "add_gsplats_from_data"
+    }
+    assert _scene_adders("scene.add_gsplats_from_file(name='g', path=p)") == {
+        "add_gsplats_from_file"
+    }
+    # Mentioning an adder without calling it must not count.
+    assert _scene_adders("x = 'add_gsplats'\nimport add_gsplats_from_data\n") == set()
+    assert TOPOLOGY_PRESERVING_ADDERS.isdisjoint({"add_gsplats"})
+
+
+def test_the_costly_recipe_gate_is_not_vacuous() -> None:
+    """It must actually be watching a demo, and a real adder call."""
+    fitting = _fitting_demos()
+    watched = {
+        n
+        for n, s in fitting.items()
+        if set(_policy_recipes(s)) & SCENE_TOPOLOGY_RECIPES
+    }
+    assert watched, "no demo chooses a scene-topology recipe — the gate is vacuous"
+    for n in sorted(watched):
+        assert _scene_adders(fitting[n]), (
+            f"{n} is watched by the gate but no add_gsplats* call parsed out of "
+            "it — the assertion cannot fail for the right reason"
+        )
+    assert SCENE_TOPOLOGY_RECIPES <= set(_RECIPE_DEFAULTS)
 
 
 def _tiny_fit(rng: np.random.Generator, n: int, ndim: int):
