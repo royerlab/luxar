@@ -186,6 +186,7 @@ from luxar.demos import (
     require_module,
     warn_if_no_cuda_gpu,
 )
+from luxar.demos._lod_policy import save_with_lod
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
@@ -1209,8 +1210,10 @@ def fit_timepoint(volume: np.ndarray, index: int, label: str) -> GSplatData:
             truncation_radius=TRUNCATE_SIGMAS,
         )
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        result.save(
+        save_with_lod(
+            result,
             cache_file,
+            recipe="stream",
             encoding_mode=EncodingMode.MEMORY,
             include_fitting_info=False,
             compress="zip",
@@ -1247,8 +1250,10 @@ def fit_timepoint(volume: np.ndarray, index: int, label: str) -> GSplatData:
     )
 
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    result.save(
+    save_with_lod(
+        result,
         cache_file,
+        recipe="stream",
         encoding_mode=EncodingMode.MEMORY,
         include_fitting_info=True,
         compress="zip",

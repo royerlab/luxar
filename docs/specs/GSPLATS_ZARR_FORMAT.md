@@ -641,6 +641,13 @@ the two are comparable. Quote `foreground_fraction` with it: a dB figure taken
 over 0.01% of a volume means something quite different from one taken over 40%,
 and the bare number cannot say which.
 
+The score is always taken on the fitter's own **voxel grid**, whatever frame the
+centers were handed back in. A dataset fitted with `output_space: real` and a
+`voxel_size` stores physical centers, so re-rendering the stored splats directly
+onto the source grid will not reproduce these numbers — divide the spacing back
+out first. The metrics describe the fit, not the coordinate frame it was
+delivered in.
+
 A metric that is mathematically undefined is **omitted, not written**: a volume
 with no foreground (a constant tile, a signal-free crop) has no
 `foreground_psnr_db`, and an exact reconstruction has no `psnr_db`. Writing them

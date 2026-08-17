@@ -55,6 +55,29 @@ channel through a 3-D volume share the implementation in
 images, over sampled timepoints, or with demo-specific titles for a
 single-channel volume.
 
+The LOD topology a fitting demo writes its cached artifact with is chosen in
+`_lod_policy.py`, not left to whichever fitter the demo happened to call
+(`fit_gaussian_splats` returns one additive sub-LOD, the progressive fitter
+several, which is how five shipped archives ended up with no ladder at all).
+Demos call `save_with_lod(result, cache_file, recipe=...)` in place of
+`result.save(...)`; the per-recipe parameters live in one table there so two
+demos asking for `levels` cannot drift apart. `adaptive` is the one that changes
+how a demo READS its cache back — it writes a `kind=partition` tree, which has
+no flat `GSplatData` form, so those demos fetch paths with `ensure_dataset` and
+graft each with `add_gsplats_from_file`. Anything costlier than `stream` is also
+conditional on how the demo BUILDS its scene: `add_gsplats_from_data` and
+`add_gsplats_from_file` carry a stored topology through, while plain
+`add_gsplats(centers=…, amplitudes=…)` writes a flat leaf, so a demo that
+rebuilds from arrays would pay `levels`' extra ~38% and then discard it.
+`tests/test_lod_policy.py` holds both gates: a fitting demo either routes every
+archive through the policy or is accounted for by name — it ships no artifact, it
+names the topology itself with a literal `build_recipe(...)`, or it sits on the
+shrinking pending list — and a demo choosing `levels`/`adaptive` must reach the
+scene through an adder that preserves it, whichever of those doors it came
+through. The choice applies from the next refit onwards — the
+hosted archives keep whatever topology they were written with until they are
+refitted and reuploaded, since the manifest pins their checksums.
+
 The three network demos (`caida_as_topology`, `huri_interactome`,
 `ppi_flow_field`) share `_graph_common.py`, but not all of it. All three use the
 cache-aware download and Louvain community detection; the sparse adjacency and
@@ -821,7 +844,7 @@ The human head Gaussian-splatted in **true photographic color** from the NLM Vis
 
 **Run**: `luxar demo run gsplats_3d_visible_human_head [-- --recompute]`
 
-**Requires**: Nothing extra by default — ships a precomputed fit + per-splat colors via Git LFS. With `--recompute` (or if the LFS assets aren't pulled) it auto-downloads the 377 color head slices (~1.1 GB) to `~/.cache/luxar/gsplats_visible_human_head/`, builds the masked RGB volume, fits luminance (GPU), and samples per-splat colors.
+**Requires**: **~1.1 GB download + a fit (GPU strongly preferred; CPU works but is slow) on the first run today.** The shipped Git LFS pair is a fit plus a per-splat colors sidecar, but that sidecar was written in the wrong splat order and does not correspond to the fit it ships with (issue #1670) — the demo detects the mismatch on load, refuses to render it, and falls through to the download-and-refit path, which caches a verified pair for later runs. Once the artifact is regenerated this is "nothing extra by default" again. The refit auto-downloads the 377 color head slices (~1.1 GB) to `~/.cache/luxar/gsplats_visible_human_head/`, builds the masked RGB volume, fits luminance (GPU), and samples per-splat colors; `--recompute` forces that path regardless.
 
 **Demonstrates**: True-color volumetric anatomy → Gaussian splats via a **single luminance fit + per-splat color sampling** (one fit, real photographic color — vs. the scalar-intensity-plus-colormap microscopy demos), warm-vs-blue tissue masking to drop the frozen-gel background, ACES tone-mapping, self-contained download → mask → fit → cache-processed bootstrap. Data: [NLM Visible Human Project](https://www.nlm.nih.gov/research/visible/visible_human.html) (Male color cryosections, head subset; public domain).
 
@@ -969,6 +992,20 @@ A radar does not sample a volume — it spins a 0.95° beam at 14 discrete eleva
 **Requires**: Nothing for the default path — the fitted splats ship via Git LFS (no network, no GPU, no radar decoder). `--recompute` downloads 800 MB of Level II volume scans from the NOAA archive and needs `metpy` plus a GPU.
 
 **Demonstrates**: Weather/atmosphere as gsplats + lines, polar→Cartesian objective analysis (Barnes on a `cKDTree`, scipy only — no Py-ART), the 4/3-effective-earth beam-propagation model, geometric coverage masking instead of threshold-tuning, `combine_as_new_dimension` for a stacked 4D time axis (streaming ladder only — coarse substitutive levels average the merged amplitudes down and muddy the hail core, so they are deliberately not used), an *adaptive* splat budget (constant occupied-voxels-per-splat, since the system grows ~6x across the window), a *global* rather than per-frame intensity scale so the storm's intensification and decay survive, a baked `CameraConfig(up=(0,0,1))` because a geographic scene on the viewer's default up-vector renders altitude sideways, and a baked appearance (turbo over the full amplitude window at low opacity with moderate volumetric absorption) so colour still corresponds to conventional dBZ bands. Options: `--recompute`, `--no-serve`, `--serve-only`, `--max-timepoints=N`, `--grid-m=N`, `--grid-z-m=N`, `--splats=N`, `--dbz-floor=N`, `--vert-exag=N`, `--relist`.
+
+---
+
+#### demo_gsplats_4d_cell_tracking_challenge.py - 4D Cell Tracking Challenge (matrix)
+
+Six crops of a developing zebrafish embryo from the public [**Biohub Cell Tracking During Development**](https://www.kaggle.com/competitions/biohub-cell-tracking-during-development) competition, laid out as a complete **3x2 matrix** where every tile is an independent 100-timepoint light-sheet timelapse. Each tile carries all three things at once: the image data as a 4D (ZYX + time) Gaussian-splat volume, the ground-truth position of every tracked cell as points that appear **only** at the timepoint they belong to, and every tracking link as one `indexed` Lines node. Colour is **lineage** throughout, so a founder cell and all of its descendants share a hue; scrub the Time slider and the markers walk along their own tracks while the volume animates beneath them. Cell **divisions** render as real forks, because consecutive links share a vertex row. The crops differ in a scientifically visible way — some show a coherent parallel migration, others a tangle — which is much of why the matrix reads well.
+
+Each of the 199 training crops is an OME-Zarr **0.5** (zarr **v3**) store, `T=100, Z=64, Y=256, X=256` uint16 at 1.625 x 0.40625 x 0.40625 um (a 104 um cube), paired with a **GEFF** tracking graph. The demo ranks the crops by annotation density and shows the top six (~1,500-1,950 cells each; the median crop has only 659 and the sparsest 50, so the choice matters). `DATASETS` carries nine and `--datasets 9` uses them all; six is the default because it fills a rectangle exactly.
+
+**Run**: `luxar demo run gsplats_4d_cell_tracking_challenge`
+
+**Requires**: A Kaggle API token (`~/.kaggle/access_token` or `$KAGGLE_API_TOKEN`) plus the `kaggle` package — the competition endpoint is authenticated, so this demo cannot fetch its data unattended. ~4 GB of download and a CUDA GPU for the fitting pass (~24 s per timepoint, ~40 min per crop); a warm fit cache then rebuilds the scene with no GPU and no raw data at all.
+
+**Demonstrates**: Reading **OME-Zarr 0.5** image stores and **GEFF** cell-lineage graphs (`luxar.gsplats.interop.geff`), all three geometry types in one scene per tile, `combine_as_new_dimension` for a stacked 4D time axis with `coarsen_dims` making time a hard LOD barrier, one `layer=True` group per crop so the Layers panel offers one row per embryo rather than three, `line_type="indexed"` for a lineage forest with shared joints, and two appearance lessons that are measured rather than guessed: dropping the top 5% of splats by characteristic size (a diffuse tail that otherwise renders as opaque discs burying the nuclei under volumetric blending), and an LOD ladder whose **depth is the frame budget** — the `screen-area` selector anchors its finest level at half the screen, so a matrix tile occupies a small fraction of it and draws a coarse level whatever the ladder's length; depth therefore sets both what the opening framing costs and how much detail it discards. A one-level ladder drew 20k splats per timepoint per crop (120k per frame across the matrix) and scrubbing was choppy; the shipped four-level ladder draws ~4,900 per timepoint per crop (29,774 per frame) and never fetches the finer levels, which rendering merged levels back to volume shows costs nothing visible above ~5k. Options: `--datasets=N`, `--timepoints=N`, `--seeds=K`, `--recompute`, `--no-serve`, `--serve-only`.
 
 ## Demo Pattern
 
@@ -1143,6 +1180,7 @@ from luxar.demos import (
     warn_if_no_cuda_gpu,  # GPU/MPS/CPU
     load_precomputed_gsplats,
     load_precomputed_bundle,  # LFS-shipped gsplat data
+    voxel_sampled_payload_agreement,  # does a per-splat sidecar still match its fit?
 )
 
 # Download once, reused on every later run:
@@ -1409,6 +1447,7 @@ hatch run python packages/luxar/src/luxar/demos/demo_gsplats_4d_zebrafish_timela
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_4d_neuromast_2ch.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_4d_celegans_tracking.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_4d_nexrad_supercell.py
+hatch run python packages/luxar/src/luxar/demos/demo_gsplats_4d_cell_tracking_challenge.py
 ```
 
 ## Troubleshooting
