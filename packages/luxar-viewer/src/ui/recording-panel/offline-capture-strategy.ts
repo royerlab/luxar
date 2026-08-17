@@ -6,8 +6,11 @@
  * - Turntable smooth mode (renders each frame individually for perfectly
  *   smooth output regardless of GPU FPS)
  *
- * Unlike real-time MediaRecorder capture, this loop is fully decoupled
- * from the browser's animation frame rate. Each frame is:
+ * Unlike real-time MediaRecorder capture, this loop is decoupled from
+ * the browser's animation frame RATE — but not from the animation loop
+ * itself: step 1 runs as a per-frame callback, so the rAF loop has to
+ * be running (see the wake-up in `runOfflineCaptureLoop`). Each frame
+ * is:
  * 1. Camera orbited by one step (quaternion rotation, same as auto-rotate)
  * 2. Scene rendered (full pipeline)
  * 3. Pixels read back (synchronous GPU stall — intentional)
@@ -174,9 +177,13 @@ export class OfflineCaptureStrategy implements CaptureStrategy {
 
     session.pauseAutoRotate();
 
-    // Per-frame rotation step: frame 0 captures the starting view without rotation,
-    // then frames 1..N-1 each advance by one step to complete exactly 2π total.
-    const anglePerFrame = totalFrames > 1 ? (2 * Math.PI) / (totalFrames - 1) : 0;
+    // Per-frame rotation step: frame 0 captures the starting view without
+    // rotation, then frames 1..N-1 each advance by one step, so the N frames
+    // cover [0, 2π) and the LAST frame stops one step short of the first.
+    // That step is 2π/N, NOT 2π/(N-1): dividing by N-1 lands the last frame
+    // exactly back on the start pose, and a turntable is made to loop — the
+    // duplicate shows up as a one-frame hitch at every wrap.
+    const anglePerFrame = totalFrames > 0 ? (2 * Math.PI) / totalFrames : 0;
 
     log.info(
       Modules.RECORDING,
@@ -338,6 +345,24 @@ export class OfflineCaptureStrategy implements CaptureStrategy {
       let consecutiveErrors = 0;
       const MAX_CONSECUTIVE_ERRORS = 3;
 
+      // Wake the rAF loop, exactly as the real-time strategy does. The
+      // turntable's rotation is applied from a per-frame callback, and
+      // those only run while the loop is animating — but the loop
+      // idle-stops after ~2s of no interaction, which is the normal
+      // state by the time the user has read the panel and confirmed the
+      // dialog. Registering a `continuous` callback only KEEPS a running
+      // loop alive; it never restarts a stopped one. Without this call
+      // the camera never rotates and the capture silently emits N
+      // identical frames — the capture path renders its own pipeline
+      // pass (`renderToImageData`), so frames are still produced, just
+      // all from the same pose.
+      //
+      // Don't "optimize" this away by orbiting the camera inline and
+      // leaving the loop stopped: the depth-sort scheduler and the LOD
+      // group selector are per-frame callbacks too, so a stopped loop
+      // would freeze depth order and LOD level at the opening pose
+      // while the camera swings a full turn.
+      this.animationController.startAnimation();
       this.animationController.addPerFrameCallback(keepAliveId, () => {}, { continuous: true });
 
       for (let i = 0; i < totalFrames; i++) {
