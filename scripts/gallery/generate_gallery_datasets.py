@@ -20,11 +20,18 @@ machine that does have the input regenerates its tile on every route, ``--force`
 included), and only a NON-ZERO EXIT is reclassified into the soft *manual-data*
 bucket instead of ``failed``.
 
-Two limits of that rule, both deliberate. A genuine bug inside one of those demos
-also lands in the soft bucket rather than returning 1 — its error tail is still
-printed, so it stays visible. And a ``timeout``, a ``no-output`` (exit 0 having
-written nothing) or a death by signal (a negative return code: the OOM killer, a
-segfault) stays HARD even for them, which leaves one real case unrescued:
+A demo listed in ``UNBUILDABLE_IDS`` is skipped WITHOUT being run at all — not
+demoted after the fact — because there is no machine on which it currently
+succeeds; running it would only burn ``GEN_TIMEOUT_S`` (and its download) before
+reporting a hard failure. That list is temporary by construction: each entry
+names the issue that put it there and is deleted when the cause is gone.
+
+Two limits of the demote-on-failure rule, both deliberate. A genuine bug inside
+one of those demos also lands in the soft bucket rather than returning 1 — its
+error tail is still printed, so it stays visible. And a ``timeout``, a
+``no-output`` (exit 0 having written nothing) or a death by signal (a negative
+return code: the OOM killer, a segfault) stays HARD even for them, which leaves
+one real case unrescued:
 ``arxiv_papers_kaggle`` needs no credentials to start and declares a ~30 GB
 download, so on a cold machine it can exhaust ``GEN_TIMEOUT_S`` and land in
 ``timeout`` — a non-zero exit for the whole run. Fixing that by skipping large
@@ -62,6 +69,22 @@ GEN_TIMEOUT_S = 3600
 # non-zero exit is more likely to mean "this machine doesn't have it" than "the
 # demo is broken". Mirrors the pair `luxar demo run-all` skips outright.
 LOCAL_INPUT_MODES = ("manual-file", "kaggle-auth")
+
+# Manifest ids that CANNOT currently be built on any machine, mapped to why.
+# Soft-skipped without spawning anything, the way an un-fetchable `local_data`
+# entry is demoted: the alternative is a hard `timeout` that returns 1 and aborts
+# `make generate-gallery` before it captures a single tile.
+#
+# This is a temporary list, not a policy. DELETE an entry the moment its cause is
+# gone — the demo is then generated like any other.
+UNBUILDABLE_IDS: dict[str, str] = {
+    "gsplats_3d_visible_human_head": (
+        "#1670: the shipped vh_head_colors.npz sidecar is misordered against the "
+        "fit it ships with, so the demo refuses the pair and its default path is "
+        "a ~1.1 GB download plus a 4M-splat fit — well past GEN_TIMEOUT_S. "
+        "Delete this entry once vh_head_colors.npz is regenerated."
+    ),
+}
 
 
 def load_manifest() -> list[dict[str, Any]]:
@@ -117,6 +140,13 @@ def generate_one(entry: dict[str, Any]) -> tuple[str, str]:
     tile is still regenerated wherever the input is present; a ``timeout``, a
     ``no-output`` or a death by SIGNAL stays hard even then.
     """
+    unbuildable = UNBUILDABLE_IDS.get(entry["id"])
+    if unbuildable is not None:
+        # Skipped BEFORE spawning: unlike the local-input demos there is no
+        # machine on which this one succeeds, so running it only burns the
+        # timeout (and a gigabyte of bandwidth) before failing hard.
+        return ("unbuildable", unbuildable)
+
     script = entry.get("script")
     if not script:
         return ("capture-only", "no generator script (feature-branch demo)")
@@ -173,6 +203,8 @@ def print_plan(demos: list[dict[str, Any]]) -> None:
         for d in demos:
             present = "ready" if dataset_exists(d) else "MISSING"
             gen = d.get("script") or "(capture-only)"
+            if d["id"] in UNBUILDABLE_IDS:
+                gen += "  (unbuildable; skipped without running)"
             mode = needs_local_input(d)
             if mode is not None:
                 # Still run — the mark says a failure here will be reported as
@@ -217,6 +249,7 @@ def main() -> int:
         "already-present": [],
         "capture-only": [],
         "manual-data": [],
+        "unbuildable": [],
         "failed": [],
         "timeout": [],
         "no-output": [],
@@ -243,9 +276,10 @@ def main() -> int:
     aprint(f"\n{len(ready)}/{len(demos)} datasets ready for capture.")
     aprint("Next: cd packages/luxar-viewer && pnpm gallery")
 
-    # Non-zero only on hard generation failures. capture-only and manual-data are
-    # expected states, not errors: the latter is a demo whose un-fetchable input
-    # this machine does not have (see `generate_one`).
+    # Non-zero only on hard generation failures. capture-only, manual-data and
+    # unbuildable are expected states, not errors: manual-data is a demo whose
+    # un-fetchable input this machine does not have, unbuildable one that cannot
+    # be built anywhere yet (see `generate_one`).
     hard_failures = results["failed"] + results["timeout"] + results["no-output"]
     return 1 if hard_failures else 0
 

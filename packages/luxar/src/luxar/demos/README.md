@@ -843,7 +843,7 @@ The human head Gaussian-splatted in **true photographic color** from the NLM Vis
 
 **Run**: `luxar demo run gsplats_3d_visible_human_head [-- --recompute]`
 
-**Requires**: Nothing extra by default — ships a precomputed fit + per-splat colors via Git LFS. With `--recompute` (or if the LFS assets aren't pulled) it auto-downloads the 377 color head slices (~1.1 GB) to `~/.cache/luxar/gsplats_visible_human_head/`, builds the masked RGB volume, fits luminance (GPU), and samples per-splat colors.
+**Requires**: **~1.1 GB download + a fit (GPU strongly preferred; CPU works but is slow) on the first run today.** The shipped Git LFS pair is a fit plus a per-splat colors sidecar, but that sidecar was written in the wrong splat order and does not correspond to the fit it ships with (issue #1670) — the demo detects the mismatch on load, refuses to render it, and falls through to the download-and-refit path, which caches a verified pair for later runs. Once the artifact is regenerated this is "nothing extra by default" again. The refit auto-downloads the 377 color head slices (~1.1 GB) to `~/.cache/luxar/gsplats_visible_human_head/`, builds the masked RGB volume, fits luminance (GPU), and samples per-splat colors; `--recompute` forces that path regardless.
 
 **Demonstrates**: True-color volumetric anatomy → Gaussian splats via a **single luminance fit + per-splat color sampling** (one fit, real photographic color — vs. the scalar-intensity-plus-colormap microscopy demos), warm-vs-blue tissue masking to drop the frozen-gel background, ACES tone-mapping, self-contained download → mask → fit → cache-processed bootstrap. Data: [NLM Visible Human Project](https://www.nlm.nih.gov/research/visible/visible_human.html) (Male color cryosections, head subset; public domain).
 
@@ -1179,6 +1179,7 @@ from luxar.demos import (
     warn_if_no_cuda_gpu,  # GPU/MPS/CPU
     load_precomputed_gsplats,
     load_precomputed_bundle,  # LFS-shipped gsplat data
+    voxel_sampled_payload_agreement,  # does a per-splat sidecar still match its fit?
 )
 
 # Download once, reused on every later run:

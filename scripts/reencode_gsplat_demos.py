@@ -24,6 +24,10 @@ Per store, the transform is chosen by structure:
 By default output is written to a STAGING dir and the committed LFS files are
 NOT touched (verify first). Pass ``--apply`` to overwrite the committed files.
 
+Datasets paired with a positionally-indexed per-splat ``.npz`` sidecar
+(``SIDECAR_PAIRED_DIRS``) are REFUSED: re-encoding reorders the splats and
+silently invalidates the sidecar (#1670).
+
 Usage:
     hatch run python scripts/reencode_gsplat_demos.py [--only NAME ...] \
         [--staging DIR] [--recipe stream|overview] [--apply]
@@ -39,10 +43,24 @@ import tempfile
 import zipfile
 from pathlib import Path
 
+from arbol import aprint
+
 from luxar._zarr_compat import read_node_attrs
 
 REPO = Path(__file__).resolve().parents[1]
 DATA_DIR = REPO / "packages/luxar/src/luxar/demos/data"
+
+# Dataset dirs whose fit is paired with a POSITIONALLY-INDEXED per-splat sidecar:
+#   gsplats_ct_totalsegmentator/ct_atlas_labels.npz   (organ label per splat)
+#   gsplats_visible_human_head/vh_head_colors.npz     (sampled RGB per splat)
+# Re-encoding those fits REORDERS their splats (`flatten` + `lod --recipe stream`,
+# or `additive`), which silently invalidates the sidecar sitting next to them —
+# exactly the bug of #1670, whose Visible Human sidecar is misordered to this day.
+# This script has no way to resample a sidecar (the source volume is not in hand),
+# so it refuses these datasets rather than recreating the bug.
+SIDECAR_PAIRED_DIRS = frozenset(
+    {"gsplats_ct_totalsegmentator", "gsplats_visible_human_head"}
+)
 
 
 def run_cli(*args: str) -> None:
@@ -53,6 +71,23 @@ def run_cli(*args: str) -> None:
         sys.stderr.write(proc.stdout[-4000:])
         sys.stderr.write(proc.stderr[-4000:])
         raise RuntimeError(f"CLI failed: {' '.join(cmd)}")
+
+
+def sidecar_pair_refusal(src_zip: Path) -> str | None:
+    """Why *src_zip* must not be re-encoded, or ``None`` when it is safe.
+
+    Pure predicate on the path so it can be unit-tested without any store.
+    """
+    name = src_zip.parent.name
+    if name not in SIDECAR_PAIRED_DIRS:
+        return None
+    return (
+        f"{name} ships a per-splat sidecar (.npz) indexed positionally against "
+        "this fit. Re-encoding reorders the splats, which INVALIDATES the sidecar "
+        "and cannot be detected by anything that only reads the fit (see #1670). "
+        "Regenerate the sidecar in the same pass — re-sample the source volume at "
+        "the RE-SAVED store's centers — or leave this dataset alone."
+    )
 
 
 def _is_group_dir(path: Path) -> bool:
@@ -244,6 +279,11 @@ def main() -> int:
         tmp = Path(td)
         for src in zips:
             rel = src.relative_to(DATA_DIR)
+            refusal = sidecar_pair_refusal(src)
+            if refusal is not None:
+                aprint(f"SKIP (sidecar-paired dataset): {rel}")
+                aprint(f"  {refusal}")
+                continue
             # Skip unmaterialized LFS pointers.
             if src.stat().st_size < 1024:
                 print(f"SKIP (LFS pointer, run git lfs pull): {rel}")

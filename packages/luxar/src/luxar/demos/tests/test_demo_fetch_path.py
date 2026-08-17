@@ -30,9 +30,11 @@ import importlib
 import json
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from luxar.demos import registry
+from luxar.gsplats.gsplat_data import GSplatData
 
 DEMO_PATHS = sorted(registry._DEMOS_DIR.glob("demo_*.py"))
 MANIFEST = registry._DEMOS_DIR / "data_manifest.json"
@@ -170,10 +172,23 @@ def test_ct_atlas_reaches_the_manifest_on_a_cold_cache(tmp_path, monkeypatch) ->
     labels = tmp_path / "ct_atlas_labels.npz"
     calls: list[tuple] = []
 
+    # The resolved pair is checked for positional alignment before it is
+    # returned (#1670), so the stub fit is a real (tiny) GSplatData and the stub
+    # sidecar matches its length. Its four splats are COINCIDENT and carry the
+    # SAME label, which makes acceptance independent of the guard's `min_pairs`:
+    # too few pairs to judge → accept as unverifiable; enough → agreement 1.0.
+    # A `min_pairs` change must never redden a test about manifest fetching.
+    stub_fit = GSplatData(
+        centers=np.zeros((4, 3), dtype=np.float32),
+        amplitudes=np.ones(4, dtype=np.float32),
+        cholesky_factors=np.tile([1, 0, 1, 0, 0, 1], (4, 1)).astype(np.float32),
+    )
+    stub_labels = np.full(4, 5, dtype=np.int32)
+
     def _fake_fetch(*args, **kwargs):
         calls.append(args)
         labels.write_bytes(b"the sidecar rides along")  # what ensure_dataset does
-        return ["the fit"]
+        return [stub_fit]
 
     monkeypatch.setattr(demo, "RECOMPUTE", False)
     monkeypatch.setattr(demo, "CACHE_FIT", tmp_path / "absent.gsplats.zarr.zip")
@@ -181,7 +196,7 @@ def test_ct_atlas_reaches_the_manifest_on_a_cold_cache(tmp_path, monkeypatch) ->
     monkeypatch.setattr(demo, "LFS_FIT", tmp_path / "absent-lfs.gsplats.zarr.zip")
     monkeypatch.setattr(demo, "LFS_LABELS", tmp_path / "absent-lfs.npz")
     monkeypatch.setattr(demo, "load_dataset_gsplats", _fake_fetch)
-    monkeypatch.setattr(demo, "_load_labels", lambda p: p.read_bytes())
+    monkeypatch.setattr(demo, "_load_labels", lambda p: stub_labels)
 
     def _refit_is_a_failure():
         raise AssertionError("fell through to the download-and-refit path")
@@ -191,5 +206,5 @@ def test_ct_atlas_reaches_the_manifest_on_a_cold_cache(tmp_path, monkeypatch) ->
     fit, got_labels = demo.load_or_build()
 
     assert calls, "the manifest fetch was never reached on a cold cache"
-    assert fit == "the fit"
-    assert got_labels == b"the sidecar rides along"
+    assert fit is stub_fit
+    assert got_labels is stub_labels
