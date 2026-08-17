@@ -51,10 +51,14 @@ document opts in with a docblock on its **first line**:
 // @vitest-environment jsdom
 ```
 
-Constructing a jsdom document costs ~1.8 s of CPU per file and only ~124 of
-the unit files touch one, so the rest would be paying for a DOM they never
-use. Forgetting the docblock is not silent — the file fails with
-`ReferenceError: document is not defined`. Mocks that need a DOM
+Constructing a jsdom document costs ~1.8 s of CPU per file and only ~125 of
+the unit files need a browser global at all, so the rest would be paying for a
+DOM they never use. Forgetting the docblock is normally not silent — the file
+fails with `ReferenceError: document is not defined`. The exception is code under
+test that reads a browser global through `typeof` and has a non-browser branch:
+that degrades quietly instead of throwing, which is exactly how #1642 hid, so
+don't rely on the loud failure when what the file needs is `self`/`location`
+rather than a document. Mocks that need a DOM
 (`installMatchMediaMock`, `installWebGLMock`) no-op under `node`, so they are
 there when the docblock is.
 

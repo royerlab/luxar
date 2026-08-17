@@ -89,7 +89,7 @@ is the slow exception).
 git clone https://github.com/royerlab/luxar.git
 cd luxar
 make setup-dev          # Auto-installs Node.js, pnpm, Hatch (no sudo)
-luxar demo              # Browse the 85 bundled demos
+luxar demo              # Browse the 86 bundled demos
 luxar demo run lorenz   # Run one — generates the data and opens the viewer
 ```
 
@@ -103,7 +103,7 @@ That last command generates a Lorenz attractor and opens the viewer:
 category, what it needs, and whether you have already built it:
 
 ```
-🎬 [Luxar] 85 demos
+🎬 [Luxar] 86 demos
 
   #  KEY                                    GEOM         CATEGORY       NEEDS                STATUS
 ───────────────────────────────────────────────────────────────────────────────────────────────────

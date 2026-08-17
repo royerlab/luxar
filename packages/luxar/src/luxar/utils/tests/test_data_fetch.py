@@ -864,6 +864,52 @@ def test_wrapper_loads_only_the_gsplat_files(fake_gsplats_repo):
     assert len(out[0].amplitudes) == 8
 
 
+def test_wrapper_points_a_multi_part_store_at_the_graft_entry(
+    fake_gsplats_repo, tmp_path, monkeypatch
+):
+    """A ``kind=partition`` payload has no flat form, so say what does open it.
+
+    Pins the sentinel as well as the wording: the branch keys on the shape
+    error's own "matrix-shaped" text, so if that message is ever reworded the
+    wrapper silently goes back to surfacing a bare internal error — with a
+    remedy the caller cannot guess.
+    """
+    import numpy as np
+
+    from luxar.gsplats.gsplat_data import GSplatData
+    from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+
+    manifest, cache = fake_gsplats_repo
+    n = 64
+    chol = np.zeros((n, 6), dtype=np.float32)
+    chol[:, [0, 2, 5]] = 1.0
+    data = GSplatData(
+        centers=(np.random.rand(n, 3) * 100).astype(np.float32),
+        amplitudes=np.ones(n, dtype=np.float32),
+        cholesky_factors=chol,
+    )
+    partition = data.to_spatial_partition(max_elements=16)
+    assert len(partition.children) > 1, "the fixture must really be multi-part"
+    payload = tmp_path / "demos_data" / "gsplats_toy" / "toy_ch0.gsplats.zarr.zip"
+    payload.unlink()
+    write_gsplats_tree(payload, partition, compress="zip")
+    entry = manifest["datasets"]["gsplats_toy"]["files"][0]
+    entry["sha256"] = _sha256(payload)
+    entry["bytes"] = payload.stat().st_size
+
+    with pytest.raises(ValueError) as excinfo:
+        load_dataset_gsplats(
+            "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
+        )
+
+    message = str(excinfo.value)
+    assert "multi-part" in message
+    assert "ensure_dataset('gsplats_toy')" in message
+    assert "add_gsplats_from_file" in message
+    # The original shape error is kept, not swallowed.
+    assert "matrix-shaped" in str(excinfo.value.__cause__)
+
+
 def test_wrapper_recompute_returns_none(fake_gsplats_repo):
     manifest, cache = fake_gsplats_repo
     assert (

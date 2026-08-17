@@ -11,15 +11,19 @@ export default defineConfig({
     // wasm+cache subset, same 798 passed / 2 skipped either way:
     //     jsdom  127.15 s  (environment 75.72 s)
     //     node    13.85 s  (environment 12 ms)
-    // Across the whole suite only 124 of 559 files need a document, so the
-    // other 435 were paying for a DOM they never touched.
+    // Across the whole suite only 125 of 561 files need a browser global (a
+    // document in most cases), so the other 436 were paying for a DOM they
+    // never touched.
     //
     // Inverting the default (rather than listing directories) is deliberate:
     // the need is not directory-aligned — `ui/` is 65% jsdom while
-    // `rendering/` and `data/` are 92-94% node — and a missing docblock fails
-    // loudly with `ReferenceError: document is not defined` rather than
-    // silently running in the wrong environment. To regenerate the list after
-    // a large refactor: `vitest run --environment node` and take the failures.
+    // `rendering/` and `data/` are 92-94% node — and a missing docblock normally
+    // fails loudly with `ReferenceError: document is not defined` rather than
+    // silently running in the wrong environment. The exception is a global read
+    // through `typeof` behind a non-browser branch, which degrades quietly (see
+    // #1642), so the empirical list is derived, not trusted. To regenerate it
+    // after a large refactor: `vitest run --environment node` and take the
+    // failures.
     environment: 'node',
     globals: true,
     globalSetup: ['./src/tests/global-setup.ts'],
@@ -34,7 +38,7 @@ export default defineConfig({
     // Worker threads, not forked processes. A thread reuses the host process's
     // heap and module machinery instead of paying a full V8 + Vite-runtime
     // bootstrap per worker, which is most of the fixed cost when the suite is
-    // 559 small files.
+    // 561 small files.
     pool: 'threads',
     // Cap worker concurrency ON CI ONLY. The `maxWorkers: 4` that used to apply
     // everywhere was a response to `[vitest-pool-runner]: Timeout waiting for

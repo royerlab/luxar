@@ -13,6 +13,21 @@ Reports PSNR + SSIM for each, plus geometric mean combined scores.
 Outputs a single METRIC line for autoresearch extraction.
 
 IMPORTANT: Budget parameters are CONSTANTS — do not change them.
+
+IMPORTANT: every fit here pins ``floor="none"``. PSNR/SSIM are scored against
+the RAW volume, so the fit must not remove a pedestal the reference still
+carries. The shipped default ``floor="auto"`` estimates and subtracts a
+histogram-mode background level — 3.55% of range on this file's own 2D composite
+— which makes output amplitudes background-relative: the original-referenced
+metrics then penalise the fit for correctly dropping non-signal, and the reported
+METRIC would move silently whenever the floor estimator changes. ``floor="none"``
+leaves the fit on the volume's own hard-min basis (normalization still subtracts
+``min(V)`` and deliberately never adds it back), which *is* the raw basis for the
+2D composite, whose ``min`` is 0; for the 3D chimera it is that same basis up to a
+constant, since the chimera's global min is a min over separately normalized
+quadrant crops. This is a benchmark-only pin — ``gsplat fit``/``cal`` keep
+``--floor auto``, which is the right default for real use (see the 2026-07-12
+``--floor`` decision in TODO.md).
 """
 
 import os  # noqa: I001 — must set env before torch import
@@ -217,6 +232,10 @@ def run_fit_and_evaluate(V: np.ndarray, max_splats: int, label: str) -> dict:
     with asection(f"Fitting: {label}"):
         result = fit_progressive_gaussian_splats(
             V,
+            # PSNR/SSIM below are scored against the raw V, so the fit must stay
+            # on V's own hard-min basis: the shipped floor="auto" would subtract
+            # a background pedestal the reference still carries (module docstring).
+            floor="none",
             max_splats=max_splats,
             max_splats_per_pass=MAX_SPLATS_PER_PASS,
             iters_per_pass=ITERS_PER_PASS,

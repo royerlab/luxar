@@ -24,6 +24,7 @@ scripts/
 | `release.sh` | Run release preflight checks, then create and push the release tag |
 | `gen_format_contract.py` | Generate the Python and TypeScript format-contract projections from `format-contract/contract.yaml` |
 | `gen_data_manifest.py` | Regenerate the demo-data manifest (`demos/data_manifest.json`); `--check` is the CI drift gate |
+| `gen_zenodo_records.py` | Generate the Zenodo record descriptions from the manifest and the archives' own stamps; `--check` lists rows that would publish incomplete (never contacts Zenodo) |
 | `generate_galaxy_simple.py` | Fetch Gaia DR3 stars → raw zarr table for demos |
 | `gen_census_umap.py` | Build the large CELLxGENE Census scVI/UMAP cache on a CUDA/RAPIDS environment |
 | `generate_builtin_colormaps.py` | Regenerate built-in colormap LUTs (Python + TS) |
@@ -398,3 +399,32 @@ hatch run python scripts/benchmark_progressive_psnr.py
 ```
 
 See also `scripts/benchmarks/` for the seeding/WASM performance benchmarks.
+
+---
+
+## Fitting Benchmarks Must Declare Their Floor Basis
+
+Every gsplat fit called here through a module-level fitting *function* passes an
+explicit `floor=`, and the in-repo harnesses that score PSNR/SSIM against the raw
+volume pin `floor="none"` — the shipped default `floor="auto"` subtracts a
+background pedestal the reference still carries, which penalises the fit for
+correctly dropping non-signal and lets the reported number drift with the floor
+estimator. The guard `packages/luxar/src/luxar/tests/test_benchmark_floor_pin.py`
+enforces the declaration: it parses every `*.py` under `scripts/` and fails on a
+fitter call that declares no floor — a `floor=` keyword, or a kwargs dict
+carrying the key that is visible at the call site — so declare one when you add a
+fitting script (`floor="auto"` is a valid answer — the gate wants a stated basis,
+not a particular value).
+
+Two shapes stay outside the gate's reach, so pin them by hand. *The class API*:
+`GaussianSplatFitter().fit(V)` is a Python-function fit the guard cannot see, as
+an AST call-name check would have to flag every `.fit(` to catch it. *Argv-driven
+fits*: `calibrate_gsplat_demos.py` runs many fits by subprocessing `luxar gsplat
+cal` with no `--floor`, and that one needs no pin because `cal` is
+self-consistent — it subtracts the floor from the volume once up front and pins
+its own per-K fits to `floor="none"`.
+
+One caveat when changing a fit path: the two Pareto benchmarks compare against a
+*local, uncommitted* `scripts/benchmarks/data/*baseline*.json`, so a baseline
+recorded on a different floor basis will read as a regression — delete it once
+and let the next run become the baseline.

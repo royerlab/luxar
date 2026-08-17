@@ -48,9 +48,9 @@
  *   when scene content changes.
  *
  * The control loop is decomposed into pure, timestamp-driven modules
- * under ./adaptive-dpr/ (FPS tracker, refresh-rate estimator,
- * hysteresis tracker, probe controller, bounds ledger — see that
- * folder's README); this class is the orchestrating facade and owns
+ * under ./adaptive-dpr/ (FPS tracker, stall detector, refresh-rate
+ * estimator, hysteresis tracker, probe controller, bounds ledger — see
+ * that folder's README); this class is the orchestrating facade and owns
  * everything environmental (live devicePixelRatio, renderer, config,
  * callbacks, pause/idle/resume hooks).
  */
@@ -61,10 +61,11 @@ import { adaptiveDPRConfig as adaptiveDPRDefaults } from '../config/sections/ada
 import { log, Modules, LogEmoji } from '../utils/log';
 import { clamp } from '../utils/clamp';
 import { FPSTracker } from './adaptive-dpr/fps-tracker';
-import { ProbeController } from './adaptive-dpr/probe-controller';
+import { ProbeController, type ProbeVerdict } from './adaptive-dpr/probe-controller';
 import { BoundsLedger } from './adaptive-dpr/bounds-ledger';
 import { HysteresisTracker } from './adaptive-dpr/hysteresis-tracker';
 import { RefreshRateEstimator } from './adaptive-dpr/refresh-rate-estimator';
+import { StallDetector } from './adaptive-dpr/stall-detector';
 
 /**
  * Interface for the renderer manager that can set pixel ratio
@@ -100,6 +101,68 @@ export interface AdaptiveDPRState {
 export type DPRChangeCallback = (dpr: number, isReducedResolution: boolean) => void;
 
 /**
+ * Consecutive intervals that must read as the FRAME RATE (rather than
+ * dead time) after a gap reset before the FPS window is trusted for
+ * LEARNING again.
+ *
+ * The stall detector compares each interval against the median of its
+ * four PRECEDING neighbours, so by the THIRD consecutive dead interval
+ * half that memory is dead time and the interval is reclassified as the
+ * frame rate. From timestamps alone that is not even wrong — three 5s
+ * gaps in a row genuinely is 0.2fps for 15s — but the FPS window it
+ * lands in holds nothing except dead time. Left trusted, that window
+ * arms a probe, settles it against a baseline measured on the SAME dead
+ * time, rejects it for want of an improvement, and pins a U-shape floor
+ * on data containing zero render measurement — a floor whose TTL then
+ * backs off exponentially on every repeat. That is exactly the harm the
+ * gap reset exists to prevent, in an otherwise healthy session.
+ *
+ * Classifying better is impossible from intervals alone, so the
+ * newly-absorbed cadence is instead made UNTRUSTED for a couple of
+ * intervals: scale-downs still apply (fewer pixels help a stuttering
+ * scene too) but nothing is learned from them. The cost on a genuine
+ * slowdown is that the FIRST scale-down goes unratified — it is applied
+ * immediately either way — after which the normal probe machinery
+ * engages.
+ *
+ * The protection is bounded, deliberately: a burst of up to
+ * CADENCE_TRUST_INTERVALS + 2 dead intervals teaches nothing, and past
+ * that the "burst" is a sustained slow regime the manager must be free
+ * to learn from. The bound is counted in INTERVALS, and that is the only
+ * form the guarantee takes — what it buys in wall clock depends on how
+ * long they are (four 5s gaps is 20s, four 400ms hitches is 1.6s) and on
+ * how much of its own `probeWindowMs` plus representative span a probe
+ * can still gather afterwards. Measured with the production 0.9 step
+ * inside a 60fps session, the turnover for consecutive 400ms hitches sits
+ * at NINE: eight (3.2s) leave the floor untouched, nine (3.6s) pin a 0.81
+ * floor.
+ */
+const CADENCE_TRUST_INTERVALS = 2;
+
+/**
+ * Frames the loop must fit inside one `probeWindowMs` before a content
+ * change is allowed to VOID an in-flight probe (see
+ * notifyContentChanged). Two is the ProbeController's own settle
+ * minimum — below it a replacement probe could not be judged either, so
+ * voiding trades a contaminated verdict for no verdict at all.
+ */
+const MIN_FRAMES_TO_RERUN_PROBE = 2;
+
+/**
+ * Why a tick's FPS window is unrepresentative of steady-state render
+ * cost, or null when it is trustworthy. Both causes suppress LEARNING
+ * identically (see evaluateAndAdjust); the distinction is carried only
+ * so the scale-down log can name the real one.
+ *
+ * Exported deliberately, despite having no caller outside this file:
+ * `scaleDown` is private but still documented (`excludePrivate: false`) and
+ * names this type in its signature, and a documented member referencing a
+ * non-exported symbol trips the TypeDoc warning ratchet (86/86 with the
+ * export). Do not un-export it as cleanup.
+ */
+export type SuppressionCause = 'load' | 'cadence' | null;
+
+/**
  * Manages adaptive pixel ratio for performance optimization
  */
 export class AdaptiveDPRManager {
@@ -122,6 +185,23 @@ export class AdaptiveDPRManager {
   private lastEvaluationTime: number = 0;
   private isReducedResolution: boolean = false;
 
+  // Tells dead time apart from a slow frame rate (see
+  // adaptive-dpr/stall-detector.ts): an interval is a STALL only when it
+  // is both over `gapResetMs` and a large outlier against the recent
+  // cadence. Its cadence memory deliberately survives the gap reset it
+  // drives (that is what makes it converge) and is cleared only where
+  // the frame STREAM itself breaks — pause, display change, disable,
+  // dispose; NOT on a content change (see notifyContentChanged).
+  // Constructed in the ctor once config is merged.
+  private stallDetector: StallDetector;
+
+  // Consecutive intervals the detector has classified as the frame rate
+  // since the last gap reset / session boundary. Below
+  // CADENCE_TRUST_INTERVALS the window is untrusted for LEARNING (see
+  // that constant and `suppressed` in evaluateAndAdjust). Reset wherever
+  // stallDetector.clear() is called, plus by the gap reset itself.
+  private nonStallIntervals: number = 0;
+
   // U-shape probe lifecycle (see adaptive-dpr/probe-controller.ts), the
   // learned floor it feeds (see adaptive-dpr/bounds-ledger.ts), the
   // scale-up streak (see adaptive-dpr/hysteresis-tracker.ts), and the
@@ -142,7 +222,8 @@ export class AdaptiveDPRManager {
   // and nothing feeds the estimator or settles probes.
   private loadActivityPredicate: (() => boolean) | null = null;
 
-  // Coalescing clock for notifyContentChanged().
+  // Coalescing clock for notifyContentChanged() — only advances on the
+  // calls that are acted upon.
   private lastContentChangeAt: number | null = null;
 
   // Idle-restore state: prepareIdleFrame() snaps DPR to native for the
@@ -196,6 +277,7 @@ export class AdaptiveDPRManager {
       graceSamples: this.config.midbandGraceSamples,
     });
     this.refreshRateEstimator = new RefreshRateEstimator(this.config.refreshRateFallback);
+    this.stallDetector = new StallDetector(this.config.gapResetMs);
     // Initial enabled state from config. At runtime, this is overridden by
     // renderingControls.defaults.adaptiveDPREnabled (persisted per-scene in localStorage).
     this.isEnabled = this.config.enabled;
@@ -249,6 +331,8 @@ export class AdaptiveDPRManager {
     this.hysteresis.clear();
     this.refreshRateEstimator.clear();
     this.fpsTracker.clear();
+    this.stallDetector.clear();
+    this.nonStallIntervals = 0;
     this.restingAtNative = false;
     this.lastOperatingDPR = null;
 
@@ -300,24 +384,97 @@ export class AdaptiveDPRManager {
     // a spurious, probe-ratified scale-down — so reset the session
     // state and start sampling fresh. An in-flight probe is voided (not
     // judged): the experiment's data is contaminated, learn nothing.
+    //
+    // "Long after" is an OUTLIER test, not an absolute one (see
+    // adaptive-dpr/stall-detector.ts): the interval must clear
+    // `gapResetMs` AND be several times the recent inter-frame median.
+    // A plain absolute threshold made adaptation structurally inert
+    // exactly where shedding pixels matters most — below
+    // ~1000/gapResetMs fps (2.9fps at the 350ms default) EVERY interval
+    // exceeds it, so the tracker was cleared on every frame AND
+    // `lastEvaluationTime` was pushed to `timestamp`, leaving the
+    // `>= evaluationIntervalMs` test below comparing 0 against 500;
+    // evaluateAndAdjust never ran and a software-rasterized 0.5fps scene
+    // sat at native DPR forever. Under the outlier rule a genuine
+    // slowdown costs one or two misread intervals while the median
+    // follows the new cadence, after which the samples are kept and the
+    // normal machinery scales down (the FPS tracker's minimum retention
+    // keeps the estimate defined at those rates). Isolated stalls in a
+    // healthy session — one, or up to two in a row — stay outliers
+    // against the fast median and are still discarded. By the THIRD in a
+    // row half the cadence memory is dead time, so it is absorbed as the
+    // frame rate: the window is kept and a scale-down may apply, but the
+    // newly-absorbed cadence is untrusted for LEARNING for
+    // CADENCE_TRUST_INTERVALS intervals (see that constant), so a short
+    // stall burst costs a transient reduction and no learned floor.
+    //
+    // Residual limitation: the test only sees inter-frame intervals, so
+    // a dead period ALTERNATING one-for-one with a single fast frame
+    // (2000/100/2000/100…, measured) makes the dead intervals half the
+    // memory — the median lands between the phases and they are kept as
+    // "the frame rate", mixing real dead time into the FPS window. The
+    // manager still ADAPTS there (measured at native 2: the reported FPS
+    // is only ever 0, 10 or 0.5, all far below the down threshold, and
+    // the DPR does come down); what it cannot do is report the ~0.5fps
+    // the user actually perceives. Two or more fast frames between dead
+    // periods go the other way: the median stays fast, so the dead time
+    // is correctly discarded every cycle and the window never
+    // accumulates more than those few fast frames — so a 16.7/16.7/400ms
+    // cadence (~6.9 perceived fps, measured) evaluates on the fast pair
+    // and reads a healthy 60fps.
     const last = this.fpsTracker.lastTimestamp;
-    if (last !== null && timestamp - last > this.config.gapResetMs) {
-      this.fpsTracker.clear();
-      this.probeController.void_();
-      this.hysteresis.clear();
-      // The estimator's uniform-low plateau clock and recent window
-      // span the gap too — dead time must not count toward a
-      // "sustained" throttle/distress verdict (learned state survives).
-      this.refreshRateEstimator.noteSessionInterrupted();
-      this.lastEvaluationTime = timestamp;
+    if (last !== null) {
+      if (this.stallDetector.isStall(timestamp - last)) {
+        this.fpsTracker.clear();
+        this.probeController.void_();
+        this.hysteresis.clear();
+        // Whatever cadence the next intervals establish has not been
+        // observed yet — untrust it for learning until
+        // CADENCE_TRUST_INTERVALS of it are in.
+        this.nonStallIntervals = 0;
+        // The estimator's uniform-low plateau clock and recent window
+        // span the gap too — dead time must not count toward a
+        // "sustained" throttle/distress verdict (learned state survives).
+        this.refreshRateEstimator.noteSessionInterrupted();
+        // NB: the evaluation clock is deliberately NOT pushed forward
+        // here. Pinning it to `timestamp` (the pre-fix line) meant a
+        // stall recurring more often than `evaluationIntervalMs` re-pinned
+        // the clock before it could mature, so no evaluation with a frame
+        // rate to judge ever ran: measured over 43s, a repeating
+        // 16.7/16.7/400ms cadence (~6.9 perceived fps) and an
+        // 8×16.7+360ms one both produced ZERO. That is the same
+        // structural inertness this class was fixed for, on a different
+        // pattern. What keeps dead time from counting as progress is the
+        // return value below: the freshly cleared window holds a single
+        // sample, so the tick that finds it has no frame rate to judge,
+        // is not an evaluation, and does not consume the interval budget.
+        // Clamping the pin to one interval before `timestamp` was tried
+        // and MEASURED INERT (identical evaluations, DPR, floor and
+        // applied-ratio counts on six cadences), because the clamped pin
+        // leaves the gate satisfied on every subsequent frame anyway.
+        //
+        // The detector's cadence memory is deliberately not cleared here
+        // either — surviving its own reset is what lets it converge.
+      } else if (this.nonStallIntervals < CADENCE_TRUST_INTERVALS) {
+        // Saturating count: only the distance to the trust threshold
+        // matters, so it never grows past it.
+        this.nonStallIntervals++;
+      }
     }
 
     this.fpsTracker.push(timestamp);
 
-    // Evaluate DPR at configured interval
+    // Evaluate DPR at configured interval. A tick that found NO samples
+    // (the window was just cleared by the gap reset above) is not an
+    // evaluation and must not consume the interval budget — otherwise
+    // the frame that arrives with data 16ms later has to wait another
+    // full interval, which for a hitch recurring faster than
+    // `evaluationIntervalMs` means the only ticks that ever run are the
+    // dataless ones (measured: a 16.7/16.7/400ms cadence evaluated on
+    // the freshly-cleared window every cycle and never on the two real
+    // frames between the gaps).
     if (timestamp - this.lastEvaluationTime >= this.config.evaluationIntervalMs) {
-      this.evaluateAndAdjust(timestamp);
-      this.lastEvaluationTime = timestamp;
+      if (this.evaluateAndAdjust(timestamp)) this.lastEvaluationTime = timestamp;
     }
   }
 
@@ -330,9 +487,14 @@ export class AdaptiveDPRManager {
   }
 
   /**
-   * Evaluate current performance and adjust DPR if needed
+   * Evaluate current performance and adjust DPR if needed.
+   *
+   * @returns true when the tick had a frame rate to judge. False means
+   *   the FPS window held fewer than two samples — a just-cleared window
+   *   after a gap reset or a display change — which is NOT an evaluation
+   *   and must not consume the interval budget (see recordFrame).
    */
-  private evaluateAndAdjust(timestamp: number): void {
+  private evaluateAndAdjust(timestamp: number): boolean {
     // Rebase first if the display changed: a native-DPR change clears
     // the FPS window, so getCurrentFPS() below returns 0 and this tick
     // naturally becomes a no-op while fresh samples accumulate.
@@ -341,13 +503,28 @@ export class AdaptiveDPRManager {
     const fps = this.getCurrentFPS();
 
     // Need at least some frames to make a decision
-    if (fps === 0) return;
+    if (fps === 0) return false;
 
-    // While data is loading, FPS samples reflect decode/upload jank,
-    // not steady-state render cost. Scale-downs still apply (a janky
-    // load benefits from fewer pixels too) but NOTHING is learned from
-    // such samples: no probes armed or settled, no estimator feeding.
-    const suppressed = this.loadActivityPredicate?.() ?? false;
+    // Two situations make the window unrepresentative of steady-state
+    // render cost, and both get the same treatment: scale-downs still
+    // apply (fewer pixels benefit a janky or stuttering scene too) but
+    // NOTHING is learned from such samples — no probes armed or settled,
+    // no estimator feeding, no punished-ascent or distress bookkeeping.
+    //
+    // - Data is loading: the samples are decode/upload jank.
+    // - The cadence was only just RECLASSIFIED from dead time to frame
+    //   rate by the gap detector, so the window can be made entirely of
+    //   absorbed dead time (see CADENCE_TRUST_INTERVALS).
+    //
+    // Which of the two it was is kept (not just the boolean) so the
+    // scale-down log names the actual cause: both roads lead to an
+    // unprobed reduction, and a line that blames data loading for what
+    // was really an untrusted cadence sends a reader debugging this
+    // machinery straight to the wrong subsystem.
+    const cadenceUntrusted = this.nonStallIntervals < CADENCE_TRUST_INTERVALS;
+    const suppressedBy: SuppressionCause =
+      (this.loadActivityPredicate?.() ?? false) ? 'load' : cadenceUntrusted ? 'cadence' : null;
+    const suppressed = suppressedBy !== null;
 
     // Feed the refresh-cap estimator — but only clean, full-span
     // windows, so partial post-reset windows and load jank don't
@@ -375,7 +552,7 @@ export class AdaptiveDPRManager {
     });
     if (verdict) {
       this.applyProbeVerdict(verdict, timestamp, fps);
-      return;
+      return true;
     }
 
     // Floor decays so we re-probe after the configured TTL. Scene
@@ -414,7 +591,7 @@ export class AdaptiveDPRManager {
             '(TTL-decayed; content changes re-check)'
         );
         this.hysteresis.recordLow();
-        return;
+        return true;
       }
       // Already at/below 1.0: nothing to demote — the verdict is
       // consumed (it re-arms) and the normal scale-down walk below
@@ -426,15 +603,34 @@ export class AdaptiveDPRManager {
       // ascent" — enough of those and the ledger demotes the operating
       // ceiling to exactly 1.0 (HiDPI is a luxury this scene has proven
       // it can't sustain). The demotion clamp IS this tick's reduction.
-      // Load-suppressed samples never count: jank isn't the ascent's
-      // fault.
+      // Unrepresentative samples never count — neither load jank nor
+      // absorbed dead time is the ascent's fault.
       if (!suppressed && this.boundsLedger.recordSlowSample(timestamp)) {
         this.applyCeilingDemotion(fps);
       } else {
         // Performance is poor - scale down (and arm a probe so we can
         // verify the move actually helped — unless the sample is
-        // load-suppressed, in which case the reduction applies unprobed).
-        this.scaleDown(timestamp, fps, suppressed);
+        // unrepresentative, whether from data loading or an untrusted
+        // cadence, in which case the reduction applies unprobed).
+        //
+        // Known limitation, measured: on a HITCH-HEAVY cadence the walk
+        // can still reach minDPR with no probe ever ratifying it, because
+        // every hitch is a gap reset and a gap reset VOIDS the in-flight
+        // probe. At native 2.0 over 400 frames of 30ms with a 1.2s hitch
+        // every 40 (~17 perceived fps, 33fps between hitches — a
+        // genuinely below-threshold rate), 6 unprobed and 7 probed steps
+        // reach 0.508 and not one probe produced a verdict of any kind.
+        // Rate-limiting the reduction was tried: capping it at one
+        // UNPROBED step per untrusted episode is inert here (the loop
+        // already takes at most one — the same 6), and a latch cleared
+        // only by a settled probe cannot clear at all when hitches keep
+        // destroying probes, which froze a neighbouring 400ms-hitch
+        // cadence (~9 perceived fps) at a single step for 50s — the
+        // structural inertness this class was fixed for. The walk is
+        // bounded by minDPR and lifts again at the normal hysteresis rate
+        // (measured: 16 scale-ups in the 60s after the hitches stop,
+        // exactly as many as from a shallower start).
+        this.scaleDown(timestamp, fps, suppressedBy);
       }
       this.hysteresis.recordLow();
     } else if (fps > upThreshold) {
@@ -448,6 +644,7 @@ export class AdaptiveDPRManager {
       // (a couple of dropped frames must not restart the whole wait).
       this.hysteresis.recordMidband();
     }
+    return true;
   }
 
   /**
@@ -460,6 +657,10 @@ export class AdaptiveDPRManager {
    * settle — used (not `performance.now()`) for the floor clock so TTL
    * decay stays consistent with FPS-window timing. A 'pending' verdict
    * means the probe window is still open: decide nothing this tick.
+   *
+   * A CONTENT-CONFOUNDED probe (one kept across a content change because
+   * the loop was too slow to re-run the experiment) gets neither
+   * treatment: see applyConfoundedVerdict.
    */
   private applyProbeVerdict(
     verdict: NonNullable<ReturnType<ProbeController['evaluate']>>,
@@ -480,6 +681,11 @@ export class AdaptiveDPRManager {
     }
 
     const { probe, fpsRatio } = verdict;
+    if (probe.contentConfounded) {
+      this.applyConfoundedVerdict(verdict);
+      return;
+    }
+
     if (verdict.kind === 'accepted') {
       // The regime responds to DPR reduction — stale rejection streaks
       // no longer describe it.
@@ -520,13 +726,60 @@ export class AdaptiveDPRManager {
   }
 
   /**
+   * Settle a probe whose measurement window a scene-content change ran
+   * through (see notifyContentChanged, which keeps such a probe only
+   * when the loop is too slow to run a replacement experiment).
+   *
+   * Its baseline was measured on the OLD content and its settle sample on
+   * the NEW one, so the ratio is confounded in BOTH directions and none
+   * of the usual consequences may be applied:
+   *
+   * - A per-frame LOD swap to a FINER (heavier) level reads as
+   *   'rejected'. Reverting would push the DPR back UP — adding pixels to
+   *   a scene that just got heavier — and pin a floor for the full
+   *   `floorTtlMs`, after which `blocksScaleDownTo` makes scale-down
+   *   impossible for 30s. Re-armed on every swap, that recreates the
+   *   "sits at native DPR forever" symptom in 30-second windows.
+   * - A swap to a COARSER (faster) level reads as 'accepted', crediting
+   *   the LOD coarsening to the DPR step and wiping the rejection-backoff
+   *   streak that quiets scenes DPR reduction cannot help.
+   *
+   * So a confounded probe teaches NOTHING — exactly like an inconclusive
+   * one: KEEP the reduced DPR (fewer pixels never hurt a stuttering loop,
+   * which is the defensible half of the experiment), no revert, no floor,
+   * no backoff movement.
+   *
+   * What this deliberately does NOT do is stop the walk. Under sustained
+   * churn no clean experiment exists, so a reduction with no verdict is
+   * all the loop can do, and walking down is the right distress response;
+   * it is bounded by `minDPR` and lifts again through the normal scale-up
+   * hysteresis once content settles. A previous revision held the walk
+   * while a churn clock ran, and that mechanism was measured to invert
+   * its own goal — its window was the same 5s constant
+   * `notifyContentChanged` coalesces on, so churn arriving just slower
+   * than the window walked FURTHER down (to minDPR) than not having it,
+   * while per-frame churn pinned a 0.33fps scene at 1.62 indefinitely.
+   */
+  private applyConfoundedVerdict(verdict: Extract<ProbeVerdict, { fpsRatio: number }>): void {
+    const { probe, fpsRatio } = verdict;
+    log.info(
+      Modules.ADAPTIVE_DPR,
+      `Probe at DPR ${probe.probedDPR.toFixed(2)} settled across a content change ` +
+        `(×${fpsRatio.toFixed(2)} vs the OLD content — confounded): keeping the reduction, ` +
+        'learning nothing (no revert, no floor, no backoff movement)'
+    );
+  }
+
+  /**
    * Scale DPR down for better performance, arming a probe so we
    * verify the move actually helped (see U-shape comment at the top
-   * of this file). Load-suppressed scale-downs apply WITHOUT a probe:
-   * the reduction still helps a janky load, but jank-polluted FPS
-   * samples must never become floor evidence.
+   * of this file). A scale-down taken on an UNREPRESENTATIVE window
+   * applies WITHOUT a probe — the reduction still helps a janky load or
+   * a stuttering loop, but such FPS samples must never become floor
+   * evidence. `suppressedBy` names which cause it was (see
+   * SuppressionCause) purely so the log line is honest about it.
    */
-  private scaleDown(timestamp: number, fps: number, suppressed: boolean): void {
+  private scaleDown(timestamp: number, fps: number, suppressedBy: SuppressionCause): void {
     const proposed = this.currentDPR * this.config.scaleDownFactor;
     // Block scaleDown from moving TO OR BELOW the U-shape floor. The
     // ledger's to-or-below early-return (rather than clamping to the
@@ -548,12 +801,18 @@ export class AdaptiveDPRManager {
       LogEmoji.PERFORMANCE,
       Modules.ADAPTIVE_DPR,
       `Scaled down: DPR ${previousDPR.toFixed(2)} → ${newDPR.toFixed(2)} ` +
-        `(FPS: ${fps.toFixed(1)}, ${suppressed ? 'load-suppressed, unprobed' : 'probing for U-shape'})`
+        `(FPS: ${fps.toFixed(1)}, ${
+          suppressedBy === 'load'
+            ? 'load-suppressed, unprobed'
+            : suppressedBy === 'cadence'
+              ? 'untrusted cadence, unprobed'
+              : 'probing for U-shape'
+        })`
     );
 
     // Arm the probe so the next evaluateAndAdjust pass after
     // config.probeWindowMs judges whether this move helped.
-    if (!suppressed) {
+    if (suppressedBy === null) {
       this.probeController.arm({
         previousDPR,
         previousFPS: fps,
@@ -670,6 +929,8 @@ export class AdaptiveDPRManager {
       this.boundsLedger.reset();
       this.refreshRateEstimator.clear();
       this.fpsTracker.clear();
+      this.stallDetector.clear();
+      this.nonStallIntervals = 0;
       this.restingAtNative = false;
       this.lastOperatingDPR = null;
 
@@ -825,6 +1086,8 @@ export class AdaptiveDPRManager {
    */
   notifyPaused(): void {
     this.fpsTracker.clear();
+    this.stallDetector.clear();
+    this.nonStallIntervals = 0;
     this.hysteresis.clear();
     this.probeController.void_();
     // The estimator's SESSION transients (recent window, uniform-low
@@ -916,11 +1179,22 @@ export class AdaptiveDPRManager {
    * `contentChangeRecheckMs` so event bursts (per-frame LOD swaps
    * during a zoom) don't spam the ledger.
    *
+   * Unlike a pause or a display change this is NOT a frame-stream
+   * boundary — see the cadence-memory note in the body.
+   *
    * @param timestamp - Caller-supplied clock for tests; defaults to
    *   `performance.now()`, the same clock the frame loop feeds.
    */
   notifyContentChanged(timestamp: number = performance.now()): void {
     if (!this.isEnabled) return;
+    // Every notification contaminates an in-flight probe's before/after
+    // comparison, whether or not THIS call is the one acted upon — the
+    // LOD level swapped either way. So a pending probe is marked ahead of
+    // the coalescing early-return, otherwise a probe that happened to be
+    // armed and settled BETWEEN two acted-upon calls would be mistaken
+    // for a clean experiment and could revert the DPR upward and pin a
+    // 30s floor on it.
+    this.probeController.markContentConfounded();
     if (
       this.lastContentChangeAt !== null &&
       timestamp - this.lastContentChangeAt < this.config.contentChangeRecheckMs
@@ -933,15 +1207,56 @@ export class AdaptiveDPRManager {
     // to the current content: proof of a high rate earned on the OLD
     // content must not license mis-capping the NEW one as "throttled".
     this.refreshRateEstimator.noteContentChanged();
-    // A content change is a regime change for the FPS sample stream:
-    // the window still holds old-content frames (a mixed window would
-    // instantly re-prove the rate and defeat the scoping above), an
-    // in-flight probe's baseline now describes different content (the
-    // classic confounded before/after), and the scale-up streak was
-    // earned on the old workload. Clear SESSION state, exactly like
-    // notifyPaused — learned bounds were already softened above.
+    // Voiding an in-flight probe is normally right — its baseline was
+    // measured on the OLD content, the classic confounded before/after —
+    // but only when the loop can actually RUN the replacement
+    // experiment. A probe needs frames inside `probeWindowMs` to settle,
+    // and content changes recur at most once per
+    // `contentChangeRecheckMs`; below roughly two frames per probe
+    // window, every armed probe is voided before it can ever be judged.
+    // Measured at 0.5fps (native 2) with a content change every frame:
+    // every probe was voided and no verdict of any kind was ever
+    // produced. A verdict contaminated by a content change beats never
+    // having one, so a slow loop keeps its probe — but only as a
+    // CONFOUNDED one: its before/after comparison spans two different
+    // scenes, so the settle keeps the reduction and learns nothing, never
+    // acting on the verdict's direction (see applyConfoundedVerdict).
+    // That is what the gate buys, and it is not a stop to the walk — the
+    // pixel ratio still descends unratified while content churns. It
+    // buys the absence of THRASH: measured over 20 minutes of per-frame
+    // churn at 0.33fps (native 2), acting on those verdicts produced 100
+    // reductions and 98 reverts back UP (202 renderer pixel-ratio
+    // applications, each a render-target reallocation), while discarding
+    // them produced 13 monotone reductions and no revert at all. An
+    // unknown rate (fewer than two samples, `getFPS()` = 0) keeps the
+    // void: nothing says the loop is slow, and that is the historical
+    // behaviour.
+    const fps = this.fpsTracker.getFPS();
+    const framesPerProbeWindow = (fps * this.config.probeWindowMs) / 1000;
+    if (fps <= 0 || framesPerProbeWindow >= MIN_FRAMES_TO_RERUN_PROBE) {
+      this.probeController.void_();
+    }
+    // The FPS window still holds old-content frames (a mixed window
+    // would instantly re-prove the rate and defeat the scoping above)
+    // and the scale-up streak was earned on the old workload, so both go
+    // — exactly like notifyPaused; learned bounds were already softened.
+    //
+    // The stall detector's CADENCE MEMORY deliberately stays, unlike at
+    // pause / display change / disable. Those interrupt the frame STREAM
+    // and are followed by resume dead time; a content change does not —
+    // frames keep arriving at whatever rate they were arriving at. And
+    // wiping the cadence there is actively harmful: the detector's
+    // cold-memory fallback is the absolute `gapResetMs` floor alone, so
+    // for any loop slower than 1000/gapResetMs fps (2.9fps at the 350ms
+    // default) the very NEXT interval — a perfectly ordinary frame at
+    // the scene's own rate — is misread as dead time. That fires a gap
+    // reset which clears the FPS window a second time and voids the
+    // in-flight probe the gate above just protected, which is why the
+    // gate is inert without this. A stale cadence is self-correcting
+    // (the median follows the new content within two or three
+    // intervals — the same convergence any genuine slowdown relies on),
+    // so the trust counter is not reset here either.
     this.fpsTracker.clear();
-    this.probeController.void_();
     this.hysteresis.clear();
     log.info(
       Modules.ADAPTIVE_DPR,
@@ -962,6 +1277,8 @@ export class AdaptiveDPRManager {
    */
   dispose(): void {
     this.fpsTracker.clear();
+    this.stallDetector.clear();
+    this.nonStallIntervals = 0;
     this.onDPRChange = null;
     this.renderer = null;
     log.info(Modules.ADAPTIVE_DPR, 'Disposed');

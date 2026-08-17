@@ -23,6 +23,16 @@ export interface PendingProbe {
   probedDPR: number;
   /** Timestamp the probe was armed. */
   startTime: number;
+  /**
+   * True once a scene-content change has run through this probe's
+   * measurement window (set by markContentConfounded). The baseline was
+   * measured on the OLD content and the settle sample on the NEW one, so
+   * the before/after comparison is CONFOUNDED: it says nothing about
+   * what the DPR change did. The caller must not act on the direction of
+   * such a verdict — see AdaptiveDPRManager.applyConfoundedVerdict, which
+   * keeps the reduction and learns nothing.
+   */
+  contentConfounded?: boolean;
 }
 
 export type ProbeVerdict =
@@ -63,13 +73,23 @@ export interface ProbeControllerConfig {
 
 /**
  * A window whose span reaches this multiple of `minSpanMs` counts as
- * representative even below `minSamples`: gap detection guarantees a
- * long-span window has no internal stall, so few frames over a long
- * span means the scene is genuinely SLOW, not contaminated. Without
- * this, scenes below `minSamples` fps (default 8) could never produce
- * a "clean" sample — every probe would void inconclusive, no U-shape
- * floor would ever be learned, and DPR would walk unprotected to
- * minDPR even when the reduction never helped.
+ * representative even below `minSamples`: few frames over a long span
+ * usually means the scene is genuinely SLOW rather than contaminated.
+ * Without this, scenes below `minSamples` fps (default 8) could never
+ * produce a "clean" sample — every probe would void inconclusive, no
+ * U-shape floor would ever be learned, and DPR would walk unprotected
+ * to minDPR even when the reduction never helped.
+ *
+ * What the manager's gap detection actually guarantees is narrower than
+ * "no internal stall": it discards intervals that are OUTLIERS against
+ * the recent frame cadence (see adaptive-dpr/stall-detector.ts), so a
+ * long-span window contains no dead time that stood out from its
+ * surroundings — but an interval matching a genuinely slow cadence is
+ * kept by design, and a converged burst pattern (dead time between fast
+ * runs) can leave real dead time inside the span. The mitigation is the
+ * asymmetry enforced below: a low-sample POSITIVE never settles as an
+ * acceptance, so a contaminated long-span window can cost a revert but
+ * can never wipe the rejection-backoff streak.
  */
 const REPRESENTATIVE_SPAN_FACTOR = 1.3;
 
@@ -95,6 +115,18 @@ export class ProbeController {
    */
   void_(): void {
     this.pending = null;
+  }
+
+  /**
+   * Mark the in-flight probe as spanning a scene-content change (no-op
+   * when none is pending). Used when the caller decides to KEEP the
+   * probe across the change — a loop too slow to run a replacement
+   * experiment prefers a contaminated verdict to no verdict at all — so
+   * that the settle can be applied with the reduced confidence it
+   * deserves.
+   */
+  markContentConfounded(): void {
+    if (this.pending) this.pending.contentConfounded = true;
   }
 
   /**

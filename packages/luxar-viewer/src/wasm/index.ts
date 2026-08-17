@@ -105,9 +105,11 @@ export type WasmShimModule = { default: () => Promise<unknown> } & Record<string
  * shim, trying the candidates in order.
  *
  * Split out of {@link initWasm} and given an injectable importer because
- * `initWasm` cannot reach this loop under vitest: `import.meta.env.DEV` is true
- * there, so every in-suite `initWasm()` takes the single-candidate dev-server
- * branch and a regression back to "use candidate 0 only" would pass every gate.
+ * `initWasm` cannot exercise a SUCCESSFUL walk under vitest: it reaches the shim
+ * through a `new Function('url', 'return import(url)')` indirection that vitest's
+ * VM module runner does not service, so every candidate it tries rejects and a
+ * regression back to "use candidate 0 only" would still end in the TypeScript
+ * fallback and pass every gate.
  *
  * Two rules, both load-bearing:
  * - A candidate must expose a callable `default` to count as a hit. A host that
@@ -258,17 +260,30 @@ export function setWasmJsUrl(url: string | undefined): void {
  *
  * ## Load Order
  *
- * 1. Try to load the compiled WASM shim, in candidate order: an explicit
- *    {@link setWasmJsUrl} override, else `/wasm/luxar_wasm.js` on a dev
- *    server, else each bundle-relative candidate from
- *    {@link wasmShimCandidateUrls} until one imports as a shim
- *    ({@link importFirstWasmShim})
- * 2. If all fail (not built, wrong layout, browser incompatibility), use the
- *    TypeScript fallback
+ * 1. Resolve the JS shim URL candidates, first match wins: an explicit
+ *    {@link setWasmJsUrl} override; else, in a dev build with a `location`
+ *    global, the single candidate `/wasm/luxar_wasm.js` on the dev-server
+ *    origin; else the bundle-relative candidates from
+ *    {@link wasmShimCandidateUrls}, which cover both depths a chunk carrying
+ *    this module can sit at.
+ * 2. Import the candidates in order until one loads as a shim
+ *    ({@link importFirstWasmShim}), then load its `luxar_wasm_bg.wasm` binary.
+ * 3. If all of that fails (not built, stale build, wrong layout, browser
+ *    incompatibility, or a URL that could not be resolved at all), use the
+ *    TypeScript fallback.
  *
  * @returns Promise resolving to WasmModule interface
  */
 export async function initWasm(): Promise<WasmModule> {
+  // Declared outside the try so the catch can report the candidate list this
+  // load RESOLVED. It is deliberately NOT phrased as "the candidates it tried":
+  // the same catch also covers a post-import failure — `default()` throwing, or
+  // `assertRequiredWasmExports` rejecting a stale artifact — and in those cases
+  // one of the listed candidates DID load. What the list is always good for is
+  // telling an absent artifact apart from a loader that never computed a URL at
+  // all, which is exactly how #1642 (a bare `self` dereference in a DOM-less
+  // host) stayed invisible.
+  let wasmJsUrls: string[] | undefined;
   try {
     // Compute the WASM shim URL(s). The correct base differs by build:
     //
@@ -281,26 +296,33 @@ export async function initWasm(): Promise<WasmModule> {
     //     Resolving through a variable also prevents Vite from trying to
     //     resolve the path as a source asset at build time.
     //
-    //   • Vite dev server: this module is served from /src/wasm/index.ts, so
-    //     any bundle-relative path would resolve under /src/wasm/ — but
-    //     `make build-wasm` writes the compiled module to public/wasm/, which
-    //     the dev server serves at /wasm/. Resolve against the origin in that
-    //     case (a SINGLE candidate: dev serves public/ at the root, so the
-    //     bundle-relative ones would only add guaranteed 404s) so dev picks up
-    //     the built WASM instead of silently falling back to the (slower)
-    //     TypeScript implementation.
+    //   • Vite dev server, WHEN a `location` global exists: this module is
+    //     served from /src/wasm/index.ts, so any bundle-relative path would
+    //     resolve under /src/wasm/ — but `make build-wasm` writes the compiled
+    //     module to public/wasm/, which the dev server serves at /wasm/.
+    //     Resolve against the origin in that case (a SINGLE candidate: dev
+    //     serves public/ at the root, so the bundle-relative ones would only
+    //     add guaranteed 404s) so dev picks up the built WASM instead of
+    //     silently falling back to the (slower) TypeScript implementation.
+    //     `location` (bare, not `self.location`) is present in both window and
+    //     dedicated-worker scopes, and the read is reached only in a dev build
+    //     AND only through `typeof`, so a production bundle in a non-browser
+    //     host never touches `location` at all. A dev build in a host that
+    //     merely LACKS the global falls through to the bundle-relative
+    //     candidates below — in Node/SSR there is no dev-server origin to
+    //     resolve against, so that is the only resolution that could mean
+    //     anything there (#1642).
     //
     // Embedders whose bundlers don't support `import.meta.url` resolution
     // can override the URL via {@link setWasmJsUrl} (forwarded by
     // LuxarAppOptions.wasmPath); the override takes precedence over both.
     const isDev = Boolean((import.meta as { env?: { DEV?: boolean } }).env?.DEV);
-    let wasmJsUrls: string[];
     if (wasmJsUrlOverride) {
       wasmJsUrls = [wasmJsUrlOverride];
-    } else if (isDev) {
+    } else if (isDev && typeof location !== 'undefined' && location?.origin) {
       // public/ is served at the server root in dev regardless of the
       // production-only relative `base`.
-      wasmJsUrls = [new URL('/wasm/luxar_wasm.js', self.location.origin).href];
+      wasmJsUrls = [new URL('/wasm/luxar_wasm.js', location.origin).href];
     } else {
       wasmJsUrls = wasmShimCandidateUrls(import.meta.url);
     }
@@ -312,7 +334,8 @@ export async function initWasm(): Promise<WasmModule> {
     ) => Promise<unknown>;
     // Candidate walking, the shim shape check and error attribution all live in
     // importFirstWasmShim so they can be unit-tested with a stub importer —
-    // this branch is unreachable under vitest (import.meta.env.DEV is true).
+    // under vitest every import attempted from here rejects, whatever it
+    // resolved, so a hit can never be observed on this path.
     const wasmModule = await importFirstWasmShim(wasmJsUrls, importWasm);
 
     // Initialize WASM (loads the .wasm binary), then reject mixed/stale dev
@@ -330,8 +353,26 @@ export async function initWasm(): Promise<WasmModule> {
     // Return the WASM module (it already implements WasmModule interface)
     return wasmModule as unknown as WasmModule;
   } catch (error) {
-    // WASM not available - use TypeScript fallback
-    log.warning(Modules.WASM, 'Failed to load WASM module, using TypeScript fallback', error);
+    // WASM not available - use TypeScript fallback.
+    //
+    // The message states what the list IS (the resolved candidates, in order)
+    // rather than claiming each was fetched and failed: only the exhausted-walk
+    // case is a per-URL failure, while `default()` throwing and a stale-artifact
+    // rejection both happen AFTER one candidate loaded fine.
+    //
+    // `%` is doubled because this string is console.warn's FIRST argument, i.e. a
+    // format string: `new URL()` preserves percent-escapes present in the base,
+    // so a path containing `%d`/`%s` would consume `error` as its substitution
+    // and drop it from the log entirely. Console collapses `%%` back to a single
+    // `%` whenever any extra argument is present, and `error` always is.
+    const candidates = wasmJsUrls
+      ? `candidates, in order: ${wasmJsUrls.join(', ').replace(/%/g, '%%')}`
+      : '<URL resolution failed before the import>';
+    log.warning(
+      Modules.WASM,
+      `Failed to load WASM module (${candidates}), using TypeScript fallback`,
+      error
+    );
     log.info(Modules.WASM, 'To build WASM module: pnpm build:wasm (or make build-wasm)');
     log.info(
       Modules.WASM,

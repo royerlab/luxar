@@ -120,6 +120,14 @@ def run_single_fit(
     t0 = time.perf_counter()
     gsplat_data = fit_progressive_gaussian_splats(
         V,
+        # PSNR is scored against the raw V, so the fit must stay on V's own
+        # hard-min basis — which is the raw basis here, since every loader above
+        # normalizes to min 0. The shipped floor="auto" would instead subtract a
+        # background pedestal the reference still carries (5.47% of range on
+        # kidney_dapi, 2.07% on opencell_ch0, 1.64% on kidney_actin — the three
+        # datasets the reported median is taken over), moving the Pareto verdict
+        # whenever the estimator changes.
+        floor="none",
         max_splats=max_splats,
         max_splats_per_pass=max_splats_per_pass,
         iters_per_pass=iters_per_pass,
@@ -169,6 +177,9 @@ def run_benchmark(
 
         _ = fit_progressive_gaussian_splats(
             V_warmup,
+            # Output is discarded, but the warm-up must exercise the same code
+            # path as the measured fits above — same basis, same pin.
+            floor="none",
             max_splats=1000,
             max_splats_per_pass=500,
             iters_per_pass=50,

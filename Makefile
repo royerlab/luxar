@@ -100,6 +100,12 @@ MIN_NODE_MINOR := 22
 # ("packages field missing or empty").
 MIN_PNPM_MAJOR := 10
 MIN_PNPM_MINOR := 6
+# Exact wasm-pack pin — `install-rust` installs this version and replaces any
+# other one it finds, so a local toolchain matches CI. Keep in sync with the
+# `jetli/wasm-pack-action` `version:` inputs in .github/workflows/ci.yml,
+# publish.yml and publish-npm.yml (those take a leading 'v'), and with the
+# version table in docs/guides/developer/BUILD_SYSTEM_SPEC.md.
+WASM_PACK_VERSION := 0.15.0
 
 # ============================================================================
 # Dependency Checking and Installation Helpers
@@ -1735,8 +1741,18 @@ build-viewer-lib:  ## Build + verify the viewer's npm library bundle
 	cd packages/luxar-viewer && pnpm run ci:release
 	@echo "✅ Viewer library bundle built and export surface verified"
 
-rebuild-viewer:  ## Complete clean rebuild of viewer (auto-installs dependencies as needed)
-	@echo "🧹 Cleaning viewer build artifacts..."
+rebuild-viewer:  ## Clean rebuild of the viewer BUNDLE (WASM only if stale; auto-installs deps)
+	@# Scope note: this clears the JS/TS side only — dist/, the vite dep-optimizer
+	@# cache, tsbuildinfo, stale vite config timestamps. It deliberately does NOT
+	@# clear packages/luxar-viewer/public/wasm/ or the cargo target dir, so
+	@# `pnpm build:wasm` is a cache hit (it reports "Finished release profile in
+	@# 0.1s") whenever the Rust sources are unchanged. That is the point: the
+	@# stale-artifact bugs this target exists to clear are vite/TS ones, and the
+	@# release profile (lto=true, codegen-units=1) costs ~2 min to rebuild from
+	@# scratch. For a genuinely everything-from-source rebuild, chain the existing
+	@# WASM cleaner first:
+	@#     make clean-wasm rebuild-viewer
+	@echo "🧹 Cleaning viewer build artifacts (JS/TS; WASM kept unless stale)..."
 	@rm -rf packages/luxar-viewer/dist/
 	@rm -rf packages/luxar-viewer/.vite/
 	@rm -f packages/luxar-viewer/*.tsbuildinfo
@@ -1808,12 +1824,35 @@ install-rust:  ## Install Rust and wasm-pack for WASM development
 	fi; \
 	echo ""; \
 	echo "🔧 Checking wasm-pack installation..."; \
-	if command -v wasm-pack >/dev/null 2>&1; then \
-		echo "✅ wasm-pack is already installed: $$(wasm-pack --version)"; \
+	WASM_PACK_PIN="$(WASM_PACK_VERSION)"; \
+	# `|| true` is load-bearing under .SHELLFLAGS' `-e`: with no wasm-pack on \
+	# PATH the substitution exits 127, which would abort the recipe before the \
+	# install it is probing for. \
+	FOUND_WASM_PACK="$$(wasm-pack --version 2>/dev/null | awk '{print $$2}' || true)"; \
+	if [ "$$FOUND_WASM_PACK" = "$$WASM_PACK_PIN" ]; then \
+		echo "✅ wasm-pack is already at the pinned version: $$WASM_PACK_PIN"; \
 	else \
-		echo "📥 Installing wasm-pack 0.14.0 (this may take a minute)..."; \
-		cargo install wasm-pack --version 0.14.0 --locked; \
-		echo "✅ wasm-pack installed successfully!"; \
+		if [ -n "$$FOUND_WASM_PACK" ]; then \
+			echo "🔄 wasm-pack $$FOUND_WASM_PACK found, but the pin is $$WASM_PACK_PIN — reinstalling..."; \
+		else \
+			echo "📥 Installing wasm-pack $$WASM_PACK_PIN (this may take a minute)..."; \
+		fi; \
+		cargo install wasm-pack --version "$$WASM_PACK_PIN" --locked --force; \
+		# Then MEASURE, don't assume. `cargo install --force` replaces only the \
+		# copy in cargo's own install root: one earlier in PATH (Homebrew, a \
+		# distro package) survives and keeps winning, and the root itself moves \
+		# with CARGO_INSTALL_ROOT/CARGO_HOME. A pin nobody can observe is not a \
+		# pin, so re-probe PATH and fail if it does not answer with the pin. \
+		WASM_PACK_ON_PATH="$$(command -v wasm-pack || true)"; \
+		INSTALLED_WASM_PACK="$$(wasm-pack --version 2>/dev/null | awk '{print $$2}' || true)"; \
+		if [ "$$INSTALLED_WASM_PACK" = "$$WASM_PACK_PIN" ]; then \
+			echo "✅ wasm-pack $$WASM_PACK_PIN installed: $$WASM_PACK_ON_PATH"; \
+		else \
+			echo "❌ Installed wasm-pack $$WASM_PACK_PIN, but PATH answers with $${INSTALLED_WASM_PACK:-no wasm-pack at all} ($${WASM_PACK_ON_PATH:-not on PATH})."; \
+			echo "   cargo installs into $${CARGO_INSTALL_ROOT:-$${CARGO_HOME:-$$HOME/.cargo}}/bin unless it is configured otherwise;"; \
+			echo "   put that directory on PATH ahead of any other wasm-pack (or remove the other copy)."; \
+			exit 1; \
+		fi; \
 	fi; \
 	echo ""; \
 	echo "✅ Rust/WASM development environment ready!"; \

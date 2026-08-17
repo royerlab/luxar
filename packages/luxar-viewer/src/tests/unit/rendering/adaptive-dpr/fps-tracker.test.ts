@@ -51,6 +51,50 @@ describe('FPSTracker', () => {
     expect(tracker.sampleCount()).toBeLessThanOrEqual(121);
   });
 
+  it('stays defined below one frame per window (min retention)', () => {
+    const tracker = new FPSTracker(1000);
+    // 0.5fps: the previous frame is 2000ms old — twice the window — so
+    // pure age trimming would leave a single sample and report 0 ("not
+    // enough data") exactly where shedding pixels matters most.
+    pushAt(tracker, 0, 4, 2000);
+    expect(tracker.sampleCount()).toBe(2);
+    expect(tracker.span()).toBe(2000);
+    expect(tracker.getFPS()).toBeCloseTo(0.5, 3);
+  });
+
+  it('does NOT widen the window at healthy frame rates (min-retention control)', () => {
+    // Negative control for the retention floor: at 60fps far more than
+    // the two retained samples fit inside the window, so the floor never
+    // binds and the trimming behaviour is unchanged.
+    const tracker = new FPSTracker(1000);
+    pushAt(tracker, 0, 300, 1000 / 60); // 5s of 60fps
+    expect(tracker.sampleCount()).toBeLessThanOrEqual(61);
+    expect(tracker.span()).toBeLessThanOrEqual(1000);
+    expect(tracker.getFPS()).toBeCloseTo(60, 1);
+  });
+
+  it('honours an explicit minRetainedSamples above the default', () => {
+    const tracker = new FPSTracker(1000, 4);
+    pushAt(tracker, 0, 6, 2000); // every sample is older than the window
+    expect(tracker.sampleCount()).toBe(4);
+    expect(tracker.span()).toBe(6000);
+    expect(tracker.getFPS()).toBeCloseTo(0.5, 3);
+  });
+
+  it('clamps minRetainedSamples below 2 (the floor is an invariant, not a preference)', () => {
+    // A caller passing 0/1 would silently restore the undefined-estimate
+    // failure the retention floor exists to prevent, so the ctor refuses.
+    // ±Infinity is the other half of the hazard: it clamps "upward" and
+    // would mean NEVER trim, i.e. a window that no longer slides — the
+    // estimate would report the whole session's average forever.
+    for (const bad of [0, 1, -5, 1.9, Number.NaN, Infinity, -Infinity]) {
+      const tracker = new FPSTracker(1000, bad);
+      pushAt(tracker, 0, 4, 2000); // every sample older than the window
+      expect(tracker.sampleCount(), `minRetainedSamples=${bad}`).toBe(2);
+      expect(tracker.getFPS(), `minRetainedSamples=${bad}`).toBeCloseTo(0.5, 3);
+    }
+  });
+
   it('exposes the newest timestamp and clears fully', () => {
     const tracker = new FPSTracker(1000);
     expect(tracker.lastTimestamp).toBeNull();

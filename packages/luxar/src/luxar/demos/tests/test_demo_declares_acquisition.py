@@ -57,9 +57,6 @@ _IS_ITS_OWN_SOURCE = {
 #: BEFORE that dataset is uploaded, or it goes to Zenodo with an inflated ratio.
 _NOT_YET_DECLARING = {
     "demo_gsplats_3d_acto3d_heart.py",
-    # Not among the 14 shipped datasets, but it fits, so it is in scope. Found
-    # by this gate on its first run, having been missed by a hand-built list.
-    "demo_gsplats_3d_flylight_mcfo_neurons.py",
     "demo_gsplats_3d_tng_cosmic_web.py",
     "demo_gsplats_3d_tribolium_embryo.py",
     "demo_gsplats_2d_codex_pancreas.py",

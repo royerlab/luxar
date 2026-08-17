@@ -101,6 +101,34 @@ coordinate frames).
 | `ultra` | 20,000 | 500 | 20 | 0.999 |
 | `n2s` | 20,000 | 500 | 10 | 0.999 (manuscript blind-spot protocol) |
 
+**With NO `--preset`, `fit` runs 1000 iterations — below `draft`.** `--preset` has no
+default, and `load_fit_config` layers one only `if preset is not None`, so a bare
+`luxar gsplat fit` falls through to the *function* defaults: `n_iters=1000`,
+`early_stop_patience=300`, `patience=15`, `max_eccentricity=10.0`,
+`cull_retention=0.95`, `enable_dynamic_ops=True`. Verified by resolving the config:
+
+    load_fit_config(None, None, {})["n_iters"] == 1000     # bare CLI fit
+    load_fit_config("draft", None, {})["n_iters"] == 2000
+
+The Python API (`fit_gaussian_splats`, which has no `preset=` argument) shares those
+same defaults. Either way, a fifth of `standard` on thin filaments leaves splats at
+their isotropic σ=1-voxel seed shape and renders axons as bead chains. Treat a bare
+`fit` as a preview; pass `--preset`/`--iters` for anything real. See "BOTH entry
+points default to 1000 iters" in `SKILL.md`.
+
+### Shape-related knobs not exposed as `fit` flags (Python / `--config` YAML only)
+| Knob | Default | Meaning |
+| --- | --- | --- |
+| `patience` | 15 | plateau LR-decay patience; at 15 the shape LR decays away long before shapes settle |
+| `enable_dynamic_ops` | True | periodic splat relocation — **resets relocated splats to isotropic σ=0.5 with off-diagonals zeroed**, undoing elongation a long fit earned |
+| `l1_diag` | auto (0.01·lr) | L1 on the Cholesky diagonal; its own comment says it "encourages smaller, more isotropic splats" |
+| `sigma_min_diag` | sqrt(1/12) ≈ 0.289 | per-axis floor on the Cholesky diagonal |
+
+`max_eccentricity` caps the axis ratio at `sqrt(max_eccentricity)` (so 10.0 → 3.16),
+enforced as a hard clamp on the Cholesky diagonal AND off-diagonals. It is inert on a
+short fit that never elongates that far, and only starts binding once the fit is
+converged — measured at 14.9% of splats pinned to the ceiling, costing 2.65 dB.
+
 ---
 
 ## `luxar gsplat cal INPUT OUTPUT_JSON`
