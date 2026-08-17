@@ -13,6 +13,7 @@ import os
 import shlex
 import sys
 import time
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Optional
 
@@ -23,6 +24,15 @@ from ..demos import registry
 from ..demos.registry import DemoInfo
 from ..utils import demo_runs
 from ..utils.process import can_kill_process_groups, run_child_process
+from .demo_render import (
+    STATUS_BUILT,
+    STATUS_CACHED,
+    demo_console,
+    render_caches,
+    render_catalogue,
+    render_dependencies,
+    render_detail,
+)
 from .utils import format_memory_size
 
 app_demo = typer.Typer(
@@ -37,21 +47,6 @@ app_demo.add_typer(cache_app, name="cache")
 
 
 # ────────────────────────────── rendering ────────────────────────────────────
-def _needs_glyphs(info: DemoInfo) -> str:
-    """Compact 'what does this demo need' summary for the table/info views."""
-    parts: list[str] = []
-    if info.download_mb:
-        parts.append(f"⬇{info.download_mb}MB")
-    if info.gpu == "required":
-        parts.append("GPU")
-    elif info.gpu == "optional":
-        parts.append("GPU*")
-    local = {"git-lfs": "LFS", "kaggle-auth": "🔑kaggle", "manual-file": "📁manual"}
-    if info.local_data in local:
-        parts.append(local[info.local_data])
-    return " ".join(parts)
-
-
 def _safe_output_paths(info: DemoInfo) -> list[Path]:
     """Resolve a demo's output paths, or ``[]`` when the root can't be found.
 
@@ -103,9 +98,9 @@ def _empty_dirs(cache_dir: Path, deleted: Optional[set[Path]] = None) -> list[Pa
 def _status(info: DemoInfo) -> str:
     """Whether this demo already has cached inputs or a generated output."""
     if any(p.exists() for p in _safe_output_paths(info)):
-        return "output ✓"
+        return STATUS_BUILT
     if any(d.exists() for d in registry.demo_cache_dirs(info)):
-        return "cached"
+        return STATUS_CACHED
     return ""
 
 
@@ -122,27 +117,29 @@ def _demos_or_exit() -> list[DemoInfo]:
         raise typer.Exit(1) from e
 
 
+def _starter_key(demos: Sequence[DemoInfo]) -> Optional[str]:
+    """The cheapest demo to suggest by name in the footer's ``run`` hint.
+
+    "Cheapest" = nothing to download, no GPU, no data to place by hand — the one
+    class of demo that is guaranteed to work on a fresh checkout with no
+    network.
+
+    Sorted here rather than trusting the caller's order, so "the suggestion does
+    not move around" is a property of this function instead of an accident of
+    every call site passing key-sorted registry output: shuffling the input
+    otherwise yields a dozen different suggestions, while the catalogue beside
+    it stays byte-identical because `render_catalogue` sorts internally.
+    """
+    for demo in sorted(demos, key=lambda d: d.key):
+        if not demo.download_mb and demo.gpu == "none" and not demo.local_data:
+            return demo.key
+    return None
+
+
 def _print_table(demos: list[DemoInfo]) -> None:
-    # Size the KEY column to the longest key so it is never truncated — the
-    # key is what the user types into `demo run`, so it must be copy-pasteable.
-    kw = max((len(d.key) for d in demos), default=3)
-    kw = max(kw, len("KEY"))
-    header = (
-        f"{'#':>3}  {'KEY':<{kw}} {'GEOM':<12} {'CATEGORY':<14} {'NEEDS':<20} STATUS"
-    )
-    aprint(f"🎬 [Luxar] {len(demos)} demos\n")
-    aprint(header)
-    aprint("─" * len(header))
-    for d in demos:
-        aprint(
-            f"{d.index:>3}  {d.key:<{kw}} {d.geometry:<12} {d.category:<14} "
-            f"{_needs_glyphs(d):<20} {_status(d)}"
-        )
-    aprint("")
-    aprint("Run one:  luxar demo run <key|#>       Details:  luxar demo info <key|#>")
-    aprint("Caches:   luxar demo cache list        Clear:    luxar demo cache clear …")
-    aprint("Deps:     luxar demo deps              Install:  luxar demo deps --install")
-    aprint("Stop:     luxar demo stop              (kills running demos, frees ports)")
+    """Print the demo catalogue, grouped into category sections."""
+    statuses = {d.key: _status(d) for d in demos}
+    render_catalogue(demo_console(), demos, statuses, example_key=_starter_key(demos))
 
 
 def _resolve_or_exit(key_or_index: str) -> DemoInfo:
@@ -214,33 +211,7 @@ def demo_info(
 ) -> None:
     """Show full details for one demo."""
     info = _resolve_or_exit(key)
-    req = info.requirements
-    aprint(f"🎬 {info.title}  [{info.key}]  #{info.index}")
-    aprint(f"   {info.description}")
-    aprint("")
-    aprint(f"   Category:   {info.category}")
-    aprint(f"   Geometry:   {info.geometry}")
-    aprint(f"   Compute:    {req['compute']}")
-    aprint(
-        f"   Download:   {req['download_mb']} MB"
-        if req["download_mb"]
-        else "   Download:   none (offline)"
-    )
-    aprint(f"   GPU:        {req['gpu']}")
-    if req["local_data"]:
-        aprint(f"   Local data: {req['local_data']}")
-    if info.caches:
-        aprint(f"   Caches:     {', '.join(info.caches)}")
-    if info.outputs:
-        outs = ", ".join(f"{o}.luxar.zarr" for o in info.outputs)
-        aprint(f"   Outputs:    {outs}")
-    aprint("")
-    aprint(f"   Run:        luxar demo run {info.key}")
-    aprint(f"   Module:     python -m {info.module}")
-    aprint(
-        "   Network sim: run the generated scene through "
-        "`luxar serve <scene> --viewer --profile 3g`"
-    )
+    render_detail(demo_console(), info, _status(info))
 
 
 # ──────────────────────────────── run ────────────────────────────────────────
@@ -591,26 +562,8 @@ def demo_deps(
     # "Unmet" = missing OR installed-but-below-its-pin (OUTDATED). Both need the
     # extra (re)installed, so both drive the same action set and exit code.
     unmet = [r for r in rows if not r.satisfied]
-    # Never let a column be narrower than its own header — a one-row report
-    # (e.g. `--extra gsplats`) would otherwise print a ragged table.
-    mw = max(max(len(r.module) for r in rows), len("MODULE"))
-    sw = max(max(len(r.spec.spec) for r in rows), len("REQUIREMENT"))
-
     plural = "dependency" if len(rows) == 1 else "dependencies"
-    aprint(f"📦 [Luxar] {len(rows)} optional demo {plural}\n")
-    header = f"  {'MODULE':<{mw}}  {'REQUIREMENT':<{sw}}  {'EXTRA':<8} STATUS"
-    aprint(header)
-    # Rule the exact width of the header rather than a hand-counted constant
-    # (the old `mw + sw + 20` overshot by one and left a dangling glyph).
-    aprint("  " + "─" * (len(header) - 2))
-    for r in rows:
-        # Three-way: satisfied → ok; importable but below its pin → OUTDATED;
-        # not importable → MISSING.
-        status = "ok" if r.satisfied else ("OUTDATED" if r.installed else "MISSING")
-        aprint(
-            f"  {r.module:<{mw}}  {r.spec.spec:<{sw}}  "
-            f"{(r.spec.extra or '—'):<8} {status}"
-        )
+    render_dependencies(demo_console(), rows)
     aprint("")
 
     if not unmet:
@@ -721,21 +674,7 @@ def cache_list() -> None:
     if not entries:
         aprint(f"No demo cache directories under {registry.DEMO_CACHE_ROOT}")
         raise typer.Exit(0)
-    aprint(f"💾 [Luxar] Demo caches under {registry.DEMO_CACHE_ROOT}\n")
-    total = 0
-    for e in entries:
-        total += e.size_bytes
-        # A protected dir holds a hand-placed input, so it is claimed whatever
-        # DEMO_META says — calling it an ORPHAN would invite the very
-        # `clear --orphans` that must never touch it.
-        if e.protected:
-            marker = "🔒 hand-placed input"
-            owner = f"{', '.join(e.demo_keys)}  {marker}" if e.demo_keys else marker
-        else:
-            owner = ", ".join(e.demo_keys) if e.demo_keys else "⚠️  ORPHAN"
-        aprint(f"  {format_memory_size(e.size_bytes):>10}  {e.path.name:<32} {owner}")
-    aprint("")
-    aprint(f"  {format_memory_size(total):>10}  TOTAL ({len(entries)} dirs)")
+    render_caches(demo_console(), entries, registry.DEMO_CACHE_ROOT, format_memory_size)
 
 
 # ─────────────────────────────── cache clear ─────────────────────────────────

@@ -572,7 +572,8 @@ install-demo-deps:  ## Install the demo extras (demos + gsplats + io)
 	@$(HATCH) run luxar demo deps || true
 	@echo ""
 	@echo "ℹ️  Some demos need credentials or a manual download instead of a"
-	@echo "   package — see 'luxar demo info <key>' (NEEDS column in 'luxar demo')."
+	@echo "   package — see 'luxar demo info <key>', or the git-lfs/kaggle/manual"
+	@echo "   markers in the last column of 'luxar demo'."
 
 # Code formatting (using Hatch)
 format-python:  ## Format Python code with ruff
