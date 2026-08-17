@@ -182,7 +182,7 @@ All tests colocated in `packages/luxar/src/luxar/gsplats/tests/test_calibration.
 - `cv_mask`: Determinism, fraction Binomial CI, shape/dtype, invalid bounds
 - `donut_median_fill`: Constant volume unchanged, unmasked voxels untouched, gradient volume local average, 2D/3D/4D shape correctness, empty mask early return, radius-bounds validation
 - Noise floor estimators: Laplacian/Haar/background MAD on constant/noisy volumes
-- `estimate_floor`: Mode histogram vs percentile, zero-padding exclusion
+- `estimate_floor`: Mode histogram vs percentile, zero-padding exclusion, high-offset float32 volumes (a background band narrower than float32 spacing) and a degenerate single-value band
 - `build_k_grid`: Exponential/polynomial spacing, endpoint pinning, explicit-grid override & precedence, input validation (bad progression, too few points, `k_max ≤ k_min`)
 - `find_k_star`: Peak/plateau/signal-limited regime detection, flank thresholds, tail-rise gate, `k_knee` vs `k_star`, backward-compatible hydration
 - Feature content: `count_features` (peaks/edges/intensity), `feature_threshold` shared scale, `select_calibration_region` (`densest`, small-volume `whole` fallback, hot-outlier robustness, unknown-strategy rejection)

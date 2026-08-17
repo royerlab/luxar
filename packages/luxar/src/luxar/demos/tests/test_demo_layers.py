@@ -178,6 +178,13 @@ EXEMPT: dict[str, Exemption] = {
         frozenset({"'embryo_line'"}),
         "100 copies of one ladder under the layer=True `embryo_line` group.",
     ),
+    "demo_gsplats_4d_cell_tracking_challenge.py": Exemption(
+        frozenset({"'volume'", "'tracks'", "'cells'"}),
+        frozenset({"crop['name']"}),
+        "Each crop of the matrix contributes a volume, its tracks and its "
+        "cell markers; the useful control is the crop, so all three hang off "
+        "the per-crop layer=True group named after it (6 panel rows, not 18).",
+    ),
 }
 
 

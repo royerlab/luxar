@@ -1,18 +1,20 @@
 /**
- * SortWorker init lifecycle: what happens when startup is SLOW rather than
- * broken.
+ * SortWorker STARTUP: when it happens, on whose deadline, and how the two
+ * failure arms the shared guard adds are classified.
  *
- * The coordinator used to spawn the worker on the first order-dependent
- * commit and race `initialize()` against a fixed deadline, caching the
- * rejection forever on any failure. On a multi-million-element scene that
- * first commit lands while this thread is saturated decoding, so the
- * worker's reply — which must be dispatched on this thread — misses the
- * deadline. A healthy worker was then terminated and depth sorting stayed
- * off for the whole session, silently.
- *
- * These tests pin the distinction the fix rests on: a DEADLINE MISS is
- * transient and retried, while an `onerror` death or an explicit
- * `initialize()` rejection is permanent and still latches.
+ * The retry/give-up/epoch behaviour of a STARVED init lives in
+ * `src/tests/unit/rendering/depth-sort-coordinator.test.ts` and is
+ * deliberately not repeated here. What this file pins is the rest of the
+ * startup contract:
+ * - the worker is spawned + initialized at APP INIT (`warmUpDepthSortWorker`),
+ *   while nothing is loading — the first order-dependent commit is the worst
+ *   possible moment, because it lands exactly when this thread is saturated
+ *   decoding and the worker's Comlink reply has to be dispatched on it;
+ * - the deadline is `config.depthSort.workerInitTimeoutMs`, not a constant;
+ * - `onmessageerror` (which the coordinator's hand-rolled race never had)
+ *   settles init, permanently;
+ * - `isDepthSortAvailable()` — what the data-loading monitor's footer reads —
+ *   says "unavailable" only once the subsystem has actually given up.
  *
  * Split into its own file (rather than added to depth-sort-coordinator.test.ts)
  * because it is the only one here that needs FAKE TIMERS, which do not mix
@@ -23,6 +25,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as THREE from 'three';
+import type { AppConfig } from '../../../../config/types';
 
 /** How `initialize()` behaves for a given test. */
 type InitBehavior = 'immediate' | 'never-settles' | 'rejects';
@@ -36,24 +39,21 @@ let mockApi: {
   releaseNode: ReturnType<typeof vi.fn>;
   releaseAllNodes: ReturnType<typeof vi.fn>;
 };
-/** Resolver for the pending `initialize()` under 'never-settles'. */
-let resolveInit: ((r: { wasmFallback: boolean }) => void) | null = null;
-/** When true the mocked worker CONSTRUCTOR throws (CSP-blocked script). */
-let workerConstructThrows = false;
-let logMock: {
-  info: ReturnType<typeof vi.fn>;
-  warning: ReturnType<typeof vi.fn>;
-  error: ReturnType<typeof vi.fn>;
-};
+/**
+ * The config instance the freshly imported coordinator actually reads. It
+ * must come from the SAME module registry generation, so it is captured in
+ * `loadCoordinator` rather than imported at the top of this file — a
+ * `vi.resetModules()` would otherwise leave the two looking at different
+ * objects and any knob written here would be invisible to the coordinator.
+ */
+let liveConfig: AppConfig;
 
 function makeMockApi(behavior: InitBehavior) {
   return {
     initialize: vi.fn(() => {
       if (behavior === 'immediate') return Promise.resolve({ wasmFallback: true });
       if (behavior === 'rejects') return Promise.reject(new Error('WASM unavailable'));
-      return new Promise<{ wasmFallback: boolean }>((resolve) => {
-        resolveInit = resolve;
-      });
+      return new Promise<{ wasmFallback: boolean }>(() => {});
     }),
     registerNode: vi.fn(async () => undefined),
     // Never settles: these tests only assert that a sort was DISPATCHED.
@@ -67,13 +67,14 @@ async function loadCoordinator(behavior: InitBehavior = 'never-settles') {
   vi.resetModules();
   terminatedWorkers.length = 0;
   constructedWorkers = [];
-  resolveInit = null;
-  workerConstructThrows = false;
+  // Drop the previous test's worker handle: `__lastMockWorker` is global while
+  // the coordinator is re-imported per test, so a stale one would let a test
+  // fire an event into the PREVIOUS module instance and assert nothing.
+  delete (globalThis as unknown as { __lastMockWorker?: unknown }).__lastMockWorker;
   mockApi = makeMockApi(behavior);
-  logMock = { info: vi.fn(), warning: vi.fn(), error: vi.fn() };
 
   vi.doMock('../../../../utils/log', () => ({
-    log: logMock,
+    log: { info: vi.fn(), warning: vi.fn(), error: vi.fn() },
     Modules: new Proxy({}, { get: (_t, p) => String(p) }),
   }));
   vi.doMock('comlink', () => ({
@@ -85,7 +86,6 @@ async function loadCoordinator(behavior: InitBehavior = 'never-settles') {
       onerror: ((e: unknown) => void) | null = null;
       onmessageerror: ((e: unknown) => void) | null = null;
       constructor() {
-        if (workerConstructThrows) throw new Error('worker construction blocked');
         constructedWorkers.push(this);
         (globalThis as unknown as { __lastMockWorker?: unknown }).__lastMockWorker = this;
       }
@@ -93,12 +93,29 @@ async function loadCoordinator(behavior: InitBehavior = 'never-settles') {
     },
   }));
 
-  return await import('../../../../rendering/depth-sort-coordinator');
+  const coord = await import('../../../../rendering/depth-sort-coordinator');
+  liveConfig = (await import('../../../../config')).config;
+  return coord;
 }
 
 /** Drain microtasks so ensureWorker → registerNode → scheduleSort settles. */
 async function flush(): Promise<void> {
   for (let i = 0; i < 20; i++) await Promise.resolve();
+}
+
+/** The live mocked worker (for firing worker-level events). */
+function liveWorker(): {
+  onerror?: ((e: unknown) => void) | null;
+  onmessageerror?: ((e: unknown) => void) | null;
+} {
+  return (
+    globalThis as unknown as {
+      __lastMockWorker: {
+        onerror?: ((e: unknown) => void) | null;
+        onmessageerror?: ((e: unknown) => void) | null;
+      };
+    }
+  ).__lastMockWorker;
 }
 
 function makeCamera(): THREE.PerspectiveCamera {
@@ -130,10 +147,10 @@ function makeSortableMesh(count: number, blendingMode = 'volumetric'): THREE.Mes
 
 const CENTERS = () => new Float32Array([0, 0, -1, 1, 0, -2]);
 
-/** The configured init deadline (config.depthSort.workerInitTimeoutMs). */
-const INIT_DEADLINE_MS = 30_000;
+/** The default init deadline (`config.depthSort.workerInitTimeoutMs`). */
+const DEFAULT_INIT_DEADLINE_MS = 30_000;
 
-describe('SortWorker init resilience', () => {
+describe('SortWorker startup (warm-up, configured deadline, guard arms)', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.clearAllMocks();
@@ -143,166 +160,136 @@ describe('SortWorker init resilience', () => {
     vi.useRealTimers();
   });
 
-  it('retries after a deadline miss and re-registers, without a second initialize()', async () => {
-    // The regression gate. Against the pre-fix coordinator the worker is
-    // terminated on timeout and `initPromise` stays rejected, so no retry
-    // ever happens and `requestReprocess` is never called.
-    const coord = await loadCoordinator('never-settles');
-    const requestReprocess = vi.fn();
+  it('warms up at app init with no commit — and the first commit reuses that worker', async () => {
+    // The prevention half of the fix: initialize() runs while the app is idle
+    // instead of racing the scene decode. Reuse matters as much as the early
+    // start — a warm-up that spawned its own throwaway worker would leave the
+    // commit path paying the very startup cost this avoids.
+    const coord = await loadCoordinator('immediate');
     coord.configureDepthSort({
       getCamera: () => makeCamera(),
       requestRender: vi.fn(),
-      requestReprocess,
       isLoadInProgress: () => false,
     });
 
-    const mesh = makeSortableMesh(2);
-    coord.noteDepthSortCommit(mesh, CENTERS(), 2);
+    coord.warmUpDepthSortWorker();
     await flush();
+
+    expect(constructedWorkers).toHaveLength(1);
     expect(mockApi.initialize).toHaveBeenCalledTimes(1);
-
-    // The deadline passes with the worker still silent (this thread busy).
-    await vi.advanceTimersByTimeAsync(INIT_DEADLINE_MS + 1);
-    await flush();
-
-    // Transient: the worker is NOT killed for being late.
-    expect(terminatedWorkers).toHaveLength(0);
-    expect(coord.isDepthSortAvailable()).toBe(true);
+    expect(coord.getDepthSortWorkerStatus()).toEqual({ state: 'ready', initTimeouts: 0 });
+    // Nothing has committed, so nothing is registered yet.
     expect(mockApi.registerNode).not.toHaveBeenCalled();
 
-    // The worker answers late — exactly what the 3M repro showed happening
-    // just after the main thread gave up on it.
-    resolveInit!({ wasmFallback: false });
+    // The first order-dependent commit now finds a READY worker.
+    coord.noteDepthSortCommit(makeSortableMesh(2), CENTERS(), 2);
     await flush();
 
-    // A frame past the loader-idle gate drives the retry.
-    coord.evaluateDepthSortPerFrame();
-    await flush();
-
-    // The ORIGINAL in-flight RPC was adopted rather than a second one
-    // issued — worker-side initWasm() is not memoized, so a duplicate call
-    // would fetch and instantiate the module twice.
-    expect(mockApi.initialize).toHaveBeenCalledTimes(1);
+    expect(mockApi.registerNode).toHaveBeenCalledTimes(1);
+    expect(mockApi.sort).toHaveBeenCalledTimes(1);
     expect(constructedWorkers).toHaveLength(1);
-    expect(terminatedWorkers).toHaveLength(0);
-
-    // Nodes are pushed back through a commit, because the worker never
-    // received their centers and nothing else would re-commit them.
-    expect(requestReprocess).toHaveBeenCalled();
-
-    // …and that re-commit now reaches the worker.
-    coord.noteDepthSortCommit(mesh, CENTERS(), 2);
-    await flush();
-    expect(mockApi.registerNode).toHaveBeenCalled();
-    expect(mockApi.sort).toHaveBeenCalled();
-  });
-
-  it('gives up after MAX_INIT_TIMEOUT_ATTEMPTS deadline misses, and says so', async () => {
-    const coord = await loadCoordinator('never-settles');
-    coord.configureDepthSort({
-      getCamera: () => makeCamera(),
-      requestRender: vi.fn(),
-      requestReprocess: vi.fn(),
-      isLoadInProgress: () => false,
-    });
-
-    const mesh = makeSortableMesh(2);
-    coord.noteDepthSortCommit(mesh, CENTERS(), 2);
-    await flush();
-
-    // Three deadline misses in a row, each retried on a later idle frame.
-    // The first two must leave the worker ALIVE — that is the bound being
-    // a bound, rather than the old give-up-on-first-miss behaviour.
-    for (let attempt = 0; attempt < 3; attempt++) {
-      await vi.advanceTimersByTimeAsync(INIT_DEADLINE_MS + 1);
-      await flush();
-      if (attempt < 2) {
-        expect(terminatedWorkers, `miss ${attempt + 1} must not kill the worker`).toHaveLength(0);
-        expect(coord.isDepthSortAvailable()).toBe(true);
-      }
-      coord.evaluateDepthSortPerFrame();
-      await flush();
-    }
-
-    // Latched: the worker is released and the state is reported, not hidden.
-    expect(coord.isDepthSortAvailable()).toBe(false);
-    expect(terminatedWorkers).toHaveLength(1);
-
-    // No spawn storm — further frames must not keep constructing workers.
-    const spawned = constructedWorkers.length;
-    for (let i = 0; i < 5; i++) {
-      coord.evaluateDepthSortPerFrame();
-      await flush();
-    }
-    expect(constructedWorkers).toHaveLength(spawned);
-  });
-
-  it('commits during a load do not spend the bounded retry budget', async () => {
-    // The retry budget belongs to the loader-idle gate. A commit landing
-    // while the loader is still busy must NOT start a fresh attempt: it
-    // would race exactly the congestion that caused the last miss, and a
-    // long enough load could burn all three attempts and latch the session
-    // unsorted before the idle retry ever ran — the original bug, three
-    // deadlines later.
-    let loading = true;
-    const coord = await loadCoordinator('never-settles');
-    coord.configureDepthSort({
-      getCamera: () => makeCamera(),
-      requestRender: vi.fn(),
-      requestReprocess: vi.fn(),
-      isLoadInProgress: () => loading,
-    });
-
-    const mesh = makeSortableMesh(2);
-    coord.noteDepthSortCommit(mesh, CENTERS(), 2);
-    await flush();
-    // First miss (the warm-up/first-commit attempt).
-    await vi.advanceTimersByTimeAsync(INIT_DEADLINE_MS + 1);
-    await flush();
-
-    // Commits keep landing while the scene streams in; each would otherwise
-    // open — and blow — another attempt.
-    for (let i = 0; i < 4; i++) {
-      coord.noteDepthSortCommit(mesh, CENTERS(), 2);
-      await flush();
-      await vi.advanceTimersByTimeAsync(INIT_DEADLINE_MS + 1);
-      await flush();
-    }
-    expect(coord.isDepthSortAvailable()).toBe(true);
-    expect(terminatedWorkers).toHaveLength(0);
-
-    // Loading settles; the worker's original RPC answers and the retry lands.
-    loading = false;
-    resolveInit!({ wasmFallback: false });
-    coord.evaluateDepthSortPerFrame();
-    await flush();
     expect(mockApi.initialize).toHaveBeenCalledTimes(1);
-
-    coord.noteDepthSortCommit(mesh, CENTERS(), 2);
-    await flush();
-    expect(mockApi.registerNode).toHaveBeenCalled();
-    expect(mockApi.sort).toHaveBeenCalled();
   });
 
-  it('an initialize() rejection is PERMANENT — terminated, never retried', async () => {
-    // The worker answered: it cannot work (e.g. WASM genuinely missing).
-    // Unlike a deadline miss this is evidence, so the old latch is right.
+  it('warms up nothing when depth sorting is disabled (?depthSort=0)', async () => {
+    // The master switch must keep the subsystem fully inert: a spawned worker
+    // would load WASM for a session that never sorts.
+    const coord = await loadCoordinator('immediate');
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+    coord.setDepthSortEnabled(false);
+
+    coord.warmUpDepthSortWorker();
+    await flush();
+
+    expect(constructedWorkers).toHaveLength(0);
+    expect(mockApi.initialize).not.toHaveBeenCalled();
+    expect(coord.getDepthSortWorkerStatus()).toEqual({ state: 'idle', initTimeouts: 0 });
+  });
+
+  it('a failing warm-up stays fire-and-forget: no throw, no unhandled rejection', async () => {
+    // `core/app/init/pipeline.ts` calls this synchronously in the middle of a
+    // sequence that must not be derailed by a worker that cannot start.
+    // Real timers: an unhandled rejection is only observable after a real
+    // macrotask turn.
+    vi.useRealTimers();
     const coord = await loadCoordinator('rejects');
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown): void => {
+      unhandled.push(reason);
+    };
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      expect(() => coord.warmUpDepthSortWorker()).not.toThrow();
+      await flush();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+
+    // The failure is not swallowed either — it is a reported verdict.
+    expect(coord.getDepthSortWorkerStatus()).toEqual({ state: 'failed', initTimeouts: 0 });
+    expect(coord.isDepthSortAvailable()).toBe(false);
+  });
+
+  it('takes the init deadline from config.depthSort.workerInitTimeoutMs', async () => {
+    // The deadline used to be a module constant, so an embedder on a slow
+    // machine had no way to widen it (and no test could shorten it).
+    const coord = await loadCoordinator('never-settles');
+    liveConfig.depthSort.workerInitTimeoutMs = 250;
     coord.configureDepthSort({
       getCamera: () => makeCamera(),
       requestRender: vi.fn(),
-      requestReprocess: vi.fn(),
       isLoadInProgress: () => false,
     });
 
-    const mesh = makeSortableMesh(2);
-    coord.noteDepthSortCommit(mesh, CENTERS(), 2);
+    coord.warmUpDepthSortWorker();
+    await flush();
+    expect(mockApi.initialize).toHaveBeenCalledTimes(1);
+
+    // Just short of the configured budget: no verdict yet.
+    await vi.advanceTimersByTimeAsync(249);
+    expect(coord.getDepthSortWorkerStatus()).toEqual({ state: 'idle', initTimeouts: 0 });
+
+    // Just past it — on THIS budget, two orders of magnitude before the 30 s
+    // default a hardcoded deadline would have waited for.
+    await vi.advanceTimersByTimeAsync(2);
+    expect(coord.getDepthSortWorkerStatus()).toEqual({ state: 'starved', initTimeouts: 1 });
+  });
+
+  it('an unserializable message during init is PERMANENT (the onmessageerror arm)', async () => {
+    // New with the shared guard: the coordinator's own race listened to
+    // `onerror` only, so a worker that answered with an unstructured-cloneable
+    // payload left `initialize()` pending until the deadline — reported as a
+    // starved main thread and RETRIED, three times, for a worker that had
+    // already failed. It is a dead-script-class failure and must latch.
+    const coord = await loadCoordinator('never-settles');
+    coord.configureDepthSort({
+      getCamera: () => makeCamera(),
+      requestRender: vi.fn(),
+      isLoadInProgress: () => false,
+    });
+
+    coord.warmUpDepthSortWorker();
+    await flush();
+    const live = liveWorker();
+    expect(live.onmessageerror).toBeTypeOf('function');
+
+    live.onmessageerror!({});
     await flush();
 
-    expect(terminatedWorkers).toHaveLength(1);
+    // `initTimeouts: 0` is the pin: this was classified as broken, not slow.
+    expect(coord.getDepthSortWorkerStatus()).toEqual({ state: 'failed', initTimeouts: 0 });
     expect(coord.isDepthSortAvailable()).toBe(false);
+    expect(terminatedWorkers).toHaveLength(1);
 
-    for (let i = 0; i < 5; i++) {
+    // No retry is armed: neither elapsed time nor further frames respawn it.
+    coord.noteDepthSortCommit(makeSortableMesh(2), CENTERS(), 2);
+    await flush();
+    for (let frame = 0; frame < 3; frame++) {
+      await vi.advanceTimersByTimeAsync(DEFAULT_INIT_DEADLINE_MS);
       coord.evaluateDepthSortPerFrame();
       await flush();
     }
@@ -311,252 +298,60 @@ describe('SortWorker init resilience', () => {
     expect(mockApi.registerNode).not.toHaveBeenCalled();
   });
 
-  it('a worker error during startup is PERMANENT — terminated, never retried', async () => {
+  it('reports depth sorting AVAILABLE while a starved init is still recoverable', async () => {
+    // What the data-loading monitor footer reads. 'idle' (never spawned) and
+    // 'ready' are obviously available; the interesting one is 'starved' — a
+    // retry is armed and expected to land, so announcing UNAVAILABLE there
+    // would cry wolf on every slow load.
+    const coord = await loadCoordinator('never-settles');
+    expect(coord.isDepthSortAvailable()).toBe(true); // never spawned
+
+    coord.configureDepthSort({
+      getCamera: () => makeCamera(),
+      requestRender: vi.fn(),
+      isLoadInProgress: () => false,
+    });
+    coord.warmUpDepthSortWorker();
+    await flush();
+    await vi.advanceTimersByTimeAsync(DEFAULT_INIT_DEADLINE_MS + 1);
+
+    expect(coord.getDepthSortWorkerStatus()).toEqual({ state: 'starved', initTimeouts: 1 });
+    expect(coord.isDepthSortAvailable()).toBe(true);
+
+    // Ready is available too (the same load, once init succeeds elsewhere, is
+    // covered by the warm-up test above — here the point is the contrast).
+    const ready = await loadCoordinator('immediate');
+    ready.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+    ready.warmUpDepthSortWorker();
+    await flush();
+    expect(ready.getDepthSortWorkerStatus().state).toBe('ready');
+    expect(ready.isDepthSortAvailable()).toBe(true);
+  });
+
+  it('reports depth sorting UNAVAILABLE once the session has given up', async () => {
+    // The other half of issue #705's rule: a scene drawn in storage order
+    // must never look like a correctly sorted one. A dead worker script is
+    // the terminal case — nothing later can recover it.
     const coord = await loadCoordinator('never-settles');
     coord.configureDepthSort({
       getCamera: () => makeCamera(),
       requestRender: vi.fn(),
-      requestReprocess: vi.fn(),
       isLoadInProgress: () => false,
     });
-
-    const mesh = makeSortableMesh(2);
-    coord.noteDepthSortCommit(mesh, CENTERS(), 2);
+    coord.warmUpDepthSortWorker();
     await flush();
 
-    const live = (
-      globalThis as unknown as { __lastMockWorker?: { onerror?: (e: unknown) => void } }
-    ).__lastMockWorker;
-    expect(live?.onerror).toBeTypeOf('function');
     // A plain object, not `new ErrorEvent(...)`: this suite runs in the
     // default `node` environment, where that constructor does not exist.
     // The guard reads `.message` structurally, so this is the same input.
-    live!.onerror!({ message: 'module evaluation failed' });
+    liveWorker().onerror!({ message: 'module evaluation failed' });
     await flush();
 
-    expect(terminatedWorkers).toHaveLength(1);
+    expect(coord.getDepthSortWorkerStatus().state).toBe('failed');
     expect(coord.isDepthSortAvailable()).toBe(false);
 
-    for (let i = 0; i < 5; i++) {
-      coord.evaluateDepthSortPerFrame();
-      await flush();
-    }
-    expect(mockApi.initialize).toHaveBeenCalledTimes(1);
-    expect(constructedWorkers).toHaveLength(1);
-  });
-
-  it('survives two misses then succeeds on the LAST allowed attempt', async () => {
-    // The fencepost from the other side: attempt 3 is permitted, it is only
-    // a THIRD miss that latches. Off-by-one here would give up while the
-    // worker was about to answer — the exact failure this change exists to
-    // stop, reintroduced one attempt later.
-    const coord = await loadCoordinator('never-settles');
-    coord.configureDepthSort({
-      getCamera: () => makeCamera(),
-      requestRender: vi.fn(),
-      requestReprocess: vi.fn(),
-      isLoadInProgress: () => false,
-    });
-
-    const mesh = makeSortableMesh(2);
-    coord.noteDepthSortCommit(mesh, CENTERS(), 2);
-    await flush();
-
-    for (let miss = 0; miss < 2; miss++) {
-      await vi.advanceTimersByTimeAsync(INIT_DEADLINE_MS + 1);
-      await flush();
-      coord.evaluateDepthSortPerFrame();
-      await flush();
-    }
-    expect(coord.isDepthSortAvailable()).toBe(true);
-    expect(terminatedWorkers).toHaveLength(0);
-
-    // The worker finally answers, on the third and last permitted attempt.
-    resolveInit!({ wasmFallback: false });
-    await flush();
-    expect(coord.isDepthSortAvailable()).toBe(true);
-
-    // And the subsystem is genuinely usable, not merely "not latched".
-    coord.noteDepthSortCommit(mesh, CENTERS(), 2);
-    await flush();
-    expect(mockApi.registerNode).toHaveBeenCalled();
-    expect(mockApi.sort).toHaveBeenCalled();
-  });
-
-  it('a commit landing DURING a retry joins it rather than starting a rival attempt', async () => {
-    // `ensureWorker()` dedupes on `initPromise`, so the commit rides the
-    // retry already in flight; when it resolves, the commit's own
-    // continuation registers the node. The hazard would be a second worker,
-    // or a node whose registration is dropped because the retry "owned" it.
-    const coord = await loadCoordinator('never-settles');
-    coord.configureDepthSort({
-      getCamera: () => makeCamera(),
-      requestRender: vi.fn(),
-      requestReprocess: vi.fn(),
-      isLoadInProgress: () => false,
-    });
-
-    const first = makeSortableMesh(2);
-    coord.noteDepthSortCommit(first, CENTERS(), 2);
-    await flush();
-    await vi.advanceTimersByTimeAsync(INIT_DEADLINE_MS + 1);
-    await flush();
-
-    // Retry starts on the next idle frame…
-    coord.evaluateDepthSortPerFrame();
-    await flush();
-
-    // …and a SECOND node commits while it is still in flight.
-    const second = makeSortableMesh(3);
-    coord.noteDepthSortCommit(second, new Float32Array([0, 0, -1, 1, 0, -2, 2, 0, -3]), 3);
-    await flush();
-
-    // One worker, one initialize() — no rival attempt.
-    expect(constructedWorkers).toHaveLength(1);
-    expect(mockApi.initialize).toHaveBeenCalledTimes(1);
-
-    resolveInit!({ wasmFallback: false });
-    await flush();
-
-    // The node that committed mid-retry is registered and sorted.
-    expect(mockApi.registerNode).toHaveBeenCalled();
-    expect(mockApi.sort).toHaveBeenCalled();
-  });
-
-  it('an offline capture during the retry window does not sort an uninitialized worker', async () => {
-    // `resortForCapture`'s force loop dispatches for every visible
-    // order-dependent node WITHOUT consulting `state.registered`. Before the
-    // worker survived a deadline miss, `api !== null` implied initialized, so
-    // that was safe; now it can mean "spawned, awaiting retry", and sorting
-    // against it would hit the worker-side NOT_INITIALIZED guard.
-    const coord = await loadCoordinator('never-settles');
-    coord.configureDepthSort({
-      getCamera: () => makeCamera(),
-      requestRender: vi.fn(),
-      isLoadInProgress: () => false,
-    });
-
-    const mesh = makeSortableMesh(2);
-    coord.noteDepthSortCommit(mesh, CENTERS(), 2);
-    await flush();
-    await vi.advanceTimersByTimeAsync(INIT_DEADLINE_MS + 1);
-    await flush();
-
-    // Worker alive but NOT initialized — the window this guards.
-    expect(terminatedWorkers).toHaveLength(0);
-    await coord.resortForCapture(0);
-    await flush();
-    expect(mockApi.sort).not.toHaveBeenCalled();
-  });
-
-  it('a dispose mid-init makes the in-flight attempt stale, not authoritative', async () => {
-    // The generation token's whole job. `disposeDepthSort()` bumps it while
-    // an attempt is awaiting its guard; when that attempt finally settles it
-    // must not publish `workerReady` over the disposed state, nor clear a
-    // newer attempt's cached promise.
-    const coord = await loadCoordinator('never-settles');
-    coord.configureDepthSort({
-      getCamera: () => makeCamera(),
-      requestRender: vi.fn(),
-      isLoadInProgress: () => false,
-    });
-
-    const mesh = makeSortableMesh(2);
-    coord.noteDepthSortCommit(mesh, CENTERS(), 2);
-    await flush();
-    expect(constructedWorkers).toHaveLength(1);
-
+    // A dispose restores a truthful, unspent verdict for the next app.
     coord.disposeDepthSort();
-    await flush();
-    // Dispose terminates the worker it owned.
-    expect(terminatedWorkers).toHaveLength(1);
-
-    // The superseded attempt answers LATE.
-    resolveInit!({ wasmFallback: false });
-    await flush();
-
-    // It must not resurrect the subsystem behind dispose's back.
-    expect(coord.isDepthSortAvailable()).toBe(true); // dispose resets the flag
-    coord.configureDepthSort({
-      getCamera: () => makeCamera(),
-      requestRender: vi.fn(),
-      isLoadInProgress: () => false,
-    });
-    coord.evaluateDepthSortPerFrame();
-    await flush();
-    // No node state survives dispose, so nothing was registered against the
-    // dead worker by the stale resolution.
-    expect(mockApi.registerNode).not.toHaveBeenCalled();
-  });
-
-  it('a CSP-blocked constructor is PERMANENT — and is REPORTED, not silent', async () => {
-    // `new Worker()` throws synchronously, so this arm reaches the failure
-    // bookkeeping only because the construction lives inside the try. With
-    // it outside, the session degraded to unsorted while
-    // `isDepthSortAvailable()` still answered true — silent, which is the
-    // one outcome this whole change exists to prevent.
-    const coord = await loadCoordinator('immediate');
-    workerConstructThrows = true;
-    coord.configureDepthSort({
-      getCamera: () => makeCamera(),
-      requestRender: vi.fn(),
-      requestReprocess: vi.fn(),
-      isLoadInProgress: () => false,
-    });
-
-    const mesh = makeSortableMesh(2);
-    coord.noteDepthSortCommit(mesh, CENTERS(), 2);
-    await flush();
-
-    expect(coord.isDepthSortAvailable()).toBe(false);
-    expect(mockApi.registerNode).not.toHaveBeenCalled();
-
-    // Latched: no retry storm against a script that will never load.
-    for (let i = 0; i < 5; i++) {
-      coord.evaluateDepthSortPerFrame();
-      await flush();
-    }
-    expect(constructedWorkers).toHaveLength(0);
-    expect(terminatedWorkers).toHaveLength(0);
-  });
-
-  it('warms up at configure time, with no commit — and honours ?depthSort=0', async () => {
-    // The prevention half of the fix: starting here means initialize() runs
-    // while the app is idle, instead of racing the scene decode.
-    const coord = await loadCoordinator('immediate');
-    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
-    coord.warmUpDepthSortWorker();
-    await flush();
-
-    expect(constructedWorkers).toHaveLength(1);
-    expect(mockApi.initialize).toHaveBeenCalledTimes(1);
-
-    // A disabled session must spawn nothing at all.
-    const off = await loadCoordinator('immediate');
-    off.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
-    off.setDepthSortEnabled(false);
-    off.warmUpDepthSortWorker();
-    await flush();
-    expect(constructedWorkers).toHaveLength(0);
-  });
-
-  it('warm-up means the first commit registers immediately', async () => {
-    const coord = await loadCoordinator('immediate');
-    coord.configureDepthSort({
-      getCamera: () => makeCamera(),
-      requestRender: vi.fn(),
-      isLoadInProgress: () => false,
-    });
-    coord.warmUpDepthSortWorker();
-    await flush();
-
-    const mesh = makeSortableMesh(2);
-    coord.noteDepthSortCommit(mesh, CENTERS(), 2);
-    await flush();
-
-    expect(mockApi.registerNode).toHaveBeenCalled();
-    expect(mockApi.sort).toHaveBeenCalled();
-    // Still exactly one worker: the commit path reuses the warmed one.
-    expect(constructedWorkers).toHaveLength(1);
+    expect(coord.isDepthSortAvailable()).toBe(true);
   });
 });

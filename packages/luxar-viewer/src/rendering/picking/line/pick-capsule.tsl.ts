@@ -531,6 +531,13 @@ export function capsuleLinePickWebGPUFactory(
   });
 
   const depthNode = Fn(() => {
+    // BRANCHLESS by construction, and that is load-bearing: `brightness` is a
+    // factory-scope `.toVar()` shared with `colorNode`, so it is assigned wherever
+    // three first BUILDS it — which is unconditional top-level flow in either entry
+    // point only while this body contains no `if`. Adding a branch here (a
+    // `uSurfaceDepth`-style select) would bury that assignment in one arm and leave
+    // `colorNode`'s top-level readers with 0; it needs the same unconditional fragment
+    // prologue the gsplat/mesh pick factories use.
     return float(1.0).sub(clamp(brightness, 0.0, 1.0));
   });
 
