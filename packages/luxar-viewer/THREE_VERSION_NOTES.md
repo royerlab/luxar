@@ -49,19 +49,25 @@ call or a downgrade of type safety at that site.
 ## Why the runtime is still on r184
 
 The obvious resolution is to move the runtime up so both sit at r185. That was
-attempted and **reverted**: r185 breaks the TSL / WebGPU path. Measured on the
-same machine, same specs, with the `three` version as the only variable:
+attempted and **reverted**: r185 broke the TSL / WebGPU path. Measured on the
+same machine, same specs, with the `three` version as the only variable — this
+table predates the #1697 fix and describes the code as it was then:
 
 | `three` | `tsl-shader-parity` + `tsl-codegen-snapshot` |
 | ------- | -------------------------------------------- |
 | 0.184.0 | **100 passed**, 0 failed                     |
 | 0.185.1 | 96 passed, **4 failed**                      |
 
-The failures are behavioural, not tolerance drift — most starkly
-`gsplat-pick-surface`, where the TSL side renders **zero pixels**. Full detail,
-including the other three and a reproduction, is in the tracking issue.
+The failures were behavioural, not tolerance drift — most starkly
+`gsplat-pick-surface`, where the TSL side rendered **zero pixels**. All four had
+one cause: the pick shaders shared fragment values across `colorNode` and
+`depthNode` and so depended on which entry point three built first, which is what
+r185 flipped. #1697 fixed that, and re-ran the same A/B on the fixed code: 101
+passed at both 0.184.0 and 0.185.1.
 
-👉 **Blocking issue: #1683.** Until it is resolved, `three` stays at `~0.184.0`.
+👉 **Tracking issue: #1683**, still open — it now covers the bump itself, which
+also wants a full E2E pass, since a `three` minor can move pixels well outside
+the picking shaders. Until someone does that, `three` stays at `~0.184.0`.
 
 ## Why tilde, not caret
 
@@ -100,11 +106,13 @@ These are the Three.js surfaces the viewer uses directly:
 
 ## When to bump
 
-Trigger an explicit `~0.185.0` (or higher) bump only once #1683 is resolved
-**and** one of:
+Trigger an explicit `~0.185.0` (or higher) bump when one of:
 
 1. Three.js releases notes for a stable WebGPU API surface, or
 2. Luxar needs a specific rendering or TSL feature only present in a newer minor.
+
+The r185 parity failures are fixed (#1697), so what gates a bump now is the
+checklist below rather than an open code defect. #1683 tracks that step.
 
 To perform the bump, edit the two ranges in `package.json` **by hand**. `three`
 lives under `peerDependencies`, and `pnpm add -E` would both move it into

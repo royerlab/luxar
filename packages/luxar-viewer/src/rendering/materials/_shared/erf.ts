@@ -4,7 +4,9 @@
  * own copy of the same A&S 7.1.26 form in `luxar/gsplats/lift.py` — the
  * two languages cannot share code, but the constants must stay in sync.)
  *
- * Two implementations live here, each matched to its consumer:
+ * Two implementations, each matched to its consumer. The TSL builder for
+ * the second one lives next door in `erf-tsl.ts` so this file stays free
+ * of `three/tsl` — see that module's header for why (issue #1679):
  *
  * 1. `erfRef` — the Abramowitz & Stegun 7.1.26 rational approximation
  *    (max abs error 1.5e-7). The CPU-side reference: precomputing
@@ -13,7 +15,7 @@
  *    measure `erfPoly` against. Costs one `exp` and one division per
  *    call — fine on the CPU, the expensive form in a fragment shader.
  *
- * 2. `erfPoly` / `GLSL_ERF_FUNCTIONS` / `erfPolyTSL` — a pure odd
+ * 2. `erfPoly` / `GLSL_ERF_FUNCTIONS` (+ `erfPolyTSL` in `erf-tsl.ts`) — a pure odd
  *    polynomial on [-3, 3], clamped to ±1 outside. NO exp, NO division:
  *    the fragment-shader form, built for the #1352 volumetric line
  *    primitive (since deleted; no production shader consumes it today —

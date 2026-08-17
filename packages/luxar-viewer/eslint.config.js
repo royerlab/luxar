@@ -43,9 +43,10 @@ export default [
       // WebGL user a renderer they never ran (issue #1679).
       //
       // The whole cone now hangs off ONE dynamic import in
-      // `rendering/tsl/load.ts`; `rendering/tsl/registry.ts` is the single
-      // module allowed to name these specifiers directly. Everything else
-      // reaches the classes through `rendering/tsl/slot.ts`.
+      // `rendering/tsl/load.ts`; the `*-tsl` / `*.tsl` modules that
+      // `rendering/tsl/registry.ts` gathers are the only production modules
+      // allowed to name these specifiers directly (see the override below).
+      // Everything else reaches the classes through `rendering/tsl/slot.ts`.
       //
       // `allowTypeImports` keeps `import type { WebGPURenderer }` legal —
       // types are erased and cost nothing (renderer-capabilities.ts relies on
@@ -73,8 +74,9 @@ export default [
             {
               name: 'three/tsl',
               message:
-                'Import three/tsl only in src/rendering/tsl/registry.ts and the *-tsl modules it ' +
-                'owns. A value import from anywhere the entry point reaches eagerly pulls the ' +
+                'Import three/tsl only from the *-tsl / *.tsl modules inside the lazy cone ' +
+                'rooted at src/rendering/tsl/registry.ts. A value import from anywhere the ' +
+                'entry point reaches eagerly pulls the ' +
                 'three-webgpu chunk into the initial payload. See #1679.',
               allowTypeImports: true,
             },
