@@ -207,20 +207,28 @@ def _stamp_merged_quality(
         from luxar.gsplats.rendering.volume_rendering import render_to_volume_tensor
 
         scored = _to_voxel_frame(merged, grid_scale)
-        with torch.no_grad():
-            rendered = render_to_volume_tensor(
-                scored,
-                shape=volume_shape,
-                device=device,
-                truncate=scored.truncation_radius,
-            )
-            ref = torch.as_tensor(
-                np.asarray(volume, dtype=np.float32), device=rendered.device
-            )
-            quality = compute_quality_metrics(rendered, ref)
+        rendered: Any = None
+        ref: Any = None
+        try:
+            with torch.no_grad():
+                rendered = render_to_volume_tensor(
+                    scored,
+                    shape=volume_shape,
+                    device=device,
+                    truncate=scored.truncation_radius,
+                )
+                ref = torch.as_tensor(
+                    np.asarray(volume, dtype=np.float32), device=rendered.device
+                )
+                quality = compute_quality_metrics(rendered, ref)
+        finally:
+            # Released whether or not the score succeeded: the failure this most
+            # often takes is an OOM inside SSIM, and leaving the peak reserved
+            # would carry it into whatever the caller does next (a `--recipe`
+            # reduction runs on the same device seconds later).
             del rendered, ref
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
         merged.stats["mse"] = quality["mse"]
         merged.stats["psnr_db"] = quality["psnr_db"]
         merged.stats["ssim"] = quality["ssim"]
@@ -749,10 +757,24 @@ def fit_tiled(
     -------
     GSplatData
         Merged result with all splats in global coordinates.
-        Multi-LOD if progressive=True.
+        Multi-LOD if progressive=True. With ``partition=False`` the merged
+        reconstruction is also scored against the whole volume and the metrics
+        (``psnr_db``, ``ssim``, ``mse``, ``foreground_*``) land in ``stats`` —
+        see the merged-quality note below.
 
     Notes
     -----
+    **Merged quality metrics**: the per-tile scores describe crops of an
+    apodized decomposition and do not compose, so the merged reconstruction is
+    rendered once against ``volume`` and scored. Scoring materializes the whole
+    volume, so it is bounded by a memory budget — half the memory actually free,
+    held under a 24 GiB ceiling, with ``LUXAR_TILED_QUALITY_MAX_GB`` overriding
+    both (``0`` declines outright). Over budget, or on a failure, it says so even
+    when ``verbose=False``. ``partition=True`` merges are not scored (the tree
+    node has no fit-stats dict and this path threads none through on save) and
+    say so too; ``luxar gsplat compare`` is the recourse, after
+    ``luxar gsplat flatten``.
+
     **GPU utilization with progressive**: When ``progressive=True``, each
     per-pass fit uses fewer splats (``max_splats_per_pass``), which may
     under-saturate the GPU.  For batch/Slurm jobs, combine
