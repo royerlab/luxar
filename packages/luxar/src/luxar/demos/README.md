@@ -124,8 +124,9 @@ tabled requirement. Report-only mode remains the CI/setup gate and exits 1 for
 any unmet row.
 
 Some demos need something a package manager can't supply — a Kaggle credential,
-a manual download, a `git lfs pull`, or a GPU. Those show up in the `NEEDS`
-column of `luxar demo` and in `luxar demo info <key>`, not here.
+a manual download, a `git lfs pull`, or a GPU. Those show up in the trailing
+requirements column of `luxar demo` (as `kaggle`, `manual`, `git-lfs`, `GPU`,
+`GPU?`) and in `luxar demo info <key>`, not here.
 
 ## The DEMO_META registry
 

@@ -58,6 +58,44 @@ class TestListAndTable:
         assert "No demos match" in result.stdout
 
 
+class TestStarterKey:
+    def test_suggestion_does_not_depend_on_caller_order(self) -> None:
+        """The footer's "e.g." demo must be the same one every run.
+
+        `render_catalogue` sorts internally, so the table is order-independent;
+        the footer sat right beside it and was not, yielding a dozen different
+        suggestions across shuffles of the same input.
+        """
+        import random
+
+        from luxar.cli.demo_commands import _starter_key
+
+        demos = iter_demos()
+        expected = _starter_key(demos)
+        assert expected, "no offline demo to suggest - fixture assumption broke"
+        rng = random.Random(11)
+        for _ in range(20):
+            shuffled = list(demos)
+            rng.shuffle(shuffled)
+            assert _starter_key(shuffled) == expected
+
+    def test_no_suggestion_when_nothing_is_free(self) -> None:
+        """Every demo costs something -> no "e.g." rather than a false promise."""
+        from luxar.cli.demo_commands import _starter_key
+
+        costly = [d for d in iter_demos() if d.download_mb or d.gpu != "none"]
+        assert costly, "fixture assumption broke: no costly demos"
+        assert _starter_key(costly) is None
+        assert _starter_key([]) is None
+
+    def test_suggests_only_a_demo_that_needs_nothing(self) -> None:
+        from luxar.cli.demo_commands import _starter_key
+
+        key = _starter_key(iter_demos())
+        demo = next(d for d in iter_demos() if d.key == key)
+        assert not demo.download_mb and demo.gpu == "none" and not demo.local_data
+
+
 class TestInfo:
     def test_info_by_key(self, runner) -> None:
         result = runner.invoke(app, ["demo", "info", "lorenz"])
@@ -955,7 +993,9 @@ class TestDeps:
         assert loud.stdout == quiet.stdout
         assert "scipy" in loud.stdout
         assert "anndata" not in loud.stdout
-        assert "1 optional demo dependency" in loud.stdout
+        # Count and noun agree on the heading of a one-row report.
+        assert "1 dependency" in loud.stdout
+        assert "1 dependencies" not in loud.stdout
 
     def test_deps_only_install_is_a_noop_when_target_is_satisfied(self, runner) -> None:
         from luxar.demos._dependencies import DependencyStatus
@@ -1062,15 +1102,52 @@ class TestDeps:
         plain = [re.sub(r"\x1b\[[0-9;]*m", "", ln) for ln in result.stdout.splitlines()]
         header = next(ln for ln in plain if "MODULE" in ln)
         row = next(ln for ln in plain if "ab>=1" in ln)
-        # The EXTRA column must start at the same offset in both lines.
+        # Every column must start at the same offset in both lines.
         assert header.index("EXTRA") == row.index("demos"), f"{header!r} vs {row!r}"
-        # ...and the rule must be exactly as wide as the header it underlines
-        # (a hand-counted constant overshot by one glyph).
-        sep = next(ln for ln in plain if "─" * 10 in ln)
-        gutter = header.index("MODULE") - 2  # arbol prefix + the 2-space indent
-        assert len(sep.rstrip()) - gutter == len(header.rstrip()) - gutter, (
-            f"rule {len(sep.rstrip())} != header {len(header.rstrip())}"
-        )
+        assert header.index("STATUS") == row.index("ok"), f"{header!r} vs {row!r}"
+
+    def test_deps_heading_rule_tracks_the_table_width(
+        self, runner, monkeypatch
+    ) -> None:
+        """The heading rule is measured, not a hand-counted constant.
+
+        The old table underlined its header with a fixed expression that
+        overshot by one glyph; a rule that does not follow the widest column is
+        the same bug waiting to come back.
+
+        ``COLUMNS`` is pinned because the assertions below straddle the terminal
+        edge: Rich honours that variable, so on a narrow terminal both the
+        "tracks the column" and the "clamps at the edge" cases would collapse
+        into clamping and the first assertion would fail for a reason that has
+        nothing to do with the rule.
+        """
+        import re
+
+        from luxar.demos._dependencies import DependencyStatus
+
+        monkeypatch.setenv("COLUMNS", "80")
+
+        def fill_for(spec: str) -> int:
+            """How many rule glyphs the heading draws for a table this wide."""
+            fake = [DependencyStatus("ab", DependencySpec(spec, "demos"), True, True)]
+            with patch("luxar.demos.survey", return_value=fake):
+                result = runner.invoke(app, ["demo", "deps"])
+            plain = (
+                re.sub(r"\x1b\[[0-9;]*m", "", ln) for ln in result.stdout.splitlines()
+            )
+            return next(ln for ln in plain if "─" in ln).count("─")
+
+        # Long enough that the rule is measured rather than clamped to its
+        # one-glyph minimum, and still inside the pinned 80 columns, so the fill
+        # tracks the column exactly: three more characters of REQUIREMENT,
+        # three more rule glyphs.
+        short = "ab>=1,<2,!=1.5,!=1.6,!=1.7,!=1.8,!=1.9,!=1.10,!=1.11"
+        assert fill_for(short) > 1
+        assert fill_for(short + "abc") - fill_for(short) == 3
+
+        # ...and it stops at the terminal edge rather than wrapping the heading
+        # onto a second line.
+        assert fill_for(short + "a" * 200) == fill_for(short + "a" * 400)
 
     def test_deps_dry_run_install_runs_no_pip(self, runner) -> None:
         from luxar.demos._dependencies import DependencyStatus

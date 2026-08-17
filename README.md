@@ -99,32 +99,43 @@ That last command generates a Lorenz attractor and opens the viewer:
 
 #### Browsing the catalogue
 
-`luxar demo` prints every bundled demo as a table — index, key, geometry,
-category, what it needs, and whether you have already built it:
+`luxar demo` prints every bundled demo, grouped by category — index, key,
+geometry, what it needs, and whether you have already built it:
 
 ```
-🎬 [Luxar] 85 demos
+🎬 85 Luxar demos  ·  74 built  ·  8 cached  ·  3 not generated yet
 
-  #  KEY                                    GEOM         CATEGORY       NEEDS                STATUS
-───────────────────────────────────────────────────────────────────────────────────────────────────
-  1  arxiv_papers_kaggle                    points       embeddings     ⬇30000MB 🔑kaggle
-  2  arxiv_papers_semantic_scholar          points       embeddings     ⬇20MB                cached
-  7  cellxgene_census_umap                  points       embeddings     ⬇12MB LFS
-  9  chromatrace_choir_umap_sequence        points       embeddings     📁manual              cached
- 25  gsplats_2d_cmu1_pathology              gsplats      medical        ⬇150MB GPU* LFS      cached
- 27  gsplats_3d_acto3d_heart                gsplats      microscopy     ⬇13MB GPU            cached
+ ASTRONOMY ───────────────────────────────────────────────────────────── 6 demos
+ ✓  3  asteroids_solar_system                  points+lines  300 MB
+ ✓ 12  cosmicflows_laniakea                    points+lines  25 MB
+ • 15  desi_galaxies                           points        72 MB git-lfs
+
+ MEDICAL ─────────────────────────────────────────────────────────────── 4 demos
+ ✓ 17  dmri_tractography                       lines         588 MB
+ • 25  gsplats_2d_cmu1_pathology               gsplats       150 MB GPU? git-lfs
+
+ SYNTHETIC ──────────────────────────────────────────────────────────── 19 demos
+ ✓ 10  cloud                                   points
+   11  collision                               points
  ...
 
-Run one:  luxar demo run <key|#>       Details:  luxar demo info <key|#>
-Caches:   luxar demo cache list        Clear:    luxar demo cache clear …
-Deps:     luxar demo deps              Install:  luxar demo deps --install
+ ✓ built   • inputs cached   (blank) not generated yet
+ GPU/GPU? = required/optional     git-lfs kaggle manual = data you supply
+
+ Run      luxar demo run <key|#>                e.g. luxar demo run cloud
+ Details  luxar demo info <key|#>
+ Filter   luxar demo list -c astronomy -g gsplats
+ Deps     luxar demo deps                       --install fixes what it reports
+ Caches   luxar demo cache list                 cache clear <key> to reclaim
+ Stop     luxar demo stop                       frees ports of forgotten runs
 ```
 
-**NEEDS** tells you the cost before you commit: `⬇NNMB` for a download, `GPU`
-(required) or `GPU*` (optional), plus `LFS`, `🔑kaggle`, or `📁manual` when a demo
-needs Git-LFS data, Kaggle credentials, or a file you supply. **STATUS** reads
-`cached` once inputs are downloaded and `output ✓` once the scene is built, so a
-second pass over the catalogue shows exactly what is already on disk.
+The **left rail** is what you already have: `✓` the scene is built, `•` the
+inputs are downloaded, blank means neither — so a second pass over the catalogue
+shows exactly what is on disk. The **last column** is what a demo costs you
+before you commit to it: the download size, `GPU` (required) or `GPU?`
+(optional), plus `git-lfs`, `kaggle`, or `manual` when it needs Git-LFS data,
+Kaggle credentials, or a file you supply.
 
 #### The `luxar demo` commands
 
@@ -132,7 +143,7 @@ second pass over the catalogue shows exactly what is already on disk.
 |---------|--------------|
 | `luxar demo` | Browse the catalogue (same as `luxar demo list`) |
 | `luxar demo list -c microscopy` | Filter by category: `synthetic`, `microscopy`, `embeddings`, `photogrammetry`, `astronomy`, `structural`, `networks`, `medical`, `geoscience`, `genomics`, `connectome` |
-| `luxar demo list -g gsplats` | Filter by geometry: `points`, `gsplats`, `lines`, `points+lines`, `mixed` |
+| `luxar demo list -g gsplats` | Filter by geometry: `points`, `gsplats`, `lines`, `mesh`, `points+lines`, `mixed` |
 | `luxar demo info <key\|#>` | Requirements, caches, outputs, and how to run one demo |
 | `luxar demo run <key\|#>` | Run by key (e.g. `luxar demo run lorenz`) or by the index shown in the table — keys are stable, indices shift as demos are added |
 | `luxar demo run <key> -- ARGS` | Forward arguments to the demo script, e.g. `luxar demo run gsplats_3d_tribolium_embryo -- --recompute --no-serve` |
