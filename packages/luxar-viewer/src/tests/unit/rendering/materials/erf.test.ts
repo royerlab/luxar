@@ -20,11 +20,11 @@ import { float } from 'three/tsl';
 import {
   erfRef,
   erfPoly,
-  erfPolyTSL,
   ERF_POLY_COEFFS,
   ERF_POLY_CLAMP,
   GLSL_ERF_FUNCTIONS,
 } from '../../../../rendering/materials/_shared/erf';
+import { erfPolyTSL } from '../../../../rendering/materials/_shared/erf-tsl';
 import { computeRayIntegralFactor } from '../../../../rendering/materials/gsplat/math';
 
 /** High-precision erf values (mpmath, 12 significant digits). */

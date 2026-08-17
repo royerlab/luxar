@@ -16,7 +16,8 @@
 
 import { NodeMaterial } from 'three/webgpu';
 import { vec4, float, positionGeometry } from 'three/tsl';
-import { GLSL_ERF_FUNCTIONS, erfPolyTSL } from '../../../../rendering/materials/_shared/erf';
+import { GLSL_ERF_FUNCTIONS } from '../../../../rendering/materials/_shared/erf';
+import { erfPolyTSL } from '../../../../rendering/materials/_shared/erf-tsl';
 import type { ShaderSource } from '../../../../rendering/materials/_shared/shader-source';
 import type { RegistryEntry } from './types';
 

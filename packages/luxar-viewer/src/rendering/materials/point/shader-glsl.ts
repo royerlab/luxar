@@ -30,7 +30,7 @@ import {
   VOLUMETRIC_SERIES_TAU_THRESHOLD,
   VOLUMETRIC_TAU_EPS,
 } from '../_shared/volumetric';
-import { pointWebGPUFactory, buildPointTSLNodesFromUniforms } from './shader-tsl';
+import { requireTslMaterials } from '../../tsl/slot';
 
 export const POINT_VERTEX_SHADER = /* glsl */ `
     precision highp float;
@@ -374,8 +374,11 @@ export const POINT_SOURCE: ShaderSource = {
   // and colorNode (super-Gaussian falloff + GOG). Default config — no
   // toggles. Consumers needing USE_COLORMAP / LUXAR_MAX_RGB_CONTRIBUTION
   // call `pointWebGPUFactory(uniforms, { ...flags })` directly.
-  webgpu: (uniforms: Record<string, unknown>) =>
-    pointWebGPUFactory(
+  webgpu: (uniforms: Record<string, unknown>) => {
+    const { pointWebGPUFactory, buildPointTSLNodesFromUniforms } =
+      requireTslMaterials().factories.point;
+    return pointWebGPUFactory(
       buildPointTSLNodesFromUniforms(uniforms as Record<string, import('three').IUniform>)
-    ),
+    );
+  },
 };

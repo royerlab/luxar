@@ -23,7 +23,6 @@
  */
 
 import * as THREE from 'three';
-import { WebGPURenderer } from 'three/webgpu';
 import { config } from '../../../config';
 import {
   createRendererCapabilities,
@@ -337,6 +336,14 @@ export async function createWebGPURenderer(
       );
     }
   }
+
+  // Loaded HERE, not at module scope: a static `import { WebGPURenderer }`
+  // makes the ~173 kB gzipped `three-webgpu` chunk a dependency of the entry
+  // bundle, which every WebGL session then downloads and never runs (issue
+  // #1679). `selectBackend()` is pure and synchronous and has already chosen
+  // WebGPU by the time we get here, so this await costs the WebGPU path one
+  // chunk fetch and the default path nothing.
+  const { WebGPURenderer } = await import('three/webgpu');
 
   const gpuRenderer = new WebGPURenderer({
     canvas,

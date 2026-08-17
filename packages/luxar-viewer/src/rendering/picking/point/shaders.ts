@@ -22,8 +22,8 @@ import {
   GLSL_NEAR_FADE_FUNCTIONS,
   GLSL_SORTED_INDEX,
 } from '../../materials/_shared/glsl-lib';
-import { pointPickWebGPUFactory, buildPointPickTSLNodesFromUniforms } from './pick.tsl';
 import { FALLOFF_FLOOR, FALLOFF_K } from '../../materials/_shared/falloff';
+import { requireTslMaterials } from '../../tsl/slot';
 
 /**
  * Picking vertex shader for points.
@@ -191,6 +191,8 @@ export const POINT_PICK_SOURCE: ShaderSource = {
   webgl: { vertex: POINT_PICK_VERTEX_SHADER, fragment: POINT_PICK_FRAGMENT_SHADER },
   webgpu: (uniforms: Record<string, unknown>) => {
     const u = uniforms as Record<string, import('three').IUniform>;
+    const { pointPickWebGPUFactory, buildPointPickTSLNodesFromUniforms } =
+      requireTslMaterials().factories.pickPoint;
     return pointPickWebGPUFactory(buildPointPickTSLNodesFromUniforms(u));
   },
 };

@@ -13,11 +13,7 @@
  */
 
 import type { ShaderSource } from '../../materials/_shared/shader-source';
-import {
-  bloomThresholdWebGPUFactory,
-  bloomDownsampleWebGPUFactory,
-  bloomUpsampleWebGPUFactory,
-} from './bloom.tsl';
+import { requireTslMaterials } from '../../tsl/slot';
 
 /**
  * Shared fullscreen-triangle vertex shader for all three bloom passes.
@@ -122,19 +118,25 @@ export const BLOOM_THRESHOLD_SOURCE: ShaderSource = {
   name: 'bloom-threshold',
   webgl: { vertex: BLOOM_VERTEX_SHADER, fragment: BLOOM_THRESHOLD_FRAGMENT_SHADER },
   webgpu: (uniforms: Record<string, unknown>) =>
-    bloomThresholdWebGPUFactory(uniforms as Record<string, import('three').IUniform>),
+    requireTslMaterials().factories.bloom.bloomThresholdWebGPUFactory(
+      uniforms as Record<string, import('three').IUniform>
+    ),
 };
 
 export const BLOOM_DOWNSAMPLE_SOURCE: ShaderSource = {
   name: 'bloom-downsample',
   webgl: { vertex: BLOOM_VERTEX_SHADER, fragment: BLOOM_DOWNSAMPLE_FRAGMENT_SHADER },
   webgpu: (uniforms: Record<string, unknown>) =>
-    bloomDownsampleWebGPUFactory(uniforms as Record<string, import('three').IUniform>),
+    requireTslMaterials().factories.bloom.bloomDownsampleWebGPUFactory(
+      uniforms as Record<string, import('three').IUniform>
+    ),
 };
 
 export const BLOOM_UPSAMPLE_SOURCE: ShaderSource = {
   name: 'bloom-upsample',
   webgl: { vertex: BLOOM_VERTEX_SHADER, fragment: BLOOM_UPSAMPLE_FRAGMENT_SHADER },
   webgpu: (uniforms: Record<string, unknown>) =>
-    bloomUpsampleWebGPUFactory(uniforms as Record<string, import('three').IUniform>),
+    requireTslMaterials().factories.bloom.bloomUpsampleWebGPUFactory(
+      uniforms as Record<string, import('three').IUniform>
+    ),
 };

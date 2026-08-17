@@ -66,7 +66,7 @@ import {
   GLSL_ELEMENT_ID_SPLIT,
   GLSL_NEAR_FADE_FUNCTIONS,
 } from '../../materials/_shared/glsl-lib';
-import { meshPickWebGPUFactory, buildMeshPickTSLNodesFromUniforms } from './pick.tsl';
+import { requireTslMaterials } from '../../tsl/slot';
 
 /**
  * Picking vertex stage for meshes.
@@ -238,6 +238,8 @@ export const MESH_PICK_SOURCE: ShaderSource = {
   webgl: { vertex: MESH_PICK_VERTEX_SHADER, fragment: MESH_PICK_FRAGMENT_SHADER },
   webgpu: (uniforms: Record<string, unknown>) => {
     const u = uniforms as Record<string, import('three').IUniform>;
+    const { meshPickWebGPUFactory, buildMeshPickTSLNodesFromUniforms } =
+      requireTslMaterials().factories.pickMesh;
     return meshPickWebGPUFactory(buildMeshPickTSLNodesFromUniforms(u));
   },
 };

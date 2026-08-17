@@ -17,6 +17,7 @@ import { extractCameraOverrides } from '../config/zarr-bridge/viewer-config-util
 import type { ZarrViewerConfig } from '../types/zarr';
 import type { PostProcessingManager } from '../rendering/post-processing/post-processing-manager';
 import { materialManager } from '../rendering';
+import { loadTslMaterials } from '../rendering/tsl/load';
 import { disposeColormapTextures } from '../rendering/colormap-textures';
 import type { Renderer, RendererCapabilities } from '../rendering/renderer-capabilities';
 import {
@@ -448,6 +449,18 @@ export class SceneManager extends THREE.EventDispatcher<{
     }
     this.renderer = result.renderer;
     this.capabilities = result.capabilities;
+
+    // Fetch the TSL/WebGPU material cone before anything can ask for a
+    // material. This is the ONLY place it is loaded on the production path, and
+    // the reason the default WebGL session never downloads the ~173 kB gzipped
+    // `three-webgpu` chunk (issue #1679).
+    //
+    // Ordering is load-bearing and already guaranteed: `init()` awaits
+    // `setupRenderer()` (this) before `setupPostProcessing()`, which builds the
+    // first material of the whole app (the mega-shader, then bloom and FXAA).
+    // Because the registry is installed by then, `buildMaterial` and the
+    // `MaterialManager` dispatch tables can stay synchronous.
+    await loadTslMaterials();
 
     // Hand the capabilities to the material manager so its
     // getPoint/Line/GSplatMaterial dispatch picks the TSL backend.

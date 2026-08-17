@@ -11,10 +11,10 @@ import { PointMaterial } from './materials/point/material-glsl';
 import { LineMaterial } from './materials/line/material-glsl';
 import { GSplatMaterial } from './materials/gsplat/material-glsl';
 import { MeshMaterial } from './materials/mesh/material-glsl';
-import { PointTSLMaterial } from './materials/point/material-tsl';
-import { LineTSLMaterial } from './materials/line/material-tsl';
-import { GSplatTSLMaterial } from './materials/gsplat/material-tsl';
-import { MeshTSLMaterial } from './materials/mesh/material-tsl';
+import type { PointTSLMaterial } from './materials/point/material-tsl';
+import type { LineTSLMaterial } from './materials/line/material-tsl';
+import type { GSplatTSLMaterial } from './materials/gsplat/material-tsl';
+import type { MeshTSLMaterial } from './materials/mesh/material-tsl';
 import type { PointPickingMaterial } from './picking/point/material';
 import type { LinePickingMaterial } from './picking/line/material';
 import type { GSplatPickingMaterial } from './picking/gsplat/material';
@@ -244,7 +244,7 @@ export class MaterialManager {
     const backend = resolveMaterialBackend(this.caps);
 
     const createStart = performance.now();
-    const material = new VISUAL_FACTORIES.point[backend]({
+    const material = new (VISUAL_FACTORIES.point[backend]())({
       opacity: props.opacity,
       absorption: props.absorption,
       gamma: props.gamma,
@@ -291,7 +291,7 @@ export class MaterialManager {
     const backend = resolveMaterialBackend(this.caps);
 
     const createStart = performance.now();
-    const material = new VISUAL_FACTORIES.line[backend]({
+    const material = new (VISUAL_FACTORIES.line[backend]())({
       opacity: props.opacity,
       absorption: props.absorption,
       gamma: props.gamma,
@@ -337,7 +337,7 @@ export class MaterialManager {
     const backend = resolveMaterialBackend(this.caps);
 
     const createStart = performance.now();
-    const material = new VISUAL_FACTORIES.gsplat[backend]({
+    const material = new (VISUAL_FACTORIES.gsplat[backend]())({
       opacity: props.opacity,
       absorption: props.absorption ?? 1.0,
       gamma: props.gamma,
@@ -390,7 +390,7 @@ export class MaterialManager {
     const backend = resolveMaterialBackend(this.caps);
 
     const createStart = performance.now();
-    const material = new VISUAL_FACTORIES.mesh[backend]({
+    const material = new (VISUAL_FACTORIES.mesh[backend]())({
       opacity: props.opacity,
       gamma: props.gamma,
       intensity: props.intensity,
@@ -425,22 +425,22 @@ export class MaterialManager {
    * `register()` like any other camera-aware material.
    */
   createPointPickingMaterial(config: PointPickingMaterialConfig): LuxarPointPickingMaterial {
-    return new PICKING_FACTORIES.point[resolveMaterialBackend(this.caps)](config);
+    return new (PICKING_FACTORIES.point[resolveMaterialBackend(this.caps)]())(config);
   }
 
   /** Same shape as `createPointPickingMaterial`, for lines. */
   createLinePickingMaterial(config: LinePickingMaterialConfig): LuxarLinePickingMaterial {
-    return new PICKING_FACTORIES.line[resolveMaterialBackend(this.caps)](config);
+    return new (PICKING_FACTORIES.line[resolveMaterialBackend(this.caps)]())(config);
   }
 
   /** Same shape as `createPointPickingMaterial`, for gsplats. */
   createGSplatPickingMaterial(config: GSplatPickingMaterialConfig): LuxarGSplatPickingMaterial {
-    return new PICKING_FACTORIES.gsplat[resolveMaterialBackend(this.caps)](config);
+    return new (PICKING_FACTORIES.gsplat[resolveMaterialBackend(this.caps)]())(config);
   }
 
   /** Same shape as `createPointPickingMaterial`, for meshes. */
   createMeshPickingMaterial(config: MeshPickingMaterialConfig): LuxarMeshPickingMaterial {
-    return new PICKING_FACTORIES.mesh[resolveMaterialBackend(this.caps)](config);
+    return new (PICKING_FACTORIES.mesh[resolveMaterialBackend(this.caps)]())(config);
   }
 
   /**
@@ -450,7 +450,7 @@ export class MaterialManager {
    * `MegaShaderMaterial` and the TSL `MegaShaderTSLMaterial`.
    */
   createMegaShaderMaterial(cfg: MegaShaderConfig): LuxarMegaShaderMaterial {
-    return new MEGA_SHADER_FACTORIES[resolveMaterialBackend(this.caps)](cfg);
+    return new (MEGA_SHADER_FACTORIES[resolveMaterialBackend(this.caps)]())(cfg);
   }
 
   /** Update camera parameters for all registered materials. */
