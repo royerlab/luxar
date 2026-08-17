@@ -338,6 +338,18 @@ export class OfflineCaptureStrategy implements CaptureStrategy {
       let consecutiveErrors = 0;
       const MAX_CONSECUTIVE_ERRORS = 3;
 
+      // Wake the rAF loop BEFORE registering the keep-alive, exactly as
+      // the real-time strategy does. The turntable's rotation is applied
+      // from a per-frame callback, and those only run while the loop is
+      // animating — but the loop idle-stops after ~2s of no interaction,
+      // which is the normal state by the time the user has read the
+      // panel and confirmed the dialog. Registering a `continuous`
+      // callback only KEEPS a running loop alive; it never restarts a
+      // stopped one. Without this call the camera never rotates and the
+      // capture silently emits N identical frames — the capture path
+      // renders its own pipeline pass (`renderToImageData`), so frames
+      // are still produced, just all from the same pose.
+      this.animationController.startAnimation();
       this.animationController.addPerFrameCallback(keepAliveId, () => {}, { continuous: true });
 
       for (let i = 0; i < totalFrames; i++) {

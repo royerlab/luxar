@@ -124,11 +124,31 @@ function makeSceneManager(): {
   return { sm: sm as any, orbitControls };
 }
 
-function makeAnimController(): any {
+/**
+ * Animation-controller double that models the real idle behaviour: the
+ * rAF loop starts STOPPED (the viewer idle-stops after ~2s of no
+ * interaction, which is the normal state by the time a user has read
+ * the Recording panel and confirmed the dialog), and per-frame
+ * callbacks only fire while it is running. Registering a `continuous`
+ * callback does NOT restart a stopped loop — only startAnimation()
+ * does. A double that fires callbacks unconditionally cannot see the
+ * "turntable captures N identical frames" bug at all.
+ */
+function makeAnimController({ animating = false }: { animating?: boolean } = {}): any {
+  let isAnimating = animating;
   return {
+    get isActive(): boolean {
+      return isAnimating;
+    },
+    startAnimation: vi.fn(() => {
+      isAnimating = true;
+    }),
     // Invoke the registered callback once synchronously to simulate a
-    // single rendered frame (this is what drives applyOrbitRotation).
-    addPerFrameCallback: vi.fn((_id: string, cb?: () => void) => cb?.()),
+    // single rendered frame (this is what drives applyOrbitRotation) —
+    // but only while the loop is actually animating.
+    addPerFrameCallback: vi.fn((_id: string, cb?: () => void) => {
+      if (isAnimating) cb?.();
+    }),
     removePerFrameCallback: vi.fn(),
   };
 }
@@ -273,6 +293,40 @@ describe('OfflineCaptureStrategy', () => {
   });
 
   describe('happy-path frame loop', () => {
+    it('wakes the idle-stopped rAF loop so the turntable actually rotates', async () => {
+      const { sm, orbitControls } = makeSceneManager();
+      // Loop stopped by the idle timer while the user read the panel.
+      const anim = makeAnimController({ animating: false });
+      const strat = new OfflineCaptureStrategy(sm, anim, makeHooks());
+
+      // videoFPS 2 + turntableSpeed 120 → totalFrames = ceil(3 * 2) = 6.
+      await strat.run(
+        makeOpts({ outputFormat: 'png', videoFPS: 2, turntableSpeed: 120 }),
+        'turntable',
+        makeSession()
+      );
+
+      // The loop must be woken BEFORE the keep-alive callback is
+      // registered — a `continuous` callback keeps a running loop alive
+      // but never restarts a stopped one.
+      expect(anim.startAnimation).toHaveBeenCalled();
+      const startOrder = anim.startAnimation.mock.invocationCallOrder[0];
+      const keepAliveOrder = anim.addPerFrameCallback.mock.calls.findIndex(
+        (c: unknown[]) => c[0] === OfflineCaptureStrategy.KEEPALIVE_CALLBACK_ID
+      );
+      expect(keepAliveOrder).toBeGreaterThanOrEqual(0);
+      expect(startOrder).toBeLessThan(
+        anim.addPerFrameCallback.mock.invocationCallOrder[keepAliveOrder]
+      );
+
+      // Frames 1..5 each advance one step — without the wake-up the
+      // camera never moves and every captured frame is identical.
+      const driver = mockState.driverInstances.at(-1)!;
+      expect(driver.captureFrame).toHaveBeenCalledTimes(6);
+      expect(orbitControls.applyOrbitRotation).toHaveBeenCalledTimes(5);
+      expect(orbitControls.applyOrbitRotation).toHaveBeenCalledWith((2 * Math.PI) / 5);
+    });
+
     it('builds the overlay, drives the driver for every frame, then tears everything down', async () => {
       const { sm, orbitControls } = makeSceneManager();
       const session = makeSession();

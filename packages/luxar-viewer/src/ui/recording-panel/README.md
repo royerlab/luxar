@@ -119,6 +119,16 @@ frame-by-frame capture for turntable + EXR-sequence modes:
    `ExrSequenceDriver` / `VideoModeDriver`); call `driver.setup(ctx)`.
 6. Mount the modal overlay (focus trap + Escape to cancel + preview
    canvas + counter).
+6b. `animationController.startAnimation()`, then register the
+   `continuous` keep-alive callback — in that order. The rotation is
+   applied from a per-frame callback, and those only run while the rAF
+   loop is animating; the loop idle-stops after ~2 s of no interaction
+   (the normal state once the user has read the panel and confirmed the
+   dialog), and a `continuous` callback only KEEPS a running loop alive
+   — it never restarts a stopped one. Skipping the wake-up produces a
+   capture of N identical frames with no rotation at all, because the
+   capture path renders its own pipeline pass (`renderToImageData`)
+   independently of the loop.
 7. For each frame: register a per-frame callback that orbits the
    camera one step, `await requestAnimationFrame`, then call
    `driver.captureFrame(ctx, frameIndex, progress)`. Tolerate up to
