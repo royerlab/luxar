@@ -22,6 +22,7 @@ import { getGpuByteBudget } from '../../../rendering/gpu-byte-budget';
 import {
   configureDepthSort,
   setDepthSortEnabled,
+  warmUpDepthSortWorker,
   evaluateDepthSortPerFrame,
 } from '../../../rendering/depth-sort-coordinator';
 import { materialManager } from '../../../rendering';
@@ -299,6 +300,14 @@ export async function runInitPipeline(
     // is tracked (the stored tree stays valid, the mapping does not).
     getDisplayDims: () => sceneDimsManager.getDims()?.displayed ?? null,
   });
+  // Start the SortWorker NOW, while the app is still idle, rather than
+  // letting the first order-dependent commit spawn it. That commit lands
+  // when this thread and the data-worker pool are saturated decoding the
+  // scene, and the worker's `initialize()` reply has to be dispatched on
+  // this very thread — on a multi-million-element scene it misses its
+  // deadline there, which used to disable sorting for the whole session.
+  // Honours `setDepthSortEnabled` above (so `?depthSort=0` spawns nothing).
+  warmUpDepthSortWorker();
   // Camera-motion re-sort scheduler (Phase 3, spec §6) + global cross-node
   // renderOrder assignment. Same per-frame slot pattern as
   // 'lod-group-selector' below; the evaluation early-outs when no

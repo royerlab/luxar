@@ -13,4 +13,9 @@ export const depthSortConfig: DepthSortConfig = {
   enabled: true, // URL escape hatch: ?depthSort=0 (pins identity ordering)
   angleThresholdDeg: 3,
   translationFraction: 0.05,
+  // Generous relative to the data pool's 10 s: this one deadline covers a
+  // cold WASM fetch + instantiate, and the reply lands on whatever the main
+  // thread is doing. Missing it is transient (retried when the loader goes
+  // idle), so erring long costs nothing but a later first sort.
+  workerInitTimeoutMs: 30_000,
 };

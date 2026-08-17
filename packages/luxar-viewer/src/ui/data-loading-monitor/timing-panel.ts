@@ -577,21 +577,43 @@ function createAggregatedRoot(root: TimingEntry): TimingEntry {
 }
 
 /**
+ * Footer text for the depth-sort subsystem.
+ *
+ * `unavailable` wins over the sort count, and shows even when no sort ever
+ * ran — which is exactly the case it exists for. A session whose SortWorker
+ * never came up renders every order-dependent layer in storage order, and
+ * the only previous signal was one console error at the moment it happened.
+ * Issue #705 settled the principle for the perf bench (never report a
+ * sorted workload that silently ran unsorted); this is the same rule for
+ * the live monitor.
+ */
+function depthSortFooter(depthSortRoot?: TimingEntry, unavailable?: boolean): string {
+  if (unavailable) return ' · depth sort UNAVAILABLE';
+  if (depthSortRoot === undefined || depthSortRoot.count === 0) return '';
+  return ` · ${depthSortRoot.count} ${depthSortRoot.count === 1 ? 'sort' : 'sorts'}`;
+}
+
+/**
  * Render the complete hierarchical timing panel
  * Aggregates performance data by node type (Points, Lines, GSplats) instead of individual nodes.
  *
  * @param root - The 'Total Update' timing tree (per-frame demand updates)
  * @param refinementRoot - Optional 'LOD Refinement' tree (background passes),
  *   rendered as a second section below the main tree when it has data
+ * @param depthSortRoot - Optional 'Depth Sort' tree (camera-triggered re-sorts)
+ * @param depthSortUnavailable - True once the depth-sort subsystem has given
+ *   up for this session; reported in the footer instead of a sort count, and
+ *   keeps the panel out of its empty state so the notice cannot be buried
  */
 export function renderHierarchicalTimingPanel(
   root: TimingEntry,
   refinementRoot?: TimingEntry,
-  depthSortRoot?: TimingEntry
+  depthSortRoot?: TimingEntry,
+  depthSortUnavailable?: boolean
 ): string {
   const hasRefinement = refinementRoot !== undefined && refinementRoot.count > 0;
   const hasDepthSort = depthSortRoot !== undefined && depthSortRoot.count > 0;
-  if (root.count === 0 && !hasRefinement && !hasDepthSort) {
+  if (root.count === 0 && !hasRefinement && !hasDepthSort && !depthSortUnavailable) {
     return `
       <div class="luxar-timing-panel luxar-timing-panel--empty">
         <div class="luxar-timing-panel__empty-msg">
@@ -600,6 +622,15 @@ export function renderHierarchicalTimingPanel(
       </div>
     `;
   }
+  // `depthSortUnavailable` deliberately keeps the panel out of the empty state
+  // even with zero timings. That window is narrower than "before any data
+  // loads": `data-loading-monitor.ts::renderPerformanceTab` short-circuits to
+  // its own "Profiler not connected" block while the profiler is null, and the
+  // profiler is only wired once a scene loader exists — so this term matters
+  // once the profiler IS connected but all three trees are still empty (a
+  // scene whose geometry never sorts, or one that has not yet recorded an
+  // update/refinement/sort sample). "No timing data yet" would bury the one
+  // thing worth saying there.
 
   // Aggregate children by node type for cleaner display
   const aggregatedRoot = createAggregatedRoot(root);
@@ -610,9 +641,7 @@ export function renderHierarchicalTimingPanel(
   const refinementCount = hasRefinement
     ? ` · ${refinementRoot.count} refinement ${refinementRoot.count === 1 ? 'pass' : 'passes'}`
     : '';
-  const depthSortCount = hasDepthSort
-    ? ` · ${depthSortRoot.count} ${depthSortRoot.count === 1 ? 'sort' : 'sorts'}`
-    : '';
+  const depthSortCount = depthSortFooter(depthSortRoot, depthSortUnavailable);
 
   return `
     <div class="luxar-timing-panel">
@@ -672,7 +701,8 @@ export function updateTimingPanelValues(
   container: HTMLElement,
   root: TimingEntry,
   refinementRoot?: TimingEntry,
-  depthSortRoot?: TimingEntry
+  depthSortRoot?: TimingEntry,
+  depthSortUnavailable?: boolean
 ): boolean {
   const timingBody = container.querySelector('.luxar-timing-panel__body');
   if (!timingBody) return false;
@@ -699,9 +729,7 @@ export function updateTimingPanelValues(
     const refinementCount = hasRefinement
       ? ` · ${refinementRoot.count} refinement ${refinementRoot.count === 1 ? 'pass' : 'passes'}`
       : '';
-    const depthSortCount = hasDepthSort
-      ? ` · ${depthSortRoot.count} ${depthSortRoot.count === 1 ? 'sort' : 'sorts'}`
-      : '';
+    const depthSortCount = depthSortFooter(depthSortRoot, depthSortUnavailable);
     updateCount.textContent = `${root.count} updates${refinementCount}${depthSortCount}`;
   }
 

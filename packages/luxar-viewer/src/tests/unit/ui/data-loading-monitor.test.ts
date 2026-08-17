@@ -24,6 +24,19 @@ import type {
   MemoryMetrics,
   SceneGraphNode,
 } from '../../../types/data-monitor-types';
+import type { TimingEntry, UpdateProfiler } from '../../../profiling/update-profiler';
+
+/**
+ * The depth-sort verdict the monitor reads, drivable from a test. Only
+ * `isDepthSortAvailable` is replaced — everything else in that module stays
+ * real, so nothing else in this file's import graph changes behaviour. Default
+ * `true` keeps every other test here on the pre-existing path.
+ */
+let depthSortAvailable = true;
+vi.mock('../../../rendering/depth-sort-coordinator', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../rendering/depth-sort-coordinator')>()),
+  isDepthSortAvailable: () => depthSortAvailable,
+}));
 
 // Mock DOM environment
 beforeEach(() => {
@@ -1692,5 +1705,71 @@ describe('DataLoadingMonitor — accumulator provider record', () => {
     for (const type of POOLED_GEOMETRY_TYPES) {
       expect(metrics.accumulators[type], `${type} slot survived the reset`).toBeNull();
     }
+  });
+});
+
+describe('Performance tab depth-sort note', () => {
+  function entry(count: number, name = 'Total Update'): TimingEntry {
+    return { name, lastMs: 1, avgMs: 1, count, children: [] };
+  }
+
+  /** Minimal profiler: one recorded update, no refinement, no sorts. */
+  function makeProfiler(): UpdateProfiler {
+    return {
+      getTimings: () => entry(1),
+      getRefinementTimings: () => entry(0, 'LOD Refinement'),
+      getDepthSortTimings: () => entry(0, 'Depth Sort'),
+    } as unknown as UpdateProfiler;
+  }
+
+  afterEach(() => {
+    depthSortAvailable = true;
+  });
+
+  // Both `!isDepthSortAvailable()` call sites in data-loading-monitor.ts could
+  // be replaced by a constant with the rest of the suite still green: the
+  // footer note is the branch's only user-visible surface and nothing exercised
+  // it end to end. This drives the verdict and reads the rendered DOM, on the
+  // FULL rebuild path (renderPerformanceTab) and the INCREMENTAL patch path
+  // (updateTimingPanelValues) separately — they forward the same verdict from
+  // two different places.
+  it('forwards the depth-sort verdict on both the full-render and incremental paths', () => {
+    const container = document.getElementById('test-container')!;
+    const monitor = new DataLoadingMonitor(container);
+    monitor.setProfiler(makeProfiler());
+    monitor.show();
+    // The tabbed timing panel only exists in the expanded (detailed) view.
+    monitor.expand();
+    monitor.setActiveTab('performance');
+
+    const footerEl = (): HTMLElement =>
+      container.querySelector('.luxar-timing-panel__update-count') as HTMLElement;
+    // Baseline: a healthy subsystem says nothing (the anti-test for both
+    // assertions below — a hard-coded `true` note would fail here).
+    expect(footerEl()).not.toBeNull();
+    expect(footerEl().textContent).not.toContain('UNAVAILABLE');
+
+    // Incremental path: the panel structure already exists, so the polling tick
+    // patches the footer text in place. Holding the element across the update
+    // is what proves the patch (not a rebuild) forwarded the verdict — a full
+    // innerHTML rebuild would detach this node.
+    const patched = footerEl();
+    depthSortAvailable = false;
+    monitor.forceUpdate();
+    expect(patched.isConnected).toBe(true);
+    expect(patched.textContent).toContain('depth sort UNAVAILABLE');
+
+    // Full-render path: a tab round-trip rebuilds the panel from scratch.
+    monitor.setActiveTab('overview');
+    monitor.setActiveTab('performance');
+    expect(footerEl()).not.toBe(patched);
+    expect(footerEl().textContent).toContain('depth sort UNAVAILABLE');
+
+    // And it tracks a recovery, on the rebuilt structure.
+    depthSortAvailable = true;
+    monitor.forceUpdate();
+    expect(footerEl().textContent).not.toContain('UNAVAILABLE');
+
+    monitor.dispose();
   });
 });
