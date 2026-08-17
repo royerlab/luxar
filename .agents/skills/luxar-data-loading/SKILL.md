@@ -34,10 +34,14 @@ The dispatch is by **file suffix**, and anything not `.npy` / `.npz` / zarr /
 `.tiff` falls through to `imageio.imread` — which either works whole-file or
 raises. Two cases worth knowing before you plan a fit:
 
-- **`.lsm` (Zeiss)** loads, via the imageio fallback. But that path reads the
-  WHOLE file eagerly: no lazy slice, no `--array-key`, and `--channel` /
-  `--timepoint` are applied *after* materialization. A 2.8 GB LSM is 2.8 GB of
-  RAM before any selection happens. Convert to zarr first if the file is large.
+- **`.lsm` (Zeiss)** loads, via the imageio fallback (tifffile plugin). But that
+  path reads the WHOLE file eagerly: no lazy slice, no `--array-key`, and
+  `--channel` / `--timepoint` only act at all if you also pass `--axes` (see
+  below) — and then *after* materialization. Budget RAM from the decoded array,
+  not the file size: the loader returns float32, so the resident cost is
+  `prod(shape) × 4` bytes whatever the file's compression — about 2× the on-disk
+  size of a 16-bit acquisition, transiently more while the cast is in flight.
+  Convert to zarr first if the file is large.
 - **`.h5j` (Janelia FlyLight) is NOT supported.** Despite the HDF5 extension it
   is a container of per-channel **H.265 elementary streams**, so no array reader
   can open it. Decode with ffmpeg, then **crop the macroblock padding** — the
@@ -74,6 +78,11 @@ Without `--axes`, the loader infers axes from the number of dimensions:
 | 3D | `ZYX` | kept as-is |
 | 2D | `YX` | kept as-is |
 | >5D | T=first, extra leading dims folded into channel, last 3 = spatial | |
+
+**That table is the zarr path only.** For `.npy` / `.npz` / `.tiff` / imageio inputs
+the loader squeezes the decoded array and returns it as-is, so `--channel` /
+`--timepoint` are silently ignored — `fit movie.tiff --timepoint 3` fits the whole
+5D stack. On any non-zarr nD input, pass `--axes` (which does the indexing itself).
 
 **Override with `--axes`** when the layout differs (e.g. a camera axis, or `ZCYX`).
 Recognized labels: `time`/`t`, `channel`/`c`/`ch`/`camera`/`cam`, `z`/`y`/`x` (plus

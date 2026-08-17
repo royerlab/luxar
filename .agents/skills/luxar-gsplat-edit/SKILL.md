@@ -128,22 +128,25 @@ luxar gsplat napari in.gsplats.zarr                    # napari + centers overla
   `references/edit-commands.md`.
 - The old `split` command is gone — use `partition`.
 - `transform` applies operations in a fixed order: scale → rotate → translate → center
-  → scale-intensity → normalize-intensity. **The order is why anisotropic voxel
-  scaling plus a rotation needs TWO invocations**: in one call the scale lands
-  first, so `--scale 0.19,0.19,0.38 --rotate-y 90` puts the axial pitch on a
-  lateral axis. Rotate first, then scale in a second call (or vice versa —
-  whichever your frame needs). Note also that a rotation invalidates a
-  partition's `bsp_tree` split planes; anything but a quarter-turn downgrades
-  the viewer's back-to-front ordering to centroid order, which the command warns
-  about — re-partition afterwards to restore exact ordering.
+  → scale-intensity → normalize-intensity. It composes to `p → R·S·p`, so **a
+  per-axis scale is applied in the PRE-rotation frame** — which is what you want
+  for a voxel-pitch correction on the stored axes, but wrong if the `--scale`
+  vector is written in the frame you end up in. `--scale 0.19,0.19,0.38
+  --rotate-y 90` in one call applies 0.38 to the stored third axis, not to the
+  one the rotation brings into that slot; when the two are expressed in
+  different frames, split them into two invocations. Note also that a rotation
+  invalidates a partition's `bsp_tree` split planes; anything but a quarter-turn
+  downgrades the viewer's back-to-front ordering to centroid order, which the
+  command warns about — re-partition afterwards to restore exact ordering.
 - **`merge --as-dimension` needs `-e precision` if the stacked coordinates must
   be exact.** The default `auto` encoding quantises centers to uint16 over the
   column's range, so `--values 0,1,2` comes back as `[0, 1.0000153, 2]`
-  (reproduced; `-e precision` gives exact `[0, 1, 2]`). Harmless for a spatial
-  axis, fatal for a **categorical** dimension: the viewer matches the slice
-  position against the stored coordinate, so the middle category silently shows
-  nothing. Carry `-e precision` through *every* stage that rewrites the store
-  (colour, lod, transform), not just the merge.
+  (reproduced; `-e precision` gives exact `[0, 1, 2]`). Harmless on an axis that
+  carries real extent, fatal on a stacked one — and that is the default: `--sigma
+  0` gives each splat σ = 1e-7 in the new axis, so a coordinate off by 1.5e-5
+  sits ~150 σ from the slice, far past the truncation radius, and the whole
+  middle slice attenuates to nothing. Carry `-e precision` through *every* stage
+  that rewrites the store (colour, lod, transform), not just the merge.
 - `cull -m auto` picks error_budget (if `--target`), else redundancy (if `--shape`),
   else cumulative.
 - `denoise` lives here too but acts on a raw VOLUME (pre-fit), not on splats.

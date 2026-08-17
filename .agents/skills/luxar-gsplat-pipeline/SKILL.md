@@ -176,16 +176,16 @@ on heavy-tailed sparse data that tail is a lot of splats.
 
 | | `n_iters` | `early_stop_patience` | `max_eccentricity` | `cull_retention` |
 | --- | --- | --- | --- | --- |
-| *(no preset)* | — | — | — | **0.95** |
+| *(no preset)* | 1,000 | 300 | 10 | **0.95** |
 | `draft` | 2,000 | 200 | 10 | 0.999 |
 | `standard` | 5,000 | 300 | 10 | 0.999 |
 | `hifi` | 10,000 | 400 | 15 | 0.999 |
 | `ultra` / `n2s` | 20,000 | 500 | 20 / 10 | 0.999 |
 
-So a bare `fit` silently drops 5% of amplitude, while any preset keeps
-essentially everything. That difference is deliberate: `0.999` is the
-manuscript's blind-spot protocol baseline, and the old preset default of `0.95`
-made `cal` report a false "signal limited" curve. Pass
+So a bare `fit` silently drops 5% of amplitude *and* runs fewer iterations than
+`draft`, while any preset keeps essentially everything. That difference is
+deliberate: `0.999` is the manuscript's blind-spot protocol baseline, and the old
+preset default of `0.95` made `cal` report a false "signal limited" curve. Pass
 `--cull-retention 0` to keep every splat, or a lower value as a deliberate
 size lever — but for *reducing* a finished fit prefer `decimate` (hit a target
 count) or `cull --target vol.npy` (error-budget, the principled one) over
@@ -198,20 +198,23 @@ tightening this knob and refitting.
 | Thin/faint structure missing | `--floor auto` (see above), then raise K — not a higher floor |
 | Background haze survives | the viewer's display window + opacity, or `filter --soft-highpass p90`; **not** a higher floor |
 | Blobby, over-smoothed detail | more K first; then `--preset hifi/ultra` for iterations |
-| Elongated streak artifacts | lower `--max-eccentricity` (presets range 10–20) |
+| Elongated streak artifacts | lower `max_eccentricity` — no CLI flag, set it in a `--config` YAML (`--dump-config` writes a template); presets range 10–20 |
 | Result far bigger than needed | `decimate --target N` / `-f 0.1`; `cull --target vol.npy -p 95` |
 | Boxy steps at tile boundaries | suspect the SOURCE (mosaic seams, coverage count), not the fit — measure the artefact's period first |
 | Fit is slow, exploring | `--preset draft` (2k iters) for the search, one `hifi` run at the end |
 
 `--iters` has `early_stop_patience` behind it, so a preset's budget is a
-*ceiling*: a converged fit stops early and a bigger preset costs nothing extra.
+*ceiling*: a converged fit stops before it. It is not free, though — patience
+grows with the preset (200 → 500), so the bigger one still burns up to 300 more
+iterations after the last improvement, and it moves `max_eccentricity` too.
 Raise iterations when the loss is still falling at the cap; raise K when it is
 not but the reconstruction is still soft.
 
-`--seed-method` (`auto`/`edges`/`grid`/`decomposition`/`peaks`, comma-combinable)
-matters most on structure the default misses: `edges` for boundaries, `peaks`
-for sparse point-like maxima, `grid` for uniform coverage, `decomposition` for
-blobs (slow). `--loss` defaults to `l1`; `poisson` suits shot-noise-dominated
+`--seed-method` (`auto`, or any comma-combination of
+`edges`/`grid`/`decomposition`/`peaks` — `auto` *is* `edges,grid` and cannot
+itself appear in a list) matters most on structure the default misses: `edges`
+for boundaries, `peaks` for sparse point-like maxima, `grid` for uniform
+coverage, `decomposition` for blobs (slow). `--loss` defaults to `l1`; `poisson` suits shot-noise-dominated
 photon counts.
 
 ## Traps that cost real time
