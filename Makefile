@@ -1735,8 +1735,18 @@ build-viewer-lib:  ## Build + verify the viewer's npm library bundle
 	cd packages/luxar-viewer && pnpm run ci:release
 	@echo "✅ Viewer library bundle built and export surface verified"
 
-rebuild-viewer:  ## Complete clean rebuild of viewer (auto-installs dependencies as needed)
-	@echo "🧹 Cleaning viewer build artifacts..."
+rebuild-viewer:  ## Clean rebuild of the viewer BUNDLE (WASM only if stale; auto-installs deps)
+	@# Scope note: this clears the JS/TS side only — dist/, the vite dep-optimizer
+	@# cache, tsbuildinfo, stale vite config timestamps. It deliberately does NOT
+	@# clear packages/luxar-viewer/public/wasm/ or the cargo target dir, so
+	@# `pnpm build:wasm` is a cache hit (it reports "Finished release profile in
+	@# 0.1s") whenever the Rust sources are unchanged. That is the point: the
+	@# stale-artifact bugs this target exists to clear are vite/TS ones, and the
+	@# release profile (lto=true, codegen-units=1) costs ~2 min to rebuild from
+	@# scratch. For a genuinely everything-from-source rebuild, chain the existing
+	@# WASM cleaner first:
+	@#     make clean-wasm rebuild-viewer
+	@echo "🧹 Cleaning viewer build artifacts (JS/TS; WASM kept unless stale)..."
 	@rm -rf packages/luxar-viewer/dist/
 	@rm -rf packages/luxar-viewer/.vite/
 	@rm -f packages/luxar-viewer/*.tsbuildinfo
@@ -1811,8 +1821,8 @@ install-rust:  ## Install Rust and wasm-pack for WASM development
 	if command -v wasm-pack >/dev/null 2>&1; then \
 		echo "✅ wasm-pack is already installed: $$(wasm-pack --version)"; \
 	else \
-		echo "📥 Installing wasm-pack 0.14.0 (this may take a minute)..."; \
-		cargo install wasm-pack --version 0.14.0 --locked; \
+		echo "📥 Installing wasm-pack 0.15.0 (this may take a minute)..."; \
+		cargo install wasm-pack --version 0.15.0 --locked; \
 		echo "✅ wasm-pack installed successfully!"; \
 	fi; \
 	echo ""; \

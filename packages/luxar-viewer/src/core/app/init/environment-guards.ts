@@ -17,10 +17,14 @@ export function assertBrowserEnvironment(): void {
 /**
  * Throw if the host's THREE.js revision is below what the viewer needs.
  *
- * The package.json declares `three@^0.184.0` as a peer; we use APIs
- * (Timer, current postprocessing ToneMappingEffect shape) that are not
- * present in older revisions. Fail fast with a clear message instead
+ * We use APIs (Timer, current postprocessing ToneMappingEffect shape) that
+ * are not present in older revisions. Fail fast with a clear message instead
  * of a cryptic "X is not a constructor" deep in initialization.
+ *
+ * The floor here (184) matches the peer range in package.json
+ * (`three@~0.184.0`). Note that `@types/three` deliberately sits a minor AHEAD
+ * of both — that skew is about a defective TSL `pow` overload in the r184
+ * definitions, not about the runtime; see THREE_VERSION_NOTES.md and #1683.
  */
 export function assertThreeRevision(minRevision = 184): void {
   const threeRevision = parseInt(THREE.REVISION ?? '0', 10);

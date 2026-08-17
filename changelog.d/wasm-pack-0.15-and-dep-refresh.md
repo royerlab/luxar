@@ -1,0 +1,37 @@
+#### wasm-pack 0.15, a dependency refresh, and an honest `rebuild-viewer`
+
+`wasm-pack` moves 0.14.0 → 0.15.0 across all six pin sites — the Makefile plus
+five workflow jobs — which silences the update warning printed on every viewer
+build. The generated WASM is byte-identical: same 50,858-byte binary, same
+`.d.ts`, same JS shim. The only difference is a trailing newline in the generated
+`package.json`, which is gitignored. The 0.15.0 release also moved the upstream
+repository from `drager/wasm-pack` to `wasm-bindgen/wasm-pack`; the release URLs
+CI downloads still resolve through the rename redirect, which was checked against
+the real assets rather than assumed.
+
+Routine dependency refreshes ride along: `zarrita` 0.7.4, `mediabunny` 1.54.0,
+Vitest 4.1.10, ESLint 10.8.1, Knip 6.32.2, dependency-cruiser 18.2.0, tsx, and
+`globals`. `@typescript-eslint`'s plugin and parser had drifted onto different
+versions and now move together.
+
+`THREE_VERSION_NOTES.md` gains the explanation for something that has looked like
+an oversight for a while: `three` is pinned at `~0.184.0` while `@types/three`
+sits at `~0.185.1`, a deliberate one-minor lead. `three` ships no `.d.ts`, so
+`@types/three` is the sole type description of the runtime — and `0.184.1`, the
+last r184 definitions release, declares TSL `pow` as
+`(x: Node<"vec3">, y: Node<"vec3">)` where a `VarNode<"vec3">` is not assignable,
+so a correct componentwise `pow(vec3, vec3)` call fails to typecheck. The r185
+definitions widen those overloads and describe the r184 runtime *more* accurately
+than the r184 ones do. Closing the skew by moving the runtime to r185 was
+attempted and reverted: it breaks the TSL/WebGPU path in four places, most
+starkly a gsplat pick surface that renders zero pixels. That is now tracked in
+its own issue, and the notes record both the reason for the skew and the reason
+the runtime stays put.
+
+Finally, `make rebuild-viewer` stops advertising a "complete clean rebuild" it
+never performed. It clears the JS/TS artifacts but deliberately leaves
+`public/wasm/` and the cargo target directory alone, so the Rust step is a cache
+hit whenever its sources are unchanged — which is the right default, since the
+stale-artifact bugs the target exists to clear are vite/TS ones and the release
+profile costs ~2 minutes to rebuild from scratch. The help text now says what it
+does and points at `make clean-wasm rebuild-viewer` for the full thing.
