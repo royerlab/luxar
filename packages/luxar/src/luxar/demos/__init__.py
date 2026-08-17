@@ -38,6 +38,7 @@ from ..utils.demos import (
     print_data_provenance,
     require_local_data,
     stack_colorings,
+    voxel_sampled_payload_agreement,
     warn_if_no_cuda_gpu,
 )
 from ._dependencies import (
@@ -86,5 +87,6 @@ __all__ = [
     "stack_colorings",
     "substitutive_lod_or_flat",
     "survey",
+    "voxel_sampled_payload_agreement",
     "warn_if_no_cuda_gpu",
 ]

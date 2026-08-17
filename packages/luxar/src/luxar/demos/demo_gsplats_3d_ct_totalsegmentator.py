@@ -44,8 +44,16 @@ On a fresh machine this demo bootstraps itself with no manual steps:
   2. If those assets aren't pulled, ``--recompute`` (or missing assets)
      AUTOMATICALLY downloads the 3.2 GB subset to
      ``~/.cache/luxar/gsplats_ct_totalsegmentator/`` (resumable), extracts one
-     subject, combines its masks with ``nibabel``, fits on the GPU, samples the
-     per-splat organ label, and caches.
+     subject, combines its masks with ``nibabel``, fits on the GPU, caches the
+     fit, then reloads it and samples the per-splat organ label from the stored
+     splat order.
+
+The labels sidecar is indexed positionally against the fit, and the cache goes
+through ``save_with_lod`` (a streaming ladder whose rungs are each written in
+hilbert order), which reorders splats — so the labels are sampled from the SAVED
+store's own order (save → reload → sample), never from the in-memory fit. On load
+the pair is verified against that invariant (splats sharing a voxel must share a
+label); a mismatched pair is reported and refitted rather than rendered.
 
 USAGE
 -----
@@ -85,6 +93,7 @@ from luxar.demos import (
     load_dataset_gsplats,
     parse_demo_flags,
     require_module,
+    voxel_sampled_payload_agreement,
     warn_if_no_cuda_gpu,
 )
 from luxar.demos._lod_policy import save_with_lod
@@ -134,6 +143,19 @@ ITERS_PER_PASS = 4_000
 PSNR_PATIENCE = 0.1
 
 SCENE_INTENSITY = 0.012  # Display brightness (dense body — dial down; see VH demo)
+
+# Minimum same-voxel label agreement for a cached/shipped (fit, labels) pair to be
+# trusted. Aligned data scores exactly 1.000. DO NOT LOOSEN THIS — the gate is
+# deliberately tight, because the interesting failures are NEAR MISSES rather
+# than full shuffles. Measured on the shipped pair (660,934 splats), permuting
+# the aligned sidecar the way each mistake would have written it: a different
+# space-filling curve (the writer's own morton order instead of hilbert) scores
+# 0.901, a roll-by-one 0.955, an adjacent-pair swap 0.962 — all just under 0.99,
+# and the last of them is the worst case the constant has to stay above. A full
+# shuffle only falls to the payload's own chance level Σp², which for these 117
+# organ labels is 0.027 (not 1.4e-05; that is the figure measured for the
+# Visible Human demo's sampled-RGB payload).
+MIN_LABEL_AGREEMENT = 0.99
 
 # TotalSegmentator v2 `total` task — 117 structures (label index → name).
 CLASS_MAP = {
@@ -451,6 +473,38 @@ def _load_labels(path: Path) -> np.ndarray:
         return data["labels_u8"].astype(np.int32)
 
 
+def _labels_match_fit(fit: GSplatData, labels: np.ndarray, source: str) -> bool:
+    """Is this (fit, labels) pair positionally aligned? Reports why if not.
+
+    The labels are indexed positionally against the fit, so a sidecar written in
+    a different splat order than the store is silently wrong (wrong colors, wrong
+    layers, wrong tooltips). Both were sampled nearest-voxel, so splats sharing a
+    voxel must share a label — see ``voxel_sampled_payload_agreement``.
+    """
+    if len(labels) != len(fit.centers):
+        aprint(
+            f"{source}: {len(labels):,} labels for {len(fit.centers):,} splats "
+            "— the sidecar does not belong to this fit."
+        )
+        return False
+    agreement = voxel_sampled_payload_agreement(fit.centers, labels)
+    if agreement is None:
+        # Too little evidence to judge — accepted (rejecting would force a
+        # multi-GB refit on every sparse fit), but never silently.
+        aprint(
+            f"{source}: too few same-voxel splats to check the label order "
+            "— the pair is accepted UNVERIFIED."
+        )
+        return True
+    if agreement < MIN_LABEL_AGREEMENT:
+        aprint(
+            f"{source}: same-voxel label agreement {agreement:.3f} < "
+            f"{MIN_LABEL_AGREEMENT} — the labels are not in the fit's splat order."
+        )
+        return False
+    return True
+
+
 # =============================================================================
 # Data loading (network / nibabel IO — not unit-tested)
 # =============================================================================
@@ -577,7 +631,7 @@ def load_ct_and_labels() -> tuple[np.ndarray, np.ndarray, np.ndarray, tuple]:
 def fit_atlas(
     fit_vol: np.ndarray, label_vol: np.ndarray, acquisition: tuple | None = None
 ) -> tuple[GSplatData, np.ndarray]:
-    """Fit splats to the CT, sample the per-splat organ label, cache both."""
+    """Fit the CT, cache, reload, sample labels; returns ``(stored_fit, labels)``."""
     global DEVICE
     if DEVICE is None:
         DEVICE = detect_device()
@@ -601,12 +655,25 @@ def fit_atlas(
         )
         aprint(f"Fitted {len(result.amplitudes):,} splats")
 
-    with asection("Sampling per-splat organ labels"):
-        labels = sample_labels(label_vol, result.centers)
+    return save_and_sample_labels(result, label_vol)
 
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+def save_and_sample_labels(
+    fit: GSplatData, label_vol: np.ndarray
+) -> tuple[GSplatData, np.ndarray]:
+    """Cache the fit, then sample the per-splat labels in the STORE's own order.
+
+    The writer reorders splats — ``save_with_lod`` splits them into a streaming
+    ladder and each rung is written spatially (``ordering="hilbert"``) — so
+    sampling the label volume at the in-memory fit's centers would produce a
+    sidecar that no longer lines up with what ``load`` hands back. Saving first
+    and sampling the RELOADED centers makes the pair aligned by construction
+    under any writer ordering, and makes this path return exactly what the cached
+    path will load next run. Returns ``(stored_fit, labels)``.
+    """
+    CACHE_FIT.parent.mkdir(parents=True, exist_ok=True)
     save_with_lod(
-        result,
+        fit,
         CACHE_FIT,
         # `stream`, not `levels`, even though the atlas is a large orbited
         # object: this demo does not hand its fit to the scene whole. It masks
@@ -621,8 +688,11 @@ def fit_atlas(
         compress="zip",
         zip_deflate=True,
     )
+    stored = GSplatData.load(CACHE_FIT)
+    with asection("Sampling per-splat organ labels"):
+        labels = sample_labels(label_vol, stored.centers)
     _save_labels_u8(labels, CACHE_LABELS)
-    return result, labels
+    return stored, labels
 
 
 def load_or_build() -> tuple[GSplatData, np.ndarray]:
@@ -639,7 +709,9 @@ def load_or_build() -> tuple[GSplatData, np.ndarray]:
             aprint(f"Manifest fetch unavailable ({exc}).")
             precomputed = None
         if precomputed is not None and CACHE_LABELS.exists():
-            return precomputed[0], _load_labels(CACHE_LABELS)
+            labels = _load_labels(CACHE_LABELS)
+            if _labels_match_fit(precomputed[0], labels, f"{FIT_FILE} + {LABELS_FILE}"):
+                return precomputed[0], labels
         if (
             LFS_FIT.exists()
             and LFS_LABELS.exists()
@@ -647,10 +719,28 @@ def load_or_build() -> tuple[GSplatData, np.ndarray]:
             and not is_lfs_pointer(LFS_LABELS)
         ):
             fit = GSplatData.load(LFS_FIT)
-            return fit, _load_labels(LFS_LABELS)
+            labels = _load_labels(LFS_LABELS)
+            if _labels_match_fit(fit, labels, f"{LFS_FIT} + {LFS_LABELS}"):
+                return fit, labels
+        # KNOWN LIMITATION (see #1672): the refit below writes into the
+        # MANIFEST-VERIFIED dataset cache, whose sha256 check
+        # (`luxar.utils.data_fetch._ensure_one`) quarantines any file that does
+        # not match the manifest. So ANY refit is self-erasing — not only one
+        # caused by the alignment guard above. Measured: the next run's fetch
+        # quarantines the freshly written cache file (renaming it `.corrupt`) for
+        # failing the manifest sha256, then raises, because the in-repo LFS files
+        # are pointers and the manifest builds no Zenodo URL for this dataset yet
+        # (unpublished record). That FileNotFoundError lands in the `except`
+        # above, so we fall through to here and refit again. A refit is the
+        # DEFAULT state on any checkout without the Git LFS assets pulled, so such
+        # a machine refits on EVERY invocation. Each refit re-quarantines to the
+        # same fixed `.corrupt` name (`quarantine_file` REPLACES a prior
+        # quarantine), so that leaves one leftover file, not a growing pile. The
+        # fix belongs with the fetch layer, not here.
         aprint(
-            "Precomputed atlas not available (Git LFS assets not pulled). "
-            "Falling back to download + fit (one-time; result is cached)."
+            "Precomputed atlas not available (Git LFS assets not pulled, or the "
+            "shipped fit and its labels sidecar disagree). Falling back to "
+            "download + fit (one-time; result is cached)."
         )
 
     warn_if_no_cuda_gpu()

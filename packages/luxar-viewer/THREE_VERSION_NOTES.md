@@ -33,9 +33,9 @@ interface Pow {
 and a `VarNode<"vec3">` is **not** assignable to `Node<"vec3">` there (the
 recursive `NodeExtensions` chain resolves `label()` to `Node<"float">`).
 Overload resolution therefore falls back to the float signature and rejects
-`materials/line/shader-tsl-capsule.ts:618` — a `pow(vec3, vec3)` call that is
-componentwise and correct in r184 and r185 alike. `0.185.x` fixes it by widening
-the vector overloads to `Vec3OrFloat`.
+`src/rendering/materials/line/shader-tsl-capsule.ts:618` — a `pow(vec3, vec3)`
+call that is componentwise and correct in r184 and r185 alike. `0.185.x` fixes it
+by widening the vector overloads to `Vec3OrFloat`.
 
 So the r185 _definitions_ describe the r184 _runtime_ more accurately than the
 r184 definitions do. Only their version number leads.
@@ -49,9 +49,8 @@ call or a downgrade of type safety at that site.
 ## Why the runtime is still on r184
 
 The obvious resolution is to move the runtime up so both sit at r185. That was
-attempted and **reverted**: r185 broke the TSL / WebGPU path. Measured on the
-same machine, same specs, with the `three` version as the only variable —
-**before the #1683 fix, so these numbers are stale and describe the old code**:
+attempted and **reverted**: r185 breaks the TSL / WebGPU path. Measured on the
+same machine, same specs, with the `three` version as the only variable:
 
 | `three` | `tsl-shader-parity` + `tsl-codegen-snapshot` |
 | ------- | -------------------------------------------- |
@@ -62,10 +61,7 @@ The failures are behavioural, not tolerance drift — most starkly
 `gsplat-pick-surface`, where the TSL side renders **zero pixels**. Full detail,
 including the other three and a reproduction, is in the tracking issue.
 
-👉 **#1683 is fixed** — the pick shaders no longer depend on which fragment
-entry point three builds first, which is what the r185 order flip changed. So it
-is no longer the blocker. What is left before a bump is re-running the A/B above
-against the fixed code: `three` stays at `~0.184.0` until someone does.
+👉 **Blocking issue: #1683.** Until it is resolved, `three` stays at `~0.184.0`.
 
 ## Why tilde, not caret
 
@@ -89,9 +85,10 @@ API surface from under us.
 These are the Three.js surfaces the viewer uses directly:
 
 - `WebGLRenderer` for the default GLSL rendering path.
-- `WebGPURenderer` for the opt-in TSL rendering path. Loaded lazily — see
-  `src/rendering/tsl/README.md`; it is imported only when the WebGPU backend is
-  actually selected.
+- `WebGPURenderer` (from `three/webgpu`) for the opt-in TSL rendering path —
+  constructed in `src/scene/scene-manager/render-pipeline/renderer-setup.ts`
+  once the backend is selected, and imported there lazily so a WebGL session
+  never downloads it (see `src/rendering/tsl/README.md`).
 - `ShaderMaterial` with `glslVersion: THREE.GLSL3` for WebGL shaders.
 - `NodeMaterial` / TSL for WebGPU shaders.
 - `WebGLRenderTarget` with `HalfFloatType` for HDR scene and post-processing
@@ -103,20 +100,25 @@ These are the Three.js surfaces the viewer uses directly:
 
 ## When to bump
 
-Trigger an explicit `~0.185.0` (or higher) bump only when:
+Trigger an explicit `~0.185.0` (or higher) bump only once #1683 is resolved
+**and** one of:
 
-1. the r185 A/B has been re-run against the post-#1683 code and is clean,
-   **and** one of:
-2. Three.js releases notes for a stable WebGPU API surface, or
-3. Luxar needs a specific rendering or TSL feature only present in a newer minor.
+1. Three.js releases notes for a stable WebGPU API surface, or
+2. Luxar needs a specific rendering or TSL feature only present in a newer minor.
 
-A bump means editing the ranges by hand — `three` is a `peerDependencies` entry,
-not a dependency, so `pnpm add three@…` would wrongly create a `dependencies`
-entry, and `-E`/`--save-exact` would drop the tilde this file argues for:
+To perform the bump, edit the two ranges in `package.json` **by hand**. `three`
+lives under `peerDependencies`, and `pnpm add -E` would both move it into
+`dependencies` (shipping a second copy of three to every consumer of the
+published package) and replace the tilde with an exact version:
+
+```jsonc
+"peerDependencies": { "three": "~0.185.0" }
+"devDependencies":  { "@types/three": "~0.185.0" }
+```
+
+Then:
 
 ```bash
-# package.json: peerDependencies.three  -> "~0.185.0"
-# package.json: devDependencies["@types/three"] -> "~0.185.1" (keep in step)
 pnpm install
 pnpm typecheck
 pnpm test --run

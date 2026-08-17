@@ -213,6 +213,7 @@ Demo scene generators, precomputed data helpers, and viewer launch utilities.
 - `parse_int_arg(name, default, argv=None)`: Parse an integer `--name=VALUE` / `--name VALUE` flag; warns and falls back to `default` on a malformed value
 - `parse_path_arg(name, argv=None)`: Parse a path `--name=PATH` / `--name PATH` flag, expanding `~`; returns `None` when the flag is absent or left without a value
 - `is_lfs_pointer()`: Check if a file is a Git LFS pointer (not actual data)
+- `voxel_sampled_payload_agreement(centers, payload)`: Fraction of same-voxel splat pairs carrying an identical payload row — the correspondence check for a per-splat sidecar shipped alongside a `.gsplats.zarr` fit (`save()` reorders splats, so a sidecar sampled before saving is silently misindexed). `None` when too few splats share a voxel to judge
 
 **Features:**
 - Ready-to-use demo scenes
