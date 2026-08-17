@@ -129,14 +129,20 @@ reconstruction into a corner (a 0.44 um/voxel stack renders into the first ~44% 
 each axis) — and it fails *silently*: you get a plausible-looking array, and metrics
 that read as catastrophic reconstruction failure rather than as a units bug.
 
-Check first — `centers.max(0)` against the shape — and convert if they disagree:
+Check first — `centers.max(0)` against the shape — and convert with `transform`,
+which rescales the centres and the covariance together:
 
 ```python
-# centres divide by the voxel size; the Cholesky factor L divides too,
-# because Sigma = L L^T scales as the SQUARE of the length unit.
-g_vox = GSplatData(centers=g.centers / vox, cholesky_factors=g.cholesky_factors / vox,
-                   amplitudes=g.amplitudes, colors=None)
+# Sigma = L L^T scales as the SQUARE of the length unit, so the Cholesky factor
+# rescales along with the centres. transform() does both, per axis, and keeps
+# amplitudes, colours and any LOD structure. vox is microns per voxel (Z, Y, X).
+g_vox = g.transform(np.diag(1.0 / np.asarray(vox, dtype=np.float64)))
 ```
+
+Do not hand-roll it as `cholesky_factors / vox`: the factors are packed
+lower-triangular (6 wide in 3D, not 3), so a per-axis `vox` — the way
+`voxel_size` is spelled everywhere else — raises a broadcast error, and
+substituting a scalar mean gets an anisotropic stack quietly wrong.
 
 Scoring the result has its own two traps — global PSNR on a sparse stack is
 flattered by the empty part (one fit: 47 dB global vs 23 dB foreground), and a
