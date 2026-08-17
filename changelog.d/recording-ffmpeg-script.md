@@ -16,8 +16,17 @@ which are different functions: for an ACES scene, `tonemap=hable` (the usual sta
 measures 16.0 dB, *worse than applying no tone mapping at all* (23.8 dB). The exact
 expression lands at 38.2 dB, within 2 dB of what the same maths achieves with no video
 codec in the way at all. Linear, Reinhard, Cineon, ACES and Neutral are all reproduced
-exactly; AgX has no practical closed form here, so its script says so and points at
-recording a PNG sequence instead of quietly producing the wrong look.
+exactly; AgX has no practical closed form here, so its curve degrades to a plain clamp
+and the script says so, pointing at recording a PNG sequence instead of quietly producing
+the wrong look — but exposure, offset and gamma are still applied there, since dropping
+them would put the frames at the wrong brightness for the same reason the old script did.
+
+Because `geq` interprets its expression per pixel on the CPU, expression size *is* the
+encode cost, so the two cross-channel curves share their intermediates through
+expression registers instead of being re-inlined at every use: ACES 8.0 KB → 2.0 KB
+(11.0 → 1.5 s per 1920×1088 frame) and Neutral 63.2 KB → 1.5 KB (26.1 → 1.0 s), which
+takes a 600-frame turntable from hours of encoding down to minutes with bit-identical
+output.
 
 Several smaller things in the same script were wrong or missing. Outputs were always
 named `turntable.mp4` regardless of what you recorded — they now take the capture's own

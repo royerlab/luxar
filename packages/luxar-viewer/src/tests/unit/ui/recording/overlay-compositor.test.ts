@@ -294,6 +294,28 @@ describe('compositeTextOverlay', () => {
     expect(lines).toEqual(['one two', 'three four']);
   });
 
+  it('splits a word too long for the box, the way break-word does', () => {
+    // The manager sets `word-wrap: break-word` next to the width, so on
+    // screen an unbreakable token (a long URL or identifier) is cut
+    // rather than allowed to overflow. Leaving it whole ran it off the
+    // frame in the capture only.
+    const fake = makeFakeCtx();
+    fake.measureText = vi.fn((t: string) => ({ width: t.length * 10 }));
+    const el = makeTextOverlay('a supercalifragilistic b');
+    compositeTextOverlay(
+      fake as unknown as CanvasRenderingContext2D,
+      el,
+      makeConfig({ width: 0.1, anchor: 'top-left' }),
+      0,
+      0,
+      unitMetrics(1000, 600)
+    );
+    // Box is 0.1 × 1000 = 100 px → 10 characters per line.
+    const lines = fake.fillText.mock.calls.map((c) => c[0]);
+    expect(lines).toEqual(['a', 'supercalif', 'ragilistic', 'b']);
+    expect(lines.every((l: string) => l.length <= 10)).toBe(true);
+  });
+
   it('keeps single-line text on one fillText call when no width is set', () => {
     const fake = makeFakeCtx();
     fake.measureText = vi.fn((t: string) => ({ width: t.length * 10 }));

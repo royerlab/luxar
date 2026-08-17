@@ -132,8 +132,11 @@ export function compositeOverlays(
     const inlineOpacity = parseFloat(el.style.opacity);
     ctx.globalAlpha = Number.isFinite(inlineOpacity) ? inlineOpacity : config.opacity;
 
-    // Positions are fractions of the canvas on both sides (the DOM uses
-    // `left/top: %` of the same box), so they need no unit conversion.
+    // `position` is placed as a fraction of the frame. On screen the
+    // overlay is `position: fixed`, so its `left/top: %` resolve against
+    // the viewport — the two agree whenever the canvas fills the window,
+    // and for a capture the frame is the box you want to place against
+    // (a viewport fraction can land outside an embedded canvas entirely).
     const [nx, ny] = config.position;
     const x = nx * w;
     const y = ny * h;
@@ -151,22 +154,47 @@ export function compositeOverlays(
 }
 
 /**
- * Greedy word-wrap into lines no wider than `maxWidth`. A single word
- * longer than the box is left on its own line rather than being cut —
- * matching CSS `word-wrap: break-word`'s preference to overflow before
- * it splits mid-word for a width it cannot satisfy.
+ * Split a single word that cannot fit on a line of its own into
+ * character chunks that do. At least one character always goes on a
+ * chunk, so a maxWidth narrower than one glyph terminates.
+ */
+function breakWord(ctx: CanvasRenderingContext2D, word: string, maxWidth: number): string[] {
+  const chunks: string[] = [];
+  let chunk = '';
+  for (const ch of word) {
+    if (chunk && ctx.measureText(chunk + ch).width > maxWidth) {
+      chunks.push(chunk);
+      chunk = ch;
+    } else {
+      chunk += ch;
+    }
+  }
+  if (chunk) chunks.push(chunk);
+  return chunks;
+}
+
+/**
+ * Greedy word-wrap into lines no wider than `maxWidth`. A word wider
+ * than the box is split mid-word: the DOM overlay sets `word-wrap:
+ * break-word` alongside its `width`, so on screen an unbreakable token
+ * (a long URL or identifier) breaks rather than overflowing, and the
+ * capture has to do the same.
  */
 function wrapText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string[] {
   const lines: string[] = [];
   for (const paragraph of text.split('\n')) {
     let line = '';
     for (const word of paragraph.split(/\s+/).filter(Boolean)) {
-      const candidate = line ? `${line} ${word}` : word;
-      if (line && ctx.measureText(candidate).width > maxWidth) {
-        lines.push(line);
-        line = word;
-      } else {
-        line = candidate;
+      const pieces =
+        ctx.measureText(word).width > maxWidth ? breakWord(ctx, word, maxWidth) : [word];
+      for (const piece of pieces) {
+        const candidate = line ? `${line} ${piece}` : piece;
+        if (line && ctx.measureText(candidate).width > maxWidth) {
+          lines.push(line);
+          line = piece;
+        } else {
+          line = candidate;
+        }
       }
     }
     lines.push(line);
@@ -204,7 +232,9 @@ export function compositeTextOverlay(
   // The on-screen box is the configured width when there is one, even if
   // the text is shorter — anchoring must use the same box.
   const blockWidth = wrapWidth ?? longestLine;
-  const blockHeight = lines.length === 1 ? fontSize * 1.2 : lineHeight * lines.length;
+  // One line box per line, as on screen (the default 1.2 keeps the
+  // single-line height this used to hardcode).
+  const blockHeight = lineHeight * lines.length;
 
   const [dx, dy] = computeAnchorOffset(config.anchor, blockWidth, blockHeight);
   const x = xIn + dx;

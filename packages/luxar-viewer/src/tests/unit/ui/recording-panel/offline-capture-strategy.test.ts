@@ -278,6 +278,24 @@ describe('OfflineCaptureStrategy', () => {
       );
     });
 
+    it('still converts EXR frames when the renderer cannot report a grade', async () => {
+      // No `postProcessing` on the scene manager → the grade is unknown.
+      // The script must still clamp and sRGB-encode: skipping the colour
+      // chain hands the encoder scene-linear floats, which is the dark,
+      // colour-shifted video the chain exists to prevent.
+      const { sm } = makeSceneManager();
+      const strat = new OfflineCaptureStrategy(sm, makeAnimController(), makeHooks());
+
+      await strat.run(makeOpts({ outputFormat: 'exr' }), 'turntable', makeSession());
+
+      const ctx = mockState.driverInstances.at(-1)!.setup.mock.calls[0][0] as {
+        generateFfmpegScript: (frames: number, ext: string) => string;
+      };
+      const script = ctx.generateFfmpegScript(10, 'exr');
+      expect(script).toContain('t=iec61966-2-1');
+      expect(script).toContain('geq=');
+    });
+
     it('honours an explicit resolution over the native canvas height', async () => {
       const { sm } = makeSceneManager({ width: 2560, height: 1440 });
       const session = makeSession();

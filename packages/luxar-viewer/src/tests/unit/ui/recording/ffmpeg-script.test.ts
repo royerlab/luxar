@@ -120,11 +120,48 @@ describe('generateFfmpegScript', () => {
       const script = generateFfmpegScript(
         opts({ frameExt: 'exr', grade: { toneMapping: 'agx', ...NEUTRAL_GRADE } })
       );
-      expect(script).not.toContain('geq=');
       expect(script).toContain('AgX has no practical closed form');
       expect(script).toContain('PNG/WebP sequence instead');
       // Still sRGB-encoded — linear floats must not go straight out.
       expect(script).toContain('t=iec61966-2-1');
+    });
+
+    it('still applies the grade under AgX, only the curve falls back', () => {
+      // The AgX fallback used to emit no geq at all, which silently threw
+      // away exposure, offset and gamma — a +2 EV capture came out four
+      // stops dark even though the header said the grade was applied.
+      const script = generateFfmpegScript(
+        opts({
+          frameExt: 'exr',
+          grade: { toneMapping: 'agx', exposure: 2, offset: 0.01, gamma: 1.5 },
+        })
+      );
+      expect(script).toContain('geq=');
+      expect(script).toContain('*4'); // exp2(2)
+      expect(script).toContain('+0.01');
+      expect(script).toContain('pow(');
+      // The curve itself degrades to Linear's bare clamp.
+      expect(script).toContain('clip(');
+      expect(script).toContain('exposure 2 EV, offset 0.01, gamma 1.5');
+    });
+
+    it('factors the cross-channel curves through st()/ld() registers', () => {
+      // Textually re-inlining `peak` (which reads all three offset
+      // channels, which each read all three inputs) grew the Neutral
+      // expression to 63 KB and 26 s per 1920×1088 frame — geq is a
+      // per-pixel CPU interpreter, so expression size is the whole cost.
+      // The registers compute each intermediate once per pixel.
+      for (const toneMapping of ['aces', 'neutral'] as const) {
+        const script = generateFfmpegScript(
+          opts({ frameExt: 'exr', grade: { toneMapping, ...NEUTRAL_GRADE } })
+        );
+        expect(script).toContain('st(0,');
+        expect(script).toContain('ld(0)');
+        const geq = /geq=[^\n]*/.exec(script)?.[0] ?? '';
+        expect(geq.length).toBeLessThan(4000);
+        // Ten slots exist (0-9); anything higher is silently clipped.
+        expect(geq).not.toMatch(/[sl][td]\(1\d/);
+      }
     });
 
     it('folds exposure, offset and gamma into the expression when non-default', () => {

@@ -210,8 +210,21 @@ Measured against the viewer's own PNG of the same frame:
 
 `hable` is _worse than doing nothing_, which is why the approximations
 are not offered. AgX is the one mode with no practical closed form (four
-matrix stages around a log-space polynomial), so its script says so and
-points at the LDR-sequence route instead of faking it.
+matrix stages around a log-space polynomial), so its curve degrades to a
+plain clamp and the script says so, pointing at the LDR-sequence route
+instead of faking the look. Exposure, offset and gamma are still applied
+there — dropping them would encode the frames at the wrong brightness,
+which is the failure the whole chain exists to prevent.
+
+`geq` evaluates its expression per pixel on the CPU, so expression _size_
+is the encode cost. The cross-channel curves (ACES, Neutral) share
+intermediates through `st()`/`ld()` registers rather than re-inlining
+them, which is worth an order of magnitude on the same frames:
+
+| curve   | inlined            | with registers   |
+| ------- | ------------------ | ---------------- |
+| ACES    | 8.0 KB, 11.0 s/fr  | 2.0 KB, 1.5 s/fr |
+| Neutral | 63.2 KB, 26.1 s/fr | 1.5 KB, 1.0 s/fr |
 
 Other things the script gets right that are easy to get wrong: `-tag:v
 hvc1` (libx265 defaults to `hev1`, which QuickTime and Safari refuse),

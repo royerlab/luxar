@@ -75,14 +75,27 @@ const TONE_MAP_BY_THREE_CONSTANT: Record<number, ToneMapName> = {
   [THREE.NeutralToneMapping]: 'neutral',
 };
 
+/** Ungraded clamp — the fallback when the renderer can't report a grade. */
+const NEUTRAL_GRADE: GradeSettings = {
+  toneMapping: 'linear',
+  exposure: 0,
+  offset: 0,
+  gamma: 1,
+};
+
 /**
  * Read the display transform an EXR capture bypasses, so the bundled
- * ffmpeg script can put it back. Falls back to a neutral grade if the
- * renderer doesn't expose it (older mocks in tests).
+ * ffmpeg script can put it back.
+ *
+ * Falls back to an ungraded clamp if the renderer doesn't expose it
+ * (older mocks in tests). It must not return `undefined`: that makes the
+ * script skip the colour chain entirely, which encodes the scene-linear
+ * floats as if they were display-referred — the dark, colour-shifted
+ * video this whole path exists to prevent.
  */
-function readGradeSettings(sceneManager: SceneManager): GradeSettings | undefined {
+function readGradeSettings(sceneManager: SceneManager): GradeSettings {
   const grade = sceneManager.postProcessing?.getGradeSettings?.();
-  if (!grade) return undefined;
+  if (!grade) return NEUTRAL_GRADE;
   return {
     toneMapping: TONE_MAP_BY_THREE_CONSTANT[grade.toneMapping] ?? 'neutral',
     exposure: grade.exposure,
