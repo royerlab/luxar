@@ -89,6 +89,7 @@ FIXTURE_NAMES: list[str] = [
     "test_lines.luxar.zarr",
     "test_lines_blending_modes.luxar.zarr",
     "test_lines_categorical.luxar.zarr",
+    "test_lines_volumetric_reversed.luxar.zarr",
     "test_lod_group.luxar.zarr",
     "test_lod_group_additive_finest.luxar.zarr",
     "test_lod_group_volumetric.luxar.zarr",
@@ -106,6 +107,7 @@ FIXTURE_NAMES: list[str] = [
     "test_points_blending_modes.luxar.zarr",
     "test_points_normal_overlap.luxar.zarr",
     "test_points_normal_overlap_reversed.luxar.zarr",
+    "test_points_volumetric_reversed.luxar.zarr",
     "test_quantization.luxar.zarr",
     "test_sharpness_range.luxar.zarr",
     "test_standalone_gsplats.gsplats.zarr",
@@ -2862,6 +2864,143 @@ def generate_points_normal_overlap_reversed_test() -> None:
         aprint(f"  Created {output}")
 
 
+def generate_points_volumetric_reversed_test() -> None:
+    """The points overlap scene in `volumetric`, declared FRONT-TO-BACK.
+
+    The points twin of :func:`generate_gsplats_volumetric_reversed_test`.
+    Identical geometry to
+    :func:`generate_points_normal_overlap_reversed_test` — only
+    ``blending_mode`` differs — so the pair isolates the blending mode as
+    the single variable behind the depth-sort decision.
+
+    `needsDepthSort` is `normal ∪ volumetric` and the coordinator judges
+    order-dependence on it for ALL four geometry types, but until this
+    fixture existed the only E2E gate on the volumetric arm filtered
+    ``nodeType === 'gsplats'``: nothing would have caught points (or
+    lines) regressing to unsorted volumetric compositing. Under the
+    viewer's auto-framed camera the identity ordering is not
+    back-to-front, so the E2E assertion (aSortedIndex non-identity +
+    view-z monotone) fails unless volumetric points reach the SortWorker.
+    """
+    with asection("Generating Points Volumetric-Reversed Test"):
+        output = FIXTURES_DIR / "test_points_volumetric_reversed.luxar.zarr"
+
+        # Same points as the normal-overlap-reversed twin, front point FIRST.
+        positions = np.array(
+            [
+                [0.25, 0.0, 1.0],  # front point (green) stored first
+                [-0.25, 0.0, 0.0],  # back point (red) stored second
+                [3.0, 2.0, 0.0],  # small reference point (blue), no overlap
+            ],
+            dtype=np.float32,
+        )
+        colors = np.array(
+            [
+                [0.1, 1.0, 0.1],  # green (front)
+                [1.0, 0.1, 0.1],  # red (back)
+                [0.1, 0.1, 1.0],  # blue
+            ],
+            dtype=np.float32,
+        )
+        radii = np.array([0.7, 0.7, 0.3], dtype=np.float32)
+
+        dims = Dimensions(
+            [
+                Dimension("x", unit="units", display=True),
+                Dimension("y", unit="units", display=True),
+                Dimension("z", unit="units", display=True),
+            ]
+        )
+
+        with LuxarZarrCompiler(
+            output,
+            encoding_mode=EncodingMode.PRECISION,
+            compressor=None,
+            float16_allowed=False,
+        ) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+
+            scene.add_points(
+                "volumetric_points_reversed",
+                positions,
+                colors=colors,
+                radii=radii,
+                blending_mode="volumetric",
+                absorption=1.0,
+                opacity=0.5,
+            )
+
+        aprint(f"  Created {output}")
+
+
+def generate_lines_volumetric_reversed_test() -> None:
+    """The lines twin of :func:`generate_points_volumetric_reversed_test`.
+
+    Three independent segments — a front one, a back one overlapping it in
+    screen space, and an off-axis reference — declared FRONT-FIRST with
+    ``blending_mode="volumetric"``. Lines sort on SEGMENT MIDPOINTS
+    (`commit-lines-geometry.ts`), which is the delta from the points
+    fixture: the same gate, exercised through the other centers provider.
+    """
+    with asection("Generating Lines Volumetric-Reversed Test"):
+        output = FIXTURES_DIR / "test_lines_volumetric_reversed.luxar.zarr"
+
+        # Segment pairs, front segment FIRST. Midpoints stagger in z the
+        # same way the points fixture's centers do.
+        vertices = np.array(
+            [
+                [-0.6, 0.0, 1.0],  # front segment (green)
+                [0.9, 0.0, 1.0],
+                [-0.9, 0.0, 0.0],  # back segment (red), overlaps on screen
+                [0.6, 0.0, 0.0],
+                [2.6, 2.0, 0.0],  # off-axis reference (blue)
+                [3.4, 2.0, 0.0],
+            ],
+            dtype=np.float32,
+        )
+        colors = np.array(
+            [
+                [0.1, 1.0, 0.1],
+                [0.1, 1.0, 0.1],
+                [1.0, 0.1, 0.1],
+                [1.0, 0.1, 0.1],
+                [0.1, 0.1, 1.0],
+                [0.1, 0.1, 1.0],
+            ],
+            dtype=np.float32,
+        )
+        widths = np.array([0.7, 0.7, 0.7, 0.7, 0.3, 0.3], dtype=np.float32)
+
+        dims = Dimensions(
+            [
+                Dimension("x", unit="units", display=True),
+                Dimension("y", unit="units", display=True),
+                Dimension("z", unit="units", display=True),
+            ]
+        )
+
+        with LuxarZarrCompiler(
+            output,
+            encoding_mode=EncodingMode.PRECISION,
+            compressor=None,
+            float16_allowed=False,
+        ) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+
+            scene.add_lines(
+                "volumetric_lines_reversed",
+                vertices,
+                widths,
+                colors=colors,
+                line_type="segments",
+                blending_mode="volumetric",
+                absorption=1.0,
+                opacity=0.5,
+            )
+
+        aprint(f"  Created {output}")
+
+
 def generate_gsplats_normal_overlap_test() -> None:
     """Two large overlapping splats at staggered depth, 'normal' blending.
 
@@ -4355,6 +4494,8 @@ def main() -> None:
         generate_blending_inherited_test()
         generate_points_normal_overlap_test()
         generate_points_normal_overlap_reversed_test()
+        generate_points_volumetric_reversed_test()
+        generate_lines_volumetric_reversed_test()
         aprint("")
 
         generate_gsplats_test()
