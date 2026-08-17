@@ -10,7 +10,8 @@ The two browser drivers share the same recipe: launch headless Chromium
 via `@playwright/test` with GPU acceleration flags, navigate to a Luxar
 URL with `?debug` enabled, wait for the scene to initialize, poke at
 `window.__luxarDebug`, and write a PNG to disk. The E2E server-identity
-helper is test-harness infrastructure rather than a browser driver.
+and worker-sizing helpers are test-harness infrastructure rather than
+browser drivers.
 
 ## Contents
 
@@ -18,7 +19,8 @@ helper is test-harness infrastructure rather than a browser driver.
 tools/
 ├── agent-driver.ts          # Browser debugging driver
 ├── capture-hires.ts         # High-resolution figure capture for papers
-└── e2e-server-identity.ts   # Checkout identity + Playwright preflight helpers
+├── e2e-server-identity.ts   # Checkout identity + Playwright preflight helpers
+└── e2e-workers.ts           # Local Playwright parallelism sized to the machine
 ```
 
 ## `e2e-server-identity.ts`
@@ -40,6 +42,34 @@ probe the repository-root data marker; screenshot/video generation uses
 data-server reuse instead. The helper also performs the HTTP availability
 checks for required E2E datasets so filesystem presence cannot mask a
 mis-rooted server.
+
+## `e2e-workers.ts`
+
+Decides how many workers a local Playwright run may use, so a busy machine
+gets a slower suite instead of a red one. `playwright.config.ts` calls
+`resolveE2EWorkers()` at load and prints one line with the decision and the
+inputs it came from:
+
+```text
+[🧵] [E2E] parallelism: 2 worker(s) — 16 cpus, load1 24.1 (capacity)
+```
+
+Four workers is still the ceiling — the binding resource is the GIL-bound
+`python3 -m http.server 9000` dataset server, not the GPU — but the count is
+sized down from it by spare capacity,
+`clamp(floor((cpus - load1) / 2), 1, 4)`, budgeting roughly two cores per
+worker (Chromium renderer + GPU process + the viewer's own worker pool, plus a
+share of that server). Measured on a 16-core box at a 1-minute load of 12–24,
+`dimension-animation.spec.ts` failed 15 of 21 tests at four workers and passed
+21 of 21 at one, every failure a bare action timeout with the element already
+visible/enabled/stable.
+
+The arithmetic lives in the pure `chooseLocalWorkers({ cpus, load1, override })`
+(covered by `src/tests/unit/config/e2e-workers.test.ts`); `resolveE2EWorkers()`
+is the thin wrapper that reads `os.cpus()`, `os.loadavg()`, `CI`, and
+`LUXAR_E2E_WORKERS`. Precedence: Playwright's own `--workers=N` beats the config
+outright (how the E2E daemon pins itself to one worker), then
+`LUXAR_E2E_WORKERS=N`, then the heuristic; `CI` is unconditionally serial.
 
 ## `agent-driver.ts`
 

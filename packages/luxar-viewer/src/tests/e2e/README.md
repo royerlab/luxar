@@ -29,6 +29,34 @@ pnpm test:e2e:report
 New specs import from `./fixtures`, not from `@playwright/test`
 directly — see [Shared Fixture](#shared-fixture-fixturests) below.
 
+### Parallelism is sized to the machine
+
+The local worker count is not a constant. `playwright.config.ts` asks
+`tools/e2e-workers.ts` for it and prints the decision as one line at startup:
+
+```text
+[🧵] [E2E] parallelism: 2 worker(s) — 16 cpus, load1 24.1 (capacity)
+```
+
+Four workers remains the ceiling — the binding resource is the GIL-bound
+`python3 -m http.server 9000` dataset server, not the GPU — but the count is
+sized down from it by the box's spare capacity,
+`clamp(floor((cpus - load1) / 2), 1, 4)`, budgeting about two cores per worker
+(a Chromium renderer, a GPU process, the viewer's own worker pool, and a share
+of that dataset server). On a workstation shared with CI runner slots this
+matters a lot: at a 1-minute load of 12–24 on 16 cores,
+`dimension-animation.spec.ts` failed 15 of 21 tests at four workers and passed
+21 of 21 at one, every failure a wall-clock action timeout
+(`page.click: Timeout 10000ms exceeded`, element already visible/enabled/stable)
+with no product cause. A loaded box now gets a slower run instead of a red one,
+so treat a burst of timeouts across unrelated specs as a capacity report before
+filing a viewer bug.
+
+Pin the count with `LUXAR_E2E_WORKERS=N` (an integer; anything else is ignored),
+or with Playwright's own `--workers=N`, which overrides the config outright —
+that is how the E2E daemon and the promotion job hold themselves to one worker.
+CI is unconditionally serial.
+
 ### Which script runs which specs
 
 | Script                | Selection                                                                                                                                        |

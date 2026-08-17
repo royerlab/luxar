@@ -304,6 +304,29 @@ pnpm test:e2e --grep "Visual" --update-snapshots
 pnpm exec playwright install chromium
 ```
 
+### Issue: Many unrelated tests time out at once on a busy machine
+**Cause**: Too many Playwright workers for the box's spare capacity — the runs
+starve each other and every action hits its wall-clock timeout with the element
+already visible/enabled/stable. Measured on a shared 16-core workstation at a
+1-minute load of 12–24: `dimension-animation.spec.ts` failed 15 of 21 tests at 4
+workers and passed 21 of 21 at `--workers=1`, with no product cause.
+
+**Solution**: Nothing, usually — `playwright.config.ts` now sizes the local
+worker count from spare capacity (`clamp(floor((cpus - load1) / 2), 1, 4)`, about
+two cores per worker) and prints its decision at startup:
+
+```text
+[🧵] [E2E] parallelism: 2 worker(s) — 16 cpus, load1 24.1 (capacity)
+```
+
+Pin it explicitly with `LUXAR_E2E_WORKERS=N`, or with `--workers=N` (which
+overrides the config), when you want a fixed run:
+
+```bash
+LUXAR_E2E_WORKERS=1 pnpm test:e2e
+npx playwright test dimension-animation.spec.ts --workers=1
+```
+
 ### Issue: Tests flaky/intermittent failures
 **Solution**: Replace `waitForTimeout` with condition waits:
 ```typescript

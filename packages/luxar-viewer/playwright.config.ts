@@ -13,6 +13,7 @@ import { defineConfig, devices } from '@playwright/test';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
 import { createE2EServerMetadata, ensureCheckoutIdentity } from './tools/e2e-server-identity';
+import { resolveE2EWorkers } from './tools/e2e-workers';
 
 // `package.json` declares `"type": "module"`, so the CommonJS `__dirname`
 // global is undefined at config load. Reconstruct it from `import.meta.url`.
@@ -29,6 +30,17 @@ const viewerBaseURL = `http://127.0.0.1:${viewerPort}`;
 const dataBaseURL = 'http://127.0.0.1:9000';
 const checkoutIdentity = ensureCheckoutIdentity(projectRoot, __dirname);
 const serverMetadata = createE2EServerMetadata(checkoutIdentity, viewerBaseURL, dataBaseURL);
+
+// Parallelism is decided once, here (see the `workers:` comment below), and stamped so a run's
+// output records what it ran with. Playwright loads this file in every test worker too, and
+// sets TEST_WORKER_INDEX only there — the guard keeps the stamp to one line per run.
+const workerPlan = resolveE2EWorkers();
+if (process.env.TEST_WORKER_INDEX === undefined) {
+  console.log(
+    `[🧵] [E2E] parallelism: ${workerPlan.workers} worker(s) — ` +
+      `${workerPlan.cpus} cpus, load1 ${workerPlan.load1.toFixed(1)} (${workerPlan.reason})`
+  );
+}
 
 /**
  * See https://playwright.dev/docs/test-configuration
@@ -71,18 +83,29 @@ export default defineConfig({
   // - CI: 2 retries because CI environments have more variability.
   retries: process.env.CI ? 2 : 0,
 
-  // Local: 4 workers. CI: 1 (software rendering is slower and less stable with
-  // concurrency).
+  // Local: up to 4 workers, sized DOWN by the box's spare capacity. CI: 1
+  // (software rendering is slower and less stable with concurrency).
   //
-  // The ceiling here is NOT the GPU — it is the dataset server, a GIL-bound
+  // The CEILING of 4 is NOT the GPU — it is the dataset server, a GIL-bound
   // `python3 -m http.server 9000` (see webServer below) streaming thousands of
   // small zarr chunks to every worker at once. The evidence is already in the
   // tree: all-examples-smoke-test.spec.ts raised its own timeout to 120 s to
   // "absorb HTTP-server contention when several worker-pool tabs decode
-  // mid-size datasets concurrently". Raise this past 4 only together with a
+  // mid-size datasets concurrently". Raise it past 4 only together with a
   // measurement, and if it saturates, replace that server rather than adding
-  // workers. Override per run with `--workers=N`.
-  workers: process.env.CI ? 1 : 4,
+  // workers.
+  //
+  // Running AT the ceiling on a busy box invents failures. On a shared 16-core
+  // workstation at a 1-minute load of 12-24, dimension-animation.spec.ts failed
+  // 15 of 21 tests at 4 workers and passed 21 of 21 at `--workers=1` — every
+  // failure a bare wall-clock timeout (`page.click: Timeout 10000ms exceeded`
+  // with the element already visible/enabled/stable), no product cause, and two
+  // issues filed as viewer regressions off exactly that. So the count is now
+  // `clamp(floor((cpus - load1) / 2), 1, 4)`, i.e. ~2 cores budgeted per worker:
+  // a loaded box gets a slower run instead of a red one. See
+  // tools/e2e-workers.ts. Pin it with `LUXAR_E2E_WORKERS=N`, or with Playwright's
+  // own `--workers=N`, which overrides this config entirely.
+  workers: workerPlan.workers,
 
   // Reporter to use
   reporter: [
