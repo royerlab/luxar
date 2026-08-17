@@ -401,11 +401,24 @@ export function gsplatPickWebGPUFactory(
   // skips, which would leave the call to build at its consumption site,
   // inside the arm again — so the assignments are emitted in trace order
   // in unconditional top-level flow, whichever entry point three builds
-  // first. `.once()` then lets the second call reuse the traced body
-  // instead of re-emitting the chain, which is the "compile once,
-  // reference twice" property the `.toVar()`s were there for;
-  // correctness does not rest on it, since either flow assigns before it
-  // reads.
+  // first.
+  //
+  // What `.once()` does and does not buy: the prologue's code is emitted
+  // where it is FIRST built, and because both entry points call it as
+  // their first statement that site is the top level of whichever flow
+  // three emits first. `.once()` then lets the second call reuse the
+  // already-traced result instead of emitting the chain twice — the
+  // "compile once, reference twice" property the `.toVar()`s were there
+  // for. Its cache lives on the NodeBuilder (so per material build) and
+  // is keyed on shader stage `'any'`, so calling this same prologue from
+  // another shader STAGE would silently reuse the first stage's nodes —
+  // it is fragment-only for that reason. A cache MISS would merely
+  // duplicate the chain, which stays correct.
+  //
+  // One visible consequence of the r185 flip: with the depth flow
+  // emitted first, `gl_FragDepth` is written ABOVE the `Discard`s in
+  // source order (the GLSL twins discard first). Still correct — a
+  // discarded fragment writes no buffer at all, depth included.
   const mahalSq: TSLNode = float(0.0).toVar('gsplatPickMahalSq');
   const intensity: TSLNode = float(0.0).toVar('gsplatPickIntensity');
   const brightness: TSLNode = float(0.0).toVar('gsplatPickBrightness');

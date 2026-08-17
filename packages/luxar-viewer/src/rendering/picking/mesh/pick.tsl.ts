@@ -47,6 +47,7 @@ import {
   vec4 as _vec4,
   float,
   int,
+  bool,
   clamp as _clamp,
   max as _max,
   depth,
@@ -181,13 +182,30 @@ export function meshPickWebGPUFactory(
   // consumption site, inside the arm again — so the assignments are emitted in trace
   // order in unconditional top-level flow, whichever entry point three builds first.
   // Trace order is also why the inner `cutoutOn.select(...)` below can no longer be
-  // the first build site of `coverage`. `.once()` then lets the second call reuse the
-  // traced body instead of inlining the chain twice into the generated WGSL/GLSL;
-  // correctness does not rest on it, since either flow assigns before it reads.
+  // the first build site of `coverage`.
+  //
+  // What `.once()` does and does not buy: the prologue's code is emitted where it is
+  // FIRST built, and because both entry points call it as their first statement that
+  // site is the top level of whichever flow three emits first. `.once()` then lets the
+  // second call reuse the already-traced result instead of emitting the chain twice.
+  // Its cache lives on the NodeBuilder (so per material build) and is keyed on shader
+  // stage `'any'`, so calling this same prologue from another shader STAGE would
+  // silently reuse the first stage's nodes — it is fragment-only for that reason. A
+  // cache MISS would merely duplicate the chain, which stays correct.
+  //
+  // One visible consequence of the r185 flip: with the depth flow emitted first,
+  // `gl_FragDepth` is written ABOVE the `Discard`s in source order (the GLSL twins
+  // discard first). Still correct — a discarded fragment writes no buffer at all,
+  // depth included.
   const coverage: TSLNode = float(0.0).toVar('meshPickCoverage');
   const nearFade: TSLNode = float(0.0).toVar('meshPickNearFade');
+  // Read by BOTH entry points — the brightness select in the prologue below and the
+  // cutout `Discard` in `colorNode` — so it is an explicit var assigned in the
+  // prologue like the rest. As a free-standing comparison node it happened to survive
+  // only because a select's condition is emitted before its `if`, i.e. by the same
+  // build-order accident the prologue exists to stop depending on.
+  const cutoutOn: TSLNode = bool(false).toVar('meshPickCutout');
   const brightness: TSLNode = float(0.0).toVar('meshPickBrightness');
-  const cutoutOn: TSLNode = int(uAlphaCutout).equal(int(1));
 
   const fragmentPrologue = Fn(() => {
     // Identical coverage to the visual shader (§6.2): a mesh has no per-element
@@ -197,6 +215,9 @@ export function meshPickWebGPUFactory(
     // visual graph — pick coverage must keep matching visible coverage as the camera
     // flies into the surface. Per FRAGMENT, because a triangle spans depth.
     nearFade.assign(perspectiveNearFadeTSL(uIsOrtho, vViewZ, max(uNearCull, float(1e-20))));
+    // Assigned before `brightness`, whose select reads it, and before the cutout
+    // `Discard` in `colorNode` reads it.
+    cutoutOn.assign(int(uAlphaCutout).equal(int(1)));
     // Survivors of the cutout are FULLY OPAQUE on screen (the visual shader emits
     // `vec4(rgb, 1.0)` for them), so their pick brightness must be 1.0 too. Carrying
     // the pre-cutout coverage through instead would under-weight a solid mesh in the

@@ -134,6 +134,11 @@ function mainFlowLines(source: string): FlowLine[] {
  *
  * Keyed on the explicit `.toVar('name')` names the pick factories declare, so it is
  * independent of the generated `nodeVarN` numbering.
+ *
+ * A declaration with no initializer is NOT counted as a reference: generated GLSL
+ * hoists `float NAME;` above `main()` (so it never reaches this helper), but WGSL
+ * declares `var NAME : f32;` inside the entry function, and counting that as the first
+ * read would fail the helper on correct code.
  */
 function assertAssignedInUnconditionalFlow(
   shader: string,
@@ -148,9 +153,16 @@ function assertAssignedInUnconditionalFlow(
 
   for (const name of varNames) {
     // An optional leading type token covers a `float name = …` declaration form;
-    // the trailing `[^=]` keeps a comparison (`name == x`) from reading as one.
-    const assignment = new RegExp(`^\\s*(?:const\\s+)?(?:\\w+\\s+)?${name}\\s*=[^=]`);
+    // the trailing `[^=]` keeps a comparison (`name == x`) from reading as one. A
+    // COMPOUND assignment (`name += …`, `-=`, `*=`, `/=`) counts as an assignment too,
+    // so a future one inside a branch fails the depth-0 assertion below instead of
+    // slipping past it and resurfacing as a confusing "read before assignment".
+    const assignment = new RegExp(`^\\s*(?:const\\s+)?(?:\\w+\\s+)?${name}\\s*(?:[-+*/])?=[^=]`);
     const reference = new RegExp(`\\b${name}\\b`);
+    // `float name;` (GLSL) / `var name : f32;` (WGSL) — a declaration, not a read.
+    const declarationOnly = new RegExp(
+      `^\\s*(?:var\\s+)?(?:\\w+\\s+)?${name}\\s*(?::\\s*\\w+\\s*)?;\\s*$`
+    );
 
     const assignments = flow.filter((line) => assignment.test(line.text));
     expect(
@@ -167,7 +179,9 @@ function assertAssignedInUnconditionalFlow(
       ).toBe(0);
     }
 
-    const firstReference = flow.find((line) => reference.test(line.text));
+    const firstReference = flow.find(
+      (line) => reference.test(line.text) && !declarationOnly.test(line.text)
+    );
     expect(
       firstReference?.lineNumber,
       `${shader}: "${name}" is read at line ${firstReference?.lineNumber} before its first ` +
@@ -433,6 +447,14 @@ test.describe('TSL → generated-shader snapshots', () => {
     //
     // The snapshots pin this only implicitly — the difference is one indentation level
     // inside a 150-line file, which is the last thing a reviewer notices. This names it.
+    //
+    // HONESTY NOTE — this guard is INERT at the currently pinned three r184. r184 emits
+    // the COLOUR flow first, and with colour first even the pre-fix free-standing
+    // `.toVar()`s were built at top level, so a green run here proves only that the
+    // named vars still exist and are still read after their assignment; it would NOT
+    // have caught the bug. It becomes a live regression gate the moment the runtime
+    // moves to r185, whose depth-first order is what produced the zero-pixel pick pass
+    // (issue #1683).
     await bootHarness(page);
 
     const shared = [
@@ -442,7 +464,7 @@ test.describe('TSL → generated-shader snapshots', () => {
       },
       {
         shader: 'mesh-pick',
-        vars: ['meshPickCoverage', 'meshPickNearFade', 'meshPickBrightness'],
+        vars: ['meshPickCoverage', 'meshPickNearFade', 'meshPickCutout', 'meshPickBrightness'],
       },
     ] as const;
 

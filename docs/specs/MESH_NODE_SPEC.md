@@ -1068,9 +1068,17 @@ alpha-weighted emission shared by `additive`/`luminous`/`normal`, §6.2), `mesh-
 premultiply, §6.2), `mesh-flat-normal`, `mesh-colormap`, `mesh-pick`.
 
 > **TSL house rule** (from the depth-sorting spec's remediation): both vertex stages must trace inside
-> `Fn()` with explicit `.toVar()` statements, and the fragment must reconstruct the bottom-left
-> fragcoord as `vec2(x, screenSize.y - y)` if it reads screen coordinates at all. The mesh fragment
-> shader does **not** need fragcoord, which sidesteps that trap entirely.
+> `Fn()` with explicit `.toVar()` statements; the fragment must reconstruct the bottom-left
+> fragcoord as `vec2(x, screenSize.y - y)` if it reads screen coordinates at all; and a value shared
+> between two fragment entry points (`colorNode` and `depthNode`) must be ASSIGNED in an unconditional
+> prologue that both of them call first. The third rule is the one the mesh pick shader learned the hard
+> way (#1683): the order in which three builds the two entry points is not part of its API — it flipped
+> from colour-first to depth-first between r184 and r185 — and a `.toVar()` is assigned wherever three
+> first builds it, so a branching `depthNode` buried the shared coverage/fade/brightness chain inside one
+> `if` arm and every top-level reader saw 0, discarding every fragment of the pick pass. The mesh
+> fragment shaders sidestep the fragcoord trap (neither the visual nor the pick one needs fragcoord),
+> but the pick fragment sits squarely in the third rule and follows it via `fragmentPrologue` in
+> `picking/mesh/pick.tsl.ts`.
 
 ### 6.5 Picking
 
