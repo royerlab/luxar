@@ -111,7 +111,9 @@ function makeSession(overrides: Record<string, unknown> = {}): any {
   };
 }
 
-function makeSceneManager(): {
+function makeSceneManager(
+  nativeSize: { width: number; height: number } = { width: 1280, height: 720 }
+): {
   sm: any;
   orbitControls: { applyOrbitRotation: ReturnType<typeof vi.fn> };
 } {
@@ -120,6 +122,14 @@ function makeSceneManager(): {
   });
   const sm = {
     controls: { getControls: vi.fn(() => orbitControls) },
+    // The strategy reads the renderer's logical size to honour the
+    // panel's "Native" resolution option.
+    renderer: {
+      getSize: vi.fn((target: { set: (x: number, y: number) => unknown }) => {
+        target.set(nativeSize.width, nativeSize.height);
+        return target;
+      }),
+    },
   };
   return { sm: sm as any, orbitControls };
 }
@@ -251,6 +261,33 @@ describe('OfflineCaptureStrategy', () => {
       expect(document.querySelector('.luxar-recording-overlay')).toBeNull();
       expect(strat.sessionAbort).toBeNull();
       expect(mockState.driverInstances).toHaveLength(0);
+    });
+
+    it('captures at the canvas height when the resolution is Native (0)', async () => {
+      // The panel's Resolution dropdown documents "Native = current canvas
+      // size", but the offline loop used to force 1080 — downscaling every
+      // Retina/4K capture and rescaling composited overlays with it.
+      const { sm } = makeSceneManager({ width: 2560, height: 1440 });
+      const session = makeSession();
+      const strat = new OfflineCaptureStrategy(sm, makeAnimController(), makeHooks());
+
+      await strat.run(makeOpts({ videoResolution: 0 }), 'turntable', session);
+
+      expect(session.saveRecordingState).toHaveBeenCalledWith(
+        expect.objectContaining({ scaleResolution: { targetH: 1440, align16: true } })
+      );
+    });
+
+    it('honours an explicit resolution over the native canvas height', async () => {
+      const { sm } = makeSceneManager({ width: 2560, height: 1440 });
+      const session = makeSession();
+      const strat = new OfflineCaptureStrategy(sm, makeAnimController(), makeHooks());
+
+      await strat.run(makeOpts({ videoResolution: 1080 }), 'turntable', session);
+
+      expect(session.saveRecordingState).toHaveBeenCalledWith(
+        expect.objectContaining({ scaleResolution: { targetH: 1080, align16: true } })
+      );
     });
 
     it('warns and bails when the controls are not orbit controls', async () => {

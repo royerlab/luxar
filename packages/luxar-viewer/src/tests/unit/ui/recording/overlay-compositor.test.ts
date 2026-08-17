@@ -14,7 +14,9 @@ import {
   compositeTextOverlay,
   compositeImageOverlay,
   compositeHtmlOverlay,
+  computeOverlayMetrics,
 } from '../../../../ui/recording-panel/overlay-compositor';
+import type { OverlayCaptureMetrics } from '../../../../ui/recording-panel/overlay-compositor';
 import type { OverlayManager } from '../../../../ui/overlay-manager';
 import type { OverlayConfig } from '../../../../data/loaders';
 
@@ -63,6 +65,23 @@ function makeCanvas(width = 800, height = 600) {
   canvas.width = width;
   canvas.height = height;
   return canvas;
+}
+
+/**
+ * A canvas with a real layout box. jsdom's getBoundingClientRect is all
+ * zeros, which is the "no layout" fallback path — tests that care about
+ * the CSS-pixel → capture-pixel ratio have to supply one.
+ */
+function makeLaidOutCanvas(cssW: number, cssH: number, pxW = cssW, pxH = cssH) {
+  const canvas = makeCanvas(pxW, pxH);
+  canvas.getBoundingClientRect = () =>
+    ({ width: cssW, height: cssH, left: 0, top: 0, right: cssW, bottom: cssH }) as DOMRect;
+  return canvas;
+}
+
+/** 1:1 metrics — capture pixel == CSS pixel == viewport-relative unit. */
+function unitMetrics(vw = 800, vh = 600): OverlayCaptureMetrics {
+  return { scaleX: 1, scaleY: 1, vw, vh };
 }
 
 function makeTextOverlay(text: string, opacity = '1'): HTMLDivElement {
@@ -192,8 +211,7 @@ describe('compositeTextOverlay', () => {
       makeConfig(),
       0,
       0,
-      800,
-      600
+      unitMetrics()
     );
     expect(fake.fillText).not.toHaveBeenCalled();
   });
@@ -213,8 +231,7 @@ describe('compositeTextOverlay', () => {
       config,
       100,
       100,
-      800,
-      600
+      unitMetrics()
     );
 
     expect(fake.fillRect).toHaveBeenCalledTimes(1);
@@ -236,6 +253,62 @@ describe('compositeTextOverlay', () => {
     expect(drawY).toBeCloseTo(89.2, 5);
   });
 
+  it('sizes the font from the viewport height, not the capture height', () => {
+    // font_size is authored as a vh fraction (the manager writes
+    // `font-size: <font_size × 100>vh`), so it must resolve against the
+    // viewport scaled into capture pixels — resolving it against the
+    // capture frame made overlays shrink or grow with the chosen
+    // recording resolution.
+    const fake = makeFakeCtx(1920, 1080);
+    const el = makeTextOverlay('Hi');
+    compositeTextOverlay(
+      fake as unknown as CanvasRenderingContext2D,
+      el,
+      makeConfig({ font_size: 0.05 }),
+      0,
+      0,
+      { scaleX: 3, scaleY: 3, vw: 3840, vh: 2160 }
+    );
+    // 0.05 × 2160 = 108 capture px (5% of the 2160-px viewport span).
+    expect(fake.font).toBe('108px system-ui, -apple-system, sans-serif');
+  });
+
+  it('wraps text to the configured width instead of drawing one long line', () => {
+    // With `width` set the DOM overlay wraps (`width: …vw` +
+    // `word-wrap: break-word`); fillText does not, so the capture used to
+    // run a single line straight off the frame.
+    const fake = makeFakeCtx();
+    // 10 px per character makes the wrap points predictable.
+    fake.measureText = vi.fn((t: string) => ({ width: t.length * 10 }));
+    const el = makeTextOverlay('one two three four');
+    compositeTextOverlay(
+      fake as unknown as CanvasRenderingContext2D,
+      el,
+      makeConfig({ width: 0.1, anchor: 'top-left' }),
+      0,
+      0,
+      unitMetrics(1000, 600)
+    );
+    // Box is 0.1 × 1000 = 100 px → 10 characters per line.
+    const lines = fake.fillText.mock.calls.map((c) => c[0]);
+    expect(lines).toEqual(['one two', 'three four']);
+  });
+
+  it('keeps single-line text on one fillText call when no width is set', () => {
+    const fake = makeFakeCtx();
+    fake.measureText = vi.fn((t: string) => ({ width: t.length * 10 }));
+    const el = makeTextOverlay('one two three four');
+    compositeTextOverlay(
+      fake as unknown as CanvasRenderingContext2D,
+      el,
+      makeConfig(),
+      0,
+      0,
+      unitMetrics()
+    );
+    expect(fake.fillText).toHaveBeenCalledTimes(1);
+  });
+
   it('skips background and stroke when not configured', () => {
     const fake = makeFakeCtx();
     const el = makeTextOverlay('Hi');
@@ -245,8 +318,7 @@ describe('compositeTextOverlay', () => {
       makeConfig(),
       0,
       0,
-      800,
-      600
+      unitMetrics()
     );
     expect(fake.fillRect).not.toHaveBeenCalled();
     expect(fake.strokeText).not.toHaveBeenCalled();
@@ -265,8 +337,7 @@ describe('compositeImageOverlay', () => {
       makeConfig(),
       0,
       0,
-      800,
-      600
+      unitMetrics()
     );
     expect(fake.drawImage).not.toHaveBeenCalled();
   });
@@ -280,8 +351,7 @@ describe('compositeImageOverlay', () => {
       makeConfig({ size: [0.2, 0.4] }),
       100,
       100,
-      1000,
-      500
+      unitMetrics(1000, 500)
     );
     expect(fake.drawImage).toHaveBeenCalledTimes(1);
     // size = [0.2 * 1000, 0.4 * 500] = [200, 200]
@@ -303,8 +373,7 @@ describe('compositeImageOverlay', () => {
       makeConfig(),
       0,
       0,
-      800,
-      600
+      unitMetrics()
     );
     const args = fake.drawImage.mock.calls[0];
     expect(args[3]).toBe(100);
@@ -313,6 +382,54 @@ describe('compositeImageOverlay', () => {
     // xIn/yIn=0 → drawn at (-50, -25).
     expect(args[1]).toBe(-50);
     expect(args[2]).toBe(-25);
+  });
+
+  it('scales a natural-size image by the capture/CSS pixel ratio', () => {
+    // The bug: an <img> with no configured `size` lays out at its natural
+    // CSS size on screen, but was drawn at raw natural pixels into the
+    // capture — so recording a 720-tall canvas at 4K shrank it 3×.
+    const fake = makeFakeCtx(2560, 2160);
+    const el = makeImageOverlay();
+    compositeImageOverlay(
+      fake as unknown as CanvasRenderingContext2D,
+      el,
+      makeConfig({ anchor: 'top-left' }),
+      0,
+      0,
+      { scaleX: 3, scaleY: 3, vw: 3840, vh: 2160 }
+    );
+    const args = fake.drawImage.mock.calls[0];
+    expect(args[3]).toBe(300); // 100 CSS px × 3
+    expect(args[4]).toBe(150); // 50 CSS px × 3
+  });
+});
+
+describe('computeOverlayMetrics', () => {
+  it('maps CSS pixels to capture pixels and viewport units to capture pixels', () => {
+    // Canvas laid out at 640×360 CSS inside a 1280×720 viewport, captured
+    // at 1920×1080: 3 capture px per CSS px, and a 1.0 vh fraction spans
+    // 720 × 3 = 2160 capture px (twice the frame — which is correct: the
+    // canvas only shows half the viewport's height).
+    const gl = makeLaidOutCanvas(640, 360);
+    const m = computeOverlayMetrics(1920, 1080, gl, { width: 1280, height: 720 });
+    expect(m.scaleX).toBeCloseTo(3, 6);
+    expect(m.scaleY).toBeCloseTo(3, 6);
+    expect(m.vw).toBeCloseTo(3840, 6);
+    expect(m.vh).toBeCloseTo(2160, 6);
+  });
+
+  it('is the identity when the canvas fills the viewport at capture size', () => {
+    const gl = makeLaidOutCanvas(1280, 720);
+    const m = computeOverlayMetrics(1280, 720, gl, { width: 1280, height: 720 });
+    expect(m).toEqual({ scaleX: 1, scaleY: 1, vw: 1280, vh: 720 });
+  });
+
+  it('falls back to the capture size when the canvas has no layout box', () => {
+    // Detached / display:none canvas → getBoundingClientRect is all zeros.
+    // Dividing by that would give Infinity; fall back to treating the
+    // capture as the viewport.
+    const m = computeOverlayMetrics(1920, 1080, makeCanvas(), { width: 1280, height: 720 });
+    expect(m).toEqual({ scaleX: 1, scaleY: 1, vw: 1920, vh: 1080 });
   });
 });
 

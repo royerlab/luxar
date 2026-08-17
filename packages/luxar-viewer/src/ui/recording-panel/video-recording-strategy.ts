@@ -154,8 +154,28 @@ export class VideoRecordingStrategy implements CaptureStrategy {
       const onstopComplete = new Promise<void>((resolve) => {
         const recorder = this.mediaRecorder as MediaRecorder;
         recorder.onstop = () => {
+          // Every state mutation this path unwinds has to survive a throw
+          // from the delivery half (Blob construction on a huge recording,
+          // a downloadBlob hook, a toast). Without the inner finally, one
+          // of those left the panel hidden, DPR disabled, resize locked
+          // and the per-frame callbacks registered — the same class of
+          // stuck state the offline loop guards against.
+          const unwind = (): void => {
+            this.recordedChunks = [];
+            session.isRecording = false;
+            session.hideRecordingIndicator();
+            this.animationController.removePerFrameCallback(this.keepAliveCallbackId);
+            this.animationController.removePerFrameCallback(this.turntableCallbackId);
+            session.cleanupSyncListener();
+            session.restoreAutoRotate();
+            session.restoreRecordingState();
+            this.cleanupCaptureStream();
+          };
+
           try {
             if (session.isDisposed()) {
+              // Disposed: drop the recording, and leave panel/DPR restore
+              // to the Panel's own dispose path.
               this.recordedChunks = [];
               session.isRecording = false;
               session.hideRecordingIndicator();
@@ -163,25 +183,22 @@ export class VideoRecordingStrategy implements CaptureStrategy {
               return;
             }
 
-            const blob = new Blob(this.recordedChunks, { type: mimeType });
-            const totalElapsed = ((Date.now() - session.recordingStartTime) / 1000).toFixed(1);
-            log.info(
-              Modules.RECORDING,
-              `Recording finalized: ${this.recordedChunks.length} chunks, ` +
-                `${(blob.size / (1024 * 1024)).toFixed(1)} MB, ${totalElapsed}s elapsed`
-            );
-            this.hooks.downloadBlob(blob, this.hooks.generateFilename('webm'));
-            this.recordedChunks = [];
-            session.isRecording = false;
-            session.hideRecordingIndicator();
-
-            this.animationController.removePerFrameCallback(this.keepAliveCallbackId);
-            this.animationController.removePerFrameCallback(this.turntableCallbackId);
-            session.cleanupSyncListener();
-            session.restoreAutoRotate();
-            session.restoreRecordingState();
-            this.cleanupCaptureStream();
-            showToast('Video saved');
+            try {
+              const blob = new Blob(this.recordedChunks, { type: mimeType });
+              const totalElapsed = ((Date.now() - session.recordingStartTime) / 1000).toFixed(1);
+              log.info(
+                Modules.RECORDING,
+                `Recording finalized: ${this.recordedChunks.length} chunks, ` +
+                  `${(blob.size / (1024 * 1024)).toFixed(1)} MB, ${totalElapsed}s elapsed`
+              );
+              this.hooks.downloadBlob(blob, this.hooks.generateFilename('webm'));
+              showToast('Video saved');
+            } catch (err) {
+              log.error(Modules.RECORDING, `Recording finalize failed: ${err}`);
+              showToast('Recording finalize failed');
+            } finally {
+              unwind();
+            }
           } finally {
             resolve();
           }
@@ -221,6 +238,13 @@ export class VideoRecordingStrategy implements CaptureStrategy {
       this.cleanupCaptureStream();
       this.mediaRecorder = null;
       this.recordedChunks = [];
+      // The duration limit may already be armed (it is set before the
+      // slider-sync / turntable startup that can throw); leaving it
+      // running would fire abort() at a dead recorder minutes later.
+      if (this.durationTimer) {
+        clearTimeout(this.durationTimer);
+        this.durationTimer = null;
+      }
       this.animationController.removePerFrameCallback(this.keepAliveCallbackId);
       this.animationController.removePerFrameCallback(this.turntableCallbackId);
       session.cleanupSyncListener();

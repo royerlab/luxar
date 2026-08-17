@@ -149,6 +149,36 @@ recording flags. The driver's own abort handler runs from the same
 finally so per-driver resources (ZIP streams, mediabunny encoders)
 are torn down without orphan files.
 
+## Overlay compositing units
+
+Overlays live in the DOM, so their sizes are authored in **viewport**
+units: the overlay manager writes `font-size: <font_size × 100>vh`,
+`width: <size[0] × 100>vw`, `padding: …vh`, and an `<img>` with no
+configured `size` simply lays out at its natural CSS-pixel size.
+
+The capture frame is neither the viewport nor the CSS canvas: the
+offline loop renders at the chosen output height (and an embedded
+viewer's canvas is a fraction of the window). `computeOverlayMetrics`
+therefore derives two conversions from `glCanvas.getBoundingClientRect()`
+and the viewport, and every branch uses them:
+
+| Authored as                                            | Convert with              |
+| ------------------------------------------------------ | ------------------------- |
+| `font_size`, `padding`, `stroke_width`, `size[1]` (vh) | `× metrics.vh`            |
+| `width`, `size[0]` (vw)                                | `× metrics.vw`            |
+| natural image pixels (CSS px)                          | `× metrics.scaleX/scaleY` |
+| `position` (fraction of the canvas)                    | `× canvas.width/height`   |
+
+Resolving vh/vw against the capture canvas instead — which is what this
+module used to do — is only correct when the canvas fills the viewport
+AND the capture is canvas-sized. Recording breaks both halves, which is
+why a logo shrank as the output resolution went up.
+
+Two paths cannot composite overlays at all, and the confirmation dialog
+says so when overlays are visible: the real-time MediaRecorder
+(`canvas.captureStream` sees the WebGL canvas alone) and the EXR driver
+(raw HDR buffer).
+
 ## Screenshot path
 
 `ScreenshotStrategy` is simpler: hide panels, save state, optionally

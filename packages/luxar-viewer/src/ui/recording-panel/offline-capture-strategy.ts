@@ -35,6 +35,7 @@
  *    the "wasn't set" case gracefully.
  */
 
+import * as THREE from 'three';
 import { log, Modules } from '../../utils/log';
 import { getViewerContainer } from '../../utils/viewer-container';
 import { showToast } from '../toast';
@@ -150,7 +151,18 @@ export class OfflineCaptureStrategy implements CaptureStrategy {
 
     // Save state, disable DPR, lock resize, scale resolution.
     // Dimensions are rounded to a multiple of 16 (macroblock alignment).
-    const targetH = opts.videoResolution > 0 ? opts.videoResolution : 1080;
+    //
+    // `videoResolution === 0` is the panel's "Native" option, documented
+    // in its tooltip as "current canvas size" — so capture at the size
+    // the canvas actually has (logical size × native DPR, which is what
+    // the real-time path records once adaptive DPR is switched off)
+    // rather than silently forcing 1080. Forcing it downscaled every
+    // Retina/4K capture and, because it changed the capture-to-CSS pixel
+    // ratio, rescaled the composited overlays with it.
+    const logicalH = this.sceneManager.renderer.getSize(new THREE.Vector2()).y;
+    const nativeDPR = session.adaptiveDPRManager?.getNativeDPR() ?? window.devicePixelRatio ?? 1;
+    const targetH =
+      opts.videoResolution > 0 ? opts.videoResolution : Math.round(logicalH * nativeDPR);
     session.saveRecordingState({
       disableDPR: true,
       lockResize: true,

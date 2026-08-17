@@ -34,24 +34,90 @@ const BLEND_MODE_TO_COMPOSITE: Record<string, GlobalCompositeOperation> = {
 };
 
 /**
+ * The two scale factors every overlay branch needs to reproduce what
+ * the screen shows.
+ *
+ * On screen, overlay sizes are authored in VIEWPORT units — the
+ * overlay manager writes `font-size: <font_size × 100>vh`,
+ * `width: <size[0] × 100>vw`, `padding: …vh` — and an `<img>` with no
+ * configured size lays out at its natural CSS-pixel size. None of
+ * those are relative to the capture frame, so resolving them against
+ * the capture canvas (as this module used to) only agrees with the
+ * screen in the one case where the canvas exactly fills the viewport
+ * AND the capture is exactly canvas-sized. Recording breaks both
+ * halves of that: the offline path renders at the chosen output
+ * height (1080p/1440p/4K), and an embedded viewer's canvas is a
+ * fraction of the window.
+ *
+ * So: convert to CSS pixels first (viewport-relative sizes against the
+ * real viewport, natural image sizes as-is), then multiply by the
+ * capture-pixels-per-CSS-pixel ratio. This is the same mapping the
+ * HTML branch has always used for its `getBoundingClientRect` math.
+ */
+export interface OverlayCaptureMetrics {
+  /** Capture pixels per CSS pixel, horizontally. */
+  scaleX: number;
+  /** Capture pixels per CSS pixel, vertically. */
+  scaleY: number;
+  /** Capture pixels spanned by a `1.0` (=100vw) width fraction. */
+  vw: number;
+  /** Capture pixels spanned by a `1.0` (=100vh) height fraction. */
+  vh: number;
+}
+
+/** Viewport dimensions, injectable so the metrics stay unit-testable. */
+export interface ViewportSize {
+  width: number;
+  height: number;
+}
+
+/**
+ * Derive {@link OverlayCaptureMetrics} for a capture.
+ *
+ * Falls back to treating the capture canvas as the viewport when the
+ * on-screen canvas has no layout box (detached / display:none), which
+ * keeps a headless or offscreen capture rendering something sane
+ * instead of dividing by zero.
+ */
+export function computeOverlayMetrics(
+  captureWidth: number,
+  captureHeight: number,
+  glCanvas: HTMLCanvasElement,
+  viewport: ViewportSize
+): OverlayCaptureMetrics {
+  const rect = glCanvas.getBoundingClientRect();
+  const hasLayout = rect.width > 0 && rect.height > 0;
+  const scaleX = hasLayout ? captureWidth / rect.width : 1;
+  const scaleY = hasLayout ? captureHeight / rect.height : 1;
+  return {
+    scaleX,
+    scaleY,
+    vw: hasLayout ? viewport.width * scaleX : captureWidth,
+    vh: hasLayout ? viewport.height * scaleY : captureHeight,
+  };
+}
+
+/**
  * Composite every visible overlay onto the capture canvas. No-op
  * when the overlay manager has nothing to draw.
  *
- * `glCanvas` is the renderer's DOM element — its bounding rect is the
- * coordinate frame for HTML-overlay positioning. For text and image
- * overlays, only the canvas dimensions matter.
+ * `glCanvas` is the renderer's DOM element — its bounding rect maps
+ * CSS pixels to capture pixels (see {@link OverlayCaptureMetrics}) and
+ * is the coordinate frame for HTML-overlay positioning.
  */
 export function compositeOverlays(
   canvas: HTMLCanvasElement,
   ctx: CanvasRenderingContext2D,
   overlayManager: OverlayManager,
-  glCanvas: HTMLCanvasElement
+  glCanvas: HTMLCanvasElement,
+  viewport: ViewportSize = { width: window.innerWidth, height: window.innerHeight }
 ): void {
   const overlays = overlayManager.getVisibleOverlays();
   if (overlays.length === 0) return;
 
   const w = canvas.width;
   const h = canvas.height;
+  const metrics = computeOverlayMetrics(w, h, glCanvas, viewport);
 
   for (const { el, config } of overlays) {
     ctx.save();
@@ -60,22 +126,52 @@ export function compositeOverlays(
       ctx.globalCompositeOperation = BLEND_MODE_TO_COMPOSITE[config.blend_mode] ?? 'source-over';
     }
 
-    ctx.globalAlpha = parseFloat(el.style.opacity) || config.opacity;
+    // A live fade writes an inline opacity; fall back to the config only
+    // when there is no inline value to read (`parseFloat('')` is NaN).
+    // `|| config.opacity` would have promoted a legitimate 0 to full.
+    const inlineOpacity = parseFloat(el.style.opacity);
+    ctx.globalAlpha = Number.isFinite(inlineOpacity) ? inlineOpacity : config.opacity;
 
+    // Positions are fractions of the canvas on both sides (the DOM uses
+    // `left/top: %` of the same box), so they need no unit conversion.
     const [nx, ny] = config.position;
     const x = nx * w;
     const y = ny * h;
 
     if (el.classList.contains('luxar-overlay--text')) {
-      compositeTextOverlay(ctx, el, config, x, y, w, h);
+      compositeTextOverlay(ctx, el, config, x, y, metrics);
     } else if (el.classList.contains('luxar-overlay--image')) {
-      compositeImageOverlay(ctx, el, config, x, y, w, h);
+      compositeImageOverlay(ctx, el, config, x, y, metrics);
     } else if (el.classList.contains('luxar-overlay--html')) {
       compositeHtmlOverlay(ctx, el, glCanvas);
     }
 
     ctx.restore();
   }
+}
+
+/**
+ * Greedy word-wrap into lines no wider than `maxWidth`. A single word
+ * longer than the box is left on its own line rather than being cut —
+ * matching CSS `word-wrap: break-word`'s preference to overflow before
+ * it splits mid-word for a width it cannot satisfy.
+ */
+function wrapText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string[] {
+  const lines: string[] = [];
+  for (const paragraph of text.split('\n')) {
+    let line = '';
+    for (const word of paragraph.split(/\s+/).filter(Boolean)) {
+      const candidate = line ? `${line} ${word}` : word;
+      if (line && ctx.measureText(candidate).width > maxWidth) {
+        lines.push(line);
+        line = word;
+      } else {
+        line = candidate;
+      }
+    }
+    lines.push(line);
+  }
+  return lines;
 }
 
 /** Composite a single text overlay onto the capture canvas. */
@@ -85,43 +181,63 @@ export function compositeTextOverlay(
   config: OverlayConfig,
   xIn: number,
   yIn: number,
-  _canvasW: number,
-  canvasH: number
+  metrics: OverlayCaptureMetrics
 ): void {
   const text = el.textContent ?? '';
   if (!text) return;
 
-  // Font sizes / paddings / strokes are stored as vh-relative fractions;
-  // resolve against canvas height for capture-time pixel values.
-  const fontSize = (config.font_size ?? 0.03) * canvasH;
+  // Font sizes / paddings / strokes are authored as vh fractions, and
+  // `width` as a vw fraction — the same units the DOM overlay uses.
+  const fontSize = (config.font_size ?? 0.03) * metrics.vh;
   const fontFamily = FONT_PRESETS[config.font ?? 'sans'] ?? config.font ?? FONT_PRESETS.sans;
   ctx.font = `${fontSize}px ${fontFamily}`;
   ctx.textBaseline = 'top';
 
-  const metrics = ctx.measureText(text);
-  const textWidth = metrics.width;
-  const textHeight = fontSize * 1.2;
+  // An overlay with a configured width wraps on screen (the manager sets
+  // `width: …vw` + `word-wrap: break-word`), so the capture has to wrap
+  // too — `fillText` alone would run one long line off the frame.
+  const lineHeight = fontSize * (config.line_height ?? 1.2);
+  const wrapWidth = config.width ? config.width * metrics.vw : null;
+  const lines = wrapWidth ? wrapText(ctx, text, wrapWidth) : [text];
 
-  const [dx, dy] = computeAnchorOffset(config.anchor, textWidth, textHeight);
+  const longestLine = Math.max(...lines.map((l) => ctx.measureText(l).width));
+  // The on-screen box is the configured width when there is one, even if
+  // the text is shorter — anchoring must use the same box.
+  const blockWidth = wrapWidth ?? longestLine;
+  const blockHeight = lines.length === 1 ? fontSize * 1.2 : lineHeight * lines.length;
+
+  const [dx, dy] = computeAnchorOffset(config.anchor, blockWidth, blockHeight);
   const x = xIn + dx;
   const y = yIn + dy;
 
   if (config.background) {
-    const padding = (config.padding ?? 0.005) * canvasH;
+    const padding = (config.padding ?? 0.005) * metrics.vh;
     ctx.fillStyle = config.background;
-    ctx.fillRect(x - padding, y - padding, textWidth + padding * 2, textHeight + padding * 2);
+    ctx.fillRect(x - padding, y - padding, blockWidth + padding * 2, blockHeight + padding * 2);
   }
 
+  // Horizontal alignment inside the block (only meaningful with a width).
+  const align = config.text_align ?? 'left';
+  const lineX = (lineWidth: number): number => {
+    if (align === 'center') return x + (blockWidth - lineWidth) / 2;
+    if (align === 'right') return x + (blockWidth - lineWidth);
+    return x;
+  };
+
+  const strokeWidth = config.stroke_color ? (config.stroke_width ?? 0.002) * metrics.vh : 0;
   if (config.stroke_color) {
-    const strokeWidth = (config.stroke_width ?? 0.002) * canvasH;
     ctx.strokeStyle = config.stroke_color;
     ctx.lineWidth = strokeWidth * 2;
     ctx.lineJoin = 'round';
-    ctx.strokeText(text, x, y);
   }
-
   ctx.fillStyle = config.color ?? '#ffffff';
-  ctx.fillText(text, x, y);
+
+  lines.forEach((line, i) => {
+    const lx = lineX(ctx.measureText(line).width);
+    const ly = y + i * lineHeight;
+    if (config.stroke_color) ctx.strokeText(line, lx, ly);
+    ctx.fillText(line, lx, ly);
+  });
 }
 
 /** Composite a single image overlay onto the capture canvas. */
@@ -131,8 +247,7 @@ export function compositeImageOverlay(
   config: OverlayConfig,
   xIn: number,
   yIn: number,
-  canvasW: number,
-  canvasH: number
+  metrics: OverlayCaptureMetrics
 ): void {
   const img = el.querySelector('img');
   if (!img || !img.complete || img.naturalWidth === 0) return;
@@ -140,11 +255,18 @@ export function compositeImageOverlay(
   let drawW: number;
   let drawH: number;
   if (config.size) {
-    drawW = config.size[0] * canvasW;
-    drawH = config.size[1] * canvasH;
+    // `size` is [vw, vh] fractions — the units the manager writes onto
+    // the <img> style.
+    drawW = config.size[0] * metrics.vw;
+    drawH = config.size[1] * metrics.vh;
   } else {
-    drawW = img.naturalWidth;
-    drawH = img.naturalHeight;
+    // No configured size: the <img> lays out at its natural size in CSS
+    // pixels, so the capture has to scale those into capture pixels.
+    // Drawing raw natural pixels made the image shrink relative to the
+    // frame as the recording resolution went up (a 64 px logo stayed
+    // 64 px whether the frame was 720 or 2160 tall).
+    drawW = img.naturalWidth * metrics.scaleX;
+    drawH = img.naturalHeight * metrics.scaleY;
   }
 
   const [dx, dy] = computeAnchorOffset(config.anchor, drawW, drawH);
