@@ -368,20 +368,28 @@ function ensureWorker(): Promise<void> {
   if (initPromise) return initPromise;
   const generation = ++initGeneration;
   initPromise = (async () => {
-    // Reuse the worker a timed-out attempt deliberately left running.
-    const reused = worker !== null && api !== null;
-    const w = reused
-      ? worker!
-      : sortWorkerUrlOverride
-        ? new Worker(sortWorkerUrlOverride, { type: 'module' })
-        : new SortWorker();
-    if (!reused) {
-      worker = w;
-      api = wrap<SortWorkerAPI>(w);
-      pendingInit = null;
-    }
-    const liveApi = api!;
+    // Declared outside the try so the catch can terminate a worker that WAS
+    // constructed. The construction itself is INSIDE it: `new Worker()`
+    // throws synchronously when the script is CSP-blocked, and that arm has
+    // to reach the same permanent-failure bookkeeping as every other one —
+    // otherwise the session degrades to unsorted with `isDepthSortAvailable()`
+    // still reporting true, which is exactly the silent failure this is
+    // supposed to end.
+    let w: Worker | null = null;
     try {
+      // Reuse the worker a timed-out attempt deliberately left running.
+      const reused = worker !== null && api !== null;
+      w = reused
+        ? worker!
+        : sortWorkerUrlOverride
+          ? new Worker(sortWorkerUrlOverride, { type: 'module' })
+          : new SortWorker();
+      if (!reused) {
+        worker = w;
+        api = wrap<SortWorkerAPI>(w);
+        pendingInit = null;
+      }
+      const liveApi = api!;
       const result = await initializeWithGuard(
         w,
         // Hand the guard the MEMOIZED RPC rather than letting it start a
@@ -393,8 +401,10 @@ function ensureWorker(): Promise<void> {
         'SortWorker',
         config.depthSort.workerInitTimeoutMs,
         () => {
-          w.onerror = null;
-          w.onmessageerror = null;
+          if (w) {
+            w.onerror = null;
+            w.onmessageerror = null;
+          }
         },
         sortWorkerWasmPathOverride
       );
@@ -416,10 +426,19 @@ function ensureWorker(): Promise<void> {
         // Keep `w` running: its WASM work is still in flight and
         // `pendingInit` still holds the RPC we will re-await. Clearing the
         // cached promise is what lets a later call retry at all.
+        //
+        // The guard cleared this worker's error handlers when it settled, so
+        // a death BETWEEN attempts goes unobserved: the next attempt simply
+        // waits out its deadline instead of failing fast. Bounded, not
+        // silent — MAX_INIT_TIMEOUT_ATTEMPTS still latches it, and the
+        // monitor reports it. Re-arming a permanent handler here would have
+        // to be undone by the next attempt's guard, for a faster path to the
+        // same outcome.
         if (initGeneration === generation) initPromise = null;
       } else {
         if (initGeneration === generation) depthSortUnavailable = true;
-        discardWorker(w);
+        // Null when the constructor itself threw — nothing to terminate.
+        if (w) discardWorker(w);
       }
       throw error;
     }
@@ -526,6 +545,12 @@ function retryInitIfPending(): void {
     .then(() => {
       // A dispose may have torn the worker down while we awaited.
       if (!workerReady) return;
+      // Deliberately asymmetric with the visibility test above: spending a
+      // retry is only worth it when something VISIBLE needs sorting, but once
+      // the worker is up every tracked order-dependent node is re-registered
+      // — including a hidden resident LOD level, which would otherwise render
+      // unsorted the moment it is shown (the case forceReregister's
+      // loadedViewVersion clear exists for).
       for (const state of nodeStates.values()) {
         if (isLiveOrderDependent(liveBlendingMode(state.mesh))) forceReregister(state.mesh);
       }
@@ -758,7 +783,13 @@ export function noteDepthSortCommit(
   const generation = state.generation;
   void ensureWorker()
     .then(() => {
-      if (!api) return;
+      // `workerReady`, not just `api`: ensureWorker also RESOLVES on the
+      // stale-generation path (a dispose landed mid-init), where `api` may
+      // already belong to a freshly spawned, not-yet-initialized worker. The
+      // generation re-check below covers that too — dispose clears
+      // `nodeStates` and generations are lifetime-monotonic — but this keeps
+      // "is the worker usable?" a local question rather than a four-step proof.
+      if (!api || !workerReady) return;
       // A newer commit may have landed while the worker was spawning.
       const current = nodeStates.get(nodeId);
       if (current?.generation !== generation) return;
@@ -869,7 +900,12 @@ function formatOrderingBytes(bytes: number, uploaded: boolean): string {
 function scheduleSort(mesh: THREE.Mesh, nodeId: string): void {
   const state = nodeStates.get(nodeId);
   const camera = getCamera?.();
-  if (!state || !api || !camera) return;
+  // `workerReady`, not just `api`: a timed-out attempt leaves the worker (and
+  // its Comlink wrapper) alive to be retried, so `api !== null` no longer
+  // implies `initialize()` completed. Sorting against that worker would hit
+  // the worker-side NOT_INITIALIZED guard. Reached from the capture drain's
+  // force loop, which dispatches without consulting `state.registered`.
+  if (!state || !api || !workerReady || !camera) return;
   if (state.inFlight) {
     state.resortQueued = true;
     return;
@@ -1447,7 +1483,7 @@ export async function resortForCapture(maxWaitMs = 3000): Promise<void> {
     // a node that pass just put in flight would only set `resortQueued` —
     // a SECOND, identical full sort run serially after the first. Force-
     // first, the pass's in-flight skip makes the two compose to one sort.
-    if (depthSortEnabled && getCamera?.() && api) {
+    if (depthSortEnabled && getCamera?.() && workerReady) {
       for (const [nodeId, state] of nodeStates) {
         const mesh = state.mesh;
         if (!isEffectivelyVisible(mesh)) continue;

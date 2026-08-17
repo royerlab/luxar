@@ -13,6 +13,15 @@ tunes the per-frame scheduler (`rendering/depth-sort-coordinator.ts` →
 | `enabled`             | `true`  | Master switch; `false` pins the identity (storage) order. URL escape hatch: `?depthSort=0`.                     |
 | `angleThresholdDeg`   | `3`     | Re-sort when the node-relative view axis rotates past this angle.                                               |
 | `translationFraction` | `0.05`  | Re-sort when the camera translates along the view axis past this fraction of the node's bounding-sphere radius. |
+| `workerInitTimeoutMs` | `30000` | Deadline for the SortWorker's one-time `initialize()` (WASM load + instantiate). `0` disables the guard. |
+
+`workerInitTimeoutMs` is the odd one out — it is a startup deadline, not a
+re-sort trigger. Missing it is treated as TRANSIENT: the worker keeps running
+and init is retried once the loader goes idle, because the reply has to be
+dispatched on a main thread that a large scene keeps busy. It is deliberately
+more generous than the data pool's `dataLoading.performance.workerInitTimeoutMs`
+(10 s), since erring long costs only a later first sort. See the failure
+taxonomy in `rendering/depth-sort-coordinator/README.md`.
 
 The sort kernel orders by view-space z, so the permutation depends only on
 the model-space view axis direction and its offset: rotation changes the

@@ -577,14 +577,6 @@ function createAggregatedRoot(root: TimingEntry): TimingEntry {
 }
 
 /**
- * Render the complete hierarchical timing panel
- * Aggregates performance data by node type (Points, Lines, GSplats) instead of individual nodes.
- *
- * @param root - The 'Total Update' timing tree (per-frame demand updates)
- * @param refinementRoot - Optional 'LOD Refinement' tree (background passes),
- *   rendered as a second section below the main tree when it has data
- */
-/**
  * Footer text for the depth-sort subsystem.
  *
  * `unavailable` wins over the sort count, and shows even when no sort ever
@@ -601,6 +593,18 @@ function depthSortFooter(depthSortRoot?: TimingEntry, unavailable?: boolean): st
   return ` · ${depthSortRoot.count} ${depthSortRoot.count === 1 ? 'sort' : 'sorts'}`;
 }
 
+/**
+ * Render the complete hierarchical timing panel
+ * Aggregates performance data by node type (Points, Lines, GSplats) instead of individual nodes.
+ *
+ * @param root - The 'Total Update' timing tree (per-frame demand updates)
+ * @param refinementRoot - Optional 'LOD Refinement' tree (background passes),
+ *   rendered as a second section below the main tree when it has data
+ * @param depthSortRoot - Optional 'Depth Sort' tree (camera-triggered re-sorts)
+ * @param depthSortUnavailable - True once the depth-sort subsystem has given
+ *   up for this session; reported in the footer instead of a sort count, and
+ *   keeps the panel out of its empty state so the notice cannot be buried
+ */
 export function renderHierarchicalTimingPanel(
   root: TimingEntry,
   refinementRoot?: TimingEntry,
@@ -609,7 +613,7 @@ export function renderHierarchicalTimingPanel(
 ): string {
   const hasRefinement = refinementRoot !== undefined && refinementRoot.count > 0;
   const hasDepthSort = depthSortRoot !== undefined && depthSortRoot.count > 0;
-  if (root.count === 0 && !hasRefinement && !hasDepthSort) {
+  if (root.count === 0 && !hasRefinement && !hasDepthSort && !depthSortUnavailable) {
     return `
       <div class="luxar-timing-panel luxar-timing-panel--empty">
         <div class="luxar-timing-panel__empty-msg">
@@ -618,6 +622,11 @@ export function renderHierarchicalTimingPanel(
       </div>
     `;
   }
+  // `depthSortUnavailable` deliberately keeps the panel out of the empty
+  // state even with zero timings: a warm-up that fails before any data loads
+  // (CSP-blocked worker script) is exactly when there is nothing else to
+  // notice it by, and "No timing data yet" would bury the one thing worth
+  // saying.
 
   // Aggregate children by node type for cleaner display
   const aggregatedRoot = createAggregatedRoot(root);

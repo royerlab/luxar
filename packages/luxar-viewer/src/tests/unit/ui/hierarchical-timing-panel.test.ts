@@ -47,6 +47,34 @@ describe('renderHierarchicalTimingPanel', () => {
     expect(html).toContain('No timing data yet');
   });
 
+  it('reports an unavailable depth-sort subsystem in the footer', () => {
+    // A session whose SortWorker never came up draws every order-dependent
+    // layer in storage order. Before this the only signal was a single
+    // console error at the moment it happened (issue #705's rule).
+    const html = renderHierarchicalTimingPanel(makeEntry({ count: 5 }), undefined, undefined, true);
+    expect(html).toContain('depth sort UNAVAILABLE');
+  });
+
+  it('an unavailable subsystem escapes the empty placeholder', () => {
+    // Warm-up now runs before any data loads, so a CSP-blocked worker script
+    // sets this with zero timings — precisely when 'No timing data yet'
+    // would bury the one thing worth saying.
+    const html = renderHierarchicalTimingPanel(makeEntry({ count: 0 }), undefined, undefined, true);
+    expect(html).not.toContain('luxar-timing-panel--empty');
+    expect(html).toContain('depth sort UNAVAILABLE');
+  });
+
+  it('shows the sort count when the subsystem is healthy', () => {
+    const html = renderHierarchicalTimingPanel(
+      makeEntry({ count: 5 }),
+      undefined,
+      makeEntry({ name: 'Depth Sort', count: 3 }),
+      false
+    );
+    expect(html).toContain('3 sorts');
+    expect(html).not.toContain('UNAVAILABLE');
+  });
+
   it('renders header / body / footer when data is present', () => {
     const html = renderHierarchicalTimingPanel(makeEntry({ count: 5 }));
     expect(html).toContain('luxar-timing-panel__header');
