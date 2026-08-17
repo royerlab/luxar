@@ -270,6 +270,30 @@ describe('RecordingSession', () => {
       sentinel.remove();
     });
 
+    // The dialog's promised frame count must match what the capture loop
+    // actually produces (`offline-capture-strategy` ceil(360/speed * fps))
+    // and what the panel's own Output field shows (`getTurntableInfo`).
+    // Rounding the duration BEFORE the multiply broke both: at 7°/s and
+    // 30 FPS it promised 1530 frames / 51s against 1543 / 51.4s.
+    it.each([
+      [7, 30, '1543 frames at 30 FPS (51.4s video)'],
+      [36, 30, '300 frames at 30 FPS (10.0s video)'],
+    ])(
+      'turntable dialog at %i°/s, %i FPS promises the count the capture produces',
+      async (turntableSpeed, videoFPS, expected) => {
+        const promise = (panel as any).session.showConfirmationDialog({
+          mode: 'turntable',
+          options: { ...(panel as any).options, turntableSpeed, videoFPS },
+        });
+
+        const message = document.querySelector('#luxar-recording-confirm-message');
+        expect(message?.textContent).toContain(expected);
+
+        (document.querySelector('[data-action="cancel"]') as HTMLElement)?.click();
+        await promise;
+      }
+    );
+
     it('resolves to false when panel disposes mid-dialog', async () => {
       const promise = (panel as any).session.showConfirmationDialog({
         mode: (panel as any).mode,

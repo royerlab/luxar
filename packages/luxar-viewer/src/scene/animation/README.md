@@ -25,6 +25,8 @@ folder contains only the loop and the dimension scrubber.
 - `addPerFrameCallback(id, fn, { continuous? })` / `removePerFrameCallback(id)` / `hasPerFrameCallback(id)` — register named callbacks executed after `controls.update()` but before `postProcessing.render()`. `continuous: true` keeps the loop alive past the idle timeout (used by dimension animation and turntable recording); the default `false` is on-demand (e.g. dynamic clipping, scale bar).
 - `setAdaptiveDPRManager(manager)` — opt-in DPR feedback: the loop calls `recordFrame(now)` each frame so the manager can downshift pixel ratio under load.
 - `setContextLostPredicate(predicate)` — injected by `SceneManager` to suppress GPU work while the WebGL context is lost; controls and callbacks still tick so input stays responsive.
+- `setRenderSkipPredicate(predicate)` — injected by `core/app/init/pipeline`, keyed on `RecordingPanel.isLoopRenderSuppressed()`: an offline capture renders its own pipeline pass per frame, so the loop's render is discarded work. Same shape as the context-lost guard — controls and callbacks still tick, but adaptive-DPR frames are not recorded (a frame that draws nothing is not a fast frame). Offline-only; the real-time recording path records the canvas the loop paints. Narrower than the capture's own mutual-exclusion flag: it is dropped before the capture teardown awaits its driver abort, so a wedged abort cannot freeze the viewport. It gates the idle-restore frame below as well — both of the controller's render call sites, since the claim is that nobody but the pipeline's current owner may draw.
+- `setIdleRestorePredicate(predicate)` — consulted before the idle-pause native-DPR restore; returning false keeps the current DPR (recording resolution stays locked for a whole capture).
 - `get isActive` — true while the loop is running.
 - `dispose()` — stops the loop and clears all per-frame callbacks. Not reusable after dispose.
 
@@ -52,11 +54,13 @@ callers that build the options object dynamically; defaults come from
   Auto-rotate, post-processing effects that self-declare via
   `needsContinuousAnimation()`, and continuous callbacks together
   decide whether idle timeout fires.
-- **No GPU work while context is lost.** When the injected
-  `isContextLost` predicate returns true, the loop emits
-  `frame-end` and returns before `postProcessing.render()`. Controls
-  and per-frame callbacks still execute, so UI input is unaffected
-  during the brief loss window.
+- **No GPU work while context is lost — or while another owner drives
+  the pipeline.** When either injected predicate (`isContextLost`,
+  `shouldSkipRender`) returns true, the loop emits `frame-end` and
+  returns before `postProcessing.render()`. Controls and per-frame
+  callbacks still execute, so UI input is unaffected during the loss
+  window, and the depth-sort scheduler and LOD selector keep following
+  the camera through an offline capture.
 - **Animation never outruns data.** `DimensionAnimationManager`
   tracks `pendingUpdates` per dimension. After
   `setDimensionValue(...)` it awaits `sceneDimsManager.waitForUpdate()`
