@@ -1,6 +1,6 @@
-#### Three more silent readers, found auditing the format-3 move
+#### Four more silent readers, found auditing the format-3 move
 
-A post-merge audit of the format-3 change turned up three defects of the same
+A post-merge audit of the format-3 change turned up four defects of the same
 class it was written to remove — the class where nothing raises and the wrong
 answer is an ordinary-looking value.
 
@@ -36,8 +36,9 @@ incomplete is what stops the E2E suite from starting at all — both global setu
 then demand a regeneration that can never satisfy them. Its tests pinned the v2
 branch explicitly and the v3 branch only via a sweep over whatever the ambient
 generator happened to write, which `LUXAR_ZARR_FORMAT=2` silently reverts to v2
-alone. Three explicit cases now, including a v3 root written before consolidation
-finished.
+alone. Four explicit cases now: a complete v3 root, one written before
+consolidation finished, one whose document is not parseable, and a stale
+`.zmetadata` left beside an unfinished v3 root.
 
 **Where a document's format comes from.** `attrs_from_node_doc` and the viewer's
 `rootAttributes` inferred it from a `zarr_format: 3` member, which misreads a
