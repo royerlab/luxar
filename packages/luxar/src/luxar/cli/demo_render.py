@@ -422,11 +422,14 @@ def render_dependencies(console: Console, rows: Sequence[DependencyStatus]) -> N
     for row, module, spec, extra in zip(rows, modules, specs, extras):
         label, style = _dep_verdict(row)
         line = Text(" " * _INDENT)
-        line.append(f"{module:<{mw}}", style="bold cyan")
+        # Padded through `_pad` like every other data column: these come from
+        # the dependency table rather than from this module, and the widths
+        # above are measured in cells, so a format spec could disagree with them.
+        line.append(_pad(module, mw), style="bold cyan")
         line.append(" " * _GUTTER)
-        line.append(f"{spec:<{sw}}")
+        line.append(_pad(spec, sw))
         line.append(" " * _GUTTER)
-        line.append(f"{extra:<{ew}}", style="dim")
+        line.append(_pad(extra, ew), style="dim")
         line.append(" " * _GUTTER)
         line.append(label, style=style)
         console.print(line)

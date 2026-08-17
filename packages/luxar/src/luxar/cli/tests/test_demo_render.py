@@ -423,6 +423,24 @@ class TestDependencies:
             assert header.index("EXTRA") == row.index(extra), f"{header!r} vs {row!r}"
             assert header.index("STATUS") == row.index("ok"), f"{header!r} vs {row!r}"
 
+    def test_columns_align_in_cells_not_code_points(self) -> None:
+        """A wide character in a row must not shift the columns after it.
+
+        The widths are measured in cells, so the cells have to be PADDED in
+        cells too — `f"{value:<{width}}"` counts code points and puts the rest
+        of the row one column out per wide character.
+        """
+        lines = self._render(
+            [
+                self._row("モジュ", "mod>=1", "demos", True, True),
+                self._row("plain_module", "other>=1", "demos", True, True),
+            ]
+        )
+        rows = [ln for ln in lines if ln.rstrip().endswith("ok")]
+        assert len(rows) == 2
+        offsets = {Text(r[: r.rindex("ok")]).cell_len for r in rows}
+        assert len(offsets) == 1, f"STATUS column ragged at {sorted(offsets)}"
+
     def test_singular_heading_for_a_one_row_report(self) -> None:
         heading = self._render([self._row("ab", "ab>=1", "demos", True, True)])[0]
         assert heading.endswith("1 dependency")
