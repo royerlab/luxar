@@ -42,10 +42,12 @@ import { showToast } from '../toast';
 import type { SceneManager } from '../../scene/scene-manager';
 import type { AnimationController } from '../../scene/animation/animation-controller';
 import { LuxarOrbitControls } from '../../controls/luxar-orbit-controls';
+import { computeVideoBitrate as computeVideoBitratePure } from './media-utilities';
 import {
-  computeVideoBitrate as computeVideoBitratePure,
   generateFfmpegScript as generateFfmpegScriptPure,
-} from './media-utilities';
+  type GradeSettings,
+  type ToneMapName,
+} from './ffmpeg-script';
 import type { CaptureContext, OfflineCaptureDriver } from './drivers/offline-capture-driver';
 import { ImageSequenceDriver } from './drivers/image-sequence-driver';
 import { ExrSequenceDriver } from './drivers/exr-sequence-driver';
@@ -62,6 +64,32 @@ export interface OfflineCaptureStrategyHooks {
 }
 
 type OfflineMode = 'exr' | 'webm' | 'mp4' | 'mkv' | 'png' | 'webp' | 'jpeg';
+
+/** THREE tone-mapping constants → the names the ffmpeg script knows. */
+const TONE_MAP_BY_THREE_CONSTANT: Record<number, ToneMapName> = {
+  [THREE.LinearToneMapping]: 'linear',
+  [THREE.ReinhardToneMapping]: 'reinhard',
+  [THREE.CineonToneMapping]: 'cineon',
+  [THREE.ACESFilmicToneMapping]: 'aces',
+  [THREE.AgXToneMapping]: 'agx',
+  [THREE.NeutralToneMapping]: 'neutral',
+};
+
+/**
+ * Read the display transform an EXR capture bypasses, so the bundled
+ * ffmpeg script can put it back. Falls back to a neutral grade if the
+ * renderer doesn't expose it (older mocks in tests).
+ */
+function readGradeSettings(sceneManager: SceneManager): GradeSettings | undefined {
+  const grade = sceneManager.postProcessing?.getGradeSettings?.();
+  if (!grade) return undefined;
+  return {
+    toneMapping: TONE_MAP_BY_THREE_CONSTANT[grade.toneMapping] ?? 'neutral',
+    exposure: grade.exposure,
+    offset: grade.offset,
+    gamma: grade.gamma,
+  };
+}
 
 export class OfflineCaptureStrategy implements CaptureStrategy {
   readonly kind = 'offline' as const;
@@ -91,12 +119,8 @@ export class OfflineCaptureStrategy implements CaptureStrategy {
     return !state.isRecording && !state.isOfflineCaptureActive;
   }
 
-  async run(
-    opts: RecordingOptions,
-    _mode: RecordingMode,
-    session: RecordingSession
-  ): Promise<void> {
-    return this.runOfflineCaptureLoop(opts.outputFormat as OfflineMode, opts, session);
+  async run(opts: RecordingOptions, mode: RecordingMode, session: RecordingSession): Promise<void> {
+    return this.runOfflineCaptureLoop(opts.outputFormat as OfflineMode, opts, session, mode);
   }
 
   /** Synchronously stop the loop. The loop's await checkpoints
@@ -123,7 +147,8 @@ export class OfflineCaptureStrategy implements CaptureStrategy {
   private async runOfflineCaptureLoop(
     mode: OfflineMode,
     opts: RecordingOptions,
-    session: RecordingSession
+    session: RecordingSession,
+    recordingMode: RecordingMode
   ): Promise<void> {
     const confirmed = await session.showConfirmationDialog({
       mode: opts.outputFormat === 'exr' || opts.frameByFrame ? 'turntable' : 'video',
@@ -313,7 +338,20 @@ export class OfflineCaptureStrategy implements CaptureStrategy {
       fps,
       renderFrameToCanvas: () => this.hooks.renderFrameToCanvas(),
       generateFilename: (ext) => this.hooks.generateFilename(ext),
-      generateFfmpegScript: (rate, frames, ext) => generateFfmpegScriptPure(rate, frames, ext),
+      generateFfmpegScript: (frames, ext) =>
+        generateFfmpegScriptPure({
+          fps,
+          frameCount: frames,
+          frameExt: ext,
+          mode: recordingMode === 'turntable' ? 'turntable' : 'video',
+          // Strip the extension the panel appended: the script names its
+          // own outputs off this stem.
+          outputBase: this.hooks.generateFilename('zip').replace(/\.zip$/, ''),
+          // EXR frames are scene-linear and pre-grade, so the script has
+          // to re-apply the viewer's display transform. LDR frames are
+          // already graded and ignore this.
+          grade: ext === 'exr' ? readGradeSettings(this.sceneManager) : undefined,
+        }),
       downloadBlob: (blob, filename) => this.hooks.downloadBlob(blob, filename),
       computeVideoBitrate: (w, h) =>
         computeVideoBitratePure(w, h, opts.videoFPS, opts.videoQuality),

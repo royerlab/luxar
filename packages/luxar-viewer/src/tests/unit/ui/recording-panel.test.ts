@@ -6,7 +6,7 @@
  * gets called for each mode/format), GUI controller visibility logic,
  * Panel-routed utility wrappers (downloadBlob, generateFilename), and
  * the pure-helper module integrations (computeVideoBitrate,
- * generateFfmpegScript, getSupportedMimeType) that the Panel re-exposes.
+ * getSupportedMimeType) that the Panel re-exposes.
  *
  * Per-collaborator tests live alongside their target:
  *   - `recording-panel/session.test.ts`
@@ -23,7 +23,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   computeVideoBitrate,
-  generateFfmpegScript,
   getSupportedMimeType,
 } from '../../../ui/recording-panel/media-utilities';
 import { log, Modules } from '../../../utils/log';
@@ -377,31 +376,6 @@ describe('RecordingPanel', () => {
       it('max quality at 4K', () => {
         const bitrate = computeVideoBitrate(3840, 2160, 60, 'max');
         expect(bitrate).toBe(Math.round(3840 * 2160 * 60 * 0.3));
-      });
-    });
-
-    describe('generateFfmpegScript', () => {
-      it('generates valid bash script', () => {
-        const script = generateFfmpegScript(30, 300, 'png');
-        expect(script.startsWith('#!/bin/bash')).toBe(true);
-        expect(script).toContain('set -e');
-      });
-
-      it('uses correct frame pattern for PNG', () => {
-        const script = generateFfmpegScript(60, 600, 'png');
-        expect(script).toContain('frame_%06d.png');
-        expect(script).toContain('framerate 60');
-      });
-
-      it('includes HDR section for EXR', () => {
-        const script = generateFfmpegScript(30, 300, 'exr');
-        expect(script).toContain('yuv420p10le');
-        expect(script).toContain('bt2020');
-      });
-
-      it('excludes HDR section for non-EXR', () => {
-        const script = generateFfmpegScript(30, 300, 'jpg');
-        expect(script).not.toContain('yuv420p10le');
       });
     });
 

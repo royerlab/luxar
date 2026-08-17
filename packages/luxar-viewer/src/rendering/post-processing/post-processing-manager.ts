@@ -362,6 +362,29 @@ export class PostProcessingManager {
     this.megaShader.setGlobalGamma(value);
   }
 
+  /**
+   * The display transform the mega-shader applies after the point where
+   * an EXR capture is read (`hdr-effects-pre-tone` bypasses all of it):
+   * exposure → offset → gamma → tone mapping → sRGB.
+   *
+   * Exported so the offline EXR path can bundle an ffmpeg recipe that
+   * reproduces what the viewer showed, instead of encoding scene-linear
+   * floats as if they were already display-referred.
+   */
+  getGradeSettings(): {
+    toneMapping: THREE.ToneMapping;
+    exposure: number;
+    offset: number;
+    gamma: number;
+  } {
+    return {
+      toneMapping: this.megaShader.getToneMapping(),
+      exposure: this.megaShader.uniforms.uExposure.value as number,
+      offset: this.megaShader.uniforms.uGlobalOffset.value as number,
+      gamma: this.megaShader.uniforms.uGlobalGamma.value as number,
+    };
+  }
+
   // ================================================================
   // Anti-aliasing
   // ================================================================
