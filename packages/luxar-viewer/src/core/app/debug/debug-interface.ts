@@ -434,6 +434,10 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
     Modules.LUXAR,
     '  __luxarDebug.resortDepthOrderingForCapture() - Re-sort depth ordering for the current pose (offline capture)'
   );
+  log.info(
+    Modules.LUXAR,
+    '  __luxarDebug.getDepthSortWorkerStatus() - Why a scene may be drawn unsorted (idle/ready/starved/failed + deadline misses)'
+  );
   log.info(Modules.LUXAR, '  __luxarDebug.scene - Access THREE.js scene');
   log.info(Modules.LUXAR, '  __luxarDebug.camera - Access camera');
   log.info(Modules.LUXAR, '  __luxarDebug.app - Access LuxarApp instance');
