@@ -2877,9 +2877,15 @@ def generate_points_volumetric_reversed_test() -> None:
     order-dependence on it for ALL four geometry types, but until this
     fixture existed the only E2E gate on the volumetric arm filtered
     ``nodeType === 'gsplats'``: nothing would have caught points (or
-    lines) regressing to unsorted volumetric compositing. Under the
-    viewer's auto-framed camera the identity ordering is not
-    back-to-front, so the E2E assertion (aSortedIndex non-identity +
+    lines) regressing to unsorted volumetric compositing.
+
+    NOTE: as in the normal-mode twin, the compiler Morton-reorders
+    storage, so the on-disk order is spatial rather than the declaration
+    order — declaring front-first is not itself what makes this a gate.
+    Its GEOMETRY is: the auto-framed camera looks straight down -z
+    (`camera-framing.ts`), and the near (green) point lands BETWEEN the
+    two far points in storage order, so the identity ordering is not
+    back-to-front and the E2E assertion (aSortedIndex non-identity +
     view-z monotone) fails unless volumetric points reach the SortWorker.
     """
     with asection("Generating Points Volumetric-Reversed Test"):
@@ -2941,6 +2947,15 @@ def generate_lines_volumetric_reversed_test() -> None:
     ``blending_mode="volumetric"``. Lines sort on SEGMENT MIDPOINTS
     (`commit-lines-geometry.ts`), which is the delta from the points
     fixture: the same gate, exercised through the other centers provider.
+
+    Same caveat as the points twin: the compiler Hilbert-reorders segments,
+    so the declaration order is not what lands on disk. The gate is the
+    z-structure, which survives any reordering of these three — the front
+    segment stores BETWEEN the two z=0 ones, so under the -z auto-framed
+    camera the identity ordering is not back-to-front. Keep every segment
+    at constant z if you edit this: the E2E check reconstructs the midpoint
+    sort key from the line texture, so a segment slanted in z would need
+    the fixture's overlap reasoning redone.
     """
     with asection("Generating Lines Volumetric-Reversed Test"):
         output = FIXTURES_DIR / "test_lines_volumetric_reversed.luxar.zarr"

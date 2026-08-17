@@ -1223,39 +1223,24 @@ test.describe('Points and Lines volumetric depth sorting', () => {
   // Lines are not a redundant copy of points: their centers provider hands
   // the SortWorker SEGMENT MIDPOINTS (commit-lines-geometry.ts) rather than
   // element positions, so it is a genuinely separate path into the same gate.
+  //
+  // Both fixtures come from tests/fixtures/generate_test_data.py and are
+  // covered by the global-setup pre-flight, which fails the whole run by
+  // name when a declared fixture is missing or half-written — run
+  // `pnpm test:generate-fixtures` first.
   test.slow();
-
-  test.beforeAll(async () => {
-    const { existsSync } = await import('node:fs');
-    const path = await import('node:path');
-    const { fileURLToPath } = await import('node:url');
-    const specDir = path.dirname(fileURLToPath(import.meta.url));
-    for (const name of [
-      'test_points_volumetric_reversed.luxar.zarr',
-      'test_lines_volumetric_reversed.luxar.zarr',
-    ]) {
-      const fixtureDir = path.resolve(specDir, `../../../tests/fixtures/${name}`);
-      if (!existsSync(fixtureDir)) {
-        throw new Error(
-          `Missing fixture ${fixtureDir} — run \`pnpm test:generate-fixtures\` ` +
-            'from packages/luxar-viewer/ first.'
-        );
-      }
-    }
-  });
 
   /**
    * Assert that a reversed-declaration volumetric node reaches a
    * back-to-front ordering: the applied permutation departs from identity
    * AND view z is non-decreasing along it.
    *
-   * `stride` is the node's element-texture stride in floats, whose texel0.xyz
-   * is the sort key the coordinator registered: 12 for points (position), 24
-   * for lines — where texel0.xyz is the segment START vertex, so the
-   * monotonicity check runs on start points rather than the midpoints the
-   * worker sorted. That is fine for THIS fixture, whose segments are
-   * axis-aligned and parallel, so start-point order and midpoint order agree;
-   * it is not a general identity.
+   * `stride` is the node's element-texture stride in floats: 12 for points,
+   * 24 for lines. The monotonicity check must run on the SAME key the
+   * SortWorker was handed, so it reconstructs that key from the texture —
+   * texel0.xyz (position) for points, and the mean of texel0.xyz (segment
+   * start) and texel1.xyz (segment end) for lines, which is the midpoint the
+   * lines centers provider registers.
    */
   async function expectVolumetricBackToFront(
     page: import('@playwright/test').Page,
@@ -1348,7 +1333,7 @@ test.describe('Points and Lines volumetric depth sorting', () => {
 
     // …and the permutation it settled on is genuinely back-to-front.
     const monotone = await page.evaluate(
-      ({ t, s }) => {
+      ({ t, s, mid }) => {
         const debug = (window as any).__luxarDebug;
         const results: Array<{ ordering: number[]; viewZs: number[]; ok: boolean }> = [];
         debug.scene.traverse((obj: any) => {
@@ -1375,7 +1360,13 @@ test.describe('Points and Lines volumetric depth sorting', () => {
           for (let j = 0; j < count; j++) {
             const idx = arr[j];
             ordering.push(idx);
-            const zv = viewZof(texData[idx * s], texData[idx * s + 1], texData[idx * s + 2]);
+            const b = idx * s;
+            // The registered sort key: texel0.xyz, or the texel0/texel1
+            // midpoint for lines (see the doc comment above).
+            const kx = mid ? (texData[b] + texData[b + 4]) / 2 : texData[b];
+            const ky = mid ? (texData[b + 1] + texData[b + 5]) / 2 : texData[b + 1];
+            const kz = mid ? (texData[b + 2] + texData[b + 6]) / 2 : texData[b + 2];
+            const zv = viewZof(kx, ky, kz);
             viewZs.push(zv);
             // Small epsilon: equal-depth elements share a key bucket.
             if (zv < prev - 1e-4) ok = false;
@@ -1385,7 +1376,7 @@ test.describe('Points and Lines volumetric depth sorting', () => {
         });
         return results;
       },
-      { t: nodeType, s: stride }
+      { t: nodeType, s: stride, mid: nodeType === 'lines' }
     );
     expect(monotone.length).toBeGreaterThan(0);
     for (const r of monotone) {
