@@ -289,6 +289,15 @@ export function pointPickWebGPUFactory(
   // Depth = 1.0 - brightness (the brightest hit takes precedence).
   // Discard-gating happens via colorNode → depth is only written when
   // colorNode also writes.
+  //
+  // BRANCHLESS by construction, and that is load-bearing: `brightness`
+  // is a factory-scope `.toVar()` shared with `colorNode`, so it is
+  // assigned wherever three first BUILDS it — which is unconditional
+  // top-level flow in either entry point only while this body contains
+  // no `if`. Adding a branch here (a `uSurfaceDepth`-style select) would
+  // bury that assignment in one arm and leave `colorNode`'s top-level
+  // readers with 0; it needs the same unconditional fragment prologue
+  // the gsplat/mesh pick factories use.
   const depthNode = Fn(() => float(1.0).sub(clamp(brightness, 0.0, 1.0)));
 
   const material = outMaterial ?? new NodeMaterial();

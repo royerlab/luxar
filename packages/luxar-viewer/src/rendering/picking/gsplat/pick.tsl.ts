@@ -375,36 +375,86 @@ export function gsplatPickWebGPUFactory(
 
   // ---- Fragment ----
   //
-  // Compute the Mahalanobis brightness ONCE, materialised via
-  // `.toVar()` so both color and depth fragment outputs reference the
-  // same computation instead of each rebuilding the
-  // forward-substitution + exp + clamp chain. TSL doesn't expose a
-  // multi-output fragment Fn in r184 (separate `colorNode` and
-  // `depthNode` are independent stage entry points); the `.toVar()`
-  // is the closest available "compile once, reference twice" pattern.
-  // Worst case (no common-subexpression elimination by the TSL
-  // builder) the cost is equivalent to today's duplicated graph;
-  // best case it halves the per-fragment picking cost on
-  // splat-heavy scenes.
-  // Bottom-left fragcoord reconstruction — same top-left/bottom-left
-  // mismatch fix as the visual factory (see shader-tsl.ts fragment).
-  // Un-flip with `screenSize` (the bound target's size — the exact term
-  // the builder's top-left flip used), not the app-stamped uResolution;
-  // see shader-tsl.ts. For picking they currently coincide (uResolution
-  // is re-stamped to the pick target dims), but screenSize is exact by
-  // construction in every configuration.
-  const fragCoordBL: TSLNode = vec2(screenCoordinate.x, screenSize.y.sub(screenCoordinate.y));
-  const d: TSLNode = vec2(fragCoordBL.sub(vCenterScreen));
-  const y0: TSLNode = d.x.mul(vL2D.x).toVar();
-  const y1: TSLNode = d.y.sub(vL2D.y.mul(y0)).mul(vL2D.z).toVar();
-  const mahalSq: TSLNode = y0.mul(y0).add(y1.mul(y1)).toVar();
-  const intensity: TSLNode = vAmplitude2D
-    .mul(uInvOneMinusC)
-    .mul(max(exp(mahalSq.mul(-0.5)).sub(uShiftC), float(0.0)))
-    .toVar();
-  const brightness: TSLNode = clamp(intensity, 0.0, 1.0).toVar();
+  // The Mahalanobis chain is computed ONCE and read by BOTH fragment
+  // entry points, so where its assignments are EMITTED is load-bearing.
+  //
+  // `colorNode` and `depthNode` are independent stage entry points, and
+  // the order in which three builds them is not part of its API: r184
+  // emitted the colour flow first, r185 emits the depth flow first. A
+  // value materialised with `.toVar()` is assigned wherever three first
+  // BUILDS it, and a branch-scoped assignment is only re-hoisted for a
+  // later reader that is itself inside a block
+  // (`NodeBuilder.addFlowCodeHierarchy`, gated on
+  // `builder.context.nodeBlock !== undefined`) — never for one at the
+  // top level of a flow. `depthNode` BRANCHES on `uSurfaceDepth`, which
+  // three lowers to a real `if / else`, so if the depth flow builds
+  // first a free-standing chain lands inside the `else` arm while every
+  // top-level reader (both `Discard` conditions and the output vec4)
+  // still reads the variable — unassigned, i.e. 0, which discards every
+  // fragment and renders an empty pick buffer.
+  //
+  // The invariant this enforces by construction: every value shared
+  // between the two entry points is declared up front and ASSIGNED in
+  // `fragmentPrologue`, a `'void'`-typed `Fn` invoked as the FIRST
+  // statement of BOTH entry points. A void `Fn` call is a stack
+  // STATEMENT — a non-void one is wrapped in an intent var that three
+  // skips, which would leave the call to build at its consumption site,
+  // inside the arm again — so the assignments are emitted in trace order
+  // in unconditional top-level flow, whichever entry point three builds
+  // first.
+  //
+  // What `.once()` does and does not buy: the prologue's code is emitted
+  // where it is FIRST built, and because both entry points call it as
+  // their first statement that site is the top level of whichever flow
+  // three emits first. `.once()` then lets the second call reuse the
+  // already-traced result instead of emitting the chain twice — the
+  // "compile once, reference twice" property the `.toVar()`s were there
+  // for. Its cache lives on the NodeBuilder (so per material build) and
+  // is keyed on shader stage `'any'`, so calling this same prologue from
+  // another shader STAGE would silently reuse the first stage's nodes —
+  // it is fragment-only for that reason. A cache MISS would merely
+  // duplicate the chain, which stays correct.
+  //
+  // One visible consequence of the r185 flip: with the depth flow
+  // emitted first, `gl_FragDepth` is written ABOVE the `Discard`s in
+  // source order (the GLSL twins discard first). Still correct — a
+  // discarded fragment writes no buffer at all, depth included.
+  const mahalSq: TSLNode = float(0.0).toVar('gsplatPickMahalSq');
+  const intensity: TSLNode = float(0.0).toVar('gsplatPickIntensity');
+  const brightness: TSLNode = float(0.0).toVar('gsplatPickBrightness');
+
+  const fragmentPrologue = Fn(() => {
+    // Bottom-left fragcoord reconstruction — same top-left/bottom-left
+    // mismatch fix as the visual factory (see shader-tsl.ts fragment).
+    // Un-flip with `screenSize` (the bound target's size — the exact term
+    // the builder's top-left flip used), not the app-stamped uResolution;
+    // see shader-tsl.ts. For picking they currently coincide (uResolution
+    // is re-stamped to the pick target dims), but screenSize is exact by
+    // construction in every configuration.
+    // `.toVar()` on these two for the same reason as the vertex prologue's house rule
+    // (every value a STATEMENT): as free expressions they are re-expanded at each of
+    // their ~6 downstream uses, which inlines the whole un-flip twice per Mahalanobis
+    // term. Materialising them changes no arithmetic, only how often it is written out.
+    const fragCoordBL: TSLNode = vec2(
+      screenCoordinate.x,
+      screenSize.y.sub(screenCoordinate.y)
+    ).toVar();
+    const d: TSLNode = vec2(fragCoordBL.sub(vCenterScreen)).toVar();
+    const y0: TSLNode = d.x.mul(vL2D.x).toVar();
+    const y1: TSLNode = d.y.sub(vL2D.y.mul(y0)).mul(vL2D.z).toVar();
+    mahalSq.assign(y0.mul(y0).add(y1.mul(y1)));
+    intensity.assign(
+      vAmplitude2D.mul(uInvOneMinusC).mul(max(exp(mahalSq.mul(-0.5)).sub(uShiftC), float(0.0)))
+    );
+    brightness.assign(clamp(intensity, 0.0, 1.0));
+    // Returned only so `.once()` has a result to cache — a body with no
+    // result re-traces on the second call and emits the whole chain
+    // twice. The entry points read the vars above, not this value.
+    return brightness;
+  }, 'void').once();
 
   const colorNode = Fn(() => {
+    fragmentPrologue();
     Discard(mahalSq.greaterThan(uTruncateSq));
     Discard(intensity.lessThan(1e-4));
     return vec4(vNodeId, vElementId.x, brightness, vElementId.y);
@@ -417,11 +467,12 @@ export function gsplatPickWebGPUFactory(
   // projected depth) — the front-most splat wins, matching the occluding
   // surface the user sees. Commutative modes (additive/max/luminous)
   // keep brightness-as-depth — the brightest splat wins.
-  const depthNode = Fn(() =>
-    int(uSurfaceDepth)
+  const depthNode = Fn(() => {
+    fragmentPrologue();
+    return int(uSurfaceDepth)
       .equal(int(1))
-      .select(depth as unknown as TSLNode, float(1.0).sub(brightness))
-  );
+      .select(depth as unknown as TSLNode, float(1.0).sub(brightness));
+  });
 
   const material = outMaterial ?? new NodeMaterial();
   material.vertexNode = clipPos;
