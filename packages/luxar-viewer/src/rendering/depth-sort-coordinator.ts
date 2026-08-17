@@ -873,11 +873,9 @@ function maybeRetryStarvedWorkerInit(): void {
  * misses the deadline, recovery is not immediate: nothing retries here, and
  * `maybeRetryStarvedWorkerInit` only spends an attempt once something visible
  * actually wants sorting — which is the point, since burning the budget on an
- * empty scene would leave none for the load that needs it. (Both names are
- * plain code spans, not `{@link}`s: they are module-private, and exporting
- * THIS function promoted its links into the documented set, where an
- * unresolvable target is a warning the TypeDoc ratchet fails on — the same
- * hazard {@link getDepthSortWorkerStatus}'s doc calls out.)
+ * empty scene would leave none for the load that needs it. (Both names stay
+ * code spans: they are module-private, and a doc link from an EXPORTED symbol
+ * to one of those trips the TypeDoc warning ratchet.)
  *
  * The cost is unconditional: the sort-worker chunk and its WASM are fetched on
  * every page load, including scenes that never sort (all-additive points, an
