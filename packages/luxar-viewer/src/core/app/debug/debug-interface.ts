@@ -19,7 +19,11 @@ import {
 } from '../../../rendering/material-sync-helpers';
 import { materialManager, type BlendingMode } from '../../../rendering/material-manager';
 import { normalizeBlendingMode } from '../../../rendering/blending-state';
-import { noteDepthSortCommit, resortForCapture } from '../../../rendering/depth-sort-coordinator';
+import {
+  getDepthSortWorkerStatus,
+  noteDepthSortCommit,
+  resortForCapture,
+} from '../../../rendering/depth-sort-coordinator';
 import { setCommittedData } from '../../../types/committed-data';
 import { resolveLinePrimitiveForNode } from '../../../types/line-primitive';
 import type { LoadedPointsData } from '../../../types/points';
@@ -160,6 +164,18 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
     // permutation frozen at the pre-orbit pose. Resolves when ordering is
     // settled (or after an internal safety timeout).
     resortDepthOrderingForCapture: (maxWaitMs?: number) => resortForCapture(maxWaitMs),
+
+    // Why the scene may be drawn UNSORTED (issue #1694). `idle` = the sort
+    // worker was never spawned or its init is still in flight; `ready` =
+    // sorts are flowing; `starved` = init missed its 30 s deadline (a busy
+    // main thread during a multi-million-element load) and a bounded retry
+    // is armed or in flight, so sorting is off MEANWHILE, not for the
+    // session; `failed` =
+    // permanently unavailable (dead/blocked worker script, or the retries
+    // ran out). `initTimeouts` counts the deadline misses. Exposed because
+    // the degrade used to be visible only as one console line, which is
+    // impossible to check after the fact from an E2E run or a bug report.
+    getDepthSortWorkerStatus: () => getDepthSortWorkerStatus(),
 
     // Helper to get scene loader manager (for cache inspection)
     getSceneLoader: () => {
@@ -417,6 +433,10 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
   log.info(
     Modules.LUXAR,
     '  __luxarDebug.resortDepthOrderingForCapture() - Re-sort depth ordering for the current pose (offline capture)'
+  );
+  log.info(
+    Modules.LUXAR,
+    '  __luxarDebug.getDepthSortWorkerStatus() - Why a scene may be drawn unsorted (idle/ready/starved/failed + deadline misses)'
   );
   log.info(Modules.LUXAR, '  __luxarDebug.scene - Access THREE.js scene');
   log.info(Modules.LUXAR, '  __luxarDebug.camera - Access camera');

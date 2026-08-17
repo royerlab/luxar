@@ -16,8 +16,8 @@ archive served to a WebGL viewer. This skill builds a scene from a dataset.
 
 **The repo's demos and examples are the canonical know-how** — when in doubt, read a
 matching one before writing code:
-- `packages/luxar/src/luxar/demos/demo_*.py` (~67 complete demos)
-- `packages/luxar/examples/*_example.py` (~51 focused examples)
+- `packages/luxar/src/luxar/demos/demo_*.py` (85 complete demos)
+- `packages/luxar/examples/*_example.py` (52 focused examples)
 
 ## The canonical pattern (every demo follows this)
 
@@ -202,6 +202,16 @@ luxar info my_scene.luxar.zarr --stats              # inspect a built scene
 - 4D/nD scenes can show 0 elements at a given slice — navigate to a populated slice,
   or use `extend_to_all` to broadcast across a non-displayed dim.
 - Match `positions` column order to the `Dimensions` order.
+- **Always pass `n_iters` to `add_gsplats_from_volume` / `fit_gaussian_splats`** (the
+  example above uses 5000). The default is 1000 — *below* the CLI's lowest preset —
+  and on thin structures it leaves splats at their isotropic seed shape and renders
+  filaments as bead chains. See the `luxar-gsplat-pipeline` skill.
+- **A demo that caches a fit must key the cache on every parameter that changes the
+  result**, the optimizer schedule included. Seeds/floor/retention are the obvious
+  ones, but the schedule changes splat SHAPES while leaving the COUNT identical, so a
+  key blind to it silently returns the old fit and makes a retune look like a no-op.
+  Fold the parameters into the filename (a short digest) rather than relying on
+  anyone remembering `--recompute`.
 
 See `references/scene-api.md` for exact signatures and `**attrs`. For volume→splats,
 use the `luxar-gsplat-pipeline` skill.
