@@ -503,6 +503,30 @@ describe('OfflineCaptureStrategy', () => {
       expect(flagDuringSetup).toBe(true);
       expect(session.isEXRSequenceRecording).toBe(false);
     });
+
+    it('sets and then clears isLoopRenderSuppressed across a run', async () => {
+      const { sm } = makeSceneManager();
+      const session = makeSession();
+      // Asserting only that the flag is false after teardown is equally true
+      // of a flag never set at all, so probe it MID-RUN: suppression while the
+      // capture owns the pipeline is the whole point of the flag.
+      let flagDuringSetup: boolean | undefined;
+      mockState.config.setupOk = true;
+      const strat = new OfflineCaptureStrategy(sm, makeAnimController(), makeHooks());
+      vi.mocked(ImageSequenceDriver).mockImplementationOnce(() => {
+        const d = mockState.makeDriver();
+        d.setup = vi.fn(async () => {
+          flagDuringSetup = session.isLoopRenderSuppressed;
+          return true;
+        });
+        return d as never;
+      });
+
+      await strat.run(makeOpts(), 'turntable', session);
+
+      expect(flagDuringSetup).toBe(true);
+      expect(session.isLoopRenderSuppressed).toBe(false);
+    });
   });
 
   describe('error + abort handling', () => {
@@ -537,6 +561,28 @@ describe('OfflineCaptureStrategy', () => {
       expect(driver.abort).toHaveBeenCalledWith(expect.anything(), 'error');
       expect(showToast).toHaveBeenCalledWith('Recording finalize failed');
       expect(session.isRecording).toBe(false);
+    });
+
+    it('leaves isLoopRenderSuppressed false when the pre-try overlay setup throws', async () => {
+      const { sm } = makeSceneManager();
+      // showRecordingIndicator() runs in the window BETWEEN the recording
+      // flags and the `try` — the one stretch the finally does not cover — so
+      // it is exactly where a throw used to strand the suppression flag true.
+      // The flag is the loop's global render-skip predicate, so a stuck true
+      // blanks the viewport until a page reload. Raising it as the first
+      // statement inside the try is what makes this window safe; moving the
+      // assignment back above here turns this test red.
+      const boom = new Error('indicator fail');
+      const session = makeSession({
+        showRecordingIndicator: vi.fn(() => {
+          throw boom;
+        }),
+      });
+      const strat = new OfflineCaptureStrategy(sm, makeAnimController(), makeHooks());
+
+      await expect(strat.run(makeOpts(), 'turntable', session)).rejects.toThrow(boom);
+
+      expect(session.isLoopRenderSuppressed).toBe(false);
     });
 
     it('clears isLoopRenderSuppressed BEFORE awaiting driver.abort', async () => {

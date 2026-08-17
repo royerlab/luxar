@@ -30,10 +30,15 @@
  * Critical correctness invariants:
  * 1. AbortController is assigned BEFORE any state mutation — dispose()
  *    during the early state-save / rAF window must abort the session.
- * 2. The post-saveRecordingState body is wrapped in try/finally so an
+ * 2. The body from driver.setup onward is wrapped in try/finally so an
  *    exception from driver.setup, driver.captureFrame, driver.finalize,
  *    or any DOM/state mutation cannot leave the panel with a stuck
  *    overlay, hidden panels, scaled renderer, or stale recording flags.
+ *    The earlier window — panel hide / saveRecordingState through the
+ *    overlay construction — is NOT covered, which is why
+ *    isLoopRenderSuppressed is raised inside the try: a stuck value
+ *    there blanks the whole viewport, where the other flags only lock
+ *    further captures or leave the panel looking wrong.
  * 3. The finally block is idempotent — every removal/restore handles
  *    the "wasn't set" case gracefully.
  */
@@ -218,10 +223,6 @@ export class OfflineCaptureStrategy implements CaptureStrategy {
     }
     session.isRecording = true;
     session.isOfflineCaptureActive = true;
-    // The loop's own render is redundant from here on — the capture
-    // renders its own pipeline pass per frame (see the render-skip
-    // predicate wired in `core/app/init/pipeline`).
-    session.isLoopRenderSuppressed = true;
     session.recordingStartTime = Date.now();
     session.showRecordingIndicator();
 
@@ -350,6 +351,16 @@ export class OfflineCaptureStrategy implements CaptureStrategy {
     let finalizeSucceeded = false;
 
     try {
+      // The loop's own render is redundant from here on — the capture
+      // renders its own pipeline pass per frame (see the render-skip
+      // predicate wired in `core/app/init/pipeline`). Set INSIDE the try so
+      // the finally below always clears it: the flag suppresses the loop's
+      // render globally, so escaping with it stuck true blanks the viewport
+      // until a page reload. Nothing between the recording flags above and
+      // this point can paint a frame — the REC indicator, the overlay and the
+      // driver context are all built synchronously, and the last yield is the
+      // rAF well above them.
+      session.isLoopRenderSuppressed = true;
       const setupOk = await driver.setup(ctx);
       if (!setupOk) {
         return;

@@ -10,9 +10,9 @@ global raw-HDR shader flags (effects off, no tone mapping) across the await, and
 capture overlay's scrim is translucent, so the viewport visibly flickered between the
 normal image and a blown-out one for the whole sequence.
 
-The loop now skips only its own render while an offline capture is active. Controls
-and every per-frame callback still run each tick — the depth-sort scheduler and the
-LOD group selector have to follow the orbiting camera, which is why the loop must run
+The loop now skips only its own render while an offline capture is driving the pipeline.
+Controls and every per-frame callback still run each tick — the depth-sort scheduler and
+the LOD group selector have to follow the orbiting camera, which is why the loop must run
 in the first place. The suppression is offline-only: the real-time recording path
 records the canvas the loop paints, and silencing it there would produce an empty
 video. The trade-off is stated plainly: the viewport behind the translucent capture
