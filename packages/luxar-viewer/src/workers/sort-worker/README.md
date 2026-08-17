@@ -216,7 +216,7 @@ The worker uses the same `wasm/` module as the data workers:
 - **Sort**: `scheduleSort()` — calls `withTimeout('depth-sort', api.sort(...), SORT_RPC_TIMEOUT_MS)`
 - **Release node**: `releaseDepthSortNode()` — calls `releaseWorkerNode()` → `api.releaseNode()` (fire-and-forget)
 - **Release all**: `releaseAllDepthSortNodes()` — calls `api.releaseAllNodes()` (fire-and-forget)
-- **Terminate**: `disposeDepthSort()` (line 904) — calls `worker.terminate()`
+- **Terminate**: `disposeDepthSort()` — calls `worker.terminate()`
 
 ### Commit Paths (geometry commits)
 

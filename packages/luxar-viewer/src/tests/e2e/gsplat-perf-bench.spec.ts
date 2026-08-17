@@ -740,6 +740,51 @@ function depthSortStatsOf(raw: OrbitSamplingRaw): DepthSortStats {
 }
 
 /**
+ * Depth-sort completions accumulated since NAVIGATION, read once.
+ *
+ * The ladder scenario has no orbit window to sample — the load itself is the
+ * window, and the sorts it cares about are the ones dispatched by the
+ * commits that stream in during it. So it reads the profiler's monotonic
+ * completion stream after polling instead of per frame: `total` is exact,
+ * and the retained (bounded) event ring supplies the latency percentiles,
+ * with anything aged out of it reported as dropped.
+ *
+ * Returns null when the profiler is unreachable, which the caller keeps
+ * distinct from "reachable, and zero sorts happened".
+ */
+async function probeLoadDepthSortStats(page: Page): Promise<DepthSortStats | null> {
+  const raw = await page.evaluate(() => {
+    // Same cast-to-any chain as the orbit loop: the profiler shape is
+    // internal and the stage fields are optional.
+    const debug = (window as unknown as { __luxarDebug?: any }).__luxarDebug;
+    try {
+      const c = debug?.getSceneLoader?.()?.getProfiler?.()?.getDepthSortCompletions?.();
+      if (!c || typeof c.total !== 'number' || !Array.isArray(c.events)) return null;
+      return {
+        total: c.total as number,
+        events: (c.events as any[]).map((e) => ({
+          lastMs: e.lastMs,
+          kernelMs: e.kernelMs,
+          boundaryMs: e.boundaryMs,
+          queueMs: e.queueMs,
+        })),
+      };
+    } catch {
+      return null;
+    }
+  });
+  if (raw === null) return null;
+  return depthSortStatsOf({
+    frameDtMs: [],
+    sortInc: [],
+    sortEvents: raw.events,
+    droppedCompletions: Math.max(0, raw.total - raw.events.length),
+    finalSortCount: raw.total,
+    totalMs: 0,
+  });
+}
+
+/**
  * L8 gate probe: split frames into 'sorting-adjacent' (a depth-sort
  * completion within ±1 frame) vs 'idle-orbit' and return each
  * class's p99. Decides whether ordering applies are what spikes the
@@ -1187,6 +1232,10 @@ async function measureZarrLadderScenario(
   const gpuRenderer = await probeGpuRenderer(page);
   const postSettle = await measurePostSettleFrame(page);
   const elementCount = await probeElementCount(page, false);
+  // Read the completion stream LAST: an ordering counts as complete only once
+  // a draw acknowledges it, and the post-settle frame above is the last one
+  // this scenario drives.
+  const depthSort = await probeLoadDepthSortStats(page);
 
   if (elementCount === 0) {
     notes.push('elementCount=0 after ladder polling');
@@ -1208,7 +1257,10 @@ async function measureZarrLadderScenario(
     frameMs: statsOf(ladderRaw.loadWindowDtMs),
     postSettleFrameMs: postSettle.ms,
     renderedFramesBefore: postSettle.renderedFramesBefore,
-    depthSort: null,
+    // Sorts that completed during the LOAD, not during an orbit — this
+    // scenario's `requiresDepthSort` assertion reads this, and it is the only
+    // scenario whose sorts have to survive startup under load congestion.
+    depthSort,
     ladder: {
       wallMsToLadderComplete: ladderRaw.wallMsToLadderComplete,
       observedGrowth: ladderRaw.observedGrowth,
@@ -1360,7 +1412,8 @@ for (const scn of SCENARIOS) {
     }
     if (result.depthSort !== null && result.depthSort.sortCount === 0) {
       result.notes.push(
-        'no depth-sort dispatch observed during the window — orbit may not have crossed the re-sort threshold'
+        'no depth-sort dispatch observed during the window — the orbit may not have crossed the ' +
+          're-sort threshold, or (on a load scenario) no commit ever registered a sorted node'
       );
     }
     if (result.depthSort?.droppedCompletions) {

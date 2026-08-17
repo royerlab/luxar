@@ -98,14 +98,14 @@ Both files are **module-scoped singletons** (the `element-texture-layout.ts` pat
 
 **Failure taxonomy** (`ensureWorker()`), and why a deadline is not a death:
 
-| trigger                                                      | verdict       | behaviour                                           |
-| ------------------------------------------------------------ | ------------- | --------------------------------------------------- |
-| constructor throws (CSP-blocked script)                      | permanent     | terminate, cache the rejection, warn once           |
-| `onerror` / `onmessageerror` (404, module-evaluation death)  | permanent     | terminate, cache the rejection, warn once           |
-| `initialize()` rejects (the worker answered: it cannot work) | permanent     | terminate, cache the rejection, warn once           |
-| deadline missed                                              | **transient** | keep the worker running, clear `initPromise`, retry |
+| trigger                                                      | verdict       | behaviour                                                          |
+| ------------------------------------------------------------ | ------------- | ------------------------------------------------------------------ |
+| constructor throws (CSP-blocked script)                      | permanent     | terminate, cache the rejection, warn once                          |
+| `onerror` / `onmessageerror` (404, module-evaluation death)  | permanent     | terminate, cache the rejection, warn once                          |
+| `initialize()` rejects (the worker answered: it cannot work) | permanent     | terminate, cache the rejection, warn once                          |
+| deadline missed                                              | **transient** | keep the worker running, clear `initPromise`, retry at loader idle |
 
-A deadline miss says the reply was late, not that the worker is broken — the same reasoning `WorkerInitTimeoutError` and `isWorkerInfrastructureError` already apply to RPC timeouts. The worker stays alive with its `initialize()` still in flight (`pendingInit`), and `evaluateDepthSortPerFrame()` retries past its loader-idle gate — precisely when the congestion that caused the miss is over. The retry re-awaits the SAME RPC, so it usually completes at once, and every tracked order-dependent node is then pushed back through a commit via `forceReregister()` (the worker holds none of their centers). After `MAX_INIT_TIMEOUT_ATTEMPTS` misses it latches like a permanent failure. Either way `isDepthSortAvailable()` goes false and the data-loading monitor's footer says `depth sort UNAVAILABLE`, so a silently unsorted scene is not possible (issue #705's rule).
+A deadline miss says the reply was late, not that the worker is broken — the same reasoning `WorkerInitTimeoutError` and `isWorkerInfrastructureError` already apply to RPC timeouts. The worker stays alive with its `initialize()` still in flight (`pendingInit`), and `evaluateDepthSortPerFrame()` retries past its loader-idle gate — precisely when the congestion that caused the miss is over. That gate owns the whole bounded budget: `ensureWorker()` refuses to open a fresh attempt for a commit while the loader is still busy (it resolves without readiness instead), because a long enough load would otherwise spend all `MAX_INIT_TIMEOUT_ATTEMPTS` against the very congestion that caused the misses. The retry re-awaits the SAME RPC, so it usually completes at once, and every tracked order-dependent node is then pushed back through a commit via `forceReregister()` (the worker holds none of their centers). After `MAX_INIT_TIMEOUT_ATTEMPTS` misses it latches like a permanent failure. Either way `isDepthSortAvailable()` goes false and the data-loading monitor's footer says `depth sort UNAVAILABLE`, so a silently unsorted scene is not possible (issue #705's rule).
 
 ### Generation Contract (Spec §5)
 

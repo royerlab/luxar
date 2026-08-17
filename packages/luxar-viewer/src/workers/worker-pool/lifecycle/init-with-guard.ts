@@ -81,7 +81,16 @@ export function initializeWithGuard<TResult>(
     // init promise rather than getting swallowed by the can't-find-
     // worker-in-pool branch of handleWorkerFailure.
     worker.onerror = (event) => {
-      const message = event instanceof ErrorEvent ? event.message : 'unknown error';
+      // Duck-typed rather than `event instanceof ErrorEvent`, for the same
+      // reason `preventDefault` below is: that global does not exist in every
+      // host this runs in (the unit suite's default `node` environment, for
+      // one), and a bare reference to a missing global throws a
+      // ReferenceError OUT of the handler — leaving the init promise unsettled,
+      // which is precisely what this guard exists to prevent.
+      const message =
+        typeof (event as { message?: unknown }).message === 'string'
+          ? (event as { message: string }).message
+          : 'unknown error';
       settle('err', new Error(`${label} runtime error during init: ${message}`));
       if (typeof event.preventDefault === 'function') event.preventDefault();
     };

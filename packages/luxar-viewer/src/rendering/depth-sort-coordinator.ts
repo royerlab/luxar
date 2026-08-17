@@ -117,9 +117,10 @@ let sortWorkerUrlOverride: string | undefined;
  * Call before `LuxarApp.initialize()`. That window used to run to the first
  * order-dependent commit, but the worker is now warmed up during app init
  * ({@link warmUpDepthSortWorker}), so a later call would arrive after the
- * spawn it is meant to redirect. `applyModuleOverrides` — the
- * `LuxarAppOptions.workerPath` path — already runs early enough; this note
- * is for embedders that call the setter themselves.
+ * spawn it is meant to redirect. `LuxarAppOptions.workerPath` deliberately
+ * does NOT reach here (it names the DATA worker bundle, a different chunk —
+ * see `applyModuleOverrides`), so relocating the sort worker means calling
+ * this setter yourself, before `initialize()`.
  */
 export function setSortWorkerUrl(url: string): void {
   sortWorkerUrlOverride = url;
@@ -245,6 +246,13 @@ let getProfiler: (() => UpdateProfiler | null) | null = null;
 let depthSortEnabled = true;
 /** One-shot flag for the SortWorker-unavailable error (see noteDepthSortCommit). */
 let warnedWorkerUnavailable = false;
+/**
+ * `initGeneration` of the attempt whose deadline miss has already been
+ * reported — one line per ATTEMPT, not one per commit parked on it, and not
+ * the one-shot session flag above (a miss is transient, so it must not
+ * silence the report of a later permanent failure).
+ */
+let warnedInitDeadlineGeneration = -1;
 /**
  * Reentrancy guard for {@link resortForCapture}'s frame-request suppression.
  * The offline capture nulls `requestRender` so draining can't re-arm the rAF
@@ -382,6 +390,17 @@ function discardWorker(w: Worker): void {
  */
 function ensureWorker(): Promise<void> {
   if (initPromise) return initPromise;
+  // A RETRY belongs to the loader-idle gate, not to a commit. This state —
+  // a worker still alive with `initPromise` cleared — exists only after a
+  // deadline miss, and the misses are what {@link MAX_INIT_TIMEOUT_ATTEMPTS}
+  // bounds. A commit landing mid-flood would spend one of them against
+  // exactly the congestion that caused the last miss, so a long enough load
+  // could burn the whole budget and latch the session unsorted before
+  // {@link retryInitIfPending} ever ran — the failure this change exists to
+  // stop, three deadlines later. Resolving (rather than joining anything)
+  // is safe: every caller re-checks `workerReady`, and the successful retry
+  // re-registers every tracked node itself.
+  if (worker !== null && !workerReady && isLoadInProgress?.()) return Promise.resolve();
   const generation = ++initGeneration;
   initPromise = (async () => {
     // Declared outside the try so the catch can terminate a worker that WAS
@@ -799,9 +818,10 @@ export function noteDepthSortCommit(
   const generation = state.generation;
   void ensureWorker()
     .then(() => {
-      // `workerReady`, not just `api`: ensureWorker also RESOLVES on the
-      // stale-generation path (a dispose landed mid-init), where `api` may
-      // already belong to a freshly spawned, not-yet-initialized worker. The
+      // `workerReady`, not just `api`: ensureWorker also RESOLVES without
+      // readiness — on the stale-generation path (a dispose landed mid-init),
+      // where `api` may already belong to a freshly spawned, not-yet-
+      // initialized worker, and when it defers a retry to loader idle. The
       // generation re-check below covers that too — dispose clears
       // `nodeStates` and generations are lifetime-monotonic — but this keeps
       // "is the worker usable?" a local question rather than a four-step proof.
@@ -835,6 +855,22 @@ export function noteDepthSortCommit(
       scheduleSort(mesh, nodeId);
     })
     .catch((error) => {
+      // A deadline miss is not a session verdict: the worker is still alive
+      // and the retry is pending, so saying "disabled for this session" here
+      // would be wrong — and would burn the one-shot flag, silencing the
+      // report of a LATER genuine failure. One line per attempt instead
+      // (generation-keyed: every commit parked on this attempt lands here).
+      if (error instanceof WorkerInitTimeoutError && !depthSortUnavailable) {
+        if (warnedInitDeadlineGeneration !== initGeneration) {
+          warnedInitDeadlineGeneration = initGeneration;
+          log.warning(
+            Modules.WORKER_POOL,
+            `SortWorker init missed its ${config.depthSort.workerInitTimeoutMs}ms deadline ` +
+              '— retrying once loading settles'
+          );
+        }
+        return;
+      }
       // Once per session: a failed worker init stays failed (the cached
       // initPromise is rejected), so EVERY later commit lands here —
       // per-commit error lines would flood a timelapse scrub. Rendering
@@ -1692,4 +1728,5 @@ export function disposeDepthSort(): void {
   getProfiler = null;
   depthSortEnabled = true;
   warnedWorkerUnavailable = false;
+  warnedInitDeadlineGeneration = -1;
 }

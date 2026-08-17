@@ -237,6 +237,53 @@ describe('SortWorker init resilience', () => {
     expect(constructedWorkers).toHaveLength(spawned);
   });
 
+  it('commits during a load do not spend the bounded retry budget', async () => {
+    // The retry budget belongs to the loader-idle gate. A commit landing
+    // while the loader is still busy must NOT start a fresh attempt: it
+    // would race exactly the congestion that caused the last miss, and a
+    // long enough load could burn all three attempts and latch the session
+    // unsorted before the idle retry ever ran — the original bug, three
+    // deadlines later.
+    let loading = true;
+    const coord = await loadCoordinator('never-settles');
+    coord.configureDepthSort({
+      getCamera: () => makeCamera(),
+      requestRender: vi.fn(),
+      requestReprocess: vi.fn(),
+      isLoadInProgress: () => loading,
+    });
+
+    const mesh = makeSortableMesh(2);
+    coord.noteDepthSortCommit(mesh, CENTERS(), 2);
+    await flush();
+    // First miss (the warm-up/first-commit attempt).
+    await vi.advanceTimersByTimeAsync(INIT_DEADLINE_MS + 1);
+    await flush();
+
+    // Commits keep landing while the scene streams in; each would otherwise
+    // open — and blow — another attempt.
+    for (let i = 0; i < 4; i++) {
+      coord.noteDepthSortCommit(mesh, CENTERS(), 2);
+      await flush();
+      await vi.advanceTimersByTimeAsync(INIT_DEADLINE_MS + 1);
+      await flush();
+    }
+    expect(coord.isDepthSortAvailable()).toBe(true);
+    expect(terminatedWorkers).toHaveLength(0);
+
+    // Loading settles; the worker's original RPC answers and the retry lands.
+    loading = false;
+    resolveInit!({ wasmFallback: false });
+    coord.evaluateDepthSortPerFrame();
+    await flush();
+    expect(mockApi.initialize).toHaveBeenCalledTimes(1);
+
+    coord.noteDepthSortCommit(mesh, CENTERS(), 2);
+    await flush();
+    expect(mockApi.registerNode).toHaveBeenCalled();
+    expect(mockApi.sort).toHaveBeenCalled();
+  });
+
   it('an initialize() rejection is PERMANENT — terminated, never retried', async () => {
     // The worker answered: it cannot work (e.g. WASM genuinely missing).
     // Unlike a deadline miss this is evidence, so the old latch is right.
@@ -281,7 +328,10 @@ describe('SortWorker init resilience', () => {
       globalThis as unknown as { __lastMockWorker?: { onerror?: (e: unknown) => void } }
     ).__lastMockWorker;
     expect(live?.onerror).toBeTypeOf('function');
-    live!.onerror!(new ErrorEvent('error', { message: 'module evaluation failed' }));
+    // A plain object, not `new ErrorEvent(...)`: this suite runs in the
+    // default `node` environment, where that constructor does not exist.
+    // The guard reads `.message` structurally, so this is the same input.
+    live!.onerror!({ message: 'module evaluation failed' });
     await flush();
 
     expect(terminatedWorkers).toHaveLength(1);
