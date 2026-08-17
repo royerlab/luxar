@@ -32,30 +32,55 @@ directly — see [Shared Fixture](#shared-fixture-fixturests) below.
 ### Parallelism is sized to the machine
 
 The local worker count is not a constant. `playwright.config.ts` asks
-`tools/e2e-workers.ts` for it and prints the decision as one line at startup:
+`tools/e2e-workers.ts` for it, and the global setup prints the run's ceiling as
+one line before the pre-flight checks:
 
 ```text
-[🧵] [E2E] parallelism: 2 worker(s) — 16 cpus, load1 24.1 (capacity)
+[🧵] [E2E] parallelism: max 1 worker — 16 cpus, load1 22.2 (capacity)
+```
+
+That number is `config.workers`, the ceiling for the run — Playwright narrows it
+to `min(workers, maxConcurrentTestGroups)` after global setup, so a single-file
+run of a spec pinned to one worker is stamped `max 3` and then reports
+"using 1 worker". When the ceiling is not what was sized the line carries both,
+without guessing at the cause (`--workers=N`, `--ui`, a watch session and
+`playwright.perf.config.ts`'s own `workers: 1` all produce it):
+
+```text
+[🧵] [E2E] parallelism: max 1 worker — 16 cpus, load1 1.9 (capacity sized 3, run with 1)
 ```
 
 Four workers remains the ceiling — the binding resource is the GIL-bound
-`python3 -m http.server 9000` dataset server, not the GPU — but the count is
-sized down from it by the box's spare capacity,
-`clamp(floor((cpus - load1) / 2), 1, 4)`, budgeting about two cores per worker
-(a Chromium renderer, a GPU process, the viewer's own worker pool, and a share
-of that dataset server). On a workstation shared with CI runner slots this
-matters a lot: at a 1-minute load of 12–24 on 16 cores,
+`python3 -m http.server 9000` dataset server, not the GPU — and the count is that
+ceiling scaled by the box's free fraction,
+`clamp(round(4 * (cpus - load1) / cpus), 1, 4)`. The bands are fractions of the
+box, so they hold at any size: 4 while at least 7/8 of it is free, 3 down to 5/8,
+2 down to 3/8, 1 below that. On 16 cores that is 4 up to load 2, 3 up to load 6,
+2 up to load 10, then 1. An **idle** box of any size keeps the ceiling, so the
+sizing only ever backs off under load. On a workstation shared with CI runner
+slots that matters a lot: at a 1-minute load of 12–24 on 16 cores,
 `dimension-animation.spec.ts` failed 15 of 21 tests at four workers and passed
 21 of 21 at one, every failure a wall-clock action timeout
 (`page.click: Timeout 10000ms exceeded`, element already visible/enabled/stable)
 with no product cause. A loaded box now gets a slower run instead of a red one,
 so treat a burst of timeouts across unrelated specs as a capacity report before
-filing a viewer bug.
+filing a viewer bug. Only those two counts were measured, though — 16 cores at
+load 12 → 1 is the configuration measured green, and the 2 and 3 the formula can
+pick are interpolation — and the protection is probabilistic either way: the
+1-minute load average lags, is read once at startup, and on Linux includes tasks
+blocked on I/O elsewhere on the machine.
 
-Pin the count with `LUXAR_E2E_WORKERS=N` (an integer; anything else is ignored),
-or with Playwright's own `--workers=N`, which overrides the config outright —
-that is how the E2E daemon and the promotion job hold themselves to one worker.
-CI is unconditionally serial.
+Because concurrency is now load-dependent, the two wall-clock guards in
+`nd-navigation.spec.ts` and `worker-wasm-integration.spec.ts` have more headroom
+on a loaded box **than the same box would give them at four workers**. That is
+not a claim about idle machines versus busy ones: at one worker on the loaded box
+a real DOM click still took 869–1216 ms, so its absolute margin against a fixed
+wall clock is not obviously better than an idle box's at three.
+
+Pin the count with `LUXAR_E2E_WORKERS=N` (an integer, clamped to `[1, cpus]`;
+anything else is ignored), or with Playwright's own `--workers=N`, which
+overrides the config outright — as do `--debug` and `--pause`, which force one
+worker. CI is unconditionally serial.
 
 ### Which script runs which specs
 
@@ -107,7 +132,7 @@ not read fixtures.
 e2e/
 ├── fixtures.ts          # Re-extended `test` fixture; auto console-error guard
 ├── helpers.ts           # ~40 Playwright helper utilities (wait/get/assert)
-├── global-setup.ts      # Pre-flight: servers, datasets, fixtures; makes dirs
+├── global-setup.ts      # Parallelism stamp; pre-flight: servers, datasets, fixtures; makes dirs
 ├── render-ticks.ts      # Confirmed render-tick flushing for detector specs
 ├── harnesses/
 │   └── tsl-harness.ts   # TSL ↔ GLSL parity harness (loaded by tsl-harness.html)
@@ -275,7 +300,10 @@ Helpers follow a few conventions worth matching:
 ## Global Setup (`global-setup.ts`)
 
 Runs once before any spec (wired in `playwright.config.ts`, and shared
-by `playwright.perf.config.ts`). Five preflight checks:
+by `playwright.perf.config.ts`). It first stamps the run's parallelism
+ceiling on stderr — see
+[Parallelism is sized to the machine](#parallelism-is-sized-to-the-machine) —
+then runs five preflight checks:
 
 1. **Checkout identity** — both the Vite server and the repository
    dataset server must return the deterministic marker for the current

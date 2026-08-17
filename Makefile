@@ -2677,7 +2677,7 @@ test-cov-typescript:  ## Run TypeScript tests with coverage
 	fi
 	cd packages/luxar-viewer && pnpm run test:coverage
 
-test-e2e:  ## Run the full Playwright E2E suite (~17 min)
+test-e2e:  ## Run the full Playwright E2E suite (~17 min at 4 workers; workers scale with load)
 	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
 		echo "📦 Installing TypeScript dependencies first..."; \
 		cd packages/luxar-viewer && pnpm install; \

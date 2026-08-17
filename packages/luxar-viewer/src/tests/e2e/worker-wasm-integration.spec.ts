@@ -337,9 +337,13 @@ test.describe('Worker + WASM Combined Performance', () => {
     // With workers + WASM, large queries should complete quickly
     // This is a smoke test, not precise benchmarking
     //
-    // CONTENTION NOTE: wall-clock assertion, and the suite now runs
-    // `fullyParallel` across 4 workers. If this flakes, diagnose with
-    // `--workers=1` rather than raising the threshold.
+    // CONTENTION NOTE: wall-clock assertion, and the suite runs `fullyParallel`
+    // across up to 4 workers. If this flakes, diagnose with `--workers=1` rather
+    // than raising the threshold. The local count is now sized to the box
+    // (tools/e2e-workers.ts), so a loaded machine runs fewer of them: against the SAME
+    // box at four workers this fixed threshold has more headroom. It does NOT follow
+    // that a loaded machine is a softer test than an idle one — its absolute wall clock
+    // is slower either way.
     expect(totalTime).toBeLessThan(10000); // Should finish in <10 seconds
 
     // Verify data loaded

@@ -46,30 +46,59 @@ mis-rooted server.
 ## `e2e-workers.ts`
 
 Decides how many workers a local Playwright run may use, so a busy machine
-gets a slower suite instead of a red one. `playwright.config.ts` calls
-`resolveE2EWorkers()` at load and prints one line with the decision and the
-inputs it came from:
+gets a slower suite instead of a red one. `playwright.config.ts` takes the
+count; the E2E global setup prints one line with the run's ceiling and the
+inputs the count was sized from (there, not at config load, because Playwright
+applies `--workers=N` afterwards):
 
 ```text
-[🧵] [E2E] parallelism: 2 worker(s) — 16 cpus, load1 24.1 (capacity)
+[🧵] [E2E] parallelism: max 1 worker — 16 cpus, load1 22.2 (capacity)
 ```
 
+`max` because the stamped number is `config.workers`, a ceiling: Playwright
+narrows it to `min(workers, maxConcurrentTestGroups)` after global setup, so a
+single-file run can be stamped `max 3` and then report "using 1 worker". A
+ceiling that differs from what was sized prints as
+`(capacity sized 3, run with 1)` — both numbers, no cause claimed, since
+`--workers=N`, `--ui`, a watch session and `playwright.perf.config.ts`'s own
+`workers: 1` all get there.
+
 Four workers is still the ceiling — the binding resource is the GIL-bound
-`python3 -m http.server 9000` dataset server, not the GPU — but the count is
-sized down from it by spare capacity,
-`clamp(floor((cpus - load1) / 2), 1, 4)`, budgeting roughly two cores per
-worker (Chromium renderer + GPU process + the viewer's own worker pool, plus a
-share of that server). Measured on a 16-core box at a 1-minute load of 12–24,
+`python3 -m http.server 9000` dataset server, not the GPU — and the count is
+that ceiling scaled by the box's free fraction,
+`clamp(round(4 * (cpus - load1) / cpus), 1, 4)`. The bands are fractions of the
+box: 4 while at least 7/8 of it is free, 3 down to 5/8, 2 down to 3/8, 1 below
+that — on 16 cores, 4 up to load 2, 3 up to load 6, 2 up to load 10, then 1. An
+**idle** box of any size keeps the ceiling, so this only ever backs off under
+load. Measured on a 16-core box at a 1-minute load of 12–24,
 `dimension-animation.spec.ts` failed 15 of 21 tests at four workers and passed
 21 of 21 at one, every failure a bare action timeout with the element already
-visible/enabled/stable.
+visible/enabled/stable. Only those two counts were measured — 16 cores at load
+12 → 1 is the green configuration — and the 2 and 3 the formula can also pick
+are interpolation.
+
+The signal is imperfect on purpose: the 1-minute load average lags and is read
+once at startup (a run launched just after a burst crawls on a box that is
+already idle), and on Linux it counts uninterruptible-sleep tasks, so a
+concurrent `git lfs pull` throttles the suite for I/O it does not compete for.
+Sampling `os.cpus()[].times` twice would be lag-free but needs ~150 ms, and
+Playwright re-evaluates the config module in every worker process as well as the
+parent — so that wait would be paid N+1 times per run. Nothing prevents an
+`await` there (the package is ESM and the config is loaded with
+`await import()`); the cost is simply not worth a lag-free reading.
 
 The arithmetic lives in the pure `chooseLocalWorkers({ cpus, load1, override })`
 (covered by `src/tests/unit/config/e2e-workers.test.ts`); `resolveE2EWorkers()`
-is the thin wrapper that reads `os.cpus()`, `os.loadavg()`, `CI`, and
-`LUXAR_E2E_WORKERS`. Precedence: Playwright's own `--workers=N` beats the config
-outright (how the E2E daemon pins itself to one worker), then
-`LUXAR_E2E_WORKERS=N`, then the heuristic; `CI` is unconditionally serial.
+is the thin wrapper that reads `os.availableParallelism()`, `os.loadavg()`, `CI`,
+and `LUXAR_E2E_WORKERS`. Precedence: Playwright's own `--workers=N` overrides the
+config outright (and `--debug` / `--pause` force one worker), then
+`LUXAR_E2E_WORKERS=N` — an integer, clamped to `[1, cpus]` purely as a typo guard
+(`=40` on a 16-core box), so a pin may exceed the ceiling of four but not the
+machine — then the heuristic; `CI` is unconditionally serial. The heuristic
+itself is deliberately NOT capped by the core count: the binding resource is that
+single-threaded dataset server rather than the cores, and capping would lower the
+historical default on a 1- or 2-core box, which nothing has measured as needed. Windows has no load average, and is reported as no signal rather than as
+an idle box, which means the ceiling.
 
 ## `agent-driver.ts`
 
