@@ -160,45 +160,69 @@ export function meshPickWebGPUFactory(
 
   const clipPos: TSLNode = vertexBody();
 
-  // `colorNode` and `depthNode` are INDEPENDENT stage entry points, so anything
-  // both read is hoisted into one `.toVar()` here — the same structure the line and
-  // gsplat pick factories use, and the reason the coverage chain is not inlined
-  // twice into the generated WGSL/GLSL.
+  // `colorNode` and `depthNode` are INDEPENDENT stage entry points, and the order in
+  // which three builds them is not part of its API: r184 emitted the colour flow
+  // first, r185 emits the depth flow first. A value materialised with `.toVar()` is
+  // assigned wherever three first BUILDS it, and a branch-scoped assignment is only
+  // re-hoisted for a later reader that is itself inside a block
+  // (`NodeBuilder.addFlowCodeHierarchy`, gated on
+  // `builder.context.nodeBlock !== undefined`) — never for one at the top level of a
+  // flow. There are TWO branches here: `depthNode` selects on `uSurfaceDepth`, and the
+  // brightness select on `uAlphaCutout` nests one level deeper inside it. Three lowers
+  // each to a real `if / else`, so a free-standing shared chain lands inside an arm
+  // while the top-level readers (the two `Discard` conditions, the output vec4) still
+  // read the variable — unassigned, i.e. 0. That is a pick buffer with no pixels in
+  // it, and a cutout that discards the wrong fragments.
   //
-  // Identical coverage to the visual shader (§6.2): a mesh has no per-element
-  // intensity/amplitude, so coverage is per-vertex alpha times node opacity.
-  const coverageShared = Fn(() => vAlpha.mul(uOpacity)).once();
-  const coverage: TSLNode = coverageShared().toVar('meshPickCoverage');
+  // So every value both entry points read is declared up front and ASSIGNED in
+  // `fragmentPrologue`, a `'void'`-typed `Fn` invoked as the FIRST statement of BOTH
+  // of them. A void `Fn` call is a stack STATEMENT — a non-void one is wrapped in an
+  // intent var that three skips, which would leave the call to build at its
+  // consumption site, inside the arm again — so the assignments are emitted in trace
+  // order in unconditional top-level flow, whichever entry point three builds first.
+  // Trace order is also why the inner `cutoutOn.select(...)` below can no longer be
+  // the first build site of `coverage`. `.once()` then lets the second call reuse the
+  // traced body instead of inlining the chain twice into the generated WGSL/GLSL;
+  // correctness does not rest on it, since either flow assigns before it reads.
+  const coverage: TSLNode = float(0.0).toVar('meshPickCoverage');
+  const nearFade: TSLNode = float(0.0).toVar('meshPickNearFade');
+  const brightness: TSLNode = float(0.0).toVar('meshPickBrightness');
   const cutoutOn: TSLNode = int(uAlphaCutout).equal(int(1));
-  // Same fade, same 1e-20 degenerate-smoothstep floor and same 0.01 reject as the
-  // visual graph — pick coverage must keep matching visible coverage as the camera
-  // flies into the surface. Per FRAGMENT, because a triangle spans depth.
-  const nearFadeShared = Fn(() =>
-    perspectiveNearFadeTSL(uIsOrtho, vViewZ, max(uNearCull, float(1e-20)))
-  ).once();
-  const nearFade: TSLNode = nearFadeShared().toVar('meshPickNearFade');
-  // Survivors of the cutout are FULLY OPAQUE on screen (the visual shader emits
-  // `vec4(rgb, 1.0)` for them), so their pick brightness must be 1.0 too. Carrying
-  // the pre-cutout coverage through instead would under-weight a solid mesh in the
-  // cross-node brightness vote purely because its author wrote 0.6 into a channel
-  // the visual output ignores.
-  //
-  // The fade multiplies AFTER that select, so it reaches both arms once: the cutout
-  // arm's visual twin ramps its shaded RGB by the same factor, and the commutative
-  // arm's carries it in the coverage. Folding it into `coverage` instead would move
-  // the cutout comparison below and dissolve the holes open as the camera neared.
-  const brightness: TSLNode = clamp(
-    cutoutOn.select(float(1.0), coverage).mul(nearFade),
-    0.0,
-    1.0
-  ).toVar('meshPickBrightness');
+
+  const fragmentPrologue = Fn(() => {
+    // Identical coverage to the visual shader (§6.2): a mesh has no per-element
+    // intensity/amplitude, so coverage is per-vertex alpha times node opacity.
+    coverage.assign(vAlpha.mul(uOpacity));
+    // Same fade, same 1e-20 degenerate-smoothstep floor and same 0.01 reject as the
+    // visual graph — pick coverage must keep matching visible coverage as the camera
+    // flies into the surface. Per FRAGMENT, because a triangle spans depth.
+    nearFade.assign(perspectiveNearFadeTSL(uIsOrtho, vViewZ, max(uNearCull, float(1e-20))));
+    // Survivors of the cutout are FULLY OPAQUE on screen (the visual shader emits
+    // `vec4(rgb, 1.0)` for them), so their pick brightness must be 1.0 too. Carrying
+    // the pre-cutout coverage through instead would under-weight a solid mesh in the
+    // cross-node brightness vote purely because its author wrote 0.6 into a channel
+    // the visual output ignores.
+    //
+    // The fade multiplies AFTER that select, so it reaches both arms once: the cutout
+    // arm's visual twin ramps its shaded RGB by the same factor, and the commutative
+    // arm's carries it in the coverage. Folding it into `coverage` instead would move
+    // the cutout comparison below and dissolve the holes open as the camera neared.
+    brightness.assign(clamp(cutoutOn.select(float(1.0), coverage).mul(nearFade), 0.0, 1.0));
+    // Returned only so `.once()` has a result to cache — a body with no result
+    // re-traces on the second call and emits the whole chain twice. The entry points
+    // read the vars above, not this value.
+    return brightness;
+  }, 'void').once();
 
   const colorNode = Fn(() => {
+    fragmentPrologue();
     // The cutout is a runtime-uniform branch, not a build flag — one `mesh-pick`
-    // variant covers every blending mode. It lives in `colorNode` rather than in
-    // the shared chain, following the line/gsplat pick precedent; a discarded
-    // fragment writes neither colour nor depth, so the placement is safe either
-    // way, but keeping the shared value a pure expression is not.
+    // variant covers every blending mode. The discards live in `colorNode` rather
+    // than in the shared prologue, following the line/gsplat pick precedent; a
+    // discarded fragment writes neither colour nor depth, so either placement is
+    // equivalent on screen — but a discard inside the prologue would execute in
+    // whichever flow three happens to build first, which is precisely the ordering
+    // the prologue exists to stop depending on.
     //
     // The near reject is ordered FIRST, matching the GLSL twin, so both backends
     // decline a faded fragment for the same reason; either way it writes neither
@@ -208,11 +232,12 @@ export function meshPickWebGPUFactory(
     return vec4(vNodeId, vElementId.x, brightness, vElementId.y);
   });
 
-  const depthNode = Fn(() =>
-    int(uSurfaceDepth)
+  const depthNode = Fn(() => {
+    fragmentPrologue();
+    return int(uSurfaceDepth)
       .equal(int(1))
-      .select(depth as unknown as TSLNode, float(1.0).sub(brightness))
-  );
+      .select(depth as unknown as TSLNode, float(1.0).sub(brightness));
+  });
 
   const material = outMaterial ?? new NodeMaterial();
   // Own the vertex output outright rather than leaving NodeMaterial's default

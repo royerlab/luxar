@@ -67,8 +67,8 @@ layout( location = 1 ) in vec3 position;
 
 
 // vars
-int nodeVar4;
-vec2 nodeVar5;
+int nodeVar5;
+vec2 nodeVar6;
 float nodeVar9;
 mat4 modelViewMatrix;
 vec4 nodeVar10;
@@ -85,12 +85,12 @@ void main() {
 	// flow
 	// code
 
-	nodeVarying1 = 0.0;
 	nodeVarying0 = 1.0;
+	nodeVarying1 = 0.0;
 	nodeVarying2 = nodeUniform5;
-	nodeVar4 = ( int( uint( gl_VertexID ) ) / 65536 );
-	nodeVar5 = vec2( float( ( int( uint( gl_VertexID ) ) - ( nodeVar4 * 65536 ) ) ), float( nodeVar4 ) );
-	nodeVarying3 = nodeVar5;
+	nodeVar5 = ( int( uint( gl_VertexID ) ) / 65536 );
+	nodeVar6 = vec2( float( ( int( uint( gl_VertexID ) ) - ( nodeVar5 * 65536 ) ) ), float( nodeVar5 ) );
+	nodeVarying3 = nodeVar6;
 
 	if ( ( ( color.w < 1e30 ) && ( color.w > -1e30 ) ) ) {
 

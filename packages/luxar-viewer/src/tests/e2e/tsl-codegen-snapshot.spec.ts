@@ -86,6 +86,96 @@ function counters(label: string, src: string): string {
   return `${label}: pow=${pow} tan=${tan} sqrt/length=${sqrtOrLen} tex=${tex} varyings≈${varyings} branches=${branches}`;
 }
 
+/** One line of a generated `main()` body, with its brace depth inside that body. */
+interface FlowLine {
+  text: string;
+  /** 0 = directly inside `main()`; >= 1 = inside an `if` / `else` block. */
+  depth: number;
+  /** 1-indexed line number in the generated source, for failure messages. */
+  lineNumber: number;
+}
+
+/**
+ * Splits a generated shader into the lines of its `main()` body, each tagged
+ * with the brace depth it sits at. Brace counting is per line, which is exact
+ * for Three's generated code (it puts every block brace on its own line).
+ */
+function mainFlowLines(source: string): FlowLine[] {
+  const lines = source.split('\n');
+  const mainIndex = lines.findIndex((line) => /^\s*void\s+main\s*\(\s*\)\s*\{/.test(line));
+  if (mainIndex < 0) return [];
+
+  const flow: FlowLine[] = [];
+  let depth = 0;
+  for (let i = mainIndex + 1; i < lines.length; i++) {
+    const text = lines[i];
+    flow.push({ text, depth, lineNumber: i + 1 });
+    depth += (text.match(/\{/g) ?? []).length - (text.match(/\}/g) ?? []).length;
+    if (depth < 0) break; // the closing brace of main()
+  }
+  return flow;
+}
+
+/**
+ * Asserts that each named variable of a generated fragment shader is ASSIGNED in
+ * the unconditional top-level flow of `main()`, before any line that reads it.
+ *
+ * The defect class this catches: `colorNode` and `depthNode` are INDEPENDENT
+ * NodeMaterial entry points, and a value shared between them is assigned wherever
+ * three first BUILDS it. Three re-hoists such an assignment into another
+ * conditional block when the later reader is itself inside a block, but NOT when
+ * that reader sits at the top level of a flow. So when a BRANCHING `depthNode`
+ * becomes the first build site — the emission order of the two entry points is not
+ * part of three's API, and it flipped from colour-first to depth-first between r184
+ * and r185 — the shared chain is assigned inside an `if`/`else` arm while every
+ * top-level reader gets an unassigned variable, i.e. 0. In these pick shaders that
+ * means the discard conditions fire for every fragment and the pick buffer comes
+ * back empty.
+ *
+ * Keyed on the explicit `.toVar('name')` names the pick factories declare, so it is
+ * independent of the generated `nodeVarN` numbering.
+ */
+function assertAssignedInUnconditionalFlow(
+  shader: string,
+  fragmentShader: string,
+  varNames: readonly string[]
+): void {
+  const flow = mainFlowLines(fragmentShader);
+  expect(
+    flow.length,
+    `no main() found in the generated "${shader}" fragment shader`
+  ).toBeGreaterThan(0);
+
+  for (const name of varNames) {
+    // An optional leading type token covers a `float name = …` declaration form;
+    // the trailing `[^=]` keeps a comparison (`name == x`) from reading as one.
+    const assignment = new RegExp(`^\\s*(?:const\\s+)?(?:\\w+\\s+)?${name}\\s*=[^=]`);
+    const reference = new RegExp(`\\b${name}\\b`);
+
+    const assignments = flow.filter((line) => assignment.test(line.text));
+    expect(
+      assignments.length,
+      `${shader}: "${name}" is never assigned inside main() — the shared fragment value is gone, or was renamed.`
+    ).toBeGreaterThan(0);
+
+    for (const line of assignments) {
+      expect(
+        line.depth,
+        `${shader}: "${name}" is assigned at brace depth ${line.depth} (line ${line.lineNumber}: ` +
+          `"${line.text.trim()}"). A value shared between colorNode and depthNode must be ` +
+          'assigned in unconditional top-level flow — see the fragment prologue in the factory.'
+      ).toBe(0);
+    }
+
+    const firstReference = flow.find((line) => reference.test(line.text));
+    expect(
+      firstReference?.lineNumber,
+      `${shader}: "${name}" is read at line ${firstReference?.lineNumber} before its first ` +
+        `assignment at line ${assignments[0].lineNumber} — that read sees an unassigned variable.`
+    ).toBe(assignments[0].lineNumber);
+  }
+}
+
 function snapshotPath(shader: string, kind: 'vertex' | 'fragment'): string {
   return path.join(SNAPSHOT_DIR, `${shader}.${kind}.glsl.txt`);
 }
@@ -327,5 +417,38 @@ test.describe('TSL → generated-shader snapshots', () => {
     // (3) The 16-bit split, off the built-in rather than an ordering attribute.
     expect(both).not.toMatch(/\baSortedIndex\b/);
     expect(both).toContain('65536');
+  });
+
+  test('gsplat-pick and mesh-pick assign every shared fragment value in unconditional flow', async ({
+    page,
+  }) => {
+    // Both factories have a BRANCHING `depthNode` (the `uSurfaceDepth` convention
+    // selector), and mesh has a second branch one level deeper (the `uAlphaCutout`
+    // arm of the brightness select). Three lowers each to a real `if`/`else`, so a
+    // shared fragment value that is first BUILT there is assigned inside an arm — and
+    // three only re-hoists such an assignment for readers that are themselves inside a
+    // block. Every top-level reader then sees 0: the pick pass discards every fragment
+    // and the buffer comes back empty (which is exactly what r185 did before the
+    // shared values were moved into an unconditional prologue).
+    //
+    // The snapshots pin this only implicitly — the difference is one indentation level
+    // inside a 150-line file, which is the last thing a reviewer notices. This names it.
+    await bootHarness(page);
+
+    const shared = [
+      {
+        shader: 'gsplat-pick',
+        vars: ['gsplatPickMahalSq', 'gsplatPickIntensity', 'gsplatPickBrightness'],
+      },
+      {
+        shader: 'mesh-pick',
+        vars: ['meshPickCoverage', 'meshPickNearFade', 'meshPickBrightness'],
+      },
+    ] as const;
+
+    for (const { shader, vars } of shared) {
+      const result = await runTSL(page, shader);
+      assertAssignedInUnconditionalFlow(shader, result.fragmentShader, vars);
+    }
   });
 });
