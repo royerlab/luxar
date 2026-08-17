@@ -527,11 +527,12 @@ def _print_regressions(
             aprint(f"  ✨ {key}")
 
     aprint(
-        "\n⚠️  If the function(s) above are genuinely new complexity, simplify "
-        "them (extract helpers, flatten branches) — do NOT reach for "
-        "--update-baseline to silence real debt. If they moved, were renamed, or "
-        "were otherwise legitimately re-keyed, --update-baseline IS the right "
-        "response."
+        "\n⚠️  Act on the ❌ regressions at the TOP of this report: if they are "
+        "genuinely new complexity, simplify them (extract helpers, flatten "
+        "branches) — do NOT reach for --update-baseline to silence real debt. The "
+        "✨ vanished keys just above are the OPPOSITE — they dropped below the "
+        "threshold or were re-keyed (a move/rename); --update-baseline IS the right "
+        "response for those."
     )
 
 
