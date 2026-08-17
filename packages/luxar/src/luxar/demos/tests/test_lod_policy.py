@@ -44,6 +44,23 @@ _NO_CACHED_ARTIFACT = {
     ),
 }
 
+#: Demos that choose the topology of their shipped artifact themselves, and why.
+#:
+#: What qualifies is narrow: the demo names the topology it ships in its own
+#: source, with a literal ``build_recipe(data, "<recipe>", ...)`` call, instead of
+#: letting :func:`save_with_lod` make the choice. That is still a deliberate,
+#: reviewable decision — the helper simply is not the one carrying it out. A demo
+#: that keeps whatever topology its fitter happened to produce has made no choice
+#: at all and belongs in ``_NOT_YET_ROUTED`` below, not here.
+_CHOOSES_OUTSIDE_THE_POLICY = {
+    "demo_gsplats_4d_cell_tracking_challenge.py": (
+        "build_lod() asks build_recipe for 'levels' with time as a hard coarsening "
+        "barrier (coarsen_dims=(0, 1, 2)), and the precomputed crop it ships is "
+        "that result; its two bare .save() calls are the per-timepoint refit cache "
+        "and that already-laddered crop"
+    ),
+}
+
 #: Fitting demos not yet routed through the policy. SHRINKS to empty.
 #:
 #: These keep whatever topology their fitter happens to produce — which is the
@@ -109,6 +126,34 @@ def _policy_recipes(src: str) -> list[str]:
     return recipes
 
 
+def _literal_recipes(src: str) -> list[str]:
+    """The recipe literals *src* passes to ``build_recipe`` itself.
+
+    ``recipe`` is the SECOND positional parameter of
+    :func:`luxar.gsplats.lod.recipes.build_recipe` and positional-or-keyword, so
+    both spellings count. Parsed, not grepped, for :func:`_policy_recipes`'
+    reason plus one of its own: the import line already contains the name, and a
+    ``build_recipe(data, recipe, params)`` that takes its recipe from a VARIABLE
+    (the recipes-gallery demo loops over all of them) names no topology a
+    reviewer can read off the source. Only a constant in the recipe slot is the
+    visible choice ``_CHOOSES_OUTSIDE_THE_POLICY`` accepts in place of the helper.
+    """
+    recipes = []
+    for node in ast.walk(ast.parse(src)):
+        if not (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "build_recipe"
+        ):
+            continue
+        if len(node.args) > 1 and isinstance(node.args[1], ast.Constant):
+            recipes.append(node.args[1].value)
+        for kw in node.keywords:
+            if kw.arg == "recipe" and isinstance(kw.value, ast.Constant):
+                recipes.append(kw.value.value)
+    return recipes
+
+
 def _scene_adders(src: str) -> set[str]:
     """The ``add_gsplats*`` methods *src* builds its scene with.
 
@@ -157,12 +202,18 @@ def test_every_fitting_demo_chooses_a_topology_or_is_listed() -> None:
     unrouted = {
         name for name, src in _fitting_demos().items() if not _policy_recipes(src)
     }
-    accounted = set(_NO_CACHED_ARTIFACT) | _NOT_YET_ROUTED
+    accounted = (
+        set(_NO_CACHED_ARTIFACT) | set(_CHOOSES_OUTSIDE_THE_POLICY) | _NOT_YET_ROUTED
+    )
     assert unrouted <= accounted, (
         "a fitting demo writes its cache without choosing an LOD topology:\n  "
         + "\n  ".join(sorted(unrouted - accounted))
-        + "\nRoute its save through luxar.demos._lod_policy.save_with_lod, or add "
-        "it to _NO_CACHED_ARTIFACT with the reason it ships no artifact."
+        + "\nThere are three ways out. Route its save through "
+        "luxar.demos._lod_policy.save_with_lod; or, if it ships no artifact at "
+        "all, add it to _NO_CACHED_ARTIFACT with that reason; or, if it already "
+        "names the topology of the artifact it ships in its own source with a "
+        "literal build_recipe(...) call, add it to _CHOOSES_OUTSIDE_THE_POLICY "
+        "with that reason."
     )
 
 
@@ -176,6 +227,28 @@ def test_the_pending_list_shrinks_and_does_not_go_stale() -> None:
         )
     for name in sorted(_NO_CACHED_ARTIFACT):
         assert name in fitting, f"{name} no longer fits — drop the exemption"
+
+
+def test_the_outside_the_policy_exemptions_still_earn_their_place() -> None:
+    """An exemption granted for a reason must not outlive it.
+
+    Its members are excused only because their source states a topology, so
+    measure that claim rather than take it: the demo must still fit, must still
+    NOT use the helper (once it does, it is routed, and every other assertion
+    here starts applying to it — the exemption would hide them), and the literal
+    ``build_recipe`` call the whole excuse rests on must still be present.
+    """
+    fitting = _fitting_demos()
+    for name, reason in sorted(_CHOOSES_OUTSIDE_THE_POLICY.items()):
+        assert name in fitting, f"{name} no longer fits — drop the exemption"
+        assert not _policy_recipes(fitting[name]), (
+            f"{name} now routes through save_with_lod — drop it from "
+            "_CHOOSES_OUTSIDE_THE_POLICY so the routed assertions cover it"
+        )
+        assert _literal_recipes(fitting[name]), (
+            f"{name} no longer names a topology with a literal build_recipe() "
+            f"call, so its exemption ({reason}) no longer describes it"
+        )
 
 
 def test_a_routed_demo_writes_every_archive_through_the_policy() -> None:
@@ -259,6 +332,27 @@ def test_the_routing_detectors_are_not_fooled_by_the_import_line() -> None:
     )
     assert _policy_recipes(routed_plus_bare) == ["stream"]
     assert _bare_saves(routed_plus_bare) == 1
+
+
+def test_the_literal_recipe_detector_demands_a_readable_choice() -> None:
+    """Same treatment for the third door's detector, which gates an exemption.
+
+    A detector that answered "yes" too easily would excuse a demo that in fact
+    chose nothing — the defect the whole file exists to catch, wearing the
+    exemption as cover.
+    """
+    import_only = (
+        "from luxar.gsplats.lod import RecipeParams, build_recipe\n"
+        "result.save(cache_file, compress='zip')\n"
+    )
+    assert _literal_recipes(import_only) == []
+    # A recipe read out of a variable is not a choice anyone can review.
+    assert _literal_recipes("built = build_recipe(base, recipe, _params())") == []
+    # The real shape, positionally and by keyword.
+    assert _literal_recipes("build_recipe(d, 'levels', RecipeParams(levels=3))") == [
+        "levels"
+    ]
+    assert _literal_recipes("build_recipe(d, recipe='levels', params=p)") == ["levels"]
 
 
 def test_the_demo_recipe_type_and_defaults_agree() -> None:

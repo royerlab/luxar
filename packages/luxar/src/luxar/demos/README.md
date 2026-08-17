@@ -70,9 +70,10 @@ conditional on how the demo BUILDS its scene: `add_gsplats_from_data` and
 `add_gsplats(centers=…, amplitudes=…)` writes a flat leaf, so a demo that
 rebuilds from arrays would pay `levels`' extra ~38% and then discard it.
 `tests/test_lod_policy.py` holds both gates: a fitting demo either routes every
-archive through the policy or appears on the shrinking pending list with a
-reason, and a demo choosing `levels`/`adaptive` must reach the scene through an
-adder that preserves it. The choice applies from the next refit onwards — the
+archive through the policy or is accounted for by name — it ships no artifact, it
+names the topology itself with a literal `build_recipe(...)`, or it sits on the
+shrinking pending list — and a demo choosing `levels`/`adaptive` must reach the
+scene through an adder that preserves it. The choice applies from the next refit onwards — the
 hosted archives keep whatever topology they were written with until they are
 refitted and reuploaded, since the manifest pins their checksums.
 
