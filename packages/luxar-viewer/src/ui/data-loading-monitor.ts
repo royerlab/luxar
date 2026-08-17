@@ -87,6 +87,9 @@ import {
 } from './data-loading-monitor/timing-panel';
 
 import type { UpdateProfiler } from '../profiling/update-profiler';
+// A session whose SortWorker never came up draws every order-dependent
+// layer in storage order; without this the only trace is one console error.
+import { isDepthSortAvailable } from '../rendering/depth-sort-coordinator';
 import { POOLED_GEOMETRY_TYPES } from '../types/data-monitor-types';
 import type { PooledGeometryType, AccumulatorProvider } from '../types/data-monitor-types';
 import { GEOMETRY_TYPES, type GeometryTypeName } from '../types/format-contract';
@@ -1387,7 +1390,8 @@ export class DataLoadingMonitor {
                 this.contentContainer,
                 timingData,
                 refinementData,
-                depthSortData
+                depthSortData,
+                !isDepthSortAvailable()
               );
             }
           }
@@ -1976,7 +1980,8 @@ export class DataLoadingMonitor {
         ${renderHierarchicalTimingPanel(
           timingData,
           this.profiler?.getRefinementTimings(),
-          this.profiler?.getDepthSortTimings()
+          this.profiler?.getDepthSortTimings(),
+          !isDepthSortAvailable()
         )}
       </div>
     `;

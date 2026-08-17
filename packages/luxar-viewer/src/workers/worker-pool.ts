@@ -314,7 +314,9 @@ export class WorkerPool {
     return initializeWithGuard(
       worker,
       api,
-      workerNumber,
+      // Keeps the pre-existing message text (`Worker 3 init exceeded …`)
+      // now that the guard is label-driven and shared with the sort worker.
+      `Worker ${workerNumber}`,
       config.dataLoading.performance.workerInitTimeoutMs,
       () => this.attachWorkerErrorHandlers(worker, workerNumber),
       wasmPath

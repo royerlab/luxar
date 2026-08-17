@@ -47,6 +47,36 @@ describe('renderHierarchicalTimingPanel', () => {
     expect(html).toContain('No timing data yet');
   });
 
+  it('reports an unavailable depth-sort subsystem in the footer', () => {
+    // A session whose SortWorker never came up draws every order-dependent
+    // layer in storage order. Before this the only signal was a single
+    // console error at the moment it happened (issue #705's rule).
+    const html = renderHierarchicalTimingPanel(makeEntry({ count: 5 }), undefined, undefined, true);
+    expect(html).toContain('depth sort UNAVAILABLE');
+  });
+
+  it('an unavailable subsystem escapes the empty placeholder', () => {
+    // The reachable window is "profiler connected, nothing recorded yet": the
+    // monitor renders its own 'Profiler not connected' block while the profiler
+    // is null (so a pre-scene warm-up failure never gets this far), but once it
+    // is wired a scene can sit at zero updates/refinements/sorts — precisely
+    // when 'No timing data yet' would bury the one thing worth saying.
+    const html = renderHierarchicalTimingPanel(makeEntry({ count: 0 }), undefined, undefined, true);
+    expect(html).not.toContain('luxar-timing-panel--empty');
+    expect(html).toContain('depth sort UNAVAILABLE');
+  });
+
+  it('shows the sort count when the subsystem is healthy', () => {
+    const html = renderHierarchicalTimingPanel(
+      makeEntry({ count: 5 }),
+      undefined,
+      makeEntry({ name: 'Depth Sort', count: 3 }),
+      false
+    );
+    expect(html).toContain('3 sorts');
+    expect(html).not.toContain('UNAVAILABLE');
+  });
+
   it('renders header / body / footer when data is present', () => {
     const html = renderHierarchicalTimingPanel(makeEntry({ count: 5 }));
     expect(html).toContain('luxar-timing-panel__header');
@@ -354,6 +384,41 @@ describe('updateTimingPanelValues', () => {
     expect(container.querySelector('.luxar-timing-panel__update-count')?.textContent).toBe(
       '99 updates'
     );
+  });
+
+  it('patches an appearing depth-sort UNAVAILABLE note into the footer', () => {
+    // The steady-state path: the monitor only re-renders when the structure is
+    // dirty, so on the common tick it patches values in place — the note has to
+    // reach the footer through THIS branch too, or a session that gives up
+    // mid-run never shows it until something else forces a rebuild.
+    const container = renderInto(renderHierarchicalTimingPanel(makeEntry({ count: 5 })));
+    const footer = (): string =>
+      container.querySelector('.luxar-timing-panel__update-count')?.textContent ?? '';
+    expect(footer()).not.toContain('UNAVAILABLE');
+
+    const ok = updateTimingPanelValues(
+      container,
+      makeEntry({ count: 6 }),
+      undefined,
+      undefined,
+      true
+    );
+    expect(ok).toBe(true);
+    expect(footer()).toContain('depth sort UNAVAILABLE');
+  });
+
+  it('clears the note in place once depth sorting is available again', () => {
+    // A dispose/re-init resets the verdict, and a stale UNAVAILABLE misleads
+    // exactly as much as a missing one.
+    const container = renderInto(
+      renderHierarchicalTimingPanel(makeEntry({ count: 5 }), undefined, undefined, true)
+    );
+    const footer = (): string =>
+      container.querySelector('.luxar-timing-panel__update-count')?.textContent ?? '';
+    expect(footer()).toContain('depth sort UNAVAILABLE');
+
+    updateTimingPanelValues(container, makeEntry({ count: 6 }), undefined, undefined, false);
+    expect(footer()).not.toContain('UNAVAILABLE');
   });
 
   it('returns false when the body element is missing', () => {

@@ -3939,7 +3939,7 @@ describe('depth-sort coordinator — the indexed (mesh) apply', () => {
  * worker `error` event — a script that really is dead — is not.
  */
 describe('depth-sort coordinator — starved init retry (issue #1694)', () => {
-  /** Mirrors the module-private SORT_WORKER_INIT_TIMEOUT_MS. */
+  /** Mirrors the DEFAULT of `config.depthSort.workerInitTimeoutMs`. */
   const INIT_TIMEOUT_MS = 30_000;
   /** Mirrors the module-private SORT_WORKER_INIT_RETRY_BASE_MS (× attempt). */
   const RETRY_BASE_MS = 2_000;

@@ -125,6 +125,15 @@ type ScenarioSpec =
       id: string;
       label: string;
       url: string;
+      /**
+       * Gate a hard assertion that at least one depth sort completed.
+       *
+       * On a LADDER scenario this is the load path's only sorted-workload
+       * guard: the sort has to survive startup while the loader saturates
+       * the main thread, which is precisely where the synthetic scenarios
+       * (debug-hook injection, no zarr load) cannot reach.
+       */
+      requiresDepthSort?: boolean;
     };
 
 const SCENARIOS: ScenarioSpec[] = [
@@ -174,6 +183,14 @@ const SCENARIOS: ScenarioSpec[] = [
     id: 'visible-human-ladder-load',
     label: 'gsplats_3d_visible_human_head.luxar.zarr (1.91 M, single node, volumetric ladder)',
     url: `${DATA_BASE}/datasets/demos/gsplats_3d_visible_human_head.luxar.zarr`,
+    // The only LOADING scenario large enough to stress SortWorker startup,
+    // and therefore the only one that can catch a sorted scene that ran
+    // unsorted because init lost to load congestion. The `synthetic`
+    // scenarios above reach 10 M but inject their elements through the
+    // debug hook — no zarr load, no congestion, so they are structurally
+    // blind to it. `volumetric` is order-dependent (needsDepthSort), so a
+    // sort is genuinely required here.
+    requiresDepthSort: true,
   },
   {
     kind: 'zarr-orbit',
@@ -723,6 +740,51 @@ function depthSortStatsOf(raw: OrbitSamplingRaw): DepthSortStats {
 }
 
 /**
+ * Depth-sort completions accumulated since NAVIGATION, read once.
+ *
+ * The ladder scenario has no orbit window to sample — the load itself is the
+ * window, and the sorts it cares about are the ones dispatched by the
+ * commits that stream in during it. So it reads the profiler's monotonic
+ * completion stream after polling instead of per frame: `total` is exact,
+ * and the retained (bounded) event ring supplies the latency percentiles,
+ * with anything aged out of it reported as dropped.
+ *
+ * Returns null when the profiler is unreachable, which the caller keeps
+ * distinct from "reachable, and zero sorts happened".
+ */
+async function probeLoadDepthSortStats(page: Page): Promise<DepthSortStats | null> {
+  const raw = await page.evaluate(() => {
+    // Same cast-to-any chain as the orbit loop: the profiler shape is
+    // internal and the stage fields are optional.
+    const debug = (window as unknown as { __luxarDebug?: any }).__luxarDebug;
+    try {
+      const c = debug?.getSceneLoader?.()?.getProfiler?.()?.getDepthSortCompletions?.();
+      if (!c || typeof c.total !== 'number' || !Array.isArray(c.events)) return null;
+      return {
+        total: c.total as number,
+        events: (c.events as any[]).map((e) => ({
+          lastMs: e.lastMs,
+          kernelMs: e.kernelMs,
+          boundaryMs: e.boundaryMs,
+          queueMs: e.queueMs,
+        })),
+      };
+    } catch {
+      return null;
+    }
+  });
+  if (raw === null) return null;
+  return depthSortStatsOf({
+    frameDtMs: [],
+    sortInc: [],
+    sortEvents: raw.events,
+    droppedCompletions: Math.max(0, raw.total - raw.events.length),
+    finalSortCount: raw.total,
+    totalMs: 0,
+  });
+}
+
+/**
  * L8 gate probe: split frames into 'sorting-adjacent' (a depth-sort
  * completion within ±1 frame) vs 'idle-orbit' and return each
  * class's p99. Decides whether ordering applies are what spikes the
@@ -1170,6 +1232,10 @@ async function measureZarrLadderScenario(
   const gpuRenderer = await probeGpuRenderer(page);
   const postSettle = await measurePostSettleFrame(page);
   const elementCount = await probeElementCount(page, false);
+  // Read the completion stream LAST: an ordering counts as complete only once
+  // a draw acknowledges it, and the post-settle frame above is the last one
+  // this scenario drives.
+  const depthSort = await probeLoadDepthSortStats(page);
 
   if (elementCount === 0) {
     notes.push('elementCount=0 after ladder polling');
@@ -1191,7 +1257,10 @@ async function measureZarrLadderScenario(
     frameMs: statsOf(ladderRaw.loadWindowDtMs),
     postSettleFrameMs: postSettle.ms,
     renderedFramesBefore: postSettle.renderedFramesBefore,
-    depthSort: null,
+    // Sorts that completed during the LOAD, not during an orbit — this
+    // scenario's `requiresDepthSort` assertion reads this, and it is the only
+    // scenario whose sorts have to survive startup under load congestion.
+    depthSort,
     ladder: {
       wallMsToLadderComplete: ladderRaw.wallMsToLadderComplete,
       observedGrowth: ladderRaw.observedGrowth,
@@ -1343,7 +1412,8 @@ for (const scn of SCENARIOS) {
     }
     if (result.depthSort !== null && result.depthSort.sortCount === 0) {
       result.notes.push(
-        'no depth-sort dispatch observed during the window — orbit may not have crossed the re-sort threshold'
+        'no depth-sort dispatch observed during the window — the orbit may not have crossed the ' +
+          're-sort threshold, or (on a load scenario) no commit ever registered a sorted node'
       );
     }
     if (result.depthSort?.droppedCompletions) {
@@ -1381,19 +1451,28 @@ for (const scn of SCENARIOS) {
     expect(result.elementCount, `${scn.id}: zero drawn elements`).toBeGreaterThan(0);
 
     // A scenario that requires depth sorting must complete at least one
-    // sort round-trip during the orbit window. The profiler's sort count
-    // stays 0 when the scheduler never dispatches or the SortWorker never
-    // returns within the window — the "green depth-sort benchmark that
-    // actually measured UNSORTED rendering" failure this guards against.
-    // Relaxed on a software rasterizer for the same reason as the
-    // frame-count floor: one multi-million-element frame can take seconds
-    // there, so the orbit may not cross the re-sort threshold within the
-    // sample window (recorded as a note).
-    const requiresDepthSort = 'requiresDepthSort' in scn && scn.requiresDepthSort === true;
-    if (requiresDepthSort && !result.skipped && !result.softwareRenderer) {
+    // sort round-trip inside its measurement window — the orbit for the
+    // orbiting kinds, the LOAD for the ladder scenario (which never orbits).
+    // This is the "green depth-sort benchmark that actually measured UNSORTED
+    // rendering" failure guard. Relaxed on a software rasterizer for the same
+    // reason as the frame-count floor: one multi-million-element frame can take
+    // seconds there, so the window may not cross the re-sort threshold
+    // (recorded as a note).
+    //
+    // The two causes are asserted SEPARATELY because the probe keeps them
+    // apart and they point at different things: `depthSort === null` means the
+    // profiler probe was unreachable (no debug hook / no profiler / it threw),
+    // so nothing was measured at all, while a zero count means the window was
+    // measured and no sort landed in it.
+    if (scn.requiresDepthSort === true && !result.skipped && !result.softwareRenderer) {
+      const windowName = scn.kind === 'zarr-ladder' ? 'load window' : 'orbit window';
       expect(
-        result.depthSort?.sortCount ?? 0,
-        `${scn.id}: requires depth sorting but no sort completed during the orbit window`
+        result.depthSort,
+        `${scn.id}: requires depth sorting but the depth-sort profiler probe was unreachable — nothing was measured`
+      ).not.toBeNull();
+      expect(
+        result.depthSort!.sortCount,
+        `${scn.id}: requires depth sorting but no sort completed during the ${windowName}`
       ).toBeGreaterThan(0);
     }
 
