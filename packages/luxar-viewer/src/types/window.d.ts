@@ -80,6 +80,17 @@ declare global {
        * depth-sort scheduler dead. Resolves when settled or after a safety timeout.
        */
       resortDepthOrderingForCapture?: (maxWaitMs?: number) => Promise<void>;
+      /**
+       * Why depth sorting may be off (issue #1694): `idle` = never spawned /
+       * init in flight, `ready` = sorts are flowing, `starved` = init missed
+       * its 30 s deadline and a bounded retry is armed, `failed` =
+       * permanently unavailable. `initTimeouts` counts the deadline misses
+       * this session.
+       */
+      getDepthSortWorkerStatus?: () => {
+        state: 'idle' | 'ready' | 'starved' | 'failed';
+        initTimeouts: number;
+      };
       getSceneLoader?: () => unknown;
 
       /**
