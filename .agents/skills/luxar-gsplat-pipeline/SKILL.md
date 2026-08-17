@@ -252,11 +252,20 @@ Note: `fit_gaussian_splats` has NO `preset=` argument — the CLI presets just e
 to `n_iters` / `early_stop_patience` / `max_eccentricity` / `cull_retention` (see
 the preset table in `references/cli-options.md`). Set those knobs directly in Python.
 
-### The API defaults are BELOW `draft` — always set a schedule
+### BOTH entry points default to 1000 iters — BELOW `draft`. Always set a schedule.
 
 `n_iters` defaults to **1000**: below the CLI's lowest preset (`draft` = 2000) and a
-fifth of `standard` (5000). Calling the API without it is not "default quality", and
-the failure is not obvious — it looks like a rendering or splat-count problem:
+fifth of `standard` (5000). This is NOT only a Python-API quirk — `--preset` has no
+default either, and `load_fit_config` layers one only `if preset is not None`, so:
+
+```bash
+luxar gsplat fit vol.tiff out.gsplats.zarr                   # 1000 iters (!)
+luxar gsplat fit vol.tiff out.gsplats.zarr --preset standard # 5000
+```
+
+**Pass `--preset` (or `--iters`) on every real fit; a bare `fit` is a preview.**
+Calling either path without it is not "default quality", and the failure is not
+obvious — it looks like a rendering or splat-count problem:
 
 **Symptom: thin filaments (axons, vessels, fibres) render as chains of beads.**
 Under-converged splats never leave their seed shape. Edge seeding initialises them

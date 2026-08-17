@@ -429,6 +429,21 @@
         }
       ]
     },
+    "gsplats_cell_tracking": {
+      "bucket": "zenodo",
+      "record": "cc-by",
+      "license": "cc0-1.0",
+      "source": "Kaggle competition 'Biohub - Cell Tracking During Development' (zebrafish light-sheet crops + GEFF ground-truth lineages)",
+      "attribution": "Biohub cell-tracking challenge data (CC0); imaging by the Royer group, CZ Biohub SF. Derived product: per-crop 4D Gaussian-splat fits with substitutive LOD.",
+      "acquisition": {
+        "description": "one competition training crop per fitted archive: an OME-Zarr store of T=100, Z=64, Y=256, X=256 uint16 (838.9 MB of raw voxels each), fitted timepoint by timepoint at its native grid",
+        "comparable": true,
+        "stored_bytes": null
+      },
+      "pending_upload": true,
+      "dir": "gsplats_cell_tracking",
+      "files": []
+    },
     "h2afva": {
       "bucket": "zenodo",
       "record": "h2afva",

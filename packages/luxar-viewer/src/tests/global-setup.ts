@@ -59,12 +59,28 @@ const FIXTURE_INPUT_SOURCE_DIRS = [
 
 const EXPECTED_FIXTURES = parseGeneratedFixtureNames(GENERATOR_PATH);
 
+/**
+ * Wall-clock budget for one generator run.
+ *
+ * Measured: `generate_test_data.py` takes ~215 s on an M-series laptop, so the
+ * previous 120 s could not finish it — every regeneration was SIGTERM'd
+ * mid-write, which leaves incomplete stores AND relands on the same wall the
+ * next run, because the stamp is only written on success. The failure reads as
+ * `spawnSync ETIMEDOUT`, which looks like a hung shell rather than a budget
+ * that was never survivable.
+ *
+ * 600 s is ~2.8x the measured time, headroom for a slower or loaded machine
+ * (CI runners are not faster than a laptop here). `LUXAR_FIXTURE_GEN_TIMEOUT_MS`
+ * overrides it rather than requiring a source edit on a machine that needs more.
+ */
+const GENERATOR_TIMEOUT_MS = Number(process.env.LUXAR_FIXTURE_GEN_TIMEOUT_MS) || 600_000;
+
 function runPythonGenerator(command: string, label: string): void {
   try {
     execSync(command, {
       cwd: PROJECT_ROOT,
       stdio: 'pipe',
-      timeout: 120_000,
+      timeout: GENERATOR_TIMEOUT_MS,
     });
     console.log(`[test-setup] ${label} generated successfully.`);
   } catch (err: unknown) {
@@ -74,6 +90,16 @@ function runPythonGenerator(command: string, label: string): void {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[test-setup] Failed to generate ${label}: ${message}`);
     if (stderr) console.error(stderr);
+    // A timeout reads as `spawnSync ETIMEDOUT`, which looks like a hung shell.
+    // Say which budget was exceeded and how to raise it, so the next person is
+    // not left comparing a generator that works by hand against one that does
+    // not work here.
+    if (err && typeof err === 'object' && (err as { code?: string }).code === 'ETIMEDOUT') {
+      console.error(
+        `[test-setup] ...that was the ${GENERATOR_TIMEOUT_MS} ms budget, not a hang. ` +
+          'Raise it with LUXAR_FIXTURE_GEN_TIMEOUT_MS if this machine is slower.'
+      );
+    }
     console.error(`[test-setup] Run manually: ${command}`);
     throw new Error(`${label} generation failed. See above for details.`, { cause: err });
   }

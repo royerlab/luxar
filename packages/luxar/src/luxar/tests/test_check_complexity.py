@@ -706,6 +706,56 @@ def test_failure_report_lists_only_the_keys_that_truly_vanished(
     assert "a.py::big" not in vanished_block
 
 
+def test_failure_hint_points_at_the_regressions_not_the_vanished_keys(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The closing hint must name the ❌ keys, not the ✨ list printed above it."""
+    baseline = {"b.py::gone": [14]}
+    current = {"c.py::newone": [11]}
+    report = checker.evaluate_ratchet(current, baseline)
+    assert report.new == ["c.py::newone"]
+
+    assert checker._print_report(report, current, baseline) == 1
+    output = _clean_output(capsys)
+
+    assert "regressions at the TOP" in output
+    # The ✨ keys are explicitly marked as the opposite of the failure.
+    assert "IS the right response for those" in output
+    # Never the old wording, which read as an accusation against the ✨ key.
+    assert "function(s) above are genuinely new complexity" not in output
+
+
+def test_failure_hint_omits_the_vanished_clause_when_nothing_vanished(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """With no ✨ list printed, the hint must not refer to one."""
+    baseline = {"a.py::big": [20]}
+    current = {"a.py::big": [20], "b.py::newone": [11]}
+    report = checker.evaluate_ratchet(current, baseline)
+
+    assert checker._print_report(report, current, baseline) == 1
+    output = _clean_output(capsys)
+
+    assert "regressions at the TOP" in output
+    assert "vanished" not in output
+
+
+def test_restricted_failure_hint_does_not_invite_updating_the_baseline(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """On a partial scan the ✨ keys went unread, so they must not be tightened."""
+    baseline = {"a.py::big": [20], "other/mod.py::elsewhere": [14]}
+    current = {"a.py::big": [20], "a.py::newone": [11]}
+    report = checker.evaluate_ratchet(current, baseline, pair_moves=False)
+
+    assert checker._print_report(report, current, baseline, restricted=True) == 1
+    output = _clean_output(capsys)
+
+    assert "other/mod.py::elsewhere" in output
+    assert "went unread" in output
+    assert "IS the right response for those" not in output
+
+
 def test_main_reports_a_ruff_failure_as_exit_2(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

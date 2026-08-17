@@ -43,7 +43,13 @@ authored appearance of an archived input on rebuild.
 document. A caller holding a document's BYTES rather than a path — the archive
 peek reads one zip/tar member without extracting — gets `NODE_ATTR_DOCS` and
 `attrs_from_node_doc` for the same reason.
-The shared shape of all nine is worth stating: **none of them raised**
+Two more turned up in the Gaia catalog guards, where the shape is nastier still:
+one test forced a parse error by writing invalid JSON to `bp_rp/.zarray`, which
+at format 3 is a stray file zarr ignores — the real `zarr.json` stayed valid, the
+store opened and read fine, and the expected error never came (`DID NOT RAISE`).
+A test that cannot fail is worse than one that fails.
+
+The shared shape of all eleven is worth stating: **none of them raised**
 — each returned an ordinary value that a caller had a reasonable interpretation
 for, which is why they have to be found by grepping for the document names. The
 archive peek is the sharpest evidence that this is a standing hazard rather than

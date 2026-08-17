@@ -232,13 +232,13 @@ The worker uses the same `wasm/` module as the data workers:
 
 ### Initialization Failures
 
-- Worker script dies during async module evaluation → `onerror` event → `initPromise` rejects
-- WASM initialization fails → throws `'WASM unavailable...'` → main thread catches, terminates worker, degrades to unsorted normal mode
-- Timeout (30s) → main thread rejects `initPromise`, terminates worker, degrades to unsorted normal mode
+- Worker script dies during async module evaluation → `onerror` event → `initPromise` rejects — PERMANENT (nothing about waiting longer would help)
+- WASM initialization fails → throws `'WASM unavailable...'` → main thread catches, terminates worker, degrades to unsorted normal mode — also PERMANENT
+- Timeout (30s) → main thread rejects `initPromise` (with the coordinator's own `SortWorkerInitTimeoutError`), terminates worker, degrades to unsorted normal mode MEANWHILE — but this one is RETRYABLE (issue #1694): a missed deadline means only that init lost a race to a busy main thread, so the coordinator retries it up to 3 attempts in total with a growing backoff, and a late success re-registers every sorted node. Only after the budget is spent is the degrade permanent.
 
 ### Sort Failures
 
-- Worker unavailable (init failed) → main thread's cached `initPromise` is rejected, every commit lands in the warn-once catch (line 399–412)
+- Worker unavailable (init failed) → main thread's cached `initPromise` is rejected, every commit lands in the warn-once catch (line 399–412) — warn-once per EPISODE: a successful (possibly retried) init re-arms it
 - Worker crashes mid-session → Comlink RPC pending forever → timeout (30s, see `scheduleSort` line 514) → main thread clears `inFlight` and drains the queue (bounded staleness degrade)
 - Stale request (newer commit landed) → worker returns `null` → main thread discards the result
 

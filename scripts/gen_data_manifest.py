@@ -366,6 +366,46 @@ DATASETS: dict[str, dict] = {
         # `published: False`, and the fetch leg stays dormant until that flips —
         # the pins are what publication turns on.
     ),
+    "gsplats_cell_tracking": dict(
+        bucket="zenodo",
+        record="cc-by",
+        license="cc0-1.0",
+        source=(
+            "Kaggle competition 'Biohub - Cell Tracking During Development' "
+            "(zebrafish light-sheet crops + GEFF ground-truth lineages)"
+        ),
+        attribution=(
+            "Biohub cell-tracking challenge data (CC0); imaging by the Royer "
+            "group, CZ Biohub SF. Derived product: per-crop 4D Gaussian-splat "
+            "fits with substitutive LOD."
+        ),
+        # Computed on obsidian, awaiting upload to the cc-by record. Redistributable
+        # as a DERIVED product because the source is CC0 — and since the raw
+        # competition data is behind an authenticated endpoint, hosting the fits is
+        # what makes the demo runnable with no Kaggle credentials and no GPU at all.
+        #
+        # ONE file set, at the full 100 timepoints: ~700 MB (measured — 77.3 MB per
+        # crop x 9). No lighter variant, deliberately. The demo exists to show the
+        # whole timelapse, a decimated one would undercut that, and 700 MB is modest
+        # for this catalogue (the celegans demo pulls 26 GB). The derived product is
+        # far smaller than either the ~4 GB of raw crops or the ~450 MB of
+        # per-timepoint fit cache it is built from, because a fitted splat costs
+        # about 12 bytes once encoded and zipped.
+        acquisition=dict(
+            description=(
+                "one competition training crop per fitted archive: an OME-Zarr "
+                "store of T=100, Z=64, Y=256, X=256 uint16 (838.9 MB of raw "
+                "voxels each), fitted timepoint by timepoint at its native grid"
+            ),
+            comparable=True,
+            # Measured when the crops are next in hand: they sit behind the
+            # authenticated competition endpoint (~450 MB of chunks per crop),
+            # so opening them to size the chunk-compressed store is a 4 GB
+            # download rather than a local probe.
+            stored_bytes=None,
+        ),
+        pending_upload=True,
+    ),
     "h2afva": dict(
         bucket="zenodo",
         record="h2afva",
