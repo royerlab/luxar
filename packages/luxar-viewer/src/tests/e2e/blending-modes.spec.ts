@@ -36,6 +36,10 @@ const GSPLAT_VOLUMETRIC_FIXTURE =
   'http://localhost:9000/packages/luxar-viewer/tests/fixtures/test_gsplats_volumetric.luxar.zarr';
 const GSPLAT_VOLUMETRIC_REVERSED_FIXTURE =
   'http://localhost:9000/packages/luxar-viewer/tests/fixtures/test_gsplats_volumetric_reversed.luxar.zarr';
+const POINTS_VOLUMETRIC_REVERSED_FIXTURE =
+  'http://localhost:9000/packages/luxar-viewer/tests/fixtures/test_points_volumetric_reversed.luxar.zarr';
+const LINES_VOLUMETRIC_REVERSED_FIXTURE =
+  'http://localhost:9000/packages/luxar-viewer/tests/fixtures/test_lines_volumetric_reversed.luxar.zarr';
 const GSPLAT_RGBA_OCCLUSION_FIXTURE =
   'http://localhost:9000/packages/luxar-viewer/tests/fixtures/test_gsplats_rgba_occlusion.luxar.zarr';
 
@@ -1203,6 +1207,195 @@ test.describe('Points normal mode depth sorting', () => {
 
     const webglErrors = await getWebGLErrors(page);
     expect(webglErrors.length).toBe(0);
+  });
+});
+
+test.describe('Points and Lines volumetric depth sorting', () => {
+  // The volumetric arm of the sort gate for the two EMISSIVE non-gsplat
+  // types. `needsDepthSort` is `normal ∪ volumetric` and the coordinator
+  // judges order-dependence on it uniformly for all four geometry types,
+  // but every existing volumetric sort assertion filtered
+  // `nodeType === 'gsplats'` — so points and lines could have regressed to
+  // unsorted volumetric compositing with the suite still green. These two
+  // fixtures are geometry-identical to their `normal` twins, leaving the
+  // blending mode as the only variable.
+  //
+  // Lines are not a redundant copy of points: their centers provider hands
+  // the SortWorker SEGMENT MIDPOINTS (commit-lines-geometry.ts) rather than
+  // element positions, so it is a genuinely separate path into the same gate.
+  //
+  // Both fixtures come from tests/fixtures/generate_test_data.py and are
+  // covered by the global-setup pre-flight, which fails the whole run by
+  // name when a declared fixture is missing or half-written — run
+  // `pnpm test:generate-fixtures` first.
+  test.slow();
+
+  /**
+   * Assert that a reversed-declaration volumetric node reaches a
+   * back-to-front ordering: the applied permutation departs from identity
+   * AND view z is non-decreasing along it.
+   *
+   * `stride` is the node's element-texture stride in floats: 12 for points,
+   * 24 for lines. The monotonicity check must run on the SAME key the
+   * SortWorker was handed, so it reconstructs that key from the texture —
+   * texel0.xyz (position) for points, and the mean of texel0.xyz (segment
+   * start) and texel1.xyz (segment end) for lines, which is the midpoint the
+   * lines centers provider registers.
+   */
+  async function expectVolumetricBackToFront(
+    page: import('@playwright/test').Page,
+    fixture: string,
+    nodeType: 'points' | 'lines',
+    stride: number
+  ): Promise<void> {
+    await page.addInitScript(() => {
+      localStorage.setItem('luxar-control-rail-hint-dismissed', '1');
+    });
+    await page.goto(`/?src=${fixture}&debug&dpr=1`);
+    await waitForLuxarReady(page);
+
+    // Committed instances first — the sort lands asynchronously after.
+    await page.waitForFunction(
+      (t) => {
+        const debug = (window as unknown as { __luxarDebug?: { scene?: unknown } }).__luxarDebug;
+        if (!debug?.scene) return false;
+        let committed = false;
+        (debug.scene as { traverse: (cb: (obj: unknown) => void) => void }).traverse((obj) => {
+          const o = obj as {
+            userData?: { nodeType?: string };
+            geometry?: { instanceCount?: number };
+          };
+          if (o.userData?.nodeType === t && (o.geometry?.instanceCount ?? 0) > 0) committed = true;
+        });
+        return committed;
+      },
+      nodeType,
+      { timeout: 30000 }
+    );
+
+    // The mode must actually be volumetric — otherwise a fixture that
+    // silently lost its blending_mode would make the sort assertion below
+    // pass for the wrong reason (as plain `normal`).
+    const modes = await page.evaluate((t) => {
+      const debug = (window as any).__luxarDebug;
+      const out: string[] = [];
+      debug.scene.traverse((obj: any) => {
+        if (obj.userData?.nodeType !== t) return;
+        const mat = Array.isArray(obj.material) ? obj.material[0] : obj.material;
+        out.push(mat?.userData?.blendingMode);
+      });
+      return out;
+    }, nodeType);
+    expect(modes.length).toBeGreaterThan(0);
+    for (const m of modes) expect(m).toBe('volumetric');
+
+    // Non-identity: times out against a coordinator that treats volumetric
+    // as order-INDEPENDENT for this node type (the regression this guards).
+    await page.waitForFunction(
+      (t) => {
+        const debug = (window as unknown as { __luxarDebug?: { scene?: unknown } }).__luxarDebug;
+        if (!debug?.scene) return false;
+        let sorted = false;
+        (debug.scene as { traverse: (cb: (obj: unknown) => void) => void }).traverse((obj) => {
+          const o = obj as {
+            userData?: {
+              nodeType?: string;
+              visiblePointCount?: number;
+              visibleSegmentCount?: number;
+            };
+            geometry?: {
+              attributes?: {
+                aSortedIndex?: { array?: ArrayLike<number> };
+                aSortedIndexB?: { array?: ArrayLike<number> };
+              };
+              userData?: { sortedIndexSlot?: 0 | 1 };
+            };
+          };
+          if (o.userData?.nodeType !== t) return;
+          const arr =
+            o.geometry?.userData?.sortedIndexSlot === 1
+              ? o.geometry?.attributes?.aSortedIndexB?.array
+              : o.geometry?.attributes?.aSortedIndex?.array;
+          const count = o.userData?.visiblePointCount ?? o.userData?.visibleSegmentCount ?? 0;
+          if (!arr || count < 2) return;
+          for (let i = 0; i < count; i++) {
+            if (arr[i] !== i) {
+              sorted = true;
+              return;
+            }
+          }
+        });
+        return sorted;
+      },
+      nodeType,
+      { timeout: 30000 }
+    );
+
+    // …and the permutation it settled on is genuinely back-to-front.
+    const monotone = await page.evaluate(
+      ({ t, s, mid }) => {
+        const debug = (window as any).__luxarDebug;
+        const results: Array<{ ordering: number[]; viewZs: number[]; ok: boolean }> = [];
+        debug.scene.traverse((obj: any) => {
+          if (obj.userData?.nodeType !== t) return;
+          const count = obj.userData?.visiblePointCount ?? obj.userData?.visibleSegmentCount ?? 0;
+          const arr =
+            obj.geometry?.userData?.sortedIndexSlot === 1
+              ? obj.geometry?.attributes?.aSortedIndexB?.array
+              : obj.geometry?.attributes?.aSortedIndex?.array;
+          const texData = obj.geometry?.userData?.elementTexture?.image?.data;
+          if (!arr || !texData || count < 2) return;
+          const mwi = debug.camera.matrixWorldInverse.elements;
+          const mw = obj.matrixWorld.elements;
+          const viewZof = (x: number, y: number, z: number) => {
+            const wx = mw[0] * x + mw[4] * y + mw[8] * z + mw[12];
+            const wy = mw[1] * x + mw[5] * y + mw[9] * z + mw[13];
+            const wz = mw[2] * x + mw[6] * y + mw[10] * z + mw[14];
+            return mwi[2] * wx + mwi[6] * wy + mwi[10] * wz + mwi[14];
+          };
+          const ordering: number[] = [];
+          const viewZs: number[] = [];
+          let ok = true;
+          let prev = -Infinity;
+          for (let j = 0; j < count; j++) {
+            const idx = arr[j];
+            ordering.push(idx);
+            const b = idx * s;
+            // The registered sort key: texel0.xyz, or the texel0/texel1
+            // midpoint for lines (see the doc comment above).
+            const kx = mid ? (texData[b] + texData[b + 4]) / 2 : texData[b];
+            const ky = mid ? (texData[b + 1] + texData[b + 5]) / 2 : texData[b + 1];
+            const kz = mid ? (texData[b + 2] + texData[b + 6]) / 2 : texData[b + 2];
+            const zv = viewZof(kx, ky, kz);
+            viewZs.push(zv);
+            // Small epsilon: equal-depth elements share a key bucket.
+            if (zv < prev - 1e-4) ok = false;
+            prev = Math.max(prev, zv);
+          }
+          results.push({ ordering, viewZs, ok });
+        });
+        return results;
+      },
+      { t: nodeType, s: stride, mid: nodeType === 'lines' }
+    );
+    expect(monotone.length).toBeGreaterThan(0);
+    for (const r of monotone) {
+      expect(
+        r.ok,
+        `${nodeType} volumetric ordering ${r.ordering} viewZs ${r.viewZs} not back-to-front`
+      ).toBe(true);
+    }
+
+    const webglErrors = await getWebGLErrors(page);
+    expect(webglErrors.length).toBe(0);
+  }
+
+  test('volumetric POINTS settle on a back-to-front ordering', async ({ page }) => {
+    await expectVolumetricBackToFront(page, POINTS_VOLUMETRIC_REVERSED_FIXTURE, 'points', 12);
+  });
+
+  test('volumetric LINES settle on a back-to-front ordering', async ({ page }) => {
+    await expectVolumetricBackToFront(page, LINES_VOLUMETRIC_REVERSED_FIXTURE, 'lines', 24);
   });
 });
 
