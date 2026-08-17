@@ -186,7 +186,7 @@ const SCENARIOS: ScenarioSpec[] = [
     // The only LOADING scenario large enough to stress SortWorker startup,
     // and therefore the only one that can catch a sorted scene that ran
     // unsorted because init lost to load congestion. The `synthetic`
-    // scenarios below reach 10 M but inject their elements through the
+    // scenarios above reach 10 M but inject their elements through the
     // debug hook — no zarr load, no congestion, so they are structurally
     // blind to it. `volumetric` is order-dependent (needsDepthSort), so a
     // sort is genuinely required here.
