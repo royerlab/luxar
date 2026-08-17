@@ -59,12 +59,17 @@ def _fit(volume: np.ndarray, **kwargs: Any) -> Any:
     return fit_tiled(volume, **opts)
 
 
-def test_a_tiled_fit_records_merged_quality(volume: np.ndarray) -> None:
+def test_a_tiled_fit_records_merged_quality(
+    volume: np.ndarray, capsys: pytest.CaptureFixture
+) -> None:
     """The regression: the merged archive used to carry no PSNR at all."""
     stats = _fit(volume).stats
     missing = [k for k in _QUALITY_KEYS if k not in stats]
     assert not missing, f"the merged tiled result lost {missing}"
     assert np.isfinite(stats["psnr_db"]) and stats["psnr_db"] > 0
+    # The unscored notice is unconditional on its own branch, so nothing else
+    # would catch a change that printed it next to a store carrying `psnr_db`.
+    assert "No merged quality metrics" not in capsys.readouterr().out
 
 
 def test_the_merged_score_survives_the_physical_coordinate_round_trip(
@@ -144,7 +149,7 @@ def test_an_unparseable_budget_override_does_not_lose_the_fit(
 def test_a_partition_is_left_alone_but_says_so(
     volume: np.ndarray, capsys: pytest.CaptureFixture
 ) -> None:
-    """A partition has nowhere to persist fit stats, so it is not scored.
+    """A partition merge has no fit-stats dict to stamp, so it is not scored.
 
     Asserted rather than assumed: the scoring call sits right after the merge,
     and a partition returns a node with no ``stats`` dict to write into. The

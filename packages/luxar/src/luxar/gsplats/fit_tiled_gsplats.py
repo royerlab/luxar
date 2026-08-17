@@ -829,10 +829,13 @@ def fit_tiled(
         # partition's split planes need the same factor (#1587).
         grid_scale=grid_scale,
     )
-    # Flat merges only: a partition has nowhere to persist fit stats (the tree
-    # writer reads them off a flat leaf), the same reason `applied_floor` is
-    # in-memory there. The caller's array is still in hand here, which is what
-    # makes scoring the WHOLE reconstruction possible at all.
+    # Flat merges only, and for a pipeline reason rather than a format one: the
+    # tree writer does take `fitting_info` for any node kind, but the merged
+    # partition is a frozen tree node with no `stats` dict to stamp into, and
+    # this path calls the writer with no `fitting_info` at all — so a score taken
+    # here would have nowhere to go without threading it through first. The
+    # caller's array is still in hand here, which is what makes scoring the WHOLE
+    # reconstruction possible at all.
     if not partition:
         _stamp_merged_quality(
             merged,
@@ -853,9 +856,10 @@ def fit_tiled(
         # a matrix-shaped leaf, which is why the flatten step is worded as a
         # condition rather than as a fact about this result.
         aprint(
-            "No merged quality metrics: a partition tree has nowhere to persist "
-            "fit stats. Score the written archive with `luxar gsplat compare` — "
-            "on a `kind=partition` result, run `luxar gsplat flatten` first."
+            "No merged quality metrics: the merged partition is a tree node with "
+            "no fit-stats dict to stamp onto, and this path threads none through "
+            "on save. Score the written archive with `luxar gsplat compare` — on "
+            "a `kind=partition` result, run `luxar gsplat flatten` first."
         )
     return merged
 
