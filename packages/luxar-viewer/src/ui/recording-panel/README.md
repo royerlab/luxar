@@ -116,11 +116,15 @@ frame-by-frame capture for turntable + EXR-sequence modes:
    scale resolution to a 16-pixel-aligned multiple of the target.
 4. Pause auto-rotate and compute per-frame angle for the turntable.
 5. Build the per-mode driver (`ImageSequenceDriver` /
-   `ExrSequenceDriver` / `VideoModeDriver`); call `driver.setup(ctx)`.
+   `ExrSequenceDriver` / `VideoModeDriver`).
 6. Mount the modal overlay (focus trap + Escape to cancel + preview
    canvas + counter).
-7. Wake the rAF loop (`animationController.startAnimation()`) and
-   register the `continuous` keep-alive callback.
+7. Enter the `try`, call `driver.setup(ctx)`, then wake the rAF loop
+   (`animationController.startAnimation()`) and register the
+   `continuous` keep-alive callback. Only the driver's _construction_
+   is pre-overlay; `setup` runs inside the `try` on purpose, so a
+   throw from it is unwound by the `finally` that removes the overlay
+   mounted in step 6.
 8. For each frame: register a per-frame callback that orbits the
    camera one step, `await requestAnimationFrame`, then call
    `driver.captureFrame(ctx, frameIndex, progress)`. Tolerate up to
@@ -129,8 +133,8 @@ frame-by-frame capture for turntable + EXR-sequence modes:
 9. Call `driver.finalize(ctx, capturedFrames, progress)`.
 10. In `finally`: call `driver.abort?(ctx, reason)` if setup ran but
     finalize didn't succeed, remove per-frame callbacks, hide the
-    indicator + overlay, restore auto-rotate + recording state, and
-    clear the abort controller reference.
+    indicator + overlay, restore auto-rotate + recording state, wake
+    the loop once more, and clear the abort controller reference.
 
 Step 7's wake-up is load-bearing, not belt-and-braces: the turntable's
 rotation is applied from a per-frame callback, those only run while the
@@ -141,6 +145,26 @@ alive; it never restarts a stopped one. Without the wake-up the capture
 still emits N well-formed frames (the capture path renders its own
 pipeline pass via `renderToImageData`, independently of the loop) —
 they are simply all the same pose.
+
+The loop runs, but its **own** render does not: `core/app/init/pipeline`
+gives the animation controller a render-skip predicate keyed on
+`RecordingPanel.isOfflineCaptureActive()`. Every tick still updates the
+controls and every per-frame callback — that is the whole reason the
+loop has to run — but skips `postProcessing.render()`, whose output the
+capture would discard anyway. It also removes a visible artifact: the
+readback in step 3 is asynchronous, so the loop interleaves with it, and
+an EXR capture holds global raw-HDR shader flags across that await —
+a loop render landing inside the window painted a blown-out frame
+through the translucent overlay, once per captured frame. The predicate
+is offline-only: the real-time MediaRecorder path records the canvas the
+loop paints, so suppressing its render there would yield an empty video.
+
+Step 10's second wake-up closes the tail: `restoreRecordingState()`
+resizes the render target back (clearing the canvas) after the keep-alive
+is gone, so without it a still-stopped loop — or one the idle timer halts
+in the gap right after the resize — leaves the viewer blank until the
+next mouse move. By then `isOfflineCaptureActive` is false, so that frame
+is a real render.
 
 The `try { … } finally { … }` wrapping every state-mutating step is
 load-bearing: a thrown error anywhere in the loop must restore the

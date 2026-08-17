@@ -59,6 +59,15 @@ export class AnimationController {
   private canRestoreAtIdle: (() => boolean) | null = null;
 
   /**
+   * Predicate that returns true while some other owner is driving the
+   * pipeline itself and the loop's own render would be thrown away.
+   * Set during an offline capture, whose every frame runs its own
+   * independent pipeline pass into an offscreen target. See
+   * {@link setRenderSkipPredicate}.
+   */
+  private shouldSkipRender: (() => boolean) | null = null;
+
+  /**
    * Create animation controller for rendering loop management.
    *
    * Sets up performance monitoring and prepares animation loop. Does not
@@ -184,6 +193,26 @@ export class AnimationController {
   }
 
   /**
+   * Inject a predicate the loop polls to decide whether to skip its own
+   * `postProcessing.render()`. When it returns true the frame still
+   * runs controls.update() and every per-frame callback — the loop has
+   * to keep ticking so the depth-sort scheduler and the LOD group
+   * selector follow the camera — but issues no draw call of its own.
+   *
+   * Wired to the offline capture, which renders its own pipeline pass
+   * per frame into an offscreen target: the loop's render is pure waste
+   * there, and worse, EXR capture holds global mega-shader flags (raw
+   * HDR, effects off) across its async readback, so a loop render
+   * landing inside that window paints a blown-out frame under the
+   * translucent capture overlay. Must stay OFF for the real-time
+   * MediaRecorder path, which records the canvas the loop paints.
+   * Mirrors `setContextLostPredicate`. Pass `null` to always render.
+   */
+  setRenderSkipPredicate(predicate: (() => boolean) | null): void {
+    this.shouldSkipRender = predicate;
+  }
+
+  /**
    * Main animation loop function - the heart of HDR 3D rendering
    *
    * This function is called ~60 times per second (depending on display refresh rate)
@@ -235,7 +264,12 @@ export class AnimationController {
     // exceptions on some platforms). Controls and per-frame callbacks
     // already ran above so user input stays responsive while the
     // browser drives recovery.
-    if (this.isContextLost?.()) {
+    //
+    // The render-skip predicate joins the same early return: an
+    // offline capture owns the pipeline for its whole run, so the
+    // loop's render would be discarded work drawn between the
+    // capture's own passes.
+    if (this.isContextLost?.() || this.shouldSkipRender?.()) {
       eventBus.emit('frame-end', {});
       return;
     }

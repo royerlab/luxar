@@ -370,6 +370,47 @@ describe('VideoRecordingStrategy', () => {
       );
     });
 
+    // The real-time path has the same wake-up requirement the offline path
+    // does: the turntable rotates from a per-frame callback, and those only
+    // run while the rAF loop is animating — which it is NOT by the time the
+    // user has read the panel and confirmed the dialog (the loop idle-stops
+    // after ~2s). Registering the `continuous` keep-alive keeps a RUNNING
+    // loop alive but never restarts a stopped one, so without
+    // `startAnimation()` the recorded video would hold the opening pose for
+    // its whole length. Drive the real run() so both halves are pinned.
+    it('wakes the idle-stopped loop, keeps it alive, and actually rotates', async () => {
+      vi.spyOn((panel as any).session, 'showConfirmationDialog').mockResolvedValue(true);
+      const canvas = mockSceneManager.renderer.domElement;
+      (canvas as any).captureStream = vi.fn(() => ({ getTracks: vi.fn(() => []) }));
+      const controls = mockSceneManager.controls.getControls();
+
+      // Route to the real-time MediaRecorder path: turntable mode, smooth
+      // capture off, WebM output.
+      (panel as any).mode = 'turntable';
+      (panel as any).options.frameByFrame = false;
+      (panel as any).options.outputFormat = 'webm';
+
+      const recordingPromise = panel.startVideoRecording();
+      await new Promise((r) => setTimeout(r, 0));
+
+      expect(mockAnimController.startAnimation).toHaveBeenCalled();
+      expect(mockAnimController.addPerFrameCallback).toHaveBeenCalledWith(
+        'recording-keepalive',
+        expect.any(Function),
+        { continuous: true }
+      );
+      // The keep-alive must be continuous — a plain callback does not stop
+      // the idle timer from halting the loop two seconds in.
+      expect(mockAnimController.__perFrameOpts.get('recording-keepalive')).toEqual({
+        continuous: true,
+      });
+      // A frame ticked with the loop awake, so the turntable callback ran.
+      expect(controls.applyOrbitRotation).toHaveBeenCalled();
+
+      mockMediaRecorder.onstop();
+      await recordingPromise;
+    });
+
     // [P2/W1] The previous test only checked the callback was registered.
     // Invoke the registered callback and verify it actually drives the orbit
     // rotation — a no-op callback body would otherwise pass the registration

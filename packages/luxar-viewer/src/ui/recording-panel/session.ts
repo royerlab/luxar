@@ -275,9 +275,14 @@ export class RecordingSession {
       const fmt = options.outputFormat;
       let details = `Recording will capture at ${options.videoFPS} FPS.`;
       if (mode === 'turntable') {
-        const duration = Math.round(360 / options.turntableSpeed);
+        // Round for DISPLAY only, never before the frame-count multiply:
+        // the capture loop and the panel's Output field both derive their
+        // counts from the unrounded duration, so rounding first promises a
+        // different number of frames than the capture actually produces
+        // (7°/s at 30 FPS: 1530 promised vs 1543 captured).
+        const duration = 360 / options.turntableSpeed;
         const expectedFrames = Math.ceil(duration * options.videoFPS);
-        details = `Camera will rotate 360° — ${expectedFrames} frames at ${options.videoFPS} FPS (${duration}s video).`;
+        details = `Camera will rotate 360° — ${expectedFrames} frames at ${options.videoFPS} FPS (${duration.toFixed(1)}s video).`;
         if (options.frameByFrame) {
           details += '<br><strong>Offline capture</strong> — each frame is rendered individually.';
         }

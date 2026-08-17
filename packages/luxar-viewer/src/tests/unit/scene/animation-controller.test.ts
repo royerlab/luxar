@@ -264,6 +264,38 @@ describe('AnimationController', () => {
       expect(mockPostProcessing.render).toHaveBeenCalledTimes(1);
     });
 
+    // The render-skip predicate is set during an offline capture, which
+    // renders its own pipeline pass per frame. The loop must keep ticking
+    // (per-frame callbacks drive the depth-sort scheduler and the LOD
+    // group selector, which have to follow the orbiting camera) while
+    // issuing no draw call of its own.
+    it('skips postProcessing.render() but still ticks controls + callbacks when render-skip is on', () => {
+      const callback = vi.fn();
+      controller.addPerFrameCallback('cb', callback);
+      controller.setRenderSkipPredicate(() => true);
+
+      controller.startAnimation();
+
+      expect(mockControls.update).toHaveBeenCalledTimes(1);
+      expect(callback).toHaveBeenCalledTimes(1);
+      expect(mockPostProcessing.render).not.toHaveBeenCalled();
+    });
+
+    it('renders normally when the render-skip predicate returns false', () => {
+      controller.setRenderSkipPredicate(() => false);
+      controller.startAnimation();
+
+      expect(mockPostProcessing.render).toHaveBeenCalledTimes(1);
+    });
+
+    it('renders normally when the render-skip predicate is cleared to null', () => {
+      controller.setRenderSkipPredicate(() => true);
+      controller.setRenderSkipPredicate(null);
+      controller.startAnimation();
+
+      expect(mockPostProcessing.render).toHaveBeenCalledTimes(1);
+    });
+
     it('should cancel animation frame on stop', () => {
       controller.startAnimation();
       controller.stopAnimation();
@@ -462,6 +494,50 @@ describe('AnimationController', () => {
 
       // Now should be idle
       expect(controller.isActive).toBe(false);
+    });
+
+    // The `hasContinuousCallbacks` clause of shouldContinueAnimating() is
+    // the entire reason both recording keep-alives work: startAnimation()
+    // arms the idle timer, nothing in a capture loop re-arms it, so a
+    // registered `continuous` callback is the only thing keeping the loop
+    // alive past the first two seconds of a capture.
+    it('should continue animation when a continuous per-frame callback is registered', () => {
+      mockControls.getAutoRotate.mockReturnValue(false);
+      mockPostProcessing.needsContinuousAnimation.mockReturnValue(false);
+
+      controller.addPerFrameCallback('keepalive', vi.fn(), { continuous: true });
+      controller.startAnimation();
+
+      vi.advanceTimersByTime(2000);
+
+      expect(controller.isActive).toBe(true);
+    });
+
+    // Negative control: an on-demand callback (the default) must NOT hold
+    // the loop open, or dynamic-clipping and the scale bar would defeat
+    // the whole idle-pause power optimization.
+    it('should NOT keep the loop alive for a non-continuous per-frame callback', () => {
+      mockControls.getAutoRotate.mockReturnValue(false);
+      mockPostProcessing.needsContinuousAnimation.mockReturnValue(false);
+
+      controller.addPerFrameCallback('on-demand', vi.fn());
+      controller.startAnimation();
+
+      vi.advanceTimersByTime(2000);
+
+      expect(controller.isActive).toBe(false);
+    });
+
+    // Registration alone is inert on a stopped loop — this is exactly why
+    // both recording paths must call startAnimation() explicitly.
+    it('registering a callback while stopped neither fires it nor starts the loop', () => {
+      const callback = vi.fn();
+
+      controller.addPerFrameCallback('keepalive', callback, { continuous: true });
+
+      expect(controller.isActive).toBe(false);
+      expect(callback).not.toHaveBeenCalled();
+      expect(mockControls.update).not.toHaveBeenCalled();
     });
 
     it('should reschedule check when continuous effects are active at timeout', () => {

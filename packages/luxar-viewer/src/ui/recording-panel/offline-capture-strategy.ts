@@ -12,8 +12,11 @@
  * be running (see the wake-up in `runOfflineCaptureLoop`). Each frame
  * is:
  * 1. Camera orbited by one step (quaternion rotation, same as auto-rotate)
- * 2. Scene rendered (full pipeline)
- * 3. Pixels read back (synchronous GPU stall — intentional)
+ * 2. Scene rendered (full pipeline, into the capture's own target)
+ * 3. Pixels read back asynchronously (PBO fence on WebGL2, mapAsync on
+ *    WebGPU) — the rAF loop keeps ticking through the await, which is
+ *    why the loop's own render is suppressed for the whole capture
+ *    (see the render-skip predicate wired in `core/app/init/pipeline`)
  * 4. Frame stored / encoded
  * 5. Brief yield to keep the browser responsive
  *
@@ -437,6 +440,14 @@ export class OfflineCaptureStrategy implements CaptureStrategy {
       cleanupOfflineOverlay();
       session.restoreAutoRotate();
       session.restoreRecordingState();
+      // Guarantee exactly one repaint after teardown. restoreRecordingState
+      // resizes the render target back, which clears the canvas, and the
+      // keep-alive callback is already gone by now — so a loop that is
+      // still stopped (or that the idle timer stops in the gap right after
+      // the resize) leaves the viewer blank until the next mouse move.
+      // The render-skip predicate reads `isOfflineCaptureActive`, cleared
+      // a few lines above, so this frame is a real render.
+      this.animationController.startAnimation();
       if (this.sessionAbort === sessionAbort) {
         this.sessionAbort = null;
       }

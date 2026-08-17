@@ -203,6 +203,16 @@ export class RecordingPanel {
     return this.session.isAnyCaptureActive();
   }
 
+  /**
+   * True only while the frame-by-frame offline capture loop is running.
+   * Narrower than `isCurrentlyRecording()`: the real-time MediaRecorder
+   * path records the canvas the animation loop paints, so callers that
+   * suppress rendering must key off THIS flag, not the general one.
+   */
+  isOfflineCaptureActive(): boolean {
+    return this.session.isOfflineCaptureActive;
+  }
+
   setPanelStateCallbacks(
     getStates: () => PanelStates,
     restoreStates: (states: PanelStates) => void

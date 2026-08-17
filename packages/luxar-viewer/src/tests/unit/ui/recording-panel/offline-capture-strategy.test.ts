@@ -142,8 +142,9 @@ function makeAnimController({ animating = false }: { animating?: boolean } = {})
     }),
     // Invoke the registered callback once synchronously to simulate a
     // single rendered frame (this is what drives applyOrbitRotation) —
-    // but only while the loop is actually animating.
-    addPerFrameCallback: vi.fn((_id: string, cb?: () => void) => {
+    // but only while the loop is actually animating. The options
+    // argument is recorded so `{ continuous: true }` is assertable.
+    addPerFrameCallback: vi.fn((_id: string, cb?: () => void, _opts?: unknown) => {
       if (isAnimating) cb?.();
     }),
     removePerFrameCallback: vi.fn(),
@@ -308,6 +309,18 @@ describe('OfflineCaptureStrategy', () => {
       // restarts a stopped one.
       expect(anim.startAnimation).toHaveBeenCalled();
 
+      // …and the keep-alive is the other half, load-bearing past the
+      // first two seconds: startAnimation() arms the idle timer and
+      // nothing in the capture loop re-arms it, so a `continuous`
+      // callback is the ONLY thing that stops the timer halting the
+      // loop mid-capture. Dropping the option (or the registration)
+      // re-creates the identical-frames bug for every frame after ~2s.
+      expect(anim.addPerFrameCallback).toHaveBeenCalledWith(
+        OfflineCaptureStrategy.KEEPALIVE_CALLBACK_ID,
+        expect.any(Function),
+        { continuous: true }
+      );
+
       // Frames 1..5 each advance one step — without the wake-up the
       // camera never moves and every captured frame is identical. The step
       // is 2π/6, so the six frames cover [0, 2π) and the last one stops
@@ -381,6 +394,26 @@ describe('OfflineCaptureStrategy', () => {
       expect(anim.removePerFrameCallback).toHaveBeenCalledWith(
         OfflineCaptureStrategy.KEEPALIVE_CALLBACK_ID
       );
+    });
+
+    it('re-wakes the rAF loop after teardown so the cleared canvas gets repainted', async () => {
+      const { sm } = makeSceneManager();
+      const session = makeSession();
+      const anim = makeAnimController();
+      const strat = new OfflineCaptureStrategy(sm, anim, makeHooks());
+
+      // Record the call order: the repaint has to come AFTER the state
+      // restore, because restoreRecordingState resizes the render target
+      // (which clears the canvas) and removes the keep-alive. Waking
+      // before it would leave the viewer blank until the next mouse move.
+      const order: string[] = [];
+      session.restoreRecordingState = vi.fn(() => order.push('restore'));
+      anim.startAnimation.mockImplementation(() => order.push('start'));
+
+      await strat.run(makeOpts(), 'turntable', session);
+
+      expect(order.at(-1)).toBe('start');
+      expect(order.at(-2)).toBe('restore');
     });
 
     it('sets and then clears isEXRSequenceRecording across an EXR run', async () => {
