@@ -8,7 +8,7 @@ The Luxar Rendering package provides a high-performance rendering pipeline built
 
 The default backend is `THREE.WebGLRenderer` (GLSL `ShaderMaterial`). `WebGPURenderer` (TSL `NodeMaterial`) is selectable via `?renderer=webgpu` or `VITE_LUXAR_USE_WEBGPU=1`; it falls back to its internal WebGL2 backend when no WebGPU adapter is available. Every TSL shader is validated against its GLSL counterpart through `tsl-shader-parity.spec.ts`. For diagnostics, `?renderer=webgpu&webgpu-force-webgl` constructs `WebGPURenderer({ forceWebGL: true })`: Luxar still uses TSL `NodeMaterial` shaders and the WebGPURenderer API surface, but Three.js routes rendering through its internal WebGL2 backend instead of native WebGPU.
 
-**The TSL half is lazily loaded.** Because WebGL is the default, the entire `three/webgpu` cone — the 9 TSL material classes and every TSL graph factory — sits behind a single `await import()` in `rendering/tsl/load.ts` and is fetched only when `selectBackend()` actually chooses WebGPU. That keeps ~173 kB gzipped off the initial payload for the default session (issue #1679). Consequences worth knowing before you edit a material: the `MaterialManager` dispatch tables hold **thunks**, not classes (`VISUAL_FACTORIES[kind][backend]()`); the `ShaderSource.webgpu` closures obtain their factory from `requireTslMaterials()` rather than importing it; `material-sync-helpers.ts` uses structural probes instead of `instanceof` on TSL classes; and a value import of `three/webgpu` outside `rendering/tsl/registry.ts` is an ESLint error. See `tsl/README.md`.
+**The TSL half is lazily loaded.** Because WebGL is the default, the entire `three/webgpu` cone — the 9 TSL material classes and every TSL graph factory — sits behind a single `await import()` in `rendering/tsl/load.ts` and is fetched only when `selectBackend()` actually chooses WebGPU. That keeps ~173 kB gzipped off the initial payload for the default session (issue #1679). Consequences worth knowing before you edit a material: the `MaterialManager` dispatch tables hold **thunks**, not classes (`VISUAL_FACTORIES[kind][backend]()`); the `ShaderSource.webgpu` closures obtain their factory from `requireTslMaterials()` rather than importing it; `material-sync-helpers.ts` uses structural probes instead of `instanceof` on TSL classes; and a value import of `three/webgpu` from production code outside the lazy cone — `rendering/tsl/registry.ts` and the `*-tsl` / `*.tsl` modules it owns — is an ESLint error (`src/tests/**` is exempt: it ships nothing, and the parity harness drives the WebGPU path directly). See `tsl/README.md`.
 
 ### Key Features
 
@@ -35,7 +35,7 @@ rendering/
 ├── blending-state.ts                   # THREE blending state for every Luxar mode
 ├── material-colormap-helpers.ts        # Shared scalar-colormap guards and uniform helpers
 ├── material-sync-helpers.ts            # Geometry-commit material sync helpers
-├── tsl/                                # The lazy three/webgpu boundary — registry.ts (sole importer) + load.ts (sole `await import()`) + slot.ts (zero-import accessor). See tsl/README.md.
+├── tsl/                                # The lazy three/webgpu boundary — registry.ts (sole entry to the cone) + load.ts (sole `await import()`) + slot.ts (zero-runtime-import accessor). See tsl/README.md.
 ├── display-range.ts                    # Pure display-window ↔ shader intensity/offset math + resolveColormapWindow (shared by all 3 node factories)
 
 ├── line-geometry.ts                    # Line quad base + 6-texel layout/texel writer + mesh create/update

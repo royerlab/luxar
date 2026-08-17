@@ -1,5 +1,5 @@
 /**
- * The holder for the lazily-loaded TSL registry — a zero-import leaf.
+ * The holder for the lazily-loaded TSL registry — a zero-runtime-import leaf.
  *
  * Split from `load.ts` for one structural reason: the `ShaderSource.webgpu`
  * closures in the GLSL shader modules need `requireTslMaterials()`, and if that

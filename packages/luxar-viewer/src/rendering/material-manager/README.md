@@ -71,8 +71,8 @@ MaterialManager (class)
 
 ## See also
 
-- `../README.md` — package-level overview, the 12-shader matrix, and
-  the "5. Material Manager" section with usage examples.
+- `../README.md` — package-level overview and the "6. Material Manager"
+  section with usage examples.
 - `../material-manager.ts` — the orchestrator class these helpers serve.
 - `../materials/` and `../picking/` — the visual and picking material
   classes the factory tables instantiate.

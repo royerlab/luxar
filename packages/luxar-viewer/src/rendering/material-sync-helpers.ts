@@ -71,7 +71,11 @@ function hasMethod<K extends string>(
 function isPointSyncTarget(
   m: THREE.Material | null | undefined
 ): m is THREE.Material & PointSyncTarget {
-  return hasMethod(m, 'updatePointTexture') && hasMethod(m, 'updateHasElementAlpha');
+  return (
+    hasMethod(m, 'updatePointTexture') &&
+    hasMethod(m, 'updateRadiusScale') &&
+    hasMethod(m, 'updateHasElementAlpha')
+  );
 }
 
 function isPointPickSyncTarget(

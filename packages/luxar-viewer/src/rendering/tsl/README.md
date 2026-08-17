@@ -15,11 +15,11 @@ that never ran.
 
 ## Module map
 
-| File          | Role                                                                                                                                                                                               |
-| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `registry.ts` | The **only** module in `src/` allowed to name `three/webgpu` / `three/tsl` as a value. Gathers the 9 TSL material classes and every TSL graph factory into one `TSL_REGISTRY` value.               |
-| `load.ts`     | The **only** module that imports `registry.ts`, via `await import()`. That single dynamic edge is what makes the chunk lazy. Memoized and concurrency-safe; re-loadable after a transient failure. |
-| `slot.ts`     | Zero-import leaf holding the loaded registry. `requireTslMaterials()` for synchronous consumers.                                                                                                   |
+| File          | Role                                                                                                                                                                                                                                                                                                                  |
+| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `registry.ts` | The designated entry to the lazy cone: the `*-tsl` / `*.tsl` modules that name `three/webgpu` / `three/tsl` as values are reachable only through it in production (the e2e TSL harness imports a few of them directly). Gathers the 9 TSL material classes and every TSL graph factory into one `TSL_REGISTRY` value. |
+| `load.ts`     | The **only** module that imports `registry.ts` at runtime, via `await import()` (`slot.ts`'s import is type-only and erased). That single dynamic edge is what makes the chunk lazy. Memoized and concurrency-safe; re-loadable after a transient failure.                                                            |
+| `slot.ts`     | Zero-runtime-import leaf holding the loaded registry. `requireTslMaterials()` for synchronous consumers.                                                                                                                                                                                                              |
 
 ## Why `slot.ts` is separate from `load.ts`
 
@@ -31,7 +31,7 @@ lived in `load.ts`, those modules would gain a graph edge to
 import breaks it at runtime, but `no-circular` in `.dependency-cruiser.cjs` is
 error-severity and counts a dynamic edge like any other — rightly, since a cycle
 that only works because of import timing is what that rule exists to prevent.
-So the accessor sits in a leaf that imports nothing.
+So the accessor sits in a leaf that imports nothing at runtime.
 
 ## The ordering contract
 

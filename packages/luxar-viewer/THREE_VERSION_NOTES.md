@@ -49,8 +49,9 @@ call or a downgrade of type safety at that site.
 ## Why the runtime is still on r184
 
 The obvious resolution is to move the runtime up so both sit at r185. That was
-attempted and **reverted**: r185 breaks the TSL / WebGPU path. Measured on the
-same machine, same specs, with the `three` version as the only variable:
+attempted and **reverted**: r185 broke the TSL / WebGPU path. Measured on the
+same machine, same specs, with the `three` version as the only variable —
+**before the #1683 fix, so these numbers are stale and describe the old code**:
 
 | `three` | `tsl-shader-parity` + `tsl-codegen-snapshot` |
 | ------- | -------------------------------------------- |
@@ -61,7 +62,10 @@ The failures are behavioural, not tolerance drift — most starkly
 `gsplat-pick-surface`, where the TSL side renders **zero pixels**. Full detail,
 including the other three and a reproduction, is in the tracking issue.
 
-👉 **Blocking issue: #1683.** Until it is resolved, `three` stays at `~0.184.0`.
+👉 **#1683 is fixed** — the pick shaders no longer depend on which fragment
+entry point three builds first, which is what the r185 order flip changed. So it
+is no longer the blocker. What is left before a bump is re-running the A/B above
+against the fixed code: `three` stays at `~0.184.0` until someone does.
 
 ## Why tilde, not caret
 
@@ -101,15 +105,19 @@ These are the Three.js surfaces the viewer uses directly:
 
 Trigger an explicit `~0.185.0` (or higher) bump only when:
 
-1. #1683 is resolved, **and** one of:
+1. the r185 A/B has been re-run against the post-#1683 code and is clean,
+   **and** one of:
 2. Three.js releases notes for a stable WebGPU API surface, or
 3. Luxar needs a specific rendering or TSL feature only present in a newer minor.
 
-A bump means:
+A bump means editing the ranges by hand — `three` is a `peerDependencies` entry,
+not a dependency, so `pnpm add three@…` would wrongly create a `dependencies`
+entry, and `-E`/`--save-exact` would drop the tilde this file argues for:
 
 ```bash
-pnpm add three@~0.185.0 -E
-pnpm add -D @types/three@~0.185.0 -E
+# package.json: peerDependencies.three  -> "~0.185.0"
+# package.json: devDependencies["@types/three"] -> "~0.185.1" (keep in step)
+pnpm install
 pnpm typecheck
 pnpm test --run
 pnpm playwright test  # full E2E, not just the mega-shader spec

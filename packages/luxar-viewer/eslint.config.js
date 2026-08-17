@@ -63,7 +63,9 @@ export default [
             {
               name: 'three/webgpu',
               message:
-                'Import three/webgpu only in src/rendering/tsl/registry.ts. Elsewhere, get the ' +
+                'Import three/webgpu only inside the lazy cone rooted at ' +
+                'src/rendering/tsl/registry.ts — that is, from the *-tsl / *.tsl modules it ' +
+                'gathers, not from registry.ts itself. Elsewhere, get the ' +
                 'class from requireTslMaterials() in rendering/tsl/slot.ts (loaded by ' +
                 'loadTslMaterials()), or use `import type` if you only need the type. See #1679.',
               allowTypeImports: true,
@@ -82,9 +84,10 @@ export default [
     },
   },
   {
-    // The lazy cone itself. `registry.ts` is the designated importer of
-    // `three/webgpu`; the `*-tsl` / `*.tsl` modules it pulls in are the TSL
-    // implementations and necessarily name `three/tsl` and `NodeMaterial`.
+    // The lazy cone itself. `registry.ts` is the designated entry to the cone
+    // and imports neither subpath itself; the `*-tsl` / `*.tsl` modules it pulls
+    // in are the TSL implementations and necessarily name `three/webgpu` /
+    // `three/tsl` and `NodeMaterial`.
     // They are reachable ONLY through registry.ts's dynamic-import boundary,
     // which is the property that actually matters and is verified against the
     // built bundle by `scripts/check-eager-chunks.mjs`.
