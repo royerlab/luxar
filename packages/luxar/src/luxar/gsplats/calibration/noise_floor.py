@@ -174,7 +174,11 @@ def estimate_floor(V: np.ndarray, method: str = "mode") -> float:
     if method != "mode":
         raise ValueError(f"estimate_floor: unknown method {method!r}")
     hi = float(np.percentile(Vf, 95.0))
-    hist, edges = np.histogram(Vf[Vf <= hi], bins=512)
+    # Histogram in float64: on a float32 volume whose background sits at a large
+    # offset, 512 bins across the sub-p95 band are narrower than float32 spacing and
+    # np.histogram raises "Too many bins for data range". float64 has the dynamic
+    # range to place them; the mode is unchanged on data float32 could already bin (#1671).
+    hist, edges = np.histogram(Vf[Vf <= hi].astype(np.float64, copy=False), bins=512)
     i = int(hist.argmax())
     mode = 0.5 * (float(edges[i]) + float(edges[i + 1]))
     return float(min(mode, float(np.median(Vf))))

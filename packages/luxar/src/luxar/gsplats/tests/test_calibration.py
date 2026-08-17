@@ -1213,6 +1213,17 @@ class TestEstimateFloor:
         # Padding is excluded, so the estimate still lands on the pedestal.
         assert floor == pytest.approx(110.0, abs=4.0)
 
+    def test_float32_high_offset_narrow_band(self) -> None:
+        # A float32 background at a large offset makes 512 bins across the sub-p95
+        # band narrower than float32 spacing; np.histogram used to raise "Too many
+        # bins for data range". The estimator must histogram in float64 and still
+        # land on the offset (#1671).
+        rng = np.random.default_rng(0)
+        V = (30000.0 + rng.random((16, 64, 64))).astype(np.float32)
+        V[8, 32, 32] = 40000.0  # a lone bright voxel above the narrow background
+        floor = estimate_floor(V, method="mode")
+        assert floor == pytest.approx(30000.0, abs=2.0)
+
     def test_unknown_method_raises(self) -> None:
         V = self._pedestal_volume()
         with pytest.raises(ValueError):
