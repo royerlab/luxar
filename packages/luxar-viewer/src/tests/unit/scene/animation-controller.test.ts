@@ -410,6 +410,26 @@ describe('AnimationController', () => {
       expect(manager.prepareIdleFrame).not.toHaveBeenCalled();
     });
 
+    // The idle restore is the loop's OTHER render call site, so the
+    // render-skip predicate has to reach it too — and BEFORE
+    // prepareIdleFrame(), which resizes (clearing the canvas) on its way
+    // to returning true. Rendering here mid-capture would paint a
+    // native-DPR frame through the capture scrim; resizing and then not
+    // rendering would leave the canvas blank with nothing to repaint it.
+    it('skips the idle restore — resize included — while the render-skip predicate is on', () => {
+      const manager = makeDPRManagerStub();
+      controller.setAdaptiveDPRManager(manager as never);
+      controller.setRenderSkipPredicate(() => true);
+      controller.startAnimation();
+      mockPostProcessing.render.mockClear();
+
+      vi.advanceTimersByTime(2000);
+
+      expect(controller.isActive).toBe(false); // loop still pauses
+      expect(manager.prepareIdleFrame).not.toHaveBeenCalled();
+      expect(mockPostProcessing.render).not.toHaveBeenCalled();
+    });
+
     it('skips the idle restore while the context is lost', () => {
       const manager = makeDPRManagerStub();
       controller.setAdaptiveDPRManager(manager as never);

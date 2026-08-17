@@ -15,10 +15,13 @@ and every per-frame callback still run each tick — the depth-sort scheduler an
 LOD group selector have to follow the orbiting camera, which is why the loop must run
 in the first place. The suppression is offline-only: the real-time recording path
 records the canvas the loop paints, and silencing it there would produce an empty
-video. The trade-off is that the viewport behind the translucent capture overlay is
-no longer live for the duration of the capture — the overlay's own preview canvas
-shows each captured frame instead, and an EXR sequence never sets that preview, so it
-shows only the frame counter.
+video. The trade-off is stated plainly: the viewport behind the translucent capture
+overlay goes dark for the duration, not merely static — bringing the capture
+resolution up already resized the render target, which cleared the canvas, and now
+nothing repaints it. Progress is the overlay's own preview canvas, which shows each
+captured frame; an EXR sequence never sets that preview, so it shows the frame counter
+alone. That is what the viewport looked like before the loop was woken for a capture
+at all, minus the flicker.
 
 The capture's teardown also guarantees a repaint now. Restoring the recording state
 resizes the render target back, which clears the canvas, and by that point the

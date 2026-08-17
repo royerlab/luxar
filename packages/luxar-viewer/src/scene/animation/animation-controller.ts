@@ -329,10 +329,25 @@ export class AnimationController {
       // render ONE frame directly — NOT via startAnimation(), which
       // would re-arm the idle timer and feed native-DPR frames back
       // into the FPS evaluator.
+      //
+      // The render-skip predicate is checked here too — this is the
+      // loop's OTHER render call site, and the predicate's claim is
+      // "nobody but the pipeline's current owner may draw", not "the
+      // animate() path may not draw". Today it is redundant (a capture
+      // disables adaptive DPR, so isActive() is already false, and the
+      // idle-restore predicate is off for the whole capture), but the
+      // guard that makes it redundant lives in another file: drop
+      // `disableDPR` from the capture's saveRecordingState and this
+      // would paint a native-DPR frame through the capture scrim,
+      // possibly inside the raw-HDR window. It must come BEFORE
+      // prepareIdleFrame(), which RESIZES on its way to returning true
+      // — skipping the render after that resize would leave the canvas
+      // cleared with nothing to repaint it.
       if (
         this.adaptiveDPRManager?.isActive?.() &&
         this.canRestoreAtIdle?.() !== false &&
         !this.isContextLost?.() &&
+        !this.shouldSkipRender?.() &&
         this.adaptiveDPRManager.prepareIdleFrame?.()
       ) {
         this.postProcessing.render();

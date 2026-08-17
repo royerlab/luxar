@@ -160,6 +160,15 @@ through the translucent overlay, once per captured frame. The predicate
 is offline-only: the real-time MediaRecorder path records the canvas the
 loop paints, so suppressing its render there would yield an empty video.
 
+What the user sees behind the scrim for the duration is a DARK viewport,
+not a frozen frame: step 3's resolution scaling already resized the
+render target (which clears the canvas) and nothing repaints it after
+that. The overlay's preview canvas is the progress feedback — it shows
+each captured frame, except on the EXR path, which never calls
+`setPreview` and therefore shows the counter alone. Do not "fix" the
+dark viewport by rendering into it mid-capture: that is the flicker
+described above.
+
 Step 10's second wake-up closes the tail: `restoreRecordingState()`
 resizes the render target back (clearing the canvas) after the keep-alive
 is gone, so without it a still-stopped loop — or one the idle timer halts
