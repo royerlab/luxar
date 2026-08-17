@@ -201,9 +201,11 @@ export function meshPickWebGPUFactory(
   const nearFade: TSLNode = float(0.0).toVar('meshPickNearFade');
   // Read by BOTH entry points — the brightness select in the prologue below and the
   // cutout `Discard` in `colorNode` — so it is an explicit var assigned in the
-  // prologue like the rest. As a free-standing comparison node it happened to survive
-  // only because a select's condition is emitted before its `if`, i.e. by the same
-  // build-order accident the prologue exists to stop depending on.
+  // prologue like the rest. As a free-standing comparison it was materialised anyway
+  // (three gives a select's condition its own `bool`), so it survived r184 only
+  // because the colour flow built first and the cutout `Discard` put that assignment
+  // at top level there — the same build-order accident the prologue exists to stop
+  // depending on. Depth-first, it lands in the arm and the discard reads `false`.
   const cutoutOn: TSLNode = bool(false).toVar('meshPickCutout');
   const brightness: TSLNode = float(0.0).toVar('meshPickBrightness');
 
