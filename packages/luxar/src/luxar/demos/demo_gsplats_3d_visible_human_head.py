@@ -35,13 +35,28 @@ U.S. National Library of Medicine — The Visible Human Project® (Male).
 
 SELF-CONTAINED / CACHING
 ------------------------
-On a fresh machine this demo bootstraps itself with no manual steps:
-  1. Fast path: a precomputed fit + per-splat colors shipped via Git LFS
-     (``demos/data/gsplats_visible_human_head/``).
-  2. If those assets aren't pulled, it AUTOMATICALLY downloads the 377 color
-     slices (~1.1 GB) to ``~/.cache/luxar/gsplats_visible_human_head/``, builds
-     the masked RGB volume, fits luminance on the GPU, samples colors, and caches
-     the result — so subsequent runs are instant.
+The colors sidecar is indexed positionally against the fit, and the cache goes
+through ``save_with_lod`` (a streaming ladder whose rungs are each written in
+hilbert order), which reorders splats — so the colors are sampled from the SAVED
+store's own order (save → reload → sample), never from the in-memory fit. On load
+the pair is verified against that invariant (splats sharing a voxel must share a
+color); a mismatched pair is reported and refitted rather than rendered.
+
+NO WORKING FAST PATH TODAY (#1670): the shipped ``vh_head_colors.npz`` was
+sampled in the pre-save splat order and does NOT correspond to the shipped
+``vh_head.gsplats.zarr.zip`` (measured same-voxel agreement 0.00097 over
+1,911,192 splats). The guard therefore REJECTS the shipped pair and every run
+falls through to the download-and-refit path below, until the artifact is
+regenerated. So on a fresh machine this demo bootstraps itself with no manual
+steps, but not instantly:
+  1. It downloads the 377 color slices (~1.1 GB) to
+     ``~/.cache/luxar/gsplats_visible_human_head/``, builds the masked RGB
+     volume, fits luminance on the GPU, caches the fit, then reloads it and
+     samples the colors from the stored splat order — so subsequent runs load
+     that (verified) local pair instantly.
+  2. The shipped Git LFS assets in ``demos/data/gsplats_visible_human_head/``
+     become the fast path again as soon as the sidecar is regenerated against
+     the store it ships with.
 ``--recompute`` forces the download + build + fit path.
 
 USAGE
@@ -59,8 +74,20 @@ DEMO_META = {
     "category": "medical",
     "geometry": "gsplats",
     "requirements": {
-        "download_mb": 25,
-        "compute": "medium",
+        # 1100, not 25: the shipped `vh_head_colors.npz` sidecar does not
+        # correspond to the shipped fit (#1670), so the guard rejects the pair
+        # and the DEFAULT path is the full ~1.1 GB cryosection download + refit.
+        # Restore 25 once the artifact is regenerated (and the shipped pair
+        # passes `_colors_match_fit`). Read by `luxar demo run-all`, whose
+        # `--max-download-mb` default of 200 now skips this demo — correctly, it
+        # really does download 1.1 GB unattended.
+        "download_mb": 1100,
+        # "heavy", not "medium", for the same reason and with the same expiry:
+        # the default path today is a progressive fit of up to 4M splats over a
+        # ~10 GB RGB volume, not a cached load. Restore "medium" together with
+        # the 25 above once the artifact is regenerated.
+        "compute": "heavy",
+        # Still "optional": the fit genuinely runs on CPU (slowly).
         "gpu": "optional",
         "local_data": "git-lfs",
     },
@@ -80,6 +107,7 @@ from luxar.demos import (
     is_lfs_pointer,
     launch_viewer,
     parse_demo_flags,
+    voxel_sampled_payload_agreement,
     warn_if_no_cuda_gpu,
 )
 from luxar.demos._lod_policy import save_with_lod
@@ -120,6 +148,21 @@ PSNR_PATIENCE = 0.1
 # Display brightness: volumetric compositing bounds the sum, but this dense
 # head still reads hot, so scale amplitudes down to keep the core from clipping.
 SCENE_INTENSITY = 0.008
+
+# Minimum same-voxel color agreement for a cached/shipped (fit, colors) pair to be
+# trusted. Aligned data scores exactly 1.000. DO NOT LOOSEN THIS — the gate is
+# deliberately tight, because the interesting failures are NEAR MISSES rather
+# than full shuffles: a different space-filling curve, or a changed within-voxel
+# tie-break, lands at 0.90-0.97 (measured on the CT demo's shipped pair, whose
+# aligned sidecar can be permuted the way each mistake would have written it:
+# the writer's own morton order instead of hilbert 0.901, roll-by-one 0.955,
+# adjacent-pair swap 0.962 — the worst case the constant has to stay above).
+# Only a FULL shuffle falls to the payload's own chance level Σp², which is
+# payload-dependent and is NOT what the threshold is set against: 1.4e-05 for
+# this demo's sampled uint8 RGB (measured over the 1,911,192 rows of the shipped
+# `vh_head_colors.npz`; an actual full shuffle of it scores 2.85e-05), against
+# 0.027 for the CT demo's 117 organ labels.
+MIN_COLOR_AGREEMENT = 0.99
 
 # Physical voxel spacing of the NLM VHM color cryosections: 1.0 mm axial (slice
 # spacing) vs ~0.33 mm in-plane. The assembly resamples to physically-cubic
@@ -331,8 +374,81 @@ def _load_colors_f32(path: Path) -> np.ndarray:
     return c.astype(np.float32) / 255.0 if c.dtype == np.uint8 else c.astype(np.float32)
 
 
+def _colors_match_fit(fit: GSplatData, colors: np.ndarray, source: str) -> bool:
+    """Is this (fit, colors) pair positionally aligned? Reports why if not.
+
+    The colors are indexed positionally against the fit, so a sidecar written in a
+    different splat order than the store is silently wrong — every splat renders
+    some other splat's color. Both were sampled nearest-voxel, so splats sharing a
+    voxel must share a color — see ``voxel_sampled_payload_agreement``.
+    """
+    if len(colors) != len(fit.centers):
+        aprint(
+            f"{source}: {len(colors):,} colors for {len(fit.centers):,} splats "
+            "— the sidecar does not belong to this fit."
+        )
+        return False
+    agreement = voxel_sampled_payload_agreement(fit.centers, colors)
+    if agreement is None:
+        # Too little evidence to judge — accepted (rejecting would force a
+        # multi-GB refit on every sparse fit), but never silently.
+        aprint(
+            f"{source}: too few same-voxel splats to check the color order "
+            "— the pair is accepted UNVERIFIED."
+        )
+        return True
+    if agreement < MIN_COLOR_AGREEMENT:
+        aprint(
+            f"{source}: same-voxel color agreement {agreement:.3f} < "
+            f"{MIN_COLOR_AGREEMENT} — the colors are not in the fit's splat order."
+        )
+        return False
+    return True
+
+
+def save_and_sample_colors(
+    fit: GSplatData, rgb_vol: np.ndarray
+) -> tuple[GSplatData, np.ndarray]:
+    """Cache the fit, then sample the per-splat colors in the STORE's own order.
+
+    The writer reorders splats — ``save_with_lod`` splits them into a streaming
+    ladder and each rung is written spatially (``ordering="hilbert"``) — so
+    sampling the RGB volume at the in-memory fit's centers would produce a sidecar
+    that no longer lines up with what ``load`` hands back. Saving first and
+    sampling the RELOADED centers makes the pair aligned by construction under any
+    writer ordering, and makes this path return exactly what the cached path will
+    load next run — including the uint8 quantization of the colors.
+    Returns ``(stored_fit, colors)``.
+    """
+    CACHE_FIT.parent.mkdir(parents=True, exist_ok=True)
+    save_with_lod(
+        fit,
+        CACHE_FIT,
+        # `stream`, not `levels`: the head IS a large orbited single object, but
+        # the scene is built from explicit `centers=`/`amplitudes=` arrays plus
+        # the per-splat colours sidecar, and `add_gsplats` writes a flat leaf —
+        # so a substitutive ladder would cost the ~38% extra bytes recorded in
+        # `_lod_policy` and be discarded before the viewer ever saw it. Carrying
+        # the levels into the scene needs the colours to live on the
+        # `GSplatData` so the whole fit can go through `add_gsplats_from_data`;
+        # until then `stream` is the honest choice.
+        recipe="stream",
+        encoding_mode=EncodingMode.MEMORY,  # uint8 Cholesky — smallest on-disk
+        include_fitting_info=True,
+        compress="zip",
+        zip_deflate=True,
+    )
+    stored = GSplatData.load(CACHE_FIT, include_stats=False)
+    with asection("Sampling per-splat colors from the RGB volume"):
+        colors = sample_colors(rgb_vol, stored.centers)
+    _save_colors_u8(colors, CACHE_COLORS)
+    # Read the sidecar back so the recompute path matches the shipped/cached path
+    # exactly (both render the quantized colors).
+    return stored, _load_colors_f32(CACHE_COLORS)
+
+
 def fit_head(rgb_vol: np.ndarray, acquisition=None) -> tuple[GSplatData, np.ndarray]:
-    """Fit luminance, sample per-splat colors, cache both. Returns (fit, colors)."""
+    """Fit luminance, cache, reload, sample colors; returns ``(stored_fit, colors)``."""
     global DEVICE
     if DEVICE is None:
         DEVICE = detect_device()
@@ -360,32 +476,7 @@ def fit_head(rgb_vol: np.ndarray, acquisition=None) -> tuple[GSplatData, np.ndar
         )
         aprint(f"Fitted {len(result.amplitudes):,} splats")
 
-    with asection("Sampling per-splat colors from the RGB volume"):
-        colors = sample_colors(rgb_vol, result.centers)
-
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    save_with_lod(
-        result,
-        CACHE_FIT,
-        # `stream`, not `levels`: the head IS a large orbited single object, but
-        # the scene is built from explicit `centers=`/`amplitudes=` arrays plus
-        # the per-splat colours sidecar, and `add_gsplats` writes a flat leaf —
-        # so a substitutive ladder would cost the ~38% extra bytes recorded in
-        # `_lod_policy` and be discarded before the viewer ever saw it. Carrying
-        # the levels into the scene needs the colours to live on the
-        # `GSplatData` so the whole fit can go through `add_gsplats_from_data`;
-        # until then `stream` is the honest choice.
-        recipe="stream",
-        encoding_mode=EncodingMode.MEMORY,  # uint8 Cholesky — smallest on-disk
-        include_fitting_info=True,
-        compress="zip",
-        zip_deflate=True,
-    )
-    _save_colors_u8(colors, CACHE_COLORS)
-    # Round-trip through uint8 so the recompute path matches the shipped/cached
-    # path exactly (both render the quantized colors).
-    colors = np.clip(np.rint(colors * 255.0), 0, 255).astype(np.float32) / 255.0
-    return result, colors
+    return save_and_sample_colors(result, rgb_vol)
 
 
 def load_or_build() -> tuple[GSplatData, np.ndarray]:
@@ -395,8 +486,11 @@ def load_or_build() -> tuple[GSplatData, np.ndarray]:
         if CACHE_FIT.exists() and CACHE_COLORS.exists():
             aprint("  Using cached fit + colors")
             fit = GSplatData.load(CACHE_FIT, include_stats=False)
-            return fit, _load_colors_f32(CACHE_COLORS)
-        # shipped LFS assets
+            colors = _load_colors_f32(CACHE_COLORS)
+            if _colors_match_fit(fit, colors, f"{CACHE_FIT} + {CACHE_COLORS}"):
+                return fit, colors
+        # shipped LFS assets (also retried when the cached pair was rejected —
+        # the copy overwrites a cache that has already been judged unusable)
         if (
             LFS_FIT.exists()
             and LFS_COLORS.exists()
@@ -404,16 +498,33 @@ def load_or_build() -> tuple[GSplatData, np.ndarray]:
             and not is_lfs_pointer(LFS_COLORS)
         ):
             aprint("  Copying shipped fit + colors from package data to cache")
-            import shutil
+            from luxar.utils.atomic_copy import atomic_copy_file
 
             CACHE_DIR.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(LFS_FIT, CACHE_FIT)
-            shutil.copy2(LFS_COLORS, CACHE_COLORS)
+            # Atomic (temp sibling + rename), not `shutil.copy2`: a Ctrl-C
+            # mid-copy would otherwise leave a truncated file under the canonical
+            # cache name, and the cache door above calls `GSplatData.load` on it
+            # with no `try` — so a half-written zip kills every later run until
+            # the user deletes the cache by hand.
+            atomic_copy_file(LFS_FIT, CACHE_FIT)
+            atomic_copy_file(LFS_COLORS, CACHE_COLORS)
             fit = GSplatData.load(CACHE_FIT, include_stats=False)
-            return fit, _load_colors_f32(CACHE_COLORS)
+            colors = _load_colors_f32(CACHE_COLORS)
+            if _colors_match_fit(fit, colors, f"{LFS_FIT} + {LFS_COLORS}"):
+                return fit, colors
+        # A rejected pair triggers a FULL refit, not a cheap re-sample of the
+        # assembled volume at the stored centers, even though that would be far
+        # cheaper (no fit, just the ~1.1 GB assembly). The reason is that a
+        # re-sample cannot be VERIFIED by this guard: splats sharing a voxel share
+        # an index in any coordinate frame whatsoever, so a re-sample taken in the
+        # wrong frame (a different crop box, a different resample factor — exactly
+        # the parameters that drift between the shipped artifact and today's code)
+        # still scores agreement 1.0. It would need its own, separate guard; until
+        # one exists, refitting is the only outcome this file can vouch for.
         aprint(
-            "Precomputed fit not available (Git LFS assets not pulled). "
-            "Falling back to download + fit (one-time; result is cached)."
+            "Precomputed fit not available (Git LFS assets not pulled, or the "
+            "cached/shipped fit and its colors sidecar disagree). Falling back to "
+            "download + fit (one-time; result is cached)."
         )
 
     warn_if_no_cuda_gpu()
