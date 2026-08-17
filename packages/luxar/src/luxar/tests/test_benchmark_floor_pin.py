@@ -69,11 +69,12 @@ one needs no pin anyway: ``calibrate`` subtracts the floor from ``V`` ONCE up
 front and then pins its own per-K fits to ``floor="none"``
 (``luxar/gsplats/calibration/driver.py``), so fit target, render reference and
 held-out truth all sit on one floored basis — self-consistent, unlike an
-original-referenced benchmark. (It also takes the spec inside ``fit_kwargs``
-rather than as a keyword, so a keyword check could not see it either. So does
-:func:`luxar.gsplats.planner.fit_planned`, a module-level fit driver a benchmark
-could plausibly call, whose ``fit_kwargs["floor"]`` must already be a concrete
-level or ``"none"``; it is unlisted and unguarded for that same reason.)
+original-referenced benchmark. (``calibrate`` also takes the spec inside a
+``fit_kwargs`` *dict parameter* rather than as a keyword, so a keyword check
+could not see it either. :func:`luxar.gsplats.planner.fit_planned` reads the
+same way at a glance but does not behave that way — it collects ``**fit_kwargs``,
+so a ``floor=`` written at its call site is plainly visible here and honoured at
+fit time; it is guarded, see :data:`GUARDED_NAMES`.)
 
 *Anything outside ``scripts/``.* ``scripts/`` is the line because these are the
 harnesses whose numbers are consumed as machine verdicts — an autoresearch
@@ -120,11 +121,21 @@ SCRIPTS_DIR = PROJECT_ROOT / "scripts"
 #: against the raw volume is the original bug again, silently. The requirement is
 #: satisfiable on them precisely because they *have* the keyword.
 #:
-#: ``fit_tiled_parallel`` itself is for that same reason deliberately NOT listed:
-#: it is keyword-only with no ``floor`` parameter and no ``**kwargs``, so
-#: demanding ``floor=`` there would order an author to write a call that raises
-#: ``TypeError``. Its per-tile floor only ever travels through the caller's
-#: ``worker_cmd_builder`` — i.e. through one of the two builders above.
+#: ``fit_planned`` (``luxar/gsplats/planner/fit_planned.py``) collects
+#: ``**fit_kwargs`` and forwards them to a per-box ``fit_gaussian_splats``, so a
+#: ``floor=`` at its call site is both visible here and honoured at fit time —
+#: the same mechanism as ``fit_progressive_gaussian_splats``. It needs the
+#: declaration more than most: with no floor in ``fit_kwargs`` every box
+#: re-estimates ``auto`` against its own crop, which its own docstring warns
+#: leaves visible brightness steps at box boundaries, so the value declared there
+#: has to be a concrete level or ``"none"``.
+#:
+#: ``fit_tiled_parallel`` and ``fit_planned_parallel`` are deliberately NOT
+#: listed: both are keyword-only with no ``floor`` parameter and no
+#: ``**kwargs``, so demanding ``floor=`` there would order an author to write a
+#: call that raises ``TypeError``. Their per-tile/per-box floor only ever travels
+#: through the caller's ``worker_cmd_builder`` — i.e. through one of the two
+#: builders above.
 GUARDED_NAMES: frozenset[str] = frozenset(
     {
         "fit_gaussian_splats",
@@ -132,6 +143,7 @@ GUARDED_NAMES: frozenset[str] = frozenset(
         "fit_tile",
         "fit_tiled",
         "fit_tiled_gaussian_splats",
+        "fit_planned",
         "build_worker_cmd",
         "_default_worker_cmd_builder",
     }
@@ -452,11 +464,32 @@ scaler.fit_transform(X)
 """
 
 # fit_tiled_parallel has no floor parameter and no **kwargs, so `floor=` there
-# is a TypeError, not a pin: the gate must NOT ask for one.
+# is a TypeError, not a pin: the gate must NOT ask for one. Same for
+# fit_planned_parallel, whose per-box floor travels through its cmd builder.
 _PARALLEL_UNPINNED = """
 from luxar.gsplats.fit_tiled_parallel import fit_tiled_parallel
 
 data = fit_tiled_parallel(num_tiles=4, jobs=2, worker_cmd_builder=build)
+"""
+
+_PLANNED_PARALLEL_UNPINNED = """
+from luxar.gsplats.planner.fit_planned_parallel import fit_planned_parallel
+
+data = fit_planned_parallel(plan, jobs=2, tmp_dir=tmp, worker_cmd_builder=build)
+"""
+
+# fit_planned DOES take the spec — inside **fit_kwargs, forwarded to a per-box
+# fit_gaussian_splats — so a floor= at the call site is visible and honoured.
+_PLANNED_UNPINNED = """
+from luxar.gsplats.planner.fit_planned import fit_planned
+
+data = fit_planned(V, plan, device="cuda")
+"""
+
+_PLANNED_PINNED = """
+from luxar.gsplats.planner.fit_planned import fit_planned
+
+data = fit_planned(V, plan, floor="none", device="cuda")
 """
 
 
@@ -481,6 +514,9 @@ data = fit_tiled_parallel(num_tiles=4, jobs=2, worker_cmd_builder=build)
         ("public fit_tiled alias", _ALIAS_UNPINNED, 1),
         ("unrelated .fit()", _NOT_A_FITTER, 0),
         ("fit_tiled_parallel (argv floor)", _PARALLEL_UNPINNED, 0),
+        ("fit_planned_parallel (argv floor)", _PLANNED_PARALLEL_UNPINNED, 0),
+        ("fit_planned unpinned", _PLANNED_UNPINNED, 1),
+        ("fit_planned pinned", _PLANNED_PINNED, 0),
     ],
 )
 def test_detector_on_planted_sources(label: str, source: str, expected: int) -> None:
