@@ -70,7 +70,7 @@ DEMO_META = {
         "gpu": "none",
         "local_data": "git-lfs",
     },
-    "caches": [],
+    "caches": ["dipc_genome"],
     "outputs": ["dipc_3d_genome"],
 }
 

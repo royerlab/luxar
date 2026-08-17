@@ -69,6 +69,10 @@ import numpy as np
 import torch
 from arbol import aprint, asection
 
+from luxar.gsplats.fitting.results import (
+    lift_source_grid_stats,
+    stamp_voxels_per_splat,
+)
 from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData
 from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
 
@@ -121,6 +125,81 @@ def _compute_psnr_chunked(
         return float("inf")
 
     return 10.0 * math.log10(data_range**2 / mse)
+
+
+def _compute_foreground_psnr_chunked(
+    rendered_gpu: torch.Tensor,
+    original_np: np.ndarray,
+    chunk_voxels: int = 50_000_000,
+) -> tuple[float, float, float]:
+    """Foreground PSNR, chunked like :func:`_compute_psnr_chunked`.
+
+    The progressive fitter works on volumes too large to hold several copies of,
+    so it cannot call :func:`~luxar.gsplats.metrics.compute_foreground_psnr`
+    directly: that one masks the whole volume at once (a full-size mask plus two
+    boolean-indexed copies), on top of the target and the render already
+    resident. Chunking bounds those to ``chunk_voxels``. Same definition: error
+    averaged over ``original > otsu`` only, ``data_range`` from the whole volume.
+
+    ``rendered_gpu`` follows :func:`_compute_psnr_chunked`'s signature, but the
+    fitter calls this one with its CPU-cached render (the GPU copy is already
+    freed by then), so in practice the work happens on the host.
+
+    Returns ``(psnr_db, threshold, foreground_fraction)``.
+    """
+    from .metrics import otsu_threshold
+
+    flat_original = original_np.ravel()
+    # A view when already float32, so this does not double peak RAM.
+    threshold = otsu_threshold(torch.from_numpy(flat_original))
+
+    n = flat_original.size
+    flat_rendered = rendered_gpu.reshape(-1)
+    sse = 0.0
+    n_fg = 0
+    for i in range(0, n, chunk_voxels):
+        end = min(i + chunk_voxels, n)
+        chunk_orig = torch.from_numpy(flat_original[i:end]).to(rendered_gpu.device)
+        mask = chunk_orig > threshold
+        count = int(mask.sum().item())
+        if count:
+            sse += (
+                (flat_rendered[i:end][mask] - chunk_orig[mask]).square_().sum().item()
+            )
+            n_fg += count
+        del chunk_orig, mask
+
+    fraction = n_fg / max(n, 1)
+    if n_fg == 0:
+        return float("nan"), threshold, fraction
+
+    mse = sse / n_fg
+    if mse == 0.0:
+        return float("inf"), threshold, fraction
+
+    data_range = float(original_np.max()) - float(original_np.min())
+    if data_range == 0.0:
+        return float("inf"), threshold, fraction
+
+    return 10.0 * math.log10(data_range**2 / mse), threshold, fraction
+
+
+def _final_foreground_score(
+    cached_rendered_np: Optional[np.ndarray],
+    V_original: np.ndarray,
+) -> tuple[float, float, float]:
+    """Foreground score for the last completed pass, or ``nan`` if there was none.
+
+    Taken once at the end rather than per pass: only the final value is
+    stamped, and the patience check steers on the global PSNR. The caller
+    passes the render ``prev_psnr`` was measured from, so the two figures agree
+    on which pass they describe.
+    """
+    if cached_rendered_np is None:  # no pass completed — nothing was rendered
+        return float("nan"), float("nan"), 0.0
+    return _compute_foreground_psnr_chunked(
+        torch.from_numpy(cached_rendered_np), V_original
+    )
 
 
 def fit_progressive_gaussian_splats(
@@ -196,6 +275,11 @@ def fit_progressive_gaussian_splats(
         at the default.
     **kwargs
         Additional keyword arguments passed through to ``fit_gaussian_splats``.
+        ``norm_range`` (a whole-volume intensity scale, as tiled fitting
+        supplies) applies to pass 0 only: passes 1+ fit a residual that is by
+        construction a small fraction of that range, and normalizing it against
+        the range would put it under the absolute convergence tolerance and end
+        the pass immediately. Residual passes keep their own per-pass scale.
 
     Returns
     -------
@@ -390,7 +474,14 @@ def fit_progressive_gaussian_splats(
         # wrongly eat signal.
         pass_kwargs["floor"] = "none"
 
+        # A supplied whole-volume intensity scale describes the VOLUME, not the
+        # residual chain built from it. Pass 0 shares it (that is the point);
+        # passes 1+ normalize their residual by its own extent, as they always
+        # have — against the whole-volume range a residual worth several passes
+        # sits below the absolute convergence tolerance and the pass ends at
+        # its first evaluation.
         if pass_i > 0:
+            pass_kwargs["norm_range"] = None
             # Residual-pass overrides (see module docstring for rationale):
             pass_kwargs["loss_type"] = "poisson"  # natural for sparse residuals
             pass_kwargs["lr"] = 0.03  # fine-detail splats converge faster
@@ -503,6 +594,11 @@ def fit_progressive_gaussian_splats(
             break
         pass_i += 1
 
+    # Score the foreground before the last pass's render is freed.
+    fg_psnr, fg_threshold, fg_fraction = _final_foreground_score(
+        cached_rendered_np, V_original
+    )
+
     # Free cached render (CPU numpy) from the last pass
     del cached_rendered_np
     if torch.cuda.is_available():
@@ -518,6 +614,9 @@ def fit_progressive_gaussian_splats(
         "n_splats": total_splats,
         "time_seconds": total_time,
         "psnr_db": prev_psnr,
+        "foreground_psnr_db": fg_psnr,
+        "foreground_threshold": fg_threshold,
+        "foreground_fraction": fg_fraction,
         "stop_reason": stop_reason,
         "max_splats": max_splats,
         "max_splats_per_pass": max_splats_per_pass,
@@ -553,6 +652,18 @@ def fit_progressive_gaussian_splats(
                     f"to avoid wasting compute on splats that get culled."
                 )
 
+    # Lift the source-grid stamps out of pass 1 and onto the whole result.
+    #
+    # Every pass sees the SAME volume (later ones fit its residual), so pass 1's
+    # record of that volume describes the fit as a whole. Left where they are
+    # they stay buried in `pass_stats`, never reach `_FITTING_INFO_KEYS`, and the
+    # dataset ends up unable to say what it is a representation of — which is
+    # how the progressive demos came to have no compression figure at all.
+    #
+    # `voxels_per_splat` is deliberately NOT copied: it is a ratio against one
+    # pass's splat count, and the merged result has all of them — it is stamped
+    # below instead, after the cull.
+    lift_source_grid_stats(overall_stats, accumulated_lods)
     final_result = GSplatData.from_additive_sublods(
         accumulated_lods, stats=overall_stats
     )
@@ -600,6 +711,12 @@ def fit_progressive_gaussian_splats(
                 f"{n_before} -> {final_result.n_splats} splats "
                 f"(removed {n_removed}, {100.0 * n_removed / n_before:.1f}%)"
             )
+
+    # Density is quoted against the splats actually DELIVERED, so it is stamped
+    # here rather than beside the other source-grid stamps above: the post-fit
+    # cull runs in between, and the pre-cull count would overstate how much of
+    # the volume each surviving splat stands for.
+    stamp_voxels_per_splat(final_result.stats, final_result.n_splats)
 
     # Collapse per-pass LODs into a single flattened LOD.  The pass-by-pass
     # accumulation is an internal implementation detail; callers that want

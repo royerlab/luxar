@@ -86,7 +86,7 @@ from luxar import Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import (
     launch_viewer,
-    load_precomputed_gsplats,
+    load_dataset_gsplats,
     parse_demo_flags,
     require_module,
     warn_if_no_cuda_gpu,
@@ -144,7 +144,11 @@ def load_cells3d():
     """Load cells3d dataset from scikit-image.
 
     Returns:
-        list[np.ndarray]: One 3D volume per channel, shape (Z, Y, X), float32 [0, 1].
+        tuple: ``(volumes, source_dtype)`` -- one 3D volume per channel, shape
+        (Z, Y, X), float32 [0, 1], and the element type the data was STORED in.
+        The grid is untouched here, so only the dtype has to be declared to the
+        fit; without it the compression ratio is quoted against the float32
+        working copy rather than the acquisition.
     """
     with asection("Loading cells3d dataset"):
         cells3d = require_module("skimage.data").cells3d
@@ -181,7 +185,7 @@ def load_cells3d():
             aprint(f"  {ch_name}: {V.shape}, range [{V.min():.3f}, {V.max():.3f}]")
 
         aprint(f"Loaded {len(volumes)} channels")
-        return volumes
+        return volumes, str(raw.dtype)
 
 
 # =============================================================================
@@ -189,7 +193,7 @@ def load_cells3d():
 # =============================================================================
 
 
-def fit_channel(volume, channel_name, cache_file):
+def fit_channel(volume, channel_name, cache_file, source_dtype=None):
     """Fit gsplats to a single channel (always fits — caller handles precomputed).
 
     Args:
@@ -214,6 +218,9 @@ def fit_channel(volume, channel_name, cache_file):
     result = fit_gaussian_splats(
         volume,
         seeds=MAX_SPLATS,
+        # The grid is the acquisition's; only the element type was changed
+        # on the way here, and that is the denominator of the ratio.
+        source_dtype=source_dtype,
         device=DEVICE,
         seed_method="edges",
         verbose=True,
@@ -238,7 +245,7 @@ def fit_channel(volume, channel_name, cache_file):
     return result
 
 
-def fit_all_channels(volumes):
+def fit_all_channels(volumes, source_dtype=None):
     """Fit gsplats to all channels."""
     with asection("Fitting GSplats per channel"):
         gsplats_list = []
@@ -248,7 +255,9 @@ def fit_all_channels(volumes):
             cache_file = CACHE_DIR / f"cells3d_ch{i}.gsplats.zarr.zip"
 
             with asection(f"Channel {i}: {ch_name}"):
-                gsplats = fit_channel(volume, ch_name, cache_file)
+                gsplats = fit_channel(
+                    volume, ch_name, cache_file, source_dtype=source_dtype
+                )
                 gsplats_list.append(gsplats)
 
         return gsplats_list
@@ -393,8 +402,8 @@ def main():
             aprint(f"No scene found at {output_path}. Run without --serve-only first.")
         return
 
-    # Try loading precomputed data (from Git LFS / local cache)
-    precomputed = load_precomputed_gsplats(
+    # Try the manifest-driven fetch (checksum-verified cache -> in-repo -> Zenodo)
+    precomputed = load_dataset_gsplats(
         "gsplats_cells3d",
         ["cells3d_ch0.gsplats.zarr.zip", "cells3d_ch1.gsplats.zarr.zip"],
         recompute=RECOMPUTE,
@@ -405,8 +414,8 @@ def main():
     else:
         # --recompute path: load raw data, fit from scratch
         warn_if_no_cuda_gpu()
-        volumes = load_cells3d()
-        gsplats_list = fit_all_channels(volumes)
+        volumes, source_dtype = load_cells3d()
+        gsplats_list = fit_all_channels(volumes, source_dtype=source_dtype)
 
     # Report
     with asection("Fitting Summary"):

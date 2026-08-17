@@ -37,6 +37,7 @@ import type { PickingSystem } from '../picking/picking-system';
 import { applyTransform } from './transforms';
 import { validateLoadedPointsData, validateColorMode } from './validation';
 import { resolveColormapWindow } from '../display-range';
+import { DEFAULT_POINT_RADIUS } from '../../config/constants';
 
 /**
  * Build a Points InstancedBufferGeometry from loaded data.
@@ -100,7 +101,7 @@ export function createPointsGeometry(
   // maxRadius for Uint8 normalized radii — the texel holds the [0, 1]
   // widened value in that case); footprintRadius is always the real max
   // radius in world units regardless of dtype.
-  let footprintRadius = 0.5; // matches the no-radii fill default below
+  let footprintRadius = DEFAULT_POINT_RADIUS; // matches the no-radii fill default below
   let radiiF32: Float32Array;
   if (data.radii) {
     footprintRadius = maxRadius;
@@ -111,7 +112,7 @@ export function createPointsGeometry(
     radiusScale = data.radii instanceof Uint8Array ? maxRadius : 1.0;
   } else {
     radiiF32 = new Float32Array(pointCount);
-    radiiF32.fill(0.5);
+    radiiF32.fill(DEFAULT_POINT_RADIUS);
   }
 
   // Sharpness (same dtype rules). Sharpness is authored in [0, 1]:

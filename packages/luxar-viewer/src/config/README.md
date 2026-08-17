@@ -41,6 +41,9 @@ config/
 │                                  #   Settings-popover model; live values mutate config, startup
 │                                  #   values thread through bootstrap (URL params always win)
 ├── constants.ts                   # WASM ABI constants
+├── cinematic-preset.ts            # Cinematic-mode preset values — shared by the C-key toggle
+│                                  #   (ui/rendering-controls/cinematic-mode.ts, which re-exports
+│                                  #   them) and the zarr bridge's cinematic_mode expansion
 ├── sections/
 │   ├── camera/             {data,types,validate}.ts
 │   ├── animation/          {data,types}.ts
@@ -153,7 +156,8 @@ adaptiveDPR: {
 
   // Session hygiene
   contentChangeRecheckMs: 5000, // Content-change coalescing / early re-probe
-  gapResetMs: 350               // Frame gap that resets the FPS window
+  gapResetMs: 350               // Absolute floor for calling a frame gap DEAD TIME
+                                // (must ALSO be >4x the recent inter-frame median)
 }
 ```
 
@@ -195,7 +199,7 @@ renderingControls: {
     msaaEnabled: false,         // Incompatible with additive blending
     msaaSamples: 4,
     ssaaEnabled: false,
-    toneMapping: 'ACES',        // Default; use 'Neutral' for exact colormap-LUT fidelity
+    toneMapping: 'ACES',        // Default; use 'None' for exact colormap-LUT fidelity inside [0, 1]
     // Detector noise (physics-based: Poisson + Gaussian + FPN)
     detectorNoiseEnabled: false,
     detectorNoiseReadoutSigma: 0.002,  // Temporal readout noise
@@ -251,6 +255,7 @@ cache: {
   l1MaxSizeMB: 100,           // L1 in-memory LRU — CEILING; heap-aware sizing may scale it down
   l2MaxSizeMB: 2048,          // L2: persistent OPFS cache (disk, fixed — not heap-sized)
   opfsOperationTimeoutMs: 10000, // Per-OPFS-operation deadline (ms)
+  opfsTimeoutTripThreshold: 3, // Consecutive timeouts before the L2 circuit breaker trips
   externalDatasetTtlMs: null, // Optional TTL (ms) for non-local datasets; null = no expiry
   debug: false                // Enable cache debug logging
 }
@@ -552,3 +557,7 @@ From `./url-params.ts`:
 From `./constants.ts`:
 
 - `MAX_SUPPORTED_DIMS = 16` — mirrored in Rust as the WASM ABI cap on nD.
+- `DEFAULT_POINT_RADIUS = 0.5` — the radius a points node with no `radii` array
+  is drawn at; mirrored in Python as `DEFAULT_POINT_RADIUS`
+  (`packages/luxar/src/luxar/typing_utils/constants.py`), which the writer pads a
+  no-radii chunk's spatial bounds by.

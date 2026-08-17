@@ -127,3 +127,63 @@ class TestComputeChunkBoundsGSplats:
         np.testing.assert_allclose(
             barrier_width, 1.0 + 2 * _BARRIER_BOUND_EPS, atol=1e-4
         )
+
+
+def test_barrier_bound_eps_matches_viewer_gsplats_step_fraction() -> None:
+    """``_BARRIER_BOUND_EPS`` and the viewer's gsplats continuous-dim epsilon are
+    ONE decision expressed twice, and nothing but this test links them.
+
+    The viewer's ``gsplatsContinuousDimTolerance`` is documented as the
+    reader-side mirror of this pad: at a unit step its step-scaled term is
+    ``GSPLATS_CONTINUOUS_EPS_STEP_FRACTION × 1``, which must equal
+    ``_BARRIER_BOUND_EPS``. Same style as the discrete rule's Python-side pin
+    (``io/tests/_compiler/test_finalize.py``
+    ``test_validate_discrete_ranges_tolerance_matches_viewer_quarter_step``),
+    but parsing the TypeScript declaration instead of restating the number —
+    a prose comment on each side is not a link.
+    """
+    from pathlib import Path
+
+    from luxar.conftest import find_repo_relative_file, read_ts_number_const
+    from luxar.io._ordering import bounds as bounds_module
+
+    rel = (
+        Path("packages")
+        / "luxar-viewer"
+        / "src"
+        / "data"
+        / "loaders"
+        / "spatial-query"
+        / "tolerance-computer.ts"
+    )
+    start = Path(bounds_module.__file__).resolve()
+    computer = find_repo_relative_file(rel, start)
+    assert computer is not None, (
+        f"cannot locate {rel} in any ancestor of {start}. If the viewer file "
+        "moved, update this test — do NOT delete it: it is the only link "
+        "keeping _BARRIER_BOUND_EPS and the viewer's gsplats continuous-dim "
+        "epsilon in agreement."
+    )
+    source = computer.read_text(encoding="utf-8")
+
+    step_fraction = read_ts_number_const(source, "GSPLATS_CONTINUOUS_EPS_STEP_FRACTION")
+    assert step_fraction == _BARRIER_BOUND_EPS, (
+        f"GSPLATS_CONTINUOUS_EPS_STEP_FRACTION ({step_fraction}) must equal "
+        f"_BARRIER_BOUND_EPS ({_BARRIER_BOUND_EPS}): the viewer applies the "
+        "step-scaled term to the CONTINUOUS dims the writer leaves unpadded, "
+        "and it is calibrated to the pad the writer puts on barrier dims. "
+        f"Change BOTH — {computer} and "
+        "luxar/io/_ordering/bounds.py — or the mirror silently desyncs."
+    )
+
+    # The step-scaled term must also stay strictly below the half-cell membership
+    # gates, for the same reason the discrete quarter-cell reach does: pad + reach
+    # must never sum to a full step at a unit-ish step. (There is no cap on the
+    # reader's second, ABSOLUTE term — a review of #1183 removed the quarter-cell
+    # ceiling that used to be here, because the band it caps is what the renderer
+    # genuinely shows on a micro-step axis. See `gsplatsContinuousDimTolerance`.)
+    assert 0.0 < step_fraction < 0.5, (
+        f"GSPLATS_CONTINUOUS_EPS_STEP_FRACTION ({step_fraction}) scales with the "
+        "step; at >= 0.5 a query on one cell reaches the neighbouring cell, "
+        "which is the over-fetch the quarter-cell rules exist to prevent."
+    )

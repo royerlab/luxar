@@ -25,6 +25,7 @@
  */
 
 import { config } from './index';
+import { LINE_PRIMITIVE_POLICIES, type LinePrimitivePolicy } from '../types/line-primitive';
 import { StorageKeys } from '../utils/storage-keys';
 import { log, Modules } from '../utils/log';
 
@@ -62,6 +63,14 @@ export interface UserSettings {
   advanced: {
     /** Render backend; 'auto' = the built-in default chain → reload. */
     renderer: 'auto' | 'webgl' | 'webgpu';
+    /**
+     * Line primitive policy (#1352 follow-up) → reload (the primitive is
+     * baked into each line material's shader at construction; there is
+     * no live-swap path). 'auto' = capsule, except very large line
+     * nodes, which build the cheaper quad — see
+     * `types/line-primitive.ts` for the measured rule.
+     */
+    linePrimitivePolicy: LinePrimitivePolicy;
   };
 }
 
@@ -119,6 +128,7 @@ export function defaultUserSettings(): UserSettings {
     },
     advanced: {
       renderer: 'auto',
+      linePrimitivePolicy: 'auto',
     },
   };
 }
@@ -197,6 +207,14 @@ function sanitizeUserSettings(raw: unknown): UserSettings {
     },
     advanced: {
       renderer: enumOrDefault(advanced.renderer, ['auto', 'webgl', 'webgpu'], d.advanced.renderer),
+      // Vocabulary from `types/line-primitive.ts` rather than a local
+      // literal: a new policy value must not be able to pass validation
+      // here while the resolver rejects it (or vice versa).
+      linePrimitivePolicy: enumOrDefault(
+        advanced.linePrimitivePolicy,
+        LINE_PRIMITIVE_POLICIES,
+        d.advanced.linePrimitivePolicy
+      ),
     },
   };
 }
@@ -263,6 +281,7 @@ function reloadKey(s: UserSettings): string {
     s.caching.budgetMode,
     s.caching.budgetMode === 'custom' ? s.caching.budgetMB : null,
     s.advanced.renderer,
+    s.advanced.linePrimitivePolicy,
   ]);
 }
 

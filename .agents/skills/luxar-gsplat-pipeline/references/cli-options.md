@@ -14,7 +14,7 @@ Inputs: `.npy`, `.npz`, `.tiff`/`.tif`, `.zarr`, `.zarr.zip` (TIFF/other need `p
 | Flag | Default | Meaning |
 | --- | --- | --- |
 | `--seeds` / `-s` | auto | int = splat count — a WHOLE-VOLUME budget (what a default `cal` reports as K*); a tiled fit divides it across its N tiles (`ceil(K/N)`, floored at 1) instead of giving each tile the full count, so the total tracks the request, not the tile count. Not exact: near-zero tiles are skipped, and `K < N` gives N. A non-positive int is left alone so the fitter still rejects it. float in (0,1] = compression ratio, scale-free so applied per tile unchanged; `auto`. Ignored under `--tiling content` (budgets come from the density plan). A `cal --auto-region` K* is region-scoped, NOT a whole-volume budget — transfer it via `--cal` + `--tiling content`, not `--seeds` |
-| `--floor` | auto | background floor / DC-offset suppression subtracted (clip at 0) BEFORE normalization, so output amplitudes are background-relative. `auto` = histogram-mode estimate (capped at the median; a no-op on clean data). `pNN` = subtract that percentile; a plain number = fixed value; `none` = disable (legacy hard-min) |
+| `--floor` | auto | background floor / DC-offset suppression subtracted (clip at 0) BEFORE normalization, so output amplitudes are background-relative. `auto` = histogram-mode estimate (capped at the median; a no-op on clean data). `pNN` = subtract that percentile; a plain number = fixed value; `none` = disable (legacy hard-min). Resolved against the WHOLE volume under any tiling — never against a tile or box crop, so every tile/box works from the same level. `uniform`/`content` resolve it once in the parent and pass the number down; the uniform `-j N` / `--tile k/M` workers each resolve the same spec against the same whole volume (the sampler is deterministic, so they agree) |
 | `--iters` / `-n` | preset | max optimization iterations |
 | `--preset` | none | `draft` / `standard` / `hifi` / `ultra` / `n2s` (see preset table) |
 | `--config` | none | YAML config file (overrides preset) |
@@ -101,6 +101,26 @@ coordinate frames).
 | `ultra` | 20,000 | 500 | 20 | 0.999 |
 | `n2s` | 20,000 | 500 | 10 | 0.999 (manuscript blind-spot protocol) |
 
+**The Python API defaults are BELOW `draft`.** `fit_gaussian_splats` (no `preset=`
+argument) defaults to `n_iters=1000`, `early_stop_patience=300`, `patience=15`,
+`max_eccentricity=10.0`, `cull_retention=0.95`, `enable_dynamic_ops=True`. A caller
+who omits `n_iters` gets a fifth of `standard`, which on thin filaments leaves splats
+at their isotropic σ=1-voxel seed shape and renders axons as bead chains. See the
+"API defaults are BELOW draft" section in `SKILL.md`.
+
+### Shape-related knobs not exposed as `fit` flags (Python / `--config` YAML only)
+| Knob | Default | Meaning |
+| --- | --- | --- |
+| `patience` | 15 | plateau LR-decay patience; at 15 the shape LR decays away long before shapes settle |
+| `enable_dynamic_ops` | True | periodic splat relocation — **resets relocated splats to isotropic σ=0.5 with off-diagonals zeroed**, undoing elongation a long fit earned |
+| `l1_diag` | auto (0.01·lr) | L1 on the Cholesky diagonal; its own comment says it "encourages smaller, more isotropic splats" |
+| `sigma_min_diag` | sqrt(1/12) ≈ 0.289 | per-axis floor on the Cholesky diagonal |
+
+`max_eccentricity` caps the axis ratio at `sqrt(max_eccentricity)` (so 10.0 → 3.16),
+enforced as a hard clamp on the Cholesky diagonal AND off-diagonals. It is inert on a
+short fit that never elongates that far, and only starts binding once the fit is
+converged — measured at 14.9% of splats pinned to the ceiling, costing 2.65 dB.
+
 ---
 
 ## `luxar gsplat cal INPUT OUTPUT_JSON`
@@ -166,7 +186,7 @@ additive (refines one leaf); `levels` is substitutive (coarse↔fine swap);
 | `--target-ms` | — | streaming sizing: derive `stream:<c>` so the first additive chunk downloads in ~this many ms (mutually exclusive with `--breakpoints`) |
 | `--bandwidth-mbps` | 25 | assumed downlink for `--target-ms` sizing |
 | `--bytes-per-splat` | measured/estimated | override the on-wire bytes/splat for `--target-ms` sizing |
-| `--truncation-sigmas` | 3.0 | Mahalanobis cutoff for greedy |
+| `--truncation-sigmas` | the dataset's own truncation radius | Mahalanobis cutoff for greedy |
 | `--max-n-dense` | 2000 | greedy dense-Gram threshold |
 | `--reveal-centre` | dataset bbox centre | `-m radial` only: comma-separated shell centre, one coordinate per measured axis. On a partitioned recipe the default centres each part on itself — pass this to grow the whole object from one point |
 | `--spatial-dims` | non-degenerate axes | `-m radial` only: comma-separated centre-column indices the shell distance spans (order pairs with `--reveal-centre`); the default keeps a stacked time/channel axis out of the shells |
@@ -208,24 +228,39 @@ luxar gsplat additive sub.gsplats.zarr pyr.gsplats.zarr --target-ms 200   # ~200
 | `--coarsen-dims` | all | center-column indices coarsening may merge over (rest = hard barriers) |
 
 ### LOD switch tuning (any kind=lod group)
-Auto-derived, no knob: each child's `coverage_fraction` = `sqrt(N_i / N_finest)`
-(a viewport-relative value; coarsest 0.0, finest 1.0). The viewer multiplies it by
-half of the live viewport's fitted screen axis (the smaller of its width/height),
-so the finest level shows at any normal full-frame view (projected size ≳ half
-the fitted screen axis) and coarser levels step in as it shrinks below that —
-self-calibrating on any monitor or aspect ratio.
+Auto-derived, no knob, and COUNT-INDEPENDENT: thresholds come from SCREEN-AREA
+occupancy halving and are stamped `selector="screen-area"`. Each
+`coverage_fraction` is a literal screen-area fraction (projected bbox rect area /
+viewport area): the coarsest child gets `0.0` (always-eligible floor), the finest
+gets `0.5` — so a WHOLE-OBJECT ladder holds full detail while the object occupies
+at least half the screen — and each level between halves once more
+(…, 1/8, 1/4, 1/2). Element counts are read only for the ladder's LENGTH.
+
+The metric is an NDC-area fraction, so it is RESOLUTION-independent — the same
+framing reads the same fraction on any monitor size, and the projected rect is
+clipped to the viewport first so it tops out at exactly 1.0. It is **not**
+aspect-independent: `fov` is vertical, so a wider viewport shows more world
+horizontally and the same object covers a smaller area fraction. Resizing between
+square and ultrawide does move the switch points.
+
+The retired `sqrt(N_i/N_finest)` derivation was a diagonal metric spaced by a
+count ratio; it held the most expensive level across nearly the whole usable zoom
+range on dense additive data, which is why the anchor is now occupancy, not count.
 
 The `adaptive` and `overview` recipes are the exception: their ladders are bound
-to a spatial partition (a tile projects to a fraction of the whole object), so
-they are scaled to anchor the finest at `4.0` = `SCREEN_FILL_DIAGONAL_RATIO /
-FILL_FACTOR` — approximately the switch point a screen-filling tile needs (exact
-only near aspect ratio sqrt(3) ~= 1.73; the real screen-filling metric ranges
-~2.8 at 1:1 to ~7.4 at an ultrawide 32:9 — see `lod-group-registry.ts`'s
-`FILL_FACTOR` doc) — and what `overview`'s "coarse overview, fine tiles on zoom"
-means. An explicit `coverage_fractions=[...]` list may use the same `[0, 4]`
-range. The former `extent`/`count` methods and the
-`--lod-method` / `--extent-percentile` / `--extent-anisotropy` /
-`--base-pixel-size` flags have been removed.
+to a spatial partition, so they keep the FILLS-SCREEN anchor
+(`partitioned_coverage_fractions`, finest = area 1.0 = the tile alone fills the
+screen). For `adaptive` that is geometry — each lod group's bbox is one BSP tile,
+so it projects to a fraction of the whole object. For `overview` it is the
+recipe's contract: the coarse cap is what you see at the opening framing and the
+fine partition is the zoom-in branch, so it deliberately does NOT show full detail
+at a normal full-frame view. Use `levels` if you want that.
+
+Legacy stores and explicit `coverage_fractions=[...]` lists keep the older
+`selector="coverage"` diagonal metric (thresholds in `[0, 4]`); the viewer reads
+both. The former `extent`/`count` methods and the `--lod-method` /
+`--extent-percentile` / `--extent-anisotropy` / `--base-pixel-size` flags have
+been removed.
 
 ### Quality stamps
 | Flag | Default | Meaning |

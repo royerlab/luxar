@@ -169,6 +169,26 @@ describe('setupCaches — SliceCache gating + invalidation wiring', () => {
     expect(result.cachingStore).not.toBeNull();
   });
 
+  it('?no-opfs keeps every other tier: caching store, L0 and SliceCache all construct', async () => {
+    appConfig.cache.enabled = true;
+    appConfig.cache.l0Enabled = true;
+    appConfig.cache.sliceCacheEnabled = true;
+    const result = await setupCaches('http://example.com/scene.zarr/', {
+      noOpfs: true,
+    });
+    // The L2 skip happens INSIDE MultiLevelCachingStore.init() (l2Store
+    // stays null; covered by the store's own unit tests). From the
+    // outside: the store must still construct WITH the flag, and every
+    // in-memory tier stays on.
+    expect(result.cachingStore).not.toBeNull();
+    const { MultiLevelCachingStore } =
+      await import('../../../../../cache/multi-level-caching-store');
+    const ctorOptions = vi.mocked(MultiLevelCachingStore).mock.calls.at(-1)?.[1];
+    expect(ctorOptions).toMatchObject({ noOpfs: true });
+    expect(result.l0Cache).not.toBeNull();
+    expect(result.sliceCache).not.toBeNull();
+  });
+
   it('?no-cache disables the SliceCache along with every other tier', async () => {
     appConfig.cache.enabled = true;
     appConfig.cache.sliceCacheEnabled = true;

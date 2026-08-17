@@ -110,6 +110,12 @@ export interface UrlParams {
   noCache: boolean;
   /** Disable only the SliceCache / S-cache (`?no-slice-cache`). */
   noSliceCache: boolean;
+  /**
+   * Disable only the L2 OPFS persistent tier (`?no-opfs`); L0/L1/S-cache
+   * stay on. The deterministic sibling of the OPFS circuit breaker — use
+   * it in environments whose OPFS is known to stall (automated Chromium).
+   */
+  noOpfs: boolean;
   /** Verbose cache logging (`?cache-debug`). */
   cacheDebug: boolean;
   /** Clear caches on init (`?clear-cache`). */
@@ -239,7 +245,10 @@ export interface UrlParams {
 
   /**
    * Select the line rendering primitive for the session
-   * (`?linePrimitive=screen-space|capsule`, issue #1352).
+   * (`?linePrimitive=screen-space|capsule`, issue #1352). The session's
+   * strongest word: it overrides the `Advanced → Line primitive` policy
+   * setting (whose `auto` mode otherwise sizes each node at material
+   * build — see `types/line-primitive.ts`).
    *
    * `capsule` (the default) profiles the 2D point-to-segment distance in
    * pixel space — direction-stable end-on, bisector-cut joins;
@@ -269,6 +278,7 @@ export function readUrlParams(search?: string): UrlParams {
     debug: params.has('debug'),
     noCache: params.has('no-cache'),
     noSliceCache: params.has('no-slice-cache'),
+    noOpfs: params.has('no-opfs'),
     cacheDebug: params.has('cache-debug'),
     clearCache: params.has('clear-cache'),
     lodFade: !params.has('no-lod-fade'),

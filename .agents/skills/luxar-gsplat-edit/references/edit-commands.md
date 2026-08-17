@@ -98,14 +98,18 @@ Appearance is baked in here:
 - `--tone-mapping` (default `ACES`, the viewer default) — `None`/`Linear`/`Reinhard`/
   `Cineon`/`ACES`/`AgX`/`Neutral`. Prefer `ACES` and pass it explicitly (that
   records the choice and silences the compiler's LUT notice, which only fires
-  when nothing was chosen); reach for `Neutral` when the colormap carries an
-  exact scientific color encoding (ACES shifts hues).
+  when nothing was chosen); when the colormap carries an exact scientific color
+  encoding (ACES shifts hues) reach for `None` — an exact passthrough — as
+  long as the scene stays inside [0, 1]. `Neutral` is not a passthrough: even
+  below its knee it subtracts a channel-minimum offset, so anything but a fully
+  saturated colour moves, and over range it keeps the hue angle but sheds chroma
+  (a `None` clamp flattens everything above 1.0 and can shift hue).
 - `--gamma` (1.0) — display gamma.
 - `--intensity` (1.0) — display intensity multiplier.
 - `--layer`/`--no-layer` (default `layer`) — list the gsplats node in the viewer Layers panel.
 
 ## migrate-format IN OUT
-Upgrade legacy layouts → v3.3. Five input shapes are auto-detected: v1.0 (flat),
+Upgrade legacy layouts → v3.4. Five input shapes are auto-detected: v1.0 (flat),
 v1.1 (multi-LOD additive), v2.0 (substitutive×additive matrix), a substitutive
 directory (manifest.json + level_<i> files), and a v3.0/v3.1 store still carrying
 the pre-v3.2 `pixel_size` lod selector attrs (rewritten to `coverage` +

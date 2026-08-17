@@ -282,7 +282,7 @@ def fit_volume(volume: np.ndarray) -> GSplatData:
         result.save(
             CACHE_FILE,
             encoding_mode=EncodingMode.AUTO,
-            include_fitting_info=False,
+            include_fitting_info=True,
             compress="zip",
             zip_deflate=True,
         )

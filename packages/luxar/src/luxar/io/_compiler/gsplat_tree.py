@@ -204,7 +204,7 @@ def _write_single_splat_set(
         else:
             group.attrs["chunk_size"] = min(1024, max(64, metadata["n_splats"]))
         if sublod.stats:
-            group.attrs["lod_stats"] = dict(sublod.stats)
+            group.attrs["lod_stats"] = _safe_lod_stats(sublod.stats)
         group.attrs["truncation_radius"] = truncation_radius
     else:
         leaf_attrs = dict(attrs or {})
@@ -213,7 +213,7 @@ def _write_single_splat_set(
         # the single-set fast path too, mirroring the lightweight ladder branch,
         # so the reader's unconditional lod_stats read round-trips faithfully.
         if sublod.stats and "lod_stats" not in leaf_attrs:
-            leaf_attrs["lod_stats"] = dict(sublod.stats)
+            leaf_attrs["lod_stats"] = _safe_lod_stats(sublod.stats)
         apply_gsplat_group_attrs(
             group,
             metadata,
@@ -446,6 +446,22 @@ def json_safe_value(value: Any) -> tuple[bool, Any]:
                 out_dict[str(k)] = conv
         return True, out_dict
     return False, None
+
+
+def _safe_lod_stats(stats: Dict[str, Any]) -> Dict[str, Any]:
+    """A leaf's ``lod_stats`` attr, filtered exactly like ``level_stats``.
+
+    ``lod_stats`` carries a leaf's whole fit ``stats`` dict, quality metrics
+    included, and those go non-finite on ordinary inputs — a constant or
+    signal-free volume has no foreground, so ``foreground_psnr_db`` is ``nan``,
+    and an exact reconstruction gives ``psnr_db == +inf``. Written raw, zarr
+    emits them as bare ``NaN`` / ``Infinity`` tokens, which are not JSON, and
+    because the root document carries the consolidated index for the whole tree
+    ONE such value costs a strict reader the ENTIRE store rather than that one
+    number. :func:`json_safe_value` drops them per key and keeps the rest.
+    """
+    ok, safe = json_safe_value(dict(stats))
+    return safe if ok and isinstance(safe, dict) else {}
 
 
 def _meta_to_node_attrs(meta: Optional[Dict[str, Any]]) -> Dict[str, Any]:

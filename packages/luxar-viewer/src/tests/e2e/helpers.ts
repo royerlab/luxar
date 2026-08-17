@@ -110,11 +110,18 @@ export function captureConsoleMessages(page: Page): {
 /**
  * NOTE: Manual screenshot helpers removed - use Playwright's built-in screenshot system instead.
  *
- * Playwright automatically captures screenshots for every test (configured in playwright.config.ts).
- * Screenshots are saved to test-results/ and included in the HTML report.
+ * Playwright captures screenshots, video and traces ON FAILURE ONLY
+ * (`screenshot: 'only-on-failure'`, `video`/`trace: 'on-first-retry'` in
+ * playwright.config.ts). Recording them for passing tests too cost ~330-430 s
+ * per run for artifacts nobody read.
  *
- * If you need a screenshot in a test, Playwright will capture it automatically.
- * To force a screenshot at a specific point: await page.screenshot({ path: 'test-results/my-screenshot.png' });
+ * A failing test therefore still produces a screenshot in test-results/, and
+ * under `--retries` the retry produces a full trace and video as well. To get
+ * the same artifacts for a PASSING test while debugging, re-run that spec with
+ * `--trace on --video on --screenshot on`.
+ *
+ * To capture a screenshot at a specific point regardless of outcome:
+ * `await page.screenshot({ path: 'test-results/my-screenshot.png' });`
  */
 
 /**
@@ -307,18 +314,58 @@ export async function waitForUIState(
  * Retrieves all console messages from the browser's console interceptor.
  * This is ESSENTIAL for detecting errors in data loading, decoding, and rendering.
  *
+ * Deadline-bounded (#1651). This helper runs from the shared fixture's
+ * teardown (`assertNoConsoleErrors`) for the specs that import `test` from
+ * `./fixtures` — 58 of the 66, the other 8 importing `@playwright/test`
+ * directly and getting no fixture teardown — so an unanswered probe used to
+ * burn the ENTIRE remaining test budget and be reported as `Tearing down
+ * "page" exceeded the test timeout` pending on the evaluate below. Failing
+ * in `timeout` ms with a message that says what went unanswered is
+ * strictly more informative.
+ *
+ * WHAT THE DEFAULT COSTS, honestly: a deadline here cannot distinguish a
+ * page that will never answer from one that would have answered late, so
+ * ANY value can cut short a stall that would have ended, turning a test
+ * that used to pass into one that fails. That is a real cost rather than a
+ * hypothetical — the stalls measured for #1651 lasted tens of seconds (a
+ * trivial `page.evaluate` unanswered for 5 s twelve times running, ~78 s in
+ * all, while the page went on rendering). The bound is worth paying anyway
+ * because the alternative failure is opaque, but it is a trade, not a free
+ * win.
+ *
+ * WHY 45 s: Playwright gives the After Hooks phase a FRESH timeout slot
+ * (`afterHooksSlot = { timeout: calculateMaxTimeout(project.timeout,
+ * testInfo.timeout) }` in its worker), so fixture teardown always has the
+ * full per-test timeout available — the config's 60 s, or more in a file that
+ * raises its own — no matter how much the test
+ * body already used. 45 s lands inside that slot — which is what makes the
+ * failure attributable to this probe by name instead of arriving as `Tearing
+ * down "page" exceeded the test timeout` — while still leaving a wide margin
+ * for a page that recovers late. It also bounds the mid-test call sites,
+ * where the probe shares the body's budget rather than getting a fresh slot.
+ * The work itself is a walk over at most
+ * `DEFAULT_MAX_BUFFER_SIZE` buffered messages
+ * (`src/utils/console-interceptor.ts`), so a live page answers in
+ * milliseconds and never approaches this.
+ *
  * @param page - Playwright page
+ * @param timeout - Deadline for the in-page probe, in ms
  * @returns Object with errors, warnings, and info messages
+ * @throws If the page does not answer the probe within `timeout` ms
  */
-export async function getConsoleMessages(page: Page): Promise<{
+export async function getConsoleMessages(
+  page: Page,
+  timeout = 45000
+): Promise<{
   errors: string[];
   warnings: string[];
   logs: string[];
   all: string[];
 }> {
-  return await page.evaluate(() => {
+  const probe = page.evaluate(() => {
     const debug = (window as any).__luxarDebug;
     if (!debug || !debug.consoleInterceptor) {
+      // Legitimate "no interceptor installed" answer, not a wedge.
       return { errors: [], warnings: [], logs: [], all: [] };
     }
 
@@ -354,6 +401,25 @@ export async function getConsoleMessages(page: Page): Promise<{
 
     return { errors, warnings, logs, all };
   });
+
+  // Race against `null` as the sentinel: the in-page function above always
+  // returns an object (empty buckets when there is no interceptor), so a
+  // `null` here can only mean the deadline won.
+  const buckets = await raceEvaluate<Awaited<typeof probe> | null>(probe, timeout, null);
+
+  if (buckets === null) {
+    // Deliberately NOT empty buckets: the fixture teardown feeds this
+    // into assertNoConsoleErrors, so returning `{errors: [], ...}` here
+    // would silently turn the console-error gate into a vacuous pass for
+    // every spec that imports `test` from `./fixtures`.
+    throw new Error(
+      `getConsoleMessages: the page never answered the console-buffer probe within ${timeout} ms — ` +
+        'its main thread is saturated and starving the evaluate round trip, so the console-error ' +
+        'check could not run. See issue #1651.'
+    );
+  }
+
+  return buckets;
 }
 
 /**
@@ -519,21 +585,30 @@ export async function waitForDimensionSystemReady(page: Page, timeout = 10000): 
 }
 
 /**
- * Wait for navigation to complete by detecting loading state change
+ * Wait for nD navigation to complete: poll until `getState().isLoading` is
+ * false.
  *
- * This is more robust than waitForTimeout because it:
- * 1. Waits for isLoading to become true (navigation started)
- * 2. Then waits for isLoading to become false (navigation finished)
+ * There is no "wait for the navigation to START" phase — the helper only ever
+ * waits for `isLoading` to be false, so it resolves on the first poll if the
+ * loader is already idle. That is the intended behaviour on both sides of the
+ * race: a same-task trigger (a keyboard nav) sets the flag synchronously —
+ * `SceneLoader.updateView` takes the lock before its first await — so it is
+ * already true before this helper gets to poll, while a fully cache-served pass
+ * may never be OBSERVED true at all: polling is discrete (`waitForFunction` on
+ * rAF below, then a 100 ms loop), so such a pass can start and finish between
+ * two polls. That is why the callers in `spatial-index-accuracy.spec.ts` prefer
+ * this silent variant. Waiting for `true` first would hang in the second case.
  *
- * @param page - Playwright page
- * @param timeout - Maximum wait time in ms
- */
-/**
- * Wait for nD navigation to complete.
+ * The only preliminary wait is for the flag to EXIST (`typeof isLoading ===
+ * 'boolean'`), i.e. for the debug interface to be installed; if that never
+ * happens the helper sleeps 300 ms and returns.
  *
  * **Silent on timeout** — returns normally even if `isLoading` never
  * cleared. Use {@link waitForNavigationCompleteOrThrow} for tests
  * that depend on navigation actually finishing.
+ *
+ * @param page - Playwright page
+ * @param timeout - Maximum wait time in ms
  */
 export async function waitForNavigationComplete(page: Page, timeout = 15000): Promise<void> {
   const startTime = Date.now();
@@ -593,41 +668,71 @@ export async function waitForNavigationCompleteOrThrow(page: Page, timeout = 150
  * Wait for render frames to stabilize
  *
  * Useful for visual regression tests that need stable screenshots.
- * Tries to wait for frame counter if available, otherwise uses time-based wait.
+ * Waits for the frame counter to ADVANCE by `minFrames` if available, otherwise
+ * uses a state-based wait + time buffer.
+ *
+ * **Best-effort, like {@link waitForNextRender}** — if the frame counter cannot
+ * be read or never advances, the fallback returns after the state wait plus a
+ * `minFrames * 100`ms buffer, which on a starved page can be worth far fewer
+ * than `minFrames` frames. Since the callers are almost all screenshot
+ * comparisons, that give-up emits one `console.warn` naming which branch it
+ * took rather than passing off a possibly pre-render capture in silence.
  *
  * @param page - Playwright page
  * @param minFrames - Minimum number of frames to render (used as multiplier for fallback)
- * @param timeout - Maximum wait time
+ * @param timeout - Cap on each INDIVIDUAL wait, not on the call — see the
+ *   note on {@link raceEvaluate}. The frame-counter read, the `renderOnce()`
+ *   kick and the frame wait are each capped at `Math.min(timeout, 3000)`; the
+ *   state-based fallback keeps the full `timeout` (and still throws, as it
+ *   always has, if the viewer never settles).
  */
 export async function waitForRenderStable(
   page: Page,
   minFrames = 3,
   timeout = 10000
 ): Promise<void> {
+  // Each `page.evaluate` below is bounded like the frame wait itself: an
+  // unbounded evaluate on a frame-starved page outlives the whole test budget
+  // instead of letting this helper fall back (see `raceEvaluate`).
+  const evaluateTimeout = Math.min(timeout, 3000);
+
   // Snapshot the current frame BEFORE the wait. The previous version
   // checked `frame >= minFrames` against the lifetime counter, so once
   // the initial paint exceeded `minFrames` (which it does within
   // milliseconds of viewer startup), the helper would resolve
   // immediately on every subsequent call — ignoring any post-action
   // paints. Screenshot tests captured pre-action state.
-  const start = await page.evaluate(() => {
-    const debug = (window as any).__luxarDebug;
-    // WebGLRenderer exposes `info.render.frame`; WebGPURenderer
-    // exposes `info.frame`. Probe both so the helper works on
-    // either backend.
-    const info = debug?.renderer?.info;
-    const frame = info?.render?.frame ?? info?.frame;
-    return typeof frame === 'number' ? frame : null;
-  });
+  //
+  // An unanswered read yields `null`, which routes to the state-based
+  // fallback exactly like a missing debug interface does.
+  const start = await raceEvaluate(
+    page.evaluate(() => {
+      const debug = (window as any).__luxarDebug;
+      // WebGLRenderer exposes `info.render.frame`; WebGPURenderer
+      // exposes `info.frame`. Probe both so the helper works on
+      // either backend.
+      const info = debug?.renderer?.info;
+      const frame = info?.render?.frame ?? info?.frame;
+      return typeof frame === 'number' ? frame : null;
+    }),
+    evaluateTimeout,
+    null
+  );
 
   if (start !== null) {
     // Kick the animation loop in case it's idle (auto-paused after ~2s
     // of inactivity); without this, the frame counter never advances
     // and we'd always fall through to the time-based fallback.
-    await page.evaluate(() => {
-      const debug = (window as any).__luxarDebug;
-      debug?.renderOnce?.();
-    });
+    // Best-effort: if the page is too busy to answer, carry on to the frame
+    // wait (and then the fallback) rather than stalling here.
+    await raceEvaluate(
+      page.evaluate(() => {
+        const debug = (window as any).__luxarDebug;
+        debug?.renderOnce?.();
+      }),
+      evaluateTimeout,
+      undefined
+    );
 
     const target = start + minFrames;
     try {
@@ -659,7 +764,82 @@ export async function waitForRenderStable(
     { timeout }
   );
   // Additional buffer for GPU to render frames
-  await page.waitForTimeout(minFrames * 100);
+  const buffer = minFrames * 100;
+  await page.waitForTimeout(buffer);
+
+  // Report the give-up rather than handing a screenshot test a capture that may
+  // predate the paint it was pacing itself on.
+  const branch =
+    start === null
+      ? `the frame counter could not be read within ${evaluateTimeout}ms`
+      : `the frame counter was readable but never advanced by ${minFrames} within ${Math.min(timeout, 3000)}ms`;
+  console.warn(
+    `[⚠️] [E2E waitForRenderStable] asked for ${minFrames} frame(s) at timeout=${timeout}ms, ` +
+      `but ${branch}; took the state-based fallback + ${buffer}ms buffer instead, ` +
+      `so ${minFrames} frame(s) were NOT observed`
+  );
+}
+
+/**
+ * Race an in-flight `page.evaluate` against a deadline.
+ *
+ * Playwright dispatches `page.evaluate` with no timeout of its own — neither
+ * `actionTimeout` nor `setDefaultTimeout` bounds it, only the whole test's
+ * budget does. So on a frame-starved page (a loaded workstation drops the
+ * viewer from ~30 FPS to ~4) an evaluate can sit unanswered until the test
+ * itself expires, instead of letting the caller fall back.
+ *
+ * This bounds ONE wait, not a whole helper. A helper that makes several
+ * bounded calls in sequence takes the SUM of their caps plus whatever its
+ * fallback costs, so its total runtime can legitimately exceed the single
+ * `timeout` value the caller passed. Read a helper's `timeout` parameter as
+ * "the cap on each individual wait", never as "the cap on the call".
+ *
+ * WHAT STARVES IT is main-thread task starvation, not anything GL-specific,
+ * so no probe is exempt from needing a bound (#1651). Instrumented on an
+ * idle box, a trivial `page.evaluate(() => 'ok')` went unanswered for its
+ * 5 s deadline twelve times in a row while `requestAnimationFrame` kept
+ * ticking (34 → 157) and the renderer's own counter advanced 426 → 672,
+ * with `visibilityState === 'visible'` and the WebGL context never lost; an
+ * in-page `setInterval(..., 1000)` fired twice over a 28 s window inside that
+ * stall. A saturated software-rendering rAF loop starves the lower-priority
+ * task sources — in-page timers and Playwright's `Runtime.callFunctionOn`
+ * round trip — for tens of seconds while rendering continues throughout.
+ * Corollary for `onTimeout`: pass a sentinel the in-page function can never
+ * return, so the caller can tell a real answer from a missed deadline, and
+ * decide at the call site what a missed deadline MEANS — a detector whose
+ * answer the test asserts on must say it could not run rather than fall back
+ * to a value that reads as a pass.
+ *
+ * The timer is always cleared, so a resolved race leaves no handle keeping the
+ * Node process alive. A rejection that arrives after the deadline is absorbed
+ * by `Promise.race` (which has already settled) rather than going unhandled.
+ *
+ * Unit-tested in `src/tests/unit/tests/e2e-helpers-race-evaluate.test.ts`.
+ * Prefer a wait helper built on it where one fits; a spec holding its own
+ * `page.evaluate` calls it directly (see `webgl-errors.spec.ts`), because a
+ * bare evaluate has no other bound.
+ *
+ * @param evaluation - The already-started `page.evaluate` promise.
+ * @param timeout - Deadline in ms.
+ * @param onTimeout - Value to resolve with if the deadline wins.
+ */
+export async function raceEvaluate<T>(
+  evaluation: Promise<T>,
+  timeout: number,
+  onTimeout: T
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      evaluation,
+      new Promise<T>((resolve) => {
+        timer = setTimeout(() => resolve(onTimeout), timeout);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /**
@@ -669,33 +849,64 @@ export async function waitForRenderStable(
  * by the specified number of frames. This replaces most `waitForTimeout(100-500)`
  * calls after user actions (key presses, clicks, etc.) that trigger re-renders.
  *
- * Falls back to a state-based wait + time buffer if the frame counter is unavailable
- * or if the animation loop is idle (auto-paused after inactivity).
+ * **Never fails on give-up** — falls back to a state-based wait + a short time
+ * buffer if the frame counter is unavailable or if the animation loop is idle
+ * (auto-paused after inactivity), and returns normally. On a frame-starved page
+ * that buffer can be worth one or two frames rather than N. The give-up is not
+ * silent: it emits one `console.warn` naming which branch it took, and the
+ * boolean return says the same thing to a caller that wants to react.
+ *
+ * A strict, throwing variant was tried and reverted: the animation controller
+ * auto-pauses after ~2s of inactivity and this helper's kick is a single
+ * `renderOnce()`, so a request for several frames on an idle loop cannot be
+ * satisfied by construction. Failing there turns the healthy path red, which is
+ * exactly why the state-based fallback exists.
  *
  * @param page - Playwright page
  * @param frames - Number of frames to wait for (default: 2)
- * @param timeout - Maximum wait time in ms (default: 5000)
+ * @param timeout - Cap on each INDIVIDUAL wait in ms (default: 5000), not on
+ *   the call: the frame-counter read, the `renderOnce()` kick and the frame
+ *   wait are each capped at `Math.min(timeout, 3000)` and the state fallback
+ *   at `timeout`, so a fully starved page costs roughly the sum of those legs.
+ * @returns `true` when the counter was observed to advance by `frames`,
+ *   `false` when the helper gave up and used the fallback.
  */
-export async function waitForNextRender(page: Page, frames = 2, timeout = 5000): Promise<void> {
-  // Try to read the current frame counter
-  const currentFrame = await page.evaluate(() => {
-    const debug = (window as any).__luxarDebug;
-    // WebGLRenderer exposes `info.render.frame`; WebGPURenderer
-    // exposes `info.frame`. Probe both so the helper works on
-    // either backend.
-    const info = debug?.renderer?.info;
-    const frame = info?.render?.frame ?? info?.frame;
-    return typeof frame === 'number' ? frame : null;
-  });
+export async function waitForNextRender(page: Page, frames = 2, timeout = 5000): Promise<boolean> {
+  // Each `page.evaluate` below is bounded by the same budget as the frame
+  // wait, so a page too starved to answer takes the state-based fallback
+  // instead of hanging the whole test (see `raceEvaluate`).
+  const evaluateTimeout = Math.min(timeout, 3000);
+
+  // Try to read the current frame counter. An unanswered read yields `null`,
+  // which routes to the fallback exactly like a missing debug interface does.
+  const currentFrame = await raceEvaluate(
+    page.evaluate(() => {
+      const debug = (window as any).__luxarDebug;
+      // WebGLRenderer exposes `info.render.frame`; WebGPURenderer
+      // exposes `info.frame`. Probe both so the helper works on
+      // either backend.
+      const info = debug?.renderer?.info;
+      const frame = info?.render?.frame ?? info?.frame;
+      return typeof frame === 'number' ? frame : null;
+    }),
+    evaluateTimeout,
+    null
+  );
 
   if (currentFrame !== null) {
     // Force-trigger a render in case the animation loop is idle (auto-paused).
     // The animation controller pauses after ~2s of inactivity, which means
     // the frame counter stops incrementing. Calling renderOnce() kicks it.
-    await page.evaluate(() => {
-      const debug = (window as any).__luxarDebug;
-      debug?.renderOnce?.();
-    });
+    // Best-effort: if the page is too busy to answer, carry on to the frame
+    // wait (and then the fallback) rather than stalling here.
+    await raceEvaluate(
+      page.evaluate(() => {
+        const debug = (window as any).__luxarDebug;
+        debug?.renderOnce?.();
+      }),
+      evaluateTimeout,
+      undefined
+    );
 
     // Use frame counter for precise wait, with a shorter timeout so we can
     // fall back gracefully if the animation loop is truly stopped.
@@ -711,7 +922,7 @@ export async function waitForNextRender(page: Page, frames = 2, timeout = 5000):
         targetFrame,
         { timeout: Math.min(timeout, 3000) }
       );
-      return;
+      return true;
     } catch {
       // Frame counter didn't advance (animation loop idle) — fall through to time-based wait
     }
@@ -731,7 +942,21 @@ export async function waitForNextRender(page: Page, frames = 2, timeout = 5000):
     .catch(() => {
       // State never became stable — continue anyway
     });
-  await page.waitForTimeout(Math.max(frames * 50, 200));
+  const buffer = Math.max(frames * 50, 200);
+  await page.waitForTimeout(buffer);
+
+  // The give-up is reported, never silent: a test that reads as passing while
+  // having observed almost no frames is the failure mode worth naming.
+  const branch =
+    currentFrame === null
+      ? `the frame counter could not be read within ${Math.min(timeout, 3000)}ms`
+      : `the frame counter was readable but never advanced by ${frames} within ${Math.min(timeout, 3000)}ms`;
+  console.warn(
+    `[⚠️] [E2E waitForNextRender] asked for ${frames} frame(s) at timeout=${timeout}ms, ` +
+      `but ${branch}; took the state-based fallback + ${buffer}ms buffer instead, ` +
+      `so ${frames} frame(s) were NOT observed`
+  );
+  return false;
 }
 
 /**

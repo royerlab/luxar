@@ -197,7 +197,11 @@ class Group(Node):
                   (default ``True``). Used by the Layers panel to start a
                   layer hidden.
                 - ``opacity``, ``intensity``, ``gamma``, ``blending_mode``,
-                  ``colormap``: standard rendering attributes.
+                  ``colormap``: standard rendering attributes. An explicit
+                  ``None`` for ``colormap`` or ``coverage_fraction`` means
+                  "absent" — identical to omitting the key — so
+                  ``colormap=maybe_colormap`` is a safe call form. Every OTHER
+                  render attr still refuses a ``None``.
                 - ``absorption`` (float >= 0): absorption coefficient kappa,
                   read by the ``"volumetric"`` blending mode; kappa=0 renders
                   like additive. Defaults to 1.0.
@@ -299,7 +303,11 @@ class Group(Node):
                 - ``visible`` (bool): Initial visibility when scene loads
                   (default ``True``).
                 - ``opacity``, ``intensity``, ``gamma``, ``blending_mode``,
-                  ``colormap``: standard rendering attributes.
+                  ``colormap``: standard rendering attributes. An explicit
+                  ``None`` for ``colormap`` or ``coverage_fraction`` means
+                  "absent" — identical to omitting the key — so
+                  ``colormap=maybe_colormap`` is a safe call form. Every OTHER
+                  render attr still refuses a ``None``.
                 - ``absorption`` (float >= 0): absorption coefficient kappa,
                   read by the ``"volumetric"`` blending mode; kappa=0 renders
                   like additive. Defaults to 1.0.
@@ -465,7 +473,10 @@ class Group(Node):
                 ``offset``, ``gamma``, ``colormap``, ``layer``, ``visible``,
                 ``transform``, ``nd_transform``, ``blending_mode``. Note
                 ``volumetric`` blending is rejected — it has no meaning for an
-                opaque surface.
+                opaque surface. An explicit ``None`` for ``colormap`` or
+                ``coverage_fraction`` means "absent" — identical to omitting the
+                key — so ``colormap=maybe_colormap`` is a safe call form. Every
+                OTHER render attr still refuses a ``None``.
 
         Returns:
             The created Mesh node — or, with ``substitutive_lod``, the ``kind=lod``
@@ -560,7 +571,11 @@ class Group(Node):
                 - ``visible`` (bool): Initial visibility when scene loads
                   (default ``True``).
                 - ``opacity``, ``intensity``, ``gamma``, ``blending_mode``,
-                  ``colormap``: standard rendering attributes.
+                  ``colormap``: standard rendering attributes. An explicit
+                  ``None`` for ``colormap`` or ``coverage_fraction`` means
+                  "absent" — identical to omitting the key — so
+                  ``colormap=maybe_colormap`` is a safe call form. Every OTHER
+                  render attr still refuses a ``None``.
                 - ``absorption`` (float >= 0): absorption coefficient kappa,
                   read by the ``"volumetric"`` blending mode; kappa=0 renders
                   like additive. Defaults to 1.0. Like ``layer``, on a

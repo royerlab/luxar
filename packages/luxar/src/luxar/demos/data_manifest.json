@@ -3,25 +3,28 @@
   "description": "Single source of truth for Luxar demo dataset disposition (R17). bucket: zenodo=fetch-on-demand redistributable; local-compute=fetch raw + build locally (not redistributable); regenerate=cheap CPU rebuild (not hosted). See scripts/gen_data_manifest.py.",
   "records": {
     "cc-by": {
-      "title": "Luxar demo datasets (CC-BY / CC0 / public domain)",
+      "title": "Luxar demo datasets: permissively licensed (CC-BY, CC0, public domain)",
       "license": "cc-by-4.0",
-      "zenodo_concept_doi": null,
-      "zenodo_record": null,
-      "base_url": null
+      "zenodo_doi": "10.5281/zenodo.21912280",
+      "zenodo_record": "21912280",
+      "base_url": null,
+      "published": false
     },
     "cc-by-sa": {
-      "title": "Luxar demo datasets (CC-BY-SA)",
+      "title": "Luxar demo datasets: ShareAlike (CC BY-SA 4.0)",
       "license": "cc-by-sa-4.0",
-      "zenodo_concept_doi": null,
-      "zenodo_record": null,
-      "base_url": null
+      "zenodo_doi": "10.5281/zenodo.21912282",
+      "zenodo_record": "21912282",
+      "base_url": null,
+      "published": false
     },
     "h2afva": {
-      "title": "h2afva zebrafish histone light-sheet TIMELAPSE, full 253 timepoints (Gaussian splats; a 51-timepoint subset is included for easier download)",
+      "title": "Zebrafish embryogenesis, histone-labelled nuclei: 253-timepoint light-sheet timelapse as Gaussian splats (with a lighter 51-timepoint fit)",
       "license": "cc-by-4.0",
-      "zenodo_concept_doi": null,
-      "zenodo_record": null,
-      "base_url": null
+      "zenodo_doi": "10.5281/zenodo.21912284",
+      "zenodo_record": "21912284",
+      "base_url": null,
+      "published": false
     }
   },
   "datasets": {
@@ -31,6 +34,11 @@
       "license": "cc0-1.0",
       "source": "scikit-image (data.kidney)",
       "attribution": "scikit-image sample data (CC0).",
+      "acquisition": {
+        "description": "the scikit-image `kidney` sample, all 3 channels of which are fitted",
+        "comparable": true,
+        "stored_bytes": null
+      },
       "dir": "gsplats_kidney",
       "files": [
         {
@@ -56,6 +64,11 @@
       "license": "cc0-1.0",
       "source": "scikit-image (data.cells3d) \u2014 Allen Institute for Cell Science",
       "attribution": "scikit-image sample data.",
+      "acquisition": {
+        "description": "the scikit-image `cells3d` sample, both channels of which are fitted",
+        "comparable": true,
+        "stored_bytes": null
+      },
       "dir": "gsplats_cells3d",
       "files": [
         {
@@ -76,6 +89,11 @@
       "license": "cc0-1.0",
       "source": "OpenSlide test data (Aperio CMU-1.svs)",
       "attribution": "OpenSlide CMU-1 (CC0 1.0 public domain).",
+      "acquisition": {
+        "description": "Aperio CMU-1.svs, a ~169 MB multi-resolution slide pyramid",
+        "comparable": false,
+        "reason": "the file stores every pyramid level and the fit reads one, then resizes it, so its size would price the levels that were never fitted rather than the compression of the one that was"
+      },
       "dir": "gsplats_cmu1_pathology",
       "files": [
         {
@@ -101,6 +119,11 @@
       "license": "cc0-1.0",
       "source": "EMDB EMD-5384",
       "attribution": "EMDB is public domain / CC0. Map: EMD-5384.",
+      "acquisition": {
+        "description": "EMD-5384 `emd_5384.map.gz` -- the whole map, as downloaded",
+        "comparable": true,
+        "stored_bytes": null
+      },
       "dir": "gsplats_cryoem_virus",
       "files": [
         {
@@ -116,6 +139,11 @@
       "license": "cc-by-4.0",
       "source": "TotalSegmentator (Wasserthal et al. 2023)",
       "attribution": "TotalSegmentator (Wasserthal et al. 2023; CC BY 4.0).",
+      "acquisition": {
+        "description": "a TotalSegmentator subset, repacked locally into an npz",
+        "comparable": false,
+        "reason": "the download is a multi-scan subset and the demo repacks selected scans into its own npz, so neither the download nor the repack is the same array the fit represents"
+      },
       "dir": "gsplats_ct_totalsegmentator",
       "files": [
         {
@@ -136,6 +164,12 @@
       "license": "cc-by-4.0",
       "source": "Zenodo 3993082 (3D dust map)",
       "attribution": "doi:10.5281/zenodo.3993082 (CC BY 4.0).",
+      "acquisition": {
+        "description": "the `mean` array inside Zenodo 3993082 `mean_std.h5`, measured with its own HDF5 storage size",
+        "comparable": true,
+        "stored_bytes": null,
+        "note": "the FILE is 2.4 GB but holds mean AND std, and the fit reads only the mean, so the file size is not the denominator -- h5py's per-dataset get_storage_size() is"
+      },
       "dir": "gsplats_milkyway_dust",
       "files": [
         {
@@ -166,6 +200,11 @@
       "license": "cc-by-4.0",
       "source": "Zenodo 6460303 (mskcc_confocal C. elegans)",
       "attribution": "Santella, Kovacevic, Bao, Hirsch \u2014 doi:10.5281/zenodo.6460303 (CC BY 4.0).",
+      "acquisition": {
+        "description": "the Zenodo TIFF timelapse, every timepoint of which is fitted",
+        "comparable": true,
+        "stored_bytes": null
+      },
       "dir": "gsplats_celegans",
       "files": [
         {
@@ -181,6 +220,11 @@
       "license": "pd-nlm",
       "source": "NLM Visible Human Project (Male head, PNG)",
       "attribution": "U.S. NLM Visible Human Project (public domain; acknowledge NLM, no endorsement implied).",
+      "acquisition": {
+        "description": "377 RGB cryosection photographs (Visible Human Project)",
+        "comparable": false,
+        "reason": "the fit converts colour photographs to a single greyscale volume and crops it to content, so a ratio against the stored photographs would price a colour conversion, not compression"
+      },
       "dir": "gsplats_visible_human_head",
       "files": [
         {
@@ -201,6 +245,11 @@
       "license": "pd-noaa",
       "source": "NOAA NEXRAD Level II, KTLX (Twin Lakes, OK), 2013-05-31 21Z - 06-01 03Z",
       "attribution": "U.S. NOAA/NWS NEXRAD Level II via NOAA Open Data Dissemination (public domain, 17 U.S.C. 105; acknowledge NOAA, no endorsement implied). Derived product: regridded and Gaussian-fitted, not original NOAA data.",
+      "acquisition": {
+        "description": "82 NEXRAD Level II scans (~800 MB gzipped)",
+        "comparable": false,
+        "reason": "the scans are polar sweeps carrying several moments and elevation angles, of which the demo re-grids ONE moment inside one box, so the figure would price dropping the other moments and the polar-to-Cartesian resampling"
+      },
       "dir": "gsplats_nexrad_supercell",
       "files": [
         {
@@ -216,6 +265,11 @@
       "license": "cc-by-4.0",
       "source": "IDR idr0062 (image 6001240; Nessys, Blin et al. 2019)",
       "attribution": "IDR idr0062 (Blin et al., PLOS Biol 2019; CC BY 4.0).",
+      "acquisition": {
+        "description": "IDR 6001240 OME-Zarr, the two fitted channels' own stored chunks",
+        "comparable": true,
+        "stored_bytes": null
+      },
       "dir": "gsplats_multichannel",
       "files": [
         {
@@ -236,6 +290,11 @@
       "license": "cc-by-4.0",
       "source": "IDR idr0062 (image 6001240; Nessys, Blin et al. 2019)",
       "attribution": "IDR idr0062 (Blin et al., PLOS Biol 2019; CC BY 4.0).",
+      "acquisition": {
+        "description": "IDR 6001240 OME-Zarr, the fitted channel's own stored chunks",
+        "comparable": true,
+        "stored_bytes": null
+      },
       "dir": "gsplats_dapi",
       "files": [
         {
@@ -296,6 +355,11 @@
       "license": "cc-by-sa-4.0",
       "source": "OpenCell (CZ Biohub) MAP4",
       "attribution": "OpenCell / CZ Biohub \u2014 Cho et al., Science 2022, doi:10.1126/science.abi6983 (CC BY-SA 4.0).",
+      "acquisition": {
+        "description": "the OpenCell MAP4 TIFF, both channels of which are fitted",
+        "comparable": true,
+        "stored_bytes": null
+      },
       "dir": "gsplats_opencell_map4",
       "files": [
         {
@@ -314,14 +378,14 @@
       "bucket": "zenodo",
       "record": "cc-by",
       "license": "cc-by-4.0",
-      "source": "Janelia FlyLight Gen1 MCFO, line VT019012, slide 20140423_20_D5, 63x confocal",
+      "source": "Janelia FlyLight Gen1 MCFO, line VT019012, slide 20140423_20_D5, 63x confocal (stitched unaligned_stack.h5j)",
       "attribution": "Janelia FlyLight Project Team, HHMI Janelia Research Campus \u2014 Meissner et al., eLife 12:e80660 (2023), doi:10.7554/eLife.80660; MCFO method: Nern, Pfeiffer & Rubin, PNAS 112(22) (2015), doi:10.1073/pnas.1506763112; VT driver lines: Tirian & Dickson, bioRxiv 198648 (2017), doi:10.1101/198648. Imagery CC BY 4.0.",
       "dir": "gsplats_flylight_mcfo_63x",
       "files": [
         {
           "name": "flylight_mcfo_63x.gsplats.zarr.zip",
-          "sha256": "258971bbe5a69a0defe105b0c9fb97ed5b2144b86ef5743ea42ee3a8efd70ac3",
-          "bytes": 5203144
+          "sha256": "167461b170c40295cba791616e480b8d80de39df6b532f06bb2c877b7f5b382d",
+          "bytes": 8150095
         }
       ]
     },
@@ -331,6 +395,11 @@
       "license": "cc-by-sa-4.0",
       "source": "Zenodo 1211599 (zebrafish light-sheet)",
       "attribution": "Pia Aanstad \u2014 doi:10.5281/zenodo.1211599 (CC BY-SA 4.0).",
+      "acquisition": {
+        "description": "the LSM timelapse, every fitted timepoint's own stored bytes",
+        "comparable": true,
+        "stored_bytes": null
+      },
       "dir": "gsplats_zebrafish",
       "files": [
         {
@@ -346,9 +415,19 @@
       "license": "cc-by-4.0",
       "source": "Neuromast 2-channel light-sheet timelapse (iSIM)",
       "attribution": "Adrian Jacobo (CZ Biohub SF); used with permission (CC BY 4.0).",
-      "pending_upload": true,
       "dir": "gsplats_4d_neuromast_2ch",
-      "files": []
+      "files": [
+        {
+          "name": "neuromast_membranes.gsplats.zarr.zip",
+          "sha256": "160f19215921c0dff8728477f8a8fd3a433ae5cce50735e7c5c11113e9a2ec31",
+          "bytes": 72926598
+        },
+        {
+          "name": "neuromast_nuclei.gsplats.zarr.zip",
+          "sha256": "726c580619288a227bb02ad5c12a5ae52ee16ededd335f0be4407307bba0a5f1",
+          "bytes": 66778833
+        }
+      ]
     },
     "gsplats_cell_tracking": {
       "bucket": "zenodo",
@@ -371,15 +450,21 @@
       "variants": {
         "51tp": {
           "default": true,
-          "approx_bytes": 2900000000,
-          "note": "51-timepoint refit \u2014 lighter default for the demo.",
+          "approx_bytes": 2134212223,
+          "note": "51-timepoint fit (every 5th frame) \u2014 lighter default for the demo.",
           "files": []
         },
         "253tp": {
           "default": false,
-          "approx_bytes": 16000000000,
+          "approx_bytes": 11428060091,
           "note": "Full 253-timepoint timelapse \u2014 opt-in (large download).",
-          "files": []
+          "files": [
+            {
+              "name": "h2afva_253tp.gsplats.zarr.zip",
+              "sha256": "46621b393d4a49421987ee400ce0be08b73d4da03441230bc6f59ff31917214e",
+              "bytes": 11428060091
+            }
+          ]
         }
       }
     },
@@ -389,7 +474,6 @@
       "license": "cc-by-4.0",
       "source": "Drosophila His2Av::mRFP1 embryo, SiMView light-sheet (Royer/Keller)",
       "attribution": "Royer & Keller labs \u2014 Royer et al., Nat. Biotechnol. 34, 1267-1278 (2016), doi:10.1038/nbt.3708 (CC BY 4.0).",
-      "pending_upload": true,
       "dir": "gsplats_3d_drosophila_gastrulation",
       "files": [
         {
@@ -405,7 +489,6 @@
       "license": "cc-by-4.0",
       "source": "h2afva zebrafish histone light-sheet, single stack (Royer lab)",
       "attribution": "Royer lab, CZ Biohub SF (CC BY 4.0).",
-      "pending_upload": true,
       "dir": "gsplats_3d_h2afva_stack",
       "files": [
         {
@@ -421,7 +504,6 @@
       "license": "cc-by-4.0",
       "source": "h2afva single stack at four decimation levels (Royer lab)",
       "attribution": "Royer lab, CZ Biohub SF (CC BY 4.0).",
-      "pending_upload": true,
       "dir": "gsplats_3d_h2afva_decimation",
       "files": [
         {
@@ -452,7 +534,7 @@
       "license": "cc-by-nc-3.0-igo",
       "source": "ESA Gaia DR3 archive",
       "reason": "CC BY-NC (non-commercial) \u2014 incompatible with a cleanly-reusable host.",
-      "strategy": "Query the ESA Gaia archive and build the point cloud client-side (no GPU); cache locally. Requires the ESA/Gaia/DPAC acknowledgement.",
+      "strategy": "Rebuild by hand with scripts/generate_galaxy_simple.py (queries the ESA Gaia archive, no GPU) into ~/.cache/luxar/, or place a copy there; building it automatically on first run is royerlab/luxar#1575. Requires the ESA/Gaia/DPAC acknowledgement.",
       "dir": "",
       "files": [
         {
@@ -503,6 +585,17 @@
           "bytes": 5516346
         }
       ]
+    },
+    "gsplats_flylight_mcfo": {
+      "bucket": "local-compute",
+      "redistribute": true,
+      "license": "cc-by-4.0",
+      "source": "FISBe v1.0 (Zenodo 10875063) / Janelia FlyLight Gen1 MCFO",
+      "attribution": "FISBe (Mais et al., CVPR 2024; doi:10.5281/zenodo.10875063, CC BY 4.0). Imagery from the FlyLight Project Team, Janelia Research Campus, HHMI; cite Meissner et al. eLife 2023 12:e80660 and Tirian & Dickson 2017 for the VT line.",
+      "reason": "CC BY 4.0 and redistributable, but no Zenodo record is published yet.",
+      "strategy": "Range-extract one sample (~415 MB) from the 7.1 GB Zenodo archive + fit locally (GPU). The archive is never fetched whole.",
+      "dir": "gsplats_flylight_mcfo",
+      "files": []
     },
     "gsplats_tribolium": {
       "bucket": "local-compute",

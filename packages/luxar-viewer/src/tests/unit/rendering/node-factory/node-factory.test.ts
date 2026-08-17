@@ -20,6 +20,7 @@ import { attachSplatStorage, getSplatTexture } from '../../../../rendering/gspla
 import { attachPointStorage, getPointTexture } from '../../../../rendering/point-geometry';
 import { attachLineStorage, getLineTexture } from '../../../../rendering/line-geometry';
 import { POINT_FLOATS_PER_POINT } from '../../../../rendering/element-texture-layout';
+import { DEFAULT_POINT_RADIUS } from '../../../../config/constants';
 
 // Audit C3 fix: `Math.random()` replaced with a seedable PRNG so failures
 // can be reproduced. The seed is fixed per call site below; bump it if
@@ -244,9 +245,10 @@ describe('NodeFactory', () => {
       const data = createMockPointsData({ pointCount: 50 });
       const geometry = factory.createPointsGeometry(data);
 
-      // No radii → radius texels filled with 0.5; boundingBox grows by 0.5.
-      expect(geometry.boundingBox?.min.x).toBeCloseTo(-0.5, 5);
-      expect(geometry.boundingBox?.max.x).toBeCloseTo(10.5, 5);
+      // No radii → radius texels filled with DEFAULT_POINT_RADIUS; boundingBox
+      // grows by the same amount.
+      expect(geometry.boundingBox?.min.x).toBeCloseTo(-DEFAULT_POINT_RADIUS, 5);
+      expect(geometry.boundingBox?.max.x).toBeCloseTo(10 + DEFAULT_POINT_RADIUS, 5);
     });
 
     it('should store the radius scale in userData', () => {
@@ -267,11 +269,11 @@ describe('NodeFactory', () => {
       const data = createMockPointsData({ pointCount: 50 });
       const geometry = factory.createPointsGeometry(data);
 
-      // Centers bounds are [0,10]; with no radii the 0.5 fill footprint is
-      // baked in → [-0.5, 10.5].
+      // Centers bounds are [0,10]; with no radii the DEFAULT_POINT_RADIUS fill
+      // footprint is baked in → [-0.5, 10.5].
       expect(geometry.boundingBox).not.toBeNull();
-      expect(geometry.boundingBox?.min.x).toBeCloseTo(-0.5, 5);
-      expect(geometry.boundingBox?.max.x).toBeCloseTo(10.5, 5);
+      expect(geometry.boundingBox?.min.x).toBeCloseTo(-DEFAULT_POINT_RADIUS, 5);
+      expect(geometry.boundingBox?.max.x).toBeCloseTo(10 + DEFAULT_POINT_RADIUS, 5);
     });
   });
 
@@ -670,5 +672,20 @@ describe('NodeFactory', () => {
 
       expect(material).toBeInstanceOf(THREE.ShaderMaterial);
     });
+  });
+});
+
+describe('DEFAULT_POINT_RADIUS', () => {
+  it('is 0.5', () => {
+    // MIRROR: DEFAULT_POINT_RADIUS in
+    // packages/luxar/src/luxar/typing_utils/constants.py must hold this value.
+    // The two languages cannot share a symbol, so each side pins the literal
+    // and names the other — same convention as the truncation-radius mirror in
+    // rendering/materials/falloff.test.ts. A Python test
+    // (typing_utils/tests/test_constants.py) pins that side, where the constant
+    // is what the spatial index expands a no-radii chunk's bounds by; drift
+    // would make the stored bound tighter than the disc drawn here, and the
+    // reader would miss points at a chunk boundary.
+    expect(DEFAULT_POINT_RADIUS).toBe(0.5);
   });
 });

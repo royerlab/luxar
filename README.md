@@ -246,7 +246,7 @@ A cross-section of Luxar's built-in demos — all four geometry types (**Points*
 | [![Particle Collision — physics event](docs/images/readme/gallery/collision.webp)](docs/images/readme/gallery/collision.webm) | [![Ocean — bioluminescent jellyfish](docs/images/readme/gallery/ocean.webp)](docs/images/readme/gallery/ocean.webm) |
 | **Particle Collision**<br>physics event | **Ocean**<br>bioluminescent jellyfish |
 
-> The full curated set (and more datasets) lives in `scripts/gallery/manifest.json`. A few very large point clouds (Gaia 3M stars, DESI cosmic web) and heavy volumes render too slowly under headless software-GL to include as videos here — regenerate with a GPU via `make generate-gallery`.
+> The full curated set (and more datasets) lives in `scripts/gallery/manifest.json`. A few very large point clouds (DESI cosmic web) and heavy volumes render too slowly under headless software-GL to include as videos here — regenerate those with a GPU via `make generate-gallery`. The Gaia 3M-star tile is missing for a different reason: that catalog is CC BY-NC, so it is not shipped, and the demo reads it from `~/.cache/luxar/milky_way_gaia_3m/milky_way_gaia_3m.zarr.zip`, where you have to place it by hand. The gallery harness still runs every such demo — on a machine that has the file the tile regenerates normally — and only reports it as `manual-data` (rather than failing the whole build) if it exits non-zero, which is what happens on a machine without the file.
 >
 > These demos visualize openly-shared scientific datasets — see [Acknowledgments → Datasets & scientific data](#datasets--scientific-data) for full sources and citations.
 

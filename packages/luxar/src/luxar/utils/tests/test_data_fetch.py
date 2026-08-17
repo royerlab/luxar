@@ -146,20 +146,52 @@ def test_present_zenodo_files_have_checksums():
         if d["bucket"] != "zenodo":
             continue
         for f in _all_files(d):
-            assert f.get("sha256"), f"{name}/{f['name']}: missing sha256"
+            sha = f.get("sha256")
+            assert sha, f"{name}/{f['name']}: missing sha256"
+            # Shape-check it too: a pin transcribed by hand (truncated, or an md5
+            # pasted where the sha256 belongs) is unverifiable data that would
+            # only surface as a checksum failure on someone else's download.
+            assert len(sha) == 64 and all(c in "0123456789abcdef" for c in sha), (
+                f"{name}/{f['name']}: {sha!r} is not a lowercase hex sha256"
+            )
             assert f.get("bytes"), f"{name}/{f['name']}: missing byte size"
 
 
-def test_pending_upload_datasets_are_declared_and_empty():
+def _file_lists(dataset: dict) -> list[tuple[str, list[dict]]]:
+    """``(label, files)`` per variant, or one entry for a flat dataset."""
+    if "variants" in dataset:
+        return [(vn, v.get("files", [])) for vn, v in dataset["variants"].items()]
+    return [("files", dataset.get("files", []))]
+
+
+def test_pending_upload_flag_matches_the_file_lists():
+    """The flag and the file lists must agree, in BOTH directions.
+
+    A zenodo dataset with an empty file list cannot be fetched at all, so leaving
+    one unflagged hides a broken demo. A dataset whose files are all pinned no
+    longer needs the flag, and a flag left behind is how four datasets came to
+    claim they were still awaiting upload after their files were live in the
+    records: nothing checked the two against each other.
+    """
     m = load_manifest()
-    # neuromast + h2afva are computed on obsidian; not yet in the repo.
-    for name in ("gsplats_4d_neuromast_2ch", "h2afva"):
-        assert name in m["datasets"], f"{name} should be listed as a pending upload"
-        assert _all_files(m["datasets"][name]) == [], f"{name} should have no files yet"
+    for name, d in m["datasets"].items():
+        if d["bucket"] != "zenodo":
+            continue
+        empty = [label for label, files in _file_lists(d) if not files]
+        if d.get("pending_upload"):
+            assert empty, (
+                f"{name}: flagged pending_upload, but every file list is "
+                f"populated — the flag is stale and should be removed"
+            )
+        else:
+            assert not empty, (
+                f"{name}: not flagged pending_upload, but {empty} file list(s) "
+                f"are empty, so the demo cannot fetch it"
+            )
 
 
 def test_h2afva_has_light_default_and_full_variant():
-    """The 16 GB timelapse ships as an opt-in; the demo default is the light cut."""
+    """The 11.4 GB timelapse ships as an opt-in; the demo default is the light cut."""
     variants = load_manifest()["datasets"]["h2afva"]["variants"]
     assert set(variants) == {"51tp", "253tp"}
     assert variants["51tp"]["default"] is True
@@ -603,7 +635,7 @@ def test_missing_and_unhosted_raises_clear_error(fake_repo):
     """No cache, no in-repo file, no Zenodo URL → actionable FileNotFoundError."""
     manifest, cache = fake_repo
     manifest["datasets"]["gsplats_toy"]["files"][0]["name"] = "absent.zip"
-    with pytest.raises(FileNotFoundError, match="Zenodo record URL is not set"):
+    with pytest.raises(FileNotFoundError, match="builds no Zenodo URL for it yet"):
         ensure_dataset(
             "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
         )
@@ -894,3 +926,257 @@ def test_wrapper_repairs_a_corrupt_cache_before_loading(fake_gsplats_repo):
     assert first is not None and second is not None
     assert len(second[0].amplitudes) == len(first[0].amplitudes)
     assert find_quarantined_files(cached)
+
+
+# --------------------------------------------------------------------------- #
+# load_dataset_bundle: the manifest-driven bundle path
+# --------------------------------------------------------------------------- #
+def _write_bundle(path: Path, members: dict[str, bytes]) -> None:
+    import zipfile
+
+    with zipfile.ZipFile(path, "w") as zf:
+        for name, blob in members.items():
+            zf.writestr(name, blob)
+
+
+def test_load_dataset_bundle_verifies_the_outer_zip_then_extracts(
+    tmp_path, monkeypatch
+):
+    """The bundle is checksum-verified, then its members are extracted and loaded.
+
+    The point of routing bundles through the manifest is that the OUTER zip -- the
+    unit that is actually downloaded -- gets verified. Members are covered by
+    verifying the container, so they are not pinned individually.
+    """
+    from luxar.utils import demos as demos_utils
+
+    inner = {
+        "frame0.gsplats.zarr.zip": b"PK-not-really",
+        "frame1.gsplats.zarr.zip": b"x",
+    }
+    lfs_dir = tmp_path / "repo" / "bundle_ds"
+    lfs_dir.mkdir(parents=True)
+    bundle = lfs_dir / "b.gsplats.zarr.zip"
+    _write_bundle(bundle, inner)
+    sha = hashlib.sha256(bundle.read_bytes()).hexdigest()
+
+    manifest = {
+        "schema_version": 1,
+        "records": {"r": {"published": False}},
+        "datasets": {
+            "bundle_ds": {
+                "bucket": "zenodo",
+                "record": "r",
+                "license": "cc0-1.0",
+                "dir": "bundle_ds",
+                "files": [
+                    {
+                        "name": "b.gsplats.zarr.zip",
+                        "sha256": sha,
+                        "bytes": bundle.stat().st_size,
+                    }
+                ],
+            }
+        },
+    }
+    monkeypatch.setattr(data_fetch, "_DEMOS_DATA_DIR", tmp_path / "repo")
+    loaded: list[tuple[Path, dict]] = []
+
+    def _spy(bp, bn, cd, fn, **kwargs):
+        loaded.append((bp, kwargs))
+        return list(fn)
+
+    monkeypatch.setattr(demos_utils, "_extract_bundle_and_load", _spy)
+
+    out = demos_utils.load_dataset_bundle(
+        "bundle_ds",
+        "b.gsplats.zarr.zip",
+        list(inner),
+        cache_root=tmp_path / "cache",
+        manifest=manifest,
+        verbose=False,
+    )
+    assert out == list(inner)
+    # Resolved through ensure_dataset, so it is the verified CACHE copy that gets
+    # extracted, not the working-tree file.
+    assert loaded and loaded[0][0].parent == tmp_path / "cache" / "bundle_ds"
+    assert loaded[0][0].read_bytes() == bundle.read_bytes()
+    # The extracted frames are keyed on the digest that was just verified, not on
+    # a (size, mtime) guess a same-size re-upload could reproduce.
+    assert loaded[0][1]["stamp"] == f"sha256:{sha}"
+
+
+def test_load_dataset_bundle_rejects_a_bundle_that_is_not_a_manifest_file(
+    tmp_path, monkeypatch
+):
+    """Naming a bundle the manifest does not list must raise, not fetch something else."""
+    from luxar.utils import demos as demos_utils
+
+    lfs_dir = tmp_path / "repo" / "bundle_ds"
+    lfs_dir.mkdir(parents=True)
+    bundle = lfs_dir / "b.gsplats.zarr.zip"
+    _write_bundle(bundle, {"f.gsplats.zarr.zip": b"x"})
+    manifest = {
+        "schema_version": 1,
+        "records": {"r": {"published": False}},
+        "datasets": {
+            "bundle_ds": {
+                "bucket": "zenodo",
+                "record": "r",
+                "license": "cc0-1.0",
+                "dir": "bundle_ds",
+                "files": [
+                    {
+                        "name": "b.gsplats.zarr.zip",
+                        "sha256": hashlib.sha256(bundle.read_bytes()).hexdigest(),
+                        "bytes": bundle.stat().st_size,
+                    }
+                ],
+            }
+        },
+    }
+    monkeypatch.setattr(data_fetch, "_DEMOS_DATA_DIR", tmp_path / "repo")
+    with pytest.raises(FileNotFoundError, match="not a manifest file"):
+        demos_utils.load_dataset_bundle(
+            "bundle_ds",
+            "wrong.zip",
+            ["f.gsplats.zarr.zip"],
+            cache_root=tmp_path / "cache",
+            manifest=manifest,
+            verbose=False,
+        )
+
+
+def test_load_dataset_bundle_returns_none_for_a_local_compute_dataset():
+    """A non-hosted dataset hands control back so the demo builds it itself."""
+    from luxar.utils import demos as demos_utils
+
+    manifest = {
+        "schema_version": 1,
+        "records": {},
+        "datasets": {
+            "lc": {
+                "bucket": "local-compute",
+                "license": "none",
+                "reason": "not redistributable",
+                "files": [],
+            }
+        },
+    }
+    assert (
+        demos_utils.load_dataset_bundle(
+            "lc", "b.zip", ["f.zip"], manifest=manifest, verbose=False
+        )
+        is None
+    )
+
+
+def test_load_dataset_bundle_honours_recompute():
+    from luxar.utils import demos as demos_utils
+
+    assert (
+        demos_utils.load_dataset_bundle(
+            "anything", "b.zip", ["f.zip"], recompute=True, verbose=False
+        )
+        is None
+    )
+
+
+# --------------------------------------------------------------------------- #
+# The Zenodo leg: ids are recorded long before the record is public
+# --------------------------------------------------------------------------- #
+def test_unpublished_record_builds_no_url_even_with_ids():
+    """`published: false` keeps the leg dormant, ids notwithstanding.
+
+    Zenodo reserves a DOI at deposition time and the deposition id becomes the
+    record id on publication, so both are recorded as soon as the draft exists --
+    but a file URL into an unpublished draft 404s for everyone. Returning None
+    keeps the caller on the in-repo copy and its clean "not hosted yet" message
+    instead of turning that into an HTTP error.
+    """
+    rec = {
+        "zenodo_record": "21912280",
+        "zenodo_doi": "10.5281/zenodo.21912280",
+        "published": False,
+    }
+    assert data_fetch.zenodo_file_url(rec, "kidney_ch0.gsplats.zarr.zip") is None
+
+
+def test_published_record_derives_the_standard_file_url():
+    rec = {"zenodo_record": "21912280", "published": True}
+    assert data_fetch.zenodo_file_url(rec, "a.zip") == (
+        "https://zenodo.org/records/21912280/files/a.zip?download=1"
+    )
+
+
+def test_explicit_base_url_wins_over_the_derived_form():
+    rec = {
+        "zenodo_record": "21912280",
+        "base_url": "https://example.org/files/",
+        "published": True,
+    }
+    assert data_fetch.zenodo_file_url(rec, "a.zip") == (
+        "https://example.org/files/a.zip?download=1"
+    )
+
+
+def test_base_url_is_not_gated_by_published():
+    """The Sandbox rehearsal: a mirror URL on a record that is still a draft.
+
+    The migration runbook rehearses against sandbox.zenodo.org by pointing a
+    record's `base_url` there while keeping the production record an unpublished
+    (still deletable) draft. `published` describes THAT record, so it must not
+    silence a `base_url` aimed somewhere else — otherwise the rehearsal needs
+    `published: true` on a draft, which the audit script would report as LIVE.
+    """
+    rec = {
+        "zenodo_record": "21912280",
+        "base_url": "https://sandbox.zenodo.org/records/1234/files",
+        "published": False,
+    }
+    assert data_fetch.zenodo_file_url(rec, "a.zip") == (
+        "https://sandbox.zenodo.org/records/1234/files/a.zip?download=1"
+    )
+
+
+def test_record_without_ids_builds_no_url():
+    assert data_fetch.zenodo_file_url({}, "a.zip") is None
+
+
+def test_a_record_that_omits_published_is_treated_as_reachable():
+    """Only an explicit `published: false` gates the URL.
+
+    The generator always emits the flag, so every SHIPPED record carries one --
+    but a hand-rolled record (a fixture here, or a `base_url` aimed at a one-off
+    mirror during the Sandbox rehearsal) has no reason to, and must not be
+    silenced by its absence. Pinned because the audit script reads the same
+    field and the two have to agree on what a missing one means.
+    """
+    assert data_fetch.zenodo_file_url({"zenodo_record": "21912280"}, "a.zip") == (
+        "https://zenodo.org/records/21912280/files/a.zip?download=1"
+    )
+    assert data_fetch.zenodo_file_url(
+        {"base_url": "https://example.org/files"}, "a.zip"
+    ) == ("https://example.org/files/a.zip?download=1")
+
+
+def test_every_shipped_record_agrees_with_its_published_flag():
+    """Each record's id is recorded, and `published` decides whether a URL exists.
+
+    Guards against wiring a live URL by accident: while a record is an unpublished
+    draft it must build no URL, so no demo can start 404ing against something that
+    is not public yet. The other direction matters just as much — a record flipped
+    to published has to actually resolve to a URL, or the flip is silently inert.
+    Written both ways so publication needs no edit here beyond the flag itself.
+    """
+    m = load_manifest()
+    for name, rec in m["records"].items():
+        assert rec.get("zenodo_record"), f"{name}: record id should be recorded"
+        url = data_fetch.zenodo_file_url(rec, "x.zip")
+        # `base_url` is an explicit "the files are HERE" override that outranks the
+        # flag (the Sandbox rehearsal), so it belongs on the reachable side here —
+        # this has to mirror `zenodo_file_url`, not restate a subset of it.
+        if rec.get("published") or rec.get("base_url"):
+            assert url, f"{name}: reachable per its flags but builds no URL"
+        else:
+            assert url is None, f"{name}: unpublished draft, but the leg is live"

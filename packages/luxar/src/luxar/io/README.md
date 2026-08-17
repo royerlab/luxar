@@ -200,7 +200,7 @@ This ensures:
 - `sort_points_compound()`: Compound ordering for Points
 - `sort_splats_spatial()`: Simple spatial ordering for GSplats
 - `sort_segments_compound()`: Compound ordering for Lines segments
-- `compute_chunk_bounds_points()`: Chunk bounds with radius extent
+- `compute_chunk_bounds_points()`: Chunk bounds with radius extent (`radii=None` ⇒ the renderer's `DEFAULT_POINT_RADIUS`, so the bound is never tighter than the drawn disc)
 - `compute_chunk_bounds_gsplats()`: Chunk bounds with ellipsoidal extent
 - `morton_encode_nd()`: Morton (Z-order) encoding
 - `morton_encode_128bit()`: Morton encoding for 128-bit coordinates
@@ -216,11 +216,14 @@ This ensures:
 sources fed to gsplat fitting/calibration), independent of the compiled
 `.luxar.zarr` scene format above:
 
-- `volume.load_volume(path, channel=, timepoint=, array_key=, axes=)` — reads
-  `.npy` / `.npz` / `.zarr` / `.zarr.zip` / `.tiff` / imageio-supported files to
-  a float32 volume, with OME-Zarr-aware positional slicing and an explicit
-  `--axes` override. Missing optional readers raise `ImportError` (the CLI turns
-  it into a clean exit).
+- `volume.load_volume(path, channel=, timepoint=, array_key=, axes=, info=)` —
+  reads `.npy` / `.npz` / `.zarr` / `.zarr.zip` / `.tiff` / imageio-supported
+  files to a float32 volume, with OME-Zarr-aware positional slicing and an
+  explicit `--axes` override. Missing optional readers raise `ImportError` (the
+  CLI turns it into a clean exit). Pass an `info` dict to get back
+  `source_dtype`, the element type the array was **stored** in — the return is
+  always float32, so this is the last point at which it is knowable, and it is
+  the honest denominator of any size/compression figure quoted about the result.
 - `ome_zarr.discover_ome_zarr_shape(path, ...)` → `OMEZarrInfo` — discovers the
   T/C/Z/Y/X layout, voxel size, unit, and resolution levels from NGFF
   `multiscales` (with custom-`axes` and shape-heuristic fallbacks).
@@ -433,10 +436,19 @@ Compression gains from:
 
 **External**:
 - `zarr>=3.2,<4`: Storage backend. Note the library version and the on-disk
-  format are separate axes — Luxar writes zarr **format 2** from zarr-python 3.
-  Both are pinned in `luxar._zarr_compat`, which is the only module that names a
-  zarr format; go through its helpers (`open_group`, `create_array`,
-  `consolidate`, ...) rather than calling `zarr.*` directly.
+  format are separate axes — Luxar writes zarr **format 3** by default
+  (`LUXAR_ZARR_FORMAT=2` still produces format 2) and READS both, so existing
+  format-2 stores keep working untouched. Both axes are pinned in
+  `luxar._zarr_compat`, the only module that names a zarr format; go through its
+  helpers (`open_group`, `create_array`, `consolidate`, ...) rather than calling
+  `zarr.*` directly. Code that inspects a store on disk should use its
+  bi-format readers (`read_array_meta`, `read_node_attrs`, `is_consolidated`,
+  `read_consolidated_attrs`) instead of naming `.zarray` / `.zattrs` /
+  `.zmetadata`, which exist in only one of the two formats. Editing a store in
+  place likewise goes through `open_group`: re-opening an already-consolidated
+  store with plain `zarr.open_group` and re-consolidating writes a nested
+  consolidated index holding the pre-edit attributes, which later reads then
+  serve in preference to the (correct) documents on disk.
 - `numpy>=2.0`: Array operations
 - `numcodecs`: Blosc compressor (`DEFAULT_COMP`)
 - `arbol>=0.3.5`: Progress logging

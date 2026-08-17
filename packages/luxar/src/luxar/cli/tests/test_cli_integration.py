@@ -16,8 +16,38 @@ import requests
 from fastapi.testclient import TestClient
 
 from luxar import Dimensions, LuxarZarrCompiler
+from luxar._zarr_compat import ZARR_FORMAT
 from luxar.cli.utils import find_available_port
 from luxar.utils.demos import create_lorenz_attractor
+
+#: The served document carrying a node's attributes / group record / array
+#: record, for the format Luxar currently writes. Format 3 folds all three into
+#: one ``zarr.json`` per node; format 2 keeps them apart. These are URL paths
+#: fetched over HTTP by name — the server just serves files, so the test has to
+#: ask for the document that actually exists.
+_ATTRS_DOC = ".zattrs" if ZARR_FORMAT == 2 else "zarr.json"
+_GROUP_DOC = ".zgroup" if ZARR_FORMAT == 2 else "zarr.json"
+_ARRAY_DOC = ".zarray" if ZARR_FORMAT == 2 else "zarr.json"
+
+
+def _node_attrs(payload: dict) -> dict:
+    """A node's user attributes from either document shape.
+
+    A ``.zattrs`` IS the attributes object; a ``zarr.json`` is the whole node
+    record with attributes nested under ``attributes``, so reading a Luxar attr
+    off the top level of the latter always yields ``None``. Mirrors the viewer's
+    ``rootAttributes`` in ``types/zarr-documents.ts`` — both sides bypass the
+    zarr library here and so both need this unwrap.
+
+    A v3 record whose ``attributes`` is present but not a mapping yields ``{}``,
+    matching the TypeScript side (whose ``typeof null === "object"`` check falls
+    through to ``?? {}``). Returning ``payload`` there instead would hand back
+    ``zarr_format`` and ``node_type`` as though they were the node's attributes.
+    """
+    if payload.get("zarr_format") == 3:
+        attributes = payload.get("attributes")
+        return attributes if isinstance(attributes, dict) else {}
+    return payload
 
 
 class _ImmediateThread:
@@ -44,8 +74,23 @@ class _ImmediateThread:
 
 @pytest.fixture
 def available_port():
-    """Find an available port for testing."""
-    return find_available_port(8000, end_port=9000)
+    """A port for this test to bind.
+
+    Deliberately an OS-assigned EPHEMERAL port rather than
+    ``find_available_port(8000, ...)``. That helper scans deterministically
+    upward from its start port, so under ``pytest -n`` every worker probing at
+    the same moment is handed 8000 and they collide — and the collision surfaces
+    as ``pytest.fail`` in the ``test_server`` fixture, i.e. a hard red rather
+    than a retry. The kernel's ephemeral allocator hands out distinct ports
+    instead. (``test_export.py`` already uses this pattern.)
+
+    Still a probe-then-close: the socket is closed so the caller can bind it,
+    which every consumer here does — ``test_port_conflict_handling`` binds it
+    ITSELF to manufacture a conflict, so the fixture cannot hold it open.
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
 
 
 @pytest.fixture
@@ -58,59 +103,54 @@ def sample_scene(tmp_path):
 
 @pytest.fixture
 def test_server(sample_scene, available_port):
-    """Start a real test server in a background thread."""
-    from luxar.cli.main import create_server_app
+    """Start a real test server in a background thread, and stop it afterwards."""
+    import asyncio
 
-    # Create server app
-    app = create_server_app(str(sample_scene))
-
-    # Start server in background thread
     import uvicorn
 
-    server_thread = None
-    server_started = threading.Event()
+    from luxar.cli.main import create_server_app
 
-    def run_server():
-        config = uvicorn.Config(
-            app, host="127.0.0.1", port=available_port, log_level="error"
-        )
-        server = uvicorn.Server(config)
+    app = create_server_app(str(sample_scene))
+    # Build the Server OUTSIDE the thread so teardown has a handle to signal.
+    config = uvicorn.Config(
+        app, host="127.0.0.1", port=available_port, log_level="error"
+    )
+    server = uvicorn.Server(config)
 
-        # Signal that server is starting
-        server_started.set()
-
-        # Run server (this blocks)
-        import asyncio
-
-        asyncio.run(server.serve())
-
-    server_thread = threading.Thread(target=run_server, daemon=True)
+    server_thread = threading.Thread(
+        target=lambda: asyncio.run(server.serve()), daemon=True
+    )
     server_thread.start()
 
-    # Wait for server to start
-    server_started.wait(timeout=5)
-    time.sleep(0.5)  # Give server time to bind to port
-
-    # Verify server is running
-    max_retries = 10
-    for i in range(max_retries):
+    # Poll /health as the readiness signal. The previous version set an Event
+    # immediately BEFORE `serve()` (so it said nothing about readiness) and then
+    # slept a flat 0.5 s to compensate — dead time on every one of the 11 tests
+    # that take this fixture.
+    deadline = time.monotonic() + 15.0
+    while True:
         try:
-            response = requests.get(
-                f"http://127.0.0.1:{available_port}/health", timeout=1
-            )
-            if response.status_code == 200:
+            if (
+                requests.get(
+                    f"http://127.0.0.1:{available_port}/health", timeout=1
+                ).status_code
+                == 200
+            ):
                 break
         except requests.exceptions.RequestException:
-            if i == max_retries - 1:
-                pytest.fail(
-                    f"Server failed to start after {max_retries} retries — "
-                    "a real regression, not a reason to skip."
-                )
-            time.sleep(0.5)
+            pass
+        if time.monotonic() > deadline:
+            pytest.fail(
+                "Server failed to become healthy within 15s — a real regression."
+            )
+        time.sleep(0.05)
 
     yield f"http://127.0.0.1:{available_port}"
 
-    # Server thread is daemon, will be cleaned up automatically
+    # Actually shut down. The thread is a daemon, so a leaked server survived
+    # until the process exited and kept its port bound; under `pytest -n` that
+    # is one abandoned listener per server per worker.
+    server.should_exit = True
+    server_thread.join(timeout=10)
 
 
 class TestServeIntegration:
@@ -140,17 +180,17 @@ class TestServeIntegration:
 
     def test_root_zarr_endpoint(self, test_server):
         """Test that root zarr endpoint returns correct metadata."""
-        response = requests.get(f"{test_server}/.zattrs")
+        response = requests.get(f"{test_server}/{_ATTRS_DOC}")
         assert response.status_code == 200
-        data = response.json()
+        data = _node_attrs(response.json())
         assert "luxar_version" in data  # Changed from "version" to match implementation
         assert data["type"] == "scene"
 
     def test_scene_metadata(self, test_server):
         """Test retrieving scene metadata."""
-        response = requests.get(f"{test_server}/.zattrs")
+        response = requests.get(f"{test_server}/{_ATTRS_DOC}")
         assert response.status_code == 200
-        metadata = response.json()
+        metadata = _node_attrs(response.json())
 
         # Verify expected metadata structure
         assert (
@@ -160,7 +200,7 @@ class TestServeIntegration:
 
     def test_zarr_group_listing(self, test_server):
         """Test listing zarr groups."""
-        response = requests.get(f"{test_server}/.zgroup")
+        response = requests.get(f"{test_server}/{_GROUP_DOC}")
         assert response.status_code == 200
         data = response.json()
         assert "zarr_format" in data
@@ -168,21 +208,25 @@ class TestServeIntegration:
     def test_positions_array_access(self, test_server):
         """Test accessing point positions array."""
         # First, get the scene structure to find point nodes
-        response = requests.get(f"{test_server}/.zattrs")
+        response = requests.get(f"{test_server}/{_ATTRS_DOC}")
         assert response.status_code == 200
 
         # The Lorenz demo creates a node named "LorenzAttractor"
-        response = requests.get(f"{test_server}/LorenzAttractor/positions/.zarray")
+        url = f"{test_server}/LorenzAttractor/positions/{_ARRAY_DOC}"
+        response = requests.get(url)
         assert response.status_code == 200, (
-            f"Expected 200 for LorenzAttractor/positions/.zarray, "
-            f"got {response.status_code}"
+            f"Expected 200 for {url}, got {response.status_code}"
         )
         array_meta = response.json()
         assert "shape" in array_meta
-        assert "dtype" in array_meta
+        # The formats spell the element type differently — format 2 stores a
+        # numpy dtype string (`<u2`), format 3 a `data_type` name (`uint16`) —
+        # so accept either KEY, then assert the value against both spellings.
+        dtype = array_meta.get("dtype", array_meta.get("data_type"))
+        assert dtype is not None, f"no dtype key in {sorted(array_meta)}"
         # Positions default to uint16 per-axis fixed-point (linear_perchannel_u16),
         # decoded to float32 in the viewer; PRECISION / large-extent scenes stay float32.
-        assert array_meta["dtype"] in ["<u2", ">u2", "uint16", "<f4", ">f4", "float32"]
+        assert dtype in ["<u2", ">u2", "uint16", "<f4", ">f4", "float32"]
 
     def test_cors_headers(self, test_server):
         """Test that local CORS origins are allowed by default."""
@@ -195,7 +239,7 @@ class TestServeIntegration:
 
     def test_no_cache_header_on_data_responses(self, test_server):
         """Every mutable data response must require browser revalidation."""
-        response = requests.get(f"{test_server}/.zattrs")
+        response = requests.get(f"{test_server}/{_ATTRS_DOC}")
         assert response.headers.get("Cache-Control") == "no-cache"
 
     def test_no_cache_middleware_accepts_start_without_headers(self):
@@ -656,10 +700,10 @@ class TestDataServerMountRoot:
         client = TestClient(_build_data_app(sample_scene))
 
         # The store is served AT the root (data URLs carry no name suffix).
-        assert client.get("/.zgroup").status_code == 200
+        assert client.get(f"/{_GROUP_DOC}").status_code == 200
         # Neither the sibling nor the old parent-mounted URL shape resolves.
         assert client.get("/secret_sibling.txt").status_code == 404
-        assert client.get(f"/{sample_scene.name}/.zgroup").status_code == 404
+        assert client.get(f"/{sample_scene.name}/{_GROUP_DOC}").status_code == 404
 
     def test_resolve_mount_root(self, tmp_path):
         """Directories mount themselves; files never fall back to their parent."""

@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Unit tests for core/app/overlays/init-scale-bar.ts (G8).
  *

@@ -13,6 +13,7 @@ the core data API. This file covers:
 import numpy as np
 import pytest
 
+from luxar._zarr_compat import read_node_attrs
 from luxar.gsplats.gsplat_data import GSplatData
 
 from ._gsplat_data_helpers import _make_2d_gsplat, _make_3d_gsplat, _make_empty_gsplat
@@ -575,6 +576,168 @@ class TestSliceBy:
         assert sliced.n_splats == 2
         assert sliced.colors is not None
         assert np.array_equal(sliced.colors[1], [0, 255, 0])
+
+
+# ── Source-provenance stamps across a filter ────────────
+
+
+#: What a whole-volume `gsplat fit` of a 64³ uint16 stack stamps into `stats`.
+_SOURCE_STAMP = {
+    "source_shape": [64, 64, 64],
+    # A producer that preprocessed before fitting declares its acquisition; the
+    # marker is region-scoped like the grid it qualifies, or a crop would leave a
+    # flag behind saying a shape that is no longer stored was declared.
+    "source_declared": True,
+    "source_dtype": "uint16",
+    "source_voxels": 64**3,
+    "source_bytes": 2 * 64**3,
+    # What that acquisition occupied on disk, compressed — region-scoped like
+    # the decoded size it sits beside.
+    "source_stored_bytes": 1_000_000,
+    "fitted_shape": [64, 64, 64],
+    "fitted_voxels": 64**3,
+    "occupancy": 0.01,
+    # fitted_voxels / 3 splats — a ratio over the fitted grid, so region-scoped
+    # like the rest, and unanchored once its denominator is dropped.
+    "voxels_per_splat": 64**3 / 3,
+}
+
+#: Everything in the stamp EXCEPT the element type, which a crop cannot change.
+_REGION_KEYS = tuple(k for k in _SOURCE_STAMP if k != "source_dtype")
+
+
+class TestSourceStampAfterFilter:
+    """A crop must not keep the whole-volume source stamp.
+
+    ``gsplat info`` turns ``source_bytes`` into a compression ratio and quotes
+    ``occupancy`` beside it. After ``gsplat slice`` keeps an eighth of the volume,
+    those numbers describe a region the artifact no longer represents — an ~8x
+    inflated ratio. Silence is the feature's existing policy for an unknown
+    source grid, so the region-scoped fields are dropped instead.
+    """
+
+    @staticmethod
+    def _stamped() -> GSplatData:
+        gs = GSplatData(
+            centers=np.array(
+                [[10, 10, 10], [50, 50, 50], [90, 90, 90]], dtype=np.float32
+            ),
+            amplitudes=np.array([1.0, 0.5, 0.1], dtype=np.float32),
+            cholesky_factors=np.tile(
+                np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (3, 1)
+            ),
+            stats=dict(_SOURCE_STAMP),
+        )
+        return gs
+
+    def test_bbox_crop_drops_the_region_scoped_stamps(self):
+        out = self._stamped().filter_by(bbox=[(0, 60), (0, 60), (0, 60)])
+        assert out.n_splats == 2
+        for key in _REGION_KEYS:
+            assert key not in out.stats, f"{key!r} survived a crop"
+        # The element type is unchanged by a crop, so it stays true.
+        assert out.stats["source_dtype"] == "uint16"
+
+    def test_slice_by_drops_the_region_scoped_stamps(self):
+        out = self._stamped().slice_by(
+            [slice(0, 60), slice(None, None), slice(None, None)]
+        )
+        for key in _REGION_KEYS:
+            assert key not in out.stats, f"{key!r} survived a slice"
+        assert out.stats["source_dtype"] == "uint16"
+
+    def test_non_spatial_filter_keeps_the_stamp(self):
+        """The negative control: an amplitude threshold is not a crop.
+
+        It removes splats but not region — the surviving splats still represent
+        the whole fitted volume, so the compression ratio stays answerable.
+        """
+        out = self._stamped().filter_by(amplitude_min=0.3)
+        assert out.n_splats == 2
+        for key, value in _SOURCE_STAMP.items():
+            assert out.stats[key] == value, f"{key!r} was dropped by a plain filter"
+
+    def test_a_bbox_that_excludes_nothing_keeps_the_stamp(self):
+        """The other negative control: a crop that removed nothing is not a crop.
+
+        `--bbox` enclosing the whole volume is the natural spelling when one axis
+        of a scripted sweep is unbounded; the result represents exactly the same
+        content as its input, so its provenance is still true.
+        """
+        out = self._stamped().filter_by(bbox=[(-1, 1000)] * 3)
+        assert out.n_splats == 3  # nothing removed
+        for key, value in _SOURCE_STAMP.items():
+            assert out.stats[key] == value, f"{key!r} was dropped by a no-op bbox"
+
+    def test_an_all_unbounded_slice_keeps_the_stamp(self):
+        """`gsplat slice in out ":, :, :"` — the same no-op through slice_by."""
+        out = self._stamped().slice_by([slice(None, None)] * 3)
+        assert out.n_splats == 3
+        for key, value in _SOURCE_STAMP.items():
+            assert out.stats[key] == value, f"{key!r} was dropped by a no-op slice"
+
+    def test_the_cropped_stamp_does_not_survive_in_the_leafs_lod_stats(
+        self, tmp_path
+    ) -> None:
+        """The persisted twin must be cleaned too.
+
+        `GSplatData.__init__` aliases a single-leaf dataset's top-level `stats`
+        dict as its sub-LOD's, and the writer persists the sub-LOD's copy as the
+        leaf's `lod_stats` — so a crop that only rebound the top-level dict left
+        an uncropped stamp on disk anyway.
+        """
+        out = self._stamped().filter_by(bbox=[(0, 60)] * 3)
+        store = tmp_path / "cropped.gsplats.zarr"
+        out.save(store, ordering="none")
+
+        # Walk the node documents rather than naming `.zattrs`: the on-disk zarr
+        # format is selectable and v3 — the default — keeps a node's attributes
+        # in `zarr.json` instead, so globbing for `.zattrs` finds nothing at all
+        # and the walk silently examines no attributes.
+        seen_lod_stats = False
+        for node_dir in (store, *(p for p in store.rglob("*") if p.is_dir())):
+            attrs = read_node_attrs(node_dir)
+            if attrs is None:
+                continue
+            lod_stats = attrs.get("lod_stats")
+            seen_lod_stats = seen_lod_stats or lod_stats is not None
+            for key in _REGION_KEYS:
+                assert key not in (lod_stats or {}), (
+                    f"{key!r} survived the crop in {node_dir}'s lod_stats"
+                )
+        assert seen_lod_stats, "no lod_stats was written — the test proves nothing"
+
+    def test_a_ladder_sublod_does_not_keep_the_pre_crop_stamp(self):
+        """The aliased-twin argument covers ONE sub-LOD; a ladder has several.
+
+        A progressive fit stamps each pass's full fit stats into that pass's
+        sub-LOD, and those dicts are persisted as the leaf's `lod_stats`. On the
+        ladder path `filter()` copies each sub-LOD's stats independently, so the
+        pre-crop stamp survives there unless every sub-LOD is cleaned.
+        """
+        from luxar.gsplats.gsplat_data import AdditiveSubLOD
+
+        def _lod(centers: list[list[float]]) -> AdditiveSubLOD:
+            n = len(centers)
+            return AdditiveSubLOD(
+                centers=np.array(centers, dtype=np.float32),
+                amplitudes=np.ones(n, dtype=np.float32),
+                cholesky_factors=np.tile(
+                    np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (n, 1)
+                ),
+                stats=dict(_SOURCE_STAMP),
+            )
+
+        laddered = GSplatData.from_additive_sublods(
+            [_lod([[10, 10, 10], [50, 50, 50]]), _lod([[90, 90, 90]])],
+            stats=dict(_SOURCE_STAMP),
+        )
+        out = laddered.filter_by(bbox=[(0, 60)] * 3)
+        assert out.n_additive_sublods == 2  # the ladder is preserved
+        for i, lod in enumerate(out.additive_sublods):
+            for key in _REGION_KEYS:
+                assert key not in lod.stats, f"{key!r} survived the crop in sub-LOD {i}"
+            assert lod.stats["source_dtype"] == "uint16"
 
 
 # ── Concatenate ─────────────────────────────────────────

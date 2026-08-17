@@ -725,13 +725,64 @@ def cache_list() -> None:
     total = 0
     for e in entries:
         total += e.size_bytes
-        owner = ", ".join(e.demo_keys) if e.demo_keys else "⚠️  ORPHAN"
+        # A protected dir holds a hand-placed input, so it is claimed whatever
+        # DEMO_META says — calling it an ORPHAN would invite the very
+        # `clear --orphans` that must never touch it.
+        if e.protected:
+            marker = "🔒 hand-placed input"
+            owner = f"{', '.join(e.demo_keys)}  {marker}" if e.demo_keys else marker
+        else:
+            owner = ", ".join(e.demo_keys) if e.demo_keys else "⚠️  ORPHAN"
         aprint(f"  {format_memory_size(e.size_bytes):>10}  {e.path.name:<32} {owner}")
     aprint("")
     aprint(f"  {format_memory_size(total):>10}  TOTAL ({len(entries)} dirs)")
 
 
 # ─────────────────────────────── cache clear ─────────────────────────────────
+def _clearable_cache_dirs(info: DemoInfo, kept: list[str]) -> list[Path]:
+    """A demo's cache dirs minus its hand-placed inputs, recording what was kept.
+
+    A :data:`registry.PROTECTED_INPUT_DIRS` directory holds bytes the user put
+    there by hand with no download to get them back, so clearing it is not a
+    cache eviction but data loss. It is dropped here — before the caller can
+    collect its files OR add it to the sweep list, since the empty-directory
+    sweep would otherwise rmdir an input directory that is (or has just become)
+    empty. Kept names accumulate in ``kept``, in encounter order and deduplicated,
+    for one notice each; only a directory that actually exists is worth a notice,
+    as a demo can declare the name on a machine that never received the file.
+    """
+    clearable: list[Path] = []
+    for cache_dir in registry.demo_cache_dirs(info):
+        if cache_dir.name in registry.PROTECTED_INPUT_DIRS:
+            if cache_dir.exists() and cache_dir.name not in kept:
+                kept.append(cache_dir.name)
+            continue
+        clearable.append(cache_dir)
+    return clearable
+
+
+def _orphan_targets(
+    entries: list["registry.CacheEntry"], kept: list[str]
+) -> list[tuple[Path, int, str]]:
+    """Deletion targets for ``--orphans``, sparing hand-placed inputs.
+
+    A protected entry is claimed by definition, so it is not an orphan however
+    empty its ``demo_keys`` is — that is exactly the state that used to make
+    ``clear --orphans`` rmtree the Gaia catalog. Only that state earns a notice
+    (see :func:`_clearable_cache_dirs`): a protected dir some demo *does* claim
+    was never a candidate here, and announcing it would mean `clear <other-key>
+    --orphans` volunteering advice about a directory the user never selected.
+    """
+    targets: list[tuple[Path, int, str]] = []
+    for e in entries:
+        if e.protected:
+            if not e.demo_keys and e.path.name not in kept:
+                kept.append(e.path.name)
+        elif not e.demo_keys:
+            targets.append((e.path, e.size_bytes, f"ORPHAN {e.path.name}"))
+    return targets
+
+
 @cache_app.command("clear")
 def cache_clear(
     keys: Optional[list[str]] = typer.Argument(
@@ -748,7 +799,9 @@ def cache_clear(
         False, "--outputs", help="Also delete generated datasets/demos/*.luxar.zarr."
     ),
     orphans: bool = typer.Option(
-        False, "--orphans", help="Also remove cache dirs claimed by no demo."
+        False,
+        "--orphans",
+        help="Also remove cache dirs claimed by no demo (hand-placed inputs are kept).",
     ),
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Show what would be deleted; delete nothing."
@@ -790,9 +843,15 @@ def cache_clear(
             if (is_computed and computed) or (not is_computed and downloads):
                 targets.append((f, f.stat().st_size, f"{demo_key}/{f.name}"))
 
+    # Hand-placed demo inputs (registry.PROTECTED_INPUT_DIRS) are refused on
+    # every route — by key, --all and --orphans — and the names of the ones we
+    # spared earn one notice each, printed in --dry-run and in a real run alike
+    # so the preview matches the run. See :func:`_clearable_cache_dirs`.
+    protected_kept: list[str] = []
+
     cache_dirs: list[Path] = []
     for d in selected:
-        for cache_dir in registry.demo_cache_dirs(d):
+        for cache_dir in _clearable_cache_dirs(d, protected_kept):
             cache_dirs.append(cache_dir)
             _add_dir_files(cache_dir, d.key)
         if outputs:
@@ -809,9 +868,7 @@ def cache_clear(
         except registry.DemoMetaError as exc:
             aprint(f"❌ Broken demo metadata: {exc}")
             raise typer.Exit(1) from exc
-        for e in entries:
-            if not e.demo_keys:
-                targets.append((e.path, e.size_bytes, f"ORPHAN {e.path.name}"))
+        targets.extend(_orphan_targets(entries, protected_kept))
 
     # One cache name can be claimed by several demos (four share
     # ``gsplats_tribolium``), so a selection covering more than one claimant
@@ -837,6 +894,14 @@ def cache_clear(
     # a real run silently removes a cache dir it never mentioned.
     doomed = {p for p, _, _ in targets}
     empties = [p for c in cache_dirs for p in _empty_dirs(c, deleted=doomed)]
+
+    # Ahead of the "nothing to clear" exit: a selection that was *only* a
+    # protected input still has to say why it cleared nothing.
+    for name in protected_kept:
+        aprint(
+            f"🔒 Keeping {name}/ — a hand-placed demo input, not a download; "
+            "delete it by hand if you really mean to."
+        )
 
     if not targets and not empties:
         aprint("Nothing to clear for that selection.")

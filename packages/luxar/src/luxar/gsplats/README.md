@@ -36,7 +36,7 @@ pip install "luxar[gsplats]"
 - **Robust Initialization**: Multiscale candidate detection with DoG and peak finding
 - **Memory Efficient**: Truncated rendering and pre-allocated buffers
 - **Tiled Fitting**: Overlapping tiles with Hann cosine apodization for volumes that exceed GPU memory
-- **Quality Metrics**: Built-in PSNR, SSIM, and MSE computation on GPU tensors
+- **Quality Metrics**: Built-in PSNR, foreground PSNR, SSIM, and MSE computation on GPU tensors
 
 ## Quick Example
 
@@ -47,8 +47,8 @@ from luxar.gsplats import fit_gaussian_splats
 result = fit_gaussian_splats(volume, n_iters=1000)
 
 # Post-processing transformations
-result = result.center_at_centroid()     # Center for easier viewing
-result = result.scale_intensity(0.1)     # Reduce brightness 10x
+result = result.center_at_centroid()  # Center for easier viewing
+result = result.scale_intensity(0.1)  # Reduce brightness 10x
 result = result.translate([10, 20, 30])  # Shift in space
 
 # Save or visualize
@@ -138,10 +138,10 @@ result = fit_gaussian_splats(
     image,
     # seeds auto-generated with volume-proportional scaling
     # norm_percentile=0.0 by default (full range normalization)
-    n_iters=300,                          # Maximum iterations
-    lr=0.01,                              # Stable learning rate
-    asymmetric_penalty=1.0,               # Over-prediction penalty factor (default)
-    loss_type="l1",                       # default; alternatives: "mse", "poisson"
+    n_iters=300,  # Maximum iterations
+    lr=0.01,  # Stable learning rate
+    asymmetric_penalty=1.0,  # Over-prediction penalty factor (default)
+    loss_type="l1",  # default; alternatives: "mse", "poisson"
     # max_abs_error auto-set to 0.01 (1% of normalized range)
     # l1_amp auto-set to 0.1 * lr for proportional amplitude regularization
     # l1_diag auto-set to 0.01 * lr for mild diagonal regularization
@@ -152,7 +152,6 @@ result = fit_gaussian_splats(
 # 2. Access results and render directly - clean and simple!
 # Result contains: centers, amplitudes, cholesky_factors, stats
 reconstruction = render_gaussians_numpy(image.shape, result, truncate=3.0)
-
 ```
 
 **Note**: `fit_gaussian_splats()` returns a `GSplatData` dataclass with:
@@ -173,12 +172,12 @@ from luxar.gsplats import fit_tiled
 
 # Fit a large volume using tiles
 result = fit_tiled(
-    large_volume,            # np.ndarray or zarr.Array (lazy loading supported)
-    tile_size=256,           # Tile size per axis (int or per-axis tuple)
-    overlap=32,              # Overlap width for cosine blending
-    n_iters=1000,            # Forwarded to fit_gaussian_splats per tile
-    device="cuda",           # GPU for each tile
-    verbose=True,            # Per-tile progress logging
+    large_volume,  # np.ndarray or zarr.Array (lazy loading supported)
+    tile_size=256,  # Tile size per axis (int or per-axis tuple)
+    overlap=32,  # Overlap width for cosine blending
+    n_iters=1000,  # Forwarded to fit_gaussian_splats per tile
+    device="cuda",  # GPU for each tile
+    verbose=True,  # Per-tile progress logging
 )
 
 # Result is a single GSplatData with all splats in global coordinates
@@ -209,10 +208,13 @@ merged = GSplatData.concatenate(all_tile_results)
 - `TileSpec` -- Frozen dataclass describing one tile: grid index, slices, origin, shape, border flags, and actual per-axis overlap with neighbors.
 - `compute_tile_specs(volume_shape, tile_size, overlap)` -- Deterministic grid of overlapping tiles in row-major order. Edge tiles are clamped to volume boundaries.
 - `cosine_window(spec)` -- Builds an nD separable Hann apodization window from a `TileSpec`. Two adjacent windows sum to exactly 1.0 in the overlap zone (partition-of-unity property).
+- `grid_bsp_tree(specs, *, scale=None)` -- Serialized `bsp_tree` over a uniform tile grid, so the viewer paints tile-parts back-to-front instead of by centroid (#1555). `scale` is a per-axis, finite and strictly positive factor mapping the specs' voxel frame onto the frame the splats actually live in (see below).
+- `resolve_grid_scale(ndim, *, downscale_factors=None, voxel_size=None, output_space="real")` -- Builds that `scale`. The two terms COMPOSE: a `--downscale` grid is computed on the decimated shape while the workers rescale their splats back to full resolution, and a `voxel_size` fit with `output_space="real"` emits physical centers. Returns `None` when both are no-ops (#1587). Raises on an `output_space` outside `("real", "voxel")` -- silently reading a typo as "voxel" would drop the spacing term, which is the very mismatch this closes -- on a `voxel_size` that is neither a scalar nor length-`ndim`, and on a resolved factor that is not finite and positive (a YAML `.nan` passes the fitter's own `<= 0` test and would otherwise become a `NaN` split plane). Every producer of a uniform tile grid's `bsp_tree` goes through it: `fit_tiled`, `dispatch_parallel_tiled`, and the `batch-fit` planner (which resolves the workers' `--preset`/`--config` once and records the answer as the manifest's `grid_scale`, for the merge to read).
 
 **Key properties:**
 - Overlap must satisfy `overlap <= tile_size // 2` to avoid triple tile overlap.
-- The background floor (`floor`, default `"auto"`) is resolved once against the whole volume (never per tile) and subtracted from each raw tile before apodization; on the floor-subtracted data the cosine windows guarantee seamless blending without post-merge pruning. (This applies to uniform/apodized tiling; the content-adaptive planner currently hands each unapodized box the raw floor spec, so its boxes still estimate per box.)
+- The background floor (`floor`, default `"auto"`) is resolved once against the whole volume (never per tile) and subtracted from each tile before apodization — on the DENOISED basis when `--denoise` is active, since that is the data the level is subtracted from: `resolve_volume_floor_denoised` keeps the whole-volume level and adds the shift measured on a small bounded denoise probe, which reproduces the non-tiled path's denoised estimate exactly whenever the volume fits the probe budget. Above that budget the shift is applied for a `pNN` spec only; the default `auto` keeps its raw-basis level and says so, because the histogram-mode shift is not measurable on a bounded crop (#1178). On the floor-subtracted data the cosine windows guarantee seamless blending without post-merge pruning. The content-adaptive planner resolves it the same way — one whole-volume level, handed to the density scan and to every box (#1174) — but its boxes are unapodized and the level reaches them as the fit's `floor` argument, so a box lying entirely above the pedestal still normalizes against its own crop minimum (`image_min = max(level, min(crop))`) rather than the level.
+- The intensity scale is resolved whole-volume in the same spirit — but not on the denoised basis: `resolve_volume_norm_range` resolves one `(image_min, image_max)` against the RAW whole volume (same bounded sampler and determinism guarantee as the floor, no denoise probe) and every tile normalizes with it, so the optimiser's absolute criteria — convergence tolerance, seeding and culling thresholds, `amp_max` — mean the same thing in every tile. `image_min` is pinned at 0 (where floor-subtracted, apodized tile data starts) and a full-range scale carries no ceiling, since it is a bounded *sample* and a brighter voxel is real signal. A tile far dimmer than the volume maximum is therefore held to the same absolute tolerance as the rest of the volume, and converges earlier than it would have on its own scale. Because that unclipped scale can put a voxel above 1.0, the auto `amp_max` follows the normalized peak instead of capping at 1.0 (it stays 1.0 exactly whenever the range came from the array itself, so a whole-volume fit is unaffected). Because the bottom is pinned, a `norm_percentile > 0` keeps its bright-outlier clipping under tiling but not its low-end clipping. Where the measurement carries no usable scale — a non-finite top, a top with no positive extent (the sample landed in empty or masked space), or a top the applied floor reaches — every tile falls back to its own scale with a printed note, rather than being handed a zero, negative or epsilon range to divide by. A volume that is honestly dim is not one of those cases and keeps its shared scale. Uniform tiling only — the content-adaptive planner's boxes still normalize against their own crop.
 - `fit_tile` rejects explicit seed arrays (use int count, float ratio, or None).
 - zarr arrays are supported for out-of-core processing -- only one tile is materialized at a time.
 
@@ -226,17 +228,15 @@ from luxar.gsplats.seeds import generate_seeds, seed_from_edges
 # Custom seed generation with specific method
 custom_seeds = seed_from_edges(
     image,
-    n_seeds=1000,                # Custom density
-    min_distance=2.0,            # Minimum seed spacing
-    edge_threshold_rel=0.1,      # Edge detection threshold
+    n_seeds=1000,  # Custom density
+    min_distance=2.0,  # Minimum seed spacing
+    edge_threshold_rel=0.1,  # Edge detection threshold
 )
 
 # Or use unified entry point
 custom_seeds = generate_seeds(image, method="edges")
 
-result = fit_gaussian_splats(
-    image, seeds=custom_seeds
-)
+result = fit_gaussian_splats(image, seeds=custom_seeds)
 ```
 
 ### Controlling Seed Count
@@ -245,7 +245,9 @@ The `seeds` parameter supports multiple input types for flexible control:
 
 ```python
 # Option 1: Auto-generate (default)
-result = fit_gaussian_splats(image)  # auto seed budget (see "Auto-Seed Generation" below)
+result = fit_gaussian_splats(
+    image
+)  # auto seed budget (see "Auto-Seed Generation" below)
 
 # Option 2: Exact count (NEW!)
 result = fit_gaussian_splats(image, seeds=1000)  # Exactly 1000 splats
@@ -387,10 +389,10 @@ The system includes two types of L1 regularization to control model complexity a
 ```python
 result = fit_gaussian_splats(
     image,
-    l1_amp=0.02,      # Strong amplitude sparsity (2% of lr)
-    l1_diag=0.005,    # Mild shape regularization (0.5% of lr)
+    l1_amp=0.02,  # Strong amplitude sparsity (2% of lr)
+    l1_diag=0.005,  # Mild shape regularization (0.5% of lr)
     lr=0.01,
-    n_iters=300
+    n_iters=300,
 )
 ```
 
@@ -471,18 +473,15 @@ from luxar.gsplats import DynamicOpsConfig
 
 # Create configuration
 config = DynamicOpsConfig()
-config.step_every = 50              # Run every 50 iterations
-config.k_max_residuals = 40         # Max peaks to find
-config.nms_radius_vox = 2.0         # Non-maximum suppression radius
+config.step_every = 50  # Run every 50 iterations
+config.k_max_residuals = 40  # Max peaks to find
+config.nms_radius_vox = 2.0  # Non-maximum suppression radius
 config.relocation_percentile = 1.0  # % of weakest splats to relocate
 config.max_relocations_per_step = 64  # Cap relocations per step
 
 # Fit with dynamic operations
 result = fit_gaussian_splats(
-    image,
-    enable_dynamic_ops=True,
-    dynamic_config=config,
-    n_iters=300
+    image, enable_dynamic_ops=True, dynamic_config=config, n_iters=300
 )
 ```
 
@@ -527,7 +526,7 @@ from luxar.gsplats.optim import create_optimizer_and_scheduler
 optimizer, scheduler = create_optimizer_and_scheduler(
     model,
     lr=0.01,  # Base LR, auto-compensated for gradient dilution
-    scheduler_type="plateau"
+    scheduler_type="plateau",
 )
 ```
 
@@ -546,8 +545,8 @@ from luxar.gsplats.fit_gsplats import GaussianSplatFitter
 
 # Initialize fitter with specific device and options
 fitter = GaussianSplatFitter(
-    device="cuda",              # or "mps", "cpu"; None auto-selects CUDA → MPS → CPU
-    enable_dynamic_ops=True,    # fixed-pool splat relocation during fitting (default)
+    device="cuda",  # or "mps", "cpu"; None auto-selects CUDA → MPS → CPU
+    enable_dynamic_ops=True,  # fixed-pool splat relocation during fitting (default)
 )
 
 # Fit with detailed statistics
@@ -555,9 +554,9 @@ result = fitter.fit(
     image,
     seeds=candidates,
     n_iters=500,
-    early_stop_patience=200,     # iterations without improvement before stopping
-    sigma_min_diag=[0.5, 0.5],   # Minimum splat size
-    sigma_max_diag=[10.0, 10.0], # Maximum splat size
+    early_stop_patience=200,  # iterations without improvement before stopping
+    sigma_min_diag=[0.5, 0.5],  # Minimum splat size
+    sigma_max_diag=[10.0, 10.0],  # Maximum splat size
 )
 
 # Access optimization statistics from result.stats
@@ -579,6 +578,8 @@ from luxar.gsplats.metrics import compute_quality_metrics, compute_psnr, compute
 # Compute all metrics at once
 metrics = compute_quality_metrics(pred_tensor, target_tensor)
 print(f"PSNR: {metrics['psnr_db']:.2f} dB")
+print(f"PSNR (foreground): {metrics['foreground_psnr_db']:.2f} dB "
+      f"over {metrics['foreground_fraction'] * 100:.2f}% of voxels")
 print(f"SSIM: {metrics['ssim']:.4f}")
 print(f"MSE:  {metrics['mse']:.6e}")
 print(f"Relative L2: {metrics['rel_l2']:.4f}")
@@ -589,11 +590,30 @@ psnr = compute_psnr(pred_tensor, target_tensor)
 ssim = compute_ssim(pred_tensor, target_tensor, window_size=11)
 ```
 
+### Read the foreground number, not just the global one
+
+On sparse volumes the global PSNR is dominated by background: on a synthetic
+99.9%-empty volume (the shape a light-sheet stack has), a fit that discards 90%
+of the signal still scores **37 dB globally** while scoring **0.9 dB on the
+foreground**. Quote both --
+the global figure alone is close to a report on how well the emptiness was
+reproduced.
+
+Foreground is `target > otsu(target)`, defined on the *target* so a fit that
+hallucinates structure is still scored where the signal actually is. The error
+is averaged over foreground voxels only, but `data_range` comes from the whole
+volume, matching `calibration.metrics.held_out_psnr_foreground` so the two are
+comparable; using the foreground's own (narrower) range would silently inflate
+the result. `foreground_fraction` is reported alongside because a PSNR over
+0.01% of a volume means something very different from one over 40%.
+
 ### Functions
 
 - `compute_psnr(pred, target, data_range=None)` -- Peak Signal-to-Noise Ratio in dB. Returns `float('inf')` when MSE is zero.
+- `compute_foreground_psnr(pred, target, data_range=None, threshold=None)` -- PSNR over foreground voxels only. Returns `(psnr_db, threshold, fraction)`; `psnr_db` is `nan` when the foreground is empty.
+- `otsu_threshold(target, bins=256)` -- Otsu's threshold, on the input device. Reimplemented rather than delegating to scikit-image (a `demos` extra) so the foreground definition does not depend on which extras are installed; pinned to match `skimage.filters.threshold_otsu` exactly.
 - `compute_ssim(pred, target, window_size=11, data_range=None)` -- Structural Similarity Index using nD Gaussian-weighted convolution. Supports 2D, 3D, and higher (averages over 3D sub-volumes for >3D).
-- `compute_quality_metrics(pred, target, data_range=None, ssim_window_size=11)` -- Computes all metrics in one call. Returns a dict with keys: `mse`, `psnr_db`, `ssim`, `rel_l2`, `max_abs_error`.
+- `compute_quality_metrics(pred, target, data_range=None, ssim_window_size=11)` -- Computes all metrics in one call. Returns a dict with keys: `mse`, `psnr_db`, `ssim`, `rel_l2`, `max_abs_error`, `foreground_psnr_db`, `foreground_threshold`, `foreground_fraction`.
 
 ### Quality Metrics in GSplatData.stats
 
@@ -618,6 +638,7 @@ rendered = render_to_volume_tensor(result, shape=volume.shape, device="cuda")
 
 # Compute metrics without GPU-CPU round-trip
 import torch
+
 target = torch.from_numpy(volume).to("cuda")
 metrics = compute_quality_metrics(rendered, target)
 print(f"PSNR={metrics['psnr_db']:.1f} dB, SSIM={metrics['ssim']:.4f}")
@@ -640,7 +661,9 @@ ks = build_k_grid(n_points=10, k_min=1_000, k_max=512_000)  # manuscript-style s
 result = calibrate(volume, k_grid=ks, fit_kwargs={"device": "cuda"})
 
 print(f"Recommended K* = {result.held_out_peak.k_star:,}")
-print(f"Curve type     = {result.held_out_peak.type}")  # peak | plateau | signal_limited
+print(
+    f"Curve type     = {result.held_out_peak.type}"
+)  # peak | plateau | signal_limited
 print(f"Noise floor σ̂ = {result.noise_floor.sigma_hat:.4f}")
 print(f"PSNR ceiling   = {result.noise_floor.psnr_max_db:.1f} dB")
 
@@ -720,15 +743,19 @@ additive = make_additive_lod(data, n_lods=4, method="greedy")
 
 # 2b. Substitutive: 3 coarser levels with 4x compression each
 pyramid = make_substitutive_lod(
-    data, compression_factor=4, levels=3, method="kmeans_lloyd",
+    data,
+    compression_factor=4,
+    levels=3,
+    method="kmeans_lloyd",
 )
 # pyramid.substitutive_levels[0] = original; [3] = coarsest (≈ N / 64 splats)
 
 # 2c. Full 2-D pyramid (substitutive × additive) in one call
 matrix = make_lod_pyramid(
     data,
-    compression_factor=4, levels=3,     # outer (substitutive) axis
-    n_additive_lods=4,                  # inner (additive) axis
+    compression_factor=4,
+    levels=3,  # outer (substitutive) axis
+    n_additive_lods=4,  # inner (additive) axis
 )
 ```
 
@@ -825,8 +852,7 @@ from luxar.gsplats import fit_gaussian_splats
 result = fit_gaussian_splats(image, n_iters=1000)
 
 # Save to file with spatial ordering for efficient access
-result.save('fitted.gsplats.zarr',
-           ordering='hilbert')  # or 'morton', 'none'
+result.save("fitted.gsplats.zarr", ordering="hilbert")  # or 'morton', 'none'
 
 # Colors are automatically saved if present; SDR (uint8) vs HDR (geolog_perchannel_u16)
 # is auto-detected from the values — there is no explicit color_mode knob.
@@ -840,7 +866,7 @@ Load previously saved splats back into a GSplatData object:
 from luxar.gsplats.io import load_gsplats
 
 # Load from disk
-result = load_gsplats('fitted.gsplats.zarr')
+result = load_gsplats("fitted.gsplats.zarr")
 
 # Access all fields
 print(f"Loaded {result.centers.shape[0]} splats")
@@ -848,6 +874,7 @@ print(f"Has colors: {result.colors is not None}")
 
 # Render loaded splats
 from luxar.gsplats.models.gsplats.rendering_wrappers import render_gaussians_numpy
+
 reconstruction = render_gaussians_numpy(image.shape, result, truncate=3.0)
 ```
 
@@ -865,21 +892,21 @@ image = np.random.rand(100, 100).astype(np.float32)
 result = fit_gaussian_splats(image, n_iters=1000)
 
 # Add directly to scene
-with LuxarZarrCompiler('scene.luxar.zarr') as compiler:
+with LuxarZarrCompiler("scene.luxar.zarr") as compiler:
     scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-    gsplats = scene.add_gsplats_from_data('fitted', result)
+    gsplats = scene.add_gsplats_from_data("fitted", result)
     print(f"Added {gsplats.n_splats} splats with colors={gsplats.has_colors}")
 ```
 
 **Option 2: Add from saved .gsplats.zarr file**
 ```python
 # First save result
-result.save('fitted.gsplats.zarr', ordering='hilbert')
+result.save("fitted.gsplats.zarr", ordering="hilbert")
 
 # Later, load into a scene
-with LuxarZarrCompiler('scene.luxar.zarr') as compiler:
+with LuxarZarrCompiler("scene.luxar.zarr") as compiler:
     scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-    gsplats = scene.add_gsplats_from_file('loaded', 'fitted.gsplats.zarr')
+    gsplats = scene.add_gsplats_from_file("loaded", "fitted.gsplats.zarr")
     print(f"Loaded {gsplats.n_splats} splats")
 ```
 
@@ -915,23 +942,23 @@ result = GSplatData(
     amplitudes=amplitudes,
     cholesky_factors=cholesky_factors,
     colors=np.random.rand(n_splats, 3).astype(np.float32),  # Add colors
-    stats={}
+    stats={},
 )
 
 # Colors are preserved during save/load; SDR (uint8 [0-255]) vs HDR (values
 # > 1 → geolog_perchannel_u16, decoded back to float32) is auto-detected —
 # no color_mode knob.
-result.save('colored.gsplats.zarr')
+result.save("colored.gsplats.zarr")
 
 # Load preserves colors
-loaded = load_gsplats('colored.gsplats.zarr')
+loaded = load_gsplats("colored.gsplats.zarr")
 assert loaded.colors is not None
 assert loaded.colors.shape == (n_splats, 3)
 
 # Scene integration preserves colors
-with LuxarZarrCompiler('scene.luxar.zarr') as compiler:
+with LuxarZarrCompiler("scene.luxar.zarr") as compiler:
     scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-    gsplats = scene.add_gsplats_from_data('colored', result)
+    gsplats = scene.add_gsplats_from_data("colored", result)
     assert gsplats.has_colors == True
 ```
 
@@ -944,7 +971,8 @@ Main fitting function with automatic optimizations.
 
 **Key Parameters:**
 - `V`: Input n-dimensional array to reconstruct
-- `seeds`: Initial candidate positions (N, d), int count, or float compression ratio
+- `seeds`: Initial candidate positions (N, d), int count, float compression ratio, or a `GSplatData` to warm-start from
+- `seed_amps_background_relative`: Which amplitude convention a `GSplatData` warm start carries — `False` (default) for `generate_seeds()` output (raw image intensities, background pedestal included), `True` for a previous fit's output (pedestal already removed). Getting it wrong is silent: a fit's output taken as raw has an active `floor` subtracted a second time, so every seed dimmer than the floor starts at 0
 - `n_iters`: Maximum iterations (default: 1000)
 - `lr`: Learning rate (default: 0.01)
 - `loss_type`: "l1" (default), "mse", or "poisson" — see Supp. Doc. 5 for the empirical comparison that motivates the L1 default
@@ -966,9 +994,17 @@ Main fitting function with automatic optimizations.
 Tiled fitting for large volumes that exceed GPU memory. Splits the volume into
 overlapping tiles with Hann cosine apodization, fits each tile independently,
 and concatenates results. The background floor is resolved once against the
-whole volume and subtracted from each raw tile before windowing (floor
-subtraction and apodization do not commute); the partition-of-unity property
-then eliminates seam artifacts.
+whole volume and subtracted from each tile before windowing (floor
+subtraction and apodization do not commute) — on the denoised basis when
+per-tile denoising is active, so `--denoise` removes the same pedestal here as
+it does on the non-tiled path: exactly so within the bounded probe's budget,
+approximately above it for a `pNN` spec, and not at all above it for the default
+`auto` (the raw-basis level is kept, with a note, because the mode shift is not
+measurable on a bounded crop) (#1178); the partition-of-unity property
+then eliminates seam artifacts. The normalization range is resolved once
+against the whole volume too (`resolve_volume_norm_range`), so every tile is
+fitted on one shared intensity scale — see the tiling key-properties list
+above.
 
 **Key Parameters:**
 - `tile_size`: Tile size per axis (int or tuple). Must satisfy `overlap <= tile_size // 2`.
@@ -976,6 +1012,7 @@ then eliminates seam artifacts.
 - `voxel_size`: Physical voxel spacing (optional), forwarded to per-tile fitting.
 - `output_space`: `"real"` or `"voxel"` coordinate space for output centers.
 - `verbose`: Print per-tile progress (default: True).
+- `source_shape` / `source_dtype`: Grid and stored element type of the ACQUISITION, when `volume` is already a preprocessed copy of it (a caller that decimated before tiling must declare the grid, or the merged result records the working copy as its source). Taken explicitly rather than through `**fit_kwargs` because they describe the MERGED result and are applied at the merge: forwarded to the tiles, each would claim the whole acquisition as its own crop's source. `source_shape=None` measures `volume`, which is right whenever nothing was preprocessed.
 - `**fit_kwargs`: All parameters from `fit_gaussian_splats` (seeds, n_iters, device, etc.)
 
 `seeds` is handed to **every** tile as-is, so an integer here is a *per-tile* count, not a whole-volume budget: N tiles fit ~N × `seeds` splats. This differs from the CLI, where `--seeds` **is** a whole-volume budget that `luxar gsplat fit` divides by the tile count before calling this function (`cli.gsplat_ops.fitting.fit_utils.split_seeds_across_tiles`). If you are fitting at a K\* from `gsplat cal` (see the calibration sections above), divide it yourself — or pass a float compression ratio, which is scale-free and needs no adjustment.
@@ -1049,9 +1086,9 @@ The implementation supports multiple PyTorch devices with performance-aware auto
 fitter = GaussianSplatFitter()  # Uses best available
 
 # Manual device selection:
-fitter = GaussianSplatFitter(device="mps")    # Force MPS
-fitter = GaussianSplatFitter(device="cuda")   # Force CUDA
-fitter = GaussianSplatFitter(device="cpu")    # Force CPU
+fitter = GaussianSplatFitter(device="mps")  # Force MPS
+fitter = GaussianSplatFitter(device="cuda")  # Force CUDA
+fitter = GaussianSplatFitter(device="cpu")  # Force CPU
 ```
 
 ### Apple Silicon Performance Notes:
@@ -1077,7 +1114,7 @@ model = GaussianSplatModelMetal(
     amps0=amps,
     sigma_min_diag=[0.5, 0.5, 0.5],  # required: per-axis minimum splat size
     truncate=3.0,
-    device='mps'  # Must be MPS
+    device="mps",  # Must be MPS
 )
 
 # Use like normal PyTorch model

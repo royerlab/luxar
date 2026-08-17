@@ -14,7 +14,7 @@ description: >-
 # Luxar GSplat pipeline
 
 Luxar fits **Gaussian splats** to scientific volumes and serves them to a WebGL
-viewer. The standalone artifact is a `.gsplats.zarr` (format v3.3 — a node tree;
+viewer. The standalone artifact is a `.gsplats.zarr` (format v3.4 — a node tree;
 older v3.x files are still read transparently).
 All commands below are subcommands of `luxar gsplat`.
 
@@ -68,11 +68,84 @@ therefore background-relative. `--floor` is ON by default (`auto`):
 `cal` applies the same `--floor` up front so K* is measured on floor-suppressed
 data, matching how you fit.
 
+Under **any** tiling (`uniform`, `content`, `--tile k/M`, `-j N`) the spec is
+resolved against the **whole volume**, never against a tile or box crop — which
+would make abutting regions fit against different baselines and show brightness
+steps at their boundaries. `uniform` and `content` resolve it once in the parent
+and hand every tile/box the concrete level; the uniform `-j N`/`--tile k/M`
+workers instead each resolve the spec themselves against that same whole volume,
+which agrees because the sampler is deterministic. `batch-fit` extends this
+across time: one global level for the whole timelapse, resolved at plan time as
+the **minimum** of the levels measured on a bounded set of evenly spaced `(t, c)`
+slices spanning the whole store — up to 4 timepoints (always including `t=0` and
+`t=T-1` when `T > 1`) x up to 4 channel-like coordinates — and recorded in the
+manifest. A minimum cannot clip a **sampled** timepoint/channel to zero and so
+lose that slice; a dimmer NON-sampled slice still can, since bounded sampling
+bounds only what it samples, so pass `--floor none` or an explicit numeric
+`--floor N` when a particular slice must survive.
+
+**Stay on `auto` unless you have measured otherwise.** A `pNN` floor subtracts a
+percentile of *all* voxels, so on sparse data it lands wherever the sparsity puts
+it rather than where the noise ends. On a 96x640x640 crop of a sparse light-sheet
+brain — 1.01% of its voxels foreground (above 10% of max), 12.9% in the dim band
+(1–10%, where thin faint neurites live) — `p99` sat at **1.34% of that crop's
+max**, squarely inside signal. Note it is a crop figure: over the whole stack the
+same percentile is 0.05% of peak. A `pNN` floor moves with whatever you point it
+at, which is the whole problem. Every arm at a fixed seed budget, scored against
+the **unfloored** original:
+
+| floor | splats | global | foreground | dim-band mass recovered |
+|-------|--------|--------|------------|-------------------------|
+| none  | 47,172 | 41.90  | 28.49 dB   | 42.0% |
+| auto  | 46,020 | 41.76  | 28.24 dB   | 40.7% |
+| p95   | 39,859 | 40.33  | 27.04 dB   | 23.0% |
+| p99   | 15,483 | 35.81  | **18.86 dB** | **0.6%** |
+
+`auto` is within 0.25 dB of no floor at all, so pedestal removal is essentially
+free; all the damage comes from raising the floor. `p99` also produced a third of
+the splats from the same seeds — the structure was clipped to zero before fitting
+began.
+
+A high floor **looks better in a MIP** (the haze is gone and the render is
+crisper than its own source). That is the trap: judge a floor on foreground /
+dim-band PSNR against unfloored data, never on how the render looks. Handle
+residual haze with the viewer's display window and opacity, not by destroying
+data at fit time — and never port a floor choice between datasets without
+retesting it there.
+
 ```bash
-luxar gsplat fit volume.tiff out.gsplats.zarr                 # --floor auto (default)
+luxar gsplat fit volume.tiff out.gsplats.zarr                 # --floor auto (default, recommended)
 luxar gsplat fit volume.tiff out.gsplats.zarr --floor p10     # subtract 10th percentile
 luxar gsplat cal volume.tiff cal.json --floor none            # legacy (no floor)
 ```
+
+## Traps that cost real time
+
+Each of these has burned a whole fit cycle. Check them before you launch a long run.
+
+- **`--seeds` is a whole-volume budget, but only for the CLI.** `luxar gsplat fit
+  --seeds K` divides K across the tiles it makes. The *Python* `fit_tiled_gsplats`
+  does NOT — an integer `seeds` there is handed to every tile unchanged, so N tiles
+  fit ~N × seeds splats. And `--tiling auto` is the DEFAULT, so a gigavoxel volume
+  tiles whether or not you asked (the whole-volume threshold is 64 Mvoxel).
+- **`--cal` / `--k-star-ref` / `--feature-*` apply ONLY to `--tiling content`.**
+  Under `--tiling none|uniform` they are ignored — the CLI prints a `⚠ … apply only
+  to --tiling content` line, but in a long arbol log that scrolls past. The symptom
+  is a fit that lands at a few hundred splats when you asked for K* = 128,000,
+  because `seeds` silently fell back to `auto`. A `cal --auto-region` K* is
+  *region-scoped* anyway: transfer it with `--cal` + `--tiling content`, never by
+  passing it to `--seeds`.
+- **`fit` has no `--overwrite`** (`lod`, `additive`, `transform` etc. do). `rm -rf`
+  the output first, or a chained script dies mid-run on a stale store.
+- **A/B two fits only at equal splat count.** Splat count dominates every quality
+  metric, so comparing a 1.4 M-splat variant against a 2.7 M-splat one measures the
+  count, not the variable you changed. Fix the seed budget on both arms.
+- **Size VRAM for the per-splat intermediates, not the volume tensor.** A 3.2 Gvoxel
+  whole-volume fit asked for 95 GiB after the volume itself came to 12.9 GB. Tile it.
+- **Score against the ORIGINAL, and on the foreground.** Global PSNR on a
+  97–99%-empty stack is flattered by the empty part and barely moves; foreground
+  (say, above 10% of max) and a dim band (1–10%) are where the answer lives. Never
+  score a floored/denoised fit against its own preprocessed input.
 
 ## Choosing a LOD recipe (`lod --recipe`)
 
@@ -145,7 +218,7 @@ luxar gsplat slice in.gsplats.zarr out.gsplats.zarr "0:50, :, 10:90"
 luxar gsplat transform in.gsplats.zarr out.gsplats.zarr --scale 4,1,1,1 --center
 luxar gsplat merge a.gsplats.zarr b.gsplats.zarr -o merged.gsplats.zarr
 luxar gsplat partition in.gsplats.zarr part.gsplats.zarr --parts 4 --rule sah
-luxar gsplat migrate-format legacy.gsplats.zarr v3.gsplats.zarr      # legacy -> v3.3
+luxar gsplat migrate-format legacy.gsplats.zarr v3.gsplats.zarr      # legacy -> v3.4
 ```
 
 ## Python fitting API
@@ -178,6 +251,51 @@ result.save("fitted.gsplats.zarr", ordering="hilbert")
 Note: `fit_gaussian_splats` has NO `preset=` argument — the CLI presets just expand
 to `n_iters` / `early_stop_patience` / `max_eccentricity` / `cull_retention` (see
 the preset table in `references/cli-options.md`). Set those knobs directly in Python.
+
+### The API defaults are BELOW `draft` — always set a schedule
+
+`n_iters` defaults to **1000**: below the CLI's lowest preset (`draft` = 2000) and a
+fifth of `standard` (5000). Calling the API without it is not "default quality", and
+the failure is not obvious — it looks like a rendering or splat-count problem:
+
+**Symptom: thin filaments (axons, vessels, fibres) render as chains of beads.**
+Under-converged splats never leave their seed shape. Edge seeding initialises them
+*isotropic at σ = 1.0 voxel*, so a 1-voxel-wide filament is rebuilt from 1-voxel
+spheres spaced ~2.5σ apart, which beads by construction. Diagnose by measuring the
+fitted shapes — a median axis ratio near 1.0-1.3 with σ ≈ 1 voxel means the
+optimizer never moved them, not that the basis cannot represent the structure.
+
+Six defaults must move TOGETHER; any one alone underperforms:
+
+```python
+result = fit_gaussian_splats(
+    volume,
+    n_iters=10_000,               # 1000 leaves splats at their seed shape
+    patience=200,                 # 15 decays the shape LR away early
+    early_stop_patience=2000,     # 300 stops before shapes settle
+    enable_dynamic_ops=False,     # relocation RESETS splats to isotropic mid-fit
+    max_eccentricity=None,        # 10.0 caps the axis ratio at sqrt(10)
+    l1_diag=0.0,                  # the default penalty pulls toward isotropy
+)
+```
+
+Measured on a 1-voxel-wide neuron dataset (skeleton points dipping below 25% of
+their local ridge / foreground PSNR): 1000 iters 22.2% / 22.94 dB → 10000 iters
+with the above 16.5% / **25.85 dB**, against 11.9% for the raw data itself. Raising
+`n_iters` while leaving relocation on LOSES ~1 dB, because it resets the shapes the
+extra iterations just bought. 20000 iterations adds only +0.2 dB — beading converges
+by ~5000, fidelity by ~10000.
+
+**What does NOT fix beading** (all measured, so don't retry them): more seeds makes
+it *worse* (finer subdivision shrinks σ faster than the gaps, so spacing went 2.45σ →
+3.22σ); fewer seeds gives tighter spacing and still beads more; and widening the
+render truncation radius barely moves it — the splats genuinely do not reach each
+other.
+
+Cost is fit time only (~2x), and it is one-time if you cache. **If you cache fits,
+key the cache on the schedule too** — it changes splat SHAPES while leaving the
+count identical, so a cache keyed only on seeds/floor/retention silently returns the
+old fit and makes a retune look like a no-op.
 
 ## Add a fitted gsplat node to a Luxar scene
 
@@ -217,6 +335,16 @@ does (a) for you and writes a ready-to-serve scene.
 - The `lod` command **rejects an existing partition** — to add LOD to tiled output,
   use `fit --recipe` / `batch-fit merge --recipe` (per-part LOD as it streams), or
   `gsplat additive` to ladder every leaf of an existing tree structure-preservingly.
-- LOD switch thresholds are auto-derived as viewport-relative `coverage_fraction`
-  = `sqrt(N_i/N_finest)` (no threshold knob; self-calibrates on any monitor).
-- See `docs/specs/GSPLATS_ZARR_FORMAT.md` for the v3.3 node-tree format.
+- LOD switch thresholds are auto-derived by SCREEN-AREA occupancy halving and
+  stamped `selector="screen-area"`: each `coverage_fraction` is a literal screen-area
+  fraction (projected bbox rect area / viewport area), so a whole-object `levels`
+  ladder shows full detail while the object occupies at least half the screen and
+  steps one level coarser per halving. No threshold knob, and RESOLUTION-independent
+  (an NDC-area fraction, so the same framing reads the same on any monitor size).
+  It is NOT aspect-independent: `fov` is vertical, so widening the viewport widens
+  the visible world and lowers the area fraction — resizing square→ultrawide does
+  move the switch points.
+  (`adaptive` and `overview` are partition-bound and keep the fills-screen anchor.)
+  Legacy stores and explicit `coverage_fractions=[...]` lists keep the older
+  `selector="coverage"` diagonal metric; the viewer reads both.
+- See `docs/specs/GSPLATS_ZARR_FORMAT.md` for the v3.4 node-tree format.

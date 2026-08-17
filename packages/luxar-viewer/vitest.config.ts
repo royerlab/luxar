@@ -3,7 +3,28 @@ import { resolve } from 'path';
 
 export default defineConfig({
   test: {
-    environment: 'jsdom',
+    // `node` is the DEFAULT; a file that needs a DOM opts in with a
+    // `// @vitest-environment jsdom` docblock on its first line.
+    //
+    // Constructing a jsdom document costs ~1.8 s of CPU per test FILE and is
+    // paid whether or not the file touches the DOM. Measured on the 42-file
+    // wasm+cache subset, same 798 passed / 2 skipped either way:
+    //     jsdom  127.15 s  (environment 75.72 s)
+    //     node    13.85 s  (environment 12 ms)
+    // Across the whole suite only 125 of 561 files need a browser global (a
+    // document in most cases), so the other 436 were paying for a DOM they
+    // never touched.
+    //
+    // Inverting the default (rather than listing directories) is deliberate:
+    // the need is not directory-aligned — `ui/` is 65% jsdom while
+    // `rendering/` and `data/` are 92-94% node — and a missing docblock normally
+    // fails loudly with `ReferenceError: document is not defined` rather than
+    // silently running in the wrong environment. The exception is a global read
+    // through `typeof` behind a non-browser branch, which degrades quietly (see
+    // #1642), so the empirical list is derived, not trusted. To regenerate it
+    // after a large refactor: `vitest run --environment node` and take the
+    // failures.
+    environment: 'node',
     globals: true,
     globalSetup: ['./src/tests/global-setup.ts'],
     setupFiles: ['./src/tests/setup.ts'],
@@ -14,13 +35,21 @@ export default defineConfig({
     // failures. 15s gives headroom without masking genuine hangs.
     testTimeout: 15000,
     hookTimeout: 15000,
-    // Cap worker concurrency. On high-core machines Vitest's default fork
-    // count oversubscribes the box; combined with the jsdom + WebGL-mock
-    // memory footprint this produced `[vitest-pool-runner]: Timeout waiting
-    // for worker to respond` errors in the full coverage run. A fixed, modest
-    // pool keeps the suite within resource limits and deterministic across
-    // machines.
-    maxWorkers: 4,
+    // Worker threads, not forked processes. A thread reuses the host process's
+    // heap and module machinery instead of paying a full V8 + Vite-runtime
+    // bootstrap per worker, which is most of the fixed cost when the suite is
+    // 561 small files.
+    pool: 'threads',
+    // Cap worker concurrency ON CI ONLY. The `maxWorkers: 4` that used to apply
+    // everywhere was a response to `[vitest-pool-runner]: Timeout waiting for
+    // worker to respond` in the full coverage run — a symptom of the FORKS
+    // pool's per-worker memory footprint on a high-core box. Threads have a far
+    // smaller footprint, and with `environment: 'node'` as the default the jsdom
+    // documents that dominated that footprint are gone too. Hosted CI runners
+    // are 2-core and genuinely need the cap (ci.yml documents an OOM kill from
+    // over-parallelising there), so keep it there and let Vitest size the pool
+    // to the machine locally.
+    maxWorkers: process.env.CI ? 4 : undefined,
     minWorkers: 1,
     exclude: [
       '**/node_modules/**',

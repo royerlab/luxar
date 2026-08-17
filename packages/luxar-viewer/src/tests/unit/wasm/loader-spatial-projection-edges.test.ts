@@ -3,19 +3,33 @@
  * projection helpers. Closes wasm.md gap cluster:
  *   - [wasm.md G22][P5] isWasmSupported with WebAssembly.instantiate set to a
  *                       TRUTHY non-function (the documented threat at L118).
- *   - [wasm.md G23][P5] initWasm: dynamic import resolves but `default()` is
- *                       missing → falls back gracefully (proves the override
- *                       URL is actually exercised — discriminator from G24).
- *   - [wasm.md G24][P5] setWasmJsUrl: a non-empty override flows through to
- *                       the dynamic import — proven by a partial-shim data:
- *                       URL that resolves but fails the `default()` call.
+ *   - [wasm.md G23][P5] initWasm: a shim URL that is not a loadable WASM module
+ *                       → falls back gracefully instead of propagating.
+ *   - [wasm.md G24][P5] setWasmJsUrl: a non-empty override is read at call
+ *                       time, not memoised at module init.
  *   - [wasm.md G31][P5] extract_3d_positions displayDims[j] >= ndim → OOB
  *                       read → undefined → Float32Array stores NaN.
  *
- * Pure math / pure module API — no mocks.
+ * Pure math / pure module API. The test doubles are `console` spies, used to
+ * read back the URL the loader resolved from its own fallback warning, and the
+ * two `[G22]` tests' temporary replacement of `WebAssembly.instantiate` with a
+ * truthy non-function, each restored in a `finally`.
+ *
+ * Note on G23/G24: these were written to discriminate WHERE the load failed
+ * (import resolved but `default()` missing, vs. the URL never being honoured),
+ * but no vitest environment can actually resolve `initWasm`'s dynamic import —
+ * the `new Function('url', 'return import(url)')` indirection is not serviceable
+ * by vitest's VM module runner (`ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING`), so
+ * even a `data:` URL throws before `default()` is reached. The URL the loader
+ * resolved is therefore observable only through the message its `catch` logs,
+ * which is what the G23/G24 tests below assert on: the override reaches the
+ * resolution step, a second override is read at call time rather than memoised
+ * at module init, and every one of these URLs lands in the documented
+ * TypeScript fallback. Loading the compiled kernels for real goes through
+ * `src/tests/helpers/wasm-artifact.ts`.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { initWasm, isWasmSupported, setWasmJsUrl } from '../../../wasm';
 import { TypeScriptFallback } from '../../../wasm/typescript';
 import { extract_3d_positions } from '../../../wasm/typescript/projection';
@@ -47,32 +61,55 @@ describe('isWasmSupported — truthy non-function instantiate [wasm.md G22]', ()
 });
 
 describe('initWasm + setWasmJsUrl — URL pass-through discriminator [wasm.md G23, G24]', () => {
-  it('[G23][G24] override URL with a partial-shim data: URL → import resolves but `default()` missing → fall back', async () => {
-    // The audit notes that a bad URL and the default both fall back to TS,
-    // so the existing test "URL override → still TypeScriptFallback" doesn't
-    // PROVE the override was honored. Here we install a data: URL that
-    // imports successfully (defining `foo` but not `default`); then
-    // `wasmModule.default()` throws because `default` is undefined.
-    // This proves the override URL was exercised — a regression that
-    // ignored the override would have imported the non-existent default
-    // wasm path and failed earlier.
-    //
-    // jsdom CAN import data: URLs in its dynamic import, so this discriminates.
-    setWasmJsUrl('data:text/javascript,export const foo = 1');
+  it('[G23][G24] override URL pointing at a partial shim (no `default`) still falls back', async () => {
+    // Originally written as a discriminator: a data: URL that imports fine
+    // (defining `foo` but not `default`) would fail at `wasmModule.default()`,
+    // proving the override reached the import. Under vitest the dynamic import
+    // itself is unserviceable (see the docblock), so the failure happens one
+    // step earlier and `default()` is never reached. Two things are pinned
+    // instead: the fallback warning names the `data:` URL, which is what proves
+    // the override reached the resolution step at all (the pass-through this
+    // describe block is named for); and an override naming something that is
+    // not a loadable WASM shim lands in the TypeScript fallback rather than
+    // propagating.
+    const overrideUrl = 'data:text/javascript,export const foo = 1';
+    setWasmJsUrl(overrideUrl);
+    // `console.log` is spied purely to keep the two remediation `log.info`
+    // lines out of the reporter. Both spies are installed before the `try` and
+    // restored inline before the assertions (so a failure reads a live console)
+    // AND in the `finally` (so a rejection cannot leak them); `mockRestore` is
+    // idempotent.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const info = vi.spyOn(console, 'log').mockImplementation(() => {});
     try {
       const wasm = await initWasm();
-      // The init must fall through to TS fallback because `default` is missing.
+      // Filter to the loader's own warning rather than indexing by position:
+      // an unrelated `console.warn` in the spy window would shift the index.
+      const failures = warn.mock.calls.filter(([m]) =>
+        String(m).includes('Failed to load WASM module')
+      );
+      warn.mockRestore();
+      info.mockRestore();
+
       expect(wasm).toBeInstanceOf(TypeScriptFallback);
+      expect(failures.length).toBeGreaterThan(0);
+      const [message] = failures[0] as [string, unknown];
+      expect(message).toContain(overrideUrl);
     } finally {
+      warn.mockRestore();
+      info.mockRestore();
       setWasmJsUrl('');
     }
   });
 
-  it('[G23] initialized stale shim missing a required kernel falls back immediately', async () => {
-    // This mimics a pre-cap-suppression gitignored public/wasm build: the JS
-    // shim imports and its default initializer succeeds, but the newer kernel
-    // export is absent. The loader must reject it now rather than returning a
-    // partial module that throws TypeError during a later projection.
+  it('[G23] shim URL missing a required kernel falls back to a complete module', async () => {
+    // Written to mimic a stale gitignored public/wasm build: a shim whose
+    // default initializer succeeds but whose newer kernel export is absent,
+    // which `assertRequiredWasmExports` must reject rather than hand back a
+    // partial module that throws TypeError during a later projection. That
+    // rejection is covered directly in `index.test.ts` — here the import never
+    // resolves under vitest, so what is asserted is the end state: whatever the
+    // reason, the caller receives a module with every kernel present.
     setWasmJsUrl('data:text/javascript,export default async function init() {}');
     try {
       const wasm = await initWasm();
@@ -83,18 +120,46 @@ describe('initWasm + setWasmJsUrl — URL pass-through discriminator [wasm.md G2
     }
   });
 
-  it('[G24] non-empty override is reflected immediately (state is module-local, not cached on first use)', async () => {
-    // Pin that setWasmJsUrl mutates module-local state at call time, not on
-    // first initWasm. A regression that captured the URL inside initWasm
-    // would still work but a regression that memoised it in module init
-    // would fail this sequencing test.
+  it('[G24] non-empty override is read at call time, not memoised on first use', async () => {
+    // Pin that each initWasm re-reads the override. The fallback warning names
+    // the URL the loader resolved, so the two calls must name missing-1.js and
+    // missing-2.js in that order — a regression that memoised the URL (at
+    // module init, or on the first initWasm) would name missing-1.js twice and
+    // fail here. `instanceof TypeScriptFallback` alone cannot discriminate:
+    // every URL lands in the fallback under vitest (see the docblock).
     setWasmJsUrl('http://localhost:0/missing-1.js');
-    const w1 = await initWasm();
-    setWasmJsUrl('http://localhost:0/missing-2.js');
-    const w2 = await initWasm();
-    setWasmJsUrl('');
-    expect(w1).toBeInstanceOf(TypeScriptFallback);
-    expect(w2).toBeInstanceOf(TypeScriptFallback);
+    // `console.log` is spied purely to keep the two remediation `log.info`
+    // lines out of the reporter. Both spies are installed before the `try` and
+    // restored inline before the assertions (so a failure reads a live console)
+    // AND in the `finally` (so a rejection cannot leak them); `mockRestore` is
+    // idempotent.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const info = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      const w1 = await initWasm();
+      setWasmJsUrl('http://localhost:0/missing-2.js');
+      const w2 = await initWasm();
+      // Filter to the loader's OWN warnings before indexing: the order is the
+      // point of this test, and an unrelated `console.warn` landing between the
+      // two calls would shift both indices and assert against the wrong message.
+      const failures = warn.mock.calls.filter(([m]) =>
+        String(m).includes('Failed to load WASM module')
+      );
+      warn.mockRestore();
+      info.mockRestore();
+
+      expect(w1).toBeInstanceOf(TypeScriptFallback);
+      expect(w2).toBeInstanceOf(TypeScriptFallback);
+      expect(failures.length).toBeGreaterThanOrEqual(2);
+      const [first] = failures[0] as [string, unknown];
+      const [second] = failures[1] as [string, unknown];
+      expect(first).toContain('missing-1.js');
+      expect(second).toContain('missing-2.js');
+    } finally {
+      warn.mockRestore();
+      info.mockRestore();
+      setWasmJsUrl('');
+    }
   });
 });
 

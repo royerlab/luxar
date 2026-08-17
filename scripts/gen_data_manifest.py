@@ -19,6 +19,12 @@ The manifest records, per dataset:
                   Zenodo record's single license field; that is why records are
                   grouped by license family).
   * ``record``  — (zenodo only) which Zenodo record groups this dataset.
+  * ``acquisition`` — what the dataset as a whole was fitted FROM, and either its
+                  stored size (``comparable: true`` + ``stored_bytes``) or the
+                  ``reason`` no honest ratio exists. Dataset-level rather than
+                  per-archive because a dataset is often several archives (one
+                  per channel) fitted from a single file. Gated by
+                  ``demos/tests/test_manifest_acquisition.py``.
   * ``files``   — basenames + sha256 (git-LFS oid) + byte size, so a fetched copy
                   is checksum-verified.
   * ``dir``     — the in-repo subdir relative to ``demos/data/`` (empty string =
@@ -53,30 +59,56 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = REPO_ROOT / "packages/luxar/src/luxar/demos/data"
 MANIFEST = REPO_ROOT / "packages/luxar/src/luxar/demos/data_manifest.json"
 
-# Zenodo records, grouped by license family. IDs/DOIs/base_url are null until the
-# depositions are created and files uploaded (R17 step 2); once set, the fetch
-# helper pulls from Zenodo instead of the in-repo LFS copy.
+# Zenodo records, grouped by license family.
+#
+# The record ids and DOIs below are REAL and final: Zenodo reserves a DOI at
+# deposition time and the deposition id becomes the record id on publication, so
+# `https://zenodo.org/records/<id>/...` is already the right URL. What is not yet
+# true is that the records are PUBLIC — all three are still unsubmitted drafts,
+# and a file URL into a draft 404s for everyone.
+#
+# `zenodo_doi` is that reserved DOI, i.e. the VERSION DOI of this deposition —
+# NOT the version-independent concept DOI, which is a different identifier Zenodo
+# mints on publication and which cannot be known from the deposition id.
+#
+# Hence `published`: while it is false the fetch helper builds no URL at all, so
+# the Zenodo leg stays dormant exactly as it did when the ids were null, and
+# demos keep resolving cache -> in-repo LFS. Flipping the three flags at
+# publication time is what activates fetching, and it is the only edit needed.
+# Recording the ids now (rather than at publish time) means the manifest, the
+# record descriptions and the reserved DOIs cannot drift apart in the meantime.
+#
+# Titles are kept in step with the live record titles on purpose: they are what a
+# `luxar demo` user is pointed at, and the h2afva one in particular used to
+# describe the 51tp cut as a "subset", which its own record text contradicts.
 RECORDS = {
     "cc-by": {
-        "title": "Luxar demo datasets (CC-BY / CC0 / public domain)",
+        "title": "Luxar demo datasets: permissively licensed (CC-BY, CC0, public domain)",
         "license": "cc-by-4.0",
-        "zenodo_concept_doi": None,
-        "zenodo_record": None,
+        "zenodo_doi": "10.5281/zenodo.21912280",
+        "zenodo_record": "21912280",
         "base_url": None,
+        "published": False,
     },
     "cc-by-sa": {
-        "title": "Luxar demo datasets (CC-BY-SA)",
+        "title": "Luxar demo datasets: ShareAlike (CC BY-SA 4.0)",
         "license": "cc-by-sa-4.0",
-        "zenodo_concept_doi": None,
-        "zenodo_record": None,
+        "zenodo_doi": "10.5281/zenodo.21912282",
+        "zenodo_record": "21912282",
         "base_url": None,
+        "published": False,
     },
     "h2afva": {
-        "title": "h2afva zebrafish histone light-sheet TIMELAPSE, full 253 timepoints (Gaussian splats; a 51-timepoint subset is included for easier download)",
+        "title": (
+            "Zebrafish embryogenesis, histone-labelled nuclei: 253-timepoint "
+            "light-sheet timelapse as Gaussian splats (with a lighter "
+            "51-timepoint fit)"
+        ),
         "license": "cc-by-4.0",
-        "zenodo_concept_doi": None,
-        "zenodo_record": None,
+        "zenodo_doi": "10.5281/zenodo.21912284",
+        "zenodo_record": "21912284",
         "base_url": None,
+        "published": False,
     },
 }
 
@@ -90,6 +122,11 @@ DATASETS: dict[str, dict] = {
         license="cc0-1.0",
         source="scikit-image (data.kidney)",
         attribution="scikit-image sample data (CC0).",
+        acquisition=dict(
+            description="the scikit-image `kidney` sample, all 3 channels of which are fitted",
+            comparable=True,
+            stored_bytes=None,
+        ),
     ),
     "gsplats_cells3d": dict(
         bucket="zenodo",
@@ -97,6 +134,11 @@ DATASETS: dict[str, dict] = {
         license="cc0-1.0",
         source="scikit-image (data.cells3d) — Allen Institute for Cell Science",
         attribution="scikit-image sample data.",
+        acquisition=dict(
+            description="the scikit-image `cells3d` sample, both channels of which are fitted",
+            comparable=True,
+            stored_bytes=None,
+        ),
     ),
     "gsplats_cmu1_pathology": dict(
         bucket="zenodo",
@@ -104,6 +146,15 @@ DATASETS: dict[str, dict] = {
         license="cc0-1.0",
         source="OpenSlide test data (Aperio CMU-1.svs)",
         attribution="OpenSlide CMU-1 (CC0 1.0 public domain).",
+        acquisition=dict(
+            description="Aperio CMU-1.svs, a ~169 MB multi-resolution slide pyramid",
+            comparable=False,
+            reason=(
+                "the file stores every pyramid level and the fit reads one, then "
+                "resizes it, so its size would price the levels that were never "
+                "fitted rather than the compression of the one that was"
+            ),
+        ),
     ),
     "gsplats_cryoem_virus": dict(
         bucket="zenodo",
@@ -111,6 +162,11 @@ DATASETS: dict[str, dict] = {
         license="cc0-1.0",
         source="EMDB EMD-5384",
         attribution="EMDB is public domain / CC0. Map: EMD-5384.",
+        acquisition=dict(
+            description="EMD-5384 `emd_5384.map.gz` -- the whole map, as downloaded",
+            comparable=True,
+            stored_bytes=None,
+        ),
     ),
     "gsplats_ct_totalsegmentator": dict(
         bucket="zenodo",
@@ -118,6 +174,15 @@ DATASETS: dict[str, dict] = {
         license="cc-by-4.0",
         source="TotalSegmentator (Wasserthal et al. 2023)",
         attribution="TotalSegmentator (Wasserthal et al. 2023; CC BY 4.0).",
+        acquisition=dict(
+            description="a TotalSegmentator subset, repacked locally into an npz",
+            comparable=False,
+            reason=(
+                "the download is a multi-scan subset and the demo repacks selected "
+                "scans into its own npz, so neither the download nor the repack is "
+                "the same array the fit represents"
+            ),
+        ),
     ),
     "gsplats_milkyway_dust": dict(
         bucket="zenodo",
@@ -125,6 +190,19 @@ DATASETS: dict[str, dict] = {
         license="cc-by-4.0",
         source="Zenodo 3993082 (3D dust map)",
         attribution="doi:10.5281/zenodo.3993082 (CC BY 4.0).",
+        acquisition=dict(
+            description=(
+                "the `mean` array inside Zenodo 3993082 `mean_std.h5`, measured "
+                "with its own HDF5 storage size"
+            ),
+            comparable=True,
+            stored_bytes=None,
+            note=(
+                "the FILE is 2.4 GB but holds mean AND std, and the fit reads only "
+                "the mean, so the file size is not the denominator -- h5py's "
+                "per-dataset get_storage_size() is"
+            ),
+        ),
     ),
     "desi_galaxies": dict(
         bucket="zenodo",
@@ -139,6 +217,11 @@ DATASETS: dict[str, dict] = {
         license="cc-by-4.0",
         source="Zenodo 6460303 (mskcc_confocal C. elegans)",
         attribution="Santella, Kovacevic, Bao, Hirsch — doi:10.5281/zenodo.6460303 (CC BY 4.0).",
+        acquisition=dict(
+            description="the Zenodo TIFF timelapse, every timepoint of which is fitted",
+            comparable=True,
+            stored_bytes=None,
+        ),
     ),
     "gsplats_visible_human_head": dict(
         bucket="zenodo",
@@ -146,6 +229,15 @@ DATASETS: dict[str, dict] = {
         license="pd-nlm",
         source="NLM Visible Human Project (Male head, PNG)",
         attribution="U.S. NLM Visible Human Project (public domain; acknowledge NLM, no endorsement implied).",
+        acquisition=dict(
+            description="377 RGB cryosection photographs (Visible Human Project)",
+            comparable=False,
+            reason=(
+                "the fit converts colour photographs to a single greyscale volume "
+                "and crops it to content, so a ratio against the stored photographs "
+                "would price a colour conversion, not compression"
+            ),
+        ),
     ),
     "gsplats_nexrad_supercell": dict(
         bucket="zenodo",
@@ -161,6 +253,16 @@ DATASETS: dict[str, dict] = {
             "implied). Derived product: regridded and Gaussian-fitted, not "
             "original NOAA data."
         ),
+        acquisition=dict(
+            description="82 NEXRAD Level II scans (~800 MB gzipped)",
+            comparable=False,
+            reason=(
+                "the scans are polar sweeps carrying several moments and elevation "
+                "angles, of which the demo re-grids ONE moment inside one box, so "
+                "the figure would price dropping the other moments and the "
+                "polar-to-Cartesian resampling"
+            ),
+        ),
     ),
     "gsplats_multichannel": dict(
         bucket="zenodo",
@@ -168,6 +270,11 @@ DATASETS: dict[str, dict] = {
         license="cc-by-4.0",
         source="IDR idr0062 (image 6001240; Nessys, Blin et al. 2019)",
         attribution="IDR idr0062 (Blin et al., PLOS Biol 2019; CC BY 4.0).",
+        acquisition=dict(
+            description="IDR 6001240 OME-Zarr, the two fitted channels' own stored chunks",
+            comparable=True,
+            stored_bytes=None,
+        ),
     ),
     "gsplats_dapi": dict(
         bucket="zenodo",
@@ -175,6 +282,11 @@ DATASETS: dict[str, dict] = {
         license="cc-by-4.0",
         source="IDR idr0062 (image 6001240; Nessys, Blin et al. 2019)",
         attribution="IDR idr0062 (Blin et al., PLOS Biol 2019; CC BY 4.0).",
+        acquisition=dict(
+            description="IDR 6001240 OME-Zarr, the fitted channel's own stored chunks",
+            comparable=True,
+            stored_bytes=None,
+        ),
     ),
     "census_umap_1m": dict(
         bucket="zenodo",
@@ -207,6 +319,11 @@ DATASETS: dict[str, dict] = {
         license="cc-by-sa-4.0",
         source="OpenCell (CZ Biohub) MAP4",
         attribution="OpenCell / CZ Biohub — Cho et al., Science 2022, doi:10.1126/science.abi6983 (CC BY-SA 4.0).",
+        acquisition=dict(
+            description="the OpenCell MAP4 TIFF, both channels of which are fitted",
+            comparable=True,
+            stored_bytes=None,
+        ),
     ),
     "gsplats_flylight_mcfo_63x": dict(
         bucket="zenodo",
@@ -214,7 +331,7 @@ DATASETS: dict[str, dict] = {
         license="cc-by-4.0",
         source=(
             "Janelia FlyLight Gen1 MCFO, line VT019012, slide 20140423_20_D5, "
-            "63x confocal"
+            "63x confocal (stitched unaligned_stack.h5j)"
         ),
         attribution=(
             "Janelia FlyLight Project Team, HHMI Janelia Research Campus — "
@@ -230,17 +347,24 @@ DATASETS: dict[str, dict] = {
         license="cc-by-sa-4.0",
         source="Zenodo 1211599 (zebrafish light-sheet)",
         attribution="Pia Aanstad — doi:10.5281/zenodo.1211599 (CC BY-SA 4.0).",
+        acquisition=dict(
+            description="the LSM timelapse, every fitted timepoint's own stored bytes",
+            comparable=True,
+            stored_bytes=None,
+        ),
     ),
-    # -- NEW heavy timelapses computed on obsidian (not yet in LFS) ----------
+    # -- Heavy timelapses computed on obsidian -------------------------------
     "gsplats_4d_neuromast_2ch": dict(
         bucket="zenodo",
         record="cc-by",
         license="cc-by-4.0",
         source="Neuromast 2-channel light-sheet timelapse (iSIM)",
         attribution="Adrian Jacobo (CZ Biohub SF); used with permission (CC BY 4.0).",
-        # Permission CONFIRMED by the author 2026-08-12 — no longer blocked;
-        # bytes are on obsidian (~250 MB) awaiting upload to the cc-by record.
-        pending_upload=True,
+        # Permission CONFIRMED by the author 2026-08-12; both channels uploaded to
+        # the cc-by record and pinned below (md5 verified against Zenodo). The
+        # record is still a DRAFT, so RECORDS["cc-by"] carries its id but
+        # `published: False`, and the fetch leg stays dormant until that flips —
+        # the pins are what publication turns on.
     ),
     "gsplats_cell_tracking": dict(
         bucket="zenodo",
@@ -275,21 +399,30 @@ DATASETS: dict[str, dict] = {
         license="cc-by-4.0",
         source="h2afva zebrafish histone light-sheet timelapse (Royer lab)",
         attribution="Royer lab, CZ Biohub SF (CC BY 4.0).",
+        # Still pending: the 253tp variant is uploaded and pinned, but the 51tp
+        # file in the record is a SUPERSEDED build and must not be pinned. It
+        # predates the isotropic correction (z extent 405 raw voxels instead of
+        # 1620), carries no substitutive LOD levels at all, is format 3.2, and
+        # keeps the acquisition time numbering 0..250 rather than 0..50. Pinning
+        # it would make the demo fetch a dataset that renders squashed 4x in z.
+        # Replacement build is verified; upload is held pending the zarr-v3
+        # landing and the wider gsplat dataset audit.
         pending_upload=True,
-        # This record's PURPOSE is the full 253-timepoint timelapse. The 51tp
-        # variant is a strict SUBSET of it, shipped anyway because pulling 2.9 GB
-        # is far easier than 16 GB over Zenodo's best-effort bandwidth — the demo
-        # takes 51tp by default and the full timelapse is opt-in. Redundant in
-        # content, not in usability. Files filled at upload.
+        # The 51tp variant covers every FIFTH timepoint of the same acquisition
+        # (frames 0, 5, ... 250 — measured, 51 clusters spaced 5.0000), renumbered
+        # 0..50. It is a temporal subsample, but an INDEPENDENT fit rather than a
+        # decimation of the full one: per-timepoint splat counts differ (2.50M vs
+        # 2.38M at the finest level). Shipped as the default because pulling
+        # ~2.1 GB is far easier than ~11.4 GB over Zenodo's best-effort bandwidth.
         variants={
             "51tp": dict(
                 default=True,
-                approx_bytes=2_900_000_000,
-                note="51-timepoint refit — lighter default for the demo.",
+                approx_bytes=2_134_212_223,
+                note="51-timepoint fit (every 5th frame) — lighter default for the demo.",
             ),
             "253tp": dict(
                 default=False,
-                approx_bytes=16_000_000_000,
+                approx_bytes=11_428_060_091,
                 note="Full 253-timepoint timelapse — opt-in (large download).",
             ),
         },
@@ -300,7 +433,6 @@ DATASETS: dict[str, dict] = {
         license="cc-by-4.0",
         source="Drosophila His2Av::mRFP1 embryo, SiMView light-sheet (Royer/Keller)",
         attribution="Royer & Keller labs — Royer et al., Nat. Biotechnol. 34, 1267-1278 (2016), doi:10.1038/nbt.3708 (CC BY 4.0).",
-        pending_upload=True,
     ),
     "gsplats_3d_h2afva_stack": dict(
         bucket="zenodo",
@@ -311,7 +443,6 @@ DATASETS: dict[str, dict] = {
         license="cc-by-4.0",
         source="h2afva zebrafish histone light-sheet, single stack (Royer lab)",
         attribution="Royer lab, CZ Biohub SF (CC BY 4.0).",
-        pending_upload=True,
     ),
     "gsplats_3d_h2afva_decimation": dict(
         bucket="zenodo",
@@ -319,7 +450,6 @@ DATASETS: dict[str, dict] = {
         license="cc-by-4.0",
         source="h2afva single stack at four decimation levels (Royer lab)",
         attribution="Royer lab, CZ Biohub SF (CC BY 4.0).",
-        pending_upload=True,
     ),
     # ---- Bucket 3: NOT redistributable → fetch raw + compute locally -------
     "milky_way_gaia_3m": dict(
@@ -329,7 +459,7 @@ DATASETS: dict[str, dict] = {
         dir="",
         source="ESA Gaia DR3 archive",
         reason="CC BY-NC (non-commercial) — incompatible with a cleanly-reusable host.",
-        strategy="Query the ESA Gaia archive and build the point cloud client-side (no GPU); cache locally. Requires the ESA/Gaia/DPAC acknowledgement.",
+        strategy="Rebuild by hand with scripts/generate_galaxy_simple.py (queries the ESA Gaia archive, no GPU) into ~/.cache/luxar/, or place a copy there; building it automatically on first run is royerlab/luxar#1575. Requires the ESA/Gaia/DPAC acknowledgement.",
     ),
     "gsplats_tng_cosmic_web": dict(
         bucket="local-compute",
@@ -346,6 +476,27 @@ DATASETS: dict[str, dict] = {
         source="Acto3D sample data (github.com/Acto3D/Acto3D)",
         reason="Repo MIT covers software only; sample data unlicensed (all rights reserved).",
         strategy="Fetch raw from the Acto3D source + fit locally (GPU).",
+    ),
+    "gsplats_flylight_mcfo": dict(
+        bucket="local-compute",
+        # Unlike the other local-compute rows this one IS redistributable —
+        # it is local-compute only because the cc-by Zenodo record does not
+        # exist yet. Promote it to bucket="zenodo", record="cc-by" once it
+        # does; nothing else about the demo has to change.
+        redistribute=True,
+        license="cc-by-4.0",
+        source="FISBe v1.0 (Zenodo 10875063) / Janelia FlyLight Gen1 MCFO",
+        attribution=(
+            "FISBe (Mais et al., CVPR 2024; doi:10.5281/zenodo.10875063, "
+            "CC BY 4.0). Imagery from the FlyLight Project Team, Janelia "
+            "Research Campus, HHMI; cite Meissner et al. eLife 2023 "
+            "12:e80660 and Tirian & Dickson 2017 for the VT line."
+        ),
+        reason="CC BY 4.0 and redistributable, but no Zenodo record is published yet.",
+        strategy=(
+            "Range-extract one sample (~415 MB) from the 7.1 GB Zenodo "
+            "archive + fit locally (GPU). The archive is never fetched whole."
+        ),
     ),
     "gsplats_tribolium": dict(
         bucket="local-compute",

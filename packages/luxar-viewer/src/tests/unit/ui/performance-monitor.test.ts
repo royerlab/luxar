@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Unit tests for PerformanceMonitor.
  *
@@ -105,6 +106,47 @@ describe('PerformanceMonitor', () => {
       monitor.show();
       frame();
       expect(num()).not.toBe('––');
+    });
+
+    it('shows a sub-1fps rate as a decimal, not as the "0" that means idle', () => {
+      // The regime this readout matters most in: a software rasterizer on
+      // a heavy scene renders at a fraction of a frame per second.
+      // Math.round() turned a real 0.4fps into `0` — which the Performance
+      // panel next door uses for "not rendering at all" — so the rail
+      // gauge and the panel disagreed about the same rate.
+      const now = vi.spyOn(performance, 'now');
+      try {
+        monitor.show();
+        now.mockReturnValue(1000); // not 0 — the window start is falsy-guarded
+        frame();
+        now.mockReturnValue(6000); // two frames over 5s = 0.4fps
+        frame();
+        expect(num()).toBe('0.4');
+      } finally {
+        now.mockRestore();
+      }
+    });
+
+    it('bands the colour by the SHOWN rate, so a displayed "50" is not amber', () => {
+      // The readout rounds; the colour band must agree with it. 49.6fps shows
+      // as "50", so classifying the raw rate would put a green number's worth
+      // of frames behind an amber "50".
+      const now = vi.spyOn(performance, 'now');
+      try {
+        monitor.show();
+        now.mockReturnValue(1000);
+        frame(); // opens the window (and renders — lastRender = 1000)
+        now.mockReturnValue(1100); // <200ms later, so no render steals lastRender
+        for (let i = 0; i < 23; i++) frame();
+        now.mockReturnValue(1504); // 25 frames over 504ms = 49.60fps
+        frame();
+        expect(num()).toBe('50');
+        expect(document.body.querySelector<HTMLElement>('.luxar-perf__num')?.dataset.level).toBe(
+          'good'
+        );
+      } finally {
+        now.mockRestore();
+      }
     });
 
     it('hide() unsubscribes so later frames no longer update it', () => {

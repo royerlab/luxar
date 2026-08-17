@@ -54,6 +54,17 @@ in the parent README's "Embedding" section. Checks:
 4. `three` is externalized: the bundle text must not contain a
    `class WebGLRenderer` definition. A bundled `three` would be a
    multi-MB regression and break peer-dep semantics.
+5. Every emitted chunk that spells out a bundle-relative WASM shim
+   specifier can actually reach `dist/lib/wasm/luxar_wasm.js` from its own
+   directory. The entry chunk sits at the output root and the worker
+   chunks under `assets/`, so one relative literal cannot serve both
+   (#1649), and getting it wrong is silent — the import 404s and the
+   viewer drops to the TypeScript fallback. At least one specifier must
+   appear somewhere in the build, since this is a text-level scan that
+   would otherwise pass vacuously once the paths stop being literals.
+   Which chunk carries them is deliberately not pinned: that is a
+   code-splitting detail, and any placement is still verified by the
+   per-chunk reachability check.
 
 Exits non-zero on any failure with a per-issue diagnostic.
 
@@ -171,6 +182,19 @@ row must be discounted.
 The `api` column appends ` (webgl-bk)` when a WebGPURenderer run fell
 back to its internal WebGL2 backend — otherwise that fallback would look
 like a clean `webgpu` row.
+
+A `⚠️ JS frame timing not comparable` line follows the frame-timing table
+when a measured row's two sides disagree on whether they carry
+`excludedResolveIntervals`. The line bench drops the frame interval after
+each GPU-timestamp resolve (readback latency, not scene work) and records
+the count in that field; because the field postdates the exclusion, its
+one-sided absence means the older side's frame stats still include that
+latency wherever that run resolved timestamps, and the row's deltas are
+instrument drift rather than a rendering change. The test is
+presence-only and conservative: a run that never resolved (any WebGL row,
+or a run whose timestamp queries produced no samples) leaves no trace
+perf-diff can read, so those rows are listed too — the warning text says
+which case is which.
 
 ```bash
 node scripts/perf-diff.mjs baseline.json new.json > diff.md

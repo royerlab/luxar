@@ -24,7 +24,7 @@ import { readUrlParams, type UrlParams } from '../config/url-params';
 import { initUserSettings } from '../config/user-settings';
 import { configureGpuByteBudget } from '../rendering/gpu-byte-budget';
 import { setLineJoinOverride } from '../types/line-join';
-import { setLinePrimitiveOverride } from '../types/line-primitive';
+import { setLinePrimitiveOverride, setLinePrimitivePolicy } from '../types/line-primitive';
 import { StorageKeys } from '../utils/storage-keys';
 import { showError, clearError } from '../ui/error-overlay';
 import { showToast } from '../ui/toast';
@@ -134,6 +134,12 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
   // shader-source pair, the TSL factory a graph). `null` means the built-in
   // default. See types/line-primitive.ts.
   setLinePrimitiveOverride(urlParams.linePrimitive);
+
+  // Install the line-primitive POLICY from user settings, same ordering
+  // constraint. `?linePrimitive=` (the override above) stays the strongest
+  // word; a forced policy ('capsule' | 'quad') replaces the default; 'auto'
+  // sizes each node at material build. See types/line-primitive.ts.
+  setLinePrimitivePolicy(userSettings.advanced.linePrimitivePolicy);
 
   // Name the browser tab after the scene as early as possible. `luxar serve
   // --open` derives `?title=` from the dataset file name, so several open
@@ -247,6 +253,10 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
       // can force-enable past the other). Value-typed params use `??`.
       noCache: urlParams.noCache || !userSettings.caching.enabled,
       noSliceCache: urlParams.noSliceCache || !userSettings.caching.sliceCache,
+      // Param-only (no settings toggle): a diagnostic/E2E kill switch like
+      // cacheDebug; the persistent "no caching" preference already exists
+      // coarser as caching.enabled.
+      noOpfs: urlParams.noOpfs,
       cacheDebug: urlParams.cacheDebug,
       clearCache: urlParams.clearCache,
       noPrefetch: urlParams.noPrefetch || !userSettings.caching.prefetch,

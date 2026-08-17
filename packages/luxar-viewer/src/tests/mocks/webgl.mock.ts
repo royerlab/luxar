@@ -153,8 +153,23 @@ export class MockWebGLRenderingContext {
  * Install WebGL mock globally
  *
  * Overrides HTMLCanvasElement.getContext to return mock WebGL context
+ *
+ * No-op outside a DOM environment. Most unit suites run under
+ * `environment: 'node'` (only the files that genuinely need a document opt in
+ * via a `@vitest-environment jsdom` docblock), and there `HTMLCanvasElement` is
+ * not merely absent — it is an unresolvable identifier, so a bare reference
+ * throws `ReferenceError` and takes the whole setup hook with it.
+ *
+ * CURRENTLY UNEXERCISED. Measured 2026-08-15 on the full suite: nothing calls
+ * `HTMLCanvasElement.prototype.getContext` (0 invocations across 11,526 tests),
+ * and stubbing `installWebGLMock` out entirely still leaves all 559 files
+ * green. It is kept as defensive infrastructure for a future test that renders
+ * to a real canvas — but if you are wondering whether it is load-bearing, it is
+ * not, and deleting it (plus `MockWebGLRenderingContext`) is a safe cleanup.
+ * Contrast `installMatchMediaMock`, which kills 13 tests when disabled.
  */
 export function installWebGLMock(): void {
+  if (typeof HTMLCanvasElement === 'undefined') return;
   HTMLCanvasElement.prototype.getContext = vi.fn((contextType: string) => {
     if (contextType === 'webgl' || contextType === 'webgl2') {
       return new MockWebGLRenderingContext() as any;

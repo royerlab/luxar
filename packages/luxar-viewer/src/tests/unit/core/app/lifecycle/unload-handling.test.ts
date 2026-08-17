@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Unit tests for core/app/lifecycle/unload-handling.ts (G4).
  *

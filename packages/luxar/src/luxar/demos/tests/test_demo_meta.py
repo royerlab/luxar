@@ -6,10 +6,12 @@ single durable gate (the block generator that seeded them was a one-off).
 
 from __future__ import annotations
 
+import ast
 import json
 import subprocess
 import sys
 import textwrap
+from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
@@ -301,3 +303,93 @@ def test_output_and_cache_paths_resolve(tmp_path: Path) -> None:
     assert outs and outs[0] == tmp_path / "lorenz.luxar.zarr"
     dirs = registry.demo_cache_dirs(demo, cache_root=tmp_path)
     assert all(d.parent == tmp_path for d in dirs)
+
+
+# --------------------------------------------------------------------------- #
+# DEMO_META.caches vs the cache directory a demo actually writes
+# --------------------------------------------------------------------------- #
+def _string_constants(tree: ast.Module) -> dict[str, str]:
+    """Map every NAME bound to a string literal anywhere in *tree* (last wins)."""
+    consts: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant):
+            if isinstance(node.value.value, str):
+                for t in node.targets:
+                    if isinstance(t, ast.Name):
+                        consts[t.id] = node.value.value
+    return consts
+
+
+def _resolve_str(node: ast.expr, consts: Mapping[str, str]) -> str | None:
+    """Resolve one path-chain operand to a string, or None if it is neither a
+    string literal nor a name bound to one in *consts*."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.Name):
+        return consts.get(node.id)
+    return None
+
+
+def _truediv_chain(node: ast.BinOp) -> list[ast.expr]:
+    """Flatten the left spine of an ``a / b / c`` chain into its operand list."""
+    parts: list[ast.expr] = []
+    cur: ast.expr = node
+    while isinstance(cur, ast.BinOp) and isinstance(cur.op, ast.Div):
+        parts.insert(0, cur.right)
+        cur = cur.left
+    parts.insert(0, cur)
+    return parts
+
+
+def _cache_dirs_written(path: Path) -> set[str]:
+    """Cache subdirectory names *path* joins onto the luxar cache root.
+
+    Matches the ``... / ".cache" / "luxar" / X`` chain every demo uses, resolving
+    ``X`` through the module's own string constants (they spell it
+    ``CACHE_DIR = Path.home() / ".cache" / "luxar" / DEMO_NAME``, so a literal-only
+    match finds nothing).
+
+    Deliberately AST-only and local to this test: the check has to run without
+    importing 84 demo modules, and keeping it here avoids widening the registry's
+    public surface for one invariant.
+    """
+    tree = ast.parse(path.read_text())
+    consts = _string_constants(tree)
+
+    found: set[str] = set()
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div)):
+            continue
+        vals = [_resolve_str(p, consts) for p in _truediv_chain(node)]
+        if "luxar" not in vals:
+            continue
+        i = vals.index("luxar")
+        seg = vals[i + 1] if i + 1 < len(vals) else None
+        # A dotted segment is a FILE sitting at the cache root, not a cache
+        # directory (arxiv parks `arxiv_embeddings.zip` and
+        # `arxiv_metadata.json` there). `inventory_caches` walks directories
+        # only, and `caches` names are joined then rmtree'd, so a filename
+        # does not belong in it.
+        if seg and "." not in seg:
+            found.add(str(seg))
+    return found
+
+
+@pytest.mark.parametrize("path", DEMO_PATHS, ids=lambda p: p.stem)
+def test_written_cache_dirs_are_declared(path: Path) -> None:
+    """A cache directory a demo writes must be declared in its ``caches``.
+
+    ``luxar demo cache list`` and ``cache clear`` both work off ``caches``, so an
+    undeclared directory is one the user can neither see nor free. Three demos had
+    drifted this way and were holding ~2 GB between them (the INRIA garden capture
+    alone is 1.5 GB), reported only as anonymous orphans in the cache inventory.
+    """
+    meta = extract_demo_meta(path)
+    written = _cache_dirs_written(path)
+    declared = set(meta["caches"])
+    undeclared = sorted(written - declared)
+    assert not undeclared, (
+        f"{path.name} writes {undeclared} under the cache root but declares "
+        f"caches={sorted(declared)}; `luxar demo cache list/clear` cannot "
+        f"see or free it"
+    )

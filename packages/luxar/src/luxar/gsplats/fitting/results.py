@@ -188,6 +188,182 @@ def _clip_to_bounds(
     return clipped
 
 
+#: Fraction of the normalized [0, 1] intensity range a voxel must EXCEED to count
+#: as occupied. A bare ``> 0`` test measures noise, not sparsity: ``V_normalized``
+#: is ``clip((V - image_min) / range, 0, 1)`` and ``image_min`` is a low
+#: percentile -- or, under ``floor=auto``, the estimated background MODE, i.e. the
+#: background's own centre -- so roughly half of a noisy background survives it.
+#: Measured on a volume that is 2.2% signal: 58% "occupancy", a number that flatly
+#: contradicts the compression ratio it is printed beside. One percent of the
+#: dynamic range sits far above camera read noise (a few 1e-3 of range on a 16-bit
+#: acquisition) and far below real structure.
+#:
+#: The threshold is deliberately relative to the fit's OWN normalization, so
+#: ``occupancy`` describes what the fit actually had to represent: with
+#: ``floor=none`` an unsuppressed pedestal counts, because the optimiser did spend
+#: splats on it.
+_OCCUPANCY_THRESHOLD = 0.01
+
+#: Voxels per counting block in :func:`_occupied_fraction` (16M -> a 16 MB bool
+#: temporary, whatever the volume's size).
+_OCCUPANCY_BLOCK_VOXELS = 1 << 24
+
+
+def _occupied_fraction(Vn: np.ndarray, fitted_voxels: int) -> float:
+    """Fraction of ``Vn`` above :data:`_OCCUPANCY_THRESHOLD` of its range.
+
+    Counted in blocks along the first axis rather than through a whole-volume
+    ``Vn > t`` mask: that mask is another full-size allocation, on top of the
+    three copies of the volume already resident at this point. Basic slicing is a
+    view, so the temporary is bounded by the block size whatever the volume's.
+    """
+    rows = max(1, _OCCUPANCY_BLOCK_VOXELS // max(1, int(np.prod(Vn.shape[1:]))))
+    occupied = 0
+    for start in range(0, len(Vn), rows):
+        block = Vn[start : start + rows]
+        occupied += int(np.count_nonzero(block > _OCCUPANCY_THRESHOLD))
+    return float(occupied / fitted_voxels)
+
+
+#: Source-grid stamps that describe the VOLUME and so belong to a whole fit,
+#: however many times the fitter was invoked to produce it.
+#:
+#: Deliberately excludes ``voxels_per_splat``: that one is a ratio against the
+#: splat count of the invocation that produced it, so a multi-pass fitter
+#: copying it verbatim would report the first pass's density for the whole
+#: result. It has to be recomputed against the final count.
+SOURCE_GRID_VOLUME_KEYS = (
+    "source_shape",
+    "source_dtype",
+    "source_voxels",
+    "source_bytes",
+    "source_stored_bytes",
+    "source_declared",
+    "fitted_shape",
+    "fitted_voxels",
+    "occupancy",
+)
+
+
+def lift_source_grid_stats(dest: dict[str, Any], passes: "Sequence[Any]") -> None:
+    """Copy the source-grid stamps from a multi-pass fit's FIRST pass onto ``dest``.
+
+    Every pass of a progressive fit sees the same volume (later ones fit its
+    residual), so the first pass's record of that volume describes the fit as a
+    whole. Left in the per-pass stats it never reaches ``_FITTING_INFO_KEYS``, and
+    the dataset cannot say what it is a representation of.
+
+    ``passes`` are the accumulated sub-LODs, in order; an empty list is a no-op.
+    """
+    if not passes:
+        return
+    first = getattr(passes[0], "stats", None) or {}
+    for key in SOURCE_GRID_VOLUME_KEYS:
+        if key in first:
+            dest[key] = first[key]
+
+
+def stamp_voxels_per_splat(stats: dict[str, Any], n_splats: int) -> None:
+    """Quote density against the splats actually DELIVERED.
+
+    Called after any post-fit cull rather than beside the other source-grid
+    stamps: the pre-cull count would overstate how much of the volume each
+    surviving splat stands for, and it is the surviving ones that ship. A no-op
+    without a fitted grid to divide, or with nothing left to divide by.
+    """
+    fitted_voxels = stats.get("fitted_voxels")
+    if fitted_voxels and n_splats:
+        stats["voxels_per_splat"] = float(fitted_voxels / n_splats)
+
+
+def _source_grid_stats(
+    config: FitConfig, preprocessed_data: PreprocessedData, n_splats: int
+) -> dict[str, Any]:
+    """Record the volume the splats represent, so compression is computable later.
+
+    A fitted ``.gsplats.zarr`` records its own byte size but nothing about what it
+    is a representation of, which makes "how much did this compress?" unanswerable
+    from the artifact. It is not answerable from the producing script either: the
+    fitted grid is derived at run time from downscale factors and from isotropic
+    resampling of the voxel spacing, so it is not a constant anyone can read off.
+
+    Two grids are kept separate on purpose:
+
+    ``source_*``
+        the array handed to the fitter, in its original dtype -- the honest
+        denominator for a compression ratio.
+    ``fitted_*``
+        the grid actually optimised against, after any downscaling. Equal to the
+        source grid when no downscaling happened.
+
+    ``occupancy`` is the fraction of fitted voxels carrying signal (see
+    :func:`_occupied_fraction`). Sparse microscopy volumes are typically >99%
+    empty, and a compression ratio means something quite different at 0.03%
+    occupancy than at 50%, so the ratio should never be quoted without it.
+    """
+    out: dict[str, Any] = {}
+    V = getattr(config, "V", None)
+    if V is not None and hasattr(V, "shape"):
+        # A DECLARED source grid wins over the array's own. Most producers
+        # preprocess before fitting — a demo that downscales a 5D OME-Zarr
+        # channel to 128^3 hands the fitter something that is no longer the
+        # acquisition, so measuring `V` would quote the ratio against the
+        # working copy. `source_declared` is recorded alongside so a reader can
+        # tell a measured grid from a stated one; an unmarked declaration would
+        # be indistinguishable from a measurement, which is the whole risk of
+        # letting callers name their own denominator.
+        declared = getattr(config, "source_shape", None)
+        shape = [int(x) for x in (declared if declared else V.shape)]
+        out["source_shape"] = shape
+        voxels = int(np.prod(shape)) if shape else 0
+        out["source_voxels"] = voxels
+        if declared:
+            out["source_declared"] = True
+        stored = getattr(config, "source_stored_bytes", None)
+        if stored:
+            # What the acquisition OCCUPIES, beside what it decodes to. `info`
+            # quotes both ratios: against raw voxels the splats look best, and
+            # against the stored file is what a reader downloading it compares.
+            out["source_stored_bytes"] = int(stored)
+        # `config.V` has already been cast to float32, so its own dtype/nbytes
+        # would describe the fitter's working copy rather than the caller's
+        # array. Use what validation captured before the cast, and fall back to
+        # the cast array only when that is unavailable.
+        dtype = getattr(config, "source_dtype", None) or str(getattr(V, "dtype", ""))
+        itemsize = getattr(config, "source_itemsize", None)
+        out["source_dtype"] = dtype
+        if itemsize:
+            out["source_bytes"] = voxels * int(itemsize)
+        elif dtype == str(getattr(V, "dtype", "")) and getattr(V, "nbytes", None):
+            # No captured item size: quote the working array's own bytes ONLY
+            # while the recorded dtype IS that array's dtype. A dtype name numpy
+            # could not size (recorded verbatim, on purpose) would otherwise be
+            # paired with float32 byte counts, and `gsplat info` would turn that
+            # pair into a compression ratio inflated by the cast. No bytes is
+            # better than bytes measured on a different type — `info` already
+            # stays silent when the source size is unknown.
+            #
+            # UNREACHABLE on every current path, and deliberately left rather
+            # than deleted: `config.V` is always the post-cast float32 array, so
+            # this needs `dtype == "float32"`, whose item size is never missing.
+            # Should that cast ever move, note this branch measures `V` — which
+            # a DECLARED `source_shape` makes the wrong array, not merely the
+            # wrong type. Guard on `declared` here if it becomes live; it is not
+            # guarded today because no test could prove the guard works.
+            out["source_bytes"] = int(V.nbytes)
+
+    Vn = getattr(preprocessed_data, "V_normalized", None)
+    if Vn is not None and hasattr(Vn, "shape"):
+        out["fitted_shape"] = [int(x) for x in Vn.shape]
+        fitted_voxels = int(np.prod(Vn.shape)) if Vn.ndim else 0
+        out["fitted_voxels"] = fitted_voxels
+        if fitted_voxels:
+            out["occupancy"] = _occupied_fraction(Vn, fitted_voxels)
+        if n_splats:
+            out["voxels_per_splat"] = float(fitted_voxels / n_splats)
+    return out
+
+
 def finalize_results(
     optimization_results: OptimizationResults,
     config: FitConfig,
@@ -311,6 +487,14 @@ def finalize_results(
         "image_max": preprocessed_data.image_max,
         "intensity_range": preprocessed_data.intensity_range,
         "floor": preprocessed_data.floor,
+        # What the splats are a representation OF. Without this, a stored
+        # .gsplats.zarr cannot say how much it compressed: the source grid is
+        # nowhere on disk, and it is not recoverable from the demo either,
+        # because the fitted grid is computed at run time (downscale factors,
+        # isotropic resampling from voxel spacing). Two grids, kept apart on
+        # purpose -- `source_*` is the array handed to the fitter, `fitted_*` is
+        # what it actually optimised against after any downscaling.
+        **_source_grid_stats(config, preprocessed_data, len(amps_np)),
     }
 
     # Store movie frames in stats for later display (don't show here to avoid timing issues)
@@ -361,9 +545,16 @@ def finalize_results(
             stats["mse"] = quality["mse"]
             stats["psnr_db"] = quality["psnr_db"]
             stats["ssim"] = quality["ssim"]
+            # Foreground PSNR is the honest score on sparse volumes, where the
+            # global figure is mostly a report on reconstructed emptiness.
+            stats["foreground_psnr_db"] = quality["foreground_psnr_db"]
+            stats["foreground_threshold"] = quality["foreground_threshold"]
+            stats["foreground_fraction"] = quality["foreground_fraction"]
             if config.verbose:
                 aprint(
                     f"Quality: PSNR={quality['psnr_db']:.1f} dB, "
+                    f"foreground PSNR={quality['foreground_psnr_db']:.1f} dB "
+                    f"(over {quality['foreground_fraction'] * 100:.2f}% of voxels), "
                     f"SSIM={quality['ssim']:.4f}, MSE={quality['mse']:.2e}"
                 )
         except Exception as exc:

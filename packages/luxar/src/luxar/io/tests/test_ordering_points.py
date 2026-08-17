@@ -20,6 +20,7 @@ from luxar.io.ordering import (
     compute_chunk_bounds_points,
     sort_points_compound,
 )
+from luxar.typing_utils.constants import DEFAULT_POINT_RADIUS
 
 
 class TestChunkBoundsPoints:
@@ -44,6 +45,108 @@ class TestChunkBoundsPoints:
 
         # Check bounds are valid (min < max)
         assert np.all(bounds[:, :, 0] <= bounds[:, :, 1])
+
+    def test_no_radii_expands_by_the_default_render_radius(self) -> None:
+        """A chunk with no radii is expanded by exactly DEFAULT_POINT_RADIUS.
+
+        A points node that stores no radii array is still DRAWN with the
+        renderer's default radius, so the write-side bound must carry that
+        extent. The old code used a "1% of the chunk's coordinate range, floor
+        0.01" fudge instead — 50x too tight here — leaving the reader to rely on
+        the viewer's tolerance over-reach to not miss a point.
+        """
+        positions = np.array(
+            [
+                [0.0, 0.0],
+                [1.0, 1.0],
+            ],
+            dtype=np.float32,
+        )
+
+        bounds = compute_chunk_bounds_points(positions, radii=None, chunk_size=2)
+
+        assert bounds.shape == (1, 2, 2)
+        for dim in range(2):
+            assert bounds[0, dim, 0] == pytest.approx(0.0 - DEFAULT_POINT_RADIUS)
+            assert bounds[0, dim, 1] == pytest.approx(1.0 + DEFAULT_POINT_RADIUS)
+
+    def test_no_radii_expansion_does_not_scale_with_coordinate_range(self) -> None:
+        """The no-radii expansion is absolute, not a fraction of the extent.
+
+        The removed "1% of coordinate range" margin grew with the data, so the
+        same authored scene bounded differently depending on its units. Two
+        chunks whose ranges differ by three orders of magnitude must get the
+        same expansion.
+        """
+        small = np.array([[0.0, 0.0], [1.0, 1.0]], dtype=np.float32)
+        large = np.array([[0.0, 0.0], [1000.0, 1000.0]], dtype=np.float32)
+
+        small_bounds = compute_chunk_bounds_points(small, radii=None, chunk_size=2)
+        large_bounds = compute_chunk_bounds_points(large, radii=None, chunk_size=2)
+
+        small_pad = small[:, 0].min() - small_bounds[0, 0, 0]
+        large_pad = large[:, 0].min() - large_bounds[0, 0, 0]
+        assert small_pad == pytest.approx(large_pad)
+        assert large_pad == pytest.approx(DEFAULT_POINT_RADIUS)
+
+    def test_no_radii_matches_explicit_default_scalar_radius(self) -> None:
+        """radii=None and radii=DEFAULT_POINT_RADIUS give identical bounds.
+
+        The writer and the renderer agree by construction: absent radii simply
+        mean the default radius.
+        """
+        rng = np.random.default_rng(7)
+        positions = (rng.random((37, 3)) * 12.0).astype(np.float32)
+
+        implicit = compute_chunk_bounds_points(positions, radii=None, chunk_size=8)
+        explicit = compute_chunk_bounds_points(
+            positions, radii=DEFAULT_POINT_RADIUS, chunk_size=8
+        )
+
+        np.testing.assert_array_equal(implicit, explicit)
+
+    def test_no_radii_pad_survives_the_float32_store_at_large_coordinates(
+        self,
+    ) -> None:
+        """A 0.5 pad must still widen the bound where it is under half an ULP.
+
+        ``chunk_bounds`` is float32. Past ``|x| ~ 2**23`` the ULP exceeds 1, so a
+        round-to-nearest store of ``min - 0.5`` / ``max + 0.5`` lands back on the
+        unpadded coordinate and the stored bound is TIGHTER than the disc the
+        renderer draws. The removed scale-relative fudge was no safer here — 1%
+        of this chunk's 10-unit range is 0.1 against a half-ULP of 1.0, so it
+        rounded away too; the outward store is what closes the hole, for the
+        authored-radius paths as much as for this one. A points node authored in
+        nm over a ~10 mm field sits exactly here.
+        """
+        # ULP is 2.0 at 2e7, so both pads round away without the fix.
+        lo, hi = 2.0e7, 2.0e7 + 10.0
+        positions = np.array([[lo, lo, lo], [hi, hi, hi]], dtype=np.float32)
+
+        bounds = compute_chunk_bounds_points(positions, radii=None, chunk_size=2)
+
+        assert bounds.dtype == np.float32
+        assert bounds.shape == (1, 3, 2)
+        for dim in range(3):
+            assert bounds[0, dim, 0] < positions[:, dim].min()
+            assert bounds[0, dim, 1] > positions[:, dim].max()
+
+    def test_authored_radius_pad_survives_the_float32_store_too(self) -> None:
+        """The outward store is not specific to the no-radii default.
+
+        An authored radius is padded in exactly the same place, so a small
+        radius on large coordinates lost its pad the same way. Pins both the
+        broadcast-scalar and the per-point array paths.
+        """
+        lo, hi = 2.0e7, 2.0e7 + 10.0
+        positions = np.array([[lo, lo, lo], [hi, hi, hi]], dtype=np.float32)
+        per_point = np.full(2, 0.05, dtype=np.float32)
+
+        for radii in (0.05, per_point):
+            bounds = compute_chunk_bounds_points(positions, radii=radii, chunk_size=2)
+            for dim in range(3):
+                assert bounds[0, dim, 0] < positions[:, dim].min()
+                assert bounds[0, dim, 1] > positions[:, dim].max()
 
     def test_chunk_bounds_basic_with_radii(self) -> None:
         """Test chunk bounds with uniform radii."""
@@ -248,10 +351,17 @@ class TestChunkBoundsPoints:
         assert bounds.shape == (1, 3, 2)
 
         # Time (discrete) should have tight bounds: exactly [0, 5] padded by
-        # the epsilon only (pins the NO-RADII branch of the write-side fix —
-        # a separate code site from the radii branch).
+        # the epsilon only. Reached with radii=None, which since the write-side
+        # fix runs through the SAME code site as an explicit scalar radius (the
+        # two branches were collapsed into one) — so this pins that the default
+        # render radius does not leak onto a categorical axis.
         assert bounds[0, 0, 0] == pytest.approx(-_BARRIER_BOUND_EPS)  # time min
         assert bounds[0, 0, 1] == pytest.approx(5.0 + _BARRIER_BOUND_EPS)  # time max
+
+        # ...while the spatial axes DO carry the renderer's default radius.
+        for dim in (1, 2):
+            assert bounds[0, dim, 0] == pytest.approx(10.0 - DEFAULT_POINT_RADIUS)
+            assert bounds[0, dim, 1] == pytest.approx(10.0 + DEFAULT_POINT_RADIUS)
 
     def test_chunk_bounds_varying_radii(self) -> None:
         """Test with varying radii per point."""

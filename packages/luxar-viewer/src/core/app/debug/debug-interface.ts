@@ -21,6 +21,7 @@ import { materialManager, type BlendingMode } from '../../../rendering/material-
 import { normalizeBlendingMode } from '../../../rendering/blending-state';
 import { noteDepthSortCommit, resortForCapture } from '../../../rendering/depth-sort-coordinator';
 import { setCommittedData } from '../../../types/committed-data';
+import { resolveLinePrimitiveForNode } from '../../../types/line-primitive';
 import type { LoadedPointsData } from '../../../types/points';
 import type { SyntheticInjectionResult, SyntheticSceneSpec } from '../../../scene/synthetic-scene';
 import { computeDebugState, computeDrawOrder } from './debug-state';
@@ -121,6 +122,11 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
     // Helper function to get current state snapshot.
     // Implementation lives in `./debug-state.ts` so the
     // scene-walking logic can be unit-tested directly.
+    //
+    // `isLoading` is read from the loader manager INSIDE the getter, per
+    // snapshot — capturing it once here would freeze it at install time (when
+    // nothing is loading yet) and hand every polling E2E helper a permanent
+    // "idle".
     getState: () =>
       computeDebugState({
         scene: ports.sceneManager.scene,
@@ -128,6 +134,7 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
         currentFov: ports.sceneManager.currentFov,
         isAnimating: ports.animationController.isActive,
         initialized: ports.isInitialized(),
+        isLoading: SceneLoaderManager.getInstance().isAnyLoadPassInProgress(),
         dims: sceneDimsManager.getDims(),
       }),
 
@@ -223,28 +230,49 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
               : 'normal';
 
         if (spec.type === 'lines') {
-          const { generateSyntheticLines } = await import('../../../scene/synthetic-scene');
+          const { generateSyntheticLines, syntheticLinesBoundsDiagonal } =
+            await import('../../../scene/synthetic-scene');
           const cfg = generateSyntheticLines(spec);
+          const maxWidth = spec.width ?? 1.0;
           // Build the visual material directly through the
           // material-manager so the same blending / dispatch logic
           // production uses applies. Picking material is intentionally
           // skipped — the synthetic scenarios don't exercise picking.
+          // Mirror createLinesNode's per-node auto-policy sizing so the
+          // synthetic path builds the same primitive production would for
+          // a node of this size — count AND the rendered-width factor,
+          // normalized by the generation volume the walk fills (a wide
+          // scene crosses the auto threshold well below 2 M segments,
+          // exactly as an authored wide node does, so a count-swept bench
+          // arm can't measure a primitive production wouldn't build). An
+          // explicit ?linePrimitive= arm still wins inside the resolver,
+          // so bench A/B arms are unaffected.
           const material = materialManager.getLineMaterial({
             blendingMode,
             opacity: 1.0,
             gamma: 1.0,
             intensity: 1.0,
             offset: 0.0,
+            primitive: resolveLinePrimitiveForNode({
+              nSegments: cfg.segmentCount,
+              maxWidth,
+              bboxDiagonal: syntheticLinesBoundsDiagonal(spec),
+            }),
           });
           const mesh = createInstancedLinesMesh(cfg, material);
           const clamped = clampLineCapacity(cfg.segmentCount);
           mesh.userData = {
             nodeType: 'lines',
-            attrs: {},
+            // `n_segments` mirrors the authored total a production
+            // `.zattrs` carries (`LinesMetadata.n_segments`) — the
+            // stable per-node count a size-aware primitive policy keys
+            // on. Without it a synthetic 10 M-segment bench scene would
+            // read as "no authored count" and resolve as a tiny scene.
+            attrs: { n_segments: cfg.segmentCount },
             // Mirrors createLinesNode's `attrs.max_width`: the widest
             // authored width, which `spec.width` now controls (the
             // thick perf scenarios inject 3.0, not the 1.0 default).
-            maxWidth: spec.width ?? 1.0,
+            maxWidth,
             visibleSegmentCount: clamped,
             synthetic: true,
           };

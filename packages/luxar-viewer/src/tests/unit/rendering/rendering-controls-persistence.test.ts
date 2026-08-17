@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Unit tests for the rendering-controls settings-persistence helpers.
  *
@@ -15,6 +16,7 @@ import {
   stripDynamicClippingPlanes,
 } from '../../../ui/rendering-controls/settings-persistence';
 import { config } from '../../../config';
+import { buildCinematicValues, CINEMATIC_SNAPSHOT_KEYS } from '../../../config/cinematic-preset';
 import { StorageKeys } from '../../../utils/storage-keys';
 
 describe('settings-persistence — buildBaseDefaults', () => {
@@ -53,6 +55,32 @@ describe('settings-persistence — buildResetDefaults', () => {
     expect(defaults.fov).toBe(99);
     // Untouched defaults still come from config.
     expect(defaults.flyMovementSpeed).toBe(config.controls.fly.movement.speed.default);
+  });
+
+  it('expands viewer_config.cinematic_mode into the preset, surviving the clamp', () => {
+    // The cinematic preset is expanded inside extractRenderingOverrides, so
+    // this consumer gets it for free — including through the
+    // validateRenderingSettings clamp buildResetDefaults applies afterwards.
+    const preset = buildCinematicValues();
+    const defaults = buildResetDefaults({ cinematic_mode: true });
+
+    // Every preset key, not a hand-picked few: a preset value outside the
+    // validator's range would be silently swapped for the base default on this
+    // path while the C-key toggle (which does not validate) kept it — an
+    // authored-vs-keypress divergence nothing else would catch.
+    for (const key of CINEMATIC_SNAPSHOT_KEYS) {
+      expect(defaults[key]).toBe(preset[key]);
+    }
+    expect(defaults.toneMapping).toBe('ACES');
+  });
+
+  it('an author-set key still beats the expanded preset through buildResetDefaults', () => {
+    const preset = buildCinematicValues();
+    const defaults = buildResetDefaults({ cinematic_mode: true, bloom_strength: 0.9 });
+
+    expect(defaults.bloomStrength).toBe(0.9);
+    // Neighbouring preset keys are still expanded around the author's value.
+    expect(defaults.bloomThreshold).toBe(preset.bloomThreshold);
   });
 });
 

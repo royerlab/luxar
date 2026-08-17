@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Unit tests for ui/rendering-controls/setup/performance-setup.ts.
  *
@@ -274,6 +275,29 @@ describe('setupPerformanceControls', () => {
       );
       const fpsValue = rows[1].querySelector('.luxar-gui__controller-widget') as HTMLElement;
       expect(fpsValue.textContent).toBe('idle');
+    });
+
+    it.each([
+      [0.4, '0.4'],
+      [0.04, '0.04'],
+      [0.96, '1.0'],
+    ])('renders a sub-1fps rate as %f, not the "not rendering" 0', (fps, expected) => {
+      // The FPS estimate is DEFINED below 1fps (the window keeps a
+      // two-sample minimum), so a software-rasterized scene reports e.g.
+      // 0.4 — which Math.round() turned into "0", the row's unambiguous
+      // sentinel for "not rendering at all".
+      settings.adaptiveDPREnabled = true;
+      manager.isActive.mockReturnValue(true);
+      manager.getState.mockReturnValue({ currentDPR: 0.5, currentFPS: fps });
+
+      setupPerformanceControls(makeContext());
+      vi.advanceTimersByTime(500);
+
+      const rows = folder.domElement.querySelectorAll(
+        '.luxar-gui__children .luxar-gui__controller'
+      );
+      const fpsValue = rows[1].querySelector('.luxar-gui__controller-widget') as HTMLElement;
+      expect(fpsValue.textContent).toBe(expected);
     });
 
     it('cleanup() stops the interval', () => {

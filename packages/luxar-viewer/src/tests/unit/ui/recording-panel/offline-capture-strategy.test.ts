@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Tests for OfflineCaptureStrategy — the frame-by-frame offline capture
  * orchestrator (EXR sequences + smooth turntable).
@@ -123,11 +124,28 @@ function makeSceneManager(): {
   return { sm: sm as any, orbitControls };
 }
 
-function makeAnimController(): any {
+/**
+ * Animation-controller double that models the real idle behaviour: the
+ * rAF loop starts STOPPED (the viewer idle-stops after ~2s of no
+ * interaction, which is the normal state by the time a user has read
+ * the Recording panel and confirmed the dialog), and per-frame
+ * callbacks only fire while it is running. Registering a `continuous`
+ * callback does NOT restart a stopped loop — only startAnimation()
+ * does. A double that fires callbacks unconditionally cannot see the
+ * "turntable captures N identical frames" bug at all.
+ */
+function makeAnimController({ animating = false }: { animating?: boolean } = {}): any {
+  let isAnimating = animating;
   return {
+    startAnimation: vi.fn(() => {
+      isAnimating = true;
+    }),
     // Invoke the registered callback once synchronously to simulate a
-    // single rendered frame (this is what drives applyOrbitRotation).
-    addPerFrameCallback: vi.fn((_id: string, cb?: () => void) => cb?.()),
+    // single rendered frame (this is what drives applyOrbitRotation) —
+    // but only while the loop is actually animating.
+    addPerFrameCallback: vi.fn((_id: string, cb?: () => void) => {
+      if (isAnimating) cb?.();
+    }),
     removePerFrameCallback: vi.fn(),
   };
 }
@@ -272,6 +290,42 @@ describe('OfflineCaptureStrategy', () => {
   });
 
   describe('happy-path frame loop', () => {
+    it('wakes the idle-stopped rAF loop so the turntable actually rotates', async () => {
+      const { sm, orbitControls } = makeSceneManager();
+      // Loop stopped by the idle timer while the user read the panel.
+      const anim = makeAnimController({ animating: false });
+      const strat = new OfflineCaptureStrategy(sm, anim, makeHooks());
+
+      // videoFPS 2 + turntableSpeed 120 → totalFrames = ceil(3 * 2) = 6.
+      await strat.run(
+        makeOpts({ outputFormat: 'png', videoFPS: 2, turntableSpeed: 120 }),
+        'turntable',
+        makeSession()
+      );
+
+      // The loop has to be woken explicitly: registering a `continuous`
+      // keep-alive callback keeps a RUNNING loop alive but never
+      // restarts a stopped one.
+      expect(anim.startAnimation).toHaveBeenCalled();
+
+      // Frames 1..5 each advance one step — without the wake-up the
+      // camera never moves and every captured frame is identical. The step
+      // is 2π/6, so the six frames cover [0, 2π) and the last one stops
+      // short of the first (a turntable has to loop seamlessly).
+      const driver = mockState.driverInstances.at(-1)!;
+      expect(driver.captureFrame).toHaveBeenCalledTimes(6);
+      expect(orbitControls.applyOrbitRotation).toHaveBeenCalledTimes(5);
+      expect(orbitControls.applyOrbitRotation).toHaveBeenCalledWith((2 * Math.PI) / 6);
+
+      // The full sweep must stop exactly one step short of a whole turn —
+      // 5 × 2π/6, never 2π.
+      const swept = orbitControls.applyOrbitRotation.mock.calls.reduce(
+        (sum: number, call: unknown[]) => sum + (call[0] as number),
+        0
+      );
+      expect(swept).toBeCloseTo(2 * Math.PI * (5 / 6), 12);
+    });
+
     it('builds the overlay, drives the driver for every frame, then tears everything down', async () => {
       const { sm, orbitControls } = makeSceneManager();
       const session = makeSession();
@@ -292,10 +346,11 @@ describe('OfflineCaptureStrategy', () => {
       // finalize receives the captured-frame count.
       expect(driver.finalize).toHaveBeenCalledWith(expect.anything(), 2, expect.anything());
 
-      // Frame 0 captures the start view; frame 1 rotates by the full step
-      // (2π / (totalFrames - 1) = 2π).
+      // Frame 0 captures the start view; frame 1 rotates by one step
+      // (2π / totalFrames = π), landing half a turn away rather than back
+      // on the start pose.
       expect(orbitControls.applyOrbitRotation).toHaveBeenCalledTimes(1);
-      expect(orbitControls.applyOrbitRotation).toHaveBeenCalledWith(2 * Math.PI);
+      expect(orbitControls.applyOrbitRotation).toHaveBeenCalledWith(Math.PI);
 
       // Overlay built with modal ARIA + cancel button, and its counter
       // advanced to the final frame before teardown.

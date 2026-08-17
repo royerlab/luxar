@@ -255,6 +255,19 @@ def resolve_denoise_h(ctx: FitPipelineCtx, volume: "Any") -> Optional[float]:
     on ``ctx.denoise_effective_h`` and then either denoises the full volume
     now (non-tiled fitting, :func:`maybe_denoise_full_volume`) or passes
     ``h`` + params through to ``fit_tile`` (tiled fitting, per-tile denoise).
+
+    The non-tiled path then resolves the background floor on DENOISED data as a
+    matter of ordering (the fit sees the denoised volume). The uniform tiled
+    paths get there by correcting the whole-volume level onto the denoised basis
+    with a bounded probe
+    (:func:`~luxar.gsplats.fitting.preprocessing.resolve_volume_floor_denoised`,
+    #1178), which has three documented exceptions: a volume ABOVE the probe
+    budget keeps its raw-basis level under the default ``--floor auto`` (the
+    histogram-mode shift is not measurable on a bounded crop — a ``pNN`` spec is
+    corrected there), a probe that cannot be read or denoised keeps it too, and
+    ``batch-fit`` hands its tasks a numeric level resolved from the raw input
+    (see :func:`resolve_shared_floor`). The first two print a note; the third is a
+    known gap, tracked separately rather than announced per task.
     """
     if not ctx.denoise:
         return None
@@ -300,6 +313,13 @@ def maybe_denoise_full_volume(
 
     For tiled paths, denoise is deferred to per-tile (see ``fit_tile``);
     the volume is returned unchanged.
+
+    Ordering note: the non-tiled fit therefore resolves its ``--floor`` from the
+    DENOISED volume (``_normalize_data`` runs on what this returns), always and
+    exactly. The tiled paths cannot reorder the passes that way, so they aim at
+    the same basis with a denoise-corrected whole-volume estimator instead
+    (#1178) — exactly within the probe budget, and above it only for a ``pNN``
+    spec (see :func:`resolve_denoise_h`).
     """
     if ctx.denoise and ctx.denoise_effective_h is not None and not is_tiled:
         from luxar.gsplats.preprocessing.denoise_pipeline import (
@@ -459,36 +479,73 @@ def split_seeds_across_tiles(
     return per_tile
 
 
-def reject_downscaled_volume_refit(
-    recipe_params: "Any", effective_downscale: "Any"
+def reject_rescaled_volume_refit(
+    recipe_params: "Any",
+    effective_downscale: "Any",
+    *,
+    voxel_size: "Any" = None,
+    output_space: "Any" = "real",
 ) -> None:
-    """Refuse ``--refine volume`` under ``--downscale`` — different frames.
+    """Refuse ``--refine volume`` when the tile grid and the splats differ in frame.
 
-    A per-part volume re-fit crops the source to the part's own tile, which only
-    holds while the tile grid and the splats share a coordinate frame. Under
-    ``--downscale`` they do not: the grid is computed on the DOWNSCALED shape (so
-    the parent and its workers agree on the tile count) while every worker
-    rescales its splats back to full resolution. Each crop would then be a factor
-    too small and in the wrong place, and the never-worse guard could not tell —
-    it compares against that same wrong crop. Checked before any fitting, since
-    the alternative is discovering it after the whole fit.
+    A per-part volume re-fit crops the source to the part's own tile — the cell
+    of the partition's ``bsp_tree`` — and uses that cell as VOXEL INDICES into
+    the volume. That only holds while the tile grid and the splats share a
+    coordinate frame. Two independent factors break it, and they are exactly the
+    two :func:`~luxar.gsplats.tiling.resolve_grid_scale` reconciles for the
+    split planes (#1587):
 
-    Called with the resolved downscale, so a factor coming from ``--config`` /
-    ``--preset`` is caught as well as the flag. The sequential tiled path refuses
-    ``--recipe`` outright under ``--downscale`` (it writes a flat leaf there), so
-    ``-j>1`` is what makes this combination otherwise reachable.
+    * ``--downscale``: the grid is computed on the DOWNSCALED shape (so the
+      parent and its workers agree on the tile count) while every worker
+      rescales its splats back to full resolution.
+    * a ``voxel_size`` with ``output_space="real"`` (the default): the grid is
+      in voxels while every tile's splats are offset by ``origin * voxel_size``
+      and emitted in PHYSICAL units.
+
+    Either way each crop is a factor off and in the wrong place, and the
+    never-worse guard cannot tell — it compares against that same wrong crop.
+    (Physical-unit centers additionally defeat the re-fit itself: it renders on
+    an origin-anchored voxel grid, which is what
+    :class:`~luxar.gsplats.lod.volume_refit.VolumeRefitConfig`'s
+    ``frame_tolerance`` heuristic exists to notice after the fact.) Checked
+    before any fitting, since the alternative is discovering it after the whole
+    fit.
+
+    Called with the RESOLVED values, so a factor coming from ``--config`` /
+    ``--preset`` is caught as well as the flag. The sequential tiled path
+    refuses ``--recipe`` outright under ``--downscale`` (it writes a flat leaf
+    there), so ``-j>1`` is what makes that combination otherwise reachable; a
+    ``voxel_size`` is reachable on both the sequential and the parallel
+    partition path. It is checked on the NON-tiled path too, where there are no
+    parts to crop but the re-fit still renders on the source's voxel grid, so a
+    physical-unit ladder can only ever be discarded — hence the message speaks
+    of the crop's frame rather than of tiles.
     """
-    if (
-        recipe_params is not None
-        and getattr(recipe_params, "refine", "none") == "volume"
-        and effective_downscale is not None
-    ):
+    if recipe_params is None or getattr(recipe_params, "refine", "none") != "volume":
+        return
+    if effective_downscale is not None:
         raise typer.BadParameter(
             "--refine volume cannot be combined with --downscale: the tile grid "
             "is computed on the downscaled shape while the fitted splats are "
             "rescaled back to full resolution, so each tile's crop of the volume "
             "would land in the wrong place. Drop --downscale, or use --refine l2."
         )
+    if voxel_size is not None and output_space == "real":
+        spacing = (
+            [float(voxel_size)]
+            if isinstance(voxel_size, (int, float))
+            else [float(v) for v in voxel_size]
+        )
+        if any(v != 1.0 for v in spacing):
+            raise typer.BadParameter(
+                f"--refine volume cannot be combined with a real-space "
+                f"voxel_size ({spacing} with output_space='real'): the re-fit "
+                "crops and renders on the source's VOXEL grid (per part, from "
+                "the tile grid, when there are parts) while the fitted splats "
+                "are in physical units, so every crop would be a factor off. "
+                "Set output_space: voxel in the config, drop voxel_size, or "
+                "use --refine l2."
+            )
 
 
 def dispatch_parallel_tiled(
@@ -524,7 +581,7 @@ def dispatch_parallel_tiled(
         resolve_jobs,
     )
     from luxar.gsplats.fitting.downscale import normalize_downscale
-    from luxar.gsplats.tiling import compute_tile_specs
+    from luxar.gsplats.tiling import compute_tile_specs, resolve_grid_scale
 
     # Compute the tile grid on the POST-downscale shape (shape math
     # only — decimation is volume[::f]) so the parent and workers
@@ -605,10 +662,14 @@ def dispatch_parallel_tiled(
                 config=ctx.config,
                 loss=ctx.loss,
                 lr=ctx.lr,
-                # Forward the user's SPEC verbatim: each worker resolves it
-                # against the same volume with the deterministic sampler, so
-                # every worker subtracts one identical level. (An unset floor
-                # lets each worker apply its own --config/--preset merge.)
+                # Forward the user's SPEC verbatim: for auto/pNN each worker
+                # resolves it against the same volume with the deterministic
+                # sampler, so every worker subtracts one identical level. (An
+                # unset floor lets each worker apply its own --config/--preset
+                # merge.) A user NUMERIC passes straight through to the worker,
+                # which now applies it unvetoed — see fit_single_tile: a numeric
+                # above the volume's max windows every tile to zero, warned about
+                # per tile rather than silently ignored as it once was.
                 floor=ctx.floor,
                 seed_method=ctx.seed_method,
                 downscale=ds_arg,
@@ -654,6 +715,28 @@ def dispatch_parallel_tiled(
                 partition=not ctx.flat,
                 recipe=ctx.recipe,
                 recipe_params=recipe_params,
+                # The grid above is in DOWNSCALED voxels while every worker
+                # rescales its splats back to full resolution AND (with a
+                # voxel_size from --config, unless output_space is "voxel")
+                # emits physical coordinates. Both factors compose, so the
+                # merge needs their product to place the partition's split
+                # planes in the splats' own frame (#1587).
+                grid_scale=resolve_grid_scale(
+                    volume.ndim,
+                    downscale_factors=ds_factors,
+                    voxel_size=fit_config.get("voxel_size"),
+                    output_space=fit_config.get("output_space", "real"),
+                ),
+                # What the merged result is a representation OF. The workers hold
+                # the volume, so this process is the only one that can say: the
+                # grid above is post-downscale, and the stored element type is
+                # gone by the time `load_volume` has handed back float32. Under
+                # --downscale the acquisition grid is declared; without one the
+                # two grids agree and there is nothing to declare.
+                source_shape=(
+                    [int(s) for s in volume.shape] if ds_factors is not None else None
+                ),
+                source_dtype=fit_config.get("source_dtype"),
             )
 
         with asection(f"Saving to {ctx.output_path.name}"):
@@ -666,6 +749,193 @@ def dispatch_parallel_tiled(
 
     aprint("--jobs resolved to 1 worker; using sequential tiled fitting")
     return False
+
+
+def validate_floor_spec(floor_spec: "str | float | None") -> None:
+    """Reject a malformed/negative floor spec as a clean usage error.
+
+    Meant to run BEFORE any volume is touched, so a typo (``--floor potato``) or
+    an out-of-range percentile (``--floor p150``) costs no read, and surfaces as a
+    :class:`typer.BadParameter` (which Typer renders as a usage error) rather than
+    a bare ``ValueError`` traceback from deep inside the fit. Numeric specs are
+    validated too — a ``floor: -5.0`` in a YAML config would otherwise reach a
+    worker's argv as ``--floor -5.0``, which click parses as an option, not a
+    value.
+    """
+    from luxar.gsplats.fitting.validation import _validate_floor
+
+    try:
+        _validate_floor(floor_spec)
+    except ValueError as exc:
+        raise typer.BadParameter(f"--floor: {exc}") from exc
+
+
+def floor_spec_needs_volume(floor_spec: "str | float | None") -> bool:
+    """Whether resolving this ``--floor`` spec has to read the volume.
+
+    ``auto`` / ``pNN`` are volume-derived; ``none`` / ``None`` / a numeric spec
+    are already concrete, so a caller that would have to LOAD data purely to
+    resolve them can skip the load entirely.
+    """
+    if not isinstance(floor_spec, str):
+        return False
+    f = floor_spec.strip().lower()
+    return f == "auto" or f.startswith("p")
+
+
+def resolve_shared_floor(
+    volume: "Any",
+    floor_spec: "str | float | None",
+    *,
+    guard_numeric: bool = True,
+    scope: str = "every tile",
+    verbose: bool = True,
+) -> "tuple[float | None, str | float]":
+    """Resolve a user ``--floor`` spec ONCE into the level every worker subtracts.
+
+    The multi-worker counterpart of what :func:`luxar.gsplats.fit_tiled_gsplats.fit_tiled`
+    does inline: a spec is resolved against the WHOLE ``volume`` (via
+    :func:`~luxar.gsplats.fitting.preprocessing.resolve_volume_floor`, a bounded
+    deterministic sample — never a full ``np.percentile``) so independent
+    consumers — content boxes, ``-j`` box subprocesses, every batch ``(t, c)``
+    task — all subtract one identical pedestal instead of each re-estimating its
+    own.
+
+    The level is resolved on the RAW volume. ``--tiling content`` is unaffected
+    because it ignores ``--denoise`` outright (warned about in ``fit``).
+    ``batch-fit`` under ``--denoise`` does NOT get a denoised-basis level in
+    either mode, and that is a known gap rather than a covered case: the plan
+    resolves the level from the RAW ``input_path`` (``batch/planning.py``,
+    :func:`~luxar.cli.gsplat_ops.batch.planning._resolve_and_record_floor`)
+    before the denoise job has written anything, and the default on-the-fly mode
+    then forwards that raw-basis NUMBER to tasks which denoise each tile
+    themselves — a numeric spec being precisely what
+    :func:`~luxar.gsplats.fitting.preprocessing.resolve_volume_floor_denoised`
+    passes through uncorrected. Out of scope for #1178 and tracked separately.
+    The paths that DO resolve on the denoised basis — uniform tiling, sequential
+    and ``-j``/``--tile k/M`` alike (for any volume-derived spec within the
+    denoise probe's budget, and above it for a ``pNN`` spec only) — call
+    :func:`~luxar.gsplats.fitting.preprocessing.resolve_volume_floor_denoised`
+    instead of this function (see :func:`fit_single_tile` and
+    :func:`luxar.gsplats.fit_tiled_gsplats.fit_tiled`). Add
+    ``denoise_h``/``denoise_params`` passthrough here if a consumer of this
+    function ever gains denoising.
+
+    Parameters
+    ----------
+    volume
+        The volume the level is a property of. May be ``None`` when
+        :func:`floor_spec_needs_volume` is ``False`` (nothing is read).
+    guard_numeric
+        Apply the "floor >= max would erase all signal" guard to a NUMERIC spec
+        too (one bounded read). ``True`` where a user spec first becomes a level;
+        ``False`` for a level a parent already resolved and guarded.
+    scope
+        Phrase naming who subtracts it, for the log line ("every box", ...).
+
+    Returns
+    -------
+    (level, forward)
+        ``level`` is the concrete level to subtract locally (``None`` = disabled,
+        or the guard refused it). ``forward`` is what to hand a worker — the same
+        number, the string ``"none"``, or, for the rare NEGATIVE resolved level
+        (dark-frame-corrected data), the original spec: neither ``--floor`` nor
+        ``fit_gaussian_splats`` accepts a negative level, so that one case keeps
+        forwarding the spec exactly as before this function existed — and, being
+        a spec again, it is re-resolved wherever it lands:
+
+        * ``fit --tiling uniform -j N`` / ``--tile k/M``: exact. Each worker
+          re-resolves the spec against the SAME whole volume with the same
+          deterministic sampler, so they all reach the same level.
+        * ``fit --tiling content``: DEGENERATES to per-box resolution. The spec
+          goes into ``box_fit_kwargs["floor"]`` and reaches
+          ``fit_gaussian_splats(crop, floor=<spec>)`` per box, which resolves it
+          against that BOX CROP — i.e. the #1174 per-box pedestal, and a
+          violation of :func:`~luxar.gsplats.planner.fit_planned.fit_planned`'s
+          "must already be a CONCRETE level" contract. It is accepted only
+          because refusing would make dark-frame-corrected data unfittable.
+        * ``batch-fit``: each ``(t, c)`` task resolves it on its own timepoint, so
+          pedestals may differ across the run; that is said loudly at plan time
+          and no level is recorded in the manifest (see
+          :func:`luxar.cli.gsplat_ops.batch.planning.resolve_batch_floor`).
+    """
+    from luxar.gsplats.fitting.preprocessing import resolve_volume_floor
+    from luxar.gsplats.fitting.validation import _validate_floor
+
+    if isinstance(floor_spec, str):
+        _validate_floor(floor_spec)  # reject a malformed/negative USER spec early
+    if volume is None:
+        # Nothing to sample: a concrete spec resolves without data (the caller
+        # checked `floor_spec_needs_volume`), so the guard has to be skipped.
+        guard_numeric = False
+    level = resolve_volume_floor(volume, floor_spec, guard_numeric=guard_numeric)
+    if level is None:
+        # Disabled, resolved to 0 (the "0 disables" rule), or refused by the
+        # guard — all three mean "subtract nothing", which is what the workers
+        # must be told explicitly so they don't re-resolve the spec themselves.
+        return None, "none"
+    if level < 0.0:
+        aprint(
+            f"Note: resolved background floor {level:.6g} is negative and cannot "
+            f"be forwarded as --floor; {scope} resolves the spec itself."
+        )
+        # `floor_spec` cannot be None here: a None spec resolves to level None
+        # and already returned above.
+        assert floor_spec is not None
+        return level, floor_spec
+    if verbose:
+        aprint(
+            f"Floor suppression: {scope} subtracts background level {level:.6g} "
+            f"(resolved once for the whole volume)"
+        )
+    return level, level
+
+
+def _tile_worker_label(ctx: "Any", tile_idx: int, n_tiles: int) -> str:
+    """Name this worker's sub-volume for a diagnostic: ``tile 3/16 (t=7, c=1)``."""
+    label = f"tile {tile_idx}/{n_tiles}"
+    t_idx = getattr(ctx, "timepoint", None)
+    c_idx = getattr(ctx, "channel", None)
+    if t_idx is not None or c_idx is not None:
+        label += f" (t={t_idx}, c={c_idx})"
+    return label
+
+
+def warn_if_level_erases_volume(volume: "Any", level: float, *, what: str) -> None:
+    """Loudly flag a concrete floor level that clips ``what``'s volume to zero.
+
+    A concrete numeric ``--floor`` reaching a worker is applied UNVETOED, by
+    design: the number is a property of the whole volume the workers share, and
+    re-guarding it against one worker's sub-volume is exactly the per-sub-volume
+    pedestal disagreement #1174 removes (see :func:`fit_single_tile`). But a level
+    at or above THIS sub-volume's maximum windows it entirely to zero — 0 splats,
+    an ``.empty`` marker, and a merge that skips it while the run reports success
+    — and nothing downstream mentions the floor. So it is announced here.
+
+    Warn-only: the level is still applied. Reuses the same bounded deterministic
+    sample :func:`~luxar.gsplats.fitting.preprocessing.resolve_volume_floor`
+    would draw, so this costs one bounded read and never a second one.
+    """
+    from luxar.gsplats.fitting.preprocessing import (
+        FLOOR_SAMPLE_BUDGET_VOXELS,
+        _sample_volume_for_floor,
+    )
+
+    sample = _sample_volume_for_floor(volume, int(FLOOR_SAMPLE_BUDGET_VOXELS))
+    if sample is None or sample.size == 0:
+        return
+    sample_max = float(sample.max())
+    if level < sample_max:
+        return
+    aprint(
+        f"⚠ Background floor level {level:.6g} is NOT below {what}'s sampled "
+        f"maximum ({sample_max:.6g}): subtracting it clips this whole sub-volume "
+        f"to zero, so it will fit 0 SPLATS and be skipped by the merge (an "
+        f".empty marker). The level is applied AS GIVEN — a concrete numeric "
+        f"--floor is deliberately not re-guarded per sub-volume, so no worker "
+        f"disagrees about the pedestal. Pass --floor none, or a lower "
+        f"--floor N, if this sub-volume must survive."
+    )
 
 
 def fit_single_tile(
@@ -708,18 +978,64 @@ def fit_single_tile(
     fc_output_space = fit_config.pop("output_space", "real")
 
     # This is the standalone worker's own user-spec entry point: validate the
-    # spec (rejecting e.g. a negative --floor, as every other entry point
-    # does), then resolve it GUARDED so fit_tile is never handed an unguarded
-    # numeric — a too-high explicit floor is warned about and dropped instead
-    # of silently erasing the tile. ``None`` in the merged config (a
-    # ``floor: null`` YAML) means DISABLED, exactly as on the sequential
-    # tiled and non-tiled paths.
-    from luxar.gsplats.fitting.preprocessing import resolve_volume_floor
+    # spec (rejecting e.g. a negative --floor, as every other entry point does),
+    # then resolve it. ``None`` in the merged config (a ``floor: null`` YAML)
+    # means DISABLED, exactly as on the sequential tiled and non-tiled paths.
+    #
+    # A CONCRETE numeric level is applied UNGUARDED (#1174). This worker holds
+    # only ONE sub-volume — one tile of one (t, c) — so re-guarding the number
+    # here would drop it on a dim/bleached timepoint (``floor=None`` → hard-min
+    # normalization) while every sibling task subtracts it: precisely the
+    # per-timepoint pedestal difference the shared resolution removes. The number
+    # normally comes from a parent that already resolved and guarded it against
+    # the whole volume the tiles belong to (`batch-fit` plan time; the
+    # `fit --tiling uniform -j N` parent, which forwards its ``--floor`` spec
+    # verbatim, so each worker re-resolves the same spec against the same volume).
+    #
+    # BEHAVIOUR CHANGE vs main: a USER numeric on this path — `fit --tile k/M
+    # --floor 110`, or `-j N --floor 110` — used to be guarded here too and would
+    # be reported-and-ignored when it exceeded the volume's sampled max. It is now
+    # APPLIED, so a too-high number windows the tile to zero. The loud warn-only
+    # check below names exactly that, since the resulting ``.empty`` tile would
+    # otherwise never mention the floor. A volume-derived spec (``auto``/``pNN``)
+    # is still resolved against this whole volume WITH the guard, because it
+    # becomes a level here for the first time.
+    # With --denoise the tile is denoised BEFORE the level is subtracted, so a
+    # volume-derived spec is resolved on the DENOISED basis (#1178) — the same
+    # correction `fit_tiled` applies, from the same deterministic probe of the
+    # same whole volume, so this worker and its siblings still agree on one
+    # level. The denoise keys are PEEKED at: they stay in `fit_config` for
+    # `fit_tile` (which pops them) to denoise the tile with.
+    from luxar.gsplats.fitting.preprocessing import resolve_volume_floor_denoised
     from luxar.gsplats.fitting.validation import _validate_floor
 
     floor_spec = fit_config.get("floor", "auto")
     _validate_floor(floor_spec)
-    resolved_floor = resolve_volume_floor(volume, floor_spec, guard_numeric=True)
+    resolved_floor = resolve_volume_floor_denoised(
+        volume,
+        floor_spec,
+        denoise_h=fit_config.get("_denoise_h"),
+        denoise_params=fit_config.get("_denoise_params"),
+        guard_numeric=False,
+        # Log the raw level and the measured denoise shift — but ONLY where
+        # denoising made this a new resolution to report. With `--denoise` off
+        # this worker's log stays byte-identical to what it printed before #1178
+        # (and it would not be read anyway: `build_worker_cmd` hardcodes
+        # ``--quiet`` and the parent discards a successful worker's stdout).
+        # Gated on a volume-derived spec too: an absolute level is not resolved
+        # here, and `warn_if_level_erases_volume` below is the line that matters
+        # for one of those.
+        verbose=bool(fit_config.get("verbose", False))
+        and floor_spec_needs_volume(floor_spec)
+        and fit_config.get("_denoise_h") is not None
+        and fit_config.get("_denoise_params") is not None,
+    )
+    if resolved_floor is not None and not floor_spec_needs_volume(floor_spec):
+        warn_if_level_erases_volume(
+            volume,
+            resolved_floor,
+            what=_tile_worker_label(ctx, tile_idx, len(specs)),
+        )
     fit_config["floor"] = resolved_floor if resolved_floor is not None else "none"
 
     with asection(
@@ -848,20 +1164,28 @@ def rescale_and_save(
     """
     # Rescale tiled results back to original coordinates if downscaled
     if tiled_downscale_factors is not None and result.n_splats > 0:
-        from luxar.gsplats.fitting.downscale import (
-            rescale_centers,
-            rescale_cholesky_packed,
-        )
-        from luxar.gsplats.gsplat_data import GSplatData
+        import numpy as np
 
-        result = GSplatData(
-            centers=rescale_centers(result.centers, tiled_downscale_factors),
-            amplitudes=result.amplitudes,
-            cholesky_factors=rescale_cholesky_packed(
-                result.cholesky_factors, tiled_downscale_factors
-            ),
-            colors=result.colors,
-            stats=result.stats,
+        # A per-axis rescale IS a diagonal linear transform, and going through
+        # `transform` carries everything the leaf holds through it. Rebuilding a
+        # plain GSplatData from the concatenated top-level arrays instead RESET
+        # `truncation_radius` to the default (#1624): `truncate:` is a documented
+        # YAML key (`gsplat fit --dump-config` emits it) that lands on the result
+        # in `fitting/results.py`, so `fit --tile k/M --downscale N` with a
+        # `--config` holding `truncate: 3.5` stored 2.75 — a wrong radius in the
+        # tile's own store, on the plain non-progressive path too, and one the
+        # merge's `concatenate` requires the non-empty tiles to AGREE on
+        # (`_data/composition.py`), so a downscaled tile also disagreed with an
+        # un-downscaled sibling.
+        # `transform`'s diagonal fast path multiplies centers by these factors and
+        # the packed Cholesky by the same per-row `tril_scales` vector as
+        # `rescale_centers` / `rescale_cholesky_packed`. It also maps per sub-LOD,
+        # which keeps an additive ladder's rungs (colors, stats, radius) intact;
+        # that is a by-construction guarantee rather than a fixed symptom — every
+        # fitter reachable here flattens first (`fit_progressive_gsplats` returns
+        # `final_result.flattened()`), so no ladder arrives at this line today.
+        result = result.transform(
+            np.diag(np.asarray(tiled_downscale_factors, dtype=np.float64))
         )
         aprint(f"Rescaled {result.n_splats} splats to original coordinates")
 

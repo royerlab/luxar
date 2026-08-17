@@ -173,7 +173,13 @@ test.describe('WASM Integration E2E', () => {
 
     // Verify WASM module status via console logs
     // Either: [emoji] [WASM] Loaded compiled WASM module (success)
-    // Or:     [emoji] [WASM] Failed to load WASM module, using TypeScript fallback
+    // Or:     [emoji] [WASM] Failed to load WASM module (candidates, in order: <urls>), using
+    //         TypeScript fallback
+    //           — <urls> is the list the loader RESOLVED, not a list of URLs each proved to fail:
+    //             the same catch covers a post-import failure (init throwing, or a stale artifact
+    //             rejected by assertRequiredWasmExports), where one of them did load. Replaced by
+    //             "<URL resolution failed before the import>" when no URL was computed at all.
+    //           — this spec keys only on the `TypeScript fallback` tail.
     // Or:     No WASM messages at all (WASM binary not built — TypeScript path used implicitly)
     const messages = await getConsoleMessages(page);
     const wasmMessages = messages.all.filter((m) => m.includes('[WASM]'));
@@ -330,6 +336,10 @@ test.describe('Worker + WASM Combined Performance', () => {
 
     // With workers + WASM, large queries should complete quickly
     // This is a smoke test, not precise benchmarking
+    //
+    // CONTENTION NOTE: wall-clock assertion, and the suite now runs
+    // `fullyParallel` across 4 workers. If this flakes, diagnose with
+    // `--workers=1` rather than raising the threshold.
     expect(totalTime).toBeLessThan(10000); // Should finish in <10 seconds
 
     // Verify data loaded

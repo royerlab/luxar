@@ -15,6 +15,12 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
+    // Deliberately still 'jsdom', even though the main config now defaults to
+    // 'node' and both files included below are node-safe. This suite compares
+    // timings against per-commit baselines under `perf-results/`, all of which
+    // were recorded in a jsdom worker; switching the environment would change
+    // the measurement substrate and silently invalidate them. Flip this only
+    // together with re-recording the baselines.
     environment: 'jsdom',
     globals: true,
     // WASM-only setup: the perf benches read no zarr fixtures, and bench

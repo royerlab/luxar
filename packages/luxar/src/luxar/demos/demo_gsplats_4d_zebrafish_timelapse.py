@@ -93,7 +93,7 @@ from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.demos import (
     MissingDependencyError,
     launch_viewer,
-    load_precomputed_bundle,
+    load_dataset_bundle,
     parse_demo_flags,
     require_module,
     warn_if_no_cuda_gpu,
@@ -179,10 +179,12 @@ def load_zebrafish_volumes() -> tuple:
     """Download and load the zebrafish LSM as a list of 3D volumes.
 
     Returns:
-        Tuple of (volumes, voxel_size_zyx, time_indices):
+        Tuple of (volumes, voxel_size_zyx, time_indices, acquisition):
         - volumes: List of 3D float32 volumes, one per timepoint, each normalised to [0, 1].
         - voxel_size_zyx: Tuple of (Z, Y, X) voxel spacing in micrometres, or None.
         - time_indices: List of source frame indices used (for cache key stability).
+        - acquisition: ``(shape, dtype)`` of ONE stored timepoint, declared to the
+          fit — every volume above is a normalised, possibly resized copy of one.
     """
     tifffile = require_module("tifffile")
 
@@ -245,6 +247,11 @@ def load_zebrafish_volumes() -> tuple:
             f"(stride={stride}, indices={time_indices[0]}..{time_indices[-1]})"
         )
 
+        # The acquisition grid + stored type of one timepoint, taken before the
+        # normalization and the optional resize in the loop below. Every timepoint
+        # shares the grid, so it is read once here rather than per iteration.
+        acquisition = (tuple(int(x) for x in raw.shape[1:]), str(raw.dtype))
+
         volumes = []
         for t in time_indices:
             V = raw[t].astype(np.float32)
@@ -271,7 +278,7 @@ def load_zebrafish_volumes() -> tuple:
 
         aprint(f"Loaded {len(volumes)} volumes, shape per volume: {volumes[0].shape}")
 
-    return volumes, voxel_size_zyx, time_indices
+    return volumes, voxel_size_zyx, time_indices, acquisition
 
 
 # =============================================================================
@@ -308,6 +315,7 @@ def fit_timepoint(
     label: str,
     cache_file: Path,
     voxel_size=None,
+    acquisition=None,
 ) -> GSplatData:
     """Fit GSplats to a single timepoint volume with caching.
 
@@ -340,8 +348,13 @@ def fit_timepoint(
 
     aprint(f"Fitting {label} (fixed-K joint fit: seeds={MAX_SPLATS})...")
 
+    src_shape, src_dtype = acquisition or (None, None)
     result = fit_gaussian_splats(
         volume,
+        # One timepoint of the stored stack is the source; the fitted array is
+        # a normalized, possibly resized float32 copy of it.
+        source_shape=src_shape,
+        source_dtype=src_dtype,
         seeds=MAX_SPLATS,
         device=DEVICE,
         verbose=True,
@@ -363,7 +376,9 @@ def fit_timepoint(
     return result
 
 
-def fit_all_timepoints(volumes: list, voxel_size=None, time_indices=None) -> list:
+def fit_all_timepoints(
+    volumes: list, voxel_size=None, time_indices=None, acquisition=None
+) -> list:
     """Fit GSplats to every timepoint.
 
     Args:
@@ -390,6 +405,7 @@ def fit_all_timepoints(volumes: list, voxel_size=None, time_indices=None) -> lis
                     f"T={t} (frame {src_idx})",
                     cache_file,
                     voxel_size=voxel_size,
+                    acquisition=acquisition,
                 )
                 gsplats_list.append(gsplats)
         return gsplats_list
@@ -681,7 +697,7 @@ def main():
         f"zebrafish_frame{idx:04d}.gsplats.zarr.zip" for idx in precomputed_indices
     ]
 
-    gsplats_list = load_precomputed_bundle(
+    gsplats_list = load_dataset_bundle(
         _PRECOMPUTED_DEMO_NAME,
         _PRECOMPUTED_BUNDLE_NAME,
         precomputed_file_names,
@@ -697,11 +713,14 @@ def main():
         # Load data — per-timepoint cache checks happen inside fit_all_timepoints().
         # We can't skip the load here because the time_indices (which frames to use)
         # depend on the stride computed from the data's total frame count.
-        volumes, voxel_size_zyx, time_indices = load_zebrafish_volumes()
+        volumes, voxel_size_zyx, time_indices, acquisition = load_zebrafish_volumes()
 
         # Fit GSplats per timepoint (with per-frame caching)
         gsplats_list = fit_all_timepoints(
-            volumes, voxel_size=voxel_size_zyx, time_indices=time_indices
+            volumes,
+            voxel_size=voxel_size_zyx,
+            time_indices=time_indices,
+            acquisition=acquisition,
         )
 
     # Optional round-trip visualisation

@@ -195,6 +195,28 @@ def estimate_bytes_per_splat(
     )
 
 
+def carried_appearance(input_path: Path) -> dict:
+    """The source root's authored appearance, announced as it is picked up.
+
+    A rebuilding command owns the STRUCTURE, not the look: the builders make
+    fresh nodes that know nothing about the input, so without this the writer's
+    own defaults take over and every authored value is lost (#1600). Pass the
+    result to ``write_gsplats_tree(root_attrs=...)`` /
+    ``GSplatData.save(root_attrs=...)``, which seeds the output root at LOWEST
+    precedence so the command's own structural attrs still win.
+
+    The announcement lives here rather than at each call site so a command reads
+    as one statement (and so ``lod_recipe`` stays under the complexity ratchet).
+    Quiet when the input authored nothing.
+    """
+    from luxar.gsplats.io.load_gsplats import read_authored_appearance
+
+    carried = read_authored_appearance(input_path)
+    if carried:
+        aprint("Carrying authored appearance: " + ", ".join(sorted(carried)))
+    return carried
+
+
 def measure_store_bytes(path: Path) -> int:
     """Total on-disk bytes of a ``.gsplats.zarr`` store (dir walk; ≈ wire cost).
 
@@ -228,19 +250,28 @@ def detect_store_encoding(path: Path) -> Optional[str]:
     modes (u8 in both auto and memory, hence not discriminative). Returns
     ``None`` when the store cannot be classified (zip archive, legacy layout,
     broadcast-only quantized store) — callers should then not assume a mode.
+
+    Attributes are read through :func:`luxar._zarr_compat.read_node_attrs`, so
+    both on-disk formats are classified. Globbing for the format-2 ``.zattrs``
+    document by name (the previous implementation) matched nothing in a format-3
+    store and returned the perfectly ordinary ``None``, which callers read as
+    "unclassifiable" rather than as the failure it was.
     """
-    import json
     from typing import Iterator
+
+    from luxar._zarr_compat import read_node_attrs
 
     if not path.is_dir():
         return None
 
     def _encodings(array: str) -> Iterator[dict]:
-        for zattrs in sorted(path.rglob(f"{array}/.zattrs")):
-            try:
-                enc = json.loads(zattrs.read_text()).get("encoding", {})
-            except (OSError, json.JSONDecodeError, AttributeError):
+        # Glob the array DIRECTORY, not its metadata document: the document is
+        # named differently per format, the directory is not.
+        for node in sorted(path.rglob(array)):
+            if not node.is_dir():
                 continue
+            attrs = read_node_attrs(node)
+            enc = (attrs or {}).get("encoding", {})
             if isinstance(enc, dict) and enc.get("name"):
                 yield enc
 

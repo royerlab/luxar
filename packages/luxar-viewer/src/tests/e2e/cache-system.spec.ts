@@ -290,6 +290,33 @@ test.describe('Three-Level Cache System (L0/L1/L2)', () => {
     await assertNoConsoleErrors(page);
   });
 
+  test('?no-opfs skips ONLY the L2 tier: scene renders, in-memory tiers stay on, no badge', async ({
+    page,
+  }) => {
+    await page.goto(`/?src=${DATASET}&debug&no-opfs&cache-debug`);
+    await waitForLuxarReady(page);
+
+    const state = await getLuxarState(page);
+    expect(state.totalPoints).toBeGreaterThan(0);
+
+    const cacheStats = await page.evaluate(async () => {
+      const debug = (window as any).__luxarDebug;
+      return await debug.cache.getStats();
+    });
+
+    // L1 (in-memory) still serves; L2 was never constructed, so its stats
+    // stay the all-zero defaults — with a real dataset loaded, a live L2
+    // would have written by now. A DELIBERATE disable reports
+    // opfsAvailable=true: the opfs-unavailable badge is reserved for
+    // unrequested degradation (init failure / breaker trip).
+    expect(cacheStats.l1).toBeDefined();
+    expect(cacheStats.l2.count).toBe(0);
+    expect(cacheStats.l2.writes).toBe(0);
+    expect(cacheStats.health?.opfsAvailable).toBe(true);
+
+    await assertNoConsoleErrors(page);
+  });
+
   test('should list cached datasets via debug API', async ({ page }) => {
     await page.goto(`/?src=${DATASET}&debug`);
     await waitForLuxarReady(page);

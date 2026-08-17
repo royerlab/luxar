@@ -52,12 +52,179 @@ def _validate_floor(floor: "str | float | None") -> None:
         raise ValueError(f"floor must be >= 0, got {value}")
 
 
+def _validate_norm_range(norm_range: "tuple[float, float] | None") -> None:
+    """Validate a supplied ``(image_min, image_max)`` normalization range.
+
+    A degenerate or reversed range is otherwise silent: ``image_max ==
+    image_min`` lands in ``_normalize_data``'s "nearly uniform" branch, which
+    replaces the whole array with 0.5, and ``image_max < image_min`` normalizes
+    every voxel negative and clips it to zero. Both fit successfully and return
+    nonsense.
+    """
+    if norm_range is None:
+        return
+    if len(norm_range) != 2:
+        raise ValueError(
+            f"norm_range must be an (image_min, image_max) pair, got {norm_range!r}"
+        )
+    lo, hi = float(norm_range[0]), float(norm_range[1])
+    if not (math.isfinite(lo) and math.isfinite(hi)):
+        raise ValueError(f"norm_range values must be finite, got {norm_range!r}")
+    if hi <= lo:
+        raise ValueError(
+            f"norm_range must satisfy image_max > image_min, got {norm_range!r}"
+        )
+
+
+def _explicit_dtype_name(source_dtype: Any) -> Optional[str]:
+    """Normalize an EXPLICIT ``source_dtype`` argument to a dtype name, or None.
+
+    A caller naturally passes a dtype OBJECT (``np.dtype("uint16")``) or a scalar
+    type (``np.uint16``), not only a string, and the value is stored verbatim in
+    ``stats`` — where a dtype object is not JSON-serializable, so the whole fit
+    used to complete and then die in ``.save()``. Normalized through
+    ``str(np.dtype(...))`` exactly like the derived path.
+
+    ``None`` (absent) and a blank string both mean "no explicit value": storing
+    ``""`` gave a ``None`` itemsize, which sends ``results.py`` to the post-cast
+    float32 ``V.nbytes`` — the 2x-overstated source size this stamp exists to
+    prevent. An unrecognizable dtype NAME is still tolerated and recorded as
+    given (the itemsize resolver records it without a size).
+    """
+    if source_dtype is None:
+        return None
+    if isinstance(source_dtype, str):
+        # Stripped for the lookup too, not only for the emptiness test above: a
+        # quoted YAML `source_dtype: "uint16 "` is otherwise unsizable, and the
+        # size then silently goes missing — the same degradation the blank check
+        # exists to prevent.
+        source_dtype = source_dtype.strip()
+        if not source_dtype:
+            return None
+    try:
+        return str(np.dtype(source_dtype))
+    except TypeError:  # a name/object numpy cannot interpret — keep it verbatim
+        return str(source_dtype)
+
+
+def _exact_dim(value: Any) -> int:
+    """One grid dimension as an exact integer, or raise.
+
+    ``int()`` alone silently TRUNCATES, which is the wrong failure for a number
+    that will be published as a denominator: a caller who computed a dimension
+    (a downscale factor, a JSON round-trip) wants to hear about it, not to get a
+    grid quietly off by a voxel. ``bool`` is rejected for the same reason — it is
+    an ``int`` subclass, so ``True`` would pass as a one-voxel axis.
+    """
+    if isinstance(value, bool):
+        raise TypeError(f"not an integer dimension: {value!r}")
+    dim = int(value)  # raises TypeError/ValueError on anything uninterpretable
+    if dim != value:
+        raise ValueError(f"not an integer dimension: {value!r}")
+    return dim
+
+
+def _explicit_source_shape(source_shape: Any) -> Optional[list[int]]:
+    """Normalize an EXPLICIT ``source_shape`` argument, or None.
+
+    This declares the grid of the ACQUISITION the fit represents, for the very
+    common case where the caller preprocessed before fitting -- a demo that
+    downscales a 5D OME-Zarr channel to 128^3 and normalizes it hands the fitter
+    an array that is no longer the data anyone means by "the source". Without a
+    way to say so, the recorded grid is the working copy and every compression
+    ratio quoted from it is against the wrong denominator.
+
+    Validated rather than trusted: this number becomes the denominator of a
+    published ratio, so a malformed one must fail here, loudly, and not surface
+    later as a plausible-looking figure nobody can reproduce. That rules out two
+    inputs a bare ``int(x)`` would have accepted with a straight face: a
+    fractional dimension (``236 / 2`` truncates to a grid 0.2% off the one the
+    caller meant) and a bare string (``"128"`` iterates into ``[1, 2, 8]``, a
+    denominator four orders of magnitude wrong).
+    """
+    if source_shape is None:
+        return None
+    if isinstance(source_shape, (str, bytes)):
+        raise ValueError(
+            f"source_shape must be a sequence of integers, got {source_shape!r}"
+        )
+    try:
+        dims = [_exact_dim(x) for x in source_shape]
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"source_shape must be a sequence of integers, got {source_shape!r}"
+        ) from exc
+    if not dims:
+        raise ValueError("source_shape cannot be empty")
+    if any(d <= 0 for d in dims):
+        raise ValueError(f"source_shape dimensions must be positive, got {dims}")
+    return dims
+
+
+def _explicit_source_stored_bytes(value: Any) -> Optional[int]:
+    """Normalize an EXPLICIT ``source_stored_bytes``, or None.
+
+    The size the acquisition actually OCCUPIES -- the compressed file you
+    download, not the array it decodes to. Both are wanted: a ratio against the
+    decoded array says how much the splat representation beats raw voxels, and a
+    ratio against the stored file says how much smaller the thing you download
+    became. Quoting only the first invites reading it as the second, which
+    flatters the splats by the source codec's own factor.
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise ValueError(f"source_stored_bytes must be an integer, got {value!r}")
+    try:
+        size = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"source_stored_bytes must be an integer, got {value!r}"
+        ) from exc
+    if size != value or size <= 0:
+        raise ValueError(
+            f"source_stored_bytes must be a positive integer, got {value!r}"
+        )
+    return size
+
+
+def _resolve_source_dtype(V: Any, source_dtype: Any) -> tuple[str, Optional[int]]:
+    """Resolve ``(source_dtype, source_itemsize)`` for the volume ``V``.
+
+    Called BEFORE the fitter's float32 cast: the fitter works in float32, so
+    after that cast the original element size is gone. It is the denominator of
+    any compression ratio quoted about the result, and a uint16 volume recorded
+    as float32 would overstate compression by 2x.
+
+    An explicit ``source_dtype`` wins over what ``V`` reports, because a caller
+    can be one cast further removed than we are: ``luxar gsplat fit`` loads
+    through ``load_volume``, which already returns float32, so on that path --
+    the one that produces essentially every stored dataset -- the on-disk
+    element type is knowable ONLY from there. Reading ``V.dtype`` (rather than
+    ``np.asarray(V).dtype``) keeps a lazy zarr/dask input lazy: materializing it
+    twice would double both the peak memory and the read.
+    """
+    name = _explicit_dtype_name(source_dtype)
+    if name is None:
+        _dt = getattr(V, "dtype", None)
+        try:
+            name = str(np.dtype(_dt) if _dt is not None else np.asarray(V).dtype)
+        except TypeError:  # a non-numpy dtype object (e.g. a torch dtype)
+            name = str(np.asarray(V).dtype)
+    try:
+        source_itemsize: Optional[int] = int(np.dtype(name).itemsize)
+    except TypeError:  # an unrecognized dtype name — record it without a size
+        source_itemsize = None
+    return name, source_itemsize
+
+
 def prepare_fit_config(
     fitter: "GaussianSplatFitter",  # GaussianSplatFitter instance
     V: np.ndarray,
     seeds: Optional[np.ndarray | int | float | GSplatData] = None,
     norm_percentile: float = 0.0,
     floor: "str | float | None" = "auto",
+    norm_range: "tuple[float, float] | None" = None,
     downscale: Optional[int | Sequence[int]] = None,
     init_sigma_vox: Optional[float] = None,
     n_iters: int = 1000,
@@ -93,6 +260,10 @@ def prepare_fit_config(
     sort_splats_interval: int = 1000,
     iter_callback: Optional[Any] = None,
     iter_callback_every: int = 25,
+    seed_amps_background_relative: bool = False,
+    source_dtype: Optional[str] = None,
+    source_shape: Optional[Sequence[int]] = None,
+    source_stored_bytes: Optional[int] = None,
     **seed_kwargs: Any,
 ) -> FitConfig:
     """
@@ -112,6 +283,12 @@ def prepare_fit_config(
         - "auto": Principled combination of all methods (recommended)
         This parameter is only used when seeds=None. If seeds are provided,
         this parameter is ignored.
+    seed_amps_background_relative : bool, default=False
+        Amplitude convention of a ``seeds=GSplatData`` warm start. False (the
+        default) = raw-image-sampled, as ``generate_seeds()`` returns; True =
+        background-relative, as a previous fit's output is. See
+        ``fit_gaussian_splats`` for the full explanation. Ignored unless
+        ``seeds`` is a GSplatData.
     **seed_kwargs
         Additional keyword arguments for seed generation (e.g., num_scales,
         percentile_thresh, etc.). Only used when seeds=None.
@@ -128,7 +305,12 @@ def prepare_fit_config(
     ValueError
         If any parameters are invalid
     """
-    # Input validation
+    # Input validation.
+    # Capture the caller's dtype BEFORE the cast below (see the helper: after the
+    # cast the original element size is gone).
+    source_dtype, source_itemsize = _resolve_source_dtype(V, source_dtype)
+    source_shape = _explicit_source_shape(source_shape)
+    source_stored_bytes = _explicit_source_stored_bytes(source_stored_bytes)
     V = np.asarray(V, dtype=np.float32)
     if V.size == 0:
         raise ValueError("Input image V cannot be empty")
@@ -254,6 +436,8 @@ def prepare_fit_config(
     if amp_max is not None and amp_max <= 0:
         raise ValueError("amp_max must be positive if specified")
 
+    _validate_norm_range(norm_range)
+
     # Validate max_eccentricity
     if max_eccentricity is not None and max_eccentricity < 1.0:
         raise ValueError(
@@ -306,11 +490,17 @@ def prepare_fit_config(
 
     return FitConfig(
         V=V,
+        source_dtype=source_dtype,
+        source_itemsize=source_itemsize,
+        source_shape=source_shape,
+        source_stored_bytes=source_stored_bytes,
         seeds=seeds,
+        seed_amps_background_relative=seed_amps_background_relative,
         seed_method=seed_method,
         seed_kwargs=seed_kwargs,
         norm_percentile=norm_percentile,
         floor=floor,
+        norm_range=norm_range,
         init_sigma_vox=init_sigma_vox,
         sigma_min_diag=sigma_min_diag,
         sigma_max_diag=sigma_max_diag,

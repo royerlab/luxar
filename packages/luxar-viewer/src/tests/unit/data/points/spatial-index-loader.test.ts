@@ -246,7 +246,20 @@ describe('PointsSpatialIndexLoader', () => {
       testLoader.dispose();
     });
 
-    it('should preserve zero tolerance for non-displayed dims', async () => {
+    it("uses the node's max_radius for a non-displayed dim, not the ride-along tolerance", async () => {
+      // Issue #1183. This loader has no `EffectiveRadiusConfig` here, so the
+      // reach comes from `fallbackQueryTolerance`. Its continuous arm used to
+      // read `viewState.tolerance[d] ?? maxRadius`, so a ride-along of 0
+      // collapsed the reach to nothing and dropped every point whose radius
+      // merely crossed the slice. The reachable producer of such a 0 is a dim
+      // that is discrete AND spatial: `ViewStateManager.buildToleranceArray`
+      // emits 0 for ANY `discrete` dim, while the fallback's discrete branch
+      // requires `discrete && !spatial`, so such a dim falls through to the
+      // continuous arm. (A displayed dim takes the `1e10` branch, and a
+      // discrete NON-spatial one takes `discreteDimTolerance`.) The viewState
+      // below carries no `dimensions`, so dim 3 reaches that same continuous
+      // arm. It now always uses the node's own `max_radius` (0.5 here),
+      // the quantity the write side expanded its chunk bounds by.
       const viewState: ViewState = {
         displayDims: [0, 1, 2],
         slicePosition: [0, 0, 0, 5],
@@ -258,7 +271,8 @@ describe('PointsSpatialIndexLoader', () => {
       // Builder is constructed once per query; tolerance is the third arg.
       expect(SpatialQueryBuilder).toHaveBeenCalled();
       const [, , options] = (SpatialQueryBuilder as any).mock.calls[0];
-      expect(options.tolerance[3]).toBe(0);
+      expect(options.tolerance[3]).toBe(0.5);
+      expect(options.tolerance[3]).not.toBe(0);
     });
 
     it('should respect max_radius=0 when tolerance is missing', async () => {

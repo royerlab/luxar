@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Unit tests for core/app/debug/debug-interface.ts (G11).
  *
@@ -28,10 +29,14 @@ import * as THREE from 'three';
 vi.mock('../../../../../utils/console-interceptor', () => ({
   consoleInterceptor: { patch: vi.fn() },
 }));
+// Mutable stand-in for the manager's live loading answer, so a test can flip
+// it BETWEEN two getState() calls and prove the field is read per snapshot.
+const managerState = vi.hoisted(() => ({ loadPassInProgress: false }));
 vi.mock('../../../../../data/scene-loader-manager', () => ({
   SceneLoaderManager: {
     getInstance: vi.fn(() => ({
       getDefaultLoader: vi.fn(() => null),
+      isAnyLoadPassInProgress: vi.fn(() => managerState.loadPassInProgress),
     })),
   },
 }));
@@ -99,10 +104,12 @@ function makePorts(overrides: Partial<Parameters<typeof installDebugInterface>[0
 describe('installDebugInterface', () => {
   beforeEach(() => {
     delete (window as { __luxarDebug?: unknown }).__luxarDebug;
+    managerState.loadPassInProgress = false;
   });
 
   afterEach(() => {
     delete (window as { __luxarDebug?: unknown }).__luxarDebug;
+    managerState.loadPassInProgress = false;
   });
 
   describe('debug=false short-circuit', () => {
@@ -256,6 +263,27 @@ describe('installDebugInterface', () => {
       expect(typeof state).toBe('object');
     });
 
+    // #1639 — the snapshot never carried the `isLoading` flag the E2E
+    // data-wait helpers have always polled, so `!state.isLoading` was
+    // `!undefined` and every one of them resolved on its first poll. Pin the
+    // WIRING here (the pure helper's own forwarding is covered in
+    // debug-state.test.ts): the field must come from the loader manager and be
+    // re-read on EVERY snapshot, so a captured-once refactor fails.
+    it('sources isLoading from SceneLoaderManager on each snapshot', () => {
+      installDebugInterface(makePorts());
+      const dbg = window.__luxarDebug!;
+
+      expect((dbg.getState!() as { isLoading?: boolean }).isLoading).toBe(false);
+
+      // A load starts AFTER install: a value captured at install time would
+      // still report false here.
+      managerState.loadPassInProgress = true;
+      expect((dbg.getState!() as { isLoading?: boolean }).isLoading).toBe(true);
+
+      managerState.loadPassInProgress = false;
+      expect((dbg.getState!() as { isLoading?: boolean }).isLoading).toBe(false);
+    });
+
     it('forwards isAnimating from animationController.isActive', () => {
       const ports = makePorts();
       (ports.animationController as unknown as { isActive: boolean }).isActive = true;
@@ -296,6 +324,10 @@ describe('installDebugInterface', () => {
         generateSyntheticLines: () => {
           throw new Error('simulated bundle-load failure');
         },
+        // The injector destructures this alongside the generator (it
+        // sizes the line primitive from the generation volume), and
+        // vitest throws on an export a mock factory omits.
+        syntheticLinesBoundsDiagonal: () => 1,
       }));
 
       installDebugInterface(makePorts());
@@ -321,6 +353,33 @@ describe('installDebugInterface', () => {
       );
 
       vi.doUnmock('../../../../../scene/synthetic-scene');
+    });
+  });
+
+  // The injected node is the perf bench's `default`-arm subject, so it
+  // must be sized by the SAME auto rule (#1352) a compiled node is:
+  // authored count × a rendered-width factor normalized by the node's
+  // extent. Count-only sizing would let a wide swept arm benchmark the
+  // capsule where production builds the quad.
+  describe('injectSyntheticScene line-primitive sizing', () => {
+    /** A wide-lines spec whose WIDTH alone carries it over the threshold. */
+    const wide = { type: 'lines' as const, count: 40_000, bounds: 10, width: 3 };
+
+    it('crosses the auto threshold on rendered width, far below the count threshold', async () => {
+      installDebugInterface(makePorts());
+      const result = await window.__luxarDebug!.injectSyntheticScene!(wide);
+      const material = (result.mesh as THREE.Mesh).material as THREE.Material;
+      expect(material.userData.linePrimitive).toBe('screen-space');
+    });
+
+    it('keeps the capsule for the same count at a sub-clamp width', async () => {
+      // Same 40 k count, width far below the shader's 1.5 px floor — the
+      // negative control, without which "reads the width" would also be
+      // satisfied by flipping every injected node to the quad.
+      installDebugInterface(makePorts());
+      const result = await window.__luxarDebug!.injectSyntheticScene!({ ...wide, width: 0.02 });
+      const material = (result.mesh as THREE.Mesh).material as THREE.Material;
+      expect(material.userData.linePrimitive).toBe('capsule');
     });
   });
 });

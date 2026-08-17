@@ -604,9 +604,13 @@ def build_scene(hycom_path: Path, marble_path: Path, output_path: Path) -> Path:
             scene = c.create_scene(
                 dimensions=dims,
                 viewer_config=ViewerConfig(
-                    # Neutral rather than ACES: the ramp is an encoding of speed,
-                    # and ACES shifts hues away from the intended blue->white.
-                    tone_mapping="Neutral",
+                    # No tone mapping at all (#1459): the ramp is an encoding of
+                    # speed, and every colour here — Blue Marble texture and
+                    # blue->white LUT alike — already sits inside [0, 1], so a
+                    # passthrough is exact. ACES shifts hues; Neutral subtracts
+                    # its offset and compresses from peak 0.76 up, dulling the
+                    # white the fastest currents are supposed to reach.
+                    tone_mapping="None",
                     camera=globe_camera(-84.0, 25.0),
                 ),
             )

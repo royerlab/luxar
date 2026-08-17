@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Unit tests for `installOnlineRetry` — the `window 'online'` trigger for
  * `SceneLoader.retryAllFailedLoaders` (the recovery engine's documented

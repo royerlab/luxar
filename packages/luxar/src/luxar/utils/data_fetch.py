@@ -143,10 +143,34 @@ def zenodo_file_url(record: Manifest, filename: str) -> Optional[str]:
     ``.../records/<id>/files/<name>?download=1`` form from ``zenodo_record``.
     Returns None when the record has neither (i.e. not uploaded yet), which keeps
     the fetch path dormant and demos on the in-repo fallback.
+
+    A record that carries ids but is not yet ``published`` returns None for the
+    DERIVED form. The ids are reserved and final from deposition time, so they are
+    recorded well before the record goes public -- but a file URL into an
+    unpublished draft 404s for everyone, and turning a clean "not hosted yet" into
+    an HTTP error would be a worse story for the one caller who has no in-repo
+    copy. ``published`` therefore gates the URL, not the presence of an id.
+
+    It does NOT gate an explicit ``base_url``, which says "the files are HERE"
+    about somewhere other than the record the flag describes. That ordering is
+    what the migration runbook's rehearsal needs: point a record's ``base_url``
+    at sandbox.zenodo.org and fetch through ``ensure_dataset`` *while the
+    production record stays an unpublished draft*. Gating it the other way round
+    would force ``published: true`` onto a record that is still a draft -- a lie
+    the audit script would then report as LIVE.
+
+    Only an explicit ``published: false`` gates: a record that omits the field
+    is treated as reachable, which is what keeps a hand-rolled record (a test
+    fixture, or a ``base_url`` pointed at a one-off mirror) working without it.
+    The generator always emits the flag, so every shipped record has one --
+    ``test_every_shipped_record_agrees_with_its_published_flag`` holds that both
+    ways.
     """
     base = record.get("base_url")
     if base:
         return f"{base.rstrip('/')}/{filename}?download=1"
+    if record.get("published") is False:
+        return None
     rec = record.get("zenodo_record")
     if rec:
         return f"https://zenodo.org/records/{rec}/files/{filename}?download=1"
@@ -373,8 +397,9 @@ def _ensure_one(
         )
     raise FileNotFoundError(
         f"{fname} is not cached (any cached copy failed its checksum and was "
-        "quarantined), not present in-repo (git lfs pull), and its Zenodo record "
-        "URL is not set yet in the demo-data manifest."
+        "quarantined), not present in-repo (git lfs pull), and the demo-data "
+        "manifest builds no Zenodo URL for it yet — its record has no id, or is "
+        "still an unpublished draft."
     )
 
 
@@ -456,10 +481,12 @@ def load_dataset_gsplats(
           and assumes nothing about the format.
         * **Datasets whose bucket is not ``zenodo``.** ``gsplats_tribolium``,
           ``gsplats_acto3d_heart``, ``gsplats_tng_cosmic_web`` and
-          ``milky_way_gaia_3m`` still ship files in-repo but are marked
-          ``local-compute``, so this returns ``None`` for them and the demo would
-          fit from scratch on a GPU instead of loading the file that is sitting
-          right there. Migrate a demo only once its dataset is ``zenodo``.
+          ``milky_way_gaia_3m`` are marked ``local-compute`` and no longer ship
+          files in-repo, so this returns ``None`` for them and the demo takes its
+          own build path: a GPU refit for the three gsplat ones, and for Gaia a
+          hand-run ``scripts/generate_galaxy_simple.py`` rebuild (or a copy the
+          user already placed in the cache). Migrate a demo only once its dataset
+          is ``zenodo``.
     """
     if recompute:
         return None

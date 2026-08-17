@@ -24,6 +24,7 @@ scripts/
 | `release.sh` | Run release preflight checks, then create and push the release tag |
 | `gen_format_contract.py` | Generate the Python and TypeScript format-contract projections from `format-contract/contract.yaml` |
 | `gen_data_manifest.py` | Regenerate the demo-data manifest (`demos/data_manifest.json`); `--check` is the CI drift gate |
+| `gen_zenodo_records.py` | Generate the Zenodo record descriptions from the manifest and the archives' own stamps; `--check` lists rows that would publish incomplete (never contacts Zenodo) |
 | `generate_galaxy_simple.py` | Fetch Gaia DR3 stars → raw zarr table for demos |
 | `gen_census_umap.py` | Build the large CELLxGENE Census scVI/UMAP cache on a CUDA/RAPIDS environment |
 | `generate_builtin_colormaps.py` | Regenerate built-in colormap LUTs (Python + TS) |
@@ -202,13 +203,19 @@ These are **NOT** part of luxar's core dependencies because they're large astron
 # Install dependencies (one-time)
 hatch run pip install astroquery astropy
 
-# Generate 3M stars (used for demo, ~90 minutes)
-hatch run python scripts/generate_galaxy_simple.py --count 3000000 --output packages/luxar/src/luxar/demos/data/milky_way_gaia_3m.zarr
+# Generate 3M stars (used for demo, ~90 minutes). The --output stem is
+# load-bearing: the zip must contain a top-level milky_way_gaia_3m.zarr/ directory.
+hatch run python scripts/generate_galaxy_simple.py --count 3000000 --output ~/.cache/luxar/milky_way_gaia_3m/milky_way_gaia_3m.zarr
 
 # Test with smaller datasets
 hatch run python scripts/generate_galaxy_simple.py --count 10000    # 10k stars (~30 sec)
 hatch run python scripts/generate_galaxy_simple.py --count 100000   # 100k stars (~2 min)
 ```
+
+The 3M output goes to the demo's cache, **not** into the repository: the Gaia
+catalog is CC BY-NC and the derived point cloud inherits that, so do not commit
+it (the former in-repo `demos/data/` copy was removed for exactly that reason).
+Doing this build automatically on the demo's first run is issue #1575.
 
 **Output Format:**
 
@@ -254,7 +261,6 @@ DOI: 10.1051/0004-6361/202243940
 
 **See also:**
 - `demo_gaia_milky_way_3m.py` - Converts raw data to Luxar format and visualizes
-- `demo_gaia_milky_way_8m.py` - Larger 8M star dataset demo
 - ESA Gaia Archive: https://gea.esac.esa.int/archive/
 
 ---

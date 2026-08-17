@@ -141,7 +141,7 @@ import os
 
 from luxar.demos import (
     launch_viewer,
-    load_precomputed_gsplats,
+    load_dataset_gsplats,
     parse_demo_flags,
     warn_if_no_cuda_gpu,
 )
@@ -203,6 +203,18 @@ CACHE_DIR.mkdir(parents=True, exist_ok=True)
 def load_dapi_data():
     """Load and preprocess DAPI microscopy data from IDR.
 
+    Returns ``(V, acquisition)``. ``V`` is the preprocessed working copy the
+    fitter is given -- one channel, downscaled to ``TARGET_SIZE``, normalized to
+    [0, 1] -- and ``acquisition`` is ``(shape, dtype, stored_bytes)`` of the
+    ORIGINAL stored channel -- the grid and element type it was acquired at, and
+    what it OCCUPIES in the store (compressed), which are different numbers and
+    give different compression ratios. ``stored_bytes`` is ``None`` when the
+    store cannot report a size, and ``acquisition`` itself is ``None`` when the
+    array was synthesized here and so is its own
+    source. The fit stamps the acquisition rather than the working copy, or the
+    compression ratio it publishes would be quoted against a downscaled float32
+    copy of the data instead of the data.
+
     Data Source: Image Data Resource (IDR) study idr0062, Image 6001240
     Original Authors: Prisca Liberali lab, FMI
     Citation: Blin et al. (2019) + Williams et al. (2017) Nature Methods 14(8):775-781
@@ -236,6 +248,30 @@ def load_dapi_data():
                 # Load DAPI channel
                 aprint(f"Extracting T={TIME_POINT}, C={DAPI_CHANNEL} (DAPI)...")
                 V = np.array(data[TIME_POINT, DAPI_CHANNEL, :, :, :], dtype=np.float32)
+                # Captured BEFORE the cast and the downscale below: this is the
+                # grid and element type the compression ratio must be quoted
+                # against.
+                # Third element: what the channel OCCUPIES in the store, from
+                # the zarr chunks themselves. The decoded size is voxels x
+                # itemsize, but nobody downloads the decoded array -- so both
+                # are recorded and `gsplat info` quotes a ratio against each.
+                # Pro-rated by voxel share: zarr sizes the whole 5D array and
+                # this is one channel of it, so it assumes the channels
+                # compress alike.
+                try:
+                    nb = int(data.nbytes_stored())
+                except Exception:  # older zarr, or a store that cannot report it
+                    nb = 0
+                # A store that cannot walk its own chunks -- an HTTP mapper with
+                # no directory listing, which is exactly what IDR serves --
+                # returns 0 rather than raising, and pro-rating 0 gives 0, which
+                # the fit refuses as a denominator. Unknown is a legitimate
+                # answer: `info` then quotes only the ratio it can stand behind,
+                # which is the whole point of never inferring this number.
+                stored = (
+                    int(nb * (z_size * y_size * x_size) / max(data.size, 1)) or None
+                )
+                acquisition = ((z_size, y_size, x_size), str(data.dtype), stored)
             else:
                 raise ValueError(f"Unexpected data shape: {full_shape}")
 
@@ -249,7 +285,8 @@ def load_dapi_data():
             V = V.astype(np.float32)
 
             aprint(f"✓ Loaded: {V.shape}, range [{V.min():.3f}, {V.max():.3f}]")
-            return V
+            aprint(f"✓ Acquisition: {acquisition[0]} {acquisition[1]}")
+            return V, acquisition
 
         except Exception as e:
             aprint(f"⚠ Remote loading failed: {e}")
@@ -271,7 +308,8 @@ def load_dapi_data():
 
             V = np.clip(V, 0, 1).astype(np.float32)
             aprint(f"✓ Fallback created: {V.shape}")
-            return V
+            # Synthesized here, so this array IS the source: nothing to declare.
+            return V, None
 
 
 # =============================================================================
@@ -279,8 +317,15 @@ def load_dapi_data():
 # =============================================================================
 
 
-def fit_dapi_gsplats(volume):
-    """Fit gsplats to DAPI volume (no cache check — caller handles that)."""
+def fit_dapi_gsplats(volume, acquisition=None):
+    """Fit gsplats to DAPI volume (no cache check — caller handles that).
+
+    ``acquisition`` is the ``(shape, dtype, stored_bytes)`` of the original
+    stored channel, as returned by :func:`load_dapi_data` (its last element is
+    ``None`` when the store could not be sized); ``None`` means ``volume`` is its own
+    source. It is stamped into the fit so the dataset can state its compression
+    against the acquisition rather than against the preprocessed copy.
+    """
     with asection("GSplats Fitting"):
         # Auto-detect best device (Metal on Apple Silicon for substantial speedup, chip-dependent)
         global DEVICE
@@ -305,12 +350,19 @@ def fit_dapi_gsplats(volume):
         # Fit gsplats progressively
         aprint(f"Fitting (fixed-K joint fit: seeds={MAX_SPLATS})...")
 
+        # `volume` is a downscaled, normalized float32 copy of one channel, so
+        # declaring the acquisition is what keeps the stamped compression ratio
+        # about the DATA rather than about this working copy.
+        src_shape, src_dtype, src_stored = acquisition or (None, None, None)
         result = fit_gaussian_splats(
             volume,
             seeds=MAX_SPLATS,
             device=DEVICE,
             verbose=True,
             max_eccentricity=8.0,
+            source_shape=src_shape,
+            source_dtype=src_dtype,
+            source_stored_bytes=src_stored,
         )
 
         n_splats = len(result.amplitudes)
@@ -555,11 +607,11 @@ def main():
             aprint("Run without --serve-only to generate first")
             return
 
-    # Try loading precomputed data (from Git LFS / local cache)
+    # Try the manifest-driven fetch (checksum-verified cache -> in-repo -> Zenodo)
     volume = None
     gsplats_data_original = None
 
-    precomputed = load_precomputed_gsplats(
+    precomputed = load_dataset_gsplats(
         "gsplats_dapi",
         ["dapi.gsplats.zarr.zip"],
         recompute=RECOMPUTE,
@@ -570,8 +622,8 @@ def main():
     else:
         # --recompute path: download raw data, fit from scratch
         warn_if_no_cuda_gpu()
-        volume = load_dapi_data()
-        gsplats_data_original = fit_dapi_gsplats(volume)
+        volume, acquisition = load_dapi_data()
+        gsplats_data_original = fit_dapi_gsplats(volume, acquisition)
 
     # Optional round-trip visualisation (before centering/scaling transforms)
     if SHOW_ROUNDTRIP:

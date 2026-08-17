@@ -2,33 +2,84 @@
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 from typing import Any, Dict
 
 import zarr
 
 from luxar._zarr_compat import open_group as zc_open_group
+from luxar.gsplats.io._archive import resolve_store_path
 
 
 def inspect_gsplats_zarr(path: str | Path) -> Dict[str, Any]:
     """Inspect .gsplats.zarr metadata without loading arrays.
 
+    Accepts a ``.gsplats.zarr`` directory or a ``.gsplats.zarr.zip`` /
+    ``.gsplats.zarr.tar.gz`` archive, resolved through the same store-root
+    helper the loader uses (an archive nests its store one directory deep) —
+    matching the loader's resolution is deliberate.
+
+    "Without loading arrays" is about the ARRAY DATA, not about I/O in general.
+    A directory store and a *flat* zip (store at the archive root, opened in
+    place as a ``ZipStore`` — the one point where this reads a shape the loader
+    does not, see ``resolve_store_path``'s ``flat_zip_in_place``) cost nothing
+    beyond reading metadata documents. A NESTED archive — what
+    ``save_gsplats(..., compress=…)`` writes — is EXTRACTED to a temp directory
+    to resolve its store root, so inspecting one costs its full uncompressed
+    size in temp space for the duration of the call (measured: a 3.17 MB archive
+    writes 3.15 MB across 105 files, linear in dataset size). The temp directory
+    is removed before returning, on success and on failure alike.
+
     Args:
-        path: Path to .gsplats.zarr directory
+        path: Path to a .gsplats.zarr directory or compressed archive
 
     Returns:
-        Dictionary with format information
+        Dictionary with format information. ``storage_bytes``/``storage_mb``
+        measure the path as given — the archive's own bytes, not the extracted
+        copy — and ``compression_ratio`` is ``None`` when that size is unknown
+        or zero, rather than an invented 1.0.
+
+        Pre-existing limitation, unchanged here: ``compression_ratio`` and
+        ``uncompressed_mb`` are modelled from ``n_splats``, which for a
+        multi-node tree (``kind=lod`` / ``kind=partition``) is only the
+        REPRESENTATIVE leaf's count while ``storage_bytes`` covers the whole
+        tree, so the ratio is only meaningful for a single-leaf store (measured:
+        a 4-part partition of 4x1000 splats reports ``n_splats=1000`` and
+        ``compression_ratio=0.46``, where the whole tree's own ratio is ~1.9).
 
     Raises:
         FileNotFoundError: If path doesn't exist
-        ValueError: If format is invalid
+        ValueError: If format is invalid, or the path is a regular file that is
+            not a supported archive
     """
     path = Path(path)
     if not path.exists():
         raise FileNotFoundError(f"GSplats zarr not found: {path}")
 
+    # `flat_zip_in_place`: a flat zip is metadata-readable in place as a
+    # ZipStore, and always was, so refusing it here would be a new regression.
+    # The loader does NOT opt in — see `resolve_store_path`.
+    zarr_path, temp_dir = resolve_store_path(path, flat_zip_in_place=True)
+    try:
+        return _inspect_store(path, zarr_path)
+    finally:
+        # Remove the extraction temp dir (None for a directory store).
+        if temp_dir is not None and temp_dir.exists():
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def _inspect_store(path: Path, zarr_path: Path) -> Dict[str, Any]:
+    """Inspect an opened-on-disk store.
+
+    Args:
+        path: The user-supplied path, whose own bytes are the meaningful
+            on-disk size (for an archive that is the archive file itself).
+        zarr_path: The resolved store to open — a directory, or the zip FILE
+            itself for a flat zip opened in place as a ``ZipStore``.
+    """
     # Open zarr store (read-only)
-    root = zc_open_group(str(path), mode="r")
+    root = zc_open_group(str(zarr_path), mode="r")
 
     # Validate format
     format_type = root.attrs.get("format_type")
@@ -156,14 +207,14 @@ def inspect_gsplats_zarr(path: str | Path) -> Dict[str, Any]:
         provenance_group = root["provenance"]
         info["provenance"] = dict(provenance_group.attrs)
 
-    # Compute storage size
+    # Compute storage size. A directory store is walked; anything else is a
+    # single file (an archive), whose own st_size IS its on-disk size — summing
+    # zero there used to report "0.0 MB" for every archive.
     try:
-        total_bytes = sum(
-            sum(f.stat().st_size for f in p.rglob("*") if f.is_file())
-            if p.is_dir()
-            else 0
-            for p in [path]
-        )
+        if path.is_dir():
+            total_bytes = sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
+        else:
+            total_bytes = path.stat().st_size
         info["storage_bytes"] = total_bytes
         info["storage_mb"] = round(total_bytes / (1024 * 1024), 2)
 
@@ -180,8 +231,11 @@ def inspect_gsplats_zarr(path: str | Path) -> Dict[str, Any]:
             + (12 if info["has_colors"] else 0)  # colors (float32)
         )
 
-        compression_ratio = uncompressed_bytes / total_bytes if total_bytes > 0 else 1.0
-        info["compression_ratio"] = round(compression_ratio, 2)
+        # A ratio against an unmeasurable size is not a measurement — report it
+        # as absent rather than publishing an invented 1.0.
+        info["compression_ratio"] = (
+            round(uncompressed_bytes / total_bytes, 2) if total_bytes > 0 else None
+        )
         info["uncompressed_mb"] = round(uncompressed_bytes / (1024 * 1024), 2)
 
     except Exception:
@@ -229,10 +283,15 @@ def format_gsplats_info(info: Dict[str, Any]) -> str:
         mb = info["storage_mb"]
         ratio = info["compression_ratio"]
         uncompressed_mb = info["uncompressed_mb"]
-        lines.append(
-            f"Size: {mb:.1f} MB ({uncompressed_mb:.1f} MB uncompressed, "
-            f"{ratio:.1f}x compression)"
-        )
+        if ratio is None:
+            # Size measured but no ratio available (a zero/unknown size) — print
+            # what is known rather than a made-up compression figure.
+            lines.append(f"Size: {mb:.1f} MB ({uncompressed_mb:.1f} MB uncompressed)")
+        else:
+            lines.append(
+                f"Size: {mb:.1f} MB ({uncompressed_mb:.1f} MB uncompressed, "
+                f"{ratio:.1f}x compression)"
+            )
 
     # Fitting info
     if "fitting" in info:

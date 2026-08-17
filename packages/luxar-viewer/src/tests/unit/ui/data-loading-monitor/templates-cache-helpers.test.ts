@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * R3: focused unit tests for the cache-tab helper functions exported
  * from `data-loading-monitor/templates.ts`. These guard the small pure

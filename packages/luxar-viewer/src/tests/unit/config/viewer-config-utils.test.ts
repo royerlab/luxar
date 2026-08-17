@@ -10,6 +10,7 @@ import {
   renderingSettingsToZarr,
   RENDERING_SETTINGS_MAP,
 } from '../../../config/zarr-bridge/viewer-config-utils';
+import { buildCinematicValues, CINEMATIC_SNAPSHOT_KEYS } from '../../../config/cinematic-preset';
 import type { ZarrViewerConfig } from '../../../types/zarr';
 
 describe('extractRenderingOverrides', () => {
@@ -200,6 +201,112 @@ describe('extractRenderingOverrides', () => {
     expect(overrides.fovPreset).toBe('50mm Normal');
     expect(overrides.near).toBe(0.1);
     expect(overrides.far).toBe(1000);
+  });
+});
+
+describe('extractRenderingOverrides — cinematic_mode preset expansion', () => {
+  // `cinematic_mode` used to be a pass-through flag nothing acted on, so a
+  // scene authoring it rendered with none of the preset's effects. The bridge
+  // now expands the preset for every key the scene did NOT set explicitly.
+
+  it('expands the whole cinematic preset when cinematic_mode is true', () => {
+    const overrides = extractRenderingOverrides({ cinematic_mode: true });
+    const preset = buildCinematicValues();
+
+    // Assert against buildCinematicValues() itself so this test cannot drift
+    // from the preset definition.
+    for (const key of CINEMATIC_SNAPSHOT_KEYS) {
+      expect(overrides[key]).toBe(preset[key]);
+    }
+    // The flag itself survives, so the panel checkbox still reads as on.
+    expect(overrides.cinematicMode).toBe(true);
+  });
+
+  it('keeps author-set keys — the scene wins over the preset', () => {
+    const overrides = extractRenderingOverrides({
+      cinematic_mode: true,
+      bloom_strength: 0.9,
+      tone_mapping: 'Neutral',
+      vignette_enabled: false,
+    });
+    const preset = buildCinematicValues();
+
+    expect(overrides.bloomStrength).toBe(0.9);
+    expect(overrides.toneMapping).toBe('Neutral');
+    expect(overrides.vignetteEnabled).toBe(false);
+    // Unset preset keys are still expanded around them.
+    expect(overrides.bloomThreshold).toBe(preset.bloomThreshold);
+    expect(overrides.detectorNoiseEnabled).toBe(preset.detectorNoiseEnabled);
+    expect(overrides.chromaticLensDispersion).toBe(preset.chromaticLensDispersion);
+  });
+
+  // `fov` and `fovPreset` are a COUPLED pair: an author who set either half
+  // owns the framing, so neither half is filled from the preset. Filling only
+  // the missing half would make the slider and the dropdown name different
+  // lenses (and the first panel open would rewrite the author's preset name).
+  it('leaves BOTH fov keys alone when the author set camera.fov', () => {
+    const overrides = extractRenderingOverrides({
+      cinematic_mode: true,
+      camera: { fov: 90 },
+    });
+
+    expect(overrides.fov).toBe(90);
+    expect('fovPreset' in overrides).toBe(false);
+    // The rest of the preset still expands around the untouched pair.
+    expect(overrides.toneMapping).toBe(buildCinematicValues().toneMapping);
+  });
+
+  it('leaves BOTH fov keys alone when the author set camera.fov_preset', () => {
+    const overrides = extractRenderingOverrides({
+      cinematic_mode: true,
+      camera: { fov_preset: '85mm Portrait' },
+    });
+
+    expect(overrides.fovPreset).toBe('85mm Portrait');
+    expect('fov' in overrides).toBe(false);
+    expect(overrides.toneMapping).toBe(buildCinematicValues().toneMapping);
+  });
+
+  it('expands both fov keys when the scene authors no camera framing', () => {
+    const overrides = extractRenderingOverrides({ cinematic_mode: true });
+    const preset = buildCinematicValues();
+
+    expect(overrides.fov).toBe(preset.fov);
+    expect(overrides.fovPreset).toBe(preset.fovPreset);
+  });
+
+  it('treats a null camera value as unset, not as author-set', () => {
+    // The map walk skips null; the camera block must agree, otherwise a null
+    // both blocks the preset key and leaks downstream to guards that only
+    // test `!== undefined`.
+    const overrides = extractRenderingOverrides({
+      cinematic_mode: true,
+      camera: { fov: null as unknown as number, fov_preset: null as unknown as string },
+    });
+    const preset = buildCinematicValues();
+
+    expect(overrides.fov).toBe(preset.fov);
+    expect(overrides.fovPreset).toBe(preset.fovPreset);
+    expect('near' in overrides).toBe(false);
+  });
+
+  it('does not expand for cinematic_mode false, absent, or non-boolean truthy', () => {
+    expect(extractRenderingOverrides({ cinematic_mode: false }).toneMapping).toBeUndefined();
+    expect(extractRenderingOverrides({}).toneMapping).toBeUndefined();
+    // Strictly `=== true`: a corrupt config must not silently restyle the scene.
+    const truthy = extractRenderingOverrides({
+      cinematic_mode: 1 as unknown as boolean,
+    });
+    expect(truthy.toneMapping).toBeUndefined();
+    expect(truthy.bloomEnabled).toBeUndefined();
+  });
+
+  it('cinematic_mode false leaves the overrides to the explicit keys only', () => {
+    const overrides = extractRenderingOverrides({
+      cinematic_mode: false,
+      bloom_enabled: true,
+    });
+    expect(Object.keys(overrides).sort()).toEqual(['bloomEnabled', 'cinematicMode']);
   });
 });
 

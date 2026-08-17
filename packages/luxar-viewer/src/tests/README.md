@@ -27,17 +27,40 @@ pnpm run test:coverage
 
 # Quality gates
 pnpm run check                # Fast dev-loop: typecheck + lint + unit tests
-pnpm run check:ci             # Merge gate: overrides + typecheck + lint + layers + knip + coverage thresholds
+pnpm run check:static         # check:ci minus the tests — what `make check-all` runs
+pnpm run check:ci             # Merge gate: check:static + coverage thresholds
 ```
 
-`check` keeps the iteration fast. `check:ci` is what `make check-all`
-runs and what should run in CI — it adds the `check:overrides` pnpm
+`check` keeps the iteration fast. `check:ci` is what CI runs — it adds
+the `check:overrides` pnpm
 security-pin guard, the dependency-cruiser
 layer rule check, the `check:knip:ci` unused-export/unused-file gate,
 and enforces the ratcheted coverage thresholds
 declared in `vitest.config.ts`. A PR can pass `check` while
 violating layers, leaving dead exports, or dropping coverage; that
-cannot happen with `check:ci`.
+cannot happen with `check:ci`. `check:static` is that same set minus
+`test:coverage`, so `make check-all` no longer re-runs a suite
+`make test-all` has already run.
+
+### Test environment: `node` by default, jsdom on request
+
+`vitest.config.ts` sets `environment: 'node'`. A test file that needs a
+document opts in with a docblock on its **first line**:
+
+```ts
+// @vitest-environment jsdom
+```
+
+Constructing a jsdom document costs ~1.8 s of CPU per file and only ~125 of
+the unit files need a browser global at all, so the rest would be paying for a
+DOM they never use. Forgetting the docblock is normally not silent — the file
+fails with `ReferenceError: document is not defined`. The exception is code under
+test that reads a browser global through `typeof` and has a non-browser branch:
+that degrades quietly instead of throwing, which is exactly how #1642 hid, so
+don't rely on the loud failure when what the file needs is `self`/`location`
+rather than a document. Mocks that need a DOM
+(`installMatchMediaMock`, `installWebGLMock`) no-op under `node`, so they are
+there when the docblock is.
 
 ### E2E console-error fixture (opt-in)
 

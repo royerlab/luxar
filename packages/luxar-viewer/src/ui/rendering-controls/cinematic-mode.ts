@@ -14,6 +14,12 @@
  */
 
 import { config, type RenderingSettings } from '../../config';
+import {
+  buildCinematicValues,
+  CINEMATIC_SNAPSHOT_KEYS,
+  type CinematicSnapshot,
+  type CinematicSnapshotKeys,
+} from '../../config/cinematic-preset';
 import { toneMappingFromName } from '../../rendering/post-processing/tone-mapping';
 import { log, Modules } from '../../utils/log';
 import type { PostProcessingManager } from '../../rendering';
@@ -21,89 +27,12 @@ import type { SceneManager } from '../../scene/scene-manager';
 import type { AnimationController } from '../../scene/animation/animation-controller';
 import type { RenderingControllers } from './types';
 
-/** Keys of RenderingSettings that cinematic mode touches. */
-export type CinematicSnapshotKeys =
-  | 'toneMapping'
-  | 'bloomEnabled'
-  | 'bloomThreshold'
-  | 'bloomStrength'
-  | 'bloomRadius'
-  | 'bloomLevels'
-  | 'detectorNoiseEnabled'
-  | 'detectorNoiseReadoutSigma'
-  | 'detectorNoisePhotonGain'
-  | 'detectorNoiseFpnSigma'
-  | 'vignetteEnabled'
-  | 'chromaticLensDistortionEnabled'
-  | 'chromaticLensDistortionX'
-  | 'chromaticLensDistortionY'
-  | 'chromaticLensDispersion'
-  | 'chromaticLensPrincipalPointX'
-  | 'chromaticLensPrincipalPointY'
-  | 'chromaticLensFocalLengthX'
-  | 'chromaticLensFocalLengthY'
-  | 'chromaticLensSkew'
-  | 'fov'
-  | 'fovPreset';
-
-export type CinematicSnapshot = Pick<RenderingSettings, CinematicSnapshotKeys>;
-
-const CINEMATIC_SNAPSHOT_KEYS: CinematicSnapshotKeys[] = [
-  'toneMapping',
-  'bloomEnabled',
-  'bloomThreshold',
-  'bloomStrength',
-  'bloomRadius',
-  'bloomLevels',
-  'detectorNoiseEnabled',
-  'detectorNoiseReadoutSigma',
-  'detectorNoisePhotonGain',
-  'detectorNoiseFpnSigma',
-  'vignetteEnabled',
-  'chromaticLensDistortionEnabled',
-  'chromaticLensDistortionX',
-  'chromaticLensDistortionY',
-  'chromaticLensDispersion',
-  'chromaticLensPrincipalPointX',
-  'chromaticLensPrincipalPointY',
-  'chromaticLensFocalLengthX',
-  'chromaticLensFocalLengthY',
-  'chromaticLensSkew',
-  'fov',
-  'fovPreset',
-];
-
-/** Cinematic-ON values used both for apply and for the dirty-check on restore. */
-export function buildCinematicValues(): CinematicSnapshot {
-  const lens35 = config.camera.lensDistortionPresets['35mm'];
-  return {
-    toneMapping: 'ACES',
-    // Subtle, wide glow: a near-zero threshold so mid-tones contribute, a
-    // gentle strength so the halo reads as lens veiling rather than a bloom
-    // effect, and the full mipmap ladder for a smooth spread.
-    bloomEnabled: true,
-    bloomThreshold: 0.01,
-    bloomStrength: 0.05,
-    bloomRadius: 1.0,
-    bloomLevels: 8,
-    detectorNoiseEnabled: true,
-    detectorNoiseReadoutSigma: 0.002,
-    detectorNoisePhotonGain: 0.002,
-    detectorNoiseFpnSigma: 0.001,
-    vignetteEnabled: true,
-    chromaticLensDistortionEnabled: true,
-    chromaticLensDistortionX: lens35.distortionX,
-    chromaticLensDistortionY: lens35.distortionY,
-    chromaticLensDispersion: lens35.dispersion,
-    chromaticLensPrincipalPointX: lens35.principalPointX,
-    chromaticLensPrincipalPointY: lens35.principalPointY,
-    chromaticLensFocalLengthX: lens35.focalLengthX,
-    chromaticLensFocalLengthY: lens35.focalLengthY,
-    chromaticLensSkew: lens35.skew,
-    fov: config.camera.fovPresets['35mm'],
-    fovPreset: '35mm',
-  };
-}
+// The preset values themselves live in `config/cinematic-preset.ts` so the
+// zarr config bridge can expand `viewer_config.cinematic_mode` without
+// importing `ui/`. Re-exported here so existing importers of this module
+// (the facade, the tests) keep working unchanged.
+export { buildCinematicValues };
+export type { CinematicSnapshot, CinematicSnapshotKeys };
 
 export interface CinematicContext {
   settings: RenderingSettings;

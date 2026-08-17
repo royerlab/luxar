@@ -486,11 +486,13 @@ def create_luxar_scene(
         ) as compiler:
             scene = compiler.create_scene(
                 dimensions=dims,
-                # Neutral tone-mapping, not the viewer's default ACES. Colour
-                # here IS the encoding (hue = which part, shade = which LOD
-                # level), and ACES lifts highlights and shifts hue — which
-                # would blur exactly the distinction the gallery is making.
-                viewer_config=ViewerConfig(tone_mapping="Neutral"),
+                # No tone mapping at all (#1459). Colour here IS the encoding
+                # (hue = which part, shade = which LOD level) and the whole
+                # scene stays inside [0, 1], so a passthrough is exact: ACES
+                # lifts highlights and shifts hue, and Neutral would subtract
+                # its offset and compress from peak 0.76 up — flattening
+                # exactly the shade steps the gallery is making.
+                viewer_config=ViewerConfig(tone_mapping="None"),
             )
             scene.attrs["title"] = "GSplats: lod --recipe gallery — Tribolium Embryo"
             scene.attrs["description"] = """

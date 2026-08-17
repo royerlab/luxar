@@ -17,6 +17,7 @@ import pytest
 import zarr
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.conftest import array_compressor
 
 
 def _make_3d_dims():
@@ -347,7 +348,11 @@ class TestImageLabelZarrProperties:
 
         store = zarr.open_group(path, mode="r")
         image_bytes_arr = store["pts"]["image_label_bytes"]
-        assert image_bytes_arr.compressor is None
+        # Via the helper: `.compressor` RAISES on a format-3 array rather than
+        # answering. `array_compressor` returns None only for a genuinely
+        # uncompressed array — it raises on a non-blosc compressor rather than
+        # reporting it as raw, which is what keeps this assertion meaningful.
+        assert array_compressor(image_bytes_arr) is None
 
     def test_offsets_has_compression(self, tmp_path):
         """image_label_offsets array uses default compression."""
@@ -361,7 +366,7 @@ class TestImageLabelZarrProperties:
 
         store = zarr.open_group(path, mode="r")
         offsets_arr = store["pts"]["image_label_offsets"]
-        assert offsets_arr.compressor is not None
+        assert array_compressor(offsets_arr) is not None
 
     def test_has_image_labels_metadata(self, tmp_path):
         """has_image_labels flag set in .zattrs."""

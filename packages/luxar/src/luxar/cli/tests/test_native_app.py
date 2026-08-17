@@ -21,6 +21,7 @@ import pytest
 import zarr
 from typer.testing import CliRunner
 
+from luxar._zarr_compat import is_consolidated
 from luxar.cli import app
 from luxar.cli.native_app import (
     SUPPORTED_PLATFORMS,
@@ -153,8 +154,11 @@ class TestBundleMacosApp:
         assert launcher.is_file()
         assert launcher.stat().st_mode & stat.S_IEXEC
         assert (app_path / "Contents" / "Resources" / "viewer" / "index.html").is_file()
-        # zarr data is preserved and re-readable
-        assert (app_path / "Contents" / "Resources" / "data" / ".zgroup").is_file()
+        # zarr data is preserved and re-readable. Assert the CONSOLIDATED index
+        # survived the copy rather than naming `.zgroup`: only format 2 has that
+        # document, and a store copied without its index still opens while being
+        # unusable to the viewer, which enumerates the scene from it alone.
+        assert is_consolidated(app_path / "Contents" / "Resources" / "data")
         zarr.open_group(app_path / "Contents" / "Resources" / "data", mode="r")
 
     def test_info_plist_is_valid(
@@ -274,7 +278,7 @@ class TestBundleLinuxFolder:
         assert launcher.is_file()
         assert launcher.stat().st_mode & stat.S_IEXEC
         assert (folder / "viewer" / "index.html").is_file()
-        assert (folder / "data" / ".zgroup").is_file()
+        assert is_consolidated(folder / "data")
         assert "Quick start" in (folder / "README.txt").read_text()
 
 
