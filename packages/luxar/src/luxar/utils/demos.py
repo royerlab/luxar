@@ -672,8 +672,9 @@ def voxel_sampled_payload_agreement(
     on this function: a shuffled sidecar still scores at that payload's chance
     level ``Σ p_v²`` (measured on the two shipped payloads: 0.027 for the CT's
     117 organ labels, 1.4e-05 for the Visible Human's sampled uint8 RGB), so a
-    payload that is NEARLY CONSTANT scores near 1.0 however badly it is permuted. A caller whose payload has little diversity must not rely on
-    this check. NaN is likewise invisible to it: ``NaN == NaN`` is False, so a
+    payload that is NEARLY CONSTANT scores near 1.0 however badly it is
+    permuted. A caller whose payload has little diversity must not rely on this
+    check. NaN is likewise invisible to it: ``NaN == NaN`` is False, so a
     float payload using NaN as "no data" scores ~0 even when perfectly aligned
     (neither Luxar caller can hit that — int labels and uint8-derived colours).
 

@@ -26,11 +26,12 @@ succeeds; running it would only burn ``GEN_TIMEOUT_S`` (and its download) before
 reporting a hard failure. That list is temporary by construction: each entry
 names the issue that put it there and is deleted when the cause is gone.
 
-Two limits of the demote-on-failure rule, both deliberate. A genuine bug inside one of those demos
-also lands in the soft bucket rather than returning 1 — its error tail is still
-printed, so it stays visible. And a ``timeout``, a ``no-output`` (exit 0 having
-written nothing) or a death by signal (a negative return code: the OOM killer, a
-segfault) stays HARD even for them, which leaves one real case unrescued:
+Two limits of the demote-on-failure rule, both deliberate. A genuine bug inside
+one of those demos also lands in the soft bucket rather than returning 1 — its
+error tail is still printed, so it stays visible. And a ``timeout``, a
+``no-output`` (exit 0 having written nothing) or a death by signal (a negative
+return code: the OOM killer, a segfault) stays HARD even for them, which leaves
+one real case unrescued:
 ``arxiv_papers_kaggle`` needs no credentials to start and declares a ~30 GB
 download, so on a cold machine it can exhaust ``GEN_TIMEOUT_S`` and land in
 ``timeout`` — a non-zero exit for the whole run. Fixing that by skipping large
