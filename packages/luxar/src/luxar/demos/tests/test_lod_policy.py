@@ -44,6 +44,27 @@ _NO_CACHED_ARTIFACT = {
     ),
 }
 
+#: Demos that choose the topology of their shipped artifact themselves, and why.
+#:
+#: What qualifies is narrow: the demo names the topology it ships in its own
+#: source, with a literal ``build_recipe(data, "<recipe>", ...)`` call, instead of
+#: letting :func:`save_with_lod` make the choice. That is still a deliberate,
+#: reviewable decision — the helper simply is not the one carrying it out. A demo
+#: that keeps whatever topology its fitter happened to produce has made no choice
+#: at all and belongs in ``_NOT_YET_ROUTED`` below, not here.
+#:
+#: This excuses a member from the *choosing* gate only. The topology it names is
+#: still put through the two round-trip gates (see :func:`_chosen_recipes`), since
+#: naming ``levels`` yourself costs exactly what asking the helper for it costs.
+_CHOOSES_OUTSIDE_THE_POLICY = {
+    "demo_gsplats_4d_cell_tracking_challenge.py": (
+        "build_lod() asks build_recipe for 'levels' with time as a hard coarsening "
+        "barrier (coarsen_dims=(0, 1, 2)), and the precomputed crop it ships is "
+        "that result; its two bare .save() calls are the per-timepoint refit cache "
+        "and that already-laddered crop"
+    ),
+}
+
 #: Fitting demos not yet routed through the policy. SHRINKS to empty.
 #:
 #: These keep whatever topology their fitter happens to produce — which is the
@@ -109,6 +130,49 @@ def _policy_recipes(src: str) -> list[str]:
     return recipes
 
 
+def _literal_recipes(src: str) -> list[str]:
+    """The recipe literals *src* passes to ``build_recipe`` itself.
+
+    ``recipe`` is the SECOND positional parameter of
+    :func:`luxar.gsplats.lod.recipes.build_recipe` and positional-or-keyword, so
+    both spellings count. Parsed, not grepped, for :func:`_policy_recipes`'
+    reason plus one of its own: the import line already contains the name, and a
+    ``build_recipe(data, recipe, params)`` that takes its recipe from a VARIABLE
+    (the recipes-gallery demo loops over all of them) names no topology a
+    reviewer can read off the source. Only a constant in the recipe slot is the
+    visible choice ``_CHOOSES_OUTSIDE_THE_POLICY`` accepts in place of the helper.
+    """
+    recipes = []
+    for node in ast.walk(ast.parse(src)):
+        if not (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "build_recipe"
+        ):
+            continue
+        if len(node.args) > 1 and isinstance(node.args[1], ast.Constant):
+            recipes.append(node.args[1].value)
+        for kw in node.keywords:
+            if kw.arg == "recipe" and isinstance(kw.value, ast.Constant):
+                recipes.append(kw.value.value)
+    return recipes
+
+
+def _chosen_recipes(name: str, src: str) -> list[str]:
+    """Every topology *name* chose, through whichever door it chose it.
+
+    The two round-trip gates below ask a different question from the one the
+    exemption answers: not "who applied the recipe?" but "do the extra bytes it
+    costs reach the scene, or are they discarded?". Keying those on
+    :func:`_policy_recipes` alone would let ``_CHOOSES_OUTSIDE_THE_POLICY``
+    excuse a demo from them too, which is not what it is for — a demo that names
+    ``levels`` itself pays the same ~38% and can throw it away just as easily.
+    """
+    if name in _CHOOSES_OUTSIDE_THE_POLICY:
+        return _literal_recipes(src)
+    return _policy_recipes(src)
+
+
 def _scene_adders(src: str) -> set[str]:
     """The ``add_gsplats*`` methods *src* builds its scene with.
 
@@ -157,12 +221,18 @@ def test_every_fitting_demo_chooses_a_topology_or_is_listed() -> None:
     unrouted = {
         name for name, src in _fitting_demos().items() if not _policy_recipes(src)
     }
-    accounted = set(_NO_CACHED_ARTIFACT) | _NOT_YET_ROUTED
+    accounted = (
+        set(_NO_CACHED_ARTIFACT) | set(_CHOOSES_OUTSIDE_THE_POLICY) | _NOT_YET_ROUTED
+    )
     assert unrouted <= accounted, (
         "a fitting demo writes its cache without choosing an LOD topology:\n  "
         + "\n  ".join(sorted(unrouted - accounted))
-        + "\nRoute its save through luxar.demos._lod_policy.save_with_lod, or add "
-        "it to _NO_CACHED_ARTIFACT with the reason it ships no artifact."
+        + "\nThere are three ways out. Route its save through "
+        "luxar.demos._lod_policy.save_with_lod; or, if it ships no artifact at "
+        "all, add it to _NO_CACHED_ARTIFACT with that reason; or, if it already "
+        "names the topology of the artifact it ships in its own source with a "
+        "literal build_recipe(...) call, add it to _CHOOSES_OUTSIDE_THE_POLICY "
+        "with that reason."
     )
 
 
@@ -176,6 +246,41 @@ def test_the_pending_list_shrinks_and_does_not_go_stale() -> None:
         )
     for name in sorted(_NO_CACHED_ARTIFACT):
         assert name in fitting, f"{name} no longer fits — drop the exemption"
+
+
+def test_the_outside_the_policy_exemptions_still_earn_their_place() -> None:
+    """An exemption granted for a reason must not outlive it.
+
+    Its members are excused only because their source states a topology, so
+    measure that claim rather than take it: the demo must still fit, must still
+    NOT use the helper (once it does, it is routed, and every other assertion
+    here starts applying to it — the exemption would hide them), and the literal
+    ``build_recipe`` call the whole excuse rests on must still be present.
+    """
+    from luxar.gsplats.lod import RECIPE_NAMES
+
+    fitting = _fitting_demos()
+    for name, reason in sorted(_CHOOSES_OUTSIDE_THE_POLICY.items()):
+        assert name in fitting, f"{name} no longer fits — drop the exemption"
+        assert not _policy_recipes(fitting[name]), (
+            f"{name} now routes through save_with_lod — drop it from "
+            "_CHOOSES_OUTSIDE_THE_POLICY so the routed assertions cover it"
+        )
+        literals = _literal_recipes(fitting[name])
+        assert literals, (
+            f"{name} no longer names a topology with a literal build_recipe() "
+            f"call, so its exemption ({reason}) no longer describes it"
+        )
+        # A name is only a topology if a builder answers to it. The recipes have
+        # been renamed once already (substitutive -> levels), so a stale or
+        # typo'd literal is a real way for this excuse to stop meaning anything
+        # while still parsing.
+        unknown = sorted(set(literals) - set(RECIPE_NAMES))
+        assert not unknown, (
+            f"{name} names {unknown}, which build_recipe does not define "
+            f"(it knows {list(RECIPE_NAMES)}) — an unbuildable recipe is not the "
+            "choice the exemption rests on"
+        )
 
 
 def test_a_routed_demo_writes_every_archive_through_the_policy() -> None:
@@ -261,6 +366,27 @@ def test_the_routing_detectors_are_not_fooled_by_the_import_line() -> None:
     assert _bare_saves(routed_plus_bare) == 1
 
 
+def test_the_literal_recipe_detector_demands_a_readable_choice() -> None:
+    """Same treatment for the third door's detector, which gates an exemption.
+
+    A detector that answered "yes" too easily would excuse a demo that in fact
+    chose nothing — the defect the whole file exists to catch, wearing the
+    exemption as cover.
+    """
+    import_only = (
+        "from luxar.gsplats.lod import RecipeParams, build_recipe\n"
+        "result.save(cache_file, compress='zip')\n"
+    )
+    assert _literal_recipes(import_only) == []
+    # A recipe read out of a variable is not a choice anyone can review.
+    assert _literal_recipes("built = build_recipe(base, recipe, _params())") == []
+    # The real shape, positionally and by keyword.
+    assert _literal_recipes("build_recipe(d, 'levels', RecipeParams(levels=3))") == [
+        "levels"
+    ]
+    assert _literal_recipes("build_recipe(d, recipe='levels', params=p)") == ["levels"]
+
+
 def test_the_demo_recipe_type_and_defaults_agree() -> None:
     """`DemoRecipe` and `_RECIPE_DEFAULTS` must list the same recipes."""
     from typing import get_args
@@ -278,11 +404,12 @@ def test_a_demo_choosing_a_tree_recipe_does_not_read_its_cache_flat() -> None:
     how it shipped to review once.
     """
     for name, src in sorted(_fitting_demos().items()):
-        if not (set(_policy_recipes(src)) & TREE_RECIPES):
+        tree = sorted(set(_chosen_recipes(name, src)) & TREE_RECIPES)
+        if not tree:
             continue
         for loader in _FLAT_LOADERS:
             assert loader not in src, (
-                f"{name} writes a {sorted(set(_policy_recipes(src)) & TREE_RECIPES)} "
+                f"{name} writes a {tree} "
                 f"artifact but reads it back through {loader}, which cannot open a "
                 "multi-part store. Fetch the PATH (ensure_dataset) and graft it with "
                 "Group.add_gsplats_from_file()."
@@ -302,7 +429,7 @@ def test_a_costly_recipe_is_only_chosen_where_the_scene_can_carry_it() -> None:
     simply pays for a ladder no viewer will ever be offered.
     """
     for name, src in sorted(_fitting_demos().items()):
-        costly = set(_policy_recipes(src)) & SCENE_TOPOLOGY_RECIPES
+        costly = set(_chosen_recipes(name, src)) & SCENE_TOPOLOGY_RECIPES
         if not costly:
             continue
         adders = _scene_adders(src)
@@ -336,9 +463,18 @@ def test_the_costly_recipe_gate_is_not_vacuous() -> None:
     watched = {
         n
         for n, s in fitting.items()
-        if set(_policy_recipes(s)) & SCENE_TOPOLOGY_RECIPES
+        if set(_chosen_recipes(n, s)) & SCENE_TOPOLOGY_RECIPES
     }
     assert watched, "no demo chooses a scene-topology recipe — the gate is vacuous"
+    # Negative control for the third door: a demo excused from CHOOSING through
+    # the policy is not excused from spending the bytes wisely, so a costly
+    # topology named in its own source must still land in `watched`.
+    for n in sorted(_CHOOSES_OUTSIDE_THE_POLICY):
+        if set(_literal_recipes(fitting[n])) & SCENE_TOPOLOGY_RECIPES:
+            assert n in watched, (
+                f"{n} names a costly topology but the gate does not see it — its "
+                "exemption would licence spending those bytes and discarding them"
+            )
     for n in sorted(watched):
         assert _scene_adders(fitting[n]), (
             f"{n} is watched by the gate but no add_gsplats* call parsed out of "
