@@ -144,6 +144,14 @@ export class OfflineCaptureStrategy implements CaptureStrategy {
 
     const bailEarly = (): void => {
       session.restoreRecordingState();
+      // Same repaint guarantee as the main teardown: restoreRecordingState
+      // resizes the render target back, which clears the canvas, and no
+      // keep-alive is registered on this path — so a stopped loop would
+      // leave the viewer blank until the next mouse move. Skipped when the
+      // session is disposed (see the note in the finally).
+      if (!session.isDisposed()) {
+        this.animationController.startAnimation();
+      }
       if (this.sessionAbort === sessionAbort) {
         this.sessionAbort = null;
       }
@@ -419,6 +427,10 @@ export class OfflineCaptureStrategy implements CaptureStrategy {
       log.error(Modules.RECORDING, `Offline ${mode} capture failed: ${err}`);
       showToast('Recording failed');
     } finally {
+      // Clear the render-skip flag FIRST: it globally suppresses the
+      // loop's render, and a driver abort that never settles would
+      // otherwise leave the viewer frozen with no recovery but a reload.
+      session.isOfflineCaptureActive = false;
       if (setupCompleted && !finalizeSucceeded) {
         try {
           const reason = sessionAbort.signal.aborted
@@ -435,7 +447,6 @@ export class OfflineCaptureStrategy implements CaptureStrategy {
       this.animationController.removePerFrameCallback(keepAliveId);
       session.hideRecordingIndicator();
       session.isRecording = false;
-      session.isOfflineCaptureActive = false;
       session.isEXRSequenceRecording = false;
       cleanupOfflineOverlay();
       session.restoreAutoRotate();
@@ -446,8 +457,16 @@ export class OfflineCaptureStrategy implements CaptureStrategy {
       // still stopped (or that the idle timer stops in the gap right after
       // the resize) leaves the viewer blank until the next mouse move.
       // The render-skip predicate reads `isOfflineCaptureActive`, cleared
-      // a few lines above, so this frame is a real render.
-      this.animationController.startAnimation();
+      // at the top of this finally, so this frame is a real render.
+      //
+      // Never on a disposed session: dispose() tears the AnimationController
+      // down BEFORE the RecordingPanel (see `runDisposePipeline`), and
+      // RecordingPanel.dispose() only ABORTS an in-flight capture — a loop
+      // parked on an await resumes here a tick later. Waking it then would
+      // restart the rAF loop against a disposed PostProcessingManager.
+      if (!session.isDisposed()) {
+        this.animationController.startAnimation();
+      }
       if (this.sessionAbort === sessionAbort) {
         this.sessionAbort = null;
       }

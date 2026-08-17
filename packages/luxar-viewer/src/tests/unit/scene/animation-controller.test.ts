@@ -269,16 +269,32 @@ describe('AnimationController', () => {
     // (per-frame callbacks drive the depth-sort scheduler and the LOD
     // group selector, which have to follow the orbiting camera) while
     // issuing no draw call of its own.
-    it('skips postProcessing.render() but still ticks controls + callbacks when render-skip is on', () => {
+    it('skips postProcessing.render() but still ticks controls + callbacks when render-skip is on', async () => {
+      const { eventBus } = await import('../../../utils/cross-layer/event-bus');
       const callback = vi.fn();
+      const startListener = vi.fn();
+      const endListener = vi.fn();
+      const offStart = eventBus.on('frame-start', startListener);
+      const offEnd = eventBus.on('frame-end', endListener);
       controller.addPerFrameCallback('cb', callback);
       controller.setRenderSkipPredicate(() => true);
 
-      controller.startAnimation();
+      try {
+        controller.startAnimation();
 
-      expect(mockControls.update).toHaveBeenCalledTimes(1);
-      expect(callback).toHaveBeenCalledTimes(1);
-      expect(mockPostProcessing.render).not.toHaveBeenCalled();
+        expect(mockControls.update).toHaveBeenCalledTimes(1);
+        expect(callback).toHaveBeenCalledTimes(1);
+        expect(mockPostProcessing.render).not.toHaveBeenCalled();
+        // A skipped frame still has to CLOSE its measurement: the early
+        // return emits frame-end, so the performance monitor never sees an
+        // unpaired frame-start (one per skipped frame, for a whole capture).
+        expect(startListener).toHaveBeenCalledTimes(1);
+        expect(endListener).toHaveBeenCalledTimes(1);
+      } finally {
+        offStart();
+        offEnd();
+        controller.stopAnimation();
+      }
     });
 
     it('renders normally when the render-skip predicate returns false', () => {

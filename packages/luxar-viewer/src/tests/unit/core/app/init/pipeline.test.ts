@@ -58,6 +58,11 @@ function makeRecordingPanelStub() {
   return {
     setPanelStateCallbacks: vi.fn(),
     setAdaptiveDPRManager: vi.fn(),
+    // The two capture flags the pipeline's injected predicates read.
+    // `isCurrentlyRecording()` covers BOTH capture kinds; only the
+    // narrower `isOfflineCaptureActive()` may gate the render skip.
+    isCurrentlyRecording: vi.fn(() => false),
+    isOfflineCaptureActive: vi.fn(() => false),
   };
 }
 function makeLayersPanelStub() {
@@ -367,6 +372,40 @@ describe('runInitPipeline', () => {
       await runInitPipeline(ports, partial);
 
       expect(partial.animationController?.startAnimation).toHaveBeenCalled();
+    });
+  });
+
+  describe('recording-panel predicate wiring', () => {
+    it('the render-skip predicate follows the OFFLINE capture flag, never real-time recording', async () => {
+      const { factories } = makeFactoryOverrides();
+      const ports = makePorts();
+      ports.options.factories = factories as never;
+
+      await runInitPipeline(ports, {});
+
+      const animation = factories.animationController.mock.results[0].value as {
+        setRenderSkipPredicate: ReturnType<typeof vi.fn>;
+      };
+      const panel = factories.recordingPanel.mock.results[0].value as {
+        isCurrentlyRecording: ReturnType<typeof vi.fn>;
+        isOfflineCaptureActive: ReturnType<typeof vi.fn>;
+      };
+      expect(animation.setRenderSkipPredicate).toHaveBeenCalledTimes(1);
+      const predicate = animation.setRenderSkipPredicate.mock.calls[0][0] as () => boolean;
+
+      expect(predicate()).toBe(false);
+
+      // Real-time MediaRecorder capture: `isCurrentlyRecording()` is true
+      // for it too, and its video IS the canvas the loop paints — keying
+      // the skip off that flag would record an empty video.
+      panel.isCurrentlyRecording.mockReturnValue(true);
+      expect(predicate()).toBe(false);
+
+      // Offline (frame-by-frame) capture renders its own pipeline pass per
+      // frame, so the loop's render is discarded work — and during an EXR
+      // sequence it paints a blown-out frame under the translucent overlay.
+      panel.isOfflineCaptureActive.mockReturnValue(true);
+      expect(predicate()).toBe(true);
     });
   });
 

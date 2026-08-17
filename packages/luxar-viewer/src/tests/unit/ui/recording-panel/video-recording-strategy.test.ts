@@ -394,16 +394,13 @@ describe('VideoRecordingStrategy', () => {
       await new Promise((r) => setTimeout(r, 0));
 
       expect(mockAnimController.startAnimation).toHaveBeenCalled();
+      // The keep-alive must be continuous — a plain callback does not stop
+      // the idle timer from halting the loop two seconds in.
       expect(mockAnimController.addPerFrameCallback).toHaveBeenCalledWith(
         'recording-keepalive',
         expect.any(Function),
         { continuous: true }
       );
-      // The keep-alive must be continuous — a plain callback does not stop
-      // the idle timer from halting the loop two seconds in.
-      expect(mockAnimController.__perFrameOpts.get('recording-keepalive')).toEqual({
-        continuous: true,
-      });
       // A frame ticked with the loop awake, so the turntable callback ran.
       expect(controls.applyOrbitRotation).toHaveBeenCalled();
 

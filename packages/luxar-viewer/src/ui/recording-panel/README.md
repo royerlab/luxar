@@ -152,8 +152,9 @@ gives the animation controller a render-skip predicate keyed on
 controls and every per-frame callback — that is the whole reason the
 loop has to run — but skips `postProcessing.render()`, whose output the
 capture would discard anyway. It also removes a visible artifact: the
-readback in step 3 is asynchronous, so the loop interleaves with it, and
-an EXR capture holds global raw-HDR shader flags across that await —
+drivers' per-frame readback is asynchronous, so the loop interleaves
+with it, and an EXR capture holds global raw-HDR shader flags across
+that await —
 a loop render landing inside the window painted a blown-out frame
 through the translucent overlay, once per captured frame. The predicate
 is offline-only: the real-time MediaRecorder path records the canvas the
@@ -164,7 +165,13 @@ resizes the render target back (clearing the canvas) after the keep-alive
 is gone, so without it a still-stopped loop — or one the idle timer halts
 in the gap right after the resize — leaves the viewer blank until the
 next mouse move. By then `isOfflineCaptureActive` is false, so that frame
-is a real render.
+is a real render. The early-bail paths (disposed during the opening rAF
+window, non-orbit controls) restore the same state and owe the same
+repaint, so they wake the loop too. Neither wake-up fires on a disposed
+session: `runDisposePipeline` disposes the AnimationController before the
+RecordingPanel, and panel dispose only ABORTS an in-flight capture, whose
+finally resumes a tick later — restarting the loop there would render
+against a disposed pipeline.
 
 The `try { … } finally { … }` wrapping every state-mutating step is
 load-bearing: a thrown error anywhere in the loop must restore the

@@ -77,14 +77,15 @@ export function createMockSceneManager(): any {
  * structurally blind to the whole "capture emits N identical frames"
  * class of bug (a deleted `startAnimation()` would fail nothing).
  *
- * The options argument of each registration is recorded in
- * `__perFrameOpts` so `{ continuous: true }` is assertable.
+ * The options argument of each registration is recorded by `vi.fn()`
+ * itself, so `{ continuous: true }` is assertable with
+ * `toHaveBeenCalledWith`.
  */
 export function createMockAnimationController({
   animating = false,
 }: { animating?: boolean } = {}): any {
   let isAnimating = animating;
-  const perFrameOpts = new Map<string, unknown>();
+  const registered = new Set<string>();
   return {
     startAnimation: vi.fn(() => {
       isAnimating = true;
@@ -94,14 +95,12 @@ export function createMockAnimationController({
     }),
     // Invoke the callback once synchronously to simulate a single
     // rendered frame — but only while the loop is actually animating.
-    addPerFrameCallback: vi.fn((id: string, cb?: () => void, options?: unknown) => {
-      perFrameOpts.set(id, options);
+    addPerFrameCallback: vi.fn((id: string, cb?: () => void, _options?: unknown) => {
+      registered.add(id);
       if (isAnimating) cb?.();
     }),
-    removePerFrameCallback: vi.fn((id: string) => {
-      perFrameOpts.delete(id);
-    }),
-    __perFrameOpts: perFrameOpts,
+    // Returns a boolean, like the real `removePerFrameCallback`.
+    removePerFrameCallback: vi.fn((id: string) => registered.delete(id)),
   };
 }
 
