@@ -18,6 +18,11 @@ Safety, by construction rather than by discipline:
 * **Idempotent.** A file already on the deposition with a matching MD5 and size
   is skipped, so a re-run after an interruption resumes instead of duplicating.
 * Every upload is **verified** against the MD5 Zenodo computes server-side.
+* **The token travels in an ``Authorization: Bearer`` header, never as an
+  ``access_token`` query parameter.** A query string is recorded by server and proxy
+  access logs, TLS-terminating middleboxes, and any tracing layer that formats
+  ``HTTPError.url``; a header is not. The header is *unredirected*, so it is never
+  replayed to a redirect target.
 
 Usage::
 
@@ -37,6 +42,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import http.client
 import json
 import os
 import sys
@@ -56,15 +62,22 @@ def _md5(path: Path) -> str:
     return h.hexdigest()
 
 
-def _get(url: str) -> Any:
-    with urllib.request.urlopen(url, timeout=60) as resp:
+def _get(url: str, token: str) -> Any:
+    req = urllib.request.Request(url, method="GET")
+    # UNREDIRECTED, deliberately: urllib's redirect handler copies everything in
+    # ``Request.headers`` onto the follow-up request — including to whatever host
+    # a ``Location`` names. An unredirected header is still sent on the initial
+    # request but is not carried across a redirect, which then fails closed with a
+    # 401 that the SystemExit handler below reports without a URL.
+    req.add_unredirected_header("Authorization", f"Bearer {token}")
+    with urllib.request.urlopen(req, timeout=60) as resp:
         return json.load(resp)
 
 
 def fetch_deposition(dep_id: str, token: str) -> dict:
     """Fetch the deposition, refusing anything that is not an open draft."""
     try:
-        dep = _get(f"{API}/{dep_id}?access_token={token}")
+        dep = _get(f"{API}/{dep_id}", token)
     except urllib.error.HTTPError as exc:
         raise SystemExit(
             f"Zenodo returned HTTP {exc.code} {exc.reason} for deposition {dep_id}. "
@@ -106,14 +119,49 @@ def existing_files(dep: dict) -> dict[str, tuple[str, int]]:
 
 def upload(bucket: str, path: Path, token: str) -> dict:
     """PUT one file into the deposition's bucket and return Zenodo's response."""
-    url = f"{bucket}/{path.name}?access_token={token}"
+    url = f"{bucket}/{path.name}"
     size = path.stat().st_size
     with path.open("rb") as fh:
         req = urllib.request.Request(url, data=fh, method="PUT")
         req.add_header("Content-Type", "application/octet-stream")
         req.add_header("Content-Length", str(size))
-        with urllib.request.urlopen(req, timeout=3600) as resp:
-            return json.load(resp)
+        # Unredirected for the same reason as in ``_get``. urllib refuses to
+        # redirect a PUT at all, so there is no follow-up request to leak to here
+        # today; both call sites are written the same way so neither can drift.
+        req.add_unredirected_header("Authorization", f"Bearer {token}")
+        try:
+            with urllib.request.urlopen(req, timeout=3600) as resp:
+                return json.load(resp)
+        except (OSError, http.client.HTTPException) as exc:
+            # Deliberately no URL in either message: the whole point of sending
+            # the credential as a header is that it never reaches a log or a
+            # console. Only HTTPError carries ``code``, so that probe is what
+            # splits the answered-with-a-status branch from the rest.
+            #
+            # The clause is wider than ``URLError`` on purpose. ``do_open``
+            # wraps only the SEND phase in ``URLError``; ``h.getresponse()`` is
+            # not wrapped, so a response-phase death arrives raw as
+            # ``RemoteDisconnected``, ``TimeoutError``, ``BadStatusLine`` or —
+            # from inside ``json.load`` — ``IncompleteRead``. That is precisely
+            # the multi-GB case: Zenodo computes the server-side md5 only after
+            # the whole body lands, so the long wait is on the RESPONSE, where
+            # an idle load balancer or the 3600 s timeout hits. ``OSError``
+            # covers URLError/TimeoutError/RemoteDisconnected and a local
+            # read error on the body; ``HTTPException`` covers the rest.
+            code = getattr(exc, "code", None)
+            if code is not None:
+                raise SystemExit(
+                    f"Zenodo returned HTTP {code} {exc.reason} while uploading "
+                    f"{path.name} to the deposition bucket. A 401/403 means the "
+                    "credential was rejected on the bucket endpoint — check that "
+                    "ZENODO_TOKEN has deposit:write scope."
+                ) from exc
+            raise SystemExit(
+                f"Upload of {path.name} to the deposition bucket did not "
+                f"complete: {getattr(exc, 'reason', None) or exc}. Nothing was "
+                "verified, so re-run once the cause is cleared; files already "
+                "uploaded intact are skipped."
+            ) from exc
 
 
 def plan_uploads(
@@ -176,9 +224,21 @@ def main() -> int:
     )
     args = ap.parse_args()
 
-    token = os.environ.get("ZENODO_TOKEN")
+    # Stripped and then refused if a line break survives. A CRLF-terminated token
+    # file (``ZENODO_TOKEN=$(cat token.txt)`` leaves the ``\r``) used to be
+    # tolerated because ``urlsplit`` drops ASCII \t\r\n from a URL; as a header
+    # value it instead makes ``http.client.putheader`` raise ``ValueError: Invalid
+    # header value b'Bearer <token>'``, which no handler here catches — so the
+    # credential would end up in a traceback. Neither message echoes the value.
+    token = (os.environ.get("ZENODO_TOKEN") or "").strip()
     if not token:
         raise SystemExit("ZENODO_TOKEN is not set.")
+    if "\r" in token or "\n" in token:
+        raise SystemExit(
+            "ZENODO_TOKEN contains a line break inside the value. Check how it was "
+            "captured (a wrapped paste or a concatenated file) and re-copy the token "
+            "from Zenodo."
+        )
 
     paths = []
     for p in args.files:
