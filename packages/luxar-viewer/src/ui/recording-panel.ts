@@ -204,13 +204,17 @@ export class RecordingPanel {
   }
 
   /**
-   * True only while the frame-by-frame offline capture loop is running.
+   * True only while the frame-by-frame offline capture loop owns the
+   * pipeline, i.e. while the animation loop's own render is redundant.
    * Narrower than `isCurrentlyRecording()`: the real-time MediaRecorder
    * path records the canvas the animation loop paints, so callers that
    * suppress rendering must key off THIS flag, not the general one.
+   * Narrower than `session.isOfflineCaptureActive` too — it is dropped
+   * as soon as the capture stops driving the pipeline, so a wedged
+   * teardown can never leave the viewport frozen.
    */
-  isOfflineCaptureActive(): boolean {
-    return this.session.isOfflineCaptureActive;
+  isLoopRenderSuppressed(): boolean {
+    return this.session.isLoopRenderSuppressed;
   }
 
   setPanelStateCallbacks(

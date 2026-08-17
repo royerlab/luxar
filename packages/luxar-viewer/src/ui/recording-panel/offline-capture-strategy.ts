@@ -218,6 +218,10 @@ export class OfflineCaptureStrategy implements CaptureStrategy {
     }
     session.isRecording = true;
     session.isOfflineCaptureActive = true;
+    // The loop's own render is redundant from here on — the capture
+    // renders its own pipeline pass per frame (see the render-skip
+    // predicate wired in `core/app/init/pipeline`).
+    session.isLoopRenderSuppressed = true;
     session.recordingStartTime = Date.now();
     session.showRecordingIndicator();
 
@@ -430,7 +434,9 @@ export class OfflineCaptureStrategy implements CaptureStrategy {
       // Clear the render-skip flag FIRST: it globally suppresses the
       // loop's render, and a driver abort that never settles would
       // otherwise leave the viewer frozen with no recovery but a reload.
-      session.isOfflineCaptureActive = false;
+      // Only this flag — the mutual-exclusion flags below must survive
+      // the abort await.
+      session.isLoopRenderSuppressed = false;
       if (setupCompleted && !finalizeSucceeded) {
         try {
           const reason = sessionAbort.signal.aborted
@@ -447,6 +453,13 @@ export class OfflineCaptureStrategy implements CaptureStrategy {
       this.animationController.removePerFrameCallback(keepAliveId);
       session.hideRecordingIndicator();
       session.isRecording = false;
+      // NOT cleared before the abort await above: `ScreenshotStrategy`
+      // gates mutual exclusion on this flag, so a screenshot started
+      // mid-teardown would overwrite and then null the single
+      // `savedRecordingState` slot, leaving `restoreRecordingState()`
+      // below a no-op — the viewer stuck at capture resolution with
+      // resize locked until a page reload.
+      session.isOfflineCaptureActive = false;
       session.isEXRSequenceRecording = false;
       cleanupOfflineOverlay();
       session.restoreAutoRotate();
@@ -456,7 +469,7 @@ export class OfflineCaptureStrategy implements CaptureStrategy {
       // keep-alive callback is already gone by now — so a loop that is
       // still stopped (or that the idle timer stops in the gap right after
       // the resize) leaves the viewer blank until the next mouse move.
-      // The render-skip predicate reads `isOfflineCaptureActive`, cleared
+      // The render-skip predicate reads `isLoopRenderSuppressed`, cleared
       // at the top of this finally, so this frame is a real render.
       //
       // Never on a disposed session: dispose() tears the AnimationController

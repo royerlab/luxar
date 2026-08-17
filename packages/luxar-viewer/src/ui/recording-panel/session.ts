@@ -65,6 +65,19 @@ export class RecordingSession {
   isOfflineCaptureActive: boolean = false;
   isEXRSequenceRecording: boolean = false;
 
+  /**
+   * True while the animation loop's OWN render is redundant because
+   * someone else owns the pipeline for the frame (today: the offline
+   * capture, which renders its own pass per frame).
+   *
+   * Deliberately separate from `isOfflineCaptureActive`. This is the
+   * narrower, shorter-lived claim — it is dropped the moment the capture
+   * stops driving the pipeline, so a wedged teardown can never freeze the
+   * viewport. `isOfflineCaptureActive` is a mutual-exclusion flag and
+   * must stay true until the session has fully unwound.
+   */
+  isLoopRenderSuppressed: boolean = false;
+
   // ── Lifecycle ─────────────────────────────────────────────────
   disposed: boolean = false;
 

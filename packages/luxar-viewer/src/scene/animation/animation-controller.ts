@@ -238,10 +238,11 @@ export class AnimationController {
     eventBus.emit('frame-start', {});
 
     // Record frame for adaptive DPR - tracks FPS and adjusts pixel
-    // ratio. Skipped while the rendering context is lost: those frames
-    // do no GPU work, so their "speed" would drive bogus scale-ups and
+    // ratio. Skipped while the rendering context is lost AND while the
+    // render-skip predicate is on: both kinds of frame do no GPU work of
+    // their own, so their "speed" would drive bogus scale-ups and
     // falsely settle U-shape probes.
-    if (this.adaptiveDPRManager && !this.isContextLost?.()) {
+    if (this.adaptiveDPRManager && !this.isContextLost?.() && !this.shouldSkipRender?.()) {
       this.adaptiveDPRManager.recordFrame(performance.now());
     }
 

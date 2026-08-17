@@ -94,6 +94,7 @@ function makeSession(overrides: Record<string, unknown> = {}): any {
   return {
     isRecording: false,
     isOfflineCaptureActive: false,
+    isLoopRenderSuppressed: false,
     isEXRSequenceRecording: false,
     recordingStartTime: 0,
     disposed: false,
@@ -538,7 +539,7 @@ describe('OfflineCaptureStrategy', () => {
       expect(session.isRecording).toBe(false);
     });
 
-    it('clears isOfflineCaptureActive BEFORE awaiting driver.abort', async () => {
+    it('clears isLoopRenderSuppressed BEFORE awaiting driver.abort', async () => {
       mockState.config.finalizeThrows = true;
       const { sm } = makeSceneManager();
       const session = makeSession();
@@ -551,7 +552,7 @@ describe('OfflineCaptureStrategy', () => {
       vi.mocked(ImageSequenceDriver).mockImplementationOnce(() => {
         const d = mockState.makeDriver();
         d.abort = vi.fn(async () => {
-          flagDuringAbort = session.isOfflineCaptureActive;
+          flagDuringAbort = session.isLoopRenderSuppressed;
         });
         return d as never;
       });
@@ -559,6 +560,34 @@ describe('OfflineCaptureStrategy', () => {
       await strat.run(makeOpts(), 'turntable', session);
 
       expect(flagDuringAbort).toBe(false);
+      expect(session.isLoopRenderSuppressed).toBe(false);
+    });
+
+    it('keeps isOfflineCaptureActive TRUE while driver.abort is awaited', async () => {
+      mockState.config.finalizeThrows = true;
+      const { sm } = makeSceneManager();
+      const session = makeSession();
+      const strat = new OfflineCaptureStrategy(sm, makeAnimController(), makeHooks());
+
+      // The mutual-exclusion flag must NOT be dropped early: ScreenshotStrategy
+      // gates on it, and a mediabunny finalize / EXR zip abort can take
+      // seconds. A screenshot started inside that window overwrites and then
+      // nulls the single `savedRecordingState` slot, so this capture's own
+      // `restoreRecordingState()` no-ops and the viewer is stuck at capture
+      // resolution with resize locked until a page reload.
+      let flagDuringAbort: boolean | undefined;
+      vi.mocked(ImageSequenceDriver).mockImplementationOnce(() => {
+        const d = mockState.makeDriver();
+        d.abort = vi.fn(async () => {
+          flagDuringAbort = session.isOfflineCaptureActive;
+        });
+        return d as never;
+      });
+
+      await strat.run(makeOpts(), 'turntable', session);
+
+      expect(flagDuringAbort).toBe(true);
+      // …and it is still cleared by the time the teardown returns.
       expect(session.isOfflineCaptureActive).toBe(false);
     });
 

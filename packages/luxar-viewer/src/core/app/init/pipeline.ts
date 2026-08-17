@@ -501,8 +501,10 @@ export async function runInitPipeline(
   // capture holds raw-HDR shader flags across its async readback. The
   // loop itself keeps running (per-frame callbacks must follow the
   // camera); only its render is skipped. Offline-only: the real-time
-  // path records the canvas the loop paints.
-  animationController.setRenderSkipPredicate(() => recordingPanel.isOfflineCaptureActive());
+  // path records the canvas the loop paints. Keyed on the narrow
+  // render-suppression flag rather than the capture's mutual-exclusion
+  // flag, so a wedged capture teardown can't freeze the viewport.
+  animationController.setRenderSkipPredicate(() => recordingPanel.isLoopRenderSuppressed());
 
   // Initialize layers panel (per-node controls)
   const layersPanel = factories.layersPanel(document.body, animationController);

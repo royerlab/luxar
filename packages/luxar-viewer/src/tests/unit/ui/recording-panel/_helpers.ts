@@ -80,6 +80,14 @@ export function createMockSceneManager(): any {
  * The options argument of each registration is recorded by `vi.fn()`
  * itself, so `{ continuous: true }` is assertable with
  * `toHaveBeenCalledWith`.
+ *
+ * Note the fidelity limit: this double runs a callback at REGISTRATION
+ * time (once, if the loop is running), not on a simulated frame — its
+ * consumers have no frame pump. `offline-capture-strategy.test.ts` has a
+ * local double that instead QUEUES callbacks and runs them from a
+ * `__tick()` driven by its `requestAnimationFrame` spy, which is what
+ * catches "registered and removed with no tick in between". A consumer
+ * that needs frame-tick fidelity should adopt that shape.
  */
 export function createMockAnimationController({
   animating = false,

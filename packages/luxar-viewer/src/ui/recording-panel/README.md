@@ -148,7 +148,7 @@ they are simply all the same pose.
 
 The loop runs, but its **own** render does not: `core/app/init/pipeline`
 gives the animation controller a render-skip predicate keyed on
-`RecordingPanel.isOfflineCaptureActive()`. Every tick still updates the
+`RecordingPanel.isLoopRenderSuppressed()`. Every tick still updates the
 controls and every per-frame callback — that is the whole reason the
 loop has to run — but skips `postProcessing.render()`, whose output the
 capture would discard anyway. It also removes a visible artifact: the
@@ -164,11 +164,13 @@ Step 10's second wake-up closes the tail: `restoreRecordingState()`
 resizes the render target back (clearing the canvas) after the keep-alive
 is gone, so without it a still-stopped loop — or one the idle timer halts
 in the gap right after the resize — leaves the viewer blank until the
-next mouse move. By then `isOfflineCaptureActive` is false, so that frame
+next mouse move. By then `isLoopRenderSuppressed` is false, so that frame
 is a real render. The early-bail paths (disposed during the opening rAF
 window, non-orbit controls) restore the same state and owe the same
-repaint, so they wake the loop too. Neither wake-up fires on a disposed
-session: `runDisposePipeline` disposes the AnimationController before the
+repaint, so the non-orbit-controls bail wakes the loop too. No wake-up
+ever fires on a disposed session — which is what makes the disposed bail
+the exception, since a dispose is the only production way to reach it:
+`runDisposePipeline` disposes the AnimationController before the
 RecordingPanel, and panel dispose only ABORTS an in-flight capture, whose
 finally resumes a tick later — restarting the loop there would render
 against a disposed pipeline.

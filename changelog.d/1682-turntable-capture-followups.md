@@ -31,10 +31,11 @@ while the capture loop and the panel's own Output field both use the unrounded
 duration. At 7°/s and 30 FPS the dialog promised 1530 frames and a 51-second video
 against the 1543 frames the capture actually produces; all three now agree.
 
-Finally, the shared animation-controller test double fired per-frame callbacks
-unconditionally, which made it structurally blind to the class of bug that caused all
-of this: deleting the loop wake-up from the real-time recording path failed none of
-the recording-panel tests. The double now models the real stopped-loop semantics —
-only `startAnimation()` starts it, registration alone never does — and records the
+Finally, the shared animation-controller test double never ran per-frame callbacks at
+all — it was four bare stubs with no loop state — which made it structurally blind to
+the class of bug that caused all of this: deleting the loop wake-up from the real-time
+recording path failed none of the recording-panel tests. The double now models the real
+stopped-loop semantics — only `startAnimation()` starts the loop, registering a
+callback never does, and callbacks run only while it is running — and records the
 `continuous` option, so the keep-alive that holds the loop open past the two-second
 idle timer is asserted rather than assumed.

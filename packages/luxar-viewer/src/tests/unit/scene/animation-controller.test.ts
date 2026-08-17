@@ -274,9 +274,11 @@ describe('AnimationController', () => {
       const callback = vi.fn();
       const startListener = vi.fn();
       const endListener = vi.fn();
+      const dprManager = { recordFrame: vi.fn() };
       const offStart = eventBus.on('frame-start', startListener);
       const offEnd = eventBus.on('frame-end', endListener);
       controller.addPerFrameCallback('cb', callback);
+      controller.setAdaptiveDPRManager(dprManager as never);
       controller.setRenderSkipPredicate(() => true);
 
       try {
@@ -285,6 +287,10 @@ describe('AnimationController', () => {
         expect(mockControls.update).toHaveBeenCalledTimes(1);
         expect(callback).toHaveBeenCalledTimes(1);
         expect(mockPostProcessing.render).not.toHaveBeenCalled();
+        // A render-skipped frame did no GPU work of its own, so feeding
+        // its duration to adaptive DPR would drive bogus scale-ups and
+        // falsely settle U-shape probes — same reasoning as context-lost.
+        expect(dprManager.recordFrame).not.toHaveBeenCalled();
         // A skipped frame still has to CLOSE its measurement: the early
         // return emits frame-end, so the performance monitor never sees an
         // unpaired frame-start (one per skipped frame, for a whole capture).

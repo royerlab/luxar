@@ -401,7 +401,11 @@ describe('VideoRecordingStrategy', () => {
         expect.any(Function),
         { continuous: true }
       );
-      // A frame ticked with the loop awake, so the turntable callback ran.
+      // The turntable callback ran. No frame ticked here: the shared
+      // animation-controller double invokes a callback at REGISTRATION
+      // time, and only while the loop is running — so this assertion
+      // still fails if the wake-up above is deleted (registration on a
+      // stopped loop runs nothing), which is the bug being pinned.
       expect(controls.applyOrbitRotation).toHaveBeenCalled();
 
       mockMediaRecorder.onstop();
