@@ -17,9 +17,11 @@
  *   says "unavailable" only once the subsystem has actually given up.
  *
  * Split into its own file (rather than added to depth-sort-coordinator.test.ts)
- * because it is the only one here that needs FAKE TIMERS, which do not mix
- * with that file's frame-pump helpers — `src/tests/setup.ts` backs the rAF
- * mock with real `setTimeout`. Mirrors the shape of
+ * by TOPIC, not by tooling: that file's own `starved init retry` block
+ * installs the same fake timers. Startup is its own contract — when the
+ * worker is spawned, whose deadline it runs on, and which guard arms classify
+ * it — and it needs its own `loadCoordinator` (one that hands back the live
+ * `config` so a test can move the deadline). Mirrors the shape of
  * `src/tests/unit/workers/worker-pool/lifecycle/`.
  */
 
@@ -152,7 +154,13 @@ const DEFAULT_INIT_DEADLINE_MS = 30_000;
 
 describe('SortWorker startup (warm-up, configured deadline, guard arms)', () => {
   beforeEach(() => {
-    vi.useFakeTimers();
+    // Both clocks the init path reads, exactly as the sibling file fakes them:
+    // the deadline is a `setTimeout` while a retry's backoff is measured on
+    // the monotonic `performance.now()`. Faking only the timer would let a
+    // test advance past a backoff and still read a real clock.
+    vi.useFakeTimers({
+      toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'performance', 'Date'],
+    });
     vi.clearAllMocks();
   });
 
@@ -206,9 +214,17 @@ describe('SortWorker startup (warm-up, configured deadline, guard arms)', () => 
     expect(coord.getDepthSortWorkerStatus()).toEqual({ state: 'idle', initTimeouts: 0 });
   });
 
-  it('a failing warm-up stays fire-and-forget: no throw, no unhandled rejection', async () => {
+  it('a warm-up whose initialize() rejects records a permanent failure and does not throw at the call site', async () => {
     // `core/app/init/pipeline.ts` calls this synchronously in the middle of a
-    // sequence that must not be derailed by a worker that cannot start.
+    // sequence that must not be derailed by a worker that cannot start: the
+    // call returns normally and the failure becomes a reported verdict.
+    //
+    // The unhandled-rejection arm is a smoke check, NOT coverage of the
+    // warm-up's own `.catch()`: `ensureWorker` attaches one to the CACHED
+    // `initPromise` (and the warm-up's `void` discards its own handle), so
+    // from outside there is nothing left to observe — deleting the warm-up's
+    // `.catch()` leaves this file green. It stays in production as the
+    // defensive guard for the promise this call site holds.
     // Real timers: an unhandled rejection is only observable after a real
     // macrotask turn.
     vi.useRealTimers();
@@ -238,25 +254,33 @@ describe('SortWorker startup (warm-up, configured deadline, guard arms)', () => 
     // The deadline used to be a module constant, so an embedder on a slow
     // machine had no way to widen it (and no test could shorten it).
     const coord = await loadCoordinator('never-settles');
+    // `config` is module state. A `vi.resetModules()` in the next
+    // `loadCoordinator` happens to hand out a fresh one, so a leak here is
+    // invisible today — restore anyway rather than depend on that.
+    const defaultDeadlineMs = liveConfig.depthSort.workerInitTimeoutMs;
     liveConfig.depthSort.workerInitTimeoutMs = 250;
-    coord.configureDepthSort({
-      getCamera: () => makeCamera(),
-      requestRender: vi.fn(),
-      isLoadInProgress: () => false,
-    });
+    try {
+      coord.configureDepthSort({
+        getCamera: () => makeCamera(),
+        requestRender: vi.fn(),
+        isLoadInProgress: () => false,
+      });
 
-    coord.warmUpDepthSortWorker();
-    await flush();
-    expect(mockApi.initialize).toHaveBeenCalledTimes(1);
+      coord.warmUpDepthSortWorker();
+      await flush();
+      expect(mockApi.initialize).toHaveBeenCalledTimes(1);
 
-    // Just short of the configured budget: no verdict yet.
-    await vi.advanceTimersByTimeAsync(249);
-    expect(coord.getDepthSortWorkerStatus()).toEqual({ state: 'idle', initTimeouts: 0 });
+      // Just short of the configured budget: no verdict yet.
+      await vi.advanceTimersByTimeAsync(249);
+      expect(coord.getDepthSortWorkerStatus()).toEqual({ state: 'idle', initTimeouts: 0 });
 
-    // Just past it — on THIS budget, two orders of magnitude before the 30 s
-    // default a hardcoded deadline would have waited for.
-    await vi.advanceTimersByTimeAsync(2);
-    expect(coord.getDepthSortWorkerStatus()).toEqual({ state: 'starved', initTimeouts: 1 });
+      // Just past it — on THIS budget, two orders of magnitude before the 30 s
+      // default a hardcoded deadline would have waited for.
+      await vi.advanceTimersByTimeAsync(2);
+      expect(coord.getDepthSortWorkerStatus()).toEqual({ state: 'starved', initTimeouts: 1 });
+    } finally {
+      liveConfig.depthSort.workerInitTimeoutMs = defaultDeadlineMs;
+    }
   });
 
   it('an unserializable message during init is PERMANENT (the onmessageerror arm)', async () => {
@@ -347,7 +371,8 @@ describe('SortWorker startup (warm-up, configured deadline, guard arms)', () => 
     liveWorker().onerror!({ message: 'module evaluation failed' });
     await flush();
 
-    expect(coord.getDepthSortWorkerStatus().state).toBe('failed');
+    // That `onerror` latches 'failed' (rather than arming a retry) is pinned in
+    // the sibling file; what this asserts is the AVAILABILITY the footer reads.
     expect(coord.isDepthSortAvailable()).toBe(false);
 
     // A dispose restores a truthful, unspent verdict for the next app.

@@ -1451,19 +1451,28 @@ for (const scn of SCENARIOS) {
     expect(result.elementCount, `${scn.id}: zero drawn elements`).toBeGreaterThan(0);
 
     // A scenario that requires depth sorting must complete at least one
-    // sort round-trip during the orbit window. The profiler's sort count
-    // stays 0 when the scheduler never dispatches or the SortWorker never
-    // returns within the window — the "green depth-sort benchmark that
-    // actually measured UNSORTED rendering" failure this guards against.
-    // Relaxed on a software rasterizer for the same reason as the
-    // frame-count floor: one multi-million-element frame can take seconds
-    // there, so the orbit may not cross the re-sort threshold within the
-    // sample window (recorded as a note).
-    const requiresDepthSort = 'requiresDepthSort' in scn && scn.requiresDepthSort === true;
-    if (requiresDepthSort && !result.skipped && !result.softwareRenderer) {
+    // sort round-trip inside its measurement window — the orbit for the
+    // orbiting kinds, the LOAD for the ladder scenario (which never orbits).
+    // This is the "green depth-sort benchmark that actually measured UNSORTED
+    // rendering" failure guard. Relaxed on a software rasterizer for the same
+    // reason as the frame-count floor: one multi-million-element frame can take
+    // seconds there, so the window may not cross the re-sort threshold
+    // (recorded as a note).
+    //
+    // The two causes are asserted SEPARATELY because the probe keeps them
+    // apart and they point at different things: `depthSort === null` means the
+    // profiler probe was unreachable (no debug hook / no profiler / it threw),
+    // so nothing was measured at all, while a zero count means the window was
+    // measured and no sort landed in it.
+    if (scn.requiresDepthSort === true && !result.skipped && !result.softwareRenderer) {
+      const windowName = scn.kind === 'zarr-ladder' ? 'load window' : 'orbit window';
       expect(
-        result.depthSort?.sortCount ?? 0,
-        `${scn.id}: requires depth sorting but no sort completed during the orbit window`
+        result.depthSort,
+        `${scn.id}: requires depth sorting but the depth-sort profiler probe was unreachable — nothing was measured`
+      ).not.toBeNull();
+      expect(
+        result.depthSort!.sortCount,
+        `${scn.id}: requires depth sorting but no sort completed during the ${windowName}`
       ).toBeGreaterThan(0);
     }
 

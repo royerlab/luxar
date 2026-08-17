@@ -16,12 +16,19 @@ tunes the per-frame scheduler (`rendering/depth-sort-coordinator.ts` →
 | `workerInitTimeoutMs` | `30000` | Deadline for the SortWorker's one-time `initialize()` (WASM load + instantiate). `0` disables the guard.        |
 
 `workerInitTimeoutMs` is the odd one out — it is a startup deadline, not a
-re-sort trigger. Missing it is treated as TRANSIENT: the worker keeps running
-and init is retried once the loader goes idle, because the reply has to be
-dispatched on a main thread that a large scene keeps busy. It is deliberately
-more generous than the data pool's `dataLoading.performance.workerInitTimeoutMs`
-(10 s), since erring long costs only a later first sort. See the failure
-taxonomy in `rendering/depth-sort-coordinator/README.md`.
+re-sort trigger, and it bounds ONE attempt rather than the worker's life. A miss
+TERMINATES that worker; because a deadline miss says nothing about the worker's
+health (the reply has to be dispatched on a main thread that a large scene keeps
+busy), the bounded per-frame retry then spawns a FRESH worker after a backoff,
+and a retry that lands forces a re-registration sweep. Shortening it therefore
+buys faster failure detection at the cost of extra worker spawns + WASM
+instantiations and that forced re-commit of every sorted node, which is why
+it is deliberately more generous than the data pool's
+`dataLoading.performance.workerInitTimeoutMs` (10 s) — erring long costs only a
+later first sort. `0` installs no timer at all, so a worker that neither answers
+nor errors leaves `initialize()` pending and every order-dependent commit parks
+another continuation on it: a debugging escape hatch, not a tuning option. See
+the failure taxonomy in `rendering/depth-sort-coordinator/README.md`.
 
 The sort kernel orders by view-space z, so the permutation depends only on
 the model-space view axis direction and its offset: rotation changes the

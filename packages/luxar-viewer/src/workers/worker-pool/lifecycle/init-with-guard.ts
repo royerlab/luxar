@@ -66,8 +66,9 @@ export function initializeWithGuard<TResult>(
       else reject(payload as Error);
     };
     // Mirror withTimeout() semantics: 0/negative/non-finite disables the
-    // guard. `config/validation.ts` documents this convention for all
-    // worker timeouts ("0 disables, but the guard is recommended"); the
+    // guard. `config/sections/data-loading/performance/validate.ts`
+    // documents this convention for worker init timeouts ("0 disables, but
+    // the guard is recommended"); the
     // pre-fix `setTimeout(..., 0)` instead fired on the next macrotask
     // and rejected real async inits immediately.
     const timer: ReturnType<typeof setTimeout> | undefined =

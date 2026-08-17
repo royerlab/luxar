@@ -384,6 +384,41 @@ describe('updateTimingPanelValues', () => {
     );
   });
 
+  it('patches an appearing depth-sort UNAVAILABLE note into the footer', () => {
+    // The steady-state path: the monitor only re-renders when the structure is
+    // dirty, so on the common tick it patches values in place — the note has to
+    // reach the footer through THIS branch too, or a session that gives up
+    // mid-run never shows it until something else forces a rebuild.
+    const container = renderInto(renderHierarchicalTimingPanel(makeEntry({ count: 5 })));
+    const footer = (): string =>
+      container.querySelector('.luxar-timing-panel__update-count')?.textContent ?? '';
+    expect(footer()).not.toContain('UNAVAILABLE');
+
+    const ok = updateTimingPanelValues(
+      container,
+      makeEntry({ count: 6 }),
+      undefined,
+      undefined,
+      true
+    );
+    expect(ok).toBe(true);
+    expect(footer()).toContain('depth sort UNAVAILABLE');
+  });
+
+  it('clears the note in place once depth sorting is available again', () => {
+    // A dispose/re-init resets the verdict, and a stale UNAVAILABLE misleads
+    // exactly as much as a missing one.
+    const container = renderInto(
+      renderHierarchicalTimingPanel(makeEntry({ count: 5 }), undefined, undefined, true)
+    );
+    const footer = (): string =>
+      container.querySelector('.luxar-timing-panel__update-count')?.textContent ?? '';
+    expect(footer()).toContain('depth sort UNAVAILABLE');
+
+    updateTimingPanelValues(container, makeEntry({ count: 6 }), undefined, undefined, false);
+    expect(footer()).not.toContain('UNAVAILABLE');
+  });
+
   it('returns false when the body element is missing', () => {
     const container = document.createElement('div');
     expect(updateTimingPanelValues(container, makeEntry({ count: 1 }))).toBe(false);

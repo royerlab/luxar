@@ -146,8 +146,21 @@ vi.mock('../../../../../data/scene-loader-manager', () => ({
 vi.mock('../../../../../utils/cross-layer/notifier', () => ({
   notifier: { error: vi.fn() },
 }));
+// The coordinator is module-scoped live authority; mocked so the warm-up
+// call is observable (and so no real SortWorker/WASM is spawned here).
+vi.mock('../../../../../rendering/depth-sort-coordinator', () => ({
+  configureDepthSort: vi.fn(),
+  setDepthSortEnabled: vi.fn(),
+  warmUpDepthSortWorker: vi.fn(),
+  evaluateDepthSortPerFrame: vi.fn(),
+}));
 
 import { InputHandler } from '../../../../../input/input-handler';
+import {
+  configureDepthSort,
+  setDepthSortEnabled,
+  warmUpDepthSortWorker,
+} from '../../../../../rendering/depth-sort-coordinator';
 
 function makePorts(): InitPipelinePorts {
   const canvas = document.createElement('canvas');
@@ -366,6 +379,31 @@ describe('runInitPipeline', () => {
       await runInitPipeline(ports, partial);
 
       expect(partial.animationController?.startAnimation).toHaveBeenCalled();
+    });
+  });
+
+  describe('depth-sort warm-up', () => {
+    it('warms up the SortWorker during init, AFTER the enable + config wiring', async () => {
+      // The warm-up is the whole point of starting the worker here: spawned
+      // lazily by the first order-dependent commit it races the scene decode
+      // for the main thread and misses its init deadline at a few million
+      // elements, which used to disable sorting for the session.
+      //
+      // Order is load-bearing, not cosmetic: `warmUpDepthSortWorker` early-outs
+      // on the `depthSortEnabled` flag, so warming up before
+      // `setDepthSortEnabled` would spawn a worker (and load WASM) for a
+      // `?depthSort=0` session, and before `configureDepthSort` a starved
+      // retry's self-wake would have no `requestRender` to call.
+      const { factories } = makeFactoryOverrides();
+      const ports = makePorts();
+      ports.options.factories = factories as never;
+
+      await runInitPipeline(ports, {});
+
+      expect(warmUpDepthSortWorker).toHaveBeenCalledTimes(1);
+      const warmUpOrder = vi.mocked(warmUpDepthSortWorker).mock.invocationCallOrder[0];
+      expect(vi.mocked(setDepthSortEnabled).mock.invocationCallOrder[0]).toBeLessThan(warmUpOrder);
+      expect(vi.mocked(configureDepthSort).mock.invocationCallOrder[0]).toBeLessThan(warmUpOrder);
     });
   });
 
