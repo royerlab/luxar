@@ -326,6 +326,22 @@ describe('RecordingPanel', () => {
     });
   });
 
+  describe('render-suppression accessor', () => {
+    // `isOfflineCaptureActive` deliberately stays true across the awaited
+    // driver.abort(), so keying the animation loop's render-skip predicate off
+    // it would leave the viewport dark through a wedged teardown. The second
+    // pair is the negative control that catches exactly that miswiring.
+    it('reads isLoopRenderSuppressed, not isOfflineCaptureActive', () => {
+      (panel as any).session.isLoopRenderSuppressed = true;
+      (panel as any).session.isOfflineCaptureActive = false;
+      expect(panel.isLoopRenderSuppressed()).toBe(true);
+
+      (panel as any).session.isLoopRenderSuppressed = false;
+      (panel as any).session.isOfflineCaptureActive = true;
+      expect(panel.isLoopRenderSuppressed()).toBe(false);
+    });
+  });
+
   describe('dependency setters', () => {
     it('routes setAnimationManager into session', () => {
       const mockAnimManager = {
