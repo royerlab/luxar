@@ -33,9 +33,9 @@ interface Pow {
 and a `VarNode<"vec3">` is **not** assignable to `Node<"vec3">` there (the
 recursive `NodeExtensions` chain resolves `label()` to `Node<"float">`).
 Overload resolution therefore falls back to the float signature and rejects
-`materials/line/shader-tsl-capsule.ts:618` — a `pow(vec3, vec3)` call that is
-componentwise and correct in r184 and r185 alike. `0.185.x` fixes it by widening
-the vector overloads to `Vec3OrFloat`.
+`src/rendering/materials/line/shader-tsl-capsule.ts:618` — a `pow(vec3, vec3)`
+call that is componentwise and correct in r184 and r185 alike. `0.185.x` fixes it
+by widening the vector overloads to `Vec3OrFloat`.
 
 So the r185 _definitions_ describe the r184 _runtime_ more accurately than the
 r184 definitions do. Only their version number leads.
@@ -99,17 +99,26 @@ These are the Three.js surfaces the viewer uses directly:
 
 ## When to bump
 
-Trigger an explicit `~0.185.0` (or higher) bump only when:
+Trigger an explicit `~0.185.0` (or higher) bump only once #1683 is resolved
+**and** one of:
 
-1. #1683 is resolved, **and** one of:
-2. Three.js releases notes for a stable WebGPU API surface, or
-3. Luxar needs a specific rendering or TSL feature only present in a newer minor.
+1. Three.js releases notes for a stable WebGPU API surface, or
+2. Luxar needs a specific rendering or TSL feature only present in a newer minor.
 
-A bump means:
+To perform the bump, edit the two ranges in `package.json` **by hand**. `three`
+lives under `peerDependencies`, and `pnpm add -E` would both move it into
+`dependencies` (shipping a second copy of three to every consumer of the
+published package) and replace the tilde with an exact version:
+
+```jsonc
+"peerDependencies": { "three": "~0.185.0" }
+"devDependencies":  { "@types/three": "~0.185.0" }
+```
+
+Then:
 
 ```bash
-pnpm add three@~0.185.0 -E
-pnpm add -D @types/three@~0.185.0 -E
+pnpm install
 pnpm typecheck
 pnpm test --run
 pnpm playwright test  # full E2E, not just the mega-shader spec

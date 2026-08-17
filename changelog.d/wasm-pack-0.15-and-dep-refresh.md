@@ -9,6 +9,13 @@ repository from `drager/wasm-pack` to `wasm-bindgen/wasm-pack`; the release URLs
 CI downloads still resolve through the rename redirect, which was checked against
 the real assets rather than assumed.
 
+`make install-rust` now actually enforces that pin. It used to accept whatever
+`wasm-pack` it found — so a developer sitting on 0.13.0 was told "already
+installed" and stayed there, and bumping the pin changed nothing locally. It now
+compares against the pinned version and reinstalls on a mismatch, warning if
+another copy on `PATH` shadows the one it just installed. The version itself
+moves to a single `WASM_PACK_VERSION` variable at the top of the Makefile.
+
 Routine dependency refreshes ride along: `zarrita` 0.7.4, `mediabunny` 1.54.0,
 Vitest 4.1.10, ESLint 10.8.1, Knip 6.32.2, dependency-cruiser 18.2.0, tsx, and
 `globals`. `@typescript-eslint`'s plugin and parser had drifted onto different

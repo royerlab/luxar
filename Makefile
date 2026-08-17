@@ -100,6 +100,12 @@ MIN_NODE_MINOR := 22
 # ("packages field missing or empty").
 MIN_PNPM_MAJOR := 10
 MIN_PNPM_MINOR := 6
+# Exact wasm-pack pin — `install-rust` installs this version and replaces any
+# other one it finds, so a local toolchain matches CI. Keep in sync with the
+# `jetli/wasm-pack-action` `version:` inputs in .github/workflows/ci.yml,
+# publish.yml and publish-npm.yml (those take a leading 'v'), and with the
+# version table in docs/guides/developer/BUILD_SYSTEM_SPEC.md.
+WASM_PACK_VERSION := 0.15.0
 
 # ============================================================================
 # Dependency Checking and Installation Helpers
@@ -1818,12 +1824,25 @@ install-rust:  ## Install Rust and wasm-pack for WASM development
 	fi; \
 	echo ""; \
 	echo "🔧 Checking wasm-pack installation..."; \
-	if command -v wasm-pack >/dev/null 2>&1; then \
-		echo "✅ wasm-pack is already installed: $$(wasm-pack --version)"; \
+	WASM_PACK_PIN="$(WASM_PACK_VERSION)"; \
+	# `|| true` is load-bearing under .SHELLFLAGS' `-e`: with no wasm-pack on \
+	# PATH the substitution exits 127, which would abort the recipe before the \
+	# install it is probing for. \
+	FOUND_WASM_PACK="$$(wasm-pack --version 2>/dev/null | awk '{print $$2}' || true)"; \
+	if [ "$$FOUND_WASM_PACK" = "$$WASM_PACK_PIN" ]; then \
+		echo "✅ wasm-pack is already at the pinned version: $$WASM_PACK_PIN"; \
 	else \
-		echo "📥 Installing wasm-pack 0.15.0 (this may take a minute)..."; \
-		cargo install wasm-pack --version 0.15.0 --locked; \
-		echo "✅ wasm-pack installed successfully!"; \
+		if [ -n "$$FOUND_WASM_PACK" ]; then \
+			echo "🔄 wasm-pack $$FOUND_WASM_PACK found, but the pin is $$WASM_PACK_PIN — reinstalling..."; \
+		else \
+			echo "📥 Installing wasm-pack $$WASM_PACK_PIN (this may take a minute)..."; \
+		fi; \
+		cargo install wasm-pack --version "$$WASM_PACK_PIN" --locked --force; \
+		echo "✅ wasm-pack $$WASM_PACK_PIN installed to $(HOME)/.cargo/bin"; \
+		if [ -x "$(HOME)/.cargo/bin/wasm-pack" ] && [ "$$(command -v wasm-pack)" != "$(HOME)/.cargo/bin/wasm-pack" ]; then \
+			echo "⚠️  ...but PATH resolves wasm-pack to $$(command -v wasm-pack), which shadows it."; \
+			echo "   Remove that copy, or put $(HOME)/.cargo/bin ahead of it in PATH."; \
+		fi; \
 	fi; \
 	echo ""; \
 	echo "✅ Rust/WASM development environment ready!"; \

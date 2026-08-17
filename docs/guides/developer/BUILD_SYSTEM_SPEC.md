@@ -897,7 +897,7 @@ selects the full suite and the documentation gate as well.
 | Python | 3.12 | zarr 3 requires >=3.12 from 3.2 on; also stdlib `tomllib`, PEP 695 type stubs |
 | Node.js | 22.22 | jsdom 30 engines `^22.22.2 || ^24.15.0 || >=26.0.0` (undici 8 crashes on older Node); Vite 8.x needs only 20.19 |
 | Rust | stable | WASM compilation |
-| wasm-pack | 0.14.0 (pinned) | WASM packaging — `install-rust` installs exactly `wasm-pack 0.14.0` with `cargo install --locked` |
+| wasm-pack | 0.15.0 (pinned) | WASM packaging — `install-rust` installs exactly `WASM_PACK_VERSION` (see the Makefile) with `cargo install --locked`, replacing any other version already on the machine |
 
 ## Related Documentation
 
