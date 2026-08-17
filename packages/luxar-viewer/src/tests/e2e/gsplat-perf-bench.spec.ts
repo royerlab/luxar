@@ -125,6 +125,15 @@ type ScenarioSpec =
       id: string;
       label: string;
       url: string;
+      /**
+       * Gate a hard assertion that at least one depth sort completed.
+       *
+       * On a LADDER scenario this is the load path's only sorted-workload
+       * guard: the sort has to survive startup while the loader saturates
+       * the main thread, which is precisely where the synthetic scenarios
+       * (debug-hook injection, no zarr load) cannot reach.
+       */
+      requiresDepthSort?: boolean;
     };
 
 const SCENARIOS: ScenarioSpec[] = [
@@ -174,6 +183,14 @@ const SCENARIOS: ScenarioSpec[] = [
     id: 'visible-human-ladder-load',
     label: 'gsplats_3d_visible_human_head.luxar.zarr (1.91 M, single node, volumetric ladder)',
     url: `${DATA_BASE}/datasets/demos/gsplats_3d_visible_human_head.luxar.zarr`,
+    // The only LOADING scenario large enough to stress SortWorker startup,
+    // and therefore the only one that can catch a sorted scene that ran
+    // unsorted because init lost to load congestion. The `synthetic`
+    // scenarios below reach 10 M but inject their elements through the
+    // debug hook — no zarr load, no congestion, so they are structurally
+    // blind to it. `volumetric` is order-dependent (needsDepthSort), so a
+    // sort is genuinely required here.
+    requiresDepthSort: true,
   },
   {
     kind: 'zarr-orbit',

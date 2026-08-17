@@ -584,10 +584,28 @@ function createAggregatedRoot(root: TimingEntry): TimingEntry {
  * @param refinementRoot - Optional 'LOD Refinement' tree (background passes),
  *   rendered as a second section below the main tree when it has data
  */
+/**
+ * Footer text for the depth-sort subsystem.
+ *
+ * `unavailable` wins over the sort count, and shows even when no sort ever
+ * ran — which is exactly the case it exists for. A session whose SortWorker
+ * never came up renders every order-dependent layer in storage order, and
+ * the only previous signal was one console error at the moment it happened.
+ * Issue #705 settled the principle for the perf bench (never report a
+ * sorted workload that silently ran unsorted); this is the same rule for
+ * the live monitor.
+ */
+function depthSortFooter(depthSortRoot?: TimingEntry, unavailable?: boolean): string {
+  if (unavailable) return ' · depth sort UNAVAILABLE';
+  if (depthSortRoot === undefined || depthSortRoot.count === 0) return '';
+  return ` · ${depthSortRoot.count} ${depthSortRoot.count === 1 ? 'sort' : 'sorts'}`;
+}
+
 export function renderHierarchicalTimingPanel(
   root: TimingEntry,
   refinementRoot?: TimingEntry,
-  depthSortRoot?: TimingEntry
+  depthSortRoot?: TimingEntry,
+  depthSortUnavailable?: boolean
 ): string {
   const hasRefinement = refinementRoot !== undefined && refinementRoot.count > 0;
   const hasDepthSort = depthSortRoot !== undefined && depthSortRoot.count > 0;
@@ -610,9 +628,7 @@ export function renderHierarchicalTimingPanel(
   const refinementCount = hasRefinement
     ? ` · ${refinementRoot.count} refinement ${refinementRoot.count === 1 ? 'pass' : 'passes'}`
     : '';
-  const depthSortCount = hasDepthSort
-    ? ` · ${depthSortRoot.count} ${depthSortRoot.count === 1 ? 'sort' : 'sorts'}`
-    : '';
+  const depthSortCount = depthSortFooter(depthSortRoot, depthSortUnavailable);
 
   return `
     <div class="luxar-timing-panel">
@@ -672,7 +688,8 @@ export function updateTimingPanelValues(
   container: HTMLElement,
   root: TimingEntry,
   refinementRoot?: TimingEntry,
-  depthSortRoot?: TimingEntry
+  depthSortRoot?: TimingEntry,
+  depthSortUnavailable?: boolean
 ): boolean {
   const timingBody = container.querySelector('.luxar-timing-panel__body');
   if (!timingBody) return false;
@@ -699,9 +716,7 @@ export function updateTimingPanelValues(
     const refinementCount = hasRefinement
       ? ` · ${refinementRoot.count} refinement ${refinementRoot.count === 1 ? 'pass' : 'passes'}`
       : '';
-    const depthSortCount = hasDepthSort
-      ? ` · ${depthSortRoot.count} ${depthSortRoot.count === 1 ? 'sort' : 'sorts'}`
-      : '';
+    const depthSortCount = depthSortFooter(depthSortRoot, depthSortUnavailable);
     updateCount.textContent = `${root.count} updates${refinementCount}${depthSortCount}`;
   }
 

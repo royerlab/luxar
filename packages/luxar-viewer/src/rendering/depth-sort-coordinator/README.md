@@ -66,9 +66,12 @@ Both files are **module-scoped singletons** (the `element-texture-layout.ts` pat
 
 **Module state** (depth-sort-coordinator.ts):
 
-- `worker` — the single persistent SortWorker (spawned on first order-dependent commit, terminated on app dispose)
-- `api` — Comlink-wrapped `SortWorkerAPI` (registerNode, sort, releaseNode, releaseAllNodes)
-- `initPromise` — cached initialization promise (deduplicated)
+- `worker` — the single persistent SortWorker (spawned at app init by `warmUpDepthSortWorker()`, terminated on app dispose)
+- `api` — Comlink-wrapped `SortWorkerAPI` (registerNode, sort, releaseNode, releaseAllNodes). NOT a readiness signal — see `workerReady`
+- `initPromise` — cached initialization promise (deduplicated). Cached rejections are PERMANENT failures only; a deadline miss clears it so the attempt can be retried
+- `pendingInit` — the live worker's raw `initialize()` RPC, memoized for its lifetime so a retry re-awaits the original call instead of issuing a second one (worker-side `initWasm()` is not memoized)
+- `workerReady` — true only between a successful `initialize()` and disposal
+- `initGeneration` / `initTimeoutAttempts` / `depthSortUnavailable` — staleness token, retry bound, and the session's give-up flag (read by `isDepthSortAvailable()`)
 - `nodeStates: Map<string, NodeSortState>` — per-node tracking (generation, in-flight flag, last sort pose, queued re-sort, registered flag)
 - `nextGeneration` — monotonic counter (unique across a node's LIFETIMES, not just within one)
 - Injected callbacks: `getCamera` (getter, not captured reference), `requestRender`, `requestReprocess`, `isLoadInProgress`, `getProfiler`
@@ -82,15 +85,27 @@ Both files are **module-scoped singletons** (the `element-texture-layout.ts` pat
 
 ### SortWorker Lifecycle
 
-1. **Spawn** — on first `noteDepthSortCommit` of an order-dependent node, via `ensureWorker()`:
+1. **Warm up** — at app init, `warmUpDepthSortWorker()` (called from `core/app/init/pipeline.ts`, gated on `depthSortEnabled`) runs `ensureWorker()`:
    - Constructs `new SortWorker()` (Vite `?worker` import) or `new Worker(sortWorkerUrlOverride)` (embedder override)
    - Wraps via Comlink: `api = wrap<SortWorkerAPI>(worker)`
-   - Calls `api.initialize(sortWorkerWasmPathOverride)` (timeout + onerror guarded; see init-settle guard below)
+   - Calls `api.initialize(sortWorkerWasmPathOverride)` through the shared `worker-pool/lifecycle/init-with-guard.ts` (deadline + `onerror` + `onmessageerror`)
    - Logs ready message with `wasmFallback` flag (WASM compiled or TypeScript fallback)
-2. **Persist** — the worker lives across commits and frames (NOT part of the round-robin data-worker pool)
-3. **Terminate** — on `disposeDepthSort()` (app teardown / test reset)
+   - **Why at init, not on first commit**: the first order-dependent commit lands exactly when this thread and the data-worker pool are saturated decoding the scene, and the worker's reply must be dispatched on this thread. At ~3 M points it missed a 30 s deadline there, and the session rendered unsorted from then on. Starting while the app is idle removes the overlap.
+2. **Persist** — the worker lives across commits and frames (NOT part of the round-robin data-worker pool). `noteDepthSortCommit` still calls `ensureWorker()`; it dedupes on `initPromise` and covers embedders that configure late.
+3. **Terminate** — on `disposeDepthSort()` (app teardown / test reset), or on a permanent init failure.
 
-**Init-settle guard**: A worker whose script dies during async module evaluation (before `expose()`) emits an `error` event but never settles the Comlink `initialize` RPC. Left pending forever, every order-dependent commit would attach a continuation (closing over its centers provider, which for points pins the full `LoadedPointsData`), accumulating unbounded. The 30s timeout + `onerror` rejection in `ensureWorker()` guarantee the promise settles, draining all queued continuations into the documented warn-once degrade path.
+**Init-settle guard**: A worker whose script dies during async module evaluation (before `expose()`) emits an `error` event but never settles the Comlink `initialize` RPC. Left pending forever, every order-dependent commit would attach a continuation (closing over its centers provider, which for points pins the full `LoadedPointsData`), accumulating unbounded. The `config.depthSort.workerInitTimeoutMs` deadline + the `onerror`/`onmessageerror` rejections guarantee the promise settles on every attempt, draining all queued continuations.
+
+**Failure taxonomy** (`ensureWorker()`), and why a deadline is not a death:
+
+| trigger | verdict | behaviour |
+|---|---|---|
+| constructor throws (CSP-blocked script) | permanent | terminate, cache the rejection, warn once |
+| `onerror` / `onmessageerror` (404, module-evaluation death) | permanent | terminate, cache the rejection, warn once |
+| `initialize()` rejects (the worker answered: it cannot work) | permanent | terminate, cache the rejection, warn once |
+| deadline missed | **transient** | keep the worker running, clear `initPromise`, retry |
+
+A deadline miss says the reply was late, not that the worker is broken — the same reasoning `WorkerInitTimeoutError` and `isWorkerInfrastructureError` already apply to RPC timeouts. The worker stays alive with its `initialize()` still in flight (`pendingInit`), and `evaluateDepthSortPerFrame()` retries past its loader-idle gate — precisely when the congestion that caused the miss is over. The retry re-awaits the SAME RPC, so it usually completes at once, and every tracked order-dependent node is then pushed back through a commit via `forceReregister()` (the worker holds none of their centers). After `MAX_INIT_TIMEOUT_ATTEMPTS` misses it latches like a permanent failure. Either way `isDepthSortAvailable()` goes false and the data-loading monitor's footer says `depth sort UNAVAILABLE`, so a silently unsorted scene is not possible (issue #705's rule).
 
 ### Generation Contract (Spec §5)
 

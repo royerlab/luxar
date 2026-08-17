@@ -21,4 +21,12 @@ export interface DepthSortConfig {
    *  node's bounding-sphere radius (default: 0.05). Only translation
    *  ALONG the view axis counts (see module doc above). */
   translationFraction: number;
+  /** Deadline for the SortWorker's one-time `initialize()` (WASM load +
+   *  instantiate), in ms. Peer of
+   *  `dataLoading.performance.workerInitTimeoutMs`. Missing it is treated
+   *  as TRANSIENT — the worker keeps running and init is retried once the
+   *  loader goes idle — so this bounds how long a commit waits before
+   *  giving up on THIS attempt, not how long the worker gets to live.
+   *  `0` disables the guard (withTimeout convention). */
+  workerInitTimeoutMs: number;
 }

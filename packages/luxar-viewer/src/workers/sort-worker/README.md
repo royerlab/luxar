@@ -76,10 +76,10 @@ The facade `workers/sort-worker.ts` (entry point bundled by Vite's `?worker` imp
 
 ### Spawn (Main Thread → Worker)
 
-1. Main thread calls `ensureWorker()` (depth-sort-coordinator.ts, line 224) on first order-dependent commit
+1. Main thread calls `ensureWorker()` (depth-sort-coordinator.ts) — at APP INIT via `warmUpDepthSortWorker()`, not on the first order-dependent commit. That commit arrives while the loader saturates the main thread, which is where the init deadline below used to be missed
 2. Constructs `new SortWorker()` (Vite `?worker` import) or `new Worker(sortWorkerUrlOverride)` (embedder override)
 3. Wraps via Comlink: `api = wrap<SortWorkerAPI>(worker)`
-4. Calls `api.initialize(sortWorkerWasmPathOverride)` with 30s timeout + onerror guard (see init-settle guard in depth-sort-coordinator README)
+4. Calls `api.initialize(sortWorkerWasmPathOverride)` through the shared `worker-pool/lifecycle/init-with-guard.ts` — `config.depthSort.workerInitTimeoutMs` deadline + `onerror`/`onmessageerror` guard (see the failure taxonomy in the depth-sort-coordinator README)
 
 ### Initialize (Worker)
 
@@ -208,11 +208,14 @@ The worker uses the same `wasm/` module as the data workers:
 
 ### Main Thread (depth-sort-coordinator.ts)
 
-- **Spawn**: `ensureWorker()` (line 224) — constructs worker, wraps via Comlink, calls `initialize()`
-- **Register**: `noteDepthSortCommit()` (line 333) — transfers centers, calls `api.registerNode()`
-- **Sort**: `scheduleSort()` (line 463) — calls `withTimeout('depth-sort', api.sort(...), 30s)`
-- **Release node**: `releaseDepthSortNode()` (line 873) — calls `releaseWorkerNode()` → `api.releaseNode()` (fire-and-forget)
-- **Release all**: `releaseAllDepthSortNodes()` (line 892) — calls `api.releaseAllNodes()` (fire-and-forget)
+(Line numbers deliberately omitted — the previous ones had drifted by ~70 lines and quietly misled.)
+
+- **Warm up**: `warmUpDepthSortWorker()` — fire-and-forget `ensureWorker()` at app init
+- **Spawn**: `ensureWorker()` — constructs worker, wraps via Comlink, calls `initialize()` under the shared init guard
+- **Register**: `noteDepthSortCommit()` — transfers centers, calls `api.registerNode()`
+- **Sort**: `scheduleSort()` — calls `withTimeout('depth-sort', api.sort(...), SORT_RPC_TIMEOUT_MS)`
+- **Release node**: `releaseDepthSortNode()` — calls `releaseWorkerNode()` → `api.releaseNode()` (fire-and-forget)
+- **Release all**: `releaseAllDepthSortNodes()` — calls `api.releaseAllNodes()` (fire-and-forget)
 - **Terminate**: `disposeDepthSort()` (line 904) — calls `worker.terminate()`
 
 ### Commit Paths (geometry commits)
@@ -234,7 +237,7 @@ The worker uses the same `wasm/` module as the data workers:
 
 - Worker script dies during async module evaluation → `onerror` event → `initPromise` rejects
 - WASM initialization fails → throws `'WASM unavailable...'` → main thread catches, terminates worker, degrades to unsorted normal mode
-- Timeout (30s) → main thread rejects `initPromise`, terminates worker, degrades to unsorted normal mode
+- Init deadline missed (`config.depthSort.workerInitTimeoutMs`) → treated as TRANSIENT: the worker keeps running with its `initialize()` still in flight, `initPromise` is cleared, and the per-frame scheduler retries once the loader goes idle (re-awaiting the same RPC). Only after `MAX_INIT_TIMEOUT_ATTEMPTS` misses does it terminate and degrade to unsorted. A deadline miss means the reply was late — on a multi-million-element scene the main thread that has to dispatch it is busy decoding — not that the worker is broken
 
 ### Sort Failures
 
@@ -250,7 +253,7 @@ Worker may already be terminating → RPC rejects → swallowed (fire-and-forget
 
 ### Single Worker Instance
 
-Only one SortWorker exists per session. Spawned on first order-dependent commit, terminated on app dispose. NOT part of the data worker pool (no round-robin).
+Only one SortWorker exists per session. Spawned at app init (`warmUpDepthSortWorker()`), terminated on app dispose. NOT part of the data worker pool (no round-robin) — but it now shares the pool's `init-with-guard.ts`, so the two cannot drift apart on startup semantics.
 
 ### Transfer Semantics
 
