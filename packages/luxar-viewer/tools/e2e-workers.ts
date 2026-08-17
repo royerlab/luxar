@@ -3,7 +3,7 @@
  *
  * `playwright.config.ts` used to hardcode `workers: process.env.CI ? 1 : 4`. That ceiling is a
  * real constraint (see `MAX_LOCAL_WORKERS`), but it is a CEILING, not a target: a developer
- * workstation shared with CI runner slots and other agents can be at a 1-minute load average of
+ * workstation shared with CI runner slots and other jobs can be at a 1-minute load average of
  * 22 on 16 cores, and four Chromium instances on top of that starve the very input handling
  * Playwright's action timeouts measure. Measured on a 16-core box at load 12-24:
  * `dimension-animation.spec.ts` failed 15 of 21 tests with the config default of 4 workers and
