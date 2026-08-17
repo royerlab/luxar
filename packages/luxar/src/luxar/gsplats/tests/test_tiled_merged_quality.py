@@ -149,10 +149,16 @@ def test_a_partition_is_left_alone_but_says_so(
     Asserted rather than assumed: the scoring call sits right after the merge,
     and a partition returns a node with no ``stats`` dict to write into. The
     absence is announced, so the missing PSNR is a stated limitation rather than
-    a hole the user has to discover in the store.
+    a hole the user has to discover in the store. ``verbose=False`` is
+    deliberate: a quiet scripted fit is exactly where the unexplained gap would
+    otherwise appear, since nothing about the omission reaches the store.
     """
-    node = _fit(volume, partition=True, verbose=True)
+    node = _fit(volume, partition=True, verbose=False)
     assert not hasattr(node, "stats") or "psnr_db" not in getattr(node, "stats", {})
     out = capsys.readouterr().out
     assert "No merged quality metrics" in out
     assert "gsplat compare" in out
+    # `compare` cannot load a `kind=partition` store directly
+    # (``GSplatData.load`` raises "not matrix-shaped"), so a recourse that omits
+    # the flatten step tracebacks on the tiled default.
+    assert "gsplat flatten" in out

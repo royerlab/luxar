@@ -295,10 +295,10 @@ def fit_tiled_parallel(
         two are the same grid, or the stamp would claim a measurement was a
         declaration.
     source_dtype : str, optional
-        Element type the volume was STORED in. The workers hold the volume, not
-        this process, so it cannot be observed here — without it the merged
-        result records a source grid with no byte count and ``info`` prints no
-        compression ratio at all.
+        Element type the volume was STORED in. This function is handed only the
+        tile grid's shape, not the array, so it cannot be observed here — the
+        caller has to pass it, and without it the merged result records a source
+        grid with no byte count and ``info`` prints no compression ratio at all.
 
     Returns
     -------
@@ -430,18 +430,22 @@ def fit_tiled_parallel(
         source_dtype=source_dtype,
     )
 
-    # No merged quality score here, unlike the in-process `fit_tiled`: the
-    # WORKERS hold the volume, not this parent (see `source_dtype` above), so
-    # there is nothing to score the reconstruction against without re-reading
-    # the source. Say so rather than shipping an unexplained gap — an archive
-    # that silently carries no PSNR is the failure the sequential path's scoring
-    # exists to end.
-    if verbose:
-        aprint(
-            "No merged quality metrics on the parallel tiled path: the tile "
-            "workers hold the volume, not this process. Score the written "
-            "archive with `luxar gsplat compare`."
-        )
+    # No merged quality score here, unlike the in-process `fit_tiled`: this
+    # function is handed only the tile grid's shape (`volume_shape`, and
+    # `source_dtype` above), never the array itself — the CLI's
+    # `dispatch_parallel_tiled` is what holds it — so there is nothing here to
+    # score the reconstruction against without re-reading the source. Say so
+    # rather than shipping an unexplained gap — an archive that silently carries
+    # no PSNR is the failure the sequential path's scoring exists to end. Said
+    # even on a quiet run: nothing about the omission reaches the store, so this
+    # notice is the only place it is ever stated.
+    aprint(
+        "No merged quality metrics on the parallel tiled path: the tiles are "
+        "fitted in worker processes and only the tile grid's shape is passed "
+        "here, not the volume, so there is nothing to score against. Score the "
+        "written archive with `luxar gsplat compare` — on a `kind=partition` "
+        "result (the tiled default), run `luxar gsplat flatten` first."
+    )
 
     if not keep_tiles:
         shutil.rmtree(tmp_dir, ignore_errors=True)

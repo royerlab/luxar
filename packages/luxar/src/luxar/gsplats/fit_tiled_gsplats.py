@@ -844,10 +844,18 @@ def fit_tiled(
             device=fit_kwargs.get("device"),
             verbose=verbose,
         )
-    elif verbose:
+    else:
+        # Said even on a quiet run: `--tiling uniform` asks for a
+        # `kind=partition` merge by default, and nothing about the omission
+        # reaches the store, so this notice is the only place it is ever stated.
+        # Keyed on the partition REQUEST, not on the shape the merge returned: a
+        # degenerate merge (a single surviving region, or none at all) hands back
+        # a matrix-shaped leaf, which is why the flatten step is worded as a
+        # condition rather than as a fact about this result.
         aprint(
-            "No merged quality metrics: a partition has nowhere to persist fit "
-            "stats. Score the written archive with `luxar gsplat compare`."
+            "No merged quality metrics: a partition tree has nowhere to persist "
+            "fit stats. Score the written archive with `luxar gsplat compare` — "
+            "on a `kind=partition` result, run `luxar gsplat flatten` first."
         )
     return merged
 
