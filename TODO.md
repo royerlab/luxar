@@ -758,8 +758,11 @@ to ship after). Sequencing is at the bottom.
 >   original-referenced comparability, not a statement about the tool.
 > - **Resolution (no re-run):** (1) numbers stand as-is; (2) **pin the manuscript
 >   fit harnesses to `--floor none`** (`run_analysis`/`run_convergence`/
->   `run_noise2self`/`progressive`/`loss_comparison`/`run_noise_floor`) so a
->   future re-run stays reproducible instead of silently inheriting `floor=auto`;
+>   `run_noise2self`/`progressive`/`loss_comparison` — amended 2026-08 per #1184:
+>   `run_noise_floor` was listed here in error; in the luxar-paper repo it only
+>   calls `estimate_noise_floor`, which never fits, so there is nothing to pin)
+>   so a future re-run stays reproducible instead of silently inheriting
+>   `floor=auto`;
 >   (3) **Methods paragraph** stating the benchmarks use `--floor none` with
 >   original-referenced PSNR for comparability, while `floor=auto` (the shipped
 >   default) is the more principled fit for real use (background isn't signal),

@@ -59,6 +59,15 @@ export class AnimationController {
   private canRestoreAtIdle: (() => boolean) | null = null;
 
   /**
+   * Predicate that returns true while some other owner is driving the
+   * pipeline itself and the loop's own render would be thrown away.
+   * Set during an offline capture, whose every frame runs its own
+   * independent pipeline pass into an offscreen target. See
+   * {@link setRenderSkipPredicate}.
+   */
+  private shouldSkipRender: (() => boolean) | null = null;
+
+  /**
    * Create animation controller for rendering loop management.
    *
    * Sets up performance monitoring and prepares animation loop. Does not
@@ -184,6 +193,26 @@ export class AnimationController {
   }
 
   /**
+   * Inject a predicate the loop polls to decide whether to skip its own
+   * `postProcessing.render()`. When it returns true the frame still
+   * runs controls.update() and every per-frame callback — the loop has
+   * to keep ticking so the depth-sort scheduler and the LOD group
+   * selector follow the camera — but issues no draw call of its own.
+   *
+   * Wired to the offline capture, which renders its own pipeline pass
+   * per frame into an offscreen target: the loop's render is pure waste
+   * there, and worse, EXR capture holds global mega-shader flags (raw
+   * HDR, effects off) across its async readback, so a loop render
+   * landing inside that window paints a blown-out frame under the
+   * translucent capture overlay. Must stay OFF for the real-time
+   * MediaRecorder path, which records the canvas the loop paints.
+   * Mirrors `setContextLostPredicate`. Pass `null` to always render.
+   */
+  setRenderSkipPredicate(predicate: (() => boolean) | null): void {
+    this.shouldSkipRender = predicate;
+  }
+
+  /**
    * Main animation loop function - the heart of HDR 3D rendering
    *
    * This function is called ~60 times per second (depending on display refresh rate)
@@ -209,10 +238,11 @@ export class AnimationController {
     eventBus.emit('frame-start', {});
 
     // Record frame for adaptive DPR - tracks FPS and adjusts pixel
-    // ratio. Skipped while the rendering context is lost: those frames
-    // do no GPU work, so their "speed" would drive bogus scale-ups and
+    // ratio. Skipped while the rendering context is lost AND while the
+    // render-skip predicate is on: both kinds of frame do no GPU work of
+    // their own, so their "speed" would drive bogus scale-ups and
     // falsely settle U-shape probes.
-    if (this.adaptiveDPRManager && !this.isContextLost?.()) {
+    if (this.adaptiveDPRManager && !this.isContextLost?.() && !this.shouldSkipRender?.()) {
       this.adaptiveDPRManager.recordFrame(performance.now());
     }
 
@@ -235,7 +265,12 @@ export class AnimationController {
     // exceptions on some platforms). Controls and per-frame callbacks
     // already ran above so user input stays responsive while the
     // browser drives recovery.
-    if (this.isContextLost?.()) {
+    //
+    // The render-skip predicate joins the same early return: an
+    // offline capture owns the pipeline for its whole run, so the
+    // loop's render would be discarded work drawn between the
+    // capture's own passes.
+    if (this.isContextLost?.() || this.shouldSkipRender?.()) {
       eventBus.emit('frame-end', {});
       return;
     }
@@ -294,10 +329,25 @@ export class AnimationController {
       // render ONE frame directly — NOT via startAnimation(), which
       // would re-arm the idle timer and feed native-DPR frames back
       // into the FPS evaluator.
+      //
+      // The render-skip predicate is checked here too — this is the
+      // loop's OTHER render call site, and the predicate's claim is
+      // "nobody but the pipeline's current owner may draw", not "the
+      // animate() path may not draw". Today it is redundant (a capture
+      // disables adaptive DPR, so isActive() is already false, and the
+      // idle-restore predicate is off for the whole capture), but the
+      // guard that makes it redundant lives in another file: drop
+      // `disableDPR` from the capture's saveRecordingState and this
+      // would paint a native-DPR frame through the capture scrim,
+      // possibly inside the raw-HDR window. It must come BEFORE
+      // prepareIdleFrame(), which RESIZES on its way to returning true
+      // — skipping the render after that resize would leave the canvas
+      // cleared with nothing to repaint it.
       if (
         this.adaptiveDPRManager?.isActive?.() &&
         this.canRestoreAtIdle?.() !== false &&
         !this.isContextLost?.() &&
+        !this.shouldSkipRender?.() &&
         this.adaptiveDPRManager.prepareIdleFrame?.()
       ) {
         this.postProcessing.render();

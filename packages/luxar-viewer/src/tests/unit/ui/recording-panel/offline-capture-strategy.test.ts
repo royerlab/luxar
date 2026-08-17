@@ -94,6 +94,7 @@ function makeSession(overrides: Record<string, unknown> = {}): any {
   return {
     isRecording: false,
     isOfflineCaptureActive: false,
+    isLoopRenderSuppressed: false,
     isEXRSequenceRecording: false,
     recordingStartTime: 0,
     disposed: false,
@@ -133,21 +134,42 @@ function makeSceneManager(): {
  * callback does NOT restart a stopped loop — only startAnimation()
  * does. A double that fires callbacks unconditionally cannot see the
  * "turntable captures N identical frames" bug at all.
+ *
+ * Registration QUEUES a callback; it never runs it. The real loop runs
+ * every registered callback once per animation frame, so `__tick()`
+ * (driven from this file's requestAnimationFrame spy) is the only thing
+ * that invokes them. Firing at registration time instead would hide the
+ * mirror-image bug: registering the capture callback AFTER the awaited
+ * frame — so it is added and removed with no tick in between — leaves
+ * `applyOrbitRotation` uncalled and every captured frame on the opening
+ * pose, which a registration-time double reports as a healthy sweep.
  */
+/** The controller double the requestAnimationFrame spy ticks (each test
+ *  builds exactly one). */
+let activeAnim: { __tick(): void } | null = null;
+
 function makeAnimController({ animating = false }: { animating?: boolean } = {}): any {
   let isAnimating = animating;
-  return {
+  const callbacks = new Map<string, () => void>();
+  const anim = {
     startAnimation: vi.fn(() => {
       isAnimating = true;
     }),
-    // Invoke the registered callback once synchronously to simulate a
-    // single rendered frame (this is what drives applyOrbitRotation) —
-    // but only while the loop is actually animating.
-    addPerFrameCallback: vi.fn((_id: string, cb?: () => void) => {
-      if (isAnimating) cb?.();
+    // The options argument is recorded by vi.fn() so `{ continuous: true }`
+    // stays assertable.
+    addPerFrameCallback: vi.fn((id: string, cb?: () => void, _opts?: unknown) => {
+      if (cb) callbacks.set(id, cb);
     }),
-    removePerFrameCallback: vi.fn(),
+    removePerFrameCallback: vi.fn((id: string) => callbacks.delete(id)),
+    /** Simulate one rendered frame: run every registered callback — but
+     *  only while the loop is actually animating. */
+    __tick: (): void => {
+      if (!isAnimating) return;
+      for (const cb of [...callbacks.values()]) cb();
+    },
   };
+  activeAnim = anim;
+  return anim;
 }
 
 function makeHooks(): any {
@@ -175,11 +197,15 @@ describe('OfflineCaptureStrategy', () => {
     vi.mocked(ExrSequenceDriver).mockClear();
     vi.mocked(VideoModeDriver).mockClear();
     vi.mocked(showToast).mockClear();
+    activeAnim = null;
     // requestAnimationFrame resolves synchronously so the loop runs to
-    // completion within the awaited run() call.
+    // completion within the awaited run() call. Each simulated frame runs
+    // the controller's registered per-frame callbacks first, exactly as
+    // the real loop does — registration alone never invokes them.
     rafSpy = vi
       .spyOn(window, 'requestAnimationFrame')
       .mockImplementation((cb: FrameRequestCallback) => {
+        activeAnim?.__tick();
         cb(0);
         return 0;
       });
@@ -242,7 +268,8 @@ describe('OfflineCaptureStrategy', () => {
         cb(0);
         return 0;
       });
-      const strat = new OfflineCaptureStrategy(sm, makeAnimController(), makeHooks());
+      const anim = makeAnimController();
+      const strat = new OfflineCaptureStrategy(sm, anim, makeHooks());
 
       await strat.run(makeOpts(), 'turntable', session);
 
@@ -251,13 +278,17 @@ describe('OfflineCaptureStrategy', () => {
       expect(document.querySelector('.luxar-recording-overlay')).toBeNull();
       expect(strat.sessionAbort).toBeNull();
       expect(mockState.driverInstances).toHaveLength(0);
+      // …but the bail must NOT wake the loop on a disposed session: the
+      // AnimationController is torn down before the RecordingPanel.
+      expect(anim.startAnimation).not.toHaveBeenCalled();
     });
 
-    it('warns and bails when the controls are not orbit controls', async () => {
+    it('warns and bails when the controls are not orbit controls, repainting the cleared canvas', async () => {
       const { sm } = makeSceneManager();
       sm.controls.getControls = vi.fn(() => ({})); // not a LuxarOrbitControls
       const session = makeSession();
-      const strat = new OfflineCaptureStrategy(sm, makeAnimController(), makeHooks());
+      const anim = makeAnimController();
+      const strat = new OfflineCaptureStrategy(sm, anim, makeHooks());
 
       await strat.run(makeOpts(), 'turntable', session);
 
@@ -265,6 +296,11 @@ describe('OfflineCaptureStrategy', () => {
       expect(session.restoreRecordingState).toHaveBeenCalled();
       expect(document.querySelector('.luxar-recording-overlay')).toBeNull();
       expect(strat.sessionAbort).toBeNull();
+      // Reachable without any dispose (fly controls + smooth turntable):
+      // restoreRecordingState resized the render target back, clearing the
+      // canvas, so the bail owes the viewer exactly one repaint — otherwise
+      // it stays blank until the next mouse move.
+      expect(anim.startAnimation).toHaveBeenCalled();
     });
   });
 
@@ -307,6 +343,18 @@ describe('OfflineCaptureStrategy', () => {
       // keep-alive callback keeps a RUNNING loop alive but never
       // restarts a stopped one.
       expect(anim.startAnimation).toHaveBeenCalled();
+
+      // …and the keep-alive is the other half, load-bearing past the
+      // first two seconds: startAnimation() arms the idle timer and
+      // nothing in the capture loop re-arms it, so a `continuous`
+      // callback is the ONLY thing that stops the timer halting the
+      // loop mid-capture. Dropping the option (or the registration)
+      // re-creates the identical-frames bug for every frame after ~2s.
+      expect(anim.addPerFrameCallback).toHaveBeenCalledWith(
+        OfflineCaptureStrategy.KEEPALIVE_CALLBACK_ID,
+        expect.any(Function),
+        { continuous: true }
+      );
 
       // Frames 1..5 each advance one step — without the wake-up the
       // camera never moves and every captured frame is identical. The step
@@ -383,6 +431,56 @@ describe('OfflineCaptureStrategy', () => {
       );
     });
 
+    it('re-wakes the rAF loop after teardown so the cleared canvas gets repainted', async () => {
+      const { sm } = makeSceneManager();
+      const session = makeSession();
+      const anim = makeAnimController();
+      const strat = new OfflineCaptureStrategy(sm, anim, makeHooks());
+
+      // Record the call order: the repaint has to come AFTER the state
+      // restore, because restoreRecordingState resizes the render target
+      // (which clears the canvas) and removes the keep-alive. Waking
+      // before it would leave the viewer blank until the next mouse move.
+      const order: string[] = [];
+      session.restoreRecordingState = vi.fn(() => order.push('restore'));
+      anim.startAnimation.mockImplementation(() => order.push('start'));
+
+      await strat.run(makeOpts(), 'turntable', session);
+
+      expect(order.at(-1)).toBe('start');
+      expect(order.at(-2)).toBe('restore');
+    });
+
+    it('does NOT re-wake the loop when the panel was disposed mid-capture', async () => {
+      const { sm } = makeSceneManager();
+      const session = makeSession();
+      const anim = makeAnimController();
+      const strat = new OfflineCaptureStrategy(sm, anim, makeHooks());
+
+      // Simulate RecordingPanel.dispose() landing while the loop is parked
+      // on a frame: it marks the session disposed and ABORTS the capture,
+      // whose finally then runs a tick later. runDisposePipeline disposes
+      // the AnimationController FIRST, so a wake-up here would restart the
+      // rAF loop against a disposed post-processing pipeline.
+      let wakesBeforeTeardown = 0;
+      vi.mocked(ImageSequenceDriver).mockImplementationOnce(() => {
+        const d = mockState.makeDriver();
+        d.captureFrame = vi.fn(async () => {
+          session.disposed = true;
+          strat.dispose();
+          wakesBeforeTeardown = anim.startAnimation.mock.calls.length;
+        });
+        return d as never;
+      });
+
+      await strat.run(makeOpts(), 'turntable', session);
+
+      // The loop's own opening wake-up already happened (that is what
+      // `wakesBeforeTeardown` records); the teardown must add nothing.
+      expect(wakesBeforeTeardown).toBeGreaterThan(0);
+      expect(anim.startAnimation).toHaveBeenCalledTimes(wakesBeforeTeardown);
+    });
+
     it('sets and then clears isEXRSequenceRecording across an EXR run', async () => {
       const { sm } = makeSceneManager();
       const session = makeSession();
@@ -404,6 +502,30 @@ describe('OfflineCaptureStrategy', () => {
 
       expect(flagDuringSetup).toBe(true);
       expect(session.isEXRSequenceRecording).toBe(false);
+    });
+
+    it('sets and then clears isLoopRenderSuppressed across a run', async () => {
+      const { sm } = makeSceneManager();
+      const session = makeSession();
+      // Asserting only that the flag is false after teardown is equally true
+      // of a flag never set at all, so probe it MID-RUN: suppression while the
+      // capture owns the pipeline is the whole point of the flag.
+      let flagDuringSetup: boolean | undefined;
+      mockState.config.setupOk = true;
+      const strat = new OfflineCaptureStrategy(sm, makeAnimController(), makeHooks());
+      vi.mocked(ImageSequenceDriver).mockImplementationOnce(() => {
+        const d = mockState.makeDriver();
+        d.setup = vi.fn(async () => {
+          flagDuringSetup = session.isLoopRenderSuppressed;
+          return true;
+        });
+        return d as never;
+      });
+
+      await strat.run(makeOpts(), 'turntable', session);
+
+      expect(flagDuringSetup).toBe(true);
+      expect(session.isLoopRenderSuppressed).toBe(false);
     });
   });
 
@@ -439,6 +561,80 @@ describe('OfflineCaptureStrategy', () => {
       expect(driver.abort).toHaveBeenCalledWith(expect.anything(), 'error');
       expect(showToast).toHaveBeenCalledWith('Recording finalize failed');
       expect(session.isRecording).toBe(false);
+    });
+
+    it('leaves isLoopRenderSuppressed false when the pre-try overlay setup throws', async () => {
+      const { sm } = makeSceneManager();
+      // showRecordingIndicator() runs in the window BETWEEN the recording
+      // flags and the `try` — the one stretch the finally does not cover — so
+      // it is exactly where a throw used to strand the suppression flag true.
+      // The flag is the loop's global render-skip predicate, so a stuck true
+      // blanks the viewport until a page reload. Raising it as the first
+      // statement inside the try is what makes this window safe; moving the
+      // assignment back above here turns this test red.
+      const boom = new Error('indicator fail');
+      const session = makeSession({
+        showRecordingIndicator: vi.fn(() => {
+          throw boom;
+        }),
+      });
+      const strat = new OfflineCaptureStrategy(sm, makeAnimController(), makeHooks());
+
+      await expect(strat.run(makeOpts(), 'turntable', session)).rejects.toThrow(boom);
+
+      expect(session.isLoopRenderSuppressed).toBe(false);
+    });
+
+    it('clears isLoopRenderSuppressed BEFORE awaiting driver.abort', async () => {
+      mockState.config.finalizeThrows = true;
+      const { sm } = makeSceneManager();
+      const session = makeSession();
+      const strat = new OfflineCaptureStrategy(sm, makeAnimController(), makeHooks());
+
+      // The flag globally suppresses the animation loop's render, so an
+      // abort that never settles would otherwise leave the viewer frozen
+      // with no recovery but a page reload.
+      let flagDuringAbort: boolean | undefined;
+      vi.mocked(ImageSequenceDriver).mockImplementationOnce(() => {
+        const d = mockState.makeDriver();
+        d.abort = vi.fn(async () => {
+          flagDuringAbort = session.isLoopRenderSuppressed;
+        });
+        return d as never;
+      });
+
+      await strat.run(makeOpts(), 'turntable', session);
+
+      expect(flagDuringAbort).toBe(false);
+      expect(session.isLoopRenderSuppressed).toBe(false);
+    });
+
+    it('keeps isOfflineCaptureActive TRUE while driver.abort is awaited', async () => {
+      mockState.config.finalizeThrows = true;
+      const { sm } = makeSceneManager();
+      const session = makeSession();
+      const strat = new OfflineCaptureStrategy(sm, makeAnimController(), makeHooks());
+
+      // The mutual-exclusion flag must NOT be dropped early: ScreenshotStrategy
+      // gates on it, and a mediabunny finalize / EXR zip abort can take
+      // seconds. A screenshot started inside that window overwrites and then
+      // nulls the single `savedRecordingState` slot, so this capture's own
+      // `restoreRecordingState()` no-ops and the viewer is stuck at capture
+      // resolution with resize locked until a page reload.
+      let flagDuringAbort: boolean | undefined;
+      vi.mocked(ImageSequenceDriver).mockImplementationOnce(() => {
+        const d = mockState.makeDriver();
+        d.abort = vi.fn(async () => {
+          flagDuringAbort = session.isOfflineCaptureActive;
+        });
+        return d as never;
+      });
+
+      await strat.run(makeOpts(), 'turntable', session);
+
+      expect(flagDuringAbort).toBe(true);
+      // …and it is still cleared by the time the teardown returns.
+      expect(session.isOfflineCaptureActive).toBe(false);
     });
 
     it('aborts capture after 3 consecutive frame failures and toasts', async () => {

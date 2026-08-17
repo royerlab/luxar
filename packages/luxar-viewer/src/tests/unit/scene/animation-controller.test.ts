@@ -264,6 +264,60 @@ describe('AnimationController', () => {
       expect(mockPostProcessing.render).toHaveBeenCalledTimes(1);
     });
 
+    // The render-skip predicate is set during an offline capture, which
+    // renders its own pipeline pass per frame. The loop must keep ticking
+    // (per-frame callbacks drive the depth-sort scheduler and the LOD
+    // group selector, which have to follow the orbiting camera) while
+    // issuing no draw call of its own.
+    it('skips postProcessing.render() but still ticks controls + callbacks when render-skip is on', async () => {
+      const { eventBus } = await import('../../../utils/cross-layer/event-bus');
+      const callback = vi.fn();
+      const startListener = vi.fn();
+      const endListener = vi.fn();
+      const dprManager = { recordFrame: vi.fn() };
+      const offStart = eventBus.on('frame-start', startListener);
+      const offEnd = eventBus.on('frame-end', endListener);
+      controller.addPerFrameCallback('cb', callback);
+      controller.setAdaptiveDPRManager(dprManager as never);
+      controller.setRenderSkipPredicate(() => true);
+
+      try {
+        controller.startAnimation();
+
+        expect(mockControls.update).toHaveBeenCalledTimes(1);
+        expect(callback).toHaveBeenCalledTimes(1);
+        expect(mockPostProcessing.render).not.toHaveBeenCalled();
+        // A render-skipped frame did no GPU work of its own, so feeding
+        // its duration to adaptive DPR would drive bogus scale-ups and
+        // falsely settle U-shape probes — same reasoning as context-lost.
+        expect(dprManager.recordFrame).not.toHaveBeenCalled();
+        // A skipped frame still has to CLOSE its measurement: the early
+        // return emits frame-end, so the performance monitor never sees an
+        // unpaired frame-start (one per skipped frame, for a whole capture).
+        expect(startListener).toHaveBeenCalledTimes(1);
+        expect(endListener).toHaveBeenCalledTimes(1);
+      } finally {
+        offStart();
+        offEnd();
+        controller.stopAnimation();
+      }
+    });
+
+    it('renders normally when the render-skip predicate returns false', () => {
+      controller.setRenderSkipPredicate(() => false);
+      controller.startAnimation();
+
+      expect(mockPostProcessing.render).toHaveBeenCalledTimes(1);
+    });
+
+    it('renders normally when the render-skip predicate is cleared to null', () => {
+      controller.setRenderSkipPredicate(() => true);
+      controller.setRenderSkipPredicate(null);
+      controller.startAnimation();
+
+      expect(mockPostProcessing.render).toHaveBeenCalledTimes(1);
+    });
+
     it('should cancel animation frame on stop', () => {
       controller.startAnimation();
       controller.stopAnimation();
@@ -354,6 +408,26 @@ describe('AnimationController', () => {
 
       expect(controller.isActive).toBe(false); // loop still pauses
       expect(manager.prepareIdleFrame).not.toHaveBeenCalled();
+    });
+
+    // The idle restore is the loop's OTHER render call site, so the
+    // render-skip predicate has to reach it too — and BEFORE
+    // prepareIdleFrame(), which resizes (clearing the canvas) on its way
+    // to returning true. Rendering here mid-capture would paint a
+    // native-DPR frame through the capture scrim; resizing and then not
+    // rendering would leave the canvas blank with nothing to repaint it.
+    it('skips the idle restore — resize included — while the render-skip predicate is on', () => {
+      const manager = makeDPRManagerStub();
+      controller.setAdaptiveDPRManager(manager as never);
+      controller.setRenderSkipPredicate(() => true);
+      controller.startAnimation();
+      mockPostProcessing.render.mockClear();
+
+      vi.advanceTimersByTime(2000);
+
+      expect(controller.isActive).toBe(false); // loop still pauses
+      expect(manager.prepareIdleFrame).not.toHaveBeenCalled();
+      expect(mockPostProcessing.render).not.toHaveBeenCalled();
     });
 
     it('skips the idle restore while the context is lost', () => {
@@ -462,6 +536,50 @@ describe('AnimationController', () => {
 
       // Now should be idle
       expect(controller.isActive).toBe(false);
+    });
+
+    // The `hasContinuousCallbacks` clause of shouldContinueAnimating() is
+    // the entire reason both recording keep-alives work: startAnimation()
+    // arms the idle timer, nothing in a capture loop re-arms it, so a
+    // registered `continuous` callback is the only thing keeping the loop
+    // alive past the first two seconds of a capture.
+    it('should continue animation when a continuous per-frame callback is registered', () => {
+      mockControls.getAutoRotate.mockReturnValue(false);
+      mockPostProcessing.needsContinuousAnimation.mockReturnValue(false);
+
+      controller.addPerFrameCallback('keepalive', vi.fn(), { continuous: true });
+      controller.startAnimation();
+
+      vi.advanceTimersByTime(2000);
+
+      expect(controller.isActive).toBe(true);
+    });
+
+    // Negative control: an on-demand callback (the default) must NOT hold
+    // the loop open, or dynamic-clipping and the scale bar would defeat
+    // the whole idle-pause power optimization.
+    it('should NOT keep the loop alive for a non-continuous per-frame callback', () => {
+      mockControls.getAutoRotate.mockReturnValue(false);
+      mockPostProcessing.needsContinuousAnimation.mockReturnValue(false);
+
+      controller.addPerFrameCallback('on-demand', vi.fn());
+      controller.startAnimation();
+
+      vi.advanceTimersByTime(2000);
+
+      expect(controller.isActive).toBe(false);
+    });
+
+    // Registration alone is inert on a stopped loop — this is exactly why
+    // both recording paths must call startAnimation() explicitly.
+    it('registering a callback while stopped neither fires it nor starts the loop', () => {
+      const callback = vi.fn();
+
+      controller.addPerFrameCallback('keepalive', callback, { continuous: true });
+
+      expect(controller.isActive).toBe(false);
+      expect(callback).not.toHaveBeenCalled();
+      expect(mockControls.update).not.toHaveBeenCalled();
     });
 
     it('should reschedule check when continuous effects are active at timeout', () => {

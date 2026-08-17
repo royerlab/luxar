@@ -42,6 +42,7 @@ function makeAnimationStub() {
   return {
     setContextLostPredicate: vi.fn(),
     setIdleRestorePredicate: vi.fn(),
+    setRenderSkipPredicate: vi.fn(),
     addPerFrameCallback: vi.fn(),
     setAdaptiveDPRManager: vi.fn(),
     startAnimation: vi.fn(),
@@ -57,6 +58,11 @@ function makeRecordingPanelStub() {
   return {
     setPanelStateCallbacks: vi.fn(),
     setAdaptiveDPRManager: vi.fn(),
+    // The two capture flags the pipeline's injected predicates read.
+    // `isCurrentlyRecording()` covers BOTH capture kinds; only the
+    // narrower `isLoopRenderSuppressed()` may gate the render skip.
+    isCurrentlyRecording: vi.fn(() => false),
+    isLoopRenderSuppressed: vi.fn(() => false),
   };
 }
 function makeLayersPanelStub() {
@@ -404,6 +410,42 @@ describe('runInitPipeline', () => {
       const warmUpOrder = vi.mocked(warmUpDepthSortWorker).mock.invocationCallOrder[0];
       expect(vi.mocked(setDepthSortEnabled).mock.invocationCallOrder[0]).toBeLessThan(warmUpOrder);
       expect(vi.mocked(configureDepthSort).mock.invocationCallOrder[0]).toBeLessThan(warmUpOrder);
+    });
+  });
+
+  describe('recording-panel predicate wiring', () => {
+    it('the render-skip predicate follows the loop-render-suppression flag, never real-time recording', async () => {
+      const { factories } = makeFactoryOverrides();
+      const ports = makePorts();
+      ports.options.factories = factories as never;
+
+      await runInitPipeline(ports, {});
+
+      const animation = factories.animationController.mock.results[0].value as {
+        setRenderSkipPredicate: ReturnType<typeof vi.fn>;
+      };
+      const panel = factories.recordingPanel.mock.results[0].value as {
+        isCurrentlyRecording: ReturnType<typeof vi.fn>;
+        isLoopRenderSuppressed: ReturnType<typeof vi.fn>;
+      };
+      expect(animation.setRenderSkipPredicate).toHaveBeenCalledTimes(1);
+      const predicate = animation.setRenderSkipPredicate.mock.calls[0][0] as () => boolean;
+
+      expect(predicate()).toBe(false);
+
+      // Real-time MediaRecorder capture: `isCurrentlyRecording()` is true
+      // for it too, and its video IS the canvas the loop paints — keying
+      // the skip off that flag would record an empty video.
+      panel.isCurrentlyRecording.mockReturnValue(true);
+      expect(predicate()).toBe(false);
+
+      // Offline (frame-by-frame) capture renders its own pipeline pass per
+      // frame, so the loop's render is discarded work — and during an EXR
+      // sequence it paints a blown-out frame under the translucent overlay.
+      // That is exactly what `isLoopRenderSuppressed()` reports, and it is
+      // dropped before the capture's teardown awaits its driver abort.
+      panel.isLoopRenderSuppressed.mockReturnValue(true);
+      expect(predicate()).toBe(true);
     });
   });
 

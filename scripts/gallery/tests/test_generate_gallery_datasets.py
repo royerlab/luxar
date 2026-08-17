@@ -537,6 +537,86 @@ def test_needs_local_input_ignores_entries_with_no_runnable_script(
     assert gen.needs_local_input({"id": "gone", "script": "demo_absent.py"}) is None
 
 
+class TestUnbuildableEntries:
+    """``UNBUILDABLE_IDS`` — soft-skipped WITHOUT being spawned.
+
+    A demo that cannot be built on any machine (today: the Visible Human head,
+    whose shipped sidecar is misordered against its fit, #1670) would otherwise
+    be RUN like any other: a ~1.1 GB download plus a 4M-splat fit that exceeds
+    ``GEN_TIMEOUT_S``, landing in the hard ``timeout`` bucket, returning 1 and
+    aborting ``make generate-gallery`` before a single tile is captured.
+    """
+
+    def test_an_unbuildable_entry_is_skipped_without_running(
+        self, tmp_path, monkeypatch, capsys
+    ) -> None:
+        calls = _setup(
+            tmp_path,
+            monkeypatch,
+            [("cannot_build", None, "timeout"), ("plain", None, "ok")],
+        )
+        monkeypatch.setattr(gen, "UNBUILDABLE_IDS", {"cannot_build": "because #1670"})
+
+        code = _run_main(monkeypatch)
+        out = capsys.readouterr().out
+
+        # Never spawned — its scripted outcome is `timeout`, which would be hard.
+        assert calls == ["demo_plain.py"]
+        assert code == 0
+        assert "unbuildable" in out
+        assert "because #1670" in out
+        assert "timeout" not in out
+        # …and its neighbour is unaffected.
+        assert "generated" in out
+
+    def test_force_does_not_run_an_unbuildable_entry(
+        self, tmp_path, monkeypatch, capsys
+    ) -> None:
+        # --force is the route that would otherwise re-run it on every machine,
+        # even one whose tile is already captured and committed.
+        calls = _setup(
+            tmp_path,
+            monkeypatch,
+            [("cannot_build", None, "timeout")],
+            present=("cannot_build",),
+        )
+        monkeypatch.setattr(gen, "UNBUILDABLE_IDS", {"cannot_build": "because #1670"})
+
+        code = _run_main(monkeypatch, "--force")
+        out = capsys.readouterr().out
+
+        assert not calls
+        assert code == 0
+        assert "unbuildable" in out
+
+    def test_list_marks_an_unbuildable_entry(
+        self, tmp_path, monkeypatch, capsys
+    ) -> None:
+        _setup(tmp_path, monkeypatch, [("cannot_build", None, "ok")])
+        monkeypatch.setattr(gen, "UNBUILDABLE_IDS", {"cannot_build": "because #1670"})
+
+        _run_main(monkeypatch, "--list")
+        out = capsys.readouterr().out
+
+        marked = next(line for line in out.splitlines() if "cannot_build" in line)
+        assert "unbuildable" in marked
+
+    def test_every_unbuildable_id_is_a_real_manifest_id(self) -> None:
+        """A typo'd id would silently do nothing at all.
+
+        Read from the REAL manifest (not the synthetic one the other tests use):
+        this list names specific entries, so it must stay coupled to them.
+        """
+        ids = {d["id"] for d in gen.load_manifest()}
+        assert set(gen.UNBUILDABLE_IDS) <= ids, sorted(set(gen.UNBUILDABLE_IDS) - ids)
+
+    def test_each_reason_cites_its_issue(self) -> None:
+        """Every entry must say WHY and be deletable on that basis."""
+        for demo_id, reason in gen.UNBUILDABLE_IDS.items():
+            assert "#" in reason, f"{demo_id}: no issue cited in {reason!r}"
+            assert "elete" in reason, f"{demo_id}: no removal condition in {reason!r}"
+
+
 def test_the_luxar_import_stays_deferred() -> None:
     """No module-level ``luxar`` import: the script is stdlib + arbol at import.
 

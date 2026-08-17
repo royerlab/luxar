@@ -504,6 +504,16 @@ export async function runInitPipeline(
   // The idle-pause native-DPR restore must never fire mid-capture —
   // recording resolution stays locked for the whole session.
   animationController.setIdleRestorePredicate(() => !recordingPanel.isCurrentlyRecording());
+  // An offline capture renders its own pipeline pass per frame, so the
+  // loop's render is discarded work — and during an EXR sequence it
+  // paints a blown-out frame under the translucent overlay, because the
+  // capture holds raw-HDR shader flags across its async readback. The
+  // loop itself keeps running (per-frame callbacks must follow the
+  // camera); only its render is skipped. Offline-only: the real-time
+  // path records the canvas the loop paints. Keyed on the narrow
+  // render-suppression flag rather than the capture's mutual-exclusion
+  // flag, so a wedged capture teardown can't freeze the viewport.
+  animationController.setRenderSkipPredicate(() => recordingPanel.isLoopRenderSuppressed());
 
   // Initialize layers panel (per-node controls)
   const layersPanel = factories.layersPanel(document.body, animationController);
