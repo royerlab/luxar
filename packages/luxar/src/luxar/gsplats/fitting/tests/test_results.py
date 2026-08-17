@@ -1200,10 +1200,14 @@ def test_postfit_metrics_present_for_physical_coords() -> None:
         max_abs_error=0.01,
     )
 
+    voxel_centers = opt.centers.numpy().copy()
     result = finalize_results(opt, config, ppd)
     for key in ("psnr_db", "ssim", "mse", "foreground_psnr_db"):
         assert key in result.stats, f"missing post-fit metric: {key}"
     # And the caller still gets physical coordinates back: voxel_size is 0.5 per
-    # axis, so the returned centers must be HALF the voxel indices they came
-    # from, not the indices the scoring copy used.
-    assert result.centers.max() <= 0.5 * np.array(config.V.shape).max()
+    # axis, so the returned centers must be exactly HALF the voxel indices they
+    # came from, not the indices the scoring copy used. Pinned against those
+    # indices rather than a bound derived from the 16x16 shape: `torch.rand`
+    # centers all sit below 1.0, so any such bound holds whether the physical
+    # conversion ran or not.
+    np.testing.assert_allclose(result.centers, 0.5 * voxel_centers, rtol=1e-6)
