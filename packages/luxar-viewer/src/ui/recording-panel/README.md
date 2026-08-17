@@ -119,12 +119,17 @@ frame-by-frame capture for turntable + EXR-sequence modes:
    `ExrSequenceDriver` / `VideoModeDriver`).
 6. Mount the modal overlay (focus trap + Escape to cancel + preview
    canvas + counter).
-7. Enter the `try`, call `driver.setup(ctx)`, then wake the rAF loop
+7. Enter the `try`, raise `isLoopRenderSuppressed`, call
+   `driver.setup(ctx)`, then wake the rAF loop
    (`animationController.startAnimation()`) and register the
    `continuous` keep-alive callback. Only the driver's _construction_
    is pre-overlay; `setup` runs inside the `try` on purpose, so a
    throw from it is unwound by the `finally` that removes the overlay
-   mounted in step 6.
+   mounted in step 6. The suppression flag is raised _inside_ the
+   `try` for the same reason, and it is the strictest case: it
+   suppresses the loop's render globally, so escaping steps 3–6 with
+   it stuck true would leave a dark viewport with no recovery but a
+   reload.
 8. For each frame: register a per-frame callback that orbits the
    camera one step, `await requestAnimationFrame`, then call
    `driver.captureFrame(ctx, frameIndex, progress)`. Tolerate up to
@@ -184,12 +189,22 @@ RecordingPanel, and panel dispose only ABORTS an in-flight capture, whose
 finally resumes a tick later — restarting the loop there would render
 against a disposed pipeline.
 
-The `try { … } finally { … }` wrapping every state-mutating step is
-load-bearing: a thrown error anywhere in the loop must restore the
-DPR lock, resize listener, panel visibility, overlay state, and
-recording flags. The driver's own abort handler runs from the same
-finally so per-driver resources (ZIP streams, mediabunny encoders)
-are torn down without orphan files.
+The `try { … } finally { … }` around steps 7–9 is load-bearing: a thrown
+error anywhere in the capture loop must restore the DPR lock, resize
+listener, panel visibility, overlay state, and recording flags. The
+driver's own abort handler runs from the same finally so per-driver
+resources (ZIP streams, mediabunny encoders) are torn down without
+orphan files.
+
+It does not reach back over steps 3–6 — the `finally` closes over
+bindings those steps create — so a throw there still strands the
+recording flags and the saved renderer state. That window is
+synchronous DOM construction with no production-reachable throw (the
+confirmation dialog in step 1 already assigns `innerHTML`, so an
+environment that forbids it fails before any state is mutated), which
+is why it is documented rather than guarded. The one flag whose stuck
+value would be worse than a locked panel — `isLoopRenderSuppressed` —
+is raised inside the `try` instead, per step 7.
 
 ## Screenshot path
 

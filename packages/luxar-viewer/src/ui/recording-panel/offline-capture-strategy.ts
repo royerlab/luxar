@@ -35,10 +35,14 @@
  *    or any DOM/state mutation cannot leave the panel with a stuck
  *    overlay, hidden panels, scaled renderer, or stale recording flags.
  *    The earlier window — panel hide / saveRecordingState through the
- *    overlay construction — is NOT covered, which is why
+ *    overlay construction — is NOT covered (the finally closes over
+ *    bindings that window creates), which is why
  *    isLoopRenderSuppressed is raised inside the try: a stuck value
  *    there blanks the whole viewport, where the other flags only lock
- *    further captures or leave the panel looking wrong.
+ *    further captures or leave the panel looking wrong. That window is
+ *    synchronous DOM construction with no production-reachable throw —
+ *    showConfirmationDialog above it already assigns innerHTML, so an
+ *    environment that forbids it fails before any state is mutated.
  * 3. The finally block is idempotent — every removal/restore handles
  *    the "wasn't set" case gracefully.
  */
