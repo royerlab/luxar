@@ -229,7 +229,11 @@ them, which is worth an order of magnitude on the same frames:
 Other things the script gets right that are easy to get wrong: `-tag:v
 hvc1` (libx265 defaults to `hev1`, which QuickTime and Safari refuse),
 `setparams` colour tagging (the `-color_*` output options silently failed
-to reach the container on the LDR path), `-start_number 0`, and an HDR10
+to reach the container on the LDR path) paired with an RGB→YUV conversion
+that uses the matrix it tags (`scale=out_color_matrix=bt709`, since
+swscale's default is BT.601 and the mismatch costs 40/255 on saturated
+colour — the EXR chain's `zscale` already converts with `m=bt709`),
+`-start_number 0`, and an HDR10
 stanza that actually _converts_ to PQ/BT.2020 rather than tagging SDR
 pixels as HDR. Output names come from the capture filename, and a
 turntable's script notes that its frames loop seamlessly.

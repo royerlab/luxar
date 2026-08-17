@@ -73,7 +73,19 @@ describe('generateFfmpegScript', () => {
       expect(script).not.toContain('geq');
       expect(script).not.toContain('zscale');
       // Pixel-format conversion and colour tagging only — no maths.
-      expect(script).toContain('-vf "format=yuv420p,setparams=');
+      expect(script).toContain('-vf "scale=out_color_matrix=bt709,format=yuv420p,setparams=');
+    });
+
+    it('converts to YUV with the matrix it tags', () => {
+      // swscale's RGB→YUV default is BT.601, so tagging BT.709 over a bare
+      // `format=yuv420p` makes every player decode with the wrong matrix:
+      // measured on a lossless round-trip of saturated patches, pure green
+      // came back 215 instead of 255 (worst error 40/255, vs 3/255 once the
+      // conversion is told to use BT.709 as well).
+      const script = generateFfmpegScript(opts({ frameExt: 'png' }));
+      expect(script).toContain('colorspace=bt709');
+      expect(script).toContain('scale=out_color_matrix=bt709');
+      expect(script).not.toMatch(/-vf "format=yuv420p/);
     });
 
     it('has no HDR stanza', () => {

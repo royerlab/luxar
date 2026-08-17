@@ -163,8 +163,12 @@ export class OfflineCaptureStrategy implements CaptureStrategy {
     session: RecordingSession,
     recordingMode: RecordingMode
   ): Promise<void> {
+    // The dialog gets the mode the panel is actually in. Deriving it from
+    // the format instead described a Turntable + PNG/MP4 capture with
+    // Smooth off as a "Video" recording — no 360° line, no frame count —
+    // even though this loop always rotates a full turntable.
     const confirmed = await session.showConfirmationDialog({
-      mode: opts.outputFormat === 'exr' || opts.frameByFrame ? 'turntable' : 'video',
+      mode: recordingMode,
       options: opts,
     });
     if (!confirmed || session.isDisposed()) return;

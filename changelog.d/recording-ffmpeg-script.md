@@ -33,10 +33,13 @@ named `turntable.mp4` regardless of what you recorded — they now take the capt
 name, and a turntable's script notes that its frames loop seamlessly while a video's does
 not. H.265 output is tagged `hvc1`, without which QuickTime, Safari and Final Cut refuse
 to play the file at all. The colour tags now reach the container (as frame parameters —
-the `-color_*` output options silently failed to on the LDR path). Frame numbering is
-pinned with `-start_number 0`. And the HDR10 variant now converts to PQ/BT.2020 instead
-of merely tagging SDR pixels as HDR, though it stays commented out since its peak-luminance
-mapping needs an HDR display to judge.
+the `-color_*` output options silently failed to on the LDR path), and the LDR path's
+RGB→YUV conversion is told to use the matrix those tags advertise: swscale defaults to
+BT.601, so tagging BT.709 over a bare `format=yuv420p` shifts saturated colour by up to
+40/255 (pure green decodes as 215) instead of the 3/255 a round-trip actually costs.
+Frame numbering is pinned with `-start_number 0`. And the HDR10 variant now converts to
+PQ/BT.2020 instead of merely tagging SDR pixels as HDR, though it stays commented out
+since its peak-luminance mapping needs an HDR display to judge.
 
 PNG/WebP/JPEG sequences are deliberately left alone by all of this: those frames come out
 of the viewer already graded, so any colour maths in the script would double-apply it.

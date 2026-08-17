@@ -287,6 +287,21 @@ function buildGradeFilter(
 const COLOUR_TAGS = 'setparams=color_primaries=bt709:color_trc=iec61966-2-1:colorspace=bt709';
 
 /**
+ * LDR frames are sRGB and have to become YUV for H.264/H.265 — and the
+ * matrix has to be named, because swscale's default for an RGB→YUV
+ * conversion is BT.601. A bare `format=yuv420p` under the BT.709 tag
+ * above therefore hands every player the wrong matrix, which is a visible
+ * shift, not a rounding one: on a lossless round-trip of saturated
+ * patches the worst channel error is 40/255 (pure green comes back 215)
+ * against 3/255 once the conversion is told to use BT.709 too.
+ *
+ * The EXR chain needs none of this — its `zscale` already converts with
+ * `m=bt709`, so its pixels and the tag agree (measured: ≤1/255 against
+ * the shader's own sRGB output).
+ */
+const LDR_TO_YUV = 'scale=out_color_matrix=bt709,format=yuv420p';
+
+/**
  * Generate the `encode_video.sh` bundled next to the frames.
  *
  * Pure: no I/O, deterministic given the inputs.
@@ -299,9 +314,9 @@ export function generateFfmpegScript(opts: FfmpegScriptOptions): string {
   const name = isTurntable ? `${outputBase}-turntable` : outputBase;
 
   const grade = buildGradeFilter(frameExt, opts.grade);
-  // `-vf` is shared by every encode below; LDR frames get the bare
+  // `-vf` is shared by every encode below; LDR frames get the
   // pixel-format conversion H.264/H.265 need.
-  const vf = `${grade ? grade.filter : 'format=yuv420p'},${COLOUR_TAGS}`;
+  const vf = `${grade ? grade.filter : LDR_TO_YUV},${COLOUR_TAGS}`;
 
   const header: string[] = [
     '#!/bin/bash',
@@ -333,6 +348,10 @@ export function generateFfmpegScript(opts: FfmpegScriptOptions): string {
       `#   exposure ${fmt(opts.grade!.exposure)} EV, offset ${fmt(opts.grade!.offset)}, ` +
         `gamma ${fmt(opts.grade!.gamma)}`,
       `#   tone mapping: ${label}`,
+      '#',
+      '# Vignette, detector noise and lens distortion are NOT in these',
+      '# frames and cannot be put back here — the EXR capture turns them',
+      '# off so the archive holds the scene, not a look.',
       '#'
     );
     if (grade.exact) {

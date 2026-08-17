@@ -296,6 +296,38 @@ describe('OfflineCaptureStrategy', () => {
       expect(script).toContain('geq=');
     });
 
+    it('multiplies the canvas height by the native DPR for Native', async () => {
+      // "Native = current canvas size" means device pixels: three's
+      // getSize() is logical, so a 2× display captures at twice that.
+      const { sm } = makeSceneManager({ width: 1280, height: 720 });
+      const session = makeSession({
+        adaptiveDPRManager: { getNativeDPR: vi.fn(() => 2) },
+      });
+      const strat = new OfflineCaptureStrategy(sm, makeAnimController(), makeHooks());
+
+      await strat.run(makeOpts({ videoResolution: 0 }), 'turntable', session);
+
+      expect(session.saveRecordingState).toHaveBeenCalledWith(
+        expect.objectContaining({ scaleResolution: { targetH: 1440, align16: true } })
+      );
+    });
+
+    it('describes the capture with the mode the panel is in', async () => {
+      // A Turntable capture with Smooth off still rotates a full 360° in
+      // this loop, so the dialog must be the turntable one (frame count +
+      // duration) — deriving the mode from the format called it a "Video"
+      // recording and dropped both.
+      const { sm } = makeSceneManager();
+      const session = makeSession();
+      const strat = new OfflineCaptureStrategy(sm, makeAnimController(), makeHooks());
+
+      await strat.run(makeOpts({ outputFormat: 'png', frameByFrame: false }), 'turntable', session);
+
+      expect(session.showConfirmationDialog).toHaveBeenCalledWith(
+        expect.objectContaining({ mode: 'turntable' })
+      );
+    });
+
     it('honours an explicit resolution over the native canvas height', async () => {
       const { sm } = makeSceneManager({ width: 2560, height: 1440 });
       const session = makeSession();
