@@ -134,19 +134,37 @@ data. Two rules make a comparison mean something:
    metric, so a 1.4 M-splat variant "beating" a 2.7 M-splat one measures the
    count. Fix the seed budget on both.
 
+Often you do not need to run anything: **`fit` already stamps the quality of the
+fit it just did** into `result.stats` (`foreground_psnr_db`,
+`foreground_threshold`, `foreground_fraction`) and prints it. Reach for `compare`
+when scoring against a *different* reference than the one fitted — the unfloored
+original, a denoised variant's untouched source, another arm's target:
+
 ```bash
 luxar gsplat compare fitted.gsplats.zarr original.tiff --output-json metrics.json
 #   --shape, --channel/--timepoint, --device, --truncate
 ```
 
-`compare` reports **global** PSNR / SSIM / MSE. On sparse data that is not the
-number to steer by: a 97–99%-empty stack is mostly empty in both volumes, so
-global PSNR barely moves however badly the structure is fitted. Split it
-yourself with `gsplat.rendering.render_to_volume` and a mask — the two bands
-that actually discriminate are the **foreground** (above ~10% of max) and the
-**dim band** (~1–10% of max, where thin faint structure lives). There is no
-built-in foreground metric; `luxar.gsplats.metrics` exposes `compute_psnr` /
-`compute_ssim` and you mask the inputs.
+`compare` reports `mse`, `psnr_db`, `ssim`, `rel_l2`, `max_abs_error` **and a
+foreground trio** — `foreground_psnr_db`, `foreground_threshold`,
+`foreground_fraction`. **Read the foreground number.** Global PSNR is dominated
+by background on sparse data: a 97–99%-empty stack scores well for
+reconstructing the emptiness and barely moves however badly the structure is
+fitted.
+
+Three things about that trio worth knowing:
+
+- The **threshold defaults to Otsu** on the target, not a fixed fraction of max.
+- Foreground is defined on the **target**, never on the prediction — a fit that
+  hallucinates signal is scored against where the signal actually is.
+- `data_range` comes from the **whole** target, so the foreground figure stays
+  comparable to `cal`'s `held_out_psnr_foreground` instead of being inflated by
+  a shrunken reference. Always report `foreground_fraction` beside the dB: a
+  PSNR over 0.01% of a volume means something very different from one over 40%.
+
+For a band the trio does not cover — the **dim band** (~1–10% of max, where thin
+faint structure lives, which is what a bad floor destroys) — mask it yourself
+with `gsplats.rendering.render_to_volume` plus `metrics.compute_psnr`.
 
 ### `--seeds` proposes; `cull_retention` disposes
 
