@@ -70,6 +70,17 @@ dependencies = [
     "numcodecs>=0.16",
 
     "typer>=0.19,<1.0",
+    # A DIRECT dependency, not just typer's transitive one: the `luxar demo`
+    # catalogue renders through `rich.console`/`rich.text` (see
+    # `luxar.cli.demo_render`), so a future typer that drops or vendors rich
+    # must not silently break the demo listing.
+    #
+    # Today typer pins `rich>=13.8`, so THAT is the floor a resolver actually
+    # picks; 13.0 is the independent minimum this package needs on its own, and
+    # is the version the whole `demo_render` API surface was verified against
+    # (Console(soft_wrap=), Text.rstrip/pad_right/cell_len, Console.capture).
+    # It only becomes load-bearing if typer's own requirement goes away.
+    "rich>=13.0",
     "fastapi>=0.111,<1.0",
     "uvicorn[standard]>=0.27,<1.0",
     "arbol>=2025.2.27.2",
