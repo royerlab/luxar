@@ -18,6 +18,8 @@ level with a printed note.
 
 from __future__ import annotations
 
+import math
+import os
 import time
 from typing import Any, Optional, Sequence
 
@@ -41,6 +43,209 @@ from luxar.gsplats.tiling import (
     grid_bsp_tree,
     resolve_grid_scale,
 )
+
+#: Upper bound, in GiB, on the memory a merged-quality score may hold resident.
+#: Above it the score is SKIPPED — and says so out loud, because an archive that
+#: silently carries no PSNR is the failure this scoring exists to end. Override
+#: with ``LUXAR_TILED_QUALITY_MAX_GB`` when the machine can take more, or set it
+#: to ``0`` to decline scoring outright. This is a CEILING, not the budget: the
+#: default is additionally held under a share of the memory actually free (see
+#: :func:`_default_quality_budget_gb`), since a fixed number describes whichever
+#: machine it was written on and not the one running the fit.
+_QUALITY_BUDGET_GB = 24.0
+
+#: Share of currently-free physical memory the default budget will commit to a
+#: score. Deliberately well under 1: the peak below is an estimate, the fit
+#: process is holding the merged splats too, and being wrong in this direction
+#: costs a metric while being wrong in the other costs the whole fit.
+_QUALITY_BUDGET_MEM_FRACTION = 0.5
+
+#: Full-size float32 volumes live at the scoring peak, which sits inside SSIM
+#: rather than at the render: the reconstruction and the reference, plus the
+#: convolution intermediates :func:`luxar.gsplats.metrics._ssim_nd` keeps live
+#: (``_SSIM_PEAK_TENSOR_COUNT``, the same count that function's own tiled
+#: fallback is sized by — and that fallback only engages on CUDA, so on CPU this
+#: is the true peak). Counting only the reconstruction and the reference
+#: under-reports it fourfold, and the shortfall does not merely cost a metric:
+#: scoring runs BEFORE the archive is written, so thrashing or an OOM kill here
+#: loses the whole fit.
+_QUALITY_PEAK_VOLUMES = 8
+
+
+def _available_ram_gb() -> "float | None":
+    """Free physical memory in GiB, or ``None`` where it cannot be measured."""
+    try:
+        pages = os.sysconf("SC_AVPHYS_PAGES")
+        page_size = os.sysconf("SC_PAGE_SIZE")
+    except (AttributeError, OSError, ValueError):  # pragma: no cover - platform
+        return None
+    if pages <= 0 or page_size <= 0:  # pragma: no cover - platform
+        return None
+    return pages * page_size / 1024**3
+
+
+def _default_quality_budget_gb() -> float:
+    """The default budget: the ceiling, held under a share of free memory.
+
+    The ceiling alone is a number about some other machine. Scoring materializes
+    the whole volume — during the fit it is only ever read tile by tile — so on a
+    host smaller than the ceiling the guard would wave through a peak the machine
+    cannot hold, and the OOM kill lands BEFORE the archive is written, losing the
+    finished fit. That is the one outcome this budget exists to prevent, so the
+    default is the smaller of the two. An explicit override still wins outright:
+    the operator knows what the machine can take.
+    """
+    available = _available_ram_gb()
+    if available is None:  # pragma: no cover - platform
+        return _QUALITY_BUDGET_GB
+    return min(_QUALITY_BUDGET_GB, _QUALITY_BUDGET_MEM_FRACTION * available)
+
+
+def _quality_budget_gb() -> float:
+    """Resident-memory budget for scoring — the env override, or the default.
+
+    A malformed override falls back to the default with a note rather than
+    raising: this runs after every tile has been fitted, so an unparseable
+    environment variable must not be what loses a finished fit.
+    """
+    default = _default_quality_budget_gb()
+    raw = os.environ.get("LUXAR_TILED_QUALITY_MAX_GB")
+    if raw is None:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        value = math.nan
+    # NaN is the one malformed value that would DISABLE the guard instead of
+    # tripping it: `float("nan")` parses, and every comparison against it is
+    # False, so the over-budget test would silently pass whatever the volume
+    # size. Treated like any other unusable override. `inf` is left alone — it
+    # is a coherent way to say "score it no matter how big".
+    if math.isnan(value):
+        aprint(
+            f"⚠️  Ignoring LUXAR_TILED_QUALITY_MAX_GB={raw!r} (not a usable "
+            f"number) — using the {default:g} GiB budget"
+        )
+        return default
+    return value
+
+
+def _to_voxel_frame(merged: GSplatData, scale: Optional[Sequence[float]]) -> GSplatData:
+    """The same mixture expressed on the tile grid's own voxel frame.
+
+    A real-space tiled fit emits physical coordinates, so the merged splats do
+    not sit on ``volume_shape``'s grid and cannot be rendered against it. The
+    frames differ by one per-axis factor (see :func:`resolve_grid_scale`), which
+    scales centers directly and Cholesky ROW ``i`` by ``scale[i]`` — so dividing
+    both undoes it exactly. Amplitudes are untouched by the conversion.
+    """
+    if scale is None:
+        return merged
+    vs = np.asarray(scale, dtype=np.float64)
+    d = merged.centers.shape[1] if merged.n_splats else len(vs)
+    tril_scales = np.concatenate([[vs[i]] * (i + 1) for i in range(d)])
+    return GSplatData(
+        centers=(merged.centers / vs).astype(np.float32),
+        amplitudes=merged.amplitudes,
+        cholesky_factors=(merged.cholesky_factors / tril_scales).astype(np.float32),
+        truncation_radius=merged.truncation_radius,
+    )
+
+
+def _stamp_merged_quality(
+    merged: GSplatData,
+    volume: Any,
+    *,
+    volume_shape: tuple[int, ...],
+    grid_scale: Optional[Sequence[float]],
+    device: Optional[str],
+    verbose: bool,
+) -> None:
+    """Score the MERGED reconstruction against the whole volume, in place.
+
+    Each tile already scores itself, but those numbers are about crops of an
+    apodized decomposition: the tiles overlap, so their errors do not compose
+    into the merged one, and none of them can speak for the archive that
+    actually ships. Without this a tiled archive carries no PSNR at all — which
+    is exactly what a published dataset is asked for.
+
+    The reference is ``volume`` exactly as the caller handed it in: the pedestal
+    the tiles subtracted is NOT put back and per-tile denoising is not applied to
+    it, so the score is against the acquisition — the same basis
+    ``luxar gsplat compare`` uses, and the same one the non-tiled path scores a
+    floor-suppressed fit against (its consequences are issue #1173's, not this
+    function's; matching it is what keeps the two paths' numbers comparable).
+    Under ``--denoise`` that parity ends, and not in this path's favor: the tiles
+    reconstruct denoised data while the reference here keeps its noise, so the
+    score is capped by that noise, whereas ``--tiling none`` denoises the whole
+    volume up front and scores against its own smoothed copy. Neither number is
+    wrong, but they are not the same measurement — a gap between them under
+    ``--denoise`` is not a tiling artifact. A lazy source is materialized here — during the fit it
+    is only ever read tile-by-tile — which is what the budget below bounds.
+    """
+    if merged.n_splats == 0:
+        return
+    budget_gb = _quality_budget_gb()
+    needed_gb = _QUALITY_PEAK_VOLUMES * 4 * float(np.prod(volume_shape)) / 1024**3
+    if needed_gb > budget_gb:
+        # Said out loud even under `verbose=False`, like the failure path below
+        # and the norm-range declines above: a quiet run still ends up with an
+        # archive carrying no PSNR, and nothing downstream can say why.
+        aprint(
+            f"Merged quality metrics skipped: scoring {volume_shape} peaks at "
+            f"~{needed_gb:.1f} GiB (the reconstruction, the reference, and "
+            f"SSIM's intermediates), over the {budget_gb:g} GiB budget. Raise "
+            "LUXAR_TILED_QUALITY_MAX_GB to score it anyway, or run "
+            "`luxar gsplat compare` afterwards."
+        )
+        return
+
+    try:
+        import torch
+
+        from luxar.gsplats.metrics import compute_quality_metrics
+        from luxar.gsplats.rendering.volume_rendering import render_to_volume_tensor
+
+        scored = _to_voxel_frame(merged, grid_scale)
+        rendered: Any = None
+        ref: Any = None
+        try:
+            with torch.no_grad():
+                rendered = render_to_volume_tensor(
+                    scored,
+                    shape=volume_shape,
+                    device=device,
+                    truncate=scored.truncation_radius,
+                )
+                ref = torch.as_tensor(
+                    np.asarray(volume, dtype=np.float32), device=rendered.device
+                )
+                quality = compute_quality_metrics(rendered, ref)
+        finally:
+            # Released whether or not the score succeeded: the failure this most
+            # often takes is an OOM inside SSIM, and leaving the peak reserved
+            # would carry it into whatever the caller does next (a `--recipe`
+            # reduction runs on the same device seconds later).
+            del rendered, ref
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        merged.stats["mse"] = quality["mse"]
+        merged.stats["psnr_db"] = quality["psnr_db"]
+        merged.stats["ssim"] = quality["ssim"]
+        merged.stats["foreground_psnr_db"] = quality["foreground_psnr_db"]
+        merged.stats["foreground_threshold"] = quality["foreground_threshold"]
+        merged.stats["foreground_fraction"] = quality["foreground_fraction"]
+        if verbose:
+            aprint(
+                f"Merged quality: PSNR={quality['psnr_db']:.1f} dB, "
+                f"foreground PSNR={quality['foreground_psnr_db']:.1f} dB "
+                f"(over {quality['foreground_fraction'] * 100:.2f}% of voxels), "
+                f"SSIM={quality['ssim']:.4f}"
+            )
+    except Exception as exc:  # pragma: no cover - device/memory dependent
+        # Loud even when quiet: a missing PSNR is invisible downstream, and the
+        # archive is usually written seconds later.
+        aprint(f"⚠️  Merged quality metrics failed ({exc}) — archive carries no PSNR")
 
 
 def _tile_norm_range(
@@ -552,10 +757,24 @@ def fit_tiled(
     -------
     GSplatData
         Merged result with all splats in global coordinates.
-        Multi-LOD if progressive=True.
+        Multi-LOD if progressive=True. With ``partition=False`` the merged
+        reconstruction is also scored against the whole volume and the metrics
+        (``psnr_db``, ``ssim``, ``mse``, ``foreground_*``) land in ``stats`` —
+        see the merged-quality note below.
 
     Notes
     -----
+    **Merged quality metrics**: the per-tile scores describe crops of an
+    apodized decomposition and do not compose, so the merged reconstruction is
+    rendered once against ``volume`` and scored. Scoring materializes the whole
+    volume, so it is bounded by a memory budget — half the memory actually free,
+    held under a 24 GiB ceiling, with ``LUXAR_TILED_QUALITY_MAX_GB`` overriding
+    both (``0`` declines outright). Over budget, or on a failure, it says so even
+    when ``verbose=False``. ``partition=True`` merges are not scored (the tree
+    node has no fit-stats dict and this path threads none through on save) and
+    say so too; ``luxar gsplat compare`` is the recourse, after
+    ``luxar gsplat flatten``.
+
     **GPU utilization with progressive**: When ``progressive=True``, each
     per-pass fit uses fewer splats (``max_splats_per_pass``), which may
     under-saturate the GPU.  For batch/Slurm jobs, combine
@@ -657,7 +876,12 @@ def fit_tiled(
     from luxar.gsplats.fitting.validation import _resolve_source_dtype
 
     merged_dtype, merged_itemsize = _resolve_source_dtype(volume, source_dtype)
-    return merge_tile_results(
+    grid_scale = resolve_grid_scale(
+        len(volume_shape),
+        voxel_size=voxel_size,
+        output_space=output_space,
+    )
+    merged = merge_tile_results(
         results,
         volume_shape=volume_shape,
         source_shape=source_shape,
@@ -678,12 +902,41 @@ def fit_tiled(
         # The grid above is in voxels; with a voxel_size and real-space output
         # every tile's splats were offset by `origin * voxel_size`, so the
         # partition's split planes need the same factor (#1587).
-        grid_scale=resolve_grid_scale(
-            len(volume_shape),
-            voxel_size=voxel_size,
-            output_space=output_space,
-        ),
+        grid_scale=grid_scale,
     )
+    # Flat merges only, and for a pipeline reason rather than a format one: the
+    # tree writer does take `fitting_info` for any node kind, but the merged
+    # partition is a frozen tree node with no `stats` dict to stamp into, and
+    # this path calls the writer with no `fitting_info` at all — so a score taken
+    # here would have nowhere to go without threading it through first. The
+    # caller's array is still in hand here, which is what makes scoring the WHOLE
+    # reconstruction possible at all.
+    if not partition:
+        _stamp_merged_quality(
+            merged,
+            volume,
+            volume_shape=volume_shape,
+            grid_scale=grid_scale,
+            # `device` rides in **fit_kwargs (it is a per-tile fit knob); score
+            # on whatever the tiles used rather than re-detecting.
+            device=fit_kwargs.get("device"),
+            verbose=verbose,
+        )
+    else:
+        # Said even on a quiet run: `--tiling uniform` asks for a
+        # `kind=partition` merge by default, and nothing about the omission
+        # reaches the store, so this notice is the only place it is ever stated.
+        # Keyed on the partition REQUEST, not on the shape the merge returned: a
+        # degenerate merge (a single surviving region, or none at all) hands back
+        # a matrix-shaped leaf, which is why the flatten step is worded as a
+        # condition rather than as a fact about this result.
+        aprint(
+            "No merged quality metrics: the merged partition is a tree node with "
+            "no fit-stats dict to stamp onto, and this path threads none through "
+            "on save. Score the written archive with `luxar gsplat compare` — on "
+            "a `kind=partition` result, run `luxar gsplat flatten` first."
+        )
+    return merged
 
 
 def merge_tile_results(
