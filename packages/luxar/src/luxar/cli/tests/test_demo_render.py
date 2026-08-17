@@ -60,11 +60,13 @@ def _demo(
     )
 
 
-def _render(demos, statuses, width: int = 200) -> list[str]:
+def _render(
+    demos, statuses, width: int = 200, example_key: str | None = None
+) -> list[str]:
     """Render a catalogue to plain lines, at a width that never soft-wraps."""
     console = Console(width=width, force_terminal=False, no_color=True, soft_wrap=True)
     with console.capture() as capture:
-        render_catalogue(console, demos, statuses)
+        render_catalogue(console, demos, statuses, example_key=example_key)
     return [_ANSI.sub("", line) for line in capture.get().splitlines()]
 
 
@@ -273,9 +275,22 @@ class TestRealCatalogueFitsATerminal:
         so ``len()`` under-measures exactly the line that could grow. The
         catalogue currently peaks at 80 with ZERO headroom, which is what makes
         the distinction worth getting right rather than academic.
+
+        The footer's ``run`` hint carries a demo key too, so it is rendered here
+        with the real suggestion rather than none: that line is
+        ``48 + len("e.g. luxar demo run ") + len(key)`` wide, so an offline demo
+        key of 12 characters or more sorting ahead of today's ``cloud`` overruns
+        80 just as surely as a long key in the table does.
         """
+        from luxar.cli.demo_commands import _starter_key
+
         demos = iter_demos()
-        lines = _render(demos, {d.key: STATUS_BUILT for d in demos}, width=300)
+        lines = _render(
+            demos,
+            {d.key: STATUS_BUILT for d in demos},
+            width=300,
+            example_key=_starter_key(demos),
+        )
         # Guard the guard. `len(lines) > len(demos)` was NOT enough: with an
         # empty registry it degenerates to `lines > 0` and the whole check
         # passes on a catalogue that rendered nothing. Tie it to the rows.
@@ -330,6 +345,17 @@ class TestDetail:
         # ...and the rest of the record is still complete.
         for field in ("Category", "Geometry", "Status", "Run", "Module"):
             assert field in text
+
+    def test_caches_line_names_every_cache_the_demo_claims(self) -> None:
+        """The other side of the branch above; no fixture here declares a cache.
+
+        Without it the caches line is only ever reached from
+        `test_demo_commands.py` (via `demo info` on a demo that happens to have
+        one), so this module's own suite would leave it unrendered.
+        """
+        info = DemoInfo(**{**_demo().__dict__, "caches": ("first", "second")})
+        assert "Caches" in self._detail(info)
+        assert "first, second" in self._detail(info)
 
 
 class TestDependencies:
@@ -667,10 +693,11 @@ class TestUnknownTerminalWidth:
 class TestUnvalidatedTextStillAligns:
     """Cache directory names come off the FILESYSTEM, validated by nothing.
 
-    Demo keys are schema-constrained to `[a-z0-9_-]`, where code points and
-    terminal cells agree — so the catalogue cannot hit this. `~/.cache/luxar/`
-    can hold any name, and an orphan directory there is exactly what `cache
-    list` exists to surface.
+    `~/.cache/luxar/` can hold any name, and an orphan directory there is
+    exactly what `cache list` exists to surface. Demo keys look like the safe
+    case and are not quite: the schema's slug rule is `c.islower() or
+    c.isdigit()`, which is Unicode-wide, so a fullwidth key passes validation
+    and measures two cells per character.
     """
 
     @pytest.mark.parametrize(
@@ -696,6 +723,20 @@ class TestUnvalidatedTextStillAligns:
         # Measured in cells: that is the whole point.
         offsets = {Text(r[: r.index("_key") - 1]).cell_len for r in rows}
         assert len(offsets) == 1, f"owner column ragged at {sorted(offsets)}"
+
+    def test_catalogue_columns_align_for_a_wide_key(self) -> None:
+        """A fullwidth key passes the slug rule, so the row must survive it."""
+        wide = "ｃｌｏｕｄ"  # fullwidth "cloud": 5 chars, 10 cells
+        assert all(c.islower() for c in wide), "fixture is not a valid demo key"
+        demos = [_demo(wide, index=1), _demo("plain_key", index=2)]
+        rows = [
+            ln
+            for ln in _render(demos, {}, width=300)
+            if re.match(r"^ [✓• ] *\d+  ", ln)
+        ]
+        assert len(rows) == 2
+        offsets = {Text(r[: r.index("points")]).cell_len for r in rows}
+        assert len(offsets) == 1, f"geometry column ragged at {sorted(offsets)}"
 
 
 class TestLegendMatchesTheRail:

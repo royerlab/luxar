@@ -75,10 +75,13 @@ def _pad(text: str, width: int, *, right: bool = False) -> str:
     """Pad ``text`` to ``width`` TERMINAL COLUMNS, not code points.
 
     ``f"{text:<{width}}"`` counts code points, so it disagrees with
-    :func:`_cells` on anything wide or combining. Every schema-validated field
-    is `[a-z0-9_-]`-ish, where the two agree — but cache directory names come
-    off the filesystem and are validated by nothing, and a CJK directory there
-    shifted the owner column four cells out of line with its neighbours.
+    :func:`_cells` on anything wide or combining. Cache directory names come off
+    the filesystem and are validated by nothing, and a CJK directory there
+    shifted the owner column four cells out of line with its neighbours. Demo
+    keys look immune and are not quite: the schema spells its slug rule as
+    ``c.islower() or c.isdigit()``, which is Unicode-wide, so a fullwidth
+    ``ｄ`` passes validation and takes two cells. Every column therefore pads
+    through here, not through a format spec.
     """
     fill = " " * max(0, width - _cells(text))
     return fill + text if right else text + fill
@@ -238,12 +241,12 @@ def _row(info: DemoInfo, status: str, widths: _Widths) -> Text:
     row.append(" " * _GUTTER)
     # The key is what the user types into `demo run`, so it gets the one
     # attention-grabbing style in the row.
-    row.append(f"{info.key:<{widths.key}}", style="bold cyan")
+    row.append(_pad(info.key, widths.key), style="bold cyan")
     row.append(" " * _GUTTER)
     # No explicit colour: forcing "white" is a literal ANSI white that
     # vanishes on a light-background terminal, where unstyled text uses the
     # reader's own foreground and is always legible.
-    row.append(f"{info.geometry:<{widths.geometry}}")
+    row.append(_pad(info.geometry, widths.geometry))
     row.append(" " * _GUTTER)
     for index, (text, style) in enumerate(_needs_tokens(info)):
         if index:
