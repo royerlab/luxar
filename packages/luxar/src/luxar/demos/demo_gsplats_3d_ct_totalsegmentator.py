@@ -87,6 +87,7 @@ from luxar.demos import (
     require_module,
     warn_if_no_cuda_gpu,
 )
+from luxar.demos._lod_policy import save_with_lod
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.utils.paths import get_demos_output_dir
@@ -604,8 +605,17 @@ def fit_atlas(
         labels = sample_labels(label_vol, result.centers)
 
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    result.save(
+    save_with_lod(
+        result,
         CACHE_FIT,
+        # `stream`, not `levels`, even though the atlas is a large orbited
+        # object: this demo does not hand its fit to the scene whole. It masks
+        # `centers`/`amplitudes`/`cholesky_factors` per tissue supergroup and
+        # calls `add_gsplats` with explicit arrays, and that adder writes a flat
+        # leaf — measured, `kind` absent and no child groups — so a substitutive
+        # ladder in the archive would be dropped before it reached the viewer
+        # while still costing the ~38% extra bytes recorded in `_lod_policy`.
+        recipe="stream",
         encoding_mode=EncodingMode.MEMORY,
         include_fitting_info=True,
         compress="zip",

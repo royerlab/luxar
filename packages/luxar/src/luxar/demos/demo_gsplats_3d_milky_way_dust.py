@@ -85,6 +85,7 @@ from luxar.demos import (
     require_module,
     warn_if_no_cuda_gpu,
 )
+from luxar.demos._lod_policy import save_with_lod
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.utils.paths import get_demos_output_dir
@@ -253,8 +254,10 @@ def fit_dust(volume: np.ndarray, acquisition=None) -> GSplatData:
 
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
         aprint(f"Caching fit to {CACHE_FILE.name}")
-        result.save(
+        save_with_lod(
+            result,
             CACHE_FILE,
+            recipe="levels",
             encoding_mode=EncodingMode.MEMORY,
             include_fitting_info=True,
             compress="zip",
@@ -334,6 +337,17 @@ def create_luxar_scene(gsplats_data: GSplatData, output_path: Path) -> Path:
                 # (p99.9) tops out near 0.081, so this holds the faint diffuse
                 # filaments just below clipping — brighter and the dense cores
                 # flatten into featureless white.
+                #
+                # Calibrated on the FINEST level, which is the one this figure
+                # was measured against. With the `levels` topology the gain
+                # lands on the kind=lod wrapper, leaving each level's own gain
+                # at identity, so the viewer folds this window onto each
+                # level's own robust range rather than onto a shared one — and
+                # a coarse level's merged representatives carry the same mass in
+                # fewer splats, so its p99.9 sits higher. Measured on synthetic
+                # fits the spread across four levels runs 1.6x-5.2x depending
+                # on how heavy the amplitude tail is, i.e. the appearance is
+                # level-dependent, not fixed by this number alone.
                 intensity=1.0 / 0.095,
                 layer=True,
             )
