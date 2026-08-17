@@ -18,6 +18,7 @@ level with a printed note.
 
 from __future__ import annotations
 
+import math
 import os
 import time
 from typing import Any, Optional, Sequence
@@ -43,17 +44,26 @@ from luxar.gsplats.tiling import (
     resolve_grid_scale,
 )
 
-#: Ceiling, in GiB, on the memory a merged-quality score may hold resident.
+#: Upper bound, in GiB, on the memory a merged-quality score may hold resident.
 #: Above it the score is SKIPPED — and says so out loud, because an archive that
 #: silently carries no PSNR is the failure this scoring exists to end. Override
 #: with ``LUXAR_TILED_QUALITY_MAX_GB`` when the machine can take more, or set it
-#: to ``0`` to decline scoring outright.
+#: to ``0`` to decline scoring outright. This is a CEILING, not the budget: the
+#: default is additionally held under a share of the memory actually free (see
+#: :func:`_default_quality_budget_gb`), since a fixed number describes whichever
+#: machine it was written on and not the one running the fit.
 _QUALITY_BUDGET_GB = 24.0
 
+#: Share of currently-free physical memory the default budget will commit to a
+#: score. Deliberately well under 1: the peak below is an estimate, the fit
+#: process is holding the merged splats too, and being wrong in this direction
+#: costs a metric while being wrong in the other costs the whole fit.
+_QUALITY_BUDGET_MEM_FRACTION = 0.5
+
 #: Full-size float32 volumes live at the scoring peak, which sits inside SSIM
-#: rather than at the render: the reconstruction and the reference, plus the ~6
+#: rather than at the render: the reconstruction and the reference, plus the
 #: convolution intermediates :func:`luxar.gsplats.metrics._ssim_nd` keeps live
-#: (its ``_SSIM_PEAK_TENSOR_COUNT``, the same count that function's own tiled
+#: (``_SSIM_PEAK_TENSOR_COUNT``, the same count that function's own tiled
 #: fallback is sized by — and that fallback only engages on CUDA, so on CPU this
 #: is the true peak). Counting only the reconstruction and the reference
 #: under-reports it fourfold, and the shortfall does not merely cost a metric:
@@ -62,24 +72,62 @@ _QUALITY_BUDGET_GB = 24.0
 _QUALITY_PEAK_VOLUMES = 8
 
 
+def _available_ram_gb() -> "float | None":
+    """Free physical memory in GiB, or ``None`` where it cannot be measured."""
+    try:
+        pages = os.sysconf("SC_AVPHYS_PAGES")
+        page_size = os.sysconf("SC_PAGE_SIZE")
+    except (AttributeError, OSError, ValueError):  # pragma: no cover - platform
+        return None
+    if pages <= 0 or page_size <= 0:  # pragma: no cover - platform
+        return None
+    return pages * page_size / 1024**3
+
+
+def _default_quality_budget_gb() -> float:
+    """The default budget: the ceiling, held under a share of free memory.
+
+    The ceiling alone is a number about some other machine. Scoring materializes
+    the whole volume — during the fit it is only ever read tile by tile — so on a
+    host smaller than the ceiling the guard would wave through a peak the machine
+    cannot hold, and the OOM kill lands BEFORE the archive is written, losing the
+    finished fit. That is the one outcome this budget exists to prevent, so the
+    default is the smaller of the two. An explicit override still wins outright:
+    the operator knows what the machine can take.
+    """
+    available = _available_ram_gb()
+    if available is None:  # pragma: no cover - platform
+        return _QUALITY_BUDGET_GB
+    return min(_QUALITY_BUDGET_GB, _QUALITY_BUDGET_MEM_FRACTION * available)
+
+
 def _quality_budget_gb() -> float:
-    """Resident-memory ceiling for scoring — the env override, or the default.
+    """Resident-memory budget for scoring — the env override, or the default.
 
     A malformed override falls back to the default with a note rather than
     raising: this runs after every tile has been fitted, so an unparseable
     environment variable must not be what loses a finished fit.
     """
+    default = _default_quality_budget_gb()
     raw = os.environ.get("LUXAR_TILED_QUALITY_MAX_GB")
     if raw is None:
-        return _QUALITY_BUDGET_GB
+        return default
     try:
-        return float(raw)
+        value = float(raw)
     except ValueError:
+        value = math.nan
+    # NaN is the one malformed value that would DISABLE the guard instead of
+    # tripping it: `float("nan")` parses, and every comparison against it is
+    # False, so the over-budget test would silently pass whatever the volume
+    # size. Treated like any other unusable override. `inf` is left alone — it
+    # is a coherent way to say "score it no matter how big".
+    if math.isnan(value):
         aprint(
-            f"⚠️  Ignoring LUXAR_TILED_QUALITY_MAX_GB={raw!r} (not a number) — "
-            f"using the {_QUALITY_BUDGET_GB:g} GiB default"
+            f"⚠️  Ignoring LUXAR_TILED_QUALITY_MAX_GB={raw!r} (not a usable "
+            f"number) — using the {default:g} GiB budget"
         )
-        return _QUALITY_BUDGET_GB
+        return default
+    return value
 
 
 def _to_voxel_frame(merged: GSplatData, scale: Optional[Sequence[float]]) -> GSplatData:
@@ -126,9 +174,14 @@ def _stamp_merged_quality(
     it, so the score is against the acquisition — the same basis
     ``luxar gsplat compare`` uses, and the same one the non-tiled path scores a
     floor-suppressed fit against (its consequences are issue #1173's, not this
-    function's; matching it is what keeps the two paths' numbers comparable). A
-    lazy source is materialized here — during the fit it is only ever read
-    tile-by-tile — which is what the budget below bounds.
+    function's; matching it is what keeps the two paths' numbers comparable).
+    Under ``--denoise`` that parity ends, and not in this path's favor: the tiles
+    reconstruct denoised data while the reference here keeps its noise, so the
+    score is capped by that noise, whereas ``--tiling none`` denoises the whole
+    volume up front and scores against its own smoothed copy. Neither number is
+    wrong, but they are not the same measurement — a gap between them under
+    ``--denoise`` is not a tiling artifact. A lazy source is materialized here — during the fit it
+    is only ever read tile-by-tile — which is what the budget below bounds.
     """
     if merged.n_splats == 0:
         return

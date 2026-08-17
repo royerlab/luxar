@@ -19,8 +19,11 @@ from typing import Any
 import numpy as np
 import pytest
 
+from luxar.gsplats import fit_tiled_gsplats
 from luxar.gsplats.fit_tiled_gsplats import (
+    _QUALITY_BUDGET_GB,
     _QUALITY_PEAK_VOLUMES,
+    _quality_budget_gb,
     fit_tiled,
 )
 
@@ -122,14 +125,72 @@ def test_the_memory_budget_skips_rather_than_thrashes(
 def test_the_peak_estimate_covers_ssims_intermediates() -> None:
     """The budget must count the SSIM peak, not just the two volumes it scores.
 
-    SSIM holds ~6 convolution intermediates live on top of the reconstruction
-    and the reference, and its own tiled fallback only engages on CUDA. Since
-    scoring runs before the archive is written, an under-count is not a missing
-    metric — it is a thrash or an OOM kill that loses the finished fit.
+    SSIM holds several convolution intermediates live on top of the
+    reconstruction and the reference, and its own tiled fallback only engages on
+    CUDA. Since scoring runs before the archive is written, an under-count is not
+    a missing metric — it is a thrash or an OOM kill that loses the finished fit.
     """
     from luxar.gsplats.metrics import _SSIM_PEAK_TENSOR_COUNT
 
     assert _QUALITY_PEAK_VOLUMES >= _SSIM_PEAK_TENSOR_COUNT
+
+
+def test_the_default_budget_is_held_under_the_memory_actually_free(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A ceiling written on one machine must not license a peak on another.
+
+    Scoring materializes the whole volume, and the OOM kill lands before the
+    archive is written — so on a host smaller than the ceiling the budget has to
+    follow the host, not the constant.
+    """
+    monkeypatch.delenv("LUXAR_TILED_QUALITY_MAX_GB", raising=False)
+
+    monkeypatch.setattr(fit_tiled_gsplats, "_available_ram_gb", lambda: 4.0)
+    assert _quality_budget_gb() == pytest.approx(2.0)
+
+    # A machine with room to spare gets the ceiling, not a multiple of its RAM.
+    monkeypatch.setattr(fit_tiled_gsplats, "_available_ram_gb", lambda: 1024.0)
+    assert _quality_budget_gb() == pytest.approx(_QUALITY_BUDGET_GB)
+
+    # Unmeasurable (a platform without SC_AVPHYS_PAGES) falls back to the ceiling
+    # rather than declining to score at all.
+    monkeypatch.setattr(fit_tiled_gsplats, "_available_ram_gb", lambda: None)
+    assert _quality_budget_gb() == pytest.approx(_QUALITY_BUDGET_GB)
+
+
+def test_an_explicit_override_still_wins_over_the_memory_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The operator knows what the machine can take; the cap is for the default."""
+    monkeypatch.setattr(fit_tiled_gsplats, "_available_ram_gb", lambda: 4.0)
+    monkeypatch.setenv("LUXAR_TILED_QUALITY_MAX_GB", "64")
+    assert _quality_budget_gb() == pytest.approx(64.0)
+
+
+def test_a_nan_override_cannot_switch_the_guard_off(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """``NaN`` parses as a float but compares False against everything.
+
+    It is the one malformed override that would DISABLE the budget rather than
+    trip it — every volume would look in-budget — so it has to be refused like
+    any other unusable value, not accepted because ``float()`` took it.
+    """
+    monkeypatch.setattr(fit_tiled_gsplats, "_available_ram_gb", lambda: 1024.0)
+    for raw in ("nan", "NaN", "-nan"):
+        monkeypatch.setenv("LUXAR_TILED_QUALITY_MAX_GB", raw)
+        budget = _quality_budget_gb()
+        assert np.isfinite(budget) and budget == pytest.approx(_QUALITY_BUDGET_GB)
+    assert "LUXAR_TILED_QUALITY_MAX_GB" in capsys.readouterr().out
+
+
+def test_an_infinite_override_is_taken_at_face_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``inf`` is a coherent "score it whatever the size", unlike ``NaN``."""
+    monkeypatch.setenv("LUXAR_TILED_QUALITY_MAX_GB", "inf")
+    assert _quality_budget_gb() == float("inf")
 
 
 def test_an_unparseable_budget_override_does_not_lose_the_fit(
