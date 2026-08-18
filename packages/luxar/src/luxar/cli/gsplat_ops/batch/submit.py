@@ -183,8 +183,8 @@ def run_batch_submit(
         "--cull-retention",
         help="After fitting each tile, remove the weakest splats that "
         "collectively contribute less than (1 - value) of the total amplitude. "
-        "When omitted, each tile uses the per-fit default (0.95 for uniform "
-        "tiles, 0.999 near-lossless for content boxes). Set to 0 to keep every "
+        "When omitted, each tile uses its fitting preset's default, which is "
+        "0.999 (near-lossless) for every preset. Set to 0 to keep every "
         "splat.",
     ),
     # Denoising

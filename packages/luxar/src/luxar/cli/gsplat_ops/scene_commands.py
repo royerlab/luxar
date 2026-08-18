@@ -371,9 +371,12 @@ def reencode_command(
 
     A structure-preserving round-trip: the whole node tree (leaf / additive
     ladder / kind=lod / partition / nested) and its ``fitting`` / ``provenance``
-    / ``pipeline`` groups are carried over verbatim — only the on-disk
-    Cholesky encoding changes. Splat *count* and geometry are unchanged; decode
-    is always to float32, so viewer/GPU/WASM paths are unaffected.
+    / ``pipeline`` groups are carried over verbatim. Structure and splat *count*
+    are unchanged, and decode is always to float32, so viewer/GPU/WASM paths are
+    unaffected — but the Cholesky factors are not the only array re-encoded:
+    ``auto`` and ``memory`` also re-quantize the CENTERS to per-axis uint16
+    fixed-point (float32 only once an axis spans 2**16), so center values are
+    bit-exact only under ``precision``.
 
     Unlike ``migrate-format`` (legacy layout → current, which only exposes
     float32 vs the AUTO uint8-first policy via ``--lossless``), this exposes the
