@@ -407,7 +407,23 @@ export function generateFfmpegScript(opts: FfmpegScriptOptions): string {
         '# The tone map is the viewer’s own curve, written out as an exact',
         '# expression (ffmpeg’s built-in `tonemap` curves are different',
         '# functions — for ACES, `tonemap=hable` measures further from the',
-        '# viewer than applying no tone mapping at all).',
+        '# viewer than applying no tone mapping at all).'
+      );
+    } else {
+      header.push(
+        '# NOTE: AgX has no practical closed form for ffmpeg. The grade',
+        '# above is applied, but the curve itself falls back to a plain',
+        '# clamp — the AgX look is NOT reproduced. For a pixel-exact match',
+        '# to the viewer, record a PNG/WebP sequence instead (those frames',
+        '# are already graded).'
+      );
+    }
+
+    // Every chain except `unknown-grade` runs `geq`, so the cost warning
+    // belongs to all of them — AgX applies exposure/offset/gamma through
+    // the same per-pixel expression and is exactly as slow.
+    if (grade.exact !== 'unknown-grade') {
+      header.push(
         '#',
         '# SLOW: `geq` evaluates that expression per pixel on one CPU core.',
         '# Measured ~2.9 s/frame at 720p, ~7.5 s at 1080p and ~35 s at 4K,',
@@ -420,14 +436,6 @@ export function generateFfmpegScript(opts: FfmpegScriptOptions): string {
         '#   2. Drop the -vf chain here and grade the linear frames in a',
         '#      colour tool (Resolve, Nuke, oiiotool) that does it on the GPU.',
         '#   3. Keep it, and let it run — the output is the reference.'
-      );
-    } else {
-      header.push(
-        '# NOTE: AgX has no practical closed form for ffmpeg. The grade',
-        '# above is applied, but the curve itself falls back to a plain',
-        '# clamp — the AgX look is NOT reproduced. For a pixel-exact match',
-        '# to the viewer, record a PNG/WebP sequence instead (those frames',
-        '# are already graded).'
       );
     }
   }

@@ -126,6 +126,21 @@ describe('generateFfmpegScript', () => {
       expect(script).toContain(marker);
     });
 
+    it('warns about geq cost on the AgX chain too — it runs the same filter', () => {
+      // AgX still applies exposure/offset/gamma and the clamp through geq,
+      // so it is exactly as slow as the exact curve. Only the no-grade
+      // fallback skips geq, and only it should skip the warning.
+      const agx = generateFfmpegScript(
+        opts({ frameExt: 'exr', grade: { toneMapping: 'agx', ...NEUTRAL_GRADE } })
+      );
+      expect(agx).toContain('geq=');
+      expect(agx).toContain('SLOW');
+
+      const unreadable = generateFfmpegScript(opts({ frameExt: 'exr', grade: undefined }));
+      expect(unreadable).not.toContain('geq=');
+      expect(unreadable).not.toContain('SLOW');
+    });
+
     it('says plainly that AgX is not reproduced rather than faking it', () => {
       // Four matrix stages around a log-space polynomial: no practical
       // closed form for geq, and ffmpeg has no AgX curve.
