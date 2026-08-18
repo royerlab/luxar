@@ -598,6 +598,55 @@ class TestChunkBoundsZarrAlignment:
                 f"passing the outer ordering_data instead of its vertex_ordering"
             )
 
+    def test_lines_segments_use_their_own_byte_budget(self) -> None:
+        """``segments`` is sized to its byte budget on the SEGMENT atom grid.
+
+        The segments array has its own ordering grid (``segment_ordering``), and
+        was the last per-element array pinned to exactly one atom — 4,096 uint32
+        pairs = 32 KB against the 64 KB target, so twice the requests it needs.
+        The atom is what the viewer resolves matched segment partitions to row
+        ranges against, so the chunk must stay a whole multiple of it.
+        """
+        from luxar.core.dimensions import Dimension, Dimensions
+
+        n_vertices = 60_000
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path = Path(tmpdir) / "test.luxar.zarr"
+            with LuxarZarrCompiler(zarr_path, enable_spatial_index=True) as compiler:
+                dims = Dimensions(
+                    [
+                        Dimension("x", display=True),
+                        Dimension("y", display=True),
+                        Dimension("z", display=True),
+                    ]
+                )
+                scene = compiler.create_scene(dimensions=dims)
+                rng = np.random.default_rng(7)
+                scene.add_lines(
+                    "lines",
+                    vertices=rng.standard_normal((n_vertices, 3)).astype(np.float32),
+                    widths=rng.random(n_vertices).astype(np.float32) + 0.01,
+                    line_type="segments",
+                )
+
+            g = zarr.open_group(zarr_path, mode="r")["lines"]
+            atom = g.attrs["segment_ordering"]["chunk_size"]
+            assert atom > 0, "segment_ordering chunk_size must be positive"
+
+            c0 = g["segments"].chunks[0]
+            n_rows = g["segments"].shape[0]
+            assert c0 > atom, (
+                f"segments chunks[0]={c0} did not exceed the segment atom "
+                f"{atom} — it is still pinned to one atom (or n_vertices is too "
+                f"small for the byte budget to clear one atom)"
+            )
+            assert c0 % atom == 0, (
+                f"segments chunks[0]={c0} is not a multiple of the segment atom "
+                f"{atom} (nor the full length {n_rows}), so a matched segment "
+                f"partition's row range can straddle a zarr chunk"
+            )
+
     # -- No spatial index (regression guard) ---------------------------------
 
     def test_no_spatial_index_still_works(self) -> None:

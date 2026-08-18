@@ -169,48 +169,7 @@ Z_MAX = 4.0
 # Display / LOD parameters.
 POINT_RADIUS = 1.2  # Mpc (visualization scale)
 SCENE_INTENSITY = 0.05
-# Explicit `coverage_fractions` rather than the derived ladder. The derived
-# thresholds came out [0, 0.125, 0.354, 1.0] on the legacy `coverage` selector,
-# whose metric is the projected bbox diagonal as a fraction of the viewport
-# diagonal — so it is ~1.0 at the default fill-to-screen framing. That put the
-# FINEST level (9.75M points) on screen at the opening shot and meant the three
-# cheap levels (19K / 152K / 1.22M) were never what anyone actually saw: a cold
-# load fetched the whole 9.75M-point level before first paint.
-#
-# Re-spaced by 4x per level instead, anchored so the finest needs a genuine 4x
-# zoom past the default framing:
-#
-#     level      elements   threshold
-#     child_0      19,014       0.00     (always valid, zoomed out)
-#     child_1     152,267       0.25
-#     child_2   1,218,970       1.00     <- the opening shot
-#     child_3   9,751,955       4.00     <- only once zoomed in 4x
-#
-# 4.0 is MAX_COVERAGE_FRACTION, this selector's ceiling, so the finest level is
-# pinned as late as the legacy metric can express.
-#
-# MEASURED CAVEAT — this does NOT fix first paint for THIS scene, and the reason
-# is worth recording. The `coverage` metric is `diagonalPx / (fittedAxisPx *
-# FILL_FACTOR)`, documented as landing in 1.25-2.43 at the opening framing for
-# the shapes in the selector's test matrix. DESI is a redshift CONE — very deep
-# along the view axis — and the registry's own notes flag that the large-depth
-# branch is only approximately invariant. Its opening-framing metric comes out
-# ABOVE 4.0, so the finest level is selected immediately regardless of these
-# numbers: a cold load still fetched all 9.75M points (31.7 MB, verified
-# unchanged before and after this edit).
-#
-# The thresholds are still correct-by-intent and do defer upgrades at other
-# framings/aspects, so they stay. But making the opening shot land on the 1.22M
-# level needs the ladder re-authored under the newer `screen-area` selector
-# (literal screen-area fraction, finest anchored at 0.5) or an `overview` recipe,
-# which deliberately does not show full detail at a full-frame view. That is a
-# re-cut of the ladder, not a re-numbering of it.
-LOD = dict(
-    compression_factor=8,
-    levels=3,
-    device="auto",
-    coverage_fractions=[0.0, 0.25, 1.0, 4.0],
-)
+LOD = dict(compression_factor=8, levels=3, device="auto")
 
 # Streaming ladder for every LOD level. The composed default sizes the first
 # chunk from a generic bandwidth budget; at 9.75M points this scene is large

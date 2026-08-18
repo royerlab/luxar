@@ -50,6 +50,13 @@ reader and the viewer loader alike, so a shared row count buys nothing. On a
 200 K-splat 3D leaf the pair drops from 172 chunks to 86, a third of the leaf's
 total requests.
 
+Lines' `segments` gets the same treatment against its OWN grid. It is the one
+array whose atom is the `segment_ordering` chunk_size rather than the vertex one,
+and it was bypassing the shared chunk calculator with a hardcoded one-atom shape —
+4,096 uint32 pairs, 32 KB against the 64 KB target, so twice the requests it needs.
+It now goes through the same calculator with the segment atom, which is the grid
+the viewer resolves matched segment partitions to row ranges against.
+
 What is no longer true is that a chunk-index range maps to *exactly* one zarr
 chunk — it now falls *inside* one, which is what Points has done since #1142. The
 atom grid still subdivides the chunk grid (`_atom_aligned_rows` rounds DOWN to an
