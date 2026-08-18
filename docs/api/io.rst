@@ -145,3 +145,37 @@ dataset without loading the pixel data.
    :members:
    :undoc-members:
    :show-inheritance:
+
+Chunk-Layout Optimisation
+-------------------------
+
+Re-chunk an existing store for streaming in one structure-preserving pass —
+values, codecs, attributes, the spatial-index grid and the zarr format version
+all survive; only zarr chunk shapes change. Backs the ``luxar optimise`` command
+and the ``luxar info --stats`` chunk diagnostic.
+
+.. automodule:: luxar.io.optimise
+   :no-members:
+
+.. autofunction:: luxar.io.optimise.optimise_store
+
+.. autofunction:: luxar.io.optimise.plan_optimisation
+
+.. autofunction:: luxar.io.optimise.summarise_chunk_layout
+
+.. autofunction:: luxar.io.optimise.resolve_target_bytes
+
+.. autoclass:: luxar.io.optimise.OptimisePlan
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. autoclass:: luxar.io.optimise.ArrayPlan
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. autoclass:: luxar.io.optimise.ChunkLayoutSummary
+   :members:
+   :undoc-members:
+   :show-inheritance:

@@ -41,6 +41,7 @@ from .network_simulation import (
     has_network_simulation,
     print_network_params,
 )
+from .optimise_command import register_optimise_command
 from .serving import (
     DirectoryListingStaticFiles,
     _add_cors,
@@ -130,6 +131,9 @@ app.add_typer(app_demo, name="demo")
 
 # Register the `info` inspection command (defined in info_command.py).
 register_info_command(app)
+
+# Register the `optimise` re-chunking command (defined in optimise_command.py).
+register_optimise_command(app)
 
 
 def _start_data_server_thread(

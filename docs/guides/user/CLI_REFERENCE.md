@@ -36,6 +36,7 @@ invented flag fails too, not just a stale command path.
 
 ```bash
 luxar info      # Dataset structure, dimensions, and compression statistics (--stats, --format json)
+luxar optimise  # Re-chunk an existing store for streaming; values stay bit-identical
 luxar serve     # Serve a .luxar.zarr over HTTP, optionally with the viewer (--viewer, --open)
 luxar viewer    # Serve the Luxar viewer, optionally with a dataset (--data)
 luxar export    # Export a scene + viewer as a standalone offline folder (or --native bundle)
@@ -46,6 +47,52 @@ luxar profiles  # List the network-simulation profiles usable via --profile
 - Offline / native export (and the `make build-launchers` prerequisite) →
   [Build system guide](../developer/BUILD_SYSTEM_SPEC.md)
 - Network profiles → [Network simulation spec](../developer/NETWORK_SIMULATION_SPEC.md)
+
+## `luxar optimise`
+
+Re-chunk a store that already exists so it streams well, in one
+structure-preserving pass. No refit, no source volume, no GPU: only zarr chunk
+shapes change, and array values stay bit-identical.
+
+```bash
+luxar optimise                    # Re-chunk SOURCE into OUTPUT at the 64 KB default
+luxar optimise --dry-run          # Report the plan and write nothing (omit OUTPUT)
+luxar optimise --target-kb 128    # Set the chunk budget directly
+luxar optimise --profile hosting  # Preset budget: hosting / local / archive
+luxar optimise --verify           # Re-read the output and compare every array
+luxar optimise --overwrite        # Replace an existing OUTPUT store
+luxar optimise --generic          # Allow a plain (non-Luxar) zarr store
+```
+
+It takes a source store and, unless `--dry-run` is given, a destination store —
+a compiled `.luxar.zarr` scene, a standalone `.gsplats.zarr` tree, or (with
+`--generic`) any zarr store at all.
+
+Most already-generated datasets are chunked far below the 64 KB target — the
+bundled demo corpus averages 5.1 KB per file, with 97% of files under 16 KB —
+and a cold load over object storage is dominated by round trips, not bytes.
+Re-chunking one demo to 64 KB cut a 245 s / 9,390-request cold load to 51 s /
+2,348 requests.
+
+Pick the budget with exactly one of `--target-kb`, `--target-bytes` or
+`--profile`. The profiles are **hosting** (256 KB — fewest round trips over
+object storage), **local** (64 KB — the authoring default) and **archive**
+(1 MB — not for streaming; minimises file count). `--dry-run` reports the plan
+and writes nothing, so the output argument must be omitted. `--verify` re-reads
+the written store and compares every array byte for byte. `--generic` allows a
+plain zarr store that is not a Luxar scene or a `.gsplats.zarr` tree.
+
+dtype, codecs, `fill_value`, memory order, every attribute and the on-disk zarr
+format version are all preserved, and the spatial-index grid is never moved: each
+new chunk is a whole multiple of its node's `chunk_size` atom. Nothing is chunked
+smaller than it already is, so running the command twice is a no-op.
+
+The output gets a fresh `content_hash` and a `chunk_layout` root attribute,
+because chunk keys now cover different rows and a warm viewer cache validating
+on an unchanged hash would serve stale chunks. For the same reason, replacing an
+existing output requires `--overwrite` and rewriting in place is refused —
+republishing under a new URL prefix is the safe move. Run `luxar info` with its
+detailed-statistics flag to see a store's chunk layout before and after.
 
 ## `luxar demo`
 

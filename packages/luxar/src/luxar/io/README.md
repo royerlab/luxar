@@ -210,6 +210,50 @@ This ensures:
 
 `ZarrWriterProtocol` defines the interface for Zarr writers, enabling different implementations while maintaining API consistency.
 
+### Re-chunking an existing store (`optimise.py`)
+
+`luxar.io.optimise` re-chunks a store that is **already on disk**, in one
+structure-preserving pass — no refit, no source volume, no GPU. It backs the
+`luxar optimise` CLI command and the `luxar info --stats` chunk diagnostic.
+
+```python
+from luxar.io.optimise import optimise_store, plan_optimisation, summarise_chunk_layout
+
+plan = optimise_store("scene.luxar.zarr", "out.luxar.zarr", target_bytes=65_536,
+                      verify=True)
+print(plan.source_n_chunks, "→", plan.target_n_chunks)
+```
+
+- `plan_optimisation(root, target_bytes=…)` → `OptimisePlan` — what would change,
+  per array, without writing. Each `ArrayPlan` carries the source/target chunk
+  shape, the resolved spatial atom, and a `skip_reason` when the array is left
+  alone.
+- `optimise_store(src, dst, …)` — does it. `verify=True` re-reads the output and
+  compares every array byte for byte.
+- `summarise_chunk_layout(root)` → `ChunkLayoutSummary` — average chunk bytes,
+  arrays under the 16 KB floor, and the chunk-file count a full load fetches.
+- `resolve_target_bytes(target_bytes=…, target_kb=…, profile=…)` — the three
+  mutually exclusive size flags, and `CHUNK_PROFILES` (`hosting` 256 KB,
+  `local` 64 KB, `archive` 1 MB).
+
+**What must not move.** `chunk_size` / `chunk_bounds` are the viewer's partition
+grid: every emitted chunk is a whole multiple of the node's atom (rounded down
+from the byte budget, never below one atom), so a row-range read never straddles
+a boundary. Lines' two atoms — `vertex_ordering.chunk_size` for the per-vertex
+arrays, `segment_ordering.chunk_size` for `segments` — are resolved separately,
+and the bounds arrays themselves are never re-chunked. A `chunk_size` attr is
+only trusted when the matching bounds array exists or the arrays already follow
+it, because a gsplat leaf written with `ordering="none"` still gets a vestigial
+one stamped. `array_ref` placeholders (`(0, D)`), `(1,)`/`(1, k)` broadcasts and
+sharded arrays are copied verbatim; nothing is chunked smaller than it already
+is; and the copy walks chunk-aligned slabs rather than reading an array whole.
+
+**Cache invalidation.** `compute_content_hashes` hashes values and attrs, not
+chunk shapes, while the viewer validates its persistent cache on `content_hash`
+— so a re-chunk with an unchanged hash lets a warm client serve chunks whose
+keys have moved. The output therefore gets both a `chunk_layout` root attr and
+recomputed content hashes.
+
 ### Input Volume Loading
 
 `luxar.io.volume` and `luxar.io.ome_zarr` load arbitrary input volumes (the
