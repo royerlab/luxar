@@ -130,6 +130,56 @@ function describeLastProbeError(error: unknown): string {
 }
 
 /**
+ * Compose the two end-of-budget reports of a split give-up loop (#1726): the
+ * THROW for "no probe ever answered" and the WARN for "a probe answered but the
+ * condition never settled". `waitForSpatialQuery` and
+ * `waitForNavigationComplete` differ only in their names and nouns, so they
+ * share this one composer and a single grep still finds every carried-failure
+ * report.
+ *
+ * Both reports state the measured elapsed time next to the nominal budget — the
+ * probes are not clamped to the loop's budget (see `waitForPointsLoaded`), so a
+ * single one can overrun it several times over — and the probe counts next to
+ * that, since the carried diagnostic is only ever the LAST one and a window in
+ * which nearly every probe failed would otherwise read as a clean "answered but
+ * never settled".
+ *
+ * `subject` is what was never observed, for the throw ("navigation"); `unsettled`
+ * the condition that never held, for the warn; `unusable` the probes that either
+ * rejected or answered with state the condition could not be read off; and
+ * `warnNote` an extra clause for the warn only, placed chronologically before the
+ * carried probe failure.
+ */
+function composeGiveUpReports(report: {
+  helper: string;
+  subject: string;
+  unsettled: string;
+  timeout: number;
+  elapsed: number;
+  probes: number;
+  unusable: number;
+  lastProbeError: unknown;
+  warnNote?: string;
+}): { failure: string; warning: string } {
+  const counts =
+    `${report.timeout}ms budget, ${report.elapsed}ms actually elapsed, ` +
+    `${report.probes} probe(s) attempted, ${report.unusable} of them yielded no usable state`;
+  const carried = describeLastProbeError(report.lastProbeError);
+
+  return {
+    failure:
+      `${report.helper}: no state probe answered during its poll window (${counts}), so ` +
+      `${report.subject} was never observed either way and whatever this test asserts next ` +
+      `reads unconfirmed state (see issue #1726)${carried}`,
+    warning:
+      `[⚠️] [E2E ${report.helper}] the page answered but ${report.unsettled} ` +
+      `(${counts}); returning anyway` +
+      (report.warnNote ? `. ${report.warnNote}` : '') +
+      carried,
+  };
+}
+
+/**
  * Wait for points to be loaded
  * Now includes debug interface readiness check
  */
@@ -350,31 +400,80 @@ export async function waitForDimensionSelected(
 /**
  * Wait for spatial index query to complete.
  *
- * **Silent on timeout** — returns normally even if the condition was
- * never reached. Use when the query completing fast is a *bonus*, not
- * a precondition. For tests that genuinely depend on the query
- * having finished, use {@link waitForSpatialQueryOrThrow} instead.
+ * **Silent only on the tolerated case.** The give-up is now split in two
+ * (#1726):
+ *
+ * - A probe ANSWERED but the query never settled within `timeout` — the case
+ *   the old "timeout not an error" comment was really about: returns normally,
+ *   after one `console.warn` saying the condition was never observed.
+ * - Every probe FAILED, so none ever answered — the helper read no viewer state
+ *   at all and the caller's next assertions would read state nothing has
+ *   confirmed. It THROWS, with the last probe failure carried into the message.
+ *   Reachable today through a rejecting probe: no `__luxarDebug`, or a destroyed
+ *   execution context.
+ *
+ * A NON-POSITIVE `timeout` never enters the loop, so it probes zero times and the
+ * report says so.
+ *
+ * See {@link waitForNavigationComplete} for what the split buys, and
+ * `waitForPointsLoaded` for why the probes are not clamped to this loop's budget
+ * — which is why both reports state the measured elapsed time and the probe
+ * counts next to the nominal budget (see `composeGiveUpReports` above — a plain
+ * code reference, not an `@link`, because it is module-private and TypeDoc
+ * warns on a link it resolves but cannot document).
+ *
+ * Use when the query completing fast is a *bonus*, not a precondition. For
+ * tests that genuinely depend on the query having finished, use
+ * {@link waitForSpatialQueryOrThrow} instead.
+ *
+ * Unit-tested in `src/tests/unit/tests/e2e-helpers-silent-waits.test.ts`.
  */
 export async function waitForSpatialQuery(page: Page, timeout = 8000): Promise<void> {
   const startTime = Date.now();
+  let answered = false;
+  let probes = 0;
+  let unusable = 0;
+  let lastProbeError: unknown;
 
   while (Date.now() - startTime < timeout) {
+    probes += 1;
     try {
       // Check if a query completed by looking for stable state.
       const state = await getLuxarState(page);
+      // Any resolved value means the page answered. A `null` answer trips the
+      // condition below into the `catch`, which counts it among the probes that
+      // yielded no usable state.
+      answered = true;
+      lastProbeError = undefined;
 
       // If we have a stable point count and not loading, query is done
       if (!state.isLoading && state.totalPoints >= 0) {
         return;
       }
-    } catch {
+    } catch (error) {
       // State not ready yet
+      unusable += 1;
+      lastProbeError = error;
     }
 
     await page.waitForTimeout(100);
   }
 
-  // Timeout not an error - query might have completed
+  const { failure, warning } = composeGiveUpReports({
+    helper: 'waitForSpatialQuery',
+    subject: 'the spatial query',
+    unsettled: 'the query never settled — isLoading stayed true, or totalPoints was absent',
+    timeout,
+    elapsed: Date.now() - startTime,
+    probes,
+    unusable,
+    lastProbeError,
+  });
+
+  if (!answered) throw new Error(failure);
+
+  // Answered, never settled — the tolerated case, reported rather than silent.
+  console.warn(warning);
 }
 
 /**
@@ -706,20 +805,83 @@ export async function waitForDimensionSystemReady(page: Page, timeout = 10000): 
  * this silent variant. Waiting for `true` first would hang in the second case.
  *
  * The only preliminary wait is for the flag to EXIST (`typeof isLoading ===
- * 'boolean'`), i.e. for the debug interface to be installed; if that never
- * happens the helper sleeps 300 ms and returns.
+ * 'boolean'`), i.e. for the debug interface to be installed. That wait failing
+ * no longer returns on its own (#1726): it FALLS THROUGH into the poll loop below,
+ * so the one end-of-budget decision governs. Its old comment claimed the failure
+ * meant "navigation completed before we start polling", which does not actually
+ * explain a missing `isLoading` — the flag
+ * exists whenever the debug interface does (`getState()` always returns a real
+ * boolean, see `core/app/debug/debug-state.ts`) — so returning there returned on
+ * nothing. Falling through gives the state probe a chance to answer, or to
+ * produce a diagnostic of its own. The preliminary failure is still worth
+ * REPORTING — "the flag was unreadable for the first N ms" is exactly what explains
+ * a 15 s budget that never saw `isLoading` clear — so its duration
+ * (deterministically the clamped preliminary budget) is interpolated into the
+ * answered-but-unsettled warn. It is NOT a probe failure: it stays out of the probe
+ * counts, and out of the throw, where the carried probe rejection is both fresher
+ * and the better headline.
  *
- * **Silent on timeout** — returns normally even if `isLoading` never
- * cleared. Use {@link waitForNavigationCompleteOrThrow} for tests
- * that depend on navigation actually finishing.
+ * **Silent only on the tolerated case.** The give-up is split in two:
+ *
+ * - A probe ANSWERED but `isLoading` never cleared within `timeout`: returns
+ *   normally, after one `console.warn` naming the helper, how many probes went out
+ *   and how many yielded no usable state, and the preliminary failure if there was
+ *   one. This is what the nine call sites rely on — several deliberately pick this
+ *   variant because their action never toggles `isLoading` at all, and they succeed
+ *   on the first probe.
+ * - Every probe FAILED, so none ever answered: THROWS, carrying the last probe
+ *   failure and the same counts. The helper read no viewer state, so returning
+ *   would let the caller assert on state nothing has confirmed.
+ *
+ * The gain is ATTRIBUTION, not a rescued pass: at all nine call sites the
+ * statement following the wait is itself a page probe (`getLuxarState`, a bare
+ * `page.evaluate`, or `getDimensionValue`, which answers `-1` and then fails its
+ * own `expect`), so the old silence already surfaced as a CONFUSING FAILURE one
+ * statement later — never as a pass. What changes is the name on it, and only when
+ * the decision is reached at all: the fall-through can take a starved page ~55 s
+ * past the start of the wait, which at the three sites whose next statement is an
+ * unbounded `page.evaluate` usually lands beyond the 60 s per-test `timeout` in
+ * `playwright.config.ts` — and beyond it at the six bounded
+ * `spatial-index-accuracy.spec.ts` sites too, since the spec has already spent
+ * seconds reaching the wait. At those six the THROW is additionally
+ * near-unreachable: they sit right after a `waitForSpatialQueryOrThrow`, which
+ * cannot itself have succeeded unless the page answered within the last 8 s, so
+ * what they get from this is the attributed warn. Closing the vacuous pass is
+ * therefore about the CONTRACT, for a future caller that does not happen to
+ * re-probe straight afterwards. What is closed is a swallowed probe FAILURE, not a
+ * swallowed timeout; see `waitForPointsLoaded` for why the probes here are not
+ * clamped to the loop's budget.
+ *
+ * Use {@link waitForNavigationCompleteOrThrow} for tests that depend on
+ * navigation actually finishing.
+ *
+ * Unit-tested in `src/tests/unit/tests/e2e-helpers-silent-waits.test.ts`.
  *
  * @param page - Playwright page
- * @param timeout - Maximum wait time in ms
+ * @param timeout - Poll budget in ms, not a hard ceiling on the call. The
+ *   preliminary wait above consumes at most `max(1, min(timeout, 10000))` of it —
+ *   floored at 1 ms because Playwright reads `timeout: 0` as NO timeout, so a
+ *   non-positive budget would otherwise wait there for the whole test — and the
+ *   `do`/`while` below then always runs at least one probe, bounded by its own 45 s
+ *   deadline rather than by this budget, so a call can overrun `timeout` by a whole
+ *   probe (both end-of-budget reports state the measured elapsed time alongside
+ *   this budget for exactly that reason). Probing at least once matters because the
+ *   preliminary wait can spend the whole budget on its own, and reporting "no probe
+ *   answered" without having probed would be a false diagnostic.
  */
 export async function waitForNavigationComplete(page: Page, timeout = 15000): Promise<void> {
   const startTime = Date.now();
+  let answered = false;
+  let probes = 0;
+  let unusable = 0;
+  let lastProbeError: unknown;
+  let preliminaryFailure: string | undefined;
 
-  // First, wait for loading state to be available (may already be done)
+  // First, wait for loading state to be available (may already be done).
+  // Floored at 1 ms: Playwright reads `timeout: 0` as NO timeout, so a
+  // non-positive `timeout` here would hand the preliminary wait the whole test
+  // budget — the opposite of the `min(timeout, 10000)` ceiling this line is for.
+  const preliminaryTimeout = Math.max(1, Math.min(timeout, 10000));
   try {
     await page.waitForFunction(
       () => {
@@ -727,31 +889,53 @@ export async function waitForNavigationComplete(page: Page, timeout = 15000): Pr
         return debug && debug.getState && typeof debug.getState().isLoading === 'boolean';
       },
       null,
-      { timeout: Math.min(timeout, 10000) }
+      { timeout: preliminaryTimeout }
     );
   } catch {
-    // If isLoading state never becomes available, just wait a moment and return.
-    // This can happen if navigation completes before we start polling.
-    await page.waitForTimeout(300);
-    return;
+    // The flag never became readable. Fall through to the poll loop rather than
+    // returning on an unread page, but record how long it cost.
+    preliminaryFailure =
+      'The preliminary wait never saw a readable isLoading flag ' +
+      `(the first ${Date.now() - startTime}ms of this call)`;
   }
 
-  // Then wait for loading to complete
-  while (Date.now() - startTime < timeout) {
+  // Then wait for loading to complete.
+  do {
+    probes += 1;
     try {
       const state = await getLuxarState(page);
+      // Any resolved value counts as an answer; see `waitForSpatialQuery`.
+      answered = true;
+      lastProbeError = undefined;
       if (!state.isLoading) {
         await page.waitForTimeout(100);
         return;
       }
-    } catch {
+    } catch (error) {
       // State may briefly be unavailable during navigation
+      unusable += 1;
+      lastProbeError = error;
     }
 
     await page.waitForTimeout(100);
-  }
+  } while (Date.now() - startTime < timeout);
 
-  // Timeout is not an error - loading may have completed
+  const { failure, warning } = composeGiveUpReports({
+    helper: 'waitForNavigationComplete',
+    subject: 'navigation',
+    unsettled: 'isLoading never cleared',
+    timeout,
+    elapsed: Date.now() - startTime,
+    probes,
+    unusable,
+    lastProbeError,
+    warnNote: preliminaryFailure,
+  });
+
+  if (!answered) throw new Error(failure);
+
+  // Answered, never cleared — the tolerated case, reported rather than silent.
+  console.warn(warning);
 }
 
 /**
@@ -1177,6 +1361,42 @@ export async function waitForCacheStable(
  * predicate against the union. Use for "wait until at least one error of type
  * X appears" patterns. For the inverse ("there should be no errors"), use
  * `waitForRenderStable` then a single `getWebGLErrors` read.
+ *
+ * Each read is bounded by whatever is left of `timeout`, no FURTHER read is
+ * dispatched into a remainder smaller than one `pollMs`, and a read that consumed
+ * the whole remainder is not followed by one more `pollMs` sleep past the deadline
+ * (#1726). `getWebGLErrors`
+ * is a bare `page.evaluate`, which has no timeout of its own, so the FIRST
+ * unanswered read used to blow straight through this budget to the whole test's.
+ * The helper does not throw on GIVE-UP — it returns data, and an empty result is a
+ * legitimate one — and a give-up emits one `console.warn` saying whether any read
+ * answered at all, so an unsatisfied predicate cannot be mistaken for "the page
+ * was healthy and produced no such error". It is not throw-free, though: a read
+ * that REJECTS propagates (a closed page, a destroyed execution context, an
+ * in-page throw out of `getWebGLErrors`), as does the trailing
+ * `page.waitForTimeout` on a page that goes away mid-poll.
+ *
+ * Enforcing the budget has a cost worth stating plainly: `getWebGLErrors` DRAINS
+ * the GL queue in-page, so an answer arriving after the deadline is discarded
+ * along with whatever real errors it already cleared, and a later read in the
+ * same spec then sees a clean queue. That is what a budget means for a helper
+ * that returns data; the proper fix is bounding `getWebGLErrors` itself — the
+ * same treatment #1651 gave `getLuxarState` and `getConsoleMessages` — which
+ * reaches 21 direct call sites across 11 spec files and is left out of scope
+ * here rather than tracked anywhere, #1651 being closed. Not dispatching a
+ * FURTHER read into a sliver of
+ * budget it cannot answer within keeps the tail case out of that trap; the FIRST
+ * read is exempt from that skip, so any POSITIVE budget — however short — still
+ * gets one tightly-bounded read, rather than returning `[]` without having read the
+ * GL queue even once, which would be the very silence this helper's warn exists to
+ * prevent. That exemption is also the one case where the call can outlast its
+ * budget: with `timeout` under `pollMs` the first read may answer early and is then
+ * followed by a full `pollMs` before the loop guard re-checks, so a 50 ms budget can
+ * report ~100 ms. A NON-POSITIVE `timeout` gets zero reads: the loop guard fails on
+ * entry, and the warn then says nothing was checked, which is exactly true.
+ * Documented rather than special-cased, since no caller asks for a zero budget.
+ *
+ * Unit-tested in `src/tests/unit/tests/e2e-helpers-silent-waits.test.ts`.
  */
 export async function waitForWebGLError(
   page: Page,
@@ -1185,16 +1405,53 @@ export async function waitForWebGLError(
 ): Promise<string[]> {
   const timeout = options.timeout ?? 5000;
   const pollMs = options.pollMs ?? 100;
-  const deadline = Date.now() + timeout;
+  const startTime = Date.now();
+  const deadline = startTime + timeout;
   const accumulated: string[] = [];
+  let answered = false;
+  let reads = 0;
 
   while (Date.now() < deadline) {
-    const errs = await getWebGLErrors(page);
-    accumulated.push(...errs);
-    if (predicate(accumulated)) return accumulated;
+    // Once one read has gone out, never dispatch another into a remainder shorter
+    // than one poll interval: it would drain the GL queue in-page and then have
+    // its answer discarded for missing the deadline, taking the real errors with
+    // it. The FIRST read is exempt — a `timeout` below `pollMs` would otherwise
+    // return `[]` having checked nothing at all, which is strictly worse than one
+    // tightly-bounded read.
+    const remaining = deadline - Date.now();
+    if (reads > 0 && remaining < pollMs) break;
+
+    // The sentinel is a FRESH Node-allocated array compared by identity, never a
+    // value: an EMPTY list is a real answer here (a page with a clean GL queue
+    // returns one on nearly every poll), so nothing about a returned array's
+    // contents could stand for a missed deadline — see `raceEvaluate`.
+    const readTimedOut: string[] = [];
+    reads += 1;
+    const errs = await raceEvaluate<string[]>(getWebGLErrors(page), remaining, readTimedOut);
+
+    // An unanswered read contributes nothing: the loop must not read a missed
+    // deadline as a clean GL queue.
+    if (errs !== readTimedOut) {
+      answered = true;
+      accumulated.push(...errs);
+      if (predicate(accumulated)) return accumulated;
+    }
+
+    // A read that consumed the whole remainder must not be followed by one more
+    // `pollMs`, which would make a 1000 ms budget report 1100 ms elapsed in the
+    // warn below.
+    if (Date.now() >= deadline) break;
     await page.waitForTimeout(pollMs);
   }
 
+  console.warn(
+    `[⚠️] [E2E waitForWebGLError] the predicate was never satisfied within its ${timeout}ms ` +
+      `budget (${Date.now() - startTime}ms actually elapsed, ${accumulated.length} ` +
+      'error(s) accumulated); ' +
+      (answered
+        ? 'the page did answer the GL-error reads, so this looks like a genuine absence'
+        : 'no GL-error read was answered within the budget, so nothing was actually checked')
+  );
   return accumulated;
 }
 
