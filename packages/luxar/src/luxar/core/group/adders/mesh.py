@@ -1184,7 +1184,7 @@ def add_mesh_substitutive_lod_wrapper_impl(
     """
     from ....io._compiler.geometry_writers.mesh import validate_mesh_arrays
     from ....mesh.decimate import decimate_cluster
-    from ..lod.group import derive_coverage_fractions, resolve_coarsen_dims
+    from ..lod.group import resolve_coarsen_dims, resolve_lod_ladder
 
     # Fail-fast pre-write gate, part two: the ARRAYS, run BEFORE any decimation
     # and before `add_lod_group` creates the group. The adder already ran the
@@ -1336,35 +1336,26 @@ def add_mesh_substitutive_lod_wrapper_impl(
 
     counts = [int(c.vertices.shape[0]) for c in coarse] + [n_vertices]
     parent_node = parent or group
-    explicit = spec.get("coverage_fractions")
-    if explicit is not None:
-        if len(explicit) != len(counts):
-            raise ValueError(
-                f"coverage_fractions has {len(explicit)} entries but the LOD ladder "
-                f"has {len(counts)} levels ({len(coarse)} decimated + 1 original). "
-                "Levels that could not reduce the surface are dropped, so the ladder "
-                "can be shorter than the requested `levels`."
-            )
-        coverage_vals = list(explicit)
-        # Explicit lists keep the legacy diagonal-metric units they were
-        # authored in (selector="coverage", the add_lod_group default).
-        lod_selector = "coverage"
-    else:
-        # Screen-area fractions by occupancy halving (finest holds while the
-        # node occupies at least half the screen; one level coarser per halving
-        # of occupied area). Independent of vertex-count ratios, and stamped
-        # selector="screen-area" so the viewer reads the thresholds in the
-        # units they were derived in.
-        #
-        # The ANCHOR is chosen from the insertion point: ``add_mesh`` rejects
-        # ``partition=`` together with ``substitutive_lod=``, so a caller who wants
-        # per-tile mesh ladders MUST hand-build the ``kind=partition`` wrapper and
-        # call this once per part — and such a per-tile ladder needs the
-        # fills-screen anchor. ``derive_coverage_fractions`` detects that ancestor
-        # automatically and logs the choice; an explicit ``coverage_fractions=[...]``
-        # still wins (the branch above).
-        coverage_vals = derive_coverage_fractions(counts, parent_node, name=name)
-        lod_selector = "screen-area"
+    # Thresholds AND the selector naming their units, from the one shared rule
+    # (``lod.group.resolve_lod_ladder``): an explicit ``coverage_fractions=[...]``
+    # is used verbatim under the legacy units it was authored in, otherwise the
+    # screen-area halving ladder is derived — re-anchored at fills-screen when the
+    # insertion point is partition-bound. ``add_mesh`` rejects ``partition=``
+    # together with ``substitutive_lod=``, so a caller who wants per-tile mesh
+    # ladders MUST hand-build the ``kind=partition`` wrapper and call this once per
+    # part, which is how that anchor is reached here.
+    coverage_vals, lod_selector = resolve_lod_ladder(
+        spec.get("coverage_fractions"),
+        counts,
+        parent_node,
+        name=name,
+        length_error=lambda n_explicit, n_levels: (
+            f"coverage_fractions has {n_explicit} entries but the LOD ladder "
+            f"has {n_levels} levels ({len(coarse)} decimated + 1 original). "
+            "Levels that could not reduce the surface are dropped, so the ladder "
+            "can be shorter than the requested `levels`."
+        ),
+    )
 
     lod_attrs = {k: v for k, v in attrs.items() if k in COMPOSITING_ATTRS}
     child_attrs = {k: v for k, v in attrs.items() if k not in COMPOSITING_ATTRS}

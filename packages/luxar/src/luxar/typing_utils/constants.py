@@ -72,6 +72,10 @@ DEFAULT_LINE_JOIN: Final[str] = "miter"
 LOD_SELECTORS: Final[frozenset[str]] = frozenset({"coverage", "screen-area"})
 # The selector every derived (auto-computed) ladder stamps.
 DERIVED_LOD_SELECTOR: Final[str] = "screen-area"
+# The UNITS an explicitly authored `coverage_fractions=[...]` list is in — the
+# legacy diagonal metric, whose values were tuned against it — and the
+# `add_lod_group` default (a hand-built ladder is authored, not derived).
+LEGACY_LOD_SELECTOR: Final[str] = "coverage"
 
 # Absorption (kappa) — the volumetric blending mode's per-node coefficient.
 # Multiplicative composition, identity 1.0; no upper bound (physical

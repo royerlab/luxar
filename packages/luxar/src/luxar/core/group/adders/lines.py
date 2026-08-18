@@ -1012,9 +1012,9 @@ def add_lines_substitutive_lod_wrapper_impl(
     from ....gsplats.lift import coarse_substitutive_levels, lift_lines_to_gsplats
     from ..lod.group import (
         compose_additive_under_substitutive,
-        derive_coverage_fractions,
         gsplat_additive_lod_from,
         level_additive_lod,
+        resolve_lod_ladder,
     )
     from ..lod.lines import resolve_additive_axis_lines
 
@@ -1158,35 +1158,26 @@ def add_lines_substitutive_lod_wrapper_impl(
     # a different, much smaller scale and would collapse the top thresholds).
     counts = [int(c.n_splats) for c in coarse_first] + [int(lifted.n_splats)]
     parent_node = parent or group
-    explicit = spec.get("coverage_fractions")
-    if explicit is not None:
-        if len(explicit) != len(counts):
-            raise ValueError(
-                f"coverage_fractions has {len(explicit)} entries but the LOD ladder "
-                f"has {len(counts)} levels ({len(coarse_first)} gsplat + 1 lines)"
-            )
-        coverage_vals = list(explicit)
-        # Explicit lists keep the legacy diagonal-metric units they were
-        # authored in (selector="coverage", the add_lod_group default).
-        lod_selector = "coverage"
-    else:
-        # Screen-area fractions by occupancy halving (finest holds while the
-        # node occupies at least half the screen; one level coarser per halving
-        # of occupied area). Count-independent — no per-level radius or
-        # world-extent needed — and stamped selector="screen-area" so the
-        # viewer reads the thresholds in the units they were derived in.
-        #
-        # The ANCHOR is chosen from the insertion point: ``add_lines`` rejects
-        # ``partition=`` together with ``substitutive_lod=``, but a caller CAN
-        # hand-build a ``kind=partition`` wrapper and call this once per part —
-        # the shape ``demo_biodiversity_planetary_scale`` uses for its Points
-        # layers (its ``add_lines`` calls take the plain scene-level ``partition=``
-        # path instead, with no ladder). Such a per-tile ladder needs the
-        # fills-screen anchor; ``derive_coverage_fractions`` detects that ancestor
-        # automatically and logs the choice, and an explicit
-        # ``coverage_fractions=[...]`` still wins (the branch above).
-        coverage_vals = derive_coverage_fractions(counts, parent_node, name=name)
-        lod_selector = "screen-area"
+    # Thresholds AND the selector naming their units, from the one shared rule
+    # (``lod.group.resolve_lod_ladder``): an explicit ``coverage_fractions=[...]``
+    # is used verbatim under the legacy units it was authored in, otherwise the
+    # screen-area halving ladder is derived — re-anchored at fills-screen when the
+    # insertion point is partition-bound. ``add_lines`` rejects ``partition=``
+    # together with ``substitutive_lod=``, but a caller CAN hand-build a
+    # ``kind=partition`` wrapper and call this once per part — the shape
+    # ``demo_biodiversity_planetary_scale`` uses for its Points layers (its
+    # ``add_lines`` calls take the plain scene-level ``partition=`` path instead,
+    # with no ladder) — which is how that anchor is reached here.
+    coverage_vals, lod_selector = resolve_lod_ladder(
+        spec.get("coverage_fractions"),
+        counts,
+        parent_node,
+        name=name,
+        length_error=lambda n_explicit, n_levels: (
+            f"coverage_fractions has {n_explicit} entries but the LOD ladder "
+            f"has {n_levels} levels ({len(coarse_first)} gsplat + 1 lines)"
+        ),
+    )
 
     lod_attrs = {k: v for k, v in attrs.items() if k in COMPOSITING_ATTRS}
     child_attrs = {k: v for k, v in attrs.items() if k not in COMPOSITING_ATTRS}

@@ -56,6 +56,9 @@ This module hosts:
   ``partitioned_coverage_fractions``, and the ``derive_coverage_fractions`` /
   ``is_partition_bound`` pair the scene adders use to choose between them from
   the ladder's insertion point.
+* ``resolve_lod_ladder`` — the single decision the four scene adders share:
+  thresholds AND the ``selector`` that names their units (an explicit list keeps
+  the legacy units it was authored in; otherwise derive and stamp screen-area).
 * The free-function validator ``validate_lod_group``, callable on any
   ``Group`` whose ``attrs["kind"] == "lod"``.
 * The shared ``resolve_display_type`` helper used by both LOD and Partition
@@ -72,10 +75,21 @@ from __future__ import annotations
 
 import math
 import warnings
-from typing import TYPE_CHECKING, Any, Callable, Dict, Final, List, Literal, Optional
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Dict,
+    Final,
+    List,
+    Literal,
+    Optional,
+    Sequence,
+)
 
 from arbol import aprint
 
+from ....typing_utils.constants import DERIVED_LOD_SELECTOR, LEGACY_LOD_SELECTOR
 from ....typing_utils.geometry_capabilities import require_lod_display_type
 from ....validation.types import validate_truncation_radius
 from .reveal import is_reveal_additive_method, pop_reveal_knobs
@@ -504,6 +518,72 @@ def derive_coverage_fractions(
         "only a fraction of the whole object's."
     )
     return fractions
+
+
+def resolve_lod_ladder(
+    explicit: Optional[Sequence[float]],
+    element_counts: list[int],
+    insertion_point: "Node",
+    *,
+    name: str,
+    length_error: Callable[[int, int], str],
+) -> tuple[list[float], str]:
+    """Decide a lod group's thresholds AND the selector that describes them.
+
+    The one place the explicit-vs-derived rule lives. All FOUR scene adders that
+    build a ``kind=lod`` group (``add_points`` / ``add_lines`` / ``add_mesh``
+    ``substitutive_lod=`` and ``add_gsplats_from_data`` ``lod_group=``) call this
+    instead of restating it, because thresholds and selector are ONE decision:
+    the selector names the UNITS the thresholds are in, so a site that derives a
+    ladder and stamps the legacy selector (or vice versa) writes a store whose
+    switch points the viewer reads on the wrong scale — silently, since both
+    vocabularies are individually valid.
+
+    The rule:
+
+    * **Explicit** ``coverage_fractions=[...]`` → used verbatim, stamped
+      :data:`~luxar.typing_utils.constants.LEGACY_LOD_SELECTOR`. An authored list
+      was tuned against the legacy diagonal metric (that is the historical
+      ``add_lod_group`` default and what every existing dataset means), so
+      re-labelling it ``"screen-area"`` would move every switch point the author
+      chose. Its ceiling is therefore :data:`MAX_COVERAGE_FRACTION`, not the
+      screen-area 1.0 — the per-geometry resolvers enforce that.
+    * **Derived** (``explicit is None``) → :func:`derive_coverage_fractions`,
+      stamped :data:`~luxar.typing_utils.constants.DERIVED_LOD_SELECTOR`. The
+      halving ladder is in literal screen-area fractions, re-anchored at
+      fills-screen when the insertion point is partition-bound.
+
+    Args:
+        explicit: The caller's ``coverage_fractions`` list, or ``None`` to derive.
+        element_counts: One entry per level, coarsest→finest (same contract as
+            :func:`coverage_fractions`); also the length an explicit list must
+            match.
+        insertion_point: The node the ``kind=lod`` group is being added to (the
+            anchor choice for a derived ladder — see
+            :func:`derive_coverage_fractions`).
+        name: The lod group's name, for the derivation's log line.
+        length_error: ``(n_explicit, n_levels) -> message`` for the
+            length-mismatch ``ValueError``. A callback because each geometry
+            words that message in its own terms (how many of its levels are
+            lifted gsplats, that mesh levels which could not reduce the surface
+            are dropped, …), and those texts are user-facing.
+
+    Returns:
+        ``(coverage_fractions, selector)`` — the per-child thresholds in
+        coarsest→finest order and the selector to stamp on the group.
+
+    Raises:
+        ValueError: If ``explicit`` is given and its length differs from
+            ``element_counts``, worded by ``length_error``.
+    """
+    if explicit is not None:
+        if len(explicit) != len(element_counts):
+            raise ValueError(length_error(len(explicit), len(element_counts)))
+        return list(explicit), LEGACY_LOD_SELECTOR
+    return (
+        derive_coverage_fractions(element_counts, insertion_point, name=name),
+        DERIVED_LOD_SELECTOR,
+    )
 
 
 def _apply_monotonicity_guard(
