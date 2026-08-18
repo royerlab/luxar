@@ -46,22 +46,36 @@ key ``0/0`` covers a different row range — a client with a warm cache believes
 itself up to date and serves chunks that no longer mean what their keys say.
 Silent wrong data, on the one path with no error to raise.
 
-Two independent guards, deliberately both: a ``chunk_layout`` summary attr is
-written on the root (attrs ARE hashed, so the hash moves for free even on a
-hasher that ignores chunk shapes), AND the content hashes are recomputed for the
-output store. Either alone would be enough today; relying on one alone would
-make a future change to the other silently reintroduce the bug.
+The guard is ONE mechanism with two halves, and it is worth being precise about
+which half does the work, because a plausible-sounding simplification deletes
+the real one. Neither hasher can see a chunk shape — the scene walk hashes
+values + attrs, and the ``.gsplats.zarr`` stamp hashes ``(name, shape, dtype)``
++ attrs — so recomputing a hash over an otherwise identical store reproduces the
+SOURCE's hash exactly. What moves it is the ``chunk_layout`` summary attr
+written on the root: attrs are hashed, so the new layout lands in the digest.
+The restamp is what PROPAGATES that attr into the stored ``content_hash`` the
+viewer actually compares. Remove either and the output ships the source's hash.
+Suppressing the attr alone was measured to leave the output hash byte-identical.
+
+(#1719 additionally folds chunk shapes into the tree hash; once that lands the
+restamp becomes independently sufficient and the attr becomes documentation.
+Until then, both are load-bearing.)
 """
 
 from __future__ import annotations
 
+import json
 import math
+import os
 import shutil
+import uuid
+import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterator
 
 import numpy as np
+import xxhash
 import zarr
 from arbol import aprint, asection
 
@@ -80,6 +94,7 @@ __all__ = [
     "OptimisePlan",
     "optimise_store",
     "plan_optimisation",
+    "resolve_target_bytes",
     "summarise_chunk_layout",
 ]
 
@@ -93,6 +108,16 @@ __all__ = [
 #: comparison. ``archive`` deliberately leaves that band: an archived store is
 #: not being streamed, and its only real cost is the file COUNT (upload time,
 #: inode pressure, per-object storage minimums).
+#:
+#: The larger targets trade PARTIAL-QUERY bytes for FULL-LOAD requests, so
+#: "object storage, therefore ``hosting``" is not unconditional. A Points or
+#: GSplats node is not loaded whole — the viewer turns visible index chunks into
+#: element ranges of ``chunk_size`` atoms, and one atom-hit costs one zarr chunk
+#: whatever its size. Measured on a real store (atom 2340, uint16 ``(N, 3)``):
+#: ``local`` 4 atoms / 54.8 KB per partial hit, ``hosting`` 18 atoms / 246.8 KB
+#: (4.5x), ``archive`` 74 atoms / 1014.6 KB (18x). Size up when the access
+#: pattern is "load the node whole"; stay on ``local`` when the viewer will be
+#: slicing into a large one.
 CHUNK_PROFILES: dict[str, int] = {
     "local": TARGET_CHUNK_BYTES,
     "hosting": MAX_CHUNK_BYTES,
@@ -216,13 +241,33 @@ def _chunk_bytes(chunks: tuple[int, ...], dtype: np.dtype[Any]) -> int:
 
 
 def _n_chunks(shape: tuple[int, ...], chunks: tuple[int, ...]) -> int:
-    """How many chunk files this grid produces — i.e. how many HTTP requests."""
+    """How many chunk files this grid produces — i.e. how many HTTP requests.
+
+    A zero-extent axis yields ZERO files, not one: zarr writes no chunk for a
+    ``(0, D)`` array, and rounding that up would make this diagnostic overstate
+    the request count of every ``array_ref`` placeholder in the store.
+    """
     if not shape:
         return 1
     total = 1
     for extent, step in zip(shape, chunks):
-        total *= max(1, -(-int(extent) // max(1, int(step))))
+        if int(extent) <= 0:
+            return 0
+        total *= -(-int(extent) // max(1, int(step)))
     return total
+
+
+def _file_grid(array: zarr.Array) -> tuple[int, ...]:
+    """The grid whose cells are FILES — the shard grid when sharded, else chunks.
+
+    A sharded v3 array packs many chunks into one object, so counting its inner
+    chunk grid would report 200 requests where 5 files exist. This diagnostic's
+    entire job is predicting the request count, so it counts objects.
+    """
+    shards = getattr(array, "shards", None)
+    if shards:
+        return tuple(int(s) for s in shards)
+    return tuple(int(c) for c in array.chunks)
 
 
 # --------------------------------------------------------------------------
@@ -270,28 +315,30 @@ def _resolve_atom(
     group_attrs: dict[str, Any],
     array_names: frozenset[str],
     array_name: str,
-    source: zarr.Array,
 ) -> int | None:
     """The atom this array's new chunk must be a multiple of, or ``None``.
 
     A ``chunk_size`` attr is NOT sufficient on its own. A gsplat leaf written
     with ``ordering="none"`` still gets a default ``chunk_size`` stamped
-    (``gsplat_assembly.py``), and its arrays are not on that grid — trusting it
-    would round a chunk down to a boundary that indexes nothing while inflating
-    it to at least one bogus atom. So the atom is trusted only when the node
-    carries the matching BOUNDS array (a real spatial index), or when the array
-    demonstrably already follows the grid (its current chunk is a proper
-    multiple, across more than one chunk).
+    (``gsplat_tree.py``: ``min(1024, max(64, n_splats))``), and its arrays are
+    not on that grid — trusting it would round a chunk down to a boundary that
+    indexes nothing while inflating it to at least one bogus atom.
+
+    The BOUNDS array is the only proof accepted. An earlier version also trusted
+    a bare ``chunk_size`` when the array's current chunk happened to be a
+    multiple of it, which is defeated by the very value the writer emits: the
+    vestigial default is a power of two, so ``amplitudes`` chunked ``(16384,)``
+    passed the coincidence test while ``centers`` at ``(5461, 3)`` on the SAME
+    node did not — one node, two answers, decided by arithmetic luck. Every
+    Luxar writer omits the bounds array only when there are zero rows
+    (``spatial_ordering/points.py``, ``spatial_ordering/lines.py``,
+    ``gsplat_assembly.py`` all guard on ``len(chunk_bounds) > 0``), so a node
+    with rows to re-chunk always carries its proof.
     """
     atom, proof = _atom_candidate(group_attrs, array_name)
-    if atom is None or proof is None:
+    if atom is None or proof is None or proof not in array_names:
         return None
-    if proof in array_names:
-        return atom
-    rows = int(source.chunks[0]) if source.chunks else 0
-    if 0 < rows < int(source.shape[0]) and rows % atom == 0:
-        return atom
-    return None
+    return atom
 
 
 # --------------------------------------------------------------------------
@@ -351,10 +398,12 @@ def _plan_array(
     chunks = tuple(int(c) for c in array.chunks)
     dtype = np.dtype(array.dtype)
     name = path.rsplit("/", 1)[-1]
+    # Files, not nominal grid cells — a sharded array's objects are its shards.
+    file_grid = _file_grid(array)
 
     def keep(reason: str) -> ArrayPlan:
         """A plan that changes nothing, recording why."""
-        n = _n_chunks(shape, chunks)
+        n = _n_chunks(shape, file_grid)
         return ArrayPlan(
             path=path,
             shape=shape,
@@ -420,7 +469,7 @@ def plan_optimisation(
         for name in sorted(names):
             array = group[name]
             path = f"{group_path}/{name}" if group_path else name
-            atom = _resolve_atom(attrs, names, name, array)
+            atom = _resolve_atom(attrs, names, name)
             plans.append(_plan_array(path, array, atom, target_bytes))
     return OptimisePlan(target_bytes=target_bytes, profile=profile, arrays=plans)
 
@@ -440,10 +489,13 @@ def summarise_chunk_layout(root: zarr.Group) -> ChunkLayoutSummary:
     under_floor = 0
     for _path, array in _walk_arrays(root):
         shape = tuple(int(s) for s in array.shape)
-        chunks = tuple(int(c) for c in array.chunks)
+        # The FILE grid, so the projected request count matches the objects a
+        # loader actually fetches (a shard is one object, however many chunks
+        # it packs) and a zero-row array contributes none.
+        grid = _file_grid(array)
         dtype = np.dtype(array.dtype)
-        count = _n_chunks(shape, chunks)
-        payload = _chunk_bytes(chunks, dtype)
+        count = _n_chunks(shape, grid)
+        payload = _chunk_bytes(grid, dtype)
         n_arrays += 1
         n_chunks += count
         total_bytes += payload * count
@@ -475,18 +527,41 @@ def _copy_array(
     raw and a measured zstd-9 policy survives verbatim. ``compressors=()`` is
     what zarr reports for a raw array and is exactly what it accepts back; that
     is a different thing from ``"auto"``, which would silently compress it.
+
+    The SHARD grid is forwarded too. A sharded array is never re-chunked (see
+    :func:`_structural_skip`), but recreating it from ``chunks`` alone would
+    promote its INNER chunk shape to the top level: a ``(200000, 4)`` float32
+    array chunked ``(1000, 4)`` inside shards of ``(50000, 4)`` went from 5
+    files to 201 — a 40x increase in round trips, reported by the plan as
+    "unchanged".
     """
     extra: dict[str, Any] = {
         "fill_value": source.fill_value,
         "attributes": dict(source.attrs),
     }
+    shards = getattr(source, "shards", None)
+    if shards:
+        extra["shards"] = tuple(int(s) for s in shards)
     if target_format == 3:
         # v3 splits the array-to-bytes step out as a serializer (endianness
         # lives there). v2 has no such concept, and `order` is metadata there
         # rather than a runtime config — passing it to a v3 array only warns.
         extra["serializer"] = source.serializer
+        # The chunk KEY layout is not the chunk grid, and "only chunk shapes
+        # change" has to cover it too. v3 carries it as a chunk_key_encoding;
+        # v2 spells the same thing `dimension_separator`, and a source written
+        # with the nested `/` layout (chosen for exactly the per-directory
+        # pressure this pass relieves) must not silently come out flat.
+        cke = getattr(source.metadata, "chunk_key_encoding", None)
+        if cke is not None:
+            extra["chunk_key_encoding"] = cke
     else:
         extra["order"] = source.order
+        separator = getattr(source.metadata, "dimension_separator", None)
+        if separator is not None:
+            from zarr.core.chunk_key_encodings import V2ChunkKeyEncoding
+
+            extra["chunk_key_encoding"] = V2ChunkKeyEncoding(separator=separator)
     dimension_names = getattr(source.metadata, "dimension_names", None)
     if dimension_names:
         extra["dimension_names"] = tuple(dimension_names)
@@ -509,7 +584,10 @@ def _copy_array(
     if shape[0] == 0:
         return dest
 
-    rows = max(1, int(chunks[0]))
+    # Slabs are aligned to the WRITE unit — the shard when there is one, the
+    # chunk otherwise — so no slab boundary lands mid-object and forces a
+    # read-modify-write.
+    rows = max(1, int(shards[0]) if shards else int(chunks[0]))
     row_bytes = max(1, int(math.prod(shape[1:])) * int(np.dtype(source.dtype).itemsize))
     slab_rows = rows * max(1, _SLAB_BYTES // max(1, rows * row_bytes))
     for start in range(0, shape[0], slab_rows):
@@ -538,22 +616,85 @@ def _copy_group(
         )
 
 
+def _hash_array_streaming(hasher: Any, dataset: zarr.Array) -> None:
+    """Feed one array's bytes to ``hasher`` in bounded-memory row slabs.
+
+    Byte-for-byte what ``hasher.update(dataset[:].tobytes())`` feeds it, without
+    materialising the array. ``ndarray.tobytes()`` is C-order by default whatever
+    the array's memory order, so the concatenation of the row slabs' bytes is
+    the whole array's bytes, and an xxhash update is order-preserving over a
+    concatenation. Pinned by
+    ``test_optimise.py::test_the_streaming_hash_is_byte_identical``.
+    """
+    shape = tuple(int(s) for s in dataset.shape)
+    if not shape:
+        hasher.update(np.asarray(dataset[...]).tobytes())
+        return
+    if shape[0] == 0:
+        return
+    row_bytes = max(
+        1, int(math.prod(shape[1:])) * int(np.dtype(dataset.dtype).itemsize)
+    )
+    slab_rows = max(1, _SLAB_BYTES // row_bytes)
+    for start in range(0, shape[0], slab_rows):
+        stop = min(shape[0], start + slab_rows)
+        hasher.update(np.asarray(dataset[start:stop]).tobytes())
+
+
+def _compute_content_hashes_streaming(root: zarr.Group) -> str:
+    """:func:`~luxar.io._compiler.finalize.hashing.compute_content_hashes`, but
+    slab-wise.
+
+    The digest is identical — same post-order walk, same per-node xxhash64 over
+    (sorted array bytes, sorted attrs JSON, sorted child hashes) — and so is the
+    stamped ``content_hash`` on every node. Only the peak memory differs: the
+    finalize-time version does ``dataset[:].tobytes()``, which holds the ndarray
+    AND a full byte copy at once (measured: 200 MB peak for a 100 MB array;
+    ~1.26 GB for the 629 MB array in the demo corpus that :data:`_SLAB_BYTES`
+    exists to avoid). Re-chunking an existing store is exactly the case where
+    the array is already on disk and need not be, so the walk is reimplemented
+    here rather than the shared finalize helper being changed under its other
+    caller.
+    """
+
+    def hash_group(group: zarr.Group) -> str:
+        hasher = xxhash.xxh64()
+        for name in sorted(group.array_keys()):
+            _hash_array_streaming(hasher, group[name])
+        attrs = {k: v for k, v in dict(group.attrs).items() if k != "content_hash"}
+        hasher.update(json.dumps(attrs, sort_keys=True, default=str).encode())
+        for name in sorted(group.group_keys()):
+            hasher.update(hash_group(group[name]).encode())
+        content_hash = hasher.hexdigest()
+        group.attrs["content_hash"] = content_hash
+        return content_hash
+
+    root_hash = hash_group(root)
+    aprint(f"Scene content hash: {root_hash[:16]}...")
+    return root_hash
+
+
 def _restamp_content_hash(root: zarr.Group) -> str | None:
     """Recompute the output store's content hash, the right way for its kind.
 
-    A compiled scene gets the full value-hashing walk it was built with. A
-    standalone ``.gsplats.zarr`` gets its own metadata-only root stamp — the
-    value walk reads every array whole, which its docstring calls prohibitive
-    for multi-GB splat stores, and it would additionally stamp per-group hashes
-    that format never carries. A store with neither marker is left alone: it is
-    not ours to annotate, and the ``chunk_layout`` attr has already moved
-    whatever hash a consumer computes over attrs.
+    A compiled scene gets the full value-hashing walk it was built with (in the
+    bounded-memory form above). A standalone ``.gsplats.zarr`` gets its own
+    metadata-only root stamp — the value walk would additionally stamp per-group
+    hashes that format never carries. A store with neither marker is left alone:
+    it is not ours to annotate.
+
+    Runs for ``--generic`` too. ``--generic`` describes the INPUT ("I know this
+    is not a Luxar store, re-chunk it anyway"), and gating the restamp on it
+    disabled the anti-stale-cache guard on the one input where it matters — a
+    Luxar scene passed with ``--generic`` came out carrying the SOURCE's
+    ``content_hash`` while its chunk keys addressed different rows, which the
+    viewer's validation queue answers ``mode: 'content-hash'`` for and never
+    falls back to a byte digest on. The marker test below is the real gate: a
+    foreign store carries neither marker and is still left untouched.
     """
     attrs = dict(root.attrs)
     if attrs.get("type") == "scene":
-        from ._compiler.finalize.hashing import compute_content_hashes
-
-        return compute_content_hashes(root)
+        return _compute_content_hashes_streaming(root)
     if "content_hash" in attrs:
         from ..gsplats.io.save_gsplats import _stamp_content_hash
 
@@ -664,55 +805,202 @@ def optimise_store(
     """Copy ``source_path`` to ``dest_path``, re-chunked, values untouched.
 
     Raises rather than writing in place: the pass reads the source while writing
-    the destination, so ``source_path == dest_path`` is not a mode this can
-    support. ``overwrite`` only governs replacing a DIFFERENT existing output —
-    it is opt-in because "publish under a new URL prefix" is the real fix for a
-    warm client cache and cannot be enforced from here.
+    the destination, so a destination that IS the source — or contains it, or
+    lives inside it — is refused (:func:`_check_destination_path`).
+    ``overwrite`` only governs replacing a DIFFERENT existing output, and only
+    one that is a zarr store or an empty directory; it is opt-in because
+    "publish under a new URL prefix" is the real fix for a warm client cache and
+    cannot be enforced from here.
+
+    All-or-nothing. The output is built in a hidden sibling directory and
+    renamed onto ``dest_path`` only after the copy — and ``verify``, when asked
+    for — has succeeded, so a failure leaves neither a half-written store at the
+    user's path nor a damaged previous one.
     """
     source_path = Path(source_path)
     dest_path = Path(dest_path)
-    if source_path.resolve() == dest_path.resolve():
+    _check_destination_path(source_path, dest_path)
+
+    # The SOURCE is opened and fully validated before the destination is
+    # touched, and the write goes to a temp sibling that is moved into place
+    # last. Neither is fussiness. The earlier order deleted `dest_path` first,
+    # so `luxar optimise mydata/s.luxar.zarr mydata --overwrite` removed the
+    # whole containing directory and only then raised FileNotFoundError, and
+    # `luxar optimise plain.zarr known-good.zarr --overwrite` destroyed a good
+    # store before refusing to work for want of `--generic`. `luxar export
+    # --native` carries the same pre-validation for the same reason.
+    source = open_group(source_path, mode="r")
+    try:
+        if not generic and not _is_luxar_store(source):
+            raise ValueError(
+                f"{source_path} does not look like a Luxar scene or a "
+                f".gsplats.zarr tree; pass --generic to re-chunk an arbitrary "
+                f"zarr store"
+            )
+
+        source_format = int(source.metadata.zarr_format)
+        plan = plan_optimisation(source, target_bytes=target_bytes, profile=profile)
+        by_path = {p.path: p for p in plan.arrays}
+        _check_destination_state(dest_path, overwrite=overwrite)
+
+        with asection(f"Re-chunking {source_path.name} -> {dest_path.name}"):
+            aprint(
+                f"target {target_bytes / 1024:.0f} KB"
+                + (f" (profile {profile})" if profile else "")
+                + f", zarr format {source_format} preserved"
+            )
+            dest_path.parent.mkdir(parents=True, exist_ok=True)
+            staging = _staging_path(dest_path)
+            artifact: Path | None = None
+            try:
+                _write_store(
+                    source, staging, by_path, plan, source_format, target_bytes, profile
+                )
+                aprint(
+                    f"✓ {plan.n_rechunked}/{len(plan.arrays)} arrays re-chunked; "
+                    f"{plan.source_n_chunks} → {plan.target_n_chunks} chunks"
+                )
+                artifact = _package(staging, dest_path)
+                if verify:
+                    reread = open_group(artifact, mode="r")
+                    try:
+                        checked = _verify(source, reread)
+                    finally:
+                        close(reread)
+                    aprint(f"✓ Verified {checked} arrays byte-for-byte")
+                _replace(artifact, dest_path)
+                artifact = None
+            finally:
+                # The artifact only survives here on a failure path; on success
+                # it has already been renamed onto the destination.
+                shutil.rmtree(staging, ignore_errors=True)
+                if artifact is not None and artifact != staging:
+                    artifact.unlink(missing_ok=True)
+    finally:
+        close(source)
+    return plan
+
+
+# --------------------------------------------------------------------------
+# Destination safety and staging
+# --------------------------------------------------------------------------
+
+#: Metadata documents whose presence means "there is a zarr node here" — v2's
+#: pair and v3's single document. Named here rather than reached for by literal
+#: at the call site; see the CLAUDE.md note on format-2 document names.
+_ROOT_DOCS = frozenset({"zarr.json", ".zgroup", ".zarray"})
+
+
+def _check_destination_path(source_path: Path, dest_path: Path) -> None:
+    """Refuse a destination that is, contains, or lives inside the source.
+
+    Equality alone is not enough. ``optimise s/scene.luxar.zarr s`` passes an
+    equality test while naming the source's own parent, and ``--overwrite`` then
+    deletes the source (plus whatever else shares that directory) before the
+    source is ever read. Both containment directions are refused: a destination
+    INSIDE the source would be copied into itself.
+    """
+    src = source_path.resolve()
+    dst = dest_path.resolve()
+    if src == dst:
         raise ValueError(
             "optimise cannot rewrite a store in place; give a different output "
             "path (and prefer a NEW URL prefix when republishing, so warm "
             "client caches cannot serve chunks under keys that moved)"
         )
-    if dest_path.exists():
-        if not overwrite:
-            raise FileExistsError(
-                f"{dest_path} already exists; pass --overwrite to replace it"
-            )
-        if dest_path.is_dir():
-            shutil.rmtree(dest_path)
-        else:
-            dest_path.unlink()
-
-    source = open_group(source_path, mode="r")
-    if not generic and not _is_luxar_store(source):
+    if dst in src.parents:
         raise ValueError(
-            f"{source_path} does not look like a Luxar scene or a .gsplats.zarr "
-            f"tree; pass --generic to re-chunk an arbitrary zarr store"
+            f"optimise refuses to write to {dest_path}: it CONTAINS the source "
+            f"{source_path}, so replacing it would delete the input (and "
+            f"everything else in that directory). Give an output path outside "
+            f"the source's directory."
+        )
+    if src in dst.parents:
+        raise ValueError(
+            f"optimise refuses to write to {dest_path}: it is inside the source "
+            f"store {source_path}, which would copy the store into itself."
         )
 
-    source_format = int(source.metadata.zarr_format)
-    plan = plan_optimisation(source, target_bytes=target_bytes, profile=profile)
-    by_path = {p.path: p for p in plan.arrays}
 
-    with asection(f"Re-chunking {source_path.name} -> {dest_path.name}"):
-        aprint(
-            f"target {target_bytes / 1024:.0f} KB"
-            + (f" (profile {profile})" if profile else "")
-            + f", zarr format {source_format} preserved"
+def _looks_like_a_zarr_store(path: Path) -> bool:
+    """Is ``path`` an existing zarr store — a directory or a zipped one?
+
+    Both formats are recognised (see :data:`_ROOT_DOCS`). A zipped store is
+    identified by its members rather than its name, so an unrelated ``.zip``
+    that happens to sit at the output path is not mistaken for one.
+    """
+    if path.is_dir():
+        return any((path / doc).exists() for doc in _ROOT_DOCS)
+    if not path.is_file() or not zipfile.is_zipfile(path):
+        return False
+    try:
+        with zipfile.ZipFile(path) as archive:
+            return any(
+                name.rsplit("/", 1)[-1] in _ROOT_DOCS for name in archive.namelist()
+            )
+    except (OSError, zipfile.BadZipFile):
+        return False
+
+
+def _check_destination_state(dest_path: Path, *, overwrite: bool) -> None:
+    """Decide whether ``dest_path`` may be replaced — WITHOUT deleting anything.
+
+    ``--overwrite`` means "replace an existing OUTPUT store", not "delete
+    whatever is at this path". A destination that exists and is neither a zarr
+    store nor an empty directory is refused, so a mistyped path costs an error
+    rather than someone's data.
+    """
+    if not dest_path.exists():
+        return
+    if not overwrite:
+        raise FileExistsError(
+            f"{dest_path} already exists; pass --overwrite to replace it"
         )
-        # `zarr_format` is passed explicitly so the output keeps the SOURCE's
-        # format rather than whatever this process writes by default; format
-        # conversion belongs to `gsplat migrate-format`, not here.
-        dest = open_group(dest_path, mode="w", zarr_format=source_format)
+    if dest_path.is_dir() and not any(dest_path.iterdir()):
+        return
+    if not _looks_like_a_zarr_store(dest_path):
+        raise ValueError(
+            f"--overwrite refuses to replace {dest_path}: it exists and is "
+            f"neither a zarr store nor an empty directory. Pick an output path "
+            f"that does not already hold something else."
+        )
+
+
+def _staging_path(dest_path: Path) -> Path:
+    """A hidden sibling DIRECTORY to build the output in before moving it.
+
+    Always a directory store, even when the destination is a ``.zarr.zip``. A
+    ``ZipStore`` appends rather than replaces, and zarr re-serializes a group
+    document on every attr write and child creation — measured on a 3-node
+    scene: 211 members for 50 unique names, 16% dead payload, 50
+    ``UserWarning: Duplicate name:`` (a hard failure under ``-W error``), and a
+    first-match unzipper reading the pre-attrs stub of every group, i.e. the
+    "loads as an empty scene" failure. ``save_gsplats`` writes a directory and
+    compresses it for the same reason.
+    """
+    return dest_path.parent / (
+        f".{dest_path.name}.optimise-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+    )
+
+
+def _write_store(
+    source: zarr.Group,
+    staging: Path,
+    by_path: dict[str, ArrayPlan],
+    plan: OptimisePlan,
+    source_format: int,
+    target_bytes: int,
+    profile: str | None,
+) -> None:
+    """Build the whole re-chunked store at ``staging``."""
+    # `zarr_format` is passed explicitly so the output keeps the SOURCE's
+    # format rather than whatever this process writes by default; format
+    # conversion belongs to `gsplat migrate-format`, not here.
+    dest = open_group(staging, mode="w", zarr_format=source_format)
+    try:
         _copy_group(source, dest, by_path, source_format)
-
-        # Written BEFORE the hashes are recomputed, so it is folded into them.
-        # Two guards against the stale-cache hazard, on purpose — see the module
-        # docstring.
+        # Written BEFORE the hash is recomputed, so it is folded into it — the
+        # attr is what actually MOVES the hash (see the module docstring).
         dest.attrs["chunk_layout"] = {
             "tool": "luxar optimise",
             "target_bytes": int(target_bytes),
@@ -722,24 +1010,35 @@ def optimise_store(
             "chunks_before": plan.source_n_chunks,
             "chunks_after": plan.target_n_chunks,
         }
-        if not generic:
-            _restamp_content_hash(dest)
+        _restamp_content_hash(dest)
         consolidate(dest)
-        # A ZipStore owns a file handle and only writes a valid archive on
-        # close; without this a `.zarr.zip` output re-read below (or by the next
-        # command) fails with "File is not a zip file". A no-op for a LocalStore.
+    finally:
         close(dest)
 
-        aprint(
-            f"✓ {plan.n_rechunked}/{len(plan.arrays)} arrays re-chunked; "
-            f"{plan.source_n_chunks} → {plan.target_n_chunks} chunks"
-        )
 
-        if verify:
-            reread = open_group(dest_path, mode="r")
-            checked = _verify(source, reread)
-            close(reread)
-            aprint(f"✓ Verified {checked} arrays byte-for-byte")
+def _package(staging: Path, dest_path: Path) -> Path:
+    """The artifact that will BECOME the output, still beside the destination.
 
-    close(source)
-    return plan
+    The staging directory itself for a directory destination; for a ``.zip`` one
+    a hidden sibling archive whose members are keyed STORE-RELATIVE, which is
+    what a :class:`zarr.storage.ZipStore` reads (stored, not deflated — the
+    chunks already carry their own codec). Either way ``--verify`` runs against
+    this, and only a passing artifact is renamed into place.
+    """
+    if dest_path.suffix.lower() != ".zip":
+        return staging
+    archive = Path(f"{staging}.zip")
+    with zipfile.ZipFile(archive, "w", zipfile.ZIP_STORED) as zf:
+        for member in sorted(staging.rglob("*")):
+            if member.is_file():
+                zf.write(member, member.relative_to(staging).as_posix())
+    return archive
+
+
+def _replace(new: Path, dest_path: Path) -> None:
+    """Put ``new`` at ``dest_path``, removing whatever is already there."""
+    if dest_path.is_dir():
+        shutil.rmtree(dest_path)
+    elif dest_path.exists():
+        dest_path.unlink()
+    os.replace(str(new), str(dest_path))

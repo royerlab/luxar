@@ -82,16 +82,33 @@ and writes nothing, so the output argument must be omitted. `--verify` re-reads
 the written store and compares every array byte for byte. `--generic` allows a
 plain zarr store that is not a Luxar scene or a `.gsplats.zarr` tree.
 
-dtype, codecs, `fill_value`, memory order, every attribute and the on-disk zarr
-format version are all preserved, and the spatial-index grid is never moved: each
-new chunk is a whole multiple of its node's `chunk_size` atom. Nothing is chunked
-smaller than it already is, so running the command twice is a no-op.
+The larger profiles trade **partial-query** bytes for **full-load** requests, so
+"object storage → `hosting`" is not unconditional. A Points or GSplats node is
+not loaded whole: the viewer turns the visible spatial-index chunks into element
+ranges of `chunk_size` atoms, and one atom-hit costs one zarr chunk whatever its
+size. Measured on a real store (atom 2340, uint16 `(N, 3)`): `local` fetches
+4 atoms / 54.8 KB per partial hit, `hosting` 18 atoms / 246.8 KB (4.5x) and
+`archive` 74 atoms / 1014.6 KB (18x). Pick `hosting`/`archive` when the access
+pattern is "load the whole node" (a gallery still, a small scene, an archive
+upload); stay on `local` when the viewer will be slicing into a large one.
+
+dtype, codecs, filters, `fill_value`, memory order, the chunk key layout, every
+attribute and the on-disk zarr format version are all preserved; a sharded array
+keeps its shard grid; and the spatial-index grid is never moved, since each new
+chunk is a whole multiple of its node's `chunk_size` atom. Nothing is chunked
+smaller than it already is, so the chunk grid is a **fixed point**: a second run
+re-chunks nothing. It is not a no-op — the store is still rewritten under a new
+hash.
 
 The output gets a fresh `content_hash` and a `chunk_layout` root attribute,
 because chunk keys now cover different rows and a warm viewer cache validating
 on an unchanged hash would serve stale chunks. For the same reason, replacing an
 existing output requires `--overwrite` and rewriting in place is refused —
-republishing under a new URL prefix is the safe move. Run `luxar info` with its
+republishing under a new URL prefix is the safe move. `--overwrite` replaces an
+existing zarr store or an empty directory and nothing else, and a destination
+that contains the source (or sits inside it) is rejected outright. The whole
+output is staged beside the destination and moved into place last, so an
+interrupted or failed run leaves no partial store. Run `luxar info` with its
 detailed-statistics flag to see a store's chunk layout before and after.
 
 ## `luxar demo`

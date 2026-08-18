@@ -165,6 +165,8 @@ and the ``luxar info --stats`` chunk diagnostic.
 
 .. autofunction:: luxar.io.optimise.resolve_target_bytes
 
+.. autodata:: luxar.io.optimise.CHUNK_PROFILES
+
 .. autoclass:: luxar.io.optimise.OptimisePlan
    :members:
    :undoc-members:

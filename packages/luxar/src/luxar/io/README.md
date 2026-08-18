@@ -242,17 +242,38 @@ from the byte budget, never below one atom), so a row-range read never straddles
 a boundary. Lines' two atoms — `vertex_ordering.chunk_size` for the per-vertex
 arrays, `segment_ordering.chunk_size` for `segments` — are resolved separately,
 and the bounds arrays themselves are never re-chunked. A `chunk_size` attr is
-only trusted when the matching bounds array exists or the arrays already follow
-it, because a gsplat leaf written with `ordering="none"` still gets a vestigial
-one stamped. `array_ref` placeholders (`(0, D)`), `(1,)`/`(1, k)` broadcasts and
-sharded arrays are copied verbatim; nothing is chunked smaller than it already
-is; and the copy walks chunk-aligned slabs rather than reading an array whole.
+trusted **only** when the matching bounds array exists, because a gsplat leaf
+written with `ordering="none"` still gets a vestigial one stamped — and that
+vestigial value is a power of two, so "the array's chunk is already a multiple
+of it" is arithmetic coincidence rather than proof. (Every Luxar writer omits
+the bounds array only for a zero-row node, so a node with rows to re-chunk
+always carries its proof.) `array_ref` placeholders (`(0, D)`), `(1,)`/`(1, k)`
+broadcasts and sharded arrays are copied verbatim — a sharded array keeps its
+**shard** grid, not just its inner chunk shape; nothing is chunked smaller than
+it already is; the chunk **key** layout (v2 `dimension_separator` / v3
+`chunk_key_encoding`) survives; and the copy walks chunk-aligned slabs rather
+than reading an array whole.
 
-**Cache invalidation.** `compute_content_hashes` hashes values and attrs, not
-chunk shapes, while the viewer validates its persistent cache on `content_hash`
-— so a re-chunk with an unchanged hash lets a warm client serve chunks whose
-keys have moved. The output therefore gets both a `chunk_layout` root attr and
-recomputed content hashes.
+**All-or-nothing.** The output is built in a hidden sibling directory and
+renamed onto the destination only after the copy (and `verify=True`, when asked
+for) succeeds, so a failure leaves neither a half-written store at the
+destination nor a damaged previous one. A `.zarr.zip` destination is compressed
+out of that directory rather than written into a `ZipStore`, which appends
+rather than replaces and would otherwise accumulate one dead copy of every group
+document per attr write. `overwrite=True` replaces an existing **zarr store or
+empty directory** only, and refuses a destination that is, contains, or lives
+inside the source.
+
+**Cache invalidation.** Neither hasher can see a chunk shape —
+`compute_content_hashes` hashes values + attrs, the `.gsplats.zarr` stamp hashes
+`(name, shape, dtype)` + attrs — while the viewer validates its persistent cache
+on `content_hash`. So the `chunk_layout` root attr is what MOVES the hash (attrs
+are hashed) and the restamp is what propagates it into the stored
+`content_hash`; both are load-bearing, and the restamp runs for `--generic` too,
+because that flag describes the input rather than the output's cache safety. The
+scene restamp is a slab-wise reimplementation of the finalize-time walk — the
+same digest, without the whole-array materialisation that would peak at twice a
+629 MB array's size.
 
 ### Input Volume Loading
 

@@ -153,14 +153,21 @@ luxar optimise fit.gsplats.zarr fit_opt.gsplats.zarr         # standalone gsplat
 luxar optimise arbitrary.zarr out.zarr --generic             # plain zarr
 ```
 
-dtype, codecs, `fill_value`, memory order, every attribute and the zarr format
-version are preserved; the spatial-index grid (`chunk_size` / `chunk_bounds`) is
-never moved, so every new chunk is a whole multiple of its node's atom. Nothing
-is ever chunked *smaller* than it already is. The output carries a fresh
+dtype, codecs, filters, `fill_value`, memory order, the chunk key layout, every
+attribute and the zarr format version are preserved; a sharded array keeps its
+shard grid; and the spatial-index grid (`chunk_size` / `chunk_bounds`) is never
+moved, so every new chunk is a whole multiple of its node's atom. Nothing is
+ever chunked *smaller* than it already is. The output carries a fresh
 `content_hash` and a `chunk_layout` root attr — without them a warm viewer cache
-would keep serving chunks whose keys now cover different rows. Overwriting an
-existing output needs `--overwrite`; rewriting in place is refused. The logic
-lives in `luxar.io.optimise`.
+would keep serving chunks whose keys now cover different rows; that restamp runs
+for `--generic` too, since the flag describes the input. Overwriting an existing
+output needs `--overwrite` and only replaces a zarr store or an empty directory;
+a destination that contains the source is refused, as is rewriting in place. The
+output is staged beside the destination and moved into place last, so a failure
+leaves nothing partial behind. Larger profiles trade partial-query bytes for
+full-load requests — see the CLI reference before reaching for `--profile
+hosting` on a store the viewer will slice into. The logic lives in
+`luxar.io.optimise`.
 
 ### `luxar profiles`
 List available network simulation profiles for testing.
