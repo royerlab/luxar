@@ -111,6 +111,7 @@ __all__ = [
     "read_array_meta",
     "read_consolidated_attrs",
     "read_node_attrs",
+    "read_raw_bytes",
     "set_zarr_format",
     "zarr_format",
 ]
@@ -925,6 +926,47 @@ def close(group: zarr.Group) -> None:
     closer = getattr(store, "close", None)
     if callable(closer):
         closer()
+
+
+def read_raw_bytes(group: zarr.Group, key: str) -> bytes | None:
+    """Read a raw, non-zarr key stored *inside* ``group``.
+
+    Some Luxar stores carry plain files alongside their zarr nodes — an overlay
+    image written straight into its overlay group's directory. Such a file has
+    no chunk grid and no zarr metadata, so no array/group API reaches it; only
+    the store itself does, and the store API is async.
+
+    zarr 3.3 *does* ship a public sync facade — ``StorePath.get_sync()``, backed
+    by ``zarr.abc.store.SupportsGetSync`` — but it is opt-in per store, and
+    ``ZipStore`` does not implement it: ``get_sync()`` there raises ``TypeError:
+    Store ZipStore does not support synchronous get``. Driving the async
+    ``StorePath.get()`` through ``zarr.core.sync.sync`` is therefore what makes
+    this READ store-agnostic — the same answer whether the key sits in a
+    ``LocalStore``, a ``MemoryStore``, a ``ZipStore`` or an fsspec-backed one —
+    which is why it belongs behind this facade with the rest of the
+    version-sensitive surface rather than at its one call site.
+
+    A claim about reading only: Luxar's overlay WRITER goes through a filesystem
+    ``Path`` (``core.scene.overlays.internals.write_overlay``), so a payload file
+    only ever exists in a directory store today. Reading through the store is
+    what keeps that an accident of the writer rather than an assumption here.
+
+    Args:
+        group: Group whose own prefix the key is resolved against — ``group``
+            may be the root or any subgroup; ``store_path`` already carries its
+            prefix either way.
+        key: Store key relative to ``group`` (for a payload file, its filename).
+
+    Returns:
+        The key's bytes, or ``None`` when it does not exist.
+    """
+    # Function-local: this private zarr path is the one thing here that a point
+    # release could relocate, and `_zarr_compat` is imported by all of luxar —
+    # at module scope such a move would break `import luxar` wholesale.
+    from zarr.core.sync import sync
+
+    buffer = sync((group.store_path / key).get())
+    return None if buffer is None else buffer.to_bytes()
 
 
 def is_missing_error(exc: BaseException) -> bool:
