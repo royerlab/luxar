@@ -82,6 +82,15 @@ and writes nothing, so the output argument must be omitted. `--verify` re-reads
 the written store and compares every array byte for byte. `--generic` allows a
 plain zarr store that is not a Luxar scene or a `.gsplats.zarr` tree.
 
+One boundary is worth stating for `--generic`, because it is a silent no-op
+rather than an error: this pass merges **rows**, i.e. it only ever grows the
+chunk along axis 0. An array chunked on its trailing axes instead — an OME-Zarr
+`(1, 1, Z, Y, X)` level chunked `(1, 1, 8, 32, 32)`, say — is therefore left
+alone and reported as `rows already in one chunk`, even though it may hold
+hundreds of small chunk files. Luxar's own arrays are all row-chunked, so this
+only affects foreign stores; use a dedicated rechunker (`rechunker`,
+`ome-zarr-py`) for those.
+
 The larger profiles trade **partial-query** bytes for **full-load** requests, so
 "object storage → `hosting`" is not unconditional. A Points or GSplats node is
 not loaded whole: the viewer turns the visible spatial-index chunks into element
