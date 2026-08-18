@@ -420,4 +420,50 @@ describe('SortWorker startup (warm-up, configured deadline, guard arms)', () => 
     coord.disposeDepthSort();
     expect(coord.isDepthSortAvailable()).toBe(true);
   });
+  it('an offline capture during the init window does not sort an unready worker', async () => {
+    // `api` is wrapped BEFORE `initializeWithGuard` is awaited, so between the
+    // spawn and 'ready' there is a live Comlink handle to a worker whose
+    // `initialize` has not finished. Worker-side `requireWasm` throws
+    // NOT_INITIALIZED_MSG for a `sort` that arrives in that window.
+    //
+    // `resortForCapture`'s force loop is the one path that can reach it: it
+    // dispatches for every visible, committed, order-dependent node WITHOUT
+    // consulting `state.registered`, and a commit stamps both `nodeStates` and
+    // `committedData` synchronously — long before init resolves. (The per-frame
+    // scheduler's recovery branch is gated on `registered`, which is only set
+    // inside the post-init continuation, so it cannot get here.)
+    //
+    // Warming up at app init widened this from "only during the first commit's
+    // init" to "any commit during startup", which is exactly when the offline
+    // gallery capture runs.
+    const coord = await loadCoordinator('never-settles');
+    coord.configureDepthSort({
+      getCamera: () => makeCamera(),
+      requestRender: vi.fn(),
+      isLoadInProgress: () => false,
+    });
+    coord.warmUpDepthSortWorker();
+    await flush();
+
+    // The window: spawned, handle live, init still pending.
+    expect(constructedWorkers).toHaveLength(1);
+    expect(coord.getDepthSortWorkerStatus().state).toBe('idle');
+
+    const mesh = makeSortableMesh(2);
+    coord.noteDepthSortCommit(mesh, CENTERS(), 2);
+    await flush();
+
+    await coord.resortForCapture(0);
+    await flush();
+
+    // A sort here would reject NOT_INITIALIZED: a spurious error line, a wasted
+    // round trip the drain then waits on — and, past both, a pose recorded for a
+    // sort that never ran. `recordSortPose` fires BEFORE the RPC, so the
+    // rejected dispatch leaves `lastSortAxis` set, which is exactly what
+    // silences the per-frame `!lastSortAxis` recovery dispatch for a node whose
+    // first real dispatch raced a null camera. (This frame is filmed in storage
+    // order either way — there is no ordering to be had before init finishes;
+    // what the gate buys is that nothing lies about having sorted one.)
+    expect(mockApi.sort).not.toHaveBeenCalled();
+  });
 });

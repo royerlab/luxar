@@ -179,7 +179,7 @@ Enforces **at most one in-flight sort per node**; a commit landing mid-sort queu
 
 **Flow**:
 
-1. Get `state`, `camera` (from `getCamera()`)
+1. Get `state`, `camera` (from `getCamera()`) — and return unless the worker is actually usable: `api` is wrapped BEFORE `initializeWithGuard` is awaited, so a live handle is not a ready worker, and `sort` is the one RPC that `requireWasm`s worker-side. `workerInitState === 'ready'` is therefore part of the gate, here rather than at each caller (the offline-capture force loop dispatches without consulting `registered`). Skipping also keeps `recordSortPose` below from stamping a pose for a sort that never ran, which would silence the per-frame `!lastSortAxis` recovery dispatch
 2. Return if already `inFlight` — set `resortQueued = true` and return
 3. Set `inFlight = true`
 4. Refresh `mesh.matrixWorld` and `camera.matrixWorld` (can be stale when a commit fires before the next frame)
@@ -271,7 +271,7 @@ The per-frame scheduler runs ONLY inside the rAF loop. Offline capture (the gall
 2. Run the cross-node renderOrder pass + pump chunked applies via `evaluateDepthSortPerFrame`
 3. Drain worker sorts + chunked applies to quiescence (`isCaptureQuiescent`: no node `inFlight` / `resortQueued` / `hasPendingSortedIndexOrderingApply`), yielding a macrotask (`setTimeout(0)`) per iteration, bounded by `maxWaitMs` so a wedged worker can never hang the capture. The drain BYPASSES the #715 slice back-pressure (`setSortedIndexApplyBackPressureBypassed`): it never draws, so the upload ack that releases a stall can never fire, and a multi-slice apply (>1M elements) would otherwise wedge every frame until the timeout — offline, the slices fold into one upload on the capture's own render, which is exactly acceptable
 
-It **suppresses the `requestRender` wake** for the duration (depth-counted / reentrancy-safe via `captureSuppressDepth` / `requestRenderBeforeCapture`; only the OUTERMOST call snapshots + restores) so draining can't re-arm the loop the capture deliberately stopped. **No-op** when depth sorting is disabled, no order-dependent node exists, or the worker is unavailable (the pure-main-thread renderOrder pass still runs).
+It **suppresses the `requestRender` wake** for the duration (depth-counted / reentrancy-safe via `captureSuppressDepth` / `requestRenderBeforeCapture`; only the OUTERMOST call snapshots + restores) so draining can't re-arm the loop the capture deliberately stopped. **No-op** when depth sorting is disabled, no order-dependent node exists, or the worker is unavailable — including the merely-not-ready-yet case of a capture launched during startup warm-up, since `scheduleSort` gates on `workerInitState === 'ready'` (the pure-main-thread renderOrder pass still runs).
 
 ### Blending-Mode Switch Hook (noteDepthSortBlendingModeSwitch)
 
