@@ -462,9 +462,10 @@ def run_fit_volume(
         "--cull-retention",
         help="After fitting, remove the weakest splats that collectively "
         "contribute less than (1 - value) of the total amplitude. "
-        "For example, 0.95 (the default) discards splats in the bottom 5%% "
-        "of cumulative amplitude — typically removing 10-30%% of splats with "
-        "negligible quality loss. Set to 0 to keep every splat.",
+        "For example, 0.95 — what a bare fit falls through to — discards splats "
+        "in the bottom 5% of cumulative amplitude, typically removing 10-30% of "
+        "them with negligible quality loss. Every --preset sets 0.999 instead "
+        "(near-lossless). Set to 0 to keep every splat.",
     ),
     # Denoising
     denoise: bool = typer.Option(

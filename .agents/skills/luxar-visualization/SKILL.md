@@ -115,6 +115,27 @@ import `luxar.utils.demos` / `luxar.utils.data_fetch` directly from a demo):
 From `luxar.utils.paths`: `get_demos_output_dir()`, `get_examples_output_dir()` for
 output locations (never commit `.luxar.zarr`).
 
+### Shipping a demo's data
+
+`ensure_dataset("<key>")` — also from the `luxar.demos` barrel — resolves a demo's
+payload cache → in-repo (git-LFS) → Zenodo, verifying the manifest sha256 at every
+step, and returns the paths. The key comes from
+`packages/luxar/src/luxar/demos/data_manifest.json`. It only resolves `zenodo`
+keys: a `local-compute` / `regenerate` one raises `LocalComputeDataset` instead,
+so those demos have to build their data themselves.
+
+**That manifest is GENERATED — never hand-edit it.** Declare the dataset in
+`scripts/gen_data_manifest.py` (bucket, record, license, source, attribution) and
+run `make gen-data-manifest`; the checksums and byte counts are read off the tree.
+A hand-edited metadata field always fails
+`test_committed_manifest_matches_generator`; a hand-edited checksum does not when
+the payload directory is absent or empty in your checkout, since the generator
+then reuses the committed file list verbatim rather than wiping it. Re-serializing
+it yourself with the wrong `indent` rewrites all ~600 lines into diff noise (the
+generator uses `indent=2`). Replacing a payload in place is then just: copy the
+new file over the LFS-tracked one, regenerate, and check the diff is only the
+sha256/bytes lines.
+
 ## Appearance is authored, not defaulted
 
 The Layers panel (press `L`) is where you dial a scene in — but it rewrites the

@@ -45,9 +45,26 @@ luxar gsplat fit data.zarr.zip splats.gsplats.zarr --timepoint 0 --channel 0
 luxar gsplat lod splats.gsplats.zarr out.gsplats.zarr --recipe stream --n-lods 6
 ```
 
-Presets: `draft` / `standard` / `hifi` / `ultra`. Override any preset knob, e.g.
+Presets: `draft` / `standard` / `hifi` / `ultra` / `n2s` (`n2s` = the manuscript's
+blind-spot protocol, and `cal`'s default). Override any preset knob, e.g.
 `--iters 8000`. Generate a config template with
 `luxar gsplat fit --dump-config --preset hifi > config.yaml`, then `--config config.yaml`.
+
+Every preset sets `cull_retention=0.999`. The `0.95` you get without one never came
+from a preset — it is the *fitter's* own default falling through, and it drops 5% of
+amplitude after every fit. Chasing a false `signal_limited` curve out of `cal`, treat
+BOTH as suspects — that retention *and* too few iterations at high K, which is the
+reason `cal` itself defaults to the `n2s` preset (20,000 iters, retention 0.999).
+A bare `fit` (no preset) still carries that `0.95` — on the CLI path, that is;
+a direct Python `fit_progressive_gaussian_splats` call defaults to `0.98`, which the
+CLI overrides — so **`--seeds` proposes and `cull_retention` disposes**: a post-fit
+cumulative-amplitude cull discards the tail, and on heavy-tailed sparse data that
+tail is a lot of splats — the final count is not `--seeds`. A bigger preset is not
+free either: `early_stop_patience` grows with it (200 → 500), and since the counter
+resets only on an improvement and the stop is tested only on eval iterations (every
+25th), the larger one burns AT LEAST 500 iterations after the last improvement —
+somewhat more, never fewer. The preset silently moves `max_eccentricity` too
+(10 → 20 from `draft` to `ultra`; `n2s` stays at 10).
 
 Supported `fit` inputs: `.zarr`, `.zarr.zip`, `.tiff`, `.npy`, `.npz`. For a
 nested zarr group use `--array-key h2afva/fused`.
@@ -118,6 +135,69 @@ luxar gsplat fit volume.tiff out.gsplats.zarr                 # --floor auto (de
 luxar gsplat fit volume.tiff out.gsplats.zarr --floor p10     # subtract 10th percentile
 luxar gsplat cal volume.tiff cal.json --floor none            # legacy (no floor)
 ```
+
+## Tuning a fit
+
+### Scoring a fit
+
+**`fit` already stamps the quality of the fit it just did** into `result.stats`
+(`foreground_psnr_db`, `foreground_threshold`, `foreground_fraction`) and prints
+it, so most arms need no extra run. That stamped number is already scored against
+the **unfloored** input it was handed — `fit` renders against the raw array, not
+against its own floored/normalized copy. Reach for `compare` when scoring against
+a *different* reference than the volume that was fitted — a denoised variant's
+untouched source, another arm's target:
+
+```bash
+luxar gsplat compare fitted.gsplats.zarr original.tiff --output-json metrics.json
+#   --channel/--timepoint, --device, --truncate
+#   (--shape is not an override: it must equal the reference shape. Omit it.)
+```
+
+`compare` reports `mse`, `psnr_db`, `ssim`, `rel_l2`, `max_abs_error` **and the
+same foreground trio**. **Read the foreground number** — and see "Traps that cost
+real time" below for what to score it *against*. Three things about that trio
+worth knowing:
+
+- The **threshold defaults to Otsu** on the target, not a fixed fraction of max.
+- Foreground is defined on the **target**, never on the prediction — a fit that
+  hallucinates signal is scored against where the signal actually is.
+- `data_range` comes from the **whole** target, not from the foreground subset, so
+  the figure is not inflated by a shrunken reference. That convention is all it
+  shares with `cal.json`'s `held_out_psnr_fg_db`, which scores only the held-out ∩
+  foreground voxels of a fit of the *masked* volume — the two dB numbers are not
+  interchangeable. Always report `foreground_fraction` beside the dB: a
+  PSNR over 0.01% of a volume means something very different from one over 40%.
+
+Neither the global nor the foreground PSNR covers the **dim band** (1–10% of max,
+above) — mask it yourself with `gsplats.rendering.render_to_volume_tensor` plus
+`metrics.compute_psnr`
+(both torch; `render_to_volume` returns NumPy, which `compute_psnr` rejects).
+
+### Symptom → knob
+
+An index into the measured sections, not a substitute for them.
+
+| Symptom | Reach for |
+| --- | --- |
+| Thin/faint structure missing | `--floor auto`, never a higher floor — "Background floor suppression" above — then raise K |
+| Background haze survives | the viewer's display window and opacity — same section; or `filter --soft-highpass p90` (the `luxar-gsplat-edit` skill) |
+| Thin filaments render as chains of beads | the six-knob schedule under "BOTH entry points default to 1000 iters" below. NOT more seeds (measured *worse*), and NOT a preset: a preset moves `n_iters`, `early_stop_patience` and `max_eccentricity` — but nothing on this schedule, so `enable_dynamic_ops`, `patience` (the plateau LR-decay one, default 15, NOT `early_stop_patience`) and `l1_diag` all stay where they are and you must set them yourself |
+| Blobby, over-smoothed detail | more K first, then a preset for iterations (early stopping makes a preset's `n_iters` a ceiling, so raise them when the loss is still falling at the cap) — but on thin structure read the beading row first |
+| Elongated streak artifacts | lower `max_eccentricity` — no `fit` flag, set it in a `--config` YAML (`--dump-config` writes a template). It only starts binding once the fit is converged, and there it measured 2.65 dB (`references/cli-options.md`) |
+| Result far bigger than needed | `decimate --target N` / `-f 0.1`, or `cull --target vol.npy -p 95` — not a lower `--cull-retention` and a refit |
+| Boxy steps at tile boundaries | suspect the SOURCE (mosaic seams, coverage count), not the fit — measure the artefact's period first |
+| Fit is slow, exploring | `--preset draft` (2,000 iters) for the search, one `hifi` run at the end |
+
+`--seed-method` matters on structure the default misses. `auto` draws on the same
+two methods a comma list would name — `edges` (boundaries) and `grid` (uniform
+coverage) — but it is NOT `edges,grid`: `auto` splits one seed budget 60/40 between
+them and derives the grid spacing from its own share, while a comma list runs each
+method on its own defaults. Both dedup the union, so that is not the difference —
+the mix is. Either way the fit pipeline then subsamples or tops up to `--seeds`, so
+the budget is never ignored; only what reaches it changes. `auto`
+cannot itself appear inside a comma list. `peaks` (sparse point-like maxima) and
+`decomposition` (blobs, slow) have to be asked for explicitly.
 
 ## Traps that cost real time
 
@@ -242,7 +322,7 @@ result = fit_gaussian_splats(
     loss_type="l1",       # "l1" | "mse" | "poisson"
     max_eccentricity=10.0,
     device="cuda",        # "auto" | "cpu" | "cuda" | "mps"
-    cull_retention=0.95,  # post-fit cumulative-amplitude cull
+    cull_retention=0.95,  # post-fit cull; the function default (presets: 0.999)
 )
 # result is a GSplatData: .centers (N,d), .amplitudes (N,), .cholesky_factors (N, d(d+1)/2), .stats
 result.save("fitted.gsplats.zarr", ordering="hilbert")

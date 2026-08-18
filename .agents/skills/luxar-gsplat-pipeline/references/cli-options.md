@@ -20,7 +20,7 @@ Inputs: `.npy`, `.npz`, `.tiff`/`.tif`, `.zarr`, `.zarr.zip` (TIFF/other need `p
 | `--config` | none | YAML config file (overrides preset) |
 | `--dump-config` | false | print resolved default config and exit |
 | `--device` / `-d` | auto | `auto` / `cpu` / `cuda` / `mps` |
-| `--loss` | l1 | `l1` / `mse` / `poisson` |
+| `--loss` | l1 | `l1` / `mse` / `poisson` — `poisson` is the matching noise model for shot-noise-dominated photon counts (see `packages/luxar/src/luxar/gsplats/GLOSSARY.md`) |
 | `--lr` | preset | learning rate |
 | `--seed-method` | auto | `auto` / `edges` / `grid` / `decomposition` / `peaks` (comma-combinable) |
 | `--compress` / `-c` | none | compress output: `zip` / `tar.gz` |

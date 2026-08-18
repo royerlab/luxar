@@ -33,6 +33,7 @@ IN PLACE (no `-e`), and the inspection commands
 | Move/scale/rotate/recenter in space | `transform` |
 | Rescale or normalize brightness | `transform --scale-intensity / --normalize-intensity` |
 | Drop low-value splats (shrink file) | `cull` |
+| Reduce to a target splat count | `decimate --target N` / `-f 0.1` |
 | Keep splats matching property thresholds | `filter` |
 | Split into spatial parts (frustum culling) | `partition` |
 | Collapse LOD/partition tree to one flat leaf | `flatten` |
@@ -88,10 +89,14 @@ luxar gsplat flatten part.gsplats.zarr flat.gsplats.zarr
 luxar gsplat additive part.gsplats.zarr streamed.gsplats.zarr --target-ms 200
 luxar gsplat additive in.gsplats.zarr out.gsplats.zarr --n-lods 4
 
-# Re-quantize the on-disk Cholesky encoding (structure-preserving copy; decode
-# is always float32 so viewer/GPU are unaffected). -e memory = uint8 (smallest,
-# ~93 dB); -e auto = adaptive u8→u16→f32 ladder (near-lossless); -e precision =
-# float32 (exact/archival).
+# Re-quantize the on-disk Cholesky encoding (structure-preserving copy; decode is
+# always float32, but the STORED values are re-quantised — see below). -e memory =
+# uint8 (smallest, ~93 dB); -e auto = adaptive u8→u16→f32 certificate ladder
+# (near-lossless); -e precision = float32 (exact/archival). That ladder is the
+# CHOLESKY policy, but the command re-encodes the CENTERS too — which its name does
+# not suggest — and there both `auto` and `memory` mean uint16 over each axis's own
+# extent (float32 only once an axis spans 2^16), so a degenerate
+# stacked column comes back quantised: see the `merge --as-dimension` note in Notes.
 luxar gsplat reencode fit.gsplats.zarr fit_u8.gsplats.zarr -e memory
 luxar gsplat reencode fit.gsplats.zarr fit_f32.gsplats.zarr -e precision
 
@@ -104,7 +109,11 @@ luxar gsplat annotate-quality in.gsplats.zarr --dry-run      # print stamps, wri
 # Merge: stack two channels with colors, or stack timepoints as a new dimension
 luxar gsplat merge ch0.gsplats.zarr ch1.gsplats.zarr -o multi.gsplats.zarr \
     --channel-colors "#ff0080,#00ff00"
-luxar gsplat merge t0.gsplats.zarr t1.gsplats.zarr -o 4d.gsplats.zarr --as-dimension --values 0,1
+# --as-dimension quantises the stacked coordinate under the default `auto`
+# encoding. The first and last values survive exactly; an INTERIOR one does not,
+# and its slice can then attenuate to nothing — so carry -e precision (see Notes).
+luxar gsplat merge t0.gsplats.zarr t1.gsplats.zarr t2.gsplats.zarr \
+    -o 4d.gsplats.zarr --as-dimension --values 0,1,2 -e precision
 
 # Convert to a web scene, and upgrade a legacy file
 luxar gsplat convert in.gsplats.zarr scene.luxar.zarr --center
@@ -159,7 +168,36 @@ the pedestal is gone by design.
   `references/edit-commands.md`.
 - The old `split` command is gone — use `partition`.
 - `transform` applies operations in a fixed order: scale → rotate → translate → center
-  → scale-intensity → normalize-intensity.
+  → scale-intensity → normalize-intensity. It composes to `p → R·S·p + (t − c)`, so **a
+  per-axis scale is applied in the PRE-rotation frame** — which is what you want
+  for a voxel-pitch correction on the stored axes, but wrong if the `--scale`
+  vector is written in the frame you end up in. `--scale 0.19,0.19,0.38
+  --rotate-y 90` in one call applies 0.38 to the stored third axis, not to the
+  one the rotation brings into that slot; when the two are expressed in
+  different frames, split them into two invocations. A partition's `bsp_tree`
+  split planes are RE-MAPPED through translation, per-axis scale and quarter-turn
+  rotations (a mirror also swaps each node's halves). What invalidates them is an
+  affine under which one of the tree's own split axes has no axis image — no
+  single nonzero in both its column and that row, or an image axis past the third
+  the stored format admits. The common case is a rotation that is not a multiple
+  of 90°, which shears the cells out of axis-alignment; a quarter turn that sends
+  a split axis to a fourth dimension (`--spatial-dims 1,2,3`) and a zero `--scale`
+  factor land in the same place. That tree is then dropped and the
+  viewer's back-to-front ordering downgrades to centroid order, which the command
+  warns about — re-partition afterwards to restore exact ordering.
+- **`merge --as-dimension` needs `-e precision` if the stacked coordinates must
+  be exact.** The default `auto` encoding quantises centers to uint16 over the
+  column's own `[min, max]`, which puts the ENDPOINTS on exact codes and leaves
+  every interior value to rounding: `--values 0,1,2` comes back as
+  `[0, 1.0000153, 2]` (reproduced; `-e precision` gives exact `[0, 1, 2]`),
+  whereas a two-timepoint `--values 0,1` is bit-exact. Harmless on an axis that
+  carries real extent, fatal on a stacked one — and that is the default: `--sigma
+  0` gives each splat σ = 1e-7 in the new axis, so a coordinate off by 1.5e-5
+  sits ~150 σ from the slice, far past the truncation radius, and the whole
+  middle slice attenuates to nothing. Carry `-e precision` through *every* stage
+  that rewrites the store, not just the merge — `lod`, `transform`, `convert`,
+  `cull`, `filter`, `partition`, `flatten`, `decimate`, `slice` and `additive`
+  all default to `auto`, and `reencode` defaults to `memory`.
 - `cull -m auto` picks error_budget (if `--target`), else redundancy (if `--shape`),
   else cumulative.
 - `denoise` lives here too but acts on a raw VOLUME (pre-fit), not on splats.

@@ -37,7 +37,8 @@ class FitPreset(str, Enum):
 
 # All presets share the manuscript's blind-spot / Noise2Self protocol as their
 # baseline (``cull_retention=0.999`` — i.e. no silent post-fit culling) and
-# vary only in optimiser budget (``n_iters`` + ``early_stop_patience``).
+# differ in optimiser budget (``n_iters`` + ``early_stop_patience``) plus
+# ``max_eccentricity`` (10 → 20 from ``draft`` to ``ultra``).
 #
 # Why this matters: the previous presets defaulted to the fitter's
 # ``cull_retention=0.95``, which silently dropped 5% of splats by amplitude
@@ -48,8 +49,9 @@ class FitPreset(str, Enum):
 # presets to the paper's profile fixes the cal protocol; users picking a
 # faster preset trade convergence quality but not protocol validity.
 #
-# ``n2s`` is the canonical name for the protocol — same numbers as ``ultra``,
-# kept explicit so it's clear which preset is the "paper reference".
+# ``n2s`` is the canonical name for the protocol — ``ultra``'s optimiser budget,
+# but at ``max_eccentricity=10``, kept explicit so it's clear which preset is the
+# "paper reference".
 PRESETS: Dict[str, Dict[str, Any]] = {
     "draft": {
         "n_iters": 2_000,
@@ -75,10 +77,11 @@ PRESETS: Dict[str, Dict[str, Any]] = {
         "max_eccentricity": 20.0,
         "cull_retention": 0.999,
     },
-    # Canonical alias for the manuscript's blind-spot protocol; identical to
-    # ``ultra`` (n_iters=20000, early_stop_patience=500, cull_retention=0.999)
-    # and the default for ``luxar gsplat cal``.  Kept named so users can pick
-    # the "paper" preset explicitly when reproducing supp_doc results.
+    # Canonical alias for the manuscript's blind-spot protocol; ``ultra``'s budget
+    # (n_iters=20000, early_stop_patience=500, cull_retention=0.999) but at
+    # max_eccentricity=10 (``ultra`` uses 20), and the default for
+    # ``luxar gsplat cal``.  Kept named so users can pick the "paper" preset
+    # explicitly when reproducing supp_doc results.
     "n2s": {
         "n_iters": 20_000,
         "early_stop_patience": 500,
