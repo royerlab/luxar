@@ -456,10 +456,14 @@ describe('SortWorker startup (warm-up, configured deadline, guard arms)', () => 
     await coord.resortForCapture(0);
     await flush();
 
-    // A sort here would reject NOT_INITIALIZED — a spurious error, a wasted
-    // round trip, and (worse for the caller) a capture that reaches quiescence
-    // with the frame still in storage order, which is the one thing
-    // resortForCapture exists to prevent.
+    // A sort here would reject NOT_INITIALIZED: a spurious error line, a wasted
+    // round trip the drain then waits on — and, past both, a pose recorded for a
+    // sort that never ran. `recordSortPose` fires BEFORE the RPC, so the
+    // rejected dispatch leaves `lastSortAxis` set, which is exactly what
+    // silences the per-frame `!lastSortAxis` recovery dispatch for a node whose
+    // first real dispatch raced a null camera. (This frame is filmed in storage
+    // order either way — there is no ordering to be had before init finishes;
+    // what the gate buys is that nothing lies about having sorted one.)
     expect(mockApi.sort).not.toHaveBeenCalled();
   });
 });
