@@ -818,7 +818,8 @@ luxar demo                             # List / run / manage bundled demos
 luxar demo run <key|#> [-- ARGS]       # Run a demo (forwards ARGS to it)
 luxar serve PATH [OPTIONS]              # Serve Zarr dataset
 luxar viewer [--data PATH] [OPTIONS]    # Serve viewer only or viewer + data
-luxar info PATH [--stats]               # Dataset information
+luxar info PATH [--stats]               # Dataset information (--stats also reports the chunk layout)
+luxar optimise SRC DST [--profile ...]  # Re-chunk an existing store for streaming (values stay bit-identical)
 luxar export SOURCE -o DIR              # Export standalone folder (Python 3 + browser)
 luxar export SOURCE -o DIR --native macos|linux-amd64|linux-arm64
                                         # Double-clickable native bundle (.app / portable folder)

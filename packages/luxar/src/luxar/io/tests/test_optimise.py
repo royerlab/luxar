@@ -447,14 +447,54 @@ class TestAlignment:
         assert assert_atom_aligned(dst) > 0
         assert_values_identical(scene, dst)
 
-    def test_a_chunk_is_never_smaller_than_one_atom(self, scene: Path) -> None:
+    def test_a_chunk_is_never_smaller_than_one_atom(self, tmp_path: Path) -> None:
         """A tiny byte target must not round an indexed chunk down to zero
-        atoms — that would put a partition's rows across two zarr chunks."""
-        root = open_group(scene, mode="r")
-        plan = plan_optimisation(root, target_bytes=64)
-        for a in plan.arrays:
-            if a.atom is not None and a.rechunked:
-                assert a.target_chunks[0] >= min(a.atom, a.shape[0])
+        atoms — that would put a partition's rows across two zarr chunks.
+
+        The floor is only OBSERVABLE on a source chunked BELOW one atom. Every
+        indexed array in a compiled scene already holds at least one atom, so
+        the earlier version of this test — which walked ``scene`` at
+        ``target_bytes=64`` and asserted inside ``if a.atom and a.rechunked`` —
+        never executed its own assertion: measured, all four arrays came back
+        ``spatial index`` / ``already at or above target`` / ``broadcast``, zero
+        reached the loop body, and deleting the ``max(1, ideal // atom)`` floor
+        in ``_atom_aligned_rows`` left the whole file green.
+        """
+        atom = 1000
+        n = 10_000
+        src = tmp_path / "sub_atom.zarr"
+        root = open_group(src, mode="w")
+        root.attrs["kind"] = "leaf"
+        root.attrs["chunk_size"] = atom
+        # The proof array — without it the `chunk_size` attr is vestigial and
+        # `_resolve_atom` correctly refuses to treat it as a grid.
+        create_array(
+            root,
+            "chunk_bounds",
+            data=np.zeros((n // atom, 3, 2), dtype=np.float32),
+            chunks=(n // atom, 3, 2),
+            compressor=None,
+        )
+        create_array(
+            root,
+            "positions",
+            data=_rng(3).random((n, 3)).astype(np.float32),
+            chunks=(100, 3),  # a tenth of one atom
+            compressor=None,
+        )
+        consolidate(root)
+
+        plan = plan_optimisation(open_group(src, mode="r"), target_bytes=64)
+        (pos,) = [a for a in plan.arrays if a.path == "positions"]
+        assert pos.atom == atom
+        # Without the floor the 64-byte budget asks for 5 rows, which rounds to
+        # zero atoms; the array would then be left alone rather than raised.
+        assert pos.rechunked, "the sub-atom chunk was not raised to one atom"
+        assert pos.target_chunks == (atom, 3), "the atom floor did not hold"
+
+        dst = tmp_path / "out.zarr"
+        optimise_store(src, dst, target_bytes=64, verify=True)
+        assert assert_atom_aligned(dst) > 0
 
 
 # --------------------------------------------------------------------------
@@ -839,6 +879,108 @@ class TestDegenerate:
         assert tuple(out["radii"].chunks) == (1,)
         assert dict(out["ref"].attrs)["encoding"]["target"] == "other/positions"
 
+    @pytest.mark.parametrize("flavour", ["structured", "vlen_string"])
+    def test_a_dtype_that_str_cannot_round_trip_is_still_planned(
+        self, tmp_path: Path, flavour: str, restore_zarr_format: None
+    ) -> None:
+        """``ArrayPlan`` recorded its dtype as ``str(np.dtype(...))`` and re-parsed
+        it to reach the itemsize — which ``np.dtype`` REJECTS for a structured
+        dtype (``"[('a', '<i4'), ('b', '<f8')]"``) and for numpy's variable-width
+        ``StringDType`` (``"StringDType()"``).
+
+        Both are ordinary in the third-party stores ``--generic`` exists for (an
+        AnnData/cellxgene ``.zarr``, an OME-Zarr label table), and the ``TypeError``
+        surfaced on the two READ-ONLY paths only: ``luxar info --stats`` exited 1
+        on a store its own ``--format json`` path printed fine, and ``optimise
+        --dry-run`` died with a traceback while the real copy of the same store
+        succeeded — a dry run strictly less capable than the run it predicts.
+        """
+        set_zarr_format(3)
+        src = tmp_path / f"{flavour}.zarr"
+        root = open_group(src, mode="w")
+        root.attrs["kind"] = "leaf"
+        if flavour == "structured":
+            create_array(
+                root,
+                "table",
+                data=np.zeros(50_000, dtype=[("a", "<i4"), ("b", "<f8")]),
+                chunks=(1000,),
+                compressor=None,
+            )
+        else:
+            labels = root.create_array(
+                "table", shape=(50_000,), dtype=str, chunks=(1000,)
+            )
+            labels[:] = np.array(["label"] * 50_000)
+        create_array(
+            root,
+            "plain",
+            data=np.arange(50_000, dtype=np.float32),
+            chunks=(1000,),
+            compressor=None,
+        )
+        consolidate(root)
+
+        # The plan's byte properties are what `--dry-run` and `--stats` read.
+        plan = plan_optimisation(open_group(src, mode="r"), target_bytes=65_536)
+        for a in plan.arrays:
+            assert a.itemsize > 0, a.path
+            assert a.target_chunk_bytes > 0, a.path
+            assert a.source_file_bytes > 0, a.path
+        assert summarise_chunk_layout(open_group(src, mode="r")).n_arrays == 2
+
+        assert _run(str(src), "--dry-run").exit_code == 0
+        assert _info(str(src), "--stats").exit_code == 0
+
+        dst = tmp_path / "out.zarr"
+        optimise_store(src, dst, verify=True)
+        assert_values_identical(src, dst)
+
+    def test_a_skip_reason_does_not_claim_more_than_it_knows(
+        self, tmp_path: Path
+    ) -> None:
+        """``--dry-run`` groups its "Left alone" tally by ``skip_reason``, so a
+        reason is a claim about the user's data.
+
+        Two were wrong for a foreign store. ``(1, 1, Z, Y, X)`` — the canonical
+        OME-Zarr level shape, 512 chunk files here — was reported as
+        ``broadcast``, which is a statement about a Luxar ENCODING, not a shape;
+        and ``single chunk`` was reported for an array chunked on trailing axes,
+        which is 64 files. This pass merges rows and nothing else, so what both
+        establish is only that axis 0 is already one chunk.
+        """
+        src = tmp_path / "trailing.zarr"
+        root = open_group(src, mode="w")
+        root.attrs["kind"] = "leaf"
+        create_array(
+            root,
+            "level",
+            data=np.zeros((1, 1, 8, 64, 64), dtype=np.uint16),
+            chunks=(1, 1, 8, 32, 32),
+            compressor=None,
+        )
+        create_array(
+            root,
+            "tiles",
+            data=np.zeros((8, 128, 128), dtype=np.uint16),
+            chunks=(8, 32, 32),
+            compressor=None,
+        )
+        consolidate(root)
+
+        plan = plan_optimisation(open_group(src, mode="r"))
+        reasons = {a.path: a.skip_reason for a in plan.arrays}
+        assert reasons == {
+            "level": "rows already in one chunk",
+            "tiles": "rows already in one chunk",
+        }
+        # Both really do hold more than one chunk file, which is why neither may
+        # be called "single chunk".
+        assert {a.path: a.source_n_chunks for a in plan.arrays} == {
+            "level": 4,
+            "tiles": 16,
+        }
+
     def test_scalar_and_empty_arrays_round_trip(self, tmp_path: Path) -> None:
         """The two skip reasons an ``array_ref`` shadows in a compiled scene: a
         0-d array has no rows to slab, and a ``(0, D)`` one writes no chunk at
@@ -875,6 +1017,26 @@ class TestDegenerate:
         out = open_group(dst, mode="r")
         assert float(out["scalar"][...]) == 3.5
         assert tuple(out["empty"].shape) == (0, 3)
+
+    def test_a_bounds_array_reports_no_atom(self, scene: Path) -> None:
+        """A bounds array is indexed by CHUNK, so it is on no element grid.
+
+        ``_atom_candidate`` special-cased only the name ``segments``, so
+        ``segment_chunk_bounds`` fell through to the per-vertex branch and
+        ``ArrayPlan.atom`` reported the node's VERTEX atom (3276 where the
+        segment grid is 4096) — wrong on a public field, and inert today only
+        because the structural skip fires before the atom is used.
+        """
+        plan = plan_optimisation(open_group(scene, mode="r"))
+        bounds = [a for a in plan.arrays if a.path.rsplit("/", 1)[-1] in _INDEX_ARRAYS]
+        assert bounds, "the fixture carries no spatial index"
+        assert {a.path.rsplit("/", 1)[-1] for a in bounds} >= {
+            "vertex_chunk_bounds",
+            "segment_chunk_bounds",
+        }, "the Lines node's two bounds arrays are what made this wrong"
+        for a in bounds:
+            assert a.atom is None, a.path
+            assert a.skip_reason == "spatial index"
 
     def test_bounds_arrays_are_never_rechunked(self, scene: Path) -> None:
         root = open_group(scene, mode="r")
@@ -1365,6 +1527,65 @@ class TestDestinationGuards:
             open_group(tmp_path / "b.zarr", mode="r").attrs
         )
 
+    @pytest.mark.parametrize(
+        "attrs",
+        [
+            # Generic enough for a foreign store to carry, and neither names a
+            # Luxar type/format/kind. `content_hash` was accepted on PRESENCE
+            # alone, and so was any `kind` whatsoever.
+            {"content_hash": "deadbeef"},
+            {"kind": "dataset"},
+            {"type": "AnnData"},
+            {"format_type": "ome-zarr"},
+            # Unhashable values must answer "not a marker", not raise.
+            {"kind": ["leaf"]},
+            {"type": {"name": "scene"}},
+        ],
+    )
+    def test_a_foreign_marker_does_not_bypass_generic(
+        self, tmp_path: Path, attrs: dict
+    ) -> None:
+        """The ``--generic`` gate tests recognized VALUES, not attr presence.
+
+        Slipping past it is not a no-op: the output gets a ``chunk_layout`` attr
+        and — for anything carrying a ``content_hash`` — that hash REPLACED under
+        Luxar's hashing semantics, which is exactly the consequence the flag
+        exists to make the caller ask for.
+        """
+        src = _tiny_store(tmp_path / "foreign.zarr", luxar=False)
+        root = open_group(src, mode="a")
+        root.attrs.update(attrs)
+        consolidate(root)
+
+        with pytest.raises(ValueError, match="--generic"):
+            optimise_store(src, tmp_path / "a.zarr")
+        assert not (tmp_path / "a.zarr").exists()
+        # And the real markers still let a Luxar store through untouched.
+        assert optimise_store(src, tmp_path / "b.zarr", generic=True).n_rechunked == 1
+
+    @pytest.mark.parametrize(
+        "attrs",
+        [
+            {"type": "scene"},
+            {"type": "points"},
+            {"format_type": "gsplats_zarr"},
+            {"kind": "leaf"},
+            {"kind": "lod"},
+            {"kind": "partition"},
+        ],
+    )
+    def test_every_real_luxar_marker_is_still_accepted(
+        self, tmp_path: Path, attrs: dict
+    ) -> None:
+        """Tightening the gate must not start demanding ``--generic`` for a store
+        Luxar itself wrote: a scene or scene-subtree root, a standalone
+        ``.gsplats.zarr`` header, or any gsplat node kind."""
+        src = _tiny_store(tmp_path / "luxarish.zarr", luxar=False)
+        root = open_group(src, mode="a")
+        root.attrs.update(attrs)
+        consolidate(root)
+        assert optimise_store(src, tmp_path / "out.zarr").n_rechunked == 1
+
     def test_a_failed_run_leaves_no_output_behind(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -1765,6 +1986,15 @@ def _run(*args: str):
     from luxar.cli.main import app
 
     return CliRunner().invoke(app, ["optimise", *args])
+
+
+def _info(*args: str):
+    """``luxar info`` — the other consumer of the plan walk (``--stats``)."""
+    from typer.testing import CliRunner
+
+    from luxar.cli.main import app
+
+    return CliRunner().invoke(app, ["info", *args])
 
 
 class TestCli:

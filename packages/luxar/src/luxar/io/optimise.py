@@ -94,6 +94,7 @@ import zarr
 from arbol import aprint, asection
 
 from .._zarr_compat import close, consolidate, create_array, open_group
+from ..typing_utils._format_contract import FORMAT_TYPE_GSPLATS, NODE_TYPES
 from ..typing_utils.constants import (
     MAX_CHUNK_BYTES,
     MIN_CHUNK_BYTES,
@@ -169,6 +170,17 @@ class ArrayPlan:
     path: str
     shape: tuple[int, ...]
     dtype: str
+    #: ``dtype.itemsize``, carried rather than re-derived from :attr:`dtype`.
+    #: ``str(np.dtype(...))`` is NOT a round trip for every dtype — a structured
+    #: dtype stringifies to ``"[('a', '<i4'), ('b', '<f8')]"`` and numpy's
+    #: variable-width ``StringDType`` to ``"StringDType()"``, neither of which
+    #: ``np.dtype()`` accepts — so re-parsing it to reach the itemsize raised
+    #: ``TypeError`` on exactly the third-party stores (AnnData/cellxgene, an
+    #: OME-Zarr label table) ``--generic`` exists for: ``luxar info --stats``
+    #: exited 1 on a store its own ``--format json`` path handled, and
+    #: ``optimise --dry-run`` died with a traceback while the real copy of the
+    #: same store succeeded.
+    itemsize: int
     source_chunks: tuple[int, ...]
     target_chunks: tuple[int, ...]
     source_n_chunks: int
@@ -189,12 +201,12 @@ class ArrayPlan:
     @property
     def target_chunk_bytes(self) -> int:
         """Nominal payload of the planned chunk, in bytes."""
-        return _chunk_bytes(self.target_chunks, np.dtype(self.dtype))
+        return _chunk_bytes(self.target_chunks, self.itemsize)
 
     @property
     def source_file_bytes(self) -> int:
         """Nominal payload of one SOURCE object (a shard when sharded)."""
-        return _chunk_bytes(self.source_file_grid, np.dtype(self.dtype))
+        return _chunk_bytes(self.source_file_grid, self.itemsize)
 
 
 @dataclass(frozen=True)
@@ -264,9 +276,9 @@ def _walk_arrays(group: zarr.Group, path: str = "") -> Iterator[tuple[str, zarr.
         yield from _walk_arrays(group[name], child_path)
 
 
-def _chunk_bytes(chunks: tuple[int, ...], dtype: np.dtype[Any]) -> int:
+def _chunk_bytes(chunks: tuple[int, ...], itemsize: int) -> int:
     """The NOMINAL payload of one chunk, uncompressed — the target's units."""
-    return int(math.prod(chunks)) * int(dtype.itemsize)
+    return int(math.prod(chunks)) * int(itemsize)
 
 
 def _n_chunks(shape: tuple[int, ...], chunks: tuple[int, ...]) -> int:
@@ -316,7 +328,16 @@ def _atom_candidate(
     bounds array. Returning the proving array's name rather than a bare int is
     what lets :func:`_resolve_atom` tell a real partition grid from a vestigial
     ``chunk_size`` default.
+
+    A bounds array is on no element grid at all — it is indexed by CHUNK — so it
+    gets no atom. Without that first test it fell through to the per-vertex
+    branch, and ``ArrayPlan.atom`` for ``segment_chunk_bounds`` reported the
+    node's VERTEX atom (3276 where the segment grid is 4096). Harmless only
+    because :func:`_structural_skip` refuses to re-chunk it before the atom is
+    used, which is not a property worth depending on for a public field.
     """
+    if array_name in _INDEX_ARRAYS:
+        return None, None
     if array_name == _SEGMENT_ARRAY:
         nested = attrs.get("segment_ordering")
         if isinstance(nested, dict) and "chunk_size" in nested:
@@ -397,6 +418,16 @@ def _structural_skip(
     naive first pass got wrong: the bounds arrays ARE the index, an ``array_ref``
     is a physical ``(0, D)`` placeholder whose values live elsewhere, and a
     broadcast is a single stored value standing in for N of them.
+
+    Each reason is user-visible (``--dry-run`` groups its "Left alone" tally by
+    it), so it must not claim more than it knows. Two did. ``shape[0] == 1`` was
+    reported as "broadcast", which is a statement about a Luxar encoding rather
+    than a shape — an OME-Zarr level array ``(1, 1, Z, Y, X)`` is not one; and
+    the last branch was "single chunk", which is only true for an array chunked
+    on axis 0 alone. This pass merges rows and nothing else, so what both
+    branches actually establish is that axis 0 is already one chunk. The
+    ``shape[0] == 1`` test is dropped rather than relabelled: it is subsumed by
+    the axis-0 test below, since ``chunks[0] >= 1`` always.
     """
     if name in _INDEX_ARRAYS:
         return "spatial index"
@@ -409,10 +440,10 @@ def _structural_skip(
         return "array_ref"
     if shape[0] == 0:
         return "empty"
-    if encoding == "broadcasted" or shape[0] == 1:
+    if encoding == "broadcasted":
         return "broadcast"
     if chunks[0] >= shape[0]:
-        return "single chunk"
+        return "rows already in one chunk"
     return ""
 
 
@@ -437,6 +468,7 @@ def _plan_array(
             path=path,
             shape=shape,
             dtype=str(dtype),
+            itemsize=int(dtype.itemsize),
             source_chunks=chunks,
             target_chunks=chunks,
             source_n_chunks=n,
@@ -472,6 +504,7 @@ def _plan_array(
         path=path,
         shape=shape,
         dtype=str(dtype),
+        itemsize=int(dtype.itemsize),
         source_chunks=chunks,
         target_chunks=target_chunks,
         source_n_chunks=_n_chunks(shape, chunks),
@@ -668,6 +701,17 @@ def _hash_array_streaming(hasher: Any, dataset: zarr.Array) -> None:
     the whole array's bytes, and an xxhash update is order-preserving over a
     concatenation. Pinned by
     ``test_optimise.py::test_the_streaming_hash_is_byte_identical``.
+
+    That holds for every FIXED-WIDTH dtype, i.e. every store the value walk can
+    hash reproducibly at all. A variable-width dtype (numpy's ``StringDType``, a
+    ``vlen-utf8`` v2 array, an object array) puts descriptors into the buffer
+    rather than characters, so ``tobytes()`` there hashes an allocation: the
+    reference itself yields a different digest on each read of the same array,
+    and slabbing changes the byte stream again. Nothing is done about it here —
+    no Luxar writer emits such an array (the reference could not hash one
+    stably either), and ``--verify`` is unaffected because
+    :func:`_slabs_differ` compares those element-wise. Noted rather than
+    silently claimed away.
     """
     shape = tuple(int(s) for s in dataset.shape)
     if not shape:
@@ -688,13 +732,15 @@ def _compute_content_hashes_streaming(root: zarr.Group) -> str:
     """:func:`~luxar.io._compiler.finalize.hashing.compute_content_hashes`, but
     slab-wise.
 
-    The digest is identical wherever the reference produces one — same
-    post-order walk, same per-node xxhash64 over (sorted array bytes, sorted
-    attrs JSON, sorted child hashes) — and so is the stamped ``content_hash`` on
-    every node. It is strictly more TOLERANT in one place: a 0-d array makes the
-    reference raise ``IndexError`` (``dataset[:]`` on a scalar), while the slab
-    walk hashes it via ``dataset[...]``. So "identical" is a statement about
-    every store the reference can hash, not about every store. Pinned by
+    The digest is identical wherever the reference produces one REPRODUCIBLY —
+    same post-order walk, same per-node xxhash64 over (sorted array bytes,
+    sorted attrs JSON, sorted child hashes) — and so is the stamped
+    ``content_hash`` on every node. Two documented departures, both narrow: a
+    0-d array makes the reference raise ``IndexError`` (``dataset[:]`` on a
+    scalar) while the slab walk hashes it via ``dataset[...]``, and a
+    variable-width dtype has no stable digest under EITHER walk (see
+    :func:`_hash_array_streaming`). So "identical" is a statement about every
+    store the reference can hash stably, not about every store. Pinned by
     ``test_optimise.py::TestCacheInvalidation``.
 
     Only the peak memory differs otherwise: the
@@ -857,15 +903,46 @@ def resolve_target_bytes(
     return TARGET_CHUNK_BYTES
 
 
+#: The node ``kind`` values a gsplat tree stores. ``lod`` and ``partition`` are
+#: written explicitly (``gsplat_tree.py``, ``save_gsplats.py``); ``leaf`` is the
+#: spec's name for the third, which the writers spell as the ABSENCE of the attr
+#: — accepted here because a store that names it is naming a Luxar kind.
+_LUXAR_NODE_KINDS = frozenset({"leaf", "lod", "partition"})
+
+
 def _is_luxar_store(root: zarr.Group) -> bool:
-    """Does this root look like a Luxar scene or a ``.gsplats.zarr`` tree?"""
+    """Does this root look like a Luxar scene or a ``.gsplats.zarr`` tree?
+
+    Recognized VALUES, not merely attribute PRESENCE. ``kind`` and
+    ``content_hash`` are generic enough for a foreign store to carry either, and
+    testing for presence let one straight past the documented ``--generic``
+    opt-in — after which its ``content_hash`` is rewritten under Luxar's hashing
+    semantics and a ``chunk_layout`` attr is added, which is precisely what the
+    gate exists to make the caller ask for.
+
+    ``content_hash`` is dropped as a marker rather than tightened: it carries no
+    value to recognise, and it was redundant. Every Luxar root declares one of
+    the other three — a scene or scene-subtree root a node ``type``, a
+    standalone ``.gsplats.zarr`` the ``format_type`` header, a gsplat node a
+    ``kind``.
+    """
     attrs = dict(root.attrs)
     return bool(
-        attrs.get("type") == "scene"
-        or "format_type" in attrs
-        or "kind" in attrs
-        or "content_hash" in attrs
+        _as_marker(attrs.get("type")) in NODE_TYPES
+        or _as_marker(attrs.get("format_type")) == FORMAT_TYPE_GSPLATS
+        or _as_marker(attrs.get("kind")) in _LUXAR_NODE_KINDS
     )
+
+
+def _as_marker(raw: Any) -> str | None:
+    """A stored attr as a comparable marker string, or ``None``.
+
+    Attrs come from arbitrary JSON, so the value may be a dict or a list —
+    unhashable, and ``x in frozenset(...)`` raises ``TypeError`` on those rather
+    than answering "not a marker". The gate must not turn a foreign store into a
+    crash.
+    """
+    return raw if isinstance(raw, str) else None
 
 
 def ensure_luxar_store(source_path: Path, root: zarr.Group, *, generic: bool) -> None:

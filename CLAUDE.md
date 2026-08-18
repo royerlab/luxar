@@ -255,8 +255,24 @@ luxar demo deps --install               # Install missing extras
 luxar demo deps --extra io              # Restrict to one extra
 luxar demo deps --only scipy --install  # Install one constrained requirement
 luxar serve <data.luxar.zarr> --viewer # Serve with viewer
-luxar info <data.luxar.zarr> --stats   # Dataset info
+luxar info <data.luxar.zarr> --stats   # Dataset info (--stats also reports the chunk layout)
 luxar profiles                   # Network simulation profiles
+# Re-chunk a store that is ALREADY on disk so it streams well — one
+# structure-preserving pass, no refit/source volume/GPU. Only zarr chunk shapes
+# change: values stay bit-identical and the spatial-index grid (`chunk_size` /
+# `chunk_bounds`) never moves, since every new chunk is a whole multiple of its
+# node's atom. Nothing is chunked SMALLER than it already is. The output gets a
+# fresh `content_hash` + a `chunk_layout` attr, because chunk keys now cover
+# different rows and a warm viewer cache validating on an unchanged hash would
+# serve stale chunks — so prefer publishing under a NEW URL prefix.
+# `--profile hosting` (256 KB) trades PARTIAL-QUERY bytes for full-load
+# requests: a Points/GSplats node the viewer SLICES into pays 4.5x the bytes per
+# partial hit vs `local`. Size up only when the access pattern is "load whole".
+luxar optimise scene.luxar.zarr out.luxar.zarr             # 64 KB default
+luxar optimise scene.luxar.zarr --dry-run                  # report the plan, write nothing
+luxar optimise scene.luxar.zarr out.luxar.zarr --profile hosting  # hosting 256 KB / local 64 KB / archive 1 MB
+luxar optimise scene.luxar.zarr out.luxar.zarr --verify    # re-read the output, compare every array
+luxar optimise arbitrary.zarr out.zarr --generic           # a plain (non-Luxar) zarr store
 luxar export scene.luxar.zarr -o my_export/             # Export scene + viewer as standalone offline folder
 luxar export scene.luxar.zarr -o my_export/ --open      # Export and serve in browser
 luxar export scene.luxar.zarr -o my_export/ --overwrite # Overwrite existing export
