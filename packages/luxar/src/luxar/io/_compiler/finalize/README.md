@@ -27,12 +27,80 @@ finalize/
 ### `hashing.compute_content_hashes(store) -> str`
 
 Post-order xxhash64 over the whole zarr tree. For each group it hashes, in a
-deterministic order: (1) its own arrays (`array_keys()` sorted, raw bytes),
-(2) its attrs as sorted JSON — **excluding** any existing `content_hash` to
-avoid self-reference, then (3) each child group's recursively-computed hash.
+deterministic order:
+
+1. for every array (`array_keys()` sorted), its **storage identity** as sorted
+   JSON, then its **decoded values** (`dataset[:].tobytes()`). The identity is
+   `name`/`shape`/`chunks`/`dtype`/shard shape, the array's own `attrs`, and its
+   codec **ids** (`codec_ids`, derived at either on-disk format) — plus the full
+   codec pipeline (`codecs`) when the array is sharded. `_storage_identity` is
+   where the reasoning lives: why layout and codec identity count as identity,
+   why the per-array `encoding` attrs do, and why codec settings deliberately do
+   not.
+2. the group's attrs as sorted JSON, **excluding** any existing `content_hash` to
+   avoid self-reference.
+3. the bytes of any plain **payload file** those attrs name (see below).
+4. each child group's **name** (`group_keys()` sorted) together with its
+   recursively-computed hash. The name is hashed because a node's own digest does
+   not carry it, so digests alone left a renamed child invisible to every
+   ancestor.
+
 The resulting hex digest is written back into the group's `content_hash`
 attribute, and the root digest is returned. xxhash64 is chosen for speed over
 cryptographic strength.
+
+Payload files are non-zarr blobs written straight into a group's directory —
+today just an overlay image (`overlays/<name>/image.png`, named by the group's
+`image_file` attr). They have no chunk grid and no zarr metadata, so
+`array_keys()` and `group_keys()` are both blind to them: before step (3)
+existed, two scenes compiled from the same script and differing **only** in
+their overlay image bytes got the *same* root hash. `content_hash` is advertised
+as a content fingerprint and consumed as one (the viewer's
+`scene-identity-watchdog`, cache validation), so a rebuild whose only change was
+the logo looked exactly like no change at all. This is compile-time only —
+nothing in the repo re-hashes a finished store, so swapping the PNG inside an
+already-finalized `.luxar.zarr` does not restamp anything.
+
+The step is driven off `PAYLOAD_FILE_ATTRS` — the attr keys whose value is a
+payload filename — **not** off a directory listing: a listing means enumerating
+a group's raw keys and filtering zarr's own documents back out, and
+`supports_listing` is not guaranteed by the store ABC, while the attrs already
+name the file. The bytes are read through `_zarr_compat.read_raw_bytes`, which
+drives the async `StorePath.get()` (zarr 3.3's public `get_sync()` is opt-in per
+store and `ZipStore` does not implement it) — so the READ is store-agnostic,
+answering the same way for a local, memory, zip or fsspec-backed store. That is
+a property of the read, not of the writer: `write_overlay` writes the image
+through a filesystem `Path`, so a payload file only ever exists in a directory
+store today.
+
+Three ways a payload can fail to contribute bytes, each folding a distinct
+sentinel so they cannot hash alike:
+
+- **absent** — the attrs name a file the store does not hold (distinct from a
+  zero-byte one).
+- **unsafe** — the name is refused for a *semantic* reason, folded in by name and
+  never read. Either it is not a single path component (zarr's `normalize_path`
+  rewrites `\` to `/` and raises on a `.`/`..` segment, so such a name addresses
+  something outside the group's own directory or nothing at all), or it names one
+  of zarr's own metadata documents — those carry the `content_hash` this walk
+  stamps, so reading one would make the digest non-convergent.
+- **unreadable** — the store raised (`OSError`/`ValueError`, the latter covering
+  the `UnicodeEncodeError` a lone surrogate in the name produces). Readability is
+  the store's verdict, and a name heuristic in its place would be wrong in
+  **both** directions: a `LocalStore` refuses an over-long component that a
+  `MemoryStore` or `ZipStore` reads back fine, or an embedded NUL that a
+  `MemoryStore` reads fine, while a short name still fails once the group's
+  directory pushes the whole path past `PATH_MAX`. Why this degrades to a term
+  instead of aborting the compile, and what that costs: see the `except` in
+  `hashing.py`.
+
+The walk must be **total** over whatever attrs a store on disk actually carries —
+including one edited by hand or written by another tool — so any `str` filename
+maps to bytes and no name can raise out of the step. Every variable-length term —
+key, name, payload — is preceded by its byte length, so the payload block is
+injective on its own rather than by relying on step (2) having just folded the
+filename in via the attrs JSON. A group naming no payload file adds no terms at
+all — a payload-free tree's digest is unchanged from before the step existed.
 
 ### `lod_backfill.finalize_lod_position_bounds(store) -> None`
 
