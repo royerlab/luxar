@@ -57,7 +57,8 @@ def write_positive_scalar(
             log line ("radius" / "width" / "amplitude"). Defaults to
             the dataset name.
         per_array_bytes: Opt-in per-array dtype byte-budget chunking (points
-            only; defaults ``False`` so lines/gsplats keep atom-sized chunks).
+            geometries; defaults ``False`` for callers that want the
+            historical exactly-one-atom chunk).
 
     Returns:
         Maximum value across ``data``.
@@ -128,7 +129,7 @@ def write_bounded_scalar(
 
     Returns the maximum value for callers that surface it on
     layer-control metadata. ``per_array_bytes`` opts into per-array
-    dtype byte-budget chunking (points only; defaults ``False`` so
+    dtype byte-budget chunking (all geometries; defaults ``False`` so
     lines keep atom-sized chunks).
     """
     label = log_label_singular or name
@@ -251,7 +252,8 @@ def write_scalars(
             be stored as an array_ref with physical shape ``(0, D)``.
         ctx: Encoder configuration (encoder, mode, compressor).
         per_array_bytes: Opt-in per-array dtype byte-budget chunking (points
-            only; defaults ``False`` so lines/gsplats keep atom-sized chunks).
+            geometries; defaults ``False`` for callers that want the
+            historical exactly-one-atom chunk).
         bounds: Explicit ``(min, max)`` display window to stamp instead of this
             array's own min/max. For a node that is one LEVEL of a larger field
             — an LOD ladder's coarsened copy — the array's own range is a

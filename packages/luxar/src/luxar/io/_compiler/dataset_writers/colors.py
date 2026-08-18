@@ -39,7 +39,8 @@ def write_colors(
             an array_ref with physical shape ``(0, D)``.
         ctx: Encoder configuration (encoder, mode, compressor).
         per_array_bytes: Opt-in per-array dtype byte-budget chunking (points
-            only; defaults ``False`` so lines/gsplats keep atom-sized chunks).
+            geometries; defaults ``False`` for callers that want the
+            historical exactly-one-atom chunk).
     """
     n_points = n_elements  # local alias keeps the rest of the body unchanged
     # RGBA colors: the alpha column is per-element opacity in [0, 1], not

@@ -492,7 +492,20 @@ def write_lines(
         metadata["has_sharpness"] = True
 
     if scalars is not None:
-        write_scalars(group, scalars, ordering_data, n_vertices, ctx.dataset_ctx)
+        # Lines' ordering_data is NESTED (vertex_ordering / segment_ordering),
+        # unlike Points' flat dict, so the vertex sub-dict must be unwrapped the
+        # way every sibling array above does it. Passing the outer dict meant the
+        # chunk calculator found no `chunk_size` and fell back to a pure byte
+        # budget, leaving `scalars` the one per-vertex array NOT on the atom grid
+        # (e.g. 16384 rows against a 3276 atom — 16384 % 3276 == 4).
+        write_scalars(
+            group,
+            scalars,
+            ordering_data.get("vertex_ordering") if ordering_data else None,
+            n_vertices,
+            ctx.dataset_ctx,
+            per_array_bytes=True,
+        )
         metadata["has_scalars"] = True
 
     # Write colormap LUT if colormap is a custom array

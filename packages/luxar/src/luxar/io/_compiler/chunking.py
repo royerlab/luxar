@@ -50,10 +50,10 @@ def calculate_intelligent_chunks(
         per_array_bytes: Opt-in (default ``False``). When ``True`` and a
             spatial ``chunk_size`` atom is present, size the first-axis chunk
             to this array's OWN dtype byte budget, rounded DOWN to a multiple
-            of the atom (never below one atom), so large points scenes issue
-            far fewer requests. When ``False`` the result is byte-for-byte
-            identical to the historical atom-sized behavior (gsplats/lines
-            keep the atom).
+            of the atom (never below one atom), so large scenes issue far fewer
+            requests. Points, Lines and GSplats all pass ``True``. When
+            ``False`` the result is byte-for-byte identical to the historical
+            atom-sized behavior.
 
     Returns:
         Optimized chunk shape.

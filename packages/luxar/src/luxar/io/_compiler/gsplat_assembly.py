@@ -241,7 +241,6 @@ def write_gsplat_arrays(
     cholesky_is_uniform: bool,
     ordering_data: Optional[Dict[str, Any]],
     ctx: DatasetCtx,
-    per_array_bytes: bool = False,
 ) -> dict[str, Any]:
     """Write gsplat arrays to a zarr group and return metadata.
 
@@ -250,15 +249,14 @@ def write_gsplat_arrays(
     validated via :func:`validate_gsplat_inputs` — both callers run it in
     their pre-group gate, so nothing is re-scanned here.
 
-    Args:
-        per_array_bytes: Size each per-splat array's first-axis chunk to its
-            OWN dtype byte budget (always a multiple of the spatial
-            ``chunk_size`` atom) instead of pinning every array to exactly one
-            atom. Several-fold fewer HTTP requests on large scenes, which
-            matters for hosted datasets. Defaults to ``False`` so the
-            standalone ``.gsplats.zarr`` tree writer keeps the documented
-            one-zarr-chunk-per-partition layout (GSPLATS_ZARR_FORMAT.md §8);
-            only the scene compiler (``.luxar.zarr``) opts in.
+    Every per-splat array sizes its own first-axis chunk to its own dtype byte
+    budget, rounded DOWN to a multiple of the spatial ``chunk_size`` atom. A
+    zarr chunk may therefore span several index chunks but never straddles one,
+    which is all the viewer's row-range reads require. This is deliberately NOT
+    a mode: both callers (the scene compiler and the standalone
+    ``.gsplats.zarr`` tree writer) get the identical layout, which is what keeps
+    the scene ⇄ standalone parity invariant in
+    ``tests/test_scene_leaf_parity.py`` true.
 
     Returns:
         Metadata dict with n_splats, ndim, has_colors, amplitude_range,
@@ -269,7 +267,7 @@ def write_gsplat_arrays(
         centers.shape,
         spatial_index_data=ordering_data,
         dtype=centers.dtype,
-        per_array_bytes=per_array_bytes,
+        per_array_bytes=True,
     )
     ctx.encoder.encode(
         data=centers,
@@ -304,7 +302,7 @@ def write_gsplat_arrays(
         n_elements=n_splats,
         ctx=ctx,
         log_label_singular="amplitude",
-        per_array_bytes=per_array_bytes,
+        per_array_bytes=True,
     )
 
     # Display range for the viewer's colormap window. GSplat amplitudes are
@@ -343,7 +341,7 @@ def write_gsplat_arrays(
             cholesky_factors.shape,
             spatial_index_data=ordering_data,
             dtype=cholesky_factors.dtype,
-            per_array_bytes=per_array_bytes,
+            per_array_bytes=True,
         )[0]
         chunks_diag = (chunk_rows, chol_diag.shape[1])
         chunks_offdiag = (chunk_rows, chol_offdiag.shape[1])
@@ -418,7 +416,7 @@ def write_gsplat_arrays(
             spatial_index_data=ordering_data,
             n_elements=n_splats,
             ctx=ctx,
-            per_array_bytes=per_array_bytes,
+            per_array_bytes=True,
         )
         metadata["has_colors"] = True
 

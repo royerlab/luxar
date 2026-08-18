@@ -664,9 +664,11 @@ sized to its own dtype byte budget rounded down to a **multiple** of the
 spatial index's `chunk_size` atom (never below one atom) — so a chunk-index
 range always falls inside a whole zarr chunk, and a large scene issues far
 fewer requests because most arrays pack several index chunks per zarr chunk.
-This applies to Points, Lines and GSplats arrays alike. (The *standalone*
-`.gsplats.zarr` tree writer is the exception: it keeps exactly one
-`chunk_size` atom per zarr chunk — see GSPLATS_ZARR_FORMAT.md §8.)
+This applies to Points, Lines and GSplats arrays alike, and to the *standalone*
+`.gsplats.zarr` tree writer too — it shares the same writer, which is what keeps
+a scene leaf and a standalone leaf byte-identical (see
+`tests/test_scene_leaf_parity.py`). GSPLATS_ZARR_FORMAT.md §8 specifies the same
+per-array sizing.
 
 #### positions/ (Required)
 - **Shape:** `(N, D)` where N = number of points, D = dimensionality
@@ -1676,7 +1678,7 @@ Optimal chunk sizes balance memory usage and access patterns:
 ### Chunking with Spatial Index
 
 When using spatial indices:
-- **Chunk Alignment**: Zarr chunk boundaries always land on the spatial-index grid. Points, Lines and GSplats arrays each size their first-axis chunk to the array's own dtype byte budget, rounded down to a multiple of the `chunk_size` atom (never below one atom). A zarr chunk may therefore span several index chunks, but never straddles one. (Standalone `.gsplats.zarr` keeps one atom per zarr chunk.)
+- **Chunk Alignment**: Zarr chunk boundaries always land on the spatial-index grid. Points, Lines and GSplats arrays each size their first-axis chunk to the array's own dtype byte budget, rounded down to a multiple of the `chunk_size` atom (never below one atom). A zarr chunk may therefore span several index chunks, but never straddles one. Standalone `.gsplats.zarr` shares the same writer and the same layout.
 - **Typical Strategy**: `chunk_size` is computed based on target memory per chunk (~64KB, see `TARGET_CHUNK_BYTES`)
 - **Benefits**: Every chunk-index row range falls inside a whole zarr chunk, and arrays pack several index chunks per zarr chunk — far fewer HTTP requests on large scenes
 - **Morton Ordering**: Points within a chunk are spatially nearby due to Morton ordering

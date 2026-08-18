@@ -292,8 +292,15 @@ def test_scene_partition_matches_standalone():
 
 
 def test_standalone_leaf_matches_scene_leaf_with_colors_and_ordering():
-    centers, amplitudes, cholesky = _splats(128, seed=3)
-    colors = np.random.default_rng(9).uniform(0, 1, size=(128, 3)).astype(np.float32)
+    # Deliberately large enough that the chunk_size atom is SMALLER than the
+    # array. At the previous n=128 the atom equalled the row count, so every
+    # array got one full-array chunk on both paths and the chunk-parity
+    # assertions below could not fail — they passed for the wrong reason. A real
+    # divergence (per-array byte-budget sizing on one path only) was invisible
+    # at that size and only shows up once arrays span several atoms.
+    n = 20_000
+    centers, amplitudes, cholesky = _splats(n, seed=3)
+    colors = np.random.default_rng(9).uniform(0, 1, size=(n, 3)).astype(np.float32)
 
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)

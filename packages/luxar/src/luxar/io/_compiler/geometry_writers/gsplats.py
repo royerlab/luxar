@@ -176,7 +176,6 @@ def write_gsplats(
         cholesky_is_uniform,
         ordering_data,
         ctx.dataset_ctx,
-        per_array_bytes=True,
     )
 
     # Set group attrs (owns the warn-once colormap-LUT flag on the orchestrator)
