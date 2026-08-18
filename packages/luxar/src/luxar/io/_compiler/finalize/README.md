@@ -133,9 +133,12 @@ a mix of leaf types and never set the parent's `display_type`.
 ### `lod_backfill.warn_one_part_partition_anchors(store) -> None`
 
 The one pass here that **reports without writing anything**. A per-TILE
-(fills-screen) LOD ladder — one whose `coverage_fraction` thresholds reach
-`MAX_COVERAGE_FRACTION` = 4.0 — is correct only under a real tiling of **two or
-more** parts, because a tile's projected bbox diagonal is intrinsically a
+(fills-screen) LOD ladder — one whose `coverage_fraction` thresholds reach the
+anchor for the group's own `selector` units (`_tile_anchor`:
+`PARTITION_FINEST_AREA` = 1.0 for `selector="screen-area"`, the literal
+screen-area fraction; `MAX_COVERAGE_FRACTION` = 4.0 for the legacy
+`selector="coverage"` diagonal metric) — is correct only under a real tiling of
+**two or more** parts, because a tile's projected bbox is intrinsically a
 fraction of the whole object's. Under a **one-part** `kind=partition` that part's
 bbox _is_ the whole object, so the ladder holds its finest level back until the
 object overfills the viewport.

@@ -39,7 +39,10 @@ deliberate choice (see ``test_no_unrouted_producer_builds_a_lod_group``).
 **Also out of scope: the detached-tree paths**, which are a different question
 (what a *stored* tree already claims about its own thresholds, with no ``explicit``
 argument to branch on) answered by
-:func:`luxar.gsplats.tree.gate_authored_selector` — shared by
+:func:`luxar.gsplats.tree.gate_authored_selector`, whose arms are: a fully
+authored ladder keeps its own stored selector verbatim (legacy only when it
+carries none), a partially- or un-authored one is re-derived and stamped
+screen-area, and an out-of-vocabulary selector raises — shared by
 ``io/_compiler/gsplat_tree.write_gsplat_node`` and
 ``gsplats_pipeline/from_io.graft_gsplat_node``. The latter is itself a scene door
 (``add_gsplats_from_file`` on a non-matrix-shaped subtree) that derives thresholds
@@ -343,9 +346,13 @@ def _read_ladder(store: Path, group_path: str) -> Tuple[Any, List[float]]:
 def _legacy_list(n_levels: int) -> List[float]:
     """A strictly ascending explicit ladder that is ONLY legal in legacy units.
 
-    It tops out at ``MAX_COVERAGE_FRACTION`` = 4.0, four times the screen-area
-    ceiling, so a store that mislabels it ``screen-area`` is caught by the
-    invariant rather than merely by an equality check on the values.
+    For ``n_levels >= 2`` it tops out at ``MAX_COVERAGE_FRACTION`` = 4.0, four
+    times the screen-area ceiling, so a store that mislabels it ``screen-area``
+    is caught by the invariant rather than merely by an equality check on the
+    values. The degenerate ``n_levels == 1`` branch canNOT carry that property —
+    ``[0.0]`` is a valid ladder under BOTH selectors — which is why
+    :func:`ladders` asserts every built ladder is at least two levels long
+    rather than letting a 1-level one pass vacuously.
     """
     if n_levels == 1:
         return [0.0]
@@ -361,6 +368,12 @@ def ladders(tmp_path_factory) -> Dict[Tuple[str, str], Tuple[Any, List[float]]]:
     pure assertions over what those runs wrote. The ``explicit`` variant reuses
     the ``derived`` ladder's LENGTH, since a mesh level that could not reduce the
     surface is dropped and an explicit list must match the ladder it lands on.
+
+    Every built ladder is asserted to be at least TWO levels long, because a
+    1-level one would make two of the tests below vacuous rather than red: the
+    only 1-level ladder is ``[0.0]``, which is legal under BOTH selectors, so
+    ``_legacy_list`` loses its off-scale 4.0 and the consistency invariant has
+    nothing left to discriminate. Dropping a mesh level is the realistic trigger.
     """
     out: Dict[Tuple[str, str], Tuple[Any, List[float]]] = {}
     root = tmp_path_factory.mktemp("selector_contract")
@@ -388,6 +401,16 @@ def ladders(tmp_path_factory) -> Dict[Tuple[str, str], Tuple[Any, List[float]]]:
             root / f"{geometry}_explicit.luxar.zarr", authored[0]
         )
         out[(geometry, "explicit_input")] = (None, explicit)
+        for variant in VARIANTS:
+            n_levels = len(out[(geometry, variant)][1])
+            assert n_levels >= 2, (
+                f"{geometry}/{variant}: ladder came out {n_levels} level(s) "
+                "long. The tests below need at least two: a 1-level ladder is "
+                "[0.0], which is valid under BOTH selectors, so they would pass "
+                "while asserting nothing (see _legacy_list). Give this geometry "
+                "a fixture its coarsener can actually reduce — for mesh that "
+                "means enough subdivisions in _octahedron_sphere."
+            )
     return out
 
 
@@ -537,6 +560,12 @@ _EXEMPT_LOD_GROUP_CALLERS = {
 #: The full expected set of production ``add_lod_group(...)`` call sites.
 _LOD_GROUP_CALLERS = frozenset(_LADDER_PRODUCERS) | frozenset(_EXEMPT_LOD_GROUP_CALLERS)
 
+#: How many ``add_lod_group(...)`` CALLS each of those modules makes — exactly
+#: one each today. Pinned separately from the key set because a SECOND call added
+#: inside an already-listed module changes no key: it needs a deliberate bump
+#: here (see :func:`test_no_unrouted_producer_builds_a_lod_group`).
+_EXPECTED_CALLS_PER_MODULE: Dict[str, int] = {rel: 1 for rel in _LOD_GROUP_CALLERS}
+
 
 def _luxar_root() -> Path:
     import luxar
@@ -643,6 +672,15 @@ def test_every_producer_calls_the_shared_resolver(rel: str) -> None:
     (``from ..lod.group import resolve_lod_ladder as _resolve``, resolved back
     through the module's ``ImportFrom`` nodes). Any of them routes the decision
     through the shared helper, which is the whole assertion.
+
+    **What it does NOT prove, stated honestly.** This is a NAME check: a producer
+    that defined its own local ``def resolve_lod_ladder(...)`` implementing the
+    rule WRONGLY passes this guard and the two structural ones beside it. So the
+    guard defends the DE-DUPLICATION convention (one shared implementation, no
+    per-producer copies to drift); the behavioural assertions at the top of this
+    module are what defend correctness — demonstrated: a deliberately wrong local
+    copy leaves all three structural guards green and turns three behavioural
+    tests red.
     """
     assert _calls_resolver(_luxar_root() / rel, filename=rel), (
         f"{rel} builds a kind=lod group but does not call resolve_lod_ladder"
@@ -650,13 +688,21 @@ def test_every_producer_calls_the_shared_resolver(rel: str) -> None:
 
 
 def test_no_unrouted_producer_builds_a_lod_group() -> None:
-    """DISCOVERY guard: find every production ``add_lod_group(...)`` call site.
+    """DISCOVERY guard: every ``add_lod_group(...)`` call site inside the ``luxar``
+    package.
 
     The two guards above take :data:`_LADDER_PRODUCERS` as given, so a FIFTH scene
     adder that builds a ``kind=lod`` group and stamps its own selector would trip
     nothing at all — the hardcoded list is the hole. This walks the whole package
-    instead and requires the discovered set to equal the four routed producers plus
-    the explicitly rationalised exemptions, so a new producer forces a decision.
+    instead and requires the discovered set — AND each module's call COUNT — to
+    equal the four routed producers plus the explicitly rationalised exemptions,
+    so a new producer forces a decision whether it lands in a new file or beside
+    an existing call.
+
+    Scope is the installed ``luxar`` package root only. ``examples/`` and
+    ``packages/luxar-viewer/tests/fixtures/generate_test_data.py`` also call
+    ``add_lod_group``, legitimately and hand-authored; they are outside the
+    library whose convention this pins, so they are out of scope here.
 
     By AST, not a text grep: ``add_lod_group`` also appears as a ``def`` (the
     ``Node`` method itself), in docstring examples and in prose comments, none of
@@ -667,7 +713,7 @@ def test_no_unrouted_producer_builds_a_lod_group() -> None:
     found: Dict[str, List[int]] = {}
     for path in sorted(root.rglob("*.py")):
         rel = path.relative_to(root).as_posix()
-        if "/tests/" in f"/{rel}" or rel.startswith("tests/"):
+        if "/tests/" in f"/{rel}":  # covers a top-level ``tests/`` too
             continue
         try:
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=rel)
@@ -698,14 +744,29 @@ def test_no_unrouted_producer_builds_a_lod_group() -> None:
         "explicit-vs-derived rule does not apply to it. Removing a call site means "
         "deleting its entry. Do not delete this assertion."
     )
+    # And the per-module COUNT, not just the key set: a SECOND add_lod_group(...)
+    # inside an ALREADY-LISTED module leaves the keys unchanged, adds no selector
+    # literal, and satisfies the routing guard through that module's EXISTING
+    # routed call — so without this the discovery guard closes only the new-FILE
+    # hole, not the new-CALL one.
+    counts = {rel: len(lines) for rel, lines in sorted(found.items())}
+    assert counts == dict(sorted(_EXPECTED_CALLS_PER_MODULE.items())), (
+        "the number of production add_lod_group(...) calls per module changed.\n"
+        f"  discovered: {counts}  (lines: { {k: v for k, v in sorted(found.items())} })\n"
+        f"  expected:   {dict(sorted(_EXPECTED_CALLS_PER_MODULE.items()))}\n"
+        "Every listed module builds exactly ONE kind=lod group today. If you added "
+        f"another, make sure it takes BOTH thresholds and selector from lod.group."
+        f"{_RESOLVER} (or belongs in _EXEMPT_LOD_GROUP_CALLERS for a stated "
+        "reason), then raise that module's count in _EXPECTED_CALLS_PER_MODULE "
+        "deliberately. Do not delete this assertion."
+    )
     # Each routed producer must actually route; each exemption must actually be
     # unrouted (an exemption that quietly started routing is a stale rationale).
     for rel in _LADDER_PRODUCERS:
         assert _calls_resolver(root / rel, filename=rel), (
             f"{rel} is listed as ROUTED but does not call {_RESOLVER}"
         )
-    for rel, reason in _EXEMPT_LOD_GROUP_CALLERS.items():
-        assert reason.strip(), f"{rel} is exempt without a stated reason"
+    for rel in _EXEMPT_LOD_GROUP_CALLERS:
         assert not _calls_resolver(root / rel, filename=rel), (
             f"{rel} is exempt from {_RESOLVER} but now calls it — move it to "
             "_LADDER_PRODUCERS and drop the exemption"

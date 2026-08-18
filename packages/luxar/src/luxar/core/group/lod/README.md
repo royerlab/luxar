@@ -75,10 +75,16 @@ viewport's **fitted screen axis** (`min(viewport.width, viewport.height)` in
 pixels, times a fill-factor constant of `0.5` — the extent the camera framing
 actually fits, so the comparison holds across aspect ratio and not just
 viewport size) and picks the finest child whose resulting pixel threshold is
-satisfied by the group's on-screen size — so the finest level activates once
-the object's projected bbox diagonal reaches half of the fitted screen axis,
-i.e. at any normal full-frame view, and coarser levels step in as it shrinks
-below that, identically on any monitor or viewport size. Across aspect ratio
+satisfied by the group's on-screen size. A legacy finest value is
+AUTHOR-chosen, so where it activates is the author's call
+(`core/tests/test_mesh_substitutive_lod.py::test_an_explicit_list_may_reach_the_legacy_ceiling`
+writes `[0.0, 2.0, 4.0]` verbatim, whose finest waits for *twice* the fitted
+axis); at the legacy finest of `1.0` — what the *retired* derivation
+produced, and what no live derivation produces any more — the finest level
+activates once the object's projected bbox diagonal reaches half of the fitted
+screen axis, i.e. at any normal full-frame view, with coarser levels stepping
+in as it shrinks below that, identically on any monitor or viewport size.
+Across aspect ratio
 the switch point is *exact* for a landscape viewport (aspect >= 1) and within
 ~25% of that value for a portrait one, where the camera fit distance itself
 varies with aspect.
@@ -90,8 +96,8 @@ varies with aspect.
 | `resolve_display_type(node)` | The geometry type a node appears as to the user. For `kind in (lod, partition)` returns the recorded `display_type`; else the node's own `type`. Shared with the Partition kind's validator. |
 | `compute_lod_display_type(children)` | Derive an LOD group's `display_type` from its finest (last) child, recursing through nested specialized groups. |
 | `_assert_strict_ascending(thresholds, source)` | The shared monotonicity guard, applied by both the explicit-`coverage_fractions=` resolver paths and `coverage_fractions()`. |
-| `_apply_monotonicity_guard(thresholds, source, cap=1.0)` | Defensive relative (×1.1) *downward* nudge so near-equal/degenerate levels still separate strictly, before the trailing `_assert_strict_ascending` check. Also caps the finest at `cap` — supplied by the CALLER, not fixed at the `1.0` default: `coverage_fractions` passes `cap=WHOLE_OBJECT_FINEST_ANCHOR`, so derived whole-object output stays in `[0, 0.5]`, and `partitioned_coverage_fractions` rescales ×2 *after* the guard has run, landing its finest on `PARTITION_FINEST_AREA` = `1.0`. |
-| `partitioned_coverage_fractions(element_counts)` | **The partition-bound anchor.** `coverage_fractions(...)` scaled by `PARTITION_FINEST_AREA / WHOLE_OBJECT_FINEST_ANCHOR` (×2 in area units), so the finest lands on `PARTITION_FINEST_AREA` = `1.0`: the tile alone fills the screen. Used wherever a spatial partition is part of the switch: the `adaptive` recipe's per-tile lod groups, and the `overview` recipe's coarse-cap/fine-partition pair. A tile's projected diagonal is intrinsically a fraction of the whole object's, so the whole-object anchor would put every tile on its finest level while the object is merely full-frame. **A ONE-part partition is excluded** — its single part covers the whole object, so `coverage_fractions` applies (`build_adaptive` and both tree writers' topology fallbacks special-case it). |
+| `_apply_monotonicity_guard(thresholds, source, cap=1.0)` | Defensive relative (×1.1) *downward* nudge so near-equal/degenerate levels still separate strictly, before the trailing `_assert_strict_ascending` check — downward so nothing is ever pushed past the anchor, with one exception the docstring spells out: a resulting ZERO PREFIX (what a zero-count intermediate level nudges down to) is lifted back UPWARD onto a geometric ramp between the `0.0` floor and the first positive threshold, since a run of zeros is not strictly ascending either (`[0, 0, 0, 0.5]` → `[0, 0.413…, 0.4545…, 0.5]`). Also caps the finest at `cap` — supplied by the CALLER, not fixed at the `1.0` default: `coverage_fractions` passes `cap=WHOLE_OBJECT_FINEST_ANCHOR`, so derived whole-object output stays in `[0, 0.5]`, and `partitioned_coverage_fractions` rescales ×2 *after* the guard has run, landing its finest on `PARTITION_FINEST_AREA` = `1.0`. |
+| `partitioned_coverage_fractions(element_counts)` | **The partition-bound anchor.** `coverage_fractions(...)` scaled by `PARTITION_FINEST_AREA / WHOLE_OBJECT_FINEST_ANCHOR` (×2 in area units), so the finest lands on `PARTITION_FINEST_AREA` = `1.0`: the tile alone fills the screen. Used wherever a spatial partition is part of the switch: the `adaptive` recipe's per-tile lod groups, and the `overview` recipe's coarse-cap/fine-partition pair. A tile's projected rect is intrinsically a fraction of the whole object's (the metric is an AREA fraction — the wording the function's own docstring uses), so the whole-object anchor would put every tile on its finest level while the object is merely full-frame. **A ONE-part partition is excluded** — its single part covers the whole object, so `coverage_fractions` applies (`build_adaptive` and both tree writers' topology fallbacks special-case it). |
 | `is_partition_bound(node)` | Does `node` (a ladder's **insertion point** — the future lod group's parent) sit inside a `kind=partition`? Walks `parent` links up, so the partition wrapper itself counts and a plain `add_group` in between still counts (the ladder is still inside one tile). The scene-graph mirror of the `under_partition` recursion flag the two gsplat writers thread down a detached tree. |
 | `derive_coverage_fractions(element_counts, insertion_point, *, name=...)` | **The scene-side anchor chokepoint.** `partitioned_coverage_fractions` when `is_partition_bound(insertion_point)` (with one `aprint` line naming the node and the chosen finest threshold, so the switch is visible), else `coverage_fractions`. All **four** scene adders use it in their auto-derive branch: `add_points` / `add_lines` / `add_mesh` `substitutive_lod=` and `add_gsplats_from_data` `lod_group=` — which is also where a per-part `add_gsplats_from_file` lands, since an ordinary ladder store is matrix-shaped. (Mesh matters here specifically because `add_mesh` refuses `partition=` together with `substitutive_lod=`, so a hand-built `kind=partition` wrapper is the *only* way to get per-tile mesh ladders.) (`graft_gsplat_node`, for a *non*-matrix-shaped subtree, ORs `is_partition_bound` into its own binding flag and calls `partitioned_coverage_fractions` directly, so that site is silent.) An explicit `coverage_fractions=[...]` still wins over all of them. Assumes the partition is a real tiling (>= 2 parts) — see `partitioned_coverage_fractions`; this is the ONE producer that cannot verify that (part 0's ladder is derived before part 1 is added), so the compiler's finalize pass (`io/_compiler/finalize/lod_backfill.py::warn_one_part_partition_anchors`) warns about the result instead. |
 | `resolve_lod_ladder(explicit, element_counts, insertion_point, *, name, length_error)` | **The explicit-vs-derived rule, decided once for the four scene adders.** Returns `(coverage_fractions, selector)` — thresholds *and* the `selector` naming their units, because those are one decision, not two. Explicit list → used verbatim with `LEGACY_LOD_SELECTOR`; otherwise `derive_coverage_fractions(...)` with `DERIVED_LOD_SELECTOR`. All **four** scene adders call it (`add_points` / `add_lines` / `add_mesh` `substitutive_lod=`, `add_gsplats_from_data` `lod_group=`) and none of them names a selector itself — an AST guard in `core/tests/group/lod/test_lod_selector_contract.py` keeps it that way. It is NOT the only producer of the pairing: the detached-tree paths go through `gsplats.tree.gate_authored_selector` instead — see "The selector rule" below. `length_error(n_explicit, n_levels)` is a callback purely so each geometry keeps its own user-facing length-mismatch wording. |
@@ -126,9 +132,13 @@ It is **not** the only place the pairing is decided, and the others are
 deliberately separate rather than missed. A detached `.gsplats.zarr` tree has no
 `explicit` argument to branch on; the question there is *what does a stored tree
 already claim about its own thresholds*, answered by
-[`luxar.gsplats.tree.gate_authored_selector`](../../../gsplats/tree.py) — fully
-authored + no selector ⇒ legacy, partially or not authored ⇒ re-derive and stamp
-screen-area. That gate is shared by the two detached-tree serializers
+[`luxar.gsplats.tree.gate_authored_selector`](../../../gsplats/tree.py) — a fully
+authored ladder KEEPS its own stored selector verbatim (validated against that
+selector's contract), falling back to legacy only when it carries none, while a
+partially- or un-authored one is re-derived and stamped screen-area (an
+out-of-vocabulary selector raises before anything is written). So a stored
+`screen-area` ladder does not lose its stamp on re-save. That gate is shared by
+the two detached-tree serializers
 (`io/_compiler/gsplat_tree.py::write_gsplat_node` and
 `gsplats_pipeline/from_io.py::graft_gsplat_node`), and
 `gsplats.tree.tree_from_substitutive_levels` keys its own selector default on
@@ -140,9 +150,11 @@ The AST guard in the contract suite exempts it by name for exactly that reason.
 
 **No tunable anchor.** There is no method selector or per-dataset knob (the
 former `extent`/`count` methods and `base_pixel_size`/`extent_percentile`/
-`extent_anisotropy` are gone) — the viewport anchors the finest level at half
-of the live fitted screen axis automatically, so the switch point
-self-calibrates to whatever monitor/window/aspect ratio the viewer runs in.
+`extent_anisotropy` are gone) — the anchor is a fraction of the LIVE viewport,
+so the switch point self-calibrates to whatever monitor/window/aspect ratio the
+viewer runs in: a derived (`selector="screen-area"`) ladder anchors its finest
+level at half the screen AREA, and under the legacy `selector="coverage"` the
+equivalent anchor is half of the live fitted screen axis.
 
 ## Per-geometry resolvers
 

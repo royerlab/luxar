@@ -555,10 +555,11 @@ def resolve_lod_ladder(
     * :func:`luxar.gsplats.tree.gate_authored_selector` — the shared gate for a
       ``GSplatNode`` tree being serialized (``io/_compiler/gsplat_tree``
       ``write_gsplat_node``) or grafted into a scene
-      (``gsplats_pipeline/from_io`` ``graft_gsplat_node``). Same *shape* of rule
-      (fully authored + no selector ⇒ legacy; partially or not authored ⇒
-      re-derive and stamp screen-area), keyed on how much of the ladder the store
-      already carries.
+      (``gsplats_pipeline/from_io`` ``graft_gsplat_node``). Keyed on how much of
+      the ladder the store already carries: a fully authored one KEEPS its own
+      stored selector verbatim (so a ``screen-area`` store does not lose its
+      stamp on re-save) and falls back to legacy only when it carries none, while
+      a partially- or un-authored one is re-derived and stamped screen-area.
     * :func:`luxar.gsplats.tree.tree_from_substitutive_levels`, whose ``selector``
       default is keyed on whether the caller supplied a ``coverage`` callable.
 
