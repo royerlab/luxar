@@ -1798,6 +1798,22 @@ rebuild-viewer:  ## Clean rebuild of the viewer BUNDLE (WASM only if stale; auto
 	echo "✅ Viewer rebuild complete!"
 
 # WASM/Rust setup and build
+# NOTE: every comment inside the recipe below must stay at MAKE level (column 0,
+# like this one). The recipe is one backslash-continued logical line, and make
+# hands that to the shell collapsed — so a `#` anywhere inside it comments out
+# everything that follows, to the end of the recipe. That silently swallowed the
+# whole wasm-pack check (and the closing banner) while `make install-rust` still
+# exited 0.
+#
+# On the `|| true` in the wasm-pack probe: it is load-bearing under
+# .SHELLFLAGS' `-e`. With no wasm-pack on PATH the command substitution exits
+# 127, which would abort the recipe before the install it is probing for.
+#
+# On the re-probe after `cargo install --force`: measure, do not assume. The
+# force-install replaces only the copy in cargo's own install root; one earlier
+# in PATH (Homebrew, a distro package) survives and keeps winning, and the root
+# itself moves with CARGO_INSTALL_ROOT/CARGO_HOME. A pin nobody can observe is
+# not a pin, so re-probe PATH and fail if it does not answer with the pin.
 install-rust:  ## Install Rust and wasm-pack for WASM development
 	@# This must be a SINGLE shell command so PATH updates persist after Rust install
 	@echo "🦀 Setting up Rust/WASM development environment..."; \
@@ -1826,9 +1842,6 @@ install-rust:  ## Install Rust and wasm-pack for WASM development
 	echo ""; \
 	echo "🔧 Checking wasm-pack installation..."; \
 	WASM_PACK_PIN="$(WASM_PACK_VERSION)"; \
-	# `|| true` is load-bearing under .SHELLFLAGS' `-e`: with no wasm-pack on \
-	# PATH the substitution exits 127, which would abort the recipe before the \
-	# install it is probing for. \
 	FOUND_WASM_PACK="$$(wasm-pack --version 2>/dev/null | awk '{print $$2}' || true)"; \
 	if [ "$$FOUND_WASM_PACK" = "$$WASM_PACK_PIN" ]; then \
 		echo "✅ wasm-pack is already at the pinned version: $$WASM_PACK_PIN"; \
@@ -1839,11 +1852,6 @@ install-rust:  ## Install Rust and wasm-pack for WASM development
 			echo "📥 Installing wasm-pack $$WASM_PACK_PIN (this may take a minute)..."; \
 		fi; \
 		cargo install wasm-pack --version "$$WASM_PACK_PIN" --locked --force; \
-		# Then MEASURE, don't assume. `cargo install --force` replaces only the \
-		# copy in cargo's own install root: one earlier in PATH (Homebrew, a \
-		# distro package) survives and keeps winning, and the root itself moves \
-		# with CARGO_INSTALL_ROOT/CARGO_HOME. A pin nobody can observe is not a \
-		# pin, so re-probe PATH and fail if it does not answer with the pin. \
 		WASM_PACK_ON_PATH="$$(command -v wasm-pack || true)"; \
 		INSTALLED_WASM_PACK="$$(wasm-pack --version 2>/dev/null | awk '{print $$2}' || true)"; \
 		if [ "$$INSTALLED_WASM_PACK" = "$$WASM_PACK_PIN" ]; then \
