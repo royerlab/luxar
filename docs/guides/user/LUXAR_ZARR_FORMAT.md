@@ -659,12 +659,16 @@ Chunking is **byte-based**, not a fixed element count: the first-dimension
 chunk length is derived from the 64 KB target (`TARGET_CHUNK_BYTES` ÷
 bytes-per-row for the array's *input* dtype — computed before encoding, so
 float32 rows even when the stored code is uint8/uint16). When spatial
-ordering is enabled (the default), each Points array's first-axis chunk is
+ordering is enabled (the default), each per-element array's first-axis chunk is
 sized to its own dtype byte budget rounded down to a **multiple** of the
 spatial index's `chunk_size` atom (never below one atom) — so a chunk-index
 range always falls inside a whole zarr chunk, and a large scene issues far
 fewer requests because most arrays pack several index chunks per zarr chunk.
-(Lines and GSplats arrays stay exactly one `chunk_size` atom per zarr chunk.)
+This applies to Points, Lines and GSplats arrays alike, and to the *standalone*
+`.gsplats.zarr` tree writer too — it shares the same writer, which is what keeps
+a scene leaf and a standalone leaf byte-identical (see
+`tests/test_scene_leaf_parity.py`). GSPLATS_ZARR_FORMAT.md §8 specifies the same
+per-array sizing.
 
 #### positions/ (Required)
 - **Shape:** `(N, D)` where N = number of points, D = dimensionality
@@ -1674,9 +1678,9 @@ Optimal chunk sizes balance memory usage and access patterns:
 ### Chunking with Spatial Index
 
 When using spatial indices:
-- **Chunk Alignment**: Zarr chunk boundaries always land on the spatial-index grid. Lines and GSplats arrays use exactly one `chunk_size` atom per zarr chunk; Points arrays size each first-axis chunk to the array's own dtype byte budget, rounded down to a multiple of the atom (never below one atom)
+- **Chunk Alignment**: Zarr chunk boundaries always land on the spatial-index grid. Points, Lines and GSplats arrays each size their first-axis chunk to the array's own dtype byte budget, rounded down to a multiple of the `chunk_size` atom (never below one atom). One zarr chunk therefore holds several whole index chunks, and no index chunk's row range ever straddles a zarr chunk boundary. Standalone `.gsplats.zarr` shares the same writer and the same layout.
 - **Typical Strategy**: `chunk_size` is computed based on target memory per chunk (~64KB, see `TARGET_CHUNK_BYTES`)
-- **Benefits**: Every chunk-index row range falls inside a whole zarr chunk, and Points arrays pack several index chunks per zarr chunk — far fewer HTTP requests on large scenes
+- **Benefits**: Every chunk-index row range falls inside a whole zarr chunk, and arrays pack several index chunks per zarr chunk — far fewer HTTP requests on large scenes
 - **Morton Ordering**: Points within a chunk are spatially nearby due to Morton ordering
 
 ## Array Encodings
