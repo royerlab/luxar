@@ -255,6 +255,57 @@ class TestSaveGsplats:
 
         assert stamped(0.0) != stamped(0.25)
 
+    def test_stamped_content_hash_changes_with_child_group_name(self) -> None:
+        # A node's own digest does not carry its NAME, and the parent folded in
+        # only its children's digests — so renaming a child part/level while
+        # leaving its contents alone left the root hash exactly where it was. A
+        # group name is a path segment, so every cached key under it moves while
+        # the token that would invalidate them says nothing changed.
+        from luxar._zarr_compat import create_array, memory_group
+        from luxar.gsplats.io.save_gsplats import _stamp_content_hash
+
+        data = np.arange(36, dtype=np.float32).reshape(12, 3)
+
+        def stamped(child: str) -> str:
+            root = memory_group()
+            root.attrs["type"] = "gsplats"
+            leaf = root.create_group(child)
+            create_array(leaf, "centers", data=data, chunks=(12, 3), compressor=None)
+            return _stamp_content_hash(root)
+
+        assert stamped("part_0") != stamped("part_1")
+
+    def test_stamped_content_hash_changes_with_sharded_inner_codec(self) -> None:
+        # A sharded array's top-level pipeline is exactly one `ShardingCodec`, so
+        # the codec IDS read `["sharding_indexed"]` and say nothing about the
+        # inner codecs or the shard index. Nothing in Luxar emits a sharded store
+        # today, so this is what keeps the expansion honest — and what stops a
+        # future in-place re-layout tool from re-stamping a store to its input's
+        # digest, which is the whole reason the metadata-only variant folds
+        # layout in at all.
+        import numcodecs
+
+        from luxar._zarr_compat import create_array
+        from luxar.gsplats.io.save_gsplats import _stamp_content_hash
+
+        data = np.arange(36, dtype=np.float32).reshape(12, 3)
+
+        def stamped(compressor: object) -> str:
+            # Format 3 explicitly: sharding does not exist at format 2.
+            root = zarr.create_group(store=zarr.storage.MemoryStore(), zarr_format=3)
+            root.attrs["type"] = "gsplats"
+            create_array(
+                root,
+                "centers",
+                data=data,
+                chunks=(3, 3),
+                shards=(6, 3),
+                compressor=compressor,
+            )
+            return _stamp_content_hash(root)
+
+        assert stamped(None) != stamped(numcodecs.Blosc(cname="zstd", clevel=9))
+
     def test_stamped_content_hash_never_reads_chunk_data(self) -> None:
         # The reason this variant exists at all: a splat store can be multi-GB, so
         # the stamp must stay metadata-only. #1718 added four more metadata reads

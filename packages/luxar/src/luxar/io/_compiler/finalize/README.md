@@ -39,7 +39,10 @@ deterministic order:
    not.
 2. the group's attrs as sorted JSON, **excluding** any existing `content_hash` to
    avoid self-reference.
-3. each child group's recursively-computed hash.
+3. each child group's **name** (`group_keys()` sorted) together with its
+   recursively-computed hash. The name is hashed because a node's own digest does
+   not carry it, so digests alone left a renamed child invisible to every
+   ancestor.
 
 The resulting hex digest is written back into the group's `content_hash`
 attribute, and the root digest is returned. xxhash64 is chosen for speed over

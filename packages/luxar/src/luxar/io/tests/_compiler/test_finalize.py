@@ -178,10 +178,11 @@ def _leaf_store(
     fill: float = 1.0,
     array_attrs: dict[str, Any] | None = None,
     zarr_format: int = 3,
+    group_name: str = "leaf",
 ) -> zarr.Group:
     """Root holding one points leaf whose single array is fully caller-specified."""
     root = zarr.group(zarr_format=zarr_format)
-    leaf = root.create_group("leaf")
+    leaf = root.create_group(group_name)
     leaf.attrs["type"] = "points"
     data = np.full(shape, fill, dtype=np.float32)
     extra: dict[str, Any] = {} if shards is None else {"shards": shards}
@@ -334,6 +335,21 @@ def test_compute_content_hashes_changes_with_array_name() -> None:
     a = compute_content_hashes(_leaf_store(name="positions"))
     b = compute_content_hashes(_leaf_store(name="radii"))
     assert a != b
+
+
+def test_compute_content_hashes_changes_with_group_name() -> None:
+    """A renamed CHILD GROUP is different content, at identical contents.
+
+    A node's own digest does not carry its name, and the parent folded in only
+    the digests of its children — so renaming a node while leaving everything
+    under it alone left the root hash EQUAL to the original's. A group name is a
+    path segment, so the rename also moves every key the viewer's cache holds for
+    that subtree, and the stale root document it keeps serving still enumerates
+    the old names.
+    """
+    cells = compute_content_hashes(_leaf_store(group_name="cells"))
+    nuclei = compute_content_hashes(_leaf_store(group_name="nuclei"))
+    assert cells != nuclei
 
 
 def test_compute_content_hashes_changes_with_per_array_attrs() -> None:

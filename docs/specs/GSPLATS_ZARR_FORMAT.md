@@ -166,8 +166,9 @@ Every node carries `position_bounds`; the root additionally carries
 `format_version:"3.4"`, `format_type:"gsplats_zarr"`, `timestamp`,
 `luxar_gsplats_version`, and `content_hash` (a metadata-only xxhash64 over the
 tree's group attrs plus, per array, its name, shape, chunk shape, shard shape,
-dtype, codec ids and own attrs). Storage layout counts as identity because the
-viewer caches encoded chunks keyed by chunk index, so a re-chunked store — or one
+dtype, codec ids and own attrs, plus each child group's name alongside its own
+digest). Storage layout counts as identity because the viewer caches encoded
+chunks keyed by chunk index, so a re-chunked store — or one renamed, or one
 compressed with a different codec — must not share its input's hash; the
 per-array attrs count because that is where the `encoding` document lives, which
 is what turns the stored ints back into scientific values. The hash is distinct

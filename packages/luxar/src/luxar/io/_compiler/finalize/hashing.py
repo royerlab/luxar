@@ -110,9 +110,9 @@ def compute_content_hashes(store: zarr.Group) -> str:
     Uses xxhash64 for speed.
 
     Each node's hash covers, in order: every array's STORAGE IDENTITY followed by
-    its decoded VALUES, then the group's own attrs, then each child group's hash.
-    See :func:`_storage_identity` for what that identity is and why layout is part
-    of it.
+    its decoded VALUES, then the group's own attrs, then each child group's NAME
+    and hash. See :func:`_storage_identity` for what that identity is and why
+    layout is part of it.
 
     Args:
         store: Root zarr group
@@ -139,11 +139,16 @@ def compute_content_hashes(store: zarr.Group) -> str:
         attrs = {k: v for k, v in dict(group.attrs).items() if k != "content_hash"}
         hasher.update(json.dumps(attrs, sort_keys=True, default=str).encode())
 
-        # 3. Hash child groups (recursively, sorted for determinism)
+        # 3. Hash child groups (recursively, sorted for determinism), each one
+        #    keyed by its NAME. A node's own digest does not carry its name, so
+        #    hashing the digests alone left a renamed child invisible to every
+        #    ancestor — the same hole `_storage_identity` closes for arrays, and
+        #    a group name is a path segment, so it decides which keys the
+        #    viewer's cache is holding.
         for child_name in sorted(group.group_keys()):
             child_path = f"{group_path}/{child_name}" if group_path else child_name
             child_hash = compute_hash_recursive(child_path)
-            hasher.update(child_hash.encode())
+            hasher.update(f"{child_name}:{child_hash}".encode())
 
         # Store hash in this node's attrs
         content_hash = hasher.hexdigest()

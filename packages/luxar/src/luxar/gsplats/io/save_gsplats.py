@@ -365,10 +365,10 @@ def _stamp_content_hash(root: zarr.Group) -> str:
     that helper reads every array's full data — prohibitive for multi-GB splat
     stores — so this variant hashes the **metadata tree only**: per-group sorted
     attrs plus each array's ``(name, shape, chunks, shards, dtype, codec ids,
-    own attrs)``. The root ``timestamp`` attr (microsecond ISO, rewritten on every
-    save) rides along in the attrs walk, so every re-save yields a distinct hash
-    even when the structure is unchanged — which is exactly the token cache
-    invalidation needs.
+    own attrs)`` and each child group's NAME alongside its digest. The root
+    ``timestamp`` attr (microsecond ISO, rewritten on every save) rides along in
+    the attrs walk, so every re-save yields a distinct hash even when the
+    structure is unchanged — which is exactly the token cache invalidation needs.
 
     Chunk/shard layout, the codec ids and the per-array attrs are part of that
     identity for the same reasons the compiler-side hash folds them in — see
@@ -382,8 +382,7 @@ def _stamp_content_hash(root: zarr.Group) -> str:
     that a future in-place RE-LAYOUT tool cannot re-stamp a store to its input's
     digest. The two remain separate digests over different serializations (this one
     an f-string over metadata only; the compiler's a sorted-key JSON dict plus the
-    decoded values, additionally expanding a SHARDED array's full codec pipeline),
-    and nothing compares them with each other.
+    decoded values), and nothing compares them with each other.
     """
     import json
 
@@ -400,15 +399,27 @@ def _stamp_content_hash(root: zarr.Group) -> str:
             # derived format-agnostically.
             shards = arr.shards
             arr_attrs = json.dumps(dict(arr.attrs), sort_keys=True, default=str)
+            # A SHARDED array's whole pipeline nests inside the single top-level
+            # `ShardingCodec`, so the ids alone read `["sharding_indexed"]` and
+            # say nothing about the inner codecs or the shard index. Expand it,
+            # exactly as `_storage_identity` does.
+            pipeline = (
+                [codec.to_dict() for codec in arr.metadata.codecs]
+                if shards is not None
+                else None
+            )
             hasher.update(
                 f"{name}:{tuple(arr.shape)}:{tuple(arr.chunks)}:"
                 f"{tuple(shards) if shards is not None else None}:{arr.dtype}:"
-                f"{codec_ids(arr.metadata)}:{arr_attrs}".encode()
+                f"{codec_ids(arr.metadata)}:{pipeline}:{arr_attrs}".encode()
             )
         attrs = {k: v for k, v in dict(group.attrs).items() if k != "content_hash"}
         hasher.update(json.dumps(attrs, sort_keys=True, default=str).encode())
+        # The child's NAME, not just its digest: a node's own digest does not
+        # carry its name, so hashing digests alone left a renamed child group
+        # invisible to every ancestor.
         for name in sorted(group.group_keys()):
-            hasher.update(hash_group(group[name]).encode())
+            hasher.update(f"{name}:{hash_group(group[name])}".encode())
         return hasher.hexdigest()
 
     content_hash = hash_group(root)
