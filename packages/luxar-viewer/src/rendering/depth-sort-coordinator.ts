@@ -1260,7 +1260,20 @@ function formatOrderingBytes(bytes: number, uploaded: boolean): string {
 function scheduleSort(mesh: THREE.Mesh, nodeId: string): void {
   const state = nodeStates.get(nodeId);
   const camera = getCamera?.();
-  if (!state || !api || !camera) return;
+  // `api` is wrapped BEFORE `initializeWithGuard` is awaited, so a live handle
+  // is not the same thing as a usable worker: between the spawn and 'ready'
+  // there is a window in which `sort` would reject NOT_INITIALIZED worker-side
+  // (`requireWasm`). Gating here rather than at each caller keeps it a single
+  // chokepoint — the capture drain's force loop dispatches without consulting
+  // `state.registered`, and a commit stamps `nodeStates` + `committedData`
+  // synchronously, so it can reach this during startup warm-up.
+  //
+  // Skipping beats letting it reject, and not only for the error line:
+  // `recordSortPose` below runs BEFORE the RPC, so a dispatch that rejects
+  // still leaves a pose on record for a sort that never ran — which is exactly
+  // what silences the per-frame `!lastSortAxis` recovery dispatch for a node
+  // whose first real dispatch raced a null camera.
+  if (!state || !api || workerInitState !== 'ready' || !camera) return;
   if (state.inFlight) {
     state.resortQueued = true;
     return;
@@ -1660,7 +1673,7 @@ export function evaluateDepthSortPerFrame(): void {
   // after a constructor throw — e.g. a CSP-blocked worker script — the
   // documented degrade-to-unsorted-normal mode). The within-mesh
   // re-sort triggers are worker-dependent, but `scheduleSort` guards
-  // `!api` itself.
+  // both `api` and init readiness itself.
   if (!depthSortEnabled || nodeStates.size === 0) return;
   const camera = getCamera?.();
   if (!camera) return;
@@ -1792,10 +1805,11 @@ function isCaptureQuiescent(): boolean {
  *
  * It is a NO-OP (returns as soon as it observes quiescence) when depth sort
  * is disabled, no order-dependent node exists, or nothing is pending. It
- * also degrades gracefully when the SortWorker is unavailable: the
- * cross-node renderOrder pass inside `evaluateDepthSortPerFrame` is pure
- * main-thread and still runs, and `scheduleSort` guards `!api` itself, so
- * no fresh sort is dispatched but the renderOrder assignment is still
+ * also degrades gracefully when the SortWorker is unavailable — or merely not
+ * READY yet, a capture launched during startup warm-up: the cross-node
+ * renderOrder pass inside `evaluateDepthSortPerFrame` is pure main-thread and
+ * still runs, and `scheduleSort` guards both `api` and init readiness itself,
+ * so no fresh sort is dispatched but the renderOrder assignment is still
  * refreshed for the pose.
  *
  * `maxWaitMs` bounds the drain so a crashed / wedged worker can never hang
