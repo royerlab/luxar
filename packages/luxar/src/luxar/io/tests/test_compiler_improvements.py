@@ -511,6 +511,64 @@ class TestChunkBoundsZarrAlignment:
                     f"{atom} nor the full array length {n_rows}"
                 )
 
+    def test_lines_scalars_land_on_the_atom_grid(self) -> None:
+        """Lines ``scalars`` is atom-aligned like every other per-vertex array.
+
+        Regression guard. Lines' ``ordering_data`` is NESTED
+        (``vertex_ordering`` / ``segment_ordering``) where Points' is flat, and
+        ``write_lines`` used to hand the OUTER dict to ``write_scalars``. The
+        chunk calculator looks for a top-level ``chunk_size``, found none, and
+        fell back to a pure byte budget — so ``scalars`` was the one per-vertex
+        array off the grid (16,384 rows against a 3,276 atom;
+        ``16384 % 3276 == 4``). No test wrote lines WITH scalars and checked
+        alignment, so it stayed invisible.
+
+        Needs enough vertices that the byte budget exceeds one atom, or the
+        misaligned and aligned answers coincide and this cannot fail.
+        """
+        from luxar.core.dimensions import Dimension, Dimensions
+
+        n_vertices = 60_000
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path = Path(tmpdir) / "test.luxar.zarr"
+            with LuxarZarrCompiler(zarr_path, enable_spatial_index=True) as compiler:
+                dims = Dimensions(
+                    [
+                        Dimension("x", display=True),
+                        Dimension("y", display=True),
+                        Dimension("z", display=True),
+                    ]
+                )
+                scene = compiler.create_scene(dimensions=dims)
+                rng = np.random.default_rng(5)
+                scene.add_lines(
+                    "lines",
+                    vertices=rng.standard_normal((n_vertices, 3)).astype(np.float32),
+                    widths=rng.random(n_vertices).astype(np.float32) + 0.01,
+                    line_type="segments",
+                    sharpness=rng.uniform(0.2, 0.9, n_vertices).astype(np.float32),
+                    # Non-uniform so the encoder cannot broadcast it to one row.
+                    scalars=rng.random(n_vertices).astype(np.float32),
+                    colormap="viridis",
+                )
+
+            g = zarr.open_group(zarr_path, mode="r")["lines"]
+            atom = g.attrs["vertex_ordering"]["chunk_size"]
+            assert atom > 0
+
+            c0 = g["scalars"].chunks[0]
+            n_rows = g["scalars"].shape[0]
+            assert c0 > atom, (
+                f"scalars chunks[0]={c0} did not exceed the atom {atom}; pick a "
+                f"larger n_vertices or this test cannot detect misalignment"
+            )
+            assert c0 % atom == 0, (
+                f"scalars chunks[0]={c0} is not a multiple of the vertex atom "
+                f"{atom} (nor the full length {n_rows}) — write_lines is likely "
+                f"passing the outer ordering_data instead of its vertex_ordering"
+            )
+
     # -- No spatial index (regression guard) ---------------------------------
 
     def test_no_spatial_index_still_works(self) -> None:
