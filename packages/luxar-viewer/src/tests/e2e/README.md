@@ -268,18 +268,18 @@ exports group into the categories below.
 
 ### Scene introspection and pixel sampling
 
-| Helper                                         | Use when                                                                                                                       |
-| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `getLuxarState(page)`                          | Read `__luxarDebug.getState()` with a clear error if the interface isn't ready.                                                |
-| `getSceneObjectNames(page)`                    | Flat list of every named object in the scene graph.                                                                            |
-| `getLayerMaterialState(page, layer)`           | Inspect uniforms / blending / depth state of a specific layer's material.                                                      |
-| `getPostProcessingState(page)`                 | Read the post-processing pipeline state (tone mapping mode, bloom, exposure).                                                  |
-| `probeWebGPUBackend(page)`                     | Which backend physically runs behind `?renderer=webgpu` — skip gate for specs that must not run on the WebGL2 fallback.        |
-| `validateSceneAttributes(page)`                | Audit every geometry's attribute buffers against the format spec.                                                              |
-| `SampledPixel`, `ElementPixelStats`            | Types returned by the pixel-sampling helpers.                                                                                  |
-| `samplePixelAt(page, x, y)` / `samplePixelsAt` | Read one or many canvas pixels via `gl.readPixels`.                                                                            |
-| `captureCanvasRGBA(page, selector?)`           | Decode one element screenshot into a full-frame RGBA buffer — whole-image / multi-region analysis on a single identical frame. |
-| `getElementPixelStats(page, ...)`              | Pixel-statistics rollup used by visual-regression-adjacent specs.                                                              |
+| Helper                                         | Use when                                                                                                                                                                                                                                              |
+| ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `getLuxarState(page, timeout?)`                | Read `__luxarDebug.getState()` with a clear error if the interface isn't ready. Deadline-bounded (45 s): throws a diagnostic naming #1651 / #1724 when the page never answers the probe, rather than returning a fallback the caller would assert on. |
+| `getSceneObjectNames(page)`                    | Flat list of every named object in the scene graph.                                                                                                                                                                                                   |
+| `getLayerMaterialState(page, layer)`           | Inspect uniforms / blending / depth state of a specific layer's material.                                                                                                                                                                             |
+| `getPostProcessingState(page)`                 | Read the post-processing pipeline state (tone mapping mode, bloom, exposure).                                                                                                                                                                         |
+| `probeWebGPUBackend(page)`                     | Which backend physically runs behind `?renderer=webgpu` — skip gate for specs that must not run on the WebGL2 fallback.                                                                                                                               |
+| `validateSceneAttributes(page)`                | Audit every geometry's attribute buffers against the format spec.                                                                                                                                                                                     |
+| `SampledPixel`, `ElementPixelStats`            | Types returned by the pixel-sampling helpers.                                                                                                                                                                                                         |
+| `samplePixelAt(page, x, y)` / `samplePixelsAt` | Read one or many canvas pixels via `gl.readPixels`.                                                                                                                                                                                                   |
+| `captureCanvasRGBA(page, selector?)`           | Decode one element screenshot into a full-frame RGBA buffer — whole-image / multi-region analysis on a single identical frame.                                                                                                                        |
+| `getElementPixelStats(page, ...)`              | Pixel-statistics rollup used by visual-regression-adjacent specs.                                                                                                                                                                                     |
 
 ### Pattern for a new helper
 
@@ -287,7 +287,8 @@ Helpers follow a few conventions worth matching:
 
 - All async helpers take `page: Page` as the first argument.
 - Wait helpers expose an explicit `timeout` parameter (default 45 s
-  for top-level readiness and for `getConsoleMessages`, 5–15 s otherwise) and throw with a
+  for top-level readiness and for the two bounded probes, `getLuxarState` and
+  `getConsoleMessages`, 5–15 s otherwise) and throw with a
   message that names the expected condition.
 - Helpers that read the debug interface go through `getLuxarState`
   rather than poking `window.__luxarDebug` directly — the wrapper
