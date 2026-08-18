@@ -47,16 +47,19 @@
  *    the "wasn't set" case gracefully.
  */
 
+import * as THREE from 'three';
 import { log, Modules } from '../../utils/log';
 import { getViewerContainer } from '../../utils/viewer-container';
 import { showToast } from '../toast';
 import type { SceneManager } from '../../scene/scene-manager';
 import type { AnimationController } from '../../scene/animation/animation-controller';
 import { LuxarOrbitControls } from '../../controls/luxar-orbit-controls';
+import { computeVideoBitrate as computeVideoBitratePure } from './media-utilities';
 import {
-  computeVideoBitrate as computeVideoBitratePure,
   generateFfmpegScript as generateFfmpegScriptPure,
-} from './media-utilities';
+  type GradeSettings,
+  type ToneMapName,
+} from './ffmpeg-script';
 import type { CaptureContext, OfflineCaptureDriver } from './drivers/offline-capture-driver';
 import { ImageSequenceDriver } from './drivers/image-sequence-driver';
 import { ExrSequenceDriver } from './drivers/exr-sequence-driver';
@@ -73,6 +76,45 @@ export interface OfflineCaptureStrategyHooks {
 }
 
 type OfflineMode = 'exr' | 'webm' | 'mp4' | 'mkv' | 'png' | 'webp' | 'jpeg';
+
+/** THREE tone-mapping constants → the names the ffmpeg script knows. */
+const TONE_MAP_BY_THREE_CONSTANT: Record<number, ToneMapName> = {
+  [THREE.LinearToneMapping]: 'linear',
+  [THREE.ReinhardToneMapping]: 'reinhard',
+  [THREE.CineonToneMapping]: 'cineon',
+  [THREE.ACESFilmicToneMapping]: 'aces',
+  [THREE.AgXToneMapping]: 'agx',
+  [THREE.NeutralToneMapping]: 'neutral',
+};
+
+/** Ungraded clamp — the fallback when the renderer can't report a grade. */
+const NEUTRAL_GRADE: GradeSettings = {
+  toneMapping: 'linear',
+  exposure: 0,
+  offset: 0,
+  gamma: 1,
+};
+
+/**
+ * Read the display transform an EXR capture bypasses, so the bundled
+ * ffmpeg script can put it back.
+ *
+ * Falls back to an ungraded clamp if the renderer doesn't expose it
+ * (older mocks in tests). It must not return `undefined`: that makes the
+ * script skip the colour chain entirely, which encodes the scene-linear
+ * floats as if they were display-referred — the dark, colour-shifted
+ * video this whole path exists to prevent.
+ */
+function readGradeSettings(sceneManager: SceneManager): GradeSettings {
+  const grade = sceneManager.postProcessing?.getGradeSettings?.();
+  if (!grade) return NEUTRAL_GRADE;
+  return {
+    toneMapping: TONE_MAP_BY_THREE_CONSTANT[grade.toneMapping] ?? 'neutral',
+    exposure: grade.exposure,
+    offset: grade.offset,
+    gamma: grade.gamma,
+  };
+}
 
 export class OfflineCaptureStrategy implements CaptureStrategy {
   readonly kind = 'offline' as const;
@@ -102,12 +144,8 @@ export class OfflineCaptureStrategy implements CaptureStrategy {
     return !state.isRecording && !state.isOfflineCaptureActive;
   }
 
-  async run(
-    opts: RecordingOptions,
-    _mode: RecordingMode,
-    session: RecordingSession
-  ): Promise<void> {
-    return this.runOfflineCaptureLoop(opts.outputFormat as OfflineMode, opts, session);
+  async run(opts: RecordingOptions, mode: RecordingMode, session: RecordingSession): Promise<void> {
+    return this.runOfflineCaptureLoop(opts.outputFormat as OfflineMode, opts, session, mode);
   }
 
   /** Synchronously stop the loop. The loop's await checkpoints
@@ -134,10 +172,15 @@ export class OfflineCaptureStrategy implements CaptureStrategy {
   private async runOfflineCaptureLoop(
     mode: OfflineMode,
     opts: RecordingOptions,
-    session: RecordingSession
+    session: RecordingSession,
+    recordingMode: RecordingMode
   ): Promise<void> {
+    // The dialog gets the mode the panel is actually in. Deriving it from
+    // the format instead described a Turntable + PNG/MP4 capture with
+    // Smooth off as a "Video" recording — no 360° line, no frame count —
+    // even though this loop always rotates a full turntable.
     const confirmed = await session.showConfirmationDialog({
-      mode: opts.outputFormat === 'exr' || opts.frameByFrame ? 'turntable' : 'video',
+      mode: recordingMode,
       options: opts,
     });
     if (!confirmed || session.isDisposed()) return;
@@ -170,7 +213,18 @@ export class OfflineCaptureStrategy implements CaptureStrategy {
 
     // Save state, disable DPR, lock resize, scale resolution.
     // Dimensions are rounded to a multiple of 16 (macroblock alignment).
-    const targetH = opts.videoResolution > 0 ? opts.videoResolution : 1080;
+    //
+    // `videoResolution === 0` is the panel's "Native" option, documented
+    // in its tooltip as "current canvas size" — so capture at the size
+    // the canvas actually has (logical size × native DPR, which is what
+    // the real-time path records once adaptive DPR is switched off)
+    // rather than silently forcing 1080. Forcing it downscaled every
+    // Retina/4K capture and, because it changed the capture-to-CSS pixel
+    // ratio, rescaled the composited overlays with it.
+    const logicalH = this.sceneManager.renderer.getSize(new THREE.Vector2()).y;
+    const nativeDPR = session.adaptiveDPRManager?.getNativeDPR() ?? window.devicePixelRatio ?? 1;
+    const targetH =
+      opts.videoResolution > 0 ? opts.videoResolution : Math.round(logicalH * nativeDPR);
     session.saveRecordingState({
       disableDPR: true,
       lockResize: true,
@@ -315,13 +369,31 @@ export class OfflineCaptureStrategy implements CaptureStrategy {
     const counterEl = overlay.querySelector('.luxar-recording-overlay__counter');
     const labelEl = overlay.querySelector('.luxar-recording-overlay__label');
 
+    // One timestamped stem for the whole capture. `generateFilename`
+    // stamps `new Date()` on every call, so calling it per artifact —
+    // the ZIP's save-dialog name at setup, its fallback download name at
+    // finalize, the script's output base — hands out names that disagree
+    // whenever a capture crosses a second boundary.
+    const captureBase = this.hooks.generateFilename('zip').replace(/\.zip$/, '');
+
     // Build the dependency context the driver needs.
     const ctx: CaptureContext = {
       sceneManager: this.sceneManager,
       fps,
       renderFrameToCanvas: () => this.hooks.renderFrameToCanvas(),
-      generateFilename: (ext) => this.hooks.generateFilename(ext),
-      generateFfmpegScript: (rate, frames, ext) => generateFfmpegScriptPure(rate, frames, ext),
+      generateFilename: (ext) => `${captureBase}.${ext}`,
+      generateFfmpegScript: (frames, ext) =>
+        generateFfmpegScriptPure({
+          fps,
+          frameCount: frames,
+          frameExt: ext,
+          mode: recordingMode === 'turntable' ? 'turntable' : 'video',
+          outputBase: captureBase,
+          // EXR frames are scene-linear and pre-grade, so the script has
+          // to re-apply the viewer's display transform. LDR frames are
+          // already graded and ignore this.
+          grade: ext === 'exr' ? readGradeSettings(this.sceneManager) : undefined,
+        }),
       downloadBlob: (blob, filename) => this.hooks.downloadBlob(blob, filename),
       computeVideoBitrate: (w, h) =>
         computeVideoBitratePure(w, h, opts.videoFPS, opts.videoQuality),

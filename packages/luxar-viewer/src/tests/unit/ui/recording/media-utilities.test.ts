@@ -9,7 +9,6 @@ import {
   type VideoQuality,
   anchorOffset,
   computeVideoBitrate,
-  generateFfmpegScript,
   generateFilename,
   generateTimestampSuffix,
   getSupportedMimeType,
@@ -115,34 +114,6 @@ describe('generateFilename', () => {
   it('respects arbitrary extension', () => {
     const name = generateFilename('exr', new Date(2026, 4, 5, 10, 30, 0));
     expect(name).toBe('luxar-capture-2026-05-05-103000.exr');
-  });
-});
-
-describe('generateFfmpegScript', () => {
-  it('includes frame count, fps, computed duration, and ext-aware input pattern', () => {
-    const script = generateFfmpegScript(30, 600, 'png');
-    expect(script).toContain('600 PNG frames at 30 FPS (20.0s)');
-    expect(script).toContain("'frame_%06d.png'");
-    expect(script).toContain('-framerate 30');
-    expect(script).toContain('"turntable.mp4"');
-  });
-
-  it('appends an HDR encoding stanza ONLY for EXR sequences', () => {
-    const exr = generateFfmpegScript(30, 60, 'exr');
-    const png = generateFfmpegScript(30, 60, 'png');
-    expect(exr).toContain('HDR MP4');
-    expect(exr).toContain('yuv420p10le');
-    expect(png).not.toContain('HDR MP4');
-    expect(png).not.toContain('yuv420p10le');
-  });
-
-  it('defaults to exr when ext omitted', () => {
-    expect(generateFfmpegScript(30, 60)).toContain('HDR MP4');
-  });
-
-  it('starts with shebang and includes the chmod usage hint', () => {
-    expect(generateFfmpegScript(30, 30, 'jpg').startsWith('#!/bin/bash')).toBe(true);
-    expect(generateFfmpegScript(30, 30, 'jpg')).toContain('chmod +x encode_video.sh');
   });
 });
 

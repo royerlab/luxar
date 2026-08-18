@@ -61,7 +61,7 @@ export class ImageSequenceDriver implements OfflineCaptureDriver {
       frameExt: ext,
       label: this.mode.toUpperCase(),
       totalBytes: this.zip.getTotalBytes(),
-      ffmpegScript: ctx.generateFfmpegScript(ctx.fps, capturedFrames, ext),
+      ffmpegScript: ctx.generateFfmpegScript(capturedFrames, ext),
       fallbackDownloadName: ctx.generateFilename('zip'),
       showToast: ctx.showToast,
       downloadBlob: ctx.downloadBlob,

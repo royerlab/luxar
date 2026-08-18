@@ -39,21 +39,22 @@ reference to Session for the shared scaffolding.
 
 ## Files
 
-| File                          | Role                                                                                                      |
-| ----------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `session.ts`                  | `RecordingSession` — shared state save/restore, dialog, indicator, mutex                                  |
-| `capture-strategy.ts`         | `CaptureStrategy` interface + `SessionState` view + `CaptureKind` union                                   |
-| `screenshot-strategy.ts`      | `ScreenshotStrategy` — single-frame capture with optional transparent BG                                  |
-| `video-recording-strategy.ts` | `VideoRecordingStrategy` — real-time MediaRecorder WebM capture                                           |
-| `offline-capture-strategy.ts` | `OfflineCaptureStrategy` — frame-by-frame turntable / EXR loop, drives one driver                         |
-| `screenshot-exporter.ts`      | `renderFrameToCanvas`, `encodeScreenshotBlob`, `normalizeScreenshotFormat`, `downloadBlob`                |
-| `video-codec-selection.ts`    | `selectVideoCodec` — mediabunny codec fallback chain for the offline video path                           |
-| `media-utilities.ts`          | `computeVideoBitrate`, `getSupportedMimeType`, `generateFilename`, `generateFfmpegScript`, `anchorOffset` |
-| `overlay-compositor.ts`       | `compositeOverlays` + text / image / HTML overlay rasterization                                           |
-| `animation-sync.ts`           | `SliderSyncCoordinator` + `getTurntableInfo` / `getNavigableDimensionOptions`                             |
-| `gui-builder.ts`              | Pure mode→format and format→predicate visibility rules (`computeControlVisibility`)                       |
-| `zip-sequence-capture.ts`     | `ZipSequenceCapture` — streaming ZIP writer for image / EXR sequences                                     |
-| `types.ts`                    | Shared types: `RecordingMode`, `RecordingOptions`, `OutputFormat`, …                                      |
+| File                          | Role                                                                                       |
+| ----------------------------- | ------------------------------------------------------------------------------------------ |
+| `session.ts`                  | `RecordingSession` — shared state save/restore, dialog, indicator, mutex                   |
+| `capture-strategy.ts`         | `CaptureStrategy` interface + `SessionState` view + `CaptureKind` union                    |
+| `screenshot-strategy.ts`      | `ScreenshotStrategy` — single-frame capture with optional transparent BG                   |
+| `video-recording-strategy.ts` | `VideoRecordingStrategy` — real-time MediaRecorder WebM capture                            |
+| `offline-capture-strategy.ts` | `OfflineCaptureStrategy` — frame-by-frame turntable / EXR loop, drives one driver          |
+| `screenshot-exporter.ts`      | `renderFrameToCanvas`, `encodeScreenshotBlob`, `normalizeScreenshotFormat`, `downloadBlob` |
+| `video-codec-selection.ts`    | `selectVideoCodec` — mediabunny codec fallback chain for the offline video path            |
+| `media-utilities.ts`          | `computeVideoBitrate`, `getSupportedMimeType`, `generateFilename`, `anchorOffset`          |
+| `ffmpeg-script.ts`            | `generateFfmpegScript` — the bundled `encode_video.sh`, incl. the EXR display transform    |
+| `overlay-compositor.ts`       | `compositeOverlays` + text / image / HTML overlay rasterization                            |
+| `animation-sync.ts`           | `SliderSyncCoordinator` + `getTurntableInfo` / `getNavigableDimensionOptions`              |
+| `gui-builder.ts`              | Pure mode→format and format→predicate visibility rules (`computeControlVisibility`)        |
+| `zip-sequence-capture.ts`     | `ZipSequenceCapture` — streaming ZIP writer for image / EXR sequences                      |
+| `types.ts`                    | Shared types: `RecordingMode`, `RecordingOptions`, `OutputFormat`, …                       |
 
 ## Subpackages
 
@@ -205,6 +206,94 @@ environment that forbids it fails before any state is mutated), which
 is why it is documented rather than guarded. The one flag whose stuck
 value would be worse than a locked panel — `isLoopRenderSuppressed` —
 is raised inside the `try` instead, per step 7.
+
+## Overlay compositing units
+
+Overlays live in the DOM, so their sizes are authored in **viewport**
+units: the overlay manager writes `font-size: <font_size × 100>vh`,
+`width: <size[0] × 100>vw`, `padding: …vh`, and an `<img>` with no
+configured `size` simply lays out at its natural CSS-pixel size.
+
+The capture frame is neither the viewport nor the CSS canvas: the
+offline loop renders at the chosen output height (and an embedded
+viewer's canvas is a fraction of the window). `computeOverlayMetrics`
+therefore derives two conversions from `glCanvas.getBoundingClientRect()`
+and the viewport, and every branch uses them:
+
+| Authored as                                            | Convert with              |
+| ------------------------------------------------------ | ------------------------- |
+| `font_size`, `padding`, `stroke_width`, `size[1]` (vh) | `× metrics.vh`            |
+| `width`, `size[0]` (vw)                                | `× metrics.vw`            |
+| natural image pixels (CSS px)                          | `× metrics.scaleX/scaleY` |
+| `position` (fraction of the canvas)                    | `× canvas.width/height`   |
+
+Resolving vh/vw against the capture canvas instead — which is what this
+module used to do — is only correct when the canvas fills the viewport
+AND the capture is canvas-sized. Recording breaks both halves, which is
+why a logo shrank as the output resolution went up.
+
+Two paths cannot composite overlays at all, and the confirmation dialog
+says so when overlays are visible: the real-time MediaRecorder
+(`canvas.captureStream` sees the WebGL canvas alone) and the EXR driver
+(raw HDR buffer).
+
+## The bundled `encode_video.sh`
+
+Image and EXR sequences ship with a script that muxes the frames into an
+MP4 (`ffmpeg-script.ts`). What it must do depends entirely on what is in
+the ZIP:
+
+- **PNG / WebP / JPEG frames are already what the viewer showed** —
+  `renderToImageData` reads the framebuffer after exposure, tone mapping
+  and the sRGB encode. The script applies no colour maths; adding any
+  would double-grade.
+- **EXR frames are scene-linear and pre-grade.** `hdr-effects-pre-tone`
+  deliberately bypasses the display transform to keep unclipped HDR, so
+  the script has to put it back: exposure → offset → gamma → tone map →
+  sRGB. It reads the live values from
+  `PostProcessingManager.getGradeSettings()` at capture time.
+
+The tone map is emitted as an exact `geq` expression carrying three's own
+constants, because ffmpeg's built-in curves are different functions.
+Measured against the viewer's own PNG of the same frame:
+
+| chain                                     | PSNR        |
+| ----------------------------------------- | ----------- |
+| exact `geq` (what we emit)                | **38.2 dB** |
+| `tonemap=hable` (the usual ACES stand-in) | 16.0 dB     |
+| no tone mapping at all                    | 23.8 dB     |
+| old script (no colour handling at all)    | 15.2 dB     |
+| ceiling: same maths, PNG out, no codec    | 40.3 dB     |
+
+`hable` is _worse than doing nothing_, which is why the approximations
+are not offered. AgX is the one mode with no practical closed form (four
+matrix stages around a log-space polynomial), so its curve degrades to a
+plain clamp and the script says so, pointing at the LDR-sequence route
+instead of faking the look. Exposure, offset and gamma are still applied
+there — dropping them would encode the frames at the wrong brightness,
+which is the failure the whole chain exists to prevent.
+
+`geq` evaluates its expression per pixel on the CPU, so expression _size_
+is the encode cost. The cross-channel curves (ACES, Neutral) share
+intermediates through `st()`/`ld()` registers rather than re-inlining
+them, which is worth an order of magnitude on the same frames:
+
+| curve   | inlined            | with registers   |
+| ------- | ------------------ | ---------------- |
+| ACES    | 8.0 KB, 11.0 s/fr  | 2.0 KB, 1.5 s/fr |
+| Neutral | 63.2 KB, 26.1 s/fr | 1.5 KB, 1.0 s/fr |
+
+Other things the script gets right that are easy to get wrong: `-tag:v
+hvc1` (libx265 defaults to `hev1`, which QuickTime and Safari refuse),
+`setparams` colour tagging (the `-color_*` output options silently failed
+to reach the container on the LDR path) paired with an RGB→YUV conversion
+that uses the matrix it tags (`scale=out_color_matrix=bt709`, since
+swscale's default is BT.601 and the mismatch costs 40/255 on saturated
+colour — the EXR chain's `zscale` already converts with `m=bt709`),
+`-start_number 0`, and an HDR10
+stanza that actually _converts_ to PQ/BT.2020 rather than tagging SDR
+pixels as HDR. Output names come from the capture filename, and a
+turntable's script notes that its frames loop seamlessly.
 
 ## Screenshot path
 

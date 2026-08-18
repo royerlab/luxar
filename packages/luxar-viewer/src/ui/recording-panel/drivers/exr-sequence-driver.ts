@@ -58,7 +58,7 @@ export class ExrSequenceDriver implements OfflineCaptureDriver {
       frameExt: 'exr',
       label: 'EXR',
       totalBytes: this.zip.getTotalBytes(),
-      ffmpegScript: ctx.generateFfmpegScript(ctx.fps, capturedFrames, 'exr'),
+      ffmpegScript: ctx.generateFfmpegScript(capturedFrames, 'exr'),
       fallbackDownloadName: ctx.generateFilename('zip'),
       showToast: ctx.showToast,
       downloadBlob: ctx.downloadBlob,
