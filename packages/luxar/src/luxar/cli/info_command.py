@@ -117,6 +117,7 @@ def register_info_command(app: typer.Typer) -> None:
                 aprint(f"  ✨ Total splats: {info_dict['n_gsplats_total']:,}")
 
             if stats:
+                _print_chunk_layout(root)
                 if info_dict["points_objects"]:
                     aprint("\n📦 Points Objects Details:")
                     for pc in info_dict["points_objects"]:
@@ -146,6 +147,49 @@ def register_info_command(app: typer.Typer) -> None:
         except Exception as e:
             aprint(f"❌ Error reading info for {path}: {e}")
             raise typer.Exit(1)
+
+
+def _print_chunk_layout(root: zarr.Group) -> None:
+    """Report the store's STREAMING shape — the ``luxar optimise`` diagnostic.
+
+    Computed off the same helper the optimiser plans from, so a badly chunked
+    store is visible from ``luxar info --stats`` rather than only after hosting
+    it and counting round trips. The projected request count is the number of
+    chunk files a full load fetches, which is what dominates a cold load over
+    object storage (measured: 245 s / 9,390 requests for 38.6 MB).
+    """
+    from ..io.optimise import plan_optimisation, summarise_plan
+    from ..typing_utils.constants import MIN_CHUNK_BYTES, TARGET_CHUNK_BYTES
+
+    # ONE walk. The summary and the "try `luxar optimise`" hint both need the
+    # same per-array metadata, and opening every array twice on top of the walk
+    # `get_zarr_info(detailed=True)` already did is three passes over a store
+    # that, in the corpus this diagnostic exists for, holds 606,349 files.
+    plan = plan_optimisation(root)
+    summary = summarise_plan(plan)
+    if summary.n_arrays == 0:
+        return
+    aprint("\n🧩 Chunk Layout:")
+    aprint(
+        f"  Average chunk: {summary.mean_chunk_bytes / 1024:.1f} KB "
+        f"(target {TARGET_CHUNK_BYTES // 1024} KB)"
+    )
+    aprint(
+        f"  Under the {MIN_CHUNK_BYTES // 1024} KB floor: "
+        f"{summary.n_arrays_under_floor}/{summary.n_arrays} arrays "
+        f"({summary.share_under_floor:.0%})"
+    )
+    aprint(f"  Projected requests for a full load: {summary.n_chunks:,} chunks")
+    if summary.mean_chunk_bytes >= MIN_CHUNK_BYTES:
+        return
+    # Gated on a REAL plan, not on the average alone. A store of ten 1 KB
+    # single-chunk arrays is under the floor and yet has nothing to re-chunk;
+    # recommending the tool there is advice that does nothing.
+    if plan.n_rechunked:
+        aprint(
+            f"  → `luxar optimise` would cut this to "
+            f"{plan.target_n_chunks:,} chunks; try --dry-run."
+        )
 
 
 def _print_tree(

@@ -36,6 +36,7 @@ invented flag fails too, not just a stale command path.
 
 ```bash
 luxar info      # Dataset structure, dimensions, and compression statistics (--stats, --format json)
+luxar optimise  # Re-chunk an existing store for streaming; values stay bit-identical
 luxar serve     # Serve a .luxar.zarr over HTTP, optionally with the viewer (--viewer, --open)
 luxar viewer    # Serve the Luxar viewer, optionally with a dataset (--data)
 luxar export    # Export a scene + viewer as a standalone offline folder (or --native bundle)
@@ -46,6 +47,88 @@ luxar profiles  # List the network-simulation profiles usable via --profile
 - Offline / native export (and the `make build-launchers` prerequisite) →
   [Build system guide](../developer/BUILD_SYSTEM_SPEC.md)
 - Network profiles → [Network simulation spec](../developer/NETWORK_SIMULATION_SPEC.md)
+
+## `luxar optimise`
+
+Re-chunk a store that already exists so it streams well, in one
+structure-preserving pass. No refit, no source volume, no GPU: only zarr chunk
+shapes change, and array values stay bit-identical.
+
+```bash
+luxar optimise                    # Re-chunk SOURCE into OUTPUT at the 64 KB default
+luxar optimise --dry-run          # Report the plan and write nothing (omit OUTPUT)
+luxar optimise --target-kb 128    # Set the chunk budget directly
+luxar optimise --profile hosting  # Preset budget: hosting / local / archive
+luxar optimise --verify           # Re-read the output; compare arrays and payload files
+luxar optimise --overwrite        # Replace an existing OUTPUT store
+luxar optimise --generic          # Allow a plain (non-Luxar) zarr store
+```
+
+It takes a source store and, unless `--dry-run` is given, a destination store —
+a compiled `.luxar.zarr` scene, a standalone `.gsplats.zarr` tree, or (with
+`--generic`) any zarr store at all.
+
+Most already-generated datasets are chunked far below the 64 KB target — the
+bundled demo corpus averages 5.1 KB per file, with 97% of files under 16 KB —
+and a cold load over object storage is dominated by round trips, not bytes.
+Re-chunking one demo to 64 KB cut a 245 s / 9,390-request cold load to 51 s /
+2,348 requests.
+
+Pick the budget with exactly one of `--target-kb`, `--target-bytes` or
+`--profile`. The profiles are **hosting** (256 KB — fewest round trips over
+object storage), **local** (64 KB — the authoring default) and **archive**
+(1 MB — not for streaming; minimises file count). `--dry-run` reports the plan
+and writes nothing, so the output argument must be omitted. `--verify` re-reads
+the written store and compares every array — and every plain payload file the
+pass copied, such as an overlay image — byte for byte, reporting how many of
+each it checked. `--generic` allows a
+plain zarr store that is not a Luxar scene or a `.gsplats.zarr` tree.
+
+One boundary is worth stating for `--generic`, because it is a silent no-op
+rather than an error: this pass merges **rows**, i.e. it only ever grows the
+chunk along axis 0. An array chunked on its trailing axes instead — an OME-Zarr
+`(1, 1, Z, Y, X)` level chunked `(1, 1, 8, 32, 32)`, say — is therefore left
+alone and reported as `rows already in one chunk`, even though it may hold
+hundreds of small chunk files. Luxar's own arrays are all row-chunked, so this
+only affects foreign stores; use a dedicated rechunker (`rechunker`,
+`ome-zarr-py`) for those.
+
+The larger profiles trade **partial-query** bytes for **full-load** requests, so
+"object storage → `hosting`" is not unconditional. A Points or GSplats node is
+not loaded whole: the viewer turns the visible spatial-index chunks into element
+ranges of `chunk_size` atoms, and one atom-hit costs one zarr chunk whatever its
+size. Measured on a real store (atom 2340, uint16 `(N, 3)`): `local` fetches
+4 atoms / 54.8 KB per partial hit, `hosting` 18 atoms / 246.8 KB (4.5x) and
+`archive` 74 atoms / 1014.6 KB (18x). Pick `hosting`/`archive` when the access
+pattern is "load the whole node" (a gallery still, a small scene, an archive
+upload); stay on `local` when the viewer will be slicing into a large one.
+
+dtype, codecs, filters, `fill_value`, memory order, the chunk key layout, the
+on-disk zarr format version and every attribute except the two the pass must
+move — the root's `content_hash` and the `chunk_layout` summary written beside
+it — are all preserved; a sharded array keeps its shard grid; and the
+spatial-index grid is never moved, since each new chunk is a whole multiple of
+its node's `chunk_size` atom. Nothing is chunked smaller than it already is, so
+the chunk grid is a **fixed point**: a second run re-chunks nothing. It still
+rewrites the store, and it still moves the hash — the `chunk_layout` attr now
+records the counts that changed (22 → 13 becomes 13 → 13). From the third run
+on, both the grid and the hash are fixed: the same layout over the same values
+hashes the same.
+
+The output gets a fresh `content_hash` and a `chunk_layout` root attribute,
+because chunk keys now cover different rows and a warm viewer cache validating
+on an unchanged hash would serve stale chunks. For the same reason, replacing an
+existing output requires `--overwrite` and rewriting in place is refused —
+republishing under a new URL prefix is the safe move. `--overwrite` replaces an
+existing zarr store or an empty directory and nothing else; a destination that
+contains the source (or sits inside it) is rejected outright, and so is one that
+is a symlink, since moving the new store into place would replace the link
+rather than what it points at (pass the target path instead). The whole output
+is staged beside the destination and moved into place last — and an existing
+store is renamed aside and deleted only once the replacement is in place — so an
+interrupted or failed run leaves no partial store and never costs you both
+copies. Run `luxar info` with its
+detailed-statistics flag to see a store's chunk layout before and after.
 
 ## `luxar demo`
 
