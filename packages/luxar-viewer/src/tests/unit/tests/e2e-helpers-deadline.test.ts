@@ -7,10 +7,10 @@
  * run allowed inside a bare evaluate and being reported as `Tearing down
  * "page" exceeded the test timeout`. `raceEvaluate` is the bound (its own
  * promise/timer contract is covered in `e2e-helpers-race-evaluate.test.ts`,
- * so this file does not repeat it), and `getConsoleMessages` — which the
- * shared fixture runs in teardown for every spec that imports `test` from
- * `./fixtures` — is the consumer covered here, reached through
- * `assertNoConsoleErrors`.
+ * so this file does not repeat it), and the two consumers covered here are
+ * `getConsoleMessages` — which the shared fixture runs in teardown for every
+ * spec that imports `test` from `./fixtures`, reached through
+ * `assertNoConsoleErrors` — and `getLuxarState`, the suite's most-called probe.
  *
  * Four assertions here would go red against the unbounded code, because a
  * wedged page never settles at all: "throws, naming the timeout, when the
@@ -24,11 +24,28 @@
  * pass-through path, and the in-page function's promise never to return
  * `null` (which is what makes `null` usable as the deadline sentinel).
  *
+ * `getLuxarState` (#1651 + #1724) adds the same three bound assertions — it
+ * throws naming the timeout, it never resolves with a stand-in, and it defaults
+ * to 45 s — all three red against the unbounded code. Its load-bearing extra is
+ * the SENTINEL test: `getLuxarState` returns whatever the viewer's untyped
+ * `getState()` hands back, so a falsy answer (`null`, `undefined`) has to pass
+ * through unchanged instead of being misreported as a stall. That one is red
+ * against a primitive sentinel rather than against the unbounded code, which is
+ * the point — it pins the one design decision the bound could get wrong while
+ * still looking correct. The in-page test merely guards an adjacent contract:
+ * a genuinely missing debug interface must still fail as itself.
+ *
  * No browser here: `page` is a one-method fake cast to Playwright's `Page`.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import type { Page } from '@playwright/test';
-import { assertNoConsoleErrors, getConsoleMessages } from '../../e2e/helpers';
+import {
+  assertNoConsoleErrors,
+  getConsoleMessages,
+  getLuxarState,
+  waitForDimensionNavigation,
+  waitForPointsLoaded,
+} from '../../e2e/helpers';
 
 /** A `page` whose `evaluate` resolves with `value`. */
 function answeringPage(value: unknown): Page {
@@ -175,5 +192,175 @@ describe('getConsoleMessages in-page function', () => {
     expect(buckets.logs).toHaveLength(1);
     expect(buckets.logs[0]).toContain('hello');
     expect(buckets.all).toHaveLength(3);
+  });
+});
+
+describe('getLuxarState deadline', () => {
+  it('returns the state when the page answers', async () => {
+    const state = { initialized: true, totalPoints: 100000, isLoading: false };
+    await expect(getLuxarState(answeringPage(state), 1000)).resolves.toEqual(state);
+  });
+
+  it('throws, naming the timeout and both issues, when the page never answers', async () => {
+    const error = await getLuxarState(wedgedPage(), 25).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toMatch(/never answered/i);
+    expect((error as Error).message).toContain('25 ms');
+    expect((error as Error).message).toContain('#1651');
+    // #1724 is the viewer-side main-thread saturation this probe is the victim
+    // of, not the cause of; naming it is how the diagnostic points at the real
+    // bug instead of blaming the E2E helper.
+    expect((error as Error).message).toContain('#1724');
+  });
+
+  it('does NOT resolve with any fallback state when the page never answers', async () => {
+    // The vacuous-pass hazard, in the shape this file already uses: well over a
+    // hundred call sites assert on the result
+    // (`expect(state.totalPoints).toBeGreaterThan(0)`)
+    // and the `state && …` / `!state.isLoading` polling helpers would read a
+    // stand-in as a pass, so a missed deadline must hand back NOTHING.
+    let resolvedWith: unknown = 'never-resolved';
+    await getLuxarState(wedgedPage(), 25).then(
+      (value) => {
+        resolvedWith = value;
+      },
+      () => {
+        /* rejection is the expected path, asserted above */
+      }
+    );
+    expect(resolvedWith).toBe('never-resolved');
+  });
+
+  it('defaults to a 45 s deadline', async () => {
+    vi.useFakeTimers();
+    const settled = getLuxarState(wedgedPage()).then(
+      () => 'resolved',
+      (e: Error) => e
+    );
+    await vi.advanceTimersByTimeAsync(44999);
+    expect(await Promise.race([settled, Promise.resolve('pending')])).toBe('pending');
+    await vi.advanceTimersByTimeAsync(1);
+    const outcome = await settled;
+    expect(outcome).toBeInstanceOf(Error);
+    expect((outcome as Error).message).toContain('45000 ms');
+  });
+
+  it('passes a falsy answer through rather than reporting it as a stall', async () => {
+    // Why the sentinel is a fresh Node-side object (`const timedOut = {}`) and
+    // not a primitive: unlike `getConsoleMessages` — whose in-page function has
+    // two exits, both object literals it wrote itself — this probe returns
+    // whatever `debug.getState()` hands back, an untyped `any` the viewer is
+    // free to reshape. A `null` sentinel would turn a legitimate `null` answer
+    // into a bogus "main thread saturated" failure, and silently so: the run
+    // would blame #1724 for a viewer that answered instantly. Identity against
+    // an object allocated in Node cannot collide, because `page.evaluate`
+    // resolves with a value deserialized from CDP and therefore freshly
+    // constructed on this side — even a page answering with a literal `{}`.
+    await expect(getLuxarState(answeringPage(null), 1000)).resolves.toBeNull();
+    await expect(getLuxarState(answeringPage(undefined), 1000)).resolves.toBeUndefined();
+    await expect(getLuxarState(answeringPage({}), 1000)).resolves.toEqual({});
+  });
+});
+
+describe('getLuxarState in-page function', () => {
+  // The fakes above never run the injected function (they ignore the callback),
+  // so this executes it for real against a stubbed `window` — the vitest default
+  // environment is `node`, so there is none otherwise.
+  const originalWindow = (globalThis as { window?: unknown }).window;
+
+  /** A `page` whose `evaluate` actually CALLS the injected function. */
+  function executingPage(): Page {
+    return {
+      evaluate: async (fn: () => unknown) => fn(),
+    } as unknown as Page;
+  }
+
+  afterEach(() => {
+    if (originalWindow === undefined) {
+      delete (globalThis as { window?: unknown }).window;
+    } else {
+      (globalThis as { window?: unknown }).window = originalWindow;
+    }
+  });
+
+  it('surfaces a missing debug interface as itself, not as a deadline stall', async () => {
+    // A genuinely absent `__luxarDebug` is the real failure it always was: the
+    // evaluate settles before the deadline, so `Promise.race` settles the same
+    // way and the in-page rejection propagates unchanged. Reporting it as a
+    // stall would send every "viewer never booted" run chasing #1724.
+    (globalThis as { window?: unknown }).window = {};
+    const error = await getLuxarState(executingPage(), 1000).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain('Debug interface not ready');
+    expect((error as Error).message).not.toMatch(/never answered/i);
+  });
+
+  it('returns the live getState() result when the debug interface is present', async () => {
+    const state = { initialized: true, totalPoints: 7 };
+    (globalThis as { window?: unknown }).window = {
+      __luxarDebug: { getState: () => state },
+    };
+    await expect(getLuxarState(executingPage(), 1000)).resolves.toEqual(state);
+  });
+});
+
+describe('poll loops attribute a starved probe', () => {
+  // The poll loops catch a failing probe and retry, because during
+  // initialization a missing debug interface is legitimate. That same catch
+  // swallows the starvation diagnostic, so a #1724 wedge used to be reported as
+  // `Timeout waiting for points to load` — blaming missing DATA for a saturated
+  // main thread, at every call site that goes through these two helpers. Both
+  // assertions below are red without the carried-forward probe error.
+
+  /** A `page` that never answers an evaluate, with a real sleep for the loop. */
+  function wedgedPollPage(): Page {
+    return {
+      evaluate: () => new Promise(() => {}),
+      waitForTimeout: (ms: number) => new Promise((resolve) => setTimeout(resolve, ms)),
+    } as unknown as Page;
+  }
+
+  /** Drive a loop whose first probe eats the whole 45 s default deadline. */
+  async function runWedgedLoop(start: () => Promise<void>): Promise<Error> {
+    vi.useFakeTimers();
+    const settled = start().then(
+      () => new Error('resolved, but the loop should have timed out'),
+      (e: Error) => e
+    );
+    // 45 s for the probe deadline, plus the loop's own sleep before it re-checks.
+    await vi.advanceTimersByTimeAsync(46000);
+    return settled;
+  }
+
+  it('names the starved probe in waitForPointsLoaded’s timeout', async () => {
+    const error = await runWedgedLoop(() => waitForPointsLoaded(wedgedPollPage(), 10, 1000));
+    expect(error.message).toContain('Timeout waiting for points to load');
+    expect(error.message).toContain('Last state probe failed');
+    expect(error.message).toMatch(/never answered/i);
+    expect(error.message).toContain('#1724');
+  });
+
+  it('names the starved probe in waitForDimensionNavigation’s timeout', async () => {
+    const error = await runWedgedLoop(() => waitForDimensionNavigation(wedgedPollPage(), 0, 1000));
+    expect(error.message).toContain('Dimension navigation did not complete within 1000ms');
+    expect(error.message).toContain('Last state probe failed');
+    expect(error.message).toContain('#1724');
+  });
+
+  it('leaves the message alone when no probe ever failed', async () => {
+    // A loop that simply never saw its condition satisfied must report exactly
+    // what it always did — no dangling "Last state probe failed" suffix.
+    const answering = {
+      evaluate: async () => ({ totalPoints: 0, isLoading: true }),
+      waitForTimeout: (ms: number) => new Promise((resolve) => setTimeout(resolve, ms)),
+    } as unknown as Page;
+    vi.useFakeTimers();
+    const settled = waitForPointsLoaded(answering, 10, 1000).then(
+      () => new Error('resolved, but the loop should have timed out'),
+      (e: Error) => e
+    );
+    await vi.advanceTimersByTimeAsync(2000);
+    const error = await settled;
+    expect(error.message).toBe('Timeout waiting for points to load (expected at least 10)');
   });
 });

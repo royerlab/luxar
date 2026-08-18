@@ -22,15 +22,72 @@ export async function waitForLuxarReady(page: Page, timeout = 45000): Promise<vo
 /**
  * Get current Luxar state
  * Now includes safety check for debug interface availability
+ *
+ * Deadline-bounded (#1651), like {@link getConsoleMessages}. This is the most
+ * called probe in the suite — well over a hundred call sites, in most spec
+ * files. Together with `getConsoleMessages` it is what the shared fixture and
+ * the bulk of the specs depend on, and both are now bounded; the rest of this
+ * file's bare `page.evaluate` calls (`renderOnce`, `getWebGLErrors`,
+ * `focusCanvas`, `captureCanvasRGBA`, `probeWebGPUBackend`, …) are not. Before
+ * the bound, a starved page reported the stall as a bare
+ * `Test timeout of 120000ms exceeded` pointing at the `page.evaluate` line
+ * below, with nothing to say which dataset or which probe was pending.
+ * Measured on `performance_benchmark_example.luxar.zarr` (100 nodes, 100k
+ * points): `getState()` costs 0.5 ms in-page and returns 12 KB, yet the round
+ * trip took 111,003 ms in one run and >150,000 ms in another, because the
+ * viewer's frame loop saturates the main thread and starves Playwright's
+ * `Runtime.callFunctionOn` (the underlying viewer bug is #1724).
+ *
+ * The same honest caveat as `getConsoleMessages` applies: a deadline cannot
+ * tell a page that will never answer from one that would have answered late,
+ * so any value here can cut short a stall that would have ended. 45 s matches
+ * `getConsoleMessages` for the reasons documented there.
+ *
+ * THROWS rather than returning a fallback. Callers overwhelmingly assert on
+ * the result (`expect(state.totalPoints).toBeGreaterThan(0)`), so any stand-in
+ * value would either fail with a nonsense diagnostic or — worse, for the
+ * `state && …` and `!state.isLoading` polling helpers above — read as a pass.
+ *
+ * @param page - Playwright page
+ * @param timeout - Deadline for the in-page probe, in ms
+ * @throws If the page does not answer the probe within `timeout` ms
  */
-export async function getLuxarState(page: Page): Promise<any> {
-  return await page.evaluate(() => {
+export async function getLuxarState(page: Page, timeout = 45000): Promise<any> {
+  const probe = page.evaluate(() => {
     const debug = (window as any).__luxarDebug;
     if (!debug || typeof debug.getState !== 'function') {
       throw new Error('Debug interface not ready: getState() not available');
     }
     return debug.getState();
   });
+
+  // Sentinel: a fresh object allocated HERE, in Node. `getConsoleMessages` can
+  // argue `null` is safe because its in-page function has exactly two exits and
+  // both return an object literal it wrote itself; this one returns whatever
+  // `debug.getState()` hands back, an untyped `any` whose shape the viewer is
+  // free to change — today an object, but a version that returned `null` or
+  // `undefined` (or nothing) would make any primitive sentinel ambiguous, and
+  // silently so. Identity against a Node-side object cannot collide at all:
+  // `page.evaluate` resolves with a value deserialized from the CDP protocol,
+  // hence always freshly constructed on this side, so even a page answering
+  // with a literal `{}` compares `!==` to `timedOut`.
+  //
+  // The in-page `throw` above still propagates as a rejection: whenever the
+  // evaluate settles before the deadline, `Promise.race` settles the same way,
+  // so a genuinely missing debug interface remains the real failure it always
+  // was rather than being reported as a stall.
+  const timedOut = {};
+  const state = await raceEvaluate<unknown>(probe, timeout, timedOut);
+
+  if (state === timedOut) {
+    throw new Error(
+      `getLuxarState: the page never answered the state probe within ${timeout} ms — ` +
+        'its main thread is saturated and starving the evaluate round trip, so the viewer state ' +
+        'could not be read. See issues #1651 and #1724.'
+    );
+  }
+
+  return state;
 }
 
 /**
@@ -48,6 +105,26 @@ export async function renderOnce(page: Page): Promise<void> {
 }
 
 /**
+ * Render the last swallowed probe failure as a suffix for a poll loop's own
+ * timeout message.
+ *
+ * The poll loops below tolerate a probe that fails — during initialization the
+ * debug interface legitimately is not there yet — so they catch and retry. But
+ * a starved probe fails the same way, and reporting only "timeout waiting for
+ * points" then blames missing DATA for what is actually a saturated main
+ * thread (#1651 / #1724). Appending the last failure keeps the loop's contract
+ * while letting `getLuxarState`'s diagnostic reach the report.
+ *
+ * Returns an empty string when no probe ever failed, so a loop that simply
+ * never saw its condition satisfied reports exactly what it always did.
+ */
+function describeLastProbeError(error: unknown): string {
+  if (error === undefined) return '';
+  const message = error instanceof Error ? error.message : String(error);
+  return `. Last state probe failed: ${message}`;
+}
+
+/**
  * Wait for points to be loaded
  * Now includes debug interface readiness check
  */
@@ -57,23 +134,37 @@ export async function waitForPointsLoaded(
   timeout = 45000
 ): Promise<void> {
   const startTime = Date.now();
+  let lastProbeError: unknown;
 
   while (Date.now() - startTime < timeout) {
     try {
+      // Probe deliberately left at its own 45 s default rather than clamped to
+      // this loop's remaining budget (same for the three sibling poll loops
+      // below, which share this shape): these loops return on any satisfying
+      // answer, so a late one is a SUCCESS, and clamping would newly FAIL a
+      // healthy-but-slow page across ~sixty call sites here and five 8 s ones
+      // in `waitForDimensionNavigation`. The honest cost is that the timeout
+      // message below can overstate how long it waited (one probe can hold the
+      // full 45 s); closing that needs its own measured change.
       const state = await getLuxarState(page);
 
       if (state && state.totalPoints >= minPoints) {
         return;
       }
-    } catch {
+    } catch (error) {
       // Debug interface not ready yet, continue waiting
-      // This can happen during initialization
+      // This can happen during initialization.
+      // Kept for the throw below: swallowing it outright is how a starved probe
+      // (see `getLuxarState`) gets misreported as missing data.
+      lastProbeError = error;
     }
 
     await page.waitForTimeout(500);
   }
 
-  throw new Error(`Timeout waiting for points to load (expected at least ${minPoints})`);
+  throw new Error(
+    `Timeout waiting for points to load (expected at least ${minPoints})${describeLastProbeError(lastProbeError)}`
+  );
 }
 
 /**
@@ -154,6 +245,7 @@ export async function waitForDimensionNavigation(
   timeout = 8000
 ): Promise<void> {
   const startTime = Date.now();
+  let lastProbeError: unknown;
 
   while (Date.now() - startTime < timeout) {
     try {
@@ -165,14 +257,18 @@ export async function waitForDimensionNavigation(
       if (state.totalPoints !== previousPointCount || !state.isLoading) {
         return;
       }
-    } catch {
-      // State not ready yet, continue waiting
+    } catch (error) {
+      // State not ready yet, continue waiting (see `waitForPointsLoaded` for
+      // why the last probe failure is carried into the throw).
+      lastProbeError = error;
     }
 
     await page.waitForTimeout(200);
   }
 
-  throw new Error(`Dimension navigation did not complete within ${timeout}ms`);
+  throw new Error(
+    `Dimension navigation did not complete within ${timeout}ms${describeLastProbeError(lastProbeError)}`
+  );
 }
 
 /**
@@ -254,7 +350,7 @@ export async function waitForSpatialQuery(page: Page, timeout = 8000): Promise<v
 
   while (Date.now() - startTime < timeout) {
     try {
-      // Check if a query completed by looking for stable state
+      // Check if a query completed by looking for stable state.
       const state = await getLuxarState(page);
 
       // If we have a stable point count and not loading, query is done
