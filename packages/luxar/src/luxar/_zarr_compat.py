@@ -973,10 +973,12 @@ def read_raw_bytes(group: zarr.Group, key: str) -> bytes | None:
 #: zarr's own per-node metadata documents, lowercased, for the write backstop.
 #:
 #: Restated here rather than imported from
-#: ``luxar.io._compiler.finalize.hashing._ZARR_METADATA_DOCS`` (the same four
-#: names): that module imports THIS one at module scope, so the reverse import
-#: is a cycle, and ``_zarr_compat`` is imported by all of luxar — a cycle here
-#: breaks ``import luxar`` wholesale.
+#: ``luxar.io._compiler.finalize.hashing._ZARR_METADATA_DOCS`` (the same five
+#: names, built from the same expression): that module imports THIS one at module
+#: scope, so the reverse import is a cycle, and ``_zarr_compat`` is imported by
+#: all of luxar — a cycle here breaks ``import luxar`` wholesale. The two sets
+#: are pinned equal by
+#: ``test_zarr_compat.py::test_the_write_backstop_covers_the_hasher_document_set``.
 _METADATA_DOC_KEYS: frozenset[str] = frozenset(
     doc.lower() for doc in (*NODE_ATTR_DOCS, *NODE_GROUP_DOCS, ".zarray", ".zmetadata")
 )

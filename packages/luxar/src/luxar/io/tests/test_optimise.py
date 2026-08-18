@@ -502,6 +502,24 @@ class TestPayloadFiles:
         assert attrs["image_file"] == "../evil.png"
         assert not any(p.name == "evil.png" for p in dst.rglob("*"))
 
+    def test_a_payload_named_exactly_like_a_metadata_document_is_skipped(
+        self, tmp_path: Path
+    ) -> None:
+        """The OTHER class ``_is_safe_payload_name`` refuses, and the one the
+        skip notice used to mis-describe as "not a plain file name". Reading such
+        a name would fold in the very ``content_hash`` the walk is stamping, and
+        writing it would replace the document the node is read through — so the
+        copy must skip it and leave the output's own document intact, which is
+        what reading the group's attrs back proves."""
+        src = _store_with_a_payload_attr(
+            tmp_path / "src.luxar.zarr", ".zattrs", payload=None
+        )
+        dst = tmp_path / "out.luxar.zarr"
+        optimise_store(src, dst, verify=True)
+        attrs = dict(open_group(dst, mode="r")["overlays/logo"].attrs)
+        assert attrs["image_file"] == ".zattrs"
+        assert attrs["type"] == "overlay_image"
+
     def test_a_payload_named_like_a_metadata_document_is_refused(
         self, tmp_path: Path
     ) -> None:
@@ -525,7 +543,14 @@ class TestPayloadFiles:
         with pytest.raises(ValueError, match=r"Zarr\.json"):
             optimise_store(src, dst, verify=True)
         assert not dst.exists()
-        assert (src / "overlays" / "logo" / "zarr.json").exists()
+        # The source's own node document survived — asserted by READING the group
+        # back rather than by naming the document, which only exists as
+        # `zarr.json` at format 3 (the v2 pair is `.zgroup`/`.zattrs`, so the
+        # literal made this the one format-blind test in the file).
+        assert dict(open_group(src, mode="r")["overlays/logo"].attrs) == {
+            "type": "overlay_image",
+            "image_file": "Zarr.json",
+        }
 
     def test_a_dangling_attr_naming_a_metadata_document_is_skipped(
         self, tmp_path: Path

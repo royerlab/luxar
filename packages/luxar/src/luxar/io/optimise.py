@@ -702,7 +702,7 @@ def _copy_group(
     target_format: int,
     path: str = "",
 ) -> None:
-    """Mirror one group — attrs, payload files, arrays, subgroups — into ``dest``."""
+    """Mirror a group — attrs, payload files, arrays, subgroups — into ``dest``."""
     dest.attrs.update(dict(source.attrs))
     _copy_payload_files(source, dest)
     for name in sorted(source.array_keys()):
@@ -808,7 +808,15 @@ def _copy_payload_files(source: zarr.Group, dest: zarr.Group) -> None:
         if not isinstance(filename, str) or not filename:
             continue
         if not _is_safe_payload_name(filename):
-            aprint(f"⚠ skipping payload {filename!r}: not a plain file name")
+            # Two classes, and the notice names both: a name that is not a
+            # single path component, and one that IS zarr's own metadata
+            # document spelled exactly (``.zattrs``), which the hasher's gate
+            # rejects too. Only a CASE-shifted collision reaches the branch
+            # below, which has bytes to be unfaithful to and so refuses.
+            aprint(
+                f"⚠ skipping payload {filename!r}: not a plain file name, or "
+                f"one of zarr's own metadata documents"
+            )
             continue
         payload = _read_payload_or_refuse(source, attr_key, filename)
         if filename.lower() in _METADATA_DOCS_LOWERCASED:
@@ -896,7 +904,8 @@ def _compute_content_hashes_streaming(root: zarr.Group) -> str:
     ~1.26 GB for the 629 MB array in the demo corpus that :data:`_SLAB_BYTES`
     exists to avoid). That bound is over ARRAY values only: a payload file is
     read WHOLE here, exactly as the reference reads it, since the store hands
-    back a key's complete bytes and there is no slabbed read for one. Re-chunking an existing store is exactly the case where
+    back a key's complete bytes and there is no slabbed read for one.
+    Re-chunking an existing store is exactly the case where
     the array is already on disk and need not be, so the walk is reimplemented
     here rather than the shared finalize helper being changed under its other
     caller.
@@ -1252,8 +1261,9 @@ def optimise_store(
                     finally:
                         close(reread)
                     aprint(
-                        f"✓ Verified {checked} arrays and {payloads} payload "
-                        f"files byte-for-byte"
+                        f"✓ Verified {checked} array{'' if checked == 1 else 's'} "
+                        f"and {payloads} payload "
+                        f"file{'' if payloads == 1 else 's'} byte-for-byte"
                     )
                 _replace(artifact, dest_path)
                 consumed = True

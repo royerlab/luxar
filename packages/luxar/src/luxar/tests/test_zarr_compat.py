@@ -603,6 +603,17 @@ def test_write_raw_bytes_round_trips_through_the_store(tmp_path: Path) -> None:
     assert zc.read_raw_bytes(logo, "image.png") == payload
 
 
+def test_the_write_backstop_covers_the_hasher_document_set() -> None:
+    """The backstop's document names are RESTATED here (importing the hasher's
+    set would be a cycle — ``hashing`` imports ``_zarr_compat``), so nothing but
+    this pins the two together. A name added to one and not the other silently
+    weakens the guard on the one primitive that can replace a node's own
+    metadata document, and no other test would go red."""
+    from luxar.io._compiler.finalize.hashing import _ZARR_METADATA_DOCS
+
+    assert zc._METADATA_DOC_KEYS == {doc.lower() for doc in _ZARR_METADATA_DOCS}
+
+
 @pytest.mark.parametrize(
     "key", ["zarr.json", ".zgroup", ".zattrs", ".zarray", ".zmetadata", "Zarr.json"]
 )
