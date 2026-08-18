@@ -11,8 +11,18 @@
  * `__luxarDebug`, a destroyed execution context, and — once the probe carries a
  * deadline of its own, #1725 — a starved page rejecting): the helper returns
  * having read nothing, and whatever the spec asserts next reads unconfirmed
- * state. That swallowed FAILURE is the vacuous pass, and it is what the throw
- * tested here closes.
+ * state.
+ *
+ * At today's nine `waitForNavigationComplete` call sites that silence did not
+ * produce a PASSING test: the next statement is always a page probe of its own,
+ * so the run failed one line later under someone else's name (`Debug interface
+ * not ready`, or a `-1` from `getDimensionValue` failing its own `expect`), and
+ * six of the nine additionally sit right after a `waitForSpatialQueryOrThrow`
+ * that could not have succeeded unless the page answered seconds earlier. So what
+ * the tests below pin is mainly ATTRIBUTION — the helper naming itself, its
+ * budget, its measured elapsed time and the probe failure it carried — plus the
+ * contract for a future caller that does NOT re-probe straight afterwards, for
+ * which the same silence would be a genuinely vacuous pass.
  *
  * A probe that never answers at all is a different animal: it hangs the loop,
  * because `page.evaluate` carries no deadline and these loops deliberately do
@@ -23,23 +33,28 @@
  *
  * Redness against the PRE-change code, per test:
  *
- * | Test                                                          | Pre-change | Mechanism                                            |
- * | ------------------------------------------------------------- | ---------- | ---------------------------------------------------- |
- * | spatial: rejects at its budget when every probe fails          | RED        | assertion — the old loop resolved silently           |
- * | spatial: does NOT resolve when every probe fails               | RED        | assertion — `resolvedWith` present                   |
- * | spatial: stays pending when the probe never settles            | green      | old code hung too; guards against a fabricated pass  |
- * | spatial: one warning when answered but never settled           | RED        | assertion — zero warnings                            |
- * | spatial: silent and prompt on a healthy page                   | green      | counterweight: goes red if the fix makes this loud   |
- * | nav: rejects when the preliminary wait failed too              | RED        | assertion — the old code returned from that `catch`  |
- * | nav: rejects when only the probes fail (preliminary resolved)   | RED        | assertion — the old loop resolved silently           |
- * | nav: does NOT resolve when every probe fails                   | RED        | assertion — `resolvedWith` present                   |
- * | nav: falls through a failed preliminary wait and probes         | RED        | assertion — the old code returned without probing    |
- * | nav: one warning when answered but `isLoading` never cleared    | RED        | assertion — zero warnings                            |
- * | nav: stays pending when the probe never settles                | green      | old code hung too; guards against a fabricated pass  |
- * | nav: silent and prompt on a healthy page                       | green      | counterweight                                        |
- * | webgl: returns within its own budget, warning once              | RED        | vitest `testTimeout` hang — the read was unbounded   |
- * | webgl: returns `[]` with one warning saying reads were answered | RED        | assertion — zero warnings                            |
- * | webgl: returns a matching error without warning                 | green      | counterweight                                        |
+ * | Test                                                              | Pre-change | Mechanism                                                |
+ * | ----------------------------------------------------------------- | ---------- | -------------------------------------------------------- |
+ * | spatial: rejects at its budget when every probe fails             | RED        | assertion — the old loop resolved silently               |
+ * | spatial: does NOT resolve when every probe fails                  | RED        | assertion — `resolvedWith` present                       |
+ * | spatial: stays pending when the probe never settles               | green      | old code hung too; guards against a fabricated pass      |
+ * | spatial: one warning when answered but never settled              | RED        | assertion — zero warnings                                |
+ * | spatial: silent and prompt on a healthy page                      | green      | counterweight: goes red if the fix makes this loud       |
+ * | nav: rejects when the preliminary wait failed too                 | RED        | assertion — the old code returned from that `catch`      |
+ * | nav: rejects when only the probes fail (preliminary resolved)     | RED        | assertion — the old loop resolved silently               |
+ * | nav: does NOT resolve when every probe fails                      | RED        | assertion — `resolvedWith` present                       |
+ * | nav: falls through a failed preliminary wait and probes           | RED        | assertion — the old code returned without probing        |
+ * | nav: probes once when the preliminary wait spent the whole budget | RED        | assertion — old `catch` returned, 0 probes, no rejection |
+ * | nav: warns and resolves when a probe answers `null`               | RED        | assertion — zero warnings (old loop swallowed it)        |
+ * | nav: preliminary failure reaches the report                       | RED        | assertion — zero warnings; old `catch` returned at once  |
+ * | nav: one warning when answered but `isLoading` never cleared      | RED        | assertion — zero warnings                                |
+ * | nav: stays pending when the probe never settles                   | green      | old code hung too; guards against a fabricated pass      |
+ * | nav: silent and prompt on a healthy page                          | green      | counterweight                                            |
+ * | webgl: returns within its own budget, warning once                | RED        | vitest `testTimeout` hang — the read was unbounded       |
+ * | webgl: returns `[]` with one warning saying reads were answered   | RED        | assertion — zero warnings                                |
+ * | webgl: dispatches one read when `timeout` is under `pollMs`       | green      | old code read once too; pins the sliver-skip regression  |
+ * | webgl: skips only a read that cannot answer within the remainder  | RED        | assertion — the unbounded old loop read 3 times, not 2   |
+ * | webgl: returns a matching error without warning                   | green      | counterweight                                            |
  *
  * No browser: every `page` below is a hand-built three-method fake cast to
  * Playwright's `Page`. `waitForTimeout` is a real `setTimeout` promise so
@@ -293,6 +308,73 @@ describe('waitForNavigationComplete end-of-budget decision', () => {
     expect(warn).not.toHaveBeenCalled();
   });
 
+  it('probes once even when the preliminary wait already spent the whole budget', async () => {
+    // `timeout: 5000` means the preliminary wait's own budget IS the whole budget,
+    // so the poll loop is entered with nothing left. That is what the `do`/`while`
+    // is for: a plain `while` would report "no state probe answered" without ever
+    // having probed, and would carry the preliminary failure instead of the
+    // probe's own. Every existing nav test uses 15000, where the preliminary wait
+    // can only spend 10000, so a plain `while` still enters — this is the case
+    // that tells the two loop shapes apart.
+    let probes = 0;
+    const page = fakePage(async () => {
+      probes += 1;
+      throw new Error(NO_DEBUG);
+    }, rejectingWaitForFunction);
+
+    const outcome = await settleUnderFakeTimers(() => waitForNavigationComplete(page, 5000), 20000);
+
+    expect(probes).toBe(1);
+    expect(outcome).toBeInstanceOf(Error);
+    const message = (outcome as Error).message;
+    // The PROBE's diagnostic, which a loop that never probed could not carry.
+    expect(message).toContain(NO_DEBUG);
+    // Nominal budget and measured elapsed, distinct here: the preliminary wait
+    // consumed all 5000 ms and the loop then ran one poll interval past it. A
+    // report naming only the budget would describe this call as a 5000 ms one.
+    expect(message).toContain('5000ms budget');
+    expect(message).toContain('5100ms actually elapsed');
+  });
+
+  it('warns and resolves when a probe answers null, instead of reading that as no answer', async () => {
+    // A resolved `null` IS an answer — the page replied — which is why `answered`
+    // is set BEFORE the condition is read. Reading the condition then throws on
+    // the null and is recorded as a probe failure, so this path must warn and
+    // RETURN. Moving the flag below the condition turns it into a throw.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const outcome = await settleUnderFakeTimers(
+      () => waitForNavigationComplete(fakePage(answering(null), resolvingWaitForFunction), 5000),
+      20000
+    );
+
+    expect(outcome).toEqual({ resolvedWith: undefined });
+    expect(warn).toHaveBeenCalledTimes(1);
+    // The carried diagnostic, not just the bare "never cleared" sentence.
+    expect(warn.mock.calls[0][0]).toContain('Last probe failure:');
+  });
+
+  it('carries the preliminary wait failure into the report when the probes never fail', async () => {
+    // The only path on which the preliminary `catch` is the sole source of a
+    // diagnostic: `isLoading` never became readable, yet every state probe
+    // afterwards answers. Dropping the record in that `catch` loses the one
+    // explanation this run has.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const outcome = await settleUnderFakeTimers(
+      () =>
+        waitForNavigationComplete(
+          fakePage(answering({ isLoading: true, totalPoints: 7 }), rejectingWaitForFunction),
+          5000
+        ),
+      20000
+    );
+
+    expect(outcome).toEqual({ resolvedWith: undefined });
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][0]).toContain('Last probe failure: page.waitForFunction');
+  });
+
   it('resolves with exactly one warning when a probe answers but isLoading never clears', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
@@ -380,6 +462,48 @@ describe('waitForWebGLError budget', () => {
     expect(outcome).toEqual({ resolvedWith: [] });
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn.mock.calls[0][0]).toContain('genuine absence');
+  });
+
+  it('dispatches at least one read when the whole budget is shorter than one poll interval', async () => {
+    // Regression pin for the sliver-skip: with `timeout` under `pollMs` the skip
+    // fired on the FIRST iteration, so the helper returned `[]` warning that
+    // "nothing was actually checked" — having genuinely checked nothing. Reading
+    // once, bounded by the little budget there is, is the pre-#1726 behaviour.
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let reads = 0;
+    const page = fakePage(async () => {
+      reads += 1;
+      return [];
+    });
+
+    const outcome = await settleUnderFakeTimers(
+      () => waitForWebGLError(page, (errors) => errors.length > 0, { timeout: 50 }),
+      4000
+    );
+
+    expect(outcome).toEqual({ resolvedWith: [] });
+    expect(reads).toBe(1);
+  });
+
+  it('skips only a read that could not answer within the remaining budget', async () => {
+    // 250 ms of budget at a 100 ms poll: reads go out at 0 ms and at 100 ms, and
+    // the 50 ms sliver left at 200 ms gets none — a read dispatched there would
+    // drain the in-page GL queue and then lose its answer to the deadline, taking
+    // the real errors with it. Exactly 2 reads, where an unbounded loop makes 3.
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let reads = 0;
+    const page = fakePage(async () => {
+      reads += 1;
+      return [];
+    });
+
+    const outcome = await settleUnderFakeTimers(
+      () => waitForWebGLError(page, (errors) => errors.length > 0, { timeout: 250, pollMs: 100 }),
+      4000
+    );
+
+    expect(outcome).toEqual({ resolvedWith: [] });
+    expect(reads).toBe(2);
   });
 
   it('returns a matching error without warning', async () => {
