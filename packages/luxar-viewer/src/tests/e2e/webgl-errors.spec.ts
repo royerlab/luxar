@@ -28,10 +28,11 @@ const DATASETS = [
 // the single GIL-bound dataset server on port 9000, written through OPFS and
 // rendered in its own WebGL context, so four at a time queue on all three. Not
 // merely a restored constraint: the file used to run sequentially against a
-// TWO-worker pool and now does so against a four-worker one, so ambient load
-// from the other three workers is worse than what it goes back to. `default`
-// rather than `serial` so one failure does not skip the rest — each test is an
-// independent detector and we want all ten verdicts.
+// TWO-worker pool and now does so against a pool of up to four (sized to the box
+// by tools/e2e-workers.ts), so the ambient load from the other workers can be
+// higher than it was under the arrangement this restores. `default` rather than
+// `serial` so one failure does not skip the rest — each test is an independent
+// detector and we want all ten verdicts.
 //
 // Contention alone was not the failure. Under load the app drops from ~30 FPS to
 // ~4, and an unbounded `page.evaluate` in `waitForNextRender` then outlived the

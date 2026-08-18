@@ -542,6 +542,28 @@ npx playwright install chromium
 - Reduce dataset size for tests
 - Add GPU error handling to code
 
+### Timeouts across many unrelated specs at once
+
+**Cause**: The machine, not the viewer. Each worker costs a Chromium (renderer +
+GPU process + the viewer's worker pool) plus a share of the single-threaded
+`python3 -m http.server 9000` dataset server, so an already-loaded box services
+input too slowly for the 10 s action timeout even though the page is healthy.
+
+**Fix**: Usually none — `playwright.config.ts` sizes the local worker count via
+`tools/e2e-workers.ts`, scaling a ceiling of four by the box's free fraction
+(`clamp(round(4 * (cpus - load1) / cpus), 1, 4)`: four while at least 7/8 of the
+box is free, three down to 5/8, two down to 3/8, one below that — on 16 cores,
+four up to load 2 and one past load 10; an idle box of any size still gets four),
+and the global setup prints the run's worker ceiling as one line — so a busy box
+produces a slower run rather than a false failure. That stamped number is
+`config.workers`; Playwright narrows it to `min(workers, maxConcurrentTestGroups)`
+afterwards, so a single-file run can be stamped `max 3` and then report "using 1
+worker". The load average lags and is read once at startup, so this is a
+probability, not a guarantee. Pin it with `LUXAR_E2E_WORKERS=N` (clamped to
+`[1, cpus]` as a typo guard), or with `--workers=N` which overrides the config
+outright. Before filing a regression off a `page.click: Timeout 10000ms exceeded`,
+re-run the spec at `--workers=1`.
+
 ### "Browser context closed"
 
 **Cause**: Test timeout or crash

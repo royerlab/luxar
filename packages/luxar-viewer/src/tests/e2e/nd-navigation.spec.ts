@@ -344,11 +344,17 @@ test.describe('nD Navigation - Performance', () => {
 
     // Navigation should complete in under 8 seconds (relaxed for E2E with data loading)
     //
-    // CONTENTION NOTE: this is a wall-clock assertion and the suite now runs
-    // `fullyParallel` across 4 workers, so other specs are loading datasets off
-    // the same server while this measures. If it starts flaking, the fix is
+    // CONTENTION NOTE: this is a wall-clock assertion and the suite runs
+    // `fullyParallel` across up to 4 workers, so other specs are loading datasets
+    // off the same server while this measures. If it starts flaking, the fix is
     // `--workers=1` for a diagnostic run (or an exclusivity mechanism) — NOT
     // raising the threshold, which is what makes this a useful regression guard.
+    //
+    // The local worker count is now sized to the box (tools/e2e-workers.ts), so a
+    // loaded machine runs fewer of them: against the SAME box at four workers this
+    // fixed threshold has more headroom. That says nothing about how one machine
+    // compares to another — a loaded box at one worker still serviced a real DOM
+    // click in 869-1216 ms — so do not read it as "the guard only bites when idle".
     expect(navTime).toBeLessThan(8000);
 
     // Verify navigation succeeded

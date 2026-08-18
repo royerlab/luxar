@@ -7,6 +7,13 @@
  * 3. Generated zarr fixtures exist, are complete, and are served (throw — 19 specs
  *    hard-depend on them)
  * 4. Basic environment checks
+ *
+ * It also stamps the run's parallelism. That belongs here rather than in `playwright.config.ts`
+ * because Playwright applies `--workers=N` / `--debug` AFTER the config module is
+ * evaluated, but hands this hook the resolved `FullConfig`. (Not reached by `--list`, which runs
+ * no global setup — so listing tests stays silent.) `config.workers` is the run's CEILING, not
+ * the concurrency it reaches: Playwright narrows it to `min(workers, maxConcurrentTestGroups)`
+ * after this hook, so a one-file run can be stamped `max 3` and then report "using 1 worker".
  */
 
 import type { FullConfig } from '@playwright/test';
@@ -23,6 +30,7 @@ import {
   isGeneratedFixtureComplete,
   parseGeneratedFixtureNames,
 } from '../../../tools/fixture-manifest';
+import { e2eWorkerPlan, formatE2EParallelismStamp } from '../../../tools/e2e-workers';
 
 // `package.json` declares `"type": "module"`, so the CommonJS `__dirname`
 // global is undefined at module load. Reconstruct it from `import.meta.url`.
@@ -113,6 +121,11 @@ async function assertGeneratedFixtures(projectRoot: string, dataBaseURL: string)
 
 export default async function globalSetup(config: FullConfig) {
   console.log('\n🔍 Running pre-flight checks...\n');
+
+  // `console.error`, not `console.log`: stdout is Playwright's machine-readable channel
+  // (`--reporter=json`, `--list`), so diagnostics belong on stderr. `config.workers` is the only
+  // count available this early, and it is a ceiling — the stamp labels it as one.
+  console.error(formatE2EParallelismStamp(config.workers, e2eWorkerPlan()));
 
   const serverMetadata = requireE2EServerMetadata(config.metadata);
   await assertCheckoutServerIdentity(
