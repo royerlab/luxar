@@ -1260,7 +1260,14 @@ function formatOrderingBytes(bytes: number, uploaded: boolean): string {
 function scheduleSort(mesh: THREE.Mesh, nodeId: string): void {
   const state = nodeStates.get(nodeId);
   const camera = getCamera?.();
-  if (!state || !api || !camera) return;
+  // `api` is wrapped BEFORE `initializeWithGuard` is awaited, so a live handle
+  // is not the same thing as a usable worker: between the spawn and 'ready'
+  // there is a window in which `sort` would reject NOT_INITIALIZED worker-side
+  // (`requireWasm`). Gating here rather than at each caller keeps it a single
+  // chokepoint — the capture drain's force loop dispatches without consulting
+  // `state.registered`, and a commit stamps `nodeStates` + `committedData`
+  // synchronously, so it can reach this during startup warm-up.
+  if (!state || !api || workerInitState !== 'ready' || !camera) return;
   if (state.inFlight) {
     state.resortQueued = true;
     return;
