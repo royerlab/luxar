@@ -259,8 +259,16 @@ class TestFormatCompliance:
             assert "ordering_max" not in attrs
 
     def test_chunk_bounds_count_matches_centers_chunks(self) -> None:
-        """§8 regression: the spatial index partition count and the centers
-        zarr chunk count must derive from the same chunk_size (one formula)."""
+        """§8 regression: the spatial index partition grid and the zarr chunk
+        grid must derive from the same ``chunk_size`` (one formula).
+
+        The partition count is still exactly ``ceil(n / chunk_size)``. The zarr
+        chunk count is no longer *equal* to it: every array sizes its own chunk
+        to its own dtype byte budget, rounded down to a multiple of the atom. So
+        the partition grid SUBDIVIDES the chunk grid — a partition's row range
+        always falls inside a single zarr chunk, never straddling one, which is
+        the property the viewer's row-range reads actually depend on.
+        """
         import math
 
         n = 20_000  # large enough to span multiple chunks at the 64KB target
@@ -271,4 +279,23 @@ class TestFormatCompliance:
             chunk_size = root.attrs["chunk_size"]
             expected = math.ceil(n / chunk_size)
             assert root["chunk_bounds"].shape[0] == expected
-            assert root["centers"].nchunks == expected
+
+            # One formula: every per-splat array's chunk is an exact multiple of
+            # the same atom (or one full-array chunk), so no chunk can straddle a
+            # partition boundary and there can never be more chunks than
+            # partitions.
+            for name in ("centers", "amplitudes", "colors"):
+                if name not in root:
+                    continue
+                arr = root[name]
+                c0 = arr.chunks[0]
+                if c0 == arr.shape[0]:
+                    continue  # single full-array chunk is trivially aligned
+                assert c0 % chunk_size == 0, (
+                    f"{name} chunks[0]={c0} is not a multiple of the "
+                    f"chunk_size atom {chunk_size}"
+                )
+                assert arr.nchunks <= expected, (
+                    f"{name} has {arr.nchunks} zarr chunks, more than the "
+                    f"{expected} partitions"
+                )

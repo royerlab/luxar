@@ -390,6 +390,7 @@ def write_lines(
         if ordering_data
         else None,
         dtype=vertices.dtype,
+        per_array_bytes=True,
     )
     ctx.dataset_ctx.encoder.encode(
         data=vertices,
@@ -410,9 +411,19 @@ def write_lines(
         allow_lut=False,
     )
 
-    # Write segments array (always, not just for indexed type)
-    segment_chunk_size = (
-        ordering_data["segment_ordering"]["chunk_size"] if ordering_data else 2048
+    # Write segments array (always, not just for indexed type). Its atom is the
+    # SEGMENT ordering grid, not the vertex one — the grid the viewer resolves
+    # matched segment partitions to row ranges against (chunk-index-loader.ts) —
+    # but the sizing rule is the same as every other array's: this array's own
+    # dtype byte budget, rounded down to a whole multiple of that atom. One atom
+    # alone is half the byte target (a 4,096-segment atom of uint32 pairs is
+    # 32 KB against 64 KB), which cost the segments array twice the requests it
+    # needs.
+    chunks_segments = calculate_intelligent_chunks(
+        segments.shape,
+        spatial_index_data=ordering_data["segment_ordering"] if ordering_data else None,
+        dtype=segments.dtype,
+        per_array_bytes=True,
     )
     ctx.dataset_ctx.encoder.encode(
         data=segments,
@@ -420,7 +431,7 @@ def write_lines(
         name="segments",
         semantic_type=SemanticType.INDEX,
         mode=ctx.dataset_ctx.encoding_mode,
-        chunks=(segment_chunk_size, 2),
+        chunks=chunks_segments,
         compressor=ctx.dataset_ctx.compressor,
         deduplicate=False,  # see vertices note above
     )
@@ -437,6 +448,7 @@ def write_lines(
         n_vertices,
         ctx.dataset_ctx,
         "width",
+        per_array_bytes=True,
     )
 
     # Initialize metadata
@@ -463,6 +475,7 @@ def write_lines(
             ordering_data.get("vertex_ordering") if ordering_data else None,
             n_vertices,
             ctx.dataset_ctx,
+            per_array_bytes=True,
         )
         metadata["has_colors"] = True
 
@@ -484,11 +497,25 @@ def write_lines(
             n_vertices,
             ctx.dataset_ctx,
             "sharpness",
+            per_array_bytes=True,
         )
         metadata["has_sharpness"] = True
 
     if scalars is not None:
-        write_scalars(group, scalars, ordering_data, n_vertices, ctx.dataset_ctx)
+        # Lines' ordering_data is NESTED (vertex_ordering / segment_ordering),
+        # unlike Points' flat dict, so the vertex sub-dict must be unwrapped the
+        # way every sibling array above does it. Passing the outer dict meant the
+        # chunk calculator found no `chunk_size` and fell back to a pure byte
+        # budget, leaving `scalars` the one per-vertex array NOT on the atom grid
+        # (e.g. 16384 rows against a 3276 atom — 16384 % 3276 == 4).
+        write_scalars(
+            group,
+            scalars,
+            ordering_data.get("vertex_ordering") if ordering_data else None,
+            n_vertices,
+            ctx.dataset_ctx,
+            per_array_bytes=True,
+        )
         metadata["has_scalars"] = True
 
     # Write colormap LUT if colormap is a custom array
