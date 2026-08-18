@@ -363,4 +363,33 @@ describe('poll loops attribute a starved probe', () => {
     const error = await settled;
     expect(error.message).toBe('Timeout waiting for points to load (expected at least 10)');
   });
+
+  it('drops a probe failure the next answered probe made stale', async () => {
+    // The common shape, and the one the suffix must NOT claim: the debug
+    // interface is legitimately absent for the first poll, then the page
+    // answers healthily for the rest of the budget while the points never
+    // arrive. Carrying that first miss to the throw would send a genuine
+    // "data never loaded" regression chasing a debug interface that was
+    // there the whole time — the same misattribution, pointing the other way.
+    let probes = 0;
+    const recovering = {
+      evaluate: async () => {
+        probes += 1;
+        if (probes === 1) throw new Error('Debug interface not ready: getState() not available');
+        return { totalPoints: 0, isLoading: false };
+      },
+      waitForTimeout: (ms: number) => new Promise((resolve) => setTimeout(resolve, ms)),
+    } as unknown as Page;
+
+    vi.useFakeTimers();
+    const settled = waitForPointsLoaded(recovering, 10, 1000).then(
+      () => new Error('resolved, but the loop should have timed out'),
+      (e: Error) => e
+    );
+    await vi.advanceTimersByTimeAsync(2000);
+    const error = await settled;
+    expect(probes).toBeGreaterThan(1);
+    expect(error.message).toBe('Timeout waiting for points to load (expected at least 10)');
+    expect(error.message).not.toContain('Debug interface not ready');
+  });
 });

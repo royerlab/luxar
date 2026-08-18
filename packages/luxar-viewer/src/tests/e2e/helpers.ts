@@ -115,8 +115,13 @@ export async function renderOnce(page: Page): Promise<void> {
  * thread (#1651 / #1724). Appending the last failure keeps the loop's contract
  * while letting `getLuxarState`'s diagnostic reach the report.
  *
- * Returns an empty string when no probe ever failed, so a loop that simply
- * never saw its condition satisfied reports exactly what it always did.
+ * Returns an empty string when the last probe answered, so a loop that simply
+ * never saw its condition satisfied reports exactly what it always did. The
+ * callers clear their record on every answered probe for that reason: a missing
+ * debug interface during initialization is normal and recovers, and carrying
+ * that first failure to the end would blame it for a loop that then polled a
+ * healthy page for the rest of its budget — the same misattribution in the
+ * other direction.
  */
 function describeLastProbeError(error: unknown): string {
   if (error === undefined) return '';
@@ -147,6 +152,9 @@ export async function waitForPointsLoaded(
       // message below can overstate how long it waited (one probe can hold the
       // full 45 s); closing that needs its own measured change.
       const state = await getLuxarState(page);
+      // The probe answered, so any earlier failure is stale — do not let an
+      // initialization-window miss get reported as the reason this loop ended.
+      lastProbeError = undefined;
 
       if (state && state.totalPoints >= minPoints) {
         return;
@@ -250,6 +258,8 @@ export async function waitForDimensionNavigation(
   while (Date.now() - startTime < timeout) {
     try {
       const state = await getLuxarState(page);
+      // Answered, so an earlier failure is stale (see `waitForPointsLoaded`).
+      lastProbeError = undefined;
 
       // Navigation complete if:
       // 1. Point count changed (new data loaded), OR
