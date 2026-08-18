@@ -418,7 +418,9 @@ export async function waitForDimensionSelected(
  * See {@link waitForNavigationComplete} for what the split buys, and
  * `waitForPointsLoaded` for why the probes are not clamped to this loop's budget
  * — which is why both reports state the measured elapsed time and the probe
- * counts next to the nominal budget (see {@link composeGiveUpReports}).
+ * counts next to the nominal budget (see `composeGiveUpReports` above — a plain
+ * code reference, not an `@link`, because it is module-private and TypeDoc
+ * warns on a link it resolves but cannot document).
  *
  * Use when the query completing fast is a *bonus*, not a precondition. For
  * tests that genuinely depend on the query having finished, use
@@ -1378,9 +1380,11 @@ export async function waitForCacheStable(
  * the GL queue in-page, so an answer arriving after the deadline is discarded
  * along with whatever real errors it already cleared, and a later read in the
  * same spec then sees a clean queue. That is what a budget means for a helper
- * that returns data; the proper fix is bounding `getWebGLErrors` itself, which
- * has 21 direct call sites across 11 spec files and belongs with the
- * probe-bounding work in #1651. Not dispatching a FURTHER read into a sliver of
+ * that returns data; the proper fix is bounding `getWebGLErrors` itself — the
+ * same treatment #1651 gave `getLuxarState` and `getConsoleMessages` — which
+ * reaches 21 direct call sites across 11 spec files and is left out of scope
+ * here rather than tracked anywhere, #1651 being closed. Not dispatching a
+ * FURTHER read into a sliver of
  * budget it cannot answer within keeps the tail case out of that trap; the FIRST
  * read is exempt from that skip, so any POSITIVE budget — however short — still
  * gets one tightly-bounded read, rather than returning `[]` without having read the
