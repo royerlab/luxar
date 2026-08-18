@@ -6721,6 +6721,61 @@ class TestReencode:
         # extent is <= 10, so the quantization step is <= 10/65535 ≈ 1.5e-4.
         np.testing.assert_allclose(got.centers, src.centers, rtol=0, atol=1e-4)
 
+    @pytest.mark.parametrize(
+        "encoding,exact", [("precision", True), ("auto", False), ("memory", False)]
+    )
+    def test_centers_are_bit_exact_only_under_precision(
+        self, runner: CliRunner, tmp_path: Path, encoding: str, exact: bool
+    ) -> None:
+        """`reencode` re-encodes the CENTERS too, which its name does not suggest.
+
+        `auto` and `memory` both quantize a coordinate column to uint16 over its
+        own [min, max], so the endpoints land on exact codes and every INTERIOR
+        value rounds. Worst on a degenerate stacked axis: `sigma=0` gives each
+        splat sigma=1e-7 in that column, so the 1.5e-5 drift below sits ~150
+        sigma from its own slice and the slice renders as nothing. Only
+        `precision` round-trips the column exactly.
+        """
+        from luxar.encoding import EncodingMode
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        def _timepoint() -> GSplatData:
+            return GSplatData(
+                centers=np.array(
+                    [[1.0, 2.0, 3.0], [4.0, -5.0, 6.0], [-7.0, 8.0, 9.0]],
+                    dtype=np.float32,
+                ),
+                amplitudes=np.array([1.0, 2.0, 3.0], dtype=np.float32),
+                cholesky_factors=np.tile(
+                    np.array([1.0, 0, 1.0, 0, 0, 1.0], dtype=np.float32), (3, 1)
+                ),
+            )
+
+        # Three timepoints, so the stacked column has an interior value at all.
+        src = tmp_path / "stacked.gsplats.zarr"
+        GSplatData.combine_as_new_dimension(
+            [_timepoint(), _timepoint(), _timepoint()],
+            values=[0.0, 1.0, 2.0],
+            sigma=0.0,
+        ).save(src, encoding_mode=EncodingMode.PRECISION)
+
+        out = tmp_path / f"{encoding}.gsplats.zarr"
+        result = runner.invoke(
+            app, ["gsplat", "reencode", str(src), str(out), "-e", encoding]
+        )
+        assert result.exit_code == 0, result.output
+
+        # Compare the SET of stacked coordinates: save/load reorders rows.
+        stacked = np.unique(GSplatData.load(out).centers[:, 3])
+        assert stacked.shape == (3,)
+        np.testing.assert_array_equal(stacked[[0, 2]], [0.0, 2.0])  # endpoints exact
+        if exact:
+            assert stacked[1] == 1.0
+        else:
+            assert stacked[1] != 1.0
+            # One quantization step over the column's [0, 2] extent.
+            assert abs(stacked[1] - 1.0) < 2.0 / 65535.0
+
     def test_reencode_preserves_pipeline_provenance(
         self, runner: CliRunner, tmp_path: Path
     ) -> None:

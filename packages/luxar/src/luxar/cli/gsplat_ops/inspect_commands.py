@@ -647,7 +647,9 @@ def compare_quality(
     shape: Optional[str] = typer.Option(
         None,
         "--shape",
-        help="Output shape as comma-separated ints (overrides reference shape)",
+        help="Render shape as comma-separated ints. NOT an override: metrics need "
+        "both volumes on the same grid, so a value that differs from the "
+        "reference shape exits 1. Omit it to use the reference shape.",
     ),
     device: Optional[str] = typer.Option(
         None, "--device", "-d", help="Device: auto/cpu/cuda/mps"

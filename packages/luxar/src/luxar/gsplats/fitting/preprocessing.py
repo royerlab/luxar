@@ -422,7 +422,8 @@ def _generate_seeds(
     # Generate seeds using specified method (returns GSplatData)
     # Pass target_count so intelligent seeding methods get proper budget allocation:
     # - With target_seeds: `auto` splits it 60% edges / 40% grid (_auto_combine)
-    # - Without: Auto estimates ~100 seeds, rest filled by grid fallback
+    # - Without: `auto` invents its own budget first —
+    #   max(100, prod(shape)**(1/ndim) / 2), capped at 10k — then splits that 60/40
     if target_count is not None:
         seeds_result = generate_seeds(
             V,
