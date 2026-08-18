@@ -14,6 +14,7 @@ once per test is what keeps this file out of the ``make test-fast`` inner loop.
 
 from __future__ import annotations
 
+import os
 import shutil
 import zipfile
 from pathlib import Path
@@ -74,6 +75,27 @@ def _groups(group: Any) -> dict[str, Any]:
 def _chunk_files(store: Path) -> int:
     """Chunk objects actually on disk — every file that is not zarr metadata."""
     return sum(1 for p in store.rglob("*") if p.is_file() and p.name not in _META_DOCS)
+
+
+def _codec_configs(array: Any) -> list[dict]:
+    """The array's compressor configuration AS STORED, at either zarr format.
+
+    v2 keeps numcodecs objects (``get_config()``); v3 keeps ``zarr.codecs``
+    ones (``to_dict()``), whose Blosc configuration additionally carries the
+    dtype-derived ``typesize`` the byte shuffle depends on.
+    """
+    return [
+        c.get_config() if hasattr(c, "get_config") else c.to_dict()
+        for c in array.compressors
+    ]
+
+
+def _tree_snapshot(root: Path) -> dict[str, tuple[int, float]]:
+    """Every path under ``root`` with its size and mtime — a "nothing moved" proof."""
+    return {
+        str(p.relative_to(root)): (p.stat().st_size, p.stat().st_mtime)
+        for p in sorted(root.rglob("*"))
+    }
 
 
 def _declared_atom(attrs: dict, array_name: str) -> tuple[int | None, str | None]:
@@ -484,6 +506,49 @@ class TestFormatPreservation:
         assert tuple(out.compressors) == (), "a RAW array picked up a compressor"
         assert out.chunks[0] > 1000
 
+    @pytest.mark.parametrize("fmt", [2, 3])
+    def test_a_compressed_arrays_codec_config_survives(
+        self, tmp_path: Path, fmt: int, restore_zarr_format: None
+    ) -> None:
+        """The RAW case above is only half of it, and the cheaper half.
+
+        Real Luxar arrays carry a MEASURED Blosc zstd-9 policy with a per-dtype
+        ``typesize`` and shuffle, and zarr's ``"auto"`` silently replaces it —
+        with Blosc/lz4/clevel-5 at format 2 and a plain zstd level 0 at format 3.
+        ``--verify`` compares values, which survive either way, so nothing else
+        here would notice: swapping ``compressor=source.compressors`` for
+        ``"auto"`` left all 80 tests green. Hence an assertion on the STORED
+        codec configuration.
+        """
+        from numcodecs import Blosc
+
+        set_zarr_format(fmt)
+        src = tmp_path / "zstd.zarr"
+        root = open_group(src, mode="w")
+        root.attrs["kind"] = "leaf"
+        create_array(
+            root,
+            "z",
+            data=_rng(21).random((50_000, 4)).astype(np.float32),
+            chunks=(1000, 4),
+            compressor=Blosc(cname="zstd", clevel=9, shuffle=Blosc.SHUFFLE),
+        )
+        consolidate(root)
+        source = open_group(src, mode="r")["z"]
+
+        dst = tmp_path / "out.zarr"
+        plan = optimise_store(src, dst, verify=True)
+        assert plan.n_rechunked == 1
+        out = open_group(dst, mode="r")["z"]
+        assert _codec_configs(out) == _codec_configs(source)
+        # Stated outright, so the test still says what it protects if the
+        # source's own policy ever changes underneath it.
+        (config,) = _codec_configs(out)
+        config = config.get("configuration", config)
+        assert config["cname"] == "zstd"
+        assert config["clevel"] == 9
+        assert_values_identical(src, dst)
+
     def test_filters_fill_value_and_memory_order_survive(
         self, tmp_path: Path, restore_zarr_format: None
     ) -> None:
@@ -546,6 +611,38 @@ class TestFormatPreservation:
         out = open_group(dst, mode="r")["y"]
         assert out.metadata.dimension_separator == "/"
         assert (dst / "y" / "0" / "0").is_file()
+        assert_values_identical(src, dst)
+
+    def test_the_v3_chunk_key_layout_is_preserved(
+        self, tmp_path: Path, restore_zarr_format: None
+    ) -> None:
+        """The v3 half of the same contract, and the untested one: deleting the
+        ``chunk_key_encoding`` forwarding left all 80 tests green while
+        demonstrably renaming every object on disk (``c.0.0`` → ``c/0/0``) — a
+        client that knows the old keys 404s on every chunk."""
+        from zarr.core.chunk_key_encodings import DefaultChunkKeyEncoding
+
+        set_zarr_format(3)
+        src = tmp_path / "keys.zarr"
+        root = open_group(src, mode="w")
+        root.attrs["kind"] = "leaf"
+        arr = root.create_array(
+            "y",
+            shape=(50_000, 2),
+            dtype="f4",
+            chunks=(1000, 2),
+            chunk_key_encoding=DefaultChunkKeyEncoding(separator="."),
+        )
+        arr[:] = _rng(8).random((50_000, 2)).astype(np.float32)
+        consolidate(root)
+        assert (src / "y" / "c.0.0").is_file(), "the fixture is not dot-separated"
+
+        dst = tmp_path / "out.zarr"
+        optimise_store(src, dst, verify=True)
+        out = open_group(dst, mode="r")["y"]
+        assert out.metadata.chunk_key_encoding.separator == "."
+        assert (dst / "y" / "c.0.0").is_file()
+        assert not (dst / "y" / "c").is_dir(), "the objects were renamed"
         assert_values_identical(src, dst)
 
     def test_dimension_names_are_forwarded(
@@ -615,6 +712,62 @@ class TestSharding:
         assert x.source_n_chunks == 4
         assert x.target_n_chunks == 4
         assert summarise_chunk_layout(root).n_chunks == 4
+
+
+# --------------------------------------------------------------------------
+# Slab walking — the bounded-memory copy, actually iterating
+#
+# Mutation-proved gap: truncating `_copy_array`'s slab loop to its first
+# iteration left all 80 tests green, and so did the same cut in
+# `_verify_values`. Nothing anywhere fed either one an array larger than the
+# 64 MB budget, so the budget's entire purpose was untested at both ends. These
+# shrink the budget instead of building a 64 MB fixture.
+# --------------------------------------------------------------------------
+
+
+class TestSlabWalking:
+    def test_the_copy_walks_every_slab(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A copy that stops after one slab writes a store whose tail is
+        ``fill_value`` — silently, because the shapes and the metadata are all
+        correct."""
+        monkeypatch.setattr(optimise_mod, "_SLAB_BYTES", 4096)
+        n = 100_000
+        src = tmp_path / "slabs.zarr"
+        root = open_group(src, mode="w")
+        root.attrs["kind"] = "leaf"
+        # Nowhere zero, so an unwritten tail cannot pass as fill_value.
+        create_array(
+            root,
+            "v",
+            data=_rng(17).integers(1, 255, n, dtype=np.uint8),
+            chunks=(512,),
+            compressor=None,
+        )
+        consolidate(root)
+
+        dst = tmp_path / "out.zarr"
+        plan = optimise_store(src, dst, target_bytes=1024, verify=True)
+        (v,) = plan.arrays
+        assert v.target_chunks == (1024,)
+        # Slabs are chunk-aligned: 1024 rows x (4096 // 1024) = 4096 per slab.
+        slab_rows = 1024 * (4096 // 1024)
+        assert n // slab_rows >= 20, "one slab covers the array — test is vacuous"
+        assert assert_values_identical(src, dst) == 1
+
+    def test_verify_walks_every_slab(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A ``--verify`` that stops after one slab is a pass with no coverage of
+        the other 95% of the array."""
+        n = 20_000
+        src, dst = _pair(tmp_path, a=np.arange(n, dtype=np.float32))
+        dst["a"][n - 1] = -1.0
+        monkeypatch.setattr(optimise_mod, "_SLAB_BYTES", 4096)  # 1024 rows
+        # The damage is in the LAST slab, so only a loop that reaches it fails.
+        with pytest.raises(ValueError, match="differs at rows 19456:20000"):
+            _verify(src, dst)
 
 
 # --------------------------------------------------------------------------
@@ -901,6 +1054,20 @@ class TestNeverShrink:
 # --------------------------------------------------------------------------
 
 
+#: Why a hash-equivalence failure below is never "just a flaky assert".
+_HASH_DRIFT = (
+    "the finalize-time content hash has CHANGED. "
+    "`_compute_content_hashes_streaming` in luxar/io/optimise.py is a "
+    "deliberate slab-wise copy of "
+    "luxar/io/_compiler/finalize/hashing.py::compute_content_hashes (it exists "
+    "only to avoid that one's whole-array materialisation), and it must be "
+    "updated to match the new digest — term for term, including any shard or "
+    "chunk-shape terms. Until it is, `luxar optimise` writes stores whose "
+    "content_hash disagrees with the compiler's, and the viewer's cache "
+    "validation compares exactly that field."
+)
+
+
 class TestCacheInvalidation:
     def test_the_scene_content_hash_changes(self, scene: Path, tmp_path: Path) -> None:
         """The bug this prevents is silent: the viewer's cache validates on
@@ -973,9 +1140,55 @@ class TestCacheInvalidation:
         per_node_reference = {
             p: dict(n.attrs)["content_hash"] for p, n, a in _walk(root) if not a
         }
-        assert streamed == reference
-        assert per_node_streamed == per_node_reference
+        assert streamed == reference, _HASH_DRIFT
+        assert per_node_streamed == per_node_reference, _HASH_DRIFT
         assert len(per_node_reference) > 1, "single-node tree — recursion untested"
+
+    def test_the_streaming_hash_matches_on_a_sharded_array(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, restore_zarr_format: None
+    ) -> None:
+        """Sharding is the term the compiled fixtures never exercise, and the
+        one #1719 is in flight to fold into the finalize digest — so without an
+        actual sharded array here, a shard-term divergence between the two
+        implementations would land green."""
+        from luxar.io._compiler.finalize.hashing import compute_content_hashes
+
+        set_zarr_format(3)
+        src = tmp_path / "sharded_hash.zarr"
+        root = open_group(src, mode="w")
+        root.attrs["type"] = "scene"
+        rng = _rng(23)
+        sharded = root.create_array(
+            "sharded",
+            shape=(20_000, 4),
+            dtype="f4",
+            chunks=(500, 4),
+            shards=(5_000, 4),
+        )
+        sharded[:] = rng.random((20_000, 4)).astype(np.float32)
+        create_array(
+            root,
+            "plain",
+            data=rng.random((3_000, 2)).astype(np.float32),
+            chunks=(300, 2),
+            compressor=None,
+        )
+        child = root.create_group("nested")
+        inner = child.create_array(
+            "also_sharded",
+            shape=(8_000, 3),
+            dtype="f4",
+            chunks=(200, 3),
+            shards=(2_000, 3),
+        )
+        inner[:] = rng.random((8_000, 3)).astype(np.float32)
+        consolidate(root)
+        assert open_group(src, mode="r")["sharded"].shards == (5_000, 4)
+
+        monkeypatch.setattr(optimise_mod, "_SLAB_BYTES", 4096)
+        assert _compute_content_hashes_streaming(root) == compute_content_hashes(
+            root
+        ), _HASH_DRIFT
 
     def test_the_streaming_hash_matches_on_an_f_order_array(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, restore_zarr_format: None
@@ -1011,7 +1224,9 @@ class TestCacheInvalidation:
         consolidate(root)
 
         monkeypatch.setattr(optimise_mod, "_SLAB_BYTES", 512)
-        assert _compute_content_hashes_streaming(root) == compute_content_hashes(root)
+        assert _compute_content_hashes_streaming(root) == compute_content_hashes(
+            root
+        ), _HASH_DRIFT
 
     def test_chunk_layout_is_stamped_on_the_root(
         self, scene: Path, tmp_path: Path
@@ -1173,6 +1388,107 @@ class TestDestinationGuards:
         assert not dst.exists()
         assert sorted(p.name for p in tmp_path.iterdir()) == ["src.luxar.zarr"]
 
+    def test_a_failure_while_packaging_leaves_no_partial_archive(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The one window the all-or-nothing promise did not cover. The artifact
+        path used to be bound from ``_package``'s RETURN, so an archive write
+        that failed partway (ENOSPC on the last member) left a hidden
+        ``.<name>.optimise-<pid>-<uuid>.zip`` beside the destination that the
+        ``finally`` never saw."""
+        src = _tiny_store(tmp_path / "src.luxar.zarr")
+        dst = tmp_path / "out.luxar.zarr.zip"
+        real_package = optimise_mod._package
+
+        def explode(staging: Path, artifact: Path) -> None:
+            real_package(staging, artifact)  # the archive now exists on disk
+            raise OSError("disk full")
+
+        monkeypatch.setattr(optimise_mod, "_package", explode)
+        with pytest.raises(OSError, match="disk full"):
+            optimise_store(src, dst)
+        assert not dst.exists()
+        # Hidden files included: the leak was a dotfile.
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["src.luxar.zarr"]
+
+    def test_a_failed_replace_keeps_the_previous_store_and_discards_nothing_else(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``_replace`` used to ``rmtree`` the destination and only THEN rename.
+        An rmtree that fails partway (a read-only child, EBUSY on a mount point,
+        an interrupt) propagated before the artifact was marked consumed, so the
+        ``finally`` deleted the new store too — and for a directory destination
+        the artifact IS the staging tree. One ``--overwrite`` onto a good store
+        could cost both copies, which is exactly what ``optimise_store``'s
+        docstring promises cannot happen."""
+        src = _tiny_store(tmp_path / "src.luxar.zarr")
+        dst = tmp_path / "out.luxar.zarr"
+        optimise_store(src, dst, target_bytes=8192)
+        good = tuple(open_group(dst, mode="r")["x"].chunks)
+        real_replace = os.replace
+        failed: list[Any] = []
+
+        def flaky(a: Any, b: Any) -> Any:
+            # Only the swap of the NEW store into place — the restore that
+            # follows it has to be allowed to work.
+            if Path(b) == dst and not failed:
+                failed.append(b)
+                raise OSError("EBUSY: device or resource busy")
+            return real_replace(a, b)
+
+        monkeypatch.setattr(optimise_mod.os, "replace", flaky)
+        with pytest.raises(OSError, match="EBUSY"):
+            optimise_store(src, dst, overwrite=True, target_bytes=32_768)
+
+        # The previous store is still there, still readable, still ITS grid.
+        assert tuple(open_group(dst, mode="r")["x"].chunks) == good
+        assert assert_values_identical(src, dst) == 1
+        assert sorted(p.name for p in tmp_path.iterdir()) == [
+            "out.luxar.zarr",
+            "src.luxar.zarr",
+        ]
+
+    def test_a_symlinked_destination_is_refused_before_any_work(
+        self, tmp_path: Path
+    ) -> None:
+        """``exists()`` and ``is_dir()`` follow a symlink; every mutator here
+        acts on the link. A link to a real store passed every guard, ran the
+        whole copy and ``--verify``, and then died in ``shutil.rmtree``
+        ("Cannot call rmtree on a symbolic link") — after which the ``finally``
+        discarded the finished output. Symlinked output paths are ordinary
+        (small home, big ``/mnt``), so the refusal has to be actionable."""
+        src = _tiny_store(tmp_path / "src.luxar.zarr")
+        real = _tiny_store(tmp_path / "real_out.luxar.zarr")
+        link = tmp_path / "out.luxar.zarr"
+        link.symlink_to(real, target_is_directory=True)
+
+        with pytest.raises(ValueError, match="symlink"):
+            optimise_store(src, link, overwrite=True)
+        assert link.is_symlink()
+        assert (real / "x").exists()
+        assert sorted(p.name for p in tmp_path.iterdir()) == [
+            "out.luxar.zarr",
+            "real_out.luxar.zarr",
+            "src.luxar.zarr",
+        ]
+
+    def test_a_dangling_symlink_destination_is_refused(self, tmp_path: Path) -> None:
+        """``Path.exists()`` is False for a dangling link, so the ``--overwrite``
+        requirement was skipped outright and ``os.replace`` then raised
+        ``NotADirectoryError`` — again with the whole copy already done."""
+        src = _tiny_store(tmp_path / "src.luxar.zarr")
+        link = tmp_path / "out.luxar.zarr"
+        link.symlink_to(tmp_path / "gone", target_is_directory=True)
+
+        with pytest.raises(ValueError, match="symlink"):
+            optimise_store(src, link)  # no --overwrite: the link is not a store
+        assert link.is_symlink()
+        assert not (tmp_path / "gone").exists()
+        assert sorted(p.name for p in tmp_path.iterdir()) == [
+            "out.luxar.zarr",
+            "src.luxar.zarr",
+        ]
+
     def test_a_failed_verify_leaves_the_previous_output_intact(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -1282,6 +1598,42 @@ class TestVerifyDiscriminates:
         with pytest.raises(ValueError, match="attrs differ"):
             _verify(src, dst)
 
+    def test_a_variable_width_string_array_is_really_compared(
+        self, tmp_path: Path, restore_zarr_format: None
+    ) -> None:
+        """``tobytes()`` is the wrong comparison for a variable-width dtype.
+
+        A zarr-v3 ``dtype=str`` array decodes to ``numpy.dtypes.StringDType``,
+        whose buffer holds descriptors into a character ARENA — so
+        ``['x'*60, 'x'*60]`` and ``['x'*60, 'y'*60]`` compare IDENTICAL byte for
+        byte. Reachable through ``--generic`` on an OME-Zarr label table or an
+        AnnData/cellxgene ``.zarr``, and ``--verify`` is the only mechanism
+        asserting the headline bit-identity claim, so a vacuous pass there is
+        the whole safety net.
+        """
+        set_zarr_format(3)
+        paths = []
+        for name, second in (("s_src.zarr", "x" * 60), ("s_dst.zarr", "y" * 60)):
+            path = tmp_path / name
+            root = open_group(path, mode="w")
+            root.attrs["kind"] = "leaf"
+            arr = root.create_array("labels", shape=(2,), dtype=str, chunks=(2,))
+            arr[:] = np.array(["x" * 60, second])
+            consolidate(root)
+            paths.append(path)
+        src, dst = (open_group(p, mode="r") for p in paths)
+
+        raw_src = np.ascontiguousarray(src["labels"][:]).tobytes()
+        raw_dst = np.ascontiguousarray(dst["labels"][:]).tobytes()
+        assert raw_src == raw_dst, "the arena-pointer trap no longer reproduces"
+        with pytest.raises(ValueError, match="differs"):
+            _verify(src, dst)
+
+        # And no false positive: a real copy of the same store still passes.
+        out = tmp_path / "s_out.zarr"
+        optimise_store(paths[0], out, verify=True)
+        assert _verify(src, open_group(out, mode="r")) == 1
+
     @pytest.mark.parametrize(
         "left, right",
         [
@@ -1327,6 +1679,40 @@ class TestSummary:
         # leave); re-chunking is exactly what lifts arrays over the 16 KB floor.
         assert after.n_arrays_under_floor < before.n_arrays_under_floor
         assert after.share_under_floor < before.share_under_floor
+
+    def test_arrays_that_fetch_nothing_are_left_out_of_the_floor_share(
+        self, tmp_path: Path
+    ) -> None:
+        """An ``array_ref`` placeholder is physically ``(0, D)``: it writes no
+        chunk and costs no request, so booking it "under the 16 KB floor" only
+        dilutes the diagnostic. Measured on a 6-node scene with deduplicated
+        positions, ``info --stats`` printed "23/24 arrays (96%)" where the
+        honest answer is 13/14 (93%)."""
+        src = tmp_path / "refs.zarr"
+        root = open_group(src, mode="w")
+        root.attrs["kind"] = "leaf"
+        create_array(
+            root,
+            "real",
+            data=np.zeros(256, dtype=np.float32),
+            chunks=(256,),
+            compressor=None,
+        )
+        for i in range(3):
+            create_array(
+                root,
+                f"ref{i}",
+                data=np.zeros((0, 3), dtype=np.float32),
+                chunks=(1, 3),
+                compressor=None,
+            )
+        consolidate(root)
+
+        summary = summarise_chunk_layout(open_group(src, mode="r"))
+        assert summary.n_chunks == 1
+        assert summary.n_arrays == 1, "a zero-file array was counted"
+        assert summary.n_arrays_under_floor == 1
+        assert summary.share_under_floor == 1.0
 
     def test_the_projected_request_count_is_the_file_count_on_disk(
         self, tmp_path: Path, restore_zarr_format: None
@@ -1382,13 +1768,33 @@ def _run(*args: str):
 
 
 class TestCli:
-    def test_dry_run_writes_nothing(self, scene: Path, tmp_path: Path) -> None:
-        before = sorted(p.name for p in tmp_path.iterdir())
+    def test_dry_run_writes_nothing(self, scene: Path) -> None:
+        """Snapshotted over the directory that actually HOLDS the source, paths
+        and sizes and mtimes, recursively. Watching an unrelated empty
+        ``tmp_path`` made this vacuous: a ``--dry-run`` mutated to write a file
+        next to the source kept all four dry-run tests green."""
+        home = scene.parent
+        before = _tree_snapshot(home)
+        assert before, "the snapshot covers nothing"
         result = _run(str(scene), "--dry-run")
         assert result.exit_code == 0, result.output
         assert "Would re-chunk" in result.output
         assert "Nothing was written" in result.output
-        assert sorted(p.name for p in tmp_path.iterdir()) == before
+        assert _tree_snapshot(home) == before
+
+    def test_dry_run_takes_the_generic_gate(self, tmp_path: Path) -> None:
+        """A dry run that plans a store the identical real run refuses is a plan
+        nobody can act on — and it also leaked the source's store handle, which
+        keeps a ``.zarr.zip``'s ``ZipStore`` open."""
+        src = _tiny_store(tmp_path / "plain.zarr", luxar=False)
+        refused = _run(str(src), "--dry-run")
+        assert refused.exit_code == 1
+        assert "--generic" in refused.output
+        assert "Would re-chunk" not in refused.output
+
+        allowed = _run(str(src), "--dry-run", "--generic")
+        assert allowed.exit_code == 0, allowed.output
+        assert "Would re-chunk" in allowed.output
 
     def test_dry_run_on_an_optimised_store_says_so(
         self, scene: Path, tmp_path: Path

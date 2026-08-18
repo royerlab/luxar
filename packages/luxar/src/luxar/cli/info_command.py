@@ -158,10 +158,15 @@ def _print_chunk_layout(root: zarr.Group) -> None:
     chunk files a full load fetches, which is what dominates a cold load over
     object storage (measured: 245 s / 9,390 requests for 38.6 MB).
     """
-    from ..io.optimise import plan_optimisation, summarise_chunk_layout
+    from ..io.optimise import plan_optimisation, summarise_plan
     from ..typing_utils.constants import MIN_CHUNK_BYTES, TARGET_CHUNK_BYTES
 
-    summary = summarise_chunk_layout(root)
+    # ONE walk. The summary and the "try `luxar optimise`" hint both need the
+    # same per-array metadata, and opening every array twice on top of the walk
+    # `get_zarr_info(detailed=True)` already did is three passes over a store
+    # that, in the corpus this diagnostic exists for, holds 606,349 files.
+    plan = plan_optimisation(root)
+    summary = summarise_plan(plan)
     if summary.n_arrays == 0:
         return
     aprint("\n🧩 Chunk Layout:")
@@ -179,9 +184,7 @@ def _print_chunk_layout(root: zarr.Group) -> None:
         return
     # Gated on a REAL plan, not on the average alone. A store of ten 1 KB
     # single-chunk arrays is under the floor and yet has nothing to re-chunk;
-    # recommending the tool there is advice that does nothing. Planning is a
-    # metadata-only walk over the same tree this diagnostic already opened.
-    plan = plan_optimisation(root)
+    # recommending the tool there is advice that does nothing.
     if plan.n_rechunked:
         aprint(
             f"  → `luxar optimise` would cut this to "

@@ -20,12 +20,16 @@ different targets, which is a flag rather than a rebuild.
 What is preserved, exactly
 --------------------------
 Everything except the zarr chunk grid: array VALUES bit-for-bit, dtype,
-compressor, filters, serializer, ``fill_value``, memory ``order``, every group
-and array attribute, and the on-disk zarr FORMAT (a v2 store stays v2 — format
-conversion is ``gsplat migrate-format``'s job, not this one). Codecs are reused
-from the SOURCE array rather than re-derived, because an omitted compressor is
-not "no compressor" (zarr's ``"auto"`` is Blosc/lz4 at format 2 and zstd at
-format 3) and some Luxar arrays are deliberately RAW.
+compressor, filters, serializer, ``fill_value``, memory ``order``, the on-disk
+zarr FORMAT (a v2 store stays v2 — format conversion is ``gsplat
+migrate-format``'s job, not this one), and every group and array attribute
+EXCEPT the two the pass is contractually required to move: the root's
+``content_hash``, which is restamped, and the ``chunk_layout`` summary written
+beside it. Those two are the cache-invalidation guard described below, and
+suppressing either ships a re-chunked store under the source's hash. Codecs are
+reused from the SOURCE array rather than re-derived, because an omitted
+compressor is not "no compressor" (zarr's ``"auto"`` is Blosc/lz4 at format 2
+and zstd at format 3) and some Luxar arrays are deliberately RAW.
 
 The spatial-index contract
 --------------------------
@@ -60,6 +64,16 @@ Suppressing the attr alone was measured to leave the output hash byte-identical.
 (#1719 additionally folds chunk shapes into the tree hash; once that lands the
 restamp becomes independently sufficient and the attr becomes documentation.
 Until then, both are load-bearing.)
+
+The attr is written for a NON-Luxar store too, and that is not tidiness either.
+A store with a ``kind`` marker but no ``content_hash`` gets no restamp, so the
+viewer's ``MultiLevelCachingStore`` validation queue falls back to a SHA-256 of
+the raw root document bytes. At format 3 the root ``zarr.json`` carries the
+chunk grid, so that token moves whatever we write; at format 2 the probe reads
+``.zattrs``, which — without ``chunk_layout`` — would be byte-identical to the
+source's, and the warm cache would again believe itself current. "Suppress the
+attr on non-Luxar stores" is therefore a plausible-sounding simplification that
+silently breaks exactly the hash-less format-2 case.
 """
 
 from __future__ import annotations
@@ -96,6 +110,7 @@ __all__ = [
     "plan_optimisation",
     "resolve_target_bytes",
     "summarise_chunk_layout",
+    "summarise_plan",
 ]
 
 
@@ -159,6 +174,10 @@ class ArrayPlan:
     source_n_chunks: int
     target_n_chunks: int
     atom: int | None
+    #: The grid whose cells are FILES — the shard grid when the array is
+    #: sharded, its chunk grid otherwise. Recorded rather than re-derived so
+    #: :func:`summarise_plan` can measure a store off the plan's single walk.
+    source_file_grid: tuple[int, ...]
     #: Empty when the array is being re-chunked; otherwise the reason it is not.
     skip_reason: str = ""
 
@@ -171,6 +190,11 @@ class ArrayPlan:
     def target_chunk_bytes(self) -> int:
         """Nominal payload of the planned chunk, in bytes."""
         return _chunk_bytes(self.target_chunks, np.dtype(self.dtype))
+
+    @property
+    def source_file_bytes(self) -> int:
+        """Nominal payload of one SOURCE object (a shard when sharded)."""
+        return _chunk_bytes(self.source_file_grid, np.dtype(self.dtype))
 
 
 @dataclass(frozen=True)
@@ -205,6 +229,11 @@ class ChunkLayoutSummary:
     optimising?" is answerable without hosting it first.
     """
 
+    #: Arrays that produce at least one object. A ``(0, D)`` ``array_ref``
+    #: placeholder writes no chunk and costs no request, so counting it would
+    #: put arrays nobody fetches in the denominator of the floor share below —
+    #: measured on a 6-node scene with deduplicated positions, that reported
+    #: "23/24 arrays (96%)" where the honest answer is 13/14 (93%).
     n_arrays: int
     n_chunks: int
     #: Chunk-count-weighted mean of the NOMINAL chunk payload, in bytes.
@@ -212,7 +241,7 @@ class ChunkLayoutSummary:
     #: Arrays whose nominal chunk payload is below
     #: :data:`~luxar.typing_utils.constants.MIN_CHUNK_BYTES`. Single-chunk arrays
     #: count: a store of a hundred tiny arrays is request-heavy for exactly the
-    #: reason a store of tiny chunks is.
+    #: reason a store of tiny chunks is. Arrays that fetch nothing do not.
     n_arrays_under_floor: int
 
     @property
@@ -413,6 +442,7 @@ def _plan_array(
             source_n_chunks=n,
             target_n_chunks=n,
             atom=atom,
+            source_file_grid=file_grid,
             skip_reason=reason,
         )
 
@@ -447,6 +477,7 @@ def _plan_array(
         source_n_chunks=_n_chunks(shape, chunks),
         target_n_chunks=_n_chunks(shape, target_chunks),
         atom=atom,
+        source_file_grid=file_grid,
     )
 
 
@@ -483,19 +514,31 @@ def _walk_groups(group: zarr.Group, path: str = "") -> Iterator[tuple[str, zarr.
 
 def summarise_chunk_layout(root: zarr.Group) -> ChunkLayoutSummary:
     """Measure a store's streaming shape: chunk sizes and request count."""
+    return summarise_plan(plan_optimisation(root))
+
+
+def summarise_plan(plan: OptimisePlan) -> ChunkLayoutSummary:
+    """The same diagnostic, off a plan that has already been walked.
+
+    ``luxar info --stats`` wants both the summary and a real plan (the "try
+    ``luxar optimise``" hint is gated on one), and the corpus this tool exists
+    for holds 606,349 files — so the two share one walk rather than opening
+    every array twice.
+
+    Counts OBJECTS, not nominal grid cells: a shard is one file however many
+    chunks it packs, and a ``(0, D)`` placeholder is none at all.
+    """
     n_arrays = 0
     n_chunks = 0
     total_bytes = 0
     under_floor = 0
-    for _path, array in _walk_arrays(root):
-        shape = tuple(int(s) for s in array.shape)
-        # The FILE grid, so the projected request count matches the objects a
-        # loader actually fetches (a shard is one object, however many chunks
-        # it packs) and a zero-row array contributes none.
-        grid = _file_grid(array)
-        dtype = np.dtype(array.dtype)
-        count = _n_chunks(shape, grid)
-        payload = _chunk_bytes(grid, dtype)
+    for array_plan in plan.arrays:
+        count = array_plan.source_n_chunks
+        if count == 0:
+            # Fetches nothing, so it is neither a request nor a badly sized
+            # chunk — booking it "under the floor" only dilutes the diagnostic.
+            continue
+        payload = array_plan.source_file_bytes
         n_arrays += 1
         n_chunks += count
         total_bytes += payload * count
@@ -645,9 +688,16 @@ def _compute_content_hashes_streaming(root: zarr.Group) -> str:
     """:func:`~luxar.io._compiler.finalize.hashing.compute_content_hashes`, but
     slab-wise.
 
-    The digest is identical — same post-order walk, same per-node xxhash64 over
-    (sorted array bytes, sorted attrs JSON, sorted child hashes) — and so is the
-    stamped ``content_hash`` on every node. Only the peak memory differs: the
+    The digest is identical wherever the reference produces one — same
+    post-order walk, same per-node xxhash64 over (sorted array bytes, sorted
+    attrs JSON, sorted child hashes) — and so is the stamped ``content_hash`` on
+    every node. It is strictly more TOLERANT in one place: a 0-d array makes the
+    reference raise ``IndexError`` (``dataset[:]`` on a scalar), while the slab
+    walk hashes it via ``dataset[...]``. So "identical" is a statement about
+    every store the reference can hash, not about every store. Pinned by
+    ``test_optimise.py::TestCacheInvalidation``.
+
+    Only the peak memory differs otherwise: the
     finalize-time version does ``dataset[:].tobytes()``, which holds the ndarray
     AND a full byte copy at once (measured: 200 MB peak for a 100 MB array;
     ~1.26 GB for the 629 MB array in the demo corpus that :data:`_SLAB_BYTES`
@@ -702,16 +752,42 @@ def _restamp_content_hash(root: zarr.Group) -> str | None:
     return None
 
 
-def _verify_values(path: str, src: zarr.Array, dst: zarr.Array) -> None:
-    """Compare one array's BYTES, slab by slab.
+#: dtype kinds whose memory buffer IS the stored payload, so comparing
+#: ``tobytes()`` compares the data. Everything outside this set (numpy's
+#: variable-width ``StringDType``, kind ``T``; an object array, kind ``O``) puts
+#: POINTERS in the buffer and must be compared element-wise instead.
+_BYTEWISE_KINDS = frozenset("biufcmMSUV")
 
-    Bytes rather than ``np.array_equal``: the contract is bit-identity, and a
-    payload-preserving NaN or a negative zero compares equal under numeric
-    equality while differing on disk.
+
+def _slabs_differ(a: np.ndarray[Any, Any], b: np.ndarray[Any, Any]) -> bool:
+    """Do these two slabs differ AS STORED?
+
+    Bytes rather than ``np.array_equal`` for every fixed-width dtype: the
+    contract is bit-identity, and a payload-preserving NaN or a negative zero
+    compares equal under numeric equality while differing on disk.
+
+    A variable-width dtype is the one case where that idiom is not merely
+    stricter but WRONG. ``numpy.dtypes.StringDType`` — what a zarr-v3
+    ``dtype=str`` array decodes to, reachable here via ``--generic`` on an
+    OME-Zarr label table or an AnnData/cellxgene store — keeps its characters in
+    an arena and its buffer holds descriptors into it, so ``tobytes()`` compares
+    two allocations. Measured: ``['x'*60, 'x'*60]`` and ``['x'*60, 'y'*60]``
+    compare IDENTICAL. Those fall back to an exact element-wise comparison, so
+    ``--verify`` stays a real check rather than a vacuous one.
+
+    (The same idiom in :func:`_hash_array_streaming` is deliberately left alone:
+    it must stay byte-for-byte what ``compute_content_hashes`` feeds its hasher.)
     """
+    if a.dtype.kind in _BYTEWISE_KINDS:
+        return a.tobytes() != b.tobytes()
+    return not np.array_equal(a, b)
+
+
+def _verify_values(path: str, src: zarr.Array, dst: zarr.Array) -> None:
+    """Compare one array's stored values, slab by slab."""
     shape = tuple(int(s) for s in src.shape)
     if not shape:
-        if np.asarray(src[...]).tobytes() != np.asarray(dst[...]).tobytes():
+        if _slabs_differ(np.asarray(src[...]), np.asarray(dst[...])):
             raise ValueError(f"verify: {path!r} differs")
         return
     if shape[0] == 0:
@@ -722,7 +798,7 @@ def _verify_values(path: str, src: zarr.Array, dst: zarr.Array) -> None:
         stop = min(shape[0], start + slab_rows)
         a = np.ascontiguousarray(src[start:stop])
         b = np.ascontiguousarray(dst[start:stop])
-        if a.tobytes() != b.tobytes():
+        if _slabs_differ(a, b):
             raise ValueError(f"verify: {path!r} differs at rows {start}:{stop}")
 
 
@@ -792,6 +868,21 @@ def _is_luxar_store(root: zarr.Group) -> bool:
     )
 
 
+def ensure_luxar_store(source_path: Path, root: zarr.Group, *, generic: bool) -> None:
+    """Refuse a foreign store unless ``generic`` says the caller meant it.
+
+    Shared by :func:`optimise_store` and the CLI's ``--dry-run`` path, which
+    must not diverge: a dry run that happily plans a store the real run refuses
+    is a plan the user cannot act on.
+    """
+    if generic or _is_luxar_store(root):
+        return
+    raise ValueError(
+        f"{source_path} does not look like a Luxar scene or a .gsplats.zarr "
+        f"tree; pass --generic to re-chunk an arbitrary zarr store"
+    )
+
+
 def optimise_store(
     source_path: str | Path,
     dest_path: str | Path,
@@ -815,7 +906,9 @@ def optimise_store(
     All-or-nothing. The output is built in a hidden sibling directory and
     renamed onto ``dest_path`` only after the copy — and ``verify``, when asked
     for — has succeeded, so a failure leaves neither a half-written store at the
-    user's path nor a damaged previous one.
+    user's path nor a damaged previous one. A previous store is moved ASIDE
+    rather than deleted first (:func:`_replace`), so a failed swap restores it
+    instead of costing both copies.
     """
     source_path = Path(source_path)
     dest_path = Path(dest_path)
@@ -831,12 +924,7 @@ def optimise_store(
     # --native` carries the same pre-validation for the same reason.
     source = open_group(source_path, mode="r")
     try:
-        if not generic and not _is_luxar_store(source):
-            raise ValueError(
-                f"{source_path} does not look like a Luxar scene or a "
-                f".gsplats.zarr tree; pass --generic to re-chunk an arbitrary "
-                f"zarr store"
-            )
+        ensure_luxar_store(source_path, source, generic=generic)
 
         source_format = int(source.metadata.zarr_format)
         plan = plan_optimisation(source, target_bytes=target_bytes, profile=profile)
@@ -851,7 +939,14 @@ def optimise_store(
             )
             dest_path.parent.mkdir(parents=True, exist_ok=True)
             staging = _staging_path(dest_path)
-            artifact: Path | None = None
+            # Computed BEFORE anything is written, so the cleanup below can
+            # remove it however far the run got. Binding it to `_package`'s
+            # RETURN left a hidden partial `.<name>.optimise-<pid>-<uuid>.zip`
+            # beside the destination whenever the archive write itself failed
+            # (ENOSPC on the last member) — the one window the all-or-nothing
+            # promise did not cover.
+            artifact = _artifact_path(staging, dest_path)
+            consumed = False
             try:
                 _write_store(
                     source, staging, by_path, plan, source_format, target_bytes, profile
@@ -860,7 +955,7 @@ def optimise_store(
                     f"✓ {plan.n_rechunked}/{len(plan.arrays)} arrays re-chunked; "
                     f"{plan.source_n_chunks} → {plan.target_n_chunks} chunks"
                 )
-                artifact = _package(staging, dest_path)
+                _package(staging, artifact)
                 if verify:
                     reread = open_group(artifact, mode="r")
                     try:
@@ -869,12 +964,12 @@ def optimise_store(
                         close(reread)
                     aprint(f"✓ Verified {checked} arrays byte-for-byte")
                 _replace(artifact, dest_path)
-                artifact = None
+                consumed = True
             finally:
                 # The artifact only survives here on a failure path; on success
                 # it has already been renamed onto the destination.
                 shutil.rmtree(staging, ignore_errors=True)
-                if artifact is not None and artifact != staging:
+                if not consumed and artifact != staging:
                     artifact.unlink(missing_ok=True)
     finally:
         close(source)
@@ -949,7 +1044,25 @@ def _check_destination_state(dest_path: Path, *, overwrite: bool) -> None:
     whatever is at this path". A destination that exists and is neither a zarr
     store nor an empty directory is refused, so a mistyped path costs an error
     rather than someone's data.
+
+    A destination that IS a symlink is refused outright, before any work.
+    ``Path.exists()`` follows the link and ``Path.is_symlink()`` does not, and
+    every mutator here acts on the link itself: a link to a real store passed
+    every check and then died in ``shutil.rmtree`` ("Cannot call rmtree on a
+    symbolic link") with the finished output already built, and a DANGLING link
+    reads as "nothing here", skipping the ``--overwrite`` requirement entirely
+    before ``os.replace`` raised ``NotADirectoryError``. Both wasted the whole
+    copy. Symlinked output paths are ordinary (small home, big ``/mnt``), so the
+    error names the target and the two ways forward.
     """
+    if dest_path.is_symlink():
+        raise ValueError(
+            f"optimise refuses to write to {dest_path}: it is a symlink (→ "
+            f"{os.readlink(dest_path)}). The output is renamed into place, "
+            f"which would replace the LINK rather than what it points at. "
+            f"Give the link's target as the output path, or remove the link "
+            f"first."
+        )
     if not dest_path.exists():
         return
     if not overwrite:
@@ -1016,29 +1129,71 @@ def _write_store(
         close(dest)
 
 
-def _package(staging: Path, dest_path: Path) -> Path:
-    """The artifact that will BECOME the output, still beside the destination.
+def _artifact_path(staging: Path, dest_path: Path) -> Path:
+    """Where the thing that will BECOME the output lives before the rename.
 
-    The staging directory itself for a directory destination; for a ``.zip`` one
-    a hidden sibling archive whose members are keyed STORE-RELATIVE, which is
-    what a :class:`zarr.storage.ZipStore` reads (stored, not deflated — the
-    chunks already carry their own codec). Either way ``--verify`` runs against
-    this, and only a passing artifact is renamed into place.
+    The staging directory itself for a directory destination; a hidden sibling
+    archive for a ``.zip`` one. Derived from the paths alone so the caller can
+    register it for cleanup BEFORE any of it exists.
     """
     if dest_path.suffix.lower() != ".zip":
         return staging
-    archive = Path(f"{staging}.zip")
-    with zipfile.ZipFile(archive, "w", zipfile.ZIP_STORED) as zf:
+    return Path(f"{staging}.zip")
+
+
+def _package(staging: Path, artifact: Path) -> None:
+    """Compress ``staging`` into ``artifact``, or do nothing when they are one.
+
+    A ``.zip`` destination gets an archive whose members are keyed
+    STORE-RELATIVE, which is what a :class:`zarr.storage.ZipStore` reads
+    (stored, not deflated — the chunks already carry their own codec). Either
+    way ``--verify`` runs against the artifact, and only a passing one is
+    renamed into place.
+    """
+    if artifact == staging:
+        return
+    with zipfile.ZipFile(artifact, "w", zipfile.ZIP_STORED) as zf:
         for member in sorted(staging.rglob("*")):
             if member.is_file():
                 zf.write(member, member.relative_to(staging).as_posix())
-    return archive
 
 
 def _replace(new: Path, dest_path: Path) -> None:
-    """Put ``new`` at ``dest_path``, removing whatever is already there."""
-    if dest_path.is_dir():
-        shutil.rmtree(dest_path)
-    elif dest_path.exists():
-        dest_path.unlink()
-    os.replace(str(new), str(dest_path))
+    """Put ``new`` at ``dest_path``, moving whatever is there ASIDE first.
+
+    Not "delete the old one, then rename". That order can lose BOTH copies:
+    a ``shutil.rmtree`` that fails partway (a read-only child, EBUSY on a mount
+    point, an interrupt) propagates before the caller can mark the artifact as
+    consumed, so its ``finally`` then deletes the freshly built output too —
+    and for a directory destination the artifact IS the staging tree. A single
+    ``--overwrite`` could take out a good previous store and its replacement,
+    which is precisely what :func:`optimise_store` promises cannot happen.
+
+    So: rename the old one out of the way (atomic, and it works for a directory,
+    a file or a symlink), swap the new one in, and only then delete the aside —
+    restoring it if the swap fails. Deleting last also means a failure to clean
+    up costs a hidden leftover rather than the output.
+    """
+    if not os.path.lexists(dest_path):
+        os.replace(str(new), str(dest_path))
+        return
+    aside = dest_path.parent / (
+        f".{dest_path.name}.optimise-old-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+    )
+    os.replace(str(dest_path), str(aside))
+    try:
+        os.replace(str(new), str(dest_path))
+    except BaseException:
+        try:
+            os.replace(str(aside), str(dest_path))
+        except OSError as restore_failed:
+            raise OSError(
+                f"optimise could not swap the new store into {dest_path}, and "
+                f"could not move the previous one back either. It is intact at "
+                f"{aside} — rename it to {dest_path.name} by hand."
+            ) from restore_failed
+        raise
+    if aside.is_dir() and not aside.is_symlink():
+        shutil.rmtree(aside, ignore_errors=True)
+    else:
+        aside.unlink(missing_ok=True)

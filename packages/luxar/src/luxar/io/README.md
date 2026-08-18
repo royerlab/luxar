@@ -216,6 +216,12 @@ This ensures:
 structure-preserving pass — no refit, no source volume, no GPU. It backs the
 `luxar optimise` CLI command and the `luxar info --stats` chunk diagnostic.
 
+Everything but the zarr chunk grid survives verbatim: values bit-for-bit, dtype,
+codecs, filters, serializer, `fill_value`, memory order, the on-disk zarr format,
+and every group and array attribute **except** the two the pass is contractually
+required to move — the root's `content_hash`, which is restamped, and the
+`chunk_layout` summary written beside it (see *Cache invalidation* below).
+
 ```python
 from luxar.io.optimise import optimise_store, plan_optimisation, summarise_chunk_layout
 
@@ -232,6 +238,10 @@ print(plan.source_n_chunks, "→", plan.target_n_chunks)
   compares every array byte for byte.
 - `summarise_chunk_layout(root)` → `ChunkLayoutSummary` — average chunk bytes,
   arrays under the 16 KB floor, and the chunk-file count a full load fetches.
+  Counts objects, so a shard is one file and a `(0, D)` placeholder is none —
+  and an array that fetches nothing is left out of the floor share entirely.
+  `summarise_plan(plan)` is the same diagnostic off a plan already walked, which
+  is how `luxar info --stats` reports both from a single pass.
 - `resolve_target_bytes(target_bytes=…, target_kb=…, profile=…)` — the three
   mutually exclusive size flags, and `CHUNK_PROFILES` (`hosting` 256 KB,
   `local` 64 KB, `archive` 1 MB).
@@ -257,12 +267,18 @@ than reading an array whole.
 **All-or-nothing.** The output is built in a hidden sibling directory and
 renamed onto the destination only after the copy (and `verify=True`, when asked
 for) succeeds, so a failure leaves neither a half-written store at the
-destination nor a damaged previous one. A `.zarr.zip` destination is compressed
-out of that directory rather than written into a `ZipStore`, which appends
-rather than replaces and would otherwise accumulate one dead copy of every group
-document per attr write. `overwrite=True` replaces an existing **zarr store or
-empty directory** only, and refuses a destination that is, contains, or lives
-inside the source.
+destination nor a damaged previous one. An existing destination is renamed
+**aside** and deleted only once the new one is in place (and restored if that
+rename fails), because deleting first can lose both copies: an `rmtree` that
+fails partway propagates before the artifact is marked consumed, and for a
+directory destination the artifact *is* the staging tree. A `.zarr.zip`
+destination is compressed out of that directory rather than written into a
+`ZipStore`, which appends rather than replaces and would otherwise accumulate
+one dead copy of every group document per attr write. `overwrite=True` replaces
+an existing **zarr store or empty directory** only, and refuses a destination
+that is, contains, or lives inside the source — or that is a **symlink**, since
+the rename would replace the link rather than its target (the error says to pass
+the target instead).
 
 **Cache invalidation.** Neither hasher can see a chunk shape —
 `compute_content_hashes` hashes values + attrs, the `.gsplats.zarr` stamp hashes

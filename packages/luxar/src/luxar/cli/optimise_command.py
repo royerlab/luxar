@@ -13,10 +13,11 @@ from typing import Optional
 import typer
 from arbol import aprint
 
-from .._zarr_compat import open_group
+from .._zarr_compat import close, open_group
 from ..io.optimise import (
     CHUNK_PROFILES,
     OptimisePlan,
+    ensure_luxar_store,
     optimise_store,
     plan_optimisation,
     resolve_target_bytes,
@@ -56,6 +57,36 @@ def _report_dry_run(plan: OptimisePlan, path: Path) -> None:
         f"({plan.n_rechunked}/{len(plan.arrays)} arrays changed)"
     )
     aprint("  Nothing was written.")
+
+
+def _plan_and_report(
+    source: Path, budget: int, profile: Optional[str], generic: bool
+) -> None:
+    """The whole ``--dry-run`` path: same validation as a real run, no writing.
+
+    Takes the ``--generic`` gate too. Without it ``luxar optimise foreign.zarr
+    --dry-run`` printed a full plan for a store the identical non-dry-run
+    command refuses — a plan the user cannot act on. And the group is CLOSED:
+    a ``.zarr.zip`` source otherwise keeps its ``ZipStore`` handle open, which
+    is a ``ResourceWarning`` (fatal under the ``-W error`` suites).
+    """
+    try:
+        root = open_group(source, mode="r")
+    except Exception as e:
+        aprint(f"❌ Error reading {source}: {e}")
+        raise typer.Exit(1) from e
+    try:
+        ensure_luxar_store(source, root, generic=generic)
+        plan = plan_optimisation(root, target_bytes=budget, profile=profile)
+    except ValueError as e:
+        aprint(f"❌ {e}")
+        raise typer.Exit(1) from e
+    except Exception as e:
+        aprint(f"❌ Error reading {source}: {e}")
+        raise typer.Exit(1) from e
+    finally:
+        close(root)
+    _report_dry_run(plan, source)
 
 
 def register_optimise_command(app: typer.Typer) -> None:
@@ -122,13 +153,7 @@ def register_optimise_command(app: typer.Typer) -> None:
             if output is not None:
                 aprint("❌ --dry-run writes nothing; drop the output argument")
                 raise typer.Exit(1)
-            try:
-                root = open_group(source, mode="r")
-                plan = plan_optimisation(root, target_bytes=budget, profile=profile)
-            except Exception as e:
-                aprint(f"❌ Error reading {source}: {e}")
-                raise typer.Exit(1)
-            _report_dry_run(plan, source)
+            _plan_and_report(source, budget, profile, generic)
             return
 
         if output is None:
