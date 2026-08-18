@@ -16,12 +16,12 @@ renderer and keeps `material-manager.ts` focused on orchestration.
 
 ## Module map
 
-| File                   | Role                                                                                                                                                                                                                                                                                                              |
-| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `factories.ts`         | `VISUAL_FACTORIES`, `PICKING_FACTORIES`, `MEGA_SHADER_FACTORIES` constructor tables keyed by `kind` × `backend`; `resolveMaterialBackend(caps)` (caps.apiSurface → `'glsl' \| 'tsl'`); `BlendingMode` type.                                                                                                       |
-| `lifecycle.ts`         | `subscribeToDispose` wires a `'dispose'` listener that removes the material from every registry; `removeFromRegistries` is the same teardown reachable from `MaterialManager.unregister`; re-exports the `SOFT_DISPOSE_FLAG` opt-out sentinel.                                                                    |
-| `soft-dispose-flag.ts` | Zero-import leaf module that defines the `SOFT_DISPOSE_FLAG` sentinel. Isolated here so the dispatcher (`data/scene-loader/commit/invalidate-render-object.ts`), which is reachable from the renderer bootstrap, can import the flag without dragging in the TSL material factories (they import `three/webgpu`). |
-| `stats.ts`             | `getCacheStats(ctx)` — diagnostic snapshot (registry sizes and cumulative `new XMaterial()` wall-clock; no cache or eviction fields — every material is per-node).                                                                                                                                                |
+| File                   | Role                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `factories.ts`         | `VISUAL_FACTORIES`, `PICKING_FACTORIES`, `MEGA_SHADER_FACTORIES` tables keyed by `kind` × `backend`; `resolveMaterialBackend(caps)` (caps.apiSurface → `'glsl' \| 'tsl'`); `BlendingMode` type. Every cell is a **thunk** (`[backend]()`), not a class: the `tsl` ones resolve through the lazy `three/webgpu` boundary and do not exist until it is awaited — see `rendering/tsl/README.md` and #1679. |
+| `lifecycle.ts`         | `subscribeToDispose` wires a `'dispose'` listener that removes the material from every registry; `removeFromRegistries` is the same teardown reachable from `MaterialManager.unregister`; re-exports the `SOFT_DISPOSE_FLAG` opt-out sentinel.                                                                                                                                                          |
+| `soft-dispose-flag.ts` | Zero-import leaf module that defines the `SOFT_DISPOSE_FLAG` sentinel. Isolated here so the dispatcher (`data/scene-loader/commit/invalidate-render-object.ts`), which is reachable from the renderer bootstrap, can import the flag without dragging in the TSL material factories (they import `three/webgpu`).                                                                                       |
+| `stats.ts`             | `getCacheStats(ctx)` — diagnostic snapshot (registry sizes and cumulative `new XMaterial()` wall-clock; no cache or eviction fields — every material is per-node).                                                                                                                                                                                                                                      |
 
 ## How the orchestrator composes them
 
@@ -29,9 +29,9 @@ renderer and keeps `material-manager.ts` focused on orchestration.
 MaterialManager (class)
    │
    ├── backend dispatch ──► factories.resolveMaterialBackend(caps)
-   │                         factories.VISUAL_FACTORIES[kind][backend]
-   │                         factories.PICKING_FACTORIES[kind][backend]
-   │                         factories.MEGA_SHADER_FACTORIES[backend]
+   │                         factories.VISUAL_FACTORIES[kind][backend]()
+   │                         factories.PICKING_FACTORIES[kind][backend]()
+   │                         factories.MEGA_SHADER_FACTORIES[backend]()
    │
    ├── register/unreg ────► lifecycle.subscribeToDispose(mat, ctx)
    │                         lifecycle.removeFromRegistries(mat, ctx)
@@ -71,8 +71,8 @@ MaterialManager (class)
 
 ## See also
 
-- `../README.md` — package-level overview, the 12-shader matrix, and
-  the "5. Material Manager" section with usage examples.
+- `../README.md` — package-level overview and the "6. Material Manager"
+  section with usage examples.
 - `../material-manager.ts` — the orchestrator class these helpers serve.
 - `../materials/` and `../picking/` — the visual and picking material
   classes the factory tables instantiate.

@@ -18,6 +18,15 @@ export default defineConfig(({ command }) => ({
     outDir: 'dist',
     emptyOutDir: true,
     target: 'esnext', // Required for Workers and WASM support
+    // Four chunks exceed rollup's 500 kB default and all four are deliberate:
+    // `blosc` and `zstd` (codec WASM glue) and `three-webgpu` are lazily
+    // imported and never touch the initial payload, and `index` is the app
+    // itself. At the default limit the warning fired on every single build and
+    // could only ever be a false positive, so it taught people to ignore it.
+    // Raised to just above the largest INTENTIONAL chunk: a new offender still
+    // trips it, and `pnpm build:check` separately proves the lazy ones stay
+    // lazy (that is the assertion with teeth — see scripts/check-eager-chunks.mjs).
+    chunkSizeWarningLimit: 1700,
     rolldownOptions: {
       output: {
         // Split the `three` package into core / tsl / webgpu so each
@@ -26,6 +35,21 @@ export default defineConfig(({ command }) => ({
         // chunk that re-downloads on any three-internal change.
         codeSplitting: {
           groups: [
+            {
+              // `three.core.js` is imported by BOTH `three.module.js` (the
+              // WebGL entry) and `three.webgpu.js`. Without a group of its own
+              // the shared core lands in one of theirs, and the observed
+              // outcome was the worst one: the `three` chunk ended up
+              // importing `three-webgpu`, which pins the whole WebGPU/node
+              // system into the eager graph no matter how carefully the
+              // application code defers it (issue #1679). Splitting the core
+              // out first — highest priority, so it wins over the two entry
+              // rules below — lets `three` and `three-webgpu` each depend on
+              // it instead of on each other.
+              name: 'three-core',
+              test: /[\\/]three[\\/]build[\\/]three\.core/,
+              priority: 30,
+            },
             {
               name: 'three-webgpu',
               test: /[\\/]three[\\/]build[\\/]three\.webgpu/,

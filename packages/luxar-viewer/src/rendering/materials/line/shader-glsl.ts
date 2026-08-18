@@ -63,10 +63,10 @@ import {
   VOLUMETRIC_SERIES_TAU_THRESHOLD,
   VOLUMETRIC_TAU_EPS,
 } from '../_shared/volumetric';
-import { lineWebGPUFactory, buildLineTSLNodesFromUniforms } from './shader-tsl';
 import { lineJoinStyleFromUniform } from '../../../types/line-join';
 import { FALLOFF_FLOOR, FALLOFF_K } from '../_shared/falloff';
 import type { ShaderSource } from '../_shared/shader-source';
+import { requireTslMaterials } from '../../tsl/slot';
 
 export const LINE_VERTEX_SHADER = /* glsl */ `
     precision highp float;
@@ -761,6 +761,8 @@ export const LINE_SOURCE: ShaderSource = {
     // without this the WebGPU build would silently ignore a pinned
     // "uLineJoin: 0" and draw mitred quads against unmitred GLSL ones.
     const join = lineJoinStyleFromUniform(u.uLineJoin?.value as number | undefined);
+    const { lineWebGPUFactory, buildLineTSLNodesFromUniforms } =
+      requireTslMaterials().factories.line;
     return lineWebGPUFactory(buildLineTSLNodesFromUniforms(u, {}), { isOrtho, join });
   },
 };

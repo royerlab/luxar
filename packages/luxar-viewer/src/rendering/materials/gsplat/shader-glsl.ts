@@ -11,7 +11,6 @@ import {
   GLSL_SORTED_INDEX,
 } from '../_shared/glsl-lib';
 import type { ShaderSource } from '../_shared/shader-source';
-import { gsplatWebGPUFactory, buildGSplatTSLNodesFromUniforms } from './shader-tsl';
 import {
   ALPHA_CLAMP,
   VOLUMETRIC_SERIES_C1,
@@ -19,6 +18,7 @@ import {
   VOLUMETRIC_SERIES_TAU_THRESHOLD,
   VOLUMETRIC_TAU_EPS,
 } from '../_shared/volumetric';
+import { requireTslMaterials } from '../../tsl/slot';
 
 export const GSPLAT_VERTEX_SHADER = /* glsl */ `
     precision highp float;
@@ -608,8 +608,11 @@ export const GSPLAT_FRAGMENT_SHADER = /* glsl */ `
 export const GSPLAT_SOURCE: ShaderSource = {
   name: 'gsplat',
   webgl: { vertex: GSPLAT_VERTEX_SHADER, fragment: GSPLAT_FRAGMENT_SHADER },
-  webgpu: (uniforms: Record<string, unknown>) =>
-    gsplatWebGPUFactory(
+  webgpu: (uniforms: Record<string, unknown>) => {
+    const { gsplatWebGPUFactory, buildGSplatTSLNodesFromUniforms } =
+      requireTslMaterials().factories.gsplat;
+    return gsplatWebGPUFactory(
       buildGSplatTSLNodesFromUniforms(uniforms as Record<string, import('three').IUniform>)
-    ),
+    );
+  },
 };

@@ -4,7 +4,9 @@
  * own copy of the same A&S 7.1.26 form in `luxar/gsplats/lift.py` — the
  * two languages cannot share code, but the constants must stay in sync.)
  *
- * Two implementations live here, each matched to its consumer:
+ * Two implementations, each matched to its consumer. The TSL builder for
+ * the second one lives next door in `erf-tsl.ts` so this file stays free
+ * of `three/tsl` — see that module's header for why (issue #1679):
  *
  * 1. `erfRef` — the Abramowitz & Stegun 7.1.26 rational approximation
  *    (max abs error 1.5e-7). The CPU-side reference: precomputing
@@ -13,7 +15,7 @@
  *    measure `erfPoly` against. Costs one `exp` and one division per
  *    call — fine on the CPU, the expensive form in a fragment shader.
  *
- * 2. `erfPoly` / `GLSL_ERF_FUNCTIONS` / `erfPolyTSL` — a pure odd
+ * 2. `erfPoly` / `GLSL_ERF_FUNCTIONS` (+ `erfPolyTSL` in `erf-tsl.ts`) — a pure odd
  *    polynomial on [-3, 3], clamped to ±1 outside. NO exp, NO division:
  *    the fragment-shader form, built for the #1352 volumetric line
  *    primitive (since deleted; no production shader consumes it today —
@@ -46,9 +48,6 @@
  *
  * @module rendering/materials/_shared/erf
  */
-
-import { abs, float, min, sign } from 'three/tsl';
-import type { TSLNode } from './tsl-helpers';
 
 /** A&S 7.1.26 auxiliary-variable constant: t = 1 / (1 + p·|x|). */
 const ERF_AS_P = 0.3275911;
@@ -134,24 +133,3 @@ float luxarErf(float x) {
   return (x < 0.0) ? -p : p;
 }
 `;
-
-/**
- * TSL twin of `luxarErf`, built from the SAME coefficient values (the
- * code generator owns literal formatting — see the module header).
- * The sign is applied by multiplying with `sign(x)` — genuinely
- * branchless in the GENERATED code (a `select` would lower to an
- * `if`/`else` that duplicates the whole polynomial across both arms),
- * and legal both inside and outside an `Fn()` body. `sign(0) = 0`
- * matches the polynomial (`P(0) = 0`), and NaN falls under the same
- * caveat as the GLSL form.
- */
-export function erfPolyTSL(x: TSLNode): TSLNode {
-  const ax = min(abs(x), float(ERF_POLY_CLAMP));
-  const t = ax.mul(ax);
-  let p: TSLNode = float(ERF_POLY_COEFFS[ERF_POLY_COEFFS.length - 1]);
-  for (let k = ERF_POLY_COEFFS.length - 2; k >= 0; k--) {
-    p = p.mul(t).add(float(ERF_POLY_COEFFS[k]));
-  }
-  p = p.mul(ax);
-  return p.mul(sign(x));
-}

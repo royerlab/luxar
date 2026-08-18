@@ -25,7 +25,7 @@ import {
   GLSL_NEAR_FADE_FUNCTIONS,
   GLSL_SORTED_INDEX,
 } from '../../materials/_shared/glsl-lib';
-import { gsplatPickWebGPUFactory, buildGSplatPickTSLNodesFromUniforms } from './pick.tsl';
+import { requireTslMaterials } from '../../tsl/slot';
 
 /**
  * Picking vertex shader for gsplats.
@@ -312,6 +312,8 @@ export const GSPLAT_PICK_SOURCE: ShaderSource = {
   webgl: { vertex: GSPLAT_PICK_VERTEX_SHADER, fragment: GSPLAT_PICK_FRAGMENT_SHADER },
   webgpu: (uniforms: Record<string, unknown>) => {
     const u = uniforms as Record<string, import('three').IUniform>;
+    const { gsplatPickWebGPUFactory, buildGSplatPickTSLNodesFromUniforms } =
+      requireTslMaterials().factories.pickGsplat;
     return gsplatPickWebGPUFactory(buildGSplatPickTSLNodesFromUniforms(u));
   },
 };

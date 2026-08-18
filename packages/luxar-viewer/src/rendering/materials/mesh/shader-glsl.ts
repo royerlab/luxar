@@ -38,7 +38,7 @@
 import { GLSL_SANITIZE_FUNCTIONS, GLSL_NEAR_FADE_FUNCTIONS } from '../_shared/glsl-lib';
 import { MESH_NORMAL_EPS_SQ } from './appearance';
 import type { ShaderSource } from '../_shared/shader-source';
-import { meshWebGPUFactory, buildMeshTSLNodesFromUniforms } from './shader-tsl';
+import { requireTslMaterials } from '../../tsl/slot';
 
 /**
  * Vertex stage.
@@ -334,8 +334,11 @@ export const MESH_SOURCE: ShaderSource = {
   // Default config — the stored-normal, opaque-cutout build. Consumers needing
   // USE_COLORMAP / the flat-normal variant / a different blend mode call
   // `meshWebGPUFactory(nodes, { ...flags })` directly.
-  webgpu: (uniforms: Record<string, unknown>) =>
-    meshWebGPUFactory(
+  webgpu: (uniforms: Record<string, unknown>) => {
+    const { meshWebGPUFactory, buildMeshTSLNodesFromUniforms } =
+      requireTslMaterials().factories.mesh;
+    return meshWebGPUFactory(
       buildMeshTSLNodesFromUniforms(uniforms as Record<string, import('three').IUniform>)
-    ),
+    );
+  },
 };

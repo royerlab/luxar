@@ -29,8 +29,6 @@ import {
   GLSL_SORTED_INDEX,
 } from '../_shared/glsl-lib';
 import type { ShaderSource } from '../_shared/shader-source';
-import { buildLineTSLNodesFromUniforms } from './shader-tsl';
-import { capsuleLineWebGPUFactory } from './shader-tsl-capsule';
 import {
   ALPHA_CLAMP,
   VOLUMETRIC_SERIES_C1,
@@ -45,6 +43,7 @@ import {
   CAPSULE_RADIUS_PER_QUAD_HALFWIDTH,
   CAPSULE_STENCIL_APRON_PX,
 } from '../_shared/line-capsule';
+import { requireTslMaterials } from '../../tsl/slot';
 
 // All literals toFixed(7) — float32-exact and snapshot-stable.
 const G = {
@@ -681,6 +680,8 @@ export const CAPSULE_LINE_SOURCE: ShaderSource = {
     // otherwise — harness consumers needing USE_COLORMAP or mode variants
     // call `capsuleLineWebGPUFactory` directly with explicit flags.
     const isOrtho = ((u.uIsOrtho?.value as number) ?? 0) === 1;
+    const { capsuleLineWebGPUFactory, buildLineTSLNodesFromUniforms } =
+      requireTslMaterials().factories.capsuleLine;
     return capsuleLineWebGPUFactory(buildLineTSLNodesFromUniforms(u, {}), { isOrtho });
   },
 };

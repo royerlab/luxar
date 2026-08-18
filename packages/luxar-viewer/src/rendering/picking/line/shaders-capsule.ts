@@ -23,8 +23,6 @@ import {
   GLSL_SORTED_INDEX,
 } from '../../materials/_shared/glsl-lib';
 import type { ShaderSource } from '../../materials/_shared/shader-source';
-import { buildLinePickTSLNodesFromUniforms } from './pick.tsl';
-import { capsuleLinePickWebGPUFactory } from './pick-capsule.tsl';
 import {
   CAPSULE_JOINT_DEFICIT_GATE,
   CAPSULE_JOINT_PACKET_MIN_RADIUS_PX,
@@ -32,6 +30,7 @@ import {
   CAPSULE_RADIUS_PER_QUAD_HALFWIDTH,
   CAPSULE_STENCIL_APRON_PX,
 } from '../../materials/_shared/line-capsule';
+import { requireTslMaterials } from '../../tsl/slot';
 
 const G = {
   RADIUS_FACTOR: CAPSULE_RADIUS_PER_QUAD_HALFWIDTH.toFixed(7),
@@ -487,6 +486,8 @@ export const CAPSULE_LINE_PICK_SOURCE: ShaderSource = {
   webgpu: (uniforms: Record<string, unknown>) => {
     const u = uniforms as Record<string, import('three').IUniform>;
     const isOrtho = ((u.uIsOrtho?.value as number) ?? 0) === 1;
+    const { capsuleLinePickWebGPUFactory, buildLinePickTSLNodesFromUniforms } =
+      requireTslMaterials().factories.pickCapsuleLine;
     return capsuleLinePickWebGPUFactory(buildLinePickTSLNodesFromUniforms(u), { isOrtho });
   },
 };
