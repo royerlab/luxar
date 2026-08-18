@@ -52,8 +52,8 @@ function makeCtx(overrides: Partial<CaptureContext> = {}): CaptureContext {
     fps: 30,
     renderFrameToCanvas: vi.fn(async () => fakeCanvas),
     generateFilename: (ext: string) => `cap.${ext}`,
-    generateFfmpegScript: (rate, frames, ext) =>
-      `ffmpeg -framerate ${rate} -i frame_%06d.${ext} -frames:v ${frames} out.mp4`,
+    generateFfmpegScript: (frames: number, ext: string) =>
+      `ffmpeg -i frame_%06d.${ext} -frames:v ${frames} out.mp4`,
     downloadBlob: vi.fn(),
     computeVideoBitrate: () => 8_000_000,
     showToast: vi.fn(),

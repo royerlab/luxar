@@ -18,21 +18,25 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import * as THREE from 'three';
 
 // Shared driver-mock state. `vi.hoisted` so the factory is available to
 // the (hoisted) vi.mock calls below.
 const mockState = vi.hoisted(() => {
-  const driverInstances: Array<Record<string, ReturnType<typeof vi.fn>>> = [];
+  const driverInstances: Array<Record<string, any>> = [];
   const config = { setupOk: true, captureThrows: 0, shouldAbort: false, finalizeThrows: false };
   function makeDriver() {
     let captureCalls = 0;
-    const d = {
+    const d: Record<string, any> = {
       setup: vi.fn(async () => config.setupOk),
       captureFrame: vi.fn(async () => {
         captureCalls++;
         if (captureCalls <= config.captureThrows) throw new Error('frame fail');
       }),
-      finalize: vi.fn(async () => {
+      finalize: vi.fn(async (ctx: any) => {
+        // Keep the context so a test can exercise the hooks the real
+        // drivers use (notably generateFfmpegScript).
+        d.lastCtx = ctx;
         if (config.finalizeThrows) throw new Error('finalize fail');
       }),
       abort: vi.fn(async () => {}),
@@ -68,6 +72,16 @@ import { showToast } from '../../../../ui/toast';
 import { log } from '../../../../utils/log';
 import { LuxarOrbitControls } from '../../../../controls/luxar-orbit-controls';
 import type { RecordingOptions } from '../../../../ui/recording-panel/types';
+
+/** A fragment unique to each tone-mapping mode's emitted expression. */
+const TONE_MAP_SCRIPT_MARKER: Record<string, string> = {
+  linear: 'tone mapping: Linear',
+  reinhard: 'tone mapping: Reinhard',
+  cineon: 'tone mapping: Cineon',
+  aces: 'tone mapping: ACES Filmic',
+  agx: 'tone mapping: AgX',
+  neutral: 'tone mapping: Khronos PBR Neutral',
+};
 
 function makeOpts(overrides: Partial<RecordingOptions> = {}): RecordingOptions {
   return {
@@ -112,7 +126,9 @@ function makeSession(overrides: Record<string, unknown> = {}): any {
   };
 }
 
-function makeSceneManager(): {
+function makeSceneManager(
+  nativeSize: { width: number; height: number } = { width: 1280, height: 720 }
+): {
   sm: any;
   orbitControls: { applyOrbitRotation: ReturnType<typeof vi.fn> };
 } {
@@ -121,6 +137,14 @@ function makeSceneManager(): {
   });
   const sm = {
     controls: { getControls: vi.fn(() => orbitControls) },
+    // The strategy reads the renderer's logical size to honour the
+    // panel's "Native" resolution option.
+    renderer: {
+      getSize: vi.fn((target: { set: (x: number, y: number) => unknown }) => {
+        target.set(nativeSize.width, nativeSize.height);
+        return target;
+      }),
+    },
   };
   return { sm: sm as any, orbitControls };
 }
@@ -281,6 +305,132 @@ describe('OfflineCaptureStrategy', () => {
       // …but the bail must NOT wake the loop on a disposed session: the
       // AnimationController is torn down before the RecordingPanel.
       expect(anim.startAnimation).not.toHaveBeenCalled();
+    });
+
+    it('captures at the canvas height when the resolution is Native (0)', async () => {
+      // The panel's Resolution dropdown documents "Native = current canvas
+      // size", but the offline loop used to force 1080 — downscaling every
+      // Retina/4K capture and rescaling composited overlays with it.
+      const { sm } = makeSceneManager({ width: 2560, height: 1440 });
+      const session = makeSession();
+      const strat = new OfflineCaptureStrategy(sm, makeAnimController(), makeHooks());
+
+      await strat.run(makeOpts({ videoResolution: 0 }), 'turntable', session);
+
+      expect(session.saveRecordingState).toHaveBeenCalledWith(
+        expect.objectContaining({ scaleResolution: { targetH: 1440, align16: true } })
+      );
+    });
+
+    it('still converts EXR frames when the renderer cannot report a grade', async () => {
+      // No `postProcessing` on the scene manager → the grade is unknown.
+      // The script must still clamp and sRGB-encode: skipping the colour
+      // chain hands the encoder scene-linear floats, which is the dark,
+      // colour-shifted video the chain exists to prevent.
+      const { sm } = makeSceneManager();
+      const strat = new OfflineCaptureStrategy(sm, makeAnimController(), makeHooks());
+
+      await strat.run(makeOpts({ outputFormat: 'exr' }), 'turntable', makeSession());
+
+      const ctx = mockState.driverInstances.at(-1)!.setup.mock.calls[0][0] as {
+        generateFfmpegScript: (frames: number, ext: string) => string;
+      };
+      const script = ctx.generateFfmpegScript(10, 'exr');
+      expect(script).toContain('t=iec61966-2-1');
+      expect(script).toContain('geq=');
+    });
+
+    it('multiplies the canvas height by the native DPR for Native', async () => {
+      // "Native = current canvas size" means device pixels: three's
+      // getSize() is logical, so a 2× display captures at twice that.
+      const { sm } = makeSceneManager({ width: 1280, height: 720 });
+      const session = makeSession({
+        adaptiveDPRManager: { getNativeDPR: vi.fn(() => 2) },
+      });
+      const strat = new OfflineCaptureStrategy(sm, makeAnimController(), makeHooks());
+
+      await strat.run(makeOpts({ videoResolution: 0 }), 'turntable', session);
+
+      expect(session.saveRecordingState).toHaveBeenCalledWith(
+        expect.objectContaining({ scaleResolution: { targetH: 1440, align16: true } })
+      );
+    });
+
+    it('describes the capture with the mode the panel is in', async () => {
+      // A Turntable capture with Smooth off still rotates a full 360° in
+      // this loop, so the dialog must be the turntable one (frame count +
+      // duration) — deriving the mode from the format called it a "Video"
+      // recording and dropped both.
+      const { sm } = makeSceneManager();
+      const session = makeSession();
+      const strat = new OfflineCaptureStrategy(sm, makeAnimController(), makeHooks());
+
+      await strat.run(makeOpts({ outputFormat: 'png', frameByFrame: false }), 'turntable', session);
+
+      expect(session.showConfirmationDialog).toHaveBeenCalledWith(
+        expect.objectContaining({ mode: 'turntable' })
+      );
+    });
+
+    it('honours an explicit resolution over the native canvas height', async () => {
+      const { sm } = makeSceneManager({ width: 2560, height: 1440 });
+      const session = makeSession();
+      const strat = new OfflineCaptureStrategy(sm, makeAnimController(), makeHooks());
+
+      await strat.run(makeOpts({ videoResolution: 1080 }), 'turntable', session);
+
+      expect(session.saveRecordingState).toHaveBeenCalledWith(
+        expect.objectContaining({ scaleResolution: { targetH: 1080, align16: true } })
+      );
+    });
+
+    it.each([
+      [THREE.LinearToneMapping, 'linear'],
+      [THREE.ReinhardToneMapping, 'reinhard'],
+      [THREE.CineonToneMapping, 'cineon'],
+      [THREE.ACESFilmicToneMapping, 'aces'],
+      [THREE.AgXToneMapping, 'agx'],
+      [THREE.NeutralToneMapping, 'neutral'],
+    ])('passes tone mapping %i to the EXR script as %s', async (toneMapping, expected) => {
+      // Every mode `MegaShaderMaterial.getToneMapping()` can return has to
+      // reach the script. A missing entry falls back to Neutral, which
+      // silently bakes the WRONG curve into the encode — and reads as a
+      // plausible result, since Neutral is a gentle curve.
+      const { sm } = makeSceneManager();
+      sm.postProcessing = {
+        getGradeSettings: () => ({ toneMapping, exposure: 0, offset: 0, gamma: 1 }),
+      };
+      const strat = new OfflineCaptureStrategy(sm, makeAnimController(), makeHooks());
+
+      await strat.run(makeOpts({ outputFormat: 'exr' }), 'turntable', makeSession());
+
+      const driver = mockState.driverInstances.at(-1)!;
+      const script: string = driver.lastCtx.generateFfmpegScript(8, 'exr');
+      expect(script).toContain(TONE_MAP_SCRIPT_MARKER[expected]);
+    });
+
+    it('gives every artifact of one capture the same timestamped stem', async () => {
+      // generateFilename() stamps new Date() per call, so the ZIP name,
+      // its fallback download name and the encode script's output base
+      // used to disagree whenever a capture crossed a second boundary.
+      const { sm } = makeSceneManager();
+      const hooks = makeHooks();
+      let call = 0;
+      hooks.generateFilename = vi.fn((ext: string) => `cap-${++call}.${ext}`);
+      const strat = new OfflineCaptureStrategy(sm, makeAnimController(), hooks);
+
+      await strat.run(makeOpts({ outputFormat: 'png' }), 'turntable', makeSession());
+
+      // Exactly one stem is minted; the drivers derive everything else.
+      expect(hooks.generateFilename).toHaveBeenCalledTimes(1);
+
+      // And every artifact the drivers ask for shares it: the ZIP name
+      // the driver downloads and the base the encode script names its
+      // outputs after have to be the same capture, not two timestamps.
+      const ctx = mockState.driverInstances.at(-1)!.lastCtx;
+      const zipName: string = ctx.generateFilename('zip');
+      const script: string = ctx.generateFfmpegScript(2, 'png');
+      expect(script).toContain(`"${zipName.replace(/\.zip$/, '')}-turntable.mp4"`);
     });
 
     it('warns and bails when the controls are not orbit controls, repainting the cleared canvas', async () => {

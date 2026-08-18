@@ -29,8 +29,12 @@ export interface CaptureContext {
   renderFrameToCanvas: () => Promise<HTMLCanvasElement>;
   /** Build a recording filename for a given extension. */
   generateFilename: (ext: string) => string;
-  /** Build the bundled `encode_video.sh` script. */
-  generateFfmpegScript: (fps: number, frames: number, ext: string) => string;
+  /**
+   * Build the bundled `encode_video.sh` script. The panel supplies the
+   * recording mode, output naming and (for EXR) the viewer's grade, so
+   * the driver only has to say how many frames of what it wrote.
+   */
+  generateFfmpegScript: (frames: number, ext: string) => string;
   /** Trigger a browser download. */
   downloadBlob: (blob: Blob, filename: string) => void;
   /** Compute the H.264/H.265/etc. bitrate for the canvas size. */

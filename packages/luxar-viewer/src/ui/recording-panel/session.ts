@@ -304,21 +304,34 @@ export class RecordingSession {
       } else if (options.videoDurationLimit > 0) {
         details += `<br>Duration limit: ${options.videoDurationLimit} seconds.`;
       }
+      // The real-time MediaRecorder path always emits WebM and picks the
+      // codec itself, so don't advertise `options.videoCodec` there. That
+      // path runs for Video mode and for a non-smooth WebM turntable
+      // (mirrors the dispatch in RecordingPanel.startVideoRecording). The
+      // offline mediabunny path (smooth turntable, or any mp4/mkv) does
+      // honor the codec.
+      const realtimeWebm = fmt === 'webm' && (mode === 'video' || !options.frameByFrame);
+
       if (fmt === 'exr') {
         details += '<br>Output: <strong>ZIP of EXR frames</strong> (full float precision).';
       } else if (fmt === 'png' || fmt === 'webp' || fmt === 'jpeg') {
         details += `<br>Output: <strong>ZIP of ${fmt.toUpperCase()} frames</strong> + ffmpeg script.`;
       } else if (fmt === 'mp4' || fmt === 'webm' || fmt === 'mkv') {
-        // The real-time MediaRecorder path always emits WebM and picks the
-        // codec itself, so don't advertise `options.videoCodec` there. That
-        // path runs for Video mode and for a non-smooth WebM turntable
-        // (mirrors the dispatch in RecordingPanel.startVideoRecording). The
-        // offline mediabunny path (smooth turntable, or any mp4/mkv) does
-        // honor the codec.
-        const realtimeWebm = fmt === 'webm' && (mode === 'video' || !options.frameByFrame);
         details += realtimeWebm
           ? '<br>Output: <strong>WebM video</strong>.'
           : `<br>Output: <strong>${fmt.toUpperCase()} video</strong> (${options.videoCodec.toUpperCase()}).`;
+      }
+
+      // Two capture paths cannot composite DOM overlays: the real-time
+      // recorder grabs the WebGL canvas alone, and the EXR driver writes
+      // the raw HDR buffer. Say so rather than letting "Include Overlays"
+      // quietly produce a file without them.
+      const hasOverlays = (this.overlayManager?.getVisibleOverlays().length ?? 0) > 0;
+      if (options.includeOverlays && hasOverlays && (realtimeWebm || fmt === 'exr')) {
+        details += realtimeWebm
+          ? '<br><strong>Overlays will NOT be included</strong> — real-time WebM records the ' +
+            'canvas alone. Enable <em>Smooth (offline)</em> to composite them.'
+          : '<br><strong>Overlays will NOT be included</strong> — EXR frames are the raw HDR buffer.';
       }
 
       overlay.innerHTML = `
