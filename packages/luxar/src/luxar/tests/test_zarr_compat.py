@@ -571,6 +571,21 @@ def test_close_is_a_no_op_for_a_local_store(tmp_path: Path) -> None:
     zc.close(zc.open_group(tmp_path / "c.zarr", mode="w"))
 
 
+def test_read_raw_bytes_reads_a_plain_file_inside_a_subgroup(tmp_path: Path) -> None:
+    """A non-zarr blob written into a group's own directory (an overlay image) is
+    reachable through no array or group API — only through the store, resolved
+    against the SUBGROUP's prefix rather than the root's."""
+    root = zc.open_group(tmp_path / "s.zarr", mode="w")
+    root.create_group("overlays").create_group("logo")
+    payload = b"\x89PNG\r\n\x1a\nnot-a-zarr-node\x00"
+    (tmp_path / "s.zarr" / "overlays" / "logo" / "image.png").write_bytes(payload)
+
+    assert zc.read_raw_bytes(root["overlays/logo"], "image.png") == payload
+    # Absent is None rather than an exception or empty bytes — "the file is gone"
+    # and "the file is empty" are different facts to a caller.
+    assert zc.read_raw_bytes(root["overlays/logo"], "missing.png") is None
+
+
 def test_consolidate_indexes_the_arrays_in_either_format(
     tmp_path: Path, write_format: int
 ) -> None:
