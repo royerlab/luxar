@@ -3,11 +3,103 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from typing import Any
 
 import xxhash
 import zarr
 from arbol import aprint
+
+from luxar._zarr_compat import NODE_ATTR_DOCS, NODE_GROUP_DOCS, read_raw_bytes
+
+# Attr keys whose value is the filename of a plain (non-zarr) payload file stored
+# *inside* the group's own directory. Such files have no chunk grid and no zarr
+# metadata, so `array_keys()` and `group_keys()` are blind to them and their bytes
+# reach the digest only through this list. A new payload kind registers its attr
+# key here. Full rationale: `finalize/README.md`.
+PAYLOAD_FILE_ATTRS: tuple[str, ...] = ("image_file",)
+
+#: zarr's own metadata documents, both on-disk formats (`_zarr_compat` already
+#: names the attr/group ones; `.zarray` and `.zmetadata` complete the set).
+_ZARR_METADATA_DOCS: frozenset[str] = frozenset(
+    (*NODE_ATTR_DOCS, *NODE_GROUP_DOCS, ".zarray", ".zmetadata")
+)
+
+
+def _is_safe_payload_name(filename: str) -> bool:
+    """True when ``filename`` is a name this walk is willing to READ at all.
+
+    Refuses on SEMANTICS only: a name that is not a single path component (zarr's
+    ``normalize_path`` rewrites ``\\`` to ``/`` and raises on ``.`` / ``..``, so
+    the name addresses a key outside the group's own directory, or nothing at
+    all), or one of zarr's metadata documents (they carry the ``content_hash``
+    this very walk stamps, so reading one would make the digest non-convergent).
+    Whether some store could open a name is the STORE's verdict, not this
+    predicate's — see the ``unreadable:`` fold in :func:`_payload_terms`. A
+    refused name is folded in BY NAME and never read, so the walk stays total
+    over whatever attrs a store on disk actually carries.
+    """
+    return (
+        "/" not in filename
+        and "\\" not in filename
+        and filename not in (".", "..")
+        and filename not in _ZARR_METADATA_DOCS
+    )
+
+
+def _payload_terms(group: zarr.Group, attrs: dict[str, Any]) -> Iterator[bytes]:
+    """Yield the hash terms for whatever payload files ``attrs`` names.
+
+    Every variable-length term carries its own byte length, which is what makes
+    the block injective by itself: without the key and name lengths, a group
+    naming ``a`` with bytes ``5:hello`` and one naming ``a7:`` with bytes
+    ``hello`` both emit ``image_filea7:5:hello``. That ambiguity is unreachable
+    through :func:`compute_content_hashes` today (step 2 folds in the attrs JSON,
+    which already carries the filename), so the prefixes are what stop this block
+    leaning on that coincidence. A group naming no payload file yields nothing at
+    all — what keeps a payload-free tree's digest identical to earlier versions'.
+
+    Args:
+        group: Group whose directory holds the payload files.
+        attrs: The group's attrs, already stripped of ``content_hash``.
+
+    Yields:
+        Byte terms to fold into the group's hasher, in order.
+    """
+    for attr_key in sorted(PAYLOAD_FILE_ATTRS):
+        filename = attrs.get(attr_key)
+        if not isinstance(filename, str) or not filename:
+            continue
+        # Key + name go in unconditionally — a rejected name included.
+        key_bytes = attr_key.encode()
+        # `surrogatepass` so ANY `str` maps to bytes: a lone surrogate survives a
+        # round-trip through zarr attrs, and a plain `.encode()` would raise here.
+        name_bytes = filename.encode(errors="surrogatepass")
+        yield f"payload:{len(key_bytes)}:".encode()
+        yield key_bytes
+        yield f"{len(name_bytes)}:".encode()
+        yield name_bytes
+        if not _is_safe_payload_name(filename):
+            yield b"unsafe:"  # rejected by name, never read
+            continue
+        try:
+            payload = read_raw_bytes(group, filename)
+        except (OSError, ValueError):
+            # The store owns the readability verdict — a length/charset heuristic
+            # here is wrong in both directions (see `finalize/README.md`). A
+            # payload we cannot read degrades to a deterministic term rather than
+            # aborting the compile: a raise reaches `finalize()`, which stamps the
+            # store `incomplete`. Honestly, this also folds a GENUINE transient
+            # I/O error into a different-but-deterministic digest: one re-download.
+            yield b"unreadable:"
+            continue
+        if payload is None:
+            # Distinct from a zero-byte file ("0:"), which would otherwise hash
+            # the same as a missing one.
+            yield b"absent:"
+        else:
+            yield f"{len(payload)}:".encode()
+            yield payload
 
 
 def _storage_identity(name: str, dataset: zarr.Array) -> dict[str, Any]:
@@ -110,9 +202,10 @@ def compute_content_hashes(store: zarr.Group) -> str:
     Uses xxhash64 for speed.
 
     Each node's hash covers, in order: every array's STORAGE IDENTITY followed by
-    its decoded VALUES, then the group's own attrs, then each child group's NAME
-    and hash. See :func:`_storage_identity` for what that identity is and why
-    layout is part of it.
+    its decoded VALUES, then the group's own attrs, then the BYTES of any plain
+    payload file those attrs name, then each child group's NAME and hash. See
+    :func:`_storage_identity` for what that identity is and why layout is part of
+    it, and :func:`_payload_terms` for the payload step.
 
     Args:
         store: Root zarr group
@@ -139,7 +232,14 @@ def compute_content_hashes(store: zarr.Group) -> str:
         attrs = {k: v for k, v in dict(group.attrs).items() if k != "content_hash"}
         hasher.update(json.dumps(attrs, sort_keys=True, default=str).encode())
 
-        # 3. Hash child groups (recursively, sorted for determinism), each one
+        # 3. Hash plain payload files named by attrs (overlay images): neither
+        #    arrays nor groups, so steps 1-2 fold in the FILENAME but never the
+        #    bytes. Attrs-driven, not by directory listing, and COMPILE time only
+        #    — nothing re-hashes a finished store. Why: `finalize/README.md`.
+        for term in _payload_terms(group, attrs):
+            hasher.update(term)
+
+        # 4. Hash child groups (recursively, sorted for determinism), each one
         #    keyed by its NAME. A node's own digest does not carry its name, so
         #    hashing the digests alone left a renamed child invisible to every
         #    ancestor — the same hole `_storage_identity` closes for arrays, and

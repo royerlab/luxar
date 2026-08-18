@@ -2,16 +2,20 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import numcodecs
 import numpy as np
 import pytest
 import zarr
+from zarr.core.buffer import default_buffer_prototype
+from zarr.core.sync import sync
 
 from luxar._zarr_compat import create_array
 from luxar.core.group.lod.group import MAX_COVERAGE_FRACTION
 from luxar.io._compiler.finalize.hashing import (
+    _payload_terms,
     _storage_identity,
     codec_ids,
     compute_content_hashes,
@@ -154,6 +158,211 @@ def test_compute_content_hashes_changes_with_data() -> None:
     )
     h_with = compute_content_hashes(root)
     assert h_with != compute_content_hashes(_lod_tree())
+
+
+# A minimal valid PNG (1x1 red pixel) — no PIL needed.
+_TINY_PNG = (
+    b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+    b"\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDAT\x08\xd7c\xf8\xcf"
+    b"\xc0\x00\x00\x03\x01\x01\x00\x18\xdd\x8d\xb0\x00\x00\x00\x00IEND\xaeB`\x82"
+)
+
+
+def _overlay_image_store(
+    root_path: Path,
+    payload: bytes | None,
+    filename: str = "image.png",
+    zarr_format: int = 3,
+) -> zarr.Group:
+    """Real on-disk store with one `overlays/logo` image-overlay group.
+
+    ``payload`` is written as a plain file inside the group's directory (exactly
+    what ``write_overlay`` does); ``None`` writes no file at all.
+
+    ``zarr_format`` is pinned explicitly because which metadata DOCUMENT exists
+    on disk depends on it — `.zattrs` at format 2, `zarr.json` at format 3 — and
+    a case naming a document the store does not have tests nothing. Explicit also
+    keeps the cases below independent of `LUXAR_ZARR_FORMAT` (which raw
+    `zarr.open_group` never consulted anyway).
+    """
+    root = zarr.open_group(str(root_path), mode="w", zarr_format=zarr_format)
+    logo = root.create_group("overlays").create_group("logo")
+    logo.attrs["type"] = "overlay_image"
+    logo.attrs["image_file"] = filename
+    if payload is not None:
+        image_dir = root_path / "overlays" / "logo"
+        image_dir.mkdir(parents=True, exist_ok=True)
+        (image_dir / filename).write_bytes(payload)
+    return root
+
+
+def test_compute_content_hashes_covers_overlay_payload_bytes(tmp_path: Path) -> None:
+    """Issue #1720: an overlay PNG is neither an array nor a group, so its bytes
+    used to sit outside the hash entirely — two stores differing only in the
+    image stamped one digest, and `content_hash` is supposed to fingerprint the
+    content it covers."""
+    store_path = tmp_path / "scene.luxar.zarr"
+    root = _overlay_image_store(store_path, _TINY_PNG)
+    h_before = compute_content_hashes(root)
+
+    # Recomputing over unchanged bytes reproduces the digest (the previous stamp
+    # is excluded from the walk by design).
+    assert compute_content_hashes(root) == h_before
+
+    # Overwrite the payload at the SAME filename, touching nothing else. The
+    # edit is SAME-LENGTH so this pins the bytes: a longer payload would still
+    # fail on the length prefix alone, with the bytes never folded in.
+    (store_path / "overlays" / "logo" / "image.png").write_bytes(
+        _TINY_PNG[:-1] + b"\x83"
+    )
+    assert compute_content_hashes(root) != h_before
+
+
+def test_compute_content_hashes_absent_payload_differs_from_empty(
+    tmp_path: Path,
+) -> None:
+    """A missing named file must not hash the same as a zero-byte one."""
+    h_absent = compute_content_hashes(_overlay_image_store(tmp_path / "a", None))
+    h_empty = compute_content_hashes(_overlay_image_store(tmp_path / "b", b""))
+    assert h_absent != h_empty
+
+
+def test_compute_content_hashes_payload_free_digest_is_unchanged() -> None:
+    """A tree with no payload attrs must hash byte-identically to what the
+    pre-payload implementation produced — the payload step only ever adds terms
+    for groups that actually name a payload file.
+
+    The digest below was captured by running the implementation with the payload
+    step commented out, over the tree built right here. The tree is local on
+    purpose: pinning a digest over a helper shared with other tests would turn
+    any legitimate edit to that helper into a failure of this tripwire. It must
+    only ever change deliberately — a moving digest means the hash inputs
+    changed, and every already-cached dataset re-downloads once.
+
+    Two things are pinned so the digest is a function of the tree alone.
+    ``zarr_format=3`` because ``_storage_identity`` folds in ``codec_ids``, which
+    is derived from ``codecs`` at format 3 and from ``filters``/``compressor`` at
+    format 2 — an ambient ``LUXAR_ZARR_FORMAT=2`` would otherwise move the digest
+    and read as a regression. And ``compressor=None`` (RAW) rather than the
+    ``"auto"`` default, since ``"auto"`` is whatever codec the installed zarr
+    happens to pick, which would make a zarr upgrade look like a Luxar-side
+    change here.
+    """
+    root = zarr.group(zarr_format=3)
+    root.attrs["type"] = "scene"
+    child = root.create_group("pts")
+    child.attrs["type"] = "points"
+    child.attrs["visible"] = True
+    create_array(
+        child,
+        "positions",
+        compressor=None,
+        data=np.arange(6, dtype=np.float32).reshape(3, 2),
+    )
+    assert "image_file" not in dict(child.attrs)  # really the payload-free path
+    assert compute_content_hashes(root) == "8f350b91c3848005"
+
+
+def test_payload_terms_are_prefix_free(tmp_path: Path) -> None:
+    """The payload block must be injective on its own.
+
+    This is the collision `_payload_terms` documents: without the key and name
+    length prefixes, both stores below fold the identical ``image_filea7:5:hello``.
+    Both names are readable, so no sentinel is involved either way.
+    """
+    a = _overlay_image_store(tmp_path / "a", b"5:hello", filename="a")
+    b = _overlay_image_store(tmp_path / "b", b"hello", filename="a7:")
+
+    def terms(root: zarr.Group) -> bytes:
+        group = root["overlays/logo"]
+        return b"".join(_payload_terms(group, dict(group.attrs)))
+
+    assert terms(a) != terms(b)
+    # The framing itself, spelled out: length, key, length, name, length, bytes.
+    assert terms(a) == b"payload:10:image_file1:a7:5:hello"
+    assert terms(b) == b"payload:10:image_file3:a7:5:hello"
+
+
+@pytest.mark.parametrize(
+    ("filename", "zarr_format", "sentinel"),
+    [
+        # Rejected by NAME (semantic): not one path component, or a document
+        # this very walk stamps.
+        ("../../../evil.png", 3, b"unsafe:"),
+        ("sub/evil.png", 3, b"unsafe:"),
+        ("sub\\evil.png", 3, b"unsafe:"),  # normalize_path turns `\` into `/`
+        (".", 3, b"unsafe:"),
+        ("..", 3, b"unsafe:"),
+        ("zarr.json", 3, b"unsafe:"),  # the v3 doc — exists only at format 3
+        (".zattrs", 2, b"unsafe:"),  # the v2 doc — exists only at format 2
+        # Rejected by the STORE (mechanical): `LocalStore.get` catches only the
+        # not-found family, so these reach the payload step as exceptions.
+        ("x" * 300 + ".png", 3, b"unreadable:"),  # OSError(ENAMETOOLONG)
+        ("a\x00b.png", 3, b"unreadable:"),  # ValueError: embedded null byte
+        # A lone surrogate round-trips zarr attrs (`json.dumps` escapes it), so
+        # the walk really does meet such a name; encoding it must not raise, and
+        # the store's own UnicodeEncodeError is a ValueError.
+        ("im\ud800age.png", 3, b"unreadable:"),
+    ],
+)
+def test_compute_content_hashes_tolerates_unreadable_payload_names(
+    tmp_path: Path, filename: str, zarr_format: int, sentinel: bytes
+) -> None:
+    """A payload name the walk cannot read must fold in deterministically.
+
+    Pins only what the payload step owns: no raise (one escaping would reach
+    ``finalize()``, which stamps the store ``incomplete``), a convergent digest,
+    and which of the two sentinels was folded — ``unsafe:`` for a name refused
+    semantically, ``unreadable:`` for the store's own verdict. That a change to
+    the *name* moves the hash comes from step 2, which hashes the attrs JSON, not
+    from here — do not read this test as covering it.
+    """
+    root = _overlay_image_store(
+        tmp_path / "scene", None, filename=filename, zarr_format=zarr_format
+    )
+
+    first = compute_content_hashes(root)  # must not raise
+    assert compute_content_hashes(root) == first
+
+    group = root["overlays/logo"]
+    assert sentinel in b"".join(_payload_terms(group, dict(group.attrs)))
+
+
+def test_compute_content_hashes_reads_the_payload_through_the_store() -> None:
+    """The read goes through the store, not the filesystem — so it works on a
+    store with no filesystem at all."""
+    root = zarr.group()  # MemoryStore
+    logo = root.create_group("overlays").create_group("logo")
+    logo.attrs["image_file"] = "image.png"
+
+    def _write(payload: bytes) -> None:
+        buffer = default_buffer_prototype().buffer.from_bytes(payload)
+        sync((logo.store_path / "image.png").set(buffer))
+
+    _write(_TINY_PNG)
+    h_before = compute_content_hashes(root)
+    # A same-length edit, so this pins the BYTES and not just the length prefix.
+    _write(_TINY_PNG[:-1] + b"\x83")
+    assert compute_content_hashes(root) != h_before
+
+
+def test_compiled_scene_hash_tracks_overlay_image_bytes(tmp_path: Path) -> None:
+    """End-to-end: two scenes compiled from the same script and differing only
+    in their overlay PNG get different root content hashes."""
+    from luxar import Dimensions, LuxarZarrCompiler
+
+    def _compile(path: Path, payload: bytes) -> str:
+        with LuxarZarrCompiler(path) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_points("pts", positions=np.zeros((2, 3), dtype=np.float32))
+            scene.add_image(payload, position=(0.9, 0.05))
+        return str(zarr.open_group(str(path), mode="r").attrs["content_hash"])
+
+    # Same-length payloads, so this pins the bytes end to end: a length-changing
+    # edit would separate the two digests on the length prefix alone.
+    h_a = _compile(tmp_path / "a.luxar.zarr", _TINY_PNG)
+    h_b = _compile(tmp_path / "b.luxar.zarr", _TINY_PNG[:-1] + b"\x83")
+    assert h_a != h_b
 
 
 # ────────────────────────────────────────────────────────────────────────
