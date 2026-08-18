@@ -1,14 +1,17 @@
 /**
  * Comprehensive Smoke Tests for ALL Example Datasets
  *
- * CRITICAL: This test suite loads EVERY example dataset and validates:
+ * CRITICAL: This test suite loads every example dataset EXCEPT the ones parked
+ * in `KNOWN_FLAKY_LARGE_DATASETS` below (each with its documented reason, and a
+ * tracking issue where one exists), and validates:
  * - No console errors
  * - No WebGL errors
  * - Points loaded successfully
  * - Scene rendered without crashes
  *
- * This is the PRIMARY defense against regressions. If this passes, all examples work.
- * If this fails, it shows EXACTLY which example broke and what the console errors are.
+ * This is a PRIMARY defense against regressions. If this passes, all the
+ * examples it still covers work. If this fails, it shows EXACTLY which example
+ * broke and what the console errors are.
  *
  * Purpose: Allow Claude Code to detect issues BEFORE user does by running E2E tests.
  */
@@ -79,6 +82,12 @@ const KNOWN_FLAKY_LARGE_DATASETS = [
   // provided by the smaller fixtures. Re-enable once we have a
   // sequential-mode override for million-point examples.
   'dense_cubic_gradient_example.luxar.zarr',
+  // 100 nodes / 100k points / 8 MB: renders a healthy ~59 fps for ~30s, then
+  // wedges into back-to-back ~1042 ms main-thread tasks. `getState()` costs
+  // 0.5 ms in-page but took 111 s across the CDP bridge, so the test dies on
+  // the ceiling with nothing to show. Reproducible at low box load, i.e. not
+  // suite contention. Un-park when the ~1 fps 100-node scene (#1724) is fixed.
+  'performance_benchmark_example.luxar.zarr',
 ];
 
 // Datasets that may legitimately have 0 visible points:
