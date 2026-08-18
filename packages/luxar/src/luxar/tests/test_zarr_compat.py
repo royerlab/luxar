@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import ast
 import json
+import re
 import warnings
 import zipfile
 from pathlib import Path
@@ -584,6 +585,44 @@ def test_read_raw_bytes_reads_a_plain_file_inside_a_subgroup(tmp_path: Path) -> 
     # Absent is None rather than an exception or empty bytes — "the file is gone"
     # and "the file is empty" are different facts to a caller.
     assert zc.read_raw_bytes(root["overlays/logo"], "missing.png") is None
+
+
+def test_write_raw_bytes_round_trips_through_the_store(tmp_path: Path) -> None:
+    """The write twin has to resolve against the SUBGROUP's prefix too, and
+    materialise real bytes: a payload written one directory up (or not at all)
+    leaves the group's ``image_file`` attr naming a file nobody can read, which
+    no array or group API would ever notice."""
+    path = tmp_path / "w.zarr"
+    root = zc.open_group(path, mode="w")
+    logo = root.create_group("overlays").create_group("logo")
+    payload = b"\x89PNG\r\n\x1a\nwritten-through-the-store\x00"
+
+    zc.write_raw_bytes(logo, "image.png", payload)
+
+    assert (path / "overlays" / "logo" / "image.png").read_bytes() == payload
+    assert zc.read_raw_bytes(logo, "image.png") == payload
+
+
+@pytest.mark.parametrize(
+    "key", ["zarr.json", ".zgroup", ".zattrs", ".zarray", ".zmetadata", "Zarr.json"]
+)
+def test_write_raw_bytes_refuses_a_metadata_document_key(
+    tmp_path: Path, key: str
+) -> None:
+    """Writing a node's own metadata document destroys the store — every reader
+    resolves the node through it — so the primitive refuses rather than trusting
+    each call site's name check. Case-insensitively: ``Zarr.json`` IS
+    ``zarr.json`` on macOS, and this is the write side."""
+    path = tmp_path / "guard.zarr"
+    root = zc.open_group(path, mode="w")
+    logo = root.create_group("overlays").create_group("logo")
+    logo_dir = path / "overlays" / "logo"
+    before = {p.name: p.read_bytes() for p in logo_dir.iterdir()}
+
+    with pytest.raises(ValueError, match=re.escape(repr(key))):
+        zc.write_raw_bytes(logo, key, b"clobbered")
+
+    assert {p.name: p.read_bytes() for p in logo_dir.iterdir()} == before
 
 
 def test_consolidate_indexes_the_arrays_in_either_format(

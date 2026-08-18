@@ -30,6 +30,7 @@ from luxar._zarr_compat import (
     open_group,
     read_consolidated_attrs,
     set_zarr_format,
+    write_raw_bytes,
     zarr_format,
 )
 from luxar.core.dimensions import Dimensions
@@ -226,6 +227,29 @@ def build_scene(path: Path, **kwargs: Any) -> Path:
     return path
 
 
+#: A minimal valid PNG (1x1 red pixel) — an overlay payload without needing PIL.
+_TINY_PNG = (
+    b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+    b"\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDAT\x08\xd7c\xf8\xcf"
+    b"\xc0\x00\x00\x03\x01\x01\x00\x18\xdd\x8d\xb0\x00\x00\x00\x00IEND\xaeB`\x82"
+)
+
+
+def build_scene_with_an_overlay_image(path: Path) -> Path:
+    """A small scene carrying a plain payload file — an image overlay.
+
+    Compiled rather than assembled by hand, so the store really is the shape
+    ``add_image`` produces: an ``overlays/logo`` group whose ``image_file`` attr
+    names a file written straight into that group's own directory, reachable
+    through no array or group API.
+    """
+    with LuxarZarrCompiler(str(path)) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        scene.add_points("pts", _rng(13).random((20_000, 3)).astype(np.float32))
+        scene.add_image(_TINY_PNG, position=(0.9, 0.05), name="logo")
+    return path
+
+
 # --------------------------------------------------------------------------
 # Fixtures
 # --------------------------------------------------------------------------
@@ -368,6 +392,22 @@ class TestRoundTrip:
         assert_values_identical(partition_scene, dst)
         assert_atom_aligned(dst)
 
+    def test_an_overlay_image_survives_the_copy(self, tmp_path: Path) -> None:
+        """An overlay PNG is neither an array nor a subgroup, so a mirror that
+        walks only those leaves it behind — and the output then carries an
+        ``image_file`` attr naming a file that is not there, which the viewer
+        shows as a vanished overlay rather than an error."""
+        src = build_scene_with_an_overlay_image(tmp_path / "src.luxar.zarr")
+        dst = tmp_path / "out.luxar.zarr"
+        optimise_store(src, dst, verify=True)
+        filename = str(
+            dict(open_group(dst, mode="r")["overlays/logo"].attrs)["image_file"]
+        )
+        assert (src / "overlays" / "logo" / filename).read_bytes() == _TINY_PNG
+        copied = dst / "overlays" / "logo" / filename
+        assert copied.is_file(), "the overlay image was dropped from the output"
+        assert copied.read_bytes() == _TINY_PNG
+
     def test_consolidated_metadata_is_present_and_readable(
         self, scene: Path, tmp_path: Path
     ) -> None:
@@ -409,6 +449,194 @@ class TestRoundTrip:
         assert after["content_hash"] != before["content_hash"]
         assert_values_identical(src, dst)
         assert_atom_aligned(dst)
+
+
+# --------------------------------------------------------------------------
+# Payload files: the bytes no array or group API reaches
+# --------------------------------------------------------------------------
+
+
+def _store_with_a_payload_attr(
+    path: Path, filename: str, payload: bytes | None = _TINY_PNG
+) -> Path:
+    """A tiny scene whose ``overlays/logo`` group names a payload file.
+
+    Hand-built rather than compiled, because ``add_image`` cannot produce the
+    names these tests are about — a name that is not a plain file name, one that
+    collides with a zarr metadata document, one naming nothing at all — and the
+    copy reads the attr, not the writer that stamped it.
+    """
+    root = open_group(path, mode="w")
+    root.attrs["type"] = "scene"
+    create_array(
+        root,
+        "x",
+        data=np.arange(5_000, dtype=np.float32),
+        chunks=(100,),
+        compressor=None,
+    )
+    logo = root.create_group("overlays").create_group("logo")
+    logo.attrs["type"] = "overlay_image"
+    logo.attrs["image_file"] = filename
+    if payload is not None:
+        write_raw_bytes(logo, filename, payload)
+    consolidate(root)
+    return path
+
+
+class TestPayloadFiles:
+    def test_a_payload_name_that_is_not_a_plain_file_name_is_skipped(
+        self, tmp_path: Path
+    ) -> None:
+        """A name addressing a key outside the group's own directory must be
+        refused by the copy, not resolved: the hasher folds such a name in
+        without ever reading it, so a copy that wrote it would put bytes at a
+        path the digest says nothing about — and one directory up from where the
+        attr claims they are."""
+        src = _store_with_a_payload_attr(
+            tmp_path / "src.luxar.zarr", "../evil.png", payload=None
+        )
+        dst = tmp_path / "out.luxar.zarr"
+        optimise_store(src, dst, verify=True)
+        attrs = dict(open_group(dst, mode="r")["overlays/logo"].attrs)
+        assert attrs["image_file"] == "../evil.png"
+        assert not any(p.name == "evil.png" for p in dst.rglob("*"))
+
+    def test_a_payload_named_like_a_metadata_document_is_refused(
+        self, tmp_path: Path
+    ) -> None:
+        """``_is_safe_payload_name`` compares zarr's document names exactly,
+        which is sound for a read gate and a clobber primitive for a write one:
+        on a case-insensitive filesystem ``Zarr.json`` IS the group's own
+        ``zarr.json``, so copying a payload under that name overwrites the
+        document the whole store is read through. On a case-SENSITIVE one it is
+        an ordinary distinct file the source really holds, and skipping it
+        shipped — under exit code 0 — the very state the copy exists to prevent:
+        an ``image_file`` attr naming a file the output does not have."""
+        probe = tmp_path / "CaseProbe"
+        probe.write_text("x")
+        if (tmp_path / "caseprobe").exists():
+            pytest.skip("a case-insensitive filesystem cannot hold the fixture")
+        src = _store_with_a_payload_attr(
+            tmp_path / "src.luxar.zarr", "Zarr.json", payload=None
+        )
+        (src / "overlays" / "logo" / "Zarr.json").write_bytes(_TINY_PNG)
+        dst = tmp_path / "out.luxar.zarr"
+        with pytest.raises(ValueError, match=r"Zarr\.json"):
+            optimise_store(src, dst, verify=True)
+        assert not dst.exists()
+        assert (src / "overlays" / "logo" / "zarr.json").exists()
+
+    def test_a_dangling_attr_naming_a_metadata_document_is_skipped(
+        self, tmp_path: Path
+    ) -> None:
+        """Refusing is about BYTES the copy cannot carry faithfully. With no
+        file behind the attr there are none, so the same name that stops the
+        pass above must not strand a store that is merely missing its overlay —
+        the output is exactly as complete as its input."""
+        src = _store_with_a_payload_attr(
+            tmp_path / "src.luxar.zarr", "Zarr.json", payload=None
+        )
+        dst = tmp_path / "out.luxar.zarr"
+        optimise_store(src, dst, verify=True)
+        attrs = dict(open_group(dst, mode="r")["overlays/logo"].attrs)
+        assert attrs["image_file"] == "Zarr.json"
+        assert attrs["type"] == "overlay_image"
+        assert not any(p.name == "Zarr.json" for p in dst.rglob("*"))
+
+    def test_a_payload_the_source_does_not_have_is_skipped(
+        self, tmp_path: Path
+    ) -> None:
+        """An attr naming a file that is already gone must not strand the store:
+        the source has no bytes to hand over, so refusing would leave a store
+        nobody can ever re-chunk, and the output is as complete as its input."""
+        src = _store_with_a_payload_attr(
+            tmp_path / "src.luxar.zarr", "gone.png", payload=None
+        )
+        dst = tmp_path / "out.luxar.zarr"
+        optimise_store(src, dst, verify=True)
+        attrs = dict(open_group(dst, mode="r")["overlays/logo"].attrs)
+        assert attrs["image_file"] == "gone.png"
+        assert not (dst / "overlays" / "logo" / "gone.png").exists()
+
+    @pytest.mark.skipif(
+        getattr(os, "geteuid", lambda: 1)() == 0,
+        reason="root ignores the mode bits this test relies on",
+    )
+    def test_a_payload_that_cannot_be_read_is_refused_by_name(
+        self, tmp_path: Path
+    ) -> None:
+        """The hasher degrades an unreadable payload to a deterministic term, so
+        the very store that compiles cleanly can reach the copy — which refuses,
+        because shipping a re-chunked store whose overlay silently vanished is
+        the failure this pass exists to prevent. The refusal has to name the
+        file and the way out; a bare ``PermissionError`` traceback names neither
+        and leaves the user with no next move."""
+        src = _store_with_a_payload_attr(tmp_path / "src.luxar.zarr", "logo.png")
+        (src / "overlays" / "logo" / "logo.png").chmod(0o000)
+        dst = tmp_path / "out.luxar.zarr"
+        with pytest.raises(ValueError, match=r"logo\.png"):
+            optimise_store(src, dst)
+        assert not dst.exists()
+        assert not any(p.name.startswith(".out.luxar.zarr") for p in tmp_path.iterdir())
+
+    def test_a_payload_survives_a_zipped_destination(self, tmp_path: Path) -> None:
+        """A ``.zarr.zip`` output is compressed out of the staging directory, so
+        a payload written anywhere but there — or after the archive is sealed —
+        is silently absent from the published store, and ``--verify`` has to
+        read it back through a ``ZipStore`` rather than a directory."""
+        src = _store_with_a_payload_attr(tmp_path / "src.luxar.zarr", "logo.png")
+        dst = tmp_path / "out.luxar.zarr.zip"
+        optimise_store(src, dst, verify=True)
+        with zipfile.ZipFile(dst) as archive:
+            assert "overlays/logo/logo.png" in archive.namelist()
+            assert archive.read("overlays/logo/logo.png") == _TINY_PNG
+
+    def test_verify_counts_the_payload_files_it_compared(self, tmp_path: Path) -> None:
+        """The count is what the run reports, and it used to be a blanket claim
+        about "every payload file" — printed identically for the vast majority
+        of stores that have none at all, and for one whose only payload the
+        verify walk skipped by construction."""
+        src = _store_with_a_payload_attr(tmp_path / "src.luxar.zarr", "logo.png")
+        dst = tmp_path / "out.luxar.zarr"
+        optimise_store(src, dst, verify=True)
+        counts = _verify(open_group(src, mode="r"), open_group(dst, mode="r"))
+        assert counts == (1, 1)
+
+    def test_verify_catches_a_truncated_payload(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``--verify`` walked arrays only, so the one thing the payload copy
+        writes sat outside the byte-for-byte promise the run prints. Every real
+        path through the copy hands the source bytes over verbatim, so the
+        damage is provoked by monkeypatching the narrowest thing that can
+        produce a short write — the copy's own byte writer."""
+        src = _store_with_a_payload_attr(tmp_path / "src.luxar.zarr", "logo.png")
+        write = optimise_mod.write_raw_bytes
+        monkeypatch.setattr(
+            optimise_mod,
+            "write_raw_bytes",
+            lambda group, key, payload: write(group, key, payload[:-1]),
+        )
+        dst = tmp_path / "out.luxar.zarr"
+        with pytest.raises(ValueError, match=r"payload 'logo\.png'.*differs"):
+            optimise_store(src, dst, verify=True)
+        assert not dst.exists()
+
+    def test_verify_catches_a_payload_missing_from_the_output(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The dropped-overlay case, which is what the copy exists to prevent
+        and therefore the one ``--verify`` must not take on trust. Monkeypatched
+        at the same single seam as the truncation above."""
+        src = _store_with_a_payload_attr(tmp_path / "src.luxar.zarr", "logo.png")
+        monkeypatch.setattr(
+            optimise_mod, "write_raw_bytes", lambda group, key, payload: None
+        )
+        dst = tmp_path / "out.luxar.zarr"
+        with pytest.raises(ValueError, match=r"payload 'logo\.png'.*is missing"):
+            optimise_store(src, dst, verify=True)
+        assert not dst.exists()
 
 
 # --------------------------------------------------------------------------
@@ -1390,6 +1618,35 @@ class TestCacheInvalidation:
             root
         ), _HASH_DRIFT
 
+    def test_the_streaming_hash_matches_on_a_payload_file(self, tmp_path: Path) -> None:
+        """A group's overlay image reaches the digest through neither
+        ``array_keys()`` nor ``group_keys()`` — only the attrs-driven payload
+        step folds its bytes. Without a payload file in the tree, a divergence
+        in that term between the two walks lands green."""
+        from luxar.io._compiler.finalize.hashing import compute_content_hashes
+
+        root = open_group(tmp_path / "payload.luxar.zarr", mode="w")
+        root.attrs["type"] = "scene"
+        create_array(
+            root,
+            "vals",
+            data=_rng(31).random((2_000, 3)).astype(np.float32),
+            chunks=(200, 3),
+            compressor=None,
+        )
+        logo = root.create_group("overlays").create_group("logo")
+        logo.attrs["type"] = "overlay_image"
+        logo.attrs["image_file"] = "image.png"
+        write_raw_bytes(logo, "image.png", _TINY_PNG)
+
+        streamed = _compute_content_hashes_streaming(root)
+        assert streamed == compute_content_hashes(root), _HASH_DRIFT
+        # Non-vacuity: the two must agree because both fold the bytes, not
+        # because both ignore them. Same-length edit, so it is the bytes that
+        # move the digest rather than a length prefix.
+        write_raw_bytes(logo, "image.png", _TINY_PNG[:-1] + b"\x83")
+        assert _compute_content_hashes_streaming(root) != streamed
+
     def test_chunk_layout_is_stamped_on_the_root(
         self, scene: Path, tmp_path: Path
     ) -> None:
@@ -1776,7 +2033,7 @@ def _pair(tmp_path: Path, **arrays: np.ndarray) -> tuple[Any, Any]:
 class TestVerifyDiscriminates:
     def test_a_matching_pair_passes(self, tmp_path: Path) -> None:
         src, dst = _pair(tmp_path, a=np.arange(500, dtype=np.float32))
-        assert _verify(src, dst) == 1
+        assert _verify(src, dst) == (1, 0)
 
     def test_a_single_flipped_value_is_caught(self, tmp_path: Path) -> None:
         src, dst = _pair(tmp_path, a=np.arange(500, dtype=np.float32))
@@ -1792,6 +2049,15 @@ class TestVerifyDiscriminates:
         )
         del dst["b"]
         with pytest.raises(ValueError, match="is missing from the output store"):
+            _verify(src, dst)
+
+    def test_a_missing_group_is_caught(self, tmp_path: Path) -> None:
+        """A group holding no arrays of its own — an overlay group is exactly
+        that shape, its payload file reachable through no array API — is
+        invisible to a walk that only compares arrays."""
+        src, dst = _pair(tmp_path, a=np.arange(500, dtype=np.float32))
+        src.create_group("overlays")
+        with pytest.raises(ValueError, match="group 'overlays' is missing"):
             _verify(src, dst)
 
     def test_a_shape_mismatch_is_caught(self, tmp_path: Path) -> None:
@@ -1853,7 +2119,7 @@ class TestVerifyDiscriminates:
         # And no false positive: a real copy of the same store still passes.
         out = tmp_path / "s_out.zarr"
         optimise_store(paths[0], out, verify=True)
-        assert _verify(src, open_group(out, mode="r")) == 1
+        assert _verify(src, open_group(out, mode="r")) == (1, 0)
 
     @pytest.mark.parametrize(
         "left, right",

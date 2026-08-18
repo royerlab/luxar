@@ -59,7 +59,7 @@ luxar optimise                    # Re-chunk SOURCE into OUTPUT at the 64 KB def
 luxar optimise --dry-run          # Report the plan and write nothing (omit OUTPUT)
 luxar optimise --target-kb 128    # Set the chunk budget directly
 luxar optimise --profile hosting  # Preset budget: hosting / local / archive
-luxar optimise --verify           # Re-read the output and compare every array
+luxar optimise --verify           # Re-read the output; compare arrays and payload files
 luxar optimise --overwrite        # Replace an existing OUTPUT store
 luxar optimise --generic          # Allow a plain (non-Luxar) zarr store
 ```
@@ -79,7 +79,9 @@ Pick the budget with exactly one of `--target-kb`, `--target-bytes` or
 object storage), **local** (64 KB — the authoring default) and **archive**
 (1 MB — not for streaming; minimises file count). `--dry-run` reports the plan
 and writes nothing, so the output argument must be omitted. `--verify` re-reads
-the written store and compares every array byte for byte. `--generic` allows a
+the written store and compares every array — and every plain payload file the
+pass copied, such as an overlay image — byte for byte, reporting how many of
+each it checked. `--generic` allows a
 plain zarr store that is not a Luxar scene or a `.gsplats.zarr` tree.
 
 One boundary is worth stating for `--generic`, because it is a silent no-op

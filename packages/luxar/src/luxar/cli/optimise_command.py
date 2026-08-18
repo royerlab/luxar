@@ -116,7 +116,9 @@ def register_optimise_command(app: typer.Typer) -> None:
             False, "--dry-run", help="Report the plan; write nothing"
         ),
         verify: bool = typer.Option(
-            False, "--verify", help="Re-read the output and compare every array"
+            False,
+            "--verify",
+            help="Re-read the output and compare every array and payload file",
         ),
         overwrite: bool = typer.Option(
             False, "--overwrite", help="Replace an existing output store"

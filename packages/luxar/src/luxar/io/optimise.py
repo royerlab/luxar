@@ -26,7 +26,11 @@ migrate-format``'s job, not this one), and every group and array attribute
 EXCEPT the two the pass is contractually required to move: the root's
 ``content_hash``, which is restamped, and the ``chunk_layout`` summary written
 beside it. Those two are the cache-invalidation guard described below, and
-suppressing either ships a re-chunked store under the source's hash. Codecs are
+dropping the restamp ships a re-chunked store under the source's hash. The plain
+non-zarr files a group's attrs name — an overlay image, which no array or group
+API reaches — are copied across byte-for-byte with everything else, or the pass
+refuses rather than dropping them (:func:`_copy_payload_files` states which
+names it will not write and why). Codecs are
 reused from the SOURCE array rather than re-derived, because an omitted
 compressor is not "no compressor" (zarr's ``"auto"`` is Blosc/lz4 at format 2
 and zstd at format 3) and some Luxar arrays are deliberately RAW.
@@ -42,28 +46,33 @@ re-chunked.
 
 The cache-invalidation hazard
 -----------------------------
-:func:`~luxar.io._compiler.finalize.hashing.compute_content_hashes` hashes array
-values and attrs, NOT chunk shapes, and the viewer's ``MultiLevelCachingStore``
-validates its persistent cache by comparing ``content_hash`` against the remote.
-A naive re-chunk therefore produces a store whose hash is IDENTICAL while chunk
-key ``0/0`` covers a different row range — a client with a warm cache believes
-itself up to date and serves chunks that no longer mean what their keys say.
-Silent wrong data, on the one path with no error to raise.
+The viewer's ``MultiLevelCachingStore`` validates its persistent cache by
+comparing ``content_hash`` against the remote, and that cache holds ENCODED
+CHUNKS KEYED BY CHUNK INDEX. A re-chunk that leaves the hash where it was is
+therefore the worst thing this pass could do: chunk key ``0/0`` covers a
+different row range while a warm client believes itself up to date, so it serves
+bytes that no longer mean what their keys say. Silent wrong data, on the one path
+with no error to raise.
 
-The guard is ONE mechanism with two halves, and it is worth being precise about
-which half does the work, because a plausible-sounding simplification deletes
-the real one. Neither hasher can see a chunk shape — the scene walk hashes
-values + attrs, and the ``.gsplats.zarr`` stamp hashes ``(name, shape, dtype)``
-+ attrs — so recomputing a hash over an otherwise identical store reproduces the
-SOURCE's hash exactly. What moves it is the ``chunk_layout`` summary attr
-written on the root: attrs are hashed, so the new layout lands in the digest.
-The restamp is what PROPAGATES that attr into the stored ``content_hash`` the
-viewer actually compares. Remove either and the output ships the source's hash.
-Suppressing the attr alone was measured to leave the output hash byte-identical.
+Both hashers now fold layout in themselves.
+:func:`~luxar.io._compiler.finalize.hashing.compute_content_hashes` hashes each
+array's STORAGE IDENTITY — name, shape, dtype, chunks, shards, codec ids and the
+array's own attrs — before its values, and the ``.gsplats.zarr`` stamp
+(``save_gsplats._stamp_content_hash``) folds the same identity terms over
+metadata alone; both key each child group by its NAME. Only the value walk also
+folds the bytes of a group's plain payload files — the gsplat stamp has no
+payload handling at all. So recomputing over the re-chunked output
+lands on a different digest by construction. What makes that reach the viewer is
+the RESTAMP: nothing else rewrites the stored ``content_hash``, and the stored
+one is what gets compared. Suppress it and the output ships under the source's
+hash however far the grid moved.
 
-(#1719 additionally folds chunk shapes into the tree hash; once that lands the
-restamp becomes independently sufficient and the attr becomes documentation.
-Until then, both are load-bearing.)
+The ``chunk_layout`` summary attr the pass writes on the root is folded in too,
+since attrs are hashed. It used to be the ONLY thing moving the digest — back
+then, suppressing it was measured to leave the output hash byte-identical to the
+source's — and against a layout-aware hasher it is now belt-and-braces there. It
+is kept because it documents what the pass did, and because it is still the whole
+guard in the hash-less case below.
 
 The attr is written for a NON-Luxar store too, and that is not tidiness either.
 A store with a ``kind`` marker but no ``content_hash`` gets no restamp, so the
@@ -93,7 +102,14 @@ import xxhash
 import zarr
 from arbol import aprint, asection
 
-from .._zarr_compat import close, consolidate, create_array, open_group
+from .._zarr_compat import (
+    close,
+    consolidate,
+    create_array,
+    open_group,
+    read_raw_bytes,
+    write_raw_bytes,
+)
 from ..typing_utils._format_contract import FORMAT_TYPE_GSPLATS, NODE_TYPES
 from ..typing_utils.constants import (
     MAX_CHUNK_BYTES,
@@ -101,6 +117,13 @@ from ..typing_utils.constants import (
     TARGET_CHUNK_BYTES,
 )
 from ._compiler.chunking import _atom_aligned_rows
+from ._compiler.finalize.hashing import (
+    _ZARR_METADATA_DOCS,
+    PAYLOAD_FILE_ATTRS,
+    _is_safe_payload_name,
+    _payload_terms,
+    _storage_identity,
+)
 
 __all__ = [
     "CHUNK_PROFILES",
@@ -679,8 +702,9 @@ def _copy_group(
     target_format: int,
     path: str = "",
 ) -> None:
-    """Mirror one group — its attrs, its arrays, and its subgroups — into ``dest``."""
+    """Mirror one group — attrs, payload files, arrays, subgroups — into ``dest``."""
     dest.attrs.update(dict(source.attrs))
+    _copy_payload_files(source, dest)
     for name in sorted(source.array_keys()):
         child_path = f"{path}/{name}" if path else name
         plan = plans[child_path]
@@ -690,6 +714,124 @@ def _copy_group(
         _copy_group(
             source[name], dest.create_group(name), plans, target_format, child_path
         )
+
+
+#: zarr's metadata document names, lowercased for a CASE-INSENSITIVE test.
+#:
+#: :func:`_is_safe_payload_name` compares them exactly, which is right where it
+#: sits: it is a READ gate, and it also decides digest terms, so tightening it
+#: would move the content hash of every store carrying an affected name.
+#: Writing is the stricter direction. On a case-insensitive filesystem — macOS
+#: is first-class here — the key ``Zarr.json`` resolves to the group's own
+#: ``zarr.json``, so a payload named that would CLOBBER the node document the
+#: whole store is read through. The write side therefore treats the names
+#: case-insensitively while the read side keeps answering exactly.
+#:
+#: ``str.lower()`` rather than ``str.casefold()``. Every name in
+#: :data:`_ZARR_METADATA_DOCS` is lowercase ASCII, so the two are equally strong
+#: against the real hazard (``Zarr.json``, ``.ZAttrs``), and casefolding is
+#: strictly WIDER in a direction with no hazard in it: it maps ``ſ`` (U+017F) to
+#: ``s``, so a payload legitimately named ``.zattrſ`` — an ordinary distinct
+#: file under every filesystem's case rules — would be taken for zarr's
+#: ``.zattrs`` and refused.
+_METADATA_DOCS_LOWERCASED = frozenset(doc.lower() for doc in _ZARR_METADATA_DOCS)
+
+
+def _read_payload_or_refuse(
+    group: zarr.Group, attr_key: str, filename: str
+) -> bytes | None:
+    """The payload's bytes (``None`` when the source holds nothing there).
+
+    Where this diverges from the hasher is the READ OUTCOME, not the name gate.
+    :func:`_payload_terms` degrades a payload it cannot read to a deterministic
+    ``unreadable:`` term, because a compile must still finish and the alternative
+    there is a store stamped ``incomplete``. This refuses instead, with an error
+    naming the file: shipping a re-chunked store whose overlay silently vanished
+    is exactly the failure this pass exists to prevent, and refusing costs
+    nothing, because the destination is still in staging and
+    :func:`optimise_store` removes it on any raise. So the same store the hasher
+    completes over can stop this pass — deliberately.
+
+    Shared by the copy and by ``--verify`` so that a source read failing on the
+    verify pass (an NFS ``ESTALE``, a concurrent ``chmod`` during a long run)
+    produces the same worded refusal rather than a bare ``OSError`` from the
+    layer underneath.
+    """
+    try:
+        return read_raw_bytes(group, filename)
+    except (OSError, ValueError) as unreadable:
+        raise ValueError(
+            f"optimise cannot read the payload file {filename!r} named by "
+            f"{attr_key!r} on group {group.path or '/'!r}: {unreadable}. "
+            f"The re-chunk is refused rather than shipping a store whose "
+            f"overlay silently vanished — repair the file (permissions, or "
+            f"the name it is stored under), remove it, or clear the "
+            f"{attr_key!r} attr, then run optimise again."
+        ) from unreadable
+
+
+def _copy_payload_files(source: zarr.Group, dest: zarr.Group) -> None:
+    """Copy the plain non-zarr files ``source``'s attrs name into ``dest``.
+
+    An overlay image is written straight into its group's own directory
+    (``core.scene.overlays.internals.write_overlay``), so it is neither an array
+    nor a subgroup and the rest of :func:`_copy_group` is blind to it: without
+    this the output store carries an ``image_file`` attr naming a file that does
+    not exist, and the overlay silently disappears from a re-chunked scene. The
+    attr keys are :data:`PAYLOAD_FILE_ATTRS` and the name test is the hasher's
+    own :func:`_is_safe_payload_name` — so the names this WRITES are the names
+    the digest reads, minus the metadata-document collision below. The copy
+    materialises BYTES, so a payload that is a symlink in the source comes out as
+    a real file in the output, which is what a self-contained store needs (a
+    symlink would not survive the ``.zarr.zip`` packaging either).
+
+    A name colliding case-insensitively with a zarr metadata document
+    (:data:`_METADATA_DOCS_LOWERCASED`) is decided by whether the SOURCE has
+    bytes there, not by the name alone. On a case-SENSITIVE filesystem a file
+    called ``Zarr.json`` is an ordinary distinct file: skipping it would produce
+    exactly the state this function exists to prevent — an ``image_file`` attr
+    naming a file the output does not hold — and do it under an exit code of 0.
+    So a name that resolves to real bytes REFUSES the re-chunk, because the copy
+    cannot write them faithfully: on the macOS or Windows machine the output may
+    be read on, that key IS the group's own metadata document. The way out is to
+    rename the payload file and the attr that names it. A DANGLING attr of that
+    shape is skipped with a notice, since there are no bytes to be unfaithful to.
+
+    A named file that is simply ABSENT is skipped with a notice rather than
+    raising, for the same reason: the source has no bytes to hand over, so
+    refusing the whole re-chunk would only strand a store that is already in that
+    state, and the output is exactly as complete as its input.
+    """
+    attrs = dict(source.attrs)
+    for attr_key in sorted(PAYLOAD_FILE_ATTRS):
+        filename = attrs.get(attr_key)
+        if not isinstance(filename, str) or not filename:
+            continue
+        if not _is_safe_payload_name(filename):
+            aprint(f"⚠ skipping payload {filename!r}: not a plain file name")
+            continue
+        payload = _read_payload_or_refuse(source, attr_key, filename)
+        if filename.lower() in _METADATA_DOCS_LOWERCASED:
+            if payload is None:
+                aprint(
+                    f"⚠ skipping payload {filename!r}: it names a zarr metadata "
+                    f"document and the source holds no file there"
+                )
+                continue
+            raise ValueError(
+                f"optimise cannot copy the payload file {filename!r} named by "
+                f"{attr_key!r} on group {source.path or '/'!r}: on a "
+                f"case-insensitive filesystem that name resolves to the group's "
+                f"own zarr metadata document, so writing it would replace the "
+                f"document the whole store is read through. The re-chunk is "
+                f"refused rather than dropping {len(payload)} bytes the source "
+                f"really holds — rename the payload file and the {attr_key!r} "
+                f"attr that names it, then run optimise again."
+            )
+        if payload is None:
+            aprint(f"⚠ payload {filename!r} named by {attr_key!r} is missing")
+            continue
+        write_raw_bytes(dest, filename, payload)
 
 
 def _hash_array_streaming(hasher: Any, dataset: zarr.Array) -> None:
@@ -733,9 +875,14 @@ def _compute_content_hashes_streaming(root: zarr.Group) -> str:
     slab-wise.
 
     The digest is identical wherever the reference produces one REPRODUCIBLY —
-    same post-order walk, same per-node xxhash64 over (sorted array bytes,
-    sorted attrs JSON, sorted child hashes) — and so is the stamped
-    ``content_hash`` on every node. Two documented departures, both narrow: a
+    same post-order walk, same per-node xxhash64 over the same terms in the same
+    order: each array's storage identity followed by its values, the group's own
+    attrs as sorted JSON, the bytes of whatever plain payload file those attrs
+    name, then each child group's name and hash — and so is the stamped
+    ``content_hash`` on every node. Only the VALUE step is local; the identity
+    and payload terms are the reference's own helpers, imported rather than
+    restated, so a future term lands in both walks at once and cannot drift.
+    Two documented departures, both narrow: a
     0-d array makes the reference raise ``IndexError`` (``dataset[:]`` on a
     scalar) while the slab walk hashes it via ``dataset[...]``, and a
     variable-width dtype has no stable digest under EITHER walk (see
@@ -747,7 +894,9 @@ def _compute_content_hashes_streaming(root: zarr.Group) -> str:
     finalize-time version does ``dataset[:].tobytes()``, which holds the ndarray
     AND a full byte copy at once (measured: 200 MB peak for a 100 MB array;
     ~1.26 GB for the 629 MB array in the demo corpus that :data:`_SLAB_BYTES`
-    exists to avoid). Re-chunking an existing store is exactly the case where
+    exists to avoid). That bound is over ARRAY values only: a payload file is
+    read WHOLE here, exactly as the reference reads it, since the store hands
+    back a key's complete bytes and there is no slabbed read for one. Re-chunking an existing store is exactly the case where
     the array is already on disk and need not be, so the walk is reimplemented
     here rather than the shared finalize helper being changed under its other
     caller.
@@ -756,11 +905,16 @@ def _compute_content_hashes_streaming(root: zarr.Group) -> str:
     def hash_group(group: zarr.Group) -> str:
         hasher = xxhash.xxh64()
         for name in sorted(group.array_keys()):
-            _hash_array_streaming(hasher, group[name])
+            dataset = group[name]
+            identity = _storage_identity(name, dataset)
+            hasher.update(json.dumps(identity, sort_keys=True, default=str).encode())
+            _hash_array_streaming(hasher, dataset)
         attrs = {k: v for k, v in dict(group.attrs).items() if k != "content_hash"}
         hasher.update(json.dumps(attrs, sort_keys=True, default=str).encode())
+        for term in _payload_terms(group, attrs):
+            hasher.update(term)
         for name in sorted(group.group_keys()):
-            hasher.update(hash_group(group[name]).encode())
+            hasher.update(f"{name}:{hash_group(group[name])}".encode())
         content_hash = hasher.hexdigest()
         group.attrs["content_hash"] = content_hash
         return content_hash
@@ -848,8 +1002,66 @@ def _verify_values(path: str, src: zarr.Array, dst: zarr.Array) -> None:
             raise ValueError(f"verify: {path!r} differs at rows {start}:{stop}")
 
 
-def _verify(source: zarr.Group, dest: zarr.Group) -> int:
-    """Re-read the output and compare it to the source. Returns the array count."""
+def _verify_payloads(path: str, src: zarr.Group, dst: zarr.Group) -> int:
+    """Compare this group's named payload files byte for byte; count them.
+
+    Walking arrays alone leaves the one thing :func:`_copy_payload_files` moves
+    outside ``--verify`` entirely, so a truncated or dropped overlay image
+    passed a run that printed a byte-for-byte promise. The name gate is the copy
+    site's, exactly: a name the copy skipped has no bytes in the output by
+    design and must not be reported as a loss. A payload the SOURCE does not
+    have is skipped for the same reason — the copy skipped it too, and the
+    output is as complete as its input. A metadata-document name only reaches
+    here in the dangling case, since the copy refuses the one that has bytes.
+
+    The count is what the run REPORTS, so it is the number actually compared —
+    a name skipped by any of those gates is not one of them.
+    """
+    compared = 0
+    attrs = dict(src.attrs)
+    for attr_key in sorted(PAYLOAD_FILE_ATTRS):
+        filename = attrs.get(attr_key)
+        if not isinstance(filename, str) or not filename:
+            continue
+        if not _is_safe_payload_name(filename):
+            continue
+        if filename.lower() in _METADATA_DOCS_LOWERCASED:
+            continue
+        expected = _read_payload_or_refuse(src, attr_key, filename)
+        if expected is None:
+            continue
+        actual = read_raw_bytes(dst, filename)
+        if actual is None:
+            raise ValueError(
+                f"verify: payload {filename!r} named by {attr_key!r} on {path!r} "
+                f"is missing from the output store"
+            )
+        if actual != expected:
+            raise ValueError(
+                f"verify: payload {filename!r} named by {attr_key!r} on {path!r} "
+                f"differs ({len(actual)} bytes, expected {len(expected)})"
+            )
+        compared += 1
+    return compared
+
+
+def _verify(source: zarr.Group, dest: zarr.Group) -> tuple[int, int]:
+    """Re-read the output and compare it to the source.
+
+    Returns ``(arrays compared, payload files compared)``. The two are counted
+    separately because a payload file is attached to a GROUP rather than to an
+    array, and because the run reports both: almost every store has zero payload
+    files, and saying so is more honest than a blanket "and every payload file".
+    """
+    dest_groups = dict(_walk_groups(dest))
+    payloads = 0
+    for group_path, src_group in _walk_groups(source):
+        dst_group = dest_groups.get(group_path)
+        if dst_group is None:
+            raise ValueError(
+                f"verify: group {group_path or '/'!r} is missing from the output store"
+            )
+        payloads += _verify_payloads(group_path or "/", src_group, dst_group)
     dest_arrays = dict(_walk_arrays(dest))
     checked = 0
     for path, src in _walk_arrays(source):
@@ -866,7 +1078,7 @@ def _verify(source: zarr.Group, dest: zarr.Group) -> int:
         if dict(src.attrs) != dict(dst.attrs):
             raise ValueError(f"verify: {path!r} attrs differ")
         checked += 1
-    return checked
+    return checked, payloads
 
 
 # --------------------------------------------------------------------------
@@ -1036,10 +1248,13 @@ def optimise_store(
                 if verify:
                     reread = open_group(artifact, mode="r")
                     try:
-                        checked = _verify(source, reread)
+                        checked, payloads = _verify(source, reread)
                     finally:
                         close(reread)
-                    aprint(f"✓ Verified {checked} arrays byte-for-byte")
+                    aprint(
+                        f"✓ Verified {checked} arrays and {payloads} payload "
+                        f"files byte-for-byte"
+                    )
                 _replace(artifact, dest_path)
                 consumed = True
             finally:

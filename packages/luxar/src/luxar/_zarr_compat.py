@@ -113,6 +113,7 @@ __all__ = [
     "read_node_attrs",
     "read_raw_bytes",
     "set_zarr_format",
+    "write_raw_bytes",
     "zarr_format",
 ]
 
@@ -967,6 +968,65 @@ def read_raw_bytes(group: zarr.Group, key: str) -> bytes | None:
 
     buffer = sync((group.store_path / key).get())
     return None if buffer is None else buffer.to_bytes()
+
+
+#: zarr's own per-node metadata documents, lowercased, for the write backstop.
+#:
+#: Restated here rather than imported from
+#: ``luxar.io._compiler.finalize.hashing._ZARR_METADATA_DOCS`` (the same four
+#: names): that module imports THIS one at module scope, so the reverse import
+#: is a cycle, and ``_zarr_compat`` is imported by all of luxar — a cycle here
+#: breaks ``import luxar`` wholesale.
+_METADATA_DOC_KEYS: frozenset[str] = frozenset(
+    doc.lower() for doc in (*NODE_ATTR_DOCS, *NODE_GROUP_DOCS, ".zarray", ".zmetadata")
+)
+
+
+def write_raw_bytes(group: zarr.Group, key: str, payload: bytes) -> None:
+    """Write a raw, non-zarr key *inside* ``group`` — the twin of the read above.
+
+    Same reasoning, same mechanism: the key has no chunk grid and no zarr
+    metadata, so only the store reaches it, and the store API is async. Driving
+    ``StorePath.set()`` through ``zarr.core.sync.sync`` is what keeps this
+    store-agnostic — a ``LocalStore`` and a ``MemoryStore`` take the same call,
+    whereas the caller writing through a filesystem ``Path`` (which is what
+    ``core.scene.overlays.internals.write_overlay`` does) only works for one of
+    them.
+
+    One backstop lives here rather than only at a call site, because this writes
+    UNDER a live node's own prefix and is exported: a key whose last path
+    component is one of zarr's metadata documents (``zarr.json``, ``.zgroup``,
+    ``.zattrs``, ``.zarray``, ``.zmetadata``) would replace the document the node
+    is read through, turning a payload write into a destroyed store. Matched
+    case-insensitively, since ``Zarr.json`` IS that document on a
+    case-insensitive filesystem. Callers still own the REST of the name check —
+    that a payload name is a single path component at all, and what to do about a
+    refused one — since only they know whether skipping, refusing or renaming is
+    the right answer (``luxar.io.optimise._copy_payload_files`` decides all
+    three).
+
+    Args:
+        group: Group whose own prefix the key is resolved against.
+        key: Store key relative to ``group`` (for a payload file, its filename).
+        payload: The bytes to store under that key.
+
+    Raises:
+        ValueError: If ``key`` names a zarr metadata document.
+    """
+    if key.rsplit("/", 1)[-1].lower() in _METADATA_DOC_KEYS:
+        raise ValueError(
+            f"write_raw_bytes refuses the key {key!r}: it names one of zarr's "
+            f"own metadata documents, so writing it would replace the document "
+            f"the node at {group.path or '/'!r} is read through. Store the "
+            f"payload under a different name."
+        )
+    # Function-local for the reason `read_raw_bytes` gives: these private zarr
+    # paths are the one thing here a point release could relocate.
+    from zarr.core.buffer import default_buffer_prototype
+    from zarr.core.sync import sync
+
+    buffer = default_buffer_prototype().buffer.from_bytes(payload)
+    sync((group.store_path / key).set(buffer))
 
 
 def is_missing_error(exc: BaseException) -> bool:

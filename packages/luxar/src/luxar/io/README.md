@@ -218,9 +218,11 @@ structure-preserving pass — no refit, no source volume, no GPU. It backs the
 
 Everything but the zarr chunk grid survives verbatim: values bit-for-bit, dtype,
 codecs, filters, serializer, `fill_value`, memory order, the on-disk zarr format,
-and every group and array attribute **except** the two the pass is contractually
-required to move — the root's `content_hash`, which is restamped, and the
-`chunk_layout` summary written beside it (see *Cache invalidation* below).
+the plain non-zarr payload files a group's attrs name (an overlay image, which
+no array or group API reaches), and every group and array attribute **except**
+the two the pass is contractually required to move — the root's `content_hash`,
+which is restamped, and the `chunk_layout` summary written beside it (see *Cache
+invalidation* below).
 
 ```python
 from luxar.io.optimise import optimise_store, plan_optimisation, summarise_chunk_layout
@@ -235,7 +237,8 @@ print(plan.source_n_chunks, "→", plan.target_n_chunks)
   shape, the resolved spatial atom, and a `skip_reason` when the array is left
   alone.
 - `optimise_store(src, dst, …)` — does it. `verify=True` re-reads the output and
-  compares every array byte for byte.
+  compares every array — and every payload file it copied — byte for byte,
+  reporting both counts.
 - `summarise_chunk_layout(root)` → `ChunkLayoutSummary` — average chunk bytes,
   arrays under the 16 KB floor, and the chunk-file count a full load fetches.
   Counts objects, so a shard is one file and a `(0, D)` placeholder is none —
@@ -280,16 +283,23 @@ that is, contains, or lives inside the source — or that is a **symlink**, sinc
 the rename would replace the link rather than its target (the error says to pass
 the target instead).
 
-**Cache invalidation.** Neither hasher can see a chunk shape —
-`compute_content_hashes` hashes values + attrs, the `.gsplats.zarr` stamp hashes
-`(name, shape, dtype)` + attrs — while the viewer validates its persistent cache
-on `content_hash`. So the `chunk_layout` root attr is what MOVES the hash (attrs
-are hashed) and the restamp is what propagates it into the stored
-`content_hash`; both are load-bearing, and the restamp runs for `--generic` too,
-because that flag describes the input rather than the output's cache safety. The
-scene restamp is a slab-wise reimplementation of the finalize-time walk — the
-same digest, without the whole-array materialisation that would peak at twice a
-629 MB array's size.
+**Cache invalidation.** The viewer validates its persistent cache on
+`content_hash`, and that cache holds encoded chunks keyed by chunk index — so a
+re-chunk that left the hash where it was would serve bytes that no longer mean
+what their keys say. Both hashers now fold layout in themselves:
+`compute_content_hashes` hashes each array's storage identity (name, shape,
+dtype, chunks, shards, codec ids, own attrs) before its values, and the
+`.gsplats.zarr` stamp folds the same identity terms over metadata alone. So
+recomputing over the re-chunked output lands on a different digest by
+construction, and the RESTAMP is what makes that reach the viewer — nothing else
+rewrites the stored `content_hash`. It runs for `--generic` too, because that
+flag describes the input rather than the output's cache safety. The
+`chunk_layout` root attr is folded in as well (attrs are hashed): belt-and-braces
+against a layout-aware hasher, and still the whole guard for a store that carries
+no `content_hash` to restamp, where the viewer falls back to a digest of the raw
+root document bytes. The scene restamp is a slab-wise reimplementation of the
+finalize-time walk — the same digest, without the whole-array materialisation
+that would peak at twice a 629 MB array's size.
 
 ### Input Volume Loading
 
