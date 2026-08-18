@@ -1798,6 +1798,26 @@ rebuild-viewer:  ## Clean rebuild of the viewer BUNDLE (WASM only if stale; auto
 	echo "✅ Viewer rebuild complete!"
 
 # WASM/Rust setup and build
+# NOTE: keep every comment about this recipe at MAKE level (column 0, like this
+# one) rather than inside it. The recipe is one backslash-continued logical
+# line, so an in-recipe `#` comment has to carry its own trailing `\` on every
+# line. Drop one while editing and the logical line SPLITS: the tail becomes a
+# separate recipe line in a fresh shell with none of the accumulated variables,
+# and without the leading `@` it echoes itself as it goes. Measured on the
+# pre-hoist version by deleting a single trailing backslash — `WASM_PACK_PIN`
+# arrived empty, so the pin check compared against nothing and the recipe died
+# on `Installed wasm-pack , but PATH answers with 0.15.0`. Nothing warns you.
+# At column 0 the hazard does not exist.
+#
+# On the `|| true` in the wasm-pack probe: it is load-bearing under
+# .SHELLFLAGS' `-e`. With no wasm-pack on PATH the command substitution exits
+# 127, which would abort the recipe before the install it is probing for.
+#
+# On the re-probe after `cargo install --force`: measure, do not assume. The
+# force-install replaces only the copy in cargo's own install root; one earlier
+# in PATH (Homebrew, a distro package) survives and keeps winning, and the root
+# itself moves with CARGO_INSTALL_ROOT/CARGO_HOME. A pin nobody can observe is
+# not a pin, so re-probe PATH and fail if it does not answer with the pin.
 install-rust:  ## Install Rust and wasm-pack for WASM development
 	@# This must be a SINGLE shell command so PATH updates persist after Rust install
 	@echo "🦀 Setting up Rust/WASM development environment..."; \
@@ -1826,9 +1846,6 @@ install-rust:  ## Install Rust and wasm-pack for WASM development
 	echo ""; \
 	echo "🔧 Checking wasm-pack installation..."; \
 	WASM_PACK_PIN="$(WASM_PACK_VERSION)"; \
-	# `|| true` is load-bearing under .SHELLFLAGS' `-e`: with no wasm-pack on \
-	# PATH the substitution exits 127, which would abort the recipe before the \
-	# install it is probing for. \
 	FOUND_WASM_PACK="$$(wasm-pack --version 2>/dev/null | awk '{print $$2}' || true)"; \
 	if [ "$$FOUND_WASM_PACK" = "$$WASM_PACK_PIN" ]; then \
 		echo "✅ wasm-pack is already at the pinned version: $$WASM_PACK_PIN"; \
@@ -1839,11 +1856,6 @@ install-rust:  ## Install Rust and wasm-pack for WASM development
 			echo "📥 Installing wasm-pack $$WASM_PACK_PIN (this may take a minute)..."; \
 		fi; \
 		cargo install wasm-pack --version "$$WASM_PACK_PIN" --locked --force; \
-		# Then MEASURE, don't assume. `cargo install --force` replaces only the \
-		# copy in cargo's own install root: one earlier in PATH (Homebrew, a \
-		# distro package) survives and keeps winning, and the root itself moves \
-		# with CARGO_INSTALL_ROOT/CARGO_HOME. A pin nobody can observe is not a \
-		# pin, so re-probe PATH and fail if it does not answer with the pin. \
 		WASM_PACK_ON_PATH="$$(command -v wasm-pack || true)"; \
 		INSTALLED_WASM_PACK="$$(wasm-pack --version 2>/dev/null | awk '{print $$2}' || true)"; \
 		if [ "$$INSTALLED_WASM_PACK" = "$$WASM_PACK_PIN" ]; then \
