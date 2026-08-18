@@ -262,14 +262,27 @@ function lastProbeFailureSuffix(lastProbeError: unknown): string {
  * - A probe ANSWERED but the query never settled within `timeout` — the case
  *   the old "timeout not an error" comment was really about: returns normally,
  *   after one `console.warn` saying the condition was never observed.
- * - NO probe ever answered — the helper never read viewer state at all, so the
- *   caller's next assertions would read state nothing has confirmed. That is
- *   the vacuous pass, not a slow query, so it THROWS with the last probe
- *   failure carried into the message.
+ * - Every probe FAILED, so none ever answered — the helper read no viewer state
+ *   at all and the caller's next assertions would read state nothing has
+ *   confirmed. That is the vacuous pass this closes, and it THROWS with the last
+ *   probe failure carried into the message. Reachable today through a rejecting
+ *   probe: no `__luxarDebug`, or a destroyed execution context.
+ *
+ * The vacuous pass being closed is therefore a swallowed probe FAILURE, not a
+ * swallowed timeout. A probe that never answers AT ALL still HANGS this loop —
+ * `page.evaluate` carries no deadline of its own — and that is deliberately left
+ * to the probe's own bound rather than clamped here, because this loop succeeds
+ * on ANY satisfying answer: clamping would turn a late-but-satisfying answer from
+ * a healthy-but-slow page into a hard failure, the trade #1725 measured and
+ * rejected for the sibling loops. Once the state probe is itself deadline-bounded
+ * (#1725), a starved page reaches the decision below as a rejection carrying its
+ * own diagnostic — precisely what the throw now reports instead of discarding.
  *
  * Use when the query completing fast is a *bonus*, not a precondition. For
  * tests that genuinely depend on the query having finished, use
  * {@link waitForSpatialQueryOrThrow} instead.
+ *
+ * Unit-tested in `src/tests/unit/tests/e2e-helpers-silent-waits.test.ts`.
  */
 export async function waitForSpatialQuery(page: Page, timeout = 8000): Promise<void> {
   const startTime = Date.now();
@@ -277,34 +290,17 @@ export async function waitForSpatialQuery(page: Page, timeout = 8000): Promise<v
   let lastProbeError: unknown;
 
   while (Date.now() - startTime < timeout) {
-    // Clamp each probe to what is LEFT of this loop's own budget. `page.evaluate`
-    // has no timeout of its own (see `raceEvaluate`), so one unanswered probe
-    // otherwise runs past `timeout` and the loop then exits as though it had
-    // polled — and here the give-up is TOLERATED, so the budget has to mean
-    // something. The opposite holds for the loops that THROW on timeout
-    // (`waitForPointsLoaded`, `waitForDimensionNavigation`): there a late answer
-    // is still a success, so clamping would newly fail a healthy-but-slow page.
-    const remaining = timeout - (Date.now() - startTime);
-    // Fresh Node-side object, compared by identity: no in-page answer can ever
-    // be this value, so it unambiguously means "the deadline won".
-    const probeTimedOut = {};
-
     try {
       // Check if a query completed by looking for stable state
-      const state = await raceEvaluate<unknown>(getLuxarState(page), remaining, probeTimedOut);
+      const state = await getLuxarState(page);
+      // Any resolved value means the page answered. A `null` answer trips the
+      // condition below into the `catch`, which records it as a probe failure —
+      // so the give-up report still carries it.
+      answered = true;
 
-      if (state === probeTimedOut) {
-        lastProbeError = new Error(
-          `getLuxarState did not answer within the ${remaining}ms left of this helper's ${timeout}ms budget`
-        );
-      } else {
-        answered = true;
-        const s = state as { isLoading?: boolean; totalPoints?: number };
-
-        // If we have a stable point count and not loading, query is done
-        if (!s.isLoading && (s.totalPoints ?? -1) >= 0) {
-          return;
-        }
+      // If we have a stable point count and not loading, query is done
+      if (!state.isLoading && state.totalPoints >= 0) {
+        return;
       }
     } catch (error) {
       // State not ready yet
@@ -316,7 +312,7 @@ export async function waitForSpatialQuery(page: Page, timeout = 8000): Promise<v
 
   if (!answered) {
     throw new Error(
-      `waitForSpatialQuery: the page never answered a single state probe within ${timeout}ms, ` +
+      `waitForSpatialQuery: no state probe answered during its ${timeout}ms poll window, ` +
         'so the spatial query was never observed either way and whatever this test asserts next ' +
         `reads unconfirmed state. See issue #1726.${lastProbeFailureSuffix(lastProbeError)}`
     );
@@ -675,12 +671,16 @@ export async function waitForDimensionSystemReady(page: Page, timeout = 10000): 
  *   normally, after one `console.warn` naming the helper. This is what the nine
  *   call sites rely on — several deliberately pick this variant because their
  *   action never toggles `isLoading` at all, and they succeed on the first probe.
- * - NO probe ever answered: THROWS, carrying the last probe failure. The helper
- *   never read viewer state, so returning would let the caller assert on state
- *   nothing has confirmed.
+ * - Every probe FAILED, so none ever answered: THROWS, carrying the last probe
+ *   failure. The helper read no viewer state, so returning would let the caller
+ *   assert on state nothing has confirmed. See {@link waitForSpatialQuery} for
+ *   why that failure case — and not an unanswered probe — is the vacuous pass
+ *   being closed, and why the probes here are not clamped to the loop's budget.
  *
  * Use {@link waitForNavigationCompleteOrThrow} for tests that depend on
  * navigation actually finishing.
+ *
+ * Unit-tested in `src/tests/unit/tests/e2e-helpers-silent-waits.test.ts`.
  *
  * @param page - Playwright page
  * @param timeout - Maximum wait time in ms
@@ -701,35 +701,23 @@ export async function waitForNavigationComplete(page: Page, timeout = 15000): Pr
       { timeout: Math.min(timeout, 10000) }
     );
   } catch (error) {
-    // The flag never became readable. Keep the short settle — a navigation that
-    // finished between two polls costs nothing here — but then fall through to
-    // the poll loop rather than returning on an unread page.
+    // The flag never became readable. Record it and fall through to the poll
+    // loop rather than returning on an unread page.
     lastProbeError = error;
-    await page.waitForTimeout(300);
   }
 
-  // Then wait for loading to complete
-  while (Date.now() - startTime < timeout) {
-    // Clamped to the loop's remaining budget for the reason spelled out in
-    // `waitForSpatialQuery`: an unbounded probe would outlive `timeout` and the
-    // loop would then exit as if it had polled, which cannot be allowed when
-    // exiting the loop is a tolerated outcome.
-    const remaining = timeout - (Date.now() - startTime);
-    const probeTimedOut = {};
-
+  // Then wait for loading to complete. `do`/`while` so at least one probe is
+  // always attempted: the preliminary wait above costs up to 10 s, so for any
+  // `timeout <= 10000` the budget can already be spent here, and reporting "no
+  // probe answered" without having probed once would be a false diagnostic.
+  do {
     try {
-      const state = await raceEvaluate<unknown>(getLuxarState(page), remaining, probeTimedOut);
-
-      if (state === probeTimedOut) {
-        lastProbeError = new Error(
-          `getLuxarState did not answer within the ${remaining}ms left of this helper's ${timeout}ms budget`
-        );
-      } else {
-        answered = true;
-        if (!(state as { isLoading?: boolean }).isLoading) {
-          await page.waitForTimeout(100);
-          return;
-        }
+      const state = await getLuxarState(page);
+      // Any resolved value counts as an answer; see `waitForSpatialQuery`.
+      answered = true;
+      if (!state.isLoading) {
+        await page.waitForTimeout(100);
+        return;
       }
     } catch (error) {
       // State may briefly be unavailable during navigation
@@ -737,11 +725,11 @@ export async function waitForNavigationComplete(page: Page, timeout = 15000): Pr
     }
 
     await page.waitForTimeout(100);
-  }
+  } while (Date.now() - startTime < timeout);
 
   if (!answered) {
     throw new Error(
-      `waitForNavigationComplete: the page never answered a single state probe within ${timeout}ms, ` +
+      `waitForNavigationComplete: no state probe answered during its ${timeout}ms poll window, ` +
         'so navigation was never observed either way and whatever this test asserts next reads ' +
         `unconfirmed state. See issue #1726.${lastProbeFailureSuffix(lastProbeError)}`
     );
@@ -1179,13 +1167,26 @@ export async function waitForCacheStable(
  * X appears" patterns. For the inverse ("there should be no errors"), use
  * `waitForRenderStable` then a single `getWebGLErrors` read.
  *
- * Each read is bounded by whatever is left of `timeout` (#1726). `getWebGLErrors`
+ * Each read is bounded by whatever is left of `timeout`, and no read is
+ * dispatched into a remainder smaller than one `pollMs` (#1726). `getWebGLErrors`
  * is a bare `page.evaluate`, which has no timeout of its own, so the FIRST
  * unanswered read used to blow straight through this budget to the whole test's.
  * The helper still never throws — it returns data, and an empty result is a
  * legitimate one — but a give-up emits one `console.warn` saying whether any read
  * answered at all, so an unsatisfied predicate cannot be mistaken for "the page
  * was healthy and produced no such error".
+ *
+ * Enforcing the budget has a cost worth stating plainly: `getWebGLErrors` DRAINS
+ * the GL queue in-page, so an answer arriving after the deadline is discarded
+ * along with whatever real errors it already cleared, and a later read in the
+ * same spec then sees a clean queue. That is what a budget means for a helper
+ * that returns data; the proper fix is bounding `getWebGLErrors` itself, which
+ * has ~30 direct call sites and belongs with the probe-bounding work in #1651.
+ * Not dispatching a read into a sliver of budget it cannot answer within keeps
+ * the tail case out of that trap. This helper currently has NO call sites, so
+ * the contract change is forward-looking.
+ *
+ * Unit-tested in `src/tests/unit/tests/e2e-helpers-silent-waits.test.ts`.
  */
 export async function waitForWebGLError(
   page: Page,
@@ -1199,16 +1200,18 @@ export async function waitForWebGLError(
   let answered = false;
 
   while (Date.now() < deadline) {
+    // Never dispatch a read into a remainder shorter than one poll interval: it
+    // would drain the GL queue in-page and then have its answer discarded for
+    // missing the deadline, taking the real errors with it.
+    const remaining = deadline - Date.now();
+    if (remaining < pollMs) break;
+
     // The sentinel is a FRESH Node-allocated array compared by identity, never a
     // value: an EMPTY list is a real answer here (a page with a clean GL queue
     // returns one on nearly every poll), so nothing about a returned array's
     // contents could stand for a missed deadline — see `raceEvaluate`.
     const readTimedOut: string[] = [];
-    const errs = await raceEvaluate<string[]>(
-      getWebGLErrors(page),
-      Math.max(deadline - Date.now(), 0),
-      readTimedOut
-    );
+    const errs = await raceEvaluate<string[]>(getWebGLErrors(page), remaining, readTimedOut);
 
     // An unanswered read contributes nothing: the loop must not read a missed
     // deadline as a clean GL queue.
@@ -1226,7 +1229,7 @@ export async function waitForWebGLError(
       `(${accumulated.length} error(s) accumulated); ` +
       (answered
         ? 'the page did answer the GL-error reads, so this looks like a genuine absence'
-        : 'the page never answered a single GL-error read, so nothing was actually checked')
+        : 'no GL-error read was answered within the budget, so nothing was actually checked')
   );
   return accumulated;
 }
