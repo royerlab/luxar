@@ -390,6 +390,7 @@ def write_lines(
         if ordering_data
         else None,
         dtype=vertices.dtype,
+        per_array_bytes=True,
     )
     ctx.dataset_ctx.encoder.encode(
         data=vertices,
@@ -437,6 +438,7 @@ def write_lines(
         n_vertices,
         ctx.dataset_ctx,
         "width",
+        per_array_bytes=True,
     )
 
     # Initialize metadata
@@ -463,6 +465,7 @@ def write_lines(
             ordering_data.get("vertex_ordering") if ordering_data else None,
             n_vertices,
             ctx.dataset_ctx,
+            per_array_bytes=True,
         )
         metadata["has_colors"] = True
 
@@ -484,6 +487,7 @@ def write_lines(
             n_vertices,
             ctx.dataset_ctx,
             "sharpness",
+            per_array_bytes=True,
         )
         metadata["has_sharpness"] = True
 

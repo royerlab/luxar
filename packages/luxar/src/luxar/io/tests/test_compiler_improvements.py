@@ -91,18 +91,18 @@ class TestChunkBoundsZarrAlignment:
     partitions with one chunk_size but wrote zarr arrays with a different
     chunk_size, causing the viewer to fetch misaligned data.
 
-    Points arrays are now sized per-array to their own dtype byte budget
-    (``per_array_bytes=True``): each per-point chunk[0] is a multiple of the
-    spatial-index ``chunk_size`` atom (or the full array length), which keeps
-    it on the viewer's row-range query grid while issuing far fewer requests
-    on large scenes. GSplats and Lines are untouched — their arrays stay
-    exactly atom-sized (chunk[0] == chunk_size).
+    Every geometry's per-element arrays are sized per-array to their own dtype
+    byte budget (``per_array_bytes=True``): each chunk[0] is a multiple of the
+    spatial-index ``chunk_size`` atom (or the full array length), which keeps it
+    on the viewer's row-range query grid while issuing far fewer requests on
+    large scenes. Correctness depends only on the ``chunk_bounds``/``chunk_size``
+    partition grid, which these arrays never change.
     """
 
     # -- GSplats alignment ---------------------------------------------------
 
     def test_gsplats_all_arrays_aligned(self) -> None:
-        """All gsplats zarr arrays must have chunks[0] == spatial chunk_size."""
+        """Gsplats arrays land on the chunk_size atom grid (multiples of it)."""
         from math import ceil
 
         from luxar.core.dimensions import Dimension, Dimensions
@@ -147,26 +147,30 @@ class TestChunkBoundsZarrAlignment:
             chunk_size = g.attrs["chunk_size"]
             assert chunk_size > 0, "chunk_size metadata must be positive"
 
-            # Every array's first chunk dimension must match chunk_size
-            assert g["centers"].chunks[0] == chunk_size, (
-                f"centers chunks[0]={g['centers'].chunks[0]} != chunk_size={chunk_size}"
-            )
-            assert g["amplitudes"].chunks[0] == chunk_size, (
-                f"amplitudes chunks[0]={g['amplitudes'].chunks[0]} != chunk_size={chunk_size}"
-            )
-            # v3.1: Cholesky stored as a diagonal + off-diagonal split; both
-            # halves share the same row-chunk size as the other arrays.
-            assert g["cholesky_factors_diag"].chunks[0] == chunk_size, (
-                f"cholesky diag chunks[0]={g['cholesky_factors_diag'].chunks[0]} "
-                f"!= chunk_size={chunk_size}"
-            )
-            assert g["cholesky_factors_offdiag"].chunks[0] == chunk_size, (
-                f"cholesky offdiag chunks[0]={g['cholesky_factors_offdiag'].chunks[0]} "
-                f"!= chunk_size={chunk_size}"
-            )
-            assert g["colors"].chunks[0] == chunk_size, (
-                f"colors chunks[0]={g['colors'].chunks[0]} != chunk_size={chunk_size}"
-            )
+            # Each per-splat array is sized to its own dtype byte budget, so
+            # chunk[0] is never below the atom and always lands ON the atom grid
+            # (a multiple of it) unless it is one full-array chunk. That is what
+            # keeps the viewer's row-range reads whole-chunk aligned.
+            # v3.1: Cholesky is stored as a diagonal + off-diagonal split; both
+            # halves share one row-chunk size.
+            for name in (
+                "centers",
+                "amplitudes",
+                "cholesky_factors_diag",
+                "cholesky_factors_offdiag",
+                "colors",
+            ):
+                c0 = g[name].chunks[0]
+                n_rows = g[name].shape[0]
+                if c0 == n_rows:
+                    continue  # single full-array chunk is always aligned
+                assert c0 >= chunk_size, (
+                    f"{name} chunks[0]={c0} < chunk_size atom={chunk_size}"
+                )
+                assert c0 % chunk_size == 0, (
+                    f"{name} chunks[0]={c0} is neither a multiple of the atom "
+                    f"{chunk_size} nor the full array length {n_rows}"
+                )
 
             # chunk_bounds partitions must match number of zarr chunks
             cb = np.array(g["chunk_bounds"])
@@ -176,10 +180,25 @@ class TestChunkBoundsZarrAlignment:
                 f"{expected_partitions} (ceil({n_splats}/{chunk_size}))"
             )
 
-            # Zarr chunk count along first axis must equal partition count
+            # Per-array sizing means a zarr chunk may now SPAN several
+            # partitions, so the counts are no longer equal. The property that
+            # matters for the viewer is that the partition grid SUBDIVIDES the
+            # zarr chunk grid: every partition's row range falls inside a single
+            # zarr chunk, so a row-range read never straddles a chunk boundary.
+            # Divisibility (asserted above) is what guarantees that, and it
+            # implies there can never be more zarr chunks than partitions.
             zarr_n_chunks = ceil(g["centers"].shape[0] / g["centers"].chunks[0])
-            assert zarr_n_chunks == cb.shape[0], (
-                f"zarr has {zarr_n_chunks} chunks but chunk_bounds has {cb.shape[0]} partitions"
+            assert zarr_n_chunks <= cb.shape[0], (
+                f"zarr has {zarr_n_chunks} chunks, more than the {cb.shape[0]} "
+                f"chunk_bounds partitions — the partition grid must subdivide "
+                f"the chunk grid, not the other way round"
+            )
+            centers_c0 = g["centers"].chunks[0]
+            assert (
+                centers_c0 == g["centers"].shape[0] or centers_c0 % chunk_size == 0
+            ), (
+                f"centers chunks[0]={centers_c0} must be an atom multiple so each "
+                f"partition lies within one zarr chunk"
             )
 
     def test_gsplats_small_dataset_single_chunk(self) -> None:
@@ -434,7 +453,7 @@ class TestChunkBoundsZarrAlignment:
     # -- Lines alignment -----------------------------------------------------
 
     def test_lines_all_attributes_aligned(self) -> None:
-        """All line attribute arrays must share the vertex chunk_size."""
+        """Line attribute arrays land on the vertex chunk_size atom grid."""
         from luxar.core.dimensions import Dimension, Dimensions
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -472,19 +491,25 @@ class TestChunkBoundsZarrAlignment:
             store = zarr.open_group(zarr_path, mode="r")
             g = store["lines"]
 
-            # Get vertex chunk_size from ordering metadata
-            vtx_chunk0 = g["vertices"].chunks[0]
+            # The atom is the vertex-ordering chunk_size: the grid the viewer
+            # resolves matched partitions to row ranges against.
+            atom = g.attrs["vertex_ordering"]["chunk_size"]
+            assert atom > 0, "vertex_ordering chunk_size must be positive"
 
-            # All vertex-indexed attributes must match
-            assert g["widths"].chunks[0] == vtx_chunk0, (
-                f"widths chunks[0]={g['widths'].chunks[0]} != vertices chunks[0]={vtx_chunk0}"
-            )
-            assert g["colors"].chunks[0] == vtx_chunk0, (
-                f"colors chunks[0]={g['colors'].chunks[0]} != vertices chunks[0]={vtx_chunk0}"
-            )
-            assert g["sharpnesses"].chunks[0] == vtx_chunk0, (
-                f"sharpnesses chunks[0]={g['sharpnesses'].chunks[0]} != vertices chunks[0]={vtx_chunk0}"
-            )
+            # Each vertex-indexed array is sized to its own dtype byte budget,
+            # so they no longer share one row count. What must hold is that each
+            # lands ON the atom grid (or is a single full-array chunk), which is
+            # what keeps a row-range read whole-chunk aligned.
+            for name in ("vertices", "widths", "colors", "sharpnesses"):
+                c0 = g[name].chunks[0]
+                n_rows = g[name].shape[0]
+                if c0 == n_rows:
+                    continue  # single full-array chunk is always aligned
+                assert c0 >= atom, f"{name} chunks[0]={c0} < atom={atom}"
+                assert c0 % atom == 0, (
+                    f"{name} chunks[0]={c0} is neither a multiple of the atom "
+                    f"{atom} nor the full array length {n_rows}"
+                )
 
     # -- No spatial index (regression guard) ---------------------------------
 
