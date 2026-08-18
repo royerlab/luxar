@@ -119,10 +119,11 @@ def assert_selector_describes_thresholds(
     place of ``[0, 1/4, 1/2, 1]``) keeps both endpoints and passes here. That is
     deliberate: the interior spacing belongs to the derivation, and is pinned
     literally next to it — ``test_lod_group.py::test_area_halving_spacing``
-    (``[0, A/4, A/2, A]`` straight off ``coverage_fractions``) plus the
-    per-geometry ``[0, 0.25, 0.5]`` assertions in
-    ``test_substitutive_points.py`` / ``test_substitutive_lines.py``. This helper's
-    job is only the SELECTOR/THRESHOLD pairing.
+    (``[0, A/4, A/2, A]`` straight off ``coverage_fractions``) plus, per geometry,
+    the literal ``[0, 0.25, 0.5]`` in ``test_substitutive_lines.py`` and the
+    whole-ladder equality against ``partitioned_coverage_fractions(counts)`` in
+    ``test_substitutive_points.py``. This helper's job is only the
+    SELECTOR/THRESHOLD pairing.
 
     Args:
         selector: The group's stamped ``selector`` attr.
@@ -405,9 +406,12 @@ def ladders(tmp_path_factory) -> Dict[Tuple[str, str], Tuple[Any, List[float]]]:
             n_levels = len(out[(geometry, variant)][1])
             assert n_levels >= 2, (
                 f"{geometry}/{variant}: ladder came out {n_levels} level(s) "
-                "long. The tests below need at least two: a 1-level ladder is "
-                "[0.0], which is valid under BOTH selectors, so they would pass "
-                "while asserting nothing (see _legacy_list). Give this geometry "
+                "long. The tests below need at least two, in both directions: a "
+                "1-level ladder is [0.0], which carries no anchor, so the "
+                "`explicit` (legacy) variant would pass while asserting nothing "
+                "(see _legacy_list), and a derived variant would instead fail "
+                "the invariant for a reason that has nothing to do with the "
+                "selector. Give this geometry "
                 "a fixture its coarsener can actually reduce — for mesh that "
                 "means enough subdivisions in _octahedron_sphere."
             )
@@ -560,10 +564,12 @@ _EXEMPT_LOD_GROUP_CALLERS = {
 #: The full expected set of production ``add_lod_group(...)`` call sites.
 _LOD_GROUP_CALLERS = frozenset(_LADDER_PRODUCERS) | frozenset(_EXEMPT_LOD_GROUP_CALLERS)
 
-#: How many ``add_lod_group(...)`` CALLS each of those modules makes — exactly
-#: one each today. Pinned separately from the key set because a SECOND call added
-#: inside an already-listed module changes no key: it needs a deliberate bump
-#: here (see :func:`test_no_unrouted_producer_builds_a_lod_group`).
+#: How many ``add_lod_group(...)`` CALLS each of those modules makes. Asserted as
+#: well as the key set, because a SECOND call added inside an already-listed
+#: module changes no key and would otherwise slip past every structural guard
+#: (see :func:`test_no_unrouted_producer_builds_a_lod_group`). Every module has
+#: exactly one today, hence the comprehension; a module that legitimately grows a
+#: second call site becomes an explicit entry here.
 _EXPECTED_CALLS_PER_MODULE: Dict[str, int] = {rel: 1 for rel in _LOD_GROUP_CALLERS}
 
 

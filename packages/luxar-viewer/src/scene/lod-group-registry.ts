@@ -10,13 +10,18 @@
  *      per-child boxes — the union is computed in place.)
  *   2. Transform the local box into world space via
  *      :func:`transformBoundingBox` and the lod_group's ``matrixWorld``.
- *   3. Project the 8 corners through the camera to NDC and back to
- *      pixel coordinates; the diagonal of the screen-space AABB, divided
- *      by ``FILL_FACTOR × fittedAxisPx`` (``fittedAxisPx`` is
- *      ``min(viewport.width, viewport.height)`` — the extent
- *      ``calculateCameraDistance`` actually fits; see the ``FILL_FACTOR`` doc),
- *      is the dimensionless **coverage metric** (1.0 == the object's projected
- *      diagonal has reached ``FILL_FACTOR`` of the fitted axis).
+ *   3. Project the 8 corners through the camera and reduce them to the
+ *      dimensionless **coverage metric**, on whichever scale the entry's
+ *      ``selector`` names — the two branches of {@link evaluateEntry}:
+ *      - ``'screen-area'`` (what every derived ladder stamps): the fraction of
+ *        the viewport the projected AABB covers by AREA, via
+ *        {@link projectBoxAreaFraction}. Aspect-free, tops out at 1.0.
+ *      - ``'coverage'`` (legacy): back to pixel coordinates, then the diagonal
+ *        of the screen-space AABB divided by ``FILL_FACTOR × fittedAxisPx``
+ *        (``fittedAxisPx`` is ``min(viewport.width, viewport.height)`` — the
+ *        extent ``calculateCameraDistance`` actually fits; see the
+ *        ``FILL_FACTOR`` doc), so 1.0 == the object's projected diagonal has
+ *        reached ``FILL_FACTOR`` of the fitted axis.
  *   4. Pick the **finest** child whose ``coverage_fraction`` threshold is
  *      satisfied by that coverage metric, with 10% asymmetric hysteresis on
  *      the downgrade direction to suppress threshold-edge flicker.

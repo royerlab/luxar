@@ -558,8 +558,11 @@ def resolve_lod_ladder(
       (``gsplats_pipeline/from_io`` ``graft_gsplat_node``). Keyed on how much of
       the ladder the store already carries: a fully authored one KEEPS its own
       stored selector verbatim (so a ``screen-area`` store does not lose its
-      stamp on re-save) and falls back to legacy only when it carries none, while
-      a partially- or un-authored one is re-derived and stamped screen-area.
+      stamp on re-save — its thresholds are re-validated against that selector's
+      ceiling and may raise), and falls back to legacy only when it carries none,
+      while a partially- or un-authored one is re-derived and stamped
+      screen-area. An out-of-vocabulary stored selector raises ahead of all of
+      that.
     * :func:`luxar.gsplats.tree.tree_from_substitutive_levels`, whose ``selector``
       default is keyed on whether the caller supplied a ``coverage`` callable.
 
