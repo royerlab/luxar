@@ -210,6 +210,97 @@ This ensures:
 
 `ZarrWriterProtocol` defines the interface for Zarr writers, enabling different implementations while maintaining API consistency.
 
+### Re-chunking an existing store (`optimise.py`)
+
+`luxar.io.optimise` re-chunks a store that is **already on disk**, in one
+structure-preserving pass — no refit, no source volume, no GPU. It backs the
+`luxar optimise` CLI command and the `luxar info --stats` chunk diagnostic.
+
+Everything but the zarr chunk grid survives verbatim: values bit-for-bit, dtype,
+codecs, filters, serializer, `fill_value`, memory order, the on-disk zarr format,
+the plain non-zarr payload files a group's attrs name (an overlay image, which
+no array or group API reaches), and every group and array attribute **except**
+the two the pass is contractually required to move — the root's `content_hash`,
+which is restamped, and the `chunk_layout` summary written beside it (see *Cache
+invalidation* below).
+
+```python
+from luxar.io.optimise import optimise_store, plan_optimisation, summarise_chunk_layout
+
+plan = optimise_store("scene.luxar.zarr", "out.luxar.zarr", target_bytes=65_536,
+                      verify=True)
+print(plan.source_n_chunks, "→", plan.target_n_chunks)
+```
+
+- `plan_optimisation(root, target_bytes=…)` → `OptimisePlan` — what would change,
+  per array, without writing. Each `ArrayPlan` carries the source/target chunk
+  shape, the resolved spatial atom, and a `skip_reason` when the array is left
+  alone.
+- `optimise_store(src, dst, …)` — does it. `verify=True` re-reads the output and
+  compares every array — and every payload file it copied — byte for byte,
+  reporting both counts.
+- `summarise_chunk_layout(root)` → `ChunkLayoutSummary` — average chunk bytes,
+  arrays under the 16 KB floor, and the chunk-file count a full load fetches.
+  Counts objects, so a shard is one file and a `(0, D)` placeholder is none —
+  and an array that fetches nothing is left out of the floor share entirely.
+  `summarise_plan(plan)` is the same diagnostic off a plan already walked, which
+  is how `luxar info --stats` reports both from a single pass.
+- `resolve_target_bytes(target_bytes=…, target_kb=…, profile=…)` — the three
+  mutually exclusive size flags, and `CHUNK_PROFILES` (`hosting` 256 KB,
+  `local` 64 KB, `archive` 1 MB).
+
+**What must not move.** `chunk_size` / `chunk_bounds` are the viewer's partition
+grid: every emitted chunk is a whole multiple of the node's atom (rounded down
+from the byte budget, never below one atom), so a row-range read never straddles
+a boundary. Lines' two atoms — `vertex_ordering.chunk_size` for the per-vertex
+arrays, `segment_ordering.chunk_size` for `segments` — are resolved separately,
+and the bounds arrays themselves are never re-chunked. A `chunk_size` attr is
+trusted **only** when the matching bounds array exists, because a gsplat leaf
+written with `ordering="none"` still gets a vestigial one stamped — and that
+vestigial value is a power of two, so "the array's chunk is already a multiple
+of it" is arithmetic coincidence rather than proof. (Every Luxar writer omits
+the bounds array only for a zero-row node, so a node with rows to re-chunk
+always carries its proof.) `array_ref` placeholders (`(0, D)`), `(1,)`/`(1, k)`
+broadcasts and sharded arrays are copied verbatim — a sharded array keeps its
+**shard** grid, not just its inner chunk shape; nothing is chunked smaller than
+it already is; the chunk **key** layout (v2 `dimension_separator` / v3
+`chunk_key_encoding`) survives; and the copy walks chunk-aligned slabs rather
+than reading an array whole.
+
+**All-or-nothing.** The output is built in a hidden sibling directory and
+renamed onto the destination only after the copy (and `verify=True`, when asked
+for) succeeds, so a failure leaves neither a half-written store at the
+destination nor a damaged previous one. An existing destination is renamed
+**aside** and deleted only once the new one is in place (and restored if that
+rename fails), because deleting first can lose both copies: an `rmtree` that
+fails partway propagates before the artifact is marked consumed, and for a
+directory destination the artifact *is* the staging tree. A `.zarr.zip`
+destination is compressed out of that directory rather than written into a
+`ZipStore`, which appends rather than replaces and would otherwise accumulate
+one dead copy of every group document per attr write. `overwrite=True` replaces
+an existing **zarr store or empty directory** only, and refuses a destination
+that is, contains, or lives inside the source — or that is a **symlink**, since
+the rename would replace the link rather than its target (the error says to pass
+the target instead).
+
+**Cache invalidation.** The viewer validates its persistent cache on
+`content_hash`, and that cache holds encoded chunks keyed by chunk index — so a
+re-chunk that left the hash where it was would serve bytes that no longer mean
+what their keys say. Both hashers now fold layout in themselves:
+`compute_content_hashes` hashes each array's storage identity (name, shape,
+dtype, chunks, shards, codec ids, own attrs) before its values, and the
+`.gsplats.zarr` stamp folds the same identity terms over metadata alone. So
+recomputing over the re-chunked output lands on a different digest by
+construction, and the RESTAMP is what makes that reach the viewer — nothing else
+rewrites the stored `content_hash`. It runs for `--generic` too, because that
+flag describes the input rather than the output's cache safety. The
+`chunk_layout` root attr is folded in as well (attrs are hashed): belt-and-braces
+against a layout-aware hasher, and still the whole guard for a store that carries
+no `content_hash` to restamp, where the viewer falls back to a digest of the raw
+root document bytes. The scene restamp is a slab-wise reimplementation of the
+finalize-time walk — the same digest, without the whole-array materialisation
+that would peak at twice a 629 MB array's size.
+
 ### Input Volume Loading
 
 `luxar.io.volume` and `luxar.io.ome_zarr` load arbitrary input volumes (the

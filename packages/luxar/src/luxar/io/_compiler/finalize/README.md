@@ -57,9 +57,13 @@ existed, two scenes compiled from the same script and differing **only** in
 their overlay image bytes got the *same* root hash. `content_hash` is advertised
 as a content fingerprint and consumed as one (the viewer's
 `scene-identity-watchdog`, cache validation), so a rebuild whose only change was
-the logo looked exactly like no change at all. This is compile-time only —
-nothing in the repo re-hashes a finished store, so swapping the PNG inside an
-already-finalized `.luxar.zarr` does not restamp anything.
+the logo looked exactly like no change at all. Two walks in the repo hash a
+store this way: this compile-time one, and `luxar optimise`'s slab-wise
+re-chunk walk (`luxar.io.optimise._compute_content_hashes_streaming`), which
+imports `_payload_terms` and folds the same bytes over a store that is already
+finished. Nothing else restamps one — swapping the PNG inside an
+already-finalized `.luxar.zarr` changes no hash until the scene is recompiled or
+re-chunked.
 
 The step is driven off `PAYLOAD_FILE_ATTRS` — the attr keys whose value is a
 payload filename — **not** off a directory listing: a listing means enumerating

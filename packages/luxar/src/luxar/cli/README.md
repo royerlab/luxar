@@ -49,6 +49,7 @@ print(result.stdout)
 - `main.py` - Main CLI application with the top-level commands
 - `serving.py` - HTTP serving internals (`create_server_app`, data/viewer servers; re-exported by `main.py`)
 - `info_command.py` - The `luxar info` command implementation
+- `optimise_command.py` - The `luxar optimise` command (a thin Typer layer over `luxar.io.optimise`)
 - `gsplat_commands.py` - Thin registration hub (~56 lines) that assembles the `gsplat` sub-app: fit, cal, render, denoise, lod, convert, migrate-format, reencode, info, napari, view, compare, annotate-quality, transform, merge, cull, filter, slice, partition, flatten, additive, benchmark; the `batch-fit` group: run/submit/status/validate/cancel/merge/denoise-calibrate/denoise-preprocess
 - `gsplat_ops/` - The gsplat subcommand implementations: 7 root modules (scene/inspect/interchange registration, `benchmark`, `recipe_shared`, `planner`, `encoding`) plus three subpackages — `fitting/` (fit/cal/render/denoise), `batch/` (`batch-fit`), `transforms/` (edit-style commands) — 30 modules across them. Each subpackage's registration surface is its `commands.py`; the `__init__.py` files are docstring-only. See `gsplat_ops/README.md`.
 - `lod.py` - the unified `lod --recipe {flat,stream,levels,tiles,overview,adaptive}` command (thin wrapper over `gsplats/lod/recipes.py`; registered onto the `gsplat` app)
@@ -130,6 +131,47 @@ luxar info data.luxar.zarr          # Basic info with tree view
 luxar info data.luxar.zarr --stats  # Include detailed statistics
 luxar info data.luxar.zarr --format json # JSON output
 ```
+
+`--stats` also reports the store's **chunk layout** — average chunk KB, the
+share of arrays under the 16 KB floor, and the projected request count for a
+full load — computed off the same helper `luxar optimise` plans from, so a
+store that is badly chunked for streaming is visible without hosting it first.
+
+### `luxar optimise`
+Re-chunk an existing store for streaming. One structure-preserving pass: only
+zarr chunk shapes change, values stay bit-identical, and no refit / source
+volume / GPU is involved.
+```bash
+luxar optimise scene.luxar.zarr optimised.luxar.zarr
+luxar optimise scene.luxar.zarr --dry-run                    # report only
+luxar optimise scene.luxar.zarr out.luxar.zarr --target-kb 128
+luxar optimise scene.luxar.zarr out.luxar.zarr --profile hosting  # 256 KB
+luxar optimise scene.luxar.zarr out.luxar.zarr --profile local    # 64 KB
+luxar optimise scene.luxar.zarr out.luxar.zarr --profile archive  # 1 MB
+luxar optimise scene.luxar.zarr out.luxar.zarr --verify      # re-read + compare every array
+luxar optimise fit.gsplats.zarr fit_opt.gsplats.zarr         # standalone gsplat trees
+luxar optimise arbitrary.zarr out.zarr --generic             # plain zarr
+```
+
+dtype, codecs, filters, `fill_value`, memory order, the chunk key layout, the
+zarr format version and every attribute **except** the two the pass is required
+to move — the root's `content_hash` and the `chunk_layout` summary beside it —
+are preserved; a sharded array keeps its shard grid; and the spatial-index grid
+(`chunk_size` / `chunk_bounds`) is never moved, so every new chunk is a whole
+multiple of its node's atom. Nothing is ever chunked *smaller* than it already
+is. Those two attrs are the cache guard: without them a warm viewer cache would
+keep serving chunks whose keys now cover different rows, and the restamp runs
+for `--generic` too, since the flag describes the input. Overwriting an existing
+output needs `--overwrite` and only replaces a zarr store or an empty directory;
+a destination that contains the source is refused, as is rewriting in place, as
+is a destination that is a symlink (the rename would replace the link, not its
+target — pass the target instead). The output is staged beside the destination
+and moved into place last, and a previous store is renamed aside rather than
+deleted first, so a failure leaves nothing partial behind and never costs both
+copies. Larger profiles trade partial-query bytes for
+full-load requests — see the CLI reference before reaching for `--profile
+hosting` on a store the viewer will slice into. The logic lives in
+`luxar.io.optimise`.
 
 ### `luxar profiles`
 List available network simulation profiles for testing.

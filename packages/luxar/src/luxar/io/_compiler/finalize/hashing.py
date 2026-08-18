@@ -234,8 +234,10 @@ def compute_content_hashes(store: zarr.Group) -> str:
 
         # 3. Hash plain payload files named by attrs (overlay images): neither
         #    arrays nor groups, so steps 1-2 fold in the FILENAME but never the
-        #    bytes. Attrs-driven, not by directory listing, and COMPILE time only
-        #    — nothing re-hashes a finished store. Why: `finalize/README.md`.
+        #    bytes. Attrs-driven, not by directory listing. Two walks hash a
+        #    store this way — this compile-time one, and `luxar optimise`'s
+        #    slab-wise re-chunk walk, which reuses these very helpers over a
+        #    FINISHED store. Why: `finalize/README.md`.
         for term in _payload_terms(group, attrs):
             hasher.update(term)
 
