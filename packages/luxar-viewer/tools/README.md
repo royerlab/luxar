@@ -91,14 +91,15 @@ The arithmetic lives in the pure `chooseLocalWorkers({ cpus, load1, override })`
 (covered by `src/tests/unit/config/e2e-workers.test.ts`); `resolveE2EWorkers()`
 is the thin wrapper that reads `os.availableParallelism()`, `os.loadavg()`, `CI`,
 and `LUXAR_E2E_WORKERS`. Precedence: Playwright's own `--workers=N` overrides the
-config outright (and `--debug` / `--pause` force one worker), then
+config outright (and `--debug` forces one worker), then
 `LUXAR_E2E_WORKERS=N` — an integer, clamped to `[1, cpus]` purely as a typo guard
 (`=40` on a 16-core box), so a pin may exceed the ceiling of four but not the
 machine — then the heuristic; `CI` is unconditionally serial. The heuristic
 itself is deliberately NOT capped by the core count: the binding resource is that
 single-threaded dataset server rather than the cores, and capping would lower the
-historical default on a 1- or 2-core box, which nothing has measured as needed. Windows has no load average, and is reported as no signal rather than as
-an idle box, which means the ceiling.
+historical default on a 1- or 2-core box, which nothing has measured as needed.
+Windows has no load average, and is reported as no signal rather than as an idle
+box, which means the ceiling.
 
 ## `agent-driver.ts`
 

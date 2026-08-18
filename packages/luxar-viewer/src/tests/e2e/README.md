@@ -79,8 +79,8 @@ wall clock is not obviously better than an idle box's at three.
 
 Pin the count with `LUXAR_E2E_WORKERS=N` (an integer, clamped to `[1, cpus]`;
 anything else is ignored), or with Playwright's own `--workers=N`, which
-overrides the config outright — as do `--debug` and `--pause`, which force one
-worker. CI is unconditionally serial.
+overrides the config outright — as does `--debug`, which forces one worker. CI is
+unconditionally serial.
 
 ### Which script runs which specs
 

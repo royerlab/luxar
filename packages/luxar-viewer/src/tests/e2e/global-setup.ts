@@ -9,7 +9,7 @@
  * 4. Basic environment checks
  *
  * It also stamps the run's parallelism. That belongs here rather than in `playwright.config.ts`
- * because Playwright applies `--workers=N` / `--debug` / `--pause` AFTER the config module is
+ * because Playwright applies `--workers=N` / `--debug` AFTER the config module is
  * evaluated, but hands this hook the resolved `FullConfig`. (Not reached by `--list`, which runs
  * no global setup — so listing tests stays silent.) `config.workers` is the run's CEILING, not
  * the concurrency it reaches: Playwright narrows it to `min(workers, maxConcurrentTestGroups)`

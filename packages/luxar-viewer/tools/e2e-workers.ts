@@ -33,7 +33,7 @@
  *    keeping startup free.
  *
  * Overrides, in precedence order: the Playwright CLI's own `--workers=N` beats anything this
- * module returns (and `--debug` / `--pause` force 1), then `LUXAR_E2E_WORKERS=N`, then this
+ * module returns (and `--debug` forces 1), then `LUXAR_E2E_WORKERS=N`, then this
  * heuristic. Because the CLI wins AFTER the config is evaluated, the run's parallelism line is
  * printed from the E2E global setup, which is handed the resolved `FullConfig` — and reports its
  * `workers` as the run's ceiling, since the concurrency actually reached is decided later still
@@ -225,7 +225,7 @@ export function e2eWorkerPlan(): E2EWorkerResolution {
  * Build the one-line parallelism stamp for a run.
  *
  * `configuredWorkers` comes from the RESOLVED `FullConfig`, not from `plan`: Playwright applies
- * `--workers=N` (and `--debug` / `--pause`, which force 1) after the config module has been
+ * `--workers=N` (and `--debug`, which forces 1) after the config module has been
  * evaluated, so the two can legitimately differ — and that is exactly the case a reader needs
  * told, since the docs recommend `--workers=1` for diagnosing a flake.
  *

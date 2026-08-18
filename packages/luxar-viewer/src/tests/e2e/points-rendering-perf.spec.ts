@@ -88,12 +88,16 @@ test('points rendering: capture N=5 FPS samples on dense_cubic_gradient', async 
     sampleDurationMs: SAMPLE_DURATION_MS,
     // Local concurrency is no longer a constant — it is sized to the machine's load
     // (tools/e2e-workers.ts) — and FPS measured against N competing Chromiums is not
-    // comparable to FPS measured against one. Recorded, with the load average it was
-    // sized from, so a diff between two runs shows when that changed underneath it.
+    // comparable to FPS measured against one. Recorded alongside the load average AT
+    // CAPTURE TIME, so a diff between two runs shows when either changed underneath
+    // it. Deliberately not the load the count was sized from: that is the parent
+    // process's reading at config load, which a worker cannot see, and this fresh
+    // reading — taken minutes later — is the one that explains the FPS below.
     // `actualWorkers` is the concurrency Playwright settled on (what its reporter
-    // prints); `config.workers` is only the ceiling, so it is the fallback.
+    // prints), an internal metadata field, hence the fallback to `config.workers`,
+    // which is only the ceiling.
     workers: test.info().config.metadata.actualWorkers ?? test.info().config.workers,
-    load1: os.loadavg()[0],
+    load1AtCapture: os.loadavg()[0],
     fps: { min, median: med, max, samples },
     capturedAt: new Date().toISOString(),
   };
