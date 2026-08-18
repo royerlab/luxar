@@ -111,7 +111,13 @@ class TestChunkBoundsZarrAlignment:
         with tempfile.TemporaryDirectory() as tmpdir:
             zarr_path = Path(tmpdir) / "test.luxar.zarr"
 
-            n_splats = 2500
+            # Large enough that EVERY per-splat array spans several atoms. At
+            # the previous n=2,500 three of the five arrays came out as one
+            # full-array chunk, which the loop below skips as trivially aligned
+            # — so the alignment assertion only really covered the Cholesky
+            # pair. The `no array is a single chunk` assertion right after the
+            # loop keeps it that way if the budgets ever shift.
+            n_splats = 20_000
             ndim = 4
             k = tril_size(ndim)
 
@@ -151,15 +157,16 @@ class TestChunkBoundsZarrAlignment:
             # chunk[0] is never below the atom and always lands ON the atom grid
             # (a multiple of it) unless it is one full-array chunk. That is what
             # keeps the viewer's row-range reads whole-chunk aligned.
-            # v3.1: Cholesky is stored as a diagonal + off-diagonal split; both
-            # halves share one row-chunk size.
-            for name in (
+            # v3.1: Cholesky is stored as a diagonal + off-diagonal split, and
+            # each half is sized to its own row width like every other array.
+            names = (
                 "centers",
                 "amplitudes",
                 "cholesky_factors_diag",
                 "cholesky_factors_offdiag",
                 "colors",
-            ):
+            )
+            for name in names:
                 c0 = g[name].chunks[0]
                 n_rows = g[name].shape[0]
                 if c0 == n_rows:
@@ -171,6 +178,28 @@ class TestChunkBoundsZarrAlignment:
                     f"{name} chunks[0]={c0} is neither a multiple of the atom "
                     f"{chunk_size} nor the full array length {n_rows}"
                 )
+
+            # Guard against the loop going vacuous: at this size every array
+            # must genuinely span several chunks, or the divisibility assertion
+            # above is skipped for all of them.
+            single_chunk = [n for n in names if g[n].chunks[0] == g[n].shape[0]]
+            assert not single_chunk, (
+                f"{single_chunk} came out as one full-array chunk, so the "
+                f"alignment assertions above never ran — raise n_splats"
+            )
+
+            # Each Cholesky half is sized to its OWN row width, not to the
+            # packed (N, k) width: at 4D the 4-column diagonal affords a bigger
+            # row chunk than the 6-column off-diagonal. A single row count
+            # derived from the packed shape would make these equal (and give
+            # both halves half their byte budget).
+            diag_c0 = g["cholesky_factors_diag"].chunks[0]
+            off_c0 = g["cholesky_factors_offdiag"].chunks[0]
+            assert diag_c0 > off_c0, (
+                f"cholesky diag chunks[0]={diag_c0} should exceed offdiag "
+                f"{off_c0} at {ndim}D — both halves look sized from the packed "
+                f"({n_splats}, {k}) shape instead of their own row widths"
+            )
 
             # chunk_bounds partitions must match number of zarr chunks
             cb = np.array(g["chunk_bounds"])

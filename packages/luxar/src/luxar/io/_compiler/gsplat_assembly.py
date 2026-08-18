@@ -250,10 +250,11 @@ def write_gsplat_arrays(
     their pre-group gate, so nothing is re-scanned here.
 
     Every per-splat array sizes its own first-axis chunk to its own dtype byte
-    budget, rounded DOWN to a multiple of the spatial ``chunk_size`` atom. A
-    zarr chunk may therefore span several index chunks but never straddles one,
-    which is all the viewer's row-range reads require. This is deliberately NOT
-    a mode: both callers (the scene compiler and the standalone
+    budget, rounded DOWN to a multiple of the spatial ``chunk_size`` atom. One
+    zarr chunk therefore holds several whole index chunks, and no index chunk's
+    row range ever straddles a zarr chunk boundary — which is all the viewer's
+    row-range reads require. This is deliberately NOT a mode: both callers (the
+    scene compiler and the standalone
     ``.gsplats.zarr`` tree writer) get the identical layout, which is what keeps
     the scene ⇄ standalone parity invariant in
     ``tests/test_scene_leaf_parity.py`` true.
@@ -335,16 +336,33 @@ def write_gsplat_arrays(
         chunks_offdiag: Optional[tuple] = None
     else:
         n_elems_chol = None
-        # Chunk both halves with the SAME row-chunk size (derived from the
-        # packed shape) so the viewer's aligned per-chunk range reads line up.
-        chunk_rows = calculate_intelligent_chunks(
-            cholesky_factors.shape,
+        # Each half is sized to ITS OWN row width — the diagonal is (N, d), the
+        # off-diagonal (N, k-d) — which is what GSPLATS_ZARR_FORMAT.md §8
+        # tabulates. Deriving one row count from the packed (N, k) shape gave
+        # both halves roughly half their byte budget (for 3D: 2,340 rows where
+        # each 3-column half affords 4,680), doubling their request count. The
+        # two arrays are read independently — a separate row-range zarr slice
+        # each, in the Python reader and in the viewer loader alike — so they
+        # need no common row count, only the atom alignment that
+        # ``calculate_intelligent_chunks`` gives each of them.
+        chunks_diag = calculate_intelligent_chunks(
+            chol_diag.shape,
             spatial_index_data=ordering_data,
-            dtype=cholesky_factors.dtype,
+            dtype=chol_diag.dtype,
             per_array_bytes=True,
-        )[0]
-        chunks_diag = (chunk_rows, chol_diag.shape[1])
-        chunks_offdiag = (chunk_rows, chol_offdiag.shape[1])
+        )
+        # 1D gsplats have no off-diagonal terms: that array is never written, so
+        # leave its chunks unset rather than divide by a zero row width.
+        chunks_offdiag = (
+            calculate_intelligent_chunks(
+                chol_offdiag.shape,
+                spatial_index_data=ordering_data,
+                dtype=chol_offdiag.dtype,
+                per_array_bytes=True,
+            )
+            if chol_offdiag.shape[1] > 0
+            else None
+        )
 
     # One joint call: the encoder owns the whole pair policy (same tier for
     # both halves, AUTO's u8→u16 certificate escalation, the 1D no-offdiag

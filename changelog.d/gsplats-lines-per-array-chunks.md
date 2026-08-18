@@ -42,6 +42,14 @@ tabulates 5,461 elements for `centers` against 16,384 for `amplitudes`. The
 implementation was pinning every array to one atom regardless; the §8 *test* was
 stricter than the §8 *text*.
 
+Both halves of the split Cholesky get their own width's budget too, rather than
+one row count derived from the packed `(N, k)` shape — which had been giving each
+half roughly half its byte target (2,340 rows for 3D where a 3-column half
+affords 4,680). They are read as two independent row-range slices in the Python
+reader and the viewer loader alike, so a shared row count buys nothing. On a
+200 K-splat 3D leaf the pair drops from 172 chunks to 86, a third of the leaf's
+total requests.
+
 What is no longer true is that a chunk-index range maps to *exactly* one zarr
 chunk — it now falls *inside* one, which is what Points has done since #1142. The
 atom grid still subdivides the chunk grid (`_atom_aligned_rows` rounds DOWN to an
@@ -51,7 +59,7 @@ matched partitions to `{start, end}` row ranges and take a zarr slice per array.
 Four assertions that encoded the stricter equality now assert the subdivision
 invariant they were really guarding.
 
-Two test-quality fixes came out of verifying this:
+Three test-quality fixes came out of verifying this:
 
 * `test_standalone_leaf_matches_scene_leaf_with_colors_and_ordering` compared
   chunk shapes at n=128, where the atom equals the row count and every array gets
@@ -66,6 +74,10 @@ Two test-quality fixes came out of verifying this:
   chunk calculator never found a `chunk_size` and fell back to a pure byte budget.
   Pre-existing, and invisible because no test wrote lines with scalars and checked
   alignment.
+* `test_gsplats_all_arrays_aligned` ran at n=2,500, where three of its five arrays
+  fit in a single full-array chunk that the alignment check skips as trivially
+  aligned. Raised to n=20,000 (every array spans several atoms) and it now asserts
+  that none of them collapsed back to one chunk, so it cannot go vacuous again.
 
 Verified neutral on two independent axes: every stored array value is
 bit-identical across both layouts (flat leaf and both ladder rungs), and rendered

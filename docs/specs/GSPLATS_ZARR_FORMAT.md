@@ -1006,6 +1006,13 @@ chunk_elements = TARGET_CHUNK_BYTES // bytes_per_row
 
 **Note**: Each array has its own optimal chunk size. The `chunk_size` in group metadata is a **reference value** for the primary arrays (centers), not a universal constant.
 
+**Spatial-index alignment**: when the leaf carries a spatial index, each array's
+count above is rounded DOWN to a whole multiple of the group's `chunk_size` atom
+(never below one atom, never above the row count) — so 5,461 becomes 4,680 =
+4 × 1,170 for a 1,170-row atom. That keeps every `chunk_bounds` partition's row
+range inside a single zarr chunk, which is what makes a spatial-query read one
+request per array per partition.
+
 **Chunk shape specification**:
 ```python
 # 1D arrays (amplitudes)

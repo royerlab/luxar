@@ -1678,7 +1678,7 @@ Optimal chunk sizes balance memory usage and access patterns:
 ### Chunking with Spatial Index
 
 When using spatial indices:
-- **Chunk Alignment**: Zarr chunk boundaries always land on the spatial-index grid. Points, Lines and GSplats arrays each size their first-axis chunk to the array's own dtype byte budget, rounded down to a multiple of the `chunk_size` atom (never below one atom). A zarr chunk may therefore span several index chunks, but never straddles one. Standalone `.gsplats.zarr` shares the same writer and the same layout.
+- **Chunk Alignment**: Zarr chunk boundaries always land on the spatial-index grid. Points, Lines and GSplats arrays each size their first-axis chunk to the array's own dtype byte budget, rounded down to a multiple of the `chunk_size` atom (never below one atom). One zarr chunk therefore holds several whole index chunks, and no index chunk's row range ever straddles a zarr chunk boundary. Standalone `.gsplats.zarr` shares the same writer and the same layout.
 - **Typical Strategy**: `chunk_size` is computed based on target memory per chunk (~64KB, see `TARGET_CHUNK_BYTES`)
 - **Benefits**: Every chunk-index row range falls inside a whole zarr chunk, and arrays pack several index chunks per zarr chunk — far fewer HTTP requests on large scenes
 - **Morton Ordering**: Points within a chunk are spatially nearby due to Morton ordering
