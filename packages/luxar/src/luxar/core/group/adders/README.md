@@ -87,9 +87,12 @@ progressively DECIMATED copies of the surface (`luxar.mesh.decimate`) and whose
 finest child is the original. It cannot be combined with `partition=` — the same
 refusal `add_points` / `add_lines` carry, which is why a hand-built
 `kind=partition` wrapper is the only route to per-tile mesh ladders; like its
-three siblings the wrapper derives its `coverage_fraction` thresholds through
-`lod.group.derive_coverage_fractions`, so such a ladder is auto-anchored at
-fills-screen (finest `4.0`) instead of the whole-object `1.0`.
+three siblings the wrapper takes BOTH its per-child `coverage_fraction`
+thresholds and the group-level `selector` naming their units from
+`lod.group.resolve_lod_ladder` (which calls `derive_coverage_fractions`
+underneath when no explicit `coverage_fractions=[...]` list was given), so such a
+ladder is auto-anchored at fills-screen (finest `PARTITION_FINEST_AREA` = `1.0`)
+instead of the whole-object `WHOLE_OBJECT_FINEST_ANCHOR` = `0.5`.
 
 `additive_lod=` writes a REVEAL ladder — `additive_<i>/` levels holding concentric
 shells of FACES, innermost first — through `add_mesh_multi_lod_wrapper_impl` and

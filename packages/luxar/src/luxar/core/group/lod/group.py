@@ -56,9 +56,13 @@ This module hosts:
   ``partitioned_coverage_fractions``, and the ``derive_coverage_fractions`` /
   ``is_partition_bound`` pair the scene adders use to choose between them from
   the ladder's insertion point.
-* ``resolve_lod_ladder`` — the single decision the four scene adders share:
-  thresholds AND the ``selector`` that names their units (an explicit list keeps
-  the legacy units it was authored in; otherwise derive and stamp screen-area).
+* ``resolve_lod_ladder`` — the single decision the four ``substitutive_lod=`` /
+  ``lod_group=`` scene adders share: thresholds AND the ``selector`` that names
+  their units (an explicit list keeps the legacy units it was authored in;
+  otherwise derive and stamp screen-area). The detached-tree writers answer the
+  related "what does a STORED tree already claim?" question separately, through
+  ``gsplats.tree.gate_authored_selector`` — see that function and
+  ``resolve_lod_ladder``'s own docstring.
 * The free-function validator ``validate_lod_group``, callable on any
   ``Group`` whose ``attrs["kind"] == "lod"``.
 * The shared ``resolve_display_type`` helper used by both LOD and Partition
@@ -89,7 +93,11 @@ from typing import (
 
 from arbol import aprint
 
-from ....typing_utils.constants import DERIVED_LOD_SELECTOR, LEGACY_LOD_SELECTOR
+from ....typing_utils.constants import (
+    DERIVED_LOD_SELECTOR,
+    LEGACY_LOD_SELECTOR,
+    LOD_SELECTORS,
+)
 from ....typing_utils.geometry_capabilities import require_lod_display_type
 from ....validation.types import validate_truncation_radius
 from .reveal import is_reveal_additive_method, pop_reveal_knobs
@@ -530,14 +538,37 @@ def resolve_lod_ladder(
 ) -> tuple[list[float], str]:
     """Decide a lod group's thresholds AND the selector that describes them.
 
-    The one place the explicit-vs-derived rule lives. All FOUR scene adders that
-    build a ``kind=lod`` group (``add_points`` / ``add_lines`` / ``add_mesh``
-    ``substitutive_lod=`` and ``add_gsplats_from_data`` ``lod_group=``) call this
-    instead of restating it, because thresholds and selector are ONE decision:
-    the selector names the UNITS the thresholds are in, so a site that derives a
-    ladder and stamps the legacy selector (or vice versa) writes a store whose
-    switch points the viewer reads on the wrong scale — silently, since both
+    The one decision shared by the four SCENE ADDERS that build a ``kind=lod``
+    group from user-supplied data (``add_points`` / ``add_lines`` / ``add_mesh``
+    ``substitutive_lod=`` and ``add_gsplats_from_data`` ``lod_group=``): all four
+    call this instead of restating it, because thresholds and selector are ONE
+    decision — the selector names the UNITS the thresholds are in, so a site that
+    derives a ladder and stamps the legacy selector (or vice versa) writes a store
+    whose switch points the viewer reads on the wrong scale — silently, since both
     vocabularies are individually valid.
+
+    **Not the only producer of the pairing** — two DETACHED-TREE paths answer a
+    related but different question, "what does a STORED tree already claim about
+    its own thresholds?", which has no ``explicit`` argument to branch on and so
+    cannot route through here:
+
+    * :func:`luxar.gsplats.tree.gate_authored_selector` — the shared gate for a
+      ``GSplatNode`` tree being serialized (``io/_compiler/gsplat_tree``
+      ``write_gsplat_node``) or grafted into a scene
+      (``gsplats_pipeline/from_io`` ``graft_gsplat_node``). Same *shape* of rule
+      (fully authored + no selector ⇒ legacy; partially or not authored ⇒
+      re-derive and stamp screen-area), keyed on how much of the ladder the store
+      already carries.
+    * :func:`luxar.gsplats.tree.tree_from_substitutive_levels`, whose ``selector``
+      default is keyed on whether the caller supplied a ``coverage`` callable.
+
+    ``graft_gsplat_node`` is itself a scene-adder path
+    (``add_gsplats_from_file`` on a non-matrix-shaped subtree) that builds a
+    ``kind=lod`` group and calls ``coverage_fractions`` /
+    ``partitioned_coverage_fractions`` directly, pairing them with
+    ``gate_authored_selector``'s answer rather than this function's — it is on the
+    stored-tree side of that split, and the guard in
+    ``core/tests/group/lod/test_lod_selector_contract.py`` exempts it by name.
 
     The rule:
 
@@ -695,8 +726,6 @@ def validate_lod_group(group: "Node") -> None:
     # vocabulary is rejected — node attrs are mutable, so a modified/imported
     # group could otherwise pass validation and serialize an invalid selector
     # (matching add_lod_group_impl and gate_authored_selector).
-    from ....typing_utils.constants import LOD_SELECTORS
-
     raw_selector = group.attrs.get("selector")
     if raw_selector is not None and raw_selector not in LOD_SELECTORS:
         raise ValueError(
@@ -705,8 +734,8 @@ def validate_lod_group(group: "Node") -> None:
             "(it names the units of the children's coverage_fraction "
             "thresholds)"
         )
-    selector = str(raw_selector) if raw_selector is not None else "coverage"
-    if selector == "screen-area":
+    selector = str(raw_selector) if raw_selector is not None else LEGACY_LOD_SELECTOR
+    if selector == DERIVED_LOD_SELECTOR:
         cap = PARTITION_FINEST_AREA
         cap_rationale = (
             "Screen-area thresholds are literal screen-area fractions; the "
@@ -790,7 +819,11 @@ def validate_authored_coverage_ladder(
     ascending. Derived ladders satisfy all of this by construction; only
     authored (preserved) ladders need the gate.
     """
-    cap = PARTITION_FINEST_AREA if selector == "screen-area" else MAX_COVERAGE_FRACTION
+    cap = (
+        PARTITION_FINEST_AREA
+        if selector == DERIVED_LOD_SELECTOR
+        else MAX_COVERAGE_FRACTION
+    )
     prev = float("-inf")
     for i, value in enumerate(values):
         value = float(value)

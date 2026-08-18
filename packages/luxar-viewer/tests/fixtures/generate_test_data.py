@@ -3559,7 +3559,8 @@ def generate_lod_group_test() -> None:
     Each child writes its own ``coverage_fraction`` attr (viewport-relative,
     coarsest 0.0 → finest 1.0), so the runtime selector has the data it needs
     even though this fixture's explicit thresholds are not the same as what a
-    real-world authoring path (auto-derived ``sqrt(N_i/N_finest)``) would supply.
+    real-world authoring path (auto-derived by screen-occupancy halving, finest
+    0.5 for a whole-object ladder) would supply.
     """
     with asection("Generating LODGroup Test"):
         output = FIXTURES_DIR / "test_lod_group.luxar.zarr"

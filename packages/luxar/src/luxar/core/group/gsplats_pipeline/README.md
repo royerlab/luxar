@@ -257,15 +257,19 @@ Both functions produce a `GSplatData` and hand it to
 gsplats child per substitutive level, written coarsest→finest and named
 `child_<i>`. Substitutive index convention is index 0 = finest,
 `n-1` = coarsest, so the level loop iterates in reverse. Per-level splat
-counts (summed across each level's additive ladder) feed both logging and
-auto-derivation of the per-child `coverage_fraction` thresholds via
-[`lod/group.derive_coverage_fractions`](../lod/group.py) when the caller did
-not supply explicit ones. That chokepoint picks the anchor from the insertion
-point: `coverage_fractions` (finest `1.0`) normally, or
-`partitioned_coverage_fractions` (finest `MAX_COVERAGE_FRACTION` = `4.0`) when
-`is_partition_bound(parent or group)` — i.e. the ladder is going inside a
-hand-built `kind=partition` wrapper, where it switches on one tile rather than
-the whole object.
+counts (summed across each level's additive ladder) feed both logging and the
+per-child `coverage_fraction` thresholds. Those thresholds and the group-level
+`selector` naming their units come as ONE decision from
+[`lod/group.resolve_lod_ladder`](../lod/group.py): an explicit
+`coverage_fractions=[...]` list is used verbatim and stamped
+`LEGACY_LOD_SELECTOR`, otherwise the ladder is auto-derived through
+`derive_coverage_fractions` and stamped `DERIVED_LOD_SELECTOR`. That derivation
+chokepoint picks the anchor from the insertion point: `coverage_fractions`
+(screen-occupancy halving, finest `WHOLE_OBJECT_FINEST_ANCHOR` = `0.5`) normally,
+or `partitioned_coverage_fractions` (the same ladder ×2 in area units, finest
+`PARTITION_FINEST_AREA` = `1.0`) when `is_partition_bound(parent or group)` —
+i.e. the ladder is going inside a hand-built `kind=partition` wrapper, where it
+switches on one tile rather than the whole object.
 
 Attribute routing splits on
 [`COMPOSITING_ATTRS`](../compositing.py): compositing attrs (opacity,

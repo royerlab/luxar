@@ -1162,11 +1162,13 @@ def add_mesh_substitutive_lod_wrapper_impl(
     is simply decimated (its per-vertex colours and scalars are averaged per
     cluster, so both reach every level). What is shared is the SHAPE: a
     ``kind=lod`` group, children coarsest→finest, viewport-relative
-    ``coverage_fraction`` per child from
-    :func:`luxar.core.group.lod.group.derive_coverage_fractions` (so a ladder
-    hand-placed under a ``kind=partition`` wrapper gets the fills-screen per-tile
-    anchor, exactly as the Points/Lines wrappers do), compositing attrs on the
-    group and everything else on the children.
+    ``coverage_fraction`` per child AND the group ``selector`` naming their units
+    from :func:`luxar.core.group.lod.group.resolve_lod_ladder` — which calls
+    ``derive_coverage_fractions`` underneath when no explicit
+    ``coverage_fractions=`` list was given, so a ladder hand-placed under a
+    ``kind=partition`` wrapper gets the fills-screen per-tile anchor, exactly as
+    the Points/Lines wrappers do — compositing attrs on the group and everything
+    else on the children.
 
     **Level targets are vertex counts**, ``V / K**i``, because that is the
     currency the decimator's search is expressed in. Triangle count would be an

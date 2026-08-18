@@ -69,13 +69,18 @@ DEFAULT_LINE_JOIN: Final[str] = "miter"
 #
 # The viewer mirror is `packages/luxar-viewer/src/types/lod-group.ts`; keep the
 # spellings in step with it.
-LOD_SELECTORS: Final[frozenset[str]] = frozenset({"coverage", "screen-area"})
+#
+# The two spellings are defined FIRST and `LOD_SELECTORS` is built from them, so
+# the vocabulary cannot drift from the constants that name its members.
 # The selector every derived (auto-computed) ladder stamps.
 DERIVED_LOD_SELECTOR: Final[str] = "screen-area"
 # The UNITS an explicitly authored `coverage_fractions=[...]` list is in — the
 # legacy diagonal metric, whose values were tuned against it — and the
 # `add_lod_group` default (a hand-built ladder is authored, not derived).
 LEGACY_LOD_SELECTOR: Final[str] = "coverage"
+LOD_SELECTORS: Final[frozenset[str]] = frozenset(
+    {LEGACY_LOD_SELECTOR, DERIVED_LOD_SELECTOR}
+)
 
 # Absorption (kappa) — the volumetric blending mode's per-node coefficient.
 # Multiplicative composition, identity 1.0; no upper bound (physical

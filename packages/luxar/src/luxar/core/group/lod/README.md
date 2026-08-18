@@ -65,9 +65,11 @@ See `docs/specs/GSPLATS_ZARR_FORMAT.md` for the v3.3 node-tree grammar
 
 Each LOD-group child carries a `coverage_fraction` attribute — a **dimensionless,
 viewport-relative** threshold, strictly monotonic increasing in coarsest→finest
-order (coarsest = `0.0`; a WHOLE-OBJECT ladder anchors its finest at `1.0`, while a
-ladder bound to a spatial partition — and any explicitly authored list — may go up
-to `MAX_COVERAGE_FRACTION` = `4.0`). At render time the
+order (coarsest = `0.0`; a derived WHOLE-OBJECT ladder anchors its finest at
+`WHOLE_OBJECT_FINEST_ANCHOR` = `0.5`, a derived ladder bound to a spatial
+partition at `PARTITION_FINEST_AREA` = `1.0`, and an explicitly authored list —
+being in the legacy units, see "The selector rule" below — may go up to
+`MAX_COVERAGE_FRACTION` = `4.0`). Under the legacy `selector="coverage"` the
 viewer multiplies each child's `coverage_fraction` by the current
 viewport's **fitted screen axis** (`min(viewport.width, viewport.height)` in
 pixels, times a fill-factor constant of `0.5` — the extent the camera framing
@@ -83,16 +85,16 @@ varies with aspect.
 
 | Symbol | Purpose |
 |--------|---------|
-| `coverage_fractions(element_counts)` | **Auto-derivation.** child *i* → `sqrt(N_i / N_finest)` where `N_finest` is the finest (last) level's element count; coarsest = `0.0`, finest = `1.0`. A count *ratio*, so non-displayed-dimension multiplicity (e.g. a stacked time axis inflating every level's count equally) cancels out. |
+| `coverage_fractions(element_counts)` | **Auto-derivation, by SCREEN-OCCUPANCY HALVING.** Coarsest = `0.0` (the always-eligible floor), finest = `WHOLE_OBJECT_FINEST_ANCHOR` = `0.5` — full detail while the object occupies at least half the screen — and each level between halves once more: `[0, …, 1/8, 1/4, 1/2]`. Count-**INDEPENDENT**: `element_counts` sets only the ladder's LENGTH (the one per-level check is that the finest count is > 0), so the retired `sqrt(N_i / N_finest)` count-ratio derivation and its multiplicity-cancels-out rationale no longer apply — counts do not enter the thresholds at all. |
 | `validate_lod_group(group)` | Free-function validator for any `Group` with `attrs["kind"] == "lod"`. Raises on no children, out-of-range `default_level`, missing `coverage_fraction`, or non-monotonic thresholds. |
 | `resolve_display_type(node)` | The geometry type a node appears as to the user. For `kind in (lod, partition)` returns the recorded `display_type`; else the node's own `type`. Shared with the Partition kind's validator. |
 | `compute_lod_display_type(children)` | Derive an LOD group's `display_type` from its finest (last) child, recursing through nested specialized groups. |
 | `_assert_strict_ascending(thresholds, source)` | The shared monotonicity guard, applied by both the explicit-`coverage_fractions=` resolver paths and `coverage_fractions()`. |
-| `_apply_monotonicity_guard(thresholds, source)` | Defensive relative (×1.1) bump so near-equal/degenerate levels still separate strictly, before the trailing `_assert_strict_ascending` check. Also caps the finest at the `1.0` anchor, so **derived** output always stays in `[0, 1]`. |
+| `_apply_monotonicity_guard(thresholds, source, cap=1.0)` | Defensive relative (×1.1) *downward* nudge so near-equal/degenerate levels still separate strictly, before the trailing `_assert_strict_ascending` check. Also caps the finest at `cap` — supplied by the CALLER, not fixed at the `1.0` default: `coverage_fractions` passes `cap=WHOLE_OBJECT_FINEST_ANCHOR`, so derived whole-object output stays in `[0, 0.5]`, and `partitioned_coverage_fractions` rescales ×2 *after* the guard has run, landing its finest on `PARTITION_FINEST_AREA` = `1.0`. |
 | `partitioned_coverage_fractions(element_counts)` | **The partition-bound anchor.** `coverage_fractions(...)` scaled by `PARTITION_FINEST_AREA / WHOLE_OBJECT_FINEST_ANCHOR` (×2 in area units), so the finest lands on `PARTITION_FINEST_AREA` = `1.0`: the tile alone fills the screen. Used wherever a spatial partition is part of the switch: the `adaptive` recipe's per-tile lod groups, and the `overview` recipe's coarse-cap/fine-partition pair. A tile's projected diagonal is intrinsically a fraction of the whole object's, so the whole-object anchor would put every tile on its finest level while the object is merely full-frame. **A ONE-part partition is excluded** — its single part covers the whole object, so `coverage_fractions` applies (`build_adaptive` and both tree writers' topology fallbacks special-case it). |
 | `is_partition_bound(node)` | Does `node` (a ladder's **insertion point** — the future lod group's parent) sit inside a `kind=partition`? Walks `parent` links up, so the partition wrapper itself counts and a plain `add_group` in between still counts (the ladder is still inside one tile). The scene-graph mirror of the `under_partition` recursion flag the two gsplat writers thread down a detached tree. |
 | `derive_coverage_fractions(element_counts, insertion_point, *, name=...)` | **The scene-side anchor chokepoint.** `partitioned_coverage_fractions` when `is_partition_bound(insertion_point)` (with one `aprint` line naming the node and the chosen finest threshold, so the switch is visible), else `coverage_fractions`. All **four** scene adders use it in their auto-derive branch: `add_points` / `add_lines` / `add_mesh` `substitutive_lod=` and `add_gsplats_from_data` `lod_group=` — which is also where a per-part `add_gsplats_from_file` lands, since an ordinary ladder store is matrix-shaped. (Mesh matters here specifically because `add_mesh` refuses `partition=` together with `substitutive_lod=`, so a hand-built `kind=partition` wrapper is the *only* way to get per-tile mesh ladders.) (`graft_gsplat_node`, for a *non*-matrix-shaped subtree, ORs `is_partition_bound` into its own binding flag and calls `partitioned_coverage_fractions` directly, so that site is silent.) An explicit `coverage_fractions=[...]` still wins over all of them. Assumes the partition is a real tiling (>= 2 parts) — see `partitioned_coverage_fractions`; this is the ONE producer that cannot verify that (part 0's ladder is derived before part 1 is added), so the compiler's finalize pass (`io/_compiler/finalize/lod_backfill.py::warn_one_part_partition_anchors`) warns about the result instead. |
-| `resolve_lod_ladder(explicit, element_counts, insertion_point, *, name, length_error)` | **The one place the explicit-vs-derived rule lives.** Returns `(coverage_fractions, selector)` — thresholds *and* the `selector` naming their units, because those are one decision, not two. Explicit list → used verbatim with `LEGACY_LOD_SELECTOR`; otherwise `derive_coverage_fractions(...)` with `DERIVED_LOD_SELECTOR`. All **four** scene adders call it (`add_points` / `add_lines` / `add_mesh` `substitutive_lod=`, `add_gsplats_from_data` `lod_group=`) and none of them names a selector itself — an AST guard in `core/tests/group/lod/test_lod_selector_contract.py` keeps it that way. `length_error(n_explicit, n_levels)` is a callback purely so each geometry keeps its own user-facing length-mismatch wording. |
+| `resolve_lod_ladder(explicit, element_counts, insertion_point, *, name, length_error)` | **The explicit-vs-derived rule, decided once for the four scene adders.** Returns `(coverage_fractions, selector)` — thresholds *and* the `selector` naming their units, because those are one decision, not two. Explicit list → used verbatim with `LEGACY_LOD_SELECTOR`; otherwise `derive_coverage_fractions(...)` with `DERIVED_LOD_SELECTOR`. All **four** scene adders call it (`add_points` / `add_lines` / `add_mesh` `substitutive_lod=`, `add_gsplats_from_data` `lod_group=`) and none of them names a selector itself — an AST guard in `core/tests/group/lod/test_lod_selector_contract.py` keeps it that way. It is NOT the only producer of the pairing: the detached-tree paths go through `gsplats.tree.gate_authored_selector` instead — see "The selector rule" below. `length_error(n_explicit, n_levels)` is a callback purely so each geometry keeps its own user-facing length-mismatch wording. |
 | `DERIVED_LOD_SELECTOR` / `LEGACY_LOD_SELECTOR` | `"screen-area"` / `"coverage"` (in `typing_utils/constants.py`, and together they ARE `LOD_SELECTORS`). The units a group's thresholds are in — see the rule below. `LEGACY_LOD_SELECTOR` is also the `add_lod_group` default, since a hand-built ladder is authored rather than derived. |
 | `MAX_COVERAGE_FRACTION` | `4.0` — the ceiling on a **legacy** (`selector="coverage"`) ladder, so in practice on an explicitly authored `coverage_fractions=[...]` list and on a hand-written per-child `coverage_fraction=`; a *derived* screen-area ladder is capped at `PARTITION_FINEST_AREA` = `1.0` instead, which is the split `validate_lod_group` makes. It is `SCREEN_FILL_DIAGONAL_RATIO / FILL_FACTOR`: approximately the coverage metric a *screen-filling* object produces (exact only near aspect ratio √3 ≈ 1.73 — see the `FILL_FACTOR` doc in `luxar-viewer/src/scene/lod-group-registry.ts`), i.e. "a level may be required to fill the screen, at most" — the same numeric value `1.0` meant before the viewer's anchor moved from screen-filling to half the fitted screen axis, though no longer an exact identity at every aspect ratio the way it was under that older anchor. |
 
@@ -113,11 +115,28 @@ together:
   finest at the whole-object anchor, or the fills-screen anchor when the
   insertion point is partition-bound).
 
-`resolve_lod_ladder` is the sole implementation; the four adders delegate to it
-rather than restating it, and `core/tests/group/lod/test_lod_selector_contract.py`
-pins both halves plus the consistency invariant (a stamped selector must agree
-with its own stamped thresholds — mislabelling raises nothing, it just puts the
-viewer's metric on the wrong scale).
+`resolve_lod_ladder` is the one implementation the four `substitutive_lod=` /
+`lod_group=` **scene adders** share — they delegate to it rather than restating
+it, and `core/tests/group/lod/test_lod_selector_contract.py` pins both halves plus
+the consistency invariant (a stamped selector must agree with its own stamped
+thresholds — mislabelling raises nothing, it just puts the viewer's metric on the
+wrong scale).
+
+It is **not** the only place the pairing is decided, and the others are
+deliberately separate rather than missed. A detached `.gsplats.zarr` tree has no
+`explicit` argument to branch on; the question there is *what does a stored tree
+already claim about its own thresholds*, answered by
+[`luxar.gsplats.tree.gate_authored_selector`](../../../gsplats/tree.py) — fully
+authored + no selector ⇒ legacy, partially or not authored ⇒ re-derive and stamp
+screen-area. That gate is shared by the two detached-tree serializers
+(`io/_compiler/gsplat_tree.py::write_gsplat_node` and
+`gsplats_pipeline/from_io.py::graft_gsplat_node`), and
+`gsplats.tree.tree_from_substitutive_levels` keys its own selector default on
+whether a `coverage` callable was supplied. `graft_gsplat_node` is the one scene
+door on that side of the split: `add_gsplats_from_file` of a *non*-matrix-shaped
+subtree builds its `kind=lod` group there, calling `coverage_fractions` /
+`partitioned_coverage_fractions` directly and taking its selector from the gate.
+The AST guard in the contract suite exempts it by name for exactly that reason.
 
 **No tunable anchor.** There is no method selector or per-dataset knob (the
 former `extent`/`count` methods and `base_pixel_size`/`extent_percentile`/
@@ -278,10 +297,12 @@ so the two can't drift). `add_lines_substitutive_lod_wrapper_impl`
 3. **Assembles** a `kind=lod` group: coarse gsplat children (coarsest-first) +
    the original Lines node as the finest child; `display_type="lines"`.
    Thresholds are auto-derived through `group.derive_coverage_fractions`
-   (`sqrt(N_i/N_finest)` on the whole-object anchor, or that × 4 when the
-   insertion point is inside a `kind=partition` — see the table above), using
-   the full lifted **bead** count, not vertex count, so the ladder stays
-   on one scale — no method selector or per-dataset anchor knob; pass explicit
+   (screen-occupancy halving to the whole-object anchor `0.5`, or that × 2 in
+   area units — finest `1.0` — when the insertion point is inside a
+   `kind=partition`; see the table above). The per-level counts handed to it are
+   the full lifted **bead** counts, not vertex counts, so the two agree on one
+   currency — though the derivation reads only their NUMBER, not their values —
+   and there is no method selector or per-dataset anchor knob; pass explicit
    `coverage_fractions=[...]` in the `substitutive_lod=` spec to override.
 
 Composes with `additive_lod` (laddered per level by default, as for Points);
@@ -318,11 +339,13 @@ resolvers:
   `explicit_coverage_fractions` is non-None only when the user passed
   `dict(coverage_fractions=[...])` (strict-ascending, in
   `[0, MAX_COVERAGE_FRACTION]` = `[0, 4]`) —
-  otherwise downstream code auto-derives per-level thresholds from splat
-  counts via `group.derive_coverage_fractions` (`sqrt(N_i/N_finest)`, re-anchored
-  at fills-screen when the insertion point is inside a `kind=partition`). There is
-  no method selector or per-dataset anchor knob: for a whole-object ladder the
-  viewer anchors the finest level at half of the live fitted screen axis — any
+  otherwise downstream code auto-derives per-level thresholds via
+  `group.derive_coverage_fractions` (screen-occupancy halving to the whole-object
+  anchor `0.5`, re-anchored at fills-screen `1.0` when the insertion point is
+  inside a `kind=partition`; the per-level splat counts set only the ladder's
+  length). There is
+  no method selector or per-dataset anchor knob: a whole-object ladder shows its
+  finest level while the object occupies at least half the SCREEN AREA — any
   normal full-frame view. `None` auto-keeps a
   multi-substitutive pyramid (routes to the `kind=lod` builder, no work
   discarded); `False` collapses to the finest level (index 0); `True`
