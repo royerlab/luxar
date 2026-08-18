@@ -1798,12 +1798,16 @@ rebuild-viewer:  ## Clean rebuild of the viewer BUNDLE (WASM only if stale; auto
 	echo "✅ Viewer rebuild complete!"
 
 # WASM/Rust setup and build
-# NOTE: every comment inside the recipe below must stay at MAKE level (column 0,
-# like this one). The recipe is one backslash-continued logical line, and make
-# hands that to the shell collapsed — so a `#` anywhere inside it comments out
-# everything that follows, to the end of the recipe. That silently swallowed the
-# whole wasm-pack check (and the closing banner) while `make install-rust` still
-# exited 0.
+# NOTE: keep every comment about this recipe at MAKE level (column 0, like this
+# one) rather than inside it. The recipe is one backslash-continued logical
+# line, so an in-recipe `#` comment has to carry its own trailing `\` on every
+# line. Drop one while editing and the logical line SPLITS: the tail becomes a
+# separate recipe line in a fresh shell with none of the accumulated variables,
+# and without the leading `@` it echoes itself as it goes. Measured on the
+# pre-hoist version by deleting a single trailing backslash — `WASM_PACK_PIN`
+# arrived empty, so the pin check compared against nothing and the recipe died
+# on `Installed wasm-pack , but PATH answers with 0.15.0`. Nothing warns you.
+# At column 0 the hazard does not exist.
 #
 # On the `|| true` in the wasm-pack probe: it is load-bearing under
 # .SHELLFLAGS' `-e`. With no wasm-pack on PATH the command substitution exits
