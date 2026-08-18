@@ -1755,8 +1755,8 @@ rebuild-viewer:  ## Clean rebuild of the viewer BUNDLE (WASM only if stale; auto
 	@#     make clean-wasm rebuild-viewer
 	@echo "🧹 Cleaning viewer build artifacts (JS/TS; WASM kept unless stale)..."
 	@rm -rf packages/luxar-viewer/dist/
-	@rm -rf packages/luxar-viewer/.vite/
-	@rm -f packages/luxar-viewer/*.tsbuildinfo
+	@rm -rf packages/luxar-viewer/node_modules/.vite/
+	@rm -f packages/luxar-viewer/node_modules/.cache/tsc.tsbuildinfo
 	@rm -f packages/luxar-viewer/vite.config.*.timestamp-*
 	@# Source nvm and check Node.js version
 	@export NVM_DIR="$$HOME/.nvm"; \

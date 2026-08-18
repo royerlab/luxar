@@ -19,21 +19,13 @@ import { PointMaterial } from '../materials/point/material-glsl';
 import { LineMaterial } from '../materials/line/material-glsl';
 import { GSplatMaterial } from '../materials/gsplat/material-glsl';
 import { MeshMaterial } from '../materials/mesh/material-glsl';
-import { PointTSLMaterial } from '../materials/point/material-tsl';
-import { LineTSLMaterial } from '../materials/line/material-tsl';
-import { GSplatTSLMaterial } from '../materials/gsplat/material-tsl';
-import { MeshTSLMaterial } from '../materials/mesh/material-tsl';
 import { PointPickingMaterial } from '../picking/point/material';
 import { LinePickingMaterial } from '../picking/line/material';
 import { GSplatPickingMaterial } from '../picking/gsplat/material';
-import { PointPickingTSLMaterial } from '../picking/point/material-tsl';
-import { LinePickingTSLMaterial } from '../picking/line/material-tsl';
-import { GSplatPickingTSLMaterial } from '../picking/gsplat/material-tsl';
 import { MeshPickingMaterial } from '../picking/mesh/material';
-import { MeshPickingTSLMaterial } from '../picking/mesh/material-tsl';
 import { MegaShaderMaterial } from '../post-processing/mega/material';
-import { MegaShaderTSLMaterial } from '../post-processing/mega/material-tsl';
 import type { RendererCapabilities } from '../renderer-capabilities';
+import { requireTslMaterials } from '../tsl/slot';
 
 /**
  * Supported blending modes for materials.
@@ -191,27 +183,35 @@ export function resolveMaterialBackend(caps: RendererCapabilities | null): Mater
 /**
  * Constructor table for the visual material pair of each geometry
  * type. `MaterialManager.get{Point,Line,GSplat,Mesh}Material` looks up
- * `VISUAL_FACTORIES[kind][backend]` to pick the class to instantiate.
+ * `VISUAL_FACTORIES[kind][backend]()` to pick the class to instantiate.
+ *
+ * Every cell is a **thunk** rather than the class itself. The `glsl` ones do
+ * not need to be, but keeping both backends the same shape is what lets the
+ * call sites stay a uniform `[backend]()` lookup — and the `tsl` ones must be,
+ * because their classes live behind the lazy `three/webgpu` boundary
+ * (`rendering/tsl/load.ts`) and do not exist until it has been awaited. A thunk
+ * that resolves late is also why the laziness is visible at the point of use
+ * instead of hiding in a getter that throws when a debugger inspects it.
  */
 export const VISUAL_FACTORIES = {
-  point: { glsl: PointMaterial, tsl: PointTSLMaterial },
-  line: { glsl: LineMaterial, tsl: LineTSLMaterial },
-  gsplat: { glsl: GSplatMaterial, tsl: GSplatTSLMaterial },
-  mesh: { glsl: MeshMaterial, tsl: MeshTSLMaterial },
+  point: { glsl: () => PointMaterial, tsl: () => requireTslMaterials().materials.point },
+  line: { glsl: () => LineMaterial, tsl: () => requireTslMaterials().materials.line },
+  gsplat: { glsl: () => GSplatMaterial, tsl: () => requireTslMaterials().materials.gsplat },
+  mesh: { glsl: () => MeshMaterial, tsl: () => requireTslMaterials().materials.mesh },
 } as const;
 
 /**
  * Constructor table for the picking material pair of each geometry
  * type. Mirror of {@link VISUAL_FACTORIES} for the picking pipeline;
  * the `create*PickingMaterial` methods look up
- * `PICKING_FACTORIES[kind][backend]` and instantiate it directly
+ * `PICKING_FACTORIES[kind][backend]()` and instantiate it directly
  * (picking materials are not cached).
  */
 export const PICKING_FACTORIES = {
-  point: { glsl: PointPickingMaterial, tsl: PointPickingTSLMaterial },
-  line: { glsl: LinePickingMaterial, tsl: LinePickingTSLMaterial },
-  gsplat: { glsl: GSplatPickingMaterial, tsl: GSplatPickingTSLMaterial },
-  mesh: { glsl: MeshPickingMaterial, tsl: MeshPickingTSLMaterial },
+  point: { glsl: () => PointPickingMaterial, tsl: () => requireTslMaterials().picking.point },
+  line: { glsl: () => LinePickingMaterial, tsl: () => requireTslMaterials().picking.line },
+  gsplat: { glsl: () => GSplatPickingMaterial, tsl: () => requireTslMaterials().picking.gsplat },
+  mesh: { glsl: () => MeshPickingMaterial, tsl: () => requireTslMaterials().picking.mesh },
 } as const;
 
 /**
@@ -220,8 +220,8 @@ export const PICKING_FACTORIES = {
  * indirection (there is only one mega-shader).
  */
 export const MEGA_SHADER_FACTORIES = {
-  glsl: MegaShaderMaterial,
-  tsl: MegaShaderTSLMaterial,
+  glsl: () => MegaShaderMaterial,
+  tsl: () => requireTslMaterials().mega,
 } as const;
 
 // (The historical `lineCacheKey` + bucketing helpers are gone: line

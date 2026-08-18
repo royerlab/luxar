@@ -26,9 +26,9 @@ import {
   GLSL_LINE_JOINT_CODE,
   GLSL_LINE_JOIN,
 } from '../../materials/_shared/glsl-lib';
-import { linePickWebGPUFactory, buildLinePickTSLNodesFromUniforms } from './pick.tsl';
 import { lineJoinStyleFromUniform } from '../../../types/line-join';
 import { FALLOFF_FLOOR, FALLOFF_K } from '../../materials/_shared/falloff';
+import { requireTslMaterials } from '../../tsl/slot';
 
 /**
  * Picking vertex shader for lines.
@@ -396,6 +396,8 @@ export const LINE_PICK_SOURCE: ShaderSource = {
     // The join style likewise (see LINE_SOURCE): GLSL carries it as a runtime
     // uniform, TSL as a graph variant, so the record must select the variant.
     const join = lineJoinStyleFromUniform(u.uLineJoin?.value as number | undefined);
+    const { linePickWebGPUFactory, buildLinePickTSLNodesFromUniforms } =
+      requireTslMaterials().factories.pickLine;
     return linePickWebGPUFactory(buildLinePickTSLNodesFromUniforms(u), { isOrtho, join });
   },
 };

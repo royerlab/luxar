@@ -45,7 +45,7 @@
  *     directly without them since we already hand NDC coords.
  */
 import type { ShaderSource } from '../../materials/_shared/shader-source';
-import { megaWebGPUFactory } from './shader.tsl';
+import { requireTslMaterials } from '../../tsl/slot';
 
 export const MEGA_VERTEX_SHADER = /* glsl */ `
   out vec2 vUv;
@@ -402,8 +402,10 @@ export const MEGA_SOURCE: ShaderSource = {
   // `LUXAR_TONE_MAPPING_MODE` is 6. Consumers that need a different
   // configuration (bloom, lens distortion, vignette) call
   // `megaWebGPUFactory(uniforms, config)` directly.
-  webgpu: (uniforms: Record<string, unknown>) =>
-    megaWebGPUFactory(uniforms as Record<string, import('three').IUniform>, {
+  webgpu: (uniforms: Record<string, unknown>) => {
+    const { megaWebGPUFactory } = requireTslMaterials().factories.mega;
+    return megaWebGPUFactory(uniforms as Record<string, import('three').IUniform>, {
       toneMappingMode: 6,
-    }),
+    });
+  },
 };

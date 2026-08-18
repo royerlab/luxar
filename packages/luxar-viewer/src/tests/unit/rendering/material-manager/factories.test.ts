@@ -11,14 +11,28 @@
  * is gone (it died with the lines texture-storage migration).
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import {
   resolveMaterialBackend,
   VISUAL_FACTORIES,
   PICKING_FACTORIES,
   MEGA_SHADER_FACTORIES,
 } from '../../../../rendering/material-manager/factories';
+import {
+  loadTslMaterials,
+  areTslMaterialsLoaded,
+  resetTslMaterialsForTests,
+} from '../../../../rendering/tsl/load';
 import type { RendererCapabilities } from '../../../../rendering/renderer-capabilities';
+
+// Every cell of these tables is a THUNK, not a constructor: the `tsl` ones
+// resolve through the lazy `three/webgpu` boundary and do not exist until it
+// has been awaited (issue #1679). So the assertions below must CALL the thunk —
+// asserting `typeof cell === 'function'` would pass on the thunk itself and
+// prove nothing about the class behind it.
+beforeAll(async () => {
+  await loadTslMaterials();
+});
 
 // Minimal RendererCapabilities for the resolveMaterialBackend tests —
 // only `apiSurface` is read.
@@ -40,12 +54,18 @@ describe('resolveMaterialBackend', () => {
 });
 
 describe('VISUAL_FACTORIES / PICKING_FACTORIES / MEGA_SHADER_FACTORIES shape', () => {
-  it('VISUAL_FACTORIES has one entry per geometry kind, each with both backends', () => {
+  it('VISUAL_FACTORIES has one entry per geometry kind, each resolving to a distinct class', () => {
     expect(Object.keys(VISUAL_FACTORIES).sort()).toEqual(['gsplat', 'line', 'mesh', 'point']);
     for (const kind of ['point', 'line', 'gsplat', 'mesh'] as const) {
-      expect(typeof VISUAL_FACTORIES[kind].glsl).toBe('function');
-      expect(typeof VISUAL_FACTORIES[kind].tsl).toBe('function');
-      expect(VISUAL_FACTORIES[kind].glsl).not.toBe(VISUAL_FACTORIES[kind].tsl);
+      const glsl = VISUAL_FACTORIES[kind].glsl();
+      const tsl = VISUAL_FACTORIES[kind].tsl();
+      expect(typeof glsl).toBe('function');
+      expect(typeof tsl).toBe('function');
+      expect(glsl).not.toBe(tsl);
+      // Name the class, so a thunk that silently resolved to the WRONG backend
+      // (the failure mode a `!==` check alone cannot see) fails here.
+      expect(glsl.name).toMatch(/Material$/);
+      expect(tsl.name).toMatch(/TSLMaterial$/);
     }
   });
 
@@ -56,9 +76,12 @@ describe('VISUAL_FACTORIES / PICKING_FACTORIES / MEGA_SHADER_FACTORIES shape', (
     // rather than reusing a sibling's — not why it could go without one.
     expect(Object.keys(PICKING_FACTORIES).sort()).toEqual(['gsplat', 'line', 'mesh', 'point']);
     for (const kind of ['point', 'line', 'gsplat', 'mesh'] as const) {
-      expect(typeof PICKING_FACTORIES[kind].glsl).toBe('function');
-      expect(typeof PICKING_FACTORIES[kind].tsl).toBe('function');
-      expect(PICKING_FACTORIES[kind].glsl).not.toBe(PICKING_FACTORIES[kind].tsl);
+      const glsl = PICKING_FACTORIES[kind].glsl();
+      const tsl = PICKING_FACTORIES[kind].tsl();
+      expect(typeof glsl).toBe('function');
+      expect(typeof tsl).toBe('function');
+      expect(glsl).not.toBe(tsl);
+      expect(tsl.name).toMatch(/PickingTSLMaterial$/);
     }
   });
 
@@ -71,7 +94,39 @@ describe('VISUAL_FACTORIES / PICKING_FACTORIES / MEGA_SHADER_FACTORIES shape', (
 
   it('MEGA_SHADER_FACTORIES exposes a flat {glsl, tsl} pair (no per-geometry split)', () => {
     expect(Object.keys(MEGA_SHADER_FACTORIES).sort()).toEqual(['glsl', 'tsl']);
-    expect(typeof MEGA_SHADER_FACTORIES.glsl).toBe('function');
-    expect(typeof MEGA_SHADER_FACTORIES.tsl).toBe('function');
+    expect(typeof MEGA_SHADER_FACTORIES.glsl()).toBe('function');
+    expect(typeof MEGA_SHADER_FACTORIES.tsl()).toBe('function');
+    expect(MEGA_SHADER_FACTORIES.glsl()).not.toBe(MEGA_SHADER_FACTORIES.tsl());
+  });
+});
+
+describe('lazy TSL boundary', () => {
+  // Restore the loaded state for any test file that shares this worker.
+  afterAll(async () => {
+    await loadTslMaterials();
+  });
+
+  it('a tsl thunk throws a directive error before the registry is loaded', () => {
+    resetTslMaterialsForTests();
+    expect(areTslMaterialsLoaded()).toBe(false);
+
+    // The contract that matters: this must THROW, not quietly hand back the
+    // GLSL class. A silent fallback would put a ShaderMaterial under
+    // WebGPURenderer, which renders blank quads rather than failing — a
+    // rendering bug wearing the costume of a wiring bug.
+    expect(() => VISUAL_FACTORIES.point.tsl()).toThrow(/has not been.*loaded/s);
+    expect(() => PICKING_FACTORIES.mesh.tsl()).toThrow(/loadTslMaterials/);
+    expect(() => MEGA_SHADER_FACTORIES.tsl()).toThrow(/loadTslMaterials/);
+
+    // The glsl side is unaffected — the WebGL path never touches the boundary.
+    expect(typeof VISUAL_FACTORIES.point.glsl()).toBe('function');
+  });
+
+  it('loadTslMaterials is idempotent and returns the same registry object', async () => {
+    resetTslMaterialsForTests();
+    const [a, b] = await Promise.all([loadTslMaterials(), loadTslMaterials()]);
+    expect(a).toBe(b);
+    expect(await loadTslMaterials()).toBe(a);
+    expect(areTslMaterialsLoaded()).toBe(true);
   });
 });

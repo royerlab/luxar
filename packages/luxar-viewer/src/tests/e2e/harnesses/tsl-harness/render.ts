@@ -23,6 +23,7 @@ import { buildDefaultCamera } from './shared';
 // only dereferenced inside the function bodies (long after the module
 // graph has evaluated), so the cycle is benign under ESM live bindings.
 import { SHADER_REGISTRY } from './index';
+import { loadTslMaterials } from '../../../../rendering/tsl/load';
 
 /** Edge length (px) of the square offscreen render target the parity harness draws into. */
 export const HARNESS_SIZE = 64;
@@ -141,6 +142,13 @@ export async function renderTSL(
   if (!entry.source.webgpu) {
     throw new Error(`Shader ${shaderName} has no TSL factory yet`);
   }
+
+  // The `ShaderSource.webgpu` closures pull their TSL factory from the lazy
+  // registry (`rendering/tsl/load.ts`) rather than importing it, so the WebGL
+  // bundle stays free of `three/webgpu` (issue #1679). The harness is a WebGPU
+  // consumer by definition, so it loads the registry up front — one await here
+  // covers every shader the harness can be asked to build.
+  await loadTslMaterials();
 
   const uniforms = entry.buildUniforms();
   const material = entry.buildTSLMaterial

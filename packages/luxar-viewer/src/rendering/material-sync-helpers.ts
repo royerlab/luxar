@@ -10,21 +10,103 @@
  */
 
 import * as THREE from 'three';
-import { PointMaterial } from './materials/point/material-glsl';
-import { PointTSLMaterial } from './materials/point/material-tsl';
-import { PointPickingMaterial } from './picking/point/material';
-import { PointPickingTSLMaterial } from './picking/point/material-tsl';
-import { LineMaterial } from './materials/line/material-glsl';
-import { LineTSLMaterial } from './materials/line/material-tsl';
-import { LinePickingMaterial } from './picking/line/material';
-import { LinePickingTSLMaterial } from './picking/line/material-tsl';
-import { GSplatMaterial } from './materials/gsplat/material-glsl';
-import { GSplatTSLMaterial } from './materials/gsplat/material-tsl';
-import { GSplatPickingMaterial } from './picking/gsplat/material';
-import { GSplatPickingTSLMaterial } from './picking/gsplat/material-tsl';
 import { getSplatTexture } from './gsplat-geometry';
 import { getPointTexture } from './point-geometry';
 import { getLineTexture } from './line-geometry';
+
+/*
+ * Family detection is STRUCTURAL, not `instanceof`.
+ *
+ * These helpers sit on the hot commit path (`commit-points-geometry.ts` and
+ * siblings) and must stay synchronous, so they cannot await the lazy
+ * `three/webgpu` boundary — and an `instanceof PointTSLMaterial` check would
+ * have to import that class as a value, dragging the whole TSL cone into the
+ * eager bundle for every WebGL user (issue #1679). Probing for the methods we
+ * are about to call is both cheaper and a tighter contract: it asserts exactly
+ * what this module needs and nothing about the class hierarchy. Same trick, and
+ * the same reasoning, as `renderer-capabilities.ts::isWebGLRenderer`.
+ *
+ * The probe method is unique per geometry family — `updatePointTexture`,
+ * `updateLineTexture`, `updateSplatTexture` — so a family can never be mistaken
+ * for another, and `updateHasElementAlpha` separates a visual material from its
+ * picking twin (only the visual one carries the volumetric alpha flag).
+ */
+
+/** Visual point material surface touched after a geometry commit. */
+interface PointSyncTarget {
+  updateRadiusScale(scale: number): void;
+  updatePointTexture(texture: THREE.DataTexture): void;
+  updateHasElementAlpha(hasElementAlpha: boolean): void;
+}
+
+/** Point picking material surface: the same minus the alpha flag. */
+type PointPickSyncTarget = Omit<PointSyncTarget, 'updateHasElementAlpha'>;
+
+/** Visual line material surface touched after a geometry commit. */
+interface LineSyncTarget {
+  updateLineTexture(texture: THREE.DataTexture): void;
+  updateHasElementAlpha(hasElementAlpha: boolean): void;
+}
+
+/** Line picking material surface. */
+type LinePickSyncTarget = Omit<LineSyncTarget, 'updateHasElementAlpha'>;
+
+/** Visual gsplat material surface touched after a geometry commit. */
+interface GSplatSyncTarget {
+  updateSplatTexture(texture: THREE.DataTexture): void;
+  updateHasElementAlpha(hasElementAlpha: boolean): void;
+}
+
+/** GSplat picking material surface. */
+type GSplatPickSyncTarget = Omit<GSplatSyncTarget, 'updateHasElementAlpha'>;
+
+/** True when `m` exposes `name` as a callable. */
+function hasMethod<K extends string>(
+  m: THREE.Material | null | undefined,
+  name: K
+): m is THREE.Material & Record<K, (...args: never[]) => unknown> {
+  return typeof (m as unknown as Record<string, unknown> | null | undefined)?.[name] === 'function';
+}
+
+function isPointSyncTarget(
+  m: THREE.Material | null | undefined
+): m is THREE.Material & PointSyncTarget {
+  return (
+    hasMethod(m, 'updatePointTexture') &&
+    hasMethod(m, 'updateRadiusScale') &&
+    hasMethod(m, 'updateHasElementAlpha')
+  );
+}
+
+function isPointPickSyncTarget(
+  m: THREE.Material | null | undefined
+): m is THREE.Material & PointPickSyncTarget {
+  return hasMethod(m, 'updatePointTexture') && hasMethod(m, 'updateRadiusScale');
+}
+
+function isLineSyncTarget(
+  m: THREE.Material | null | undefined
+): m is THREE.Material & LineSyncTarget {
+  return hasMethod(m, 'updateLineTexture') && hasMethod(m, 'updateHasElementAlpha');
+}
+
+function isLinePickSyncTarget(
+  m: THREE.Material | null | undefined
+): m is THREE.Material & LinePickSyncTarget {
+  return hasMethod(m, 'updateLineTexture');
+}
+
+function isGSplatSyncTarget(
+  m: THREE.Material | null | undefined
+): m is THREE.Material & GSplatSyncTarget {
+  return hasMethod(m, 'updateSplatTexture') && hasMethod(m, 'updateHasElementAlpha');
+}
+
+function isGSplatPickSyncTarget(
+  m: THREE.Material | null | undefined
+): m is THREE.Material & GSplatPickSyncTarget {
+  return hasMethod(m, 'updateSplatTexture');
+}
 
 /**
  * Synchronize a Points material's geometry-derived state after a
@@ -54,7 +136,7 @@ export function syncPointMaterialWithGeometry(points: THREE.Mesh): void {
   const pointTexture = getPointTexture(geometry);
 
   const renderMat = points.material as THREE.Material | null;
-  if (renderMat instanceof PointMaterial || renderMat instanceof PointTSLMaterial) {
+  if (isPointSyncTarget(renderMat)) {
     renderMat.updateRadiusScale(radiusScale);
     if (pointTexture) renderMat.updatePointTexture(pointTexture);
     // RGBA-alpha presence: gates the volumetric w(a) optical-depth map
@@ -72,7 +154,7 @@ export function syncPointMaterialWithGeometry(points: THREE.Mesh): void {
   const pickNode = points.userData?.pickNode as THREE.Object3D | undefined;
   if (pickNode) {
     const pickMat = (pickNode as THREE.Mesh | THREE.Points).material as THREE.Material | undefined;
-    if (pickMat instanceof PointPickingMaterial || pickMat instanceof PointPickingTSLMaterial) {
+    if (isPointPickSyncTarget(pickMat)) {
       pickMat.updateRadiusScale(radiusScale);
       if (pointTexture) pickMat.updatePointTexture(pointTexture);
     }
@@ -116,7 +198,7 @@ export function syncLineMaterialWithGeometry(mesh: THREE.Mesh): void {
   if (!lineTexture) return;
 
   const renderMat = mesh.material as THREE.Material | null;
-  if (renderMat instanceof LineMaterial || renderMat instanceof LineTSLMaterial) {
+  if (isLineSyncTarget(renderMat)) {
     renderMat.updateLineTexture(lineTexture);
     // RGBA-alpha presence: gates the volumetric w(a) optical-depth map
     // (uHasElementAlpha). Stamped by every texel-write path
@@ -129,7 +211,7 @@ export function syncLineMaterialWithGeometry(mesh: THREE.Mesh): void {
   const pickNode = mesh.userData?.pickNode as THREE.Object3D | undefined;
   if (pickNode) {
     const pickMat = (pickNode as THREE.Mesh).material as THREE.Material | undefined;
-    if (pickMat instanceof LinePickingMaterial || pickMat instanceof LinePickingTSLMaterial) {
+    if (isLinePickSyncTarget(pickMat)) {
       pickMat.updateLineTexture(lineTexture);
     }
   }
@@ -158,7 +240,7 @@ export function syncGSplatMaterialWithGeometry(mesh: THREE.Mesh): void {
   if (!splatTexture) return;
 
   const renderMat = mesh.material as THREE.Material | null;
-  if (renderMat instanceof GSplatMaterial || renderMat instanceof GSplatTSLMaterial) {
+  if (isGSplatSyncTarget(renderMat)) {
     renderMat.updateSplatTexture(splatTexture);
     // RGBA-alpha presence: gates the volumetric w(a) optical-depth map
     // (uHasElementAlpha). Stamped by every texel-write path
@@ -172,7 +254,7 @@ export function syncGSplatMaterialWithGeometry(mesh: THREE.Mesh): void {
   const pickNode = mesh.userData?.pickNode as THREE.Object3D | undefined;
   if (pickNode) {
     const pickMat = (pickNode as THREE.Mesh).material as THREE.Material | undefined;
-    if (pickMat instanceof GSplatPickingMaterial || pickMat instanceof GSplatPickingTSLMaterial) {
+    if (isGSplatPickSyncTarget(pickMat)) {
       pickMat.updateSplatTexture(splatTexture);
     }
   }
