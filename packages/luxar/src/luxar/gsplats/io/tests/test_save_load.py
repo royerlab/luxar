@@ -175,6 +175,174 @@ class TestSaveGsplats:
             root = zarr.open_group(str(path), mode="r")
             assert isinstance(root.attrs["content_hash"], str)
 
+    def test_stamped_content_hash_changes_with_chunk_layout(self) -> None:
+        # #1718: the metadata-only stamp must fold in CHUNK layout, not just
+        # (name, shape, dtype). The viewer cache holds encoded chunks keyed by
+        # chunk index, so a re-chunked store with identical values is not
+        # interchangeable with its input and must not share its hash.
+        from luxar._zarr_compat import create_array, memory_group
+        from luxar.gsplats.io.save_gsplats import _stamp_content_hash
+
+        data = np.arange(36, dtype=np.float32).reshape(12, 3)
+
+        def stamped(chunks: tuple[int, int]) -> str:
+            root = memory_group()
+            root.attrs["type"] = "gsplats"
+            create_array(root, "centers", data=data, chunks=chunks, compressor=None)
+            return _stamp_content_hash(root)
+
+        assert stamped((12, 3)) != stamped((3, 3))
+
+    # Both formats: the stamp derives codec ids format-agnostically (format 3
+    # lists them under `codecs`, format 2 under `filters` + `compressor`), and the
+    # hole was equally real at either vintage. Luxar writes format 2 on demand
+    # (`LUXAR_ZARR_FORMAT=2`) and re-stamps legacy v2 stores in place.
+    @pytest.mark.parametrize("zarr_format", [2, 3])
+    def test_stamped_content_hash_changes_with_codec_ids(
+        self, zarr_format: int
+    ) -> None:
+        # #1718: the stamp folds in the array's codec IDS too — raw vs blosc vs
+        # gzip encode the bytes a viewer caches at a chunk key entirely
+        # differently, and nothing else here differs (same values, shape, chunks,
+        # dtype, attrs). Ids only, so a compression-LEVEL tweak stays invisible;
+        # that trade-off is pinned on the compiler side.
+        import numcodecs
+
+        from luxar._zarr_compat import create_array
+        from luxar.gsplats.io.save_gsplats import _stamp_content_hash
+
+        data = np.arange(36, dtype=np.float32).reshape(12, 3)
+
+        def stamped(compressor: object) -> str:
+            root = zarr.create_group(
+                store=zarr.storage.MemoryStore(), zarr_format=zarr_format
+            )
+            root.attrs["type"] = "gsplats"
+            create_array(
+                root, "centers", data=data, chunks=(3, 3), compressor=compressor
+            )
+            return _stamp_content_hash(root)
+
+        raw = stamped(None)
+        blosc = stamped(numcodecs.Blosc(cname="zstd", clevel=9))
+        gzip = stamped(numcodecs.GZip(level=5))
+        assert len({raw, blosc, gzip}) == 3, (raw, blosc, gzip)
+
+    def test_stamped_content_hash_changes_with_per_array_attrs(self) -> None:
+        # #1718: an array's OWN attrs are where Luxar keeps the DEQUANTIZATION
+        # parameters, so they decide what decoded value the stored ints stand for.
+        # A changed `encoding.min` shifts every decoded amplitude while values,
+        # layout, codecs and the group attrs all stay put — and used to move
+        # neither digest.
+        from luxar._zarr_compat import create_array, memory_group
+        from luxar.gsplats.io.save_gsplats import _stamp_content_hash
+
+        data = np.arange(12, dtype=np.uint8)
+
+        def stamped(minimum: float) -> str:
+            root = memory_group()
+            root.attrs["type"] = "gsplats"
+            array = create_array(
+                root, "amplitudes", data=data, chunks=(12,), compressor=None
+            )
+            array.attrs["encoding"] = {
+                "name": "bounded_scalar_uint8",
+                "min": minimum,
+                "max": 1.0,
+                "bits": 8,
+            }
+            return _stamp_content_hash(root)
+
+        assert stamped(0.0) != stamped(0.25)
+
+    def test_stamped_content_hash_changes_with_child_group_name(self) -> None:
+        # A node's own digest does not carry its NAME, and the parent folded in
+        # only its children's digests — so renaming a child part/level while
+        # leaving its contents alone left the root hash exactly where it was. A
+        # group name is a path segment, so every cached key under it moves while
+        # the token that would invalidate them says nothing changed.
+        from luxar._zarr_compat import create_array, memory_group
+        from luxar.gsplats.io.save_gsplats import _stamp_content_hash
+
+        data = np.arange(36, dtype=np.float32).reshape(12, 3)
+
+        def stamped(child: str) -> str:
+            root = memory_group()
+            root.attrs["type"] = "gsplats"
+            leaf = root.create_group(child)
+            create_array(leaf, "centers", data=data, chunks=(12, 3), compressor=None)
+            return _stamp_content_hash(root)
+
+        assert stamped("part_0") != stamped("part_1")
+
+    def test_stamped_content_hash_changes_with_sharded_inner_codec(self) -> None:
+        # A sharded array's top-level pipeline is exactly one `ShardingCodec`, so
+        # the codec IDS read `["sharding_indexed"]` and say nothing about the
+        # inner codecs or the shard index. Nothing in Luxar emits a sharded store
+        # today, so this is what keeps the expansion honest — and what stops a
+        # future in-place re-layout tool from re-stamping a store to its input's
+        # digest, which is the whole reason the metadata-only variant folds
+        # layout in at all.
+        import numcodecs
+
+        from luxar._zarr_compat import create_array
+        from luxar.gsplats.io.save_gsplats import _stamp_content_hash
+
+        data = np.arange(36, dtype=np.float32).reshape(12, 3)
+
+        def stamped(compressor: object) -> str:
+            # Format 3 explicitly: sharding does not exist at format 2.
+            root = zarr.create_group(store=zarr.storage.MemoryStore(), zarr_format=3)
+            root.attrs["type"] = "gsplats"
+            create_array(
+                root,
+                "centers",
+                data=data,
+                chunks=(3, 3),
+                shards=(6, 3),
+                compressor=compressor,
+            )
+            return _stamp_content_hash(root)
+
+        assert stamped(None) != stamped(numcodecs.Blosc(cname="zstd", clevel=9))
+
+    def test_stamped_content_hash_never_reads_chunk_data(self) -> None:
+        # The reason this variant exists at all: a splat store can be multi-GB, so
+        # the stamp must stay metadata-only. #1718 added four more metadata reads
+        # (`chunks`, `shards`, the codec pipeline, the array's attrs) under that
+        # contract, so pin it: a chunk read would surface as a store `get` for a
+        # key that is not one of zarr's metadata documents.
+        from luxar._zarr_compat import ZARR_FORMAT, create_array
+        from luxar.gsplats.io.save_gsplats import _stamp_content_hash
+
+        requested: list[str] = []
+
+        class RecordingStore(zarr.storage.MemoryStore):
+            async def get(self, key: str, *args: object, **kwargs: object) -> object:
+                requested.append(key)
+                return await super().get(key, *args, **kwargs)  # type: ignore[arg-type]
+
+        store = RecordingStore()
+        root = zarr.create_group(store=store, zarr_format=ZARR_FORMAT)
+        root.attrs["type"] = "gsplats"
+        create_array(
+            root,
+            "centers",
+            data=np.arange(36, dtype=np.float32).reshape(12, 3),
+            chunks=(3, 3),
+            compressor=None,
+        )
+
+        # Re-open so the stamp reads metadata through the store rather than off a
+        # handle already in memory, then record only the stamp's own calls.
+        group = zarr.open_group(store=store, mode="a")
+        requested.clear()
+        _stamp_content_hash(group)
+
+        assert requested, "the store recorded no reads — the probe is inert"
+        docs = {"zarr.json", ".zarray", ".zattrs", ".zgroup", ".zmetadata"}
+        assert all(key.rsplit("/", 1)[-1] in docs for key in requested), requested
+
     def test_save_with_colors(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "test.gsplats.zarr"
