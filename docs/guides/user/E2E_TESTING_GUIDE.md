@@ -304,6 +304,47 @@ pnpm test:e2e --grep "Visual" --update-snapshots
 pnpm exec playwright install chromium
 ```
 
+### Issue: Many unrelated tests time out at once on a busy machine
+**Cause**: Too many Playwright workers for the box's spare capacity — the runs
+starve each other and every action hits its wall-clock timeout with the element
+already visible/enabled/stable. Measured on a shared 16-core workstation at a
+1-minute load of 12–24: `dimension-animation.spec.ts` failed 15 of 21 tests at 4
+workers and passed 21 of 21 at `--workers=1`, with no product cause.
+
+**Solution**: Nothing, usually — `playwright.config.ts` now scales the local
+worker ceiling of 4 by the box's free fraction
+(`clamp(round(4 * (cpus - load1) / cpus), 1, 4)`). The bands are fractions of the
+box, so they hold at any size: 4 while at least 7/8 of it is free, 3 down to 5/8,
+2 down to 3/8, 1 below that — on 16 cores, 4 up to load 2, 3 up to load 6, 2 up
+to load 10, then 1. An idle box of any size still gets 4. The run prints its
+worker ceiling before the pre-flight checks:
+
+```text
+[🧵] [E2E] parallelism: max 1 worker — 16 cpus, load1 22.2 (capacity)
+```
+
+`max` is literal: that is `config.workers`, and Playwright narrows it to
+`min(workers, maxConcurrentTestGroups)` afterwards, so a single-file run can be
+stamped `max 3` and then report "using 1 worker". When the ceiling is not the
+count that was sized, the line carries both — `(capacity sized 3, run with 1)` —
+and does not guess why.
+
+Be aware of what that protection is worth: the 1-minute load average lags and is
+sampled once at startup, so a run launched just after a burst can still crawl on
+a machine that is already idle, and one launched into a lull can take all four
+workers into the next burst. Only 4 workers (15/21 failing) and 1 worker (21/21
+passing) were actually measured, at load 12–24 on 16 cores — that bottom band is
+the configuration measured green; the intermediate counts are interpolation.
+
+Pin it explicitly with `LUXAR_E2E_WORKERS=N` (an integer, clamped to `[1, cpus]`
+as a typo guard), or with `--workers=N` (which overrides the config), when you
+want a fixed run:
+
+```bash
+LUXAR_E2E_WORKERS=1 pnpm test:e2e
+npx playwright test dimension-animation.spec.ts --workers=1
+```
+
 ### Issue: Tests flaky/intermittent failures
 **Solution**: Replace `waitForTimeout` with condition waits:
 ```typescript
