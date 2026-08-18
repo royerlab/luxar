@@ -27,10 +27,24 @@ finalize/
 ### `hashing.compute_content_hashes(store) -> str`
 
 Post-order xxhash64 over the whole zarr tree. For each group it hashes, in a
-deterministic order: (1) its own arrays (`array_keys()` sorted, raw bytes),
-(2) its attrs as sorted JSON — **excluding** any existing `content_hash` to
-avoid self-reference, (3) the bytes of any plain **payload file** the attrs name
-(see below), then (4) each child group's recursively-computed hash.
+deterministic order:
+
+1. for every array (`array_keys()` sorted), its **storage identity** as sorted
+   JSON, then its **decoded values** (`dataset[:].tobytes()`). The identity is
+   `name`/`shape`/`chunks`/`dtype`/shard shape, the array's own `attrs`, and its
+   codec **ids** (`codec_ids`, derived at either on-disk format) — plus the full
+   codec pipeline (`codecs`) when the array is sharded. `_storage_identity` is
+   where the reasoning lives: why layout and codec identity count as identity,
+   why the per-array `encoding` attrs do, and why codec settings deliberately do
+   not.
+2. the group's attrs as sorted JSON, **excluding** any existing `content_hash` to
+   avoid self-reference.
+3. the bytes of any plain **payload file** those attrs name (see below).
+4. each child group's **name** (`group_keys()` sorted) together with its
+   recursively-computed hash. The name is hashed because a node's own digest does
+   not carry it, so digests alone left a renamed child invisible to every
+   ancestor.
+
 The resulting hex digest is written back into the group's `content_hash`
 attribute, and the root digest is returned. xxhash64 is chosen for speed over
 cryptographic strength.
