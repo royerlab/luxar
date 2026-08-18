@@ -28,7 +28,9 @@ timepoint instead. Tuning: `--saturation-exponent` (0.44), `--saturation-cap`,
 ## Shared fit params
 `--preset` (standard), `--config PATH`, `--seeds`, `--iters`/`-n`, `--progressive`,
 `--splats-per-pass`, `--psnr-patience`, `--max-passes`, `--cull-retention`
-(default 0.95 uniform / 0.999 content; 0 keeps all).
+(default 0.999 in BOTH modes — every task is a `fit --preset <the run's preset>`, and
+every preset, `standard` included, sets 0.999; 0 keeps all; the flag's own `--help`
+still claims 0.95 for uniform tiles and is stale).
 
 Under **uniform** tiling an integer `--seeds K` is a **whole-volume budget per
 (t, c) volume**: every task is a `--tile k/M` fit, which divides K across that

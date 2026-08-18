@@ -122,9 +122,11 @@ ladder.)
 Re-quantize a fitted dataset's Cholesky factors to another encoding (a
 structure-preserving copy: the whole node tree — leaf / additive ladder /
 `kind=lod` / partition / nested — plus `fitting`/`provenance`/`pipeline` groups
-are carried over verbatim; only the on-disk Cholesky encoding changes). Splat
-count and geometry are unchanged; decode is always to float32, so
-viewer/GPU/WASM paths are unaffected. Unlike `migrate-format` (legacy → current,
+are carried over verbatim). Structure and splat count are unchanged, and decode is
+always to float32 — but the Cholesky factors are not the only thing re-encoded:
+`auto` and `memory` also re-quantise the CENTERS to per-axis uint16 fixed-point
+(float32 only once an axis spans 2¹⁶), so center values are bit-exact only under
+`-e precision`. Unlike `migrate-format` (legacy → current,
 float32-vs-AUTO-uint16 only), this exposes the full ladder including `memory`
 (uint8) and works on already-current files.
 | Flag | Default | Meaning |
@@ -166,7 +168,7 @@ caches invalidate automatically. Directory stores only (unpack `.zip` first).
 | --- | --- | --- |
 | `info IN` | `--histograms/--no-histograms`, `--bins`/`-b` (40) | counts, ndim, bbox, amplitude/volume/color distributions, metadata |
 | `render IN OUT.npy` | `--shape` (auto from bbox), `--device`/`-d`, `--truncate`/`-t` | rasterize splats → volume (.npy/.tiff) |
-| `compare GS REF` | `--shape`, `--device`/`-d`, `--channel`/`-c`, `--timepoint`, `--output-json`/`-j`, `--quiet` | PSNR / SSIM / MSE / rel-L2 / max-abs-err |
+| `compare GS REF` | `--device`/`-d`, `--truncate`/`-t`, `--channel`/`-c`, `--timepoint`, `--output-json`/`-j`, `--quiet`, `--shape` (not an override — it must EQUAL the reference shape or the command exits 1; omit it) | PSNR / SSIM / MSE / rel-L2 / max-abs-err |
 | `view IN` | `--port`/`-p` (8000), `--viewer-port` (5173), `--open/--no-open`, `--cors-origin` | quick web viewer (handles partition/nested; extracts archives) |
 | `napari IN` | (none) | render to volume + centers overlay in napari |
 

@@ -28,6 +28,31 @@ right up front avoids fitting the wrong data or blowing up RAM.
 A missing optional dependency raises an actionable error (e.g. "Install with: `pip
 install luxar[io]`").
 
+### Microscopy vendor containers
+
+The dispatch is by **file suffix**, and anything not `.npy` / `.npz` / zarr /
+`.tiff`/`.tif` falls through to `imageio.imread` — which either works whole-file or
+raises. Two cases worth knowing before you plan a fit:
+
+- **`.lsm` (Zeiss)** loads, via the imageio fallback (tifffile plugin). But that
+  path reads the WHOLE file eagerly: no lazy slice, no `--array-key`, and nothing
+  is sliced at all unless you pass `--axes` — with which the slicing happens
+  *after* the whole file has been read. Budget RAM from the decoded array, not
+  the file size: the loader returns float32, so the resident cost is
+  `prod(shape) × 4` bytes whatever the file's compression — 2× an *uncompressed*
+  16-bit acquisition, and an unbounded multiple of a compressed one, transiently
+  more again while the cast is in flight.
+  Convert to zarr first if the file is large.
+- **`.h5j` (Janelia FlyLight) is NOT supported.** Despite the HDF5 extension it
+  is a container of per-channel **H.265 elementary streams**, so no array reader
+  can open it. Decode with ffmpeg, then **crop the macroblock padding** — the
+  streams are padded up to macroblock bounds and the real extent is in the
+  file's `pad_right` / `pad_bottom` attributes — and write zarr.
+
+That is the general escape hatch for any unsupported container: decode it to
+zarr yourself and feed Luxar the zarr. Doing so also buys the lazy slicing the
+imageio path does not have.
+
 ## Selecting the slice to fit (CLI flags, shared by fit/cal/compare/denoise)
 
 | Flag | Meaning |
@@ -54,6 +79,11 @@ Without `--axes`, the loader infers axes from the number of dimensions:
 | 3D | `ZYX` | kept as-is |
 | 2D | `YX` | kept as-is |
 | >5D | T=first, extra leading dims folded into channel, last 3 = spatial | |
+
+**That table is the zarr path only.** For `.npy` / `.npz` / `.tiff` / imageio inputs
+the loader squeezes the decoded array and returns it as-is, so `--channel` /
+`--timepoint` are silently ignored — `fit movie.tiff --timepoint 3` fits the whole
+5D stack. On any non-zarr nD input, pass `--axes` (which does the indexing itself).
 
 **Override with `--axes`** when the layout differs (e.g. a camera axis, or `ZCYX`).
 Recognized labels: `time`/`t`, `channel`/`c`/`ch`/`camera`/`cam`, `z`/`y`/`x` (plus
@@ -90,7 +120,9 @@ reads only that slice, so a huge nD movie is never pulled into RAM whole.
 - **Wrong axes** → fitting a transposed/garbage volume. If `info`/`compare` looks wrong,
   pass `--axes` explicitly. A camera axis is the usual culprit on light-sheet data.
 - **Whole movie into RAM** → happens if you materialize a 4D/5D array yourself instead
-  of letting `load_volume` (or `--timepoint`/`--channel`) slice it lazily.
+  of letting `load_volume` (or `--timepoint`/`--channel`) slice it lazily — and
+  unavoidably on any non-zarr container, where `load_volume` itself reads the whole
+  file (see "Microscopy vendor containers").
 - **Nested zarr group** → `--array-key path/within/group` (also disambiguates a `.npz`
   with multiple arrays).
 - **TIFF/other won't load** → `pip install "luxar[io]"`.

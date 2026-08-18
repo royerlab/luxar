@@ -6716,7 +6716,9 @@ class TestReencode:
         got = GSplatData.load(out)
         assert got.n_splats == src.n_splats
         assert got.ndim == src.ndim
-        # uint8 Cholesky is lossy but centers are stored losslessly (float32).
+        # uint8 Cholesky is lossy, and `-e memory` also re-quantizes centers to
+        # per-axis uint16 — sub-1e-4 here only because this fixture's per-axis
+        # extent is <= 10, so the quantization step is <= 10/65535 ≈ 1.5e-4.
         np.testing.assert_allclose(got.centers, src.centers, rtol=0, atol=1e-4)
 
     def test_reencode_preserves_pipeline_provenance(
