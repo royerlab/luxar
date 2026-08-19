@@ -29,7 +29,7 @@ def run_decimate_dataset(
     """Reduce a dataset to a target splat count and write a flat result."""
     try:
         from luxar.gsplats.gsplat_data import GSplatData
-        from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+        from luxar.gsplats.io.save_gsplats import split_fitting_info, write_gsplats_tree
         from luxar.gsplats.lod.decimate import decimate
 
         if (target is None) == (fraction is None):
@@ -59,7 +59,13 @@ def run_decimate_dataset(
 
         with asection(f"Decimating: {input_path.name}"):
             with asection("Loading dataset"):
-                data = GSplatData.load(input_path, include_stats=False)
+                # WITH stats: a reduction is not an excuse to throw the fit's
+                # provenance away. `decimate` carries the descriptive half over and
+                # drops the measured reconstruction scores (which describe the
+                # pre-reduction splat set — #1600), so loading stats-free would
+                # discard `fitter_name` / `iterations` / the source grid too and
+                # leave the output with no provenance at all.
+                data = GSplatData.load(input_path, include_stats=True)
                 aprint(f"Loaded {data.n_splats:,} splats ({data.ndim}D)")
 
             request: Union[int, float] = (
@@ -79,11 +85,22 @@ def run_decimate_dataset(
             from luxar.gsplats.io.load_gsplats import read_authored_appearance
 
             with asection(f"Saving to {output_path.name}"):
+                # Thread the (already scrubbed) provenance through the tree writer
+                # the same way `transform` does, so the output's `fitting/` /
+                # `provenance/` / `pipeline/` groups round-trip instead of being
+                # silently dropped.
+                fitting, config, provenance, pipeline = split_fitting_info(
+                    dict(reduced.stats), include_fitting_info=True
+                )
                 write_gsplats_tree(
                     output_path,
                     reduced.tree,
                     encoding_mode=encoding_mode_obj,
                     compress=compress,
+                    fitting_info=fitting,
+                    fitting_config=config,
+                    provenance_info=provenance,
+                    pipeline_info=pipeline,
                     root_attrs=read_authored_appearance(input_path),
                 )
                 kept = 100.0 * reduced.n_splats / max(data.n_splats, 1)

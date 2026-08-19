@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from .base import _GSplatDataOps
+from .filtering import _stats_after_content_change
 
 if TYPE_CHECKING:
     from luxar.gsplats.gsplat_data import GSplatData
@@ -164,7 +165,12 @@ class CullingMixin(_GSplatDataOps):
                     "n_culled": self.n_splats - out.n_splats,
                 }
             )
-            return out
+            # The per-level recursion scrubs each level's measured scores through
+            # filter(), but _map_substitutive rebuilds the TOP-level stats from
+            # `dict(self.stats)` — the dict `gsplat info` reads `psnr_db` from.
+            return _stats_after_content_change(
+                out, changed=out.n_splats != self.n_splats
+            )
 
         # =================================================================
         # Heuristic methods (no rendering, CPU-only, fast)

@@ -702,8 +702,19 @@ def fit_progressive_gaussian_splats(
         and 0 < cull_retention < 1.0
         and final_result.n_splats > 0
     ):
+        from luxar.gsplats._data.filtering import (
+            measured_stats_snapshot,
+            restore_measured_stats,
+        )
+
         n_before = final_result.n_splats
+        # The per-pass and overall PSNRs were measured above, on the pre-trim
+        # splats. `cull` drops inherited scores (#1600), but this trim is the
+        # last step of the FIT — carried across rather than re-rendered, and
+        # rather than shipping a progressive fit with no ladder scores at all.
+        measured = measured_stats_snapshot(final_result)
         final_result = final_result.cull(method="cumulative", retention=cull_retention)
+        restore_measured_stats(final_result, measured)
         n_removed = n_before - final_result.n_splats
         if verbose:
             aprint(

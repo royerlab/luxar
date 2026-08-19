@@ -665,6 +665,82 @@ would put a bare `NaN` / `Infinity` token in the metadata document — not JSON,
 and fatal to a strict reader for the whole store rather than for that one key.
 `foreground_fraction` is still present in that case, so the artifact says why.
 
+**What survives a rewrite.** Inherited `fitting/` stamps fall into two
+categories, invalidated along two independent axes, and a tool that rewrites a
+store must apply both rules:
+
+* **Content-scoped** — every MEASURED number: the scores above, `final_loss` /
+  `final_rel_l2` / `final_max_abs_error`, the error-budget cull's own
+  `error_budget` / `max_joint_error` (and its `phase1_candidates` /
+  `phase2_iterations` search counters, which mean nothing without it), and the
+  ladder/level stamps one level down — the per-sub-LOD `cumulative_psnr_db` /
+  `delta_psnr_db` and `lod_stats.energy_fraction_cum`, plus
+  `level_stats.quality` / `level_stats.reference_energy`. They are a score for
+  one specific splat set, so they are **dropped by any operation that changes
+  which splats the artifact holds**: `cull`, `filter`, `slice`, `decimate` (a
+  merge-family reduction lands on the requested count while replacing every
+  splat with a representative), a reduced LOD **view** (a strict additive prefix,
+  or a coarser substitutive level — which is why `lod --recipe overview` does not
+  put the input fit's `psnr_db` on its merged coarse cap), and any intensity edit
+  — PSNR and MSE are absolute-error metrics, so a global `x0.5` changes them
+  outright. `energy_fraction_cum` and `reference_energy` are dropped **together**:
+  e(k) and its aggregation weight w are a both-or-neither pair (see "Quality
+  Stamps" above), and a stale e(k) is the one entry here that is
+  *rendering*-visible —
+  the viewer brightens an incomplete ladder by `1/e(k)`, so a rung that still
+  claims 0.69 after a cull left it holding everything over-brightens by ~1.44x.
+  Absent, all of these degrade correctly: the viewer's energy compensation is
+  exactly 1 without a stamp and its display gate falls back to committed-count
+  comparison, and `luxar gsplat annotate-quality` re-measures e(k)/w (and, with
+  `--with-quality`, Q) on the rewritten store in place.
+
+  A geometry-only transform (scale / rotate / translate / center) **keeps** them:
+  the splat set is identical and only the frame moved. Note this is a weaker
+  claim than the reproducibility paragraph above — that argument holds for a
+  `voxel_size` fit because the spacing is *recorded*, whereas `gsplat transform
+  --scale` records no factor and does not update `fitted_shape` / `source_shape`,
+  so the score is not reproducible from the artifact afterwards. It is kept
+  because it is still a true statement about these splats, not because you could
+  re-derive it. A rewrite that changes nothing at all keeps them too — a
+  threshold that removed no splat, `flatten`, `additive`, `annotate-quality`,
+  `partition` (the same splats, regrouped), and `reencode -e precision` (exact).
+  `reencode -e auto` / `-e memory` and `migrate-format` re-quantize the Cholesky
+  factors *and* (for `auto`/`memory`) the centers to fixed point, so the decoded
+  values are not bit-identical to the ones that were scored; the loss is
+  deliberate and bounded (~93 dB at `memory`, far below the reconstruction error
+  any of these scores report), so the scores are kept as still-valid to well
+  within their own precision rather than thrown away.
+
+  One exemption, on the producing side: the fitters end with a high-retention
+  cumulative trim (`cull_retention`, 0.95 by default) *after* scoring, and carry
+  their measurement across it — so a stored fit's score is taken on the pre-trim
+  splats, which hold 100% of the amplitude minus the retention. Re-scoring would
+  cost a second full render of the volume, and the alternative is a fit that
+  publishes no score at all. A content-planned box fit gets the opposite
+  treatment: its score was measured on the halo-padded crop, with neighbour
+  splats present and against a larger target region, so a part whose crop was
+  padded (or whose core mask dropped splats) publishes no score at all.
+* **Region-scoped** — the source grid (`source_shape`, `source_voxels`,
+  `source_bytes`, `source_stored_bytes`, `fitted_shape`, `fitted_voxels`,
+  `occupancy`, `voxels_per_splat`, and the `source_declared` marker that
+  qualifies the grid). Dropped only by a **spatial** restriction that actually
+  excluded splats, because that is what makes the compression ratio quote a
+  volume the artifact no longer represents. `source_dtype` is exempt: a crop
+  cannot change the element type. A non-spatial cull keeps this whole block.
+
+Neither category subsumes the other, which is why one predicate cannot serve
+both: an amplitude-threshold cull loses the scores and keeps the grid, a
+whole-volume bbox that excluded nothing keeps both, and a real crop loses both.
+Descriptive counters are never dropped by either rule — `iterations`,
+`best_iteration`, `converged`, `time_seconds`, `fitter_name`, and a rewrite's own
+provenance (`culled`, `culling_method`, `n_original`, `n_culled`,
+`amplitude_retention`, `filtered`, `filter_criteria`) describe the run or the
+operation, both of which happened. The structural ladder counts
+(`lod_stats.lod_n_splats` / `lod_cumulative_n`, `level_stats.n_splats_total`) are
+descriptive too, but a reduction makes them *wrong* rather than unknown and the
+writer stores them verbatim — so they are **re-stamped** from the result instead
+of dropped.
+
 ### Pipeline Group Attributes (Optional)
 
 The `pipeline/` group records the reduction/topology provenance of a dataset —

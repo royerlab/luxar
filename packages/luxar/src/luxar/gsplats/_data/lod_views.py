@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, cast
 
 from .base import _GSplatDataOps, _readonly, _readonly_opt, _readonly_sublod
+from .filtering import scrub_measured_stats
 
 if TYPE_CHECKING:
     from luxar.gsplats.gsplat_data import (
@@ -93,6 +94,12 @@ class LODViewsMixin(_GSplatDataOps):
         one's (the class is conceptually immutable); mutating them raises
         rather than silently corrupting the source.
 
+        A STRICT prefix holds fewer splats than the object the inherited measured
+        scores were taken on, so it does not carry them (#1600): a view is a
+        reduction like any other, and ``lod --recipe overview`` writes exactly such
+        a view out as a store. The full prefix (``level == n - 1``) IS the input
+        content and keeps everything.
+
         Args:
             level: Maximum LOD level to include (``0 <= level < n_additive_sublods``).
 
@@ -107,12 +114,15 @@ class LODViewsMixin(_GSplatDataOps):
         n = self.n_additive_sublods
         if not 0 <= level < n:
             raise IndexError(f"additive level {level} out of range [0, {n})")
-        return GSplatData(
+        view = GSplatData(
             additive_sublods=[
                 _readonly_sublod(lod) for lod in self.additive_sublods[: level + 1]
             ],
             stats=dict(self.stats),
         )
+        if level + 1 < n:
+            scrub_measured_stats(view)
+        return view
 
     def flattened(self) -> "GSplatData":
         """Collapse all LODs into a single LOD.
@@ -212,6 +222,15 @@ class LODViewsMixin(_GSplatDataOps):
         ``level``. Useful for operating one substitutive level at a time
         (e.g., ``data.at_substitutive(s).flattened()``).
 
+        A COARSER level (``level > 0``) is a different, MERGED splat set, so the
+        view does not inherit the measured reconstruction scores (#1600) — this is
+        the chokepoint through which ``lod --recipe overview`` built its merged
+        coarse cap and published the input fit's ``psnr_db`` on it. Level 0 is the
+        finest content itself and keeps them. (``_view_of_level`` itself does not
+        scrub: ``_map_substitutive`` walks every level through it and discards the
+        view's top-level stats, so only the callers that know the index can tell a
+        reduction from a rebuild step.)
+
         Args:
             level: Substitutive level index (0 = finest).
         """
@@ -219,7 +238,10 @@ class LODViewsMixin(_GSplatDataOps):
             raise IndexError(
                 f"substitutive level {level} out of range [0, {self.n_substitutive})"
             )
-        return self._view_of_level(self.substitutive_levels[level])
+        view = self._view_of_level(self.substitutive_levels[level])
+        if level != 0:
+            scrub_measured_stats(view)
+        return view
 
     def _view_of_level(self, src_level: "SubstitutiveLevel") -> "GSplatData":
         """Wrap an already-fetched ``SubstitutiveLevel`` as a single-level view.

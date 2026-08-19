@@ -27,7 +27,7 @@ def run_partition_dataset(
 
         from luxar.gsplats.gsplat_data import GSplatData
         from luxar.gsplats.io.load_gsplats import read_authored_appearance
-        from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+        from luxar.gsplats.io.save_gsplats import split_fitting_info, write_gsplats_tree
         from luxar.gsplats.tree import iter_leaves
 
         if max_elements is None and parts is None:
@@ -62,11 +62,23 @@ def run_partition_dataset(
                 )
 
             with asection(f"Saving to {output_path.name}"):
+                # Thread the loaded provenance through the tree writer (it used to
+                # be silently dropped, so partitioning a fit erased `psnr_db`,
+                # `fitter_name` and the source grid alike). A BSP partition is
+                # content-PRESERVING — the same splats, regrouped — so the measured
+                # scores stay true of it and no scrub applies.
+                fitting, config, provenance, pipeline = split_fitting_info(
+                    dict(data.stats), include_fitting_info=True
+                )
                 write_gsplats_tree(
                     output_path,
                     partition_node,
                     encoding_mode=encoding_mode_obj,
                     compress=compress,
+                    fitting_info=fitting,
+                    fitting_config=config,
+                    provenance_info=provenance,
+                    pipeline_info=pipeline,
                     root_attrs=read_authored_appearance(input_path),
                 )
                 aprint(

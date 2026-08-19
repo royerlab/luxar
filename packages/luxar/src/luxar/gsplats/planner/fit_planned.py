@@ -111,7 +111,10 @@ def _fit_one_box(
     ``GSplatData.concatenate`` with a uniform-tiled one fitted from the same
     config ("Truncation radius mismatch") — issue #1637.
     """
-    from luxar.gsplats._data.filtering import _REGION_SCOPED_STATS_KEYS
+    from luxar.gsplats._data.filtering import (
+        _REGION_SCOPED_STATS_KEYS,
+        drop_content_scoped_stats,
+    )
     from luxar.gsplats.fit_gsplats import fit_gaussian_splats
     from luxar.gsplats.gsplat_data import GSplatData
     from luxar.gsplats.utils.trils import tril_size
@@ -194,6 +197,15 @@ def _fit_one_box(
     if padded_is_larger or n_kept < int(keep.size):
         for key in _REGION_SCOPED_STATS_KEYS:
             box_stats.pop(key, None)
+        # ...and the MEASURED scores go with them, for the second reason the same
+        # predicate covers: `psnr_db` / `ssim` / `final_*` were taken on the fit of
+        # the PADDED crop, i.e. with the halo splats present and against a target
+        # region larger than this part. Publishing them as the part's `lod_stats`
+        # would quote a reconstruction score for a splat set the part does not hold
+        # (#1600). Note the halo half is not a count question at all — every splat
+        # can land in the core and the crop still be 18³ for a 12³ part — which is
+        # why this rides the region predicate rather than `_is_crop`.
+        drop_content_scoped_stats(box_stats)
     box_stats["n_splats"] = n_kept
     # ...and the same RAW `lod_stats` write is why non-finite values cannot ride
     # along either: zarr emits them as bare `Infinity`/`NaN` tokens that a strict
