@@ -423,10 +423,11 @@ def run_transform_dataset(
                 # Scrub the coverage_fraction LOD-switch threshold from EVERY node
                 # (leaves AND group nodes — an overview partition child, an adaptive
                 # per-part lod group) after a geometry transform so the writer
-                # re-derives it. coverage_fraction is a per-level COUNT ratio, hence
-                # invariant to scale/rotate/translate/center — so this re-derives the
-                # identical value; it is kept as a safety net for transforms that also
-                # re-ladder and change per-level counts. Intensity-only transforms
+                # re-derives it. coverage_fraction is derived from the ladder's LENGTH
+                # and its topology, not from geometry, hence invariant to
+                # scale/rotate/translate/center — so this re-derives the identical
+                # value; it is kept as a safety net for transforms that also
+                # re-ladder and change the number of levels. Intensity-only transforms
                 # leave it intact regardless. The re-derivation is TOPOLOGY-AWARE
                 # (``write_gsplat_node`` picks ``partitioned_coverage_fractions`` for a
                 # partition-bound ladder), so scrubbing an ``adaptive``/``overview``

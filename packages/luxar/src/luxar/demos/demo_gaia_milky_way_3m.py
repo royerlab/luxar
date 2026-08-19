@@ -474,11 +474,11 @@ def load_and_convert_gaia_data(data_zarr_path: Path, output_path: Path) -> int:
         # The second half of the original rationale — "closer start = the
         # coverage-fraction LOD immediately shows a finer level" — was a
         # workaround for #1361, where the finest level only engaged once the
-        # object OVERFILLED the screen. The viewer's anchor now sits at half
-        # of the fitted screen axis, so a plain fit already selects the finest
-        # level and that part is redundant. The tighter framing is KEPT purely as
-        # a composition choice (the galaxy fills the view); revisiting it is a
-        # visual change, out of scope for the anchor fix.
+        # object OVERFILLED the screen. The viewer's anchor now sits at half the
+        # screen AREA (occupancy halving), so a plain fit is no longer stuck on a
+        # coarse level and that part is redundant. The tighter framing is KEPT
+        # purely as a composition choice (the galaxy fills the view); revisiting
+        # it is a visual change, out of scope for the anchor fix.
         lo, hi = np.percentile(positions, [2, 98], axis=0)
         center = (lo + hi) / 2.0
         extent = float(np.max(hi - lo))

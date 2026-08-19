@@ -1179,8 +1179,11 @@ def add_mesh_substitutive_lod_wrapper_impl(
     A requested level is DROPPED rather than written when it cannot be a real
     level: below the decimator's 4-vertex floor, or reducing to no fewer vertices
     than the level before it. Writing it anyway would put two identical surfaces
-    in the ladder and give ``coverage_fractions`` a duplicate ratio, which is not
-    strictly ascending and raises. If every level drops — a surface already too
+    in the ladder, each claiming its own halving of screen occupancy — so the
+    viewer would swap between them and pay a load for nothing. (The thresholds
+    come from the ladder's LENGTH, not from count ratios, so a duplicate count is
+    not a duplicate threshold and nothing downstream objects.) If every level
+    drops — a surface already too
     coarse to reduce — the ladder is abandoned and a plain leaf is written, which
     is the same degenerate-path behaviour the Points wrapper has.
     """
@@ -1298,8 +1301,8 @@ def add_mesh_substitutive_lod_wrapper_impl(
         )
         count = int(level.vertices.shape[0])
         # Strictly between the previous (coarser) level and the original, or it
-        # adds nothing: a duplicate count would also give `coverage_fractions` a
-        # repeated ratio, which is not strictly ascending and raises.
+        # adds nothing: a duplicate would still be handed its own halving of
+        # screen occupancy, so the viewer would swap between identical surfaces.
         if count <= previous or count >= n_vertices:
             continue
         coarse.append(level)

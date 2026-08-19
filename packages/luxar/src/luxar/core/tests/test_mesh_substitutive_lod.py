@@ -922,8 +922,8 @@ class TestDegenerateLadders:
         # An octahedron has 6 vertices: every requested target is below the
         # decimator's 4-vertex floor or fails to reduce. Writing a one-level
         # "ladder" would be a kind=lod group with a single child, which is a
-        # pointless indirection; writing duplicate levels would hand
-        # `coverage_fractions` a repeated ratio and raise.
+        # pointless indirection; writing duplicate levels would make the viewer
+        # swap between identical surfaces.
         verts, faces = octasphere(0)
         nodes = write_ladder(tmp_path, verts, faces, substitutive_lod=True)
         assert nodes["surf"].get("kind") != "lod"
