@@ -8,6 +8,7 @@ import numpy as np
 from arbol import aprint
 
 from ...typing_utils.aliases import GroupAttrs, SceneHierarchy, TransformMatrix
+from ...typing_utils.constants import LEGACY_LOD_SELECTOR
 
 if TYPE_CHECKING:
     from ...io.writer import ZarrWriterProtocol
@@ -401,7 +402,7 @@ class Node:
         self,
         name: str,
         *,
-        selector: str = "coverage",
+        selector: str = LEGACY_LOD_SELECTOR,
         default_level: int = 0,
         **attrs: Any,
     ) -> "Group":

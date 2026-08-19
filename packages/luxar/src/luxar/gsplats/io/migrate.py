@@ -486,8 +486,9 @@ def migrate_format(
                 # v3.0/v3.1 node tree whose kind=lod groups still carry the
                 # pre-v3.2 'pixel_size' selector attrs. The live read→write
                 # round-trip IS the migration: the reader ignores the stale
-                # attrs and the writer re-derives coverage_fraction /
-                # selector='coverage' from the per-level splat counts.
+                # attrs and the writer re-derives fresh screen-area
+                # coverage_fraction thresholds (occupancy halving, stamped
+                # selector='screen-area') for the tree's shape.
                 (
                     node,
                     fitting_info,

@@ -921,10 +921,11 @@ with LuxarZarrCompiler("scene.luxar.zarr") as compiler:
 > `luxar gsplat lod --recipe levels`), `add_gsplats_from_data`
 > (and `add_gsplats_from_file`) route it by default into a `kind=lod`
 > scene group — one gsplats child per substitutive level, with
-> `coverage_fraction` thresholds derived as `sqrt(N_i / N_finest)` from the
-> per-level splat counts (a dimensionless, viewport-relative value; coarsest
-> = 0.0, finest = 1.0 for a whole-object ladder — a partition-bound one anchors
-> its finest at 4.0 instead, see `partitioned_coverage_fractions`), so the
+> `coverage_fraction` thresholds derived by SCREEN-OCCUPANCY HALVING (a
+> dimensionless, viewport-relative value; coarsest = 0.0, finest = 0.5 for a
+> whole-object ladder — a partition-bound one anchors its finest at 1.0 instead,
+> see `partitioned_coverage_fractions`; the per-level splat counts set only the
+> ladder's length), so the
 > viewer view-switches between levels identically on any monitor. In v3.3 a saved `.gsplats.zarr`
 > is already a `kind=lod` group on disk; scene embedding grafts that subtree
 > directly. No substitutive work is discarded. Pass `lod_group=False` to

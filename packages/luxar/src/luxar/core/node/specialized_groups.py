@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 from arbol import aprint
 
-from ...typing_utils.constants import LOD_SELECTORS
+from ...typing_utils.constants import LEGACY_LOD_SELECTOR, LOD_SELECTORS
 from ...typing_utils.geometry_capabilities import (
     partition_capable_types,
     require_lod_display_type,
@@ -27,7 +27,7 @@ def add_lod_group_impl(
     node: "Node",
     name: str,
     *,
-    selector: str = "coverage",
+    selector: str = LEGACY_LOD_SELECTOR,
     default_level: int = 0,
     **attrs: Any,
 ) -> "Group":
