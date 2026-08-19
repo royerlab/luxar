@@ -113,8 +113,20 @@ frame-by-frame capture for turntable + EXR-sequence modes:
 1. Show the confirmation dialog; bail if cancelled.
 2. Assign `sessionAbort` BEFORE any state mutation, so a `dispose()`
    during the early state-save / rAF window aborts cleanly.
-3. Hide panels, save renderer state, disable DPR, lock resize,
-   scale resolution to a 16-pixel-aligned multiple of the target.
+3. Hide panels, save renderer state, disable DPR, lock resize, scale
+   resolution to the target height — "Native" being the DISPLAY size
+   (`PostProcessingManager.getDisplaySize()`, _not_ `renderer.getSize()`,
+   which reports the SSAA-multiplied size) times the native DPR. The
+   height is aligned _down_ until the PHYSICAL frame, i.e. after the SSAA
+   multiplier, is even, since that is the size the frames are written at
+   and H.264/H.265 with yuv420p reject an odd dimension; the width is
+   then derived from the aligned height and aligned the same way. The
+   walk is best-effort: it tries eleven candidates (ten pixels of walk),
+   which covers every multiplier measured except those within 0.1 of an
+   even one but not on it — at 2.001 and the like the product's parity is
+   locked across a thousand consecutive heights, so no bounded walk helps
+   and the even floor is taken instead. Exactly 2 and 4 never need a
+   step; 1 and 3 need at most one.
 4. Pause auto-rotate and compute per-frame angle for the turntable.
 5. Build the per-mode driver (`ImageSequenceDriver` /
    `ExrSequenceDriver` / `VideoModeDriver`).

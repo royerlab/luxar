@@ -87,27 +87,21 @@ const TONE_MAP_BY_THREE_CONSTANT: Record<number, ToneMapName> = {
   [THREE.NeutralToneMapping]: 'neutral',
 };
 
-/** Ungraded clamp — the fallback when the renderer can't report a grade. */
-const NEUTRAL_GRADE: GradeSettings = {
-  toneMapping: 'linear',
-  exposure: 0,
-  offset: 0,
-  gamma: 1,
-};
-
 /**
  * Read the display transform an EXR capture bypasses, so the bundled
  * ffmpeg script can put it back.
  *
- * Falls back to an ungraded clamp if the renderer doesn't expose it
- * (older mocks in tests). It must not return `undefined`: that makes the
- * script skip the colour chain entirely, which encodes the scene-linear
- * floats as if they were display-referred — the dark, colour-shifted
- * video this whole path exists to prevent.
+ * Returns `undefined` when the renderer doesn't expose the grade (older
+ * mocks in tests), which is what the script's `unknown-grade` chain is
+ * for: it still converts the transfer — linear floats must never go out
+ * untouched — and says in the header that the curve is missing. Handing
+ * it a fabricated neutral grade instead produced identical pixels but a
+ * header claiming the viewer's own curve had been written out, while the
+ * viewer may well have been on ACES.
  */
-function readGradeSettings(sceneManager: SceneManager): GradeSettings {
+function readGradeSettings(sceneManager: SceneManager): GradeSettings | undefined {
   const grade = sceneManager.postProcessing?.getGradeSettings?.();
-  if (!grade) return NEUTRAL_GRADE;
+  if (!grade) return undefined;
   return {
     toneMapping: TONE_MAP_BY_THREE_CONSTANT[grade.toneMapping] ?? 'neutral',
     exposure: grade.exposure,
@@ -212,23 +206,32 @@ export class OfflineCaptureStrategy implements CaptureStrategy {
     this.hooks.hideAllPanels();
 
     // Save state, disable DPR, lock resize, scale resolution.
-    // Dimensions are rounded to a multiple of 16 (macroblock alignment).
+    // Dimensions are aligned DOWN to even numbers — H.264/H.265 with
+    // yuv420p need even width and height, and encoders pad internally to
+    // their own macroblock size, so nothing here has to.
     //
     // `videoResolution === 0` is the panel's "Native" option, documented
     // in its tooltip as "current canvas size" — so capture at the size
-    // the canvas actually has (logical size × native DPR, which is what
-    // the real-time path records once adaptive DPR is switched off)
-    // rather than silently forcing 1080. Forcing it downscaled every
-    // Retina/4K capture and, because it changed the capture-to-CSS pixel
-    // ratio, rescaled the composited overlays with it.
-    const logicalH = this.sceneManager.renderer.getSize(new THREE.Vector2()).y;
+    // the canvas actually has (display size × native DPR) rather than
+    // silently forcing 1080. Forcing it downscaled every Retina/4K
+    // capture and, because it changed the capture-to-CSS pixel ratio,
+    // rescaled the composited overlays with it.
+    //
+    // The display size comes from post-processing, NOT from
+    // `renderer.getSize()`: the renderer is handed the SSAA-multiplied
+    // size, so under SSAA it reports `display × multiplier` and asking
+    // to render THAT squares the multiplier (2× on a 3024×1700 canvas
+    // asked for a 12096×6800 target). `saveRecordingState` re-applies
+    // the multiplier itself, so the frames on disk still carry SSAA —
+    // which is what the real-time path's canvas backbuffer includes too.
+    const displayH = this.sceneManager.postProcessing.getDisplaySize().height;
     const nativeDPR = session.adaptiveDPRManager?.getNativeDPR() ?? window.devicePixelRatio ?? 1;
     const targetH =
-      opts.videoResolution > 0 ? opts.videoResolution : Math.round(logicalH * nativeDPR);
+      opts.videoResolution > 0 ? opts.videoResolution : Math.round(displayH * nativeDPR);
     session.saveRecordingState({
       disableDPR: true,
       lockResize: true,
-      scaleResolution: { targetH, align16: true },
+      scaleResolution: { targetH, alignEven: true },
     });
     await new Promise((r) => requestAnimationFrame(r));
 

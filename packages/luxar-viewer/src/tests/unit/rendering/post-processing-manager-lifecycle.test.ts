@@ -98,6 +98,7 @@ type ManagerInternals = {
   megaPass: { dispose(): void };
   disposed: boolean;
   deferRebuildDepth: number;
+  renderer: { setSize: ReturnType<typeof vi.fn>; domElement: HTMLCanvasElement };
 };
 
 function peek(mgr: PostProcessingManager): ManagerInternals {
@@ -481,6 +482,58 @@ describe('PostProcessingManager → deferred-rebuild depth', () => {
     mgr.endDeferRebuild();
     // Depth stays clamped at 0 — no negative depth, no exception.
     expect(peek(mgr).deferRebuildDepth).toBe(0);
+
+    mgr.dispose();
+  });
+});
+
+describe('PostProcessingManager → size accessors', () => {
+  beforeEach(() => {
+    materialManager.setCaps(mockCaps('webgl2'));
+  });
+
+  // The recording session saves a size and later hands it back to
+  // resize(); the offline capture derives a "Native" frame height from
+  // it. Both need the DISPLAY size, and `renderer.getSize()` is not it —
+  // reallocateForSize gives the renderer the SSAA-multiplied size and
+  // puts the display size on the canvas CSS instead.
+  it('reports the size resize() was given, not the SSAA-multiplied one', () => {
+    const mgr = makeManager({ width: 1512, height: 850 });
+    mgr.setSSAAMultiplier(2);
+    mgr.setSSAAEnabled(true);
+
+    expect(mgr.getDisplaySize()).toEqual({ width: 1512, height: 850 });
+    expect(mgr.getEffectiveRenderScale()).toBe(2);
+
+    // The premise the two accessors rest on, and the reason the capture
+    // path must fold the scale in itself: the RENDERER is handed
+    // display × multiplier while the canvas CSS keeps the display size.
+    // Without this, swapping the two would leave the accessors — and
+    // every recording test — green while an offline capture silently
+    // dropped the SSAA factor.
+    const { renderer } = peek(mgr);
+    expect(renderer.setSize).toHaveBeenLastCalledWith(3024, 1700, false);
+    expect(renderer.domElement.style.width).toBe('1512px');
+
+    mgr.resize(1920, 1080);
+    expect(mgr.getDisplaySize()).toEqual({ width: 1920, height: 1080 });
+
+    mgr.dispose();
+  });
+
+  it('hands out a copy, so a caller cannot resize the pipeline by mutation', () => {
+    const mgr = makeManager({ width: 64, height: 64 });
+    const size = mgr.getDisplaySize();
+    size.width = 4096;
+    expect(mgr.getDisplaySize().width).toBe(64);
+
+    mgr.dispose();
+  });
+
+  it('excludes SSAA from the scale when SSAA is off', () => {
+    const mgr = makeManager({ width: 64, height: 64 });
+    mgr.setSSAAMultiplier(4);
+    expect(mgr.getEffectiveRenderScale()).toBe(1);
 
     mgr.dispose();
   });
