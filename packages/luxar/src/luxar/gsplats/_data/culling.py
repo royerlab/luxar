@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from .base import _GSplatDataOps
+from .filtering import _stats_after_content_change
 
 if TYPE_CHECKING:
     from luxar.gsplats.gsplat_data import GSplatData
@@ -156,6 +157,12 @@ class CullingMixin(_GSplatDataOps):
                     verbose=verbose,
                 )
             )
+            # The per-level recursion scrubs each level's measured scores through
+            # filter(), but _map_substitutive rebuilds the TOP-level stats from
+            # `dict(self.stats)` — the dict `gsplat info` reads `psnr_db` from.
+            # Scrub BEFORE stamping: the scrub also takes the inherited cull record
+            # (`culled` / `n_original` / ...), which is what this update replaces.
+            _stats_after_content_change(out, changed=out.n_splats != self.n_splats)
             out.stats.update(
                 {
                     "culled": True,

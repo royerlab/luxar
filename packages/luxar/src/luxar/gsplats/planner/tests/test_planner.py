@@ -1229,12 +1229,17 @@ class TestPlannedFitTruncationRadius:
                 assert sub.truncation_radius == pytest.approx(3.5)
             # The per-box fit stats ride along with the part they describe...
             box_stats = leaf.additive_sublods[0].stats
-            assert "final_loss" in box_stats
+            assert "iterations" in box_stats
             # ... but the count must describe THIS part, not the padded crop it
             # was fitted on (it becomes the part's on-disk `lod_stats`).
             assert box_stats["n_splats"] == leaf.n_splats
             if not any(k in box_stats for k in _REGION_SCOPED_STATS_KEYS):
                 n_cropped += 1
+                # A rescoped box also publishes no measured SCORE: `final_loss` /
+                # `psnr_db` were taken on the padded crop, with the halo splats
+                # present and against a bigger target region (#1600).
+                assert "final_loss" not in box_stats
+                assert "psnr_db" not in box_stats
         # A box is fitted on a halo-padded crop and then core-masked, so the
         # crop's grid stamps describe a bigger region than the part (the rule
         # itself is pinned by test_core_mask_rescopes_the_box_stats and
@@ -1256,7 +1261,7 @@ class TestPlannedFitTruncationRadius:
                 assert sub.truncation_radius == pytest.approx(3.5)
             # A per-box fit stat reaches the part ON DISK, not just in memory
             # (the writer persists a sub-LOD's stats as the leaf's `lod_stats`).
-            assert "final_loss" in leaf.additive_sublods[0].stats
+            assert "iterations" in leaf.additive_sublods[0].stats
 
     def test_zero_budget_box_carries_the_configured_radius(self):
         """The early-out has no fit to read the radius off — resolve it anyway."""
@@ -1316,18 +1321,25 @@ class TestPlannedFitTruncationRadius:
         assert 0 < out.n_splats
         assert out.stats["n_splats"] == out.n_splats
         assert [k for k in _REGION_SCOPED_STATS_KEYS if k in out.stats] == []
-        # Fit-quality / normalization metadata legitimately describes this box's
-        # own fit and must survive.
-        assert "final_loss" in out.stats
+        # The MEASURED scores go with them: they were taken on the fit of the
+        # padded crop, so they describe neither this splat set (the halo splats
+        # contributed) nor this region (#1600).
+        assert "final_loss" not in out.stats
+        assert "psnr_db" not in out.stats
+        # Descriptive run metadata legitimately describes this box's own fit and
+        # must survive.
+        assert "iterations" in out.stats
 
         # Negative control: the padded crop EQUALS the core box (no halo, box
         # covering the whole volume) and nothing is dropped, so the crop's grid
-        # stamps still describe this part exactly and must be kept.
+        # stamps still describe this part exactly and must be kept — and so does
+        # its score, which was measured on exactly these splats.
         whole = PlanBox(box=[0, 24, 0, 24, 0, 24], n_features=50, budget=120)
         full = _fit_one_box(V, whole, 0, 0, **_FAST_FIT)
         assert full.stats["n_splats"] == full.n_splats
         assert full.stats["fitted_shape"] == [24, 24, 24]
         assert "occupancy" in full.stats
+        assert "final_loss" in full.stats
 
     def test_a_halo_alone_rescopes_the_box_stats(self, monkeypatch):
         """A padded crop LARGER than the core invalidates the grid stamps...
@@ -1371,7 +1383,9 @@ class TestPlannedFitTruncationRadius:
         out = _fit_one_box(V, box, 6, 0)
         assert out.n_splats == 3  # nothing was dropped by the core mask
         assert [k for k in _REGION_SCOPED_STATS_KEYS if k in out.stats] == []
-        assert out.stats["final_loss"] == 0.25  # this box's own fit, still true
+        # The score is measured against the PADDED CROP's voxels, so a halo alone
+        # invalidates it even with the splat set intact (#1600).
+        assert "final_loss" not in out.stats
 
         # Negative control: the same halo CLAMPS to the core (the box is the whole
         # volume), so the stamps describe this part and must survive.
@@ -1380,6 +1394,7 @@ class TestPlannedFitTruncationRadius:
         assert full.n_splats == 3
         assert full.stats["fitted_shape"] == [18, 18, 18]
         assert full.stats["occupancy"] == 0.5
+        assert full.stats["final_loss"] == 0.25
 
     def test_box_stats_are_json_safe(self, monkeypatch, tmp_path):
         """A non-finite box stat must not reach a part's attrs.

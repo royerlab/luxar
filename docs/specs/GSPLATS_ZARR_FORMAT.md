@@ -665,6 +665,91 @@ would put a bare `NaN` / `Infinity` token in the metadata document — not JSON,
 and fatal to a strict reader for the whole store rather than for that one key.
 `foreground_fraction` is still present in that case, so the artifact says why.
 
+**What survives a rewrite.** Inherited `fitting/` stamps fall into two
+categories, invalidated along two independent axes, and a tool that rewrites a
+store must apply both rules:
+
+* **Content-scoped** — every number MEASURED against the source volume: the
+  scores above, `final_loss` / `final_rel_l2` / `final_max_abs_error`, the
+  error-budget cull's own `error_budget` / `max_joint_error` (and its
+  `phase1_candidates` / `phase2_iterations` search counters, which mean nothing
+  without it), and the per-sub-LOD `lod_stats.cumulative_psnr_db` /
+  `delta_psnr_db` a progressive fit stamps one level down. Beside them, the
+  **record of the reduction that produced the artifact** — `culled`,
+  `culling_method`, `n_original`, `n_culled`, `amplitude_retention` — which is
+  true of the operation that stamped it and false of anything downstream. They
+  describe one specific splat set, so they are **dropped by any operation that
+  changes which splats the artifact holds**: `cull`, `filter`, `slice`, `decimate`
+  (a merge-family reduction lands on the requested count while replacing every
+  splat with a representative), a reduced LOD **view** (a strict additive prefix,
+  or a coarser substitutive level — which is why `lod --recipe overview` does not
+  put the input fit's `psnr_db` on its merged coarse cap), and any intensity edit
+  — PSNR and MSE are absolute-error metrics, so a global `x0.5` changes them
+  outright. An operation that stamps its own record does so *after* the scrub, so
+  a rewrite publishes the reduction it actually performed and no other.
+
+  **Known separate case, out of scope of this rule:** the LOD Q·e ladder stamps —
+  `lod_stats.energy_fraction_cum` (a rung's prefix energy e(k)),
+  `level_stats.reference_energy` (its weight w) and `level_stats.quality` (a
+  level's measured Q against its group's finest). These are measured on the
+  artifact's **own content** rather than against a source volume, so a coarse
+  level's stamps are statements about that coarse level and the argument above
+  does not reach them; the scene-authoring path builds every coarse child of a
+  `kind=lod` group through the same `at_substitutive` accessor and copies exactly
+  these numbers onto it. Deleting them is also not free downstream: `gsplat
+  annotate-quality` writes a leaf-local `reference_energy` only when none is
+  present, so removing w licenses it to fabricate a group-inconsistent one. A
+  reduction does make them stale, and the likely right answer is to **recompute**
+  them (cheap, O(N), no volume — what `annotate-quality` already does) rather than
+  to drop them; that needs its own design pass. Until then a tool that rewrites a
+  store should either leave them alone or re-run `annotate-quality` deliberately.
+  A `--refine l2|volume` level's `level_stats.refine_stats` (`mse_seed` /
+  `mse_refit`) belongs to the same known-separate case even though it *is* measured
+  against the source volume: it records the build step that produced that level
+  rather than the artifact's published quality, and a reduction wants it recomputed
+  for the same reason.
+
+  A geometry-only transform (scale / rotate / translate / center) **keeps** them:
+  the splat set is identical and only the frame moved. Note this is a weaker
+  claim than the reproducibility paragraph above — that argument holds for a
+  `voxel_size` fit because the spacing is *recorded*, whereas `gsplat transform
+  --scale` records no factor and does not update `fitted_shape` / `source_shape`,
+  so the score is not reproducible from the artifact afterwards. It is kept
+  because it is still a true statement about these splats, not because you could
+  re-derive it. A rewrite that changes nothing at all keeps them too — a
+  threshold that removed no splat, `flatten`, `additive`, `annotate-quality`,
+  `partition` (the same splats, regrouped), and `reencode -e precision` (exact).
+  `reencode -e auto` / `-e memory` and `migrate-format` re-quantize the Cholesky
+  factors *and* (for `auto`/`memory`) the centers to fixed point, so the decoded
+  values are not bit-identical to the ones that were scored; the loss is
+  deliberate and bounded (~93 dB at `memory`, far below the reconstruction error
+  any of these scores report), so the scores are kept as still-valid to well
+  within their own precision rather than thrown away.
+
+  One exemption, on the producing side: the fitters end with a high-retention
+  cumulative trim (`cull_retention`, 0.95 by default) *after* scoring, and carry
+  their measurement across it — so a stored fit's score is taken on the pre-trim
+  splats, which hold 100% of the amplitude minus the retention. Re-scoring would
+  cost a second full render of the volume, and the alternative is a fit that
+  publishes no score at all. A content-planned box fit gets the opposite
+  treatment: its score was measured on the halo-padded crop, with neighbour
+  splats present and against a larger target region, so a part whose crop was
+  padded (or whose core mask dropped splats) publishes no score at all.
+* **Region-scoped** — the source grid (`source_shape`, `source_voxels`,
+  `source_bytes`, `source_stored_bytes`, `fitted_shape`, `fitted_voxels`,
+  `occupancy`, `voxels_per_splat`, and the `source_declared` marker that
+  qualifies the grid). Dropped only by a **spatial** restriction that actually
+  excluded splats, because that is what makes the compression ratio quote a
+  volume the artifact no longer represents. `source_dtype` is exempt: a crop
+  cannot change the element type. A non-spatial cull keeps this whole block.
+
+Neither category subsumes the other, which is why one predicate cannot serve
+both: an amplitude-threshold cull loses the scores and keeps the grid, a
+whole-volume bbox that excluded nothing keeps both, and a real crop loses both.
+Descriptive counters are never dropped by either rule — `iterations`,
+`best_iteration`, `converged`, `time_seconds`, `fitter_name` and `filtered` /
+`filter_criteria` describe the run or the edit, both of which happened.
+
 ### Pipeline Group Attributes (Optional)
 
 The `pipeline/` group records the reduction/topology provenance of a dataset —
