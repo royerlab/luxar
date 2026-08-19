@@ -12,7 +12,7 @@
  *      :func:`transformBoundingBox` and the lod_group's ``matrixWorld``.
  *   3. Project the 8 corners through the camera and reduce them to the
  *      dimensionless **coverage metric**, on whichever scale the entry's
- *      ``selector`` names — the two branches of {@link evaluateEntry}:
+ *      ``selector`` names — the two branches of ``evaluateEntry``:
  *      - ``'screen-area'`` (what every derived ladder stamps): the fraction of
  *        the viewport the projected AABB covers by AREA, via
  *        {@link projectBoxAreaFraction}. Aspect-free, tops out at 1.0.
