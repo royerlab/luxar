@@ -22,7 +22,8 @@
  * PNG of the same frame (PSNR, higher is closer):
  *
  *   viewer ACES      exact geq 40.3 dB · tonemap=hable 16.0 · nothing 23.8
- *   viewer Reinhard  exact geq (see tests) · tonemap=reinhard 34.8
+ *   viewer Reinhard  tonemap=reinhard 34.8 dB, and the exact expression
+ *                    measured closer still
  *
  * `hable`, the usual stand-in for ACES, is *worse than no tone mapping
  * at all*, which is why this module does not offer the approximations.
@@ -82,22 +83,22 @@ interface ExposedChannels {
 /**
  * Exposure → offset → gamma, exactly as the shader's EOG block:
  *   `pow(max(c * exp2(exposure) + offset, 0), 1 / gamma)`
- * Emitted only where it changes the pixel, so the common all-default
- * case keeps the expression short.
+ * The exposure multiply and the gamma `pow` are emitted only where they
+ * change the pixel, so the common all-default case keeps the expression
+ * short. The `max` is NOT optional: the shader clamps unconditionally,
+ * and a scene-linear EXR carrying a negative component would otherwise
+ * run a value through the tone curve that the viewer never saw
+ * (Reinhard on −2 comes out at +2, i.e. white where the viewer is black).
+ * It is emitted once, before the `pow`, whether or not an offset was
+ * applied.
  */
 function applyEog(channel: string, grade: GradeSettings): string {
   let expr = channel;
-  let clamped = false;
   const scale = Math.pow(2, grade.exposure);
   if (scale !== 1) expr = `(${expr}*${fmt(scale)})`;
-  if (grade.offset !== 0) {
-    expr = `max(${expr}+${fmt(grade.offset)},0)`;
-    clamped = true;
-  }
+  expr = grade.offset !== 0 ? `max(${expr}+${fmt(grade.offset)},0)` : `max(${expr},0)`;
   if (grade.gamma !== 1) {
-    // `pow` of a negative base is undefined; the shader's own `max` has
-    // already run when an offset was applied, so don't emit it twice.
-    expr = `pow(${clamped ? expr : `max(${expr},0)`},${fmt(1 / grade.gamma)})`;
+    expr = `pow(${expr},${fmt(1 / grade.gamma)})`;
   }
   return expr;
 }
@@ -129,7 +130,10 @@ function sat(expr: string): string {
  *
  * i.e. a 600-frame turntable went from ~2-4 h of encoding to ~10-15 min,
  * with bit-identical output (both forms verified against three's own
- * functions to < 1e-7).
+ * functions to < 1e-7). Those s/frame figures are wall clock on the
+ * machine they were measured on; `geq` is slice-threaded, so they scale
+ * with the core count and the header's own numbers (CPU time) are the
+ * same measurements counted differently.
  *
  * `st(i, …)` / `ld(i)` have ten slots (0–9) and the registers belong to
  * the expression, not the filter, so each of the r/g/b expressions
@@ -286,9 +290,17 @@ function buildGradeFilter(
     return { filter: `format=gbrpf32le,${srgb},format=yuv420p`, exact: 'unknown-grade' };
   }
 
+  // `interpolation=nearest` is load-bearing, not a tuning knob. `geq`
+  // samples with bilinear interpolation by default and clamps the sample
+  // coordinate to [0, w-2] × [0, h-2], so the rightmost column and the
+  // bottom row come out as copies of their neighbours — on an 8×2
+  // gbrpf32le frame under an identity expression, a last column of 1.0
+  // read back as 0.6. These expressions only ever read integer X, Y, so
+  // nearest is both exact and cheaper.
   return {
     filter:
-      `format=gbrpf32le,geq=r='${out.r}':g='${out.g}':b='${out.b}',` + `${srgb},format=yuv420p`,
+      `format=gbrpf32le,geq=interpolation=nearest:r='${out.r}':g='${out.g}':b='${out.b}',` +
+      `${srgb},format=yuv420p`,
     exact: mapped !== null ? 'exact' : 'no-curve',
   };
 }
@@ -306,7 +318,9 @@ function buildEogOnlyFilter(grade: GradeSettings | undefined): string | null {
   const r = applyEog('r(X,Y)', grade);
   const g = applyEog('g(X,Y)', grade);
   const b = applyEog('b(X,Y)', grade);
-  return `format=gbrpf32le,geq=r='${r}':g='${g}':b='${b}',`;
+  // `interpolation=nearest` for the same reason as the SDR chain above:
+  // the default bilinear sampling duplicates the edge column and row.
+  return `format=gbrpf32le,geq=interpolation=nearest:r='${r}':g='${g}':b='${b}',`;
 }
 
 /**
@@ -425,10 +439,14 @@ export function generateFfmpegScript(opts: FfmpegScriptOptions): string {
     if (grade.exact !== 'unknown-grade') {
       header.push(
         '#',
-        '# SLOW: `geq` evaluates that expression per pixel on one CPU core.',
-        '# Measured ~2.9 s/frame at 720p, ~7.5 s at 1080p and ~35 s at 4K,',
-        `# so these ${frameCount} frames may take a while (a plain mux is`,
-        '# ~0.02 s/frame). Faster options, in order of convenience:',
+        '# SLOW: `geq` evaluates that expression per pixel. Measured CPU',
+        '# time ~2.9 s/frame at 720p, ~7.5 s at 1080p and ~35 s at 4K. The',
+        '# filter is slice-threaded, so the wall clock is roughly that',
+        '# divided by the cores you have — ~0.8 s/frame at 1080p on 16',
+        '# threads — against ~0.02 s/frame for a plain mux. On a many-core',
+        `# machine these ${frameCount} frames are minutes of encoding; on a`,
+        '# small one, budget rather more. Faster options, in order of',
+        '# convenience:',
         '#   1. Record a PNG/WebP sequence instead — those frames come out',
         '#      of the viewer already graded, so the encode is a plain mux',
         '#      and matches the viewer exactly. Prefer this unless you',

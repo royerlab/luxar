@@ -25,6 +25,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import * as THREE from 'three';
 
 if (typeof globalThis.ImageData === 'undefined') {
   (globalThis as any).ImageData = class ImageData {
@@ -139,6 +140,69 @@ describe('RecordingSession', () => {
 
       expect(manager.setEnabled).not.toHaveBeenCalledWith(false);
       expect(mockSceneManager.setAdaptivePixelRatio).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('capture-resolution alignment', () => {
+    /**
+     * Point the mock at a canvas of the given DEVICE size and give it the
+     * two collaborators the scale-resolution branch touches: a real
+     * PerspectiveCamera (the branch is gated on `instanceof`) and the
+     * material refresh.
+     */
+    function withCanvas(width: number, height: number): THREE.PerspectiveCamera {
+      mockSceneManager.renderer.getSize = vi.fn().mockReturnValue({ x: width, y: height });
+      mockSceneManager.updateMaterialsForCurrentCamera = vi.fn();
+      const camera = new THREE.PerspectiveCamera(50, width / height, 0.1, 1000);
+      mockSceneManager.camera = camera;
+      return camera;
+    }
+
+    it('records the 1080p preset at exactly 1920x1080', () => {
+      // Multiples of 16 are not an encoder requirement — H.264/H.265 with
+      // yuv420p need EVEN dimensions and encoders pad internally to their
+      // own macroblock size. Truncating to 16 recorded 1072 lines from the
+      // menu entry labelled 1080p, while the real-time path (which passes
+      // no alignment at all) recorded 1080 from the same entry.
+      withCanvas(1920, 1080);
+      panel.session.saveRecordingState({
+        scaleResolution: { targetH: 1080, alignEven: true },
+      });
+      expect(mockSceneManager.postProcessing.resize).toHaveBeenCalledWith(1920, 1080);
+    });
+
+    it('keeps a Native odd height, and the canvas aspect with it', () => {
+      // "Native" is documented as the canvas's own size: a 1512×850 CSS
+      // canvas at DPR 2 is 3024×1700, not 3024×1696. And the width comes
+      // from the ALIGNED height, so the output aspect tracks the source
+      // instead of widening the horizontal FOV the user framed.
+      const camera = withCanvas(3024, 1700);
+      panel.session.saveRecordingState({
+        scaleResolution: { targetH: 1700, alignEven: true },
+      });
+      expect(mockSceneManager.postProcessing.resize).toHaveBeenCalledWith(3024, 1700);
+      expect(camera.aspect).toBeCloseTo(3024 / 1700, 6);
+    });
+
+    it('never resizes a tiny canvas to zero or a NaN aspect', () => {
+      // A canvas smaller than the alignment used to truncate to 0, giving
+      // `resize(0, 0)` and `camera.aspect = 0/0`. Unreachable while every
+      // target height was a preset ≥ 1080; Native makes it reachable.
+      const camera = withCanvas(8, 6);
+      panel.session.saveRecordingState({
+        scaleResolution: { targetH: 6, alignEven: true },
+      });
+      const [w, h] = mockSceneManager.postProcessing.resize.mock.calls[0];
+      expect(w).toBeGreaterThan(0);
+      expect(h).toBeGreaterThan(0);
+      expect(Number.isFinite(camera.aspect)).toBe(true);
+    });
+
+    it('leaves the height alone when no alignment is asked for', () => {
+      // The real-time path passes `{ targetH }` only.
+      withCanvas(1920, 1080);
+      panel.session.saveRecordingState({ scaleResolution: { targetH: 1081 } });
+      expect(mockSceneManager.postProcessing.resize).toHaveBeenCalledWith(1922, 1081);
     });
   });
 
@@ -288,6 +352,38 @@ describe('RecordingSession', () => {
 
         const message = document.querySelector('#luxar-recording-confirm-message');
         expect(message?.textContent).toContain(expected);
+
+        (document.querySelector('[data-action="cancel"]') as HTMLElement)?.click();
+        await promise;
+      }
+    );
+
+    // "Smooth (offline)" lives in the turntable control group and is
+    // hidden in Video mode (whose only format is WebM), and
+    // startVideoRecording ignores `frameByFrame` outside turntable mode
+    // — so naming it there prescribes a control the user cannot reach.
+    it.each([
+      ['turntable', true],
+      ['video', false],
+    ] as const)(
+      'the overlay warning only names Smooth (offline) in %s mode',
+      async (mode, expected) => {
+        (panel as any).session.overlayManager = {
+          getVisibleOverlays: () => [{}],
+        };
+        const promise = (panel as any).session.showConfirmationDialog({
+          mode,
+          options: {
+            ...(panel as any).options,
+            outputFormat: 'webm',
+            includeOverlays: true,
+            frameByFrame: false,
+          },
+        });
+
+        const message = document.querySelector('#luxar-recording-confirm-message');
+        expect(message?.textContent).toContain('Overlays will NOT be included');
+        expect(message?.innerHTML.includes('Smooth (offline)')).toBe(expected);
 
         (document.querySelector('[data-action="cancel"]') as HTMLElement)?.click();
         await promise;

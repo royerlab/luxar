@@ -87,27 +87,21 @@ const TONE_MAP_BY_THREE_CONSTANT: Record<number, ToneMapName> = {
   [THREE.NeutralToneMapping]: 'neutral',
 };
 
-/** Ungraded clamp — the fallback when the renderer can't report a grade. */
-const NEUTRAL_GRADE: GradeSettings = {
-  toneMapping: 'linear',
-  exposure: 0,
-  offset: 0,
-  gamma: 1,
-};
-
 /**
  * Read the display transform an EXR capture bypasses, so the bundled
  * ffmpeg script can put it back.
  *
- * Falls back to an ungraded clamp if the renderer doesn't expose it
- * (older mocks in tests). It must not return `undefined`: that makes the
- * script skip the colour chain entirely, which encodes the scene-linear
- * floats as if they were display-referred — the dark, colour-shifted
- * video this whole path exists to prevent.
+ * Returns `undefined` when the renderer doesn't expose the grade (older
+ * mocks in tests), which is what the script's `unknown-grade` chain is
+ * for: it still converts the transfer — linear floats must never go out
+ * untouched — and says in the header that the curve is missing. Handing
+ * it a fabricated neutral grade instead produced identical pixels but a
+ * header claiming the viewer's own curve had been written out, while the
+ * viewer may well have been on ACES.
  */
-function readGradeSettings(sceneManager: SceneManager): GradeSettings {
+function readGradeSettings(sceneManager: SceneManager): GradeSettings | undefined {
   const grade = sceneManager.postProcessing?.getGradeSettings?.();
-  if (!grade) return NEUTRAL_GRADE;
+  if (!grade) return undefined;
   return {
     toneMapping: TONE_MAP_BY_THREE_CONSTANT[grade.toneMapping] ?? 'neutral',
     exposure: grade.exposure,
@@ -212,7 +206,9 @@ export class OfflineCaptureStrategy implements CaptureStrategy {
     this.hooks.hideAllPanels();
 
     // Save state, disable DPR, lock resize, scale resolution.
-    // Dimensions are rounded to a multiple of 16 (macroblock alignment).
+    // Dimensions are aligned DOWN to even numbers — H.264/H.265 with
+    // yuv420p need even width and height, and encoders pad internally to
+    // their own macroblock size, so nothing here has to.
     //
     // `videoResolution === 0` is the panel's "Native" option, documented
     // in its tooltip as "current canvas size" — so capture at the size
@@ -228,7 +224,7 @@ export class OfflineCaptureStrategy implements CaptureStrategy {
     session.saveRecordingState({
       disableDPR: true,
       lockResize: true,
-      scaleResolution: { targetH, align16: true },
+      scaleResolution: { targetH, alignEven: true },
     });
     await new Promise((r) => requestAnimationFrame(r));
 

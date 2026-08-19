@@ -318,15 +318,21 @@ describe('OfflineCaptureStrategy', () => {
       await strat.run(makeOpts({ videoResolution: 0 }), 'turntable', session);
 
       expect(session.saveRecordingState).toHaveBeenCalledWith(
-        expect.objectContaining({ scaleResolution: { targetH: 1440, align16: true } })
+        expect.objectContaining({ scaleResolution: { targetH: 1440, alignEven: true } })
       );
     });
 
     it('still converts EXR frames when the renderer cannot report a grade', async () => {
       // No `postProcessing` on the scene manager → the grade is unknown.
-      // The script must still clamp and sRGB-encode: skipping the colour
-      // chain hands the encoder scene-linear floats, which is the dark,
+      // The script must still sRGB-encode: skipping the colour chain
+      // hands the encoder scene-linear floats, which is the dark,
       // colour-shifted video the chain exists to prevent.
+      //
+      // It must NOT claim to have written out the viewer's own curve.
+      // This used to assert `geq=`, because an absent grade was replaced
+      // by a fabricated neutral one — same pixels as the unknown-grade
+      // chain, but a header saying the tone map had been reproduced when
+      // the viewer may well have been on ACES.
       const { sm } = makeSceneManager();
       const strat = new OfflineCaptureStrategy(sm, makeAnimController(), makeHooks());
 
@@ -337,7 +343,8 @@ describe('OfflineCaptureStrategy', () => {
       };
       const script = ctx.generateFfmpegScript(10, 'exr');
       expect(script).toContain('t=iec61966-2-1');
-      expect(script).toContain('geq=');
+      expect(script).toContain('grade could not be read');
+      expect(script).not.toContain('geq=');
     });
 
     it('multiplies the canvas height by the native DPR for Native', async () => {
@@ -352,7 +359,7 @@ describe('OfflineCaptureStrategy', () => {
       await strat.run(makeOpts({ videoResolution: 0 }), 'turntable', session);
 
       expect(session.saveRecordingState).toHaveBeenCalledWith(
-        expect.objectContaining({ scaleResolution: { targetH: 1440, align16: true } })
+        expect.objectContaining({ scaleResolution: { targetH: 1440, alignEven: true } })
       );
     });
 
@@ -380,7 +387,7 @@ describe('OfflineCaptureStrategy', () => {
       await strat.run(makeOpts({ videoResolution: 1080 }), 'turntable', session);
 
       expect(session.saveRecordingState).toHaveBeenCalledWith(
-        expect.objectContaining({ scaleResolution: { targetH: 1080, align16: true } })
+        expect.objectContaining({ scaleResolution: { targetH: 1080, alignEven: true } })
       );
     });
 

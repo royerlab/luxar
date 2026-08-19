@@ -34,7 +34,7 @@ export interface SavedRecordingState {
 export interface SaveRecordingStateOptions {
   lockResize?: boolean;
   disableDPR?: boolean;
-  scaleResolution?: { targetH: number; align16?: boolean };
+  scaleResolution?: { targetH: number; alignEven?: boolean };
 }
 
 export interface ConfirmationDialogInfo {
@@ -172,14 +172,19 @@ export class RecordingSession {
 
     if (options.scaleResolution) {
       this.savedRecordingState.rendererSize = { width: currentSize.x, height: currentSize.y };
-      const { targetH, align16 } = options.scaleResolution;
+      const { targetH, alignEven } = options.scaleResolution;
       const aspect = currentSize.x / currentSize.y;
-      let w = Math.round(targetH * aspect);
-      let h = targetH;
-      if (align16) {
-        w = w & ~15;
-        h = h & ~15;
-      }
+      // Align the HEIGHT first, then derive the width from the aligned
+      // height, so the output aspect still tracks the source. Deriving
+      // the width from the requested height and then truncating both
+      // independently widened the frame relative to what the user
+      // framed. Even, not a multiple of 16: H.264/H.265 with yuv420p
+      // need even dimensions and the encoder pads to its own macroblock
+      // size — the floor of 2 keeps a canvas smaller than the alignment
+      // from collapsing to a zero-sized target (and a NaN camera aspect).
+      const h = alignEven ? Math.max(2, targetH - (targetH % 2)) : targetH;
+      const wRaw = Math.round(h * aspect);
+      const w = alignEven ? Math.max(2, wRaw - (wRaw % 2)) : wRaw;
       renderer.setPixelRatio(1);
       this.sceneManager.postProcessing.resize(w, h);
       const canvas = renderer.domElement;
@@ -328,9 +333,16 @@ export class RecordingSession {
       // quietly produce a file without them.
       const hasOverlays = (this.overlayManager?.getVisibleOverlays().length ?? 0) > 0;
       if (options.includeOverlays && hasOverlays && (realtimeWebm || fmt === 'exr')) {
+        // Only the turntable group has a "Smooth (offline)" toggle — it
+        // is hidden in Video mode, and `startVideoRecording` ignores
+        // `frameByFrame` outside a turntable — so pointing a Video-mode
+        // user at it prescribes a control they cannot reach. Video mode
+        // is WebM-only too, so there is no remedy to name from here.
+        const realtimeRemedy =
+          mode === 'turntable' ? ' Enable <em>Smooth (offline)</em> to composite them.' : '';
         details += realtimeWebm
           ? '<br><strong>Overlays will NOT be included</strong> — real-time WebM records the ' +
-            'canvas alone. Enable <em>Smooth (offline)</em> to composite them.'
+            `canvas alone.${realtimeRemedy}`
           : '<br><strong>Overlays will NOT be included</strong> — EXR frames are the raw HDR buffer.';
       }
 
