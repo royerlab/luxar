@@ -963,6 +963,41 @@ describe('AnimationController', () => {
       expect(pacingDelays()).toEqual([]);
     });
 
+    // The predicate is read when the cooldown is ARMED, and a capture can
+    // start during the very frame that armed it. Without the second read in
+    // the hop callback, that cooldown plays out INSIDE the capture — up to
+    // maxCooldownMs of frozen duplicate frame at the head of a real-time
+    // recording of an already-slow scene.
+    it('a capture that starts mid-cooldown drops the pending gap', () => {
+      let recording = false;
+      controller.setPacingSuspendPredicate(() => recording);
+      controller.startAnimation();
+
+      runNextFrame(1000);
+      runNextFrame(1000);
+      expect(pacingDelays()).toEqual([0]); // the hop; the cooldown is not armed yet
+      expect(mockRAF).not.toHaveBeenCalled();
+
+      // The capture starts while the hop is in flight.
+      recording = true;
+      vi.advanceTimersByTime(0);
+
+      // No cooldown was armed and the frame is released straight away; the
+      // only timer left is the idle timer.
+      expect(pacingDelays()).toEqual([0]);
+      expect(mockRAF).toHaveBeenCalledTimes(1);
+      expect(vi.getTimerCount()).toBe(1);
+
+      // The gap that never happened must not be subtracted from the next
+      // measurement: 300ms with no cooldown of ours in it is a 300ms frame,
+      // so the streak survives and pacing resumes once the capture ends.
+      recording = false;
+      setTimeoutSpy.mockClear();
+      runNextFrame(300);
+      expect(mockRAF).not.toHaveBeenCalled();
+      expect(pacedDelaysAfterHop()).toEqual([0, 75]); // round(300 * 0.25)
+    });
+
     it('config.animation.pacing.enabled = false disables pacing', () => {
       const wasEnabled = config.animation.pacing.enabled;
       config.animation.pacing.enabled = false;

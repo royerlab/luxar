@@ -17,15 +17,24 @@ import { eventBus } from '../../utils/cross-layer/event-bus';
  * Fraction of a slow frame's own cost inserted as a cooldown before the
  * next frame.
  *
- * Deliberately a FRACTION of the cost rather than a constant: a fixed
- * 100 ms gap after a 5 s frame leaves other tasks only 2 % of wall-clock,
- * which is indistinguishable from the wedge it is meant to break. A
- * fraction keeps the yielded share roughly constant — at 0.25 the gap is
- * a quarter of the frame's cost, so about a fifth of wall-clock
- * (`0.25 / 1.25`) — no matter how slow the frame is, until
- * `config.animation.pacing.maxCooldownMs` clamps it.
+ * Deliberately a FRACTION of the cost rather than a constant, over the band
+ * where the fraction is what decides the gap: from
+ * `config.animation.pacing.slowFrameMs` (250 ms) up to 1 s, above which
+ * `config.animation.pacing.maxCooldownMs` (250 ms) clamps it flat. Across
+ * that band the gap tracks the cost — at 0.25 it is a quarter of the frame,
+ * so about a fifth of wall-clock (`0.25 / 1.25`) is yielded — whereas a flat
+ * gap cannot: a fixed 100 ms over-yields at the bottom of the band and
+ * under-yields at the top (after a 1 s frame it is 9 % of wall-clock against
+ * the fraction's 20 %).
  *
- * That share is only real because the cooldown is armed from the first
+ * Above the clamp the shipped behaviour is flat too, so the fraction wins
+ * nothing there: at 5 s the clamped 250 ms is 4.8 % of wall-clock, the same
+ * order as the fixed-100 ms strawman's 2 %. That is the clamp doing its job —
+ * it bounds the added latency of an on-demand repaint (see `maxCooldownMs`)
+ * — not a failure of the constant. The measured wedge (~1042 ms frames) sits
+ * essentially at the clamp already.
+ *
+ * Any of those shares is only real because the cooldown is armed from the first
  * event-loop turn AFTER the frame's work rather than at the frame's start
  * (see `scheduleNextFrame()`): a timer armed at the start would already be
  * overdue by the time the thread frees, and would insert nothing.
@@ -38,8 +47,8 @@ const PACING_COOLDOWN_FRACTION = 0.25;
  *
  * Two rather than one, because the two failure modes are asymmetric:
  * - The wedge pacing exists for is SUSTAINED — every frame costs ~1 s and
- *   never recovers. Requiring a second consecutive slow frame therefore
- *   delays the first cooldown by exactly one frame and costs nothing.
+ *   never recovers. Requiring a second consecutive slow frame therefore only
+ *   delays the first cooldown; it never withholds it.
  * - A single outlier is precisely what must NOT be paced: a GC pause, a
  *   shader compile, one synchronous chunk decode, or any foreign
  *   main-thread task charged to the loop because the measurement is a frame
@@ -53,6 +62,21 @@ const PACING_COOLDOWN_FRACTION = 0.25;
  * An ALTERNATING slow/fast cadence is deliberately not paced either: the
  * fast frames are proof the main thread is already getting slots, which is
  * the only thing a cooldown buys.
+ *
+ * Two MEASURED slow frames means three frames in one uninterrupted run: the
+ * first frame of a run has no predecessor and so measures nothing, the second
+ * sets the streak to 1, and the third reaches 2 and arms the first cooldown.
+ * And since `startAnimation()` clears the streak on the stopped→running edge,
+ * pacing is unreachable from a cold start whenever a frame costs more than
+ * `config.animation.idleTimeoutMs / 2` — the idle timer fires before a third
+ * frame exists and stops the loop.
+ *
+ * Neither fact costs anything here. The reported wedge holds
+ * `animating=true` continuously — every landing depth-sort reply calls
+ * `requestRender()`, which pushes the idle timer out again — so the streak
+ * accumulates and pacing engages on the third frame. And in the cold-start
+ * case the loop reaching its idle pause IS the outcome pacing exists to
+ * enable: the main thread is free either way, so there is nothing to fix.
  */
 const PACING_SLOW_FRAME_STREAK = 2;
 
@@ -103,10 +127,12 @@ const PACING_SLOW_FRAME_STREAK = 2;
  *   real cooldown armed.
  *
  * Frames are DELAYED, never skipped: each one that runs still emits exactly
- * one `frame-start` / `frame-end` pair and one
- * `adaptiveDPRManager.recordFrame()`, both on the real clock — the achieved
- * frame rate really is lower and neither the FPS readout nor the DPR control
- * loop may be told otherwise.
+ * one `frame-start` / `frame-end` pair, and records itself with
+ * `adaptiveDPRManager.recordFrame()` whenever that frame does GPU work of its
+ * own — the call is gated on the context-lost and render-skip predicates, as
+ * it was before pacing existed (see the comment at the call site). Both are
+ * on the real clock: the achieved frame rate really is lower and neither the
+ * FPS readout nor the DPR control loop may be told otherwise.
  */
 export class AnimationController {
   /** Whether the animation loop is currently running */
@@ -118,7 +144,10 @@ export class AnimationController {
   /** Timeout ID for auto-pause functionality */
   private idleTimeout: ReturnType<typeof setTimeout> | null = null;
 
-  /** Timeout ID for a pending frame-pacing cooldown (null = none armed) */
+  /**
+   * Timeout ID for the pending frame-pacing chain (null = none armed). Holds
+   * the zero-delay hop first, then the cooldown that hop arms.
+   */
   private pacingTimeout: ReturnType<typeof setTimeout> | null = null;
 
   /** Start timestamp of the previous frame (null = no frame measured yet) */
@@ -355,16 +384,19 @@ export class AnimationController {
    * This function is called ~60 times per second (depending on display refresh rate)
    * and handles the complete HDR render pipeline:
    *
-   * 1. Performance measurement begins
-   * 2. Measure the previous frame's own cost and update the slow-frame streak
+   * 1. Measure the previous frame's own cost and update the slow-frame streak
    *    (for pacing)
-   * 3. Schedule next frame — immediately via requestAnimationFrame, or
+   * 2. Performance measurement begins (`frame-start`)
+   * 3. Record the frame for adaptive DPR — unless the context is lost or
+   *    another owner is driving the pipeline, in which case this frame does no
+   *    GPU work of its own and must not be recorded
+   * 4. Schedule next frame — immediately via requestAnimationFrame, or
    *    after a bounded cooldown once consecutive frames have been
    *    pathologically slow (see `scheduleNextFrame()` below and the class
    *    JSDoc)
-   * 4. Update camera controls (handle user input, damping, constraints)
-   * 5. Render through HDR post-processing pipeline (scene → bloom → tone mapping)
-   * 6. Performance measurement ends
+   * 5. Update camera controls (handle user input, damping, constraints)
+   * 6. Render through HDR post-processing pipeline (scene → bloom → tone mapping)
+   * 7. Performance measurement ends (`frame-end`)
    *
    * Uses arrow function to maintain 'this' context when passed as callback.
    * Early return prevents unnecessary work when animation is paused.
@@ -502,16 +534,23 @@ export class AnimationController {
     // turn AFTER that work, and only then is the real cooldown armed, so the
     // gap is genuine.
     //
-    // The true inserted delay is the hop's own latency (0, or the browser's
-    // 4 ms clamp once timer nesting is deep) plus `cooldownMs`, and the cost
-    // measurement subtracts only `cooldownMs` — so while pacing is engaged it
-    // OVER-estimates the frame's cost by those few milliseconds. That is the
-    // safe direction (a slow frame is never under-measured into the fast
-    // path), and the overshoot is bounded by that hop latency: a session whose
-    // true cost sits in the last few ms below `slowFrameMs` can keep pacing at
-    // a small cooldown once it has entered, but it cannot ENTER on the bias —
-    // an unpaced frame has no hop, so reaching the streak takes two genuinely
-    // over-threshold frames.
+    // The cost measurement subtracts the NOMINAL `cooldownMs`, but the real
+    // gap is the hop's own latency plus `max(cooldownMs, when the main thread
+    // next frees)` plus the post-cooldown rAF alignment (up to one vsync,
+    // likewise not subtracted). So while pacing is engaged the next frame's
+    // cost is OVER-estimated, and the over-estimate is NOT bounded by a few
+    // milliseconds: a cooldown that comes due while a long foreign task is
+    // running inflates it by all of that foreign work. (The hop itself is
+    // armed from a rAF callback, so timer nesting restarts every frame and the
+    // browser's 4 ms nesting clamp is never reached — it contributes nothing.)
+    //
+    // Unbounded above, but always in the safe direction: a slow frame is never
+    // under-measured into the fast path. It also cannot make pacing ENGAGE
+    // spuriously — the two frames that build the streak are by definition
+    // unpaced, so neither carries a hop or a cooldown and neither is biased.
+    // Its steady-state effect is that a session sharing the main thread with
+    // sustained foreign work STAYS paced, which is the intended behaviour:
+    // yielding to that work is the whole point.
     this.pacingTimeout = setTimeout(() => {
       // The loop may have been stopped (idle pause, tab hide, dispose)
       // while the cooldown was in flight — stopAnimation() clears these
@@ -520,12 +559,48 @@ export class AnimationController {
         this.pacingTimeout = null;
         return;
       }
+      // Re-read the suspend predicate. It was last read at the top of the
+      // frame this cooldown was armed for, and a capture can have started
+      // since — honouring the stale answer would freeze up to `maxCooldownMs`
+      // of duplicate frame into the head of a real-time recording of an
+      // already-slow scene. Drop the cooldown instead, and clear the applied
+      // delay so the next cost measurement subtracts nothing.
+      if (this.pacingSuspended()) {
+        this.pacingTimeout = null;
+        this.appliedPacingDelayMs = 0;
+        this.animationId = requestAnimationFrame(this.animate);
+        return;
+      }
       this.pacingTimeout = setTimeout(() => {
         this.pacingTimeout = null;
         if (!this.isAnimating) return;
         this.animationId = requestAnimationFrame(this.animate);
       }, cooldownMs);
     }, 0);
+  }
+
+  /**
+   * Whether pacing is currently suspended, with a throwing predicate read as
+   * "not suspended".
+   *
+   * The try/catch is load-bearing because `scheduleNextFrame()` is the loop's
+   * ONLY re-arm point: a throw that escaped it would leave nothing armed while
+   * `isAnimating` stayed true, so `startAnimation()` early-returns forever and
+   * no `requestRender()` can recover — an unrecoverable freeze. A disposed
+   * recording panel is exactly that case. At worst a capture gets a paced
+   * frame, instead of the viewer freezing for the rest of the session.
+   *
+   * Shared by the two places the answer is needed — when the cooldown is
+   * armed, and again in the hop callback before the cooldown is committed —
+   * so both read it under the same guarantee.
+   */
+  private pacingSuspended(): boolean {
+    try {
+      return this.isPacingSuspended?.() === true;
+    } catch {
+      // Intentionally ignored — see above.
+      return false;
+    }
   }
 
   /**
@@ -538,21 +613,10 @@ export class AnimationController {
     const pacing = config.animation.pacing;
     if (!pacing.enabled) return 0;
 
-    // Recording owns the frame cadence for the whole capture.
-    //
-    // The predicate is called inside a try/catch because
-    // `scheduleNextFrame()` is the loop's ONLY re-arm point: a throw that
-    // escaped here would leave nothing armed while `isAnimating` stayed
-    // true, so `startAnimation()` early-returns forever and no
-    // `requestRender()` can recover — an unrecoverable freeze. A disposed
-    // recording panel is exactly that case. A throwing predicate therefore
-    // reads as "not suspended": at worst a capture gets a paced frame,
-    // instead of the viewer freezing for the rest of the session.
-    try {
-      if (this.isPacingSuspended?.()) return 0;
-    } catch {
-      // Intentionally ignored — see above.
-    }
+    // Recording owns the frame cadence for the whole capture. Read again in
+    // the hop callback, since a capture can start mid-cooldown — see
+    // `scheduleNextFrame()`.
+    if (this.pacingSuspended()) return 0;
 
     // Every healthy frame rate lands here, and so does an ISOLATED slow
     // frame: the streak (advanced in animate(), where the cost is measured)

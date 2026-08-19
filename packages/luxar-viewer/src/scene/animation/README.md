@@ -23,7 +23,7 @@ folder contains only the loop and the dimension scrubber.
 
 - `startAnimation()` / `stopAnimation()` — start or pause the rAF loop. `startAnimation` is also the event-handler wired to controls, canvas input, and dimension changes; calling it on every interaction resets the idle timer.
 - `addPerFrameCallback(id, fn, { continuous? })` / `removePerFrameCallback(id)` / `hasPerFrameCallback(id)` — register named callbacks executed after `controls.update()` but before `postProcessing.render()`. `continuous: true` keeps the loop alive past the idle timeout (used by dimension animation and turntable recording); the default `false` is on-demand (e.g. dynamic clipping, scale bar).
-- `setAdaptiveDPRManager(manager)` — opt-in DPR feedback: the loop calls `recordFrame(now)` each frame so the manager can downshift pixel ratio under load.
+- `setAdaptiveDPRManager(manager)` — opt-in DPR feedback: the loop calls `recordFrame(now)` on each frame that does GPU work of its own, so the manager can downshift pixel ratio under load. Skipped while the context is lost or another owner drives the pipeline (see `setRenderSkipPredicate` below) — a frame that draws nothing is not a fast frame.
 - `setContextLostPredicate(predicate)` — injected by `SceneManager` to suppress GPU work while the WebGL context is lost; controls and callbacks still tick so input stays responsive.
 - `setRenderSkipPredicate(predicate)` — injected by `core/app/init/pipeline`, keyed on `RecordingPanel.isLoopRenderSuppressed()`: an offline capture renders its own pipeline pass per frame, so the loop's render is discarded work. Same shape as the context-lost guard — controls and callbacks still tick, but adaptive-DPR frames are not recorded (a frame that draws nothing is not a fast frame). Offline-only; the real-time recording path records the canvas the loop paints. Narrower than the capture's own mutual-exclusion flag: it is dropped before the capture teardown awaits its driver abort, so a wedged abort cannot freeze the viewport. It gates the idle-restore frame below as well — both of the controller's render call sites, since the claim is that nobody but the pipeline's current owner may draw.
 - `setIdleRestorePredicate(predicate)` — consulted before the idle-pause native-DPR restore; returning false keeps the current DPR (recording resolution stays locked for a whole capture).
@@ -71,9 +71,13 @@ callers that build the options object dynamically; defaults come from
   `requestRender()`, and the loop could never idle (#1724). So when a
   frame's own cost exceeds `config.animation.pacing.slowFrameMs` for TWO
   consecutive frames the next frame is scheduled after
-  `min(maxCooldownMs, 25 % of the cost)` — a bounded FRACTION, because a
-  fixed 100 ms gap after a 5 s frame yields only 2 % of wall-clock. Three
-  properties are load-bearing:
+  `min(maxCooldownMs, 25 % of the cost)` — a bounded FRACTION, because a flat
+  gap cannot track the cost across the band where the fraction decides it
+  (250 ms to 1 s): a fixed 100 ms over-yields at the bottom and under-yields
+  at the top, 9 % of wall-clock after a 1 s frame against the fraction's 20 %.
+  Past 1 s the clamp makes the shipped gap flat too, which is its job — it
+  bounds the added latency of an on-demand repaint. Three properties are
+  load-bearing:
   - The cooldown is armed from a zero-delay hop
     (`setTimeout(0)` → `setTimeout(cooldown)` → rAF), not directly. A slow
     frame spends its second on browser rendering work that runs after the
@@ -89,9 +93,17 @@ callers that build the options object dynamically; defaults come from
     pacing latch on forever), and it resets on the stopped→running edge so
     an idle rest or a tab-hide is not read as one enormous frame.
   - Only a STREAK paces. The wedge is sustained (every frame ~1 s,
-    forever), so requiring a second consecutive slow frame delays the first
-    cooldown by exactly one frame and costs nothing — while a lone outlier
-    is precisely what must not be paced. Because the trigger is a period, a
+    forever), so requiring a second consecutive slow frame only delays the
+    first cooldown — while a lone outlier is precisely what must not be
+    paced. Two MEASURED slow frames means three frames in one uninterrupted
+    run (the first has no predecessor and measures nothing), and the streak
+    resets on the stopped→running edge, so pacing is unreachable from a cold
+    start once a frame costs more than `idleTimeoutMs / 2` — the idle timer
+    stops the loop before a third frame exists. Neither costs anything: the
+    wedge holds `animating=true` continuously (each landed reply calls
+    `requestRender()`, pushing the idle timer out), so it paces on the third
+    frame; and a loop that reaches its idle pause has already yielded the
+    main thread, which is all pacing is for. Because the trigger is a period, a
     FOREIGN main-thread task of that size is charged to the loop too (a GC
     pause, a shader compile, one chunk decode); one of them can no longer
     pace anything, and a sustained run of them still does, which is what
@@ -102,7 +114,9 @@ callers that build the options object dynamically; defaults come from
     `config/sections/animation/data.ts`.
   - Frames are DELAYED, never skipped, and both readouts get the REAL
     clock: each frame still emits exactly one `frame-start` / `frame-end`
-    pair and one `recordFrame(performance.now())`. The achieved frame rate
+    pair, and still calls `recordFrame(performance.now())` whenever it does
+    GPU work of its own (that call keeps its pre-existing context-lost /
+    render-skip gate, per `setAdaptiveDPRManager` above). The achieved frame rate
     really is lower, so neither the FPS readout nor adaptive DPR is told
     otherwise (no virtual pacing clock to drift against
     `notifyContentChanged()`). A steady paced cadence is absorbed by the

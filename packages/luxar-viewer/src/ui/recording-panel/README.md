@@ -166,6 +166,21 @@ through the translucent overlay, once per captured frame. The predicate
 is offline-only: the real-time MediaRecorder path records the canvas the
 loop paints, so suppressing its render there would yield an empty video.
 
+The loop's **cadence** is the other half of the contract, and it is a
+BROADER pairing: `core/app/init/pipeline` also gives the animation
+controller a pacing-suspend predicate, keyed on this package's
+`isCurrentlyRecording()` (`session.isAnyCaptureActive()`, i.e.
+`session.isRecording`) rather than the narrower
+`isLoopRenderSuppressed()`. While it returns true, frame pacing (#1724) is
+off and every frame re-arms rAF back-to-back. Both capture families need
+that, which is why the broad flag is the right key: a paced gap is a
+dropped frame in a real-time MediaRecorder capture of the canvas this loop
+paints, and a missed window — hence a dropped orbit step — for the offline
+capture, which drives its own `await requestAnimationFrame` cadence while
+registering one-shot per-frame orbit callbacks on the controller. A plain
+screenshot sets neither flag and needs no suspension: it reads the canvas
+after its own awaited frame rather than depending on the loop's cadence.
+
 What the user sees behind the scrim for the duration is a DARK viewport,
 not a frozen frame: step 3's resolution scaling already resized the
 render target (which clears the canvas) and nothing repaints it after

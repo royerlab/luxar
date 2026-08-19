@@ -35,10 +35,13 @@ after 70 s, `animating=true` throughout.
 interactive threshold, so every healthy frame rate keeps the untouched fast path)
 for _two consecutive_ frames, the next frame is scheduled after a cooldown of
 `min(maxCooldownMs, 25 % of the cost)` instead of re-arming immediately. The
-cooldown is a bounded _fraction_ rather than a constant because a fixed 100 ms
-gap would give a 5 s frame only 2 % of wall-clock for other tasks, whereas a
-clamped fraction keeps the yielded share roughly constant until the clamp bounds
-the added latency of an on-demand repaint.
+cooldown is a bounded _fraction_ rather than a constant because a flat gap cannot
+track the cost across the band where the fraction is what decides it — 250 ms to
+1 s, where a fixed 100 ms over-yields at the bottom and under-yields at the top
+(9 % of wall-clock after a 1 s frame, against the fraction's 20 %). Past 1 s the
+`maxCooldownMs` clamp makes the shipped behaviour flat as well, which is its job:
+it bounds the added latency of an on-demand repaint. (The measured wedge, at
+~1042 ms a frame, sits essentially at that clamp.)
 
 The gap is armed from a zero-delay hop — `setTimeout(0)` →
 `setTimeout(cooldown)` → `requestAnimationFrame` — and that indirection is the
@@ -60,8 +63,10 @@ would never fire, and not subtracting our own gap would make pacing latch on for
 the rest of the session. The measurement resets on the stopped→running edge, so
 an idle rest or a tab-hide is not read as one enormous frame. Being a _period_
 also means a foreign main-thread task of that size is charged to the loop even
-when the loop did not cause it (the repo's own `tests/e2e/render-ticks.ts`
-measures ~230 ms periods while a scene loads).
+when the loop did not cause it: scene loading runs frames in that neighbourhood
+(the repo's own `tests/e2e/render-ticks.ts` measures ~230 ms periods, just under
+the threshold), so a heavier load crosses it and does pace — which is what you
+want there, since the cooldown yields to the decode tasks.
 
 That last property is why the trigger is a _streak_ rather than a single frame.
 The wedge is sustained — every frame ~1042 ms, forever — so waiting for a second
@@ -79,7 +84,10 @@ have bought. Sustained foreign work — a heavy scene load — still paces, whic
 the behaviour you want there: yielding to those decode tasks is the point.
 
 Frames are delayed, never skipped: each one that runs still emits exactly one
-`frame-start` / `frame-end` pair and one `recordFrame()`, both on the real clock.
+`frame-start` / `frame-end` pair, and still calls `recordFrame()` whenever it
+does GPU work of its own (that call was already gated on the context-lost and
+render-skip predicates, and pacing does not change the gate) — both on the real
+clock.
 The achieved frame rate really is lower and neither the FPS readout nor the DPR
 control loop is told otherwise — a steady paced cadence is absorbed by the stall
 detector's median-based outlier test rather than read as a gap, and the

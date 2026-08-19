@@ -99,11 +99,18 @@ export async function renderOnce(page: Page): Promise<void> {
   await page.evaluate(() => {
     (window as any).__luxarDebug.renderOnce();
   });
-  // Intentional fixed sleep: renderOnce() schedules a single
-  // requestAnimationFrame, but the actual paint lands on the next
-  // browser frame which is not directly observable from JS. 100 ms
-  // is one paint cycle past 60 fps with margin.
-  await page.waitForTimeout(100);
+  // Intentional fixed sleep: renderOnce() schedules a frame, but the actual
+  // paint lands on the next browser frame, which is not directly observable
+  // from JS. The wait has to clear the frame-pacing cooldown (#1724): on a
+  // scene slow enough to be paced the next frame can be up to
+  // `config.animation.pacing.maxCooldownMs` (250 ms — hard-coded here rather
+  // than imported, since this helper must not pull viewer config into the
+  // Node-side test process) away, and renderOnce() is `startAnimation()`,
+  // which does not shorten a cooldown already pending on a running loop. So
+  // 300 ms = that 250 ms worst-case gap plus a paint cycle past 60 fps with
+  // margin; at 100 ms a <4 fps page could still be sampled on the frame
+  // BEFORE the change under test.
+  await page.waitForTimeout(300);
 }
 
 /**

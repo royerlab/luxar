@@ -40,10 +40,22 @@ const DATASET = 'performance_benchmark_example.luxar.zarr';
 const EXPECTED_POINTS = 100000;
 const EXPECTED_NODES = 100;
 
+/**
+ * Budget for the navigation itself. Bounded explicitly rather than left to the
+ * config's 60 s `navigationTimeout`, so it appears in the budget sum below as
+ * a number this spec controls.
+ */
+const NAV_TIMEOUT_MS = 20000;
+
 /** Budget for `initialized` to flip. */
 const READY_TIMEOUT_MS = 30000;
 
-/** Budget for the 100 nodes' points to be committed. */
+/**
+ * Budget for the 100 nodes' points to be committed. `waitForPointsLoaded`
+ * checks this budget BEFORE each iteration and does not clamp its own state
+ * probe (which keeps `getLuxarState`'s 45 s default), so the worst case is
+ * this value plus one full 45 s probe — see the budget sum below.
+ */
 const CONTENT_TIMEOUT_MS = 45000;
 
 /**
@@ -56,9 +68,11 @@ const SETTLE_TIMEOUT_MS = 40000;
 const SETTLE_HOLD_MS = 5000;
 
 /**
- * Per-call bound on a state probe here — the content re-read and every poll
- * of the settle loop. Well under `getLuxarState`'s own 45 s default so the
- * settle poll gets several attempts inside its budget instead of one.
+ * Per-call bound on a state probe here — the content re-read, every poll of
+ * the settle loop, and the post-hold re-read. Well under `getLuxarState`'s own
+ * 45 s default so the settle poll gets several attempts inside its budget
+ * instead of one. `expect.poll` does not abort a callback that is already
+ * running, so the settle leg's worst case is its own budget plus one of these.
  */
 const STATE_PROBE_TIMEOUT_MS = 10000;
 
@@ -83,12 +97,30 @@ const PROBE_TIMEOUT_MS = 2000;
 const MAX_ROUND_TRIP_MS = 500;
 
 test.describe('Frame pacing (#1724)', () => {
-  // Every leg above is bounded, and they have to FIT: 30 s ready + 45 s
-  // content + 10 s content re-read + 40 s settle + 5 s hold + 10 × 2 s probes
-  // = 150 s worst case. 180 s leaves ~30 s for navigation, the fixture setup
-  // and teardown, so a scene that never settles fails as a real assertion with
-  // this spec's own wording instead of as a bare suite timeout.
-  test.describe.configure({ timeout: 180000 });
+  // Every leg is bounded, and the bounds have to FIT inside the test timeout —
+  // otherwise a genuine regression dies as a bare suite timeout instead of the
+  // named assertion that exists to explain it. Worst case, leg by leg:
+  //
+  //   navigation                                        20 s
+  //   waitForLuxarReady                                 30 s
+  //   waitForPointsLoaded  45 s budget + 45 s unclamped
+  //                        in-flight probe              90 s
+  //   content re-read (getLuxarState, bounded)          10 s
+  //   settle poll          40 s budget + 10 s callback
+  //                        expect.poll does not abort   50 s
+  //   settle hold                                        5 s
+  //   post-hold re-read                                 10 s
+  //   10 probes × 2 s                                   20 s
+  //                                                   ------
+  //                                                    235 s
+  //
+  // 300 s leaves ~65 s for the fixture setup, teardown and the per-step
+  // overhead between the legs. This is what a FAILING run costs; a healthy one
+  // pays only the hold plus the real settle (~15 s measured). The 90 s content
+  // leg is the one number this spec cannot shrink from here:
+  // `waitForPointsLoaded` takes no probe timeout and deliberately leaves its
+  // own probe at `getLuxarState`'s 45 s default.
+  test.describe.configure({ timeout: 300000 });
 
   test('the 100-node benchmark scene settles and leaves the control channel responsive', async ({
     page,
@@ -96,7 +128,9 @@ test.describe('Frame pacing (#1724)', () => {
     // `&no-opfs` for the same reason as the smoke spec: nothing here asserts
     // the L2 OPFS tier, and automated Chromium's OPFS stalls systemically
     // (10 s per op — issue #1645), starving scene readiness past the budget.
-    await page.goto(`/?src=${EXAMPLES_BASE}/${DATASET}&debug&no-opfs`);
+    await page.goto(`/?src=${EXAMPLES_BASE}/${DATASET}&debug&no-opfs`, {
+      timeout: NAV_TIMEOUT_MS,
+    });
     await waitForLuxarReady(page, READY_TIMEOUT_MS);
 
     // The scene must actually have its content. `initialized` flips before

@@ -13,16 +13,18 @@ export const animationConfig: AnimationConfig = {
     //
     // The trigger is the frame PERIOD, so a FOREIGN main-thread task of
     // this size lands on the loop's account even when the loop did not
-    // cause it (the repo's own `tests/e2e/render-ticks.ts` records ~230 ms
-    // periods during a scene load). That is deliberate — the period is what
-    // the user actually experiences between frames, and the wedge this
-    // exists for spends its second outside JS, where a body-span
-    // measurement reads ~2 ms and would never fire.
+    // cause it. Scene loading runs frames in that neighbourhood — the
+    // repo's own `tests/e2e/render-ticks.ts` records ~230 ms periods, just
+    // under this threshold — so a heavier load crosses it and does pace.
+    // That is deliberate on both counts: the period is what the user
+    // actually experiences between frames, and the wedge this exists for
+    // spends its second outside JS, where a body-span measurement reads
+    // ~2 ms and would never fire.
     //
-    // An ISOLATED hiccup of that size still keeps the fast path, but that
-    // is the loop's STREAK rule doing the work, not this threshold: the
-    // controller paces only after two consecutive frames past this value
-    // (see PACING_SLOW_FRAME_STREAK in
+    // An ISOLATED hiccup past this value still keeps the fast path, but
+    // that is the loop's STREAK rule doing the work, not this threshold:
+    // the controller paces only after two consecutive frames past it (see
+    // PACING_SLOW_FRAME_STREAK in
     // `scene/animation/animation-controller.ts`). SUSTAINED foreign work —
     // a heavy scene load, a burst of chunk decodes — therefore does pace,
     // which is the behaviour you want there: yielding to those decode tasks
