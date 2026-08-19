@@ -184,6 +184,7 @@ describe('LuxarApp', () => {
       setContextLostPredicate: vi.fn(),
       setIdleRestorePredicate: vi.fn(),
       setRenderSkipPredicate: vi.fn(),
+      setPacingSuspendPredicate: vi.fn(),
       dispose: vi.fn(),
       isActive: false,
     };

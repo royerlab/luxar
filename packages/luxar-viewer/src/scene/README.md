@@ -151,7 +151,11 @@ animationController.startAnimation();
 private animate = (): void => {
   if (!this.isAnimating) return;
 
-  requestAnimationFrame(this.animate);
+  // Schedule the next frame: a bare requestAnimationFrame, or — once
+  // consecutive frames have been pathologically slow — a bounded cooldown
+  // first, so the main thread gets a slot (#1724). See
+  // `animation/animation-controller.ts`.
+  this.scheduleNextFrame();
 
   // Update controls
   this.sceneManager.controls.update();
@@ -892,6 +896,11 @@ const animationConfig = {
   idleTimeoutMs: 2000, // Pause after 2 seconds
   targetFPS: 60, // Target frame rate
   adaptiveQuality: true, // Reduce quality if FPS drops
+  pacing: {
+    enabled: true, // Frame pacing on (false = the back-to-back rAF loop)
+    slowFrameMs: 250, // A frame past this is "pathologically slow" (4 fps)
+    maxCooldownMs: 250, // Ceiling on the inserted gap
+  },
 };
 ```
 

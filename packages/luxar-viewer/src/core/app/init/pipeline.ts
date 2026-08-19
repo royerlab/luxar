@@ -514,6 +514,20 @@ export async function runInitPipeline(
   // render-suppression flag rather than the capture's mutual-exclusion
   // flag, so a wedged capture teardown can't freeze the viewport.
   animationController.setRenderSkipPredicate(() => recordingPanel.isLoopRenderSuppressed());
+  // Frame pacing must stay off for the whole of a capture, because both
+  // capture families depend on the loop's untouched cadence: the real-time
+  // MediaRecorder path records the canvas the loop paints (a paced gap is a
+  // dropped frame in the video), and the offline capture drives its own
+  // `await requestAnimationFrame` cadence while registering one-shot
+  // per-frame orbit callbacks on this controller (a paced frame could miss
+  // the capture's window and drop the orbit step). Hence the BROAD
+  // `isCurrentlyRecording()` — `session.isAnyCaptureActive()`, i.e.
+  // `session.isRecording`, the flag both of those paths set for the whole of
+  // their run — rather than the narrow render-suppression flag used just
+  // above. A plain screenshot does not set it and does not need it: it reads
+  // the canvas after its own awaited frame rather than depending on the
+  // loop's cadence.
+  animationController.setPacingSuspendPredicate(() => recordingPanel.isCurrentlyRecording());
 
   // Initialize layers panel (per-node controls)
   const layersPanel = factories.layersPanel(document.body, animationController);
