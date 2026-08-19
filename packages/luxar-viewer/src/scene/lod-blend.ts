@@ -9,7 +9,7 @@
  * 1. **Coverage cross-fade (distance axis)** — {@link coverageBlendPlan}. As the
  *    camera zooms across a `kind=lod` boundary, blend the two adjacent levels'
  *    opacity instead of a hard `object.visible` swap. Driven ENTIRELY by the
- *    viewport coverage metric (projected size); which level to show is a
+ *    group's selector metric (projected size); which level to show is a
  *    function of distance (`coverage_fraction`). Brightness across the switch is
  *    preserved by the levels' build-time mass conservation (both integrate to
  *    the same DC).
@@ -62,24 +62,30 @@ export interface CoverageBlend {
 }
 
 /**
- * Decide the coverage-band cross-fade for a dimensionless `metric` (projected
- * bbox diagonal ÷ `FILL_FACTOR·fittedAxisPx`, where `fittedAxisPx` is
- * `min(viewport.width, viewport.height)`) against a level's ascending
- * per-child `coverage_fraction` thresholds (coarsest 0 → finest 1 for the
- * auto-derived whole-object ladder, up to `SCREEN_FILL_DIAGONAL_RATIO /
- * FILL_FACTOR` for an explicitly authored or partition-bound one). Everything
- * here is proportional to the inter-threshold gaps, so the band scales with
- * the ladder either way.
+ * Decide the coverage-band cross-fade for a scalar `metric` — whatever the
+ * group's `selector` names, i.e. the viewport AREA fraction under
+ * `'screen-area'` (what derived ladders stamp) or the normalised diagonal
+ * (projected bbox diagonal ÷ `FILL_FACTOR·fittedAxisPx`, where `fittedAxisPx`
+ * is `min(viewport.width, viewport.height)`) under the legacy `'coverage'` —
+ * against a level's ascending per-child `coverage_fraction` thresholds
+ * (coarsest 0 → finest 0.5 whole-object / 1.0 partition-bound under
+ * `'screen-area'`; finest 1 for a legacy whole-object ladder, up to
+ * `SCREEN_FILL_DIAGONAL_RATIO / FILL_FACTOR` for an explicitly authored or
+ * partition-bound one). Everything here is proportional to the inter-threshold
+ * gaps, so the band scales with the ladder either way.
  *
  * Each inter-level boundary is the activation threshold of the finer level
  * (`thresholds[i+1]`). The band half-width is PROPORTIONAL to the local
  * inter-level spacing — `Δ_i = fraction · min(gapBelow, gapAbove)` — because the
- * `coverage_fraction` thresholds are geometrically spaced (they roughly halve
- * per coarser level for a K=4 ladder), so a constant band would be a clean
- * dissolve at the finest step yet many times wider than the whole step at the
- * coarse end (perpetually-blended coarse levels, overlapping bands). Scaling to
- * the smaller adjacent gap makes the dissolve feel the same fraction of a step
- * at every level and guarantees no two bands overlap (for `fraction ≤ 0.5`).
+ * `coverage_fraction` thresholds are geometrically spaced either way (a derived
+ * `'screen-area'` ladder halves EXACTLY per coarser level, whatever the
+ * compression factor K; a derived legacy `'coverage'` one steps by `√K`, from
+ * the retired `sqrt(N_i/N_finest)` derivation), so a constant band would be a
+ * clean dissolve at the finest step yet many times wider than the whole step at
+ * the coarse end (perpetually-blended coarse levels, overlapping bands).
+ * Scaling to the smaller adjacent gap makes the dissolve feel the same fraction
+ * of a step at every level and guarantees no two bands overlap (for
+ * `fraction ≤ 0.5`).
  *
  * When the metric is within `±Δ_i` of the NEAREST such boundary, the two levels
  * straddling it cross-fade: the finer level's weight is

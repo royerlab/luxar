@@ -246,10 +246,10 @@ def decimate_cluster(
     Raises:
         ValueError: If inputs are malformed, ``target_vertices`` < 4, or the input
             surface is degenerate enough that no triangle survives. That last case
-            is an error rather than an empty result on purpose: a ``kind=lod`` group
-            derives its switch thresholds from element counts, and
-            :func:`luxar.core.group.lod.group.coverage_fractions` raises on a
-            zero-count level — so returning one here would only move the failure
+            is an error rather than an empty result on purpose:
+            :func:`luxar.core.group.lod.group.coverage_fractions` raises on an
+            empty finest level (a ladder whose finest level draws nothing is a
+            broken ladder) — so returning one here would only move the failure
             somewhere with less context about which mesh caused it.
     """
     vertices = np.ascontiguousarray(vertices, dtype=np.float32)
@@ -410,8 +410,9 @@ def _cluster_once(
     a, b, c = new_f[:, 0], new_f[:, 1], new_f[:, 2]
     new_f = new_f[(a != b) & (b != c) & (a != c)]
     # Clustering also creates DUPLICATE triangles (two fine faces collapsing onto
-    # the same coarse corners). They render identically but inflate the face count
-    # the LOD thresholds are derived from, so drop them.
+    # the same coarse corners). They draw the same pixels twice — wasted index
+    # bytes and rasterization, and an inflated face count for the level — so drop
+    # them.
     if new_f.shape[0]:
         canonical = np.sort(new_f, axis=1)
         _, keep = np.unique(canonical, axis=0, return_index=True)
@@ -439,10 +440,9 @@ def _cluster_once(
         )
 
     # Drop representatives no surviving face references. They are not harmless
-    # padding: `coverage_fractions` derives the LOD switch thresholds from element
-    # COUNTS, so phantom vertices shift every threshold — and a vertex with no
-    # incident face has no defined normal, so it would take the arbitrary fallback
-    # and drag the level's shading statistics with it.
+    # padding: a vertex with no incident face has no defined normal, so it would
+    # take the arbitrary fallback and drag the level's shading statistics with it
+    # — and it still costs vertex-buffer bytes on every upload.
     if new_f.shape[0]:
         referenced = np.unique(new_f)
         if referenced.size != new_v.shape[0]:

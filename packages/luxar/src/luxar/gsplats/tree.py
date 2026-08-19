@@ -353,9 +353,10 @@ def without_meta_key(node: GSplatNode, key: str) -> GSplatNode:
     LOD-switch threshold after a geometry transform so the writer re-derives it: a
     stale threshold on a *group* node (an ``overview`` partition child, or an
     ``adaptive`` per-part lod group) is otherwise re-applied verbatim by the
-    serializer. (Coverage fractions are count-ratios, hence invariant to
-    scale/rotate/translate — so this re-derives the same value; it is retained as a
-    safety net for transforms that also re-ladder and change per-level counts.)
+    serializer. (Coverage fractions are derived from the ladder's LENGTH and its
+    topology, not from geometry, hence invariant to scale/rotate/translate — so this
+    re-derives the same value; it is retained as a safety net for transforms that
+    also re-ladder and change the number of levels.)
     """
     new_meta = {k: v for k, v in node.meta.items() if k != key}
     if isinstance(node, GSplatLeaf):

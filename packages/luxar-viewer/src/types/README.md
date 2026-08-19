@@ -503,17 +503,20 @@ Two `Group` node variants carry a `kind` discriminant and dedicated metadata/gua
 
 ### LOD Groups (`lod-group.ts`)
 
-A `Group` whose `kind === 'lod'` selects **one** of N alternative children at runtime based on the projected bbox diagonal in pixels and each child's `coverage_fraction` threshold — a dimensionless, viewport-relative fraction that the viewer multiplies by half (`FILL_FACTOR`) of the fitted screen axis (`min(viewport.width, viewport.height)` — the extent the camera framing actually fits, so the comparison holds across aspect ratio and not just viewport size: exactly so for a landscape viewport, and within ~25% for a portrait one, where the fit distance itself varies with aspect) to get the pixel comparison, so a whole-object ladder's finest anchor of `1.0` fires at any normal full-frame view (a partition-bound or explicitly authored ladder may go up to `4.0`). Children are arbitrary geometry subtrees (points / lines / gsplats / nested specialized groups).
+A `Group` whose `kind === 'lod'` selects **one** of N alternative children at runtime by comparing the group's on-screen size against each child's `coverage_fraction` threshold, in the units the group's `selector` attr names. Under `'screen-area'` — what every DERIVED ladder stamps — a threshold is a literal screen-area fraction: the group's projected bbox rect area over the viewport area, so the ladder is derived by occupancy halving (`[0, …, 1/8, 1/4, 1/2]`, full detail while the node occupies at least half the screen, one level coarser per halving of occupied area), and a partition-bound ladder anchors its finest one halving later at `1.0` (the tile alone fills the screen).
+
+Under the LEGACY `'coverage'` — pre-v3.4 stores and explicitly authored `coverage_fractions=[...]` lists — the metric is the projected bbox diagonal instead, normalised by half (`FILL_FACTOR`) of the fitted screen axis (`min(viewport.width, viewport.height)`, the extent the camera framing actually fits — aspect-exact for a landscape viewport, approximate for a portrait one), and the anchors are different NUMBERS in those units: a whole-object ladder's finest is `1.0` (a diagonal `1.0`, not the area `1.0` above) and a partition-bound one's is `4.0`. Children are arbitrary geometry subtrees (points / lines / gsplats / nested specialized groups).
 
 ```typescript
 import { type LODGroupMetadata, type LODGroupSelectorMode } from '../types/lod-group';
 
 // The loader matches the shape inline (attrs.type === 'group' && attrs.kind === 'lod');
-// attrs.selector is 'coverage'; attrs.display_type is the user-facing label;
+// attrs.selector is 'screen-area' (derived ladders) or 'coverage' (legacy);
+// attrs.display_type is the user-facing label;
 // attrs.default_level seeds the manual-override widget (0-based, coarsest-first).
 ```
 
-- **`LODGroupMetadata`** -- `{ type: 'group', kind: 'lod', selector: 'coverage', display_type?, default_level?, ... }`. Each child carries a `coverage_fraction` threshold (a `number`; 0.0 coarsest, 1.0 a whole-object ladder's finest anchor, up to 4.0 == `SCREEN_FILL_DIAGONAL_RATIO / FILL_FACTOR` for a partition-bound or explicitly authored one), strictly monotonic increasing coarsest→finest; the selector picks the finest child whose threshold is satisfied.
+- **`LODGroupMetadata`** -- `{ type: 'group', kind: 'lod', selector: 'screen-area' | 'coverage', display_type?, default_level?, ... }`. Each child carries a `coverage_fraction` threshold (a `number`; 0.0 coarsest, then under `'screen-area'` 0.5 for a whole-object ladder's finest and 1.0 for a partition-bound one's, while under legacy `'coverage'` the finest is 1.0 whole-object and up to 4.0 == `SCREEN_FILL_DIAGONAL_RATIO / FILL_FACTOR` partition-bound — a range the format enforces, not the viewer), strictly monotonic increasing coarsest→finest; the selector picks the finest child whose threshold is satisfied.
 - **`LODGroupSelectorMode`** -- runtime selector state: `'auto'` (view-driven, the default) or `{ lockLevel: number }` (user-locked child index, 0-based coarsest→finest).
 
 ### Partition Groups (`partition-group.ts`)

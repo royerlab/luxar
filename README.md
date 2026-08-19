@@ -386,12 +386,14 @@ Apart from `flat`, every recipe carries a progressive streaming ladder by defaul
 splats are reordered so that early prefixes carry as much of the signal as possible,
 which means the first chunk to arrive is already a meaningful picture and later
 chunks only refine it. Where levels replace each other, the viewer picks between
-them using a viewport-relative `coverage_fraction = sqrt(N_i / N_finest)` — the
-finest level shows once an object's projected size reaches about half of the
-viewport's fitted screen axis (the smaller of its width/height), i.e. at any
-normal full-frame view, and coarser ones step in as it shrinks below that — so
-level switching self-calibrates on any monitor or aspect ratio with no
-threshold to tune.
+them by screen occupancy: each level's `coverage_fraction` is a literal
+**screen-area fraction** — the node's projected bounding-box rect area over the
+viewport area — and the ladder is derived by halving it, so the finest level
+shows while the object occupies at least half the screen and every halving of
+occupied area steps one level coarser. (`adaptive` and `overview` are
+partition-bound and anchor one step higher, at area `1.0`.) Being a viewport
+fraction rather than an absolute pixel count, the metric needs no per-resolution
+or DPI tuning, though occupancy does move with viewport aspect.
 
 The canonical end-to-end pipeline is three commands:
 

@@ -28,7 +28,7 @@ scene/
 ├── animation/                      # animation-controller, dimension-animation-manager
 ├── scene-dims-manager.ts           # nD dimension coordination
 ├── lod-group-registry.ts           # Per-frame LOD-group selector (policy/state machine)
-├── lod-selector-math.ts            # Selector math: world-box fold, box→pixel projection, hysteresis pick
+├── lod-selector-math.ts            # Selector math: world-box fold, box→area/diagonal projections, hysteresis pick
 ├── lod-blend.ts                    # Pure opacity math: coverage cross-fade + energy compensation
 ├── lod-fade.ts                     # Material-level fade appliers (clone-on-first-fade)
 ├── lod-eviction.ts                 # VRAM-budget LRU eviction policy for LOD levels
@@ -324,28 +324,42 @@ levels, and bounds resident VRAM with an LRU eviction pass.
 3. **Off-screen gate**: if the world box is entirely outside the
    camera frustum, hold the group at its coarsest _ready_ level
    instead of loading a fine level the renderer would frustum-cull.
-4. Otherwise, project the 8 world corners to NDC and measure the
-   diagonal of the screen-space AABB in pixels
-   (`projectBoxDiagonalPx`). The projection is `w`-aware: if any corner
-   is at/behind the camera near plane (camera inside or straddling the
-   box), it returns `+Infinity` so the selector saturates to the finest
-   level — instead of the collapsed/garbage diagonal an unguarded
-   perspective divide would produce on close approach. The pixel
-   diagonal is normalised to a dimensionless coverage metric
+4. Otherwise, project the 8 world corners to NDC and measure how much
+   of the screen the group covers, in the units its `selector` attr
+   names. A DERIVED ladder stamps `screen-area`: the metric is the
+   screen-space AABB's **area** as a fraction of the viewport area
+   (`projectBoxAreaFraction` — each NDC axis spans 2, so the fraction is
+   the product of the per-axis half-extents after clipping to the
+   viewport, viewport-size independent by construction and topping out
+   at exactly `1.0` for any finite projection; sub-pixel-thin content
+   ramps to its linear span instead, so an edge-on plane is not pinned
+   to the coarsest level). Those thresholds are literal area fractions,
+   so nothing is normalised: a whole-object ladder anchors its finest at
+   `0.5` (half the screen occupied) and steps one level coarser per
+   halving of occupied area, while a partition-bound one anchors at
+   `1.0` (the tile alone fills the screen). The LEGACY `coverage`
+   selector — pre-v3.4 stores and explicitly authored
+   `coverage_fractions=[...]` lists — measures the pixel diagonal of
+   that AABB instead (`projectBoxDiagonalPx`) and normalises it to a
+   dimensionless coverage metric
    (`diagonalPx / (FILL_FACTOR * fittedAxisPx)`, `FILL_FACTOR = 0.5`,
    `fittedAxisPx = min(viewport.width, viewport.height)` — the extent
-   `calculateCameraDistance` actually fits, so the metric stays
-   (near-)invariant across viewport aspect ratio, not just size), so the
-   comparison is viewport-relative rather than an absolute pixel
-   count. The anchor means the finest child (`coverage_fraction` 1.0)
-   activates once the projected diagonal reaches half of the fitted
-   screen axis — any normal full-frame view — and coarser levels
-   step in as the object shrinks below that.
+   `calculateCameraDistance` actually fits), so its finest anchor
+   (`coverage_fraction` 1.0) is reached once the projected diagonal is
+   half of the fitted screen axis. Both projections are `w`-aware: if
+   any corner is at/behind the camera near plane (camera inside or
+   straddling the box), they return `+Infinity` so the selector
+   saturates to the finest level — instead of the collapsed/garbage
+   value an unguarded perspective divide would produce on close
+   approach. Under an ORTHOGRAPHIC projection nothing degenerates (`w`
+   stays 1), so neither function ever saturates and each metric's plain
+   value is used directly.
 5. Pick the finest child whose `coverageFraction` threshold (the
-   viewport-normalised per-child value read from the zarr attr
-   `coverage_fraction`) is satisfied by the coverage metric, with 10%
-   asymmetric, spacing-aware hysteresis on the downgrade direction to
-   suppress threshold-edge flicker (`pickChildWithHysteresis`).
+   per-child value read from the zarr attr `coverage_fraction`, in
+   whichever units step 4's `selector` names) is satisfied by that
+   metric, with 10% asymmetric, spacing-aware hysteresis on the
+   downgrade direction to suppress threshold-edge flicker
+   (`pickChildWithHysteresis`).
 6. Swap visibility atomically when the desired child differs; lazy
    targets that are not yet committed kick `ensureLoaded()` and swap
    on a later frame once `ready` flips true — unless the
@@ -430,8 +444,9 @@ hooks `evaluatePerFrame()` into `AnimationController` alongside the
 dynamic-clipping callback. The injected `LODGroupRegistryDeps` supply
 the camera, viewport size, `displayDims`, and the optional resident
 byte budget / measurement — omitting the budget accessors yields pure
-retention (the unit-test default). `projectBoxDiagonalPx` and
-`pickChildWithHysteresis` are exported as pure functions for testing.
+retention (the unit-test default). `projectBoxAreaFraction`,
+`projectBoxDiagonalPx` and `pickChildWithHysteresis` are exported as
+pure functions for testing.
 
 ---
 
@@ -1016,14 +1031,18 @@ _For implementation details, see the source files in this directory._
   objects in the scene (exported as both class `SceneDimsManager`
   and lazy-Proxy singleton `sceneDimsManager`).
 - `lod-group-registry.ts` — `LODGroupRegistry`: per-frame `lod_group`
-  child selector (screen-space-diagonal pick + frustum off-screen gate
+  child selector (pick on the group's screen-area or legacy diagonal
+  metric + frustum off-screen gate
   - asymmetric hysteresis), lazy-load gating, and the display/fade/
-    eviction orchestration. Re-exports `projectBoxDiagonalPx` and
-    `pickChildWithHysteresis` from `lod-selector-math.ts`.
+    eviction orchestration. Re-exports `projectBoxAreaFraction`,
+    `projectBoxDiagonalPx` and `pickChildWithHysteresis` from
+    `lod-selector-math.ts`.
 - `lod-selector-math.ts` — The selector's camera-geometry math:
   `computeEntryWorldBox` (nD position-bounds → world box via
-  displayDims), `projectBoxDiagonalPx` (world box → screen-space pixel
-  diagonal with near-plane saturation), and `pickChildWithHysteresis`.
+  displayDims), `projectBoxAreaFraction` (world box → fraction of the
+  viewport area) and `projectBoxDiagonalPx` (→ screen-space pixel
+  diagonal) — both with near-plane saturation — and
+  `pickChildWithHysteresis`.
 - `lod-fade.ts` — Material-level appliers for the two LOD anti-popping
   mechanisms: `applyLodFade` (write coverage-weight × `1/e(k)` opacity
   per fadeable leaf, clone-on-first-fade) and `isBlendableSubtree`
