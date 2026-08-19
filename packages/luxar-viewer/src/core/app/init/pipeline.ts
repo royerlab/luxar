@@ -131,6 +131,7 @@ export async function runInitPipeline(
     renderer: ports.options.renderer,
     webgpuForceWebGL: ports.options.webgpuForceWebGL,
     perfTimestamp: ports.options.perfTimestamp,
+    blendWarmup: ports.options.blendWarmup,
   });
 
   // Initialize animation controller with HDR post-processing.

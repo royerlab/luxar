@@ -22,6 +22,7 @@ import * as THREE from 'three';
 import type { SceneNode } from '../../data/data-loader-types';
 import type { BlendingMode } from '../../rendering';
 import { materialManager } from '../../rendering';
+import { scheduleBlendModeProgramWarmupForObject } from '../../rendering/webgl-blend-warmup';
 import { log, Modules } from '../../utils/log';
 import { getColormapTexture } from '../../rendering/colormap-textures';
 import { supportsScalarColormap } from '../../rendering/material-colormap-helpers';
@@ -318,6 +319,7 @@ export class LayerApplyEngine {
           (mat.userData?.blendingMode as BlendingMode | undefined) ?? blendingMode;
         noteDepthSortBlendingModeSwitch(obj as THREE.Mesh, resolvedMode, prevBlendingMode);
       }
+      scheduleBlendModeProgramWarmupForObject(obj);
     }
     this.deps.requestRender();
   }
@@ -382,6 +384,7 @@ export class LayerApplyEngine {
       if (syncMeshPickAppearance(obj as THREE.Mesh, { alphaCutoff: layer.alphaCutoff })) {
         pickDirty = true;
       }
+      scheduleBlendModeProgramWarmupForObject(obj);
     }
     if (pickDirty) this.deps.invalidatePickBuffer?.();
     if (applied) this.deps.requestRender();

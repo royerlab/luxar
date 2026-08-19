@@ -127,4 +127,9 @@ export async function loadDataset(src: string, ports: LoadDatasetPorts): Promise
 
   // Trigger animation to ensure scene is rendered immediately
   ports.animationController.startAnimation();
+
+  // Request WebGL blend-program warm-up only after the complete dataset setup.
+  // Links remain cooperative, but dataset readiness waits until all reachable
+  // variants are pinned so later interactions cannot race the initial queue.
+  await ports.sceneManager.warmBlendModePrograms();
 }
