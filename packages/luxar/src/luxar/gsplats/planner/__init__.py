@@ -13,11 +13,12 @@ Pipeline:
 
 from .bsp_boxes import plan_partition, plan_volume
 from .content_scan import ContentField, scan_content
-from .fit_planned import fit_planned
+from .fit_planned import CONTENT_CULL_RETENTION, fit_planned
 from .fit_planned_parallel import fit_planned_parallel
 from .spec import FitPlan, PlanBox
 
 __all__ = [
+    "CONTENT_CULL_RETENTION",
     "ContentField",
     "FitPlan",
     "PlanBox",

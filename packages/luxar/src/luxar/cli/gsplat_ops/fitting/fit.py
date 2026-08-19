@@ -469,9 +469,11 @@ def run_fit_volume(
         help="After fitting, remove the weakest splats that collectively "
         "contribute less than (1 - value) of the total amplitude. "
         "For example, 0.95 — what a bare fit falls through to — discards splats "
-        "in the bottom 5% of cumulative amplitude, typically removing 10-30% of "
-        "them with negligible quality loss. Every --preset sets 0.999 instead "
-        "(near-lossless). Set to 0 to keep every splat.",
+        "in the bottom 5% of cumulative amplitude; how many splats that is "
+        "depends on how heavy-tailed the data is, and on a sparse volume it can "
+        "be most of them. Every --preset sets 0.999 instead "
+        "(near-lossless), and so does --tiling content even without a preset. "
+        "Set to 0 to keep every splat.",
     ),
     # Denoising
     denoise: bool = typer.Option(

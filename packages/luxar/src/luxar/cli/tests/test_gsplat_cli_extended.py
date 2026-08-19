@@ -207,6 +207,52 @@ class TestLoadFitConfig:
         config = load_fit_config()
         assert "seeds" not in config
 
+    def test_command_defaults_displace_function_defaults(self) -> None:
+        """A per-command default beats the harvested function default (#1729).
+
+        This is the only layer that can: `setdefault` on the resolved config is a
+        no-op, because every signature default is already a key by then.
+        """
+        assert load_fit_config()["cull_retention"] == 0.95  # function default
+        config = load_fit_config(command_defaults={"cull_retention": 0.999})
+        assert config["cull_retention"] == 0.999
+
+    def test_preset_beats_command_defaults(self) -> None:
+        config = load_fit_config(
+            preset="draft", command_defaults={"n_iters": 123, "cull_retention": 0.999}
+        )
+        assert config["n_iters"] == PRESETS["draft"]["n_iters"]
+        # The command default is still visible where the preset says nothing.
+        config = load_fit_config(preset="draft", command_defaults={"lr": 0.077})
+        assert config["lr"] == 0.077
+
+    def test_yaml_beats_command_defaults(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text("cull_retention: 0.5\n")
+        config = load_fit_config(
+            config_path=yaml_path, command_defaults={"cull_retention": 0.999}
+        )
+        assert config["cull_retention"] == 0.5
+
+    def test_cli_beats_command_defaults(self) -> None:
+        config = load_fit_config(
+            cli_overrides={"cull_retention": 0.0},
+            command_defaults={"cull_retention": 0.999},
+        )
+        # 0.0 is not None, so the "keep every splat" value must survive.
+        assert config["cull_retention"] == 0.0
+
+    def test_command_defaults_skip_none_values(self) -> None:
+        """A sentinel-free dict: a None entry leaves the layer below alone."""
+        config = load_fit_config(command_defaults={"cull_retention": None})
+        assert config["cull_retention"] == 0.95
+
+    def test_omitting_command_defaults_changes_nothing(self) -> None:
+        assert load_fit_config() == load_fit_config(command_defaults=None)
+        assert load_fit_config(preset="hifi") == load_fit_config(
+            preset="hifi", command_defaults={}
+        )
+
 
 class TestSourceDtypePrecedence:
     """A `source_dtype:` a user put in a --config must beat the loader's guess.
@@ -422,7 +468,7 @@ _DUMP_CONFIG_HIFI_GOLDEN = """\
 # Luxar Gaussian Splat Fitting Configuration
 # ============================================================
 # Base preset: hifi
-# Priority: CLI flags > YAML config > preset > function defaults
+# Priority: CLI flags > YAML config > preset > command defaults > function defaults
 #
 # Usage:
 #   luxar gsplat fit volume.npy output.gsplats.zarr --config this_file.yaml

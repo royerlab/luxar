@@ -63,7 +63,17 @@ fit_planned(volume, plan)        -> GSplatData|GSplatNode   # fit each box, merg
   `truncate:` is settable only through a YAML `--config` (no preset sets it, and
   there is no `--truncate` flag), so without the forwarding `-j N` silently fitted
   at the 2.75 default; and substituting `standard` for an absent `--preset` made a
-  box resolve 5000 iterations where `-j 1` resolves 1000 (#1637).
+  box resolve 5000 iterations where `-j 1` resolves 1000 (#1637). An absent
+  `--cull-retention` does NOT mean the fitter's 0.95: the worker re-enters the same
+  CLI resolution and lands on `CONTENT_CULL_RETENTION` itself, so `-j N` and `-j 1`
+  cull identically.
+- **`CONTENT_CULL_RETENTION = 0.999`** (`fit_planned.py`) — the near-lossless
+  post-fit retention every content box is fitted at, instead of the fitter's own
+  0.95 (whose bottom-5% cull would compound across the re-merged boxes).
+  `fit_planned` defaults to it directly; `fit_planned_parallel` has no fit kwargs to
+  default, so its boxes reach the same value through the CLI content path described
+  above, which imports this same constant as its per-command default — the CLI and
+  library halves cannot drift (#1729).
 
 Both drivers expect the background floor to arrive as a **concrete level** (or
 `"none"`): the CLI resolves `--floor` once against the whole volume and hands the
