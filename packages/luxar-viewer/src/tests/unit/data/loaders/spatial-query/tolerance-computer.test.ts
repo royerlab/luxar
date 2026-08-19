@@ -677,6 +677,46 @@ describe('computeTolerance — barrierDims overrides the discrete flag (issue #1
     }
   });
 
+  it('INVARIANT: a TRUTHY non-boolean `discrete` classifies the same way the renderer does', () => {
+    // `discrete` reaches here uncoerced from the store's `scene_dimensions` JSON
+    // (`view-state-manager.ts::extractMetadata` copies the raw value), and the
+    // renderer's own gate is a truthiness test —
+    // `data-processor-gsplats.ts::buildGSplatsParams` fills `discreteDims` from
+    // `if (viewState.dimensions[d]?.discrete)`. So a hand-authored `"discrete": 1`
+    // gets the binary half-cell gate at render time, and a strict `=== true` here
+    // would hand it the ~1e-3 continuous epsilon instead: a fetch window 250×
+    // narrower than the gate the renderer applies, which is exactly the class of
+    // divergence this module exists to prevent.
+    const truthy = [1, 'true', 'yes'] as unknown as boolean[];
+    for (const flag of truthy) {
+      const d = [
+        { discrete: false },
+        { discrete: false },
+        { discrete: false },
+        { discrete: flag, step: 1.0 },
+      ];
+      // No published set: the barrier arm, exactly as a literal `true` gets.
+      expect(computeTolerance('gsplats', [0, 1, 2], 4, d)[3]).toBe(QUARTER_CELL);
+      // Published set that OMITS it: the demote arm, exactly as a literal `true` gets.
+      expect(computeTolerance('gsplats', [0, 1, 2], 4, d, { barrierDims: [] })[3]).toBe(0.5);
+      // And the sibling geometries, whose arms read the same flag.
+      expect(computeTolerance('lines', [0, 1, 2], 4, d)[3]).toBe(QUARTER_CELL);
+      expect(computeTolerance('mesh', [0, 1, 2], 4, d)[3]).toBe(0.5);
+    }
+    // Falsy non-booleans stay continuous, so this is a truthiness rule and not
+    // "anything present counts".
+    for (const flag of [0, '', null] as unknown as boolean[]) {
+      const d = [
+        { discrete: false },
+        { discrete: false },
+        { discrete: false },
+        { discrete: flag, step: 1.0 },
+      ];
+      expect(computeTolerance('gsplats', [0, 1, 2], 4, d)[3]).toBe(CONTINUOUS_EPS);
+      expect(computeTolerance('lines', [0, 1, 2], 4, d)[3]).toBe(0);
+    }
+  });
+
   it('classifies each dim independently, not "any barrier ⇒ all barriers"', () => {
     // A realistic 5D fitted timelapse: dims 0-2 displayed, dim 3 a σ-expanded
     // spatial axis the scene happens to declare discrete, dim 4 the stacked

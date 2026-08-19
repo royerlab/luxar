@@ -608,6 +608,15 @@ export function computeTolerance(
  * POINTS never ask this question at all: they classify dims from
  * `options.spatialExtendDims` (the `EffectiveRadiusConfig` flag array), never from
  * `discrete`, and their live query path does not even come through here.
+ *
+ * The `discrete` arm is a TRUTHINESS test, not `=== true`, and deliberately so: the
+ * flag rides through from the store's `scene_dimensions` JSON uncoerced
+ * (`view-state-manager.ts::extractMetadata` copies it as-is), and the renderer's own
+ * gate is truthy too — `data-processor-gsplats.ts::buildGSplatsParams` fills
+ * `discreteDims` from `if (viewState.dimensions[d]?.discrete)`. A hand-authored
+ * `"discrete": 1` must not classify one way here and the other way there, or the
+ * fetch window stops matching the gate the renderer applies, which is the whole
+ * failure this module exists to avoid.
  */
 function isBarrierDim(
   geometryType: GeometryKind,
@@ -619,7 +628,7 @@ function isBarrierDim(
   if (geometryType === 'gsplats' && barrierDims !== undefined) {
     return barrierDims.includes(dimIndex);
   }
-  return dimInfo?.discrete === true;
+  return !!dimInfo?.discrete;
 }
 
 /**
@@ -854,8 +863,10 @@ function computeGSplatsHiddenTolerance(
   // Demoted dim (writer omitted it, scene declares it discrete): the fetch window
   // must EQUAL the half-cell membership window, because that binary gate is the only
   // visibility test the projection applies to this dim — the continuous arm's
-  // degenerate band is not drawn on it at all. See the docstring above.
-  if (dimInfo?.discrete === true) {
+  // degenerate band is not drawn on it at all. See the docstring above. Truthiness,
+  // not `=== true`, for the same reason as `isBarrierDim`: this branch must fire on
+  // exactly the dims the renderer's own truthy test routes into `discreteDims`.
+  if (dimInfo?.discrete) {
     return discreteDimMembershipTolerance(dimInfo);
   }
   return gsplatsContinuousDimTolerance(dimInfo, options.truncationRadius);
