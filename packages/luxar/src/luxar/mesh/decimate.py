@@ -246,11 +246,11 @@ def decimate_cluster(
     Raises:
         ValueError: If inputs are malformed, ``target_vertices`` < 4, or the input
             surface is degenerate enough that no triangle survives. That last case
-            is an error rather than an empty result on purpose:
-            :func:`luxar.core.group.lod.group.coverage_fractions` raises on an
-            empty finest level (a ladder whose finest level draws nothing is a
-            broken ladder) — so returning one here would only move the failure
-            somewhere with less context about which mesh caused it.
+            is an error rather than an empty result on purpose: the
+            substitutive-LOD wrapper keeps a decimated level only when its vertex
+            count strictly exceeds the previous one's, so an empty return (count
+            0) would be dropped in silence — a degenerate mesh would come out as a
+            plain leaf with nothing naming which mesh caused it.
     """
     vertices = np.ascontiguousarray(vertices, dtype=np.float32)
     faces = np.ascontiguousarray(faces, dtype=np.uint32)
