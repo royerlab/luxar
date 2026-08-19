@@ -240,17 +240,29 @@ async function waitForLuxarReady(page: any, timeout = 60000): Promise<void> {
   );
 }
 
-async function waitForDataLoaded(page: any, timeout = 60000): Promise<void> {
+async function waitForDataLoaded(
+  page: any,
+  timeout = 60000,
+  requireElements = true
+): Promise<void> {
   // Geometry-agnostic: totalElements sums points + gsplats + lines + triangles,
   // so this works for all four geometry types and mixed scenes (totalPoints alone
   // stays 0 for a pure Lines demo like dipc_3d_genome, or a pure Mesh one).
+  //
+  // `requireElements = false` waits only for the loader to go idle. That is the
+  // pre-`dimensionNav` gate: a scene whose DEFAULT slice is empty (an nD demo
+  // parked on a hidden-axis position that holds nothing) has zero elements until
+  // the dimension is stepped, so insisting on elements here would time out before
+  // the navigation that fills the scene ever runs.
   await page.waitForFunction(
-    () => {
+    (needElements: boolean) => {
       const debug = (window as any).__luxarDebug;
       if (!debug || !debug.getState) return false;
       const state = debug.getState();
-      return state && !state.isLoading && state.totalElements > 0;
+      if (!state || state.isLoading) return false;
+      return needElements ? state.totalElements > 0 : true;
     },
+    requireElements,
     { timeout }
   );
 }
@@ -1215,15 +1227,24 @@ for (const demo of DEMOS) {
     await installChromeHider(page); // survives Vite reloads (must precede goto)
     await page.goto(viewerUrl, { waitUntil: 'networkidle' });
     await waitForLuxarReady(page);
-    await waitForDataLoaded(page);
+    // A dimensionNav demo may be EMPTY at its default slice, so only require a
+    // settled loader until after the navigation has run.
+    const needsNav = Boolean(demo.dimensionNav);
+    await waitForDataLoaded(page, 60000, !needsNav);
     // Settle: a Vite "re-optimizing deps" full reload can fire right after first
     // paint; wait out any in-flight reload and re-confirm the scene is loaded.
     await page.waitForTimeout(1500);
-    await waitForDataLoaded(page);
+    await waitForDataLoaded(page, 60000, !needsNav);
     console.log(`[${demo.id}] data loaded`);
 
     if (demo.dimensionNav) {
       await navigateDimension(page, demo.dimensionNav.key, demo.dimensionNav.steps);
+      // NOW the scene must have content: the navigation is what fills it, and a
+      // still of an empty canvas is worse than a failed capture.
+      await waitForDataLoaded(page);
+      console.log(
+        `[${demo.id}] dimensionNav key=${demo.dimensionNav.key} steps=${demo.dimensionNav.steps}`
+      );
     }
     // Timelapse: frame the STILL at a content-rich timepoint (a developmental
     // series is nearly empty at t0). The orbit video still plays the full range.
