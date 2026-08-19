@@ -112,9 +112,10 @@ default, and `load_fit_config` layers one only `if preset is not None`, so a bar
 
 One exception to that fall-through: `--tiling content` layers a *command default* of
 `cull_retention=0.999` between the preset and the function defaults, so a preset-less
-content fit is near-lossless per box (they are re-merged, so a per-box cull compounds).
-`--preset`, a `cull_retention:` in a `--config` and `--cull-retention` all still win.
-Iteration count is not special-cased: a bare content fit still runs 1000 iterations.
+content fit is near-lossless per box. `--preset`, a `cull_retention:` in a `--config`
+and `--cull-retention` all still win. Nothing else is special-cased: a bare content fit
+still runs 1000 iterations, and a bare `--tiling uniform` still culls each tile at
+`0.95` even though its default partition merge is per-tile too.
 
 The Python API (`fit_gaussian_splats`, which has no `preset=` argument) shares those
 same defaults. Either way, a fifth of `standard` on thin filaments leaves splats at
