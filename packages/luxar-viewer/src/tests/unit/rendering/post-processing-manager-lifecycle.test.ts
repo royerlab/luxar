@@ -98,6 +98,7 @@ type ManagerInternals = {
   megaPass: { dispose(): void };
   disposed: boolean;
   deferRebuildDepth: number;
+  renderer: { setSize: ReturnType<typeof vi.fn>; domElement: HTMLCanvasElement };
 };
 
 function peek(mgr: PostProcessingManager): ManagerInternals {
@@ -503,6 +504,16 @@ describe('PostProcessingManager → size accessors', () => {
 
     expect(mgr.getDisplaySize()).toEqual({ width: 1512, height: 850 });
     expect(mgr.getEffectiveRenderScale()).toBe(2);
+
+    // The premise the two accessors rest on, and the reason the capture
+    // path must fold the scale in itself: the RENDERER is handed
+    // display × multiplier while the canvas CSS keeps the display size.
+    // Without this, swapping the two would leave the accessors — and
+    // every recording test — green while an offline capture silently
+    // dropped the SSAA factor.
+    const { renderer } = peek(mgr);
+    expect(renderer.setSize).toHaveBeenLastCalledWith(3024, 1700, false);
+    expect(renderer.domElement.style.width).toBe('1512px');
 
     mgr.resize(1920, 1080);
     expect(mgr.getDisplaySize()).toEqual({ width: 1920, height: 1080 });

@@ -45,9 +45,10 @@ export function createMockSceneManager(): any {
       // SSAA off by default: the size handed to `resize` is the size the
       // render targets get. Tests that care override this.
       getEffectiveRenderScale: vi.fn().mockReturnValue(1),
-      // The DISPLAY size — what `resize` was last given. Deliberately
-      // NOT the same number as `renderer.getSize()`, which is the
-      // SSAA-multiplied one.
+      // The DISPLAY size — what `resize` was last given. It matches
+      // `renderer.getSize()` here only because SSAA is off by default;
+      // tests that raise the multiplier make the two diverge, since
+      // the renderer gets the SSAA-multiplied size.
       getDisplaySize: vi.fn().mockReturnValue({ width: 800, height: 600 }),
     },
     camera: {

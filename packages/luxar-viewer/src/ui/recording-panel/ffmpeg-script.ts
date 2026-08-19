@@ -316,7 +316,10 @@ function buildGradeFilter(
     filter:
       `format=gbrpf32le,geq=interpolation=nearest:r='${out.r}':g='${out.g}':b='${out.b}',` +
       `${srgb},format=yuv420p`,
-    exact: mapped !== null ? 'exact' : 'no-curve',
+    // `!= null`, not `!== null`: `toneMapExpressions` returns undefined
+    // for a mode outside the declared union, and labelling a bare-clamp
+    // chain 'exact' would promise a curve the script never emitted.
+    exact: mapped != null ? 'exact' : 'no-curve',
   };
 }
 
