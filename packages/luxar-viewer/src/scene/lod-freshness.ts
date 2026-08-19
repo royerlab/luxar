@@ -154,10 +154,9 @@ export function countFromUserData(ud: FreshnessChild['object']['userData']): num
     case 'mesh':
       // TRIANGLES, not vertices — this count answers "did this level commit
       // anything drawable", and a level with vertices but no surviving triangle
-      // draws nothing. (The ladder's `coverage_fraction` thresholds are derived
-      // from VERTEX counts, which is a different question: how much detail a
-      // level carries, in the currency the decimator's target is expressed in.
-      // Mixing the two would mean asking for one and gating on the other.)
+      // draws nothing. (The decimator sizes each coarser level to a VERTEX
+      // target — `target_vertices` in `luxar/mesh/decimate.py` — which answers a
+      // different question: how much detail a level carries.)
       return ud.visibleTriangleCount ?? null;
     default:
       return null;

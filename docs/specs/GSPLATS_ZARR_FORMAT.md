@@ -140,8 +140,10 @@ a v3.3 store without the filter is byte-identical to v3.2. **v3.2** differs
 from **v3.1** only in the `kind=lod` selector attrs: the group `selector` value
 `pixel_size` and the per-child `min_pixel_size` (absolute pixels) are renamed
 to `coverage` / `coverage_fraction` (viewport-relative `sqrt(N_i/N_finest)` in
-`[0, 1]`, strictly ascending coarsest→finest, finest `1.0`; the upper bound later
-widened to `4.0` for partition-bound ladders — see the `kind=lod` section).
+`[0, 1]`, strictly ascending coarsest→finest, finest `1.0`; the bound later
+widened to `MAX_COVERAGE_FRACTION` = 4.0 when the diagonal metric was rescaled
+×4, and is superseded for derived ladders by v3.4's `screen-area` anchors above
+— see the `kind=lod` section).
 **v3.1** differs
 from **v3.0** only in storing the Cholesky factors as two arrays
 (`cholesky_factors_diag` + `cholesky_factors_offdiag`) instead of a single packed
@@ -267,7 +269,8 @@ deliberately independent of per-level element counts (a count ratio is blind
 to element size, overlap, and intent; the retired derivation
 `sqrt(N_i/N_finest)` held the finest level until the object was far away on
 dense sub-pixel data). The metric is built from NDC fractions, so selection is
-identical on any monitor/viewport.
+independent of viewport resolution and size — though occupancy still moves with
+viewport ASPECT, since the camera framing is fitted to one screen axis.
 
 Note the semantics this deliberately REVISES: under the retired diagonal
 metric, a fitted high-aspect object read HIGH (a rod's diagonal ≈ its
@@ -1419,8 +1422,15 @@ finest level instead). Both paths go through the shared
   - Group `selector: "pixel_size"` → `"coverage"`; per-child `min_pixel_size`
     (absolute pixel threshold) → `coverage_fraction` (viewport-relative
     `sqrt(N_i/N_finest)` in `[0, 1]`, strictly ascending coarsest→finest,
-    finest `1.0`) — device-independent LOD switching. (The upper bound later
-    widened to `4.0` for partition-bound ladders; see the `kind=lod` section.)
+    finest `1.0`) — device-independent LOD switching. (The bound later widened
+    to `MAX_COVERAGE_FRACTION` = 4.0 so a hand-tuned `coverage_fractions=[...]`
+    list stayed expressible after the viewer's fill anchor was loosened so the
+    finest level engaged at a normal full-frame view instead of only once the
+    object overfilled the screen (a ×4 rescale of the diagonal metric) —
+    approximately fills-screen in these legacy diagonal units. That is not
+    today's anchor: since v3.4 a derived threshold is a screen-AREA fraction,
+    whole-object finest `0.5` and partition tile `1.0`; see the `kind=lod`
+    section.)
   - v3.0 / v3.1 stores that still carry the legacy attrs remain loadable: the
     Python re-save derives fresh `coverage_fraction` thresholds, and the web
     viewer auto-adapts the legacy ladder (normalizing `min_pixel_size` by its

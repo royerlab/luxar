@@ -14,11 +14,12 @@
  * - {@link projectBoxAreaFraction} — project that box to the fraction of the
  *   viewport AREA its screen-space rect covers (same near-plane saturation).
  *   The ``selector: 'screen-area'`` metric.
- * - {@link pickChildWithHysteresis} — pick the level for a coverage metric,
- *   with asymmetric downgrade hysteresis.
+ * - {@link pickChildWithHysteresis} — pick the level for whichever metric the
+ *   group's ``selector`` names, with asymmetric downgrade hysteresis.
  *
- * The registry re-exports `projectBoxDiagonalPx` / `pickChildWithHysteresis`
- * so existing importers (the selector unit tests) are unchanged.
+ * The registry re-exports `projectBoxAreaFraction` / `projectBoxDiagonalPx` /
+ * `pickChildWithHysteresis` so existing importers (the selector unit tests)
+ * are unchanged.
  *
  * @module scene/lod-selector-math
  */
@@ -249,20 +250,23 @@ function projectBoxNdcRect(
  * current active index. Applies 10% asymmetric hysteresis on the
  * downgrade direction.
  *
- * ``metric`` is the dimensionless coverage metric (projected bbox diagonal ÷
- * ``FILL_FACTOR × fittedAxisPx``, where ``fittedAxisPx`` is
- * ``min(viewport.width, viewport.height)``) and ``thresholds`` are the
- * per-child ``coverage_fraction`` values; they live in the same space, with the
- * auto-derived WHOLE-OBJECT finest threshold (1.0) reached once the projected
- * diagonal is ``FILL_FACTOR`` (half) of the fitted screen axis — so a
- * full-frame view puts the metric comfortably above 1, and an explicitly
- * authored **or partition-bound** threshold may itself exceed 1 (up to
- * ``SCREEN_FILL_DIAGONAL_RATIO / FILL_FACTOR``) to hold a level until later. The
- * "natural" pick is the finest child whose ``coverageFraction`` is less than or
- * equal to ``metric``. Hysteresis only resists dropping back to a coarser level:
- * when downgrading from index ``currentIdx``, the metric must fall below the
- * current threshold by a margin that is ``hysteresisRatio`` (default 10%) of the
- * GAP to the adjacent coarser threshold — i.e. below
+ * ``metric`` is whatever scalar the group's ``selector`` names — the viewport
+ * AREA fraction under ``'screen-area'`` (what derived ladders stamp), the
+ * dimensionless normalised diagonal (projected bbox diagonal ÷ ``FILL_FACTOR ×
+ * fittedAxisPx``, where ``fittedAxisPx`` is ``min(viewport.width,
+ * viewport.height)``) under the legacy ``'coverage'`` — and ``thresholds`` are
+ * the per-child ``coverage_fraction`` values, in whichever units that
+ * ``selector`` names. Under ``'screen-area'`` the derived finest anchor is 0.5
+ * whole-object / 1.0 partition-bound; under legacy ``'coverage'`` it is 1.0
+ * whole-object, and an explicitly authored **or partition-bound** threshold may
+ * exceed 1 (up to ``SCREEN_FILL_DIAGONAL_RATIO / FILL_FACTOR``) to hold a level
+ * until later — both ceilings are enforced Python-side (``validate_lod_group``),
+ * never here. The "natural" pick is the finest child whose
+ * ``coverageFraction`` is less than or equal to ``metric``. Hysteresis only
+ * resists dropping back to a coarser level: when downgrading from index
+ * ``currentIdx``, the metric must fall below the current threshold by a margin
+ * that is ``hysteresisRatio`` (default 10%) of the GAP to the adjacent coarser
+ * threshold — i.e. below
  * ``thresholds[currentIdx] - hysteresisRatio * (thresholds[currentIdx] -
  * thresholds[currentIdx - 1])``; otherwise we stay on the current level
  * even though the natural pick is coarser. (At the bottom level
@@ -339,9 +343,9 @@ export interface WorldBoxSource {
  * :type:`BoundingBox`, mapping nD axes onto X/Y/Z via the current
  * ``displayDims`` and lifting through the group's ``matrixWorld``. Returns
  * ``null`` when no child has usable bounds (mismatched/empty min-max). Shared
- * by the auto selector (diagonal pick + frustum gate) and the eviction
- * ranking so both reason over identical geometry. Children with bogus bounds
- * are skipped. Uses the caller-owned ``localBoxScratch`` (per-entry) and
+ * by the auto selector (either metric's projection + the frustum gate) and the
+ * eviction ranking so both reason over identical geometry. Children with bogus
+ * bounds are skipped. Uses the caller-owned ``localBoxScratch`` (per-entry) and
  * ``matrixScratch`` (per-registry); ``transformBoundingBox`` allocates the
  * returned box, so it is independent of those scratches and safe to keep past
  * the next call.
