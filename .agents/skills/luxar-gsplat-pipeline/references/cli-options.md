@@ -85,7 +85,7 @@ coordinate frames).
 ### Post-fit culling & denoising
 | Flag | Default | Meaning |
 | --- | --- | --- |
-| `--cull-retention` | 0.95 | keep top fraction of cumulative amplitude (presets set 0.999); 0 keeps every splat |
+| `--cull-retention` | 0.95 | keep top fraction of cumulative amplitude (presets set 0.999, and so does `--tiling content` without one); 0 keeps every splat |
 | `--denoise` | false | NLM-denoise the volume before fitting |
 | `--denoise-h` | auto | manual NLM strength (skip auto-calibration) |
 | `--denoise-2d` | false | slice-by-slice 2D NLM |
@@ -109,6 +109,13 @@ default, and `load_fit_config` layers one only `if preset is not None`, so a bar
 
     load_fit_config(None, None, {})["n_iters"] == 1000     # bare CLI fit
     load_fit_config("draft", None, {})["n_iters"] == 2000
+
+One exception to that fall-through: `--tiling content` layers a *command default* of
+`cull_retention=0.999` between the preset and the function defaults, so a preset-less
+content fit is near-lossless per box. `--preset`, a `cull_retention:` in a `--config`
+and `--cull-retention` all still win. Nothing else is special-cased: a bare content fit
+still runs 1000 iterations, and a bare `--tiling uniform` still culls each tile at
+`0.95` even though its default partition merge is per-tile too.
 
 The Python API (`fit_gaussian_splats`, which has no `preset=` argument) shares those
 same defaults. Either way, a fifth of `standard` on thin filaments leaves splats at

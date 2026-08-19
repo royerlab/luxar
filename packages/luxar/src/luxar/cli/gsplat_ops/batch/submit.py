@@ -248,7 +248,7 @@ def run_batch_submit(
         None,
         "--max-concurrent",
         help="Maximum simultaneous Slurm array tasks (limits cluster usage). "
-        "Maps to --array=0-N%%MAX. No limit if omitted.",
+        "Maps to --array=0-N%MAX. No limit if omitted.",
         rich_help_panel="Slurm resources",
     ),
     preemptible: bool = typer.Option(

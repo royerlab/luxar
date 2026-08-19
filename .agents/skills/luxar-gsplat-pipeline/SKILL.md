@@ -55,8 +55,11 @@ from a preset — it is the *fitter's* own default falling through, and it drops
 amplitude after every fit. Chasing a false `signal_limited` curve out of `cal`, treat
 BOTH as suspects — that retention *and* too few iterations at high K, which is the
 reason `cal` itself defaults to the `n2s` preset (20,000 iters, retention 0.999).
-A bare `fit` (no preset) still carries that `0.95` — on the CLI path, that is;
-a direct Python `fit_progressive_gaussian_splats` call defaults to `0.98`, which the
+A bare `fit` (no preset) still carries that `0.95` — on the CLI path, that is; and not
+under `--tiling content`, whose boxes default to `0.999` with or without a preset.
+Content only: `--tiling uniform` is not special-cased and a bare one still culls each
+tile at `0.95`.
+A direct Python `fit_progressive_gaussian_splats` call defaults to `0.98`, which the
 CLI overrides — so **`--seeds` proposes and `cull_retention` disposes**: a post-fit
 cumulative-amplitude cull discards the tail, and on heavy-tailed sparse data that
 tail is a lot of splats — the final count is not `--seeds`. A bigger preset is not

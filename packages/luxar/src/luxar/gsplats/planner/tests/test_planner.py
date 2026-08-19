@@ -13,6 +13,7 @@ import pytest
 
 from luxar.gsplats.calibration import SplatDensity
 from luxar.gsplats.planner import (
+    CONTENT_CULL_RETENTION,
     FitPlan,
     PlanBox,
     fit_planned_parallel,
@@ -810,6 +811,235 @@ class TestContentFitSharedFloor:
         assert result.exit_code != 0
         assert "Traceback" not in result.output
         assert "floor" in result.output.lower()
+
+
+class TestContentFitCullRetention:
+    """`fit --tiling content` fits every box near-losslessly (#1729).
+
+    The planner meant to install a content default of 0.999 with
+    ``fk.setdefault("cull_retention", 0.999)``, which could never fire: the
+    resolved config always already carries the fitter's own signature default of
+    0.95. So a preset-less content fit culled the bottom 5% of cumulative
+    amplitude out of EVERY box (and the boxes are re-merged, so the cull
+    compounds) while the code claimed otherwise.
+    """
+
+    @staticmethod
+    def _plan(tmp_path, volume) -> Path:
+        """Two abutting boxes splitting x in half (core-disjoint, no gap)."""
+        z, y, x = volume.shape
+        plan = FitPlan(
+            volume_shape=[z, y, x],
+            boxes=[
+                PlanBox(box=[0, z, 0, y, 0, x // 2], n_features=10, budget=50),
+                PlanBox(box=[0, z, 0, y, x // 2, x], n_features=10, budget=50),
+            ],
+            overlap=4,
+            feature_method="peaks",
+            min_leaf=8,
+            max_leaf=32,
+            density={"saturation_cap": 10_000},
+        )
+        plan_json = tmp_path / "plan.json"
+        plan.to_json(plan_json)
+        return plan_json
+
+    @staticmethod
+    def _spy_boxes(monkeypatch) -> list:
+        """Patch ``_fit_one_box`` with a spy recording each box's resolved kwargs.
+
+        Records ``n_iters`` alongside the retention: 0.999 alone cannot tell a
+        preset apart from the command default (they agree), so a preset test needs
+        a knob only the preset layer sets.
+        """
+        import importlib
+
+        fp = importlib.import_module("luxar.gsplats.planner.fit_planned")
+        seen: list = []
+
+        def _spy(volume_, box, overlap, cap, **fit_kwargs):
+            seen.append(
+                {
+                    "cull_retention": fit_kwargs.get("cull_retention"),
+                    "n_iters": fit_kwargs.get("n_iters"),
+                }
+            )
+            return TestContentFitSharedFloor._one_splat(
+                volume_, box, overlap, cap, **fit_kwargs
+            )
+
+        monkeypatch.setattr(fp, "_fit_one_box", _spy)
+        return seen
+
+    def _run_boxes(self, tmp_path, monkeypatch, **run_kwargs) -> list:
+        """Sequential 2-box content fit; returns each box's recorded fit kwargs."""
+        from luxar.cli.gsplat_ops.planner import run_content_fit
+
+        volume = _pedestal_blobs(shape=(16, 16, 32))
+        seen = self._spy_boxes(monkeypatch)
+        run_content_fit(
+            tmp_path / "unused.npy",
+            tmp_path / "out.gsplats.zarr",
+            volume=volume,
+            k_star_ref=4000,
+            n_features_ref=200,
+            plan=self._plan(tmp_path, volume),
+            floor="none",  # keep the run cheap; the floor is #1174's business
+            flat=True,
+            device="cpu",
+            verbose=False,
+            **run_kwargs,
+        )
+        return seen
+
+    def _run(self, tmp_path, monkeypatch, **run_kwargs) -> list:
+        """As :meth:`_run_boxes`, projected onto each box's ``cull_retention``."""
+        return [
+            r["cull_retention"]
+            for r in self._run_boxes(tmp_path, monkeypatch, **run_kwargs)
+        ]
+
+    def test_bare_content_fit_is_near_lossless(self, tmp_path, monkeypatch):
+        """No preset, no --config, no --cull-retention → 0.999 for every box.
+
+        FAILS pre-fix with 0.95 (the fitter's signature default falling all the
+        way through), which is the regression this pins.
+        """
+        assert self._run(tmp_path, monkeypatch) == [
+            pytest.approx(CONTENT_CULL_RETENTION),
+            pytest.approx(CONTENT_CULL_RETENTION),
+        ]
+
+    def test_preset_still_gives_its_own_retention(self, tmp_path, monkeypatch):
+        """A preset keeps outranking the command default.
+
+        ``standard``'s retention is ALSO 0.999, so the retention alone cannot tell
+        which layer supplied it. ``n_iters`` can: 5000 is the preset's, 1000 the
+        harvested function default a preset-less run resolves.
+        """
+        seen = self._run_boxes(tmp_path, monkeypatch, preset="standard")
+        assert [r["cull_retention"] for r in seen] == [
+            pytest.approx(0.999),
+            pytest.approx(0.999),
+        ]
+        assert [r["n_iters"] for r in seen] == [5000, 5000]  # the preset layer landed
+
+    def test_explicit_cli_value_reaches_every_box(self, tmp_path, monkeypatch):
+        seen = self._run(tmp_path, monkeypatch, cull_retention=0.5)
+        assert seen == [pytest.approx(0.5), pytest.approx(0.5)]
+
+    def test_config_value_beats_the_command_default(self, tmp_path, monkeypatch):
+        cfg = tmp_path / "fit.yaml"
+        cfg.write_text("cull_retention: 0.5\n")
+        seen = self._run(tmp_path, monkeypatch, config=cfg)
+        assert seen == [pytest.approx(0.5), pytest.approx(0.5)]
+
+    def test_zero_keeps_every_splat_and_is_not_replaced(self, tmp_path, monkeypatch):
+        """`--cull-retention 0` is a value, not an absence: it must win."""
+        seen = self._run(tmp_path, monkeypatch, cull_retention=0.0)
+        assert seen == [0.0, 0.0]
+
+    def test_parallel_worker_argv_only_carries_an_asked_for_retention(
+        self, tmp_path, monkeypatch
+    ):
+        """The command default must not leak into the ``-j N`` worker argv.
+
+        The workers re-enter ``_fit_kwargs`` and resolve the same default
+        themselves, so materializing it here would only make an absent flag
+        indistinguishable from an explicit one.
+        """
+        V = _pedestal_blobs(shape=(16, 16, 32))
+        bare = TestContentFitSharedFloor._capture_worker_argvs(
+            tmp_path, monkeypatch, V, floor="none"
+        )
+        assert len(bare) == 2
+        assert all("--cull-retention" not in argv for argv in bare)
+        asked = TestContentFitSharedFloor._capture_worker_argvs(
+            tmp_path, monkeypatch, V, floor="none", cull_retention=0.5
+        )
+        assert all(
+            float(a[a.index("--cull-retention") + 1]) == pytest.approx(0.5)
+            for a in asked
+        )
+
+    def test_worker_branch_resolves_the_same_default(self, tmp_path, monkeypatch):
+        """`--plan-box K` (the ``-j N`` subprocess) must not fit differently.
+
+        The worker re-enters ``_fit_kwargs`` in its own process, so a default
+        living only on the sequential path would make ``-j N`` and ``-j 1``
+        produce different splat sets — the #1637 class of bug.
+        """
+        from luxar.cli.gsplat_ops.planner import run_content_fit
+
+        volume = _pedestal_blobs(shape=(16, 16, 32))
+        seen = self._spy_boxes(monkeypatch)
+        run_content_fit(
+            tmp_path / "unused.npy",
+            tmp_path / "box0.gsplats.zarr",
+            volume=volume,
+            k_star_ref=4000,
+            n_features_ref=200,
+            plan=self._plan(tmp_path, volume),
+            plan_box=0,
+            floor="none",
+            device="cpu",
+            verbose=False,
+        )
+        assert [r["cull_retention"] for r in seen] == [
+            pytest.approx(CONTENT_CULL_RETENTION)
+        ]
+
+    def test_cli_flag_reaches_every_box_through_the_real_command(
+        self, tmp_path, monkeypatch
+    ):
+        """`--cull-retention` must survive the real ``fit`` dispatch, not just
+        ``run_content_fit``.
+
+        Every other test in this class calls ``run_content_fit`` directly, so
+        deleting ``cull_retention=cull_retention`` from ``fit.py``'s
+        ``--tiling content`` dispatch would leave the flag silently ineffective
+        with all of them still green — the same hole the ``-j`` builder test
+        above covers for the worker argv.
+        """
+        from typer.testing import CliRunner
+
+        from luxar.cli.gsplat_commands import app_gsplat
+
+        volume = _pedestal_blobs(shape=(16, 16, 32))
+        vol = tmp_path / "vol.npy"
+        np.save(vol, volume)
+        seen = self._spy_boxes(monkeypatch)
+        result = CliRunner().invoke(
+            app_gsplat,
+            # fmt: off
+            [
+                "fit",
+                str(vol),
+                str(tmp_path / "out.gsplats.zarr"),
+                "--tiling",
+                "content",
+                "--plan",
+                str(self._plan(tmp_path, volume)),
+                "--k-star-ref",
+                "4000",
+                "--n-features-ref",
+                "200",
+                "--cull-retention",
+                "0.5",
+                "--floor",
+                "none",
+                "--flat",
+                "--device",
+                "cpu",
+                "--quiet",
+            ],
+            # fmt: on
+        )
+        assert result.exit_code == 0, result.output
+        assert [r["cull_retention"] for r in seen] == [
+            pytest.approx(0.5),
+            pytest.approx(0.5),
+        ]
 
 
 class TestFitPlannedParallel:

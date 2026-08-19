@@ -178,7 +178,12 @@ def run_content_fit(
       ``flat``.
     """
     from luxar.cli.gsplat_config import load_fit_config, load_volume
-    from luxar.gsplats.planner import FitPlan, fit_planned, plan_volume
+    from luxar.gsplats.planner import (
+        CONTENT_CULL_RETENTION,
+        FitPlan,
+        fit_planned,
+        plan_volume,
+    )
     from luxar.gsplats.planner.fit_planned import _fit_one_box
 
     def _section(title: str) -> Any:
@@ -210,14 +215,18 @@ def run_content_fit(
                 "loss_type": loss,
                 "lr": lr,
                 "floor": floor,
+                # `0.0` ("keep every splat") is not None, so it still wins here.
+                "cull_retention": cull_retention,
             },
+            # Content tiling's own baseline, layered just above the fitter's
+            # harvested defaults: `--preset`, a `cull_retention:` in a `--config`
+            # and `--cull-retention` all still win — only the fitter's 0.95 is
+            # displaced. Shared with `fit_planned` so the CLI and the library
+            # cannot disagree about what a preset-less content box is fitted at.
+            command_defaults={"cull_retention": CONTENT_CULL_RETENTION},
         )
         fk.pop("seeds", None)
         fk.pop("device", None)
-        if cull_retention is not None:
-            fk["cull_retention"] = cull_retention
-        else:
-            fk.setdefault("cull_retention", 0.999)  # content default (near-lossless)
         fk["verbose"] = False
         return fk
 
