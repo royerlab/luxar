@@ -37,6 +37,7 @@ import type { PickingSystem } from '../picking/picking-system';
 import { getColormapTexture } from '../colormap-textures';
 import { supportsScalarColormap } from '../material-colormap-helpers';
 import { resolveColormapWindow } from '../display-range';
+import { scheduleBlendModeProgramWarmupForObject } from '../webgl-blend-warmup';
 import { log, Modules } from '../../utils/log';
 import type { MeshSide } from '../../data/mesh/projection';
 import type { MeshDataLoader, MeshMetadata, MeshUserData } from '../../types/mesh';
@@ -119,6 +120,7 @@ export function applyMeshShading(
   const material = object.material as LuxarMeshMaterial;
   if (typeof material.updateFlatNormal !== 'function') return;
   material.updateFlatNormal(resolveFlatNormal(attrs, storedNormalsUsable));
+  scheduleBlendModeProgramWarmupForObject(object);
 }
 
 /**

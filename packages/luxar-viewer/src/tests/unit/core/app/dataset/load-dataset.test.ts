@@ -38,6 +38,9 @@ function makePorts(trace: Trace, overrides: Partial<LoadDatasetPorts> = {}): Loa
   const sceneManager = {
     loadSceneData: vi.fn().mockImplementation(async () => trace.order.push('loadSceneData')),
     getSceneViewerConfig: vi.fn().mockReturnValue(viewerConfig),
+    warmBlendModePrograms: vi.fn(async () => {
+      trace.order.push('warmBlendModePrograms');
+    }),
     scene: { children: [] as THREE.Object3D[] },
   };
   const animationController = {
@@ -280,11 +283,46 @@ describe('loadDataset', () => {
     expect(ports.openCacheStatsView).not.toHaveBeenCalled();
   });
 
-  it('animationController.startAnimation is the LAST step', async () => {
+  it('warms blend programs only at the end, after animation starts', async () => {
     const trace: Trace = { order: [], recordedViewerConfig: undefined };
     await loadDataset('scene.zarr', makePorts(trace));
 
-    expect(trace.order[trace.order.length - 1]).toBe('startAnimation');
+    const startIdx = trace.order.indexOf('startAnimation');
+    const warmIdx = trace.order.indexOf('warmBlendModePrograms');
+    expect(startIdx).toBeGreaterThanOrEqual(0);
+    expect(warmIdx).toBeGreaterThan(startIdx);
+    expect(trace.order[trace.order.length - 1]).toBe('warmBlendModePrograms');
+  });
+
+  it('does not resolve dataset readiness until blend warming completes', async () => {
+    const trace: Trace = { order: [], recordedViewerConfig: undefined };
+    let signalWarmStarted!: () => void;
+    let finishWarm!: () => void;
+    const warmStarted = new Promise<void>((resolve) => {
+      signalWarmStarted = resolve;
+    });
+    const warmFinished = new Promise<void>((resolve) => {
+      finishWarm = resolve;
+    });
+    const ports = makePorts(trace);
+    (ports.sceneManager.warmBlendModePrograms as ReturnType<typeof vi.fn>).mockImplementation(
+      () => {
+        trace.order.push('warmBlendModePrograms');
+        signalWarmStarted();
+        return warmFinished;
+      }
+    );
+
+    let resolved = false;
+    const loading = loadDataset('scene.zarr', ports).then(() => {
+      resolved = true;
+    });
+    await warmStarted;
+    expect(resolved).toBe(false);
+
+    finishWarm();
+    await loading;
+    expect(resolved).toBe(true);
   });
 
   it('loaderConfig is forwarded to sceneManager.loadSceneData', async () => {

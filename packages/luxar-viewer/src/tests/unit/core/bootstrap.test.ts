@@ -97,6 +97,7 @@ const EMPTY_PARAMS: UrlParams = {
   clearCache: false,
   lodFade: true,
   lodEnergyComp: true,
+  blendWarmup: true,
   depthSort: true,
   lodFinest: false, // capture-quality force-finest is OFF by default (opt-in via ?lod-finest)
   noPrefetch: false,
@@ -425,7 +426,7 @@ describe('bootstrapStandalone', () => {
       expect(mocks.init.mock.calls.at(-1)?.[0].pinnedDPR).toBeUndefined();
     });
 
-    it('threads the on-by-default feature flags (lodFade/lodEnergyComp/depthSort) into init()', async () => {
+    it('threads the on-by-default feature flags (lodFade/lodEnergyComp/blendWarmup/depthSort) into init()', async () => {
       // An embedder-supplied urlParams object must control these flags —
       // the init pipeline reads options, never window.location.
       await bootstrapStandalone({
@@ -434,6 +435,7 @@ describe('bootstrapStandalone', () => {
           ...EMPTY_PARAMS,
           lodFade: false,
           lodEnergyComp: false,
+          blendWarmup: false,
           depthSort: false,
           lodFinest: true, // opt-IN flag — flipped the other way
         },
@@ -441,6 +443,7 @@ describe('bootstrapStandalone', () => {
       const flipped = mocks.init.mock.calls.at(-1)?.[0];
       expect(flipped.lodFade).toBe(false);
       expect(flipped.lodEnergyComp).toBe(false);
+      expect(flipped.blendWarmup).toBe(false);
       expect(flipped.depthSort).toBe(false);
       expect(flipped.lodFinest).toBe(true);
 
@@ -448,6 +451,7 @@ describe('bootstrapStandalone', () => {
       const defaults = mocks.init.mock.calls.at(-1)?.[0];
       expect(defaults.lodFade).toBe(true);
       expect(defaults.lodEnergyComp).toBe(true);
+      expect(defaults.blendWarmup).toBe(true);
       expect(defaults.depthSort).toBe(true);
       expect(defaults.lodFinest).toBe(false);
     });
