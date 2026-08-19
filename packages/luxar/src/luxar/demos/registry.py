@@ -158,6 +158,27 @@ class CacheEntry:
     protected: bool = False
 
 
+def _check_citation(meta: dict, fail: Any) -> None:
+    """Validate ``DEMO_META["citation"]`` if the demo declares one.
+
+    A separate function rather than a branch inside :func:`validate_meta`, which
+    sits at the complexity ratchet's ceiling: the check is self-contained, and
+    inlining it would spend the whole remaining budget on one optional key.
+
+    Explicit ``None`` means "procedurally generated, nothing to credit" -- a
+    deliberate statement rather than an omission, which is why it is spelled out
+    rather than allowing the key to be absent once it becomes required. The rules
+    themselves live in :mod:`luxar.core.citation`, so a demo and a scene cannot
+    disagree about what a citation is.
+    """
+    if "citation" not in meta:
+        return
+    try:
+        validate_citation(meta["citation"])
+    except ValueError as exc:
+        fail(str(exc))
+
+
 def validate_meta(meta: Any, path: Path) -> None:
     """Validate a raw ``DEMO_META`` literal; raise :class:`DemoMetaError`.
 
@@ -213,16 +234,7 @@ def validate_meta(meta: Any, path: Path) -> None:
             f"{sorted(v for v in LOCAL_DATA_VALUES if v is not None)} or None"
         )
 
-    # `citation` credits whoever produced the underlying dataset. Explicit
-    # `None` means "procedurally generated, nothing to credit" — a deliberate
-    # statement rather than an omission, which is why None is spelled out rather
-    # than allowing the key to be absent once it becomes required. The rules live
-    # in luxar.core.citation so a demo and a scene agree on what a citation is.
-    if "citation" in meta:
-        try:
-            validate_citation(meta["citation"])
-        except ValueError as exc:
-            fail(str(exc))
+    _check_citation(meta, fail)
 
     for field in ("caches", "outputs"):
         seq = meta[field]
