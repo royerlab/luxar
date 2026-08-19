@@ -35,8 +35,10 @@ export async function waitForLuxarReady(page: Page, timeout = 45000): Promise<vo
  * Measured on `performance_benchmark_example.luxar.zarr` (100 nodes, 100k
  * points): `getState()` costs 0.5 ms in-page and returns 12 KB, yet the round
  * trip took 111,003 ms in one run and >150,000 ms in another, because the
- * viewer's frame loop saturates the main thread and starves Playwright's
- * `Runtime.callFunctionOn` (the underlying viewer bug is #1724).
+ * viewer's frame loop saturated the main thread and starved Playwright's
+ * `Runtime.callFunctionOn`. That underlying viewer bug (#1724) is fixed — the
+ * loop now paces itself — but the bound stays: it is the generic diagnostic
+ * for a starved page, not a workaround for one scene.
  *
  * The same honest caveat as `getConsoleMessages` applies: a deadline cannot
  * tell a page that will never answer from one that would have answered late,
@@ -97,11 +99,23 @@ export async function renderOnce(page: Page): Promise<void> {
   await page.evaluate(() => {
     (window as any).__luxarDebug.renderOnce();
   });
-  // Intentional fixed sleep: renderOnce() schedules a single
-  // requestAnimationFrame, but the actual paint lands on the next
-  // browser frame which is not directly observable from JS. 100 ms
-  // is one paint cycle past 60 fps with margin.
-  await page.waitForTimeout(100);
+  // Intentional fixed sleep: renderOnce() schedules a frame, but the actual
+  // paint lands on the next browser frame, which is not directly observable
+  // from JS. 300 ms rather than the historical 100 ms so the wait also covers
+  // a frame-pacing cooldown (#1724): renderOnce() is `startAnimation()`, which
+  // does not shorten a cooldown already armed on a running loop, and the
+  // cooldown is bounded by `config.animation.pacing.maxCooldownMs` — 250 ms,
+  // hard-coded here rather than imported, since this helper must not pull
+  // viewer config into the Node-side test process. So 300 ms is that 250 ms
+  // plus a paint cycle past 60 fps.
+  //
+  // It is NOT a worst-case bound for a paced page, and this helper never had
+  // one for a slow page: the wait ahead of the next frame is the cooldown PLUS
+  // whatever the frame in flight still costs, and a page only ever paces once
+  // its frames already exceed 250 ms on their own. A spec that must sample
+  // strictly after the change on a scene that slow needs a frame-counting wait,
+  // not a fixed sleep.
+  await page.waitForTimeout(300);
 }
 
 /**

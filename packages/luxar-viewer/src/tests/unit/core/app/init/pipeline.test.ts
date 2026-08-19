@@ -43,6 +43,7 @@ function makeAnimationStub() {
     setContextLostPredicate: vi.fn(),
     setIdleRestorePredicate: vi.fn(),
     setRenderSkipPredicate: vi.fn(),
+    setPacingSuspendPredicate: vi.fn(),
     addPerFrameCallback: vi.fn(),
     setAdaptiveDPRManager: vi.fn(),
     startAnimation: vi.fn(),
@@ -446,6 +447,44 @@ describe('runInitPipeline', () => {
       // dropped before the capture's teardown awaits its driver abort.
       panel.isLoopRenderSuppressed.mockReturnValue(true);
       expect(predicate()).toBe(true);
+    });
+
+    it('the pacing-suspend predicate follows the BROAD recording flag, not loop-render suppression', async () => {
+      // Opposite polarity to the render-skip predicate above, and that is
+      // the point: frame pacing must be off for BOTH capture families,
+      // because both depend on the loop's untouched cadence (the real-time
+      // MediaRecorder path records the canvas this loop paints, so a paced
+      // gap is a dropped frame in the video; the offline capture drives its
+      // own rAF cadence with one-shot per-frame orbit callbacks). Keying it
+      // on the narrow `isLoopRenderSuppressed()` instead would silently drop
+      // a frame per gap from an exported video, and nothing else in the
+      // suite would notice.
+      const { factories } = makeFactoryOverrides();
+      const ports = makePorts();
+      ports.options.factories = factories as never;
+
+      await runInitPipeline(ports, {});
+
+      const animation = factories.animationController.mock.results[0].value as {
+        setPacingSuspendPredicate: ReturnType<typeof vi.fn>;
+      };
+      const panel = factories.recordingPanel.mock.results[0].value as {
+        isCurrentlyRecording: ReturnType<typeof vi.fn>;
+        isLoopRenderSuppressed: ReturnType<typeof vi.fn>;
+      };
+      expect(animation.setPacingSuspendPredicate).toHaveBeenCalledTimes(1);
+      const predicate = animation.setPacingSuspendPredicate.mock.calls[0][0] as () => boolean;
+
+      expect(predicate()).toBe(false);
+
+      panel.isCurrentlyRecording.mockReturnValue(true);
+      expect(predicate()).toBe(true);
+
+      // The narrow flag alone must NOT suspend pacing: it is set only for
+      // an offline capture, which already reports `isCurrentlyRecording()`.
+      panel.isCurrentlyRecording.mockReturnValue(false);
+      panel.isLoopRenderSuppressed.mockReturnValue(true);
+      expect(predicate()).toBe(false);
     });
   });
 

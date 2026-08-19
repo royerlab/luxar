@@ -68,12 +68,14 @@ runInitPipeline(ports, partial)
 ├── 16. RecordingPanel        factories.recordingPanel; setPanelState
 │                              Callbacks(ports.get/restorePanelVisibility);
 │                              setAdaptiveDPRManager; setRecordingPanel
-│                              on input handler; then the controller's two
-│                              predicates: setIdleRestorePredicate (idle
-│                              native-DPR restore gated on the panel not
-│                              currently recording) and
+│                              on input handler; then the controller's
+│                              three predicates: setIdleRestorePredicate
+│                              (idle native-DPR restore gated on the panel
+│                              not currently recording),
 │                              setRenderSkipPredicate (loop render skipped
-│                              while panel.isLoopRenderSuppressed())
+│                              while panel.isLoopRenderSuppressed()) and
+│                              setPacingSuspendPredicate (frame pacing off
+│                              while panel.isCurrentlyRecording())
 ├── 17. LayersPanel           factories.layersPanel(document.body, ctrl);
 │                              setLayersPanel on input handler
 ├── 18. ControlRail           buildRailItems(deps) → new ControlRail(items,
