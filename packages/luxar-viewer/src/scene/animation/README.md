@@ -12,10 +12,10 @@ folder contains only the loop and the dimension scrubber.
 
 ## Files
 
-| File                             | Role                                                                                                                                                                                                                                                                                                                                                        |
-| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `animation-controller.ts`        | `requestAnimationFrame`-driven render loop. Updates `ControlsManager`, runs registered per-frame callbacks, then renders through `PostProcessingManager`. Emits `frame-start` / `frame-end` on the event bus (for the PerformanceMonitor panel) and auto-pauses after `config.animation.idleTimeoutMs` of inactivity unless something continuous is active. |
-| `dimension-animation-manager.ts` | Per-dimension FPS-throttled scrubber with `once` / `loop` / `bounce` modes. Mutates `SceneDimsManager` state and awaits `waitForUpdate()` so animation never advances faster than data loading. Extends `THREE.EventDispatcher` — emits `play`, `pause`, `complete`, `directionChange`, `speedChange`, `loopModeChange`, `fpsWarning`.                      |
+| File                             | Role                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `animation-controller.ts`        | `requestAnimationFrame`-driven render loop. Updates `ControlsManager`, runs registered per-frame callbacks, then renders through `PostProcessingManager`. Emits `frame-start` / `frame-end` on the event bus (for the PerformanceMonitor panel), paces pathologically slow frames (see the invariant below), and auto-pauses after `config.animation.idleTimeoutMs` of inactivity unless something continuous is active. |
+| `dimension-animation-manager.ts` | Per-dimension FPS-throttled scrubber with `once` / `loop` / `bounce` modes. Mutates `SceneDimsManager` state and awaits `waitForUpdate()` so animation never advances faster than data loading. Extends `THREE.EventDispatcher` — emits `play`, `pause`, `complete`, `directionChange`, `speedChange`, `loopModeChange`, `fpsWarning`.                                                                                   |
 
 ## Public surface
 
@@ -27,6 +27,7 @@ folder contains only the loop and the dimension scrubber.
 - `setContextLostPredicate(predicate)` — injected by `SceneManager` to suppress GPU work while the WebGL context is lost; controls and callbacks still tick so input stays responsive.
 - `setRenderSkipPredicate(predicate)` — injected by `core/app/init/pipeline`, keyed on `RecordingPanel.isLoopRenderSuppressed()`: an offline capture renders its own pipeline pass per frame, so the loop's render is discarded work. Same shape as the context-lost guard — controls and callbacks still tick, but adaptive-DPR frames are not recorded (a frame that draws nothing is not a fast frame). Offline-only; the real-time recording path records the canvas the loop paints. Narrower than the capture's own mutual-exclusion flag: it is dropped before the capture teardown awaits its driver abort, so a wedged abort cannot freeze the viewport. It gates the idle-restore frame below as well — both of the controller's render call sites, since the claim is that nobody but the pipeline's current owner may draw.
 - `setIdleRestorePredicate(predicate)` — consulted before the idle-pause native-DPR restore; returning false keeps the current DPR (recording resolution stays locked for a whole capture).
+- `setPacingSuspendPredicate(predicate)` — injected by `core/app/init/pipeline`, keyed on the BROAD `RecordingPanel.isCurrentlyRecording()` (`session.isAnyCaptureActive()`, i.e. `session.isRecording` — the flag both the real-time MediaRecorder path and the offline capture set for the whole of their run). While it returns true, frame pacing is off and every frame re-arms rAF back-to-back: the real-time path records the canvas this loop paints, so a paced gap is a dropped frame in the video, and the offline capture drives its own `await requestAnimationFrame` cadence with one-shot per-frame orbit callbacks registered here, so a paced frame could miss its window and drop the orbit step. A plain screenshot does not set the flag and does not need it — it reads the canvas after its own awaited frame rather than depending on the loop's cadence. Deliberately wider than the `isLoopRenderSuppressed()` flag behind `setRenderSkipPredicate`. A predicate that THROWS is treated as "not suspended": `scheduleNextFrame()` is the loop's only re-arm point, so a throw escaping it would freeze the viewer unrecoverably.
 - `get isActive` — true while the loop is running.
 - `dispose()` — stops the loop and clears all per-frame callbacks. Not reusable after dispose.
 
@@ -61,6 +62,55 @@ callers that build the options object dynamically; defaults come from
   callbacks still execute, so UI input is unaffected during the loss
   window, and the depth-sort scheduler and LOD selector keep following
   the camera through an offline capture.
+- **A slow loop must still yield the main thread.** Frames re-arm
+  `requestAnimationFrame` immediately, so a scene whose frames cost ~1 s
+  puts the main thread at a 100 % duty cycle of long tasks and no other
+  task gets a slot — not worker message delivery, not a CDP evaluate.
+  That is a livelock, not just a slow render: worker replies arrived at
+  ~0.5/s, every landed reply staged an ordering apply that called
+  `requestRender()`, and the loop could never idle (#1724). So when a
+  frame's own cost exceeds `config.animation.pacing.slowFrameMs` for TWO
+  consecutive frames the next frame is scheduled after
+  `min(maxCooldownMs, 25 % of the cost)` — a bounded FRACTION, because a
+  fixed 100 ms gap after a 5 s frame yields only 2 % of wall-clock. Three
+  properties are load-bearing:
+  - The cooldown is armed from a zero-delay hop
+    (`setTimeout(0)` → `setTimeout(cooldown)` → rAF), not directly. A slow
+    frame spends its second on browser rendering work that runs after the
+    rAF callback returns but inside the same main-thread task, so a timer
+    armed at the frame's start is always already overdue when the thread
+    frees and inserts no gap at all. The hop runs at the first event-loop
+    turn after that work. Both halves of the fix then hold: no
+    animation-frame request is outstanding while the frame is drawn, AND a
+    genuine cooldown follows it.
+  - The cost is the frame PERIOD minus the cooldown _we_ inserted (the
+    wedge's second is non-JS main-thread time, so a JS-body span reads
+    ~2 ms and would never fire; not subtracting our own gap would make
+    pacing latch on forever), and it resets on the stopped→running edge so
+    an idle rest or a tab-hide is not read as one enormous frame.
+  - Only a STREAK paces. The wedge is sustained (every frame ~1 s,
+    forever), so requiring a second consecutive slow frame delays the first
+    cooldown by exactly one frame and costs nothing — while a lone outlier
+    is precisely what must not be paced. Because the trigger is a period, a
+    FOREIGN main-thread task of that size is charged to the loop too (a GC
+    pause, a shader compile, one chunk decode); one of them can no longer
+    pace anything, and a sustained run of them still does, which is what
+    you want during a heavy load. An ALTERNATING slow/fast cadence is not
+    paced either — the fast frames are proof the main thread is already
+    getting slots. A single fast frame resets the streak, so recovery is
+    immediate. See the `slowFrameMs` comment in
+    `config/sections/animation/data.ts`.
+  - Frames are DELAYED, never skipped, and both readouts get the REAL
+    clock: each frame still emits exactly one `frame-start` / `frame-end`
+    pair and one `recordFrame(performance.now())`. The achieved frame rate
+    really is lower, so neither the FPS readout nor adaptive DPR is told
+    otherwise (no virtual pacing clock to drift against
+    `notifyContentChanged()`). A steady paced cadence is absorbed by the
+    stall detector's median-based outlier test rather than read as a gap,
+    and the isolated-hiccup interactions that would have mattered — a paced
+    interval read off a freshly cleared window as a collapsed frame rate, a
+    just-under-`gapResetMs` frame pushed just over it — cannot arise,
+    because an isolated slow frame is never paced.
 - **Animation never outruns data.** `DimensionAnimationManager`
   tracks `pendingUpdates` per dimension. After
   `setDimensionValue(...)` it awaits `sceneDimsManager.waitForUpdate()`
@@ -111,9 +161,9 @@ animation-controller importing UI code.
   `recordFrame(now)` calls each frame when wired through
   `setAdaptiveDPRManager`.
 - `../../config/sections/animation` and
-  `../../config/sections/dimension-animation` — idle timeout, FPS
-  presets, min-frame time, continuous-traverse seconds, feedback
-  threshold.
+  `../../config/sections/dimension-animation` — idle timeout, pacing
+  thresholds, FPS presets, min-frame time, continuous-traverse seconds,
+  feedback threshold.
 - `../../types/animation.ts` — `DimensionAnimationState`,
   `LoopMode`, `AnimationDirection`, `DimensionAnimationEvents`.
 - `../../utils/cross-layer/event-bus.ts` — `frame-start` / `frame-end` topics.

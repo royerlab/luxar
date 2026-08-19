@@ -35,8 +35,10 @@ export async function waitForLuxarReady(page: Page, timeout = 45000): Promise<vo
  * Measured on `performance_benchmark_example.luxar.zarr` (100 nodes, 100k
  * points): `getState()` costs 0.5 ms in-page and returns 12 KB, yet the round
  * trip took 111,003 ms in one run and >150,000 ms in another, because the
- * viewer's frame loop saturates the main thread and starves Playwright's
- * `Runtime.callFunctionOn` (the underlying viewer bug is #1724).
+ * viewer's frame loop saturated the main thread and starved Playwright's
+ * `Runtime.callFunctionOn`. That underlying viewer bug (#1724) is fixed — the
+ * loop now paces itself — but the bound stays: it is the generic diagnostic
+ * for a starved page, not a workaround for one scene.
  *
  * The same honest caveat as `getConsoleMessages` applies: a deadline cannot
  * tell a page that will never answer from one that would have answered late,

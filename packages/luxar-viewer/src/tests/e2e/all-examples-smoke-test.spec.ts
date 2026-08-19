@@ -82,12 +82,6 @@ const KNOWN_FLAKY_LARGE_DATASETS = [
   // provided by the smaller fixtures. Re-enable once we have a
   // sequential-mode override for million-point examples.
   'dense_cubic_gradient_example.luxar.zarr',
-  // 100 nodes / 100k points / 8 MB: renders a healthy ~59 fps for ~30s, then
-  // wedges into back-to-back ~1042 ms main-thread tasks. `getState()` costs
-  // 0.5 ms in-page but took 111 s across the CDP bridge, so the test dies on
-  // the ceiling with nothing to show. Reproducible at low box load, i.e. not
-  // suite contention. Un-park when the ~1 fps 100-node scene (#1724) is fixed.
-  'performance_benchmark_example.luxar.zarr',
 ];
 
 // Datasets that may legitimately have 0 visible points:
