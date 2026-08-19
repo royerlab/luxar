@@ -53,9 +53,12 @@ DEMO_META = {
     "outputs": ["esm3_protein_landscape"],
     # The proteins are UniProt's and the coordinates are the model's, so the
     # credit names both -- crediting only the model would attribute someone
-    # else's dataset to it.
+    # else's dataset to it. The model is chosen at RUNTIME (`--model=`), so this
+    # static entry names the default (`esmc-300m`); the scene itself is stamped
+    # with whichever model actually ran. Keep the two in step if the default
+    # changes.
     "citation": {
-        "short": "UniProt/Swiss-Prot; embeddings by ESM-3 (Hayes et al. 2025)",
+        "short": "UniProt/Swiss-Prot; embeddings by EvolutionaryScale ESM C, 2024",
         "license": "CC BY 4.0",
     },
 }
@@ -816,7 +819,15 @@ def generate_esm3_landscape(
         )
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(
-                dimensions=dims, citation=DEMO_META["citation"]
+                dimensions=dims,
+                # Stamp the model that actually produced these embeddings, not
+                # the one DEMO_META names for the default run -- otherwise a
+                # `--model=` override writes a credit contradicting this
+                # scene's own footer two calls below.
+                citation={
+                    **DEMO_META["citation"],
+                    "short": f"UniProt/Swiss-Prot; embeddings by {model_citation}",
+                },
             )
 
             # Substitutive Points LOD: ~572k proteins is a large cloud, so coarse
