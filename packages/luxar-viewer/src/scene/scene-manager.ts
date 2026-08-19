@@ -452,7 +452,7 @@ export class SceneManager extends THREE.EventDispatcher<{
 
     // Fetch the TSL/WebGPU material cone before anything can ask for a
     // material. This is the ONLY place it is loaded on the production path, and
-    // the reason the default WebGL session never downloads the ~185 kB gzipped
+    // the reason the default WebGL session never downloads the ~182 kB gzipped
     // `three-webgpu` chunk (issue #1679).
     //
     // Ordering is load-bearing and already guaranteed: `init()` awaits

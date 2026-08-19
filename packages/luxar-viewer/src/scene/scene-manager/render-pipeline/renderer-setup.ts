@@ -339,7 +339,7 @@ export async function createWebGPURenderer(
   }
 
   // Loaded HERE, not at module scope: a static `import { WebGPURenderer }`
-  // makes the ~185 kB gzipped `three-webgpu` chunk a dependency of the entry
+  // makes the ~182 kB gzipped `three-webgpu` chunk a dependency of the entry
   // bundle, which every WebGL session then downloads and never runs (issue
   // #1679). `selectBackend()` is pure and synchronous and has already chosen
   // WebGPU by the time we get here, so this await costs the WebGPU path one

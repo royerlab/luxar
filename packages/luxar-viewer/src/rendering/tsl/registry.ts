@@ -5,7 +5,7 @@
  * `three/webgpu` or `three/tsl` (transitively, via the `*-tsl` / `*.tsl`
  * modules it pulls in). Everything else reaches these classes and factories
  * through `rendering/tsl/load`, which imports this file
- * dynamically — so rolldown places this whole subgraph, plus the ~185 kB
+ * dynamically — so rolldown places this whole subgraph, plus the ~182 kB
  * gzipped `three-webgpu` chunk, in a lazy chunk that is fetched only when the
  * WebGPU backend is actually selected.
  *

@@ -49,3 +49,10 @@ than the one it used to block. Comments elsewhere that state what the *current* 
 does — the WebGPU compat-mode adapter workaround, which three still defaults to at
 r185 exactly as it did at r184 — were updated; dated r184 measurements in the mesh and
 depth-sorting specs were left as the record of what was checked and when.
+
+One of those current-pin statements is a number rather than a name: the size of the
+lazily-loaded `three-webgpu` chunk, quoted in seven places as the payload a default
+WebGL session does not download. Re-measured on the same tree with `three` the only
+variable, it moves from 172.5 kB gzipped at r184 to 181.8 kB at r185, so the quoted
+figure goes from ~173 kB to ~182 kB. The chunk stays lazy — `check-eager-chunks.mjs`
+is green on the r185 build.
