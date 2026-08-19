@@ -354,6 +354,46 @@ describe('compositeTextOverlay', () => {
     expect(drawY).toBeCloseTo(-20, 5);
   });
 
+  it('collapses a trailing newline instead of adding an empty line', () => {
+    // The overlay manager lays every compositable overlay out as
+    // `white-space: normal` (only hover overlays get `pre-line`, and
+    // those are excluded from compositing), so on screen a `\n` is just
+    // whitespace. Splitting on it added an empty last line to the block,
+    // inflating its height by a whole line — enough to lift a
+    // bottom-anchored overlay 3.5% of the frame above where the screen
+    // has it.
+    const measure = (text: string): number => {
+      const fake = makeFakeCtx();
+      fake.measureText = vi.fn((t: string) => ({ width: t.length * 10 }));
+      compositeTextOverlay(
+        fake as unknown as CanvasRenderingContext2D,
+        makeTextOverlay(text),
+        makeConfig({ width: 0.5, background: '#000', anchor: 'top-left' }),
+        0,
+        0,
+        unitMetrics(1000, 600)
+      );
+      return fake.fillRect.mock.calls[0][3] as number;
+    };
+
+    expect(measure('Title\n')).toBe(measure('Title'));
+  });
+
+  it('wraps a mid-string newline as a space, the way the DOM does', () => {
+    const fake = makeFakeCtx();
+    fake.measureText = vi.fn((t: string) => ({ width: t.length * 10 }));
+    compositeTextOverlay(
+      fake as unknown as CanvasRenderingContext2D,
+      makeTextOverlay('one\ntwo three'),
+      makeConfig({ width: 0.5, anchor: 'top-left' }),
+      0,
+      0,
+      unitMetrics(1000, 600)
+    );
+    // Box is 0.5 × 1000 = 500 px → the whole run fits on one line.
+    expect(fake.fillText.mock.calls.map((c) => c[0])).toEqual(['one two three']);
+  });
+
   it('keeps single-line text on one fillText call when no width is set', () => {
     const fake = makeFakeCtx();
     fake.measureText = vi.fn((t: string) => ({ width: t.length * 10 }));
@@ -585,5 +625,53 @@ describe('compositeHtmlOverlay', () => {
     } finally {
       (globalThis as unknown as { Image: unknown }).Image = ImageOrig;
     }
+  });
+
+  it('builds a well-formed XML document even with a void element inside', () => {
+    // The markup is loaded as `data:image/svg+xml`, which the browser
+    // parses as XML. HTML serialization leaves `<br>` and `<img>`
+    // unclosed, which is a FATAL well-formedness error there: the Image
+    // never loads, `drawImage` never runs, and the overlay is missing
+    // from every screenshot and every recorded frame. Both tags are in
+    // the overlay HTML allowlist and several shipped demos use `<br>`.
+    const fake = makeFakeCtx(1600, 1200);
+    const el = document.createElement('div');
+    el.classList.add('luxar-overlay--html');
+    el.innerHTML = 'Line one<br>Line two<img src="data:image/gif;base64,R0lGOD">';
+    const glCanvas = makeCanvas(800, 600);
+    vi.spyOn(glCanvas, 'getBoundingClientRect').mockReturnValue(
+      rect({ left: 0, top: 0, width: 800, height: 600, right: 800, bottom: 600 })
+    );
+    vi.spyOn(el, 'getBoundingClientRect').mockReturnValue(
+      rect({ left: 0, top: 0, width: 100, height: 100, right: 100, bottom: 100 })
+    );
+
+    let captured = '';
+    const ImageOrig = globalThis.Image;
+    class RecordingImage {
+      complete = true;
+      naturalWidth = 1;
+      set src(value: string) {
+        captured = value;
+      }
+      decode(): Promise<void> {
+        return Promise.resolve();
+      }
+    }
+    (globalThis as unknown as { Image: unknown }).Image = RecordingImage;
+    try {
+      compositeHtmlOverlay(
+        fake as unknown as CanvasRenderingContext2D,
+        el as HTMLDivElement,
+        glCanvas
+      );
+    } finally {
+      (globalThis as unknown as { Image: unknown }).Image = ImageOrig;
+    }
+
+    expect(captured.startsWith('data:image/svg+xml;charset=utf-8,')).toBe(true);
+    const svg = decodeURIComponent(captured.slice('data:image/svg+xml;charset=utf-8,'.length));
+    const parsed = new DOMParser().parseFromString(svg, 'image/svg+xml');
+    expect(parsed.querySelector('parsererror')).toBeNull();
   });
 });
