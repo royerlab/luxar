@@ -214,9 +214,13 @@ def _is_tile_anchored(group: "zarr.Group") -> bool:
 def warn_one_part_partition_anchors(store: zarr.Group) -> None:
     """Warn about a fills-screen ladder under a ONE-PART ``kind=partition``.
 
-    The per-tile anchor (``coverage_fraction`` up to ``MAX_COVERAGE_FRACTION`` =
-    4.0) is correct only when the partition is a real TILING: a tile's projected
-    bbox diagonal is intrinsically a fraction of the whole object's, so a
+    The per-tile anchor — whose value is in the group's OWN selector units, see
+    :func:`_tile_anchor`: ``PARTITION_FINEST_AREA`` = 1.0 under
+    ``selector="screen-area"`` (a literal screen-area fraction), and the legacy
+    diagonal metric's ``MAX_COVERAGE_FRACTION`` = 4.0 under
+    ``selector="coverage"`` — is correct only when the partition is a real
+    TILING: a tile's projected bbox is intrinsically a fraction of the whole
+    object's, so a
     whole-object anchor would put every tile on its finest level while the object
     is merely full-frame. A ONE-part partition inverts that — its single part's
     bbox IS the whole object — and the ladder then holds its finest level back

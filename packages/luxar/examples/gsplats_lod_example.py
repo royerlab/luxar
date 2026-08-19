@@ -6,7 +6,9 @@ splats: a coarse-to-fine pyramid where each coarser level *replaces*
 its finer level with a smaller set of synthesized representative
 splats. The viewer picks a level by comparing the group's on-screen
 size against each level's viewport-relative ``coverage_fraction``
-threshold (auto-derived as ``sqrt(N_level / N_finest)``).
+threshold (auto-derived by screen-occupancy halving: full detail while
+the object covers at least half the screen area, one level coarser per
+halving of occupied area).
 
 This complements the four existing LOD examples
 (``progressive_points_lines_example.py``, ``partition_of_lod_example.py``,

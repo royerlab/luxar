@@ -146,15 +146,22 @@ path) fall back to object identity.
 Free-function bodies for the two specialized-`Group` builders on `Node`,
 extracted to keep `node.py` readable.
 
-- **`add_lod_group_impl`** — validates `selector` (only `"coverage"` is
-  currently supported) and `default_level >= 0`, then creates a child group
+- **`add_lod_group_impl`** — validates `selector` against `LOD_SELECTORS` (BOTH
+  `"coverage"` and `"screen-area"` are accepted; `LEGACY_LOD_SELECTOR` =
+  `"coverage"` is merely the *default*, since a hand-built ladder is authored
+  rather than derived) and `default_level >= 0`, then creates a child group
   with `kind="lod"`. A `kind=lod` group picks one of N alternative children at
-  runtime by projecting the group's bbox diagonal to screen pixels and
-  comparing against each child's `coverage_fraction` threshold (a
-  dimensionless, viewport-relative value — `0.0` coarsest, `1.0` a
-  whole-object ladder's finest anchor, up to `4.0` for a partition-bound or
-  explicitly authored one — multiplied by half of the current viewport's
-  fitted screen axis (`min(width, height)`) to get the pixel comparison).
+  runtime by comparing the group's on-screen size against each child's
+  `coverage_fraction` threshold — a dimensionless, viewport-relative value,
+  `0.0` coarsest, whose finest anchor depends on how the ladder was made: a
+  derived whole-object ladder ends at `0.5`, a derived partition-bound one at
+  `1.0`, and a *legacy* authored list may run up to
+  `MAX_COVERAGE_FRACTION` = `4.0`. The `selector` names the units of that
+  comparison: under `"screen-area"` each threshold is a literal fraction of the
+  viewport AREA covered by the projected bbox rect, while under the legacy
+  `"coverage"` the viewer projects the group's bbox *diagonal* to pixels and
+  compares it against the threshold times half of the current viewport's fitted
+  screen axis (`min(width, height)`).
 - **`add_partition_group_impl`** — validates `display_type` against the
   partition-capable rows of `typing_utils/geometry_capabilities.py`
   (`points` / `lines` / `gsplats` / `mesh` today — `mesh` earned it with

@@ -10,13 +10,18 @@
  *      per-child boxes — the union is computed in place.)
  *   2. Transform the local box into world space via
  *      :func:`transformBoundingBox` and the lod_group's ``matrixWorld``.
- *   3. Project the 8 corners through the camera to NDC and back to
- *      pixel coordinates; the diagonal of the screen-space AABB, divided
- *      by ``FILL_FACTOR × fittedAxisPx`` (``fittedAxisPx`` is
- *      ``min(viewport.width, viewport.height)`` — the extent
- *      ``calculateCameraDistance`` actually fits; see the ``FILL_FACTOR`` doc),
- *      is the dimensionless **coverage metric** (1.0 == the object's projected
- *      diagonal has reached ``FILL_FACTOR`` of the fitted axis).
+ *   3. Project the 8 corners through the camera and reduce them to the
+ *      dimensionless **coverage metric**, on whichever scale the entry's
+ *      ``selector`` names — the two branches of ``evaluateEntry``:
+ *      - ``'screen-area'`` (what every derived ladder stamps): the fraction of
+ *        the viewport the projected AABB covers by AREA, via
+ *        {@link projectBoxAreaFraction}. Aspect-free, tops out at 1.0.
+ *      - ``'coverage'`` (legacy): back to pixel coordinates, then the diagonal
+ *        of the screen-space AABB divided by ``FILL_FACTOR × fittedAxisPx``
+ *        (``fittedAxisPx`` is ``min(viewport.width, viewport.height)`` — the
+ *        extent ``calculateCameraDistance`` actually fits; see the
+ *        ``FILL_FACTOR`` doc), so 1.0 == the object's projected diagonal has
+ *        reached ``FILL_FACTOR`` of the fitted axis.
  *   4. Pick the **finest** child whose ``coverage_fraction`` threshold is
  *      satisfied by that coverage metric, with 10% asymmetric hysteresis on
  *      the downgrade direction to suppress threshold-edge flicker.
@@ -296,16 +301,24 @@ export interface LODGroupChild {
   object: THREE.Object3D;
   /**
    * Viewport-relative LOD-switch threshold, strictly monotonic increasing in
-   * coarsest→finest order (coarsest 0.0; the auto-derived WHOLE-OBJECT ladder
-   * anchors its finest at 1.0). Multiplied by ``FILL_FACTOR × fittedAxisPx``
-   * at selection time to compare against the group's projected bbox diagonal in
-   * pixels — so 1.0 activates once that diagonal reaches half of the fitted
-   * screen axis (any normal full-frame view), and coarser levels take over
-   * as it shrinks. An explicitly authored **or partition-bound** ladder may go up
-   * to ``SCREEN_FILL_DIAGONAL_RATIO / FILL_FACTOR`` (4.0, a screen-filling
-   * object) to hold a level until later than that — a spatially tiled layer's
-   * tiles each project to a fraction of the viewport, so the producer derives
-   * that anchor for them automatically.
+   * coarsest→finest order (coarsest 0.0). Its UNITS — and so its finest anchor —
+   * come from the entry's ``selector``:
+   *
+   * - ``'screen-area'`` (every ladder the producer derives today): a literal
+   *   fraction of the viewport AREA, compared against
+   *   ``projectBoxAreaFraction``. A whole-object ladder anchors its finest at
+   *   0.5 (full detail while the object covers at least half the screen); one
+   *   bound to a spatial partition anchors at 1.0 (the tile alone fills the
+   *   screen), which the producer derives for it automatically because a tile
+   *   projects to only a fraction of the whole object's rect.
+   * - ``'coverage'`` (legacy stores, and explicitly authored
+   *   ``coverage_fractions=[...]`` lists): multiplied by
+   *   ``FILL_FACTOR × fittedAxisPx`` at selection time and compared against the
+   *   group's projected bbox DIAGONAL in pixels, so 1.0 activates once that
+   *   diagonal reaches half of the fitted screen axis. An author may go up to
+   *   ``SCREEN_FILL_DIAGONAL_RATIO / FILL_FACTOR`` (4.0, roughly a
+   *   screen-filling object) to hold a level until later than that.
+   *
    * No upper bound is enforced here.
    */
   coverageFraction: number;
@@ -458,12 +471,13 @@ export interface LODGroupEntry {
  */
 interface LODGroupEntryCache {
   /**
-   * Per-child ``coverage_fraction`` thresholds (dimensionless, ascending,
-   * coarsest 0.0 → finest 1.0), rebuilt once at registration. The selector
-   * compares these against the projected bbox diagonal normalised by
-   * ``FILL_FACTOR × fittedAxisPx`` (a dimensionless coverage metric — the
-   * finest, 1.0, activates at half the fitted screen axis), so the list is
-   * viewport-independent and needs no per-frame rebuild.
+   * Per-child ``coverage_fraction`` thresholds (dimensionless, ascending from a
+   * 0.0 coarsest floor to whatever finest anchor the entry's ``selector`` units
+   * imply — see ``LODGroupChild.coverageFraction``), rebuilt once at
+   * registration. The selector compares them against ``projectBoxAreaFraction``
+   * under ``'screen-area'``, or against the projected bbox diagonal normalised
+   * by ``FILL_FACTOR × fittedAxisPx`` under the legacy ``'coverage'``. Either
+   * way the list is viewport-independent and needs no per-frame rebuild.
    */
   thresholds: number[];
   localBoxScratch: BoundingBox;
