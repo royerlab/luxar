@@ -783,6 +783,126 @@ def floor_spec_needs_volume(floor_spec: "str | float | None") -> bool:
     return f == "auto" or f.startswith("p")
 
 
+def _calibration_floor_level(cal: "Path") -> "Optional[float]":
+    """The CONCRETE level a ``cal.json`` records having subtracted, if any.
+
+    ``None`` means "this calibration has nothing usable to say" and covers five
+    cases deliberately treated alike: the file is unreadable, it predates the
+    stamp, it records ``null``, it records something that is not a number at all
+    (a hand-edited ``floor_subtracted: "auto"``), or it records a non-finite one
+    (``json`` round-trips ``NaN``/``Infinity`` happily, while ``--floor`` refuses
+    them — so forwarding one would abort the fit with an error about a flag the
+    user never passed).
+
+    A recorded ``null`` is NOT adopted as ``--floor none``. ``cal`` writes it
+    both when the user asked for ``none`` and when its own too-high guard
+    REFUSED the level (see ``gsplats/calibration/driver.py``), and the file
+    cannot distinguish the two — so honouring it would silently disable the
+    ``auto`` default on the strength of a guard that fired. A malformed file is
+    not diagnosed here either: the density resolver opens the same path and
+    reports it properly.
+    """
+    from luxar.gsplats.calibration import CalibrationResult
+
+    try:
+        fit_config = CalibrationResult.from_json(cal).fit_config or {}
+        level = fit_config.get("floor_subtracted")
+        if level is None:
+            return None
+        # float() inside the try on purpose: a hand-edited "auto" would
+        # otherwise raise a bare ValueError out of a helper whose whole contract
+        # is to say nothing when it has nothing to say.
+        value = float(level)
+        return value if math.isfinite(value) else None
+    except Exception:
+        return None
+
+
+def _config_pins_floor(config: "Optional[Path]") -> bool:
+    """Whether a YAML ``--config`` states a ``floor:`` of its own."""
+    if config is None:
+        return False
+    from luxar.cli.gsplat_config import _load_yaml_config
+
+    return "floor" in _load_yaml_config(config)
+
+
+def resolve_floor_with_calibration(
+    cal: "Optional[Path]",
+    floor: "Optional[str]",
+    config: "Optional[Path]",
+    *,
+    tiling: str,
+    verbose: bool = True,
+) -> "Optional[str]":
+    """The ``--floor`` spec to fit with, adopting a ``--cal``'s level (#1175).
+
+    ``gsplat cal`` subtracts a floor ONCE up front and measures the density's
+    ``feature_threshold`` on that floor-suppressed volume, recording the level
+    it used in ``fit_config.floor_subtracted``. Nothing consumed it: a
+    ``fit --tiling content --cal cal.json`` re-derived its own floor, so a
+    ``cal --floor p20`` was followed by a fit that scanned and fitted at
+    ``auto`` — the density's threshold and the volume it is applied to on two
+    different scales.
+
+    ``tiling`` is the RESOLVED decomposition, and anything but ``content`` is a
+    no-op: that is the one mode which honours ``--cal`` at all, and it is
+    required rather than defaulted, because the permissive value is the one
+    that CHANGES the fit — a caller who forgot it would adopt the calibration
+    floor under a decomposition that ignores everything else about the cal. And
+    :func:`warn_ignored_density_flags` announces the flag as ignored under every
+    other one. Silently changing the floor from a flag the CLI has just called
+    ignored would be the command contradicting itself.
+
+    Only fills a gap, never overrides. ``--floor`` is a Typer option whose
+    default is ``None`` (NOT ``"auto"`` — the "unset" state is representable),
+    so an explicit ``--floor auto`` still means the user asked for auto and
+    wins; a ``floor:`` in a YAML ``--config`` wins too. No preset sets a floor,
+    so a preset can never shadow this.
+
+    Only a CONCRETE non-negative level is adopted — see
+    :func:`_calibration_floor_level` for why a recorded ``null`` is silence
+    rather than ``"none"``. A NEGATIVE recorded level (dark-frame-corrected
+    data) is declined out loud: ``--floor`` cannot express it, and forwarding
+    one would abort the fit.
+
+    NOTE the adopted level is ABSOLUTE, in the volume's own units. Reusing one
+    ``cal.json`` across a timelapse therefore applies timepoint 0's pedestal to
+    every timepoint, where the ``auto`` default re-estimates per volume — which
+    is the point when the pedestal is an instrument offset, and wrong when it
+    drifts. Pass ``--floor auto`` to opt back out.
+
+    Returns ``floor`` unchanged whenever the calibration has nothing to add.
+    """
+    if (
+        tiling != "content"
+        or cal is None
+        or floor is not None
+        or _config_pins_floor(config)
+    ):
+        return floor
+    level = _calibration_floor_level(cal)
+    if level is None:
+        return floor
+    if level < 0.0:
+        if verbose:
+            aprint(
+                f"⚠ {cal.name} recorded a negative floor ({level:.6g}); "
+                "--floor cannot express it, so this fit resolves its own."
+            )
+        return floor
+    spec = repr(level)
+    if verbose:
+        aprint(
+            f"Floor from calibration: --floor {spec} (recorded by {cal.name} as "
+            "floor_subtracted; its density was calibrated on that scale). "
+            "The level is absolute, so re-calibrate rather than reusing this "
+            "cal.json on a volume with a different pedestal. Pass --floor "
+            "explicitly to override."
+        )
+    return spec
+
+
 def resolve_shared_floor(
     volume: "Any",
     floor_spec: "str | float | None",

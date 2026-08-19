@@ -422,8 +422,8 @@ def fit_tile(
         applies unchanged to a dim timepoint). The level is subtracted from the
         tile — after any denoising, before apodization; the two do not commute
         the other way — and the inner fit then runs with ``floor="none"``
-        and the applied level is recorded in
-        ``result.stats["applied_floor"]``.
+        and the applied level is recorded in ``result.stats["floor"]`` (with
+        ``image_min``/``image_max`` shifted back into the input volume's units).
 
     Returns
     -------
@@ -596,9 +596,89 @@ def fit_tile(
     result.stats["tile_index"] = spec.index
     result.stats["tile_grid_index"] = spec.grid_index
     result.stats["tile_origin"] = spec.origin
-    result.stats["applied_floor"] = applied_floor
+    _stamp_tile_normalization(result.stats, applied_floor)
 
     return result
+
+
+def _stamp_tile_normalization(
+    stats: dict[str, Any], applied_floor: "float | None"
+) -> None:
+    """Record a tile's normalization provenance in the VOLUME's units (#1175).
+
+    Under the one key name the format spec uses (``floor``, not the old
+    tiling-only ``applied_floor``). The pedestal was removed from the tile
+    before the fit and the inner fit then ran with ``floor="none"``, so its own
+    stats claim ``floor: None`` and measured ``image_min``/``image_max`` on the
+    already-subtracted tile. Shifting those back by the level makes a tiled
+    record mean what a flat one does, where ``image_min`` IS the applied level.
+
+    The merge carries the block up only if every tile agrees — which they do,
+    since :func:`fit_tiled` resolves one level and one ``norm_range`` for the
+    whole volume.
+    """
+    stats["floor"] = applied_floor
+    if applied_floor is None:
+        return
+    for bound in ("image_min", "image_max"):
+        value = stats.get(bound)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            stats[bound] = float(value) + float(applied_floor)
+
+
+def _stamp_merge_normalization(
+    target: dict[str, Any],
+    sources: "Sequence[Any]",
+    applied_floor: "float | None",
+) -> None:
+    """Record a MERGE's normalization provenance on ``target`` (#1175).
+
+    ``target`` is the flat merge's ``stats`` or the partition root node's
+    ``meta``; ``sources`` are the per-tile results. The bounds come from the
+    tiles (they agree by construction — one whole-volume ``norm_range``), which
+    is also the only source the subprocess merge paths have, since they hand
+    :func:`merge_tile_results` no ``applied_floor``. A level this call DID apply
+    is authoritative and overrides.
+
+    Nothing is written when neither the caller nor the tiles know: ``floor:
+    null`` asserts that no pedestal was removed, while an absent key reads as
+    "this artifact does not know", and only the second is honest here. Today's
+    tiled callers always know (``fit_tiled`` resolves one level for the whole
+    volume, and a tile store records its own), so this is a guard against a tile
+    written by an older luxar rather than a routine outcome.
+    """
+    # Deferred: luxar.gsplats.io imports GSplatData from this package's
+    # __init__, which is still executing when this module is first imported.
+    from luxar.gsplats.io.save_gsplats import agreed_normalization_stats
+
+    target.update(agreed_normalization_stats([r.stats for r in sources]))
+    if applied_floor is not None:
+        target["floor"] = applied_floor
+
+
+def _empty_merge(
+    volume_shape: tuple[int, ...],
+    sources: "Sequence[Any]",
+    applied_floor: "float | None",
+) -> GSplatData:
+    """A 0-splat merged result that still records what was subtracted (#1175).
+
+    Reached when there were no tile results at all, or when culling emptied
+    every one of them. Both used to return ``stats={}`` unconditionally, so an
+    empty merge could not say what its tiles had subtracted even when the level
+    was known — indistinguishable from a path that never records anything.
+    """
+    from luxar.gsplats.utils.trils import tril_size
+
+    ndim = len(volume_shape)
+    stats: dict[str, Any] = {}
+    _stamp_merge_normalization(stats, sources, applied_floor)
+    return GSplatData(
+        centers=np.zeros((0, ndim), dtype=np.float32),
+        amplitudes=np.zeros((0,), dtype=np.float32),
+        cholesky_factors=np.zeros((0, tril_size(ndim)), dtype=np.float32),
+        stats=stats,
+    )
 
 
 def _tiled_source_grid_stats(
@@ -998,13 +1078,11 @@ def merge_tile_results(
     applied_floor : float or None, default None
         The background level subtracted from every tile (after any denoising)
         before apodization. Supplied by the sequential :func:`fit_tiled` path; the
-        subprocess-based paths leave it ``None`` (a worker records the level
-        it applied in its own tile's in-memory stats, which do not survive
-        the reload at merge). Recorded in the flat merged result's stats;
-        on the ``partition=True`` path it is
-        stamped into the returned node's ``meta["applied_floor"]``
-        (in-memory bookkeeping only — the tree writer does not persist this
-        key).
+        subprocess-based paths leave it ``None`` and the level is recovered from
+        the tiles' own stats instead. Recorded as ``stats["floor"]`` on the flat
+        merge and as the root node's ``meta["floor"]`` on the ``partition=True``
+        path, which :func:`~luxar.gsplats.io.save_gsplats.write_gsplats_tree`
+        promotes into the store's ``pipeline/`` group (#1175).
     grid_scale : tuple of float or None, default None
         Per-axis factor mapping the tile grid's VOXEL frame (``volume_shape``,
         ``tile_size``, ``overlap``) onto the frame ``results`` carry their
@@ -1023,8 +1101,9 @@ def merge_tile_results(
         dtype/itemsize are the element type the volume was STORED in, without
         which no compression ratio can be quoted. Only the flat merge carries
         them: a ``partition=True`` tree has nowhere to persist fit stats (the
-        writer takes them from a flat leaf's ``stats``), which is also why
-        ``applied_floor`` above is in-memory only there.
+        writer takes them from a flat leaf's ``stats``) — the normalization
+        block above is the one exception, promoted from the root node's ``meta``
+        into ``pipeline/`` by the tree writer.
 
     Returns
     -------
@@ -1032,15 +1111,7 @@ def merge_tile_results(
         Merged result. Multi-LOD if ``progressive`` and tiles carry sublods.
     """
     if len(results) == 0:
-        ndim = len(volume_shape)
-        from luxar.gsplats.utils.trils import tril_size
-
-        return GSplatData(
-            centers=np.zeros((0, ndim), dtype=np.float32),
-            amplitudes=np.zeros((0,), dtype=np.float32),
-            cholesky_factors=np.zeros((0, tril_size(ndim)), dtype=np.float32),
-            stats={},
-        )
+        return _empty_merge(volume_shape, results, applied_floor)
 
     # Partition: keep one part per tile (frustum culling). Apodized tiles sum
     # correctly as additive parts; cull each tile independently (the flat path's
@@ -1060,15 +1131,7 @@ def merge_tile_results(
             indexed = [(i, r) for i, r in indexed if r.n_splats > 0]
         regions = [r for _, r in indexed]
         if not regions:
-            ndim = len(volume_shape)
-            from luxar.gsplats.utils.trils import tril_size
-
-            return GSplatData(
-                centers=np.zeros((0, ndim), dtype=np.float32),
-                amplitudes=np.zeros((0,), dtype=np.float32),
-                cholesky_factors=np.zeros((0, tril_size(ndim)), dtype=np.float32),
-                stats={},
-            )
+            return _empty_merge(volume_shape, results, applied_floor)
         node = GSplatData.partition_from_regions(
             regions,
             recipe=recipe,
@@ -1093,10 +1156,10 @@ def merge_tile_results(
             ),
             region_labels=[i for i, _ in indexed],
         )
-        # In-memory bookkeeping only: "applied_floor" is not among the
-        # round-tripped node attrs, so it is visible on the returned node
-        # but not persisted by the tree writer.
-        node.meta["applied_floor"] = applied_floor
+        # A partition has no flat stats dict, so the block rides on the ROOT
+        # node's meta and `write_gsplats_tree` promotes it into the store's
+        # `pipeline/` group on save.
+        _stamp_merge_normalization(node.meta, regions, applied_floor)
         if verbose:
             lod_note = f", per-part recipe={recipe}" if recipe else ""
             aprint(
@@ -1123,9 +1186,9 @@ def merge_tile_results(
             "volume_shape": volume_shape,
             "time_seconds": elapsed,
             "splats_per_tile": [r.n_splats for r in results],
-            "applied_floor": applied_floor,
         }
     )
+    _stamp_merge_normalization(merged.stats, results, applied_floor)
     merged.stats.update(
         _tiled_source_grid_stats(
             volume_shape,

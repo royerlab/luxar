@@ -70,6 +70,7 @@ import torch
 from arbol import aprint, asection
 
 from luxar.gsplats.fitting.results import (
+    lift_normalization_stats,
     lift_source_grid_stats,
     stamp_voxels_per_splat,
 )
@@ -605,6 +606,10 @@ def fit_progressive_gaussian_splats(
         torch.cuda.empty_cache()
 
     # --- Build result ---
+    # Deferred: luxar.gsplats.io imports GSplatData from this package's
+    # __init__, which is still executing when this module is first imported.
+    from luxar.gsplats.io.save_gsplats import NORMALIZATION_STATS_KEYS
+
     total_time = time.time() - start_time
     total_splats = sum(lod.n_splats for lod in accumulated_lods)
 
@@ -630,7 +635,17 @@ def fit_progressive_gaussian_splats(
         # Full per-pass stats (one dict per pass) -- the per-pass LOD
         # intermediates are not preserved on the flattened return value,
         # so any caller that wants per-pass detail must read this list.
-        "pass_stats": [dict(lod.stats) for lod in accumulated_lods],
+        #
+        # MINUS the normalization block (#1175). This dict is not in
+        # `_FITTING_INFO_KEYS`, so `split_fitting_info` routes it verbatim into
+        # `pipeline/` — right beside the corrected top-level block. Every pass
+        # ran with floor="none" on the ALREADY-subtracted array, so its own
+        # `floor: null, image_min: 0.0` describes the fitter's input, not the
+        # artifact, and shipping both put two contradicting answers in one group.
+        "pass_stats": [
+            {k: v for k, v in lod.stats.items() if k not in NORMALIZATION_STATS_KEYS}
+            for lod in accumulated_lods
+        ],
     }
 
     if verbose:
@@ -664,6 +679,12 @@ def fit_progressive_gaussian_splats(
     # pass's splat count, and the merged result has all of them — it is stamped
     # below instead, after the cull.
     lift_source_grid_stats(overall_stats, accumulated_lods)
+
+    # Same treatment for the normalization block (#1175): the pedestal was
+    # removed from V_original up front and every pass then ran with
+    # floor="none", so without this a progressive fit ships no record at all of
+    # the background it subtracted.
+    lift_normalization_stats(overall_stats, accumulated_lods, applied_floor)
     final_result = GSplatData.from_additive_sublods(
         accumulated_lods, stats=overall_stats
     )

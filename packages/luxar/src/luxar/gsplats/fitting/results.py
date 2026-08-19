@@ -263,6 +263,52 @@ def lift_source_grid_stats(dest: dict[str, Any], passes: "Sequence[Any]") -> Non
             dest[key] = first[key]
 
 
+def lift_normalization_stats(
+    dest: dict[str, Any],
+    passes: "Sequence[Any]",
+    applied_floor: "float | None",
+) -> None:
+    """Record a multi-pass fit's normalization provenance on ``dest`` (#1175).
+
+    A progressive fit subtracts the pedestal from the volume ONCE up front and
+    then runs every pass with ``floor="none"``, so no pass's own stats knows the
+    level — the whole fit used to ship no record of the background it removed.
+    ``applied_floor`` is that up-front level (``None`` when suppression was
+    disabled or refused).
+
+    The bounds come from the FIRST pass only: it is the one that sees the volume
+    itself, while later passes normalize their own residual by its own extent,
+    so no single ``intensity_range`` describes them all. They were measured on
+    the already-subtracted array, so the level is added back — the block is in
+    the input volume's own units on every writer path, matching the single-pass
+    fitter where ``image_min`` IS the applied level.
+
+    ``floor`` is that same shifted ``image_min``, NOT ``applied_floor`` alone
+    (#1175): pass 0 runs its own ``_normalize_data`` on the subtracted array and
+    removes the REMAINING ``image_min`` on top, so the level actually taken out
+    is the sum of the two. When the requested level sits below the data minimum
+    the two differ — ``--floor 5`` on a volume whose minimum is 98.2 ships
+    amplitudes relative to 98.2, and recording ``5`` would send a reader adding
+    the floor back 93.2 units wrong. The single-pass fitter's own rule is
+    ``applied_floor = max(resolved_floor, image_min)``; taking the max here
+    mirrors it (the shifted ``image_min`` can only be ``>= applied_floor``,
+    since the subtracted array is clipped at 0), so both paths record the same
+    number for the same volume and the same ``--floor``.
+    """
+    dest["floor"] = applied_floor
+    if not passes:
+        return
+    first = getattr(passes[0], "stats", None) or {}
+    shift = float(applied_floor) if applied_floor is not None else 0.0
+    for key in ("image_min", "image_max"):
+        if key in first:
+            dest[key] = float(first[key]) + shift
+    if "intensity_range" in first:
+        dest["intensity_range"] = float(first["intensity_range"])
+    if applied_floor is not None and "image_min" in dest:
+        dest["floor"] = max(float(applied_floor), float(dest["image_min"]))
+
+
 def stamp_voxels_per_splat(stats: dict[str, Any], n_splats: int) -> None:
     """Quote density against the splats actually DELIVERED.
 

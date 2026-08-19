@@ -380,6 +380,12 @@ def fit_tiled_parallel(
     # in the sequential path. A path that is neither present nor marked empty
     # after a clean exit is a silent spatial hole; a present-but-unreadable
     # store (e.g. a worker OOM-killed mid-save) is corrupt — both are failures.
+    #
+    # `include_stats=True` because the merge has no `applied_floor` of its own on
+    # this path: the level each worker subtracted lives in its tile store's
+    # `pipeline/` group, and reloading without stats made every tile silent, so
+    # the merge stamped an affirmative `floor: null` — "no pedestal was removed"
+    # — onto a store that had one removed (#1175).
     ndim = len(volume_shape)
     results: list[GSplatData] = []
     missing: list[int] = []
@@ -387,7 +393,7 @@ def fit_tiled_parallel(
     for i, p in enumerate(tile_paths):
         if p.exists():
             try:
-                results.append(GSplatData.load(p))
+                results.append(GSplatData.load(p, include_stats=True))
             except Exception as exc:  # present but unreadable/partial store
                 corrupt.append((i, repr(exc)))
         elif Path(str(p) + ".empty").exists():

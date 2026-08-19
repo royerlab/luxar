@@ -180,6 +180,50 @@ _HEADER_STATS_KEYS = (
     "description",
 )
 
+#: The normalization-provenance block: what a fit did to the intensity scale
+#: before optimising. ONE key name (``floor``) and ONE location (the root
+#: ``pipeline/`` group) on every writer path — see
+#: ``docs/specs/GSPLATS_ZARR_FORMAT.md`` §"Pipeline Group Attributes" (#1175).
+#:
+#: The values are in the INPUT VOLUME's own units: ``floor`` is the background
+#: level subtracted before fitting (``None``/``null`` when suppression was
+#: disabled or refused), ``image_min`` / ``image_max`` are the normalization
+#: bounds and ``intensity_range`` their span. A tiled/progressive path removes
+#: the pedestal OUTSIDE the fitter and then fits with ``floor="none"``, so it
+#: must shift its inner bounds back into those units before recording them —
+#: otherwise ``image_min`` would mean the tile's post-subtraction minimum on one
+#: path and the applied level on another.
+NORMALIZATION_STATS_KEYS = ("floor", "image_min", "image_max", "intensity_range")
+
+
+def agreed_normalization_stats(
+    stats_list: "Sequence[Optional[Dict[str, Any]]]",
+) -> Dict[str, Any]:
+    """The :data:`NORMALIZATION_STATS_KEYS` block the inputs UNANIMOUSLY agree on.
+
+    Merging several fits (tiles of one volume, boxes of one plan, arbitrary
+    datasets) must not invent a normalization record. Inputs can legitimately
+    disagree — two independently fitted volumes have two different pedestals —
+    and promoting the first one's block would silently mislabel every other
+    input. So a key is carried only when every input that HAS an opinion agrees;
+    on any disagreement it is dropped, and the merged artifact simply says
+    nothing rather than something false.
+
+    An input that does not carry a key casts no vote: an empty/skipped tile
+    records no bounds at all, and vetoing on that would erase the block for the
+    whole merge. At least one input must carry the key for it to appear.
+    """
+    agreed: Dict[str, Any] = {}
+    for key in NORMALIZATION_STATS_KEYS:
+        values = [s[key] for s in stats_list if s is not None and key in s]
+        if not values:
+            continue
+        first = values[0]
+        if all(v == first for v in values):
+            agreed[key] = first
+    return agreed
+
+
 #: Fit-runtime scratch keys that live in ``stats`` but are NOT persistable
 #: reduction/topology provenance: napari-movie capture buffers (``movie_frames``
 #: is set to ``None`` on *every* default fit — see ``fitting/results.py`` — so
@@ -458,6 +502,33 @@ def _barrier_from_coarsen_dims(
     return [d for d in range(ndim) if d not in coarsen_set]
 
 
+def _with_root_normalization(
+    pipeline_info: Optional[Dict[str, Any]], node: Any
+) -> Optional[Dict[str, Any]]:
+    """Fold the root node's normalization block into ``pipeline_info`` (#1175).
+
+    A ``kind=partition`` (or any tree) result has nowhere to put fit stats — the
+    writer takes them from a flat leaf's ``stats`` — which is how the background
+    level a tiled/content fit removed used to be lost on save. The producing path
+    stamps it onto the ROOT node's ``meta`` instead and this promotes it into the
+    store's ``pipeline/`` group, so a partition and a flat leaf answer the same
+    question with the same key in the same place. Deliberately NOT added to
+    ``_NODE_META_ATTR_KEYS``: a second on-disk home for one fact is the very
+    inconsistency #1175 is about.
+    """
+    meta = getattr(node, "meta", None)
+    if not meta:
+        return pipeline_info
+    merged = dict(pipeline_info) if pipeline_info else {}
+    for key in NORMALIZATION_STATS_KEYS:
+        if key not in meta or key in merged:
+            continue
+        ok, converted = json_safe_value(meta[key])
+        if ok:
+            merged[key] = converted
+    return merged or None
+
+
 def write_gsplats_tree(
     path: str | Path,
     node: Any,  # luxar.gsplats.tree.GSplatNode
@@ -496,8 +567,14 @@ def write_gsplats_tree(
     chunk ordering groups by them first and per-slice reads stay local. When
     ``None`` it is derived from ``pipeline_info["coarsen_dims"]`` (barrier =
     complement) if present; failing that each leaf auto-detects from its centers.
+
+    A tree has no flat ``stats`` dict for :func:`split_fitting_info` to route, so
+    the :data:`NORMALIZATION_STATS_KEYS` block rides on the ROOT node's ``meta``
+    and is promoted here into ``pipeline/`` — the one location the format spec
+    names for it (#1175). An explicit ``pipeline_info`` entry wins.
     """
     path = Path(path)
+    pipeline_info = _with_root_normalization(pipeline_info, node)
     temp_dir, zarr_path = _resolve_zarr_path(path, compress)
     if not compress:
         # Crash-safety: write into a hidden temp sibling and atomically swap

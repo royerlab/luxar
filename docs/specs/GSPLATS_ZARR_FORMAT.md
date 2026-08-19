@@ -683,21 +683,69 @@ substitutive/pyramid/recipe build round-trips its parameters:
   "refine_iters": 120,
   "coarsen_dims": null,
   "n_substitutive_levels": 4,
-  "image_min": 98.0,
+  "image_min": 110.0,
   "image_max": 4095.0,
-  "intensity_range": 3997.0,
+  "intensity_range": 3985.0,
   "floor": 110.0
 }
 ```
 
-Every fit also persists its **normalization metadata** here (routed through
-the same splitter from the fit `stats` — see `gsplats/fitting/results.py`):
+A fit also persists its **normalization metadata** here (see the per-writer
+table below for exactly which keys, and where the record comes from):
 `image_min` / `image_max` / `intensity_range` record how the source volume
 was normalized, and `floor` is the background level subtracted before
-fitting (`null` when floor suppression was disabled). **Semantic contract:**
-the floor is NOT added back — stored amplitudes are background-relative
-(intensity above the subtracted pedestal), so renders reconstruct the
-floor-suppressed volume, not the raw one.
+fitting (`null` when floor suppression was disabled or refused). **Semantic
+contract:** the floor is NOT added back — stored amplitudes are
+background-relative (intensity above the subtracted pedestal), so renders
+reconstruct the floor-suppressed volume, not the raw one.
+
+Wherever it is recorded it is under one key name (`floor`) in one location
+(`pipeline/`). The full key set is `NORMALIZATION_STATS_KEYS` in
+`gsplats/io/save_gsplats.py`; which of those four a given writer can honestly
+fill differs, and the last column says so.
+
+| Writer | How it reaches `pipeline/` | Keys |
+|---|---|---|
+| flat fit (`--tiling none`) | `stats` → `split_fitting_info` (`gsplats/fitting/results.py`) | all four |
+| progressive fit | `stats`, stamped by `lift_normalization_stats` — the pedestal is removed once up front, so no individual pass records it | all four |
+| sequential tiled merge (`fit_tiled`), flat leaf or `kind=partition` | `_stamp_merge_normalization` on the merged `stats` / the ROOT node's `meta`, from the level the merge applied plus the bounds its tiles agree on | all four |
+| parallel tiled merge (`fit -j N`) | same stamp, but the merge applied no level itself: the tiles are reloaded WITH stats and the block is recovered from what they unanimously recorded | all four |
+| `--tiling content` | the one level `resolve_shared_floor` gave every box, stamped on the merged leaf's `stats` or the root node's `meta` — unless the boxes themselves recorded a level, which wins (they subtract `max(asked, their own minimum)`, so the two can differ) | `floor`, plus any bound the in-process boxes of a `--flat` fit agreed on |
+| `batch-fit merge` (default `kind=partition`, and its K=1 bare leaf) | `manifest.floor_level`, the ONE level the plan pinned for every `(t, c)` task, folded into `pipeline_info` | `floor` only |
+
+Two paths deliberately write nothing rather than guess. `batch-fit merge` is
+silent when the manifest pinned no level — a negative resolved level is
+forwarded as a SPEC for each task to re-resolve, so there is no single answer —
+and the legacy `batch-fit merge --flat` fan-in (a multi-stage reload through
+`combine_as_new_dimension` / `merge_with_channel_colors`) carries no block at
+all. An **absent** key means "this artifact does not know"; `floor: null`
+asserts that no pedestal was removed, so the two are never interchangeable.
+
+Where a writer records `image_min`, it records it in the **input volume's own
+units** and, when a floor was applied, equal to `floor`: `_normalize_data`
+assigns `image_min = max(resolved_floor, image_min)` and takes the applied level
+FROM it, so `image_min >= floor` always and they coincide whenever suppression
+ran. A tiled or progressive path subtracts the pedestal OUTSIDE the fitter and
+then fits with `floor="none"`, so it shifts its inner `image_min` / `image_max`
+back by the applied level before recording them — otherwise `image_min` would
+mean a post-subtraction minimum on one path and the applied level on another.
+
+The two differ in what is left for the inner fit to remove, and therefore in
+what `floor` means. A **tiled** fit hands every tile a shared `norm_range`
+pinned at `image_min = 0`, precisely so no second constant comes out (a
+per-tile one would be subtracted twice across an overlap band and reintroduce
+the seam apodization exists to hide), so its `floor` is the level it subtracted
+up front, verbatim. A **progressive** fit has no such shared range: pass 0's own
+normalization removes whatever pedestal is LEFT on top, so the level actually
+taken out is the sum of the two, and its `floor` is the shifted `image_min`
+rather than the requested level — which would understate the removal whenever
+the request sits below the volume's minimum.
+
+Merging is unanimous-or-silent: `GSplatData.concatenate` carries a key only when
+every input that records it agrees, because two independently fitted volumes
+have two different pedestals and promoting the first would mislabel the rest.
+`gsplat info` lists the block among its headline metadata, on both its flat
+report and its node-tree (`kind=partition`) one.
 
 Values are JSON-attr-safe (numpy scalars coerced; non-serializable values
 dropped at write). Readers merge these into `stats` on
