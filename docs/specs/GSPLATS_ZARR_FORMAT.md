@@ -703,6 +703,11 @@ store must apply both rules:
   them (cheap, O(N), no volume — what `annotate-quality` already does) rather than
   to drop them; that needs its own design pass. Until then a tool that rewrites a
   store should either leave them alone or re-run `annotate-quality` deliberately.
+  A `--refine l2|volume` level's `level_stats.refine_stats` (`mse_seed` /
+  `mse_refit`) belongs to the same known-separate case even though it *is* measured
+  against the source volume: it records the build step that produced that level
+  rather than the artifact's published quality, and a reduction wants it recomputed
+  for the same reason.
 
   A geometry-only transform (scale / rotate / translate / center) **keeps** them:
   the splat set is identical and only the frame moved. Note this is a weaker

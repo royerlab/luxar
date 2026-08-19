@@ -39,6 +39,14 @@ actively harmful downstream: ``lod/annotate.py:332`` writes a leaf-local
 for these is to RECOMPUTE them on a reduction (cheap, O(N), no volume — exactly
 what ``lod/annotate.py`` already does), which needs its own design pass.
 
+One more stamp shares that scope and that answer, without being a Q·e one: a
+``--refine l2|volume`` level records its build step as ``level_stats.refine_stats``
+(``mse_seed`` / ``mse_refit``), which IS measured against the source volume. It
+stays out of scope with the rest of ``level_stats`` because it is a record of what
+produced that level rather than a published score of the artifact — nothing reads
+it as "this dataset's quality" the way ``gsplat info`` reads ``psnr_db`` — and
+because a reduction wants it recomputed for the same reason.
+
 Every scrub here is by KEY, never by dropping a whole nested container, and never
 reaches into a dict the caller still owns: ``GSplatData`` is conceptually
 immutable, and every call site hands over a result it has just built (a nested
@@ -148,8 +156,10 @@ _CONTENT_SCOPED_STATS_KEYS = (
 #: The record of the REDUCTION that produced the artifact: which cull ran, how
 #: many splats it started from and removed, and how much amplitude mass survived.
 #: True of the operation that stamped them and false of anything downstream, so
-#: they are content-scoped like the scores above — a ``decimate`` of a culled
-#: store used to publish the INPUT's ``amplitude_retention: 0.95`` beside a prefix
+#: they are content-scoped like the scores above. Nothing published them stale
+#: before, only because ``decimate`` published no provenance AT ALL; threading it
+#: through (as it now does) is what exposed them — a ``decimate`` of a culled store
+#: would otherwise carry the INPUT's ``amplitude_retention: 0.95`` onto a prefix
 #: reduction that had just discarded ~75% of the amplitude mass.
 #:
 #: Safe only because every op that stamps one of these does so AFTER its own
@@ -255,9 +265,14 @@ def _measured_stats_dicts(data: "GSplatData") -> "List[MutableMapping[str, Any]]
     sub-LOD objects are shared with the node, so mutating their ``stats`` reaches
     what gets written.
 
-    Deliberately NOT the leaves' ``meta["stats"]`` (the on-disk ``level_stats``):
-    the only measured stamps there are the Q·e ones this rule does not claim — see
-    the module docstring.
+    Deliberately NOT the leaves' ``meta["stats"]`` (the on-disk ``level_stats``),
+    which this rule does not claim — see the module docstring for the Q·e stamps
+    and for the one OTHER measured thing that lives there: a ``--refine
+    l2|volume`` level's nested ``refine_stats`` (``mse_seed`` / ``mse_refit``,
+    taken against the source volume). It goes with the Q·e stamps rather than
+    with the scores above, for the same reason: it is the record of the build
+    step that produced THAT level, and the answer for a reduction is to recompute
+    it, not to delete it.
     """
     return [data.stats, *(lod.stats for lod in _all_sublods(data))]
 

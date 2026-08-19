@@ -23,8 +23,10 @@ both scopes it can live in: the top-level scores (`psnr_db`, `ssim`, `mse`,
 progressive fit stamps (`cumulative_psnr_db` / `delta_psnr_db`). It also covers
 the record of the reduction that produced the artifact — `culled`,
 `culling_method`, `n_original`, `n_culled`, `amplitude_retention` — which is true
-of the op that stamped it and false of anything downstream: a `decimate` of a
-culled store published the input's `amplitude_retention: 0.95` beside a prefix
+of the op that stamped it and false of anything downstream. Nothing had published
+those stale, only because `decimate` published no provenance at all (below);
+restoring it is what exposed them, and without this half a `decimate` of a culled
+store would have carried the input's `amplitude_retention: 0.95` onto a prefix
 reduction that had just discarded ~75% of the amplitude mass. Every op that stamps
 one of those keys does so after its own filter, so a rewrite publishes the
 reduction it actually performed. **Region-scoped** is unchanged. Neither subsumes
