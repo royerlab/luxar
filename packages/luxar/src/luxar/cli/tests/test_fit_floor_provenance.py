@@ -92,6 +92,17 @@ class TestFloorFromCalibration:
         cal = _write_cal(tmp_path / "cal.json", {"floor_subtracted": "auto"})
         assert resolve_floor_with_calibration(cal, None, None, tiling="content") is None
 
+    def test_a_non_finite_recorded_level_is_ignored(self, tmp_path: Path) -> None:
+        """``json`` round-trips ``NaN``/``Infinity``, but ``--floor`` refuses
+        them — forwarding one would abort the fit with an error naming a flag
+        the user never passed."""
+        for bad in (float("nan"), float("inf"), float("-inf")):
+            cal = _write_cal(tmp_path / "cal.json", {"floor_subtracted": bad})
+            assert (
+                resolve_floor_with_calibration(cal, None, None, tiling="content")
+                is None
+            )
+
     def test_absent_key_leaves_the_caller_alone(self, tmp_path: Path) -> None:
         cal = _write_cal(tmp_path / "cal.json", {})
         assert (

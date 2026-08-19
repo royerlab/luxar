@@ -786,10 +786,13 @@ def floor_spec_needs_volume(floor_spec: "str | float | None") -> bool:
 def _calibration_floor_level(cal: "Path") -> "Optional[float]":
     """The CONCRETE level a ``cal.json`` records having subtracted, if any.
 
-    ``None`` means "this calibration has nothing usable to say" and covers four
+    ``None`` means "this calibration has nothing usable to say" and covers five
     cases deliberately treated alike: the file is unreadable, it predates the
-    stamp, it records ``null``, or it records something that is not a number at
-    all (a hand-edited ``floor_subtracted: "auto"``).
+    stamp, it records ``null``, it records something that is not a number at all
+    (a hand-edited ``floor_subtracted: "auto"``), or it records a non-finite one
+    (``json`` round-trips ``NaN``/``Infinity`` happily, while ``--floor`` refuses
+    them — so forwarding one would abort the fit with an error about a flag the
+    user never passed).
 
     A recorded ``null`` is NOT adopted as ``--floor none``. ``cal`` writes it
     both when the user asked for ``none`` and when its own too-high guard
@@ -804,10 +807,13 @@ def _calibration_floor_level(cal: "Path") -> "Optional[float]":
     try:
         fit_config = CalibrationResult.from_json(cal).fit_config or {}
         level = fit_config.get("floor_subtracted")
+        if level is None:
+            return None
         # float() inside the try on purpose: a hand-edited "auto" would
         # otherwise raise a bare ValueError out of a helper whose whole contract
         # is to say nothing when it has nothing to say.
-        return None if level is None else float(level)
+        value = float(level)
+        return value if math.isfinite(value) else None
     except Exception:
         return None
 
