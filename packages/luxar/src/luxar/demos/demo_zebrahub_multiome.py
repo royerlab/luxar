@@ -24,7 +24,9 @@ DEMO_META = {
     "caches": ["zebrahub_multiome"],
     "outputs": ["zebrahub_multiome", "cells"],
     "citation": {
-        "short": "Lange et al. 2024",
+        # First author of the preprint this demo cites above; the on-scene
+        # footer's "Lange et al." is the separate Zebrahub atlas paper.
+        "short": "Kim et al. 2024",
         "doi": "10.1101/2024.10.18.618987",
     },
 }

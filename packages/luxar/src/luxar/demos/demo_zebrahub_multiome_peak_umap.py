@@ -51,7 +51,8 @@ DEMO_META = {
     "caches": ["zebrahub_multiome_peak"],
     "outputs": ["zebrahub_multiome_peak_umap", "zebrahub_umap"],
     "citation": {
-        "short": "Lange et al. 2024",
+        # First author of the Zebrahub-Multiome preprint this demo cites above.
+        "short": "Kim et al. 2024",
         "doi": "10.1101/2024.10.18.618987",
     },
 }

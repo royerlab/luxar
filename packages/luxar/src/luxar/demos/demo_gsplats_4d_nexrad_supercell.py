@@ -161,9 +161,14 @@ DEMO_META = {
     },
     "caches": ["gsplats_nexrad_supercell"],
     "outputs": ["gsplats_4d_nexrad_supercell"],
+    # The radar data is NOAA's; MetPy (May et al., doi:10.5065/D6WW7G29) is only
+    # the decoder this demo happens to use, and crediting it here would name the
+    # wrong party. The archive carries no dataset DOI, and NOAA asks to be
+    # attributed, so the credit is the archive itself.
     "citation": {
-        "short": "May et al. 2016",
-        "doi": "10.5065/D6WW7G29",
+        "short": "NOAA NEXRAD Level II (KTLX, 2013-05-31)",
+        "license": "Public domain (17 U.S.C. 105)",
+        "url": "https://registry.opendata.aws/noaa-nexrad",
     },
 }
 

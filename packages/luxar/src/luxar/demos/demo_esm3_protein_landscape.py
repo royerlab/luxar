@@ -51,8 +51,12 @@ DEMO_META = {
     },
     "caches": ["esm3_swissprot"],
     "outputs": ["esm3_protein_landscape"],
+    # The proteins are UniProt's and the coordinates are the model's, so the
+    # credit names both -- crediting only the model would attribute someone
+    # else's dataset to it.
     "citation": {
-        "short": "Hayes et al. 2025",
+        "short": "UniProt/Swiss-Prot; embeddings by ESM-3 (Hayes et al. 2025)",
+        "license": "CC BY 4.0",
     },
 }
 

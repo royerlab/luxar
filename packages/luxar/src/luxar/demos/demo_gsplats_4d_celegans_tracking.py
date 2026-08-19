@@ -41,8 +41,9 @@ Tracking:    StarryNite + manual curation (full lineage)
 
 How to Cite:
 ------------
-Hirsch, P. et al. (2022).  3D+time nuclei tracking dataset of confocal
-fluorescence microscopy time series of C. elegans embryos.
+Santella, A., Kovacevic, I., Bao, Z., Hirsch, P. (2022).  3D+time nuclei
+tracking dataset of confocal fluorescence microscopy time series of
+C. elegans embryos.  CC BY 4.0.
 DOI: 10.5281/zenodo.6460303
 
 WORKFLOW:
@@ -100,6 +101,7 @@ DEMO_META = {
     "citation": {
         "short": "Santella et al. 2022",
         "doi": "10.5281/zenodo.6460303",
+        "license": "CC BY 4.0",
     },
 }
 

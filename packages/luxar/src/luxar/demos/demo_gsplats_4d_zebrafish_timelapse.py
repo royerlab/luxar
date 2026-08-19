@@ -84,6 +84,9 @@ DEMO_META = {
     "citation": {
         "short": "Aanstad 2018",
         "doi": "10.5281/zenodo.1211599",
+        # ShareAlike: worth carrying into the store, since it binds whoever
+        # receives a scene built from this data.
+        "license": "CC BY-SA 4.0",
     },
 }
 
