@@ -260,10 +260,12 @@ def test_validate_meta_rejects_bad_blocks(tmp_path: Path) -> None:
         # `citation` is optional, but a present one must be usable: a tile has
         # nothing to render without `short`, and a DOI-shaped URL is the mistake
         # most likely to be pasted in by hand.
-        variant(citation={"doi": "10.1/x"}),
+        variant(citation={"doi": "10.1000/x"}),
         variant(citation={"short": ""}),
         variant(citation={"short": "A et al. 2020", "authors": "A, B"}),
-        variant(citation={"short": "A et al. 2020", "doi": "https://doi.org/10.1/x"}),
+        variant(
+            citation={"short": "A et al. 2020", "doi": "https://doi.org/10.1000/x"}
+        ),
         variant(citation="A et al. 2020"),
     ]
     for bad in bad_cases:

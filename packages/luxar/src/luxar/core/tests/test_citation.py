@@ -51,17 +51,29 @@ def test_key_order_is_canonical_regardless_of_input_order() -> None:
         ("Bui et al. 2013", "must be None or a mapping"),
         (42, "must be None or a mapping"),
         ({}, "short must be a non-empty string"),
-        ({"doi": "10.1/x"}, "short must be a non-empty string"),
+        ({"doi": "10.1000/x"}, "short must be a non-empty string"),
         ({"short": ""}, "short must be a non-empty string"),
         ({"short": "   "}, "short must be a non-empty string"),
         ({"short": None}, "short must be a non-empty string"),
         ({"short": 2013}, "short must be a non-empty string"),
         ({"short": "Bui et al.\n2013"}, "short must be a single line"),
+        # "Single line" must mean every line break and control character, not
+        # just \n -- a lone \r still breaks a line in many renderers.
+        ({"short": "Bui et al.\r2013"}, "single line of printable text"),
+        ({"short": "Bui et al.\t2013"}, "single line of printable text"),
+        # A bidi override can make a rendered credit read differently from the
+        # stored string, which in an attribution field is spoofing.
+        ({"short": "Bui\u202e et al. 2013"}, "single line of printable text"),
+        # DOI near-misses people actually paste.
+        ({"short": "A", "doi": "10."}, "must be a bare DOI"),
+        ({"short": "A", "doi": "10.1016"}, "must be a bare DOI"),
+        ({"short": "A", "doi": "10.1016/"}, "must be a bare DOI"),
+        ({"short": "A", "doi": " 10.1016/x "}, "must be a bare DOI"),
         ({"short": "A", "author": "B"}, "unknown keys ['author']"),
         ({"short": "A", "license": ""}, "license must be a non-empty string"),
         ({"short": "A", "url": None}, "url must be a non-empty string"),
-        ({"short": "A", "doi": "https://doi.org/10.1/x"}, "must be a bare DOI"),
-        ({"short": "A", "doi": "doi:10.1/x"}, "must be a bare DOI"),
+        ({"short": "A", "doi": "https://doi.org/10.1000/x"}, "must be a bare DOI"),
+        ({"short": "A", "doi": "doi:10.1000/x"}, "must be a bare DOI"),
     ],
 )
 def test_rejects_malformed_payloads(bad, expected: str) -> None:
@@ -69,11 +81,30 @@ def test_rejects_malformed_payloads(bad, expected: str) -> None:
         validate_citation(bad)
 
 
+def test_incidental_whitespace_is_stripped() -> None:
+    """A stray space in a demo literal would render after the tile's em-dash."""
+    got = validate_citation({"short": "  Bui et al. 2013  ", "license": " CC BY 4.0 "})
+    assert got == {"short": "Bui et al. 2013", "license": "CC BY 4.0"}
+
+
+def test_real_world_dois_are_accepted() -> None:
+    """The tightened shape must not reject the DOIs the corpus actually uses."""
+    for doi in (
+        "10.1016/j.cell.2013.10.055",
+        "10.5281/zenodo.10875063",
+        "10.1051/0004-6361/202243940",  # suffix containing a second slash
+        "10.1101/2024.10.18.618987",
+        "10.25921/fd45-gt74",
+        "10.1126/science.abl4896",
+    ):
+        assert validate_citation({"short": "A 2020", "doi": doi})["doi"] == doi
+
+
 def test_citation_keys_matches_what_the_validator_accepts() -> None:
     """The advertised vocabulary and the enforced one cannot drift apart."""
     accepted = dict.fromkeys(CITATION_KEYS, "x")
     accepted["short"] = "A et al. 2020"
-    accepted["doi"] = "10.1/x"
+    accepted["doi"] = "10.1000/x"
     assert set(validate_citation(accepted)) == set(CITATION_KEYS)
 
 
@@ -112,6 +143,24 @@ def test_malformed_citation_never_reaches_the_data(tmp_path) -> None:
             compiler.create_scene(
                 dimensions=Dimensions.default_3d(), citation={"short": ""}
             )
+
+
+def test_citation_survives_a_re_chunk(tmp_path) -> None:
+    """`optimise` rebuilds a store's metadata; the credit must come through.
+
+    The format spec promises the attribution "travels with the store", and a
+    re-chunk is the journey most likely to break that promise: it rewrites every
+    chunk key and stamps a fresh ``content_hash``. A credit silently dropped here
+    would leave a published, re-chunked scene uncredited while the demo that
+    produced it still claims otherwise.
+    """
+    from luxar.io.optimise import optimise_store
+
+    src = _write(tmp_path, "before", citation=FULL)
+    dst = tmp_path / "after.luxar.zarr"
+    optimise_store(src, dst)
+
+    assert dict(zarr.open_group(dst, mode="r").attrs["citation"]) == FULL
 
 
 def test_scene_exposes_a_defensive_copy(tmp_path) -> None:

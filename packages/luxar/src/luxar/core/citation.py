@@ -12,7 +12,14 @@ is spelled out rather than expressed by leaving the key off.
 
 from __future__ import annotations
 
+import re
+import unicodedata
 from typing import Any, Mapping, Optional
+
+#: A DOI is ``10.<registrant>/<suffix>``; the registrant is 4+ digits and the
+#: suffix is non-empty. Deliberately permissive about the suffix, which the DOI
+#: spec allows to contain almost anything.
+_DOI_SHAPE = re.compile(r"10\.\d{4,9}/\S+")
 
 #: Keys a citation may carry. ``short`` is the only required one: it is what a
 #: gallery tile and the viewer render ("Schlegel et al. 2024"), so a citation
@@ -54,19 +61,34 @@ def validate_citation(value: Any) -> Optional[dict[str, str]]:
     short = value.get("short")
     if not isinstance(short, str) or not short.strip():
         raise ValueError("citation.short must be a non-empty string")
-    if "\n" in short:
-        raise ValueError("citation.short must be a single line")
+    # "Single line" has to mean every line break and control character, not just
+    # ``\n``: a lone ``\r`` still breaks a line in plenty of renderers, a tab
+    # wrecks a tile's alignment, and a bidi override (U+202E) can make a rendered
+    # credit read differently from the string that was stored -- which in an
+    # attribution field is a spoofing vector, not a cosmetic issue.
+    bad = {ch for ch in short if unicodedata.category(ch) in ("Cc", "Cf", "Zl", "Zp")}
+    if bad:
+        raise ValueError(
+            "citation.short must be a single line of printable text; it contains "
+            + ", ".join(sorted("U+%04X" % ord(ch) for ch in bad))
+        )
 
     for key in ("doi", "license", "url"):
         if key in value and (not isinstance(value[key], str) or not value[key].strip()):
             raise ValueError(f"citation.{key} must be a non-empty string when present")
 
     doi = value.get("doi")
-    # Shape only: a DOI is ``10.<registrant>/<suffix>``. Whether it resolves is
-    # an authoring-time question, not something to ask on every scene write.
-    if doi is not None and not doi.startswith("10."):
+    # Shape only: a DOI is ``10.<registrant>/<suffix>``. Whether it RESOLVES is an
+    # authoring-time question, not something to ask on every scene write -- but
+    # the shape is worth enforcing in full, because the near-misses are the ones
+    # people actually paste: a URL, a ``doi:`` prefix, or a bare registrant with
+    # the suffix lost.
+    if doi is not None and not _DOI_SHAPE.fullmatch(doi):
         raise ValueError(
-            f"citation.doi {doi!r} must be a bare DOI starting with '10.', not a URL"
+            f"citation.doi {doi!r} must be a bare DOI of the form "
+            "'10.<registrant>/<suffix>' (no https://doi.org/ or 'doi:' prefix)"
         )
 
-    return {key: value[key] for key in CITATION_KEYS if key in value}
+    # Strip on the way in: a stray space in a demo literal would otherwise be
+    # rendered verbatim after the tile's em-dash.
+    return {key: value[key].strip() for key in CITATION_KEYS if key in value}
