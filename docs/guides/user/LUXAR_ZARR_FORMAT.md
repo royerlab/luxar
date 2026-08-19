@@ -1244,6 +1244,12 @@ group (`ordering`, `ordering_dims`, `slice_dims`, `ordering_min`,
 `ordering_max`, `ordering_bits_per_dim`, `chunk_size`). Points and GSplats both
 do this and share that set.
 
+On a **gsplats** group `slice_dims` is not only descriptive: the viewer reads it to
+classify each hidden dimension's chunk-fetch tolerance (its barrier dims got a tight
+epsilon pad in `chunk_bounds` rather than the `truncation_radius · σ` expansion),
+instead of inferring that from the scene dimensions' `discrete` flags. The on-disk
+format is unchanged — a store stamping no `slice_dims` gets the old inference.
+
 A type with **more than one** ordering namespaces each into its own nested
 object instead, keeping a flat top-level `ordering` naming the curve. Lines is
 the only such type today: it indexes vertices in D-space and segments in

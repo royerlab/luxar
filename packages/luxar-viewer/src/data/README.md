@@ -1211,10 +1211,10 @@ favour of a single `SceneLoader.getCacheStats()` snapshot.
 
 ### Tolerance computer (loaders/spatial-query/tolerance-computer.ts)
 
-| Symbol                                                               | Description                                                                                    |
-| -------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `computeTolerance(geometryType, displayDims, ndim, dims?, options?)` | Geometry-aware per-dimension tolerance. Used by `SpatialQueryBuilder`'s geometry-aware path.   |
-| `gsplatsContinuousDimTolerance(dimInfo)`                             | The gsplats hidden-continuous float-safety epsilon, `max(1e-3 × step, 2.75e-5)` — not a reach. |
+| Symbol                                                               | Description                                                                                     |
+| -------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `computeTolerance(geometryType, displayDims, ndim, dims?, options?)` | Geometry-aware per-dimension tolerance. Used by `SpatialQueryBuilder`'s geometry-aware path.    |
+| `gsplatsContinuousDimTolerance(dimInfo, truncationRadius?)`          | The gsplats hidden-continuous float-safety epsilon, `max(1e-3 × step, T × 1e-5)` — not a reach. |
 
 ### Monitor Port (scene-loader-monitor-port.ts)
 

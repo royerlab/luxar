@@ -37,6 +37,7 @@ import {
   runWithActiveSignal,
   runWithResidencyProbe,
   type SpatialFacadeCtx,
+  type ToleranceOptions,
   LoaderEventEmitter,
   OnceInit,
   warnExtendToAllNoDimensions,
@@ -44,6 +45,13 @@ import {
 } from '../loaders';
 import { loadGSplatsChunkIndex, registerGSplatsArrayBounds } from './chunk-index-loader';
 import { createEmptyGSplatsData } from './projection';
+// `rendering` sits BELOW `data` in the package layering (see
+// `.dependency-cruiser.cjs`), so this is a downward import, not a cross-layer
+// escape. It buys the SINGLE truncation-radius sanitizer the material path uses —
+// see `resolveTruncationRadius` below for why that identity matters. The module
+// pulls in only `utils/log`, `config/constants` and a dependency-free `erf`, so
+// nothing heavy rides along.
+import { clampTruncationRadius } from '../../rendering/materials/gsplat/math';
 import type {
   LoaderMetrics,
   MonitorEvent,
@@ -63,6 +71,122 @@ import { wrapWithCache } from '../../cache/decompressed-chunk-cache/cached-zarr-
 import { ResidencyAccumulator } from '../../cache/residency-probe';
 import { ChunkPrefetcher } from '../../cache/chunk-prefetcher';
 import type { SliceCache } from '../../cache/slice-cache';
+
+/**
+ * One-shot latch for the ignored-`slice_dims` warning.
+ *
+ * The warning is a property of the STORE, not of the loader instance, and one store
+ * mints many loaders: a progressive ladder builds one per `additive_<i>` sub-LOD and
+ * a `kind=partition` one per part, all carrying the same (identical, identically
+ * unusable) attr. Per-loader logging turned a single corrupt store into hundreds of
+ * identical lines. Latched per PROCESS instead, mirroring `truncationClampWarned` in
+ * `rendering/materials/gsplat/math.ts`; the first offender is named in full, and the
+ * fallback itself is unconditional, so nothing but the logging is suppressed.
+ */
+let sliceDimsWarned = false;
+
+/** Test-only: re-arm the one-shot above so cases stay order-independent. */
+export function resetSliceDimsWarningForTests(): void {
+  sliceDimsWarned = false;
+}
+
+/**
+ * Read the writer's published BARRIER set off the node attrs, for
+ * `ToleranceOptions.barrierDims`.
+ *
+ * `slice_dims` is exactly the set `compute_chunk_bounds_gsplats` gave a tight
+ * `_BARRIER_BOUND_EPS` pad instead of the `truncation_radius · σ` expansion
+ * (`luxar/io/_compiler/gsplat_assembly.py` stamps it whenever `ordering != 'none'`),
+ * in center-column indices — the same index space as `attrs.ndim`,
+ * `viewState.slicePosition` and the `chunk_bounds` columns. Handing it to the
+ * tolerance computer is what stops the reader re-deriving barrier-ness from the
+ * scene's `discrete` flags and disagreeing with the writer (issue #1655 item 2).
+ *
+ * An EMPTY array is meaningful and is returned as such: the writer ordered purely
+ * spatially, so nothing is a barrier. `undefined` means "no published set" and lets
+ * the tolerance computer fall back to `DimensionInfo.discrete`.
+ *
+ * VALIDATION IS ALL-OR-NOTHING, on purpose. These attrs come off disk and are
+ * untrusted. Filtering a bad array element-wise would silently DROP a genuine
+ * barrier dim, and the reader would then apply the ~1e-3 continuous epsilon to an
+ * axis whose bounds are barrier-tight — i.e. narrow the fetch window below what the
+ * data needs, which is the exact failure this plumbing exists to prevent. Rejecting
+ * the whole attr instead falls back to the documented legacy rule — which IS the
+ * pre-#1655 behaviour, byte for byte, so no store gets a narrower window than it had
+ * before the attr was read (it is not a claim that the fallback is as wide as
+ * honouring a well-formed set: for a demoted dim the published set now buys a half
+ * cell where `discrete` alone gives a quarter). Anything not a plain array, or any
+ * entry that is not an integer in `[0, ndim)`, rejects the lot.
+ *
+ * Both attrs are re-widened to `unknown` before inspection even though
+ * `GSplatsMetadata` declares their shapes: that interface describes what a WELL-FORMED
+ * store carries, and validating against a declaration the data may not honour would
+ * be circular.
+ */
+function readBarrierDims(attrs: GSplatsMetadata, nodePath: string): readonly number[] | undefined {
+  const raw: unknown = (attrs as unknown as Record<string, unknown>).slice_dims;
+  if (raw === undefined || raw === null) return undefined;
+
+  const ndim = attrs.ndim;
+  const reject = (why: string): undefined => {
+    if (!sliceDimsWarned) {
+      sliceDimsWarned = true;
+      log.warning(
+        Modules.GSPLATS_SPATIAL_INDEX_LOADER,
+        `${nodePath}: ignoring the slice_dims attr (${why}) — falling back to ` +
+          "the scene dimensions' discrete flags for barrier classification. " +
+          'Further ignored slice_dims attrs are silent.'
+      );
+    }
+    return undefined;
+  };
+
+  if (!Array.isArray(raw)) return reject('not an array');
+  // A well-formed attr can still be UNCHECKABLE: `[0, ndim)` is the only bound the
+  // entry test has, so without a usable column count there is nothing to validate
+  // against. Worded as its own reason rather than folded into "malformed", because
+  // the codebase does contemplate a node without `ndim` (see `initialize`, which
+  // falls back to the centers array's column count for accumulator sizing).
+  if (!Number.isInteger(ndim) || ndim <= 0) {
+    return reject(`cannot validate its entries: node ndim is ${String(ndim)}`);
+  }
+  for (const entry of raw) {
+    if (typeof entry !== 'number' || !Number.isInteger(entry) || entry < 0 || entry >= ndim) {
+      return reject(`entry ${String(entry)} is not an integer in [0, ${ndim})`);
+    }
+  }
+  return raw as number[];
+}
+
+/**
+ * The node's Gaussian truncation radius `T`, for `ToleranceOptions.truncationRadius`
+ * (issue #1655 item 3).
+ *
+ * Sanitized through the SAME `clampTruncationRadius` the material path uses
+ * (`rendering/node-factory/create-gsplats-node.ts`), and that identity is the point,
+ * not just code reuse: the tolerance's degenerate-band term has to cover the band the
+ * renderer actually draws, and the renderer draws with the CLAMPED radius. A second,
+ * looser rule here would let the two disagree — and an unsanitized attr (`0`, a
+ * negative, `NaN`, `1e308`, a JSON string) would either collapse the band or turn the
+ * epsilon into "fetch the entire node".
+ *
+ * `clampTruncationRadius` is typed for a `number` and a zarr attr is `unknown`, so the
+ * type guard is here; a non-number attr is treated as absent and `undefined` lets the
+ * tolerance computer apply its own default, so there is one spelling of the fallback.
+ * The material path reaches the SAME answer for such an attr, but not through this
+ * guard: `create-gsplats-node.ts` casts the attr and hands it to
+ * `clampTruncationRadius`, whose own non-number branch substitutes
+ * `GSPLAT_DEFAULT_TRUNCATION_RADIUS`. That branch is why the identity above holds for
+ * a JSON `"6"` too — every numeric test in the clamp coerces a numeric string
+ * (`"6" * "6" === 36`), so without it the string reached the `uTruncate` uniform (a
+ * 6σ material band) while this side used 2.75, which is precisely the fetch-vs-render
+ * gap item 3 exists to close.
+ */
+function resolveTruncationRadius(attrs: GSplatsMetadata): number | undefined {
+  const raw: unknown = (attrs as unknown as Record<string, unknown>).truncation_radius;
+  if (typeof raw !== 'number') return undefined;
+  return clampTruncationRadius(raw);
+}
 
 /**
  * GSplats data loader using spatial indices for efficient nD queries.
@@ -106,6 +230,14 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
 
   // Suppress detail logs after first successful view update
   private _initialLoadDone = false;
+
+  // Per-node tolerance inputs (the writer's published barrier set + this node's
+  // truncation radius). Derived from attrs, which never change for the life of a
+  // loader, and memoized because the query path runs on EVERY view update: without
+  // it each slice move would re-validate the attr array and mint a fresh options
+  // object. (The malformed-attr warning is separately latched per process — see
+  // `sliceDimsWarned` — so log volume does not depend on this memo.)
+  private _toleranceOptions: ToleranceOptions | null = null;
 
   // LoaderMonitor surface — same shape as the points and lines facades.
   private readonly events = new LoaderEventEmitter();
@@ -581,6 +713,18 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
   }
 
   /**
+   * The per-node tolerance inputs for `queryVisibleSplatRanges`, computed once
+   * (see `_toleranceOptions`).
+   */
+  private toleranceOptions(attrs: GSplatsMetadata): ToleranceOptions {
+    this._toleranceOptions ??= {
+      barrierDims: readBarrierDims(attrs, this.node.path),
+      truncationRadius: resolveTruncationRadius(attrs),
+    };
+    return this._toleranceOptions;
+  }
+
+  /**
    * Query visible splat ranges based on view state.
    *
    * Delegates the chunk-bounds AABB scan and range coalescing to the canonical
@@ -627,6 +771,12 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       chunkSize: attrs.chunk_size,
       extendDims,
       logModule: Modules.GSPLATS_SPATIAL_INDEX_LOADER,
+      // Both of these are things only THIS node knows and the tolerance computer
+      // cannot see from a `DimensionInfo`: which dims the writer barrier-padded
+      // (rather than σ-expanded) in `chunk_bounds`, and the truncation radius the
+      // renderer will draw this node with. See `readBarrierDims` /
+      // `resolveTruncationRadius`, and issue #1655 items 2 and 3.
+      toleranceOptions: this.toleranceOptions(attrs),
     }).execute();
 
     return ranges;
@@ -959,6 +1109,8 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     this._onceInit.reset();
     this.events.clear();
     this.activeQueries.clear();
+
+    this._toleranceOptions = null;
 
     // Dispose accumulator
     if (this._accumulator) {

@@ -85,6 +85,26 @@ let truncationClampWarned = false;
 
 /** Clamp a truncation radius to the float32 degeneracy bounds (warns once). */
 export function clampTruncationRadius(radius: number): number {
+  // A NON-NUMBER must be treated exactly like a NaN, even though the parameter
+  // is typed `number`. The value originates in untrusted zarr JSON: a store
+  // stamping `"truncation_radius": "6"` satisfies `GSplatsMetadata` only
+  // nominally, and every check below COERCES it ("6" * "6" === 36 is finite,
+  // "6" < MIN is false), so the string would be returned unchanged and uploaded
+  // as the `uTruncate` uniform — while the fetch-tolerance side
+  // (`gsplats-spatial-index-loader.ts::resolveTruncationRadius`) treats a
+  // non-number as absent and uses the default. That divergence is exactly the
+  // material-band-vs-fetch-band gap this clamp exists to close (#1655 item 3),
+  // so the rule lives here, once, for both call sites.
+  if (typeof radius !== 'number') {
+    if (!truncationClampWarned) {
+      truncationClampWarned = true;
+      log.warning(
+        Modules.RENDERER,
+        `truncation_radius ${String(radius)} is not a number (${typeof radius}) — falling back to ${GSPLAT_DEFAULT_TRUNCATION_RADIUS}. Further clamps are silent.`
+      );
+    }
+    return GSPLAT_DEFAULT_TRUNCATION_RADIUS;
+  }
   // NaN/Inf slip past a plain comparison clamp (NaN < x is false), and a
   // JS-finite value can still poison the GPU uniforms two ways: beyond
   // float32 range (a hostile attr like 1e308) `uTruncate` itself narrows to
