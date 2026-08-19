@@ -106,6 +106,14 @@ describe('createGSplatsNode — truncation_radius sanitization', () => {
     // Finite even as a float32, but its SQUARE — uploaded as the uTruncateSq
     // uniform — overflows to Infinity. Same treatment.
     ['square-overflows-float32 (1e30)', 1e30],
+    // Not a number at all. A zarr attr is untrusted JSON, and a numeric STRING
+    // passes every numeric test in `clampTruncationRadius` by coercion
+    // (`"6" * "6" === 36`), so without its explicit non-number branch `"6"` reached
+    // `uTruncate` unchanged — a 6σ material band, while the loader's fetch tolerance
+    // treated the same attr as absent and covered 2.75σ (#1655 item 3).
+    ['numeric string ("6")', '6'],
+    ['non-numeric string', 'nonsense'],
+    ['object', {}],
   ])('falls back to the default for a %s radius', (_label, value) => {
     expect(uTruncateOf(build(value))).toBe(GSPLAT_DEFAULT_TRUNCATION_RADIUS);
   });

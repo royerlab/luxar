@@ -477,6 +477,15 @@ ancestor that sets it (viewer default: `additive`). No default is stamped:
 blending has no identity value, so a stamped default would shadow
 ancestor-set modes.
 
+**`slice_dims` is read, not just recorded**: besides describing the compound
+ordering, the barrier (categorical) column indices it lists are the set
+`compute_chunk_bounds_gsplats` gave a tight epsilon pad instead of the
+`truncation_radius · σ` expansion — so the viewer's gsplats loader now CONSUMES it,
+to classify each hidden dimension's chunk-fetch tolerance instead of inferring
+barrier-ness from the scene's `discrete` flags
+(`data/loaders/spatial-query/tolerance-computer.ts`). The on-disk format is
+unchanged; a store that stamps no `slice_dims` falls back to the old inference.
+
 **Bounds clarification**: `center_bounds` records the tight center AABB;
 `position_bounds` is the same value (centers only — chunk bounds widen per-chunk
 by the ellipsoidal extent). Encoding metadata on each array carries tighter
