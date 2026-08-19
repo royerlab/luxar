@@ -132,7 +132,7 @@ export class SceneManager extends THREE.EventDispatcher<{
    * Every method called on this field across the codebase
    * (`PostProcessingManager`, `picking-system`, `BloomChain`,
    * `FxaaPass`, UI panels) is part of the common `Renderer` surface
-   * in Three r184 — no `WebGLRenderer`-only API is used
+   * in Three r185 — no `WebGLRenderer`-only API is used
    * unconditionally. The discriminator for callers that genuinely
    * must branch is `this.capabilities.apiSurface` (see
    * `RendererCapabilities`).
@@ -452,7 +452,7 @@ export class SceneManager extends THREE.EventDispatcher<{
 
     // Fetch the TSL/WebGPU material cone before anything can ask for a
     // material. This is the ONLY place it is loaded on the production path, and
-    // the reason the default WebGL session never downloads the ~173 kB gzipped
+    // the reason the default WebGL session never downloads the ~185 kB gzipped
     // `three-webgpu` chunk (issue #1679).
     //
     // Ordering is load-bearing and already guaranteed: `init()` awaits

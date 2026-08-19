@@ -50,7 +50,7 @@ the host page survive each cycle.
 ```html
 <canvas id="luxar-canvas"></canvas>
 <script type="importmap">
-  { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.184.0/build/three.module.js" } }
+  { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.185.1/build/three.module.js" } }
 </script>
 <link rel="stylesheet" href="/path/to/luxar-viewer.css" />
 <script type="module">

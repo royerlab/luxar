@@ -1,6 +1,6 @@
 #version 300 es
 
-// Three.js r184 - Node System
+// Three.js r185 - Node System
 
 
 // extensions
@@ -28,6 +28,12 @@ precision highp isampler2DArray;
 precision highp sampler2DShadow;
 precision highp sampler2DArrayShadow;
 precision highp samplerCubeShadow;
+
+
+// structs
+
+
+
 
 
 // uniforms
@@ -715,7 +721,7 @@ void main() {
 	nodeVar158 = vec4( ( nodeVar83.xy + ( ( ( ( nodeVar157 * vec2( aQuadCorner.y ) ) / nodeUniform24 ) * vec2( 2.0 ) ) * vec2( nodeVar83.w ) ) ), nodeVar83.z, nodeVar83.w );
 	clipPos = vec4( 0.0, 0.0, -2.0, 1.0 );
 
-	if ( (!( ( ( nodeVar59 < nodeVar62 ) && ( nodeVar60 < nodeVar62 ) ) || ( ( ( nodeVar59 < ( nodeVar62 * 2.0 ) ) && ( nodeVar60 < ( nodeVar62 * 2.0 ) ) ) && ( nodeVar97 > ( nodeVar93 * 2.0 ) ) ) )) ) {
+	if ( ( ! ( ( ( nodeVar59 < nodeVar62 ) && ( nodeVar60 < nodeVar62 ) ) || ( ( ( nodeVar59 < ( nodeVar62 * 2.0 ) ) && ( nodeVar60 < ( nodeVar62 * 2.0 ) ) ) && ( nodeVar97 > ( nodeVar93 * 2.0 ) ) ) ) ) ) {
 
 		clipPos = nodeVar158;
 
