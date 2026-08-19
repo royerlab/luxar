@@ -1239,15 +1239,19 @@ class TestPartitionBoundAnchorMesh:
         for i in range(2):
             assert self.coverage(nodes, f"tiled/part_{i}") == pytest.approx(explicit)
 
-    def test_an_explicit_list_may_reach_the_partition_anchor(self, tmp_path):
+    def test_an_explicit_list_may_reach_the_legacy_ceiling(self, tmp_path):
         """An explicit mesh ladder may END at `MAX_COVERAGE_FRACTION`, verbatim.
 
         The mesh resolver (`lod/mesh.py::_validate_coverage_fractions_spec`) bounds
         an explicit list at `[0, MAX_COVERAGE_FRACTION]`, exactly like the
-        Points/Lines/GSplats resolvers. It has to: under a `kind=partition` the
-        SAME ladder DERIVES a finest of exactly `MAX_COVERAGE_FRACTION`, so a bound
-        of `1.0` would have made the tile anchor reachable by derivation but not by
-        hand. Anything above the ceiling still raises.
+        Points/Lines/GSplats resolvers. It has to, because an explicit list is
+        stamped `LEGACY_LOD_SELECTOR` and `MAX_COVERAGE_FRACTION` = 4.0 IS the
+        legacy diagonal metric's ceiling — the range an author's values were tuned
+        in. (Not a derived anchor: a derived whole-object ladder ends at
+        `WHOLE_OBJECT_FINEST_ANCHOR` = 0.5 and a derived partition-bound one at
+        `PARTITION_FINEST_AREA` = 1.0, both well below this bound. Capping the
+        authored list at either would silently reject legal legacy values.)
+        Anything above the ceiling still raises.
         """
         from luxar.core.group.lod.group import MAX_COVERAGE_FRACTION
 

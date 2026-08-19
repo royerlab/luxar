@@ -386,12 +386,11 @@ Apart from `flat`, every recipe carries a progressive streaming ladder by defaul
 splats are reordered so that early prefixes carry as much of the signal as possible,
 which means the first chunk to arrive is already a meaningful picture and later
 chunks only refine it. Where levels replace each other, the viewer picks between
-them using a viewport-relative `coverage_fraction = sqrt(N_i / N_finest)` — the
-finest level shows once an object's projected size reaches about half of the
-viewport's fitted screen axis (the smaller of its width/height), i.e. at any
-normal full-frame view, and coarser ones step in as it shrinks below that — so
-level switching self-calibrates on any monitor or aspect ratio with no
-threshold to tune.
+them using a viewport-relative `coverage_fraction` derived by screen-occupancy
+halving — the finest level shows while an object covers at least half the screen
+area, i.e. at any normal full-frame view, and each halving of the area it
+occupies steps one level coarser — so level switching self-calibrates on any
+monitor or aspect ratio with no threshold to tune.
 
 The canonical end-to-end pipeline is three commands:
 

@@ -231,13 +231,15 @@ arrays live in `additive_<i>/` subgroups; the parent leaf group carries
 
 **Substitutive LOD** (`kind=lod`):
 `child_<i>/` subgroups, coarsest→finest on disk; each child carries
-`coverage_fraction` (a dimensionless, viewport-relative value,
-`sqrt(N_i / N_finest)`; coarsest = 0.0, finest = 1.0 for a whole-object ladder).
+`coverage_fraction` (a dimensionless, viewport-relative value derived by
+SCREEN-OCCUPANCY HALVING; coarsest = 0.0, finest = 0.5 for a whole-object ladder).
 A ladder bound to a spatial partition — the `adaptive` recipe's per-tile groups,
-the `overview` recipe's coarse-cap/fine-partition pair — is scaled to anchor its
-finest at `MAX_COVERAGE_FRACTION` (4.0) instead, keeping the fills-screen switch
-point a tile needs; the writer derives the same anchor from the topology when a
-node carries no stamped value.
+the `overview` recipe's coarse-cap/fine-partition pair — is scaled ×2 (in area
+units) to anchor its finest at `PARTITION_FINEST_AREA` (1.0) instead, keeping the
+fills-screen switch point a tile needs; the writer derives the same anchor from
+the topology when a node carries no stamped value. (`MAX_COVERAGE_FRACTION` = 4.0
+is a different bound: the ceiling on a LEGACY `selector="coverage"` ladder, i.e.
+on authored values, not on anything derived.)
 
 **Spatial partition** (`kind=partition`):
 `part_<i>/` subgroups; the viewer renders all parts simultaneously.
@@ -419,10 +421,10 @@ Migration mappings:
 - **v2.0** (`splats/substitutive_<s>/additive_<a>/`) → v3.3 node tree
   (bare leaf, additive ladder, or `kind=lod` group depending on shape)
 - **v3.0/v3.1 with `selector: "pixel_size"` / per-child `min_pixel_size`** →
-  same tree re-written with `selector: "coverage"` + derived per-child
-  `coverage_fraction` (`sqrt(N_i/N_finest)`, or that × `MAX_COVERAGE_FRACTION`
-  = 4.0 for a partition-bound ladder — i.e. a legacy `adaptive` / `overview`
-  store, whose derivation is topology-aware), stamped v3.3
+  same tree re-written with `selector: "screen-area"` + freshly derived per-child
+  `coverage_fraction` (occupancy halving to finest `0.5`, or that × 2 in area
+  units — finest `1.0` — for a partition-bound ladder, i.e. a legacy `adaptive` /
+  `overview` store, whose derivation is topology-aware), stamped v3.3
 
 Migrated arrays are written with `ordering="none"` so element order is
 preserved (no Morton/Hilbert re-sort), but **encoding follows the current policy**:
