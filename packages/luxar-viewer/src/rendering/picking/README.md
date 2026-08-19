@@ -94,7 +94,7 @@ Cursor-over-empty-canvas is rejected before readback by `rayHitsAnyNode` against
 
 Pixel readback runs through `../post-processing/hdr/pixel-utils.ts::readPixelsCompactAsync`, which:
 
-- Uses `readRenderTargetPixelsAsync` on both `WebGLRenderer` and `WebGPURenderer` (r184).
+- Uses `readRenderTargetPixelsAsync` on both `WebGLRenderer` and `WebGPURenderer` (r185).
 - Compacts WebGPU's padded row layout transparently.
 - Returns top-down rows on both backends (the orchestrator computes `_lastReadX/Y` in top-down coords and passes them through unchanged).
 

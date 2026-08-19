@@ -1,6 +1,6 @@
 #version 300 es
 
-// Three.js r184 - Node System
+// Three.js r185 - Node System
 
 
 // extensions
@@ -81,7 +81,6 @@ flat  in vec2 nodeVarying8;
 
 
 // vars
-vec4 DiffuseColor;
 float nodeVar0;
 float nodeVar1;
 float nodeVar2;
@@ -137,6 +136,7 @@ float nodeVar51;
 float nodeVar52;
 float nodeVar53;
 float lineCapsulePickBrightness;
+vec4 DiffuseColor;
 vec4 Output;
 vec4 nodeVar57;
 
@@ -326,6 +326,7 @@ void main() {
 	}
 
 	lineCapsulePickBrightness = ( nodeVar19 * nodeVarying3 );
+	gl_FragDepth = ( 1.0 - clamp( lineCapsulePickBrightness, 0.0, 1.0 ) );
 
 	if ( ( lineCapsulePickBrightness < 0.0001 ) ) {
 
@@ -338,7 +339,6 @@ void main() {
 	DiffuseColor.w = ( DiffuseColor.w * nodeUniform4 );
 	nodeVar57 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
 	Output = nodeVar57;
-	gl_FragDepth = ( 1.0 - clamp( lineCapsulePickBrightness, 0.0, 1.0 ) );
 
 	// result
 	fragColor = nodeVar57;

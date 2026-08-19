@@ -1,6 +1,6 @@
 #version 300 es
 
-// Three.js r184 - Node System
+// Three.js r185 - Node System
 
 
 // extensions
@@ -39,15 +39,15 @@ layout( location = 0 ) out vec4 fragColor;
 // uniforms
 
 layout( std140 ) uniform object {
-	mat4 nodeUniform1;
+	float nodeUniform0;
+	float nodeUniform1;
 	float nodeUniform2;
-	float nodeUniform3;
-	float nodeUniform4;
+	mat3 nodeUniform4;
+	uint nodeUniform5;
 	mat3 nodeUniform6;
 	uint nodeUniform7;
-	mat3 nodeUniform8;
-	uint nodeUniform9;
-	float nodeUniform10;
+	float nodeUniform8;
+	mat4 nodeUniform10;
 	float nodeUniform12;
 	float nodeUniform13;
 	float nodeUniform14;
@@ -67,9 +67,9 @@ in vec2 nodeVarying6;
 
 
 // vars
-vec4 DiffuseColor;
 float nodeVar1;
 float nodeVar2;
+vec4 DiffuseColor;
 vec4 Output;
 vec4 nodeVar6;
 
@@ -81,6 +81,9 @@ void main() {
 	// flow
 	// code
 
+	nodeVar1 = dot( ( nodeVarying0 - vec2( 0.5 ) ), ( nodeVarying0 - vec2( 0.5 ) ) );
+	nodeVar2 = ( ( ( max( ( exp( ( pow( sqrt( ( nodeVar1 * 4.0 ) ), nodeVarying2 ) * -4.6051702 ) ) - 0.01 ), 0.0 ) * 1.0101010101010102 ) * nodeVarying3 ) * pow( min( ( nodeVarying4 / 1.5 ), 1.0 ), 2.0 ) );
+	gl_FragDepth = ( 1.0 - clamp( nodeVar2, 0.0, 1.0 ) );
 
 	if ( ( nodeVarying1 <= 0.0 ) ) {
 
@@ -89,7 +92,6 @@ void main() {
 
 	}
 
-	nodeVar1 = dot( ( nodeVarying0 - vec2( 0.5 ) ), ( nodeVarying0 - vec2( 0.5 ) ) );
 
 	if ( ( nodeVar1 > 0.25 ) ) {
 
@@ -98,7 +100,6 @@ void main() {
 
 	}
 
-	nodeVar2 = ( ( ( max( ( exp( ( pow( sqrt( ( nodeVar1 * 4.0 ) ), nodeVarying2 ) * -4.6051702 ) ) - 0.01 ), 0.0 ) * 1.0101010101010102 ) * nodeVarying3 ) * pow( min( ( nodeVarying4 / 1.5 ), 1.0 ), 2.0 ) );
 
 	if ( ( nodeVar2 < 0.0001 ) ) {
 
@@ -108,10 +109,9 @@ void main() {
 	}
 
 	DiffuseColor = vec4( nodeVarying5, nodeVarying6.x, nodeVar2, nodeVarying6.y );
-	DiffuseColor.w = ( DiffuseColor.w * nodeUniform4 );
+	DiffuseColor.w = ( DiffuseColor.w * nodeUniform2 );
 	nodeVar6 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
 	Output = nodeVar6;
-	gl_FragDepth = ( 1.0 - clamp( nodeVar2, 0.0, 1.0 ) );
 
 	// result
 	fragColor = nodeVar6;

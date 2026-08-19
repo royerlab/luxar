@@ -17,8 +17,9 @@
  *     it.
  *
  * `getAttributes()` is called from `Geometries.updateForRender`,
- * which `Renderer._renderObjectDirect` (r184 line 3535-3546) only
- * runs when `_nodes.needsRefresh(renderObject)` is `true`. A
+ * which `Renderer._renderObjectDirect` (r185 `common/Renderer.js`
+ * lines 3690-3714) only runs when
+ * `_nodes.needsRefresh(renderObject)` is `true`. A
  * pure-geometry / buffer-resize change does NOT mark `needsRefresh`,
  * so on the next draw `WebGPUBackend.draw` calls
  * `renderObject.getVertexBuffers()` which returns the stale
@@ -28,10 +29,10 @@
  * requires a larger buffer than the bound buffer size (oldSize)".
  *
  * The cleanest in-userland fix is to dispatch a `dispose` event on
- * the mesh's material. `RenderObject.onMaterialDispose` (line 307-310
- * in `common/RenderObject.js`) calls `renderObject.dispose()`, whose
+ * the mesh's material. `RenderObject.onMaterialDispose` (r185 lines
+ * 324-328 in `common/RenderObject.js`) calls `renderObject.dispose()`, whose
  * `onDispose` callback (set in `RenderObjects.createRenderObject`,
- * line 201-209) deletes the entry from `chainMap`. The next
+ * r185 lines 201-209) deletes the entry from `chainMap`. The next
  * `RenderObjects.get(...)` call returns `undefined` from the map and
  * builds a fresh `RenderObject` whose `vertexBuffers` cache starts
  * `null` — forcing `getVertexBuffers()` to call `getAttributes()` and

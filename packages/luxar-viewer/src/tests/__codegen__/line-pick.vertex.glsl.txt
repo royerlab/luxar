@@ -1,6 +1,6 @@
 #version 300 es
 
-// Three.js r184 - Node System
+// Three.js r185 - Node System
 
 
 // extensions
@@ -28,6 +28,12 @@ precision highp isampler2DArray;
 precision highp sampler2DShadow;
 precision highp sampler2DArrayShadow;
 precision highp samplerCubeShadow;
+
+
+// structs
+
+
+
 
 
 // uniforms
@@ -235,12 +241,12 @@ void main() {
 	// code
 
 	modelViewMatrix = ( cameraViewMatrix * nodeUniform1 );
-	nodeVarying1 = 0.0;
 	nodeVarying2 = 0.0;
 	nodeVarying3 = 0.0;
 	nodeVarying4 = 0.0;
 	nodeVarying7 = 0.0;
 	nodeVarying8 = 0.0;
+	nodeVarying1 = 0.0;
 	nodeVarying0 = 0.0;
 	nodeVarying5 = 0.0;
 	nodeVarying6 = 0.0;
