@@ -586,9 +586,13 @@ export class AnimationController {
    * The try/catch is load-bearing because `scheduleNextFrame()` is the loop's
    * ONLY re-arm point: a throw that escaped it would leave nothing armed while
    * `isAnimating` stayed true, so `startAnimation()` early-returns forever and
-   * no `requestRender()` can recover — an unrecoverable freeze. A disposed
-   * recording panel is exactly that case. At worst a capture gets a paced
-   * frame, instead of the viewer freezing for the rest of the session.
+   * no `requestRender()` can recover — an unrecoverable freeze. Today's wiring
+   * cannot reach that: `RecordingPanel.isCurrentlyRecording()` is a plain flag
+   * read, and the session it reads survives the panel's own `dispose()`. This
+   * is therefore a guard on the INJECTION POINT rather than on a known
+   * thrower — whatever gets wired here next inherits it, and the trade is a
+   * paced frame during a capture against the viewer freezing for the rest of
+   * the session.
    *
    * Shared by the two places the answer is needed — when the cooldown is
    * armed, and again in the hop callback before the cooldown is committed —

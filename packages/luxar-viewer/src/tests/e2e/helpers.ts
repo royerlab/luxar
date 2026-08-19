@@ -101,15 +101,20 @@ export async function renderOnce(page: Page): Promise<void> {
   });
   // Intentional fixed sleep: renderOnce() schedules a frame, but the actual
   // paint lands on the next browser frame, which is not directly observable
-  // from JS. The wait has to clear the frame-pacing cooldown (#1724): on a
-  // scene slow enough to be paced the next frame can be up to
-  // `config.animation.pacing.maxCooldownMs` (250 ms — hard-coded here rather
-  // than imported, since this helper must not pull viewer config into the
-  // Node-side test process) away, and renderOnce() is `startAnimation()`,
-  // which does not shorten a cooldown already pending on a running loop. So
-  // 300 ms = that 250 ms worst-case gap plus a paint cycle past 60 fps with
-  // margin; at 100 ms a <4 fps page could still be sampled on the frame
-  // BEFORE the change under test.
+  // from JS. 300 ms rather than the historical 100 ms so the wait also covers
+  // a frame-pacing cooldown (#1724): renderOnce() is `startAnimation()`, which
+  // does not shorten a cooldown already armed on a running loop, and the
+  // cooldown is bounded by `config.animation.pacing.maxCooldownMs` — 250 ms,
+  // hard-coded here rather than imported, since this helper must not pull
+  // viewer config into the Node-side test process. So 300 ms is that 250 ms
+  // plus a paint cycle past 60 fps.
+  //
+  // It is NOT a worst-case bound for a paced page, and this helper never had
+  // one for a slow page: the wait ahead of the next frame is the cooldown PLUS
+  // whatever the frame in flight still costs, and a page only ever paces once
+  // its frames already exceed 250 ms on their own. A spec that must sample
+  // strictly after the change on a scene that slow needs a frame-counting wait,
+  // not a fixed sleep.
   await page.waitForTimeout(300);
 }
 

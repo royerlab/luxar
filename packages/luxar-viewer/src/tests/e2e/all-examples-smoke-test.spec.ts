@@ -75,7 +75,8 @@ const KNOWN_FLAKY_LARGE_DATASETS = [
   // re-enable once we ship a downsized progressive_writing example or
   // sequential-mode override for oversized fixtures.
   'progressive_writing_example.luxar.zarr',
-  // 1.5M points (CubicArray group). Parked for HEADROOM, not for #1724:
+  // 1.5M points (a 1M-point CubicArray group plus a 500k background star
+  // field). Parked for HEADROOM, not for #1724:
   // re-measured with frame pacing in place it loads and passes with zero
   // console errors — but in 50 s of the 120 s budget at `--workers=1`. The
   // documented failure mode is PARALLEL contention (the HTTP server plus
