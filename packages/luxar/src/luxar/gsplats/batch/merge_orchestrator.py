@@ -628,6 +628,48 @@ def _recipe_pipeline_info(
     return info
 
 
+def _batch_floor_stats(manifest: BatchManifest) -> Dict[str, Any]:
+    """The normalization block a batch merge can honestly claim (#1175).
+
+    ``batch-fit`` resolves ONE background level at plan time and hands it to
+    every ``(t, c)`` task, but the merge never recorded it: the streaming
+    partition writer is fed a parts generator (no root node to promote a
+    ``meta`` block from) and the tiles it reloads carry no stats. The level is
+    already on the manifest, so take it from there.
+
+    Only an unambiguous answer is written. ``floor_level`` is set exactly when
+    the tasks were handed a concrete number; a ``None`` means one of three
+    different things (suppression disabled, a negative level whose SPEC was
+    forwarded for each task to re-resolve, or a manifest predating the field),
+    and only the first is a claim this merge may make — which the recorded
+    ``fit_args["floor"]`` spec distinguishes. Otherwise nothing is written,
+    because an absent key reads as "unknown" while ``floor: null`` asserts that
+    no pedestal was removed.
+    """
+    level = manifest.floor_level
+    if level is not None:
+        return {"floor": float(level)}
+    spec = manifest.fit_args.get("floor")
+    if isinstance(spec, str) and spec.strip().lower() == "none":
+        return {"floor": None}
+    return {}
+
+
+def _pipeline_info_with_floor(
+    recipe: Optional[str],
+    recipe_params: "Optional[RecipeParams]",
+    floor_stats: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    """:func:`_recipe_pipeline_info` plus the batch's floor block (#1175).
+
+    Kept as its own function so the caller stays one assignment: the merge
+    already carries the recipe's reduction provenance and the floor block into
+    the same ``pipeline/`` group, and either can be empty.
+    """
+    merged = {**(_recipe_pipeline_info(recipe, recipe_params) or {}), **floor_stats}
+    return merged or None
+
+
 def _slot_bsp_tree(
     manifest: BatchManifest, output_dir: Path, verbose: bool
 ) -> Optional[Dict[str, Any]]:
@@ -772,8 +814,12 @@ def _merge_partition(
     t_indices, c_indices = _tile_indices(manifest)
     # Slot label MUST match what the fit array wrote (uniform=tile, content=box).
     label = "box" if manifest.mode == "content" else "tile"
-    # Reduction provenance for the pipeline/ group (None without a recipe).
-    pipeline_info = _recipe_pipeline_info(recipe, recipe_params)
+    # Reduction provenance for the pipeline/ group (None without a recipe),
+    # plus the one background level every task subtracted (#1175) — the merge's
+    # only chance to record it, since neither branch below has a root node whose
+    # `meta` the tree writer could promote.
+    floor_stats = _batch_floor_stats(manifest)
+    pipeline_info = _pipeline_info_with_floor(recipe, recipe_params, floor_stats)
 
     # Authoritative ordering barrier: when timepoints are stacked (n_timepoints
     # > 1) the merge appends them as the LAST axis (see _finalize_part_node /
@@ -798,6 +844,9 @@ def _merge_partition(
                 # Pass the authoritative stacked-time barrier here too (K==1,
                 # no recipe) so a single-tile timelapse gets per-timepoint chunk
                 # locality instead of relying on value-based auto-detect.
+                # `save` derives pipeline_info from `stats`, so the floor block
+                # goes in there rather than through the argument (#1175).
+                part.stats.update(floor_stats)
                 part.save(final_path, barrier_dims=barrier_dims)
                 if verbose:
                     aprint(f"  Wrote bare leaf: {part.n_splats:,} splats, {part.ndim}D")

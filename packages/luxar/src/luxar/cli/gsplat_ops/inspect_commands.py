@@ -312,6 +312,15 @@ def info_dataset(
                 "foreground_fraction",
                 "ssim",
                 "mse",
+                # Normalization provenance (#1175): the background level the fit
+                # subtracted, and the bounds it normalized against. Listed
+                # rather than left to the generic "Additional Metadata" dump —
+                # amplitudes are background-RELATIVE, so `floor` is needed to
+                # interpret every intensity in the file.
+                "floor",
+                "image_min",
+                "image_max",
+                "intensity_range",
                 "convergence_time",
                 "culled",
                 "culling_method",
@@ -817,6 +826,27 @@ def compare_quality(
         raise typer.Exit(1)
 
 
+def _print_normalization_block(root: Any) -> None:
+    """List a store's ``pipeline/`` normalization block, if it has one (#1175).
+
+    The tree branch of ``info`` has no ``stats`` dict and no "Additional
+    Metadata" dump, so without this a ``kind=partition`` — the tiled CLI's
+    DEFAULT output — showed nothing at all about the background level its fit
+    subtracted, even though amplitudes are relative to exactly that level.
+    """
+    from luxar.gsplats.io.save_gsplats import NORMALIZATION_STATS_KEYS
+
+    if "pipeline" not in root:
+        return
+    attrs = dict(root["pipeline"].attrs)
+    present = [(k, attrs[k]) for k in NORMALIZATION_STATS_KEYS if k in attrs]
+    if not present:
+        return
+    aprint("\nNormalization (pipeline/):")
+    for key, value in present:
+        aprint(f"  {key}: {value}")
+
+
 def _print_gsplat_tree_summary(path: Path) -> None:
     """Report the node-tree shape of a partition / nested .gsplats.zarr.
 
@@ -870,6 +900,7 @@ def _print_gsplat_tree_summary(path: Path) -> None:
         pb = root.attrs.get("position_bounds")
         if pb:
             aprint(f"Position bounds: min={pb.get('min')} max={pb.get('max')}")
+        _print_normalization_block(root)
     finally:
         if tmp is not None and tmp.exists():
             shutil.rmtree(tmp, ignore_errors=True)

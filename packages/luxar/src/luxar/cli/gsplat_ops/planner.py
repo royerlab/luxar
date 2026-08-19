@@ -68,6 +68,59 @@ def _save_fit_result(
         write_gsplats_tree(output, result, compress=compress)
 
 
+def _stamp_content_floor(
+    result: Any,
+    floor_level: "Optional[float]",
+    floor_forward: "str | float",
+) -> None:
+    """Record the one level every content box subtracted (#1175).
+
+    A content fit used to save NO record of the pedestal it removed: the merged
+    result is built from fresh box nodes, and ``GSplatData.concatenate`` only
+    carries a block its inputs AGREE on — which per-box crops never do for their
+    own bounds, since each normalizes against its own crop. ``floor_level`` is
+    the one level `resolve_shared_floor` gave every box, so stamp it explicitly:
+    onto the flat leaf's ``stats``, or onto the root node's ``meta``, which
+    ``write_gsplats_tree`` promotes into the store's ``pipeline/`` group.
+
+    The exception is a NEGATIVE resolved level, which cannot be forwarded as a
+    concrete ``--floor`` and is instead re-resolved per box (see
+    :func:`resolve_shared_floor`). There is then no single level the artifact
+    could honestly claim, so nothing is written.
+
+    A level the BOXES already agree on wins over the planned one, and is left
+    exactly as it stands. The two differ when a box's own minimum is above the
+    requested level, because ``_normalize_data`` only ever RAISES the floor to
+    ``max(requested, image_min)``: asking for 5 on data that starts at 100
+    subtracts 100, and the boxes' unanimous ``floor: 100 / image_min: 100`` is
+    the truth. Overwriting just ``floor`` there produced a store claiming a
+    5-unit pedestal next to an ``image_min`` of 100 — two keys contradicting
+    each other, and the spec's ``image_min == floor`` invariant broken.
+    """
+    if isinstance(floor_forward, str) and floor_forward != "none":
+        return
+    from luxar.gsplats.gsplat_data import GSplatData
+
+    target = result.stats if isinstance(result, GSplatData) else result.meta
+    if "floor" in target and target["floor"] != floor_level:
+        return
+    target["floor"] = floor_level
+    # Nothing else carries the bounds here (the boxes normalize against their
+    # own crops and so never agree on them), but drop any that would now
+    # contradict rather than leave the invariant broken. Only meaningful when a
+    # floor WAS applied: with none, `image_min` is just the normalization
+    # minimum and owes `floor` nothing.
+    bound = target.get("image_min")
+    if (
+        floor_level is not None
+        and isinstance(bound, (int, float))
+        and not isinstance(bound, bool)
+        and float(bound) != float(floor_level)
+    ):
+        target.pop("image_min", None)
+        target.pop("intensity_range", None)
+
+
 def run_content_fit(
     input_path: Path,
     output: Optional[Path],
@@ -423,6 +476,8 @@ def run_content_fit(
                 progress_callback=_prog,
                 **fk,
             )
+
+    _stamp_content_floor(result, floor_level, floor_forward)
 
     output.parent.mkdir(parents=True, exist_ok=True)
     _save_fit_result(result, output, compress=compress)

@@ -259,6 +259,13 @@ The fitting pipeline orchestrates the entire process of fitting n-dimensional Ga
 - Returns a structured `GSplatData` dataclass with named fields (centers, amplitudes, cholesky_factors, stats)
 - Amplitudes are rescaled using the original intensity range, allowing direct comparison with input data
 - All arrays are separate fields, not concatenated (easier to work with)
+- The normalization block (`floor` / `image_min` / `image_max` / `intensity_range`,
+  in the input volume's own units) goes into `stats` here, and from there into
+  the store's `pipeline/` group. `lift_normalization_stats` is the multi-pass
+  counterpart for the progressive fitter, whose passes all run with
+  `floor="none"` because the pedestal was removed once up front — so only the
+  overall stats can say what was subtracted (#1175). See
+  `docs/specs/GSPLATS_ZARR_FORMAT.md` for the per-writer-path table.
 
 ### `visualization.py` - Display Helpers
 **Purpose:** Optional visualization of results.

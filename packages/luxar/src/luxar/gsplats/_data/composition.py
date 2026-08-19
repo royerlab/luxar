@@ -59,10 +59,22 @@ class CompositionMixin(_GSplatDataOps):
         if len(non_empty) == 0:
             # All empty: return a fresh empty instance (never alias an input,
             # per the immutability contract).
+            from luxar.gsplats.io.save_gsplats import (
+                NORMALIZATION_STATS_KEYS,
+                agreed_normalization_stats,
+            )
             from luxar.gsplats.utils.trils import tril_size
 
             d0 = datasets[0]
             d = d0.ndim
+            # The normalization block obeys the same unanimity rule here as on
+            # the non-empty path below (#1175): copying d0's stats wholesale
+            # would promote the FIRST input's pedestal onto a merge whose other
+            # inputs may have removed a different one.
+            empty_stats = {
+                k: v for k, v in d0.stats.items() if k not in NORMALIZATION_STATS_KEYS
+            }
+            empty_stats.update(agreed_normalization_stats([x.stats for x in datasets]))
             return make(
                 centers=np.empty((0, d), dtype=np.float32),
                 amplitudes=np.empty(0, dtype=np.float32),
@@ -70,7 +82,7 @@ class CompositionMixin(_GSplatDataOps):
                     (0, tril_size(d) if d > 0 else 0), dtype=np.float32
                 ),
                 colors=None,
-                stats=dict(d0.stats),
+                stats=empty_stats,
                 truncation_radius=d0.truncation_radius,
             )
 
@@ -102,6 +114,15 @@ class CompositionMixin(_GSplatDataOps):
             "concatenated_from": len(datasets),
             "splats_per_source": [d.n_splats for d in datasets],
         }
+        # Normalization provenance (#1175). A fresh stats dict used to drop the
+        # background level every input had removed, so a tiled merge shipped no
+        # record of its own pedestal. Carried only when every input that records
+        # a key AGREES on it — see `agreed_normalization_stats`; concatenating
+        # two unrelated fits legitimately has no single answer, and the merged
+        # result then says nothing rather than claiming the first input's.
+        from luxar.gsplats.io.save_gsplats import agreed_normalization_stats
+
+        merged_stats.update(agreed_normalization_stats([d.stats for d in datasets]))
         total_time = sum(d.stats.get("time_seconds", 0) for d in non_empty)
         if total_time > 0:
             merged_stats["time_seconds"] = total_time
