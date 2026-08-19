@@ -137,8 +137,12 @@ Outer zip containing many per-frame `.gsplats.zarr.zip` files. Automatically ext
 
 ## Data Sources & Citations
 
-- **Organoid data**: IDR study idr0062, Image 6001240 (Liberali lab, FMI)
-  - Blin et al. (2019) + Williams et al. (2017) Nature Methods 14(8):775-781
+- **Organoid data**: IDR study idr0062, Image 6001240 (Blin et al., Lowell lab,
+  University of Edinburgh) — a mouse blastocyst imaged for the Nessys
+  nuclear-segmentation benchmark, despite the demo's "organoid" naming
+  - Blin et al. (2019), *PLoS Biology*, doi:10.1371/journal.pbio.3000388 (CC BY 4.0)
+  - Hosted by the Image Data Resource: Williams et al. (2017) *Nature Methods*
+    14(8):775-781
 - **Tribolium data**: Cell Tracking Challenge, Zenodo record 5270323
   - Yin et al. (2022) J. Cell Sci. 135(5), jcs259022
 - **C. elegans data**: Zenodo record 6460303

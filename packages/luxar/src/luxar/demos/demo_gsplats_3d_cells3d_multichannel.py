@@ -75,9 +75,13 @@ DEMO_META = {
     },
     "caches": ["gsplats_cells3d"],
     "outputs": ["gsplats_3d_cells3d_multichannel"],
+    # scikit-image ships the sample, but the images are the Allen Institute's
+    # (see the Dataset block above and skimage's own cells3d docstring). The
+    # van der Walt PeerJ paper credits the LIBRARY, so citing it here would
+    # attribute someone else's microscopy to the software that loads it; the
+    # header keeps that software citation where it belongs.
     "citation": {
-        "short": "van der Walt et al. 2014",
-        "doi": "10.7717/peerj.453",
+        "short": "Allen Institute for Cell Science (scikit-image cells3d)",
     },
 }
 

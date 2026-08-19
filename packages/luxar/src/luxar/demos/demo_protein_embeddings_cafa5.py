@@ -31,7 +31,7 @@ architecture, trained on billions of protein sequences. It learns to:
 The model generates 1,024-dimensional embeddings that encode a protein's
 characteristics.
 
-Cite: Elnaggar et al. (2021), "ProtTrans: Toward Understanding the Language of
+Cite: Elnaggar et al. (2022), "ProtTrans: Toward Understanding the Language of
 Life Through Self-Supervised Learning", IEEE TPAMI. DOI: 10.1109/TPAMI.2021.3095381
 CAFA5 challenge: https://www.kaggle.com/competitions/cafa-5-protein-function-prediction
 
@@ -107,8 +107,13 @@ DEMO_META = {
     },
     "caches": ["protein_embeddings"],
     "outputs": ["protein_landscape"],
+    # The proteins are CAFA5's and the coordinates are ProtT5's, so the credit
+    # names both -- crediting only the model would attribute someone else's
+    # dataset to it (same shape as demo_esm3_protein_landscape). The DOI is the
+    # model paper, which is what the short names second; CAFA5 itself is a
+    # Kaggle competition with no DOI of its own.
     "citation": {
-        "short": "Elnaggar et al. 2022",
+        "short": "CAFA5 (Kaggle); embeddings by ProtT5 (Elnaggar et al. 2022)",
         "doi": "10.1109/TPAMI.2021.3095381",
     },
 }
@@ -1191,7 +1196,7 @@ def generate_protein_landscape(
 
             scene.add_text(
                 f"{n_proteins:,} proteins • ProtT5 embeddings • 3D UMAP • "
-                "clusters named by UniProt keyword enrichment • Elnaggar et al. 2021",
+                "clusters named by UniProt keyword enrichment • Elnaggar et al. 2022",
                 position=(0.98, 0.97),
                 font_size=0.012,
                 anchor="bottom-right",

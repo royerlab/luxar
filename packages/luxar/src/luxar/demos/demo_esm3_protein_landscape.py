@@ -667,7 +667,9 @@ def _reduce_to_3d(
 def generate_esm3_landscape(
     output_path: Path,
     sample_size: int = DEFAULT_SAMPLE_SIZE,
-    model_name: str = "esm3-open",
+    # Same default as `main()`, so a caller that omits it gets the model
+    # DEMO_META credits rather than one the CLI never runs.
+    model_name: str = "esmc-300m",
     cache_dir: Path | None = None,
     already_reported_quarantine: frozenset[Path] = frozenset(),
 ) -> int:
