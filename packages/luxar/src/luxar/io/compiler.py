@@ -15,6 +15,7 @@ from typing import (
     Dict,
     List,
     Literal,
+    Mapping,
     Optional,
     Sequence,
     Tuple,
@@ -311,6 +312,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         self,
         dimensions: Dimensions,
         viewer_config: Optional["ViewerConfig"] = None,
+        citation: Optional[Mapping[str, str]] = None,
     ) -> "Scene":
         """Create a scene with this compiler as writer.
 
@@ -321,6 +323,10 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             viewer_config: Optional viewer configuration hints. Stored in
                 the zarr file and read by the viewer at load time as
                 scene-specific defaults.
+            citation: Optional credit for whoever produced the underlying
+                dataset -- ``{"short", "doi"?, "license"?, "url"?}``. Stored in
+                the root attributes so it travels with the data. ``None`` means
+                there is no external dataset to credit.
 
         Returns:
             Scene object configured with this compiler as writer
@@ -345,7 +351,12 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         self.store.attrs["scene_dimensions"] = dimensions.to_dict()
 
         # Create scene with writer injection and optional viewer config
-        scene = Scene(writer=self, dimensions=dimensions, viewer_config=viewer_config)
+        scene = Scene(
+            writer=self,
+            dimensions=dimensions,
+            viewer_config=viewer_config,
+            citation=citation,
+        )
         self._scene = scene  # Store reference for finalize-time hover overlay injection
         aprint("✅ Scene created with progressive writer")
 

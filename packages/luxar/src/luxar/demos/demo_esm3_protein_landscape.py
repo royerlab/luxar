@@ -51,6 +51,9 @@ DEMO_META = {
     },
     "caches": ["esm3_swissprot"],
     "outputs": ["esm3_protein_landscape"],
+    "citation": {
+        "short": "Hayes et al. 2025",
+    },
 }
 
 import gzip
@@ -808,7 +811,9 @@ def generate_esm3_landscape(
             else "EvolutionaryScale ESM C, 2024"
         )
         with LuxarZarrCompiler(output_path) as compiler:
-            scene = compiler.create_scene(dimensions=dims)
+            scene = compiler.create_scene(
+                dimensions=dims, citation=DEMO_META["citation"]
+            )
 
             # Substitutive Points LOD: ~572k proteins is a large cloud, so coarse
             # levels replace it with fewer, larger merged splats when zoomed out

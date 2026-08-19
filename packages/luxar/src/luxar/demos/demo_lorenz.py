@@ -33,6 +33,8 @@ DEMO_META = {
     },
     "caches": [],
     "outputs": ["lorenz"],
+    # Procedurally generated: no external dataset, nothing to credit.
+    "citation": None,
 }
 
 import sys

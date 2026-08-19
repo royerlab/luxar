@@ -137,6 +137,10 @@ DEMO_META = {
     },
     "caches": ["gsplats_kidney"],
     "outputs": ["gsplats_6d_kidney_multichannel_toggles"],
+    "citation": {
+        "short": "van der Walt et al. 2014",
+        "doi": "10.7717/peerj.453",
+    },
 }
 
 import sys
@@ -426,6 +430,7 @@ def create_luxar_scene(gsplats_list, output_path=None):
         ) as compiler:
             scene = compiler.create_scene(
                 dimensions=dims,
+                citation=DEMO_META["citation"],
             )
 
             scene.attrs["title"] = (

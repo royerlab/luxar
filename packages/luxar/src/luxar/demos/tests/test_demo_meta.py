@@ -257,10 +257,34 @@ def test_validate_meta_rejects_bad_blocks(tmp_path: Path) -> None:
         variant(outputs=["a/b"]),
         variant(outputs=[".."]),
         {k: v for k, v in good.items() if k != "outputs"},
+        # `citation` is optional, but a present one must be usable: a tile has
+        # nothing to render without `short`, and a DOI-shaped URL is the mistake
+        # most likely to be pasted in by hand.
+        variant(citation={"doi": "10.1/x"}),
+        variant(citation={"short": ""}),
+        variant(citation={"short": "A et al. 2020", "authors": "A, B"}),
+        variant(citation={"short": "A et al. 2020", "doi": "https://doi.org/10.1/x"}),
+        variant(citation="A et al. 2020"),
     ]
     for bad in bad_cases:
         with pytest.raises(DemoMetaError):
             registry.validate_meta(bad, tmp_path / "demo_x.py")
+
+    # Both ways of saying "credited" and "nothing to credit" are accepted, as is
+    # omitting the key entirely while the corpus is still being populated.
+    for ok in (
+        variant(citation=None),
+        variant(citation={"short": "Yeh 2022"}),
+        variant(
+            citation={
+                "short": "Bui et al. 2013",
+                "doi": "10.1016/j.cell.2013.10.055",
+                "license": "CC BY 4.0",
+                "url": "https://example.org/npc",
+            }
+        ),
+    ):
+        registry.validate_meta(ok, tmp_path / "demo_x.py")
 
 
 def test_get_demo_rejects_malformed_numeric_tokens() -> None:

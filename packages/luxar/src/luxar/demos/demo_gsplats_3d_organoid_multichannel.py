@@ -103,6 +103,10 @@ DEMO_META = {
     },
     "caches": ["gsplats_multichannel"],
     "outputs": ["gsplats_3d_organoid_multichannel"],
+    "citation": {
+        "short": "Williams et al. 2017",
+        "doi": "10.1038/nmeth.4326",
+    },
 }
 
 # Enable MPS→CPU fallback for unsupported PyTorch ops (must be before torch import)
@@ -446,6 +450,7 @@ def create_luxar_scene(gsplats_list, output_path: Path | None = None):
             scene = compiler.create_scene(
                 dimensions=Dimensions.default_3d(),
                 viewer_config=ViewerConfig(tone_mapping="ACES"),
+                citation=DEMO_META["citation"],
             )
 
             # Add scene metadata

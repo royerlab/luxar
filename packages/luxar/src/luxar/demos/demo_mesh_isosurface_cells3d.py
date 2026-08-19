@@ -100,6 +100,10 @@ DEMO_META = {
     },
     "caches": [],
     "outputs": ["mesh_isosurface_cells3d"],
+    "citation": {
+        "short": "van der Walt et al. 2014",
+        "doi": "10.7717/peerj.453",
+    },
 }
 
 import numpy as np
@@ -288,6 +292,7 @@ def create_scene(output_path) -> None:
                         up=(1.0, 0.0, 0.0),
                     ),
                 ),
+                citation=DEMO_META["citation"],
             )
 
             for channel, vertices, faces, normals in surfaces:

@@ -107,6 +107,10 @@ DEMO_META = {
     },
     "caches": ["protein_embeddings"],
     "outputs": ["protein_landscape"],
+    "citation": {
+        "short": "Elnaggar et al. 2022",
+        "doi": "10.1109/TPAMI.2021.3095381",
+    },
 }
 
 import gzip
@@ -1129,7 +1133,9 @@ def generate_protein_landscape(
         )
 
         with LuxarZarrCompiler(output_path) as compiler:
-            scene = compiler.create_scene(dimensions=dims)
+            scene = compiler.create_scene(
+                dimensions=dims, citation=DEMO_META["citation"]
+            )
 
             scene.add_points(
                 "proteins",

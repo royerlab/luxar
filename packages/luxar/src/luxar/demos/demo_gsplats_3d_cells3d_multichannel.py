@@ -75,6 +75,10 @@ DEMO_META = {
     },
     "caches": ["gsplats_cells3d"],
     "outputs": ["gsplats_3d_cells3d_multichannel"],
+    "citation": {
+        "short": "van der Walt et al. 2014",
+        "doi": "10.7717/peerj.453",
+    },
 }
 
 from pathlib import Path
@@ -293,6 +297,7 @@ def create_luxar_scene(gsplats_list, output_path=None):
             scene = compiler.create_scene(
                 dimensions=Dimensions.default_3d(),
                 viewer_config=ViewerConfig(tone_mapping="ACES"),
+                citation=DEMO_META["citation"],
             )
 
             scene.attrs["title"] = "GSplats: 3D Cells Multi-Channel (BOP layers)"

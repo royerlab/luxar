@@ -138,6 +138,10 @@ DEMO_META = {
     },
     "caches": ["gsplats_kidney"],
     "outputs": ["gsplats_3d_kidney_multichannel_layers"],
+    "citation": {
+        "short": "van der Walt et al. 2014",
+        "doi": "10.7717/peerj.453",
+    },
 }
 
 import sys
@@ -405,6 +409,7 @@ def create_luxar_scene(gsplats_list, output_path=None):
             scene = compiler.create_scene(
                 dimensions=dims,
                 viewer_config=ViewerConfig(tone_mapping="ACES"),
+                citation=DEMO_META["citation"],
             )
 
             scene.attrs["title"] = "GSplats: 3D Kidney Multi-Channel (Layers panel)"

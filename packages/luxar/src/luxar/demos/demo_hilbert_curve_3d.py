@@ -76,6 +76,8 @@ DEMO_META = {
     },
     "caches": [],
     "outputs": ["hilbert_curve_3d"],
+    # Procedurally generated: no external dataset, nothing to credit.
+    "citation": None,
 }
 
 import sys

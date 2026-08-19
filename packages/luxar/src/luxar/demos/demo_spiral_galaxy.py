@@ -51,6 +51,8 @@ DEMO_META = {
     },
     "caches": [],
     "outputs": ["spiral_galaxy"],
+    # Procedurally generated: no external dataset, nothing to credit.
+    "citation": None,
 }
 
 import sys

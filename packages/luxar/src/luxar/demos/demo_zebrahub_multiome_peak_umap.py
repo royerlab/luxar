@@ -50,6 +50,10 @@ DEMO_META = {
     },
     "caches": ["zebrahub_multiome_peak"],
     "outputs": ["zebrahub_multiome_peak_umap", "zebrahub_umap"],
+    "citation": {
+        "short": "Lange et al. 2024",
+        "doi": "10.1101/2024.10.18.618987",
+    },
 }
 
 import sys
@@ -257,7 +261,9 @@ def create_zebrahub_scene(
 
         # Create scene
         with LuxarZarrCompiler(output_path) as compiler:
-            scene = compiler.create_scene(dimensions=dims)
+            scene = compiler.create_scene(
+                dimensions=dims, citation=DEMO_META["citation"]
+            )
 
             # Add points with small radii for dense point cloud
             total_points = len(positions_combined)

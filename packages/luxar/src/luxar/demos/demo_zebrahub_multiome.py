@@ -23,6 +23,10 @@ DEMO_META = {
     },
     "caches": ["zebrahub_multiome"],
     "outputs": ["zebrahub_multiome", "cells"],
+    "citation": {
+        "short": "Lange et al. 2024",
+        "doi": "10.1101/2024.10.18.618987",
+    },
 }
 
 import sys
@@ -160,7 +164,9 @@ def main() -> None:
             )
 
             with LuxarZarrCompiler(output) as compiler:
-                scene = compiler.create_scene(dimensions=dims)
+                scene = compiler.create_scene(
+                    dimensions=dims, citation=DEMO_META["citation"]
+                )
                 scene.add_points(
                     "Cells",
                     positions,
@@ -254,7 +260,9 @@ def main() -> None:
             )
 
             with LuxarZarrCompiler(output) as compiler:
-                scene = compiler.create_scene(dimensions=dims)
+                scene = compiler.create_scene(
+                    dimensions=dims, citation=DEMO_META["citation"]
+                )
                 scene.add_points(
                     "Cells",
                     positions,

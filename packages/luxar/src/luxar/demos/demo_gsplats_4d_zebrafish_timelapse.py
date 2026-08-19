@@ -81,6 +81,10 @@ DEMO_META = {
     },
     "caches": ["gsplats_zebrafish"],
     "outputs": ["gsplats_4d_zebrafish_timelapse"],
+    "citation": {
+        "short": "Aanstad 2018",
+        "doi": "10.5281/zenodo.1211599",
+    },
 }
 
 import sys
@@ -472,6 +476,7 @@ def create_luxar_scene(
         ) as compiler:
             scene = compiler.create_scene(
                 dimensions=dims,
+                citation=DEMO_META["citation"],
             )
 
             scene.attrs["title"] = "GSplats: Zebrafish Embryo 4D Time-Lapse (Confocal)"

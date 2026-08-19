@@ -161,6 +161,10 @@ DEMO_META = {
     },
     "caches": ["gsplats_nexrad_supercell"],
     "outputs": ["gsplats_4d_nexrad_supercell"],
+    "citation": {
+        "short": "May et al. 2016",
+        "doi": "10.5065/D6WW7G29",
+    },
 }
 
 import sys
@@ -1401,6 +1405,7 @@ def create_luxar_scene(
                         fov=45.0,
                     ),
                 ),
+                citation=DEMO_META["citation"],
             )
             scene.attrs["title"] = (
                 "El Reno Tornadic Supercell - NEXRAD Level II (2013-05-31)"

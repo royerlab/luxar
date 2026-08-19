@@ -217,6 +217,35 @@ The root `.zattrs` file contains scene-wide configuration:
 }
 ```
 
+### `citation` (optional root attr)
+
+`citation` credits whoever produced the data the scene shows. It is written to
+the root attributes rather than to a companion file or a web page so the
+attribution travels with the store — through `luxar export`, through a copy of
+the `.luxar.zarr` handed to someone without the repo, and into any viewer that
+opens it.
+
+```javascript
+{
+  "citation": {
+    "short": "Bui et al. 2013",              // REQUIRED: single line, what a UI renders
+    "doi": "10.1016/j.cell.2013.10.055",     // optional, bare DOI (no https://doi.org/ prefix)
+    "license": "CC BY 4.0",                  // optional
+    "url": "https://example.org/dataset"     // optional
+  }
+}
+```
+
+Only `short` is required: a citation that cannot be displayed is not a
+citation. The key is **absent** — not `null`, not an empty object — when the
+scene owes no credit, which is the normal case for procedurally generated data.
+Readers should therefore treat a missing `citation` as "unknown or not
+applicable" and never as a claim that the data has no author.
+
+Written by passing `citation=` to `LuxarZarrCompiler.create_scene(...)`. The
+payload is validated at write time (`luxar.core.citation.validate_citation`), so
+a malformed citation raises instead of being baked into every copy of the data.
+
 ### `incomplete` (optional root attr)
 
 `incomplete` (boolean) is written to the root `.zattrs` only when the writer

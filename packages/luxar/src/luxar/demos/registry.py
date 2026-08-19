@@ -6,8 +6,10 @@ never by importing the modules, which is deliberately unsupported: many
 demos parse ``sys.argv`` or create cache directories at import time, and
 several carry heavy top-level imports (pandas, zarr, scipy).
 
-This module is import-light by design (stdlib only at module level) so
-``luxar demo list`` can render its table in well under a second.
+This module is import-light by design so ``luxar demo list`` can render its
+table in well under a second: stdlib only, plus ``luxar.core.citation``, which
+is itself stdlib-only and shared with the scene writer so a demo and a scene
+agree on what a citation is.
 """
 
 from __future__ import annotations
@@ -17,6 +19,8 @@ import difflib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator, Optional
+
+from ..core.citation import validate_citation
 
 _DEMOS_DIR = Path(__file__).parent
 
@@ -85,6 +89,11 @@ _META_KEYS = {
     "caches",
     "outputs",
 }
+# Keys a demo MAY declare. `citation` is optional only while the corpus is being
+# populated (see the credit-the-authors issue): once every demo declares one it
+# moves into _META_KEYS, and the enforcement test then makes an uncredited demo
+# impossible to add. Keep this set small — an optional key is a schema hole.
+_OPTIONAL_META_KEYS = {"citation"}
 _REQUIREMENT_KEYS = {"download_mb", "compute", "gpu", "local_data"}
 
 
@@ -107,6 +116,11 @@ class DemoInfo:
     requirements: dict[str, Any]
     caches: tuple[str, ...]
     outputs: tuple[str, ...]
+    #: Dataset credit: ``{"short", "doi"?, "license"?, "url"?}``, or ``None`` for a
+    #: procedurally generated demo that owes no credit. ``None`` is also what an
+    #: as-yet-unpopulated demo reports, so consumers must not treat it as proof
+    #: that a demo is synthetic until the key is required.
+    citation: Optional[dict[str, Any]] = None
 
     @property
     def download_mb(self) -> int:
@@ -156,9 +170,10 @@ def validate_meta(meta: Any, path: Path) -> None:
 
     if not isinstance(meta, dict):
         fail("DEMO_META must be a dict literal")
-    if set(meta.keys()) != _META_KEYS:
-        missing = _META_KEYS - set(meta.keys())
-        extra = set(meta.keys()) - _META_KEYS
+    present = set(meta.keys())
+    missing = _META_KEYS - present
+    extra = present - _META_KEYS - _OPTIONAL_META_KEYS
+    if missing or extra:
         fail(
             f"DEMO_META keys mismatch (missing={sorted(missing)}, extra={sorted(extra)})"
         )
@@ -197,6 +212,17 @@ def validate_meta(meta: Any, path: Path) -> None:
             f"requirements.local_data {req['local_data']!r} not in "
             f"{sorted(v for v in LOCAL_DATA_VALUES if v is not None)} or None"
         )
+
+    # `citation` credits whoever produced the underlying dataset. Explicit
+    # `None` means "procedurally generated, nothing to credit" — a deliberate
+    # statement rather than an omission, which is why None is spelled out rather
+    # than allowing the key to be absent once it becomes required. The rules live
+    # in luxar.core.citation so a demo and a scene agree on what a citation is.
+    if "citation" in meta:
+        try:
+            validate_citation(meta["citation"])
+        except ValueError as exc:
+            fail(str(exc))
 
     for field in ("caches", "outputs"):
         seq = meta[field]
@@ -297,6 +323,7 @@ def iter_demos(*, refresh: bool = False) -> list[DemoInfo]:
             requirements=dict(meta["requirements"]),
             caches=tuple(meta["caches"]),
             outputs=tuple(meta["outputs"]),
+            citation=validate_citation(meta.get("citation")),
         )
         for i, (path, meta) in enumerate(metas)
     ]

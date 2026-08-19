@@ -96,6 +96,8 @@ DEMO_META = {
     },
     "caches": [],
     "outputs": ["quasicrystal"],
+    # Procedurally generated: no external dataset, nothing to credit.
+    "citation": None,
 }
 
 import sys
