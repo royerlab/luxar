@@ -58,7 +58,9 @@ class TestFloorFromCalibration:
         self, tmp_path: Path, capsys
     ) -> None:
         cal = _write_cal(tmp_path / "cal.json", {"floor_subtracted": 110.0})
-        assert resolve_floor_with_calibration(cal, None, None) == "110.0"
+        assert (
+            resolve_floor_with_calibration(cal, None, None, tiling="content") == "110.0"
+        )
         # Never silent: the fit says where its floor came from.
         assert "Floor from calibration" in capsys.readouterr().out
 
@@ -66,8 +68,13 @@ class TestFloorFromCalibration:
         """``--floor`` defaults to None, not "auto" — so an explicit ``auto`` is
         a user decision and must not be silently replaced by the cal's level."""
         cal = _write_cal(tmp_path / "cal.json", {"floor_subtracted": 110.0})
-        assert resolve_floor_with_calibration(cal, "auto", None) == "auto"
-        assert resolve_floor_with_calibration(cal, "p20", None) == "p20"
+        assert (
+            resolve_floor_with_calibration(cal, "auto", None, tiling="content")
+            == "auto"
+        )
+        assert (
+            resolve_floor_with_calibration(cal, "p20", None, tiling="content") == "p20"
+        )
 
     def test_recorded_null_is_not_adopted_as_none(self, tmp_path: Path) -> None:
         """``cal`` writes ``null`` both when the user asked for ``none`` AND
@@ -75,7 +82,7 @@ class TestFloorFromCalibration:
         file. Adopting it would silently disable the ``auto`` default on the
         strength of a guard firing, so say nothing instead."""
         cal = _write_cal(tmp_path / "cal.json", {"floor_subtracted": None})
-        assert resolve_floor_with_calibration(cal, None, None) is None
+        assert resolve_floor_with_calibration(cal, None, None, tiling="content") is None
 
     def test_a_non_numeric_recorded_level_does_not_traceback(
         self, tmp_path: Path
@@ -83,16 +90,18 @@ class TestFloorFromCalibration:
         """A hand-edited ``floor_subtracted: "auto"`` must fall through quietly,
         not raise a bare ValueError out of the CLI."""
         cal = _write_cal(tmp_path / "cal.json", {"floor_subtracted": "auto"})
-        assert resolve_floor_with_calibration(cal, None, None) is None
+        assert resolve_floor_with_calibration(cal, None, None, tiling="content") is None
 
     def test_absent_key_leaves_the_caller_alone(self, tmp_path: Path) -> None:
         cal = _write_cal(tmp_path / "cal.json", {})
         assert (
-            resolve_floor_with_calibration(cal, None, None) is None
+            resolve_floor_with_calibration(cal, None, None, tiling="content") is None
         )  # unset stays unset
 
     def test_no_cal_is_a_no_op(self) -> None:
-        assert resolve_floor_with_calibration(None, None, None) is None
+        assert (
+            resolve_floor_with_calibration(None, None, None, tiling="content") is None
+        )
 
     def test_only_content_tiling_adopts_it(self, tmp_path: Path) -> None:
         """Every other mode announces --cal as IGNORED two lines later."""
@@ -110,13 +119,18 @@ class TestFloorFromCalibration:
         config = tmp_path / "fit.yaml"
         config.write_text('floor: "p20"\nn_iters: 100\n')
         # Left unset, so `load_fit_config` layers the YAML floor as it always did.
-        assert resolve_floor_with_calibration(cal, None, config) is None
+        assert (
+            resolve_floor_with_calibration(cal, None, config, tiling="content") is None
+        )
 
     def test_a_yaml_config_without_a_floor_does_not_block(self, tmp_path: Path) -> None:
         cal = _write_cal(tmp_path / "cal.json", {"floor_subtracted": 110.0})
         config = tmp_path / "fit.yaml"
         config.write_text("n_iters: 100\n")
-        assert resolve_floor_with_calibration(cal, None, config) == "110.0"
+        assert (
+            resolve_floor_with_calibration(cal, None, config, tiling="content")
+            == "110.0"
+        )
 
     def test_a_negative_recorded_level_is_declined_not_forwarded(
         self, tmp_path: Path, capsys
@@ -124,7 +138,7 @@ class TestFloorFromCalibration:
         """``--floor`` rejects a negative level, so forwarding one would abort
         the fit; decline it out loud instead."""
         cal = _write_cal(tmp_path / "cal.json", {"floor_subtracted": -3.0})
-        assert resolve_floor_with_calibration(cal, None, None) is None
+        assert resolve_floor_with_calibration(cal, None, None, tiling="content") is None
         assert "negative floor" in capsys.readouterr().out
 
     def test_the_adopted_spec_is_a_valid_floor(self, tmp_path: Path) -> None:
@@ -133,7 +147,9 @@ class TestFloorFromCalibration:
         from luxar.cli.gsplat_ops.fitting.fit_utils import validate_floor_spec
 
         cal = _write_cal(tmp_path / "cal.json", {"floor_subtracted": 110.5})
-        validate_floor_spec(resolve_floor_with_calibration(cal, None, None))
+        validate_floor_spec(
+            resolve_floor_with_calibration(cal, None, None, tiling="content")
+        )
 
 
 def _stub_leaf(ndim: int = 3, n: int = 4) -> GSplatData:

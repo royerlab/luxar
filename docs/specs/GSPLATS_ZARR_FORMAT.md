@@ -726,6 +726,11 @@ ran. A tiled or progressive path subtracts the pedestal OUTSIDE the fitter and
 then fits with `floor="none"`, so it shifts its inner `image_min` / `image_max`
 back by the applied level before recording them — otherwise `image_min` would
 mean a post-subtraction minimum on one path and the applied level on another.
+Its `floor` is that shifted `image_min` too, not the level it subtracted up
+front: the inner fit's own normalization removes whatever pedestal is LEFT on
+top, so the level actually taken out is the sum of the two, and recording only
+the requested level would understate it whenever that level sits below the
+volume's minimum.
 
 Merging is unanimous-or-silent: `GSplatData.concatenate` carries a key only when
 every input that records it agrees, because two independently fitted volumes

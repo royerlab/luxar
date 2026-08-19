@@ -826,7 +826,7 @@ def resolve_floor_with_calibration(
     floor: "Optional[str]",
     config: "Optional[Path]",
     *,
-    tiling: str = "content",
+    tiling: str,
     verbose: bool = True,
 ) -> "Optional[str]":
     """The ``--floor`` spec to fit with, adopting a ``--cal``'s level (#1175).
@@ -840,7 +840,10 @@ def resolve_floor_with_calibration(
     different scales.
 
     ``tiling`` is the RESOLVED decomposition, and anything but ``content`` is a
-    no-op: that is the one mode which honours ``--cal`` at all, and
+    no-op: that is the one mode which honours ``--cal`` at all, and it is
+    required rather than defaulted, because the permissive value is the one
+    that CHANGES the fit — a caller who forgot it would adopt the calibration
+    floor under a decomposition that ignores everything else about the cal. And
     :func:`warn_ignored_density_flags` announces the flag as ignored under every
     other one. Silently changing the floor from a flag the CLI has just called
     ignored would be the command contradicting itself.

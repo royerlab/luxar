@@ -640,8 +640,12 @@ def _stamp_merge_normalization(
     :func:`merge_tile_results` no ``applied_floor``. A level this call DID apply
     is authoritative and overrides.
 
-    ``floor`` is always present, null when suppression was disabled — an absent
-    key would read as "this artifact does not know".
+    Nothing is written when neither the caller nor the tiles know: ``floor:
+    null`` asserts that no pedestal was removed, while an absent key reads as
+    "this artifact does not know", and only the second is honest here. Today's
+    tiled callers always know (``fit_tiled`` resolves one level for the whole
+    volume, and a tile store records its own), so this is a guard against a tile
+    written by an older luxar rather than a routine outcome.
     """
     # Deferred: luxar.gsplats.io imports GSplatData from this package's
     # __init__, which is still executing when this module is first imported.
@@ -650,7 +654,6 @@ def _stamp_merge_normalization(
     target.update(agreed_normalization_stats([r.stats for r in sources]))
     if applied_floor is not None:
         target["floor"] = applied_floor
-    target.setdefault("floor", None)
 
 
 def _empty_merge(
@@ -661,10 +664,9 @@ def _empty_merge(
     """A 0-splat merged result that still records what was subtracted (#1175).
 
     Reached when there were no tile results at all, or when culling emptied
-    every one of them. Both used to return ``stats={}``, which breaks the
-    "``floor`` is always present" contract the merge otherwise keeps — an absent
-    key reads as "this artifact does not know", and a caller cannot tell that
-    apart from a path that never records anything.
+    every one of them. Both used to return ``stats={}`` unconditionally, so an
+    empty merge could not say what its tiles had subtracted even when the level
+    was known — indistinguishable from a path that never records anything.
     """
     from luxar.gsplats.utils.trils import tril_size
 

@@ -154,6 +154,33 @@ class TestRoundTrip:
 
         assert _pipeline_attrs(path)["floor"] == 42.0
 
+    def test_a_real_fit_tile_result_survives_the_round_trip(
+        self, monkeypatch, tmp_path: Path
+    ) -> None:
+        """The subprocess-merge tests below write their tile stores by hand, so
+        they pin the merge but say nothing about the worker feeding it. This
+        pins the other half: what the real ``fit --tile i/M`` door
+        (:func:`fit_tile`) stamps is what a reload gets back."""
+        pytest.importorskip("torch")
+        import luxar.gsplats.fit_tiled_gsplats as ftg
+        from luxar.gsplats.tiling import compute_tile_specs
+
+        monkeypatch.setattr(ftg, "fit_gaussian_splats", _one_splat_stub())
+
+        rng = np.random.RandomState(5)
+        volume = rng.normal(100.0, 1.0, size=(96, 96)).astype(np.float32)
+        volume[40:80, 40:80] += 150.0
+        spec = compute_tile_specs(volume.shape, 48, 16)[0]
+
+        path = tmp_path / "tile.gsplats.zarr"
+        ftg.fit_tile(volume, spec, floor=100.0, verbose=False).save(path)
+
+        stats = load_gsplats(path, include_stats=True).stats
+        assert stats["floor"] == pytest.approx(100.0)
+        # In the VOLUME's units, not the already-subtracted tile's.
+        assert stats["image_min"] == pytest.approx(100.0)
+        assert stats["image_max"] == pytest.approx(250.0)
+
     def test_a_plain_tree_still_writes_no_pipeline_group(self, tmp_path: Path) -> None:
         """The lift must not conjure a pipeline/ group onto every tree."""
         from luxar._zarr_compat import open_group
@@ -284,6 +311,47 @@ def test_progressive_fit_records_the_level_it_subtracted(tmp_path: Path) -> None
     assert reloaded["floor"] == pytest.approx(100.0)
 
 
+def test_progressive_and_flat_agree_on_a_floor_below_the_data_minimum() -> None:
+    """The same volume and the same ``--floor`` must yield the same ``floor``.
+
+    A level BELOW the volume's minimum is where the two paths used to diverge:
+    the flat fitter raises it to the minimum (``image_min = max(resolved_floor,
+    image_min)``) and records THAT, while the progressive fitter subtracted the
+    requested level up front and then let pass 0 remove the remaining minimum on
+    top — recording only the requested level, understating the pedestal that
+    actually came out and contradicting its own ``image_min``.
+    """
+    pytest.importorskip("torch")
+    from luxar.gsplats import fit_gaussian_splats
+    from luxar.gsplats.fit_progressive_gsplats import fit_progressive_gaussian_splats
+
+    rng = np.random.default_rng(7)
+    # Minimum is ~98, far above the requested floor of 5.
+    V = np.full((12, 12, 12), 100.0, np.float32)
+    V += rng.normal(0, 0.5, V.shape).astype(np.float32)
+    V[4:8, 4:8, 4:8] += 300.0
+
+    common: dict[str, Any] = dict(floor=5.0, device="cpu", verbose=False)
+    progressive = fit_progressive_gaussian_splats(
+        V,
+        max_splats=20,
+        max_splats_per_pass=20,
+        iters_per_pass=10,
+        residual_pass_min_iters=10,
+        max_passes=2,
+        **common,
+    )
+    flat = fit_gaussian_splats(V, n_splats=20, iterations=10, **common)
+
+    assert flat.stats["floor"] == pytest.approx(float(V.min()), abs=1e-3)
+    assert progressive.stats["floor"] == pytest.approx(flat.stats["floor"], abs=1e-3)
+    # And the block stays self-consistent: the recorded level IS the recorded
+    # minimum, on both paths (the spec's "they coincide whenever suppression ran").
+    assert progressive.stats["floor"] == pytest.approx(
+        progressive.stats["image_min"], abs=1e-3
+    )
+
+
 def test_progressive_fit_records_a_disabled_floor_as_null() -> None:
     pytest.importorskip("torch")
     from luxar.gsplats.fit_progressive_gsplats import fit_progressive_gaussian_splats
@@ -408,8 +476,8 @@ def test_batch_merge_writes_the_block_for_a_single_tile_run(
 
 
 def test_a_merge_with_no_tiles_still_answers_the_floor_question() -> None:
-    """``floor`` is always present on a merge, null when suppression was off —
-    an ABSENT key reads as "this artifact does not know"."""
+    """A merge with nothing to merge still records the level IT applied — an
+    ABSENT key reads as "this artifact does not know", which would be false."""
     from luxar.gsplats.fit_tiled_gsplats import merge_tile_results
 
     merged = merge_tile_results(
@@ -447,6 +515,27 @@ def test_a_partition_merge_with_no_surviving_region_still_answers() -> None:
     )
     # Recovered from the tiles, since this call applied no level of its own.
     assert merged.stats["floor"] == pytest.approx(100.0)
+
+
+def test_a_merge_that_knows_nothing_stays_silent() -> None:
+    """No level of its own and tiles that record none (an older luxar's tile
+    store) → say nothing. ``floor: null`` would assert no pedestal was removed,
+    which the merge is in no position to claim."""
+    from luxar.gsplats.fit_tiled_gsplats import merge_tile_results
+
+    merged = merge_tile_results(
+        [_leaf(n=1, ndim=2) for _ in range(2)],
+        volume_shape=(32, 32),
+        tile_size=16,
+        overlap=4,
+        num_tiles=2,
+        progressive=False,
+        cull_retention=None,
+        elapsed=0.0,
+        verbose=False,
+        applied_floor=None,
+    )
+    assert "floor" not in merged.stats
 
 
 def test_an_all_empty_concatenate_does_not_promote_the_first_input() -> None:
