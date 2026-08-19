@@ -24,8 +24,10 @@ DEMO_META = {
     "caches": ["zebrahub_multiome"],
     "outputs": ["zebrahub_multiome", "cells"],
     "citation": {
-        # First author of the preprint this demo cites above; the on-scene
-        # footer's "Lange et al." is the separate Zebrahub atlas paper.
+        # First author of the Zebrahub-Multiome preprint this demo cites above,
+        # and the only paper it draws on -- confirmed with the dataset's authors.
+        # The on-scene footers named the separate Zebrahub atlas paper (Lange et
+        # al., Cell 2024) and have been corrected to match.
         "short": "Kim et al. 2024",
         "doi": "10.1101/2024.10.18.618987",
     },
@@ -207,7 +209,7 @@ def main() -> None:
 
                 # Info + citation
                 scene.add_text(
-                    "95K cells • 32 cell types • Lange et al., Cell 2024",
+                    "95K cells • 32 cell types • Kim et al. 2024",
                     position=(0.98, 0.97),
                     font_size=0.012,
                     anchor="bottom-right",
@@ -303,7 +305,7 @@ def main() -> None:
 
                 # Info + citation
                 scene.add_text(
-                    "95K cells • 32 cell types • Lange et al., Cell 2024",
+                    "95K cells • 32 cell types • Kim et al. 2024",
                     position=(0.98, 0.97),
                     font_size=0.012,
                     anchor="bottom-right",

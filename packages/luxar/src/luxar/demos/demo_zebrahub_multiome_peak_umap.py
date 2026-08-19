@@ -341,7 +341,7 @@ def create_zebrahub_scene(
                         )
 
             scene.add_text(
-                f"{n_points:,} peaks • Zebrafish • 3D UMAP • Lange et al., Cell 2024",
+                f"{n_points:,} peaks • Zebrafish • 3D UMAP • Kim et al. 2024",
                 position=(0.98, 0.97),
                 font_size=0.012,
                 anchor="bottom-right",
