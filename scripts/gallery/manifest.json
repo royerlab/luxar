@@ -321,7 +321,13 @@
       "geometry": "points",
       "category": "synthetic",
       "script": "demo_4d_fractals.py",
-      "dataset": "datasets/demos/fractals_4d.luxar.zarr"
+      "dataset": "datasets/demos/fractals_4d.luxar.zarr",
+      "dimensionNav": {
+        "key": "2",
+        "steps": 15
+      },
+      "zoom": 0.7,
+      "exposure": -1.5
     },
     {
       "id": "spiral_galaxy_5d",
@@ -419,7 +425,11 @@
       "geometry": "gsplats",
       "category": "microscopy",
       "script": "demo_gsplats_3d_kidney_multichannel_toggles.py",
-      "dataset": "datasets/demos/gsplats_6d_kidney_multichannel_toggles.luxar.zarr"
+      "dataset": "datasets/demos/gsplats_6d_kidney_multichannel_toggles.luxar.zarr",
+      "dimensionNav": {
+        "key": "1",
+        "steps": 1
+      }
     },
     {
       "id": "gsplats_3d_opencell_map4",
