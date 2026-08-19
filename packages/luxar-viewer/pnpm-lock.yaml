@@ -27,8 +27,8 @@ importers:
         specifier: ^1.54.0
         version: 1.54.0
       three:
-        specifier: ~0.184.0
-        version: 0.184.0
+        specifier: ~0.185.1
+        version: 0.185.1
       zarrita:
         specifier: ^0.7.4
         version: 0.7.4
@@ -1645,8 +1645,8 @@ packages:
     resolution: {integrity: sha512-uxc/zpqFg6x7C8vOE7lh6Lbda8eEL9zmVm/PLeTPBRhh1xCgdWaQ+J1CUieGpIfm2HdtsUpRv+HshiasBMcc6A==}
     engines: {node: '>=6'}
 
-  three@0.184.0:
-    resolution: {integrity: sha512-wtTRjG92pM5eUg/KuUnHsqSAlPM296brTOcLgMRqEeylYTh/CdtvKUvCyyCQTzFuStieWxvZb8mVTMvdPyUpxg==}
+  three@0.185.1:
+    resolution: {integrity: sha512-5aojFCXKwnjBRZvUnt3WFfEcvUJgkN5LlijRFN95hMy8WVkG4I0QNcJE+OuWvuJ0bOdStrbfXn0pkd6/QyiAlg==}
 
   tinybench@2.9.0:
     resolution: {integrity: sha512-0+DUvqWMValLmha6lr4kD8iAMK1HzV0/aKnCtWb9v9641TnP/MFb7Pc2bxoxQjTXAErryXVgUOfv2YqNllqGeg==}
@@ -3272,7 +3272,7 @@ snapshots:
 
   tapable@2.3.3: {}
 
-  three@0.184.0: {}
+  three@0.185.1: {}
 
   tinybench@2.9.0: {}
 

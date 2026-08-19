@@ -6,7 +6,7 @@
  * Because that is the sole path from the entry point to the `*-tsl` modules,
  * rolldown emits them — and the `three-webgpu` chunk they pull in — as a lazy
  * chunk instead of a static dependency of `index-*.js`. A WebGL session never
- * calls this, so it never pays for ~173 kB gzipped of the three.js node system
+ * calls this, so it never pays for ~182 kB gzipped of the three.js node system
  * (issue #1679).
  *
  * The nine TSL material classes deliberately keep their ordinary

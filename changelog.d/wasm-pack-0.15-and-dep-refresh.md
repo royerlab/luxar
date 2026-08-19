@@ -37,7 +37,8 @@ than the r184 ones do. Closing the skew by moving the runtime to r185 was
 attempted and reverted: it breaks the TSL/WebGPU path in four places, most
 starkly a gsplat pick surface that renders zero pixels. That is now tracked in
 its own issue, and the notes record both the reason for the skew and the reason
-the runtime stays put.
+the runtime stays put for now. (The blocker was root-caused and fixed shortly after,
+and the runtime has since moved to r185 — the notes describe the closed skew.)
 
 Finally, `make rebuild-viewer` stops advertising a "complete clean rebuild" it
 never performed. It clears the JS/TS artifacts but deliberately leaves

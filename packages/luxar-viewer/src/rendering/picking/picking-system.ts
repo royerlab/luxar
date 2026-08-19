@@ -616,7 +616,7 @@ export class PickingSystem {
 
     // Readback 5×5 pixels at cursor from cached buffer and vote.
     // The async readback path uses `readRenderTargetPixelsAsync`,
-    // available on both WebGLRenderer and WebGPURenderer in r184 —
+    // available on both WebGLRenderer and WebGPURenderer in r185 —
     // a uniform API that works on both backends. See
     // PICKING_DESIGN.md for the 1-frame-latency rationale.
     const result = await this.readbackAndVote();
@@ -768,7 +768,7 @@ export class PickingSystem {
    * Returns the winning PickResult or null if all pixels are background.
    *
    * Async readback (`readRenderTargetPixelsAsync`) works on both
-   * WebGLRenderer and WebGPURenderer in r184. The 1-frame latency
+   * WebGLRenderer and WebGPURenderer in r185. The 1-frame latency
    * on hover is documented in `PICKING_DESIGN.md`.
    */
   private async readbackAndVote(): Promise<PickResult | null> {

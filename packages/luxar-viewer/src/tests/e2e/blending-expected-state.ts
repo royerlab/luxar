@@ -8,7 +8,7 @@
  * expectation derive from the very code under test — and drag the THREE
  * dependency into the node-side test runner). Do not "DRY this up".
  *
- * THREE enum values (three/src/constants.js, verified against three@r184):
+ * THREE enum values (three/src/constants.js, re-verified against three@r185):
  *   blending:      NormalBlending=1, AdditiveBlending=2, CustomBlending=5
  *   blendEquation: AddEquation=100, MaxEquation=104
  *   blendSrc/Dst:  OneFactor=201, SrcAlphaFactor=204,
