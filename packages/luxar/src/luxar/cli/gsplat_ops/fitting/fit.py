@@ -21,6 +21,7 @@ from .fit_utils import (
     reject_rescaled_volume_refit,
     rescale_and_save,
     resolve_denoise_h,
+    resolve_floor_with_calibration,
     validate_and_build_recipe,
     warn_ignored_density_flags,
 )
@@ -347,7 +348,12 @@ def run_fit_volume(
     cal: Optional[Path] = typer.Option(
         None,
         "--cal",
-        help="Calibration JSON (gsplat cal) supplying the splats-per-feature density.",
+        help="Calibration JSON (gsplat cal) supplying the splats-per-feature "
+        "density. Under --tiling content it also supplies the background floor "
+        "when --floor is unset, so the fit runs on the intensity scale the "
+        "density was measured on. That level is ABSOLUTE: reusing one cal.json "
+        "across a timelapse applies the calibrated timepoint's pedestal to "
+        "every other one, where --floor auto re-estimates per volume.",
         rich_help_panel="Content-aware tiling",
     ),
     k_star_ref: Optional[int] = typer.Option(
@@ -591,6 +597,19 @@ def run_fit_volume(
             )
             resolved_tiling = _resolve_tiling_impl(
                 tiling, volume.shape, tile_size, _has_density
+            )
+
+            # A calibration records the floor it subtracted, and measured its
+            # density's feature_threshold on that scale — so consume it when the
+            # user said nothing about --floor, rather than silently fitting on a
+            # different scale than the density was calibrated for (#1175).
+            # ONLY under `--tiling content` (the resolver enforces it): that is
+            # the only mode where --cal is honoured at all, and
+            # `warn_ignored_density_flags` below says so out loud for every
+            # other mode. Adopting a floor from a flag the very next line calls
+            # ignored would be the CLI contradicting itself.
+            floor = resolve_floor_with_calibration(
+                cal, floor, config, tiling=resolved_tiling, verbose=verbose
             )
 
             # Pipeline ctx: the parameter state the extracted helpers consume.

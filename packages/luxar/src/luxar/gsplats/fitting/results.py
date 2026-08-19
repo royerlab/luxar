@@ -263,6 +263,38 @@ def lift_source_grid_stats(dest: dict[str, Any], passes: "Sequence[Any]") -> Non
             dest[key] = first[key]
 
 
+def lift_normalization_stats(
+    dest: dict[str, Any],
+    passes: "Sequence[Any]",
+    applied_floor: "float | None",
+) -> None:
+    """Record a multi-pass fit's normalization provenance on ``dest`` (#1175).
+
+    A progressive fit subtracts the pedestal from the volume ONCE up front and
+    then runs every pass with ``floor="none"``, so no pass's own stats knows the
+    level — the whole fit used to ship no record of the background it removed.
+    ``applied_floor`` is that level (``None`` when suppression was disabled or
+    refused) and is always stamped.
+
+    The bounds come from the FIRST pass only: it is the one that sees the volume
+    itself, while later passes normalize their own residual by its own extent,
+    so no single ``intensity_range`` describes them all. They were measured on
+    the already-subtracted array, so the level is added back — the block is in
+    the input volume's own units on every writer path, matching the single-pass
+    fitter where ``image_min`` IS the applied level.
+    """
+    dest["floor"] = applied_floor
+    if not passes:
+        return
+    first = getattr(passes[0], "stats", None) or {}
+    shift = float(applied_floor) if applied_floor is not None else 0.0
+    for key in ("image_min", "image_max"):
+        if key in first:
+            dest[key] = float(first[key]) + shift
+    if "intensity_range" in first:
+        dest["intensity_range"] = float(first["intensity_range"])
+
+
 def stamp_voxels_per_splat(stats: dict[str, Any], n_splats: int) -> None:
     """Quote density against the splats actually DELIVERED.
 
