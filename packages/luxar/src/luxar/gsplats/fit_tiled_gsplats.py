@@ -152,6 +152,27 @@ def _to_voxel_frame(merged: GSplatData, scale: Optional[Sequence[float]]) -> GSp
     )
 
 
+def _cull_keeping_measured_scores(data: GSplatData, retention: float) -> GSplatData:
+    """The fit's closing amplitude trim, keeping the score it just measured.
+
+    ``cull`` drops inherited reconstruction scores, because a score describes the
+    splat set it was taken on (#1600). This trim is the last step of the FIT
+    rather than a rewrite of a published artifact, and re-scoring would cost a
+    second full render of the volume — so the measurement is carried across, the
+    way it always was. See
+    :func:`luxar.gsplats._data.filtering.content_scoped_stats` for why a later
+    ``gsplat cull`` gets no such exemption.
+    """
+    from luxar.gsplats._data.filtering import (
+        measured_stats_snapshot,
+        restore_measured_stats,
+    )
+
+    measured = measured_stats_snapshot(data)
+    out = data.cull(method="cumulative", retention=retention)
+    return restore_measured_stats(out, measured)
+
+
 def _stamp_merged_quality(
     merged: GSplatData,
     volume: Any,
@@ -1124,8 +1145,10 @@ def merge_tile_results(
         # in `regions` is not the tile index the grid tree is labelled by.
         indexed = [(i, r) for i, r in enumerate(results) if r.n_splats > 0]
         if cull_retention is not None and 0 < cull_retention < 1.0:
+            # Each tile carries the score its own fit measured, and this is that
+            # fit's closing trim — so the measurement rides across it.
             indexed = [
-                (i, r.cull(method="cumulative", retention=cull_retention))
+                (i, _cull_keeping_measured_scores(r, cull_retention))
                 for i, r in indexed
             ]
             indexed = [(i, r) for i, r in indexed if r.n_splats > 0]
@@ -1209,7 +1232,7 @@ def merge_tile_results(
     # Post-fit cumulative culling on merged result
     if cull_retention is not None and 0 < cull_retention < 1.0 and merged.n_splats > 0:
         n_before = merged.n_splats
-        merged = merged.cull(method="cumulative", retention=cull_retention)
+        merged = _cull_keeping_measured_scores(merged, cull_retention)
         if verbose and merged.n_splats < n_before:
             aprint(
                 f"Post-fit culling: {n_before} -> {merged.n_splats} splats "

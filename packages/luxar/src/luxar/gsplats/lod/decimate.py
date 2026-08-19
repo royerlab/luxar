@@ -48,6 +48,7 @@ from typing import Literal, Optional, Sequence, Union
 import numpy as np
 from arbol import aprint, asection
 
+from luxar.gsplats._data.filtering import scrub_measured_stats
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.lod.additive import compute_additive_order
 from luxar.gsplats.lod.substitutive import merge_to_count
@@ -189,6 +190,25 @@ def decimate(
                 device=device,
                 coarsen_dims=coarsen_dims,
             )
+        # `_subset` / `merge_to_count` build from bare arrays, so a reduction used
+        # to arrive with NO provenance at all — dropping even the descriptive keys
+        # (`fitter_name`, `iterations`, `time_seconds`, the source grid) that no
+        # reduction makes false, and leaving the scrub below nothing to scrub.
+        # Carry the input's stats over first, so the rule below is what decides
+        # what survives instead of an accident of how the arrays were rebuilt.
+        #
+        # Then: BOTH families reach here having changed which splats the artifact
+        # holds (the one path that returns the input verbatim already returned
+        # above, so this is unconditional) — a prefix discards the tail, a merge
+        # replaces neighbours with representatives — so the fit's measured
+        # reconstruction scores, and the input's own cull/reduction record, no
+        # longer describe it. The merge family is the case a count-based predicate
+        # would miss: it lands on exactly the count the user asked for while every
+        # surviving splat is a new one. The region stamps are NOT touched: neither
+        # family is a spatial restriction, so the survivors still represent the
+        # whole fitted volume.
+        out = GSplatData.from_tree(out.tree, stats=dict(data.stats))
+        scrub_measured_stats(out)
         if verbose:
             aprint(f"Result: {out.n_splats:,} splats")
         return out

@@ -12,6 +12,10 @@ Tests for the Luxar CLI package.
 - `test_export.py` - Tests for the standalone scene export command
 - `test_network_simulation.py` - Tests for network simulation middleware and profiles
 - `test_gsplat_cli_extended.py` - Tests for gsplat subcommands
+- `test_gsplat_content_scoped_metrics.py` - Every `gsplat` subcommand (the
+  `batch-fit` group included) is classified as content-changing or not, and a
+  rewrite must drop (or keep) the fit's measured scores accordingly — through both
+  writers, and identically for a flat store and a partition
 
 ## Running
 

@@ -757,9 +757,20 @@ def fit_gaussian_splats(
 
     # Post-fit cumulative culling (keeps top cull_retention of amplitude)
     if cull_retention is not None and 0 < cull_retention < 1.0 and result.n_splats > 0:
+        from luxar.gsplats._data.filtering import (
+            measured_stats_snapshot,
+            restore_measured_stats,
+        )
+
         n_before = result.n_splats
         amp_before = float(np.sum(result.amplitudes))
+        # `cull` drops the measured scores (they describe the splat set they were
+        # taken on — see content_scoped_stats), but this trim is the last step of
+        # the FIT: the alternative to carrying the measurement over is a fit that
+        # publishes no PSNR at all, and re-scoring costs a second full render.
+        measured = measured_stats_snapshot(result)
         result = result.cull(method="cumulative", retention=cull_retention)
+        restore_measured_stats(result, measured)
         n_removed = n_before - result.n_splats
         amp_after = float(np.sum(result.amplitudes))
         amp_retained_pct = 100.0 * amp_after / amp_before if amp_before > 0 else 100.0
