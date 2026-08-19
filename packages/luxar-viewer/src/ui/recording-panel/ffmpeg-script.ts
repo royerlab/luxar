@@ -287,7 +287,20 @@ function buildGradeFilter(
     // then the linear floats must not go out untouched — that is the
     // 15 dB failure this chain exists to prevent — so still convert the
     // transfer, and let the script say the curve is missing.
-    return { filter: `format=gbrpf32le,${srgb},format=yuv420p`, exact: 'unknown-grade' };
+    //
+    // The clamp is part of that minimum. Without it the over-range
+    // floats are clipped after the RGB→YUV matrix instead, per channel
+    // and unevenly, which shifts hue rather than just crushing the
+    // highlight: a linear (100, 0.5, 0.5) pixel measured (255, 237, 7)
+    // through the unclamped chain against (254, 186, 186) with the
+    // clamp in front. In-range and negative values are unaffected.
+    const clamped = (channel: string): string => sat(`max(${channel},0)`);
+    return {
+      filter:
+        `format=gbrpf32le,geq=interpolation=nearest:r='${clamped('r(X,Y)')}':` +
+        `g='${clamped('g(X,Y)')}':b='${clamped('b(X,Y)')}',${srgb},format=yuv420p`,
+      exact: 'unknown-grade',
+    };
   }
 
   // `interpolation=nearest` is load-bearing, not a tuning knob. `geq`
@@ -391,12 +404,16 @@ export function generateFfmpegScript(opts: FfmpegScriptOptions): string {
     header.push(
       '#',
       '# These EXR frames are SCENE-LINEAR and ungraded: the capture keeps',
-      '# unclipped HDR by bypassing the viewer’s display transform. The',
-      '# filter chain below re-applies that transform so the video matches',
-      '# what you saw:'
+      '# unclipped HDR by bypassing the viewer’s display transform.'
     );
+    // Only promise the re-application when there is a grade to name —
+    // otherwise the sentence introduced a list that the unknown-grade
+    // branch then skipped, leaving a colon in front of nothing and
+    // contradicting its own NOTE a dozen lines further down.
     if (opts.grade) {
       header.push(
+        '# The filter chain below re-applies that transform so the video',
+        '# matches what you saw:',
         `#   exposure ${fmt(opts.grade.exposure)} EV, offset ${fmt(opts.grade.offset)}, ` +
           `gamma ${fmt(opts.grade.gamma)}`,
         `#   tone mapping: ${TONE_MAP_LABEL[opts.grade.toneMapping]}`
@@ -433,9 +450,11 @@ export function generateFfmpegScript(opts: FfmpegScriptOptions): string {
       );
     }
 
-    // Every chain except `unknown-grade` runs `geq`, so the cost warning
-    // belongs to all of them — AgX applies exposure/offset/gamma through
-    // the same per-pixel expression and is exactly as slow.
+    // The cost warning belongs to every chain that carries a curve —
+    // AgX applies exposure/offset/gamma through the same per-pixel
+    // expression and is exactly as slow. The `unknown-grade` chain runs
+    // `geq` too, but only a three-term clamp; the measurements below
+    // were taken on the full expressions and would overstate it.
     if (grade.exact !== 'unknown-grade') {
       header.push(
         '#',

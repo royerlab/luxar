@@ -184,18 +184,56 @@ describe('RecordingSession', () => {
       expect(camera.aspect).toBeCloseTo(3024 / 1700, 6);
     });
 
-    it('never resizes a tiny canvas to zero or a NaN aspect', () => {
+    it('never resizes a tiny canvas to zero', () => {
       // A canvas smaller than the alignment used to truncate to 0, giving
       // `resize(0, 0)` and `camera.aspect = 0/0`. Unreachable while every
       // target height was a preset ≥ 1080; Native makes it reachable.
-      const camera = withCanvas(8, 6);
+      const camera = withCanvas(2, 1);
       panel.session.saveRecordingState({
-        scaleResolution: { targetH: 6, alignEven: true },
+        scaleResolution: { targetH: 1, alignEven: true },
       });
       const [w, h] = mockSceneManager.postProcessing.resize.mock.calls[0];
-      expect(w).toBeGreaterThan(0);
-      expect(h).toBeGreaterThan(0);
+      expect(w).toBeGreaterThanOrEqual(2);
+      expect(h).toBeGreaterThanOrEqual(2);
       expect(Number.isFinite(camera.aspect)).toBe(true);
+    });
+
+    it('never resizes to a NaN aspect when the canvas has no height yet', () => {
+      // A hidden or not-yet-laid-out container reports height 0, so the
+      // aspect is Infinity — and `Infinity % 2` is NaN, which used to
+      // walk straight through the even-alignment arithmetic into
+      // `resize(NaN, …)` and `camera.aspect = NaN`.
+      const camera = withCanvas(1920, 0);
+      panel.session.saveRecordingState({
+        scaleResolution: { targetH: 1080, alignEven: true },
+      });
+      const [w, h] = mockSceneManager.postProcessing.resize.mock.calls[0];
+      expect(Number.isFinite(w)).toBe(true);
+      expect(Number.isFinite(h)).toBe(true);
+      expect(w).toBeGreaterThanOrEqual(2);
+      expect(h).toBeGreaterThanOrEqual(2);
+      expect(Number.isFinite(camera.aspect)).toBe(true);
+      // Square, not a two-pixel-wide sliver: the aspect itself falls back
+      // rather than being caught downstream by the alignment's own guard.
+      expect(camera.aspect).toBe(1);
+    });
+
+    it('keeps the SSAA-multiplied frame size even, not just the requested one', () => {
+      // The encoder sees the PHYSICAL frame: post-processing renders at
+      // ssaaMultiplier × the size handed to `resize`, and that is what
+      // lands in the ZIP. A 3024×1698 Native target at 1.5× captures at
+      // 4536×2547 — x265 rejects the odd height outright and writes a
+      // 0-byte file after the whole archive has been downloaded.
+      mockSceneManager.postProcessing.getEffectiveRenderScale = vi.fn().mockReturnValue(1.5);
+      withCanvas(3024, 1698);
+      panel.session.saveRecordingState({
+        scaleResolution: { targetH: 1698, alignEven: true },
+      });
+      const [w, h] = mockSceneManager.postProcessing.resize.mock.calls[0];
+      expect(w % 2).toBe(0);
+      expect(h % 2).toBe(0);
+      expect(Math.round(w * 1.5) % 2).toBe(0);
+      expect(Math.round(h * 1.5) % 2).toBe(0);
     });
 
     it('leaves the height alone when no alignment is asked for', () => {

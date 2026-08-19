@@ -130,8 +130,9 @@ describe('generateFfmpegScript', () => {
 
     it('warns about geq cost on the AgX chain too — it runs the same filter', () => {
       // AgX still applies exposure/offset/gamma and the clamp through geq,
-      // so it is exactly as slow as the exact curve. Only the no-grade
-      // fallback skips geq, and only it should skip the warning.
+      // so it is exactly as slow as the exact curve. The no-grade fallback
+      // runs geq as well, but only a three-term clamp — the measured
+      // figures were taken on the full expressions and would overstate it.
       const agx = generateFfmpegScript(
         opts({ frameExt: 'exr', grade: { toneMapping: 'agx', ...NEUTRAL_GRADE } })
       );
@@ -139,7 +140,6 @@ describe('generateFfmpegScript', () => {
       expect(agx).toContain('SLOW');
 
       const unreadable = generateFfmpegScript(opts({ frameExt: 'exr', grade: undefined }));
-      expect(unreadable).not.toContain('geq=');
       expect(unreadable).not.toContain('SLOW');
     });
 
@@ -252,21 +252,28 @@ describe('generateFfmpegScript', () => {
           grade: { toneMapping: 'aces', exposure: 1, offset: 0.01, gamma: 1.2 },
         })
       );
+      // Counting the occurrences would also count the commented-out
+      // H.264 stanza, so assert the property instead: every geq in the
+      // script, wherever it came from, samples with nearest.
       const geqs = script.match(/geq=[^:]*/g) ?? [];
-      // The shared `-vf` chain (H.265 and the commented H.264 alternate)
-      // plus the HDR10 stanza's EOG-only filter.
-      expect(geqs.length).toBe(3);
+      expect(geqs.length).toBeGreaterThan(0);
       expect(geqs.every((g) => g === 'geq=interpolation=nearest')).toBe(true);
     });
 
-    it('still sRGB-encodes (and says so) when the grade could not be read', () => {
+    it('still sRGB-encodes, clamps, and says so when the grade could not be read', () => {
       // A missing grade must not silently fall back to the uncorrected
       // chain — that is the 15 dB failure. Linear floats always get at
-      // least the transfer conversion.
+      // least the transfer conversion and the clamp: without the clamp
+      // the over-range values are clipped after the RGB→YUV matrix
+      // instead, which shifts hue (a linear (100, 0.5, 0.5) pixel comes
+      // out (255, 237, 7) rather than (254, 186, 186)).
       const script = generateFfmpegScript(opts({ frameExt: 'exr', grade: undefined }));
       expect(script).toContain('t=iec61966-2-1');
       expect(script).toContain('grade could not be read');
-      expect(script).not.toContain('geq=');
+      expect(script).toContain("r='clip(max(r(X,Y),0),0,1)'");
+      expect(script).toContain("b='clip(max(b(X,Y),0),0,1)'");
+      // …and the header must not promise a transform it then skips.
+      expect(script).not.toContain('what you saw:');
     });
 
     it('offers an HDR10 stanza that converts rather than just tagging', () => {
@@ -495,6 +502,11 @@ const REFERENCE_CURVES: Record<string, (c: RGB) => RGB> = {
   cineon: optimizedCineonToneMapping,
   aces: acesFilmicToneMapping,
   neutral: pbrNeutralToneMapping,
+  // AgX has no closed form for geq, so its curve deliberately degrades
+  // to the same bare clamp Linear is — which makes Linear the correct
+  // reference, and gives the branch numeric coverage rather than only
+  // the substring assertions above.
+  agx: linearToneMapping,
 };
 
 /** The mega-shader's EOG block, verbatim (shader.glsl.ts §4). */
@@ -510,6 +522,11 @@ function applyEogReference(colour: RGB, grade: Omit<GradeSettings, 'toneMapping'
  * 0.52/0.56/0.76 triples straddle Neutral's compression knee, and the
  * negative components catch an EOG clamp that is not emitted (Reinhard
  * maps −2 to +2, i.e. white where the viewer is black).
+ *
+ * The last two sit in Neutral's OFFSET knee (post-EOG channel minimum
+ * just above 0.08), one at each parity grade — without them the knee
+ * constant can be moved to 0.09 with every assertion still green, since
+ * no other colour has a minimum anywhere near it.
  */
 const PARITY_COLOURS: RGB[] = [
   [1, 0, 0],
@@ -527,6 +544,8 @@ const PARITY_COLOURS: RGB[] = [
   [-2, 0.4, 0.4],
   [0.4, -1, 0.4],
   [0.4, 0.4, -0.5],
+  [0.085, 0.4, 0.5], // min 0.085 — inside the knee at the default grade
+  [0.0086, 0.3, 0.45], // min → ≈0.0842 under exposure 1.5 / offset −0.02 / gamma 2.2
 ];
 
 const PARITY_GRADES: Array<{ label: string; grade: Omit<GradeSettings, 'toneMapping'> }> = [
@@ -543,7 +562,7 @@ describe.each(PARITY_GRADES)(
     // three's Cineon and PBR-Neutral do not end in a saturate; the module
     // clamps every curve because the frame is about to become 8-bit YUV,
     // where the clamp is a no-op. Compare against the clamped form.
-    it.each(['linear', 'reinhard', 'cineon', 'aces', 'neutral'] as const)(
+    it.each(['linear', 'reinhard', 'cineon', 'aces', 'neutral', 'agx'] as const)(
       '%s agrees per channel to < 1e-6',
       (toneMapping: ToneMapName) => {
         const expressions = emittedExpressions({ toneMapping, ...grade });

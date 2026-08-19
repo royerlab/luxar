@@ -565,6 +565,17 @@ export class PostProcessingManager {
     );
   }
 
+  /**
+   * Factor between the size passed to {@link resize} and the size the
+   * render targets — and therefore any frame read back from them —
+   * actually have. Exposed for callers that must control the PHYSICAL
+   * output dimensions, such as the recording session picking a capture
+   * resolution an encoder will accept.
+   */
+  getEffectiveRenderScale(): number {
+    return this.ssaaEnabled ? this.ssaaMultiplier : 1;
+  }
+
   setSSAAMultiplier(multiplier: number): void {
     multiplier = clamp(multiplier, 1.0, 4.0);
     if (this.ssaaMultiplier === multiplier) return;

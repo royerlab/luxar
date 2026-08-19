@@ -328,11 +328,12 @@ describe('OfflineCaptureStrategy', () => {
       // hands the encoder scene-linear floats, which is the dark,
       // colour-shifted video the chain exists to prevent.
       //
-      // It must NOT claim to have written out the viewer's own curve.
-      // This used to assert `geq=`, because an absent grade was replaced
-      // by a fabricated neutral one — same pixels as the unknown-grade
-      // chain, but a header saying the tone map had been reproduced when
-      // the viewer may well have been on ACES.
+      // It must NOT claim to have written out the viewer's own curve:
+      // an absent grade used to be replaced by a fabricated neutral one,
+      // whose header said the tone map had been reproduced when the
+      // viewer may well have been on ACES. The chain still clamps (a
+      // bare `geq`), since leaving over-range floats to be clipped after
+      // the RGB→YUV matrix shifts hue.
       const { sm } = makeSceneManager();
       const strat = new OfflineCaptureStrategy(sm, makeAnimController(), makeHooks());
 
@@ -344,7 +345,8 @@ describe('OfflineCaptureStrategy', () => {
       const script = ctx.generateFfmpegScript(10, 'exr');
       expect(script).toContain('t=iec61966-2-1');
       expect(script).toContain('grade could not be read');
-      expect(script).not.toContain('geq=');
+      expect(script).toContain("r='clip(max(r(X,Y),0),0,1)'");
+      expect(script).not.toContain('tone mapping:');
     });
 
     it('multiplies the canvas height by the native DPR for Native', async () => {

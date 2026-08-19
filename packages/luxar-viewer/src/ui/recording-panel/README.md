@@ -113,8 +113,11 @@ frame-by-frame capture for turntable + EXR-sequence modes:
 1. Show the confirmation dialog; bail if cancelled.
 2. Assign `sessionAbort` BEFORE any state mutation, so a `dispose()`
    during the early state-save / rAF window aborts cleanly.
-3. Hide panels, save renderer state, disable DPR, lock resize,
-   scale resolution to a 16-pixel-aligned multiple of the target.
+3. Hide panels, save renderer state, disable DPR, lock resize, scale
+   resolution to the target height aligned _down_ to an even value —
+   and, when SSAA is on, to one whose multiplied (physical) size is even
+   too, since that is the size the frames are written at and H.264/H.265
+   with yuv420p reject an odd dimension.
 4. Pause auto-rotate and compute per-frame angle for the turntable.
 5. Build the per-mode driver (`ImageSequenceDriver` /
    `ExrSequenceDriver` / `VideoModeDriver`).

@@ -24,6 +24,37 @@ import type { PanelStates, RecordingMode, RecordingOptions } from './types';
 
 export type CaptureKind = 'screenshot' | 'video' | 'offline';
 
+/** How many steps of 2 the encoder alignment may walk down before giving up. */
+const MAX_ALIGN_STEPS = 6;
+
+/**
+ * Align a capture dimension DOWN to an even value whose product with
+ * `scale` is also even.
+ *
+ * H.264/H.265 with yuv420p need even dimensions — x265 refuses an odd
+ * one outright ("height must be an integer multiple of the specified
+ * chroma subsampling") and WebCodecs H.264 silently falls back to
+ * another codec — but the encoder never sees the size requested here.
+ * SSAA renders at `scale` times it, and the frames written to disk are
+ * that physical size, so aligning the logical size alone still lets an
+ * odd frame through: a 3024×1698 native target at SSAA 1.5× captures at
+ * 4536×2547. The multiplier is a free-form float (a scene's
+ * `viewer_config` only clamps it to [1, 8]), so no fixed alignment
+ * covers it — walk down from the even floor instead, and settle for the
+ * plain even floor rather than shrinking the frame any further.
+ */
+function alignForEncoder(value: number, scale: number): number {
+  if (!Number.isFinite(value)) return 2;
+  const evenFloor = Math.max(2, value - (value % 2));
+  if (!Number.isFinite(scale) || scale <= 0) return evenFloor;
+  for (let i = 0; i < MAX_ALIGN_STEPS; i++) {
+    const candidate = evenFloor - 2 * i;
+    if (candidate < 2) break;
+    if (Math.round(candidate * scale) % 2 === 0) return candidate;
+  }
+  return evenFloor;
+}
+
 export interface SavedRecordingState {
   dprEnabled: boolean;
   dpr: number;
@@ -173,18 +204,23 @@ export class RecordingSession {
     if (options.scaleResolution) {
       this.savedRecordingState.rendererSize = { width: currentSize.x, height: currentSize.y };
       const { targetH, alignEven } = options.scaleResolution;
-      const aspect = currentSize.x / currentSize.y;
+      // A canvas with no height yet (hidden container, pre-layout) would
+      // make the aspect Infinity or NaN and carry it into the render
+      // target and the camera. Square is a harmless stand-in.
+      const rawAspect = currentSize.x / currentSize.y;
+      const aspect = currentSize.y > 0 && Number.isFinite(rawAspect) ? rawAspect : 1;
       // Align the HEIGHT first, then derive the width from the aligned
       // height, so the output aspect still tracks the source. Deriving
       // the width from the requested height and then truncating both
       // independently widened the frame relative to what the user
       // framed. Even, not a multiple of 16: H.264/H.265 with yuv420p
       // need even dimensions and the encoder pads to its own macroblock
-      // size — the floor of 2 keeps a canvas smaller than the alignment
-      // from collapsing to a zero-sized target (and a NaN camera aspect).
-      const h = alignEven ? Math.max(2, targetH - (targetH % 2)) : targetH;
+      // size. `alignForEncoder` also folds in the SSAA scale, since the
+      // frames on disk are the physical size, not this one.
+      const scale = this.sceneManager.postProcessing.getEffectiveRenderScale();
+      const h = alignEven ? alignForEncoder(targetH, scale) : targetH;
       const wRaw = Math.round(h * aspect);
-      const w = alignEven ? Math.max(2, wRaw - (wRaw % 2)) : wRaw;
+      const w = alignEven ? alignForEncoder(wRaw, scale) : wRaw;
       renderer.setPixelRatio(1);
       this.sceneManager.postProcessing.resize(w, h);
       const canvas = renderer.domElement;
