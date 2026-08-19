@@ -328,6 +328,7 @@ describe('runInitPipeline', () => {
           renderer: 'webgpu',
           webgpuForceWebGL: false,
           perfTimestamp: true,
+          blendWarmup: false,
           factories: factories as never,
         },
         events: new EventGroup(),
@@ -343,6 +344,7 @@ describe('runInitPipeline', () => {
         renderer: 'webgpu',
         webgpuForceWebGL: false,
         perfTimestamp: true,
+        blendWarmup: false,
       });
     });
   });

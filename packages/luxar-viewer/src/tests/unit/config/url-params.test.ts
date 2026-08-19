@@ -21,6 +21,7 @@ describe('readUrlParams', () => {
       clearCache: false,
       lodFade: true, // LOD cross-fade is ON by default (opt-out via ?no-lod-fade)
       lodEnergyComp: true, // streaming brightness compensation is ON (opt-out via ?no-lod-energy)
+      blendWarmup: true, // WebGL blend-variant warm-up is ON by default (opt-out via ?no-blend-warmup)
       depthSort: true, // gsplat depth sorting is ON by default (opt-out via ?depthSort=0)
       lodFinest: false, // capture-quality force-finest is OFF by default (opt-in via ?lod-finest)
       noPrefetch: false,
@@ -73,6 +74,12 @@ describe('readUrlParams', () => {
     expect(readUrlParams('').lodFinest).toBe(false);
     expect(readUrlParams('?debug').lodFinest).toBe(false);
     expect(readUrlParams('?lod-finest').lodFinest).toBe(true);
+  });
+
+  it('blendWarmup defaults ON and is disabled only by ?no-blend-warmup', () => {
+    expect(readUrlParams('').blendWarmup).toBe(true);
+    expect(readUrlParams('?debug').blendWarmup).toBe(true);
+    expect(readUrlParams('?no-blend-warmup').blendWarmup).toBe(false);
   });
 
   it('parses dpr as a positive float, rejecting zero/negative/non-numeric', () => {

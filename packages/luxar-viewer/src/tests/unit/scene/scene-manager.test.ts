@@ -348,6 +348,11 @@ const notifierMocks = vi.hoisted(() => ({
   hideLoading: vi.fn(),
   error: vi.fn(),
 }));
+const blendWarmupMocks = vi.hoisted(() => ({
+  configure: vi.fn(),
+  clear: vi.fn(),
+  warmScene: vi.fn(),
+}));
 vi.mock('../../../utils/cross-layer/notifier', () => ({
   notifier: {
     showLoading: notifierMocks.showLoading,
@@ -364,6 +369,16 @@ vi.mock('../../../utils/cross-layer/notifier', () => ({
 const mockShowLoading = notifierMocks.showLoading;
 const mockHideLoading = notifierMocks.hideLoading;
 const mockShowError = notifierMocks.error;
+
+vi.mock('../../../rendering/webgl-blend-warmup', () => ({
+  configureBlendModeProgramWarmup: blendWarmupMocks.configure,
+  clearBlendModeProgramWarmup: blendWarmupMocks.clear,
+  warmSceneBlendModePrograms: blendWarmupMocks.warmScene,
+}));
+
+vi.mock('../../../rendering/tsl/load', () => ({
+  loadTslMaterials: vi.fn().mockResolvedValue(undefined),
+}));
 
 vi.mock('../../../utils/hdr/hdr-detection', () => ({
   detectDisplayCapabilities: vi.fn(() => ({
@@ -487,6 +502,46 @@ describe('SceneManager', () => {
       expect(width).toBe(window.innerWidth);
       expect(height).toBe(window.innerHeight);
     });
+
+    it('keeps WebGL blend warm-up disabled on the WebGPU backend', async () => {
+      const webgpuRenderer = Object.assign(new THREE.WebGLRenderer(), {
+        isWebGLRenderer: false,
+      });
+      vi.mocked(mockedCreateWebGPURenderer).mockResolvedValueOnce({
+        fallback: false,
+        renderer: webgpuRenderer as never,
+        capabilities: {
+          apiSurface: 'webgpu',
+          framebufferYDown: true,
+          hdr: {
+            p3Gamut: false,
+            rec2020Gamut: false,
+            hdr: false,
+            deepColor: false,
+            floatTextures: false,
+            colorDepth: { red: 8, green: 8, blue: 8 },
+            recommendedColorSpace: 'srgb',
+          },
+          maxMSAASamples: 0,
+          maxTextureSize: 2048,
+          pointSizeRange: [1, 1024],
+          readBackbufferPixels: async () => ({
+            pixels: new Uint8Array(0),
+            width: 0,
+            height: 0,
+          }),
+        },
+      });
+
+      await sceneManager.init({ canvas: mockCanvas as any, renderer: 'webgpu' });
+
+      expect(blendWarmupMocks.configure).toHaveBeenCalledWith({
+        enabled: false,
+        renderer: null,
+        camera: sceneManager.camera,
+        targetScene: sceneManager.scene,
+      });
+    });
   });
 
   describe('resizeToCanvas (embedding-safe resize)', () => {
@@ -587,6 +642,14 @@ describe('SceneManager', () => {
       expect(mockShowLoadingIndicator).toHaveBeenCalled();
       expect(mockLoadScene).toHaveBeenCalledWith(testUrl, undefined);
       expect(mockHideLoadingIndicator).toHaveBeenCalled();
+    });
+
+    it('returns blend warm completion for the loaded scene root', () => {
+      const completion = Promise.resolve();
+      blendWarmupMocks.warmScene.mockReturnValueOnce(completion);
+
+      expect(sceneManager.warmBlendModePrograms()).toBe(completion);
+      expect(blendWarmupMocks.warmScene).toHaveBeenCalledExactlyOnceWith(sceneManager.scene);
     });
 
     it('should clear existing scene before loading new one', async () => {

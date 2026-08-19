@@ -148,6 +148,12 @@ export interface UrlParams {
    */
   lodFinest: boolean;
   /**
+   * WebGL-only blend warm-up. **On by default**; pass `?no-blend-warmup`
+   * to disable the off-interaction-path pre-linking of reachable
+   * blend-mode program variants.
+   */
+  blendWarmup: boolean;
+  /**
    * Whether gsplat depth sorting is enabled (depth-sorting Phases 2-3): the
    * async worker sort that keeps `normal`-mode splats composited back-to-front,
    * plus the per-frame camera-motion re-sort scheduler. **On by default**; pass
@@ -284,6 +290,7 @@ export function readUrlParams(search?: string): UrlParams {
     lodFade: !params.has('no-lod-fade'),
     lodEnergyComp: !params.has('no-lod-energy'),
     lodFinest: params.has('lod-finest'),
+    blendWarmup: !params.has('no-blend-warmup'),
     depthSort: parseEnabledFlag(params.get('depthSort')),
     noPrefetch: params.has('no-prefetch'),
     prefetchDebug: params.has('prefetch-debug'),
