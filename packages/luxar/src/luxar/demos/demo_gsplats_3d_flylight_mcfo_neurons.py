@@ -293,6 +293,7 @@ DEMO_META = {
     "citation": {
         "short": "Mais et al. 2024",
         "doi": "10.5281/zenodo.10875063",
+        "license": "CC BY 4.0",
     },
 }
 
