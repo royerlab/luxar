@@ -209,9 +209,10 @@ describe('RecordingSession', () => {
 
     it('never resizes to a NaN aspect when the canvas has no height yet', () => {
       // A hidden or not-yet-laid-out container reports height 0, so the
-      // aspect is Infinity — and `Infinity % 2` is NaN, which used to
-      // walk straight through the even-alignment arithmetic into
-      // `resize(NaN, …)` and `camera.aspect = NaN`.
+      // aspect is Infinity. The old 16-alignment masked that with a
+      // bitwise AND (`Infinity & ~15` is 0), giving `resize(0, 1072)` and
+      // a zero camera aspect; arithmetic alignment carries the Infinity
+      // instead, so the aspect has to fall back on its own.
       const camera = withCanvas(1920, 0);
       panel.session.saveRecordingState({
         scaleResolution: { targetH: 1080, alignEven: true },
