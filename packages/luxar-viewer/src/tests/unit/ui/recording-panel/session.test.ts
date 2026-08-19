@@ -145,13 +145,22 @@ describe('RecordingSession', () => {
 
   describe('capture-resolution alignment', () => {
     /**
-     * Point the mock at a canvas of the given DEVICE size and give it the
-     * two collaborators the scale-resolution branch touches: a real
+     * Point the mock at a viewport of the given DISPLAY size and give it
+     * the two collaborators the scale-resolution branch touches: a real
      * PerspectiveCamera (the branch is gated on `instanceof`) and the
      * material refresh.
+     *
+     * `renderer.getSize()` is set to the SSAA-multiplied size the real
+     * renderer would report, so a session that reads the renderer
+     * instead of the post-processing display size is visible here rather
+     * than passing on a coincidence.
      */
     function withCanvas(width: number, height: number): THREE.PerspectiveCamera {
-      mockSceneManager.renderer.getSize = vi.fn().mockReturnValue({ x: width, y: height });
+      const scale = mockSceneManager.postProcessing.getEffectiveRenderScale();
+      mockSceneManager.postProcessing.getDisplaySize = vi.fn().mockReturnValue({ width, height });
+      mockSceneManager.renderer.getSize = vi
+        .fn()
+        .mockReturnValue({ x: Math.round(width * scale), y: Math.round(height * scale) });
       mockSceneManager.updateMaterialsForCurrentCamera = vi.fn();
       const camera = new THREE.PerspectiveCamera(50, width / height, 0.1, 1000);
       mockSceneManager.camera = camera;
@@ -218,22 +227,78 @@ describe('RecordingSession', () => {
       expect(camera.aspect).toBe(1);
     });
 
-    it('keeps the SSAA-multiplied frame size even, not just the requested one', () => {
+    it('keeps the SSAA-multiplied frame size even, and close to what was asked for', () => {
       // The encoder sees the PHYSICAL frame: post-processing renders at
       // ssaaMultiplier × the size handed to `resize`, and that is what
       // lands in the ZIP. A 3024×1698 Native target at 1.5× captures at
       // 4536×2547 — x265 rejects the odd height outright and writes a
       // 0-byte file after the whole archive has been downloaded.
+      //
+      // Only the PRODUCT has to be even; the requested size never
+      // reaches an encoder. Requiring both made the walk step by the
+      // multiplier's denominator and give up on perfectly legal scales.
       mockSceneManager.postProcessing.getEffectiveRenderScale = vi.fn().mockReturnValue(1.5);
       withCanvas(3024, 1698);
       panel.session.saveRecordingState({
         scaleResolution: { targetH: 1698, alignEven: true },
       });
       const [w, h] = mockSceneManager.postProcessing.resize.mock.calls[0];
-      expect(w % 2).toBe(0);
-      expect(h % 2).toBe(0);
       expect(Math.round(w * 1.5) % 2).toBe(0);
       expect(Math.round(h * 1.5) % 2).toBe(0);
+      // Alignment shrinks, never grows, and only by a pixel or two —
+      // parity alone would also be satisfied by a frame 1.5× too big.
+      expect(h).toBeLessThanOrEqual(1698);
+      expect(h).toBeGreaterThan(1698 - 6);
+      expect(w).toBeLessThanOrEqual(3024);
+      expect(w).toBeGreaterThan(3024 - 6);
+    });
+
+    it('finds an even physical frame at a scale where even-only candidates cannot', () => {
+      // At a 1.05× multiplier the nearest even height whose product is
+      // also even is six even steps down from 1700 — past the cap — so a
+      // walk restricted to even candidates gives up and ships 1700 →
+      // 1785, an odd physical height x265 refuses. Stepping by one finds
+      // 1699 → 1784 on the first try.
+      mockSceneManager.postProcessing.getEffectiveRenderScale = vi.fn().mockReturnValue(1.05);
+      withCanvas(3024, 1700);
+      panel.session.saveRecordingState({
+        scaleResolution: { targetH: 1700, alignEven: true },
+      });
+      const [w, h] = mockSceneManager.postProcessing.resize.mock.calls[0];
+      expect(Math.round(h * 1.05) % 2).toBe(0);
+      expect(Math.round(w * 1.05) % 2).toBe(0);
+      expect(h).toBe(1699);
+    });
+
+    it('aligns the DERIVED width too, not just the height', () => {
+      // The width comes from the aligned height × the source aspect, so
+      // it can land odd even when the height is even: a 3024×1698
+      // viewport recording the 1080p preset derives 1923.
+      withCanvas(3024, 1698);
+      panel.session.saveRecordingState({
+        scaleResolution: { targetH: 1080, alignEven: true },
+      });
+      const [w, h] = mockSceneManager.postProcessing.resize.mock.calls[0];
+      expect(h).toBe(1080);
+      expect(w).toBe(1922);
+    });
+
+    it('restores the DISPLAY size after a capture, not the SSAA-multiplied one', () => {
+      // `renderer.getSize()` reports the SSAA-multiplied size (post-
+      // processing hands the renderer `display × multiplier` and puts
+      // the display size on the canvas CSS), while `resize()` takes the
+      // display size and applies the multiplier itself. Snapshotting the
+      // renderer's number therefore grew the viewport by the multiplier
+      // on every capture, and compounded on the next one.
+      mockSceneManager.postProcessing.getEffectiveRenderScale = vi.fn().mockReturnValue(2);
+      withCanvas(1512, 850);
+      panel.session.saveRecordingState({
+        scaleResolution: { targetH: 1700, alignEven: true },
+      });
+      panel.session.restoreRecordingState();
+
+      const calls = mockSceneManager.postProcessing.resize.mock.calls;
+      expect(calls.at(-1)).toEqual([1512, 850]);
     });
 
     it('leaves the height alone when no alignment is asked for', () => {

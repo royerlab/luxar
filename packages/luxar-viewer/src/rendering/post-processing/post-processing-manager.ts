@@ -566,14 +566,31 @@ export class PostProcessingManager {
   }
 
   /**
-   * Factor between the size passed to {@link resize} and the size the
-   * render targets — and therefore any frame read back from them —
-   * actually have. Exposed for callers that must control the PHYSICAL
-   * output dimensions, such as the recording session picking a capture
-   * resolution an encoder will accept.
+   * The SSAA factor sitting between the size passed to {@link resize}
+   * and the size the render targets have. It EXCLUDES the pixel ratio:
+   * the targets are `display × this × renderer.getPixelRatio()`, so a
+   * caller that wants true physical dimensions has to fold the DPR in
+   * itself. Exposed for callers that must control the PHYSICAL output
+   * dimensions, such as the recording session picking a capture
+   * resolution an encoder will accept (it forces the pixel ratio to 1
+   * first, which is what makes this factor sufficient there).
    */
   getEffectiveRenderScale(): number {
     return this.ssaaEnabled ? this.ssaaMultiplier : 1;
+  }
+
+  /**
+   * The display (CSS-pixel) size the pipeline is configured for — i.e.
+   * exactly what {@link resize} was last given, and what it takes back.
+   *
+   * This is NOT `renderer.getSize()`. `reallocateForSize` hands the
+   * renderer the SSAA-MULTIPLIED size and stamps the display size on
+   * the canvas CSS instead, so under SSAA the renderer reports
+   * `display × ssaaMultiplier`. Feeding that back into {@link resize}
+   * multiplies by the SSAA factor a second time.
+   */
+  getDisplaySize(): { width: number; height: number } {
+    return { ...this.renderSize };
   }
 
   setSSAAMultiplier(multiplier: number): void {

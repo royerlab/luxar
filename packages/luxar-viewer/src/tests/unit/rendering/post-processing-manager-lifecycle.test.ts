@@ -485,3 +485,45 @@ describe('PostProcessingManager → deferred-rebuild depth', () => {
     mgr.dispose();
   });
 });
+
+describe('PostProcessingManager → size accessors', () => {
+  beforeEach(() => {
+    materialManager.setCaps(mockCaps('webgl2'));
+  });
+
+  // The recording session saves a size and later hands it back to
+  // resize(); the offline capture derives a "Native" frame height from
+  // it. Both need the DISPLAY size, and `renderer.getSize()` is not it —
+  // reallocateForSize gives the renderer the SSAA-multiplied size and
+  // puts the display size on the canvas CSS instead.
+  it('reports the size resize() was given, not the SSAA-multiplied one', () => {
+    const mgr = makeManager({ width: 1512, height: 850 });
+    mgr.setSSAAMultiplier(2);
+    mgr.setSSAAEnabled(true);
+
+    expect(mgr.getDisplaySize()).toEqual({ width: 1512, height: 850 });
+    expect(mgr.getEffectiveRenderScale()).toBe(2);
+
+    mgr.resize(1920, 1080);
+    expect(mgr.getDisplaySize()).toEqual({ width: 1920, height: 1080 });
+
+    mgr.dispose();
+  });
+
+  it('hands out a copy, so a caller cannot resize the pipeline by mutation', () => {
+    const mgr = makeManager({ width: 64, height: 64 });
+    const size = mgr.getDisplaySize();
+    size.width = 4096;
+    expect(mgr.getDisplaySize().width).toBe(64);
+
+    mgr.dispose();
+  });
+
+  it('excludes SSAA from the scale when SSAA is off', () => {
+    const mgr = makeManager({ width: 64, height: 64 });
+    mgr.setSSAAMultiplier(4);
+    expect(mgr.getEffectiveRenderScale()).toBe(1);
+
+    mgr.dispose();
+  });
+});

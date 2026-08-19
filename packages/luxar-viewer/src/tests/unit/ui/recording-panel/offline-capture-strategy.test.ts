@@ -127,7 +127,8 @@ function makeSession(overrides: Record<string, unknown> = {}): any {
 }
 
 function makeSceneManager(
-  nativeSize: { width: number; height: number } = { width: 1280, height: 720 }
+  nativeSize: { width: number; height: number } = { width: 1280, height: 720 },
+  ssaaScale = 1
 ): {
   sm: any;
   orbitControls: { applyOrbitRotation: ReturnType<typeof vi.fn> };
@@ -137,11 +138,19 @@ function makeSceneManager(
   });
   const sm = {
     controls: { getControls: vi.fn(() => orbitControls) },
-    // The strategy reads the renderer's logical size to honour the
-    // panel's "Native" resolution option.
+    // The strategy reads the DISPLAY size to honour the panel's "Native"
+    // resolution option. `renderer.getSize()` reports the SSAA-multiplied
+    // size instead, so the two disagree whenever SSAA is on — the double
+    // models that rather than returning the same number twice.
+    postProcessing: {
+      getDisplaySize: vi.fn(() => ({ ...nativeSize })),
+    },
     renderer: {
       getSize: vi.fn((target: { set: (x: number, y: number) => unknown }) => {
-        target.set(nativeSize.width, nativeSize.height);
+        target.set(
+          Math.round(nativeSize.width * ssaaScale),
+          Math.round(nativeSize.height * ssaaScale)
+        );
         return target;
       }),
     },
@@ -323,7 +332,8 @@ describe('OfflineCaptureStrategy', () => {
     });
 
     it('still converts EXR frames when the renderer cannot report a grade', async () => {
-      // No `postProcessing` on the scene manager → the grade is unknown.
+      // No `getGradeSettings` on the post-processing manager → the grade
+      // is unknown.
       // The script must still sRGB-encode: skipping the colour chain
       // hands the encoder scene-linear floats, which is the dark,
       // colour-shifted video the chain exists to prevent.
@@ -347,6 +357,26 @@ describe('OfflineCaptureStrategy', () => {
       expect(script).toContain('grade could not be read');
       expect(script).toContain("r='clip(max(r(X,Y),0),0,1)'");
       expect(script).not.toContain('tone mapping:');
+    });
+
+    it('asks for the DISPLAY height under SSAA, not the multiplied one', async () => {
+      // Post-processing hands the renderer `display × multiplier`, so
+      // `renderer.getSize()` on a 1512×850 viewport at 2× reports 1700 —
+      // and `saveRecordingState` multiplies by the SSAA factor AGAIN.
+      // Reading the renderer therefore squared the multiplier: 3400
+      // requested, a 12096×6800 render target, ~1.3 GB per EXR readback
+      // and a lost context part-way through the capture.
+      const { sm } = makeSceneManager({ width: 1512, height: 850 }, 2);
+      const session = makeSession({
+        adaptiveDPRManager: { getNativeDPR: vi.fn(() => 2) },
+      });
+      const strat = new OfflineCaptureStrategy(sm, makeAnimController(), makeHooks());
+
+      await strat.run(makeOpts({ videoResolution: 0 }), 'turntable', session);
+
+      expect(session.saveRecordingState).toHaveBeenCalledWith(
+        expect.objectContaining({ scaleResolution: { targetH: 1700, alignEven: true } })
+      );
     });
 
     it('multiplies the canvas height by the native DPR for Native', async () => {
@@ -406,9 +436,12 @@ describe('OfflineCaptureStrategy', () => {
       // silently bakes the WRONG curve into the encode — and reads as a
       // plausible result, since Neutral is a gentle curve.
       const { sm } = makeSceneManager();
-      sm.postProcessing = {
-        getGradeSettings: () => ({ toneMapping, exposure: 0, offset: 0, gamma: 1 }),
-      };
+      sm.postProcessing.getGradeSettings = () => ({
+        toneMapping,
+        exposure: 0,
+        offset: 0,
+        gamma: 1,
+      });
       const strat = new OfflineCaptureStrategy(sm, makeAnimController(), makeHooks());
 
       await strat.run(makeOpts({ outputFormat: 'exr' }), 'turntable', makeSession());

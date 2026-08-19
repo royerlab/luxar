@@ -10,9 +10,15 @@
  *   - the renderer's GL canvas (only needed for the HTML branch's
  *     coordinate mapping).
  *
- * Behavior is identical to the inline original: same blend-mode map,
- * same per-overlay save/restore, same anchor offset rules, same
- * SVG foreignObject rasterization for HTML overlays.
+ * Text and image overlays are drawn with canvas-2D primitives (one
+ * blend-mode map, one save/restore per overlay, the shared anchor
+ * offset rules); HTML overlays are rasterized by wrapping the live node
+ * in an `<svg><foreignObject>` data URL. That wrapper is parsed as XML,
+ * so the markup is XML-serialized rather than read off `outerHTML` —
+ * HTML serialization leaves void elements such as `<br>` unclosed,
+ * which is fatal there. Wrapped text follows the DOM's own
+ * `white-space: normal` layout, where a `\n` is a space and not a
+ * break.
  *
  * @module ui/recording-panel/overlay-compositor
  */

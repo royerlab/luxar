@@ -153,6 +153,18 @@ describe('generateFfmpegScript', () => {
       expect(script).toContain('PNG/WebP sequence instead');
       // Still sRGB-encoded — linear floats must not go straight out.
       expect(script).toContain('t=iec61966-2-1');
+      // And the header must not promise a match six lines above the NOTE
+      // that says the curve is gone. The grade is still worth listing,
+      // so the tone-mapping line stays.
+      expect(script).not.toContain('what you saw:');
+      expect(script).toContain('tone mapping: AgX');
+    });
+
+    it('promises a match only when the curve is really reproduced', () => {
+      const aces = generateFfmpegScript(
+        opts({ frameExt: 'exr', grade: { toneMapping: 'aces', ...NEUTRAL_GRADE } })
+      );
+      expect(aces).toContain('what you saw:');
     });
 
     it('still applies the grade under AgX, only the curve falls back', () => {
@@ -237,6 +249,17 @@ describe('generateFfmpegScript', () => {
       expect(script).toContain('slice-threaded');
       expect(script).toContain('PNG/WebP sequence instead');
       expect(script).not.toContain('one CPU core');
+    });
+
+    it('tells geq to sample with nearest interpolation on the unknown-grade chain too', () => {
+      // That chain builds its own `geq` from a separate branch, so the
+      // graded chain's guarantee says nothing about it — and its frames
+      // have exactly the same duplicated last column and bottom row if
+      // the default bilinear sampling is left in place.
+      const script = generateFfmpegScript(opts({ frameExt: 'exr', grade: undefined }));
+      const geqs = script.match(/geq=[^:]*/g) ?? [];
+      expect(geqs.length).toBeGreaterThan(0);
+      expect(geqs.every((g) => g === 'geq=interpolation=nearest')).toBe(true);
     });
 
     it('tells geq to sample with nearest interpolation, in both chains', () => {

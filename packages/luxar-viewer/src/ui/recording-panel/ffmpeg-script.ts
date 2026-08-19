@@ -21,7 +21,9 @@
  * curves are not the same functions. Measured against the viewer's own
  * PNG of the same frame (PSNR, higher is closer):
  *
- *   viewer ACES      exact geq 40.3 dB · tonemap=hable 16.0 · nothing 23.8
+ *   viewer ACES      exact geq 38.2 dB · tonemap=hable 16.0 · nothing 23.8
+ *                    (the same maths with PNG out, i.e. no codec, tops
+ *                    out at 40.3 dB — that is the ceiling, not this chain)
  *   viewer Reinhard  tonemap=reinhard 34.8 dB, and the exact expression
  *                    measured closer still
  *
@@ -406,14 +408,24 @@ export function generateFfmpegScript(opts: FfmpegScriptOptions): string {
       '# These EXR frames are SCENE-LINEAR and ungraded: the capture keeps',
       '# unclipped HDR by bypassing the viewer’s display transform.'
     );
-    // Only promise the re-application when there is a grade to name —
-    // otherwise the sentence introduced a list that the unknown-grade
-    // branch then skipped, leaving a colon in front of nothing and
-    // contradicting its own NOTE a dozen lines further down.
+    // List the grade whenever it is known — it is worth reading even
+    // when the curve cannot be reproduced — but only promise a MATCH
+    // when the chain really carries the curve. Gating the whole block on
+    // `opts.grade` alone let AgX announce that the video matches what
+    // you saw six lines above the NOTE saying its look is not
+    // reproduced. The unknown-grade branch names nothing at all, which
+    // would leave a colon in front of an empty list.
     if (opts.grade) {
       header.push(
-        '# The filter chain below re-applies that transform so the video',
-        '# matches what you saw:',
+        ...(grade.exact === 'exact'
+          ? [
+              '# The filter chain below re-applies that transform so the video',
+              '# matches what you saw:',
+            ]
+          : [
+              '# The filter chain below re-applies the grade that was in',
+              '# effect (the curve is a separate matter — see the NOTE):',
+            ]),
         `#   exposure ${fmt(opts.grade.exposure)} EV, offset ${fmt(opts.grade.offset)}, ` +
           `gamma ${fmt(opts.grade.gamma)}`,
         `#   tone mapping: ${TONE_MAP_LABEL[opts.grade.toneMapping]}`
@@ -460,11 +472,11 @@ export function generateFfmpegScript(opts: FfmpegScriptOptions): string {
         '#',
         '# SLOW: `geq` evaluates that expression per pixel. Measured CPU',
         '# time ~2.9 s/frame at 720p, ~7.5 s at 1080p and ~35 s at 4K. The',
-        '# filter is slice-threaded, so the wall clock is roughly that',
-        '# divided by the cores you have — ~0.8 s/frame at 1080p on 16',
-        '# threads — against ~0.02 s/frame for a plain mux. On a many-core',
-        `# machine these ${frameCount} frames are minutes of encoding; on a`,
-        '# small one, budget rather more. Faster options, in order of',
+        '# filter is slice-threaded, so the wall clock is shorter but not',
+        '# proportionally shorter: the 1080p chain measured ~0.73 s/frame',
+        '# on 16 threads, against ~0.02 s/frame for a plain mux. On a',
+        `# many-core machine these ${frameCount} frames are minutes of encoding;`,
+        '# on a small one, budget rather more. Faster options, in order of',
         '# convenience:',
         '#   1. Record a PNG/WebP sequence instead — those frames come out',
         '#      of the viewer already graded, so the encode is a plain mux',

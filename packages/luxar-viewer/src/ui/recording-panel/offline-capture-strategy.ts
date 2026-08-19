@@ -212,15 +212,22 @@ export class OfflineCaptureStrategy implements CaptureStrategy {
     //
     // `videoResolution === 0` is the panel's "Native" option, documented
     // in its tooltip as "current canvas size" — so capture at the size
-    // the canvas actually has (logical size × native DPR, which is what
-    // the real-time path records once adaptive DPR is switched off)
-    // rather than silently forcing 1080. Forcing it downscaled every
-    // Retina/4K capture and, because it changed the capture-to-CSS pixel
-    // ratio, rescaled the composited overlays with it.
-    const logicalH = this.sceneManager.renderer.getSize(new THREE.Vector2()).y;
+    // the canvas actually has (display size × native DPR) rather than
+    // silently forcing 1080. Forcing it downscaled every Retina/4K
+    // capture and, because it changed the capture-to-CSS pixel ratio,
+    // rescaled the composited overlays with it.
+    //
+    // The display size comes from post-processing, NOT from
+    // `renderer.getSize()`: the renderer is handed the SSAA-multiplied
+    // size, so under SSAA it reports `display × multiplier` and asking
+    // to render THAT squares the multiplier (2× on a 3024×1700 canvas
+    // asked for a 12096×6800 target). `saveRecordingState` re-applies
+    // the multiplier itself, so the frames on disk still carry SSAA —
+    // which is what the real-time path's canvas backbuffer includes too.
+    const displayH = this.sceneManager.postProcessing.getDisplaySize().height;
     const nativeDPR = session.adaptiveDPRManager?.getNativeDPR() ?? window.devicePixelRatio ?? 1;
     const targetH =
-      opts.videoResolution > 0 ? opts.videoResolution : Math.round(logicalH * nativeDPR);
+      opts.videoResolution > 0 ? opts.videoResolution : Math.round(displayH * nativeDPR);
     session.saveRecordingState({
       disableDPR: true,
       lockResize: true,
