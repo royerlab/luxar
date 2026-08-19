@@ -138,6 +138,10 @@ DEMO_META = {
     # declaring the name buys reporting, and only reporting.
     "caches": ["milky_way_gaia_3m"],
     "outputs": ["gaia_milky_way"],
+    "citation": {
+        "short": "Gaia Collaboration et al. 2023",
+        "doi": "10.1051/0004-6361/202243940",
+    },
 }
 
 import sys
@@ -520,6 +524,7 @@ def load_and_convert_gaia_data(data_zarr_path: Path, output_path: Path) -> int:
                     bloom_strength=0.15,
                     bloom_threshold=0.85,
                 ),
+                citation=DEMO_META["citation"],
             )
 
             # Add the stars with substitutive Points LOD: coarse levels replace

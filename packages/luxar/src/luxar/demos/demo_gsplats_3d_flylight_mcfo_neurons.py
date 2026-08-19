@@ -290,6 +290,10 @@ DEMO_META = {
     },
     "caches": ["gsplats_flylight_mcfo"],
     "outputs": ["gsplats_3d_flylight_mcfo_neurons"],
+    "citation": {
+        "short": "Mais et al. 2024",
+        "doi": "10.5281/zenodo.10875063",
+    },
 }
 
 import hashlib
@@ -1461,6 +1465,7 @@ def create_luxar_scene(
                         fov=CAMERA_FOV_DEG,
                     ),
                 ),
+                citation=DEMO_META["citation"],
             )
 
             scene.attrs["title"] = "GSplats: MCFO Fly Brain Neurons"
