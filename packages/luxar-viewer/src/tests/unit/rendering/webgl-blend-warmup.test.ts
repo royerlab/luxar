@@ -309,6 +309,46 @@ describe('WebGLBlendWarmupManager', () => {
     expect(resolved).toBe(true);
   });
 
+  it('releases scene warming on its readiness budget and keeps draining after', async () => {
+    vi.useFakeTimers();
+    try {
+      const warmupTurns = makeWarmupTurnController();
+      const compileOne = vi.fn();
+      const manager = new WebGLBlendWarmupManager(
+        warmupTurns.wait,
+        compileOne,
+        activateImmediately
+      );
+      manager.configure({
+        enabled: true,
+        renderer: {} as THREE.WebGLRenderer,
+        camera: new THREE.PerspectiveCamera(),
+        targetScene: new THREE.Scene(),
+      });
+
+      let resolved = false;
+      // A turn that never comes — the background-tab case, where
+      // requestAnimationFrame is never serviced.
+      const completion = manager.warmScene(makeRenderableMesh('points')).then(() => {
+        resolved = true;
+      });
+
+      await vi.advanceTimersByTimeAsync(4999);
+      expect(resolved).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(1);
+      await completion;
+      expect(resolved).toBe(true);
+      expect(compileOne).not.toHaveBeenCalled();
+
+      // Readiness was released, not cancelled: the queue is still live.
+      await warmupTurns.releaseNext();
+      expect(compileOne).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('dedupes blend modes that land on the same program variant', async () => {
     const warmupTurns = makeWarmupTurnController();
     const compileOne = vi.fn();

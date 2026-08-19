@@ -40,40 +40,60 @@ type WarmupMaterial = THREE.Material & {
   applyBlendingMode(mode: BlendingMode): void;
 };
 
-interface WarmupConfig {
+/**
+ * What the session warms against. A null renderer/camera/scene, a WebGPU
+ * surface, or `?no-blend-warmup` all resolve to a disabled manager.
+ */
+export interface WarmupConfig {
   enabled: boolean;
   renderer: THREE.WebGLRenderer | null;
   camera: THREE.Camera | null;
   targetScene: THREE.Scene | null;
 }
 
-interface WarmupTask {
+/** One queued link: which keeper to compile, and the throwaway object to compile it on. */
+export interface WarmupTask {
   sourceMaterial: THREE.Material;
   keeperMaterial: THREE.Material;
   compileObject: THREE.Object3D;
 }
 
-interface TrackedObjectState {
+/** Per-object bookkeeping: the material it was warmed for, and its `removed` listener. */
+export interface TrackedObjectState {
   sourceMaterial: THREE.Material;
   removeHandler: () => void;
 }
 
-interface SourceWarmupState {
+/**
+ * Per-source-material state: the compile-time fingerprint the keepers were built
+ * against, the keepers pinning the programs, the objects sharing the material,
+ * and the material's `dispose` listener.
+ */
+export interface SourceWarmupState {
   fingerprint: string;
   keepers: Set<THREE.Material>;
   objects: Set<THREE.Object3D>;
   disposeHandler: () => void;
 }
 
-interface WarmCompletion {
+/**
+ * One outstanding `warmScene` caller. Settled by the drain going idle, by
+ * {@link WebGLBlendWarmupManager.clear}, or by the readiness budget expiring —
+ * whichever happens first.
+ */
+export interface WarmCompletion {
   generation: number;
   resolve: () => void;
+  budgetTimer: ReturnType<typeof setTimeout> | null;
 }
 
-type WaitForWarmupTurn = () => Promise<void>;
-type DeferActivation = (activate: () => void) => void;
+/** Yields until the next compile may run (a rendered frame, then an idle slot). */
+export type WaitForWarmupTurn = () => Promise<void>;
+/** Defers scene activation past the caller's own turn. */
+export type DeferActivation = (activate: () => void) => void;
 type IdleCallbackScheduler = (callback: () => void, options?: { timeout: number }) => number;
-type CompileOne = (
+/** Links one keeper material by compiling `compileObject` against the live scene. */
+export type CompileOne = (
   renderer: THREE.WebGLRenderer,
   camera: THREE.Camera,
   targetScene: THREE.Scene,
@@ -82,6 +102,24 @@ type CompileOne = (
 
 const WARMUP_IDLE_TIMEOUT_MS = 250;
 const WARMUP_FALLBACK_DELAY_MS = 50;
+
+/**
+ * How long dataset readiness may wait on a warm-up before giving up on it.
+ *
+ * The queue is NOT a finite set snapshotted at activation: every geometry commit
+ * schedules the node it just populated, so a progressively-loading partition
+ * keeps handing the drain new work for as long as it streams. Awaiting "the
+ * queue is empty" would therefore hold `loadDataset` — and with it
+ * `window.__luxarDebug`, the `dataset-loaded` event and `switchDataset`'s
+ * promise — until the whole scene settled. The same wait parks indefinitely in a
+ * background tab, where `requestAnimationFrame` is never serviced and no turn
+ * ever comes.
+ *
+ * So the wait is a budget, not a barrier: an ordinary scene drains well inside
+ * it and is fully pinned before readiness, while anything pathological releases
+ * readiness here and keeps warming in the background.
+ */
+const WARMUP_READINESS_BUDGET_MS = 5000;
 
 function waitForIdleOpportunity(resolve: () => void): void {
   const requestIdle = (
@@ -186,6 +224,15 @@ function buildGeometryFingerprint(geometry: THREE.BufferGeometry | undefined): s
  * (e.g. colormap enablement, point/line/splat texture-width define, mesh
  * flat-normal variant), the service must rebuild that source material's keeper
  * set instead of pinning stale programs forever.
+ *
+ * The shader SOURCE enters only as its length, not its text. Both comparisons
+ * this fingerprint feeds stay inside one material lineage — a source material
+ * against its own earlier state, and clones of that source against each other —
+ * and neither can carry different shader text, which every wrapper fixes in its
+ * constructor. Embedding it would make each call concatenate ~25 kB, and
+ * `scheduleObject` runs on the geometry-commit path and once per affected leaf
+ * per Layers-panel slider event, so that allocation lands squarely on the
+ * interaction path this module exists to keep clear.
  */
 export function buildBlendWarmupFingerprint(
   material: THREE.Material,
@@ -216,8 +263,8 @@ export function buildBlendWarmupFingerprint(
     shaderMaterial.fog === true ? 'fog' : 'no-fog',
     shaderMaterial.index0AttributeName ?? '',
     buildDefinesFingerprint(shaderMaterial.defines, includeBlendDefines),
-    shaderMaterial.vertexShader ?? '',
-    shaderMaterial.fragmentShader ?? '',
+    `vs:${(shaderMaterial.vertexShader ?? '').length}`,
+    `fs:${(shaderMaterial.fragmentShader ?? '').length}`,
     shaderMaterial.customProgramCacheKey(),
     buildGeometryFingerprint(geometry),
   ].join('@@');
@@ -279,6 +326,15 @@ function createCompileObject(source: THREE.Object3D, material: THREE.Material): 
   return compileObject;
 }
 
+/**
+ * The warm-up service itself — one instance per session (the module keeps the
+ * default one; the constructor's three injection points exist for tests).
+ *
+ * Lifecycle: {@link configure} once per renderer, {@link warmScene} once the
+ * dataset is fully set up, {@link scheduleObject} for every node that gains or
+ * changes compile-time state afterwards, {@link clear} on scene replacement,
+ * context loss and disposal.
+ */
 export class WebGLBlendWarmupManager {
   private enabled = false;
   private armed = false;
@@ -313,11 +369,33 @@ export class WebGLBlendWarmupManager {
     this.clear();
   }
 
+  /**
+   * Arm the manager and warm every reachable variant under `root`.
+   *
+   * Resolves when the queue drains, or when the readiness budget
+   * (`WARMUP_READINESS_BUDGET_MS`) elapses — whichever comes first. The budget
+   * expiring is not a failure: the drain carries on afterwards, it just stops
+   * holding the caller.
+   */
   warmScene(root: THREE.Object3D): Promise<void> {
     if (!this.enabled) return Promise.resolve();
 
     return new Promise((resolve) => {
-      const completion = { generation: this.generation, resolve };
+      const completion: WarmCompletion = {
+        generation: this.generation,
+        resolve,
+        budgetTimer: null,
+      };
+      completion.budgetTimer = setTimeout(() => {
+        completion.budgetTimer = null;
+        if (!this.warmCompletions.has(completion)) return;
+        log.info(
+          Modules.RENDERER,
+          `Blend warm-up still draining after ${WARMUP_READINESS_BUDGET_MS} ms ` +
+            `(${this.queue.length} variants queued) — releasing readiness, warming continues`
+        );
+        this.settleWarmCompletion(completion);
+      }, WARMUP_READINESS_BUDGET_MS);
       this.warmCompletions.add(completion);
       const activationToken = ++this.activationToken;
 
@@ -438,6 +516,10 @@ export class WebGLBlendWarmupManager {
 
   private settleWarmCompletion(completion: WarmCompletion): void {
     if (!this.warmCompletions.delete(completion)) return;
+    if (completion.budgetTimer !== null) {
+      clearTimeout(completion.budgetTimer);
+      completion.budgetTimer = null;
+    }
     completion.resolve();
   }
 
@@ -554,25 +636,45 @@ export class WebGLBlendWarmupManager {
   }
 }
 
-let defaultManager = new WebGLBlendWarmupManager();
+const defaultManager = new WebGLBlendWarmupManager();
 
+/**
+ * Point the session's warm-up at a renderer, camera and scene, and drop
+ * whatever the previous configuration had pinned. Called once per renderer
+ * setup; `enabled: false` (WebGPU, or `?no-blend-warmup`) makes every other
+ * entry point below a no-op.
+ */
 export function configureBlendModeProgramWarmup(config: WarmupConfig): void {
   defaultManager.configure(config);
 }
 
+/**
+ * Warm (or re-warm) the blend variants one node can reach.
+ *
+ * Called from the geometry-commit material sync and the Layers panel, i.e.
+ * wherever a node gains content or changes compile-time state. Cheap and
+ * idempotent while the node's fingerprint is unchanged; a no-op until
+ * {@link warmSceneBlendModePrograms} has armed the session.
+ */
 export function scheduleBlendModeProgramWarmupForObject(object: THREE.Object3D): void {
   defaultManager.scheduleObject(object);
 }
 
+/**
+ * Arm the session and warm everything already in the scene.
+ *
+ * Awaited at the end of a dataset load so the first Layers-panel blend switch
+ * finds its program cached — bounded by the readiness budget, so a
+ * still-streaming scene releases readiness and keeps warming behind it.
+ */
 export function warmSceneBlendModePrograms(root: THREE.Object3D): Promise<void> {
   return defaultManager.warmScene(root);
 }
 
+/**
+ * Disarm the session, drop the queue and release every pinned program. Called
+ * on scene replacement, WebGL context loss, and scene-manager disposal.
+ */
 export function clearBlendModeProgramWarmup(): void {
   defaultManager.clear();
-}
-
-export function __resetBlendModeWarmupForTests(): void {
-  defaultManager.clear();
-  defaultManager = new WebGLBlendWarmupManager();
 }
