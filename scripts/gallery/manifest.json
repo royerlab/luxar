@@ -327,7 +327,8 @@
         "steps": 15
       },
       "zoom": 0.7,
-      "exposure": -1.5
+      "exposure": -1.5,
+      "note": "Calibrated against a PRE-#842 fractals_4d store, where `w` was continuous over [-2.5, 2.5] with step 0.1 and only ~1 position in 10 held a slice — hence 15 steps to reach the first populated one, and the zoom/exposure that frame a thin sparse slice. Since #842 the generator declares `w` discrete on the grid it writes (step = 2/grid_size), so a REGENERATED store is populated at its default slice and needs no dimensionNav: re-derive these three values (or drop them) after rebuilding the dataset."
     },
     {
       "id": "spiral_galaxy_5d",
