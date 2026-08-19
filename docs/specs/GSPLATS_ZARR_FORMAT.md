@@ -669,30 +669,40 @@ and fatal to a strict reader for the whole store rather than for that one key.
 categories, invalidated along two independent axes, and a tool that rewrites a
 store must apply both rules:
 
-* **Content-scoped** — every MEASURED number: the scores above, `final_loss` /
-  `final_rel_l2` / `final_max_abs_error`, the error-budget cull's own
-  `error_budget` / `max_joint_error` (and its `phase1_candidates` /
-  `phase2_iterations` search counters, which mean nothing without it), and the
-  ladder/level stamps one level down — the per-sub-LOD `cumulative_psnr_db` /
-  `delta_psnr_db` and `lod_stats.energy_fraction_cum`, plus
-  `level_stats.quality` / `level_stats.reference_energy`. They are a score for
-  one specific splat set, so they are **dropped by any operation that changes
-  which splats the artifact holds**: `cull`, `filter`, `slice`, `decimate` (a
-  merge-family reduction lands on the requested count while replacing every
+* **Content-scoped** — every number MEASURED against the source volume: the
+  scores above, `final_loss` / `final_rel_l2` / `final_max_abs_error`, the
+  error-budget cull's own `error_budget` / `max_joint_error` (and its
+  `phase1_candidates` / `phase2_iterations` search counters, which mean nothing
+  without it), and the per-sub-LOD `lod_stats.cumulative_psnr_db` /
+  `delta_psnr_db` a progressive fit stamps one level down. Beside them, the
+  **record of the reduction that produced the artifact** — `culled`,
+  `culling_method`, `n_original`, `n_culled`, `amplitude_retention` — which is
+  true of the operation that stamped it and false of anything downstream. They
+  describe one specific splat set, so they are **dropped by any operation that
+  changes which splats the artifact holds**: `cull`, `filter`, `slice`, `decimate`
+  (a merge-family reduction lands on the requested count while replacing every
   splat with a representative), a reduced LOD **view** (a strict additive prefix,
   or a coarser substitutive level — which is why `lod --recipe overview` does not
   put the input fit's `psnr_db` on its merged coarse cap), and any intensity edit
   — PSNR and MSE are absolute-error metrics, so a global `x0.5` changes them
-  outright. `energy_fraction_cum` and `reference_energy` are dropped **together**:
-  e(k) and its aggregation weight w are a both-or-neither pair (see "Quality
-  Stamps" above), and a stale e(k) is the one entry here that is
-  *rendering*-visible —
-  the viewer brightens an incomplete ladder by `1/e(k)`, so a rung that still
-  claims 0.69 after a cull left it holding everything over-brightens by ~1.44x.
-  Absent, all of these degrade correctly: the viewer's energy compensation is
-  exactly 1 without a stamp and its display gate falls back to committed-count
-  comparison, and `luxar gsplat annotate-quality` re-measures e(k)/w (and, with
-  `--with-quality`, Q) on the rewritten store in place.
+  outright. An operation that stamps its own record does so *after* the scrub, so
+  a rewrite publishes the reduction it actually performed and no other.
+
+  **Known separate case, out of scope of this rule:** the LOD Q·e ladder stamps —
+  `lod_stats.energy_fraction_cum` (a rung's prefix energy e(k)),
+  `level_stats.reference_energy` (its weight w) and `level_stats.quality` (a
+  level's measured Q against its group's finest). These are measured on the
+  artifact's **own content** rather than against a source volume, so a coarse
+  level's stamps are statements about that coarse level and the argument above
+  does not reach them; the scene-authoring path builds every coarse child of a
+  `kind=lod` group through the same `at_substitutive` accessor and copies exactly
+  these numbers onto it. Deleting them is also not free downstream: `gsplat
+  annotate-quality` writes a leaf-local `reference_energy` only when none is
+  present, so removing w licenses it to fabricate a group-inconsistent one. A
+  reduction does make them stale, and the likely right answer is to **recompute**
+  them (cheap, O(N), no volume — what `annotate-quality` already does) rather than
+  to drop them; that needs its own design pass. Until then a tool that rewrites a
+  store should either leave them alone or re-run `annotate-quality` deliberately.
 
   A geometry-only transform (scale / rotate / translate / center) **keeps** them:
   the splat set is identical and only the frame moved. Note this is a weaker
@@ -732,14 +742,8 @@ Neither category subsumes the other, which is why one predicate cannot serve
 both: an amplitude-threshold cull loses the scores and keeps the grid, a
 whole-volume bbox that excluded nothing keeps both, and a real crop loses both.
 Descriptive counters are never dropped by either rule — `iterations`,
-`best_iteration`, `converged`, `time_seconds`, `fitter_name`, and a rewrite's own
-provenance (`culled`, `culling_method`, `n_original`, `n_culled`,
-`amplitude_retention`, `filtered`, `filter_criteria`) describe the run or the
-operation, both of which happened. The structural ladder counts
-(`lod_stats.lod_n_splats` / `lod_cumulative_n`, `level_stats.n_splats_total`) are
-descriptive too, but a reduction makes them *wrong* rather than unknown and the
-writer stores them verbatim — so they are **re-stamped** from the result instead
-of dropped.
+`best_iteration`, `converged`, `time_seconds`, `fitter_name` and `filtered` /
+`filter_criteria` describe the run or the edit, both of which happened.
 
 ### Pipeline Group Attributes (Optional)
 

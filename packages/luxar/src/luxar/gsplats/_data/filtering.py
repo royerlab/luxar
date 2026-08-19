@@ -8,15 +8,14 @@ predicate covers both:
   spatial restriction (a bbox/slice that excluded splats), and by nothing else:
   an amplitude threshold leaves the represented region exactly as it was.
   Predicate: :func:`_is_crop`.
-* :data:`_CONTENT_SCOPED_STATS_KEYS` — MEASURED scores of the splat set (against
-  the source volume, or against its own finest content). Invalidated whenever the
-  splat set changes, spatially or not: an amplitude-threshold cull leaves the
-  region untouched while changing the reconstruction completely, and a
-  merge-family reduction can hit the requested count exactly while replacing
-  every splat with a representative. Predicate: "did the content change" —
-  :func:`_stats_after_content_change`, which also reaches the per-sub-LOD
-  (:data:`_CONTENT_SCOPED_SUBLOD_KEYS`) and per-level
-  (:data:`_CONTENT_SCOPED_LEVEL_KEYS`) ladder stamps.
+* :data:`_CONTENT_SCOPED_STATS_KEYS` — MEASURED reconstruction scores of the
+  splat set against the SOURCE VOLUME (the PSNR family), plus the
+  :data:`_CONTENT_SCOPED_OP_RECORD_KEYS` record of the reduction that produced
+  the artifact. Invalidated whenever the splat set changes, spatially or not: an
+  amplitude-threshold cull leaves the region untouched while changing the
+  reconstruction completely, and a merge-family reduction can hit the requested
+  count exactly while replacing every splat with a representative. Predicate:
+  "did the content change" — :func:`_stats_after_content_change`.
 
 Reusing the region predicate for the metrics is what #1600 was: a ``cull -r 0.5``
 that halved the splat count published the pre-cull PSNR as its own, and ``gsplat
@@ -24,6 +23,21 @@ info`` reads ``psnr_db`` as THE dataset's reconstruction quality. Neither catego
 subsumes the other — a whole-volume bbox that removed nothing keeps both, a
 non-spatial cull keeps the region stamp and loses the metrics, an actual crop
 loses both.
+
+Deliberately OUT of scope here: the LOD Q·e ladder stamps —
+``lod_stats.energy_fraction_cum`` (the prefix energy e(k) of a rung),
+``level_stats.reference_energy`` (its weight w) and ``level_stats.quality`` (the
+measured Q of a level against its group's finest). Those are measured on the
+artifact's OWN content rather than against a source volume, so a coarse level's
+stamps are true of that coarse level and the argument above does not reach them —
+and ``at_substitutive`` is a plain ACCESSOR on the scene-authoring path
+(``core/group/gsplats_pipeline/lod_dispatch.py``), which copies exactly these
+numbers onto every coarse child of a ``kind=lod`` group. Deleting them is also
+actively harmful downstream: ``lod/annotate.py:332`` writes a leaf-local
+``reference_energy`` only when none is present, so a scrub licenses
+``annotate-quality`` to FABRICATE a group-inconsistent w. The likely right answer
+for these is to RECOMPUTE them on a reduction (cheap, O(N), no volume — exactly
+what ``lod/annotate.py`` already does), which needs its own design pass.
 
 Every scrub here is by KEY, never by dropping a whole nested container, and never
 reaches into a dict the caller still owns: ``GSplatData`` is conceptually
@@ -131,25 +145,29 @@ _CONTENT_SCOPED_STATS_KEYS = (
     "phase2_iterations",
 )
 
-#: MEASURED stamps that live one level down, in each additive sub-LOD's own
-#: ``stats`` (the leaf's on-disk ``lod_stats``). ``energy_fraction_cum`` is the
-#: cumulative self-energy fraction e(k) of the ladder prefix through this rung —
-#: a measurement over the splat set, and the one stale stamp that is RENDERING-
-#: visible: the viewer multiplies an incomplete ladder's brightness by ``1/e(k)``
-#: inside a ``kind=lod`` group, so a rung that still claims 0.69 after a cull left
-#: it holding everything over-brightens the fully-loaded level by ~1.44x. Absent
-#: it degrades exactly right — ``energyCompensation(undefined)`` returns 1 and the
-#: display gate falls back to committed-count comparison.
-_CONTENT_SCOPED_SUBLOD_KEYS = ("energy_fraction_cum",)
-
-#: MEASURED stamps on each substitutive level, persisted as the level group's
-#: ``level_stats``. ``quality`` is the measured mixture-L² Q of this level against
-#: its lod group's finest content; ``reference_energy`` is the absolute weight w
-#: those e(k) fractions are aggregated by. w goes WITH
-#: :data:`_CONTENT_SCOPED_SUBLOD_KEYS` — ``lod/additive.py`` calls the e/w pairing
-#: a contract (a weight with nothing to weight is a half-written stamp), and the
-#: viewer's display gate needs both or neither.
-_CONTENT_SCOPED_LEVEL_KEYS = ("quality", "reference_energy")
+#: The record of the REDUCTION that produced the artifact: which cull ran, how
+#: many splats it started from and removed, and how much amplitude mass survived.
+#: True of the operation that stamped them and false of anything downstream, so
+#: they are content-scoped like the scores above — a ``decimate`` of a culled
+#: store used to publish the INPUT's ``amplitude_retention: 0.95`` beside a prefix
+#: reduction that had just discarded ~75% of the amplitude mass.
+#:
+#: Safe only because every op that stamps one of these does so AFTER its own
+#: ``filter()`` (hence after the scrub): ``_cull_heuristic`` and the
+#: error-budget/redundancy path in ``culling.py`` both ``update`` the result of
+#: ``self.filter(...)``, as does ``filter_by``'s single-level path (``n_original``).
+#: The two multi-substitutive branches (``cull`` and ``filter_by``) build their
+#: top-level dict themselves, so they scrub BEFORE stamping — see the comments
+#: there. ``filtered`` / ``filter_criteria`` / ``n_removed`` / ``truncate`` are
+#: deliberately not here: narrowing this set is a judgement call per key, and
+#: those describe a filter rather than quantifying what is left.
+_CONTENT_SCOPED_OP_RECORD_KEYS = (
+    "culled",
+    "culling_method",
+    "n_original",
+    "n_culled",
+    "amplitude_retention",
+)
 
 #: ``stats`` keys whose value is a LIST of nested stats dicts. The progressive
 #: fitter stores one dict per pass here, mixing measured scores
@@ -166,7 +184,8 @@ def drop_content_scoped_stats(stats: "MutableMapping[str, Any]") -> None:
     The dict-level primitive, so a caller holding raw ``stats`` (the CLI's
     node-tree path, which never builds a ``GSplatData``) scrubs exactly what the
     ``GSplatData`` paths do. Use :func:`_stats_after_content_change` when you have
-    a dataset — it also reaches the per-sub-LOD and per-level ladder stamps.
+    a dataset — it also reaches each additive sub-LOD's own dict (the leaf's
+    on-disk ``lod_stats``), where a progressive fit's per-pass scores live.
 
     Mutates ``stats`` (which the caller owns) but nothing REACHABLE from it: a
     nested ``pass_stats`` list is replaced with scrubbed copies rather than edited
@@ -176,18 +195,15 @@ def drop_content_scoped_stats(stats: "MutableMapping[str, Any]") -> None:
     "conceptually immutable, operations return new instances" contract (#1600
     review). The top-level dict is a copy, the nested list must be made one.
     """
-    for key in _CONTENT_SCOPED_STATS_KEYS:
+    dropped = (*_CONTENT_SCOPED_STATS_KEYS, *_CONTENT_SCOPED_OP_RECORD_KEYS)
+    for key in dropped:
         stats.pop(key, None)
     for key in _NESTED_STATS_LIST_KEYS:
         nested = stats.get(key)
         if isinstance(nested, list):
             stats[key] = [
                 (
-                    {
-                        k: v
-                        for k, v in entry.items()
-                        if k not in _CONTENT_SCOPED_STATS_KEYS
-                    }
+                    {k: v for k, v in entry.items() if k not in dropped}
                     if isinstance(entry, dict)
                     else entry
                 )
@@ -195,10 +211,7 @@ def drop_content_scoped_stats(stats: "MutableMapping[str, Any]") -> None:
             ]
 
 
-def content_scoped_stats(
-    stats: "MutableMapping[str, Any]",
-    extra: "Sequence[str]" = (),
-) -> "Dict[str, Any]":
+def content_scoped_stats(stats: "MutableMapping[str, Any]") -> "Dict[str, Any]":
     """Snapshot the measured scores so a PRODUCER can re-attach them, deep.
 
     For the fitters' own last step, which is a high-retention cumulative cull
@@ -216,10 +229,10 @@ def content_scoped_stats(
     get no such exemption — carrying the score across an arbitrary retention the
     user picked is #1600 itself.
 
-    ``extra`` names the keys of the dict's OWN scope on top of the shared metric
-    set — the per-sub-LOD / per-level ladder stamps
-    (:data:`_CONTENT_SCOPED_SUBLOD_KEYS` / :data:`_CONTENT_SCOPED_LEVEL_KEYS`), so
-    the snapshot restores exactly what :func:`_stats_after_content_change` takes.
+    Covers the measured SCORES only, not :data:`_CONTENT_SCOPED_OP_RECORD_KEYS`:
+    the op that scrubbed them re-stamps its own record right after, and restoring
+    an older cull's ``n_original`` / ``amplitude_retention`` over it would publish
+    the wrong reduction (a tiled fit culls each tile, then culls the merge).
 
     The nested per-pass lists are deep-copied so the snapshot is independent of
     the dataset it was taken from — a later edit of the source (or of the trimmed
@@ -227,49 +240,40 @@ def content_scoped_stats(
     """
     import copy
 
-    keys = (*_CONTENT_SCOPED_STATS_KEYS, *extra)
-    snapshot = {key: stats[key] for key in keys if key in stats}
+    snapshot = {key: stats[key] for key in _CONTENT_SCOPED_STATS_KEYS if key in stats}
     for key in _NESTED_STATS_LIST_KEYS:
         if key in stats:
             snapshot[key] = copy.deepcopy(stats[key])
     return snapshot
 
 
-def _measured_stats_targets(data: "GSplatData") -> "List[tuple[Any, Sequence[str]]]":
-    """The (dict, own-scope keys) pairs every measured stamp of ``data`` lives in.
+def _measured_stats_dicts(data: "GSplatData") -> "List[MutableMapping[str, Any]]":
+    """Every dict a measured stamp of ``data`` lives in, in a fixed order.
 
-    Three scopes, in a fixed order so a snapshot and a restore line up: the
-    top-level dict, then every additive sub-LOD's (the leaf's ``lod_stats``), then
-    every leaf's ``meta["stats"]`` (the on-disk ``level_stats``). The last one has
-    to go through the NODE: ``substitutive_levels`` is rebuilt on access and copies
-    ``meta["stats"]``, so mutating the view's ``SubstitutiveLevel.stats`` reaches
-    nothing that gets written (the ``AdditiveSubLOD`` objects, by contrast, are
-    shared with the node).
+    Two scopes, ordered so a snapshot and a restore line up: the top-level dict,
+    then every additive sub-LOD's (persisted as the leaf's ``lod_stats``). The
+    sub-LOD objects are shared with the node, so mutating their ``stats`` reaches
+    what gets written.
+
+    Deliberately NOT the leaves' ``meta["stats"]`` (the on-disk ``level_stats``):
+    the only measured stamps there are the Q·e ones this rule does not claim — see
+    the module docstring.
     """
-    from luxar.gsplats.tree import iter_leaves
-
-    targets: "List[tuple[Any, Sequence[str]]]" = [(data.stats, ())]
-    targets += [(lod.stats, _CONTENT_SCOPED_SUBLOD_KEYS) for lod in _all_sublods(data)]
-    for leaf in iter_leaves(data.tree):
-        level_stats = leaf.meta.get("stats")
-        if isinstance(level_stats, dict):
-            targets.append((level_stats, _CONTENT_SCOPED_LEVEL_KEYS))
-    return targets
+    return [data.stats, *(lod.stats for lod in _all_sublods(data))]
 
 
 def measured_stats_snapshot(data: "GSplatData") -> "List[Dict[str, Any]]":
     """:func:`content_scoped_stats` over every scope of a dataset.
 
-    A progressive fit's ladder scores (``cumulative_psnr_db`` / ``delta_psnr_db``)
-    live in the per-sub-LOD dicts, so a top-level-only snapshot would restore the
-    overall PSNR and silently lose the per-pass one; the per-level scope is here
-    for the same reason (nothing on the fitters' paths stamps a ``quality`` today,
-    but the exemption must restore whatever the scrub takes, not a subset of it).
+    The per-sub-LOD walk is what makes the snapshot the exact inverse of the
+    scrub: :func:`scrub_measured_stats` reaches those dicts, so a top-level-only
+    snapshot would restore less than was taken and leave a laddered dataset
+    half-stamped. (It is not about what a progressive fit PUBLISHES: that fitter
+    ends with ``final_result.flattened()``, which collapses the ladder, so only
+    the rolled-up ``pass_psnrs`` / ``pass_stats`` on the top-level dict reach
+    disk.)
     """
-    return [
-        content_scoped_stats(stats, extra)
-        for stats, extra in _measured_stats_targets(data)
-    ]
+    return [content_scoped_stats(stats) for stats in _measured_stats_dicts(data)]
 
 
 def restore_measured_stats(
@@ -282,54 +286,22 @@ def restore_measured_stats(
     LENGTH restores only the positions both share, which is the safe direction:
     an unmatched sub-LOD keeps no score rather than borrowing another's.
     """
-    for (target, _extra), saved in zip(_measured_stats_targets(data), snapshot):
+    for target, saved in zip(_measured_stats_dicts(data), snapshot):
         target.update(saved)
     return data
 
 
 def scrub_measured_stats(result: "GSplatData") -> None:
-    """Drop every MEASURED stamp of ``result`` — top level, sub-LODs, levels.
+    """Drop every MEASURED stamp of ``result`` — top level and every sub-LOD.
 
     The dataset-level counterpart of :func:`drop_content_scoped_stats`, reaching
-    the two scopes a rewrite otherwise leaves behind: the per-sub-LOD
-    ``energy_fraction_cum`` (rendering-visible — see
-    :data:`_CONTENT_SCOPED_SUBLOD_KEYS`) and the per-level ``quality`` /
-    ``reference_energy``, which a ``_map_substitutive`` rebuild carries over
-    verbatim from the input's levels. e(k) and w go together so the ladder is
-    never left half-stamped.
-
-    The structural ladder COUNTS are re-stamped from the result rather than
-    dropped: the writer persists them verbatim, and a reduction makes them wrong
-    (not unknown) while the result knows the truth.
+    the one scope a rewrite otherwise leaves behind: a progressive fit stamps each
+    pass's scores into that pass's sub-LOD, and the writer persists those as the
+    leaf's ``lod_stats`` — so a fix applied only to the top-level dict would ship
+    the stale ladder PSNRs one level down.
     """
-    for stats, extra in _measured_stats_targets(result):
+    for stats in _measured_stats_dicts(result):
         drop_content_scoped_stats(stats)
-        for key in extra:
-            stats.pop(key, None)
-    _restamp_ladder_counts(result)
-
-
-def _restamp_ladder_counts(result: "GSplatData") -> None:
-    """Refresh ``lod_n_splats`` / ``lod_cumulative_n`` / ``n_splats_total``.
-
-    Only where they are already present — this re-states a count that was
-    authored, it does not start stamping one on a dataset that carried none. Each
-    key is re-derived from the scope that owns it (two per sub-LOD, one per level),
-    which is why they are spelled out inline rather than looped over a key tuple.
-    """
-    from luxar.gsplats.tree import iter_leaves
-
-    for leaf in iter_leaves(result.tree):
-        cumulative = 0
-        for sublod in leaf.additive_sublods:
-            cumulative += int(sublod.n_splats)
-            if "lod_n_splats" in sublod.stats:
-                sublod.stats["lod_n_splats"] = int(sublod.n_splats)
-            if "lod_cumulative_n" in sublod.stats:
-                sublod.stats["lod_cumulative_n"] = cumulative
-        level_stats = leaf.meta.get("stats")
-        if isinstance(level_stats, dict) and "n_splats_total" in level_stats:
-            level_stats["n_splats_total"] = cumulative
 
 
 def _stats_after_content_change(result: "GSplatData", *, changed: bool) -> "GSplatData":
@@ -416,12 +388,14 @@ class FilteringMixin(_GSplatDataOps):
         Returns:
             New GSplatData with filtered arrays.
 
-        Removing any splat drops the inherited measured reconstruction scores
-        (see :data:`_CONTENT_SCOPED_STATS_KEYS`): this is the single chokepoint
+        Removing any splat drops the inherited measured reconstruction scores and
+        the inherited reduction record (see :data:`_CONTENT_SCOPED_STATS_KEYS` and
+        :data:`_CONTENT_SCOPED_OP_RECORD_KEYS`): this is the single chokepoint
         every mask-based rewrite goes through — ``filter_by``, ``slice_by`` and
         every ``cull`` strategy — so scrubbing here covers all of them, and the
-        provenance each of those stamps AFTERWARDS (``culled``, ``n_original``,
-        ``filter_criteria``, ...) is untouched by the scrub.
+        record each of those stamps AFTERWARDS (``culled``, ``n_original``,
+        ``filter_criteria``, ...) describes THIS operation and lands on a clean
+        dict.
 
         Example:
             >>> filtered = data.filter(data.volumes() < 100)
@@ -673,6 +647,13 @@ class FilteringMixin(_GSplatDataOps):
                     truncate=truncate,
                 )
             )
+            # The measured scores go BEFORE this filter's own record is stamped:
+            # _map_substitutive rebuilds the top level from `dict(self.stats)`, so
+            # the per-level scrub inside filter() reaches the sub-LOD dicts but not
+            # this one — and the scrub also takes `n_original`, which is exactly
+            # the key stamped just below (the single-level path gets the same order
+            # for free, scrubbing inside `self.filter(mask)`).
+            _stats_after_content_change(out, changed=out.n_splats != self.n_splats)
             out.stats.update(
                 {
                     "filtered": True,
@@ -682,11 +663,7 @@ class FilteringMixin(_GSplatDataOps):
                 }
             )
             # A crop restricts WHICH REGION the splats represent (the per-level
-            # recursion above cannot fix the rebuilt top-level stats). Same for
-            # the measured scores: _map_substitutive rebuilds the top level from
-            # `dict(self.stats)`, so the per-level scrub inside filter() reaches
-            # the sub-LOD dicts but not this one.
-            _stats_after_content_change(out, changed=out.n_splats != self.n_splats)
+            # recursion above cannot fix the rebuilt top-level stats).
             return _stats_after_filter(
                 out, cropped=_is_crop(bbox, self.n_splats, out.n_splats)
             )

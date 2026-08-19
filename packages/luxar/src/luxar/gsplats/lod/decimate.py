@@ -48,7 +48,7 @@ from typing import Literal, Optional, Sequence, Union
 import numpy as np
 from arbol import aprint, asection
 
-from luxar.gsplats._data.filtering import _stats_after_content_change
+from luxar.gsplats._data.filtering import scrub_measured_stats
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.lod.additive import compute_additive_order
 from luxar.gsplats.lod.substitutive import merge_to_count
@@ -197,18 +197,18 @@ def decimate(
         # Carry the input's stats over first, so the rule below is what decides
         # what survives instead of an accident of how the arrays were rebuilt.
         #
-        # Then: both families change WHICH splats the artifact holds — a prefix
-        # discards the tail, a merge replaces neighbours with representatives — so
-        # the fit's measured reconstruction scores no longer describe it. The merge
-        # family is the case a count-based predicate would miss: it lands on
-        # exactly the count the user asked for while every surviving splat is a new
-        # one. The region stamps are NOT touched: neither family is a spatial
-        # restriction, so the survivors still represent the whole fitted volume.
-        # `out is not data` keeps this off the caller's own object — the one path
-        # that returns the input verbatim has already returned above.
-        if out is not data:
-            out = GSplatData.from_tree(out.tree, stats=dict(data.stats))
-        _stats_after_content_change(out, changed=out is not data)
+        # Then: BOTH families reach here having changed which splats the artifact
+        # holds (the one path that returns the input verbatim already returned
+        # above, so this is unconditional) — a prefix discards the tail, a merge
+        # replaces neighbours with representatives — so the fit's measured
+        # reconstruction scores, and the input's own cull/reduction record, no
+        # longer describe it. The merge family is the case a count-based predicate
+        # would miss: it lands on exactly the count the user asked for while every
+        # surviving splat is a new one. The region stamps are NOT touched: neither
+        # family is a spatial restriction, so the survivors still represent the
+        # whole fitted volume.
+        out = GSplatData.from_tree(out.tree, stats=dict(data.stats))
+        scrub_measured_stats(out)
         if verbose:
             aprint(f"Result: {out.n_splats:,} splats")
         return out

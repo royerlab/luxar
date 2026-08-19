@@ -157,6 +157,12 @@ class CullingMixin(_GSplatDataOps):
                     verbose=verbose,
                 )
             )
+            # The per-level recursion scrubs each level's measured scores through
+            # filter(), but _map_substitutive rebuilds the TOP-level stats from
+            # `dict(self.stats)` — the dict `gsplat info` reads `psnr_db` from.
+            # Scrub BEFORE stamping: the scrub also takes the inherited cull record
+            # (`culled` / `n_original` / ...), which is what this update replaces.
+            _stats_after_content_change(out, changed=out.n_splats != self.n_splats)
             out.stats.update(
                 {
                     "culled": True,
@@ -165,12 +171,7 @@ class CullingMixin(_GSplatDataOps):
                     "n_culled": self.n_splats - out.n_splats,
                 }
             )
-            # The per-level recursion scrubs each level's measured scores through
-            # filter(), but _map_substitutive rebuilds the TOP-level stats from
-            # `dict(self.stats)` — the dict `gsplat info` reads `psnr_db` from.
-            return _stats_after_content_change(
-                out, changed=out.n_splats != self.n_splats
-            )
+            return out
 
         # =================================================================
         # Heuristic methods (no rendering, CPU-only, fast)

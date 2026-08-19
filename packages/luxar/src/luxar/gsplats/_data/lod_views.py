@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, cast
 
 from .base import _GSplatDataOps, _readonly, _readonly_opt, _readonly_sublod
-from .filtering import scrub_measured_stats
+from .filtering import drop_content_scoped_stats
 
 if TYPE_CHECKING:
     from luxar.gsplats.gsplat_data import (
@@ -94,11 +94,12 @@ class LODViewsMixin(_GSplatDataOps):
         one's (the class is conceptually immutable); mutating them raises
         rather than silently corrupting the source.
 
-        A STRICT prefix holds fewer splats than the object the inherited measured
-        scores were taken on, so it does not carry them (#1600): a view is a
-        reduction like any other, and ``lod --recipe overview`` writes exactly such
-        a view out as a store. The full prefix (``level == n - 1``) IS the input
-        content and keeps everything.
+        A STRICT prefix holds fewer splats than the object the INHERITED top-level
+        measured scores were taken on, so the view does not carry them (#1600): a
+        view is a reduction like any other. The full prefix (``level == n - 1``) IS
+        the input content and keeps everything. Only the view's own top-level dict
+        is scrubbed — each rung's ``stats`` (its own ladder PSNR, its e(k)) is a
+        statement about that rung, which the prefix still holds unchanged.
 
         Args:
             level: Maximum LOD level to include (``0 <= level < n_additive_sublods``).
@@ -121,7 +122,7 @@ class LODViewsMixin(_GSplatDataOps):
             stats=dict(self.stats),
         )
         if level + 1 < n:
-            scrub_measured_stats(view)
+            drop_content_scoped_stats(view.stats)
         return view
 
     def flattened(self) -> "GSplatData":
@@ -223,13 +224,20 @@ class LODViewsMixin(_GSplatDataOps):
         (e.g., ``data.at_substitutive(s).flattened()``).
 
         A COARSER level (``level > 0``) is a different, MERGED splat set, so the
-        view does not inherit the measured reconstruction scores (#1600) — this is
-        the chokepoint through which ``lod --recipe overview`` built its merged
-        coarse cap and published the input fit's ``psnr_db`` on it. Level 0 is the
-        finest content itself and keeps them. (``_view_of_level`` itself does not
-        scrub: ``_map_substitutive`` walks every level through it and discards the
-        view's top-level stats, so only the callers that know the index can tell a
-        reduction from a rebuild step.)
+        view does not inherit the top-level measured reconstruction scores (#1600)
+        — this is the chokepoint through which ``lod --recipe overview`` builds its
+        merged coarse cap (as ``at_substitutive(n - 1).flattened()``) and published
+        the input fit's ``psnr_db`` on it. Level 0 is the finest content itself and
+        keeps them. (``_view_of_level`` itself does not scrub: ``_map_substitutive``
+        walks every level through it and discards the view's top-level stats, so
+        only the callers that know the index can tell a reduction from a rebuild
+        step.)
+
+        The level's OWN stamps are untouched — its ``level_stats`` Q / w and each
+        rung's e(k) are measured on this level's content, not inherited from the
+        finest, and this method is a plain accessor on the scene-authoring path
+        (``lod_dispatch.py`` builds every coarse child of a ``kind=lod`` group with
+        ``at_substitutive(s)`` and copies those numbers onto it).
 
         Args:
             level: Substitutive level index (0 = finest).
@@ -240,7 +248,7 @@ class LODViewsMixin(_GSplatDataOps):
             )
         view = self._view_of_level(self.substitutive_levels[level])
         if level != 0:
-            scrub_measured_stats(view)
+            drop_content_scoped_stats(view.stats)
         return view
 
     def _view_of_level(self, src_level: "SubstitutiveLevel") -> "GSplatData":

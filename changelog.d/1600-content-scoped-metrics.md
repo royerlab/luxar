@@ -15,33 +15,38 @@ bbox/slice crop actually excluded splats — and the measured metrics were in
 neither category. The crop predicate is the wrong one to reuse for them: an
 amplitude-threshold cull leaves the represented region untouched while changing
 the reconstruction completely. There are now two categories with two predicates.
-**Content-scoped** covers every MEASURED number, in all three scopes it can live
-in: the top-level scores (`psnr_db`, `ssim`, `mse`, `rel_l2`, `max_abs_error`, the
-`foreground_*` trio, the optimizer's `final_loss` / `final_rel_l2` /
-`final_max_abs_error`, the error-budget cull's `error_budget` / `max_joint_error`
-and its search counters), the per-sub-LOD `lod_stats` (`cumulative_psnr_db` /
-`delta_psnr_db` from a progressive fit, and `energy_fraction_cum`), and the
-per-level `level_stats` (`quality`, `reference_energy`). It is dropped whenever the
-splat set changes, spatially or not. **Region-scoped** is unchanged. Neither
-subsumes the other: a non-spatial cull loses the scores and keeps the source grid,
-a whole-volume bbox that excluded nothing keeps both, and a real crop loses both.
+**Content-scoped** covers every number MEASURED against the source volume, in
+both scopes it can live in: the top-level scores (`psnr_db`, `ssim`, `mse`,
+`rel_l2`, `max_abs_error`, the `foreground_*` trio, the optimizer's `final_loss` /
+`final_rel_l2` / `final_max_abs_error`, the error-budget cull's `error_budget` /
+`max_joint_error` and its search counters) and the per-sub-LOD `lod_stats` a
+progressive fit stamps (`cumulative_psnr_db` / `delta_psnr_db`). It also covers
+the record of the reduction that produced the artifact — `culled`,
+`culling_method`, `n_original`, `n_culled`, `amplitude_retention` — which is true
+of the op that stamped it and false of anything downstream: a `decimate` of a
+culled store published the input's `amplitude_retention: 0.95` beside a prefix
+reduction that had just discarded ~75% of the amplitude mass. Every op that stamps
+one of those keys does so after its own filter, so a rewrite publishes the
+reduction it actually performed. **Region-scoped** is unchanged. Neither subsumes
+the other: a non-spatial cull loses the scores and keeps the source grid, a
+whole-volume bbox that excluded nothing keeps both, and a real crop loses both.
 
-`energy_fraction_cum` was the one stale stamp that was *rendering*-visible. The
-viewer brightens an incomplete ladder inside a `kind=lod` group by `1/e(k)`, so a
-rung still claiming its pre-cull `e(k)` after the cull got the wrong compensation —
-in the worst case (a rung that ends up holding *everything* while still claiming
-0.69) a fully-loaded level rendered ~1.44x too bright. On the reproduction,
-`cull -r 0.9` over a 3-rung `stream` ladder left rung 0 stamped 0.681 where the
-truth for the culled ladder is 0.7035 (`gsplat annotate-quality` re-measures it as
-exactly that). It is dropped together with the `level_stats.reference_energy`
-weight it is aggregated by — `lod/additive.py` calls that pair a contract — and
-both degrade correctly when absent: the viewer's energy compensation is exactly 1
-without a stamp, its display gate falls back to committed-count comparison, and
-`annotate-quality` restamps e(k)/w (and Q with `--with-quality`) on the rewritten
-store in place. The structural per-rung counts beside them (`lod_n_splats`,
-`lod_cumulative_n`, `n_splats_total`) are *re-stamped* from the result rather than
-dropped: a reduction makes them wrong, not unknown, and the writer stores them
-verbatim.
+The LOD **Q·e ladder stamps** are a known separate case, deliberately left alone
+here: `lod_stats.energy_fraction_cum` (a rung's prefix energy e(k)),
+`level_stats.reference_energy` (its weight w) and `level_stats.quality` (a level's
+measured Q against its group's finest). Unlike the scores above they are measured
+on the artifact's *own* content rather than against a source volume, so a coarse
+level's stamps are statements about that coarse level — and the scene-authoring
+path reaches them through the same `at_substitutive` accessor a reduction uses,
+copying them onto every coarse child of a `kind=lod` group, so scrubbing there
+silently stripped the viewer's `e(k) >= 0.6` early-upgrade release and its
+`1/e(k)` brightness compensation from every coarse level. Deleting w is not free
+either: `annotate-quality` writes a leaf-local `reference_energy` only when none is
+present, so removing it licenses a fabricated, group-inconsistent value that then
+looks correctly stamped. A reduction does make these stale, and the likely right
+answer is to *recompute* them (cheap, O(N), no volume — exactly what
+`annotate-quality` already does) rather than to drop them; that gets its own
+change.
 
 The scrub is wired at the chokepoints rather than at one writer, since some
 commands save through `GSplatData.save` and others through `write_gsplats_tree`:
@@ -83,9 +88,8 @@ padded crop, with the neighbour splats contributing and against a larger target
 region, so it described neither this splat set nor this part's region.
 
 Descriptive provenance is untouched: `iterations`, `best_iteration`, `converged`,
-`time_seconds`, `fitter_name` and each operation's own record (`culled`,
-`culling_method`, `n_original`, `n_culled`, `amplitude_retention`,
-`filter_criteria`) describe a run or an edit that happened. The nested per-pass
+`time_seconds`, `fitter_name` and `filtered` / `filter_criteria` describe a run or
+an edit that happened. The nested per-pass
 `pass_stats` list is scrubbed key-by-key rather than dropped whole, so the pass
 counts survive without the stale per-pass PSNR — and it is scrubbed into a *fresh*
 list rather than edited in place, because every call site reaches it through a
