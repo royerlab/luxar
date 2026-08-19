@@ -46,8 +46,8 @@ def cull_dataset(
             "Culling method: "
             "error_budget (most principled, needs --target), "
             "redundancy (GPU, no target), "
-            "cumulative (fast, keep top N%% amplitude), "
-            "amplitude_percentile (remove bottom X%%), "
+            "cumulative (fast, keep top N% amplitude), "
+            "amplitude_percentile (remove bottom X%), "
             "combined (low amp OR large vol), "
             "auto (error_budget if --target, redundancy if --shape, else cumulative)"
         ),
@@ -92,7 +92,7 @@ def cull_dataset(
         "--redundancy-threshold",
         help="[redundancy] A splat is removed if it never contributes more "
         "than this fraction of the local signal anywhere in its support. "
-        "0.01 means 'remove splats contributing < 1%% of the signal at every "
+        "0.01 means 'remove splats contributing < 1% of the signal at every "
         "point they cover — other splats already handle those regions'.",
         min=0.0,
         max=1.0,
@@ -103,8 +103,10 @@ def cull_dataset(
         "--retention",
         "-r",
         help="[cumulative] Keep the top splats that account for this fraction "
-        "of the total amplitude. 0.95 keeps 95%% of total signal, discarding "
-        "the weakest ~10-30%% of splats. Fast but ignores spatial overlap.",
+        "of the total amplitude. 0.95 keeps 95% of total signal; how many "
+        "splats that discards depends on how heavy-tailed the data is, and on "
+        "a sparse volume it can be most of them. Fast but ignores spatial "
+        "overlap.",
         min=0.0,
         max=1.0,
     ),
@@ -113,7 +115,7 @@ def cull_dataset(
         "--amplitude-percentile",
         "-a",
         help="[amplitude_percentile / combined] Remove splats in the bottom "
-        "X percentile of amplitude. 5.0 removes the weakest 5%% by amplitude.",
+        "X percentile of amplitude. 5.0 removes the weakest 5% by amplitude.",
         min=0.0,
         max=100.0,
     ),

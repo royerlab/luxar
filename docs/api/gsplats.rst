@@ -321,6 +321,8 @@ Density-driven box planning for content-adaptive tiled fits
    :undoc-members:
    :show-inheritance:
 
+.. autodata:: luxar.gsplats.planner.fit_planned.CONTENT_CULL_RETENTION
+
 Scene Interop
 -------------
 
