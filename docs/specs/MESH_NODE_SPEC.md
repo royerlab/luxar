@@ -494,7 +494,7 @@ that type's per-element extent**:
 |---|---|---|
 | Points | `maxRadius` | quarter-cell (`discreteDimTolerance`) |
 | Lines | **`0`** — "bounds already include width" | quarter-cell, or **half-cell** when `discreteRole: 'membership'` |
-| GSplats | float-safety epsilon `max(1e-3 × step, 2.75e-5)` — the chunk bounds already carry the `truncation_radius · σ` extent | quarter-cell |
+| GSplats | float-safety epsilon `max(1e-3 × step, T × 1e-5)` where `T` is the node's own `truncation_radius` (2.75 by default, so `max(1e-3 × step, 2.75e-5)` for a typical node) — the chunk bounds already carry the `truncation_radius · σ` extent | quarter-cell |
 
 ⚠️ **Mesh must NOT copy the Lines row.** Lines can use `0` because segment clipping *interpolates
 through* the slab — a segment crossing the slice yields a clipped intersection even at zero thickness.
@@ -505,15 +505,25 @@ node renders **nothing**.
 Mesh therefore adds a fourth arm to `computeHiddenDimTolerance`:
 
 - **Discrete hidden dims** → `discreteDimMembershipTolerance` (half-cell). Mesh's slab test is a
-  MEMBERSHIP gate, exactly like the lines projection-clipping slab, so it must request
-  `discreteRole: 'membership'`; the default `'query'` role returns the *fetch reach*
-  (deliberately `< 0.5 × step`) and would drop on-grid geometry. **This is the dominant real case** —
+  MEMBERSHIP gate, exactly like the lines projection-clipping slab, but unlike lines it does not
+  *request* that role: mesh has no spatial index and issues no range query, so membership is the
+  only rule it has and `computeMeshHiddenTolerance` deliberately IGNORES `discreteRole`
+  (`data-processor-mesh.ts` accordingly passes no options at all). Honouring a `'query'` role here
+  would hand back the *fetch reach* (deliberately `< 0.5 × step`) to the one caller that is asking
+  about visibility, and drop on-grid geometry. **This is the dominant real case** —
   a mesh's hidden dimensions are almost always time or channel.
 - **Continuous hidden spatial dims** → `step × meshSlabTolerance`, default `1.0` (one cell), exposed
   via `ToleranceOptions`. Mesh is the only type with a *tunable* continuous arm: a mesh has no
-  per-element extent, so the slab thickness is invented rather than measured. GSplats has no
-  equivalent knob — its chunk bounds already carry the real `truncation_radius · σ` extent, so its
-  continuous arm is a fixed float-safety epsilon (`gsplatsContinuousDimTolerance`).
+  per-element extent, so the slab thickness is invented rather than measured. GSplats exposes no
+  equivalent slab knob — its chunk bounds already carry the real `truncation_radius · σ` extent, so
+  its continuous arm is a float-safety epsilon (`gsplatsContinuousDimTolerance`); the two inputs that
+  do vary it are read off the store, not authored — the node's own `truncation_radius`
+  (`ToleranceOptions.truncationRadius`) and the writer's published barrier set
+  (`ToleranceOptions.barrierDims`, the `slice_dims` attr, which decides whether a dim takes this arm
+  at all). Neither reaches a mesh: it publishes no `slice_dims` (no spatial index) and has no
+  truncation radius, and `isBarrierDim` honours a published set for gsplats ONLY — precisely because
+  both of a mesh's arms are membership gates, so narrowing one would change what the user sees. So
+  `meshSlabTolerance` really is the only control a mesh has.
 
 Be honest about what the second bullet means: with per-vertex cull there is no such thing as a true
 cut, so a continuous hidden dimension renders a **thick slab** ("the surface near this slice"), not a

@@ -383,6 +383,489 @@ describe('computeTolerance — gsplats', () => {
 });
 
 /**
+ * Issue #1655 item 2: the writer PUBLISHES the barrier set it used
+ * (`slice_dims`, stamped by `io/_compiler/gsplat_assembly.py` whenever
+ * `ordering != 'none'`) and the reader used to ignore it, re-deriving barrier-ness
+ * from `dimensions[d].discrete`. The two agree only while the scene declares its
+ * dimensions; with `scene_dimensions` absent the writer value-detects instead, and
+ * a dim the two sides classify DIFFERENTLY gets the wrong rule — barrier-tight
+ * bounds queried with a ~1e-3 continuous epsilon, or σ-expanded bounds queried with
+ * a quarter-cell.
+ *
+ * The two rules are ~250× apart at step 1 (0.25 vs 1e-3), so every assertion below
+ * discriminates them by a wide margin rather than by a rounding.
+ */
+describe('computeTolerance — barrierDims overrides the discrete flag (issue #1655)', () => {
+  const QUARTER_CELL = 0.25; // barrier rule at step 1
+  const CONTINUOUS_EPS = 1e-3; // gsplats continuous rule at step 1
+
+  /** dim 3 hidden; `discrete` is whatever the caller says, step always 1. */
+  const dims = (discrete: boolean): DimensionInfo[] => [
+    { discrete: false },
+    { discrete: false },
+    { discrete: false },
+    { discrete, step: 1.0 },
+  ];
+
+  it('promotes a discrete:false dim to the BARRIER rule when the writer listed it', () => {
+    // The dangerous direction: the writer gave dim 3 a tight `_BARRIER_BOUND_EPS`
+    // pad (no σ expansion), so querying it with the continuous epsilon can drop a
+    // σ-extended splat near a chunk edge. Honouring `slice_dims` widens to the
+    // quarter-cell instead.
+    const tol = computeTolerance('gsplats', [0, 1, 2], 4, dims(false), { barrierDims: [3] });
+    expect(tol[3]).toBe(QUARTER_CELL);
+    // Without the option it is still the old (narrow) answer — so this test is
+    // measuring the override, not a constant.
+    expect(computeTolerance('gsplats', [0, 1, 2], 4, dims(false))[3]).toBe(CONTINUOUS_EPS);
+  });
+
+  /**
+   * The DEMOTE direction, and the window it must carry.
+   *
+   * A demoted dim (omitted from `barrierDims`, but `discrete: true` in the scene)
+   * takes the continuous arm's BOUNDS reasoning — the writer σ-expanded it — but its
+   * fetch window is the HALF-cell, because the read side's per-splat gate for that dim
+   * is unchanged and still keyed on the SCENE flag: `data-processor-gsplats.ts` fills
+   * `discreteDims` from `viewState.dimensions[d].discrete`, `classifyHiddenDims` then
+   * puts the dim in `discreteHiddenDims` and OUT of `continuousHiddenDims`, and the
+   * projection's only test for it is `|slicePos − center| ≤ step × 0.5`. The fetch
+   * window therefore has to equal that gate: the Gaussian band never applies here, and
+   * the quarter-cell — whose `< 0.5` rationale is about the ±0.5 pad LEGACY stores put
+   * on barrier dims, which a demoted dim by definition never got — only half-covers it.
+   */
+  describe('the demote direction gets the half-cell membership window', () => {
+    const HALF_CELL = 0.5; // membership rule at step 1
+
+    it('a discrete:true dim omitted from barrierDims gets the half-cell, not the quarter', () => {
+      const tol = computeTolerance('gsplats', [0, 1, 2], 4, dims(true), { barrierDims: [] });
+      expect(tol[3]).toBe(HALF_CELL);
+      expect(tol[3]).not.toBe(CONTINUOUS_EPS);
+      expect(tol[3]).not.toBe(QUARTER_CELL); // the half-fix this replaced
+      // Strictly wider than what the same dim got before this plumbing existed, so
+      // nothing that used to be fetched stops being fetched.
+      expect(tol[3]).toBeGreaterThan(computeTolerance('gsplats', [0, 1, 2], 4, dims(true))[3]);
+    });
+
+    it('the ACTUALLY reachable shape: a standalone open synthesizes discrete dims over slice_dims: []', () => {
+      // Pins the branch to the path that really reaches it, because the obvious story
+      // does not. GRAFTING a standalone store into a scene cannot demote anything:
+      // `add_gsplats_from_file_impl` writes through the scene gsplats writer, which
+      // re-sorts and RE-STAMPS `slice_dims` from `scene_barrier_dims`
+      // (`discrete and not display`), so a scene-declared discrete axis comes back IN
+      // the set and takes the barrier arm.
+      //
+      // What does reach it is serving the `.gsplats.zarr` DIRECTLY
+      // (`?src=….gsplats.zarr`, which `gsplats/io/save_gsplats.py` enables by stamping
+      // `layer` on the root). With no `scene_dimensions`,
+      // `load-scene.ts::synthesizeSceneDimensionsFromNode` marks every axis >= 3
+      // `discrete: true, step: 1` regardless of the stored values, while the store's own
+      // `detect_barrier_dims` published `[]` for an off-grid stacked axis. That exact
+      // pair — synthesized dims + an authoritative empty set — is the fixture here.
+      const synthesized: DimensionInfo[] = [
+        { discrete: false }, // X  (isSpatial: no discrete/step stamped)
+        { discrete: false }, // Y
+        { discrete: false }, // Z
+        { discrete: true, step: 1 }, // dim3: synthesized as discrete, step 1
+      ];
+      const tol = computeTolerance('gsplats', [0, 1, 2], 4, synthesized, { barrierDims: [] });
+      expect(tol[3]).toBe(HALF_CELL);
+      for (const d of [0, 1, 2]) expect(tol[d]).toBe(1e10); // displayed
+      // Not just "everything is 0.5": the synthesized SPATIAL axes carry no `discrete`
+      // flag, so when one of them is the hidden axis it still takes the epsilon.
+      const hiddenSpatial = computeTolerance('gsplats', [0, 3], 4, synthesized, {
+        barrierDims: [],
+      });
+      expect(hiddenSpatial[1]).toBe(CONTINUOUS_EPS);
+      expect(hiddenSpatial[2]).toBe(CONTINUOUS_EPS);
+    });
+
+    it('at |Δ| == 0.5 × step exactly, fetch and render agree — both admit it', () => {
+      // The boundary the half-cell creates, pinned on the two real predicates rather
+      // than argued. They use OPPOSITE comparison directions, so agreement at equality
+      // is a fact about the pair, not a tautology:
+      //   - `executeSpatialQuery` rejects only on STRICT inequality
+      //     (`chunkMax < queryMin || chunkMin > queryMax`), so a bound exactly touching
+      //     the window matches.
+      //   - the projection's discrete gate discards on `> step * 0.5`
+      //     (`workers/data-worker/projection/gsplats.ts`), so equality is VISIBLE.
+      // A half-cell fetch window therefore covers the gate's own closed boundary; a
+      // quarter-cell does not reach it at all.
+      const STEP = 2.0; // non-unit, so a hardcoded 0.5 cannot pass by accident
+      const SLICE = 4.0;
+      const SPLAT = SLICE + 0.5 * STEP; // exactly on the gate's edge
+      const stacked: DimensionInfo[] = [
+        { discrete: false },
+        { discrete: false },
+        { discrete: false },
+        { discrete: true, step: STEP },
+      ];
+      const tol = computeTolerance('gsplats', [0, 1, 2], 4, stacked, { barrierDims: [] });
+      expect(tol[3]).toBe(0.5 * STEP);
+
+      // Render side: the gate's own predicate, at equality.
+      expect(Math.abs(SLICE - SPLAT) > STEP * 0.5).toBe(false);
+
+      // Fetch side: the real AABB scan over the bare (unpadded, unexpanded) bound.
+      const bounds = new Float32Array(4 * 2);
+      for (let d = 0; d < 4; d++) {
+        bounds[d * 2] = d === 3 ? SPLAT : -100;
+        bounds[d * 2 + 1] = d === 3 ? SPLAT : 100;
+      }
+      const scan = (t: number[]): number[] =>
+        executeSpatialQuery({
+          chunkBounds: bounds,
+          queryPosition: [0, 0, 0, SLICE],
+          queryTolerance: t,
+          numChunks: 1,
+          ndim: 4,
+        });
+      expect(scan(tol)).toEqual([0]);
+      // Negative control: the quarter-cell reach does not reach the gate's boundary.
+      expect(scan([1e10, 1e10, 1e10, 0.25 * STEP])).toEqual([]);
+      // And just OUTSIDE the gate the renderer drops the splat anyway, so the window
+      // not reaching there is correct rather than a miss.
+      const beyond = SLICE + 0.5 * STEP + 0.01;
+      expect(Math.abs(SLICE - beyond) > STEP * 0.5).toBe(true);
+    });
+
+    it('regression: an off-grid stacked axis at step 1 must not fetch a 1e-3 window', () => {
+      // `luxar gsplat merge --as-dimension --values 0.2,1.2,2.2` writes a STANDALONE
+      // store: no `scene_dimensions`, so the writer falls back to the value-based
+      // `io/_ordering/compound.py::detect_barrier_dims`, which rejects non-near-integer
+      // values and omits the axis from `slice_dims`. Opened DIRECTLY
+      // (`?src=….gsplats.zarr` — see the reachable-path case below), the viewer
+      // synthesizes `discrete: true, step: 1` for that axis, so the slice snaps to 1.0
+      // while the splats sit at 1.2. σ = 0 on a stacked axis, so the stored bound gets
+      // neither a σ expansion nor a `_BARRIER_BOUND_EPS` pad — it is the bare
+      // coordinate 1.2. The render gate passes (|1.0 − 1.2| = 0.2 ≤ 0.5) and a 1e-3
+      // window matches no chunk, so every chunk that sits entirely inside one stacked
+      // value drops out — most of the node, though not all of it (with
+      // `slice_dims: []` the sort is a pure spatial curve over ALL columns, so a chunk
+      // straddling two adjacent values still spans the query and matches).
+      const SLICE = 1.0;
+      const SPLAT = 1.2;
+      const stacked: DimensionInfo[] = [
+        { discrete: false },
+        { discrete: false },
+        { discrete: false },
+        { discrete: true, step: 1.0 },
+      ];
+      const tol = computeTolerance('gsplats', [0, 1, 2], 4, stacked, { barrierDims: [] });
+      // The render side shows it …
+      expect(Math.abs(SLICE - SPLAT)).toBeLessThanOrEqual(0.5 * 1.0);
+      // … so the fetch window has to reach it. A bare continuous epsilon does not.
+      expect(tol[3]).toBeGreaterThanOrEqual(Math.abs(SLICE - SPLAT));
+      expect(CONTINUOUS_EPS).toBeLessThan(Math.abs(SLICE - SPLAT));
+      // Measured on the real AABB scan over the bare (unpadded, unexpanded) bound.
+      const bounds = new Float32Array(4 * 2);
+      for (let d = 0; d < 4; d++) {
+        bounds[d * 2] = d === 3 ? SPLAT : -100;
+        bounds[d * 2 + 1] = d === 3 ? SPLAT : 100;
+      }
+      const scan = (t: number[]): number[] =>
+        executeSpatialQuery({
+          chunkBounds: bounds,
+          queryPosition: [0, 0, 0, SLICE],
+          queryTolerance: t,
+          numChunks: 1,
+          ndim: 4,
+        });
+      expect(scan(tol)).toEqual([0]);
+      expect(scan([1e10, 1e10, 1e10, CONTINUOUS_EPS])).toEqual([]);
+    });
+
+    it('regression: an offset-0.3 stacked axis needs the HALF cell — a quarter misses it', () => {
+      // The same shape one notch further off-grid (`--values 0.3,1.3,2.3`). This is the
+      // half of the bug the quarter-cell left unfixed — 0.3 is inside the renderer's
+      // half-cell gate and outside a 0.25-cell fetch window — so the window must be the
+      // membership half-cell, not a floor calibrated to the barrier arm's `< 0.5` pad
+      // budget (a budget a dim the writer never barrier-padded does not have).
+      const SLICE = 1.0;
+      const SPLAT = 1.3;
+      const stacked: DimensionInfo[] = [
+        { discrete: false },
+        { discrete: false },
+        { discrete: false },
+        { discrete: true, step: 1.0 },
+      ];
+      const tol = computeTolerance('gsplats', [0, 1, 2], 4, stacked, { barrierDims: [] });
+      // The render side shows it: |1.0 − 1.3| = 0.3 ≤ 0.5 × step.
+      expect(Math.abs(SLICE - SPLAT)).toBeLessThanOrEqual(0.5 * 1.0);
+      // … and 0.3 is beyond BOTH prior answers, which is what makes this case new.
+      expect(QUARTER_CELL).toBeLessThan(Math.abs(SLICE - SPLAT));
+      expect(CONTINUOUS_EPS).toBeLessThan(Math.abs(SLICE - SPLAT));
+      expect(tol[3]).toBeGreaterThanOrEqual(Math.abs(SLICE - SPLAT));
+
+      // Measured on the real AABB scan over the bare (unpadded, unexpanded) bound.
+      const bounds = new Float32Array(4 * 2);
+      for (let d = 0; d < 4; d++) {
+        bounds[d * 2] = d === 3 ? SPLAT : -100;
+        bounds[d * 2 + 1] = d === 3 ? SPLAT : 100;
+      }
+      const scan = (t: number[]): number[] =>
+        executeSpatialQuery({
+          chunkBounds: bounds,
+          queryPosition: [0, 0, 0, SLICE],
+          queryTolerance: t,
+          numChunks: 1,
+          ndim: 4,
+        });
+      expect(scan(tol)).toEqual([0]);
+      // Negative controls: the quarter-cell floor this replaced misses the chunk, and
+      // so does the bare continuous epsilon.
+      expect(scan([1e10, 1e10, 1e10, QUARTER_CELL])).toEqual([]);
+      expect(scan([1e10, 1e10, 1e10, CONTINUOUS_EPS])).toEqual([]);
+    });
+
+    it('the half-cell REPLACES the continuous term, it is not a max with it', () => {
+      // At a normal step the two candidate rules are 500× apart, so `toBe(0.5)` alone
+      // cannot tell "half-cell" from "max(half-cell, epsilon)". The micro-step axis
+      // does: there the continuous term (2.75e-5, an absolute degenerate BAND) is far
+      // WIDER than the half cell (5e-7), and a `max` would return it. It must not —
+      // that band is only ever drawn through the Gaussian attenuation, which this dim
+      // is excluded from (`classifyHiddenDims` puts a scene-discrete dim in
+      // `discreteHiddenDims`), so honouring it here would be over-fetch justified by a
+      // rule the renderer does not apply.
+      const micro: DimensionInfo[] = [
+        { discrete: false },
+        { discrete: false },
+        { discrete: false },
+        { discrete: true, step: 1e-6 },
+      ];
+      expect(computeTolerance('gsplats', [0, 1, 2], 4, dims(true), { barrierDims: [] })[3]).toBe(
+        0.5
+      );
+      expect(computeTolerance('gsplats', [0, 1, 2], 4, micro, { barrierDims: [] })[3]).toBe(0.5e-6);
+      expect(computeTolerance('gsplats', [0, 1, 2], 4, micro, { barrierDims: [] })[3]).toBeLessThan(
+        REGULARIZED_BAND
+      );
+      // Still observably NOT `undefined`: without the published set the same dim takes
+      // the barrier arm's quarter-cell.
+      expect(computeTolerance('gsplats', [0, 1, 2], 4, micro)[3]).toBe(0.25e-6);
+    });
+  });
+
+  it('an EMPTY barrierDims is authoritative, not "absent"', () => {
+    // `[]` is a real answer from the writer ("I ordered purely spatially"), and
+    // conflating it with `undefined` would silently restore the `discrete` guess: the
+    // demoted dims take the half-cell membership window, the barrier arm the
+    // quarter-cell. Asserted across all three hidden dims of a 4D node so a length
+    // check masquerading as an emptiness check cannot pass.
+    const allDiscrete: DimensionInfo[] = [
+      { discrete: true, step: 1e-6 },
+      { discrete: true, step: 1e-6 },
+      { discrete: true, step: 1e-6 },
+      { discrete: true, step: 1e-6 },
+    ];
+    const tol = computeTolerance('gsplats', [0], 4, allDiscrete, { barrierDims: [] });
+    for (const d of [1, 2, 3]) expect(tol[d]).toBe(0.5e-6);
+    expect(tol[0]).toBe(1e10); // displayed dim still wins
+    // Without the option, the same dims take the barrier rule instead.
+    const legacy = computeTolerance('gsplats', [0], 4, allDiscrete);
+    for (const d of [1, 2, 3]) expect(legacy[d]).toBe(0.25e-6);
+  });
+
+  it('INVARIANT (holds before and after #1655): with no barrierDims, `discrete` alone decides', () => {
+    // Not coverage of this change — a guard on the legacy path this change must leave
+    // alone. A store that publishes no `slice_dims` (and every non-gsplats caller,
+    // which passes no options at all) must keep classifying from the scene flag.
+    for (const options of [undefined, {}, { maxRadius: 5 }]) {
+      expect(computeTolerance('gsplats', [0, 1, 2], 4, dims(true), options)[3]).toBe(QUARTER_CELL);
+      expect(computeTolerance('gsplats', [0, 1, 2], 4, dims(false), options)[3]).toBe(
+        CONTINUOUS_EPS
+      );
+    }
+  });
+
+  it('classifies each dim independently, not "any barrier ⇒ all barriers"', () => {
+    // A realistic 5D fitted timelapse: dims 0-2 displayed, dim 3 a σ-expanded
+    // spatial axis the scene happens to declare discrete, dim 4 the stacked
+    // timepoint barrier. Dim 3 is demoted, so it takes the half-cell membership window
+    // (0.5 at step 1) while dim 4 takes the barrier quarter-cell — two DIFFERENT
+    // answers in one call, which is the point: dim 4 is classified separately.
+    const d5: DimensionInfo[] = [
+      { discrete: false },
+      { discrete: false },
+      { discrete: false },
+      { discrete: true, step: 1.0 },
+      { discrete: false, step: 1.0 },
+    ];
+    const tol = computeTolerance('gsplats', [0, 1, 2], 5, d5, { barrierDims: [4] });
+    expect(tol[3]).toBe(0.5);
+    expect(tol[4]).toBe(QUARTER_CELL);
+    // A truly continuous dim 3 (the scene agreeing with the writer) DOES take the
+    // epsilon — so the assertion above is the demote rule, not a stuck constant.
+    const d5cont: DimensionInfo[] = [...d5.slice(0, 3), { discrete: false, step: 1.0 }, d5[4]];
+    const tol2 = computeTolerance('gsplats', [0, 1, 2], 5, d5cont, { barrierDims: [4] });
+    expect(tol2[3]).toBe(CONTINUOUS_EPS);
+    expect(tol2[4]).toBe(QUARTER_CELL);
+  });
+
+  it('the barrier rule still scales with the step under an override', () => {
+    // The override picks the RULE; it must not replace the rule's own step scaling
+    // with a hardcoded 0.25.
+    const dimsStep4: DimensionInfo[] = [
+      { discrete: false },
+      { discrete: false },
+      { discrete: false },
+      { discrete: false, step: 4.0 },
+    ];
+    expect(computeTolerance('gsplats', [0, 1, 2], 4, dimsStep4, { barrierDims: [3] })[3]).toBe(1.0);
+  });
+
+  it('the seam is GSPLATS-ONLY: lines and mesh ignore barrierDims entirely', () => {
+    // `isBarrierDim` reads the published set for gsplats and nowhere else, so passing
+    // the option to another geometry is a documented no-op rather than a silent
+    // behaviour change. That is deliberate, not an oversight: honouring it would
+    // NARROW both other arms — lines' continuous arm is a literal `0` (while
+    // `data-processor-lines.ts` keeps clipping against a half-cell slab), and mesh's
+    // two arms are both MEMBERSHIP gates, so a promoted dim would take a full cell
+    // down to a half and change what the user SEES. Wiring either up must add that
+    // arm's floor first, which this pins as an explicit edit rather than a default.
+    const linesDims = dims(false);
+    expect(computeTolerance('lines', [0, 1, 2], 4, linesDims, { barrierDims: [3] })[3]).toBe(
+      computeTolerance('lines', [0, 1, 2], 4, linesDims)[3]
+    );
+    expect(computeTolerance('lines', [0, 1, 2], 4, linesDims, { barrierDims: [3] })[3]).toBe(0);
+    // Demote would have been just as invisible on the lines membership path.
+    expect(
+      computeTolerance('lines', [0, 1, 2], 4, dims(true), {
+        barrierDims: [],
+        discreteRole: 'membership',
+      })[3]
+    ).toBe(0.5);
+
+    // Mesh: promote must NOT move the slab off its full cell, demote must NOT move it
+    // off the half cell it gets from `discrete`.
+    const meshDims = dims(false);
+    expect(computeTolerance('mesh', [0, 1, 2], 4, meshDims, { barrierDims: [3] })[3]).toBe(1.0);
+    expect(computeTolerance('mesh', [0, 1, 2], 4, dims(true), { barrierDims: [] })[3]).toBe(0.5);
+    expect(computeTolerance('mesh', [0, 1, 2], 4, dims(true))[3]).toBe(0.5);
+  });
+
+  it('INVARIANT (holds before and after #1655): POINTS classify from spatialExtendDims', () => {
+    // Not coverage of this change — the invariant it must not break. Points never
+    // read `discrete` (their live path does not even come through
+    // `computeTolerance`), so wiring them to a second, differently-sourced
+    // classifier would be an unrequested behaviour change.
+    const pointDims = dims(false);
+    const opts = { maxRadius: 5.0, spatialExtendDims: [true, true, true, true] };
+    expect(computeTolerance('points', [0, 1, 2], 4, pointDims, opts)[3]).toBe(5.0);
+    expect(
+      computeTolerance('points', [0, 1, 2], 4, pointDims, { ...opts, barrierDims: [3] })[3]
+    ).toBe(5.0);
+  });
+});
+
+/**
+ * Issue #1655 item 3: the degenerate-band term is `T × sqrt(CHOLESKY_EPSILON)` and
+ * used to be pinned to the DEFAULT `T` because this function only ever saw a
+ * `DimensionInfo`. A node may stamp a larger `truncation_radius`
+ * (`clampTruncationRadius` bounds it only to the float32-representable range), and
+ * the band it renders scales with that — so the window `(2.75e-5, T × 1e-5]` was
+ * uncovered. The node's own radius now reaches the computer.
+ */
+describe('computeTolerance — gsplats truncationRadius scales the degenerate band', () => {
+  /** Micro-step axis, so the BAND term dominates and the radius is observable. */
+  const microDims: DimensionInfo[] = [
+    { discrete: false },
+    { discrete: false },
+    { discrete: false },
+    { discrete: false, step: 1e-6 },
+  ];
+  const band = (truncationRadius?: number): number =>
+    computeTolerance('gsplats', [0, 1, 2], 4, microDims, { truncationRadius })[3];
+
+  it('T = 6 gives a 6e-5 band where the default T gives 2.75e-5', () => {
+    // Spelled as literals rather than re-derived from the implementation's own
+    // expression: 6 × sqrt(1e-10) = 6e-5, 2.75 × sqrt(1e-10) = 2.75e-5.
+    expect(band(6)).toBeCloseTo(6e-5, 12);
+    expect(band()).toBeCloseTo(REGULARIZED_BAND, 12);
+    expect(band(6)).toBeGreaterThan(band());
+    // The uncovered window the issue names: (2.75e-5, 6e-5].
+    expect(band()).toBeLessThan(6e-5);
+  });
+
+  it('scales linearly, pinned to LITERAL bands across a sweep', () => {
+    // Literals, not `T * Math.sqrt(GSPLAT_CHOLESKY_EPSILON)`: re-deriving the
+    // expectation from the implementation's own expression makes the assertion
+    // unfalsifiable (the trap this file's own header comment warns about — the
+    // constants are pinned to the kernels separately, at the top of this file).
+    const EXPECTED: [number, number][] = [
+      [0.5, 5e-6],
+      [1, 1e-5],
+      [2.75, 2.75e-5],
+      [6, 6e-5],
+      [20, 2e-4],
+    ];
+    for (const [T, expected] of EXPECTED) {
+      expect(band(T)).toBeCloseTo(expected, 12);
+    }
+  });
+
+  it('the exported helper and the dispatcher select the same rule', () => {
+    // A real claim about wiring (the gsplats arm of `computeHiddenDimTolerance`
+    // could call something else), kept separate from the value assertions above so
+    // it cannot stand in for them.
+    for (const T of [0.5, 2.75, 20, undefined]) {
+      expect(gsplatsContinuousDimTolerance(microDims[3], T)).toBe(band(T));
+    }
+  });
+
+  it('a hostile or broken radius falls back to the default instead of exploding', () => {
+    // The failure to avoid is "the epsilon becomes fetch-the-entire-node" (or
+    // collapses to nothing). `clampTruncationRadius` is the authoritative rule and
+    // the loader applies it, but this arm keeps its own positive-finite backstop.
+    //
+    // The `0` / negative rows below are UNREACHABLE from the real caller, and
+    // deliberately answer differently from the authoritative clamp: the loader routes
+    // every attr through `clampTruncationRadius`, which floors those at
+    // `MIN_TRUNCATION_RADIUS` (≈2.44e-4 — pinned from the loader side in
+    // `tests/unit/data/gsplats/spatial-index-loader.test.ts`), so this branch only
+    // ever sees them from a caller that skipped the clamp. Backstop, not a second
+    // rule; see `ToleranceOptions.truncationRadius`.
+    for (const hostile of [
+      NaN,
+      Infinity,
+      -Infinity,
+      1e308, // finite in float64, Infinity in float32
+      1e30, // square overflows float32
+      0,
+      -1,
+      -2.75,
+    ]) {
+      expect(band(hostile)).toBeCloseTo(REGULARIZED_BAND, 12);
+    }
+    // A genuinely tiny-but-valid radius is NOT rejected — it is a real authored
+    // value the material clamps, not a hostile one. (Literal: 1e-3 × 1e-5.)
+    expect(band(1e-3)).toBeCloseTo(1e-8, 15);
+  });
+
+  it('does not touch the step-fraction regime, the barrier arm, or the other geometries', () => {
+    // Above the crossover term 1 dominates and the radius is irrelevant …
+    const coarse: DimensionInfo[] = [
+      { discrete: false },
+      { discrete: false },
+      { discrete: false },
+      { discrete: false, step: 1.0 },
+    ];
+    expect(computeTolerance('gsplats', [0, 1, 2], 4, coarse, { truncationRadius: 6 })[3]).toBe(
+      1e-3
+    );
+    // … a barrier dim keeps the quarter-cell whatever the radius …
+    const barrier: DimensionInfo[] = [...coarse.slice(0, 3), { discrete: true, step: 1.0 }];
+    expect(computeTolerance('gsplats', [0, 1, 2], 4, barrier, { truncationRadius: 6 })[3]).toBe(
+      0.25
+    );
+    // … and lines / mesh ignore it entirely.
+    expect(computeTolerance('lines', [0, 1, 2], 4, microDims, { truncationRadius: 6 })[3]).toBe(0);
+    expect(computeTolerance('mesh', [0, 1, 2], 4, microDims, { truncationRadius: 6 })[3]).toBe(
+      1e-6
+    );
+  });
+});
+
+/**
  * The POINT of #1183, measured on the AABB scan the loaders actually run rather
  * than on the constant: the epsilon selects exactly the chunks whose
  * coverage-expanded bounds contain the slice position, a wider reach admits
