@@ -81,30 +81,42 @@ export function getBoundingBoxDiagonal(box: BoundingBox): number {
 }
 
 /**
- * Calculates optimal camera distance to fit bounding box in view
+ * Calculates the +Z camera distance that fits a bounding box in view.
+ * X/Y are the screen plane and Z is depth, matching fitCameraToBounds' fixed
+ * face-on pose. The larger X/Y extent fills fitRatio of the shorter viewport
+ * axis at the nearest Z face. If both projected extents are zero, half the Z
+ * extent is used as a conservative fallback so the camera stays off the geometry.
  *
  * @param box - Bounding box to fit
  * @param camera - Camera configuration
  * @param fitRatio - How much of the view to fill (0-1, default 0.75)
- * @returns Optimal camera distance from center
+ * @param target - Look-at target; defaults to the bounding-box center
+ * @returns Optimal +Z camera distance from the look-at target
  */
 export function calculateCameraDistance(
   box: BoundingBox,
   camera: CameraConfig,
-  fitRatio: number = config.scene.defaultFitRatio
+  fitRatio: number = config.scene.defaultFitRatio,
+  target: { x: number; y: number; z: number } = getBoundingBoxCenter(box)
 ): number {
-  const maxDim = getBoundingBoxMaxDimension(box);
-
-  // Calculate distance based on FOV
   const fovRadians = (camera.fov * Math.PI) / 180;
   const halfFov = fovRadians / 2;
+  const nearestDepth = Math.max(0, box.max.z - target.z);
+  const screenPlaneRadius = Math.max(
+    Math.abs(box.min.x - target.x),
+    Math.abs(box.max.x - target.x),
+    Math.abs(box.min.y - target.y),
+    Math.abs(box.max.y - target.y)
+  );
+  const fitRadius = screenPlaneRadius > 0 ? screenPlaneRadius : Math.abs(box.max.z - box.min.z) / 2;
 
-  // Consider aspect ratio to ensure object fits in both dimensions
-  const verticalFit = maxDim / fitRatio / (2 * Math.tan(halfFov));
-  const horizontalFit = maxDim / fitRatio / (2 * Math.tan(halfFov) * camera.aspect);
+  // Fit the larger screen-plane extent against the shorter viewport axis at
+  // the nearest face of the box. Depth does not enlarge the silhouette
+  // directly, but it brings that face closer and increases its projection.
+  const verticalFit = nearestDepth + fitRadius / fitRatio / Math.tan(halfFov);
+  const horizontalFit = nearestDepth + fitRadius / fitRatio / (Math.tan(halfFov) * camera.aspect);
 
-  // Use the larger distance to ensure complete fit
-  return Math.max(verticalFit, horizontalFit) * 1.2; // Add 20% margin
+  return Math.max(verticalFit, horizontalFit);
 }
 
 /**
@@ -196,7 +208,8 @@ export function minNearForRadius(expandedRadius: number): number {
  * out to be nearly free, so C is set for MARGIN above the binding constraint
  * rather than at it:
  *
- *  - **C > 551, don't clip the zoom target.** At maximum zoom-in the
+ *  - **C > 551, don't clip the zoom target under the scale-multiplier floor.**
+ *    At maximum zoom-in the
  *    orbit target sits at `minDistance = 1e-3 · diagonal`
  *    (`controls.scaleMultipliers`) = `1.905e-3 · R`, while `far ≈ 1.05 · R`.
  *    Keeping it in front of the near plane needs `1.05 R / C < 1.905e-3 R`.
@@ -206,6 +219,13 @@ export function minNearForRadius(expandedRadius: number): number {
  *    `minDistance`. All four types are inside the fade-suppressed region
  *    throughout that band by construction, so at most the sub-1% line residual
  *    described in the next bullet is lost there, and this does not move C.
+ *    Auto-framing installs a separate `distance / ZOOM_IN_FACTOR` limit. The
+ *    projected-bounds fit approaches `distance / diagonal = 0.5` for a
+ *    view-axis-elongated box at the default FOV, raising this target constraint
+ *    to about 1102; C = 1200 clears it there, with a 1.14x near-plane margin at
+ *    the most extreme supported zoom. At wide FOVs the ratio falls further and
+ *    C does not clear this target constraint, as it did not before this change;
+ *    see the `ZOOM_IN_FACTOR` note in `camera-framing.ts`.
  *  - **C ≥ 992, keep everything the floor clips inside the near fade, for all
  *    four geometry types.** Every one of them already suppresses anything
  *    closer than `nearCull = 1e-3 · diagonal` via `perspectiveNearFade`

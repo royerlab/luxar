@@ -132,47 +132,32 @@ const FINE_RELOAD_SETTLE_TICKS = 8;
  * an ultrawide monitor (#1361's blur, returning at wide aspects).
  *
  * ``fittedAxisPx`` is exactly the extent ``calculateCameraDistance`` fits in
- * each regime — ``height`` for aspect ≥ 1, ``width`` for aspect < 1 — and this
- * is provably, not just empirically, the fix for the aspect ≥ 1 case: distance
- * there has no aspect dependence at all, so a box's camera-relative corner
- * positions (and hence its Y-axis NDC projection) are IDENTICAL for every
- * aspect ≥ 1, and the X-axis projection's aspect-dependent scaling exactly
- * cancels against the viewport-width term when converting NDC to pixels —
- * leaving the projected pixel diagonal EXACTLY proportional to ``height``,
- * independent of both aspect and absolute viewport size (verified to 12
- * significant digits for every shape in the test matrix, at 1:1/16:9/21:9/32:9
- * viewports of differing absolute size). The aspect < 1 branch is the mirror
- * image (distance ∝ 1/aspect) and is exactly invariant to viewport SIZE at a
- * fixed aspect, but only APPROXIMATELY invariant across different aspect < 1
- * values for a box whose depth (extent along the view axis) is a large
- * fraction of its in-plane size: there, unlike the aspect ≥ 1 branch, the
- * camera distance itself changes with aspect, so the near/far corner
- * correction from the box's own depth no longer cancels exactly. Measured at
- * the opening framing, 9:16 vs. the (exact) aspect ≥ 1 value: a cube (depth ==
- * width) is off by ~14%, "umap-ish" 100×80×60 by ~8%, while the two thin
- * shapes (an in-plane rod, a flat pancake) are off by ~0.1% — all comfortably
- * inside the headroom below.
+ * each regime — ``height`` for aspect ≥ 1, ``width`` for aspect < 1. The fit
+ * uses the larger X/Y extent at the box's nearest face: ``halfDepth +
+ * inPlane/(2·fitRatio·tan(halfFov))`` (and divides the second term by aspect in
+ * portrait). The near-face distance is therefore proportional to the fitted
+ * axis in both regimes, so the projected pixel diagonal divided by
+ * ``fittedAxisPx`` is EXACTLY invariant across aspect and absolute viewport
+ * size for the default centre fit modelled here. Preserving an authored
+ * off-centre controls target changes which depth face bounds each side of the
+ * projected rectangle. The identity remains exact while the target lies inside
+ * the box's screen-plane footprint and at or behind its near face (``target.z
+ * <= box.max.z``). It degrades when either condition is violated: for an
+ * 8×8×100 box, a target 20 units off-axis drifts 23.8%, while a centred target
+ * 10 units in front of the near face drifts 50.8%. The test matrix verifies the
+ * centre-fit identity to 9 decimal digits for a cube, pancake, in-plane rod,
+ * UMAP-like box, and a 1×1×100 view-axis rod from 1:4 portrait through 32:9
+ * ultrawide.
  *
  * Why 0.5 and not 1.0: at 1.0 the finest level only activates once the object
  * OVERFILLS the fitted axis, reproducing the original #1361 symptom at the
  * default opening framing. Measured opening-framing ``diagonalPx /
- * fittedAxisPx`` across all four shapes in the test matrix, at 1:1, 16:9, 9:16,
- * 21:9 and 32:9, ranges **0.626 (in-plane rod, worst case) – 1.214 (cube, best
- * case)**. Dividing by 0.5 turns that into a metric of **1.25 – 2.43** — past
- * the finest threshold of 1.0 with **~25% headroom even in the worst case** —
- * and, unlike the old anchor, this range barely moves across aspect ratio (see
- * above), so there is no longer a wide-canvas crossover where a shape drops
- * back below the threshold.
- *
- * 0.5 was chosen specifically to keep the metric's VALUE unchanged at the
- * mainstream 16:9 reference, not re-tuned from scratch: at 16:9,
- * ``fittedAxisPx == height`` and ``diagonalPx / height == (diagonalPx / hypot)
- * × hypot(16, 9) / 9 ≈ (diagonalPx / hypot) × 2.0398``, so ``new metric == old
- * metric × 2.0398 / 2 ≈ old metric × 1.02`` — measured as *exactly* a ×1.0199
- * factor for every shape at 16:9 (it is a pure viewport-geometry constant,
- * independent of the shape being measured). Every existing ``coverage_fraction``
- * threshold, the hysteresis band, and the cross-fade band therefore keep their
- * meaning; the only behavioural change is that the wide-canvas drift is gone.
+ * fittedAxisPx`` across all five shapes and seven aspect ratios in the test
+ * matrix ranges **0.750 (in-plane rod) – 1.061 (cube, pancake, and view-axis
+ * rod)**. Dividing by 0.5 turns that into a metric of **1.50 – 2.12** — past
+ * the finest threshold of 1.0 with **50% headroom in the worst case**. The
+ * factor remains necessary: at 1.0 the in-plane rod would still open below the
+ * finest rung even though the framing itself is now aspect-exact.
  *
  * **Coupled constant.** Python's ``MAX_COVERAGE_FRACTION`` (the upper bound on
  * any ``coverage_fraction``, authored or derived — a partition-bound ladder
@@ -217,13 +202,12 @@ const FINE_RELOAD_SETTLE_TICKS = 8;
  * 16:9 geometric value it stands for (so the two constants can't silently
  * compensate for each other).
  *
- * Also deliberately NOT covered: a cloud elongated along the VIEW axis (e.g.
- * 1×1×100) measures a metric of only ~0.024 at the default opening framing on a
- * 16:9 viewport (still far below 1.0), because ``calculateCameraDistance``
- * sizes the distance from the largest dimension even when that dimension is
- * pure depth and barely contributes to the projected AABB. That is a
- * camera-framing quirk, not a normalisation one — the fitted-axis change here
- * does not touch it; see issue #1410's "Related" note.
+ * **View-axis depth fix (#1543).** A 1×1×100 cloud previously measured only
+ * ~0.024 at the default 16:9 framing because the distance was sized from its
+ * pure-depth dimension plus a hardcoded 20% margin. The exact near-face fit
+ * above raises it to **2.121**, so it opens on the finest rung like the other
+ * full-scene shapes. The same fit removes the margin: keeping both would count
+ * depth twice and pull ordinary 3D scenes unnecessarily far back.
  *
  * **Known limitation: resize without a re-fit (out of scope here).**
  * ``updateCameraAspect`` (``utils/camera-utils.ts``) only updates
@@ -1096,7 +1080,7 @@ export class LODGroupRegistry {
         // anchor the finest at half the fitted screen axis — any normal
         // full-frame view — on any monitor OR aspect ratio (see the
         // ``FILL_FACTOR`` doc for why this denominator, unlike the viewport
-        // diagonal it replaces, stays (near-)invariant across aspect ratio).
+        // diagonal it replaces, stays invariant across aspect ratio).
         // diagonalPx == +Infinity (camera inside the box) → Infinity →
         // finest, unchanged. fittedAxisPx is > 0 here (evaluatePerFrame guards
         // width/height == 0). ``?lod-finest`` forces Infinity → always finest.
