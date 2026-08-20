@@ -237,8 +237,38 @@ class TestVoxelSize:
     def test_metadata_without_multiscales_fails_clearly(self, tmp_path) -> None:
         """Not a KeyError from the middle of a subscript chain."""
         path = self._store(tmp_path, {"ome": {"version": "0.5"}})
-        with pytest.raises(ValueError, match="multiscales"):
+        with pytest.raises(ValueError, match="has no OME-Zarr `multiscales`"):
             _demo.voxel_size_of(path)
+
+    def test_multiscales_without_a_scale_transform_says_which_half_is_missing(
+        self, tmp_path
+    ) -> None:
+        """The store IS an OME-Zarr crop; it just states no spacing.
+
+        The two failures need different messages: blaming absent `multiscales`
+        for a store that declares them sends the reader looking for the wrong
+        thing (and lists attributes that plainly include `ome`).
+        """
+        no_scale = [
+            {
+                "datasets": [
+                    {
+                        "path": "0",
+                        "coordinateTransformations": [
+                            {"type": "translation", "translation": [0, 0, 0, 0]}
+                        ],
+                    }
+                ]
+            }
+        ]
+        path = self._store(
+            tmp_path, {"ome": {"version": "0.5", "multiscales": no_scale}}
+        )
+
+        with pytest.raises(ValueError, match="states no `scale`") as excinfo:
+            _demo.voxel_size_of(path)
+
+        assert "has no OME-Zarr `multiscales`" not in str(excinfo.value)
 
 
 class TestTrackWindow:

@@ -863,6 +863,65 @@ class TestTiledFloorHandling:
             np.testing.assert_allclose(rec["data"], expected, atol=1e-4)
             assert rec["result"].stats["floor"] == 100.0
 
+    def test_pre_resolved_floor_skips_run_level_resolution(self, monkeypatch) -> None:
+        """The CLI divisor scan hands ``fit_tiled`` its resolved level once."""
+        import luxar.gsplats.fit_tiled_gsplats as ftg
+
+        records: list = []
+        monkeypatch.setattr(ftg, "fit_gaussian_splats", _recording_stub(records))
+
+        real_resolve = ftg.resolve_volume_floor_denoised
+        run_level_guard_values: list[object] = []
+
+        def spy(volume, floor, **kwargs):
+            if "guard_numeric" in kwargs:
+                run_level_guard_values.append(kwargs["guard_numeric"])
+            return real_resolve(volume, floor, **kwargs)
+
+        monkeypatch.setattr(ftg, "resolve_volume_floor_denoised", spy)
+
+        volume = self._pedestal_volume(pedestal=100.0)
+        ftg.fit_tiled(
+            volume,
+            tile_size=48,
+            overlap=16,
+            floor=100.0,
+            _floor_resolved=True,
+            verbose=False,
+        )
+
+        assert records
+        assert run_level_guard_values == []
+
+    @pytest.mark.parametrize(
+        ("floor", "applied_floor", "pedestal"),
+        [("none", None, 0.0), (3.0, 3.0, 2.0)],
+    )
+    def test_nonempty_scan_matches_fitted_tiles(
+        self, monkeypatch, floor, applied_floor, pedestal
+    ) -> None:
+        """Every tile counted for the seed divisor must enter the fitter."""
+        import luxar.gsplats.fit_tiled_gsplats as ftg
+
+        volume = np.full((96, 96), pedestal, dtype=np.float32)
+        volume[:24, :24] = 10.0
+        specs = compute_tile_specs(volume.shape, tile_size=24, overlap=4)
+
+        records: list = []
+        monkeypatch.setattr(ftg, "fit_gaussian_splats", _recording_stub(records))
+        ftg.fit_tiled(
+            volume,
+            tile_size=24,
+            overlap=4,
+            floor=floor,
+            _floor_resolved=True,
+            verbose=False,
+        )
+
+        predicted = ftg.count_nonempty_tiles(volume, specs, applied_floor)
+        assert predicted == 4
+        assert len(records) == predicted
+
     def test_negative_background_level_is_subtracted(self, monkeypatch) -> None:
         """A negative resolved level (dark-frame-corrected data) IS subtracted.
 

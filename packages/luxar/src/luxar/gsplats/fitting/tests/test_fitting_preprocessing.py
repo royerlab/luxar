@@ -229,6 +229,26 @@ class TestPreprocessData:
         assert applied_floor == pytest.approx(8.0)
         assert normalized.tolist() == pytest.approx([0.0, 0.0])
 
+    def test_supplied_norm_range_rejects_floor_at_shared_ceiling(self) -> None:
+        scales = []
+        for data_max in (20.0, 100.0):
+            V = np.array([0.0, 5.0, data_max], dtype=np.float32)
+
+            normalized, image_min, image_max, intensity_range, applied_floor = (
+                _normalize_data(
+                    V,
+                    norm_percentile=0.0,
+                    verbose=False,
+                    floor=10.0,
+                    norm_range=(0.0, 9.0),
+                )
+            )
+
+            scales.append((image_min, image_max, intensity_range, applied_floor))
+            assert normalized[1] == pytest.approx(5.0 / 9.0)
+
+        assert scales == [(0.0, 9.0, 9.0, None), (0.0, 9.0, 9.0, None)]
+
     def test_percentile_floor_excludes_exact_zero_padding(self) -> None:
         V = np.concatenate(
             [np.zeros(100, dtype=np.float32), np.linspace(100.0, 120.0, 100)]

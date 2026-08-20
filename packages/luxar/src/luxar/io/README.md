@@ -227,8 +227,9 @@ invalidation* below).
 ```python
 from luxar.io.optimise import optimise_store, plan_optimisation, summarise_chunk_layout
 
-plan = optimise_store("scene.luxar.zarr", "out.luxar.zarr", target_bytes=65_536,
-                      verify=True)
+plan = optimise_store(
+    "scene.luxar.zarr", "out.luxar.zarr", target_bytes=65_536, verify=True
+)
 print(plan.source_n_chunks, "→", plan.target_n_chunks)
 ```
 
@@ -317,7 +318,41 @@ sources fed to gsplat fitting/calibration), independent of the compiled
   the honest denominator of any size/compression figure quoted about the result.
 - `ome_zarr.discover_ome_zarr_shape(path, ...)` → `OMEZarrInfo` — discovers the
   T/C/Z/Y/X layout, voxel size, unit, and resolution levels from NGFF
-  `multiscales` (with custom-`axes` and shape-heuristic fallbacks).
+  `multiscales` (with custom-`axes` and shape-heuristic fallbacks). Both
+  OME-Zarr layouts parse: 0.4's top-level block and 0.5's block nested under an
+  `ome` key — resolved by the exported `ome_zarr.resolve_ngff_attrs(attrs)`,
+  which every reader of NGFF attributes should go through (the layout can not be
+  inferred from the store's zarr format version). The nested block wins only
+  when it carries a NON-EMPTY `multiscales` (or when the top level declares none
+  at all), so neither an `ome` block holding just `omero` rendering metadata nor
+  an empty `ome.multiscales` displaces a top-level 0.4 pyramid. A `multiscales`
+  block whose `axes` count disagrees with the SELECTED array's ndim is not
+  metadata about that array (a 5D image beside its 3D `labels/…`) and is skipped
+  rather than parsed. For a nested `array_key`, discovery first uses a non-empty
+  `multiscales` block on the array's parent group; dataset paths are matched
+  exactly relative to that owner, so a same-named root pyramid level cannot be
+  mistaken for the nested array. Voxel size composes any multiscales-level
+  `coordinateTransformations` on top; where that match or that composition cannot
+  be made honestly (an `array_key` matching no entry of a multi-level pyramid, or
+  two scale vectors of different lengths) it reports no spacing rather than a
+  plausible wrong one. Malformed metadata degrades to a fallback throughout, never
+  a traceback — a `multiscales` whose `axes` is not a list (`{"axes": null}`) or
+  whose `datasets` is not a list of mappings, an axis record with no `name` or a
+  `null` `type`, a `scale` carrying a `null` or a non-numeric string. Falling through to the shape heuristic on a ≥4D store guesses the
+  T/C roles and recovers no voxel size, so it says so on the console — stating
+  whether nothing was declared or something was declared but unusable — and points
+  at `axes_override` / `--axes`.
+- The returned `OMEZarrInfo` publishes the decomposition it used, not just its
+  results: `time_axis`, `channel_indices` and `spatial_indices` are indices into
+  `shape`. **Read those rather than re-classifying `info.axes`** — NGFF is
+  classified by the axis `type` field, so a name-driven rule disagrees in both
+  directions (a channel axis named `stain`; an axis typed `view`, which discovery
+  treats as spatial), and two vocabularies deciding the same question is how a
+  consumer silently plans against a layout discovery never reported.
+- `ome_zarr.ngff_scale_transform(transforms)` → the `scale` vector of a NGFF
+  `coordinateTransformations` list, or `None`. The list is SEARCHED for the
+  `type == "scale"` entry rather than indexed at `[0]`, which breaks on any store
+  whose first transform is a `translation`.
 
 These are domain-layer helpers (no CLI dependency); the gsplat CLI re-exports
 them. Dimension inference from a splat bounding box lives in

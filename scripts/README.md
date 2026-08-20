@@ -192,19 +192,20 @@ Fetches real star data from ESA's Gaia DR3 archive and saves it as a **raw zarr 
 
 **Additional Dependencies:**
 ```bash
-pip install astroquery astropy
+pip install 'luxar[demos]'
 ```
 
-These are **NOT** part of luxar's core dependencies because they're large astronomy-specific packages only needed for data generation.
+These are not part of Luxar's core dependencies; `astroquery` and `astropy` are
+declared by the `demos` extra because the installed demo can build the catalog.
 
 **Usage:**
 
 ```bash
-# Install dependencies (one-time)
-hatch run pip install astroquery astropy
+# Preferred installed-demo path (cached, resumable, correct member name)
+luxar demo deps --install
+luxar demo run gaia_milky_way -- --build-catalog
 
-# Generate 3M stars (used for demo, ~90 minutes). The --output stem is
-# load-bearing: the zip must contain a top-level milky_way_gaia_3m.zarr/ directory.
+# Source-checkout compatibility CLI
 hatch run python scripts/generate_galaxy_simple.py --count 3000000 --output ~/.cache/luxar/milky_way_gaia_3m/milky_way_gaia_3m.zarr
 
 # Test with smaller datasets
@@ -215,7 +216,8 @@ hatch run python scripts/generate_galaxy_simple.py --count 100000   # 100k stars
 The 3M output goes to the demo's cache, **not** into the repository: the Gaia
 catalog is CC BY-NC and the derived point cloud inherits that, so do not commit
 it (the former in-repo `demos/data/` copy was removed for exactly that reason).
-Doing this build automatically on the demo's first run is issue #1575.
+The demo path fixes the cache stem, promotes the zip atomically, and can resume
+from a completed raw zarr without repeating the TAP query.
 
 **Output Format:**
 

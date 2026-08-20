@@ -30,9 +30,8 @@ Four datasets are `local-compute` — `gsplats_tribolium`, `gsplats_acto3d_heart
 `gsplats_tng_cosmic_web` and `milky_way_gaia_3m`. Their licenses do not permit
 redistributing even the derived product, so do not migrate those demos to the
 manifest fetch path. **Their in-repo copies have been removed**: those demos now
-fetch the raw source and rebuild locally (Gaia has no *automatic* build path yet
-— `scripts/generate_galaxy_simple.py` rebuilds it by hand, and royerlab/luxar#1575
-will do that on first run — so it reads a file placed in `~/.cache/luxar/`).
+fetch the raw source and rebuild locally. Gaia's opt-in first-run path queries
+the archive with `--build-catalog` and caches the result in `~/.cache/luxar/`.
 
 Licenses split three ways: mostly CC0 / CC-BY / public domain; **CC BY-SA** for
 `gsplats_zebrafish` and `gsplats_opencell_map4` (the derived product must be

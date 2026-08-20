@@ -1760,7 +1760,9 @@ def _normalize_data(
     chosen: an explicit background level raises ``image_min`` so the pedestal
     is clipped to 0 by the existing ``np.clip((V - image_min) / range, 0, 1)``.
     ``norm_percentile`` still governs ``image_max`` (bright-outlier clipping),
-    so the two are orthogonal.
+    so the two are normally orthogonal. If the floor overtakes a
+    percentile-derived high endpoint, that endpoint expands to the data maximum,
+    dropping bright-outlier clipping to preserve usable signal.
 
     ``norm_range`` supplies ``(image_min, image_max)`` outright, bypassing
     ``norm_percentile``'s derivation from ``V``. Tiled fitting passes a range

@@ -164,7 +164,8 @@ def estimate_floor(V: np.ndarray, method: str = "mode") -> float:
     Notes
     -----
     Exact-zero voxels (masked / out-of-FOV padding) are excluded so padding
-    does not dominate the histogram.
+    does not dominate the histogram. This function materializes ``V``; use
+    :func:`luxar.gsplats.fitting.resolve_volume_floor` for a lazy whole volume.
     """
     V = np.asarray(V)
     Vf = V[V != 0.0] if np.any(V != 0.0) else V

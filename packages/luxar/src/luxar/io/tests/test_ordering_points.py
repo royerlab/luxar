@@ -148,6 +148,35 @@ class TestChunkBoundsPoints:
                 assert bounds[0, dim, 0] < positions[:, dim].min()
                 assert bounds[0, dim, 1] > positions[:, dim].max()
 
+    def test_barrier_epsilon_survives_the_float32_store_at_large_coordinates(
+        self,
+    ) -> None:
+        """The barrier arm is padded the same way, and loses it the same way.
+
+        The two large-coordinate tests above both pass ``radii=`` and no
+        ``slice_dims``, so they only exercise the SPATIAL arm. A categorical axis
+        with large values (a millisecond timestamp, an acquisition index offset
+        into an experiment) takes ``coords.min() - _BARRIER_BOUND_EPS`` instead:
+        1e-3 against a half-ULP of 1.0 at ``|x| = 2e7``, so a round-to-nearest
+        store collapses it back onto the exact category value and a query
+        landing a float ULP off it misses the chunk. Mirrors the lines and
+        gsplats barrier tests.
+        """
+        base = 2.0e7
+        positions = np.array([[base, 5.0, 5.0], [base, 6.0, 6.0]], dtype=np.float32)
+
+        bounds = compute_chunk_bounds_points(
+            positions, radii=0.05, chunk_size=2, slice_dims=[0]
+        )
+
+        assert bounds.dtype == np.float32
+        assert np.float64(bounds[0, 0, 0]) < np.float64(base)
+        assert np.float64(bounds[0, 0, 1]) > np.float64(base)
+        # ...and the spatial axes still carry their (much larger) radius pad.
+        for dim in (1, 2):
+            assert bounds[0, dim, 0] == pytest.approx(5.0 - 0.05)
+            assert bounds[0, dim, 1] == pytest.approx(6.0 + 0.05)
+
     def test_chunk_bounds_basic_with_radii(self) -> None:
         """Test chunk bounds with uniform radii."""
         positions = np.array(
