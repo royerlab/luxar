@@ -484,7 +484,7 @@ class TestDecimateQEM:
             np.linalg.norm(result.normals, axis=1), 1.0, atol=1e-5
         )
 
-    def test_an_open_surface_keeps_one_boundary_and_no_nonmanifold_edges(self) -> None:
+    def test_an_open_surface_preserves_its_orientation_area_and_boundary(self) -> None:
         side = 8
         vertices = np.array(
             [(x, y, 0) for y in range(side) for x in range(side)], np.float32
@@ -498,9 +498,15 @@ class TestDecimateQEM:
         result = decimate_qem(
             vertices, np.asarray(faces, np.uint32), target_vertices=24
         )
+        triangles = result.vertices[result.faces]
+        cross = np.cross(
+            triangles[:, 1] - triangles[:, 0], triangles[:, 2] - triangles[:, 0]
+        )
         edges, boundary, nonmanifold = edge_audit(len(result.vertices), result.faces)
         assert len(result.vertices) - edges + len(result.faces) == 1
-        assert boundary > 0
+        assert np.all(cross[:, 2] > 0), "every coarse face must keep the input winding"
+        assert np.linalg.norm(cross, axis=1).sum() / 2 >= 0.9 * (side - 1) ** 2
+        assert boundary >= 2 * (side - 1)
         assert nonmanifold == 0
 
     def test_nonspatial_columns_are_hard_collapse_barriers(self) -> None:
@@ -623,7 +629,7 @@ class TestDecimateQEM:
         vertices = np.zeros((10, 3), dtype=np.float32)
         faces = np.array([[0, 1, 2], [3, 4, 5], [6, 7, 8]], dtype=np.uint32)
 
-        with pytest.raises(ValueError, match="collapsed every triangle"):
+        with pytest.raises(ValueError, match="input .* has no triangle spanning"):
             decimate_qem(vertices, faces, target_vertices=4)
 
     def test_auto_uses_qem_only_inside_its_measured_envelope(self) -> None:

@@ -50,11 +50,35 @@ def _face_quadrics(positions: NDArray[np.float64]) -> NDArray[np.float64]:
 def _vertex_quadrics(
     positions: NDArray[np.float64], faces: NDArray[np.int64]
 ) -> NDArray[np.float64]:
-    """Sum every incident face quadric onto each vertex."""
+    """Sum incident face and boundary-line quadrics onto each vertex."""
     face_quadrics = _face_quadrics(positions[faces])
     out = np.zeros((len(positions), positions.shape[1] + 1, positions.shape[1] + 1))
     for corner in range(3):
         np.add.at(out, faces[:, corner], face_quadrics)
+
+    edges = np.sort(
+        np.concatenate([faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]]),
+        axis=1,
+    )
+    unique_edges, counts = np.unique(edges, axis=0, return_counts=True)
+    boundary_edges = unique_edges[counts == 1]
+    edge_vectors = positions[boundary_edges[:, 1]] - positions[boundary_edges[:, 0]]
+    lengths = np.linalg.norm(edge_vectors, axis=1)
+    valid = lengths > 1e-15
+    for (u, v), edge_vector, length in zip(
+        boundary_edges[valid], edge_vectors[valid], lengths[valid], strict=True
+    ):
+        direction = edge_vector / length
+        projector = np.eye(positions.shape[1]) - np.outer(direction, direction)
+        point = positions[u]
+        offset = -projector @ point
+        quadric = np.zeros_like(out[0])
+        quadric[:-1, :-1] = projector
+        quadric[:-1, -1] = offset
+        quadric[-1, :-1] = offset
+        quadric[-1, -1] = float(point @ projector @ point)
+        out[u] += 1000.0 * quadric
+        out[v] += 1000.0 * quadric
     return out
 
 
@@ -67,9 +91,8 @@ def _require_nondegenerate_surface(
     if np.any(np.linalg.matrix_rank(edges, tol=1e-12) >= 2):
         return
     raise ValueError(
-        f"decimation collapsed every triangle of a {positions.shape[0]}-vertex, "
-        f"{faces.shape[0]}-face mesh, leaving no surface. The input is "
-        "degenerate (collinear or coincident vertices) rather than merely fine."
+        f"the input {positions.shape[0]}-vertex, {faces.shape[0]}-face mesh has no "
+        "triangle spanning a surface; its vertices are collinear or coincident"
     )
 
 
