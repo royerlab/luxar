@@ -27,6 +27,15 @@ class BatchStatus:
     merge_status: str = "not_started"
 
 
+def _floor_erased_task_ids(manifest: BatchManifest, tiles_dir: Path) -> set[int]:
+    erased_slices = floor_erased_slices(manifest, tiles_dir)
+    return {
+        job.task_id
+        for job in manifest.jobs
+        if (job.timepoint, job.channel) in erased_slices
+    }
+
+
 def check_batch_status(output_dir: Path) -> BatchStatus:
     """Check the status of a batch fitting job.
 
@@ -45,22 +54,15 @@ def check_batch_status(output_dir: Path) -> BatchStatus:
     status = BatchStatus(total_tasks=manifest.total_tasks)
 
     tiles_dir = output_dir / "tiles"
-    erased_slices = floor_erased_slices(manifest, tiles_dir)
-    erased_ids = {
-        job.task_id
-        for job in manifest.jobs
-        if (job.timepoint, job.channel) in erased_slices
-    }
+    erased_ids = _floor_erased_task_ids(manifest, tiles_dir)
     status.failed += len(erased_ids)
 
     # 1. Check output files. A slot is "completed" if its store exists OR it
     # produced a legitimately-empty result (a `<output>.empty` marker — content
     # boxes / sparse tiles that fit 0 splats), so those aren't miscounted as
     # failed/unknown below.
-    completed_ids: set = set()
-    for job in manifest.jobs:
-        if job.task_id in erased_ids:
-            continue
+    completed_ids: set = set(erased_ids)
+    for job in (job for job in manifest.jobs if job.task_id not in erased_ids):
         tile_path = tiles_dir / job.output_filename
         if tile_path.exists() or Path(f"{tile_path}.empty").exists():
             status.completed += 1
@@ -74,7 +76,7 @@ def check_batch_status(output_dir: Path) -> BatchStatus:
     if remaining > 0 and manifest.array_job_id is not None:
         sacct_states = _query_sacct(manifest.array_job_id)
         for task_id in range(manifest.total_tasks):
-            if task_id in completed_ids or task_id in erased_ids:
+            if task_id in completed_ids:
                 continue
             state = sacct_states.get(task_id // tpj)
             if state is None:

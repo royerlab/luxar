@@ -339,6 +339,55 @@ FLOOR_SAMPLE_MAX_TIMEPOINTS = 4
 FLOOR_SAMPLE_MAX_CHANNELS = 4
 
 
+def _should_defer_floor_resolution(
+    mode: str,
+    denoise: DenoiseConfig,
+    floor_spec: "str | float | None",
+    denoise_mode: str,
+) -> bool:
+    """Whether a uniform denoise plan must resolve its floor after planning."""
+    from luxar.cli.gsplat_ops.fitting.fit_utils import floor_spec_needs_volume
+    from luxar.gsplats.fitting.preprocessing import _floor_spec_is_percentile
+
+    if mode != "uniform" or not denoise.denoise:
+        return False
+    if not floor_spec_needs_volume(floor_spec):
+        return False
+    # Content planning consumes the level while placing boxes, so deferring it
+    # would require reordering the content plan itself.
+    return denoise_mode == "preprocess" or _floor_spec_is_percentile(floor_spec)
+
+
+def _resolve_planned_floor(
+    *,
+    deferred: bool,
+    input_path: Path,
+    fit: FitConfig,
+    fit_args: dict[str, Any],
+    n_timepoints: int,
+    n_channels: int,
+    array_key: Optional[str],
+    axes: Optional[str],
+    axes_labels: List[str],
+    channel_shape: Tuple[int, ...],
+    spatial_shape: Tuple[int, ...],
+) -> tuple[Optional[float], Optional[float]]:
+    if deferred:
+        return None, None
+    return _resolve_and_record_floor(
+        input_path,
+        fit,
+        fit_args,
+        n_timepoints=n_timepoints,
+        n_channels=n_channels,
+        array_key=array_key,
+        axes=axes,
+        axes_labels=axes_labels,
+        channel_shape=channel_shape,
+        spatial_shape=spatial_shape,
+    )
+
+
 def _evenly_spaced(n: int, k: int) -> List[int]:
     """``k`` evenly spaced indices in ``range(n)``, endpoints included, unique.
 
@@ -1616,32 +1665,23 @@ def plan_batch(
     # Deliberately not the content plan's max-projection either, whose per-voxel
     # maximum biases the background mode upward relative to any single slice.
     floor_spec = effective_floor_spec(fit)
-    from luxar.cli.gsplat_ops.fitting.fit_utils import floor_spec_needs_volume
-
-    floor_deferred = bool(
-        mode == "uniform"
-        and denoise.denoise
-        and floor_spec_needs_volume(floor_spec)
-        and (denoise_mode == "preprocess" or str(floor_spec).lower().startswith("p"))
+    floor_deferred = _should_defer_floor_resolution(
+        mode, denoise, floor_spec, denoise_mode
     )
-    if floor_deferred:
-        floor_level = recorded_floor_level = None
-    else:
-        floor_level, recorded_floor_level = _resolve_and_record_floor(
-            input_path,
-            fit,
-            fit_args,
-            n_timepoints=n_t_full,
-            n_channels=n_c_full,
-            array_key=array_key,
-            axes=",".join(axes_list) if axes_list else None,
-            # The DISCOVERED labels, so the representative slice is pinned by label
-            # even when the user passed no --axes (the positional 4D heuristic reads
-            # a (T, Z, Y, X) store as CZYX and would silently sample t=0).
-            axes_labels=list(ome_info.axes),
-            channel_shape=tuple(ome_info.channel_shape),
-            spatial_shape=tuple(spatial),
-        )
+    floor_level, recorded_floor_level = _resolve_planned_floor(
+        deferred=floor_deferred,
+        input_path=input_path,
+        fit=fit,
+        fit_args=fit_args,
+        n_timepoints=n_t_full,
+        n_channels=n_c_full,
+        array_key=array_key,
+        axes=",".join(axes_list) if axes_list else None,
+        # The DISCOVERED labels pin the representative slice even without --axes.
+        axes_labels=list(ome_info.axes),
+        channel_shape=tuple(ome_info.channel_shape),
+        spatial_shape=tuple(spatial),
+    )
 
     if mode == "content":
         import numpy as _np

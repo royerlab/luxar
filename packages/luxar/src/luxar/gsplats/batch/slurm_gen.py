@@ -37,6 +37,53 @@ def _slurm_log_path(output_dir: str, log_name: str) -> str:
     return shlex.quote(f"{output_dir.replace('%', '%%')}/logs/{log_name}")
 
 
+def _runtime_denoise_floor_lines(
+    manifest: BatchManifest, output_dir: str
+) -> list[str]:
+    """Bash lines that load deferred denoise/floor values without hiding errors."""
+    lines: list[str] = []
+    if (
+        manifest.denoise
+        and manifest.denoise_mode == "on-the-fly"
+        and manifest.denoise_h is None
+    ):
+        h_json_path = shlex.quote(f"{output_dir}/denoise_h_values.json")
+        lines.extend(
+            [
+                f"    local H_JSON={h_json_path}",
+                "    local DENOISE_H",
+                '    if ! DENOISE_H=$(python3 -c "import json,sys; '
+                "d=json.load(open(sys.argv[1])); "
+                'print(d.get(str(int(sys.argv[2])), 0.04))" "$H_JSON" "$C"); then',
+                '        echo "Failed to read denoise h from $H_JSON" >&2',
+                "        return 1",
+                "    fi",
+                '    if [ -z "$DENOISE_H" ]; then',
+                '        echo "Empty denoise h in $H_JSON" >&2',
+                "        return 1",
+                "    fi",
+            ]
+        )
+    if manifest.floor_deferred:
+        floor_json_path = shlex.quote(f"{output_dir}/floor_level.json")
+        lines.extend(
+            [
+                f"    local FLOOR_JSON={floor_json_path}",
+                "    local FLOOR_LEVEL",
+                '    if ! FLOOR_LEVEL=$(python3 -c "import json,sys; '
+                'print(json.load(open(sys.argv[1]))[\'forward\'])" "$FLOOR_JSON"); then',
+                '        echo "Failed to read floor level from $FLOOR_JSON" >&2',
+                "        return 1",
+                "    fi",
+                '    if [ -z "$FLOOR_LEVEL" ]; then',
+                '        echo "Empty floor level in $FLOOR_JSON" >&2',
+                "        return 1",
+                "    fi",
+            ]
+        )
+    return lines
+
+
 def generate_fit_sbatch(
     manifest: BatchManifest,
     env_preamble: str,
@@ -302,31 +349,7 @@ def generate_fit_sbatch(
         ]
     )
 
-    # For on-the-fly denoise, read per-channel h at runtime
-    if (
-        manifest.denoise
-        and manifest.denoise_mode == "on-the-fly"
-        and manifest.denoise_h is None
-    ):
-        h_json_path = shlex.quote(f"{output_dir}/denoise_h_values.json")
-        lines.extend(
-            [
-                f"    local H_JSON={h_json_path}",
-                '    local DENOISE_H=$(python3 -c "import json,sys; '
-                "d=json.load(open(sys.argv[1])); "
-                'print(d.get(str(int(sys.argv[2])), 0.04))" "$H_JSON" "$C")',
-            ]
-        )
-
-    if manifest.floor_deferred:
-        floor_json_path = shlex.quote(f"{output_dir}/floor_level.json")
-        lines.extend(
-            [
-                f"    local FLOOR_JSON={floor_json_path}",
-                '    local FLOOR_LEVEL=$(python3 -c "import json,sys; '
-                'print(json.load(open(sys.argv[1]))[\'forward\'])" "$FLOOR_JSON")',
-            ]
-        )
+    lines.extend(_runtime_denoise_floor_lines(manifest, output_dir))
 
     lines.extend(
         [
@@ -536,6 +559,7 @@ def generate_denoise_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
 def generate_floor_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
     """Generate the single dependent job that resolves a denoised floor."""
     output_dir = _validated_output_dir(manifest.output_dir)
+    sampled_pairs = min(manifest.n_timepoints, 4) * min(manifest.n_channels, 4)
     lines = [
         "#!/bin/bash",
         "#SBATCH --job-name=luxar-floor",
@@ -543,7 +567,7 @@ def generate_floor_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
         "#SBATCH --ntasks=1",
         "#SBATCH --cpus-per-task=4",
         f"#SBATCH --mem={max(manifest.slurm_mem_gb, 32)}G",
-        "#SBATCH --time=01:00:00",
+        f"#SBATCH --time={max(1, sampled_pairs):02d}:00:00",
         f"#SBATCH --output={_slurm_log_path(output_dir, 'floor.out')}",
         f"#SBATCH --error={_slurm_log_path(output_dir, 'floor.err')}",
     ]

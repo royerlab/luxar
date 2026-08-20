@@ -9,6 +9,11 @@ import typer
 from arbol import aprint
 
 
+def _write_optional_script(path: Path, script: Optional[str]) -> None:
+    if script:
+        path.write_text(script)
+
+
 def submit_batch_jobs(
     *,
     output_dir: Path,
@@ -26,7 +31,7 @@ def submit_batch_jobs(
     """Write sbatch scripts, submit dependent jobs, and persist manifest updates."""
     import subprocess  # nosec B404
 
-    from luxar.gsplats.batch.manifest import save_manifest
+    from luxar.gsplats.batch.manifest import load_manifest, save_manifest
 
     out = output_dir.resolve()
     (out / "tiles").mkdir(parents=True, exist_ok=True)
@@ -40,14 +45,10 @@ def submit_batch_jobs(
     fit_path.write_text(fit_script)
     merge_path.write_text(merge_script)
     env_path.write_text(preamble)
-    if calibrate_script:
-        (out / "calibrate.sbatch").write_text(calibrate_script)
-    if denoise_script:
-        (out / "denoise_array.sbatch").write_text(denoise_script)
-    if floor_script:
-        (out / "resolve_floor.sbatch").write_text(floor_script)
-    if preempt_fit_script:
-        (out / "fit_array_preempt.sbatch").write_text(preempt_fit_script)
+    _write_optional_script(out / "calibrate.sbatch", calibrate_script)
+    _write_optional_script(out / "denoise_array.sbatch", denoise_script)
+    _write_optional_script(out / "resolve_floor.sbatch", floor_script)
+    _write_optional_script(out / "fit_array_preempt.sbatch", preempt_fit_script)
     save_manifest(manifest, out)
 
     def _parse_job_id(stdout: str) -> Optional[int]:
@@ -105,21 +106,11 @@ def submit_batch_jobs(
         denoise_total = denoise_n_t * denoise_n_c
         aprint(f"  Denoise array job: {denoise_job_id} ({denoise_total} tasks)")
 
-    floor_job_id = None
     floor_dep_id = denoise_job_id or calibrate_job_id
-    if floor_script:
-        aprint("Submitting denoised floor-resolution job...")
-        floor_cmd = ["sbatch"]
-        if floor_dep_id:
-            floor_cmd.append(f"--dependency=afterok:{floor_dep_id}")
-        floor_cmd.append(str(out / "resolve_floor.sbatch"))
-        result = subprocess.run(floor_cmd, capture_output=True, text=True)  # nosec B603
-        if result.returncode != 0:
-            aprint(f"Error submitting floor job: {result.stderr}")
-            raise typer.Exit(1)
-        floor_job_id = _parse_job_id(result.stdout)
-        manifest.floor_job_id = floor_job_id
-        aprint(f"  Floor resolution job: {floor_job_id}")
+    floor_job_id = _submit_floor_job(
+        out, floor_script, floor_dep_id, _parse_job_id, subprocess.run
+    )
+    manifest.floor_job_id = floor_job_id
 
     # Submit fitting array (depends on floor, denoise, or calibration)
     fit_dep_id = floor_job_id or floor_dep_id
@@ -190,9 +181,38 @@ def submit_batch_jobs(
     else:
         aprint(f"  Warning: merge job submission failed: {result.stderr}")
 
+    persisted = load_manifest(out)
+    persisted.calibrate_job_id = calibrate_job_id
+    persisted.denoise_job_id = denoise_job_id
+    persisted.floor_job_id = floor_job_id
+    persisted.array_job_id = fit_job_id
+    persisted.preemptible_job_id = preemptible_job_id
+    persisted.merge_job_id = merge_job_id
+    save_manifest(persisted, out)
+
+    manifest.calibrate_job_id = calibrate_job_id
+    manifest.denoise_job_id = denoise_job_id
+    manifest.floor_job_id = floor_job_id
     manifest.array_job_id = fit_job_id
+    manifest.preemptible_job_id = preemptible_job_id
     manifest.merge_job_id = merge_job_id
-    save_manifest(manifest, out)
 
     aprint(f"\nManifest: {out / 'manifest.json'}")
     aprint(f"Check status: luxar gsplat batch-fit status {out}")
+
+
+def _submit_floor_job(out, floor_script, dependency_id, parse_job_id, run):
+    if not floor_script:
+        return None
+    aprint("Submitting denoised floor-resolution job...")
+    floor_cmd = ["sbatch"]
+    if dependency_id:
+        floor_cmd.append(f"--dependency=afterok:{dependency_id}")
+    floor_cmd.append(str(out / "resolve_floor.sbatch"))
+    result = run(floor_cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        aprint(f"Error submitting floor job: {result.stderr}")
+        raise typer.Exit(1)
+    job_id = parse_job_id(result.stdout)
+    aprint(f"  Floor resolution job: {job_id}")
+    return job_id
