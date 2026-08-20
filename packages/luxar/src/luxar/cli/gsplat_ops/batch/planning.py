@@ -896,12 +896,11 @@ def _refuse_layout_the_workers_cannot_slice(
 
     The ``--axes`` escape hatch is only SUGGESTED when running it would really
     reproduce the plan (:func:`_axes_spec_luxar_can_slice`): the spec's
-    vocabulary is narrower than discovery's, and its slicer pins every
-    channel-like axis with the same ``--channel``. Quoting the discovered labels
-    back at a store with a ``stain`` channel, heuristic ``dim0…dimN`` labels, or a
-    second channel-like axis prints a command that fails or silently mis-slices —
-    and worse, ``plan_batch``'s override path is lenient enough to ACCEPT it
-    before the workers do either.
+    vocabulary is narrower than discovery's, so labels such as ``stain`` and
+    heuristic ``dim0…dimN`` cannot be quoted back. A second time axis is also
+    unquotable because one ``--timepoint`` cannot address both independently.
+    Every other suggested spec is preflighted against the worker vocabulary,
+    including folded channel-like axes decoded by one flat ``--channel``.
     """
     if axes_list is not None:
         return

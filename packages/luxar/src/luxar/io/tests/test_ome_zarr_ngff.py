@@ -945,9 +945,8 @@ def test_a_6d_store_with_no_metadata_is_refused_without_faking_an_axes_string(
     """The honest message: ``dim0…dim5`` is not an ``--axes`` spelling.
 
     ``volume._axis_kind`` rejects every one of those labels, so quoting them back
-    prints a command that fails — and ``plan_batch``'s override path is lenient
-    enough to ACCEPT it first, folding the unknown label into the tile grid so
-    that every worker dies later instead.
+    would print a command that fails. The planner preflights the same strict
+    worker vocabulary, so it withholds that invalid suggestion.
     """
     src = _write_store(tmp_path / "bare6d.zarr", (2, 2, 3, 8, 16, 16))
 
