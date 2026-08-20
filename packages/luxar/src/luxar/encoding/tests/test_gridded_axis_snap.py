@@ -105,13 +105,14 @@ def test_the_snap_is_what_makes_it_exact(tmp_path) -> None:
                 ]
             ),
         ),
-        # Gridded but with more distinct values than the cap allows.
+        # More distinct values than uint16 has levels: no grid can represent it,
+        # so there is nothing to snap to. 70000 > 65536.
         (
-            "too_many_distinct",
+            "more_distinct_than_levels",
             lambda r: np.hstack(
                 [
-                    r.random((20000, 2), dtype=np.float32),
-                    (np.arange(20000, dtype=np.float32) * 0.5).reshape(-1, 1),
+                    r.random((70000, 2), dtype=np.float32),
+                    (np.arange(70000, dtype=np.float32) * 0.5).reshape(-1, 1),
                 ]
             ),
         ),
@@ -120,6 +121,28 @@ def test_the_snap_is_what_makes_it_exact(tmp_path) -> None:
 def test_ordinary_coordinates_are_not_snapped(tmp_path, name, make) -> None:
     data = make(np.random.default_rng(0)).astype(np.float32)
     assert not _was_snapped(_encode(tmp_path, data), data), name
+
+
+@pytest.mark.parametrize("n_frames", [4097, 10_000, 65_536])
+def test_large_frame_counts_still_snap(tmp_path, n_frames) -> None:
+    """Any stack that FITS uint16 must snap, however many frames it has.
+
+    An earlier version capped this at 4096 distinct values, which silently left a
+    10 000-frame timelapse broken even though its grid fits exactly. The only real
+    limit is the number of levels the encoding has.
+    """
+    values = np.arange(n_frames, dtype=np.float32)
+    data = np.hstack(
+        [
+            np.zeros((n_frames, 3), dtype=np.float32),
+            values.reshape(-1, 1),
+        ]
+    )
+    back = np.asarray(_encode(tmp_path, data)[:])
+    assert np.array_equal(back[:, 3], values), (
+        "%d-frame axis not preserved: max |delta| = %g"
+        % (n_frames, np.abs(back[:, 3] - values).max())
+    )
 
 
 def test_snapping_does_not_grow_the_store(tmp_path) -> None:

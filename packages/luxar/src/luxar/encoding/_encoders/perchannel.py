@@ -15,25 +15,31 @@ from ..modes import EncodingMode
 from .base import BaseEncoderMixin
 from .delta_codec import probe_delta_filter
 
+#: Coordinates are always uint16 -- never uint8 (256 levels is far too coarse for
+#: positions). Named once so the grid snap and the encode call cannot drift apart
+#: on the width they assume.
+_COORD_BITS = 16
+
 
 class PerChannelEncoderMixin(BaseEncoderMixin):
     """Per-channel / scalar dtype encoding strategies for :class:`ArrayEncoder`."""
 
-    #: An axis is treated as "gridded" only if it has few enough distinct values to
-    #: enumerate cheaply. Above this it is ordinary continuous data and snapping
-    #: would be both expensive and wrong.
-    _GRID_MAX_DISTINCT = 4096
-
     def _snap_gridded_axes(
-        self, name: str, arr: np.ndarray, lo: np.ndarray, hi: np.ndarray
+        self, name: str, arr: np.ndarray, lo: np.ndarray, hi: np.ndarray, bits: int
     ) -> tuple[np.ndarray, np.ndarray]:
         """Widen `hi` on gridded axes so their values quantize exactly.
 
-        Returns possibly-adjusted ``(lo, hi)``. An axis qualifies when it holds at
-        most ``_GRID_MAX_DISTINCT`` distinct values, those values are evenly
-        spaced, and the resulting grid still fits in uint16. Anything else is left
-        exactly as it was.
+        Returns possibly-adjusted ``(lo, hi)``. An axis qualifies when its values
+        are evenly spaced and the resulting grid still fits in the target integer
+        width. Anything else is left exactly as it was.
+
+        The only cap on distinct values is ``levels`` itself: an axis with more
+        distinct values than the encoding has levels cannot be represented on any
+        grid, so there is nothing to snap to. Capping lower would reject stacks
+        that fit perfectly -- a 10 000-frame timelapse quantizes exactly at u16 --
+        and would save no work, since ``np.unique`` has already run by then.
         """
+        levels = float(2**bits - 1)
         lo = np.array(lo, dtype=np.float64, copy=True)
         hi = np.array(hi, dtype=np.float64, copy=True)
         snapped = []
@@ -43,7 +49,7 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
             if extent <= 0.0:
                 continue  # constant axis: already exact
             uniq = np.unique(col)
-            if uniq.size < 2 or uniq.size > self._GRID_MAX_DISTINCT:
+            if uniq.size < 2 or uniq.size > levels + 1:
                 continue
             gaps = np.diff(uniq)
             step = float(gaps.min())
@@ -52,10 +58,10 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
             # Evenly spaced? Allow a tolerance so float32 inputs still qualify.
             if not np.allclose(gaps, step, rtol=1e-6, atol=step * 1e-6):
                 continue
-            # The snapped grid must still fit in uint16.
-            if extent / step > 65535.0:
+            # The snapped grid must still fit in the target integer width.
+            if extent / step > levels:
                 continue
-            hi[axis] = lo[axis] + step * 65535.0
+            hi[axis] = lo[axis] + step * levels
             snapped.append((axis, uniq.size, step))
 
         if snapped:
@@ -157,7 +163,7 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
         # (#1748). Widening `hi` costs nothing: `lo`/`hi` are already stored per
         # axis, so this is a scale choice, not a format or dtype change.
         if lo is not None and hi is not None:
-            lo, hi = self._snap_gridded_axes(name, arr, lo, hi)
+            lo, hi = self._snap_gridded_axes(name, arr, lo, hi, _COORD_BITS)
 
         # Coordinates always u16 (never u8) for both AUTO and MEMORY. The decode
         # contract for COORDINATE is float32 (GPU/viewer target) regardless of the
@@ -167,7 +173,7 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
             zarr_group,
             name,
             arr,
-            16,
+            _COORD_BITS,
             chunks,
             compressor,
             lo=lo,
