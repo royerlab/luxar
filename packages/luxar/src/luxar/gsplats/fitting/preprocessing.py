@@ -957,7 +957,8 @@ def _resolve_floor(V: np.ndarray, floor: "str | float | None") -> "float | None"
             return float(estimate_floor(V, method="mode"))
         if f.startswith("p"):
             pct = float(f[1:])
-            return float(np.percentile(V, pct))
+            values = V[V != 0.0] if np.any(V != 0.0) else V
+            return float(np.percentile(values, pct))
         value = float(f)  # numeric string
     else:
         value = float(floor)
@@ -1776,13 +1777,14 @@ def _normalize_data(
     resolved_floor = _resolve_floor(V, floor)
     applied_floor: "float | None" = None
     if resolved_floor is not None:
-        if resolved_floor >= image_max:
+        data_max = float(np.max(V))
+        if resolved_floor >= data_max:
             # A floor at/above the brightest voxel would erase all signal
             # (empty [0,1] range). Refuse it and keep the default image_min.
             if verbose:
                 aprint(
-                    f"Warning: floor {resolved_floor:.6g} >= image max "
-                    f"{image_max:.6g}; ignoring (would erase all signal)"
+                    f"Warning: floor {resolved_floor:.6g} >= data max "
+                    f"{data_max:.6g}; ignoring (would erase all signal)"
                 )
         else:
             # Only ever RAISE image_min (never below the percentile-based value
@@ -1791,6 +1793,8 @@ def _normalize_data(
             # strictly positive. (When norm_percentile==0, image_min == min(V),
             # so this reduces to max(resolved_floor, min(V)) as before.)
             image_min = float(max(resolved_floor, image_min))
+            if image_min >= image_max:
+                image_max = data_max
             applied_floor = image_min
             if verbose:
                 aprint(

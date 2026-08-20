@@ -186,6 +186,35 @@ class TestPreprocessData:
         assert result.V_normalized.max() == pytest.approx(1.0, abs=1e-6)
         assert result.V_normalized.min() == pytest.approx(0.0, abs=1e-6)
 
+    def test_floor_guard_uses_true_max_with_percentile_normalization(
+        self, mock_config_2d
+    ) -> None:
+        V = np.concatenate(
+            [
+                np.linspace(0.0, 10.0, 99, dtype=np.float32),
+                np.array([100.0], dtype=np.float32),
+            ]
+        ).reshape(10, 10)
+        mock_config_2d.V = V
+        mock_config_2d.norm_percentile = 10.0
+        mock_config_2d.floor = 20.0
+
+        result = preprocess_data(mock_config_2d)
+
+        assert result.floor == pytest.approx(20.0)
+        assert result.image_min == pytest.approx(20.0)
+        assert result.image_max == pytest.approx(100.0)
+        assert result.V_normalized.max() == pytest.approx(1.0)
+
+    def test_percentile_floor_excludes_exact_zero_padding(self) -> None:
+        from luxar.gsplats.fitting.preprocessing import _resolve_floor
+
+        V = np.concatenate(
+            [np.zeros(100, dtype=np.float32), np.linspace(100.0, 120.0, 100)]
+        )
+
+        assert _resolve_floor(V, "p10") == pytest.approx(102.0, abs=0.1)
+
     def test_uniform_image_handling(self, mock_config_2d) -> None:
         """Test handling of nearly uniform images."""
         # Create nearly uniform image

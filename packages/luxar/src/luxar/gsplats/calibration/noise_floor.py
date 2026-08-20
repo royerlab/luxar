@@ -166,6 +166,7 @@ def estimate_floor(V: np.ndarray, method: str = "mode") -> float:
     Exact-zero voxels (masked / out-of-FOV padding) are excluded so padding
     does not dominate the histogram.
     """
+    V = np.asarray(V)
     Vf = V[V != 0.0] if np.any(V != 0.0) else V
     if Vf.size == 0:
         return float(np.min(V))
