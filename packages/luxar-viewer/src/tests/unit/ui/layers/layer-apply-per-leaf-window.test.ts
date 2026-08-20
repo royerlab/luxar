@@ -231,12 +231,21 @@ function harness(
   };
 }
 
-/** A colormapped kind=lod wrapper carrying NO range of its own. */
+/**
+ * A kind=lod wrapper carrying NO range and NO colormap of its own.
+ *
+ * The bare wrapper is what the compiler actually writes: `colormap` is
+ * deliberately excluded from `COMPOSITING_ATTRS` on the Python side, so the
+ * writer stamps it on every LEAF and leaves the wrapper without one. The panel
+ * finds it either way (`usesColormap` / `deriveColormapFromDescendants` both
+ * walk descendants), so this is fixture realism rather than behaviour — every
+ * derived `LayerInfo` and every window asserted below is identical with the
+ * attr on the wrapper instead.
+ */
 const LOD_WRAPPER = {
   layer: true,
   kind: 'lod',
   display_type: 'gsplats',
-  colormap: 'viridis',
 };
 
 /**
@@ -248,17 +257,32 @@ const LOD_LEVELS: LeafSpec[] = [
   {
     name: 'lod_0',
     type: 'gsplats',
-    attrs: { amplitude_data_range: [0, 8], n_splats: 100, has_scalars: true },
+    attrs: {
+      amplitude_data_range: [0, 8],
+      n_splats: 100,
+      has_scalars: true,
+      colormap: 'viridis',
+    },
   },
   {
     name: 'lod_1',
     type: 'gsplats',
-    attrs: { amplitude_data_range: [0, 4], n_splats: 400, has_scalars: true },
+    attrs: {
+      amplitude_data_range: [0, 4],
+      n_splats: 400,
+      has_scalars: true,
+      colormap: 'viridis',
+    },
   },
   {
     name: 'lod_2',
     type: 'gsplats',
-    attrs: { amplitude_data_range: [0, 2], n_splats: 1600, has_scalars: true },
+    attrs: {
+      amplitude_data_range: [0, 2],
+      n_splats: 1600,
+      has_scalars: true,
+      colormap: 'viridis',
+    },
   },
 ];
 
@@ -321,7 +345,12 @@ describe('leaves the remap must leave alone', () => {
       {
         name: 'flat',
         type: 'gsplats',
-        attrs: { amplitude_data_range: [3, 3], n_splats: 50, has_scalars: true },
+        attrs: {
+          amplitude_data_range: [3, 3],
+          n_splats: 50,
+          has_scalars: true,
+          colormap: 'viridis',
+        },
       },
     ]);
     h.state.setDisplayRange('/obj', 0.5, 1.5);
@@ -336,7 +365,11 @@ describe('leaves the remap must leave alone', () => {
   it('a level declaring NO range at all keeps the composed window', () => {
     const h = harness(LOD_WRAPPER, [
       ...LOD_LEVELS,
-      { name: 'bare', type: 'gsplats', attrs: { n_splats: 50, has_scalars: true } },
+      {
+        name: 'bare',
+        type: 'gsplats',
+        attrs: { n_splats: 50, has_scalars: true, colormap: 'viridis' },
+      },
     ]);
     h.state.setDisplayRange('/obj', 0.5, 1.5);
     h.apply();
@@ -349,7 +382,8 @@ describe('leaves the remap must leave alone', () => {
     // The `identityLayerWindow` route (a leaf the C1 guard keeps on direct colour
     // while the layer's window is a scalar one). It must not receive the scalar
     // window as a colour gain — and, since it is not colormap-active, it must not
-    // receive a scalar range either.
+    // receive a scalar range either. It is the one leaf here with no `colormap`
+    // attr, which is also what the writer stamps for a direct-colour leaf.
     const h = harness(LOD_WRAPPER, [
       ...LOD_LEVELS,
       {
@@ -472,12 +506,18 @@ describe('the remap declines when the composed window is not in the reference ba
           intensity: 0.25,
           n_splats: 100,
           has_scalars: true,
+          colormap: 'viridis',
         },
       },
       {
         name: 'child_1',
         type: 'gsplats',
-        attrs: { amplitude_data_range: [0, 2], n_splats: 1600, has_scalars: true },
+        attrs: {
+          amplitude_data_range: [0, 2],
+          n_splats: 1600,
+          has_scalars: true,
+          colormap: 'viridis',
+        },
       },
     ]);
     expect(h.layer().scalarDataRange).toEqual([0, 2]);
@@ -504,12 +544,22 @@ describe('the remap declines when the composed window is not in the reference ba
       {
         name: 'coarse',
         type: 'gsplats',
-        attrs: { amplitude_data_range: [0, 0.08], n_splats: 100, has_scalars: true },
+        attrs: {
+          amplitude_data_range: [0, 0.08],
+          n_splats: 100,
+          has_scalars: true,
+          colormap: 'viridis',
+        },
       },
       {
         name: 'fine',
         type: 'gsplats',
-        attrs: { amplitude_data_range: [0, 0.02], n_splats: 1600, has_scalars: true },
+        attrs: {
+          amplitude_data_range: [0, 0.02],
+          n_splats: 1600,
+          has_scalars: true,
+          colormap: 'viridis',
+        },
       },
     ]);
     expect(h.layer().scalarDataRange).toEqual([0, 0.02]);
@@ -533,12 +583,22 @@ describe('the remap declines when the composed window is not in the reference ba
         {
           name: 'coarse',
           type: 'gsplats',
-          attrs: { amplitude_data_range: [0, 8], n_splats: 100, has_scalars: true },
+          attrs: {
+            amplitude_data_range: [0, 8],
+            n_splats: 100,
+            has_scalars: true,
+            colormap: 'viridis',
+          },
         },
         {
           name: 'fine',
           type: 'gsplats',
-          attrs: { amplitude_data_range: [0, 2], n_splats: 1600, has_scalars: true },
+          attrs: {
+            amplitude_data_range: [0, 2],
+            n_splats: 1600,
+            has_scalars: true,
+            colormap: 'viridis',
+          },
         },
       ],
       { intensity: 2 }
@@ -572,12 +632,19 @@ describe('points behave identically to gsplats (consequence 3)', () => {
         layer: true,
         kind: 'lod',
         display_type: 'points',
-        colormap: 'viridis',
         scalar_data_range: [0, 2],
       },
       [
-        { name: 'lod_0', type: 'points', attrs: { scalar_data_range: [0, 4], has_scalars: true } },
-        { name: 'lod_1', type: 'points', attrs: { scalar_data_range: [0, 2], has_scalars: true } },
+        {
+          name: 'lod_0',
+          type: 'points',
+          attrs: { scalar_data_range: [0, 4], has_scalars: true, colormap: 'viridis' },
+        },
+        {
+          name: 'lod_1',
+          type: 'points',
+          attrs: { scalar_data_range: [0, 2], has_scalars: true, colormap: 'viridis' },
+        },
       ]
     );
     h.state.setDisplayRange('/obj', 0.5, 1.5);
@@ -585,6 +652,89 @@ describe('points behave identically to gsplats (consequence 3)', () => {
 
     expect(windowOf(h.mats.get('lod_0')!)).toEqual([1, 3]);
     expect(windowOf(h.mats.get('lod_1')!)).toEqual([0.5, 1.5]);
+  });
+});
+
+/**
+ * The case this change matters MOST in, and the reason it is not merely a
+ * refinement: a `kind=lod` ladder whose levels are not even the same PHYSICAL
+ * QUANTITY.
+ *
+ * `add_points(..., scalars=…, colormap='plasma', layer=True,
+ * substitutive_lod=True)` produces a MIXED ladder — the coarse levels are LIFTED
+ * to gsplats (direct colour, no `colormap`, `amplitude_data_range` + `n_splats`)
+ * and the finest level stays `points` (colormapped, `scalar_data_range`, and NO
+ * `n_splats`, because points write `n_points`). The attrs below are read
+ * verbatim off such a store.
+ *
+ * Two facts collide. `deriveScalarRangeFromDescendants` ranks by `n_splats`, and
+ * a points leaf never declares one — so the layer's reference is the largest
+ * LIFTED GSPLAT level's amplitude range, a different physical quantity from the
+ * points scalar it will be pushed into. And the one leaf that is
+ * colormap-active is precisely that points leaf. So the composed window landed
+ * on the colormapped leaf in units it has nothing to do with: an amplitude
+ * window of `[0.037, 2.817]` over a scalar spanning `1.035 … 280.862`, so
+ * everything above 2.817 — 99.4% of that span — clamps to the top of the LUT and
+ * renders as one flat colour. This is not the ≤13% per-level spread a plain
+ * gsplat ladder shows; it is two orders of magnitude.
+ */
+describe('a MIXED points-lift LOD ladder (the case this matters most in)', () => {
+  const MIXED_LIFT_LADDER: LeafSpec[] = [
+    // The three lifted coarse levels render DIRECT COLOUR (the lift bakes the
+    // palette into per-splat RGB), so none of them is colormap-active.
+    {
+      name: 'child_0',
+      type: 'gsplats',
+      colormapActive: false,
+      attrs: { amplitude_data_range: [0.0417868047952652, 2.960740089416504], n_splats: 63 },
+    },
+    {
+      name: 'child_1',
+      type: 'gsplats',
+      colormapActive: false,
+      attrs: { amplitude_data_range: [0.06937223672866821, 2.933626413345337], n_splats: 250 },
+    },
+    {
+      name: 'child_2',
+      type: 'gsplats',
+      colormapActive: false,
+      attrs: { amplitude_data_range: [0.03669371083378792, 2.8173763751983643], n_splats: 1000 },
+    },
+    // The finest level is the original points leaf: colormapped, its own scalar
+    // range, and no `n_splats` for the reference derivation to rank it by.
+    {
+      name: 'child_3',
+      type: 'points',
+      attrs: {
+        colormap: 'plasma',
+        scalar_data_range: [1.0351287126541138, 280.862060546875],
+        has_scalars: true,
+      },
+    },
+  ];
+
+  it('windows the colormapped points level on its OWN scalar range', () => {
+    const h = harness({ layer: true, kind: 'lod', display_type: 'points' }, MIXED_LIFT_LADDER);
+
+    // The reference really is the lifted sibling's AMPLITUDE range, not the
+    // points scalar range the only colormapped leaf actually carries.
+    expect(h.layer().scalarDataRange).toEqual([0.03669371083378792, 2.8173763751983643]);
+
+    h.apply();
+
+    // Before #1753 this leaf got the composed window verbatim —
+    // [0.03669371083378792, 2.8173763751983643] — over scalars reaching 280.86.
+    // Now it gets its own range, which is also what the node factory already
+    // hands it at creation.
+    expect(windowOf(h.mats.get('child_3')!)).toEqual([1.0351287126541138, 280.862060546875]);
+    // The lifted levels are direct colour: no scalar window is pushed at all,
+    // and their colour GOG stays the identity (the `identityLayerWindow` route,
+    // since the layer's window is a SCALAR one).
+    for (const name of ['child_0', 'child_1', 'child_2']) {
+      expect(h.mats.get(name)!.scalarRanges).toEqual([]);
+      expect(h.mats.get(name)!.intensities.at(-1)).toBe(1);
+      expect(h.mats.get(name)!.offsets.at(-1)).toBe(0);
+    }
   });
 });
 
@@ -620,21 +770,18 @@ describe('the remap declines across anything that is not a LOD ladder', () => {
     // The reference is part_0's range: neither part declares `n_splats`, so
     // `deriveScalarRangeFromDescendants` scores both 0 and keeps the first
     // visited.
-    const h = harness(
-      { layer: true, kind: 'partition', display_type: 'points', colormap: 'viridis' },
-      [
-        {
-          name: 'part_0',
-          type: 'points',
-          attrs: { scalar_data_range: [0.02, 51], has_scalars: true },
-        },
-        {
-          name: 'part_1',
-          type: 'points',
-          attrs: { scalar_data_range: [51.1, 100], has_scalars: true },
-        },
-      ]
-    );
+    const h = harness({ layer: true, kind: 'partition', display_type: 'points' }, [
+      {
+        name: 'part_0',
+        type: 'points',
+        attrs: { scalar_data_range: [0.02, 51], has_scalars: true, colormap: 'viridis' },
+      },
+      {
+        name: 'part_1',
+        type: 'points',
+        attrs: { scalar_data_range: [51.1, 100], has_scalars: true, colormap: 'viridis' },
+      },
+    ]);
     expect(h.layer().scalarDataRange).toEqual([0.02, 51]);
 
     h.state.setDisplayRange('/obj', 10, 30);
@@ -652,16 +799,26 @@ describe('the remap declines across anything that is not a LOD ladder', () => {
     // scales, so there is no scale change for the remap to undo. (Neither child
     // is a layer here — `deriveScalarRangeFromDescendants` ranks them by
     // `n_splats`, so the reference is ch1's [0, 5].)
-    const h = harness({ layer: true, colormap: 'viridis' }, [
+    const h = harness({ layer: true }, [
       {
         name: 'ch0',
         type: 'gsplats',
-        attrs: { amplitude_data_range: [0, 0.02], n_splats: 1000, has_scalars: true },
+        attrs: {
+          amplitude_data_range: [0, 0.02],
+          n_splats: 1000,
+          has_scalars: true,
+          colormap: 'viridis',
+        },
       },
       {
         name: 'ch1',
         type: 'gsplats',
-        attrs: { amplitude_data_range: [0, 5], n_splats: 10000, has_scalars: true },
+        attrs: {
+          amplitude_data_range: [0, 5],
+          n_splats: 10000,
+          has_scalars: true,
+          colormap: 'viridis',
+        },
       },
     ]);
     expect(h.layer().scalarDataRange).toEqual([0, 5]);
@@ -673,27 +830,52 @@ describe('the remap declines across anything that is not a LOD ladder', () => {
     expect(windowOf(h.mats.get('ch1')!)).toEqual([1, 4]);
   });
 
-  it('an `overview` tree remaps the coarse cap and declines under the partition', () => {
+  it('an `overview` tree: the coarse cap is eligible, the tiles under the partition are not', () => {
     // `lod --recipe overview`: a kind=lod group whose coarse level is a bare
     // leaf and whose fine level is a nested kind=partition of tiles. The split
     // falls out of the rule rather than being special-cased — the cap's path
     // crosses only the lod wrapper, each tile's path crosses the partition too.
+    //
+    // The `n_splats` here are chosen to make the cap's ELIGIBILITY observable,
+    // and a real `overview` store does not look like this: the recipe gives the
+    // cap and every part the same splat count (432 each on a measured store), so
+    // `deriveScalarRangeFromDescendants`' strict `count > bestCount` keeps the
+    // FIRST visited — the cap — and the cap then remaps onto its own range,
+    // which `remapWindowToLeafRange`'s equality short-circuit makes a literal
+    // no-op. On a real overview tree this change therefore does nothing in
+    // either branch, and the fine parts keep rendering on the cap's window. See
+    // the `overview` row of `ui/layers/README.md`.
     const h = harness({ ...LOD_WRAPPER }, [
       {
         name: 'level_0',
         type: 'gsplats',
-        attrs: { amplitude_data_range: [0, 8], n_splats: 100, has_scalars: true },
+        attrs: {
+          amplitude_data_range: [0, 8],
+          n_splats: 100,
+          has_scalars: true,
+          colormap: 'viridis',
+        },
       },
       {
         name: 'part_0',
         type: 'gsplats',
-        attrs: { amplitude_data_range: [0, 3], n_splats: 800, has_scalars: true },
+        attrs: {
+          amplitude_data_range: [0, 3],
+          n_splats: 800,
+          has_scalars: true,
+          colormap: 'viridis',
+        },
         under: { name: 'level_1', attrs: { kind: 'partition' } },
       },
       {
         name: 'part_1',
         type: 'gsplats',
-        attrs: { amplitude_data_range: [0, 2], n_splats: 1600, has_scalars: true },
+        attrs: {
+          amplitude_data_range: [0, 2],
+          n_splats: 1600,
+          has_scalars: true,
+          colormap: 'viridis',
+        },
         under: { name: 'level_1', attrs: { kind: 'partition' } },
       },
     ]);

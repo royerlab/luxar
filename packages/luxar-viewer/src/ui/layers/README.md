@@ -229,6 +229,22 @@ answers with the **LUT midpoint** (#631), i.e. one flat neutral colour for the
 whole leaf) — or when the two ranges are equal, the common case, short-circuited
 so an ordinary single-range layer keeps a bit-exact window.
 
+How much this moves depends on the ladder. On a plain gsplat one it is modest:
+for a default `luxar gsplat lod --recipe levels -K 4 -L 3` store the four levels'
+`amplitude_data_range` top ends are 0.43884 / 0.44417 / 0.43637 / 0.39260 — a
+≤13% spread, since the range is `[min, p99.9]` and mass conservation pins the
+peak (the bottom ends differ more, ~8x: 7.06e-05 vs 5.60e-04). "LOD merging sums
+amplitudes" describes the mechanism, not the magnitude. The dramatic case is the
+MIXED lift ladder — `add_points(..., scalars=…, colormap=…, layer=True,
+substitutive_lod=True)` lifts its coarse levels to gsplats (direct colour,
+`amplitude_data_range` + `n_splats`) and leaves the finest level as colormapped
+`points` (`scalar_data_range`, no `n_splats`). The reference is then a lifted
+sibling's AMPLITUDE range, a different physical quantity from the one
+colormapped leaf's scalar: on a real store an amplitude window of
+`[0.037, 2.817]` went into a scalar spanning `1.035 … 280.862`, so everything
+above 2.817 — 99.4% of that span — clamped to the top of the LUT and rendered as
+one flat colour.
+
 ##### Only across a LOD ladder — never across a partition
 
 A LOD _level_ and a partition _part_ are not the same kind of sibling, and only
@@ -250,19 +266,31 @@ monotone is the correct failure.
 edited layer down to (excluding) the leaf to be `kind === 'lod'`. The
 consequences are all deliberate:
 
-| Layer shape                                                    | Remaps?                                        |
-| -------------------------------------------------------------- | ---------------------------------------------- |
-| `kind=lod` over levels                                         | yes — this is #1753's case                     |
-| `kind=partition` over parts                                    | no — one shared window, as before              |
-| `overview` (lod cap + nested partition branch)                 | the coarse cap does; the parts under it do not |
-| `adaptive` (partition of per-tile lod groups)                  | no, anywhere                                   |
-| a plain group layer over several colormapped leaves (channels) | no                                             |
+| Layer shape                                                    | Remaps?                                                     |
+| -------------------------------------------------------------- | ----------------------------------------------------------- |
+| `kind=lod` over levels                                         | yes — this is #1753's case                                  |
+| `kind=partition` over parts                                    | no — one shared window, as before                           |
+| `overview` (lod cap + nested partition branch)                 | no-op in practice: the cap is eligible but IS the reference |
+| `adaptive` (partition of per-tile lod groups)                  | no, anywhere                                                |
+| a plain group layer over several colormapped leaves (channels) | no                                                          |
 
 `adaptive` is conservative on purpose: the correct reference for a tile's ladder
 would be that TILE's own finest level, not the layer's, and building that is a
 bigger change than #1753 asks for. A plain group over two channels declines for
 the same reason a partition does — two different physical fields are not one
 field at two scales.
+
+`overview` deserves the same honesty. Its tiles decline on the nested partition,
+and its coarse cap, while structurally eligible, changes nothing: on a measured
+`luxar gsplat lod --recipe overview` store the cap and all four parts carry 432
+splats each, and `deriveScalarRangeFromDescendants` breaks that tie with a strict
+`count > bestCount` while visiting the cap FIRST — so the cap IS the reference
+and the equality short-circuit hands its window straight back. Net, this change
+does nothing at all on an `overview` tree, and the fine parts still render on the
+cap's window: `part_2`'s own `[0.00059, 0.19962]` on the cap's
+`[0.000116, 0.44551]`, so its brightest splat lands at LUT 0.45 rather than 1.0.
+Correcting that needs a per-branch reference — the same missing piece `adaptive`
+would need.
 
 Once #1691 / PR #1752 lands (it harmonizes `amplitude_data_range` across a gsplat
 structure so siblings **share** a window) partition parts will carry equal ranges

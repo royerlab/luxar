@@ -252,14 +252,26 @@ export class LayerApplyEngine {
    * `scalar_data_range` rather than a per-segment one.
    *
    * So every GROUP node from the edited layer down to (excluding) the leaf must
-   * be `kind === 'lod'`. Consequences, all deliberate: an `overview` tree
-   * (an lod group whose coarse cap is a leaf and whose fine branch is a nested
-   * partition) remaps the cap and declines under the partition; `adaptive`
-   * (a partition of per-tile lod groups) declines outright, because the right
-   * reference for a tile's ladder is that TILE's finest level rather than the
-   * layer's, and building that is more than #1753 asks for; and a plain group
-   * layer over several colormapped leaves (two channels, say) declines too —
-   * different physical fields, not one field at two scales.
+   * be `kind === 'lod'`. Consequences, all deliberate: `adaptive` (a partition
+   * of per-tile lod groups) declines outright, because the right reference for a
+   * tile's ladder is that TILE's finest level rather than the layer's, and
+   * building that is more than #1753 asks for; and a plain group layer over
+   * several colormapped leaves (two channels, say) declines too — different
+   * physical fields, not one field at two scales.
+   *
+   * An `overview` tree (an lod group whose coarse cap is a leaf and whose fine
+   * branch is a nested partition) is a NO-OP in both branches, and it is worth
+   * being precise about why rather than claiming half a win. The tiles decline
+   * on the partition, as above. The cap is structurally eligible — but on a
+   * measured `luxar gsplat lod --recipe overview` store the cap and all four
+   * parts carry 432 splats each, and `deriveScalarRangeFromDescendants` breaks
+   * that tie with a strict `count > bestCount` while visiting the cap FIRST, so
+   * the cap IS the reference and `remapWindowToLeafRange`'s equality
+   * short-circuit returns its window untouched. The fine parts therefore keep
+   * rendering on the cap's window (measured: `part_2`'s own
+   * `[0.00059, 0.19962]` on the cap's `[0.000116, 0.44551]`, so its brightest
+   * splat lands at LUT 0.45 instead of 1.0). Fixing that needs a per-branch
+   * reference, which is the same change `adaptive` would need.
    *
    * Once #1691 / PR #1752 lands (it harmonizes `amplitude_data_range` across a
    * gsplat structure so siblings SHARE a window) partition parts will carry
