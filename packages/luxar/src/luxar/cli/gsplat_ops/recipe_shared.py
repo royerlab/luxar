@@ -159,8 +159,9 @@ def parse_lod_breakpoints(spec: str) -> "str | list[int] | list[float]":
 #: Assumed stored bytes per scalar for (centers, amplitudes, cholesky) under
 #: each encoding mode (see :func:`estimate_bytes_per_splat`). AUTO and MEMORY
 #: write the SAME widths: centers u16 (coordinates never drop to u8, though they
-#: do escalate to float32 once an axis spans 2**16, or once that grid would
-#: displace splats past their own sigma), amplitude ~u16 (width picked from
+#: do escalate to float32 once an axis spans 2**16, or once a NON-gridded axis's
+#: grid would displace MORE THAN 0.1% of the splats past their own sigma — a
+#: gridded axis is snapped instead and stays u16), amplitude ~u16 (width picked from
 #: dynamic range identically in both modes), cholesky u8 (AUTO certified —
 #: escalation to u16 is the exception, not the model; MEMORY unconditional).
 #: PRECISION: float32 everywhere.
@@ -172,7 +173,9 @@ def parse_lod_breakpoints(spec: str) -> "str | list[int] | list[float]":
 #: no store exists to measure, and it sees just ``(ndim, has_colors, encoding)``
 #: — the escalation is a property of the splats' own Cholesky, which is not in
 #: scope here and is not knowable before the fit runs. Measure the store, or use
-#: ``--bytes-per-splat``, when a stacked/degenerate axis is in play.
+#: ``--bytes-per-splat``, when a degenerate sub-population on a NON-gridded axis
+#: is in play. (A plain stacked axis is the grid-snapped case, which stays u16
+#: and needs no correction.)
 _ENCODING_ARRAY_BYTES = {
     "auto": (2.0, 2.0, 1.0),
     "precision": (4.0, 4.0, 4.0),

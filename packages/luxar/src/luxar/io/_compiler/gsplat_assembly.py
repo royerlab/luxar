@@ -47,10 +47,12 @@ from .dataset_writers.scalars import write_positive_scalar
 #:
 #: ``AUTO``/``MEMORY`` store centers as per-axis uint16 fixed point, so the step
 #: on axis *i* is ``(hi_i - lo_i) / 65535`` — a property of the axis EXTENT, not
-#: of how sharp the splats are. A degenerate axis (σ floored to 1e-7 by
-#: ``combine_as_new_dimension(..., sigma=0)``) therefore sits thousands of σ from
-#: the grid, and every such splat stops matching the slice query it belongs to —
-#: silently, since the axis endpoints quantize exactly and so look fine.
+#: of how sharp the splats are. Left on that grid, a degenerate axis (σ floored
+#: to 1e-7 by ``combine_as_new_dimension(..., sigma=0)``) would sit thousands of
+#: σ from it, and every such splat would stop matching the slice query it
+#: belongs to — silently, since the axis endpoints quantize exactly and so look
+#: fine. The encoder's grid snap prevents exactly that for the common stacked
+#: case; this rail covers what the snap cannot reach.
 #:
 #: This rail is the BACKSTOP, not the primary defence. A *gridded* axis — the
 #: common stacked/categorical case, whose distinct values all sit on one regular
@@ -74,17 +76,23 @@ from .dataset_writers.scalars import write_positive_scalar
 #: exists for: past its own core the center leaves the footprint the splat was
 #: fitted to describe altogether, which is how a merged-in track ends up
 #: thousands of σ from its own coordinate and vanishes from every query. A tighter
-#: line (this rail shipped at 0.25 σ of *jitter*, i.e. 0.125 σ of displacement)
-#: charges 2× the centers bytes for sub-voxel error: measured on 200k splats
-#: over an 8192-voxel axis with 5% pinned at the fitter's
+#: line — the obvious alternative being 0.25 σ of *jitter*, i.e. 0.125 σ of
+#: displacement — would charge 2× the centers bytes for sub-voxel error: measured
+#: on 200k splats over an 8192-voxel axis with 5% pinned at the fitter's
 #: ``sqrt(1/12) ≈ 0.2887`` σ floor, the step is
 #: 0.125 voxel, so the worst displacement is 0.0625 voxel = 0.217 σ — 12.9% of
-#: splats "unrepresentable" at 0.25 σ, and 0.03% here.
+#: splats would be "unrepresentable" at that 0.125 σ-of-displacement line, against
+#: 0.03% here.
 MAX_CENTER_DISPLACEMENT_SIGMAS = 1.0
 
 #: Largest fraction of the splats that may be unrepresentable (per
 #: :data:`MAX_CENTER_DISPLACEMENT_SIGMAS`) on one axis before the centers
-#: escalate to float32.
+#: escalate to float32. Tripping this gate is NECESSARY but not SUFFICIENT: the
+#: escalation also requires that the encoder have no exact path of its own for
+#: the array. A GRIDDED axis is snapped and stored exactly
+#: (:func:`_center_quantization_offender`), and a LUT-eligible centers array is
+#: stored verbatim at ~1 B/value (:func:`_resolve_centers_encoding_mode`); either
+#: stands the rail down.
 #:
 #: The per-splat criterion alone cannot drive the escalation, because a
 #: *minimum* over splats is an outlier statistic: any real fit contains a few
@@ -99,11 +107,11 @@ MAX_CENTER_DISPLACEMENT_SIGMAS = 1.0
 #: axis: 0.015% for a 20k random-``U(0, 1)``-Cholesky fixture, 0.0005% for a
 #: 200k SPZ-like log-normal scale distribution (0.001% with an added σ=1e-6
 #: needle), 0.03% for the 8192-voxel light-sheet case above — so 0.1% still
-#: clears every one of them by 3× or more. What it now also catches is a
-#: *minority* degenerate sub-population, which a 1% gate missed: merging a
+#: clears every one of them by 3× or more. It also catches what a looser 1% gate
+#: would miss — a *minority* degenerate sub-population: merging a
 #: 2,000-splat ``sigma=0`` track stack into a 300,000-splat fit with a real
-#: σ_t = 3.0 leaves 0.662% of the splats destroyed (max displacement 1,373 σ)
-#: — under the old gate the rail stayed silent and only 10% of the tracks still
+#: σ_t = 3.0 leaves 0.662% of the splats destroyed (max displacement 1,373 σ),
+#: and at 1% the rail would stay silent while only 10% of the tracks still
 #: landed on their own frame.
 #:
 #: The residual, stated plainly, because a population gate always has one: up to
@@ -131,13 +139,13 @@ MAX_CENTER_DISPLACEMENT_SIGMAS = 1.0
 #: Two consequences of the surrounding design sharpen that residual, and both
 #: are deliberate:
 #:
-#: * A GRIDDED stacked axis now keeps uint16 (the encoder's snap stores it
-#:   exactly) instead of escalating the whole array to float32. The escalation
-#:   used to *incidentally* rescue sub-gate needle populations on the OTHER
-#:   axes of such a store — centers are one array with one encoding, so
-#:   escalating for the time axis made every axis exact. That side effect is
-#:   gone: a stacked store's spatial axes are now held to this gate like any
-#:   other array's.
+#: * A GRIDDED stacked axis keeps uint16 (the encoder's snap stores it exactly)
+#:   instead of escalating the whole array to float32. Escalating it would
+#:   *incidentally* rescue sub-gate needle populations on the OTHER axes of such
+#:   a store — centers are one array with one encoding, so escalating for the
+#:   time axis would make every axis exact. That side effect is deliberately not
+#:   bought: a stacked store's spatial axes are held to this gate like any other
+#:   array's.
 #: * The decision is per WRITE, and a partitioned/laddered store writes each
 #:   part separately (see :func:`write_gsplat_arrays`), so it is taken per part.
 MAX_UNREPRESENTABLE_SPLAT_FRACTION = 0.001
@@ -159,18 +167,24 @@ def _axis_center_offender(
     sigma_median)`` tuple when this axis offends by MORE than ``min_fraction``
     (the running worst, so a later axis must beat an earlier one), or ``None``.
 
-    The three declines, in the order they must stay in:
+    The three declines:
 
     1. A constant axis (``hi == lo``) has a zero step and can never be violated;
        a non-finite extent is not something this rail can reason about (the
        value validators own that), so it is left to the encoder.
-    2. The population gate. Below it the axis is not an offender at all, so the
-       running worst must NOT be raised by it either.
-    3. The grid check, LAST — and lazily, only for an axis that has already
-       passed the gate, because ``np.unique`` per axis is real time. It must run
-       after the gate for the same reason it must not raise the running worst: a
-       gridded degenerate axis at 100% would otherwise mask a genuinely broken
-       non-gridded axis at 0.2% behind a bar it had no business setting.
+    2. The population gate. Below it the axis is not an offender at all.
+    3. The grid check — an axis the encoder will store exactly is not an
+       offender either. It runs LAST purely for SPEED, not for correctness:
+       ``np.unique`` per axis is real time (0.30 s of a 2.85 s encode on 5M×3
+       coordinates) and a tripped axis is rare, so testing only what has already
+       passed the gate avoids paying it on every axis of every leaf. Run
+       eagerly it would return the same offender.
+
+    What IS load-bearing is that a declining axis must not raise the running
+    worst — hence ``None`` at every decline, rather than a tuple the caller
+    would fold into ``worst_fraction``. A gridded degenerate axis at 100% that
+    set the bar on its way out would mask a genuinely broken non-gridded axis at
+    0.2% behind a threshold it had no business setting.
     """
     step = extent / COORDINATE_LEVELS
     if not np.isfinite(step) or step <= 0.0:
@@ -373,9 +387,10 @@ def _resolve_centers_encoding_mode(
         f"median sigma of those {sigma_median:.4g}) that worst case exceeds "
         f"{MAX_CENTER_DISPLACEMENT_SIGMAS:g}·sigma, i.e. it can move the center "
         "clear of the splat's own core and out of a slice query that used to "
-        "match it. The axis is not on a regular grid, so the encoder's grid snap "
-        "cannot store it exactly; the centers are therefore stored as float32 "
-        "(exact) instead, and the Cholesky/amplitude/color tiers are unchanged. "
+        "match it. The encoder cannot store this axis exactly either (it is not "
+        "on a regular grid, or it has more distinct values than uint16 has "
+        "levels), so the centers are stored as float32 (exact) instead, and the "
+        "Cholesky/amplitude/color tiers are unchanged. "
         "A figure near 100% means the axis itself is degenerate (sigma ~ 0); a "
         "small figure usually means a degenerate sub-population was merged onto "
         "a continuous axis (e.g. a sigma=0 track stack merged into a fit).",
@@ -728,16 +743,25 @@ def write_gsplat_arrays(
     test, so a few needle splats (which every real fit has) keep the uint16
     size win.
 
-    That rail is the BACKSTOP. The common degenerate case — a stacked or
-    categorical axis built with ``combine_as_new_dimension(..., sigma=0)`` — is
-    *gridded*, and the encoder snaps its quantization grid onto the data's own
-    spacing so it round-trips bit-exactly at uint16 for free; the rail skips
-    every such axis (:func:`_center_quantization_offender` asks the encoder's own
-    :func:`~luxar.encoding.gridded_axis_step`). What is left for the rail is a
-    degenerate sub-population on a NON-gridded axis, e.g. a ``sigma=0`` track
-    stack merged into a fit whose time axis is continuous. Only the centers
-    escalate; the Cholesky/amplitude/color tiers are untouched, and an escalated
-    write also opts OUT of content dedup (see below).
+    That rail is the BACKSTOP, and tripping the population gate is necessary but
+    not sufficient: it stands down wherever the encoder is going to store the
+    array exactly anyway, which it has THREE ways of doing. (1) The common
+    degenerate case — a stacked or categorical axis built with
+    ``combine_as_new_dimension(..., sigma=0)`` — is normally *gridded*, and the
+    encoder snaps its quantization grid onto the data's own spacing so it
+    round-trips bit-exactly at uint16 for free; the rail skips every such axis
+    (:func:`_center_quantization_offender` asks the encoder's own
+    :func:`~luxar.encoding.gridded_axis_step`). (2) A LUT-eligible centers array
+    is stored verbatim at ~1 B/value, which is exact AND smaller than float32
+    (:meth:`~luxar.encoding.encoder.ArrayEncoder.encodes_as_lut`, asked by
+    :func:`_resolve_centers_encoding_mode`). (3) An axis at or above
+    :data:`~luxar.typing_utils.constants.COORDINATE_U16_MAX_EXTENT` already
+    falls to float32 under the encoder's own extent rail, whose warning names
+    the real cause. What is left for the rail is a degenerate sub-population on
+    a NON-gridded, non-LUT axis, e.g. a ``sigma=0`` track stack merged into a
+    fit whose time axis is continuous. Only the centers escalate; the
+    Cholesky/amplitude/color tiers are untouched, and an escalated write also
+    opts OUT of content dedup (see below).
 
     The rail's verdict is per WRITE, i.e. per leaf, so a partitioned or
     laddered node decides PART BY PART: an 8-tile ``tiles`` recipe emits up to

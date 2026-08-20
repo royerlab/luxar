@@ -13,7 +13,9 @@ Two mechanisms cover that, and this module pins the boundary between them:
 * The **grid snap**, in the encoder
   (:func:`~luxar.encoding.gridded_axis_step`). A *gridded* axis — one whose
   distinct values all sit on one regular grid, which a stacked/categorical axis
-  always is — has its quantization grid widened onto the data's own spacing, so
+  normally is (``combine_as_new_dimension`` takes arbitrary ``values=``, and a
+  stack with more distinct values than uint16 has levels is not gridded either)
+  — has its quantization grid widened onto the data's own spacing, so
   every value round-trips bit-exactly at uint16. It costs nothing: ``lo``/``hi``
   are stored per axis regardless, so it is a scale choice, not a dtype change.
 * The **sigma rail**, in

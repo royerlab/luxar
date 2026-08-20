@@ -406,13 +406,18 @@ holds the Cholesky factors and escalates centers to float32 when HALF an axis's 
 step — the worst-case round-trip displacement — exceeds the per-splat marginal σ for
 more than 0.1% of the splats on that axis, i.e. when quantization can move those
 centers clear of their own cores. It is a population test on purpose: the few needle
-splats in an ordinary fit must not cost the whole array its uint16 win. It is also
-**snap-aware** — it runs `gridded_axis_step` on any axis that trips the population gate
+splats in an ordinary fit must not cost the whole array its uint16 win. Tripping that
+gate is **necessary but not sufficient**, because the rail stands down wherever this
+encoder is going to store the array exactly anyway. It is **snap-aware** — it runs
+`gridded_axis_step` on any axis that trips the population gate
 and skips it when the encoder will store it exactly, so a stacked axis (where 100% of
 the splats formally fail) keeps its uint16 centers and stays silent instead of doubling
-in size. What is left for the rail is a degenerate sub-population on a *non-gridded*
+in size — and it is **LUT-aware**: it asks `ArrayEncoder.encodes_as_lut` before
+escalating, since a LUT-eligible centers array is already stored verbatim, exactly, at
+~1 B/value, and escalating it would quadruple those bytes for nothing. What is left for
+the rail is a degenerate sub-population on a *non-gridded*, non-LUT
 axis: a `sigma=0` track stack merged into a fit whose time axis is continuous, where
-under a percent of the splats are destroyed and no grid can rescue them. An escalated
+the splats are destroyed and no grid can rescue them. An escalated
 centers array is written with `deduplicate=False`, because the rail's verdict depends on
 a sibling array (`cholesky_factors`) that this registry does not key on.
 

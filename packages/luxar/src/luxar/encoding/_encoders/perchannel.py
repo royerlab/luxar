@@ -94,10 +94,6 @@ def gridded_axis_step(
 class PerChannelEncoderMixin(BaseEncoderMixin):
     """Per-channel / scalar dtype encoding strategies for :class:`ArrayEncoder`."""
 
-    #: The shared grid predicate, kept reachable as a method so the snap below
-    #: and every existing caller read the same implementation.
-    _grid_step = staticmethod(gridded_axis_step)
-
     def _snap_gridded_axes(
         self, name: str, arr: np.ndarray, lo: np.ndarray, hi: np.ndarray, bits: int
     ) -> tuple[np.ndarray, np.ndarray]:
@@ -120,7 +116,7 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
             extent = float(hi[axis] - lo[axis])
             if extent <= 0.0:
                 continue  # constant axis: already exact
-            found = self._grid_step(arr[:, axis], float(lo[axis]), extent, levels)
+            found = gridded_axis_step(arr[:, axis], float(lo[axis]), extent, levels)
             if found is None:
                 continue
             step, n_distinct = found
@@ -179,14 +175,19 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
         displacement — exceeds the per-splat marginal σ for more than 0.1% of the
         splats on that axis, i.e. when quantization can move those centers clear
         of their own cores (a population test, so the odd needle splat does not
-        cost the array its uint16 win). It fires only where the snap does NOT:
-        the rail runs :func:`gridded_axis_step` on any axis that trips its
-        population gate and skips the axis when this encoder is going to store it
-        exactly anyway. What is left for it is a degenerate sub-population on a
-        NON-gridded axis — a ``sigma=0`` track stack merged into a fit whose time
-        axis is continuous, say — where the splats really are destroyed. Callers
-        encoding COORDINATE data that carries its own notion of extent should
-        route through that choke point rather than here.
+        cost the array its uint16 win). Tripping that gate is necessary but not
+        sufficient: the rail fires only where this encoder has NO exact path of
+        its own. It runs :func:`gridded_axis_step` on any axis that trips the
+        population gate and skips the axis when the snap will store it exactly,
+        and it asks
+        :meth:`~luxar.encoding.encoder.ArrayEncoder.encodes_as_lut` before
+        escalating, since a LUT-eligible centers array is already stored verbatim
+        (exactly, at ~1 B/value). What is left for it is a degenerate
+        sub-population on a NON-gridded, non-LUT axis — a ``sigma=0`` track stack
+        merged into a fit whose time axis is continuous, say — where the splats
+        really are destroyed. Callers encoding COORDINATE data that carries its
+        own notion of extent should route through that choke point rather than
+        here.
 
         Args:
             zarr_group: Zarr group to write to
@@ -242,8 +243,10 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
         # stacked/categorical axis usable: `combine_as_new_dimension(sigma=0)`
         # gives such an axis an effective sigma of 1e-7, so ANY rounding puts a
         # frame thousands of sigma from where it belongs and it stops matching a
-        # slice query at all — every frame but the two endpoints disappears
-        # (#1748). Widening `hi` costs nothing: `lo`/`hi` are already stored per
+        # slice query at all — every frame disappears except the endpoints and
+        # the few that coincidentally land on the quantization grid (on a
+        # 100-frame stack that is four of them, #1748). Widening `hi` costs
+        # nothing: `lo`/`hi` are already stored per
         # axis, so this is a scale choice, not a format or dtype change.
         if lo is not None and hi is not None:
             lo, hi = self._snap_gridded_axes(name, arr, lo, hi, _COORD_BITS)
