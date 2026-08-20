@@ -660,27 +660,33 @@ def _device() -> str:
 def voxel_size_of(image_store: Path) -> tuple[float, float, float]:
     """Read the crop's ZYX voxel size (um) from its OME-Zarr metadata.
 
-    Both metadata layouts are accepted. OME-Zarr **0.5** (which is what a zarr v3
-    store declares) nests everything under an ``ome`` key, while 0.4 puts
-    ``multiscales`` at the top level — and a zarr v3 store written by a 0.4-era
-    tool has the v3 chunk layout with the 0.4 attributes, so neither spelling can
-    be assumed from the store version alone.
+    Both metadata layouts are accepted — see
+    :func:`luxar.io.ome_zarr.resolve_ngff_attrs`, which owns that resolution. The
+    scale vector is likewise looked up by :func:`luxar.io.ome_zarr.
+    ngff_scale_transform`, which SEARCHES ``coordinateTransformations`` for the
+    ``type == "scale"`` entry: indexing ``[0]`` here broke on any store whose
+    first transform is a ``translation``.
     """
     import zarr
 
+    from luxar.io.ome_zarr import ngff_scale_transform, resolve_ngff_attrs
+
     group = zarr.open_group(str(image_store), mode="r")
     attrs = dict(group.attrs)
-    ome = attrs.get("ome")
-    root = ome if isinstance(ome, dict) and "multiscales" in ome else attrs
-    if "multiscales" not in root:
+    root = resolve_ngff_attrs(attrs)
+    scale = (
+        ngff_scale_transform(
+            root["multiscales"][0]["datasets"][0].get("coordinateTransformations")
+        )
+        if root.get("multiscales")
+        else None
+    )
+    if scale is None:
         raise ValueError(
             f"{image_store} has no OME-Zarr `multiscales` metadata "
             f"(attributes present: {sorted(attrs)}); the crop's voxel size is "
             "read from it."
         )
-    scale = root["multiscales"][0]["datasets"][0]["coordinateTransformations"][0][
-        "scale"
-    ]
     return tuple(float(s) for s in scale[1:])  # drop the time axis
 
 

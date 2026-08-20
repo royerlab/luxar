@@ -20,13 +20,16 @@ import datetime
 import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, List, Optional, Sequence, Tuple
 
 import typer
 from arbol import aprint, asection
 
 from luxar.core.group.partition import prune_serialized_bsp_tree
 from luxar.gsplats.batch.manifest import BatchJob, BatchManifest, output_filename
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from luxar.io.ome_zarr import OMEZarrInfo
 
 # ---------------------------------------------------------------------------
 # Grouped option contracts (the shared surface both commands populate)
@@ -713,6 +716,152 @@ def _validate_merge_refine_source(
         raise typer.BadParameter(f"--merge-refine volume: {problem}")
 
 
+def _worker_reproduces_the_plan(
+    info: "OMEZarrInfo", emits_channel: bool, emits_timepoint: bool
+) -> bool:
+    """Whether a positionally-slicing worker lands on the plan's spatial volume.
+
+    Asked of the decomposition discovery ITSELF used —
+    ``time_axis``/``channel_indices``/``spatial_indices`` on
+    :class:`~luxar.io.ome_zarr.OMEZarrInfo` — never of the axis LABELS. NGFF
+    classifies by the ``type`` field, so re-deriving the roles from the names
+    disagrees in both directions: a channel axis named ``stain`` looks spatial to
+    a name rule (a false refusal of a canonical 5D store that always worked),
+    while an axis typed ``view`` is spatial to the parser and channel-like to a
+    name rule (a false pass, whose plan tiles a 4-D "spatial" shape the worker
+    never sees).
+
+    ``emits_channel`` / ``emits_timepoint`` say whether the per-task command line
+    will carry ``--channel`` / ``--timepoint``; see
+    :func:`luxar.gsplats.batch.fit_command.build_task_fit_argv`, which emits each
+    only when that axis has more than one value or was explicitly sliced. They
+    matter at 4D, the one ndim where the loader's branch depends on them.
+
+    One row per branch of :func:`luxar.io.volume._load_zarr_volume`.
+    """
+    ndim = len(info.shape)
+    t_axis = info.time_axis
+    channels = tuple(info.channel_indices)
+    spatial = tuple(info.spatial_indices)
+
+    # The non-spatial axes must LEAD (time first, then the channel-like ones in
+    # fold order) with the spatial axes TRAILING in order — the shape every
+    # positional branch below assumes.
+    leading = ((t_axis,) if t_axis is not None else ()) + channels
+    ordered = leading == tuple(range(len(leading))) and spatial == tuple(
+        range(len(leading), ndim)
+    )
+    # `load_volume` squeezes the positional result (every size-1 axis, wherever it
+    # sits), so a WHOLE-array load reproduces the planned spatial shape exactly
+    # when the two agree once their size-1 axes are dropped. That is what makes a
+    # layout whose non-spatial axes are all singletons — `z,y,x,c` at
+    # (16,32,32,1), `t,c,y,x` at (1,1,32,32) — reproducible despite not leading.
+    squeeze_matches = tuple(s for s in info.shape if s != 1) == tuple(
+        s for s in info.spatial_shape if s != 1
+    )
+
+    if ndim >= 6:
+        # `arr[t, *decode_flat_channel_index(channel, shape[1:ndim-3])]`: axis 0
+        # is T, axes 1..ndim-4 fold into the flat channel index in that order, the
+        # last 3 axes are the volume.
+        return ordered and t_axis == 0 and len(spatial) == 3
+    if ndim == 5:
+        # `arr[t, c, :, :, :]` — axis 0 is T, axis 1 is C, exactly 3 spatial.
+        return t_axis == 0 and channels == (1,) and spatial == (2, 3, 4)
+    if ndim == 4:
+        # `arr[channel]` if --channel was emitted, else `arr[timepoint]` if
+        # --timepoint was, else the WHOLE array. At most ONE leading axis is
+        # consumed, and channel is preferred over timepoint.
+        if emits_channel:
+            return t_axis is None and channels == (0,) and spatial == (1, 2, 3)
+        if emits_timepoint:
+            return t_axis == 0 and channels == () and spatial == (1, 2, 3)
+        return squeeze_matches
+    # ndim <= 3: `np.array(arr)` — the whole array, no slicing at all (the
+    # --channel/--timepoint flags are ignored on this branch).
+    return squeeze_matches
+
+
+def _axes_spec_luxar_can_slice(
+    labels: Sequence[str],
+) -> "Tuple[Optional[str], List[str]]":
+    """``(spec, [])`` when ``--axes`` would accept every label, else ``(None, bad)``.
+
+    Asked of :func:`luxar.io.volume._axis_kind` itself rather than of a copied
+    word list, because that function IS the ``--axes`` vocabulary — and it is
+    deliberately narrower than discovery's (no ``view``/``angle``, and it raises
+    rather than defaulting to spatial). Only its ``ValueError`` is caught, and
+    only per label, so nothing else is swallowed.
+    """
+    from luxar.io.volume import _axis_kind
+
+    normalised = [str(label).strip().lower() for label in labels]
+    unrecognised: List[str] = []
+    for label in normalised:
+        try:
+            _axis_kind(label)
+        except ValueError:
+            unrecognised.append(label)
+    if unrecognised:
+        return None, unrecognised
+    return ",".join(normalised), []
+
+
+def _refuse_layout_the_workers_cannot_slice(
+    axes_list: Optional[List[str]],
+    info: "OMEZarrInfo",
+    emits_channel: bool,
+    emits_timepoint: bool,
+) -> None:
+    """Refuse a discovered layout the per-task worker cannot reproduce.
+
+    A no-op when the user passed ``--axes`` (``axes_list``), which the manifest
+    forwards to every worker so it slices by LABEL. Otherwise the manifest records
+    no axes and every worker falls back to the POSITIONAL slicing in
+    :func:`luxar.io.volume._load_zarr_volume`, whose per-ndim contract
+    :func:`_worker_reproduces_the_plan` mirrors row by row.
+
+    Discovery now reads real NGFF labels, so it can learn a layout — a ``(t, c,
+    y, x)`` store, say — that the positional loader silently mis-slices: the plan
+    fans over 5 timepoints × 3 channels while every worker prefers ``--channel``
+    and ignores ``--timepoint``, so the merged partition is the same 3 volumes
+    repeated. Nothing raises, so this does.
+
+    The ``--axes`` escape hatch is only SUGGESTED when it would actually work.
+    ``volume._axis_kind`` backs that spec with a narrower vocabulary than
+    discovery's, so quoting the discovered labels back at a store with a ``stain``
+    channel or heuristic ``dim0…dimN`` labels prints a command that fails — and
+    worse, ``plan_batch``'s override path is lenient enough to ACCEPT it (folding
+    the unknown label into the tile grid) before every worker dies on it.
+    """
+    if axes_list is not None:
+        return
+    if _worker_reproduces_the_plan(info, emits_channel, emits_timepoint):
+        return
+
+    labels = [str(a) for a in info.axes]
+    spec, unrecognised = _axes_spec_luxar_can_slice(labels)
+    advice = (
+        f"Pass '--axes {spec}' to slice by label instead."
+        if spec is not None
+        else (
+            "This store's own labels are not ones luxar can slice by "
+            f"({', '.join(repr(u) for u in unrecognised)} unrecognised), so "
+            f"they cannot be quoted back at you: pass '--axes' with {len(labels)} "
+            "labels of your own — time/t, channel/c/ch/camera/cam or z/y/x, one "
+            "per dimension — saying what each axis means."
+        )
+    )
+    raise typer.BadParameter(
+        f"the store's axes are '{','.join(labels)}' with shape "
+        f"{tuple(info.shape)}, a layout batch-fit's per-task volume loader "
+        f"cannot reproduce: without --axes it slices by POSITION (time first, "
+        f"then the channel-like axes, then exactly 3 spatial axes). Planning "
+        f"would fan out over axes the workers never see, producing duplicate "
+        f"tiles. {advice}"
+    )
+
+
 def _validate_merge_refine_frame(
     merge: MergeConfig, grid_scale: Optional[List[float]]
 ) -> None:
@@ -1272,6 +1421,18 @@ def plan_batch(
         aprint(f"Axes: {ome_info.axes}")
         aprint(f"Shape: {ome_info.shape}")
         aprint(f"T={n_t_full}, C={n_c_full}, spatial={'x'.join(map(str, spatial))}")
+
+        # Without --axes the manifest carries no axes, so the workers slice
+        # POSITIONALLY. Refuse a discovered layout they would slice differently
+        # from what this plan assumes, instead of emitting duplicate tiles. The
+        # two flags mirror `build_task_fit_argv`'s emission rule, since the 4D
+        # branch of the loader depends on which of them is present.
+        _refuse_layout_the_workers_cannot_slice(
+            axes_list,
+            ome_info,
+            emits_channel=n_c_full > 1 or channels_slice is not None,
+            emits_timepoint=n_t_full > 1 or timepoints_slice is not None,
+        )
 
         t_indices = (
             _parse_slice(timepoints_slice, n_t_full)
