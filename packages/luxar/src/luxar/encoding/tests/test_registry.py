@@ -103,6 +103,22 @@ class TestRegistryLifecycle:
         assert not match2.is_duplicate
         assert match2.hash == match1.hash  # Same hash, but registry was cleared
 
+    def test_snapshot_restore_keeps_prior_entries_and_discards_later_ones(self):
+        registry = ArrayRefRegistry()
+        first = np.array([1.0, 2.0, 3.0], dtype=np.float32)
+        second = np.array([4.0, 5.0, 6.0], dtype=np.float32)
+        registry.check(first, "before")
+        snapshot = registry.snapshot()
+        registry.check(second, "rolled_back")
+
+        registry.restore(snapshot)
+
+        first_match = registry.check(first.copy(), "first_retry")
+        second_match = registry.check(second.copy(), "second_retry")
+        assert first_match.is_duplicate
+        assert first_match.target_path == "before"
+        assert not second_match.is_duplicate
+
     def test_large_array_hashing(self):
         """Test hashing of large arrays (triggers two-stage check)."""
         registry = ArrayRefRegistry()

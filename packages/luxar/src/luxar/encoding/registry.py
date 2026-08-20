@@ -10,6 +10,11 @@ from typing import Optional
 import numpy as np
 import xxhash
 
+ArrayRefRegistrySnapshot = tuple[
+    dict[tuple, tuple[str, str]],
+    dict[str, str],
+]
+
 
 @dataclass
 class ArrayRefMatch:
@@ -149,6 +154,16 @@ class ArrayRefRegistry:
         """Reset registry (e.g., between independent scenes)."""
         self._quick_map.clear()
         self._full_map.clear()
+
+    def snapshot(self) -> ArrayRefRegistrySnapshot:
+        """Capture the current deduplication registrations."""
+        return self._quick_map.copy(), self._full_map.copy()
+
+    def restore(self, state: ArrayRefRegistrySnapshot) -> None:
+        """Restore deduplication registrations from a prior snapshot."""
+        quick_map, full_map = state
+        self._quick_map = quick_map.copy()
+        self._full_map = full_map.copy()
 
     def _compute_hash(self, data: bytes) -> str:
         """Compute xxhash64 hex digest of data.
