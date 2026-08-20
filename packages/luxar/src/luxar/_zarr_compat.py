@@ -95,6 +95,7 @@ __all__ = [
     "NODE_ATTR_DOCS",
     "NODE_GROUP_DOCS",
     "SUPPORTED_ZARR_FORMATS",
+    "V3_NODE_DOC",
     "ZARR_FORMAT",
     "ZARR_FORMAT_ENV_VAR",
     "attrs_from_node_doc",
@@ -382,6 +383,23 @@ NODE_ATTR_DOCS: tuple[str, ...] = (_V3_METADATA_DOC, ".zattrs")
 #: it consistently is what keeps a future consumer that does iterate from
 #: silently preferring a stale v2 document.
 NODE_GROUP_DOCS: tuple[str, ...] = (_V3_METADATA_DOC, ".zgroup")
+
+#: The format-3 per-node metadata document's NAME, exported by itself.
+#:
+#: CLAUDE.md's rule is that this facade owns metadata-document names, and a
+#: caller holding archive member NAMES rather than paths cannot use
+#: :func:`read_node_attrs` to find out which format it is looking at — the
+#: archive peek in ``luxar.gsplats.io._archive`` has to recognise the format-3
+#: document from the name alone, because the two formats' documents are not the
+#: same KIND of object and it budgets them differently (a ``.zattrs`` IS the
+#: attributes; a ``zarr.json`` also carries the node's structure and, at a
+#: consolidated root, the whole index of the tree).
+#:
+#: A separate name rather than ``NODE_ATTR_DOCS[0]``: the tuples above are
+#: ordered best-first as DOCUMENTATION for a future iterating consumer, both of
+#: today's consumers test membership, and a positional read would silently swap
+#: the meaning of anything keyed on it if that order were ever revisited.
+V3_NODE_DOC = _V3_METADATA_DOC
 
 
 def attrs_from_node_doc(parsed: Any, *, doc_name: str | None = None) -> dict[str, Any]:

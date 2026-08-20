@@ -2020,13 +2020,75 @@ class TestArchiveRootAttrsPeek:
     def test_oversized_attrs_member_refused(
         self, tmp_path: Path, fmt: str, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A ``.zattrs`` far too big for attrs is refused, not read into memory."""
+        """A ``.zattrs`` far too big for attrs is refused, not read into memory.
+
+        The refusal WARNS: ``{}`` means "authored no appearance" to every caller,
+        so a silent size refusal reaches the user only as a rebuild that reset
+        the look (#1600 point 4).
+        """
         from luxar.gsplats.io import _archive
 
         monkeypatch.setattr(_archive, "_MAX_ATTRS_BYTES", 8)
         archive = tmp_path / f"fat.gsplats.zarr.{fmt}"
         self._write(archive, fmt, [("x.gsplats.zarr/.zattrs", '{"opacity": 0.75}')])
-        assert _archive.read_archive_root_attrs(archive) == {}
+        with pytest.warns(UserWarning, match=r"metadata member '.*\.zattrs'"):
+            assert _archive.read_archive_root_attrs(archive) == {}
+
+    @pytest.mark.parametrize("fmt", ["zip", "tar.gz"])
+    def test_oversized_node_document_refused(
+        self, tmp_path: Path, fmt: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The DOCUMENT budget is a real gate, at a patched-down value.
+
+        Symmetric with ``test_oversized_attrs_member_refused``, and the pin the
+        new constant was missing: with none, setting it to 1 GiB or deleting the
+        declared-size gate left the whole peek suite green. The member here is a
+        ``zarr.json``, so it is the raised budget being exercised and not the
+        ``.zattrs`` one.
+        """
+        from luxar.gsplats.io import _archive
+
+        monkeypatch.setattr(_archive, "_MAX_NODE_DOC_BYTES", 64)
+        raw = json.dumps(
+            {
+                "zarr_format": 3,
+                "node_type": "group",
+                "attributes": {"opacity": 0.75, "pad": "x" * 256},
+            }
+        )
+        assert len(raw.encode("utf-8")) > 64
+        archive = tmp_path / f"fat_doc.gsplats.zarr.{fmt}"
+        self._write(archive, fmt, [("x.gsplats.zarr/zarr.json", raw)])
+        with pytest.warns(UserWarning, match=r"metadata member '.*zarr\.json'"):
+            assert _archive.read_archive_root_attrs(archive) == {}
+
+    @pytest.mark.parametrize("fmt", ["zip", "tar.gz"])
+    def test_a_non_ascii_zattrs_under_the_budget_is_still_returned(
+        self, tmp_path: Path, fmt: str
+    ) -> None:
+        """A within-budget ``.zattrs`` is not refused by a re-serialized measure.
+
+        ``json.dumps`` defaults to ``ensure_ascii=True`` and spaced separators, so
+        re-serializing non-ASCII attrs inflates them 2-3x: this document is
+        1.7 MiB on disk (well under the 4 MiB member budget, and read fine before
+        the peek grew a second budget) but ~3x that once escaped. Applying the
+        post-parse cap here would refuse it — a regression straight back into the
+        silent ``{}`` this change exists to remove — so a ``.zattrs`` is measured
+        once, as the member it is, and the recap runs only on the branch that got
+        the RAISED document budget.
+        """
+        from luxar.gsplats.io._archive import _MAX_ATTRS_BYTES, read_archive_root_attrs
+
+        attrs = {"opacity": 0.75, "note": "é" * 900_000}
+        raw = json.dumps(attrs, ensure_ascii=False)
+        on_disk = len(raw.encode("utf-8"))
+        escaped = len(json.dumps(attrs).encode("utf-8"))
+        # Not vacuous: inside the budget as bytes, outside it once ASCII-escaped.
+        assert on_disk < _MAX_ATTRS_BYTES < escaped
+
+        archive = tmp_path / f"unicode.gsplats.zarr.{fmt}"
+        self._write(archive, fmt, [("x.gsplats.zarr/.zattrs", raw)])
+        assert read_archive_root_attrs(archive) == attrs
 
     @staticmethod
     def _fat_v3_root_doc(attributes: dict[str, object], min_bytes: int) -> str:
@@ -2140,7 +2202,8 @@ class TestArchiveRootAttrsPeek:
         assert len(raw.encode("utf-8")) > 4 * 1024**2
         archive = tmp_path / f"fat_zattrs.gsplats.zarr.{fmt}"
         self._write(archive, fmt, [("x.gsplats.zarr/.zattrs", raw)])
-        assert read_archive_root_attrs(archive) == {}
+        with pytest.warns(UserWarning, match="Appearance peek refused"):
+            assert read_archive_root_attrs(archive) == {}
 
     @pytest.mark.parametrize("fmt", ["zip", "tar.gz"])
     def test_oversized_attributes_inside_a_node_document_are_refused(
@@ -2151,10 +2214,16 @@ class TestArchiveRootAttrsPeek:
         The document budget had to grow for the consolidated index; that must not
         become licence to hand a caller an arbitrarily large attrs mapping. The
         post-parse cap in ``_parse_attrs`` is what keeps the two independent, so
-        this document sits far below the 128 MiB document budget and is refused
-        purely on the size of what it unwraps to.
+        this document must sit STRICTLY BETWEEN the two real constants —
+        admitted by the document budget, refused on the size of what it unwraps
+        to. Asserting only "below 128 MiB" would pass with the post-parse cap
+        deleted, for the wrong reason.
         """
-        from luxar.gsplats.io._archive import read_archive_root_attrs
+        from luxar.gsplats.io._archive import (
+            _MAX_ATTRS_BYTES,
+            _MAX_NODE_DOC_BYTES,
+            read_archive_root_attrs,
+        )
 
         raw = json.dumps(
             {
@@ -2166,10 +2235,11 @@ class TestArchiveRootAttrsPeek:
                 },
             }
         )
-        assert len(raw.encode("utf-8")) < 128 * 1024**2
+        assert _MAX_ATTRS_BYTES < len(raw.encode("utf-8")) < _MAX_NODE_DOC_BYTES
         archive = tmp_path / f"fat_attrs.gsplats.zarr.{fmt}"
         self._write(archive, fmt, [("x.gsplats.zarr/zarr.json", raw)])
-        assert read_archive_root_attrs(archive) == {}
+        with pytest.warns(UserWarning, match="attributes unwrapped from"):
+            assert read_archive_root_attrs(archive) == {}
 
 
 def test_write_gsplats_tree_stamps_child_index_on_children() -> None:

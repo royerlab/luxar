@@ -89,8 +89,14 @@ def read_authored_appearance(path: str | Path) -> Dict[str, Any]:
             root = zc_open_group(p, mode="r")
             attrs = dict(root.attrs)
         else:
-            # An archive is peeked, not extracted: only the root `.zattrs`
-            # member's bytes are read, and nothing is written to disk.
+            # An archive is peeked, not extracted: only the ROOT NODE'S metadata
+            # member is read — `.zattrs` at format 2, `zarr.json` at format 3,
+            # where the attributes are unwrapped out of the node document — and
+            # nothing is written to disk. The two are budgeted differently
+            # because a format-3 root document also carries the consolidated
+            # index of the whole tree; an over-budget member warns rather than
+            # silently answering {} (see `_archive._warn_size_refusal` — which
+            # the `except` below swallows if it is promoted to an error).
             # A regular file that is not an archive yields {} from the helper.
             attrs = read_archive_root_attrs(p)
     except Exception:
