@@ -938,9 +938,13 @@ Two structural differences from the other three types:
   "ordering": "none",                // always "none" in v1 (no spatial index)
   // ... plus the standard render attrs (opacity, gamma, intensity, offset,
   //     absorption, blending_mode, colormap, layer, transform, nd_transform,
-  //     extend_to_all)
+  //     extend_to_all) and mesh-only appearance attrs (ambient, shade_exponent,
+  //     specular, shininess, alpha_cutoff)
 }
 ```
+
+The five mesh-only appearance attrs control the view-anchored shading model;
+they are rejected on points, lines, Gaussian splats, and groups.
 
 #### vertices/ (Required)
 - **Shape:** `(V, D)` — nD vertex positions, exactly like `Lines.vertices`.
@@ -1914,6 +1918,6 @@ with LuxarZarrCompiler("output.luxar.zarr", enable_spatial_index=True) as compil
 
 - Support for volumes
 - Material system with shading models (mesh ships one deliberately minimal,
-  light-free headlight — lights and richer shading models are still ahead)
+  light-free view-anchored offset key — scene lights and richer shading models are still ahead)
 - Temporal interpolation for smooth animations
 - Multi-resolution spatial indices for LOD

@@ -483,7 +483,7 @@ fitting model in detail.
 
 Triangle surfaces — isosurfaces, segmentation boundaries, cortical and organ
 meshes. The other three primitives are soft and emissive; a mesh is the one
-*connected, shaded* type, lit by a view-anchored headlight so shape reads from
+*connected, shaded* type, lit by a view-anchored offset key so shape reads from
 shading rather than from density.
 
 ```python

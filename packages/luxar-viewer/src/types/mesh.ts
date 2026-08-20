@@ -145,14 +145,13 @@ export interface MeshMetadata {
 
   /** Blending mode */
   /**
-   * Headlight shade floor in `[0, 1]` — what a face-away fragment keeps (§6.2).
+   * Offset-key shade floor in `[0, 1]` — what a face-away fragment keeps (§6.2).
    * `1.0` collapses the shade term and reproduces the emissive look of the other three
    * geometry types.
    *
    * Optional and viewer-defaulted: the writer never stamps it, so it is present only
-   * when an author passed it through `add_mesh(**attrs)`. Declared here because it
-   * WAS already reachable that way and silently dropped — an authored value that does
-   * nothing is worse than one that is refused.
+   * when an author passed it through `add_mesh(**attrs)`. Authoring support and the
+   * material read landed together so accepted values affect the rendered mesh.
    */
   ambient?: number;
 

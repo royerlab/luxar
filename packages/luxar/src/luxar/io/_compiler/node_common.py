@@ -132,7 +132,9 @@ MESH_RESERVED_ATTRS: FrozenSet[str] = frozenset(
 # keys advertised in the "Unknown node attribute" hint. A user typo like
 # ``blending="max"`` (for ``blending_mode``) used to be persisted silently and
 # ignored by the viewer (issue #787); these are the legitimate render keys a
-# caller may set on any node. Keep in sync with the per-key validators in
+# caller may set on at least one node type. Type-restricted keys remain here so
+# the typo hint can advertise the full authoring surface, with per-type refusals
+# enforced before writing. Keep in sync with the per-key validators in
 # :func:`validate_render_attrs`.
 KNOWN_RENDER_ATTRS: FrozenSet[str] = frozenset(
     {
@@ -151,6 +153,9 @@ KNOWN_RENDER_ATTRS: FrozenSet[str] = frozenset(
         "layer",
         "offset",
         "opacity",
+        # Mesh-only shading controls. Advertised for the same reason as
+        # lines-only ``join``; :func:`reject_mesh_only_appearance` refuses
+        # them on points, lines, gsplats, and groups before anything is written.
         "shade_exponent",
         "shininess",
         "specular",

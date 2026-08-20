@@ -312,9 +312,9 @@ describe('createMeshMaterial — the §6.3 opaque default survives the composed 
 
 describe('createMeshMaterial — authored shade knobs (§6.2)', () => {
   it('reads all mesh appearance attrs from the composed attrs', () => {
-    // These ride in through `add_mesh(**attrs)` (the writer never stamps them), so
-    // they were ALREADY reachable in the composed attrs and were being silently
-    // dropped. An authored value that does nothing is worse than one that is refused.
+    // These ride in through `add_mesh(**attrs)` (the writer never stamps them).
+    // Authoring support and the material reads landed together, so accepted values
+    // must reach the uniforms rather than becoming dead metadata.
     const m = createMeshMaterial(
       {
         ...ATTRS,

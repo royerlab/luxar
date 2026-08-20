@@ -2001,6 +2001,13 @@ class TestUnknownRenderAttrRejected:
             root = zarr.open_group(str(zarr_path), mode="r")
             assert "node" not in root
 
+    def test_mesh_appearance_guard_covers_every_validated_key(self) -> None:
+        """Every mesh appearance validator must have a non-mesh refusal."""
+        from luxar.core.group.compositing import MESH_ONLY_APPEARANCE_ATTRS
+        from luxar.io._compiler.node_common import _MESH_APPEARANCE_VALIDATORS
+
+        assert MESH_ONLY_APPEARANCE_ATTRS == _MESH_APPEARANCE_VALIDATORS.keys()
+
     @pytest.mark.parametrize("geometry_type", ["points", "gsplats", "mesh"])
     @pytest.mark.parametrize("via", ["property", "set_join"])
     def test_line_join_setter_refused_on_a_non_lines_leaf(

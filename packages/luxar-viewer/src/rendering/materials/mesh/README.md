@@ -155,9 +155,8 @@ re-applied per epoch by `applyMeshShading` because its
 ## The appearance knobs are author-reachable, and clamped
 
 `ambient`, `shade_exponent`, `specular`, `shininess`, and `alpha_cutoff` are read from the mesh leaf attrs. The writer never stamps them — they arrive only when passed through
-`add_mesh(**attrs)` — but they _were_ already reachable that way, so reading them is
-the difference between an authored value that works and one that silently does
-nothing.
+`add_mesh(**attrs)`. This authoring path and the material reads landed together, so
+an accepted value always affects the rendered mesh rather than becoming dead metadata.
 
 All five are clamped at the material boundary because they are fractions or exponents, not gains:
 
