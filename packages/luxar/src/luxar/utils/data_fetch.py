@@ -397,9 +397,10 @@ def _ensure_one(
         )
     raise FileNotFoundError(
         f"{fname} is not cached (any cached copy failed its checksum and was "
-        "quarantined), not present in-repo (git lfs pull), and the demo-data "
-        "manifest builds no Zenodo URL for it yet — its record has no id, or is "
-        "still an unpublished draft."
+        "quarantined), not present in-repo, and the demo-data manifest builds no "
+        "Zenodo URL for it yet — its record has no id, or is still an unpublished "
+        "draft. Publish the record and populate its manifest URL, or rerun the "
+        "demo with --recompute when that demo provides a build path."
     )
 
 

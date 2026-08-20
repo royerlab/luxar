@@ -38,10 +38,10 @@ Label scheme: the 117-class `total` map from the TotalSegmentator tool
 SELF-CONTAINED / CACHING
 ------------------------
 On a fresh machine this demo bootstraps itself with no manual steps:
-  1. Fast path: a precomputed fit + per-splat organ labels shipped via Git LFS
-     (``demos/data/gsplats_ct_totalsegmentator/``); loads instantly (colors,
+  1. Fast path: a precomputed fit + per-splat organ labels resolved through the
+     demo-data manifest; loads instantly (colors,
      layers, and hover tooltips are all derived from the labels at scene build).
-  2. If those assets aren't pulled, ``--recompute`` (or missing assets)
+  2. If those hosted assets are unavailable, ``--recompute`` (or missing assets)
      AUTOMATICALLY downloads the 3.2 GB subset to
      ``~/.cache/luxar/gsplats_ct_totalsegmentator/`` (resumable), extracts one
      subject, combines its masks with ``nibabel``, fits on the GPU, caches the

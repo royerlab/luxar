@@ -150,8 +150,9 @@ class TestCatalogDownloadErrors:
         assert expected_url in message
         assert "HTTP 404 Not Found" in message
         assert "data.desi.lbl.gov" in message
-        assert "git lfs pull" in message
+        assert "hosted precomputed scene" in message
         assert "without --recompute" in message
+        assert "git lfs pull" not in message
         assert isinstance(exc_info.value.__cause__, requests.HTTPError)
 
     def test_connection_failure_becomes_actionable_error(
@@ -171,7 +172,9 @@ class TestCatalogDownloadErrors:
         message = str(exc_info.value)
         assert "ConnectionError: network unreachable" in message
         assert f"{_demo.BASE_URL}/BGS_BRIGHT_NGC_clustering.dat.fits" in message
-        assert "git lfs pull" in message
+        assert "hosted precomputed scene" in message
+        assert "without --recompute" in message
+        assert "git lfs pull" not in message
         assert isinstance(exc_info.value.__cause__, requests.ConnectionError)
 
     def test_non_request_failure_is_not_hidden(
@@ -192,7 +195,7 @@ class TestCatalogDownloadErrors:
         tmp_path: Path,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        message = "DESI host unavailable; run git lfs pull"
+        message = "DESI host unavailable; retry the hosted precomputed scene"
 
         def _fail_build() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
             raise _demo.DESICatalogDownloadError(message)

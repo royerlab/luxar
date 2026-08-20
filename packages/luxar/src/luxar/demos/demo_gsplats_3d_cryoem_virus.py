@@ -28,9 +28,8 @@ EMDB is public domain / CC0. Map:
 SELF-CONTAINED / CACHING
 ------------------------
 On a fresh machine this demo bootstraps itself with no manual steps:
-  1. Fast path: a small precomputed fit shipped via Git LFS
-     (``demos/data/gsplats_cryoem_virus/``).
-  2. If that asset isn't pulled, it AUTOMATICALLY downloads the 1.3 GB map to
+  1. Fast path: a small precomputed fit resolved through the demo-data manifest.
+  2. If that hosted asset is unavailable, it AUTOMATICALLY downloads the 1.3 GB map to
      ``~/.cache/luxar/gsplats_cryoem_virus/``, fits Gaussian splats on the GPU,
      and caches the fit — so subsequent runs are instant.
 ``--recompute`` forces the download + fit path.
@@ -239,7 +238,7 @@ def load_or_build_gsplats() -> GSplatData:
                 return precomputed[0]
         except FileNotFoundError:
             aprint(
-                "Precomputed fit not available (Git LFS asset not pulled). "
+                "Precomputed fit is not available from the manifest cache. "
                 "Falling back to download + fit (one-time; result is cached)."
             )
 

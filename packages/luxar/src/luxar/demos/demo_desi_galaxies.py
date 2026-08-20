@@ -39,16 +39,15 @@ DESI Collaboration (2025), "Data Release 1 of the Dark Energy Spectroscopic
 SELF-CONTAINED / CACHING
 ------------------------
 On a fresh machine this demo bootstraps itself with no manual steps:
-  1. Fast path: a fully-built scene (both LOD colorings, ~80 MB) shipped via
-     Git LFS (``demos/data/desi_galaxies/``); it is unzipped once into the demos
+  1. Fast path: a fully-built scene (both LOD colorings, ~80 MB) resolved through
+     the demo-data manifest; it is downloaded and unzipped once into the demos
      output dir and loads instantly — no per-launch LOD build.
-  2. If that asset isn't pulled, ``--recompute`` (or a missing asset)
+  2. If that hosted asset is unavailable, ``--recompute`` (or a missing asset)
      AUTOMATICALLY downloads the ~1 GB of DR1 LSS catalogs to
      ``~/.cache/luxar/desi_galaxies/`` (resumable), reads them with ``astropy``,
      converts (RA, Dec, z) → comoving Mpc, and builds the scene (the substitutive
      LOD over ~10M points is GPU-accelerated but slow on CPU-only machines —
-     which is exactly why the built scene ships precomputed). If the DESI host
-     is unavailable, ``git lfs pull`` restores the no-download fast path.
+     which is exactly why the built scene is hosted precomputed).
 
 USAGE
 -----
@@ -344,10 +343,9 @@ def _catalog_download_error_message(url: str, exc: BaseException) -> str:
         "The DESI data host may be temporarily unavailable or under "
         "maintenance.\n"
         "  Check host availability: https://data.desi.lbl.gov/\n\n"
-        "The shipped precomputed scene does not need the source catalogs. "
-        "Fetch it with:\n"
-        "  git lfs pull\n"
-        "Then rerun this demo without --recompute."
+        "The hosted precomputed scene does not need the source catalogs. "
+        "Rerun this demo without --recompute to use it when its manifest record "
+        "is available."
     )
 
 
@@ -445,7 +443,7 @@ def extract_shipped_scene(zip_path: Path, output_path: Path) -> None:
     import shutil
     import zipfile
 
-    with asection("Unpacking precomputed scene (Git LFS)"):
+    with asection("Unpacking precomputed scene"):
         aprint(f"Source: {zip_path.name} ({zip_path.stat().st_size / 1e6:.0f} MB)")
         staging = output_path.parent / (output_path.name + ".part")
         shutil.rmtree(staging, ignore_errors=True)
@@ -666,7 +664,7 @@ def main() -> None:
             warn_if_scene_lacks_ladder(output_path)
         else:
             aprint(
-                "Precomputed scene not available (Git LFS asset not pulled). "
+                "Precomputed scene is not available locally. "
                 "Falling back to download + build (one-time; result is cached)."
             )
             positions, redshift, tracer_ids = _load_or_build_or_exit()

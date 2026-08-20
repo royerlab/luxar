@@ -31,10 +31,10 @@ Data (Zenodo record 3993082): ``mean_std.h5`` — mean + std of the dust
 SELF-CONTAINED / CACHING
 ------------------------
 On a fresh machine this demo bootstraps itself with no manual steps:
-  1. Fast path: a precomputed FULL-RESOLUTION fit shipped via Git LFS
-     (``demos/data/gsplats_milkyway_dust/``, ~8 MB) — the native 740×740×540
+  1. Fast path: a precomputed FULL-RESOLUTION fit resolved through the demo-data
+     manifest (~8 MB) — the native 740×740×540
      cube fit to ~675k Gaussian splats (PSNR ~35 dB).
-  2. If that asset isn't pulled, it AUTOMATICALLY downloads the 2.4 GB cube to
+  2. If that hosted asset is unavailable, it AUTOMATICALLY downloads the 2.4 GB cube to
      ``~/.cache/luxar/gsplats_milkyway_dust/`` (resumable), fits Gaussian splats
      on the GPU, and caches the fit there — so subsequent runs are instant.
 ``--recompute`` forces the download + fit path.
@@ -269,9 +269,8 @@ def fit_dust(volume: np.ndarray, acquisition=None) -> GSplatData:
 def load_or_build_gsplats() -> GSplatData:
     """Return fitted dust splats, self-contained on a fresh system.
 
-    Fast path: precomputed fit (Git LFS / local cache). If that asset is not
-    available, automatically download the cube and fit — no manual ``git lfs
-    pull`` required.
+    Fast path: precomputed fit from the manifest cache. If that asset is not
+    available, automatically download the cube and fit.
     """
     if not RECOMPUTE:
         try:
@@ -281,7 +280,7 @@ def load_or_build_gsplats() -> GSplatData:
         except FileNotFoundError:
             aprint("")
             aprint(
-                "Precomputed fit not available (Git LFS asset not pulled). "
+                "Precomputed fit is not available from the manifest cache. "
                 "Falling back to download + fit (one-time; result is cached)."
             )
 

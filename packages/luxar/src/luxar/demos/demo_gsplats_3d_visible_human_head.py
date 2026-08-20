@@ -54,9 +54,8 @@ steps, but not instantly:
      volume, fits luminance on the GPU, caches the fit, then reloads it and
      samples the colors from the stored splat order — so subsequent runs load
      that (verified) local pair instantly.
-  2. The shipped Git LFS assets in ``demos/data/gsplats_visible_human_head/``
-     become the fast path again as soon as the sidecar is regenerated against
-     the store it ships with.
+  2. The hosted manifest assets become the fast path again as soon as the
+     sidecar is regenerated against the store it accompanies.
 ``--recompute`` forces the download + build + fit path.
 
 USAGE

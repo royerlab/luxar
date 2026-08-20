@@ -15,8 +15,9 @@ import numpy as np
 import pytest
 import zarr
 
-from luxar.demos import voxel_sampled_payload_agreement
+from luxar.demos import load_manifest, voxel_sampled_payload_agreement
 from luxar.gsplats.gsplat_data import GSplatData
+from luxar.utils.download import verify_file_checksum
 
 pytest.importorskip("scipy")
 
@@ -496,8 +497,8 @@ class TestShippedLfsPairIsGuardedToo:
         assert got_fit is not sentinel_fit, "an aligned SHIPPED pair triggered a refit"
         np.testing.assert_array_equal(got_colors, colors)
 
-    def test_the_shipped_pair_is_currently_rejected(self) -> None:
-        """TRIPWIRE — the shipped artifact is misordered, and this pins that.
+    def test_the_manifest_pair_is_currently_rejected(self) -> None:
+        """TRIPWIRE — the hosted artifact is misordered, and this pins that.
 
         ``vh_head_colors.npz`` was sampled in the pre-save splat order and does
         NOT correspond to the ``vh_head.gsplats.zarr.zip`` beside it (#1670), so
@@ -521,15 +522,22 @@ class TestShippedLfsPairIsGuardedToo:
         Nothing else pins those, so without this tripwire they would quietly stay
         wrong forever. Swap this test for ``assert _colors_match_fit(...)`` then.
         """
-        from luxar.demos import is_lfs_pointer
-
-        for path in (_demo.LFS_FIT, _demo.LFS_COLORS):
-            if not path.exists() or is_lfs_pointer(path):
-                pytest.skip(f"{path.name} not materialized (run `git lfs pull`)")
-        fit = GSplatData.load(_demo.LFS_FIT, include_stats=False)
-        colors = _load_colors_f32(_demo.LFS_COLORS)
-        assert not _demo._colors_match_fit(fit, colors, "shipped"), (
-            "the shipped pair now PASSES the guard — see this test's docstring: "
+        spec = load_manifest()["datasets"][_demo.DEMO_NAME]
+        entries = {entry["name"]: entry for entry in spec["files"]}
+        paths = {
+            _demo.FIT_FILE: _demo.CACHE_FIT,
+            _demo.COLORS_FILE: _demo.CACHE_COLORS,
+        }
+        for name, path in paths.items():
+            expected = entries[name]["sha256"]
+            if not path.exists() or not verify_file_checksum(
+                path, None, expected, verbose=False
+            ):
+                pytest.skip(f"{name} is not checksum-verified in the manifest cache")
+        fit = GSplatData.load(paths[_demo.FIT_FILE], include_stats=False)
+        colors = _load_colors_f32(paths[_demo.COLORS_FILE])
+        assert not _demo._colors_match_fit(fit, colors, "manifest cache"), (
+            "the hosted pair now PASSES the guard — see this test's docstring: "
             "revert download_mb, compute, the docstring, both READMEs and the "
             "gallery UNBUILDABLE_IDS entry to the fast-path wording"
         )
