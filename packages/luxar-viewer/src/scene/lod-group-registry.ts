@@ -459,10 +459,21 @@ export interface LODGroupEntry {
   offScreen?: boolean;
   /**
    * The level index the selector WANTED this frame, recorded BEFORE the
-   * ready/freshness gates below it get a say. Written by ``evaluateEntry`` on
-   * every path that computes a ``desired`` — the explicit lock and all three
+   * ready/freshness gates below it get a say. Written by ``evaluateEntry``
+   * once a ``desired`` has been computed — the explicit lock and all three
    * auto branches (off-screen hold, screen-area pick, legacy coverage pick).
    * ``undefined`` (never evaluated) ⇒ read it as ``activeChildIndex``.
+   *
+   * It is NOT rewritten on every frame: ``evaluateEntry`` returns before
+   * computing a ``desired`` when the entry has no registration cache or no
+   * world box, and ``evaluatePerFrame`` returns before reaching the entries at
+   * all on a zero-sized viewport or with fewer than two display dims. The
+   * field then keeps its previous value. That is benign — both early returns
+   * are stable properties of the entry/viewport rather than transient states,
+   * so a stale value cannot describe a level the selector has since moved off,
+   * and an entry that never got one reads as ``activeChildIndex`` (i.e.
+   * "nothing pending"), which is the right answer for a group the selector has
+   * never been able to evaluate.
    *
    * Purely diagnostic for the renderer — nothing about display reads it. It
    * exists so an OFFLINE CAPTURE can tell "the selector wants a finer level it
@@ -754,32 +765,69 @@ export class LODGroupRegistry {
    *   selector is deliberately holding the group coarse *because it draws
    *   nothing this frame* — blocking on it would wait for a level that will
    *   never be selected while it is culled.
+   * - **Entries that are not EFFECTIVELY VISIBLE are skipped too** (a layer
+   *   toggled off in the panel, or authored ``visible=false``, anywhere up the
+   *   ancestor chain). They draw nothing, and — decisively —
+   *   {@link kickDeferredLoadIfVisible} refuses to START a deferred load while
+   *   the group is hidden, whereas the selector's frustum test is purely
+   *   geometric and still records a fine ``desiredChildIndex`` for it. Without
+   *   this skip such an entry has ``desired !== active`` with nothing ever
+   *   loading, failing or becoming ready, so the predicate would be
+   *   PERMANENTLY false and every capture frame would burn the full drain
+   *   budget before giving up.
+   * - **An entry with no child at the aspiration index is skipped** —
+   *   ``children`` can legitimately be EMPTY (every level failed its
+   *   ``getObjectByName`` attach in ``load-lod-group-node``, which warns and
+   *   carries on). Nothing at a non-existent index can ever become ready, so
+   *   blocking on it is the permanently-false trap again: the drain would burn
+   *   its whole budget on every frame and then report a degraded-LOD verdict
+   *   the scene never earned. An out-of-range ``desiredChildIndex`` is the same
+   *   shape but is NOT skipped — the rest of the entry is still checked and
+   *   only the missing ``desired`` is let through (see its bullet below).
    * - ``displayed !== activeChildIndex`` ⇒ not quiescent. A stale slice
    *   fallback or a never-downgrade hold is on screen instead of the
    *   aspiration, so what renders is not what the selector settled on.
    * - ``desired !== activeChildIndex`` ⇒ not quiescent — UNLESS that desired
-   *   child is ``failed``. The aspiration only advances onto a READY level, so
-   *   this is the one-frame window after a lazy load lands but before the next
-   *   selector pass swaps (see ``LODGroupEntry.desiredChildIndex``); it is also
-   *   the whole in-flight load. A ``failed`` level can never become ready this
-   *   frame, so blocking on it only buys a timeout — treat it as the best
-   *   available and keep checking the rest.
-   * - The aspiration must exist and be ``isReady``.
+   *   child is ``failed``, or absent (an out-of-range ``desired``, handled
+   *   right here rather than by skipping the entry). The aspiration only
+   *   advances onto a READY level, so this is the one-frame window after a lazy
+   *   load lands but before the next selector pass swaps (see
+   *   ``LODGroupEntry.desiredChildIndex``); it is also the whole in-flight
+   *   load. A ``failed`` level can never become ready this frame, so blocking
+   *   on it only buys a timeout — treat it as the best available and keep
+   *   checking the rest.
+   * - The aspiration must be ``isReady``.
    * - When freshness is tracked (``getViewVersion`` wired), the aspiration must
    *   be FRESH for the current view version — via the group-aware
    *   {@link childFreshAndCount}, not the leaf-only ``isFresh``, so a deferred
    *   ``kind=partition`` subtree stamped for an older slice counts as stale.
-   * - The aspiration's additive ladder must be complete: ``hasMoreLODs()``
-   *   still true means only a prefix of the level has committed.
+   * - The aspiration's additive ladder must be complete, and this clause is
+   *   SHAPE-DEPENDENT. A tracked LEAF answers with its own ``hasMoreLODs()``
+   *   thunk: still true means only a prefix of the level has committed. A
+   *   deferred GROUP child (a nested ``kind=partition`` / ``kind=lod``
+   *   subtree — the ``overview`` recipe's fine branch) carries NO such thunk,
+   *   so it answers with the folded ``committedLadderComplete`` of its visible
+   *   stamped leaves ({@link childFreshAndCount}'s
+   *   ``subtreeLadderComplete``). Without the fold the drain released the
+   *   frame the moment such a branch became ready — and its part leaves are at
+   *   chunk-1 by construction at that instant, which is exactly the pop this
+   *   predicate exists to remove. A ready group with no stamped leaf under it
+   *   carries no signal at all and counts as complete.
    * - No child of the entry may be ``loading`` — an in-flight commit can change
    *   what renders on a later frame.
    *
    * An empty registry (and an entry-free scene) is quiescent: there is nothing
    * to wait for.
    *
-   * Called from the capture drain, NOT from the rAF hot path, so the cost is
-   * irrelevant — but it still uses plain indexed loops and allocates nothing,
-   * matching this file's hot-path style.
+   * Called from the capture drain — once per drain rAF, so up to the drain's
+   * own frame cap (``LOD_SETTLE_MAX_FRAMES``, which is itself INCLUSIVE of the
+   * mandatory catch-up tick) plus one for the strategy's opening tri-state
+   * probe, per exported frame in the worst case; twice on a scene that is
+   * already settled (probe + one poll), and once on a latched frame (the
+   * re-arm probe alone). Either way NOT the rAF hot path, so unlike the rest of this file
+   * it does not avoid allocation: it walks the entry Map with ``for…of`` and
+   * resolves freshness through ``childFreshAndCount``, which returns a fresh
+   * object per entry. That cost is genuinely irrelevant here.
    */
   isCaptureQuiescent(): boolean {
     const version = this.deps.getViewVersion?.();
@@ -787,21 +835,45 @@ export class LODGroupRegistry {
       // Deliberately excluded: an off-screen group is held coarse on purpose
       // and contributes no pixels to the frame being captured.
       if (entry.offScreen === true) continue;
+      // Likewise excluded, and this one is load-bearing rather than merely an
+      // optimisation: a hidden group draws nothing AND cannot start a deferred
+      // load (``kickDeferredLoadIfVisible``), while the selector — whose
+      // frustum test is pure geometry — happily records a fine
+      // ``desiredChildIndex`` for it. Blocking on that combination never
+      // resolves.
+      if (!isEffectivelyVisible(entry.groupObject)) continue;
 
       const active = entry.activeChildIndex;
       const desired = entry.desiredChildIndex ?? active;
       const displayed = entry.displayedChildIndex ?? active;
+
+      const aspiration = entry.children[active];
+      // Degenerate entry — skipped, not blocked on. ``children`` is empty when
+      // every level failed its ``getObjectByName`` attach at load (the loader
+      // warns and continues), and an aspiration index can otherwise point past
+      // the end. There is no child to become ready, so returning false here
+      // would make the predicate PERMANENTLY false: every capture frame would
+      // spend the full drain budget and the run would end claiming frames were
+      // filmed at a coarse LOD, on a scene that has no level to wait for.
+      if (!aspiration) continue;
+
       if (displayed !== active) return false;
       if (desired !== active) {
         const target = entry.children[desired];
         // A failed level never becomes ready, so waiting on it only times out.
-        if (!target || target.failed !== true) return false;
+        // An out-of-range ``desired`` (no child there at all) is the same trap
+        // as the missing aspiration above and likewise must not block.
+        if (target && target.failed !== true) return false;
       }
 
-      const aspiration = entry.children[active];
-      if (!aspiration || !isReady(aspiration)) return false;
-      if (version != null && !this.childFreshAndCount(aspiration, version).fresh) return false;
+      if (!isReady(aspiration)) return false;
+      // One fold for both group-aware answers: per-slice freshness AND — for a
+      // deferred GROUP child, which has no ``hasMoreLODs`` thunk — whether its
+      // subtree's committed additive ladders are complete.
+      const progress = this.childFreshAndCount(aspiration, version ?? null);
+      if (version != null && !progress.fresh) return false;
       if (aspiration.hasMoreLODs?.() === true) return false;
+      if (!progress.subtreeLadderComplete) return false;
 
       for (let i = 0; i < entry.children.length; i++) {
         if (entry.children[i].loading) return false;
@@ -1379,31 +1451,56 @@ export class LODGroupRegistry {
    * empty-guard redirect, blend pairing) may ever elect it. A READY group with
    * no stamped leaf (nested group with no slice-dependent geometry) carries no
    * per-slice staleness signal and reports ``fresh: true, count: null``.
+   *
+   * ``subtreeLadderComplete`` is the GROUP-only third answer, folded from the
+   * same walk (``SubtreeDisplayProgress.complete``): false when any visible
+   * stamped leaf under the subtree has committed only a prefix of its additive
+   * ladder. A tracked LEAF always reports ``true`` here — that is not a claim
+   * about its ladder, it is where the leaf's ladder state deliberately does NOT
+   * live: the child's own ``hasMoreLODs()`` thunk is the single authority for a
+   * leaf (it is also what re-fires ``ensureLoaded`` to advance the ladder), and
+   * callers read it directly. Only {@link isCaptureQuiescent} consults this
+   * field; the display paths ignore it.
+   *
+   * ``version === null`` means no view-version tracking is wired: the per-slice
+   * staleness test is skipped and every READY child reads fresh — which is
+   * exactly what the ``version != null`` guards at the display call sites
+   * already assume, so those are unaffected.
    */
   private childFreshAndCount(
     child: LODGroupChild,
-    version: number
-  ): { fresh: boolean; count: number | null } {
+    version: number | null
+  ): { fresh: boolean; count: number | null; subtreeLadderComplete: boolean } {
     // Leaf detection is by tracked nodeType, NOT by "has a count stamp": a leaf
     // that has not committed a count yet is still a leaf whose freshness is its
     // own ``loadedViewVersion`` stamp. Only a genuine group subtree folds.
     if (isTrackedLeaf(child)) {
-      return { fresh: isFresh(child, version), count: visibleElementCount(child) };
+      return {
+        fresh: version == null ? isReady(child) : isFresh(child, version),
+        count: visibleElementCount(child),
+        subtreeLadderComplete: true, // a leaf answers with ``hasMoreLODs()`` — see above
+      };
     }
     // Ready gate for group children (the leaf branch gets it from ``isFresh``).
     // Without it, a not-ready deferred-group placeholder (no stamped leaves →
     // ``!aggregate`` below) would read fresh-with-unknown-count and the
     // empty-level guard could redirect display onto a level that CANNOT draw,
-    // blanking the group permanently.
-    if (!isReady(child)) return { fresh: false, count: null };
+    // blanking the group permanently. Nothing has committed, so no completeness
+    // can be claimed either.
+    if (!isReady(child)) return { fresh: false, count: null, subtreeLadderComplete: false };
     const aggregate = subtreeDisplayProgress(child.object as unknown as ProgressNode, version);
     // Ready, but no stamped leaf under the subtree (nested group with no
     // slice-dependent geometry): no per-slice staleness signal, so treat as
     // fresh — exactly the pre-existing ``isFresh`` behaviour for a ready
     // non-leaf. Only a subtree that DOES carry stamped-but-stale leaves (a
     // non-null aggregate with ``fresh === false``) triggers the coarse fallback.
-    if (!aggregate) return { fresh: true, count: null };
-    return { fresh: aggregate.fresh, count: aggregate.count };
+    // No stamped leaf likewise means no ladder to be waiting on: complete.
+    if (!aggregate) return { fresh: true, count: null, subtreeLadderComplete: true };
+    return {
+      fresh: aggregate.fresh,
+      count: aggregate.count,
+      subtreeLadderComplete: aggregate.complete,
+    };
   }
 
   /**

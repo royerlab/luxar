@@ -536,12 +536,22 @@ export async function runInitPipeline(
   // a few frames later (#1695). Force-finest was rejected as the fix — a
   // capture visits the whole scene, so pinning finest across a tiled partition
   // would make peak residency the entire dataset — so the capture waits
-  // (bounded) instead. Read live: the scene loader is created after the panel,
-  // and a scene with no lod_group has no registry, hence `?? true` = nothing
-  // to wait for.
-  recordingPanel.setLODSettledProvider(
-    () => getSceneLoader('default')?.lodGroupRegistry?.isCaptureQuiescent() ?? true
-  );
+  // (bounded) instead.
+  //
+  // Read live, because the scene loader is created after the panel. The `null`
+  // answer is load-bearing rather than a convenience: this provider is wired
+  // unconditionally, so on a plain points/lines scene the capture would
+  // otherwise spend its mandatory selector-catch-up rAF on every exported
+  // frame waiting for a selector that does not exist. `null` = "no lod_group
+  // to wait for" and skips the drain outright; only a scene with at least one
+  // registered lod_group gets the boolean. Narrow on purpose, and narrower
+  // than "nothing here can be mid-load" — a `--recipe stream` leaf has no
+  // lod_group but does have a progressive ladder still streaming.
+  recordingPanel.setLODSettledProvider(() => {
+    const registry = getSceneLoader('default')?.lodGroupRegistry;
+    if (!registry || registry.size() === 0) return null;
+    return registry.isCaptureQuiescent();
+  });
 
   // Initialize layers panel (per-node controls)
   const layersPanel = factories.layersPanel(document.body, animationController);

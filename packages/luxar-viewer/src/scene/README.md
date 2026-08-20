@@ -439,17 +439,44 @@ whole sweep: a tile that leaves the frustum mid-orbit is demoted, may
 have its fine level released by the byte budget, and reloads
 asynchronously on re-entry, which a one-rAF-per-frame capture would
 otherwise film at the coarse level (#1695). Off-screen entries are
-skipped (they draw nothing and are held coarse on purpose); an entry
-blocks while its displayed level differs from the aspiration, while the
-aspiration is not ready / not fresh / still streaming additive LODs,
-while any of its children is `loading`, or while the selector's
-`desiredChildIndex` is finer than the aspiration. That last clause is
-the subtle one: `activeChildIndex` only advances onto a READY level, so
-in the frame where a lazy level's load lands (`ready` true, `loading`
+skipped (they draw nothing and are held coarse on purpose), and so are
+entries that are not _effectively_ visible — a layer toggled off or
+authored `visible=false` anywhere up the ancestor chain. That second
+skip is load-bearing, not tidiness: a hidden group cannot start a
+deferred load (`kickDeferredLoadIfVisible` refuses), while the
+frustum-only selector still records a fine `desiredChildIndex` for it,
+so blocking on it would never resolve and every capture frame would
+burn its whole drain budget. An entry whose aspiration index holds no
+child is skipped for that same reason — `children` is empty when every
+level failed its `getObjectByName` attach at load — since nothing at a
+missing index can ever become ready. An entry blocks while its displayed
+level differs from the aspiration, while the aspiration is not ready /
+not fresh / still streaming additive LODs, while any of its children is
+`loading`, or while the selector's `desiredChildIndex` differs from the
+aspiration **at all** — a finer level it has not got yet, but equally a
+coarser one the aspiration has not moved onto. That last clause is the
+subtle one: `activeChildIndex` only advances onto a READY level, so in
+the frame where a lazy level's load lands (`ready` true, `loading`
 cleared) the swap has not happened yet — a predicate reading only
 ready/loading/displayed would call that window settled. A `desired`
 level that has `failed` does not block, since it can never become ready
-this frame. Forcing the finest level instead was rejected: a capture
+this frame.
+
+"Still streaming additive LODs" is shape-dependent, and getting it wrong
+was a real hole. A tracked **leaf** answers with its own `hasMoreLODs()`
+thunk. A deferred **group** child — a nested `kind=partition` /
+`kind=lod` subtree, i.e. the `overview` recipe's fine branch — carries no
+such thunk, so it answers with the folded `committedLadderComplete` of
+its visible stamped leaves (`subtreeDisplayProgress().complete`, surfaced
+through the registry's `childFreshAndCount`). Without that fold the drain
+released the frame the instant the fine branch became ready, and its part
+leaves are at chunk-1 by construction at that instant: the frame is
+exported at the first additive chunk and refines in over the next
+seconds, which is the exact artifact class #1695 exists to remove. A
+ready group with no stamped leaf beneath it carries no signal and counts
+as complete.
+
+Forcing the finest level instead was rejected: a capture
 visits the whole scene, so peak residency would be the entire dataset.
 
 **Retention + VRAM budget:** swaps never `release()` outgoing
