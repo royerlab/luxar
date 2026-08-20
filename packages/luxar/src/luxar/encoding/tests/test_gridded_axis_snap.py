@@ -197,15 +197,32 @@ def test_incomplete_and_fractional_grids_still_snap(tmp_path, name, values) -> N
 
 
 def test_one_dimensional_input_is_left_alone(tmp_path) -> None:
-    """A 1-D COORDINATE array has no per-axis columns — it must not raise."""
+    """A 1-D COORDINATE array has no per-axis columns — it must not raise.
+
+    Asserted through a real DECODE, not just on the encoding name. The name
+    alone certified a successful write of an unreadable array: the 1-D
+    reductions give 0-d ``col_lo``/``col_hi``, which were stored as bare JSON
+    scalars, and the decoder rejects anything but equal-length 1-D rails
+    ("got shapes () and ()"). A 1-D array is ONE column of N values on both
+    sides now.
+    """
+    values = np.array([1.0, 2.0, 5.0], dtype=np.float32)
     group = zarr.open_group(str(tmp_path / "g.zarr"), mode="w")
     ArrayEncoder().encode(
-        np.array([1.0, 2.0, 5.0], dtype=np.float32),
+        values,
         group,
         "coords",
         semantic_type=SemanticType.COORDINATE,
     )
-    assert group["coords"].attrs["encoding"]["name"] == "linear_perchannel_u16"
+    encoding = dict(group["coords"].attrs["encoding"])
+    assert encoding["name"] == "linear_perchannel_u16"
+    assert encoding["col_lo"] == [1.0] and encoding["col_hi"] == [5.0]
+
+    back = np.asarray(ArrayDecoder().decode(group["coords"], group))
+    assert back.shape == values.shape
+    # Ordinary uint16 fixed point over the whole array (nothing is snapped
+    # here — the snap needs per-axis columns), so the bound is half a step.
+    np.testing.assert_allclose(back, values, atol=(5.0 - 1.0) / 65535.0 / 2.0)
 
 
 def test_snapping_does_not_grow_the_store(tmp_path) -> None:

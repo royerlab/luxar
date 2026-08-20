@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import re
+import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -6877,22 +6878,79 @@ class TestReencode:
     @pytest.mark.parametrize(
         "encoding,exact", [("precision", True), ("auto", False), ("memory", False)]
     )
-    def test_centers_are_bit_exact_only_under_precision(
+    def test_ordinary_centers_are_bit_exact_only_under_precision(
         self, runner: CliRunner, tmp_path: Path, encoding: str, exact: bool
     ) -> None:
         """`reencode` re-encodes the CENTERS too, which its name does not suggest.
 
-        `auto` and `memory` quantize a coordinate column to uint16 over its own
-        [min, max], so a CONTINUOUS column keeps its endpoints exactly and rounds
-        every interior value. Only `precision` round-trips such a column exactly.
+        On ordinary spatial splats `auto` and `memory` both quantize a coordinate
+        column to uint16 over its own [min, max], so the endpoints land on exact
+        codes and every INTERIOR value rounds. Only `precision` round-trips the
+        column exactly. (A gridded column is the *exception* — see
+        `test_stacked_axis_centers_stay_exact_in_every_mode` below.)
+        """
+        from luxar.encoding import EncodingMode
+        from luxar.gsplats.gsplat_data import GSplatData
 
-        A stacked axis is the exception, and deliberately so: it is gridded, so
-        the encoder snaps the quantization grid onto the data's own spacing and
-        every frame round-trips exactly under all three modes (#1748). This test
-        previously asserted the opposite — that the stacked axis drifted — and
-        described the consequence in its own docstring ("sits ~150 sigma from its
-        own slice and the slice renders as nothing"). That was the bug, pinned as
-        expected behaviour; `test_gridded_axis_snap.py` now covers the fix.
+        # Ordinary 3-D splats with a well-resolved sigma of 1 per axis, so the
+        # centers sigma rail leaves these on uint16 and the quantization is
+        # actually exercised. The coordinates are IRREGULAR on purpose: an evenly
+        # spaced column (0, 1, 2) is a grid, which the encoder snaps to and
+        # stores exactly — that would measure the snap, not the quantization.
+        src = tmp_path / "plain.gsplats.zarr"
+        GSplatData(
+            centers=np.array(
+                [[-7.0, 2.0, 3.0], [1.0, -5.0, 6.0], [4.0, 8.0, 9.0]], dtype=np.float32
+            ),
+            amplitudes=np.array([1.0, 2.0, 3.0], dtype=np.float32),
+            cholesky_factors=np.tile(
+                np.array([1.0, 0, 1.0, 0, 0, 1.0], dtype=np.float32), (3, 1)
+            ),
+        ).save(src, encoding_mode=EncodingMode.PRECISION)
+
+        out = tmp_path / f"{encoding}.gsplats.zarr"
+        result = runner.invoke(
+            app, ["gsplat", "reencode", str(src), str(out), "-e", encoding]
+        )
+        assert result.exit_code == 0, result.output
+        assert zarr.open_array(str(out / "centers"), mode="r").dtype == (
+            np.float32 if exact else np.uint16
+        )
+
+        # Compare the SET of coordinates on one column: save/load reorders rows.
+        col = np.unique(GSplatData.load(out).centers[:, 0])
+        assert col.shape == (3,)
+        np.testing.assert_array_equal(col[[0, 2]], [-7.0, 4.0])  # endpoints exact
+        if exact:
+            assert col[1] == 1.0
+        else:
+            assert col[1] != 1.0
+            # One quantization step over the column's [-7, 4] extent.
+            assert abs(col[1] - 1.0) < 11.0 / 65535.0
+
+    @pytest.mark.parametrize("encoding", ["precision", "auto", "memory"])
+    def test_stacked_axis_centers_stay_exact_in_every_mode(
+        self, runner: CliRunner, tmp_path: Path, encoding: str
+    ) -> None:
+        """A stacked (sigma=0) axis is exempt from the quantization drift.
+
+        `combine_as_new_dimension(..., sigma=0)` floors that column's sigma to
+        1e-7, so a uint16 grid step of 3e-5 would displace a center by ~150 sigma
+        and every interior frame would stop matching a slice query. The column is
+        GRIDDED, though, so the encoder widens its upper rail until the
+        quantization grid coincides with the data's own spacing and every frame
+        round-trips bit-exactly (#1748) — under `auto` and `memory` as much as
+        under `precision`, and without changing the dtype.
+
+        The centers stay `linear_perchannel_u16` here, which is the load-bearing
+        half: the geometry-aware sigma rail also sees 100% of these splats as
+        unrepresentable, and if it did not defer to the snap it would store the
+        whole centers array as float32 — twice the bytes and a `UserWarning`, for
+        an axis that was never at risk. This test previously asserted the drift
+        itself and described the consequence in its own docstring ("sits ~150
+        sigma from its own slice and the slice renders as nothing"); that was the
+        bug, pinned as expected behaviour. `test_gridded_axis_snap.py` covers the
+        snap directly.
         """
         from luxar.encoding import EncodingMode
         from luxar.gsplats.gsplat_data import GSplatData
@@ -6918,28 +6976,24 @@ class TestReencode:
         ).save(src, encoding_mode=EncodingMode.PRECISION)
 
         out = tmp_path / f"{encoding}.gsplats.zarr"
-        result = runner.invoke(
-            app, ["gsplat", "reencode", str(src), str(out), "-e", encoding]
-        )
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            result = runner.invoke(
+                app, ["gsplat", "reencode", str(src), str(out), "-e", encoding]
+            )
         assert result.exit_code == 0, result.output
 
-        got = GSplatData.load(out)
+        # The rail did NOT fire: the snap already stores this axis exactly, so
+        # the centers keep the uint16 size win under the lossy modes, silently.
+        assert not [w for w in caught if "fixed-point step" in str(w.message)]
+        assert zarr.open_array(str(out / "centers"), mode="r").dtype == (
+            np.float32 if encoding == "precision" else np.uint16
+        )
 
-        # The STACKED axis is gridded, so it is exact under every mode.
-        stacked = np.unique(got.centers[:, 3])
+        # Compare the SET of stacked coordinates: save/load reorders rows.
+        stacked = np.unique(GSplatData.load(out).centers[:, 3])
         assert stacked.shape == (3,)
         np.testing.assert_array_equal(stacked, [0.0, 1.0, 2.0])
-
-        # A CONTINUOUS column is what distinguishes the modes: bit-exact only
-        # under precision, and within one quantization step otherwise.
-        src_x = np.unique(GSplatData.load(src).centers[:, 0])
-        got_x = np.unique(got.centers[:, 0])
-        if exact:
-            np.testing.assert_array_equal(got_x, src_x)
-        else:
-            assert not np.array_equal(got_x, src_x)
-            extent = float(src_x.max() - src_x.min())
-            assert np.abs(got_x - src_x).max() < extent / 65535.0
 
     def test_reencode_preserves_pipeline_provenance(
         self, runner: CliRunner, tmp_path: Path

@@ -21,7 +21,7 @@ def create_test_cholesky(n_splats: int, ndim: int) -> np.ndarray:
         Array of shape (n_splats, k) where k = ndim*(ndim+1)/2
     """
     k = ndim * (ndim + 1) // 2
-    return np.random.rand(n_splats, k).astype(np.float32) * 0.1
+    return (np.random.random((n_splats, k)) * 0.1).astype(np.float32)
 
 
 class TestGSplatsExtendToAll:
@@ -113,9 +113,9 @@ class TestGSplatsExtendToAll:
             )
             cholesky = create_test_cholesky(3, 4)
 
-            # Should NOT warn because Time has multiple values
+            # Should NOT warn because Time has multiple values.
             with warnings.catch_warnings():
-                warnings.simplefilter("error")  # Turn warnings into errors
+                warnings.simplefilter("error")
                 scene.add_gsplats(
                     "gsplats",
                     centers,

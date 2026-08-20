@@ -10,6 +10,7 @@ from arbol import aprint
 
 from luxar._zarr_compat import create_array
 
+from ...typing_utils.constants import COORDINATE_U16_MAX_EXTENT
 from ..compression import resolve_compressor
 from ..modes import EncodingMode
 from .base import BaseEncoderMixin
@@ -20,68 +21,78 @@ from .delta_codec import probe_delta_filter
 #: on the width they assume.
 _COORD_BITS = 16
 
+#: Number of quantization intervals of the COORDINATE fixed-point grid.
+COORDINATE_LEVELS = float(2**_COORD_BITS - 1)
+
+
+def gridded_axis_step(
+    col: np.ndarray, lo: float, extent: float, levels: float
+) -> Optional[tuple[float, int]]:
+    """The spacing of the regular grid ``col`` lies on, or ``None``.
+
+    Returns ``(step, n_distinct)``. The test IS the guarantee: a candidate
+    spacing is accepted only after replaying the encoder's own quantization and
+    the decoder's own dequantization over the distinct values and getting all of
+    them back bit-exactly at the COORDINATE decode dtype (float32). That is both
+    stricter and more permissive than testing the gaps for equality, and both
+    directions matter:
+
+    * A grid with MISSING rungs still qualifies. Frames ``0,1,2,7,8,9`` are what
+      a spatial tile of a stacked dataset sees, or what a filter that empties one
+      timepoint in one region leaves behind; an "all gaps equal" test rejects
+      that axis and leaves it broken by exactly the defect the snap exists to
+      prevent.
+    * A grid the float32 input only approximates still qualifies, because the
+      spacing is least-squares refit against every rung rather than taken from
+      the smallest gap. A 0.1 s frame interval jitters by more than a relative
+      1e-6 once rounded to float32, so a gap-equality test with any usable
+      tolerance rejects it.
+    * Conversely, continuous values whose smallest gap merely happens to be
+      coarse do NOT qualify, because they do not survive the replay.
+
+    The only cap on distinct values is ``levels`` itself: an axis with more
+    distinct values than the encoding has levels cannot be represented on any
+    grid, so there is nothing to snap to. Capping lower would reject stacks that
+    fit perfectly -- a 10 000-frame timelapse quantizes exactly at u16 -- and
+    would save no work, since ``np.unique`` has already run by then.
+
+    Module-level rather than a private encoder method because it is a SHARED
+    predicate: the gsplat writer's sigma rail
+    (:func:`~luxar.io._compiler.gsplat_assembly._center_quantization_offender`)
+    must know whether this encoder will store an axis exactly before deciding to
+    escalate it to float32, and the two must never answer differently. Call it
+    with exactly the ``lo``/``extent``/``levels`` the encoder will use.
+    """
+    uniq = np.unique(col)
+    if uniq.size < 2 or uniq.size > levels + 1:
+        return None
+    offsets = uniq - lo
+    coarsest = float(np.diff(uniq).min())
+    if coarsest <= 0.0 or extent / coarsest > levels:
+        return None
+    # Rung index of each distinct value on the candidate grid, then a
+    # least-squares refit of the spacing against all of them.
+    rung = np.round(offsets / coarsest)
+    if rung[0] != 0.0 or np.any(np.diff(rung) <= 0.0) or rung[-1] > levels:
+        return None
+    step = float(rung @ offsets / (rung @ rung))
+    # `span` must be derived exactly as the quantizer will derive it from the
+    # stored rails (`hi - lo`), not as `step * levels`: for a large `lo` the two
+    # differ in the last bits, and this replay is only a guarantee if it is the
+    # same arithmetic.
+    candidate = lo + step * levels
+    span = candidate - lo
+    if span <= 0.0:
+        return None
+    codes = np.round((np.clip(uniq, lo, candidate) - lo) / span * levels)
+    back = lo + codes / levels * span
+    if not np.array_equal(back.astype(np.float32), uniq.astype(np.float32)):
+        return None
+    return step, int(uniq.size)
+
 
 class PerChannelEncoderMixin(BaseEncoderMixin):
     """Per-channel / scalar dtype encoding strategies for :class:`ArrayEncoder`."""
-
-    @staticmethod
-    def _grid_step(
-        col: np.ndarray, lo: float, extent: float, levels: float
-    ) -> Optional[tuple[float, int]]:
-        """The spacing of the regular grid ``col`` lies on, or ``None``.
-
-        Returns ``(step, n_distinct)``. The test IS the guarantee: a candidate
-        spacing is accepted only after replaying the encoder's own quantization
-        and the decoder's own dequantization over the distinct values and getting
-        all of them back bit-exactly at the COORDINATE decode dtype (float32).
-        That is both stricter and more permissive than testing the gaps for
-        equality, and both directions matter:
-
-        * A grid with MISSING rungs still qualifies. Frames ``0,1,2,7,8,9`` are
-          what a spatial tile of a stacked dataset sees, or what a filter that
-          empties one timepoint in one region leaves behind; an "all gaps equal"
-          test rejects that axis and leaves it broken by exactly the defect the
-          snap exists to prevent.
-        * A grid the float32 input only approximates still qualifies, because the
-          spacing is least-squares refit against every rung rather than taken from
-          the smallest gap. A 0.1 s frame interval jitters by more than a relative
-          1e-6 once rounded to float32, so a gap-equality test with any usable
-          tolerance rejects it.
-        * Conversely, continuous values whose smallest gap merely happens to be
-          coarse do NOT qualify, because they do not survive the replay.
-
-        The only cap on distinct values is ``levels`` itself: an axis with more
-        distinct values than the encoding has levels cannot be represented on any
-        grid, so there is nothing to snap to. Capping lower would reject stacks
-        that fit perfectly -- a 10 000-frame timelapse quantizes exactly at u16 --
-        and would save no work, since ``np.unique`` has already run by then.
-        """
-        uniq = np.unique(col)
-        if uniq.size < 2 or uniq.size > levels + 1:
-            return None
-        offsets = uniq - lo
-        coarsest = float(np.diff(uniq).min())
-        if coarsest <= 0.0 or extent / coarsest > levels:
-            return None
-        # Rung index of each distinct value on the candidate grid, then a
-        # least-squares refit of the spacing against all of them.
-        rung = np.round(offsets / coarsest)
-        if rung[0] != 0.0 or np.any(np.diff(rung) <= 0.0) or rung[-1] > levels:
-            return None
-        step = float(rung @ offsets / (rung @ rung))
-        # `span` must be derived exactly as the quantizer will derive it from the
-        # stored rails (`hi - lo`), not as `step * levels`: for a large `lo` the
-        # two differ in the last bits, and this replay is only a guarantee if it
-        # is the same arithmetic.
-        candidate = lo + step * levels
-        span = candidate - lo
-        if span <= 0.0:
-            return None
-        codes = np.round((np.clip(uniq, lo, candidate) - lo) / span * levels)
-        back = lo + codes / levels * span
-        if not np.array_equal(back.astype(np.float32), uniq.astype(np.float32)):
-            return None
-        return step, int(uniq.size)
 
     def _snap_gridded_axes(
         self, name: str, arr: np.ndarray, lo: np.ndarray, hi: np.ndarray, bits: int
@@ -90,8 +101,8 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
 
         Returns possibly-adjusted ``(lo, hi)``. An axis qualifies when every one of
         its distinct values sits on one regular grid that still fits in the target
-        integer width (see :meth:`_grid_step`). Anything else is left exactly as it
-        was.
+        integer width (see :func:`gridded_axis_step`). Anything else is left
+        exactly as it was.
         """
         if arr.ndim != 2:
             # No per-axis columns to test; the generic per-column quantizer
@@ -105,7 +116,7 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
             extent = float(hi[axis] - lo[axis])
             if extent <= 0.0:
                 continue  # constant axis: already exact
-            found = self._grid_step(arr[:, axis], float(lo[axis]), extent, levels)
+            found = gridded_axis_step(arr[:, axis], float(lo[axis]), extent, levels)
             if found is None:
                 continue
             step, n_distinct = found
@@ -148,6 +159,36 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
         step at uint16, so AUTO/MEMORY fall back to float32; an extent > 2¹² warns
         that sub-unit headroom is shrinking.
 
+        A GRIDDED axis — one whose distinct values all sit on a single regular
+        grid — additionally gets its quantization grid snapped onto the data's own
+        spacing (see :func:`gridded_axis_step` / :meth:`_snap_gridded_axes`), so
+        it round-trips bit-exactly at uint16. That is what keeps a
+        stacked/categorical axis (built with ``sigma=0``) usable, and it costs
+        nothing: ``lo``/``hi`` are stored per axis already, so it is a scale
+        choice rather than a dtype change.
+
+        Neither rail knows anything but the coordinates. A *second*,
+        geometry-aware rail lives at the gsplat write choke point
+        (:func:`~luxar.io._compiler.gsplat_assembly.write_gsplat_arrays`), which
+        also has the Cholesky factors in hand: it escalates centers to
+        ``PRECISION`` when HALF an axis's grid step — the worst-case round-trip
+        displacement — exceeds the per-splat marginal σ for more than 0.1% of the
+        splats on that axis, i.e. when quantization can move those centers clear
+        of their own cores (a population test, so the odd needle splat does not
+        cost the array its uint16 win). Tripping that gate is necessary but not
+        sufficient: the rail fires only where this encoder has NO exact path of
+        its own. It runs :func:`gridded_axis_step` on any axis that trips the
+        population gate and skips the axis when the snap will store it exactly,
+        and it asks
+        :meth:`~luxar.encoding.encoder.ArrayEncoder.encodes_as_lut` before
+        escalating, since a LUT-eligible centers array is already stored verbatim
+        (exactly, at ~1 B/value). What is left for it is a degenerate
+        sub-population on a NON-gridded, non-LUT axis — a ``sigma=0`` track stack
+        merged into a fit whose time axis is continuous, say — where the splats
+        really are destroyed. Callers encoding COORDINATE data that carries its
+        own notion of extent should route through that choke point rather than
+        here.
+
         Args:
             zarr_group: Zarr group to write to
             name: Array name
@@ -177,7 +218,7 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
             lo = arr.min(axis=0)
             hi = arr.max(axis=0)
             max_extent = float((hi - lo).max())
-            if max_extent >= 65536.0:
+            if max_extent >= COORDINATE_U16_MAX_EXTENT:
                 warnings.warn(
                     f"COORDINATE '{name}': per-axis extent {max_extent:.0f} ≥ 2¹⁶; "
                     "uint16 fixed-point cannot resolve a unit step — storing float32.",
@@ -202,8 +243,10 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
         # stacked/categorical axis usable: `combine_as_new_dimension(sigma=0)`
         # gives such an axis an effective sigma of 1e-7, so ANY rounding puts a
         # frame thousands of sigma from where it belongs and it stops matching a
-        # slice query at all — every frame but the two endpoints disappears
-        # (#1748). Widening `hi` costs nothing: `lo`/`hi` are already stored per
+        # slice query at all — every frame disappears except the endpoints and
+        # the few that coincidentally land on the quantization grid (on a
+        # 100-frame stack that is four of them, #1748). Widening `hi` costs
+        # nothing: `lo`/`hi` are already stored per
         # axis, so this is a scale choice, not a format or dtype change.
         if lo is not None and hi is not None:
             lo, hi = self._snap_gridded_axes(name, arr, lo, hi, _COORD_BITS)

@@ -749,7 +749,11 @@ def fit_timelapse(
             marker = cache_file.with_suffix(cache_file.suffix + ".tmp")
             if not FLAGS["recompute"] and is_cached(t):
                 try:
-                    results.append(GSplatData.load(cache_file, include_stats=False))
+                    # include_stats=True: the cache carries the fit's
+                    # normalization provenance (floor / image_min / image_max),
+                    # and `concatenate` only propagates a background floor into
+                    # the stacked scene when every part reports one (#1175).
+                    results.append(GSplatData.load(cache_file, include_stats=True))
                     continue
                 except Exception as exc:  # noqa: BLE001
                     aprint(f"  t={t} cache unreadable ({exc}); re-fitting")
@@ -790,7 +794,13 @@ def fit_timelapse(
                 zip_deflate=True,
             )
             marker.unlink(missing_ok=True)
-            results.append(fitted)
+            # Stack what was STORED, not the in-memory fit: the cache is written
+            # under a lossy encoding, so appending `fitted` here would make a
+            # cold run (unquantized) and a warm run (the cache-hit branch above,
+            # which loads the quantized store) produce different scenes. Same
+            # include_stats=True as that branch, so the two agree AND the fit's
+            # normalization provenance survives into the stacked scene.
+            results.append(GSplatData.load(cache_file, include_stats=True))
             if (t + 1) % 10 == 0 or t == n_timepoints - 1:
                 aprint(f"  {t + 1}/{n_timepoints} fitted ({fitted.n_splats:,} splats)")
     return results

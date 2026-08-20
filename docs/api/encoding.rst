@@ -27,3 +27,14 @@ Encoding Modes
 .. autoclass:: luxar.encoding.EncodingMode
    :members:
    :undoc-members:
+
+Coordinate Grid Snap
+--------------------
+
+The shared predicate behind the COORDINATE grid snap, and the level count it is
+asked about. Both are public because the gsplat writer's sigma rail must ask the
+encoder the same question it asks itself.
+
+.. autofunction:: luxar.encoding.gridded_axis_step
+
+.. autodata:: luxar.encoding.COORDINATE_LEVELS
