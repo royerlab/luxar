@@ -438,6 +438,12 @@ def test_the_cell_search_is_robust_to_non_monotone_cluster_counts() -> None:
 
 
 class TestDecimateQEM:
+    def test_an_at_target_mesh_is_returned_unchanged(self) -> None:
+        vertices, faces = octasphere(1)
+        result = decimate_qem(vertices, faces, target_vertices=len(vertices))
+        np.testing.assert_array_equal(result.vertices, vertices)
+        np.testing.assert_array_equal(result.faces, faces)
+
     def test_link_condition_preserves_the_closed_sphere_at_every_level(self) -> None:
         v, f = octasphere(5)
         cluster = decimate_cluster(v, f, target_vertices=500)
@@ -508,6 +514,44 @@ class TestDecimateQEM:
         )
         np.testing.assert_array_equal(result.vertices, stacked)
         np.testing.assert_array_equal(result.faces, faces)
+
+    def test_unreferenced_vertices_do_not_consume_the_target_budget(self) -> None:
+        vertices, faces = octasphere(3)
+        with_strays = np.concatenate(
+            [vertices, np.full((200, 3), 7.0, dtype=np.float32)]
+        )
+
+        above_surface = decimate_qem(with_strays, faces, target_vertices=300)
+        clustered = decimate_cluster(with_strays, faces, target_vertices=300)
+        assert len(above_surface.vertices) == len(clustered.vertices) == len(vertices)
+
+        reduced = decimate_qem(with_strays, faces, target_vertices=114)
+        assert len(reduced.vertices) == 114
+        assert len(reduced.faces) > 0
+
+    def test_a_detached_tetrahedron_component_is_not_annihilated(self) -> None:
+        sphere_vertices, sphere_faces = octasphere(4)
+        tetra_vertices = np.array(
+            [[3, 0, 0], [4, 0, 0], [3.5, 1, 0], [3.5, 0.5, 1]],
+            dtype=np.float32,
+        )
+        tetra_faces = np.array(
+            [[0, 2, 1], [0, 1, 3], [1, 2, 3], [2, 0, 3]], dtype=np.uint32
+        ) + len(sphere_vertices)
+        vertices = np.concatenate([sphere_vertices, tetra_vertices])
+        faces = np.concatenate([sphere_faces, tetra_faces])
+
+        result = decimate_qem(vertices, faces, target_vertices=20)
+
+        assert len(result.vertices) == 20
+        assert int((result.vertices[:, 0] > 2).sum()) == 4
+
+    def test_a_degenerate_surface_is_refused_instead_of_returned_empty(self) -> None:
+        vertices = np.zeros((10, 3), dtype=np.float32)
+        faces = np.array([[0, 1, 2], [3, 4, 5], [6, 7, 8]], dtype=np.uint32)
+
+        with pytest.raises(ValueError, match="collapsed every triangle"):
+            decimate_qem(vertices, faces, target_vertices=4)
 
     def test_auto_uses_qem_only_inside_its_measured_envelope(self) -> None:
         assert (

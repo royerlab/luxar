@@ -20,9 +20,15 @@ import pytest
 from luxar import Dimensions, LuxarZarrCompiler
 from luxar._zarr_compat import read_consolidated_attrs
 from luxar.core.group.lod.group import (
+    MESH_SUBSTITUTIVE_METHODS,
     PARTITION_FINEST_AREA,
     WHOLE_OBJECT_FINEST_ANCHOR,
 )
+from luxar.mesh.decimate import DECIMATION_METHODS
+
+
+def test_mesh_lod_and_decimator_method_sets_stay_in_sync() -> None:
+    assert MESH_SUBSTITUTIVE_METHODS == {"auto"} | DECIMATION_METHODS
 
 
 def octasphere(subdivisions: int) -> Tuple[np.ndarray, np.ndarray]:

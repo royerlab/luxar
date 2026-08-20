@@ -65,6 +65,7 @@ from arbol import aprint
 from numpy.typing import NDArray
 
 QEM_AUTO_VERTEX_LIMIT = 5_000
+DECIMATION_METHODS = frozenset({"cluster", "qem"})
 
 
 class DecimatedMesh(NamedTuple):
@@ -347,7 +348,7 @@ def resolve_decimation_method(
                 f"{n_vertices:,} vertices is {comparison} the "
                 f"{QEM_AUTO_VERTEX_LIMIT:,}-vertex QEM limit."
             )
-    if normalized not in {"cluster", "qem"}:
+    if normalized not in DECIMATION_METHODS:
         raise ValueError(
             "mesh decimation method must be one of ['auto', 'cluster', 'qem']; "
             f"got {method!r}"
@@ -538,6 +539,7 @@ def _recompute_normals(
 
 
 __all__ = [
+    "DECIMATION_METHODS",
     "DecimatedMesh",
     "QEM_AUTO_VERTEX_LIMIT",
     "decimate",
