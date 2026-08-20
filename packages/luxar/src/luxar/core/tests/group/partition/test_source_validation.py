@@ -1045,6 +1045,12 @@ class TestGraftedFilePartitionBesideAStoredLadder:
     two" names a kwarg the caller never passed. This door names the STORE and
     gives its own remedy, the convention ``labels_on_wrapper_reason`` /
     ``GRAFT_REMEDY`` already keep next door.
+
+    Every call here passes no ``additive_lod=`` (or the ``False`` spelling), so
+    the ladder is always the store's and this wording always applies.
+    ``TestGraftedFilePartitionBesideAResolvedLadder`` below covers the other
+    half (#1632): a ladder the kwarg itself would BUILD, which gets the
+    ``additive_lod=`` pair instead.
     """
 
     def _file(self, tmp_path: Any, filename: str) -> str:
@@ -1137,17 +1143,20 @@ class TestGraftedFilePartitionBesideAStoredLadder:
     def test_additive_lod_false_collapses_the_ladder_and_still_splits(
         self, tmp_path: Any, shape: str
     ) -> None:
-        """The gate reads the STORE, so it must honour the kwarg that empties it.
+        """The gate judges the RESOLVED ladder, so the kwarg that empties it wins.
 
         ``additive_lod=False`` is the documented "collapse the ladder" spelling:
         ``resolve_additive_axis_gsplats`` flattens every level to a single sub-LOD
         BEFORE the data door asks this same question, so the store's ladder is not
-        the one that would be written and the conflict does not exist. Judging the
-        store alone refused two calls that work — measured with the skip removed,
-        both parametrisations answer ``Could not add gsplats 'g': partition= is
-        not supported alongside the additive ladder this .gsplats.zarr already
-        carries``, where without the gate entirely they split into 4 and 2 real
-        parts respectively.
+        the one that would be written and the conflict does not exist. Since
+        #1632 that needs no hand-written exemption — ``resolve_additive_rungs``
+        counts ``False`` as one rung like any other spec, and the gate skips a
+        leaf on the count alone. Judging the store instead refuses two calls that
+        work: measured on the pre-#1632 store-only gate with its hand-written
+        ``False`` skip removed, both parametrisations answer ``Could not add
+        gsplats 'g': partition= is not supported alongside the additive ladder
+        this .gsplats.zarr already carries``, where without the gate entirely they
+        split into 4 and 2 real parts respectively.
 
         Both doors, because the gate has two call sites: the matrix-shaped branch
         of ``add_gsplats_from_file`` (the bare leaf) and ``graft_gsplat_node``
@@ -1172,9 +1181,9 @@ class TestGraftedFilePartitionBesideAStoredLadder:
         store = zarr.open_group(path, mode="r")
         assert store["g"].attrs.get("kind") == "partition"
         parts = sorted(store["g"].group_keys())
-        # The split really ran: a leaf of 8 splats at a cap of 4 gives 4 parts
-        # (the ladder's rungs are unioned into one 8-splat leaf first), and the
-        # 2-part store gives one re-split part each.
+        # The split really ran: the bare leaf holds 12 splats (its two rungs, 4
+        # and 8, unioned into one leaf first), so a cap of 4 gives 4 parts, and
+        # the 2-part store gives one re-split part each.
         assert parts == (
             ["part_0", "part_1"]
             if shape == "partition"
@@ -1207,6 +1216,539 @@ class TestGraftedFilePartitionBesideAStoredLadder:
         assert [
             store["g"][p].attrs.get("kind") for p in sorted(store["g"].group_keys())
         ] == ["partition", "partition"]
+
+
+def _descendant_group_keys(group: Any) -> List[str]:
+    """Every group name anywhere under ``group``, recursively.
+
+    The ladder assertions below have to look deeper than one level: a split
+    part is itself a ``kind=partition``, so an ``additive_0`` left behind by a
+    ladder that should not exist hides two levels down.
+    """
+    out: List[str] = []
+    for key in group.group_keys():
+        out.append(key)
+        out.extend(_descendant_group_keys(group[key]))
+    return out
+
+
+class TestGraftedFilePartitionBesideAResolvedLadder:
+    """The gate must judge the RESOLVED ladder, not the stored one (#1632).
+
+    ``additive_lod=`` is not a parameter of ``graft_gsplat_node``: it rides in
+    ``**attrs`` down to each part's own ``add_gsplats_from_data_impl``, which
+    BUILDS the ladder there — one level below the ``kind=partition`` wrapper the
+    graft has already created. So a store-only gate discovers the conflict too
+    late. Measured pre-fix on an UNLADDERED nested partition with
+    ``partition={"max_elements": 4}, additive_lod={"n_lods": 2}``: ``Could not
+    add gsplats 'part_0': partition= is not supported alongside an additive_lod=
+    ladder …``, with ``g`` surviving ``finalize()`` as a childless
+    ``kind=partition`` (``finalized keys: ['g']; g -> kind=partition,
+    children=[]``).
+
+    And the mirror image, from the issue's second comment: a store-only gate
+    also refused a call that COLLAPSES the store's ladder
+    (``{"n_lods": 1, "recompute": True}`` — one rung, flat route, partitions
+    fine), because only the ``additive_lod=False`` spelling was skipped by hand.
+
+    Presence of the kwarg is emphatically NOT the question. Measured rung counts
+    for the specs below, on this class's 8-and-6-splat leaves: ``{"n_lods": 1}``
+    → 1 (legitimate), ``{"n_lods": 2}`` → 2, ``{"method": "radial"}`` → 4
+    (``n_lods`` defaults to 4 and there is no ``n_lods`` key to read; on a leaf
+    of fewer than 4 splats the equal-count cuts would clamp to ``n`` instead, so
+    "four" is a property of these fixtures, not of the spec).
+
+    But the resolved ladder is only ever the answer when the kwarg CAN be read.
+    An UNKNOWN count falls back to the store, because ``None`` is a statement
+    about the kwarg, not about the store — see
+    ``test_an_unknown_count_falls_back_to_the_stored_ladder``, the regression
+    that the first draft of this gate (which skipped the leaf instead) failed.
+    And WHICH REMEDY is chosen by the OFFENDING leaf's store alone, never by
+    whether the kwarg also rebuilds the ladder or by what the rest of the tree
+    stores: a stored ladder is the obstacle that survives dropping the kwarg.
+
+    NOT pinned here, deliberately — one residual the gate leaves open (#1763). A
+    WELL-FORMED energy-fraction spec on an UNLADDERED store
+    (``partition={"max_elements": 4}, additive_lod={"breakpoints": [0.5, 1.0]}``)
+    still strands: the count is UNKNOWN (energy cuts need the ordering and the
+    energy curve), the fallback is the store's single rung, the leaf skips, and
+    this same conflict fires from inside ``part_0`` one level too late, ``g``
+    surviving ``finalize()`` childless. That is measured behaviour, not desired
+    behaviour, so there is no test asserting it — a test would enshrine the
+    strand. Refusing on UNKNOWN instead was rejected deliberately:
+    ``{"breakpoints": [1.0]}`` resolves to a single rung and partitions fine (a
+    gate refusing what the flat path accepts is its own regression), so closing
+    this residual needs a cheaper energy count, not a blunter gate.
+    """
+
+    def _unladdered(self, tmp_path: Any, filename: str) -> str:
+        from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+
+        file_path = str(tmp_path / filename)
+        write_gsplats_tree(file_path, _nested_partition_tree(3))
+        return file_path
+
+    @pytest.mark.parametrize(
+        "spec,tag",
+        [({"n_lods": 2}, "n2"), ({"method": "radial"}, "radial")],
+    )
+    def test_a_kwarg_built_ladder_is_refused_before_the_wrapper_exists(
+        self, tmp_path: Any, spec: Dict[str, Any], tag: str
+    ) -> None:
+        """The issue's own repro, and the spec that carries no ``n_lods`` at all."""
+        file_path = self._unladdered(tmp_path, f"kwarg_ladder_{tag}.gsplats.zarr")
+        compiler, scene, path = open_scene(tmp_path, f"kwarg_{tag}.luxar.zarr")
+
+        exc = refusal(
+            lambda: scene.add_gsplats_from_file(
+                "g", file_path, partition={"max_elements": 4}, additive_lod=spec
+            )
+        )
+
+        assert str(exc).startswith("Could not add gsplats 'g': ")
+        assert "partition= is not supported alongside" in str(exc)
+        assert "part_0" not in str(exc)
+        assert "g" not in compiler.store
+        assert finalized_group_keys(compiler, path) == set()
+
+    def test_the_kwarg_built_refusal_uses_the_additive_lod_wording(
+        self, tmp_path: Any
+    ) -> None:
+        """There IS an ``additive_lod=`` in this call, and dropping it is the fix.
+
+        The stored-ladder pair ('gsplat flatten') would send the caller to
+        rewrite a file that carries no ladder at all. Using the ``additive_lod=``
+        pair also makes this refusal byte-identical to the one the data door
+        raises for the same call one step later — for a call whose ONLY fault is
+        this conflict.
+
+        The four wording assertions alone are VACUOUS: the pre-fix refusal came
+        from inside ``part_0``, and its body is byte-identical to this one by
+        design, so all four held while the wrapper stranded. The name and the
+        empty-store assertions are what discriminate, exactly as in the sibling
+        above.
+        """
+        file_path = self._unladdered(tmp_path, "kwarg_wording.gsplats.zarr")
+        compiler, scene, path = open_scene(tmp_path, "kwarg_wording.luxar.zarr")
+
+        exc = refusal(
+            lambda: scene.add_gsplats_from_file(
+                "g",
+                file_path,
+                partition={"max_elements": 4},
+                additive_lod={"n_lods": 2},
+            )
+        )
+
+        assert "an additive_lod= ladder" in str(exc)
+        assert "Drop one of the two" in str(exc)
+        assert "gsplat flatten" not in str(exc)
+        assert "already carries" not in str(exc)
+        assert str(exc).startswith("Could not add gsplats 'g': ")
+        assert finalized_group_keys(compiler, path) == set()
+
+    def test_the_matrix_shaped_door_refuses_a_kwarg_built_ladder_identically(
+        self, tmp_path: Any
+    ) -> None:
+        """The OTHER call site of this gate: a bare leaf, not a nested tree.
+
+        ``add_gsplats_from_file`` sends every matrix-shaped tree straight to
+        ``add_gsplats_from_data_impl`` instead of grafting, and calls this gate
+        there too. A bare UNLADDERED leaf plus ``partition=`` plus
+        ``additive_lod={"n_lods": 2}`` is the one shape where the store carries
+        nothing and the kwarg supplies the whole ladder, on the branch whose data
+        door names the caller's own node — so this is where the refusal is
+        byte-identical to the data door's, message and name alike, rather than
+        merely sharing its body (the graft branch says ``'g'`` where the data
+        door would have said ``part_0``, which is the point of hoisting it).
+        """
+        from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+
+        file_path = str(tmp_path / "matrix_kwarg.gsplats.zarr")
+        write_gsplats_tree(file_path, _nested_partition_tree(3).children[0])
+        compiler, scene, path = open_scene(tmp_path, "matrix_kwarg.luxar.zarr")
+
+        exc = refusal(
+            lambda: scene.add_gsplats_from_file(
+                "g",
+                file_path,
+                partition={"max_elements": 4},
+                additive_lod={"n_lods": 2},
+            )
+        )
+
+        assert str(exc).startswith("Could not add gsplats 'g': ")
+        assert "an additive_lod= ladder" in str(exc)
+        assert "Drop one of the two" in str(exc)
+        assert "gsplat flatten" not in str(exc)
+        assert "part_0" not in str(exc)
+        assert "g" not in compiler.store
+        assert finalized_group_keys(compiler, path) == set()
+
+    def test_a_single_rung_spec_is_not_refused_and_the_split_really_runs(
+        self, tmp_path: Any
+    ) -> None:
+        """``{"n_lods": 1}`` takes the flat route, so ``partition=`` is legitimate.
+
+        A presence-only check (``or is_requested(attrs.get("additive_lod"))``)
+        would refuse this, which is why the gate resolves a COUNT instead.
+        """
+        file_path = self._unladdered(tmp_path, "one_rung.gsplats.zarr")
+        compiler, scene, path = open_scene(tmp_path, "one_rung.luxar.zarr")
+
+        scene.add_gsplats_from_file(
+            "g", file_path, partition={"max_elements": 4}, additive_lod={"n_lods": 1}
+        )
+        compiler.finalize()
+
+        store = zarr.open_group(path, mode="r")
+        assert store["g"].attrs.get("kind") == "partition"
+        # Each stored part was re-split, exactly as the un-laddered control does.
+        assert [
+            store["g"][p].attrs.get("kind") for p in sorted(store["g"].group_keys())
+        ] == ["partition", "partition"]
+        assert not any(
+            key.startswith("additive_") for key in _descendant_group_keys(store["g"])
+        )
+
+    @pytest.mark.parametrize("shape", ["leaf", "partition"])
+    def test_a_recompute_spec_that_collapses_the_stored_ladder_still_splits(
+        self, tmp_path: Any, shape: str
+    ) -> None:
+        """The issue's second comment: one rung is one rung, however it is spelled.
+
+        ``{"n_lods": 1, "recompute": True}`` resolves the store's ladder down to
+        a single sub-LOD before the data door asks anything — the same end state
+        ``additive_lod=False`` produces, which this gate has always skipped.
+        Measured pre-fix, both parametrisations answered ``Could not add gsplats
+        'g': partition= is not supported alongside the additive ladder this
+        .gsplats.zarr already carries``.
+
+        Both doors, mirroring
+        ``test_additive_lod_false_collapses_the_ladder_and_still_splits``: the
+        matrix-shaped branch of ``add_gsplats_from_file`` (the bare leaf) and
+        ``graft_gsplat_node`` (the nested ``kind=partition``).
+        """
+        from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+
+        tree = _laddered_partition_tree()
+        file_path = str(tmp_path / f"recollapse_{shape}.gsplats.zarr")
+        write_gsplats_tree(
+            file_path, tree if shape == "partition" else next(iter(tree.children))
+        )
+        compiler, scene, path = open_scene(tmp_path, f"recollapse_{shape}.luxar.zarr")
+
+        scene.add_gsplats_from_file(
+            "g",
+            file_path,
+            partition={"max_elements": 4},
+            additive_lod={"n_lods": 1, "recompute": True},
+        )
+        compiler.finalize()
+
+        store = zarr.open_group(path, mode="r")
+        assert store["g"].attrs.get("kind") == "partition"
+        parts = sorted(store["g"].group_keys())
+        # Same split the ``additive_lod=False`` twin produces: the bare leaf
+        # holds 12 splats (its two rungs, 4 and 8, unioned), so a cap of 4 gives
+        # 4 parts, and the 2-part store one re-split part each.
+        assert parts == (
+            ["part_0", "part_1"]
+            if shape == "partition"
+            else ["part_0", "part_1", "part_2", "part_3"]
+        )
+        assert not any(
+            key.startswith("additive_") for key in _descendant_group_keys(store["g"])
+        )
+
+    @pytest.mark.parametrize("partition", [None, False])
+    def test_a_ladder_without_a_real_partition_request_still_grafts(
+        self, tmp_path: Any, partition: Any
+    ) -> None:
+        """Non-vacuity: the gate keys on ``partition=``, not on ``additive_lod=``.
+
+        ``additive_lod={"n_lods": 2}`` alone must still ladder every grafted
+        part, and ``partition=False`` is the bypass — not a request — so it must
+        behave identically (the leaf adder DELETES that key once the multi-LOD
+        writer is the destination). A gate that refused on the kwarg alone would
+        break both.
+        """
+        file_path = self._unladdered(tmp_path, f"ladder_only_{partition}.gsplats.zarr")
+        compiler, scene, path = open_scene(
+            tmp_path, f"ladder_only_{partition}.luxar.zarr"
+        )
+
+        kwargs = {} if partition is None else {"partition": partition}
+        scene.add_gsplats_from_file(
+            "g", file_path, additive_lod={"n_lods": 2}, **kwargs
+        )
+        compiler.finalize()
+
+        store = zarr.open_group(path, mode="r")
+        assert store["g"].attrs.get("kind") == "partition"
+        assert sorted(store["g"].group_keys()) == ["part_0", "part_1"]
+        # A ladder per part — built by the kwarg, since the store carried none.
+        for part in ("part_0", "part_1"):
+            assert sorted(store["g"][part].group_keys()) == [
+                "additive_0",
+                "additive_1",
+            ]
+
+    @pytest.mark.parametrize(
+        "spec,tag",
+        [
+            ({"n_lods": 2}, "n2"),
+            # NOT one rung: a dict without ``recompute`` never touches a level
+            # that already has a ladder, so ``n_lods`` is not even read here.
+            ({"n_lods": 1}, "n1"),
+            # FINDING 2's case: the kwarg DOES rebuild this ladder, and the
+            # remedy is still the store's, because dropping ``additive_lod=``
+            # leaves the stored ladder — and a second refusal — behind.
+            ({"n_lods": 4, "recompute": True}, "rebuilt"),
+        ],
+    )
+    def test_a_stored_ladder_keeps_its_own_wording_under_a_pass_through_spec(
+        self, tmp_path: Any, spec: Dict[str, Any], tag: str
+    ) -> None:
+        """An ALREADY-laddered store keeps the STORED wording, whatever the kwarg.
+
+        The resolver passes a stored multi-rung ladder through untouched (it only
+        computes where ``recompute`` is set or the level has <= 1 rung), so
+        ``{"n_lods": 1}`` is emphatically not one rung here. And even where the
+        kwarg does recompute, the obstacle is still the store's: 'gsplat flatten'
+        is the step that has to happen either way, whereas "drop one of the two"
+        would send the caller straight into a second refusal.
+        """
+        from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+
+        file_path = str(tmp_path / f"stored_passthrough_{tag}.gsplats.zarr")
+        write_gsplats_tree(file_path, _laddered_partition_tree())
+        compiler, scene, path = open_scene(
+            tmp_path, f"stored_passthrough_{tag}.luxar.zarr"
+        )
+
+        exc = refusal(
+            lambda: scene.add_gsplats_from_file(
+                "g", file_path, partition={"max_elements": 4}, additive_lod=spec
+            )
+        )
+
+        assert str(exc).startswith("Could not add gsplats 'g': ")
+        assert "this .gsplats.zarr already carries" in str(exc)
+        assert "gsplat flatten" in str(exc)
+        assert "Drop one of the two" not in str(exc)
+        assert finalized_group_keys(compiler, path) == set()
+
+    @pytest.mark.parametrize(
+        "spec,tag",
+        [
+            ({"n_lods": 2}, "n2"),
+            # The same store where the kwarg ALSO rebuilds the stored leaf's
+            # ladder, so no leaf is left whose ladder is "purely the store's" in
+            # the build sense — and the answer must still be the stored pair.
+            ({"n_lods": 2, "recompute": True}, "rebuilt"),
+        ],
+    )
+    def test_a_mixed_store_is_answered_by_the_leaf_the_store_laddered(
+        self, tmp_path: Any, spec: Dict[str, Any], tag: str
+    ) -> None:
+        """One laddered leaf, one flat, and a kwarg that ladders the flat one.
+
+        Both leaves offend, for different reasons — the flat one only because
+        the kwarg builds it a ladder, the laddered one on its own — so the walk
+        must not answer with whichever it meets first. It reports the STORED
+        pair, because that ladder is the obstacle that survives dropping the
+        kwarg; the flat leaf is deliberately FIRST so a first-leaf-wins gate
+        would go red here.
+        """
+        from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+        from luxar.gsplats.tree import GSplatPartition
+
+        # ``_nested_partition_tree``'s leaves are single-sub-LOD by construction
+        # (8 splats); ``_laddered_leaf`` carries two rungs of 4.
+        mixed = GSplatPartition(
+            children=[_nested_partition_tree(3).children[0], _laddered_leaf()],
+            max_elements=8,
+        )
+        file_path = str(tmp_path / f"mixed_ladder_{tag}.gsplats.zarr")
+        write_gsplats_tree(file_path, mixed)
+        compiler, scene, path = open_scene(tmp_path, f"mixed_ladder_{tag}.luxar.zarr")
+
+        exc = refusal(
+            lambda: scene.add_gsplats_from_file(
+                "g", file_path, partition={"max_elements": 4}, additive_lod=spec
+            )
+        )
+
+        assert str(exc).startswith("Could not add gsplats 'g': ")
+        assert "this .gsplats.zarr already carries" in str(exc)
+        assert "gsplat flatten" in str(exc)
+        assert "Drop one of the two" not in str(exc)
+        assert finalized_group_keys(compiler, path) == set()
+
+    def test_a_mixed_collapse_names_the_kwarg_the_flat_leaf_being_the_blocker(
+        self, tmp_path: Any
+    ) -> None:
+        """The discriminator is the OFFENDING leaf, not "a ladder exists somewhere".
+
+        ``{"recompute": True, "breakpoints": [4]}`` COLLAPSES the laddered
+        4-splat leaf (its cuts clamp to a single ``[4]``) and LADDERS the flat
+        8-splat one (``[4, 8]``), so the only leaf blocking the call is the flat
+        one — and the message is the ``additive_lod=`` pair even though a stored
+        ladder sits untouched next door. That is the right answer, not a miss:
+        'gsplat flatten' would send the caller to rewrite a ladder that is not in
+        the way, whereas dropping either half of "drop one of the two" really
+        does resolve it. Pinned because the WHICH REMEDY paragraph in
+        ``from_io`` claims exactly this.
+        """
+        from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+        from luxar.gsplats.tree import GSplatPartition
+
+        collapsing = _laddered_leaf(n_per_sublod=2, n_sublods=2)  # 4 splats, 2 rungs
+        flat = _nested_partition_tree(3).children[0]  # 8 splats, 1 rung
+        assert (collapsing.n_splats, flat.n_splats) == (4, 8)
+        file_path = str(tmp_path / "mixed_collapse.gsplats.zarr")
+        write_gsplats_tree(
+            file_path, GSplatPartition(children=[collapsing, flat], max_elements=8)
+        )
+        compiler, scene, path = open_scene(tmp_path, "mixed_collapse.luxar.zarr")
+
+        exc = refusal(
+            lambda: scene.add_gsplats_from_file(
+                "g",
+                file_path,
+                partition={"max_elements": 4},
+                additive_lod={"recompute": True, "breakpoints": [4]},
+            )
+        )
+
+        assert str(exc).startswith("Could not add gsplats 'g': ")
+        assert "an additive_lod= ladder" in str(exc)
+        assert "Drop one of the two" in str(exc)
+        assert "gsplat flatten" not in str(exc)
+        assert finalized_group_keys(compiler, path) == set()
+
+    @pytest.mark.parametrize(
+        "spec,tag",
+        [
+            # Energy fractions: uncountable without the ordering and the energy
+            # curve, which is the whole expense this query avoids.
+            ({"recompute": True, "breakpoints": [0.3, 1.0]}, "energy"),
+            # Malformed: ``_resolve_breakpoints`` would reject ``n_lods=0``.
+            ({"recompute": True, "n_lods": 0}, "malformed"),
+            # Junk type: not None, not a bool, not a dict.
+            ("stream", "junk"),
+        ],
+    )
+    def test_an_unknown_count_falls_back_to_the_stored_ladder(
+        self, tmp_path: Any, spec: Any, tag: str
+    ) -> None:
+        """REGRESSION: an unreadable kwarg does not make the store's ladder vanish.
+
+        The first draft of this gate skipped a leaf whose resolved count came
+        back ``None``, on the rule "a query must not pre-empt the builder's own
+        fault report". But UNKNOWN is a statement about the KWARG, and on a
+        LADDERED store the conflict is visible in ``iter_leaves`` without
+        counting anything — so skipping threw it away and re-stranded exactly the
+        wrapper this gate exists to prevent. Measured with the skip, on this
+        stored ``kind=partition`` of 2-sublod leaves: ``Could not add gsplats
+        'part_0': …`` for the energy case, ``ValueError: n_lods must be positive``
+        for the malformed one and ``TypeError: additive_lod must be None, bool,
+        or dict; got str`` for the junk one — each with ``g`` surviving
+        ``finalize()`` as a childless ``kind=partition``. Falling back to
+        ``stored_rungs`` restores the pre-#1632 verdict for all three, byte for
+        byte.
+
+        The rule itself is untouched where it belongs: on an UNLADDERED store the
+        fallback is 1 rung, so the leaf still skips and the builder still reports
+        the malformed spec — see
+        ``test_an_unknown_count_on_an_unladdered_store_still_reaches_the_builder``.
+        """
+        from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+
+        file_path = str(tmp_path / f"unknown_{tag}.gsplats.zarr")
+        write_gsplats_tree(file_path, _laddered_partition_tree())
+        compiler, scene, path = open_scene(tmp_path, f"unknown_{tag}.luxar.zarr")
+
+        exc = refusal(
+            lambda: scene.add_gsplats_from_file(
+                "g", file_path, partition={"max_elements": 4}, additive_lod=spec
+            )
+        )
+
+        assert str(exc).startswith("Could not add gsplats 'g': ")
+        assert "partition= is not supported alongside" in str(exc)
+        assert "this .gsplats.zarr already carries" in str(exc)
+        assert "gsplat flatten" in str(exc)
+        assert "part_0" not in str(exc)
+        assert finalized_group_keys(compiler, path) == set()
+
+    def test_a_counts_list_the_resolver_would_reject_is_unknown_not_one_rung(
+        self, tmp_path: Any
+    ) -> None:
+        """REGRESSION: the wrapper must VALIDATE a ``counts:`` list, not clamp it.
+
+        ``resolve_additive_axis_gsplats`` runs the strict
+        ``validate_counts_breakpoints`` against ``substitutive_levels[0]`` BEFORE
+        its per-level clamp loop, and a single grafted leaf IS that finest level
+        — so an out-of-range list ABORTS the call, it never shrinks. A wrapper
+        that only clamped answered a confident ONE rung instead: measured on this
+        store, ``[100]`` clamped to the 12-splat leaf's own size, the gate
+        skipped, ``graft_gsplat_node`` wrote the wrapper, and ``largest
+        breakpoint 100 exceeds N=12`` then fired from inside ``part_0`` with
+        ``g`` surviving ``finalize()`` as a childless ``kind=partition``. Round
+        1's unknown→stored fallback does not save it, because the count is not
+        unknown, it is WRONG — which is why the validation has to happen here.
+        """
+        from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+
+        file_path = str(tmp_path / "oversized_counts.gsplats.zarr")
+        write_gsplats_tree(file_path, _laddered_partition_tree())
+        compiler, scene, path = open_scene(tmp_path, "oversized_counts.luxar.zarr")
+
+        exc = refusal(
+            lambda: scene.add_gsplats_from_file(
+                "g",
+                file_path,
+                partition={"max_elements": 4},
+                additive_lod={"recompute": True, "breakpoints": [100]},
+            )
+        )
+
+        assert str(exc).startswith("Could not add gsplats 'g': ")
+        assert "partition= is not supported alongside" in str(exc)
+        # UNKNOWN falls back to the store, which IS laddered here.
+        assert "this .gsplats.zarr already carries" in str(exc)
+        assert "part_0" not in str(exc)
+        assert "exceeds N" not in str(exc)
+        assert finalized_group_keys(compiler, path) == set()
+
+    def test_an_unknown_count_on_an_unladdered_store_still_reaches_the_builder(
+        self, tmp_path: Any
+    ) -> None:
+        """The other half of the fallback: no stored ladder, no conflict to judge.
+
+        ``stored_rungs`` is 1 here, so the leaf skips and the malformed spec is
+        answered by the builder itself, one level down, with its own message —
+        which is where "a query must not pre-empt the builder's own fault report"
+        applies. The wrapper strand this leaves behind is the documented residual
+        (an invalid CALL, not a partition conflict), so what is pinned is the
+        AUTHOR of the verdict, not the strand.
+        """
+        file_path = self._unladdered(tmp_path, "unknown_unladdered.gsplats.zarr")
+        _, scene, _ = open_scene(tmp_path, "unknown_unladdered.luxar.zarr")
+
+        exc = refusal(
+            lambda: scene.add_gsplats_from_file(
+                "g",
+                file_path,
+                partition={"max_elements": 4},
+                additive_lod={"recompute": True, "n_lods": 0},
+            )
+        )
+
+        assert "n_lods must be positive" in str(exc)
+        assert "partition= is not supported alongside" not in str(exc)
 
 
 # ---------------------------------------------------------------------------

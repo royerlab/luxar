@@ -995,9 +995,20 @@ GSplats have ellipsoidal extent (unlike point radii). Chunk bounds include this 
 
 extent[d] = sqrt(covariance[d, d]) * truncation_radius  # default 2.75 (per-axis support radius, in sigmas)
 
-# Chunk bounds include extent
+# Chunk bounds include extent -- EXCEPT on a barrier/categorical axis
+# (slice_dims: time, channel), which gets no sigma expansion at all, only a
+# tiny float-boundary epsilon, so a category never bleeds into its neighbour:
+#   chunk_bounds[i, d, 0] = min(centers[chunk_i, d]) - 1e-3
+#   chunk_bounds[i, d, 1] = max(centers[chunk_i, d]) + 1e-3
 chunk_bounds[i, d, 0] = min(centers[chunk_i, d] - extent[chunk_i, d])
 chunk_bounds[i, d, 1] = max(centers[chunk_i, d] + extent[chunk_i, d])
+
+# Both arms are accumulated in float64 and narrowed to the float32 store
+# OUTWARD (lo down, hi up, by one ULP -- but only when the cast moved the bound
+# the wrong way). Without that step a small absolute pad past |x| ~ 2**23 falls
+# under half a float32 ULP and rounds away, storing an interval TIGHTER than
+# the footprint. A stored interval therefore always contains the chunk's
+# geometric footprint, at any coordinate magnitude.
 ```
 
 **Ordering Metadata** (stored on each leaf group's `.zattrs`):

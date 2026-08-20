@@ -188,8 +188,8 @@ to ship after). Sequencing is at the bottom.
     taught to read the manifest: an absent `local-compute` dataset now prints its
     licensing reason and returns `None` (→ the demo rebuilds from the raw source)
     instead of the old "run `git lfs pull`", which pointed at a file that no
-    longer exists. The Gaia demo had no download path at all and now resolves
-    cache-first with an actionable error (see #1575 for the ESA-archive build).
+    longer exists. The Gaia demo resolves cache-first and now offers an opt-in
+    ESA-archive build with `--build-catalog`.
   - **🔴 REMOVAL IS NOT COMPLETE UNTIL HISTORY IS CLEANED — one launch-time
     operation, and it is gated.** GitHub serves LFS objects for any commit and
     does NOT garbage-collect unreferenced ones (docs: *"the Git LFS objects still
@@ -303,15 +303,10 @@ to ship after). Sequencing is at the bottom.
         resolved.
       - `milky_way_gaia_3m` — CC BY-**NC** 3.0 IGO (**non-commercial**). Decision
         2026-07-21: **do NOT host it** — the NC clause is incompatible with a
-        cleanly-reusable demo-data host. **Still to build:** the Gaia demo will
-        query the ESA Gaia archive and build the point cloud on the user's
-        machine on first run, caching to `~/.cache/luxar/` (compute once, stays
-        cached), with the mandatory ESA/Gaia/DPAC acknowledgement. No GPU needed
-        (it's a point cloud, not a fit) — only a catalog query. Today the
-        committed `data/milky_way_gaia_3m.zarr.zip` is gone and
-        `demo_gaia_milky_way_3m.py` reads `~/.cache/luxar/`; the TAP query is
-        already executable as `scripts/generate_galaxy_simple.py`, so what is
-        pending is only wiring it up as an automatic first-run build.
+        cleanly-reusable demo-data host. The Gaia demo now offers an opt-in TAP
+        query and CPU build on first run, caching to `~/.cache/luxar/` (compute
+        once, stays cached) with the mandatory ESA/Gaia/DPAC acknowledgement.
+        No GPU is needed; `--recompute` replaces an existing cached catalog.
       The gsplat cases total only ~35 MB, so the cost is a GPU-gated first run for
       those demos, not storage; Gaia needs only an archive query + CPU build.
       (Optional: email tng/acto3d/tribolium sources for written redistribution
@@ -400,9 +395,8 @@ to ship after). Sequencing is at the bottom.
     ones that still ship data run off in-repo LFS, and the `local-compute` four
     (whose in-repo copies were removed) rebuild or read a placed file instead.
     Nothing has regressed, but nothing has moved either: the Gaia demo now
-    reads `~/.cache/luxar/` instead of a committed `milky_way_gaia_3m.zarr.zip`
-    (the TAP query is executable as `scripts/generate_galaxy_simple.py`, just not
-    wired up as an automatic first-run build), and the neuromast +
+    reads or builds `~/.cache/luxar/milky_way_gaia_3m/` instead of a committed
+    `milky_way_gaia_3m.zarr.zip`, and the neuromast +
     h2afva uploads remain pending. Next concrete action is still step 2 of the
     plan: create the Sandbox rehearsal record, then production.
     *(2026-08-12: the replacement-demos + dataset-removal work is now in flight
@@ -424,7 +418,7 @@ to ship after). Sequencing is at the bottom.
     uploaded. Delivered alongside, on the Gaia demo that reads a placed file: the
     appearance-tuning ask **#1461** — the `gaia_milky_way` rename, per-marker
     hover labels, and the 0.5/0.12/0.175 volumetric retune. The first-run ESA
-    rebuild (#1575) is still not wired up, so the catalog is still hand-placed.
+    rebuild is now wired up as an opt-in cached build with `--build-catalog`.
     Next action is unchanged: the Sandbox rehearsal (point a record's
     `base_url` at Sandbox — that override is deliberately NOT gated by
     `published`, so the production records stay drafts through it), then publish.

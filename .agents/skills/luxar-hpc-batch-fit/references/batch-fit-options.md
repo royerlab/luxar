@@ -34,9 +34,10 @@ uniform tiles, 0.999 for content boxes" split never existed in the batch path.
 
 Under **uniform** tiling an integer `--seeds K` is a **whole-volume budget per
 (t, c) volume**: every task is a `--tile k/M` fit, which divides K across that
-volume's M tiles (`ceil(K/M)`, floored at 1) instead of fitting K per tile, so
-each timepoint/channel tracks K rather than K x M. Not an exact count — tiles
-windowing to near-zero signal are skipped, and `K < M` gives M. A float ratio is
+volume's M non-empty tiles (`ceil(K/M)`, floored at 1) instead of fitting K per
+tile, so each timepoint/channel tracks K rather than K x the grid size. Every
+task derives the same M from the volume, grid, resolved floor, and Hann-window
+skip predicate. `K < M` gives M. A float ratio is
 scale-free and applied per tile unchanged. Under **content** tiling `--seeds` is
 ignored: tasks are emitted as `--tiling content --plan … --plan-box k` and each
 box takes its budget from the shared density plan.
