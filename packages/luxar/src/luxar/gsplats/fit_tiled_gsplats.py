@@ -88,9 +88,9 @@ def count_nonempty_tiles(
 
     The floor, window, and predicate mirror :func:`fit_tile`'s skip decision,
     but the scan deliberately does not replay optional per-tile denoising. If
-    the scan finds no signal at all, use the geometric count as the safe divisor:
-    that avoids division by zero and errs toward under-seeding if later
-    preprocessing makes a tile fit-worthy.
+    the scan finds no signal at all, use the geometric count as the safe divisor
+    solely to avoid division by zero; no tile will be fitted, so the divisor is
+    otherwise moot.
     """
     nonempty = 0
     floor = 0.0 if applied_floor is None else applied_floor

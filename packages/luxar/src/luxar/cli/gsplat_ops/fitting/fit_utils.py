@@ -465,26 +465,29 @@ def split_seeds_across_tiles(
     UNCHANGED. A ratio is a fraction of the voxels it is applied to, so it is
     already scale-free — per tile it means exactly the density it means
     whole-volume — and must never be divided by the tile count. ``None``
-    (auto) is likewise unchanged, as is any ``n_tiles <= 1`` (a single tile
-    already IS the whole volume, so there is nothing to split).
+    (auto) is likewise unchanged. A non-positive ``n_tiles`` is a defensive
+    no-op. When one non-empty tile survives a larger grid, K is unchanged but
+    the sparse-grid divisor is still announced.
     """
     if not isinstance(parsed_seeds, int) or isinstance(parsed_seeds, bool):
         return parsed_seeds
-    if n_tiles <= 1 or parsed_seeds <= 0:
+    if n_tiles <= 0 or parsed_seeds <= 0:
         return parsed_seeds
     # Integer ceiling division (not math.ceil on a quotient): a budget is an
     # arbitrary-precision Python int, and going through a float would round
     # wrong above 2**53 (and raise OverflowError on an absurdly large one).
-    per_tile = -(-parsed_seeds // n_tiles)
-    aprint(
-        f"Seeds: {parsed_seeds:,} whole-volume budget -> {per_tile:,} per tile "
-        f"across {n_tiles} non-empty tiles"
-        + (
-            f" ({grid_tiles} grid tiles)"
-            if grid_tiles is not None and grid_tiles != n_tiles
-            else ""
+    per_tile = parsed_seeds if n_tiles == 1 else -(-parsed_seeds // n_tiles)
+    if n_tiles > 1 or (grid_tiles is not None and grid_tiles > n_tiles):
+        tile_label = "tile" if n_tiles == 1 else "tiles"
+        aprint(
+            f"Seeds: {parsed_seeds:,} whole-volume budget -> {per_tile:,} per tile "
+            f"across {n_tiles} non-empty {tile_label}"
+            + (
+                f" ({grid_tiles} grid tiles)"
+                if grid_tiles is not None and grid_tiles != n_tiles
+                else ""
+            )
         )
-    )
     return per_tile
 
 

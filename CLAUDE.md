@@ -333,6 +333,7 @@ luxar gsplat fit volume.tiff splats.gsplats.zarr --floor none    # disable (hard
 # reports): a tiled fit DIVIDES it across the tiles that survive the resolved
 # floor plus Hann window instead of giving each tile the full count. Every
 # worker derives the same non-empty count; K below it gives 1 per such tile.
+# The share is equal, not occupancy-weighted, so uneven grids can misallocate K.
 
 # Uniform tiled fitting for large volumes (Hann cosine apodization, seamless stitching)
 luxar gsplat fit large.zarr splats.gsplats.zarr --tiling uniform --tile-size 256 --overlap 32

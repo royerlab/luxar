@@ -114,6 +114,15 @@ def test_split_prints_a_notice(capsys: pytest.CaptureFixture[str]) -> None:
     assert "256,000" in out and "12,191" in out and "21 non-empty tiles" in out
 
 
+def test_single_nonempty_tile_prints_sparse_grid_notice(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A one-tile divisor is still visible when it came from a larger grid."""
+    assert split_seeds_across_tiles(200, 1, grid_tiles=25) == 200
+    out = capsys.readouterr().out
+    assert "200 per tile across 1 non-empty tile (25 grid tiles)" in out
+
+
 def test_no_notice_when_nothing_is_split(capsys: pytest.CaptureFixture[str]) -> None:
     """Guard: the pass-through cases print nothing (the notice is conditional)."""
     split_seeds_across_tiles(256_000, 1)
@@ -147,6 +156,13 @@ def _make_sparse_volume(path: Path) -> None:
     """The issue's one-corner case: four windowed tiles contain all signal."""
     volume = np.zeros((96, 96), np.float32)
     volume[:24, :24] = 1.0
+    np.save(path, volume)
+
+
+def _make_single_tile_sparse_volume(path: Path) -> None:
+    """A smaller corner signal survives only the first tile of a 25-tile grid."""
+    volume = np.zeros((96, 96), np.float32)
+    volume[:16, :16] = 1.0
     np.save(path, volume)
 
 
@@ -334,6 +350,48 @@ def test_cli_sequential_sparse_fit_splits_over_nonempty_tiles(
     assert result.exit_code == 0, result.output
     assert seen["seeds"] == 50
     assert "4 non-empty tiles (25 grid tiles)" in result.output
+
+
+@pytest.mark.skipif(not HAS_TORCH, reason="the fit CLI imports the torch fitter")
+def test_cli_sequential_single_nonempty_tile_announces_sparse_grid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: dict[str, Any] = {}
+
+    def _fake_fit_tiled(volume: Any, **kwargs: Any) -> GSplatData:
+        seen.update(kwargs)
+        return _one_splat_result()
+
+    monkeypatch.setattr("luxar.gsplats.fit_tiled_gsplats.fit_tiled", _fake_fit_tiled)
+
+    volume = tmp_path / "single-tile-sparse.npy"
+    _make_single_tile_sparse_volume(volume)
+    result = runner.invoke(
+        app,
+        [
+            "gsplat",
+            "fit",
+            str(volume),
+            str(tmp_path / "single-tile-sparse.gsplats.zarr"),
+            "--tiling",
+            "uniform",
+            "--tile-size",
+            "24",
+            "--overlap",
+            "4",
+            "--flat",
+            "--floor",
+            "none",
+            "--seeds",
+            "200",
+            "--device",
+            "cpu",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert seen["seeds"] == 200
+    assert "1 non-empty tile (25 grid tiles)" in result.output
 
 
 @pytest.mark.skipif(not HAS_TORCH, reason="the fit CLI imports the torch fitter")
