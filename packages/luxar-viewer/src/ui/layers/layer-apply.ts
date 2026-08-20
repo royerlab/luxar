@@ -43,12 +43,21 @@ import {
 } from '../../data/attrs-composer';
 import { getBlendingState, liveLayerAttrs as deriveLiveLayerAttrs } from './attrs-utils';
 import { computeDisplayRange, type LayerInfo, type LayerStateManager } from './layer-state';
+import { remapWindowToLeafRange } from '../../rendering/display-range';
 import {
   applyColorAdjustments,
   isColormapActive,
   isLuxarMaterial,
   type LuxarMaterial,
 } from './luxar-material';
+
+/**
+ * A gain contributes nothing: `intensity` multiplies (identity 1) and `offset`
+ * adds (identity 0), and both are absent far more often than they are set.
+ */
+function isIdentityGain(intensity: number | undefined, offset: number | undefined): boolean {
+  return (intensity ?? 1) === 1 && (offset ?? 0) === 0;
+}
 
 /**
  * Dependencies injected by the owning {@link LayersPanel}. `getRootGroup` /
@@ -149,15 +158,27 @@ export class LayerApplyEngine {
    * that renders direct colour while the layer's window is a SCALAR window
    * (a mixed group layer), so the scalar window is never applied as a colour
    * gain. Ancestor/leaf-authored windows still compose.
+   *
+   * `precomputedAncestors` lets a caller that already walked the chain (both
+   * fan-out loops do) hand it over instead of paying for a second walk.
+   * `collectAncestorNodes` resolves each step with a linear `children.find`, so
+   * one fan-out over a P-part wrapper costs ~P²/2 path comparisons — and
+   * `applyComposed` runs on every slider tick.
    */
   private composeEffective(
     leafPath: string,
     layerPath: string,
-    identityLayerWindow = false
+    identityLayerWindow = false,
+    precomputedAncestors?: readonly SceneNode[]
   ): EffectiveAttrs | null {
-    const sceneGraph = this.deps.getSceneGraph();
-    if (!sceneGraph) return null;
-    const ancestors = collectAncestorNodes(sceneGraph, leafPath);
+    let ancestors: readonly SceneNode[];
+    if (precomputedAncestors) {
+      ancestors = precomputedAncestors;
+    } else {
+      const sceneGraph = this.deps.getSceneGraph();
+      if (!sceneGraph) return null;
+      ancestors = collectAncestorNodes(sceneGraph, leafPath);
+    }
     // Required, not optional: an omitted `layerPath` would silently disable the
     // subtree rule below and re-open the inert-Blend-control bug.
     const layerDepth = ancestors.findIndex((n) => n.path === layerPath);
@@ -188,6 +209,193 @@ export class LayerApplyEngine {
       };
     });
     return composeAttrs(chain);
+  }
+
+  /**
+   * May the composed window for this leaf be re-stated in the leaf's OWN range?
+   *
+   * Two independent questions, both of which must answer yes:
+   *
+   * * **Is the relation between the layer and the leaf one that a range change
+   *   MEANS something across?** Only `kind=lod`.
+   * * **Is the composed window actually STATED in the layer's reference range**
+   *   (`LayerInfo.scalarDataRange`), so that reading it as a position inside
+   *   that range is legitimate?
+   *
+   * ## Only across `kind=lod`
+   *
+   * A LOD *level* and a partition *part* are not the same kind of sibling.
+   *
+   * Levels are alternative representations of the WHOLE object, and gsplat LOD
+   * merging SUMS amplitudes — a coarse level's amplitude is the same physical
+   * signal at a different numeric SCALE. Re-expressing the window per level is
+   * exactly the correction that makes every level render one physical value
+   * identically, which is #1753's own repro.
+   *
+   * Parts are disjoint spatial subsets of ONE field at the SAME scale, and
+   * `packages/luxar/src/luxar/io/_compiler/gsplat_assembly.py` derives
+   * `amplitude_data_range = [min, p99.9]` per splat set — so two tiles differ
+   * purely by CONTENT. Windowing each part on its own range is per-tile
+   * auto-contrast: the same physical value renders as a different colour in
+   * different tiles and the colormap goes non-monotone, with a visible
+   * discontinuity at every BSP seam. On the repo's own
+   * `tests/fixtures/test_partition_layer.luxar.zarr` (`layer=True,
+   * kind=partition` — and `layer=True` is the default of `luxar gsplat
+   * convert`), `part_0` is `[0.5000, 0.7455]` and `part_1` `[0.7542, 0.9998]`:
+   * remapping would ramp black→white across BOTH, so the field would step
+   * 0.7455 (white) → 0.7542 (black) at the seam. Saturated-but-monotone is the
+   * correct failure. The producers say the same thing twice —
+   * `core/group/adders/mesh.py::_shared_scalar_window` ("a level or a **part**
+   * that stamps its own subset min/max renders the same value as a different
+   * colour … which is exactly the discontinuity this helper exists to
+   * prevent") and `gsplats/lift.py`, where beads share the finest node's
+   * `scalar_data_range` rather than a per-segment one.
+   *
+   * So every GROUP node from the edited layer down to (excluding) the leaf must
+   * be `kind === 'lod'`. Consequences, all deliberate: an `overview` tree
+   * (an lod group whose coarse cap is a leaf and whose fine branch is a nested
+   * partition) remaps the cap and declines under the partition; `adaptive`
+   * (a partition of per-tile lod groups) declines outright, because the right
+   * reference for a tile's ladder is that TILE's finest level rather than the
+   * layer's, and building that is more than #1753 asks for; and a plain group
+   * layer over several colormapped leaves (two channels, say) declines too —
+   * different physical fields, not one field at two scales.
+   *
+   * Once #1691 / PR #1752 lands (it harmonizes `amplitude_data_range` across a
+   * gsplat structure so siblings SHARE a window) partition parts will carry
+   * equal ranges and `remapWindowToLeafRange`'s equality short-circuit would
+   * make this a no-op anyway. The `kind` gate is the safety net until then, and
+   * for every store already written.
+   *
+   * ## …and only from a window in the reference basis
+   *
+   * `composeEffective` multiplies `intensity` and sums `offset` over the WHOLE
+   * ancestry, substituting live panel state for every `layer=true` node, so
+   * several reachable shapes hand back a window in a completely different
+   * basis. Remapping one of those does not refine a correct window, it corrupts
+   * it — hence a predicate rather than a best-effort. Every arm below is pinned
+   * by a test in `tests/unit/ui/layers/layer-apply-per-leaf-window.test.ts`:
+   *
+   * 1. **The edited layer is not on this leaf's ancestry** (`layerDepth < 0`).
+   *    Nothing can be said about the basis, so nothing is done.
+   * 2. **The edited layer AUTHORED a gain.** `intensity`/`offset` are
+   *    compositing attrs, so `add_gsplats_from_file(…, layer=True,
+   *    intensity=0.5)` / `luxar gsplat convert --intensity 0.5` stamps them on
+   *    the `kind=lod` wrapper itself. `walkSceneGraph` then seeds
+   *    `displayMin/Max` from `computeDisplayRange(0.5, 0) = [0, 2]` — a window
+   *    in the normalized-GAIN basis, with no relation to a `scalarDataRange` of,
+   *    say, `[0, 0.02]`. That window was already wrong before this change (100x
+   *    too wide); remapping it would multiply the error by `leafSpan / refSpan`
+   *    on top. Declining leaves the pre-existing behaviour exactly as it was.
+   * 3. **A node strictly below the layer is itself TRACKED AS A LAYER.** Not
+   *    "contributes a gain" — a nested layer owns its own window and its own
+   *    panel row, full stop, and its gain is not evidence either way. A
+   *    colormapped child whose own range happens to be `[0, 1]` composes
+   *    `computeUniforms(0, 1) = {1, -0}`, indistinguishable from "no window
+   *    authored", so a gain test passed it and remapped a window that was
+   *    already correct. `deriveScalarRangeFromDescendants` is the one derivation
+   *    in `layer-state.ts` that does NOT stop at a nested layer, so the outer
+   *    reference can be a sibling's range: over `ch0` (`[0, 1]`, 1e3 splats) and
+   *    `ch1` (`[0, 5]`, 1e4 splats) it is `[0, 5]`, and dragging the wrapper's
+   *    opacity composed ch0's own correct `[0, 1]` — which remapping turned into
+   *    `[0, 0.2]`, 5x too narrow, with nothing re-applying ch0 afterwards.
+   *    `[0, 1]` is not exotic: normalized scalars, probabilities, masks,
+   *    fractions.
+   * 4. **A non-layer node strictly below the layer contributes an AUTHORED
+   *    gain.** This arm mirrors `resolveColormapWindow`'s first branch, which
+   *    says the same thing at load time: a non-identity RAW LEAF gain means the
+   *    composed gain IS the window and the data range is not consulted.
+   *
+   * Ancestors ABOVE the edited layer are deliberately NOT gated: their gain
+   * composes so that the panel result matches `resolveColormapWindow`'s
+   * ancestor-only branch exactly (ancestor `intensity = 2`, reference `[0, 2]`,
+   * leaf `[0, 8]` → both give `[0, 4]`), and that agreement is itself pinned.
+   */
+  private composedWindowIsInReferenceBasis(
+    leafPath: string,
+    layerPath: string,
+    precomputedAncestors?: readonly SceneNode[]
+  ): boolean {
+    let ancestors: readonly SceneNode[];
+    if (precomputedAncestors) {
+      ancestors = precomputedAncestors;
+    } else {
+      const sceneGraph = this.deps.getSceneGraph();
+      if (!sceneGraph) return false;
+      ancestors = collectAncestorNodes(sceneGraph, leafPath);
+    }
+    const layerDepth = ancestors.findIndex((n) => n.path === layerPath);
+    if (layerDepth < 0) return false;
+    const layerNode = ancestors[layerDepth];
+    if (
+      !isIdentityGain(
+        layerNode.attrs.intensity as number | undefined,
+        layerNode.attrs.offset as number | undefined
+      )
+    ) {
+      return false;
+    }
+    // Every group between the edited layer and the leaf (the layer itself
+    // included, the leaf excluded) must be a LOD group. When the edited layer IS
+    // the leaf this loop is empty — and the remap is a no-op there anyway, since
+    // the leaf range and the reference range are then the same range.
+    for (let i = layerDepth; i < ancestors.length - 1; i++) {
+      if (ancestors[i].attrs.kind !== 'lod') return false;
+    }
+    for (let i = layerDepth + 1; i < ancestors.length; i++) {
+      const node = ancestors[i];
+      // A nested layer owns its window outright — arm 3. Checked before the gain
+      // so a nested layer whose window happens to compose to the identity gain
+      // (any `[0, 1]` range) is not mistaken for "nothing authored here".
+      if (this.deps.state.getLayer(node.path)) return false;
+      if (
+        !isIdentityGain(
+          node.attrs.intensity as number | undefined,
+          node.attrs.offset as number | undefined
+        )
+      ) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /**
+   * The scalar LUT window for ONE colormap-active leaf: the layer's composed
+   * window, re-expressed in that leaf's own data range.
+   *
+   * A layer composes a single window, but a `kind=lod` layer fans out over
+   * LEVELS whose scalars need not share a range — LOD merging sums amplitudes,
+   * so a coarsened level carries its own `amplitude_data_range` for the same
+   * physical signal, and the layer's reference range is merely whichever
+   * descendant `deriveScalarRangeFromDescendants` picked. Pushing the composed
+   * window verbatim rendered every level on the reference level's window,
+   * discarding exactly the per-level differentiation the producer stamped, and
+   * made a lazily-created level's window depend on load order (#1753).
+   *
+   * The remap runs only when the layer↔leaf relation is one a range change means
+   * something across, AND the composed window really is stated in the reference
+   * basis ({@link composedWindowIsInReferenceBasis}) — otherwise it would corrupt
+   * a window that was already correct, or auto-contrast a spatial partition tile
+   * by tile. The remap itself, and the range-shaped cases in which it must not
+   * happen, live in the pure `remapWindowToLeafRange`; the common single-range
+   * layer short-circuits there and gets the composed window back bit-exact.
+   *
+   * Only meaningful for a colormap-active material: a direct-colour leaf has no
+   * scalar window (its gain/offset are a colour GOG), which is the same condition
+   * `applyColorAdjustments` routes on.
+   */
+  private leafScalarWindow(
+    leaf: SceneNode,
+    layer: LayerInfo,
+    eff: EffectiveAttrs,
+    ancestors?: readonly SceneNode[]
+  ): { min: number; max: number } {
+    const composed = computeDisplayRange(eff.intensity, eff.offset);
+    if (!this.composedWindowIsInReferenceBasis(leaf.path, layer.path, ancestors)) return composed;
+    const leafRange = (leaf.attrs.scalar_data_range || leaf.attrs.amplitude_data_range) as
+      [number, number] | undefined;
+    return remapWindowToLeafRange(composed, layer.scalarDataRange, leafRange);
   }
 
   private applyBlendingStateToMaterial(mat: LuxarMaterial, mode: string): void {
@@ -231,12 +439,24 @@ export class LayerApplyEngine {
   private applyComposed(layer: LayerInfo): void {
     const leaves = this.getAffectedDataLeaves(layer.path);
     if (leaves.length === 0) return;
+    // Non-null whenever `leaves` is non-empty (`getAffectedDataLeaves` returns
+    // nothing without a graph); read once so the ancestry is walked ONCE per
+    // leaf below rather than once per consumer of it.
+    const sceneGraph = this.deps.getSceneGraph();
+    if (!sceneGraph) return;
 
     for (const leaf of leaves) {
       const obj = this.getMesh(leaf.path);
       if (!obj) continue;
       const mat = this.getLeafMaterial(obj);
       if (!mat) continue;
+      // ONE ancestry walk per leaf, shared by the composition and the
+      // reference-basis gate. `collectAncestorNodes` resolves each step with a
+      // linear `children.find` that allocates a string per comparison, so a
+      // fan-out over a P-part wrapper is ~P²/2 comparisons — measured at 7.0 ms
+      // for 512 parts and 129 ms for 2000, per slider tick. Walking it twice
+      // doubled that.
+      const ancestors = collectAncestorNodes(sceneGraph, leaf.path);
       // Per-leaf window routing. A layer whose window is a SCALAR window
       // (colormap in play) can still contain leaves rendering direct colour:
       // the C1 guard suppresses the LUT on geometry with no scalars bound,
@@ -245,7 +465,7 @@ export class LayerApplyEngine {
       // GOG is exactly the contrast stretch this panel no longer does — such
       // a leaf gets the identity window instead.
       const identityLayerWindow = layer.scalarWindow && !isColormapActive(mat);
-      const eff = this.composeEffective(leaf.path, layer.path, identityLayerWindow);
+      const eff = this.composeEffective(leaf.path, layer.path, identityLayerWindow, ancestors);
       if (!eff) continue;
       // An in-flight LOD fade owns the live opacity uniform: it re-renders
       // `_lodFadeBase × fadeProduct` every frame (scene/lod-fade.ts), so a
@@ -280,7 +500,16 @@ export class LayerApplyEngine {
       // phase 1, points phase 3, lines phase 4); optional-chained for
       // non-Luxar materials.
       mat.updateAbsorption?.(eff.absorption);
-      applyColorAdjustments(mat, eff.gamma, eff.intensity, eff.offset);
+      // A colormap-active leaf windows a SCALAR, and (when the composed window
+      // really is stated on the layer's reference range — see
+      // `composedWindowIsInReferenceBasis`) it is re-expressed in this leaf's
+      // own range, so a multi-level / multi-part layer stops rendering every
+      // leaf on the reference leaf's window (#1753). A direct-colour leaf has
+      // no scalar window at all, so it is not computed there.
+      const scalarWindow = isColormapActive(mat)
+        ? this.leafScalarWindow(leaf, layer, eff, ancestors)
+        : undefined;
+      applyColorAdjustments(mat, eff.gamma, eff.intensity, eff.offset, scalarWindow);
       const prevBlendingMode = mat.userData?.blendingMode as BlendingMode | undefined;
       // An unset ancestry composes to `undefined`; apply this leaf's per-type
       // default (mesh → opaque, emissive → additive) — the same mode the
@@ -414,6 +643,8 @@ export class LayerApplyEngine {
   applyColormap(layer: LayerInfo): boolean {
     const leaves = this.getAffectedDataLeaves(layer.path);
     if (leaves.length === 0) return false;
+    const sceneGraph = this.deps.getSceneGraph();
+    if (!sceneGraph) return false;
 
     let colormapInEffect = false;
     let anyMaterialReached = false;
@@ -450,10 +681,18 @@ export class LayerApplyEngine {
         // range, not a static attr — recover it from the composed
         // gain/offset so it matches what `applyComposed` will push. Falls
         // back to the authored scalar range when no composition exists.
+        //
+        // Routed through the SAME `leafScalarWindow` helper `applyComposed`
+        // uses, per-leaf remap included. The `applyComposed(layer)` at the end
+        // of this method immediately supersedes what is written here, so the
+        // two agreeing is about not leaving a trap for the next reader (#1753).
         if (mat.updateScalarRange) {
-          const eff = this.composeEffective(leaf.path, layer.path);
+          // One walk, shared by the composition and the gate — see the same
+          // note in `applyComposed`.
+          const ancestors = collectAncestorNodes(sceneGraph, leaf.path);
+          const eff = this.composeEffective(leaf.path, layer.path, false, ancestors);
           if (eff) {
-            const { min, max } = computeDisplayRange(eff.intensity, eff.offset);
+            const { min, max } = this.leafScalarWindow(leaf, layer, eff, ancestors);
             mat.updateScalarRange(min, max);
           } else if (layer.scalarDataRange) {
             mat.updateScalarRange(layer.scalarDataRange[0], layer.scalarDataRange[1]);
