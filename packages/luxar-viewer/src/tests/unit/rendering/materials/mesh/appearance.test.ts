@@ -146,9 +146,9 @@ describe('the normal-validity epsilon', () => {
 
 describe('clampShadeExponent — pow(0, y) is undefined for y <= 0', () => {
   it('floors a zero or negative exponent, which the shade term would otherwise hit at the silhouette', () => {
-    // `wrap = saturate(N·V · 0.5 + 0.5)` is EXACTLY 0 for a fragment facing directly
-    // away, so `pow(wrap, 0)` is undefined GLSL — driver-dependent 1, 0 or NaN. The
-    // clamp keeps that fragment defined (pow(0, 0.001) == 0 → shades at `ambient`).
+    // `wrap = saturate(N·L · 0.5 + 0.5)` is EXACTLY 0 for a fragment facing directly
+    // away from the key light, so `pow(wrap, 0)` is undefined GLSL — driver-dependent
+    // 1, 0 or NaN. The clamp keeps that fragment defined (pow(0, 0.001) == 0 → ambient).
     expect(clampShadeExponent(0)).toBeGreaterThan(0);
     expect(clampShadeExponent(-3)).toBeGreaterThan(0);
     expect(clampShadeExponent(0)).toBe(0.001);

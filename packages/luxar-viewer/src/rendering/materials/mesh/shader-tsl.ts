@@ -325,9 +325,9 @@ export function meshWebGPUFactory(
       const storedUsable: TSLNode = nn.greaterThanEqual(MESH_NORMAL_EPS_SQ).and(nn.lessThan(1e30));
       const storedNormal: TSLNode = vNormal
         .mul(max(nn, float(MESH_NORMAL_EPS_SQ)).inverseSqrt())
-        // Flip the STORED normal only. Without it a back fragment has
-        // dot(N, V) < 0, so the wrap term lands in [0, 0.5) and the back side
-        // shades with a dimmed inverted gradient collapsing toward uAmbient —
+        // Flip the STORED normal only. Without it, the stored back normal shades
+        // on the wrong side of its gradient, producing an inverted result that can
+        // collapse toward uAmbient —
         // immediately visible because `double_sided` defaults true and the
         // whole-triangle cull exposes a sliced isosurface's interior faces. The
         // derivative fallback must NOT be flipped: it already faces the viewer, so

@@ -60,11 +60,11 @@ cutout, dissolve.
    NaN shading — and the upper bound matters for the same reason: an INFINITE normal
    component satisfies `>= eps`, and `inf * inversesqrt(inf)` is `inf * 0` = NaN,
    i.e. the guard's own failure mode arriving from the other end.
-3. **The two-sided flip applies to the stored normal only.** Without it a
-   back-facing fragment has `dot(N, V) < 0`, the wrap term lands in `[0, 0.5)`,
-   and the back side shades with a dimmed inverted gradient collapsing toward
-   `uAmbient` — visible immediately, because `double_sided` defaults true and the
-   whole-triangle cull exposes a sliced isosurface's interior faces. The
+3. **The two-sided flip applies to the stored normal only.** Without it the stored
+   back normal shades on the wrong side of its gradient, producing an inverted
+   result that can collapse toward `uAmbient`. This is visible immediately because
+   `double_sided` defaults true and the whole-triangle cull exposes a sliced
+   isosurface's interior faces. The
    derivative normal needs no flip, and flipping it would _reintroduce_ that
    inverted shade exactly at the degenerate vertices the guard exists to rescue.
    So the exemption is per **fragment**, not per variant.

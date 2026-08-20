@@ -144,9 +144,9 @@ export const MESH_VERTEX_SHADER = /* glsl */ `
  *    it slip through and normalize into NaN shading.
  * 3. The **two-sided flip applies to the stored normal only**. `gl_FrontFacing ? N :
  *    -N` exists because `double_sided` defaults true and §5's whole-triangle cull
- *    exposes the interior back faces of a sliced closed isosurface: without the flip
- *    a back fragment has `dot(N, V) < 0`, the wrap term lands in `[0, 0.5)`, and the
- *    back side shades with a dimmed inverted gradient collapsing toward `uAmbient`.
+ *    exposes the interior back faces of a sliced closed isosurface: without the flip,
+ *    the stored back normal shades on the wrong side of its gradient, producing an
+ *    inverted result that can collapse toward `uAmbient`.
  *    The derivative normal needs no flip — `cross(dFdx, dFdy)` is defined by the
  *    rasterized fragment, not by the winding, so it always faces the viewer — and
  *    flipping it would *reintroduce* exactly that inverted shade, worst precisely at

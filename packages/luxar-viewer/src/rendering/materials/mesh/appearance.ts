@@ -50,13 +50,13 @@ export const MESH_LIGHT_DIRECTION = [-0.35, 0.55, 0.75] as const;
  * undefined.
  *
  * The same class of hazard `clampGamma` exists for, and the same `0.001` bound. The
- * shade term computes `pow(wrap, exponent)` where `wrap = saturate(N·V · 0.5 + 0.5)`,
+ * shade term computes `pow(wrap, exponent)` where `wrap = saturate(N·L · 0.5 + 0.5)`,
  * and `wrap` is **exactly 0** for any fragment whose normal faces directly away from
- * the camera (`N·V == -1`, which the two-sided flip leaves reachable on the
- * derivative-fallback path and on any unflipped geometry). GLSL leaves `pow(0, y)`
+ * the key light (`N·L == -1`, which remains reachable for valid surface normals).
+ * GLSL leaves `pow(0, y)`
  * undefined for `y <= 0`, so an author setting `shadeExponent = 0` — a perfectly
  * plausible "I want no gradient" value — produces driver-dependent output (1, 0 or
- * NaN) at precisely the silhouette.
+ * NaN) for those face-away fragments.
  *
  * Clamping keeps that fragment DEFINED and sensible: at `exponent = 0.001`,
  * `pow(0, 0.001)` is 0, so a face-away fragment shades at `ambient` — which is what
