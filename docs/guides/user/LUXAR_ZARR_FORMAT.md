@@ -223,6 +223,13 @@ while the `LuxarZarrCompiler` is open write through to the root `.zattrs`;
 mutating the live mapping after finalization only updates its in-memory cache
 and emits a warning.
 
+The structured root attrs Luxar owns — `scene_dimensions`, `viewer_config`,
+`citation` — each have a dedicated validating API (`Scene.dimensions`,
+`Scene.viewer_config`, `create_scene(citation=...)`). Author them there, not
+through `scene.attrs`: the mapping accepts free-form keys at the root, so
+writing one of those by hand skips its validation and leaves the `Scene`
+object's own copy stale.
+
 ### `citation` (optional root attr)
 
 `citation` credits whoever produced the data the scene shows. It is written to

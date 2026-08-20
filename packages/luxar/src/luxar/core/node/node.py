@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 import numpy as np
 from arbol import aprint
 
-from ...typing_utils.aliases import GroupAttrs, SceneHierarchy, TransformMatrix
+from ...typing_utils.aliases import SceneHierarchy, TransformMatrix
 from ...typing_utils.constants import LEGACY_LOD_SELECTOR
 
 if TYPE_CHECKING:
@@ -68,6 +68,15 @@ class _WriteThroughAttrs(MutableMapping[str, Any]):
     def copy(self) -> Dict[str, Any]:
         """Return a detached dict, matching the former cache-dict API."""
         return self._node._attrs_cache.copy()
+
+    def __repr__(self) -> str:
+        """Render as the dict it wraps.
+
+        ``attrs`` used to BE the cache dict, so a print/notebook/log of it
+        showed the attributes. Without this it shows a bare object address
+        instead, which is a worse debugging experience than what it replaced.
+        """
+        return repr(self._node._attrs_cache)
 
 
 class Node:
@@ -308,8 +317,14 @@ class Node:
 
     # --------------------------------------------------------------------- attrs
     @property
-    def attrs(self) -> GroupAttrs:
+    def attrs(self) -> _WriteThroughAttrs:
         """Get node attributes.
+
+        Annotated with the concrete view rather than the ``GroupAttrs`` alias
+        so its ``copy()`` — kept for parity with the cache dict this replaced —
+        is visible to type checkers. ``_WriteThroughAttrs`` is a
+        ``MutableMapping[str, Any]``, so it still satisfies
+        ``NodeProtocol.attrs``.
 
         Returns:
             Mutable mapping backed by the cache and the zarr store.

@@ -66,7 +66,9 @@ the standard mutable-mapping helpers (`update`, `pop`, `clear`, `setdefault`)
 all use the same persistence path as the node property setters. Recognized
 render attributes are assigned through those setters first, preserving their
 validation and transform normalization; other keys are checked by the writer's
-schema before the cache changes.
+schema before the cache changes. The scene ROOT is the standing exception to
+that last part: it carries its own metadata schema and so accepts free-form
+keys (`title`, `description`, `sample`, ...) — and a typo alongside them.
 
 If the writer has already been finalized (after the `LuxarZarrCompiler` context
 exits, or after `Scene.to_zarr`), the on-disk attribute can no longer be updated

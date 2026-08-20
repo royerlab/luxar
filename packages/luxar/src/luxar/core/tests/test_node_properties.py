@@ -32,6 +32,27 @@ class TestNodeAttrsPersistence:
         assert attrs["description"] == "Authored provenance"
         assert "sample" not in attrs
 
+    def test_child_node_attr_removal_reaches_the_store(self, tmp_path: Path) -> None:
+        """A non-root node takes the other branch of ``delete_group_attr``.
+
+        The scene root resolves to the store itself; a child resolves through
+        ``store[path]``, so removal on a child is a genuinely separate path.
+        """
+        store_path = tmp_path / "test.luxar.zarr"
+
+        with LuxarZarrCompiler(store_path) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            keep = scene.add_group("keep")
+            keep.attrs["visible"] = False
+            drop = scene.add_group("drop")
+            drop.attrs["visible"] = False
+            assert drop.attrs.pop("visible") is False
+            assert "visible" not in drop.attrs
+
+        root = zarr.open_group(str(store_path), mode="r")
+        assert root["keep"].attrs["visible"] is False
+        assert "visible" not in root["drop"].attrs
+
     def test_validating_setters_are_used_for_attrs_assignment(
         self, tmp_path: Path
     ) -> None:
