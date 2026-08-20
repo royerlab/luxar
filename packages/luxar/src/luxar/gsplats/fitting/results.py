@@ -283,17 +283,15 @@ def lift_normalization_stats(
     the input volume's own units on every writer path, matching the single-pass
     fitter where ``image_min`` IS the applied level.
 
-    ``floor`` is that same shifted ``image_min``, NOT ``applied_floor`` alone
-    (#1175): pass 0 runs its own ``_normalize_data`` on the subtracted array and
-    removes the REMAINING ``image_min`` on top, so the level actually taken out
-    is the sum of the two. When the requested level sits below the data minimum
-    the two differ — ``--floor 5`` on a volume whose minimum is 98.2 ships
-    amplitudes relative to 98.2, and recording ``5`` would send a reader adding
-    the floor back 93.2 units wrong. The single-pass fitter's own rule is
-    ``applied_floor = max(resolved_floor, image_min)``; taking the max here
-    mirrors it (the shifted ``image_min`` can only be ``>= applied_floor``,
-    since the subtracted array is clipped at 0), so both paths record the same
-    number for the same volume and the same ``--floor``.
+    ``floor`` is ``applied_floor`` itself, and ``image_min`` lifts back to it.
+    Pass 0 is handed ``norm_range=(0.0, V_original.max())`` (the same zero pin
+    ``fit_tile`` uses on floor-subtracted data), so it no longer re-derives a
+    remaining ``image_min`` from the subtracted array's own minimum: its inner
+    ``image_min`` is 0, and adding ``applied_floor`` back yields
+    ``image_min == floor``. That matches the single-pass fitter, which since
+    #1616 pins ``image_min`` to the resolved floor rather than raising it to the
+    crop's own minimum, so both paths record the same level for the same volume
+    and the same ``--floor``.
     """
     dest["floor"] = applied_floor
     if not passes:
@@ -305,8 +303,6 @@ def lift_normalization_stats(
             dest[key] = float(first[key]) + shift
     if "intensity_range" in first:
         dest["intensity_range"] = float(first["intensity_range"])
-    if applied_floor is not None and "image_min" in dest:
-        dest["floor"] = max(float(applied_floor), float(dest["image_min"]))
 
 
 def stamp_voxels_per_splat(stats: dict[str, Any], n_splats: int) -> None:

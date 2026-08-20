@@ -673,6 +673,7 @@ def dispatch_parallel_tiled(
                 # above the volume's max windows every tile to zero, warned about
                 # per tile rather than silently ignored as it once was.
                 floor=ctx.floor,
+                norm_range=ctx.norm_range,
                 seed_method=ctx.seed_method,
                 downscale=ds_arg,
                 channel=ctx.channel,

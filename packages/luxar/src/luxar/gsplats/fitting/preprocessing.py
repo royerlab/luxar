@@ -1240,8 +1240,8 @@ def resolve_volume_floor(
       with a negative background) is returned like any other: floor
       suppression means "put the background at 0", so a background sitting at
       ``-2`` is shifted up by ``V - (-2)`` — exactly what the non-tiled
-      path's ``image_min = max(resolved_floor, image_min)`` does when
-      ``resolved_floor`` is negative.
+      path does when it pins ``image_min = resolved_floor`` (#1616), for a
+      negative ``resolved_floor`` too.
     - The "floor >= max would erase all signal" guard is applied against the
       **sampled** max: such a level is refused with an ``aprint`` warning and
       ``None`` is returned. For numeric specs the guard runs only with

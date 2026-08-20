@@ -191,12 +191,9 @@ def effective_norm_percentile(fit: FitConfig) -> float:
     """The ``norm_percentile`` every task will inherit from preset/config."""
     from luxar.cli.gsplat_config import load_fit_config
 
+    cfg = load_fit_config(preset=fit.preset, config_path=fit.config)
     try:
-        value = float(
-            load_fit_config(preset=fit.preset, config_path=fit.config).get(
-                "norm_percentile", 0.0
-            )
-        )
+        value = float(cfg.get("norm_percentile", 0.0))
     except (TypeError, ValueError) as exc:
         raise typer.BadParameter(f"config `norm_percentile` is invalid: {exc}") from exc
     if not 0.0 <= value < 50.0:
@@ -687,8 +684,12 @@ def resolve_batch_norm_range(
     channel_shape: Tuple[int, ...] = (),
     spatial_shape: Optional[Tuple[int, ...]] = None,
     sampled_slices: "Optional[List[Tuple[int, int, Any]]]" = None,
-) -> Tuple[float, float]:
-    """Resolve one raw-input normalization range for the whole batch run."""
+) -> "Optional[Tuple[float, float]]":
+    """Resolve one raw-input normalization range for the whole batch run.
+
+    Returns ``None`` when no voxels could be sampled, so every task keeps its own
+    per-crop resolution rather than being handed an invented ``[0, 1]``.
+    """
     import numpy as _np
 
     from luxar.gsplats.fitting.preprocessing import resolve_volume_norm_range
@@ -711,8 +712,11 @@ def resolve_batch_norm_range(
         f"T={n_timepoints}, C={n_channels}"
     ):
         if not sampled:
-            aprint("No sampled voxels; using fallback normalization range [0, 1]")
-            return (0.0, 1.0)
+            aprint(
+                "No sampled voxels; each task resolves its own normalization "
+                "range (no shared range pinned)."
+            )
+            return None
         norm_range = resolve_volume_norm_range(
             _np.concatenate([sample for _, _, sample in sampled]),
             norm_percentile,
@@ -1529,7 +1533,8 @@ def plan_batch(
         spatial_shape=tuple(spatial),
         sampled_slices=sampled_slices,
     )
-    fit_args["norm_range"] = f"{norm_range[0]:.17g},{norm_range[1]:.17g}"
+    if norm_range is not None:
+        fit_args["norm_range"] = f"{norm_range[0]:.17g},{norm_range[1]:.17g}"
 
     if mode == "content":
         import numpy as _np

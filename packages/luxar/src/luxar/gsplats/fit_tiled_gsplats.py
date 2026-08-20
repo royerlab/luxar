@@ -386,6 +386,10 @@ def _ensure_tile_norm_range(
         or hi <= 0.0
         or (applied_floor is not None and hi <= NORM_RANGE_MIN_SPAN)
     ):
+        aprint(
+            f"Supplied normalization range collapses after shifting by the floor "
+            f"({float(applied_floor or 0.0):g}) — tiles fall back to their own scale."
+        )
         fit_kwargs["norm_range"] = None
     else:
         fit_kwargs["norm_range"] = (0.0, hi)

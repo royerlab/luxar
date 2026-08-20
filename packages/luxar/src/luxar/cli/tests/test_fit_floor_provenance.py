@@ -228,10 +228,10 @@ def test_content_fit_records_the_level_every_box_subtracted(
 
 
 def test_the_content_stamp_never_contradicts_the_boxes(tmp_path: Path) -> None:
-    """``_normalize_data`` only ever RAISES a floor to ``max(asked, image_min)``,
-    so asking for 5 on data starting at 100 subtracts 100 and the boxes record
-    ``floor: 100 / image_min: 100``. Stamping the ASKED level over that shipped
-    a store claiming a 5-unit pedestal beside an ``image_min`` of 100."""
+    """A level the boxes already recorded wins over the planned one:
+    ``_stamp_content_floor`` must not overwrite a box-recorded ``floor`` with a
+    different asked level, which would ship a store whose ``floor`` and
+    ``image_min`` contradict each other."""
     from luxar.cli.gsplat_ops.planner import _stamp_content_floor
 
     leaf = _stub_leaf()

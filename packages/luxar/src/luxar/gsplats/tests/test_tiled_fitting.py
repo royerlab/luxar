@@ -868,8 +868,8 @@ class TestTiledFloorHandling:
 
         Floor suppression means "put the background at 0": if the background
         sits at -2, then V - (-2) = V + 2 is correct — and it is what the
-        non-tiled path's ``image_min = max(resolved_floor, image_min)`` does
-        with a negative level. Dropping a negative level here would silently
+        non-tiled path does when it pins ``image_min = resolved_floor`` (#1616),
+        with a negative level too. Dropping a negative level here would silently
         fall back to per-tile hard-min normalization of the windowed tile —
         exactly the seam-producing bug tiled floor resolution exists to fix.
         A constant offset subtracted before windowing also preserves the

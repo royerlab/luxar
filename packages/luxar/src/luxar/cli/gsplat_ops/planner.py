@@ -88,14 +88,13 @@ def _stamp_content_floor(
     :func:`resolve_shared_floor`). There is then no single level the artifact
     could honestly claim, so nothing is written.
 
-    A level the BOXES already agree on wins over the planned one, and is left
-    exactly as it stands. The two differ when a box's own minimum is above the
-    requested level, because ``_normalize_data`` only ever RAISES the floor to
-    ``max(requested, image_min)``: asking for 5 on data that starts at 100
-    subtracts 100, and the boxes' unanimous ``floor: 100 / image_min: 100`` is
-    the truth. Overwriting just ``floor`` there produced a store claiming a
-    5-unit pedestal next to an ``image_min`` of 100 — two keys contradicting
-    each other, and the spec's ``image_min == floor`` invariant broken.
+    A level the BOXES already recorded wins over the planned one, and is left
+    exactly as it stands. Since #1616 the boxes share one ``norm_range`` and pin
+    ``image_min`` to the resolved floor (never raising it to a crop's own
+    minimum), so a recorded level and the planned one now agree; the guard below
+    still refuses to overwrite a differing box-recorded ``floor`` — which would
+    ship a store whose ``floor`` and ``image_min`` contradict each other and
+    break the spec's ``image_min == floor`` invariant.
     """
     if isinstance(floor_forward, str) and floor_forward != "none":
         return
@@ -105,9 +104,9 @@ def _stamp_content_floor(
     if "floor" in target and target["floor"] != floor_level:
         return
     target["floor"] = floor_level
-    # Nothing else carries the bounds here (the boxes normalize against their
-    # own crops and so never agree on them), but drop any that would now
-    # contradict rather than leave the invariant broken. Only meaningful when a
+    # Since #1616 the boxes share one norm_range and pin image_min to the floor,
+    # so they now agree on the bounds; still, drop any image_min that would
+    # contradict `floor` rather than leave the invariant broken. Only meaningful when a
     # floor WAS applied: with none, `image_min` is just the normalization
     # minimum and owes `floor` nothing.
     bound = target.get("image_min")
@@ -265,6 +264,16 @@ def run_content_fit(
         _, fk["floor"] = resolve_shared_floor(
             vol, fk.get("floor", "auto"), guard_numeric=False, verbose=False
         )
+        # The range has the same "resolve once against the whole (t, c) volume,
+        # never the box crop" contract as the floor above; a hand-run worker (or
+        # a manifest planned before the range existed) inherits none, so resolve
+        # it here too rather than falling back to per-crop normalization.
+        if fk.get("norm_range") is None:
+            from luxar.gsplats.fitting.preprocessing import resolve_volume_norm_range
+
+            fk["norm_range"] = resolve_volume_norm_range(
+                vol, float(fk.get("norm_percentile", 0.0)), verbose=False
+            )
         cap = int(fitplan.density.get("saturation_cap", 0)) if fitplan.density else 0
         box_result = _fit_one_box(
             vol, fitplan.boxes[plan_box], int(fitplan.overlap), cap, **fk
