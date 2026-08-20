@@ -509,6 +509,41 @@ class TestDecimateQEM:
         assert boundary >= 2 * (side - 1)
         assert nonmanifold == 0
 
+    def test_an_annulus_does_not_fold_over_itself(self) -> None:
+        radial_count, angular_count = 12, 40
+        radii = np.linspace(0.5, 1.0, radial_count)
+        angles = np.linspace(0.0, 2 * np.pi, angular_count, endpoint=False)
+        vertices = np.array(
+            [
+                (radius * np.cos(angle), radius * np.sin(angle), 0.0)
+                for radius in radii
+                for angle in angles
+            ],
+            np.float32,
+        )
+        faces = []
+        for radial_index in range(radial_count - 1):
+            for angular_index in range(angular_count):
+                next_angle = (angular_index + 1) % angular_count
+                a = radial_index * angular_count + angular_index
+                b = radial_index * angular_count + next_angle
+                c = (radial_index + 1) * angular_count + angular_index
+                d = (radial_index + 1) * angular_count + next_angle
+                faces.extend(((a, b, d), (a, d, c)))
+        result = decimate_qem(
+            vertices, np.asarray(faces, np.uint32), target_vertices=100
+        )
+
+        triangles = result.vertices[result.faces]
+        oriented_area = np.cross(
+            triangles[:, 1] - triangles[:, 0], triangles[:, 2] - triangles[:, 0]
+        )[:, 2]
+        assert len(result.vertices) >= 100
+        assert np.all(oriented_area < 0), "every coarse face must keep the input winding"
+        assert np.abs(oriented_area).sum() == pytest.approx(
+            abs(oriented_area.sum()), rel=1e-6
+        )
+
     def test_nonspatial_columns_are_hard_collapse_barriers(self) -> None:
         vertices, faces = octasphere(1)
         barrier = np.arange(len(vertices), dtype=np.float32)[:, None]

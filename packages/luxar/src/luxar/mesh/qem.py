@@ -15,6 +15,9 @@ from .decimate import (
     _validate_decimate_inputs,
 )
 
+# Dimensionless: large enough to dominate the few face quadrics at a rim vertex.
+_BOUNDARY_QUADRIC_WEIGHT = 1000.0
+
 
 def _face_quadrics(positions: NDArray[np.float64]) -> NDArray[np.float64]:
     """One homogeneous squared-distance quadric per triangle."""
@@ -77,8 +80,8 @@ def _vertex_quadrics(
         quadric[:-1, -1] = offset
         quadric[-1, :-1] = offset
         quadric[-1, -1] = float(point @ projector @ point)
-        out[u] += 1000.0 * quadric
-        out[v] += 1000.0 * quadric
+        out[u] += _BOUNDARY_QUADRIC_WEIGHT * quadric
+        out[v] += _BOUNDARY_QUADRIC_WEIGHT * quadric
     return out
 
 
@@ -357,6 +360,37 @@ def _apply_collapse(
     _rebuild_neighbors(affected, work_faces, active_faces, neighbors, vertex_faces)
 
 
+def _preserves_face_orientation(
+    u: int,
+    v: int,
+    target: NDArray[np.float64],
+    *,
+    positions: NDArray[np.float64],
+    work_faces: NDArray[np.int64],
+    active_faces: NDArray[np.bool_],
+    vertex_faces: list[set[int]],
+) -> bool:
+    """Whether every surviving incident triangle keeps its orientation."""
+    if positions.shape[1] != 3:
+        return True
+    incident = _edge_faces(u, v, vertex_faces, active_faces)
+    changed_faces = {
+        index
+        for index in vertex_faces[u] | vertex_faces[v]
+        if active_faces[index] and index not in incident
+    }
+    for face_index in changed_faces:
+        face = work_faces[face_index]
+        before = positions[face]
+        after = before.copy()
+        after[(face == u) | (face == v)] = target
+        before_normal = np.cross(before[1] - before[0], before[2] - before[0])
+        after_normal = np.cross(after[1] - after[0], after[2] - after[0])
+        if float(before_normal @ after_normal) <= 0.0:
+            return False
+    return True
+
+
 def _collapse_to_target(
     target_vertices: int,
     *,
@@ -396,6 +430,16 @@ def _collapse_to_target(
         if not _link_condition(u, v, work_faces, active_faces, neighbors, vertex_faces):
             continue
         _, target = _edge_target(u, v, positions, quadrics)
+        if not _preserves_face_orientation(
+            u,
+            v,
+            target,
+            positions=positions,
+            work_faces=work_faces,
+            active_faces=active_faces,
+            vertex_faces=vertex_faces,
+        ):
+            continue
         _apply_collapse(
             u,
             v,
