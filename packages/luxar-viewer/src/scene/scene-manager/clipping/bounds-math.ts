@@ -220,10 +220,12 @@ export function minNearForRadius(expandedRadius: number): number {
  *    throughout that band by construction, so at most the sub-1% line residual
  *    described in the next bullet is lost there, and this does not move C.
  *    Auto-framing installs a separate `distance / ZOOM_IN_FACTOR` limit. The
- *    projected-bounds fit can make `distance / diagonal` as small as 0.515 for
- *    a view-axis-elongated box, raising this target constraint to about 1102;
- *    C = 1200 still clears it, with a measured 1.14x near-plane margin at the
- *    most extreme supported zoom.
+ *    projected-bounds fit approaches `distance / diagonal = 0.5` for a
+ *    view-axis-elongated box at the default FOV, raising this target constraint
+ *    to about 1102; C = 1200 clears it there, with a 1.14x near-plane margin at
+ *    the most extreme supported zoom. At wide FOVs the ratio falls further and
+ *    C does not clear this target constraint, as it did not before this change;
+ *    see the `ZOOM_IN_FACTOR` note in `camera-framing.ts`.
  *  - **C ≥ 992, keep everything the floor clips inside the near fade, for all
  *    four geometry types.** Every one of them already suppresses anything
  *    closer than `nearCull = 1e-3 · diagonal` via `perspectiveNearFade`
