@@ -1143,17 +1143,20 @@ class TestGraftedFilePartitionBesideAStoredLadder:
     def test_additive_lod_false_collapses_the_ladder_and_still_splits(
         self, tmp_path: Any, shape: str
     ) -> None:
-        """The gate reads the STORE, so it must honour the kwarg that empties it.
+        """The gate judges the RESOLVED ladder, so the kwarg that empties it wins.
 
         ``additive_lod=False`` is the documented "collapse the ladder" spelling:
         ``resolve_additive_axis_gsplats`` flattens every level to a single sub-LOD
         BEFORE the data door asks this same question, so the store's ladder is not
-        the one that would be written and the conflict does not exist. Judging the
-        store alone refused two calls that work — measured with the skip removed,
-        both parametrisations answer ``Could not add gsplats 'g': partition= is
-        not supported alongside the additive ladder this .gsplats.zarr already
-        carries``, where without the gate entirely they split into 4 and 2 real
-        parts respectively.
+        the one that would be written and the conflict does not exist. Since
+        #1632 that needs no hand-written exemption — ``resolve_additive_rungs``
+        counts ``False`` as one rung like any other spec, and the gate skips a
+        leaf on the count alone. Judging the store instead refuses two calls that
+        work: measured on the pre-#1632 store-only gate with its hand-written
+        ``False`` skip removed, both parametrisations answer ``Could not add
+        gsplats 'g': partition= is not supported alongside the additive ladder
+        this .gsplats.zarr already carries``, where without the gate entirely they
+        split into 4 and 2 real parts respectively.
 
         Both doors, because the gate has two call sites: the matrix-shaped branch
         of ``add_gsplats_from_file`` (the bare leaf) and ``graft_gsplat_node``

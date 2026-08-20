@@ -352,6 +352,54 @@ class TestResolveAdditiveRungs:
             resolve_additive_axis_gsplats(data, spec)
         assert resolve_additive_rungs(spec, stored_rungs=1, n_splats=64) is None
 
+    def test_a_coarser_substitutive_level_is_unknown_where_the_resolver_clamps(
+        self, pyramid
+    ) -> None:
+        """A DELIBERATE DIVERGENCE, pinned as such — not parity.
+
+        Every other case in this class scores the two functions as equals. This
+        one records where they are documented NOT to agree, and it takes a
+        MULTI-substitutive input to see: the rest of the matrix is single-level
+        ``_make_random_gsplat`` data, on which a leaf always IS
+        ``substitutive_levels[0]`` and the divergence cannot arise.
+
+        ``resolve_additive_axis_gsplats`` validates an explicit ``counts:`` list
+        ONCE against the finest level and CLAMPS the coarser ones, so
+        ``[n_finest]`` builds a single rung on every level. The query is asked per
+        LEAF, so a coarser (smaller) level validates the same list against its own
+        N, fails, and answers UNKNOWN where the resolver quietly clamped. Per-leaf
+        strict validation is the right rule at the query's live caller — a grafted
+        leaf really is the resolver's ``substitutive_levels[0]`` — so the cost is
+        paid on the matrix-shaped branch, where it over-refuses a call that would
+        have worked, refusing with an empty store rather than stranding anything.
+        See the ``resolve_additive_rungs`` docstring's "Where that OVER-REFUSES".
+        """
+        laddered = resolve_additive_axis_gsplats(pyramid, {"n_lods": 2})
+        sizes = [
+            laddered.at_substitutive(s).n_splats for s in range(laddered.n_substitutive)
+        ]
+        assert len(sizes) > 1 and sizes[0] == max(sizes)  # finest is index 0
+
+        spec = {"recompute": True, "breakpoints": [sizes[0]]}
+        built = resolve_additive_axis_gsplats(laddered, spec)
+        # The resolver builds ONE rung everywhere: the finest level's cut is its
+        # own N, and every coarser level's is clamped to its own N.
+        assert [
+            built.substitutive_levels[s].n_additive_lods
+            for s in range(built.n_substitutive)
+        ] == [1] * built.n_substitutive
+
+        counts = [
+            resolve_additive_rungs(
+                spec,
+                stored_rungs=laddered.substitutive_levels[s].n_additive_lods,
+                n_splats=sizes[s],
+            )
+            for s in range(laddered.n_substitutive)
+        ]
+        assert counts[0] == 1  # the finest level agrees
+        assert all(c is None for c in counts[1:])  # every coarser one is UNKNOWN
+
 
 # ────────────────────────────────────────────────────────────────────────
 # Partition-bound anchor for add_gsplats_from_data(lod_group=...)

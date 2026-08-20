@@ -336,13 +336,13 @@ def resolve_additive_rungs(
     +---------------------------+-----------------------------------------+
     | ``False``                 | ``1`` (it flattens every level).        |
     +---------------------------+-----------------------------------------+
-    | ``dict(...)``             | ``stored_rungs`` unless the resolver    |
+    | ``dict(...)``             | STRICT ``counts:`` validation first,    |
+    |                           | always (see below); then                |
+    |                           | ``stored_rungs`` unless the resolver    |
     |                           | would compute (``recompute`` or         |
     |                           | ``stored_rungs <= 1``), in which case   |
     |                           | :func:`~luxar.gsplats.lod.additive.additive_rung_count`|
-    |                           | over the same ``n_lods=4`` default and  |
-    |                           | the same STRICT ``counts:`` validation  |
-    |                           | (see below).                            |
+    |                           | over the same ``n_lods=4`` default.     |
     +---------------------------+-----------------------------------------+
     | anything else             | ``None`` — the resolver ``TypeError``s  |
     |                           | on it downstream, at its own site.      |
@@ -355,9 +355,15 @@ def resolve_additive_rungs(
     ``substitutive_levels[0].n_splats_total`` BEFORE its per-level
     :func:`~luxar.gsplats.lod.additive.clamp_counts_breakpoints` loop, so a list
     larger than the data ABORTS ("largest breakpoint N exceeds N=…") rather than
-    shrinking. The clamp is there for the COARSER levels of a multi-level
-    pyramid, whose N the caller cannot know; a single grafted leaf IS that
-    ``substitutive_levels[0]``, i.e. exactly the N the strict validator uses. So
+    shrinking. That validation is UNCONDITIONAL there — it runs on any spec
+    carrying ``breakpoints``, above the per-level "does this level need
+    computing?" test — so it is unconditional here too, above the pass-through
+    return for a stored ladder. A spec the resolver would abort on therefore
+    answers UNKNOWN even when nothing would have been computed, rather than
+    reporting the stored count of a call that cannot run. The clamp is there for
+    the COARSER levels of a multi-level pyramid, whose N the caller cannot know;
+    a single grafted leaf IS that ``substitutive_levels[0]``, i.e. exactly the N
+    the strict validator uses. So
     clamping first would answer a confident, WRONG count precisely where the
     resolver raises — measured, ``{"recompute": True, "breakpoints": [100]}`` on
     a laddered 12-splat leaf clamped to ``[12]``, counted one rung, let the gate
@@ -373,12 +379,33 @@ def resolve_additive_rungs(
     drop a cut equal to ``n``, which ``_resolve_breakpoints`` re-appends. Same
     standing as ``additive_rung_count``'s de-duplication replay.
 
-    Where that is CONSERVATIVE: the matrix-shaped ``kind=lod`` call site asks per
-    leaf, COARSER (smaller) levels included, and there the resolver really would
-    clamp. Those leaves answer UNKNOWN, and the gate falls back to their stored
-    count — never a false refusal, only a more cautious one; and that branch
-    cannot strand anything either way, its data door naming the caller's own
-    node rather than a child.
+    Where that OVER-REFUSES: the matrix-shaped ``kind=lod`` call site asks per
+    leaf, COARSER (smaller) levels included, and there the resolver would CLAMP
+    rather than abort. Those leaves answer UNKNOWN, the gate falls back to their
+    stored count, and a call that would in fact have worked is refused.
+    Measured, on a matrix-shaped ``kind=lod`` store whose coarse leaf holds 16
+    splats (2 rungs) and whose finest holds 64 (2 rungs), with
+    ``add_gsplats_from_file("g", …, partition={"max_elements": 8},
+    additive_lod={"recompute": True, "breakpoints": [64]})``: the gate validates
+    ``[64]`` PER LEAF, so the coarse leaf's 16 answers UNKNOWN, falls back to its
+    stored 2 rungs, and the call is refused with the stored pair — while the SAME
+    call through ``add_gsplats_from_data`` SUCCEEDS, because the resolver
+    validates once against ``substitutive_levels[0]`` (64, passes) and CLAMPS the
+    coarse level to ``[16]``, so both levels really do collapse to one rung.
+
+    It is a false refusal, then — the same class as the ``{"recompute": True,
+    "breakpoints": [1.0]}`` over-refusal the gate already admits — but not a
+    regression: the pre-#1632 store-only gate refused that call too, on the
+    stored ladder alone. And it is safe in DIRECTION: it refuses with an EMPTY
+    store, never strands, and the matrix-shaped branch cannot strand in any case,
+    its data door naming the caller's own node rather than a child.
+
+    Why it is not fixed here: the two call sites genuinely differ. A grafted leaf
+    IS the resolver's ``substitutive_levels[0]``, so per-leaf strict validation is
+    exactly right there; the matrix-shaped branch instead hands the WHOLE tree to
+    ONE resolver call, which validates globally and clamps per level. Telling the
+    two apart would mean threading the branch down into the gate, for a case that
+    is already refused — correctly enough that nothing is written.
 
     ``None`` means UNKNOWN — a spec type this vocabulary does not cover, or a
     ladder :func:`~luxar.gsplats.lod.additive.additive_rung_count` cannot count
@@ -409,8 +436,6 @@ def resolve_additive_rungs(
     if isinstance(spec, dict):
         kwargs = dict(spec)
         recompute = bool(kwargs.pop("recompute", False))
-        if not (recompute or stored_rungs <= 1):
-            return int(stored_rungs)
         from ....gsplats.lod.additive import (
             additive_rung_count,
             clamp_counts_breakpoints,
@@ -423,8 +448,15 @@ def resolve_additive_rungs(
         except ValueError:
             # The resolver ABORTS on this list rather than clamping it — see
             # STRICT FIRST, CLAMP SECOND above. Clamping here instead answers a
-            # confident wrong count and strands the wrapper.
+            # confident wrong count and strands the wrapper. ABOVE the
+            # pass-through return below, because the resolver's own call is
+            # unconditional too: it validates whenever ``breakpoints`` is
+            # present, before its per-level "does this level need computing?"
+            # test, so a list the resolver would abort on is UNKNOWN here even
+            # when the stored ladder would have been passed straight through.
             return None
+        if not (recompute or stored_rungs <= 1):
+            return int(stored_rungs)
         return additive_rung_count(
             int(n_splats),
             kwargs.get("n_lods", 4),
