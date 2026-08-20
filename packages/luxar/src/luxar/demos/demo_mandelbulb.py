@@ -46,6 +46,8 @@ DEMO_META = {
     },
     "caches": [],
     "outputs": ["mandelbulb"],
+    # Procedurally generated: no external dataset, nothing to credit.
+    "citation": None,
 }
 
 import sys

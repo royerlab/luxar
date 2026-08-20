@@ -90,6 +90,8 @@ DEMO_META = {
     },
     "caches": ["quantum_orbitals"],
     "outputs": ["quantum_orbitals"],
+    # Procedurally generated: no external dataset, nothing to credit.
+    "citation": None,
 }
 
 import hashlib

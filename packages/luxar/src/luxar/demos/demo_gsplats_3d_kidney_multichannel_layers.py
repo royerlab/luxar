@@ -138,6 +138,15 @@ DEMO_META = {
     },
     "caches": ["gsplats_kidney"],
     "outputs": ["gsplats_3d_kidney_multichannel_layers"],
+    # scikit-image ships the sample, but the volume was acquired by Genevieve
+    # Buckley (Monash Micro Imaging, 2018) and released CC0 -- both recorded in
+    # skimage's own kidney docstring. The van der Walt PeerJ paper credits the
+    # LIBRARY, so citing it here would attribute someone else's microscopy to
+    # the software that loads it; the header keeps that citation where it belongs.
+    "citation": {
+        "short": "G. Buckley 2018 (scikit-image kidney)",
+        "license": "CC0 1.0",
+    },
 }
 
 import sys
@@ -405,6 +414,7 @@ def create_luxar_scene(gsplats_list, output_path=None):
             scene = compiler.create_scene(
                 dimensions=dims,
                 viewer_config=ViewerConfig(tone_mapping="ACES"),
+                citation=DEMO_META["citation"],
             )
 
             scene.attrs["title"] = "GSplats: 3D Kidney Multi-Channel (Layers panel)"
