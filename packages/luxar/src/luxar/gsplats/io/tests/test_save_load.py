@@ -2707,10 +2707,10 @@ class TestArchiveRootAttrsPeek:
     ) -> None:
         """A format-2 member read under the small budget is NOT measured twice.
 
-        This pins the NAME-based guard, and only that: a ``.zattrs`` IS the
-        attributes mapping, was already bounded by :data:`_MAX_ATTRS_BYTES` as a
-        member, and must reach the caller without a second measurement in a
-        different currency. It does NOT pin what that second measurement would
+        This pins the byte gate, and only that: a ``.zattrs`` IS the attributes
+        mapping, was already bounded by :data:`_MAX_ATTRS_BYTES` as a member, and
+        must reach the caller without a second measurement in a different
+        currency. It does NOT pin what that second measurement would
         have said — the guard short-circuits before any re-serialization runs, so
         this document would survive the recap too (the shipped measure is
         compact: ~1,800,026 B against ~1,800,029 B on disk). The
@@ -2736,7 +2736,7 @@ class TestArchiveRootAttrsPeek:
     def test_a_zattrs_whose_reserialization_inflates_is_not_measured_twice(
         self, tmp_path: Path, fmt: str
     ) -> None:
-        """The name-based guard, on input the COMPACT measure would still refuse.
+        """The byte gate from the FORMAT-2 side, on input the recap would refuse.
 
         Removing the ASCII escaping shrank the gap between "bytes on disk" and
         "bytes of a re-serialization" but did not close it: ``json.loads`` is not
@@ -2744,13 +2744,20 @@ class TestArchiveRootAttrsPeek:
         4-byte literal ``1e10`` comes back as the 13-byte ``10000000000.0``. A
         ``.zattrs`` of such values (a voxel size, an intensity scale, a physical
         extent — ordinary things to author) is therefore admitted as a member at
-        2.8 MB and would measure 4.5 MB if it were re-checked, so the member
+        2.76 MiB and would measure 4.47 MiB if it were re-checked, so the member
         budget's verdict and the re-check's verdict genuinely disagree.
 
-        The guard keys on the document's NAME, so a ``.zattrs`` is never
-        re-measured and the disagreement cannot cost this dataset its appearance.
-        Without it the peek answers ``{}`` — "authored no appearance" — for a
-        file that every earlier version of Luxar read fine.
+        The recap runs only when the bytes READ exceeded
+        :data:`_MAX_ATTRS_BYTES`, so this member is never re-measured and the
+        disagreement cannot cost this dataset its appearance. For a ``.zattrs``
+        that is arithmetic rather than a convention — its member budget IS that
+        number, so the recap condition is unreachable on this branch whatever the
+        document happens to contain; this test pins the rule from the format-2
+        side, its ``zarr.json`` sibling
+        (``test_a_node_document_inside_the_attrs_budget_is_not_re_capped``) pins
+        it where the name-keyed rule and the byte-keyed rule actually differ.
+        Without the gate the peek answers ``{}`` — "authored no appearance" — for
+        a file that every earlier version of Luxar read fine.
         """
         from luxar.gsplats.io._archive import _MAX_ATTRS_BYTES, read_archive_root_attrs
 
@@ -2778,9 +2785,9 @@ class TestArchiveRootAttrsPeek:
         an inline ``consolidated_metadata`` holding one valid group record per
         child. That is what makes a format-3 root document grow with the tree
         while its attributes stay a handful of scalars, and it is why the one
-        4 MiB budget that used to cover both was the wrong ruler (measured ~8 KB
-        of root ``zarr.json`` per part of a real ``gsplat partition``, so ~500
-        parts crossed it).
+        4 MiB budget that used to cover both was the wrong ruler (measured
+        ~8-10 KB of root ``zarr.json`` per part of a real ``gsplat partition``,
+        so ~400-500 parts crossed it).
 
         Synthesised rather than produced by a real ``gsplat partition``: the
         hundreds of parts needed to cross 4 MiB take far too long to fit for a
@@ -2819,7 +2826,7 @@ class TestArchiveRootAttrsPeek:
         literally IS the attributes mapping. A format-3 ``zarr.json`` at a
         CONSOLIDATED root — which every Luxar store is — carries the whole
         consolidated index beside attributes that are still a handful of scalars,
-        so the document grows with the tree and crosses 4 MiB at roughly 500
+        so the document grows with the tree and crosses 4 MiB at roughly 400-500
         parts (routine for a ``batch-fit merge``). The peek then returned ``{}``,
         which reads as "this dataset authored no appearance", so every rewriting
         command (``gsplat lod``, ``additive``, ``flatten``, ``decimate``,
@@ -2898,6 +2905,10 @@ class TestArchiveRootAttrsPeek:
         admitted by the document budget, refused on the size of what it unwraps
         to. Asserting only "below 128 MiB" would pass with the post-parse cap
         deleted, for the wrong reason.
+
+        Being over :data:`_MAX_ATTRS_BYTES` is also what puts this member on the
+        re-cap branch at all, since the re-cap fires on the bytes READ rather
+        than on the document's name — so the same assertion pins both halves.
         """
         from luxar.gsplats.io._archive import (
             _MAX_ATTRS_BYTES,
@@ -2933,7 +2944,10 @@ class TestArchiveRootAttrsPeek:
         the re-cap runs at all, so this is the only place the choice can be
         pinned — and it is a live hazard rather than a theoretical one, because a
         node document's ``attributes`` may legitimately carry non-ASCII text
-        (a channel name, a label, a note).
+        (a channel name, a label, a note). "Only branch" is a fact about the
+        bytes, not the name: the re-cap fires when a member's own bytes exceeded
+        :data:`_MAX_ATTRS_BYTES`, which only a ``zarr.json`` read under the
+        raised budget ever does.
 
         ``json.dumps`` defaults to ``ensure_ascii=True``, which turns one ``é``
         into six ASCII bytes: the attributes here are ~1.7 MiB and comfortably
@@ -2975,44 +2989,46 @@ class TestArchiveRootAttrsPeek:
         assert read_archive_root_attrs(archive) == authored
 
     @pytest.mark.parametrize("fmt", ["zip", "tar.gz"])
-    def test_the_recap_branch_follows_the_name_not_the_budget_values(
-        self, tmp_path: Path, fmt: str, monkeypatch: pytest.MonkeyPatch
+    def test_a_node_document_inside_the_attrs_budget_is_not_re_capped(
+        self, tmp_path: Path, fmt: str
     ) -> None:
-        """A ``zarr.json`` is re-capped even when its budget is the SMALLER one.
+        """A ``zarr.json`` the OLD single 4 MiB budget read is not newly refused.
 
-        The two budgets are only *usually* ordered document > attributes; that
-        ordering is a fact about two constants, not about what a member IS. Here
-        they are inverted, which is exactly what a retune (or the sibling
-        ``test_oversized_node_document_refused``) can do — and a re-cap branch
-        written as ``cap > _MAX_ATTRS_BYTES`` then silently switches off for the
-        one document kind it exists to bound, handing the caller an unbounded
-        attributes mapping out of a raised-budget read.
+        The re-cap is keyed on the bytes actually READ (``len(raw) >
+        _MAX_ATTRS_BYTES``), not on the document's NAME, and this input is what
+        separates the two rules. It is a format-3 node document, so a name-keyed
+        re-cap runs on it — but it never used the raised document budget at all,
+        so re-capping it can only take away an answer every earlier version of
+        Luxar gave.
 
-        Reachable without any ASCII trickery: ``json.loads`` is not
-        round-trip-preserving, so a document of ``1e10`` literals is ~76 KB as
-        written and its attributes measure ~131 KB re-serialized — admitted by
-        the document budget, refused by the attrs one.
+        Reachable without any ASCII trickery, because ``json.loads`` is not
+        round-trip-length-preserving: the 4-byte literal ``1e10`` comes back as
+        the 13-byte ``10000000000.0``, so ~190,000 such values are 2.61 MiB as
+        written and measure 4.24 MiB re-serialized (compactly — the measure the
+        recap uses). A store authoring that many numeric scalars is a foreign
+        producer's, since Python's own ``json.dumps`` never emits ``1e10``, but
+        the peek's whole job is to read what is on disk.
+
+        Under the name-keyed rule this returned ``{}`` plus a ``UserWarning`` —
+        a silent-appearance-loss regression of exactly the class #1600 exists to
+        remove.
         """
-        from luxar.gsplats.io import _archive
+        from luxar.gsplats.io._archive import _MAX_ATTRS_BYTES, read_archive_root_attrs
 
-        monkeypatch.setattr(_archive, "_MAX_NODE_DOC_BYTES", 100_000)
-        monkeypatch.setattr(_archive, "_MAX_ATTRS_BYTES", 120_000)
-
-        attrs_src = "{" + ",".join(f'"k{i}":1e10' for i in range(6000)) + "}"
+        attrs_src = "{" + ",".join(f'"k{i}":1e10' for i in range(190_000)) + "}"
         raw = '{"zarr_format":3,"node_type":"group","attributes":' + attrs_src + "}"
+        attrs = json.loads(attrs_src)
         measured = len(
-            json.dumps(
-                json.loads(attrs_src), ensure_ascii=False, separators=(",", ":")
-            ).encode("utf-8")
+            json.dumps(attrs, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         )
-        # Not vacuous: the document is admitted by its (smaller) budget, and its
-        # attributes are over the (larger) attrs budget once re-serialized.
-        assert len(raw.encode("utf-8")) < 100_000 < 120_000 < measured
+        # Not vacuous: the document as read is INSIDE the small attrs budget
+        # (so the raised budget was never used), while its attributes are
+        # OUTSIDE it once re-serialized (so a re-cap here would fire).
+        assert len(raw.encode("utf-8")) < _MAX_ATTRS_BYTES < measured
 
-        archive = tmp_path / f"inverted_budgets.gsplats.zarr.{fmt}"
+        archive = tmp_path / f"inside_attrs_budget.gsplats.zarr.{fmt}"
         self._write(archive, fmt, [("x.gsplats.zarr/zarr.json", raw)])
-        with pytest.warns(UserWarning, match="attributes unwrapped from"):
-            assert _archive.read_archive_root_attrs(archive) == {}
+        assert read_archive_root_attrs(archive) == attrs
 
 
 def test_write_gsplats_tree_stamps_child_index_on_children() -> None:
