@@ -11,20 +11,37 @@ from luxar.gsplats.batch.manifest import BatchManifest
 from luxar.io.ome_zarr import classify_axis_labels
 
 
-def _preprocessed_axes(manifest: BatchManifest) -> str:
-    """Return the explicit axes of the canonical preprocess store."""
-    if manifest.axes:
-        source_axes = [label.strip() for label in manifest.axes.split(",")]
-        _, _, spatial_indices = classify_axis_labels(source_axes)
-        spatial_axes = [source_axes[index] for index in spatial_indices]
-    else:
-        spatial_rank = len(manifest.spatial_shape)
-        canonical_spatial = ("z", "y", "x")
-        trailing_axes = (
-            list(canonical_spatial[-min(spatial_rank, 3) :]) if spatial_rank else []
-        )
-        spatial_axes = ["x"] * max(0, spatial_rank - 3) + trailing_axes
+def _preprocessed_axes(manifest: BatchManifest) -> Optional[str]:
+    """Return explicit axes for the canonical store when the source had them."""
+    if manifest.axes is None:
+        return None
+    source_axes = [label.strip() for label in manifest.axes.split(",")]
+    _, _, spatial_indices = classify_axis_labels(source_axes)
+    spatial_axes = [source_axes[index] for index in spatial_indices]
     return ",".join(["t", "c", *spatial_axes])
+
+
+def _retarget_preprocessed_fit_command(
+    fit_cmd_parts: list[str], manifest: BatchManifest, denoised_zarr_path: str
+) -> None:
+    """Retarget a fit command from the source to the canonical denoised store."""
+    fit_cmd_parts[0] = (
+        f'luxar gsplat fit {shlex.quote(denoised_zarr_path)} "${{STAGING}}"'
+    )
+    canonical_axes = _preprocessed_axes(manifest)
+    array_key_replaced = False
+    for index, part in enumerate(fit_cmd_parts):
+        if canonical_axes is not None and part.strip().startswith("--axes "):
+            fit_cmd_parts[index] = f"    --axes {shlex.quote(canonical_axes)}"
+        elif part.strip().startswith("--array-key "):
+            fit_cmd_parts[index] = "    --array-key data"
+            array_key_replaced = True
+        elif part.strip() == "--channel $C":
+            fit_cmd_parts[index] = "    --channel $C_IDX"
+        elif part.strip() == "--timepoint $T":
+            fit_cmd_parts[index] = "    --timepoint $T_IDX"
+    if not array_key_replaced:
+        fit_cmd_parts.append("    --array-key data")
 
 
 def _validated_output_dir(output_dir: str) -> str:
@@ -226,30 +243,9 @@ def generate_fit_sbatch(
         and manifest.denoise_mode == "preprocess"
         and manifest.denoised_zarr_path
     ):
-        # Replace the input path in the command
-        fit_cmd_parts[0] = (
-            f'luxar gsplat fit {shlex.quote(manifest.denoised_zarr_path)} "${{STAGING}}"'
+        _retarget_preprocessed_fit_command(
+            fit_cmd_parts, manifest, manifest.denoised_zarr_path
         )
-        # Replace the source layout with this store's canonical layout.
-        canonical_axes = shlex.quote(_preprocessed_axes(manifest))
-        axes_replaced = False
-        # Replace or add --array-key data to point at the denoised dataset
-        array_key_replaced = False
-        for i, part in enumerate(fit_cmd_parts):
-            if part.strip().startswith("--axes "):
-                fit_cmd_parts[i] = f"    --axes {canonical_axes}"
-                axes_replaced = True
-            elif part.strip().startswith("--array-key "):
-                fit_cmd_parts[i] = "    --array-key data"
-                array_key_replaced = True
-            elif part.strip() == "--channel $C":
-                fit_cmd_parts[i] = "    --channel $C_IDX"
-            elif part.strip() == "--timepoint $T":
-                fit_cmd_parts[i] = "    --timepoint $T_IDX"
-        if not axes_replaced:
-            fit_cmd_parts.append(f"    --axes {canonical_axes}")
-        if not array_key_replaced:
-            fit_cmd_parts.append("    --array-key data")
 
     fit_cmd = " \\\n    ".join(fit_cmd_parts)
 
