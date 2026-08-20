@@ -282,6 +282,12 @@ def compute_vertex_chunk_bounds(
     :func:`_store_outward_f32_array`), so a stored bound is never tighter than
     the footprint at any coordinate magnitude.
 
+    KNOWN SLACK: that holds for the AUTHORED vertices. Under the default AUTO
+    encoding the vertices are stored as per-axis uint16 fixed point, so a DECODED
+    vertex can sit up to half a quantum (``extent/131070``) outside its chunk's
+    bound on a non-gridded axis — see the note on
+    :func:`~luxar.io._ordering.points.compute_chunk_bounds_points`.
+
     Args:
         vertices: Vertex positions (already sorted), shape (V, D)
         chunk_size: Number of vertices per chunk
@@ -306,8 +312,8 @@ def compute_vertex_chunk_bounds(
 
         # Reduce per DIMENSION, not with a single ``min(axis=0)``: numpy's
         # outer-axis reduce over a 3-or-4-element inner row is several times
-        # slower than one contiguous reduce per column, and these run over every
-        # chunk of every dataset. Only the outward STORE is vectorised.
+        # slower than one reduce per column, and these run over every chunk of
+        # every dataset. Only the outward STORE is vectorised.
         mins = np.empty(n_dims, dtype=np.float64)
         maxs = np.empty(n_dims, dtype=np.float64)
         for d in range(n_dims):
@@ -346,6 +352,12 @@ def compute_segment_chunk_bounds(
     stored bound is never tighter than the footprint at any coordinate
     magnitude — not only where a small width happens to survive float32
     arithmetic and a round-to-nearest store.
+
+    KNOWN SLACK: that holds for the AUTHORED vertices. Under the default AUTO
+    encoding the vertices are stored as per-axis uint16 fixed point, so a DECODED
+    endpoint can sit up to half a quantum (``extent/131070``) outside its chunk's
+    bound on a non-gridded axis — see the note on
+    :func:`~luxar.io._ordering.points.compute_chunk_bounds_points`.
 
     IMPORTANT: widths must be a full (V,) array. Broadcast widths should be
     expanded with np.full(V, width_value) before calling this function.

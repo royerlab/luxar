@@ -15,13 +15,15 @@ suites only pin at hand-picked values:
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 from hypothesis.extra import numpy as hnp
 
-from luxar.io._ordering.bounds import _store_outward_f32_array
+from luxar.io._ordering.bounds import _store_outward_f32, _store_outward_f32_array
 from luxar.io.ordering import (
     _BARRIER_BOUND_EPS,
     compute_chunk_bounds_gsplats,
@@ -128,7 +130,8 @@ def test_hilbert_numba_numpy_parity() -> None:
 # --- Key Invariant 6: never tighter than the footprint, at ANY magnitude ------
 # The per-geometry suites pin this with hand-picked examples at |x| = 2e7 only,
 # which is one point on a curve whose whole difficulty is scale. Sweep the
-# float32 regimes instead: sub-ULP-of-1 coordinates, the 2**23/2**24 boundaries
+# float32 regimes instead: near-zero coordinates (only 0.0 is below the float32
+# ULP of 1.0, 1.19e-7; 1e-6 is just above it), the 2**23/2**24 boundaries
 # where a float32 ULP crosses 1.0 and then 2.0, and on out to the float32 max.
 # A handful of elements per case keeps the whole sweep well under a second.
 
@@ -340,9 +343,11 @@ def test_out_of_range_slice_dims_raise_in_the_gsplat_sort_too() -> None:
     ``sort_splats_spatial`` and ``compute_chunk_bounds_gsplats``. A positive
     out-of-range index already died inside ``_compound_sort``
     (``coords[:, slice_dims]`` → ``IndexError``), but a NEGATIVE one used to sort
-    silently — grouping by the LAST center column — and get written into the
-    store's ``slice_dims`` attr before the bounds builder finally raised. Both
-    now fail on the same ``ValueError``, before any splat is reordered.
+    silently: ``ordering_dims`` complements over ``range(ndim)``, so the last
+    column was lexsorted as a barrier AND spatially curve-coded, and the raw
+    ``-1`` was then persisted into the store's ``slice_dims`` attr (which the
+    viewer rejects wholesale). See :func:`_normalise_slice_dims` for the full
+    argument. Both now fail on the same ``ValueError``, before any splat moves.
     """
     centers = np.zeros((4, 3), dtype=np.float32)
     for bad in ([7], [-1]):
@@ -364,3 +369,63 @@ def test_outward_store_array_rejects_float32_input() -> None:
         _store_outward_f32_array(lo, hi)
     with pytest.raises(TypeError, match="requires float64 bounds"):
         _store_outward_f32_array(lo.astype(np.float64), hi)
+
+
+def test_outward_store_scalar_contains_and_matches_the_array_form() -> None:
+    """The scalar store (used by Points) obeys the same contract as the array one.
+
+    Only the array form's dtype guard was pinned; the scalar form — the one every
+    Points chunk goes through — had no direct test at all. Both halves of the
+    contract are asserted here: the stored float32 interval CONTAINS the float64
+    one at every magnitude, and the two implementations agree bit for bit (they
+    are the same rule written twice, so they can drift).
+    """
+    intervals = [
+        (0.0, 0.0),
+        (-1e-6, 1e-6),
+        (0.9999999, 1.0000001),
+        (-0.5, 100.5),
+        (2.0**23 - 0.5, 2.0**23 + 0.5),
+        (2.0**24 - 1e-3, 2.0**24 + 1e-3),
+        (1e9 - 0.1, 1e9 + 0.1),
+        (-3.0e38, 3.0e38),
+    ]
+    for lo, hi in intervals:
+        lo32, hi32 = _store_outward_f32(lo, hi)
+        assert float(lo32) <= lo, (lo, hi, lo32)
+        assert float(hi32) >= hi, (lo, hi, hi32)
+
+    lo_arr = np.array([lo for lo, _ in intervals], dtype=np.float64)
+    hi_arr = np.array([hi for _, hi in intervals], dtype=np.float64)
+    lo_vec, hi_vec = _store_outward_f32_array(lo_arr, hi_arr)
+    for i, (lo, hi) in enumerate(intervals):
+        lo32, hi32 = _store_outward_f32(lo, hi)
+        assert lo_vec[i] == lo32, (lo, hi)
+        assert hi_vec[i] == hi32, (lo, hi)
+
+
+def test_outward_store_is_silent_past_the_float32_ceiling() -> None:
+    """An out-of-float32-range bound must not warn, in either form.
+
+    ``np.float32(1e39)`` overflows to ``inf`` with a ``RuntimeWarning``. ``inf``
+    is the RIGHT answer for a bound (it over-fetches; it can never drop a chunk),
+    but several io tests wrap a whole compile in ``-W error``, where that warning
+    would abort the save. Both helpers suppress it locally.
+    """
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        lo32, hi32 = _store_outward_f32(-1e39, 1e39)
+        lo_vec, hi_vec = _store_outward_f32_array(
+            np.array([-1e39, 1e300], dtype=np.float64),
+            np.array([1e39, 1e300], dtype=np.float64),
+        )
+
+    # Containment still holds: the low end saturates to -inf, the high to +inf.
+    assert float(lo32) == -np.inf
+    assert float(hi32) == np.inf
+    assert lo_vec[0] == -np.float32(np.inf)
+    assert hi_vec[0] == np.float32(np.inf)
+    # A finite float64 interval far above the float32 max: the low end must still
+    # land at or below it (the largest finite float32), the high end at +inf.
+    assert float(lo_vec[1]) <= 1e300
+    assert float(hi_vec[1]) == np.inf

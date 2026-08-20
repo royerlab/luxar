@@ -58,6 +58,16 @@ def compute_chunk_bounds_points(
     bounds are computed, so that half of the claim holds only up to that
     sub-quantum slack.)
 
+    KNOWN SLACK (larger than the radii one above): these bounds are computed from
+    the AUTHORED positions, but under the default AUTO encoding the positions
+    themselves are stored as per-axis uint16 fixed point (the COORDINATE path in
+    ``luxar.encoding._encoders.perchannel``), so a DECODED position can land up to half a quantum (``extent/131070``)
+    outside its own chunk's stored bound on a non-gridded axis — 7.6e-3 at an
+    extent of 1000, well above the float32 ULP the outward store closes. A
+    GRIDDED axis is snapped to round-trip exactly, so ordinary integer
+    time/channel axes are safe; gsplats additionally escalate offending centers
+    to float32, and Points has no equivalent rail (issue #1655).
+
     ``radii=None`` does not mean "no extent" — a points node that stores no radii
     array is drawn with the renderer's default radius, so the bounds are expanded
     by ``DEFAULT_POINT_RADIUS`` (:mod:`luxar.typing_utils.constants`), exactly as

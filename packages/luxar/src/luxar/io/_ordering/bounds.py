@@ -41,23 +41,43 @@ def _normalise_slice_dims(slice_dims: Optional[Sequence[int]], ndim: int) -> set
 
     One sanitiser for all four bound builders, which otherwise diverged two ways
     behind this shared module. ``gsplats.py`` coerced with
-    ``set(int(d) for d in slice_dims)`` and then INDEXED ``mins[d]``: a positive
-    out-of-range index blew up with ``IndexError`` deep in the loop, but a
-    NEGATIVE one resolved to the LAST dim — the σ-expansion skip (a ``d in
-    discrete_dims`` test over ``range(ndim)``) never matched it, so that dim was
-    σ-expanded in the reduce and then had its bound OVERWRITTEN with the tight
-    barrier interval, leaving a genuinely spatial axis with no extent at all.
-    ``points.py`` and both ``lines.py`` builders used the membership test on both
-    sides, so out-of-range AND negative entries were ignored outright.
+    ``set(int(d) for d in slice_dims)`` and then INDEXED ``mins[d]``, so a
+    positive out-of-range index blew up with ``IndexError`` deep in the loop;
+    ``points.py`` and both ``lines.py`` builders used a membership test on both
+    sides, so out-of-range entries were ignored outright.
 
-    An out-of-range index is an ERROR rather than an ignored entry: it means a
-    categorical axis silently loses its barrier treatment and gets the geometric
-    extent expansion instead, which bleeds a chunk into its neighbour's
-    category — a wrong answer with nothing to notice. The gsplats negative-index
-    case is the sharpest argument for raising: it stored a bound that was neither
-    the barrier's nor the spatial one, dropping splats at the edge of the last
-    axis. No in-tree caller can produce a bad index (they all build the list by
-    ``enumerate``-ing the actual dims), so this only fires on a genuinely new bug.
+    A POSITIVE out-of-range index is an ERROR rather than an ignored entry: it
+    means a categorical axis silently loses its barrier treatment and gets the
+    geometric extent expansion instead, which bleeds a chunk into its
+    neighbour's category — a wrong answer with nothing to notice.
+
+    A NEGATIVE index is rejected too, even though Python resolves it. It was
+    NOT a bounds bug: the old gsplats builder σ-expanded the last column and then
+    overwrote ``mins[-1]``/``maxs[-1]`` with the tight barrier interval, so its
+    output for ``[-1]`` was bitwise identical to ``[ndim - 1]``. It is rejected
+    because nothing ELSE in the pipeline resolves it that way:
+
+    * ``_compound_sort`` puts the last column in BOTH sets. ``ordering_dims``
+      complements over ``range(ndim)``, which never contains ``-1``, so the
+      categorical axis is lexsorted as a barrier AND Morton/Hilbert-coded —
+      wasted curve bits, and emitted metadata whose ``ordering_dims ∪
+      slice_dims`` does not match ``ndim`` — malformed enough that the viewer's
+      points chunk-index loader logs a "Dimension coverage mismatch" for that
+      exact shape (``data/points/chunk-index-loader.ts``; the gsplats loader has
+      no such check, so on gsplats it passes unremarked).
+    * The raw ``-1`` is persisted into the store's ``slice_dims`` attr, and the
+      viewer's ``readBarrierDims``
+      (``data/gsplats/gsplats-spatial-index-loader.ts``) rejects the attr
+      WHOLESALE on any entry outside ``[0, ndim)``, falling back to the scene
+      dimensions' ``discrete`` flags
+      (``data/loaders/spatial-query/tolerance-computer.ts``) — so the node
+      silently loses its authoritative barrier classification.
+
+    No in-tree caller can produce a bad index today (they either ``enumerate``
+    the actual dims or complement over ``range(ndim)``; the batch merge
+    orchestrator derives its single entry from the manifest's own axis count),
+    but ``GSplatData.save(barrier_dims=...)`` is public API a user can drive
+    directly, so this is a real door rather than dead code.
 
     Args:
         slice_dims: Barrier/discrete column indices, or ``None``
@@ -106,13 +126,19 @@ def _store_outward_f32(lo: float, hi: float) -> tuple[np.float32, np.float32]:
 
     Callers must accumulate the interval in float64 first — an extent already
     lost to float32 arithmetic before the store is invisible here.
+
+    ``over='ignore'``: past the float32 ceiling the cast overflows to ``±inf``,
+    which is the RIGHT answer for a bound (an infinite bound over-fetches, it
+    never drops a chunk), but the ``RuntimeWarning`` numpy raises for it is fatal
+    under the ``-W error`` blocks several io tests wrap whole compiles in.
     """
-    lo32 = np.float32(lo)
-    if float(lo32) > lo:
-        lo32 = np.nextafter(lo32, np.float32(-np.inf))
-    hi32 = np.float32(hi)
-    if float(hi32) < hi:
-        hi32 = np.nextafter(hi32, np.float32(np.inf))
+    with np.errstate(over="ignore"):
+        lo32 = np.float32(lo)
+        if float(lo32) > lo:
+            lo32 = np.nextafter(lo32, np.float32(-np.inf))
+        hi32 = np.float32(hi)
+        if float(hi32) < hi:
+            hi32 = np.nextafter(hi32, np.float32(np.inf))
     return lo32, hi32
 
 
@@ -122,8 +148,10 @@ def _store_outward_f32_array(
     """Vectorised :func:`_store_outward_f32` over a whole chunk's dimensions.
 
     Same rule, applied to an ALREADY-REDUCED ``(d,)`` vector: the cast, the
-    comparison and the conditional ``nextafter`` step are four short NumPy passes
-    over d elements instead of a Python call per dimension. This is only about
+    comparison and the (unconditionally evaluated, then selected) ``nextafter``
+    step are a handful of short NumPy passes over d elements instead of a Python
+    call per dimension — measured faster from d=3 up (11.9 µs vs 16.2 µs at d=3,
+    13.4 vs 68.9 at d=16). This is only about
     the outward-store BRANCHING, and is NOT a reason to vectorise the min/max
     REDUCE that produces ``lo``/``hi`` as well: both lines builders reduce per
     dimension on purpose, because NumPy's outer-axis reduce over a 3-or-4-element
@@ -155,16 +183,21 @@ def _store_outward_f32_array(
             f"lo={lo.dtype}, hi={hi.dtype}): accumulate the interval in float64 "
             "first, or the pad this helper exists to preserve is already gone."
         )
-    lo32 = lo.astype(np.float32)
-    hi32 = hi.astype(np.float32)
-    lo32 = np.where(
-        lo32.astype(np.float64) > lo,
-        np.nextafter(lo32, np.float32(-np.inf)),
-        lo32,
-    )
-    hi32 = np.where(
-        hi32.astype(np.float64) < hi,
-        np.nextafter(hi32, np.float32(np.inf)),
-        hi32,
-    )
+    # over='ignore' for the same reason as the scalar form: past the float32
+    # ceiling the cast overflows to ±inf, which is the right answer for a bound
+    # (over-fetch, never a dropped chunk), but its RuntimeWarning is fatal under
+    # the ``-W error`` blocks several io tests wrap whole compiles in.
+    with np.errstate(over="ignore"):
+        lo32 = lo.astype(np.float32)
+        hi32 = hi.astype(np.float32)
+        lo32 = np.where(
+            lo32.astype(np.float64) > lo,
+            np.nextafter(lo32, np.float32(-np.inf)),
+            lo32,
+        )
+        hi32 = np.where(
+            hi32.astype(np.float64) < hi,
+            np.nextafter(hi32, np.float32(np.inf)),
+            hi32,
+        )
     return lo32, hi32

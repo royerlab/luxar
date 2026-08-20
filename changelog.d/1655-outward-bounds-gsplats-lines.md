@@ -21,8 +21,9 @@ now share one `slice_dims` sanitiser that raises on an index outside `[0, ndim)`
 rather than each ignoring or crashing on it in its own way (an unresolvable
 barrier index would silently cost that categorical axis its tight bounds).
 `sort_splats_spatial` runs the same check, so a bad index fails before any splat
-is reordered rather than after a negative one has already been written into the
-store's `slice_dims` attr.
+is reordered. A negative index in particular is a sort-side bug in its own right
+(it lands in the barrier set AND in `ordering_dims`) and would be persisted raw
+into the store's `slice_dims` attr, which the viewer then rejects wholesale.
 
 Two consequences worth knowing. First, the effective barrier pad is now
 `max(1e-3, one float32 ULP at |x|)`, so a unit-step categorical axis with large
@@ -36,7 +37,8 @@ invalidate on their own. Not every array moves: a padless `vertex_chunk_bounds`
 with no barrier dim at near-origin coordinates comes out byte-identical, because
 the outward store is a no-op when the cast did not move the bound (the branch's
 own test pins that). `segment_chunk_bounds` and the gsplats `chunk_bounds` carry
-a pad on every spatial axis, so those do change. Existing stores are not
+a pad on every spatial axis, so those generally do change (near the origin, on
+exactly-representable data, even a padded array can come out byte-identical). Existing stores are not
 rewritten and keep their old, occasionally-too-tight bounds.
 
 The write side is also where the reader-side documentation had drifted: the

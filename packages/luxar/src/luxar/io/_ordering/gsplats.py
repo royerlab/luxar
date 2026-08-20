@@ -42,9 +42,9 @@ def sort_splats_spatial(
             :func:`_normalise_slice_dims`) — the SAME check
             :func:`compute_chunk_bounds_gsplats` applies, so the failure lands at
             the first door. ``apply_gsplat_spatial_ordering`` hands the same list
-            to both: without this, a negative index would sort silently, be
-            written into the store's ``slice_dims`` attr, and only then raise
-            from the bounds builder.
+            to both, and a negative index is a genuine sort-side bug of its own
+            (it lands in the barrier set AND in ``ordering_dims``) — see
+            :func:`_normalise_slice_dims` for the full argument.
 
     Returns:
         sort_indices: Indices to reorder splats
@@ -80,6 +80,16 @@ def compute_chunk_bounds_gsplats(
     OUTWARD rounding (see :func:`_store_outward_f32_array`), so a stored bound is
     never tighter than the footprint at any coordinate magnitude — not only where
     a small σ happens to survive float32 arithmetic and a round-to-nearest store.
+
+    That guarantee is against the AUTHORED centers. Centers are themselves stored
+    as per-axis uint16 fixed point under the default AUTO encoding, so a decoded
+    center could in principle sit half a quantum outside its chunk's bound —
+    except that gsplats have a rail for exactly that:
+    ``_compiler/gsplat_assembly.py::_axis_center_offender`` escalates the centers
+    array to float32 when half an axis's grid step exceeds the per-splat marginal
+    σ for more than 0.1% of the splats, and a gridded (stacked time/channel) axis
+    is snapped to store exactly. Points and Lines have no equivalent rail — see
+    the note on :func:`~luxar.io._ordering.points.compute_chunk_bounds_points`.
 
     Args:
         centers: Splat centers (already sorted), shape (N, d)
