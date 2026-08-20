@@ -327,7 +327,12 @@ class ArrayDecoder:
                 f"{name} requires equal-length 1-D col_lo/col_hi, "
                 f"got shapes {lo.shape} and {hi.shape}"
             )
-        cols = data.shape[-1] if data.ndim >= 1 else 1
+        # A 1-D array is ONE column of N values, not one row of N channels —
+        # that is how the encoder reduces it (``_quantize_per_column`` /
+        # ``_encode_coordinate`` both take ``min/max`` over axis 0), so reading
+        # its channel count off ``shape[-1]`` rejected every 1-D array the
+        # writer can produce.
+        cols = data.shape[-1] if data.ndim >= 2 else 1
         if lo.shape[0] != cols:
             raise ValueError(
                 f"{name} expects {cols} per-column scales, got {lo.shape[0]}"

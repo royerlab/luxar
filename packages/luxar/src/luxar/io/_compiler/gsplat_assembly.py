@@ -24,6 +24,7 @@ from luxar._zarr_compat import create_array
 from ...core.dimensions import Dimensions
 from ...encoding import (
     COORDINATE_LEVELS,
+    ArrayEncoder,
     EncodingMode,
     SemanticType,
     gridded_axis_step,
@@ -126,7 +127,92 @@ MAX_CENTER_DISPLACEMENT_SIGMAS = 1.0
 #: stay silent). The "a few needle splats cannot flip an otherwise ordinary
 #: array" guarantee therefore holds only above 1,000 splats — which is also
 #: where the bytes it protects begin to matter.
+#:
+#: Two consequences of the surrounding design sharpen that residual, and both
+#: are deliberate:
+#:
+#: * A GRIDDED stacked axis now keeps uint16 (the encoder's snap stores it
+#:   exactly) instead of escalating the whole array to float32. The escalation
+#:   used to *incidentally* rescue sub-gate needle populations on the OTHER
+#:   axes of such a store — centers are one array with one encoding, so
+#:   escalating for the time axis made every axis exact. That side effect is
+#:   gone: a stacked store's spatial axes are now held to this gate like any
+#:   other array's.
+#: * The decision is per WRITE, and a partitioned/laddered store writes each
+#:   part separately (see :func:`write_gsplat_arrays`), so it is taken per part.
 MAX_UNREPRESENTABLE_SPLAT_FRACTION = 0.001
+
+
+def _axis_center_offender(
+    axis: int,
+    column: NDArray[np.float32],
+    lo: float,
+    extent: float,
+    chol: NDArray[np.float32],
+    n_rows: int,
+    n_splats: int,
+    min_fraction: float,
+) -> Optional[Tuple[int, float, int, float, float]]:
+    """Evaluate ONE axis for :func:`_center_quantization_offender`.
+
+    Returns that function's ``(axis, step, n_unrepresentable, fraction,
+    sigma_median)`` tuple when this axis offends by MORE than ``min_fraction``
+    (the running worst, so a later axis must beat an earlier one), or ``None``.
+
+    The three declines, in the order they must stay in:
+
+    1. A constant axis (``hi == lo``) has a zero step and can never be violated;
+       a non-finite extent is not something this rail can reason about (the
+       value validators own that), so it is left to the encoder.
+    2. The population gate. Below it the axis is not an offender at all, so the
+       running worst must NOT be raised by it either.
+    3. The grid check, LAST — and lazily, only for an axis that has already
+       passed the gate, because ``np.unique`` per axis is real time. It must run
+       after the gate for the same reason it must not raise the running worst: a
+       gridded degenerate axis at 100% would otherwise mask a genuinely broken
+       non-gridded axis at 0.2% behind a bar it had no business setting.
+    """
+    step = extent / COORDINATE_LEVELS
+    if not np.isfinite(step) or step <= 0.0:
+        return None
+    start = axis * (axis + 1) // 2
+    row = chol[:, start : start + axis + 1]
+    # Marginal σ on this axis: Σ[i,i] = Σ_{j≤i} L[i,j]². Accumulated in float64
+    # straight out of the (usually float32) input via ``dtype=`` rather than
+    # from a float64 copy of the whole Cholesky — the reduction is identical,
+    # and a transient copy is hundreds of MB on a multi-million-splat leaf.
+    sigma = np.sqrt(np.einsum("ij,ij->i", row, row, dtype=np.float64))
+    # Multiply rather than divide: σ == 0 (a true delta axis) is
+    # unrepresentable for any step > 0, and a NaN σ compares False and is
+    # left to the value validators.
+    unrepresentable = 0.5 * step > MAX_CENTER_DISPLACEMENT_SIGMAS * sigma
+    n_bad_rows = int(np.count_nonzero(unrepresentable))
+    if n_bad_rows == 0:
+        return None
+    # A uniform Cholesky is one broadcast row standing in for every splat,
+    # so the row fraction IS the splat fraction in both layouts.
+    fraction = n_bad_rows / n_rows
+    if fraction <= min_fraction:
+        return None
+    # Ask whether the encoder is going to grid-snap this axis and store it
+    # exactly anyway. If it is, there is nothing to protect: escalating would
+    # double the centers bytes and warn about data that round-trips bit for bit.
+    # The column is upcast HERE, one axis at a time, so the common (no offender)
+    # path never pays for a float64 copy of the centers.
+    if (
+        gridded_axis_step(
+            np.asarray(column, dtype=np.float64), lo, extent, COORDINATE_LEVELS
+        )
+        is not None
+    ):
+        return None
+    return (
+        axis,
+        step,
+        n_bad_rows if n_rows == n_splats else int(round(fraction * n_splats)),
+        fraction,
+        float(np.median(sigma[unrepresentable])),
+    )
 
 
 def _center_quantization_offender(
@@ -149,6 +235,7 @@ def _center_quantization_offender(
     worst offender — the axis with the largest affected *fraction* — or ``None``
     when no axis offends. ``sigma_median`` is the median marginal σ of the
     unrepresentable splats, i.e. a representative of what is being displaced.
+    The per-axis half lives in :func:`_axis_center_offender`.
 
     An axis the encoder will GRID-SNAP is not an offender. The encoder widens
     ``hi`` on an axis whose distinct values all sit on one regular grid so the
@@ -162,7 +249,9 @@ def _center_quantization_offender(
     gate: ``np.unique`` per axis is real time (0.30 s of a 2.85 s encode on 5M×3
     coordinates) and a tripped axis is rare.
 
-    ``None`` is also returned when some axis already spans
+    ``None`` is also returned when the centers are not ``(N, n_dims)`` — the
+    same decline-rather-than-raise policy the Cholesky-shape arm below states,
+    and for the same reason — or when some axis already spans
     :data:`~luxar.typing_utils.constants.COORDINATE_U16_MAX_EXTENT`: the
     encoder's own extent rail then stores the whole array as float32 anyway, so
     there is nothing left for this one to protect and it would only replace a
@@ -186,27 +275,33 @@ def _center_quantization_offender(
     # validate_gsplat_inputs so it cannot happen today; decline rather than
     # raise, because this is an opportunistic size/precision rail and not a
     # validator (the validators own shape errors, and own them earlier).
-    chol = np.asarray(cholesky_factors, dtype=np.float64)
+    chol = np.asarray(cholesky_factors)
     if chol.ndim != 2 or chol.shape[1] < n_dims * (n_dims + 1) // 2:
         return None
     n_rows = chol.shape[0]
     if n_rows == 0:
         return None
 
-    # Derived EXACTLY as `_encode_coordinate` derives them (float64 upcast first,
-    # then min/max), because the grid replay below is only a guarantee about what
-    # the encoder will do if it is fed the encoder's own numbers.
-    arr = np.asarray(centers).astype(np.float64)
-    if arr.ndim != 2:
+    arr = np.asarray(centers)
+    if arr.ndim != 2 or arr.shape[1] != n_dims:
         # Neither this rail nor the encoder's snap reasons about a non-(N, d)
         # coordinate array — both are per-axis, and the encoder falls through to
-        # its generic per-column quantizer. Unreachable from either call site
-        # (validate_gsplat_inputs normalizes to (N, d)); declining keeps the
-        # per-axis indexing below honest instead of guessing at an axis layout.
+        # its generic per-column quantizer. An axis count that disagrees with
+        # ``n_dims`` is the same kind of precondition breach as an unpacked
+        # Cholesky above. Unreachable from either call site
+        # (validate_gsplat_inputs normalizes to (N, d) and derives n_dims from
+        # it); declining keeps the per-axis indexing below honest — and declines
+        # rather than raising, for the reason given above.
         return None
-    lo = arr.min(axis=0)
-    hi = arr.max(axis=0)
-    extents = hi - lo
+    # Derived EXACTLY as `_encode_coordinate` derives them (which upcasts to
+    # float64 first, then reduces), because the grid replay below is only a
+    # guarantee about what the encoder will do if it is fed the encoder's own
+    # numbers. Reducing FIRST and widening the (d,) result is bit-identical —
+    # a float32→float64 cast is exact and order-preserving, so it commutes with
+    # min/max — and skips a full float64 copy of the centers, which is 53 MB on
+    # a 1.65M×4 leaf and is paid on every leaf of every ladder and partition.
+    lo = np.min(arr, axis=0).astype(np.float64)
+    extents = np.max(arr, axis=0).astype(np.float64) - lo
     # Defer to the encoder's own extent rail: at/above COORDINATE_U16_MAX_EXTENT
     # it already stores the centers as float32 — exactly, so nothing is lost —
     # and its warning names the real cause (an axis too wide for a unit step)
@@ -214,54 +309,26 @@ def _center_quantization_offender(
     # would only replace that message with a misleading one and cost the array
     # its content dedup, which is safe for a purely extent-driven fallback
     # (that verdict is a function of the centers bytes alone).
-    if float(np.max(extents[:n_dims])) >= COORDINATE_U16_MAX_EXTENT:
+    if float(np.max(extents)) >= COORDINATE_U16_MAX_EXTENT:
         return None
-    steps = extents / COORDINATE_LEVELS
 
     worst: Optional[Tuple[int, float, int, float, float]] = None
     worst_fraction = MAX_UNREPRESENTABLE_SPLAT_FRACTION
     for axis in range(n_dims):
-        step = float(steps[axis])
-        # A constant axis (hi == lo) has a zero step and can never be violated;
-        # a non-finite extent is not something this rail can reason about (the
-        # value validators own that) so it is left to the encoder.
-        if not np.isfinite(step) or step <= 0.0:
-            continue
-        start = axis * (axis + 1) // 2
-        row = chol[:, start : start + axis + 1]
-        sigma = np.sqrt(np.sum(row * row, axis=1))
-        # Multiply rather than divide: σ == 0 (a true delta axis) is
-        # unrepresentable for any step > 0, and a NaN σ compares False and is
-        # left to the value validators.
-        unrepresentable = 0.5 * step > MAX_CENTER_DISPLACEMENT_SIGMAS * sigma
-        n_bad_rows = int(np.count_nonzero(unrepresentable))
-        if n_bad_rows == 0:
-            continue
-        # A uniform Cholesky is one broadcast row standing in for every splat,
-        # so the row fraction IS the splat fraction in both layouts.
-        fraction = n_bad_rows / n_rows
-        if fraction <= worst_fraction:
-            continue
-        # Only now — for an axis that already tripped the population gate, which
-        # is rare — pay for np.unique and ask whether the encoder is going to
-        # grid-snap this axis and store it exactly anyway. If it is, there is
-        # nothing to protect: escalating would double the centers bytes and warn
-        # about data that round-trips bit for bit.
-        if (
-            gridded_axis_step(
-                arr[:, axis], float(lo[axis]), float(extents[axis]), COORDINATE_LEVELS
-            )
-            is not None
-        ):
-            continue
-        worst_fraction = fraction
-        worst = (
+        found = _axis_center_offender(
             axis,
-            step,
-            n_bad_rows if n_rows == n_splats else int(round(fraction * n_splats)),
-            fraction,
-            float(np.median(sigma[unrepresentable])),
+            arr[:, axis],
+            float(lo[axis]),
+            float(extents[axis]),
+            chol,
+            n_rows,
+            n_splats,
+            worst_fraction,
         )
+        if found is None:
+            continue
+        worst_fraction = found[3]
+        worst = found
     return worst
 
 
@@ -270,19 +337,32 @@ def _resolve_centers_encoding_mode(
     cholesky_factors: NDArray[np.float32],
     n_dims: int,
     mode: EncodingMode,
+    encoder: ArrayEncoder,
 ) -> EncodingMode:
     """Escalate the centers encoding to ``PRECISION`` when uint16 cannot hold it.
 
     Only ``AUTO``/``MEMORY`` quantize coordinates (``PRECISION`` is already
     exact and ``CUSTOM`` is rejected downstream for COORDINATE), so only those
     two are checked. The escalation is centers-only: the Cholesky, amplitude and
-    color tiers keep whatever the caller asked for. An axis the encoder will
-    grid-snap never gets here — see :func:`_center_quantization_offender`.
+    color tiers keep whatever the caller asked for.
+
+    The rail must stand down wherever the encoder is ALREADY going to store the
+    centers exactly, and the encoder has two such paths. An axis it will
+    grid-snap never reaches here at all (see
+    :func:`_center_quantization_offender`). The other is LUT encoding, which is
+    tried before the dtype encoder and is exact *and* smaller than float32 —
+    :meth:`~luxar.encoding.encoder.ArrayEncoder.encodes_as_lut` is asked only
+    once an offender has been found, so its ``np.unique`` pass costs nothing on
+    the common path.
     """
     if mode not in (EncodingMode.AUTO, EncodingMode.MEMORY):
         return mode
     offender = _center_quantization_offender(centers, cholesky_factors, n_dims)
     if offender is None:
+        return mode
+    if encoder.encodes_as_lut(centers, SemanticType.COORDINATE):
+        # Exact already, at ~1 B/value: escalating would quadruple the bytes and
+        # warn about a displacement the encoder was never going to apply.
         return mode
     axis, step, n_bad, fraction, sigma_median = offender
     n_splats = centers.shape[0]
@@ -659,6 +739,15 @@ def write_gsplat_arrays(
     escalate; the Cholesky/amplitude/color tiers are untouched, and an escalated
     write also opts OUT of content dedup (see below).
 
+    The rail's verdict is per WRITE, i.e. per leaf, so a partitioned or
+    laddered node decides PART BY PART: an 8-tile ``tiles`` recipe emits up to
+    eight separate warnings, and within one logical node the centers dtype can
+    differ between parts — a part whose degenerate splats fall under the
+    population gate keeps uint16 (and stays damaged) while its sibling
+    escalates. This is not collapsed, deliberately: the function is handed only
+    a :class:`~luxar.io._compiler.context.DatasetCtx` and a single group, and
+    the standalone tree writer has no whole-tree warning hook to collapse into.
+
     Returns:
         Metadata dict with n_splats, ndim, has_colors, amplitude_range,
         amplitude_mass, amplitude_mass_weighted_mean, center_bounds, and
@@ -677,7 +766,7 @@ def write_gsplat_arrays(
     # MAX_CENTER_DISPLACEMENT_SIGMAS — this is the single shared choke point
     # where centers AND cholesky_factors are both in hand.
     centers_mode = _resolve_centers_encoding_mode(
-        centers, cholesky_factors, n_dims, ctx.encoding_mode
+        centers, cholesky_factors, n_dims, ctx.encoding_mode, ctx.encoder
     )
     # An escalated write must bypass the encoder's content-dedup registry.
     # Dedup is keyed on the centers BYTES alone, but the rail makes the chosen

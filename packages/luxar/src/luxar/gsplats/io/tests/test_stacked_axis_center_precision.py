@@ -39,6 +39,7 @@ snap declines and the splats really are destroyed.
 import tempfile
 import warnings
 from pathlib import Path
+from typing import Optional, Tuple
 
 import numpy as np
 import pytest
@@ -97,7 +98,8 @@ def _merged_track_centers(
     a real sigma and thousands of irregular float coordinates — so no regular
     grid describes it and the encoder's snap declines — while the last
     ``n_tracks`` rows are a ``sigma=0`` track stack pinned to integer frames.
-    Those tracks are displaced by thousands of their own sigma and vanish.
+    Those tracks are displaced by up to 305 of their own sigma (half of the
+    ``4 / 65535`` step against the 1e-7 floor) and vanish.
     """
     rng = np.random.default_rng(seed)
     times = rng.random(n_splats) * 4.0
@@ -185,12 +187,21 @@ def test_grid_ness_alone_decides_whether_the_rail_fires() -> None:
     chol = np.zeros((n, 10), dtype=np.float32)
     chol[:, _DIAG_4D] = rng.uniform(0.5, 1.5, size=(n, 4))
     chol[:, 9] = 3.0
-    chol[-n_tracks:, 9] = 1e-7
+    # Every 10th row, so the degenerate splats are spread across ALL five
+    # frames. Pinning them to the last rows instead put every one of them at
+    # time 4.0 — the axis MAXIMUM, which uint16 reproduces exactly with or
+    # without a snap — so the "identical except for grid-ness" claim would have
+    # been made about splats that were never at risk on either side.
+    chol[::10, 9] = 1e-7
+    assert np.count_nonzero(chol[:, 9] < 1.0) == n_tracks
 
     xyz = (rng.random((n, 3)) * 10.0).astype(np.float32)
     gridded = np.repeat(np.arange(5, dtype=np.float32), n // 5)
-    # The same frames, nudged off the grid by far less than one quantization
-    # step, so nothing about the displacement changes — only the eligibility.
+    # The same frames, nudged off the grid. The jitter (1e-3) is ~16 full
+    # quantization steps (6.1e-5), so it is not small against the step — but it
+    # is small against the axis EXTENT, which it changes by 0.025%. The step,
+    # and hence the displacement bound the rail measures, is therefore
+    # unchanged; the only thing destroyed is grid eligibility.
     jittered = (gridded + rng.random(n).astype(np.float32) * 1e-3).astype(np.float32)
 
     assert (
@@ -199,6 +210,88 @@ def test_grid_ness_alone_decides_whether_the_rail_fires() -> None:
     offender = _center_quantization_offender(np.column_stack([xyz, jittered]), chol, 4)
     assert offender is not None
     assert offender[0] == 3
+
+
+def test_a_gridded_axis_does_not_mask_a_broken_one() -> None:
+    """A skipped (gridded) axis must not raise the bar for the axes after it.
+
+    The order inside the per-axis check is load-bearing and nothing else pins
+    it: the grid decline has to happen BEFORE the running worst fraction is
+    updated. Here axis 3 is gridded and 100% degenerate while axis 4 is
+    continuous and 0.2% degenerate. If the gridded axis were allowed to set the
+    bar first — by testing grid-ness after the update, or by hoisting the update
+    out of the loop — axis 4's 0.2% would lose to it and the rail would report
+    nothing, which is issue #1748 all over again on the axis that really is
+    broken.
+    """
+    n, n_bad = 10_000, 20  # 0.2%: over the 0.1% gate
+    rng = np.random.default_rng(1748)
+    # 5-D packed lower-triangular: diagonal at 0, 2, 5, 9, 14.
+    chol = np.zeros((n, 15), dtype=np.float32)
+    chol[:, [0, 2, 5, 9, 14]] = rng.uniform(0.5, 1.5, size=(n, 5))
+    chol[:, 9] = 1e-7  # axis 3: EVERY splat degenerate...
+    chol[:n_bad, 14] = 1e-7  # ...axis 4: a small minority
+
+    gridded = np.repeat(np.arange(5, dtype=np.float32), n // 5)  # axis 3
+    continuous = (rng.random(n) * 4.0).astype(np.float32)  # axis 4
+    centers = np.column_stack(
+        [(rng.random((n, 3)) * 10.0).astype(np.float32), gridded, continuous]
+    ).astype(np.float32)
+
+    offender = _center_quantization_offender(centers, chol, 5)
+    assert offender is not None
+    axis, _step, count, fraction, _sigma_median = offender
+    assert axis == 4
+    assert count == n_bad
+    assert fraction == pytest.approx(n_bad / n)
+
+
+def test_lut_eligible_centers_are_not_escalated() -> None:
+    """The encoder's OTHER exact path: LUT beats the rail, and float32.
+
+    LUT encoding is tried before the dtype encoder and stores the original
+    values verbatim at ~1 B/value. Escalating a LUT-eligible array to
+    ``PRECISION`` would both quadruple its bytes AND suppress the LUT (the
+    encoder skips LUT in ``PRECISION``), while warning that splats can be moved
+    clear of their own core — damage that was never going to happen. So the rail
+    must ask :meth:`ArrayEncoder.encodes_as_lut` as well as the grid predicate.
+
+    The fixture is deliberately one the rail DOES flag: axis 2's values
+    ``{0, 1, 3.7, 12}`` lie on no regular grid (the snap declines), and every
+    splat's sigma there is 1e-7.
+    """
+    n = 20_000
+    rng = np.random.default_rng(1748)
+    xy = rng.integers(0, 60, size=(n, 2)).astype(np.float32)
+    z = np.array([0.0, 1.0, 3.7, 12.0], dtype=np.float32)[rng.integers(0, 4, n)]
+    centers = np.column_stack([xy, z]).astype(np.float32)
+    chol = np.zeros((n, 6), dtype=np.float32)
+    chol[:, [0, 2, 5]] = rng.uniform(0.5, 1.5, size=(n, 3))
+    chol[:, 5] = 1e-7
+
+    # The rail really does see an offender here — the stand-down below is the
+    # LUT check, not an absent offender.
+    offender = _center_quantization_offender(centers, chol, 3)
+    assert offender is not None and offender[0] == 2
+
+    data = GSplatData(
+        centers=centers,
+        amplitudes=rng.random(n).astype(np.float32) + 0.1,
+        cholesky_factors=chol,
+    )
+    with tempfile.TemporaryDirectory() as tmpdir:
+        path = Path(tmpdir) / "lut.gsplats.zarr"
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", UserWarning)
+            data.save(path, encoding_mode=EncodingMode.AUTO)
+
+        root = zarr.open_group(str(path), mode="r")
+        assert root["centers"].attrs["encoding"]["name"] == "lut_uint8"
+        # Exact, and a quarter of what the escalation would have written.
+        loaded = np.asarray(GSplatData.load(path).centers, dtype=np.float32)
+        np.testing.assert_array_equal(
+            loaded[np.lexsort(loaded.T)], centers[np.lexsort(centers.T)]
+        )
 
 
 @pytest.mark.parametrize("mode", LOSSY_MODES)
@@ -337,7 +430,9 @@ def test_per_splat_criterion_is_half_a_step_against_one_sigma() -> None:
     centers = np.zeros((n, 3), dtype=np.float32)
     centers[:, 0] = col.astype(np.float32)
 
-    def _offender_with(sigma_axis0: float):
+    def _offender_with(
+        sigma_axis0: float,
+    ) -> Optional[Tuple[int, float, int, float, float]]:
         chol = np.zeros((n, 6), dtype=np.float32)
         chol[:, 0] = sigma_axis0
         chol[:, [2, 5]] = 1.0
@@ -460,7 +555,7 @@ def test_unpacked_cholesky_is_declined_rather_than_misread() -> None:
 
 
 def test_escalated_centers_are_not_deduped_onto_a_quantized_sibling(
-    tmp_path,
+    tmp_path: Path,
 ) -> None:
     """An escalated centers array must never become an ``array_ref``.
 

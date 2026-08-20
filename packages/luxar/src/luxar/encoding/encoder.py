@@ -279,6 +279,32 @@ class ArrayEncoder(
             _perchannel_bits,
         )
 
+    def encodes_as_lut(self, data: np.ndarray, semantic_type: SemanticType) -> bool:
+        """Would :meth:`encode` store ``data`` as an (exact) LUT encoding?
+
+        LUT is priority 3 and is tried BEFORE the dtype/semantic encoder, so for
+        an eligible array the lossy per-axis quantization the dtype encoder
+        would apply never happens: a LUT stores the original values verbatim
+        and its index array is usually smaller than the quantized alternative.
+
+        This is public because a caller outside the encoder needs to know every
+        EXACT path the encoder has before deciding to override it. The gsplat
+        writer's sigma rail
+        (:func:`~luxar.io._compiler.gsplat_assembly._resolve_centers_encoding_mode`)
+        escalates centers to ``PRECISION`` when uint16 quantization would
+        displace splats past their own σ — but ``PRECISION`` also *disables*
+        LUT, so escalating a LUT-eligible array would replace an exact 1 B/value
+        encoding with an exact 4 B/value one and warn about damage that was
+        never going to happen. The grid snap
+        (:func:`~luxar.encoding.gridded_axis_step`) is the rail's other such
+        check; this is the second, and they must both be asked.
+
+        Mirrors :meth:`encode`'s own gate: ``PRECISION`` skips LUT, as does an
+        explicit ``allow_lut=False``, so a caller that passes either must not
+        consult this. Costs one ``np.unique`` pass over ``data``.
+        """
+        return self._lut_plan(data, semantic_type) is not None
+
     def reset(self) -> None:
         """Clear registry (call between independent scenes)."""
         self._registry.clear()

@@ -696,7 +696,9 @@ luxar gsplat migrate-format old_pyr/ v3.gsplats.zarr                          # 
 # -e precision. Two exceptions stay exact in every mode: a GRIDDED axis (a
 # stacked sigma=0 time/channel axis) keeps uint16 but has its grid snapped onto
 # the data's own spacing, and a NON-gridded axis whose grid would displace
-# splats past their own sigma falls back to float32. Decode is always
+# splats past their own sigma FOR MORE THAN 0.1% OF THE SPLATS falls back to
+# float32 (a smaller degenerate population is quantized away silently — see
+# MAX_UNREPRESENTABLE_SPLAT_FRACTION). Decode is always
 # float32 so viewer/GPU/WASM are unaffected. Unlike migrate-format (legacy→current,
 # float32 vs AUTO-uint16 only) this exposes the full ladder incl. memory=uint8.
 luxar gsplat reencode fit.gsplats.zarr fit_u8.gsplats.zarr -e memory      # uint8 (smallest, ~93 dB)
