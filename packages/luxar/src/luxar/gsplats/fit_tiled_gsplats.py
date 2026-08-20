@@ -86,9 +86,10 @@ def count_nonempty_tiles(
 ) -> int:
     """Count tiles that survive floor subtraction and Hann apodization.
 
-    The operations and predicate mirror :func:`fit_tile`'s skip decision. If
-    the scan finds no signal at all, use the geometric count as the safe
-    divisor: that avoids division by zero and errs toward over-seeding if later
+    The floor, window, and predicate mirror :func:`fit_tile`'s skip decision,
+    but the scan deliberately does not replay optional per-tile denoising. If
+    the scan finds no signal at all, use the geometric count as the safe divisor:
+    that avoids division by zero and errs toward over-seeding if later
     preprocessing makes a tile fit-worthy.
     """
     nonempty = 0

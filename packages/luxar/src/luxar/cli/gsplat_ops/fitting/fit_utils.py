@@ -451,9 +451,10 @@ def split_seeds_across_tiles(
 
     ``ceil`` itself guarantees at least one seed per tile for any positive K, so
     ``0 < K < n_tiles`` gives 1 per tile and realizes ``n_tiles``, not ``K``.
-    Empty tiles are excluded from the divisor using the same floor-subtracted,
-    Hann-windowed predicate the fitter uses to skip them, so sparse volumes do
-    not lose budget merely because signal occupies a small fraction of the grid.
+    Empty tiles are excluded from the divisor using the fitter's
+    floor-subtracted, Hann-windowed predicate. The scan deliberately does not
+    replay optional per-tile denoising, so denoising can still skip a tile that
+    the budget scan counted.
 
     A **non-positive** K is returned UNCHANGED: it is invalid input, and the
     fitter rejects it with "seeds as int must be positive" exactly as it does on
@@ -1259,14 +1260,14 @@ def fit_sequential_tiled(
     specs = compute_tile_specs(volume.shape, ctx.tile_size, ctx.tile_overlap)
     floor_spec = fit_config.get("floor", "auto")
     _validate_floor(floor_spec)
-    resolved_floor = resolve_volume_floor_denoised(
-        volume,
-        floor_spec,
-        denoise_h=fit_config.get("_denoise_h"),
-        denoise_params=fit_config.get("_denoise_params"),
-        guard_numeric=True,
-    )
     if _needs_nonempty_tile_scan(parsed_seeds, len(specs)):
+        resolved_floor = resolve_volume_floor_denoised(
+            volume,
+            floor_spec,
+            denoise_h=fit_config.get("_denoise_h"),
+            denoise_params=fit_config.get("_denoise_params"),
+            guard_numeric=True,
+        )
         nonempty_tiles = count_nonempty_tiles(volume, specs, resolved_floor)
         tile_seeds = split_seeds_across_tiles(
             parsed_seeds, nonempty_tiles, grid_tiles=len(specs)

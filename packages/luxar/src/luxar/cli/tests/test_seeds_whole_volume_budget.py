@@ -230,6 +230,55 @@ def test_cli_sequential_tiled_splits_seeds(
 
 
 @pytest.mark.skipif(not HAS_TORCH, reason="the fit CLI imports the torch fitter")
+def test_cli_sequential_ratio_skips_seed_divisor_floor_probe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A ratio needs no non-empty divisor, so the CLI must not resolve its floor."""
+    seen: dict[str, Any] = {}
+
+    def _fake_fit_tiled(volume: Any, **kwargs: Any) -> GSplatData:
+        seen.update(kwargs)
+        return _one_splat_result()
+
+    def _unexpected_floor_probe(*args: Any, **kwargs: Any) -> None:
+        raise AssertionError("ratio seeds must not trigger a divisor floor probe")
+
+    monkeypatch.setattr("luxar.gsplats.fit_tiled_gsplats.fit_tiled", _fake_fit_tiled)
+    monkeypatch.setattr(
+        "luxar.gsplats.fitting.preprocessing.resolve_volume_floor_denoised",
+        _unexpected_floor_probe,
+    )
+
+    vol = tmp_path / "vol.npy"
+    _make_volume(vol)
+    result = runner.invoke(
+        app,
+        [
+            "gsplat",
+            "fit",
+            str(vol),
+            str(tmp_path / "ratio.gsplats.zarr"),
+            "--tiling",
+            "uniform",
+            "--tile-size",
+            "24",
+            "--overlap",
+            "4",
+            "--flat",
+            "--floor",
+            "5",
+            "--seeds",
+            "0.02",
+            "--device",
+            "cpu",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert seen["seeds"] == 0.02
+
+
+@pytest.mark.skipif(not HAS_TORCH, reason="the fit CLI imports the torch fitter")
 def test_cli_sequential_sparse_fit_splits_over_nonempty_tiles(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -462,7 +511,54 @@ def test_cli_parallel_forwards_raw_budget_and_announces_split(
 
     # The parent announces the division the workers will perform.
     assert "whole-volume budget" in result.output
-    assert "10 per tile" in result.output and f"{_N_TILES} tiles" in result.output
+    assert "10 per tile across 9 non-empty tiles" in result.output
+
+
+@pytest.mark.skipif(not HAS_TORCH, reason="the fit CLI imports the torch fitter")
+def test_cli_parallel_downscale_announces_conservative_seed_split(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The parent must not scan full-resolution data with downscaled tile specs."""
+    captured: dict[str, Any] = {}
+
+    def _fake_parallel(**kwargs: Any) -> GSplatData:
+        captured.update(kwargs)
+        return _one_splat_result()
+
+    monkeypatch.setattr(
+        "luxar.gsplats.fit_tiled_parallel.fit_tiled_parallel", _fake_parallel
+    )
+
+    vol = tmp_path / "vol.npy"
+    _make_volume(vol)
+    result = runner.invoke(
+        app,
+        [
+            "gsplat",
+            "fit",
+            str(vol),
+            str(tmp_path / "downscaled.gsplats.zarr"),
+            "--tiling",
+            "uniform",
+            "--tile-size",
+            "24",
+            "--overlap",
+            "4",
+            "--downscale",
+            "1,2",
+            "-j",
+            "2",
+            "--flat",
+            "--seeds",
+            "90",
+            "--device",
+            "cpu",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert captured["num_tiles"] == 6
+    assert "at least 15 per non-empty tile across 6 grid tiles" in result.output
 
 
 @pytest.mark.skipif(not HAS_TORCH, reason="the fit CLI imports the torch fitter")

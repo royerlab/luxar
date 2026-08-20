@@ -367,9 +367,11 @@ tiled (``--tiling uniform``, a large ``--tiling auto`` volume, a ``--tile k/M``
 worker, or a uniform-mode ``batch-fit`` task) the budget is *divided* across
 the tiles that survive floor subtraction and Hann windowing instead of being
 handed to each tile in full. Every worker derives the same non-empty count from
-the volume, tile grid, and resolved floor, so sparse volumes retain the whole
-budget. A :math:`K^{\star}` smaller than that count floors at one seed per
-non-empty tile. A
+the volume, tile grid, and resolved floor. The split is still equal per
+non-empty tile rather than proportional to occupancy, so an uneven grid can
+overshoot :math:`K^{\star}` before post-fit culling; use ``--tiling content``
+for density-proportional allocation. A :math:`K^{\star}` smaller than that
+count floors at one seed per non-empty tile. A
 *ratio* ``--seeds`` (a float in ``(0, 1]``) is scale-free and is applied to
 each tile unchanged. Under ``--tiling content`` ``--seeds`` is ignored entirely
 — per-box budgets come from the density plan.
