@@ -24,14 +24,31 @@ _COORD_BITS = 16
 class PerChannelEncoderMixin(BaseEncoderMixin):
     """Per-channel / scalar dtype encoding strategies for :class:`ArrayEncoder`."""
 
-    def _snap_gridded_axes(
-        self, name: str, arr: np.ndarray, lo: np.ndarray, hi: np.ndarray, bits: int
-    ) -> tuple[np.ndarray, np.ndarray]:
-        """Widen `hi` on gridded axes so their values quantize exactly.
+    @staticmethod
+    def _grid_step(
+        col: np.ndarray, lo: float, extent: float, levels: float
+    ) -> Optional[tuple[float, int]]:
+        """The spacing of the regular grid ``col`` lies on, or ``None``.
 
-        Returns possibly-adjusted ``(lo, hi)``. An axis qualifies when its values
-        are evenly spaced and the resulting grid still fits in the target integer
-        width. Anything else is left exactly as it was.
+        Returns ``(step, n_distinct)``. The test IS the guarantee: a candidate
+        spacing is accepted only after replaying the encoder's own quantization
+        and the decoder's own dequantization over the distinct values and getting
+        all of them back bit-exactly at the COORDINATE decode dtype (float32).
+        That is both stricter and more permissive than testing the gaps for
+        equality, and both directions matter:
+
+        * A grid with MISSING rungs still qualifies. Frames ``0,1,2,7,8,9`` are
+          what a spatial tile of a stacked dataset sees, or what a filter that
+          empties one timepoint in one region leaves behind; an "all gaps equal"
+          test rejects that axis and leaves it broken by exactly the defect the
+          snap exists to prevent.
+        * A grid the float32 input only approximates still qualifies, because the
+          spacing is least-squares refit against every rung rather than taken from
+          the smallest gap. A 0.1 s frame interval jitters by more than a relative
+          1e-6 once rounded to float32, so a gap-equality test with any usable
+          tolerance rejects it.
+        * Conversely, continuous values whose smallest gap merely happens to be
+          coarse do NOT qualify, because they do not survive the replay.
 
         The only cap on distinct values is ``levels`` itself: an axis with more
         distinct values than the encoding has levels cannot be represented on any
@@ -39,30 +56,61 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
         that fit perfectly -- a 10 000-frame timelapse quantizes exactly at u16 --
         and would save no work, since ``np.unique`` has already run by then.
         """
+        uniq = np.unique(col)
+        if uniq.size < 2 or uniq.size > levels + 1:
+            return None
+        offsets = uniq - lo
+        coarsest = float(np.diff(uniq).min())
+        if coarsest <= 0.0 or extent / coarsest > levels:
+            return None
+        # Rung index of each distinct value on the candidate grid, then a
+        # least-squares refit of the spacing against all of them.
+        rung = np.round(offsets / coarsest)
+        if rung[0] != 0.0 or np.any(np.diff(rung) <= 0.0) or rung[-1] > levels:
+            return None
+        step = float(rung @ offsets / (rung @ rung))
+        # `span` must be derived exactly as the quantizer will derive it from the
+        # stored rails (`hi - lo`), not as `step * levels`: for a large `lo` the
+        # two differ in the last bits, and this replay is only a guarantee if it
+        # is the same arithmetic.
+        candidate = lo + step * levels
+        span = candidate - lo
+        if span <= 0.0:
+            return None
+        codes = np.round((np.clip(uniq, lo, candidate) - lo) / span * levels)
+        back = lo + codes / levels * span
+        if not np.array_equal(back.astype(np.float32), uniq.astype(np.float32)):
+            return None
+        return step, int(uniq.size)
+
+    def _snap_gridded_axes(
+        self, name: str, arr: np.ndarray, lo: np.ndarray, hi: np.ndarray, bits: int
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Widen `hi` on gridded axes so their values quantize exactly.
+
+        Returns possibly-adjusted ``(lo, hi)``. An axis qualifies when every one of
+        its distinct values sits on one regular grid that still fits in the target
+        integer width (see :meth:`_grid_step`). Anything else is left exactly as it
+        was.
+        """
+        if arr.ndim != 2:
+            # No per-axis columns to test; the generic per-column quantizer
+            # handles this shape on its own. Leave the scales untouched.
+            return lo, hi
         levels = float(2**bits - 1)
         lo = np.array(lo, dtype=np.float64, copy=True)
         hi = np.array(hi, dtype=np.float64, copy=True)
         snapped = []
         for axis in range(arr.shape[1]):
-            col = arr[:, axis]
             extent = float(hi[axis] - lo[axis])
             if extent <= 0.0:
                 continue  # constant axis: already exact
-            uniq = np.unique(col)
-            if uniq.size < 2 or uniq.size > levels + 1:
+            found = self._grid_step(arr[:, axis], float(lo[axis]), extent, levels)
+            if found is None:
                 continue
-            gaps = np.diff(uniq)
-            step = float(gaps.min())
-            if step <= 0.0:
-                continue
-            # Evenly spaced? Allow a tolerance so float32 inputs still qualify.
-            if not np.allclose(gaps, step, rtol=1e-6, atol=step * 1e-6):
-                continue
-            # The snapped grid must still fit in the target integer width.
-            if extent / step > levels:
-                continue
+            step, n_distinct = found
             hi[axis] = lo[axis] + step * levels
-            snapped.append((axis, uniq.size, step))
+            snapped.append((axis, n_distinct, step))
 
         if snapped:
             detail = ", ".join(
@@ -72,12 +120,7 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
             # this is a transparent correctness fix that costs nothing and needs no
             # action, and warning here would fire on every stacked scene (and break
             # tests that legitimately assert their own code stays silent).
-            aprint(
-                f"  ✓ COORDINATE '{name}': snapped the quantization grid to the "
-                f"data's own spacing on {detail} — those values now round-trip "
-                "exactly (a stacked axis has effectively zero extent, so ordinary "
-                "uint16 rounding would move every interior value off its frame)"
-            )
+            aprint(f"  ✓ COORDINATE '{name}': grid-snapped {detail} — exact")
         return lo, hi
 
     def _encode_coordinate(
