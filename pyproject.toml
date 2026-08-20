@@ -164,6 +164,7 @@ demos = [
     "esm>=3.0.0",
     "h5py>=3.0.0",
     "astropy>=6.0.0",
+    "astroquery>=0.4.7",
     "mrcfile>=1.4.0",
     "nibabel>=5.0.0",
     "pyshp>=2.3.0",
