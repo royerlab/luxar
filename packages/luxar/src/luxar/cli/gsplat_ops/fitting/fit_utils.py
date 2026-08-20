@@ -264,9 +264,11 @@ def resolve_denoise_h(ctx: FitPipelineCtx, volume: "Any") -> Optional[float]:
     #1178). A volume ABOVE the probe budget keeps its raw-basis level under the
     default ``--floor auto`` because the histogram-mode shift is not measurable
     on a bounded crop; a ``pNN`` spec is corrected there, and a failed probe
-    keeps the raw level with a note. Batch plans defer that ``pNN`` correction
-    until calibrated ``h`` exists, while preprocess-mode plans resolve every
-    volume-derived spec directly from the denoised store.
+    keeps the raw level with a note. Uniform batch plans defer that ``pNN``
+    correction until calibrated ``h`` exists, while uniform preprocess-mode plans
+    resolve every volume-derived spec directly from the selected denoised store.
+    Content plans need the floor while placing boxes and therefore keep the
+    plan-time raw-basis resolution.
     """
     if not ctx.denoise:
         return None
@@ -1166,12 +1168,14 @@ def fit_single_tile(
     from luxar.gsplats.fitting.validation import _validate_floor
 
     floor_spec = fit_config.get("floor", "auto")
+    probe_cache = fit_config.setdefault("_denoise_probe_cache", {})
     _validate_floor(floor_spec)
     resolved_floor = resolve_volume_floor_denoised(
         volume,
         floor_spec,
         denoise_h=fit_config.get("_denoise_h"),
         denoise_params=fit_config.get("_denoise_params"),
+        probe_cache=probe_cache,
         guard_numeric=False,
         # Log the raw level and the measured denoise shift — but ONLY where
         # denoising made this a new resolution to report. With `--denoise` off
@@ -1241,6 +1245,7 @@ def fit_sequential_tiled(
     # which is exactly the grid fit_tiled will build below.
     specs = compute_tile_specs(volume.shape, ctx.tile_size, ctx.tile_overlap)
     floor_spec = fit_config.get("floor", "auto")
+    probe_cache = fit_config.setdefault("_denoise_probe_cache", {})
     _validate_floor(floor_spec)
     if _needs_nonempty_tile_scan(parsed_seeds, len(specs)):
         resolved_floor = resolve_volume_floor_denoised(
@@ -1248,6 +1253,7 @@ def fit_sequential_tiled(
             floor_spec,
             denoise_h=fit_config.get("_denoise_h"),
             denoise_params=fit_config.get("_denoise_params"),
+            probe_cache=probe_cache,
             guard_numeric=True,
             verbose=bool(fit_config.get("verbose", True))
             and floor_spec_needs_volume(floor_spec)

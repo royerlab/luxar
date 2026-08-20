@@ -56,10 +56,8 @@ def resolve_deferred_batch_floor(output_dir: Path) -> None:
         level, forward = resolve_batch_floor(
             Path(manifest.input_path),
             manifest.floor_spec,
-            n_timepoints=len(
-                manifest.timepoint_indices or range(manifest.n_timepoints)
-            ),
-            n_channels=len(manifest.channel_indices or range(manifest.n_channels)),
+            n_timepoints=source_info.n_timepoints,
+            n_channels=source_info.n_channels,
             array_key=manifest.array_key,
             axes=manifest.axes,
             axes_labels=list(source_info.axes),
@@ -70,19 +68,24 @@ def resolve_deferred_batch_floor(output_dir: Path) -> None:
                 "patch_size": manifest.denoise_patch_size,
                 "search_distance": manifest.denoise_search_distance,
                 "backend": manifest.denoise_backend,
+                "device": manifest.fit_args.get("device"),
                 "use_2d": manifest.denoise_2d,
             },
-            timepoint_indices=manifest.timepoint_indices,
-            channel_indices=manifest.channel_indices,
         )
 
+    (output_dir / "floor_level.json").write_text(
+        json.dumps(
+            {
+                "level": level if isinstance(forward, (int, float)) else None,
+                "forward": forward,
+            },
+            indent=2,
+        )
+    )
     manifest.floor_level = level if isinstance(forward, (int, float)) else None
     manifest.fit_args["floor"] = forward
     manifest.floor_deferred = False
     save_manifest(manifest, output_dir)
-    (output_dir / "floor_level.json").write_text(
-        json.dumps({"level": manifest.floor_level, "forward": forward}, indent=2)
-    )
 
 
 def run_batch_resolve_floor_cmd(

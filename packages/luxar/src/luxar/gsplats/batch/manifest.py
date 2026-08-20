@@ -93,7 +93,9 @@ class BatchManifest:
     a lower bound on every SAMPLED slice's pedestal, so it cannot clip a sampled
     sub-volume to zero — a
     dimmer non-sampled slice still can, bounded sampling being bounded — and it
-    does not depend on the ``--timepoints``/``--channels`` selection. The level
+    does not depend on the ``--timepoints``/``--channels`` selection for raw and
+    on-the-fly denoise runs. Preprocess runs necessarily resolve against the
+    selected-only ``denoised.zarr`` store, so their level is selection-scoped. The level
     that actually drives the fits is the concrete number in ``fit_args["floor"]``;
     this field records it for inspection and merge provenance. ``None`` means "no level is
     pinned": suppression is disabled, or the resolved level was negative so the
@@ -246,7 +248,11 @@ def floor_suppression_applied(manifest: BatchManifest) -> bool:
 def floor_erased_slices(
     manifest: BatchManifest, tiles_dir: Path
 ) -> set[tuple[int, int]]:
-    """Return ``(t, c)`` pairs whose every spatial task ended empty under a floor."""
+    """Return uniform ``(t, c)`` pairs wholly empty under an applied floor.
+
+    Content plans may legitimately place no box over a slice, so an all-empty
+    content slot is ambiguous and deliberately excluded.
+    """
     if manifest.mode != "uniform" or not floor_suppression_applied(manifest):
         return set()
     by_slice: dict[tuple[int, int], list[BatchJob]] = {}

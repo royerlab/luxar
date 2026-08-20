@@ -1146,39 +1146,36 @@ def resolve_volume_norm_range_denoised(
     denoise_h: float | None,
     denoise_params: dict[str, Any] | None,
     subtract: float | None = None,
+    probe_cache: dict[str, Any] | None = None,
     verbose: bool = False,
 ) -> tuple[float, float]:
     """Resolve the shared normalization range on the data tiles will fit.
 
     With denoising disabled this is exactly :func:`resolve_volume_norm_range`.
-    Otherwise the raw whole-volume range is shifted by the denoise-induced
+    Otherwise, when the whole volume fits the bounded probe budget, the raw
+    whole-volume range is shifted by the denoise-induced
     endpoint change measured on the deterministic shape-preserving probe used
     for floor correction.  When the volume fits the probe budget, the probe is
     the whole volume and the result exactly matches resolving after a full
-    denoise, as the non-tiled path does.
+    denoise, as the non-tiled path does. Above that budget the raw range is kept:
+    a bounded max-shift did not converge in measurement and is not worth an NLM pass.
     """
     raw_lo, raw_hi = resolve_volume_norm_range(volume, norm_percentile)
-    if denoise_h is None or denoise_params is None:
+    if (
+        denoise_h is None
+        or denoise_params is None
+        or not _volume_fits_probe_budget(volume, DENOISE_PROBE_BUDGET_VOXELS)
+    ):
         lo, hi = raw_lo, raw_hi
     else:
-        blocks = _sample_blocks_for_denoise_probe(volume, DENOISE_PROBE_BUDGET_VOXELS)
-        if not blocks:
-            lo, hi = raw_lo, raw_hi
-        else:
-            try:
-                from luxar.gsplats.preprocessing.denoise_pipeline import (
-                    denoise_volume_array,
-                )
-
-                raw_probe = np.concatenate([block.ravel() for block in blocks])
-                denoised_probe = np.concatenate(
-                    [
-                        denoise_volume_array(
-                            block, h=denoise_h, **denoise_params
-                        ).ravel()
-                        for block in blocks
-                    ]
-                )
+        try:
+            probe = _denoise_probe_arrays(
+                volume, float(denoise_h), denoise_params, probe_cache
+            )
+            if probe is None:
+                lo, hi = raw_lo, raw_hi
+            else:
+                raw_probe, denoised_probe = probe
                 if norm_percentile == 0.0:
                     probe_raw_lo = float(np.min(raw_probe))
                     probe_raw_hi = float(np.max(raw_probe))
@@ -1199,12 +1196,12 @@ def resolve_volume_norm_range_denoised(
                 hi = raw_hi + probe_denoised_hi - probe_raw_hi
                 if not np.isfinite(lo) or not np.isfinite(hi):
                     lo, hi = raw_lo, raw_hi
-            except Exception as exc:
-                aprint(
-                    "Denoised normalization-range probe failed "
-                    f"({exc}); keeping the raw-basis range."
-                )
-                lo, hi = raw_lo, raw_hi
+        except Exception as exc:
+            aprint(
+                "Denoised normalization-range probe failed "
+                f"({exc}); keeping the raw-basis range."
+            )
+            lo, hi = raw_lo, raw_hi
 
     if subtract is not None:
         lo = max(0.0, lo - float(subtract))
@@ -1299,6 +1296,9 @@ def resolve_volume_floor(
         levels already resolved and guarded upstream (e.g. the concrete level
         the parent hands each tile worker), preserving the read-free
         short-circuit.
+    sample_budget : int, optional
+        Override the bounded sample voxel budget. ``None`` uses
+        :data:`FLOOR_SAMPLE_BUDGET_VOXELS`.
     verbose : bool, default False
         Print the resolved level via arbol.
 
@@ -1476,12 +1476,44 @@ def _sample_blocks_for_denoise_probe(
     return blocks
 
 
+def _denoise_probe_arrays(
+    volume: Any,
+    denoise_h: float,
+    denoise_params: "dict[str, Any]",
+    probe_cache: "dict[str, Any] | None" = None,
+) -> "tuple[np.ndarray, np.ndarray] | None":
+    """Read and denoise the bounded probe once, optionally caching both arrays."""
+    if probe_cache is not None and "raw" in probe_cache:
+        return probe_cache["raw"], probe_cache["denoised"]
+
+    from luxar.gsplats.preprocessing.denoise_pipeline import denoise_volume_array
+
+    blocks = _sample_blocks_for_denoise_probe(volume, int(DENOISE_PROBE_BUDGET_VOXELS))
+    if not blocks:
+        return None
+    denoised = [
+        denoise_volume_array(block, h=float(denoise_h), **denoise_params)
+        for block in blocks
+    ]
+    raw_flat = np.concatenate([block.ravel() for block in blocks])
+    denoised_flat = np.concatenate(
+        [np.asarray(block, dtype=np.float32).ravel() for block in denoised]
+    )
+    if not bool(np.isfinite(denoised_flat).all()):
+        raise ValueError("denoise probe produced non-finite values")
+    if probe_cache is not None:
+        probe_cache["raw"] = raw_flat
+        probe_cache["denoised"] = denoised_flat
+    return raw_flat, denoised_flat
+
+
 def _denoise_probe_correction(
     volume: Any,
     floor: "str | float | None",
     level_raw: float,
     denoise_h: float,
     denoise_params: "dict[str, Any]",
+    probe_cache: "dict[str, Any] | None" = None,
 ) -> "tuple[float, float, int] | None":
     """Shift ``level_raw`` onto the denoised basis with a bounded probe.
 
@@ -1505,13 +1537,11 @@ def _denoise_probe_correction(
     :func:`resolve_volume_floor`, tiled or not, so there is nothing here for a
     second test to improve. Today's kernels emit none of this; it is insurance.
     """
-    from luxar.gsplats.preprocessing.denoise_pipeline import denoise_volume_array
-
     try:
-        blocks = _sample_blocks_for_denoise_probe(
-            volume, int(DENOISE_PROBE_BUDGET_VOXELS)
+        probe = _denoise_probe_arrays(
+            volume, float(denoise_h), denoise_params, probe_cache
         )
-        if not blocks:
+        if probe is None:
             # Defensive only: an empty volume has no floor sample either, so
             # `level_raw` never got this far. Kept so a future sampler change
             # cannot turn "no probe" into a TypeError mid-fit.
@@ -1520,24 +1550,7 @@ def _denoise_probe_correction(
                 f"background level {level_raw:.6g}."
             )
             return None
-        denoised = [
-            denoise_volume_array(block, h=float(denoise_h), **denoise_params)
-            for block in blocks
-        ]
-        raw_flat = np.concatenate([b.ravel() for b in blocks])
-        denoised_flat = np.concatenate(
-            [np.asarray(b, dtype=np.float32).ravel() for b in denoised]
-        )
-        if not bool(np.isfinite(denoised_flat).all()):
-            # Checked on the probe OUTPUT, not just on the level it produces: a
-            # NaN does not always propagate to the level. `estimate_floor` on a
-            # NaN-bearing array returns ~0.001, which is finite, plausible, and
-            # would silently disable floor suppression for the whole run.
-            aprint(
-                "Note: the denoise floor probe produced non-finite values; "
-                f"keeping the raw-basis background level {level_raw:.6g}."
-            )
-            return None
+        raw_flat, denoised_flat = probe
         probe_raw = _resolve_floor(raw_flat, floor)
         probe_denoised = _resolve_floor(denoised_flat, floor)
     except Exception as exc:  # noqa: BLE001 - never let a probe break a fit
@@ -1581,6 +1594,7 @@ def resolve_volume_floor_denoised(
     denoise_params: "dict[str, Any] | None" = None,
     guard_numeric: bool = False,
     sample_budget: int | None = None,
+    probe_cache: dict[str, Any] | None = None,
     verbose: bool = False,
 ) -> "float | None":
     """Resolve a ``floor`` spec as a property of the DENOISED data.
@@ -1618,6 +1632,9 @@ def resolve_volume_floor_denoised(
         ``denoise_h=None``.
     guard_numeric : bool, default False
         Forwarded to :func:`resolve_volume_floor` (see there).
+    sample_budget : int, optional
+        Override the bounded raw floor-sample voxel budget. ``None`` uses
+        :data:`FLOOR_SAMPLE_BUDGET_VOXELS`.
     verbose : bool, default False
         Print the raw level, the correction and the final level. Forwarded to
         :func:`resolve_volume_floor` on the paths that delegate to it.
@@ -1762,7 +1779,12 @@ def resolve_volume_floor_denoised(
         return None
 
     corrected = _denoise_probe_correction(
-        volume, floor, float(level_raw), float(denoise_h), denoise_params
+        volume,
+        floor,
+        float(level_raw),
+        float(denoise_h),
+        denoise_params,
+        probe_cache,
     )
     if corrected is None:
         # Nothing to correct, or nothing trustworthy to correct with — the helper

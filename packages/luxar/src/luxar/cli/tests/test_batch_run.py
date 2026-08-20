@@ -360,6 +360,22 @@ def test_batch_plan_defers_volume_floor_until_denoise_basis_exists(
     assert "floor" not in manifest.fit_args
 
 
+def test_batch_plan_does_not_defer_on_the_fly_auto_floor(tmp_path: Path) -> None:
+    src = tmp_path / "movie.zarr"
+    _make_timelapse_zarr(src)
+
+    manifest = _plan(
+        src,
+        tmp_path / "out",
+        floor="auto",
+        denoise_kwargs={"denoise": True, "denoise_h": 0.04, "preprocess": False},
+    ).manifest
+
+    assert manifest.floor_deferred is False
+    assert manifest.floor_spec is None
+    assert manifest.floor_level is not None
+
+
 def test_batch_plan_global_level_cannot_erase_a_sampled_slice(tmp_path: Path) -> None:
     """The ONE global level stays below EVERY sampled (t, c)'s maximum.
 

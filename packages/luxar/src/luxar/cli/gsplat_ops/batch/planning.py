@@ -574,11 +574,19 @@ def resolve_batch_floor(
             if sample is None or sample.size == 0:
                 continue
             if denoise_h_values is None:
+                # The sample is already within budget, so resolving it reads once
+                # and provides both the level and sampled maximum.
                 level_here = resolve_volume_floor(sample, floor_spec)
             else:
+                # The denoised path needs the lazy slice again: its probe helper
+                # samples shape-preserving blocks rather than this flat floor sample.
+                import numpy as np
+
+                full_slice = np.asarray(view[...])
                 params = dict(denoise_params or {})
-                params.setdefault(
-                    "norm_range", (float(sample.min()), float(sample.max()))
+                params["norm_range"] = (
+                    float(full_slice.min()),
+                    float(full_slice.max()),
                 )
                 level_here = resolve_volume_floor_denoised(
                     view,

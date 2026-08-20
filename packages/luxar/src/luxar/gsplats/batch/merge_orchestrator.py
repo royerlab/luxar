@@ -81,8 +81,8 @@ def merge_batch_results(
         pairs = ", ".join(f"(t={t}, c={c})" for t, c in sorted(erased))
         raise RuntimeError(
             "Background floor suppression erased every spatial tile for "
-            f"{pairs}; refusing to merge missing slices. Lower the floor or pass "
-            "--floor none, then re-fit those tasks."
+            f"{pairs}; refusing to merge missing slices. Remove those slices' "
+            ".empty markers and re-plan with a lower floor or --floor none."
         )
     if flat and manifest.mode == "content":
         raise ValueError(

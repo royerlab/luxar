@@ -18,7 +18,9 @@ from luxar.gsplats.fit_tiled_gsplats import _tile_norm_range
 from luxar.gsplats.fitting.preprocessing import (
     NORM_RANGE_MIN_SPAN,
     _normalize_data,
+    resolve_volume_floor_denoised,
     resolve_volume_norm_range,
+    resolve_volume_norm_range_denoised,
 )
 
 
@@ -102,6 +104,65 @@ def test_tiled_range_tracks_the_denoised_basis(monkeypatch):
     )
 
     assert resolved == pytest.approx((0.0, float(volume.max()) * 0.5))
+
+
+def test_floor_and_norm_range_reuse_one_denoise_probe(monkeypatch):
+    volume = np.arange(8 * 16 * 16, dtype=np.float32).reshape(8, 16, 16)
+    calls = 0
+
+    def _denoise(block, **_kwargs):
+        nonlocal calls
+        calls += 1
+        return np.asarray(block, dtype=np.float32) * 0.5
+
+    monkeypatch.setattr(
+        "luxar.gsplats.preprocessing.denoise_pipeline.denoise_volume_array",
+        _denoise,
+    )
+    cache: dict[str, object] = {}
+
+    floor = resolve_volume_floor_denoised(
+        volume, "p10", denoise_h=0.04, denoise_params={}, probe_cache=cache
+    )
+    resolved = resolve_volume_norm_range_denoised(
+        volume,
+        0.0,
+        denoise_h=0.04,
+        denoise_params={},
+        probe_cache=cache,
+    )
+
+    assert floor is not None
+    assert resolved == pytest.approx((0.0, float(volume.max()) * 0.5))
+    assert calls == 1
+
+
+def test_oversized_norm_range_skips_denoise_probe(monkeypatch):
+    volume = np.arange(64, dtype=np.float32).reshape(4, 4, 4)
+    monkeypatch.setattr(
+        "luxar.gsplats.fitting.preprocessing._volume_fits_probe_budget",
+        lambda _volume, _budget: False,
+    )
+    monkeypatch.setattr(
+        "luxar.gsplats.preprocessing.denoise_pipeline.denoise_volume_array",
+        lambda *_args, **_kwargs: pytest.fail("oversized range must not denoise"),
+    )
+
+    assert resolve_volume_norm_range_denoised(
+        volume, 0.0, denoise_h=0.04, denoise_params={}
+    ) == pytest.approx((0.0, 63.0))
+
+
+def test_norm_range_probe_read_failure_keeps_raw_range(monkeypatch):
+    volume = np.arange(64, dtype=np.float32).reshape(4, 4, 4)
+    monkeypatch.setattr(
+        "luxar.gsplats.fitting.preprocessing._denoise_probe_arrays",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("read failed")),
+    )
+
+    assert resolve_volume_norm_range_denoised(
+        volume, 0.0, denoise_h=0.04, denoise_params={}
+    ) == pytest.approx((0.0, 63.0))
 
 
 def test_subtract_clamps_at_zero(ramp_volume):

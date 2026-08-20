@@ -375,6 +375,7 @@ def _tile_norm_range(
         denoise_h=fit_kwargs.get("_denoise_h"),
         denoise_params=fit_kwargs.get("_denoise_params"),
         subtract=applied_floor,
+        probe_cache=fit_kwargs.get("_denoise_probe_cache"),
         verbose=verbose,
     )
     if not np.isfinite(hi):
@@ -524,6 +525,7 @@ def fit_tile(
     # not a user spec — _validate_floor guards user input and would reject
     # a legitimate negative resolved level.
     floor_spec = fit_kwargs.pop("floor", "auto")
+    probe_cache = fit_kwargs.setdefault("_denoise_probe_cache", {})
     if isinstance(floor_spec, str):
         _validate_floor(floor_spec)
     # Denoising is applied to the tile BELOW, before the level is subtracted, so
@@ -541,6 +543,7 @@ def fit_tile(
         floor_spec,
         denoise_h=fit_kwargs.get("_denoise_h"),
         denoise_params=fit_kwargs.get("_denoise_params"),
+        probe_cache=probe_cache,
     )
 
     # Resolve the INTENSITY SCALE against the whole volume too, for the same
@@ -566,6 +569,7 @@ def fit_tile(
     # Use pop to remove denoise keys before forwarding to fitting functions
     _denoise_h = fit_kwargs.pop("_denoise_h", None)
     _denoise_params = fit_kwargs.pop("_denoise_params", None)
+    fit_kwargs.pop("_denoise_probe_cache", None)
     if _denoise_h is not None and _denoise_params is not None:
         from arbol import asection as _asection
 
@@ -940,6 +944,7 @@ def fit_tiled(
     # against "floor >= max erases everything" too (matching the non-tiled
     # path, which warns and ignores such a floor).
     floor_spec = fit_kwargs.pop("floor", "auto")
+    probe_cache = fit_kwargs.setdefault("_denoise_probe_cache", {})
     floor_already_resolved = fit_kwargs.pop("_floor_resolved", False)
     if floor_already_resolved:
         applied_floor = None if floor_spec == "none" else float(floor_spec)
@@ -955,6 +960,7 @@ def fit_tiled(
             floor_spec,
             denoise_h=fit_kwargs.get("_denoise_h"),
             denoise_params=fit_kwargs.get("_denoise_params"),
+            probe_cache=probe_cache,
             guard_numeric=True,
             # Log the DENOISED basis the level was resolved on (raw level + the
             # measured shift) — the one number the summary line below cannot show.
