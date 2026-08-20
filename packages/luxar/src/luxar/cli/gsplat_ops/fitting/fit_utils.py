@@ -261,13 +261,12 @@ def resolve_denoise_h(ctx: FitPipelineCtx, volume: "Any") -> Optional[float]:
     paths get there by correcting the whole-volume level onto the denoised basis
     with a bounded probe
     (:func:`~luxar.gsplats.fitting.preprocessing.resolve_volume_floor_denoised`,
-    #1178), which has three documented exceptions: a volume ABOVE the probe
-    budget keeps its raw-basis level under the default ``--floor auto`` (the
-    histogram-mode shift is not measurable on a bounded crop — a ``pNN`` spec is
-    corrected there), a probe that cannot be read or denoised keeps it too, and
-    ``batch-fit`` hands its tasks a numeric level resolved from the raw input
-    (see :func:`resolve_shared_floor`). The first two print a note; the third is a
-    known gap, tracked separately rather than announced per task.
+    #1178). A volume ABOVE the probe budget keeps its raw-basis level under the
+    default ``--floor auto`` because the histogram-mode shift is not measurable
+    on a bounded crop; a ``pNN`` spec is corrected there, and a failed probe
+    keeps the raw level with a note. Batch plans defer that ``pNN`` correction
+    until calibrated ``h`` exists, while preprocess-mode plans resolve every
+    volume-derived spec directly from the denoised store.
     """
     if not ctx.denoise:
         return None

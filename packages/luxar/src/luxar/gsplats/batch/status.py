@@ -7,7 +7,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Optional
 
-from luxar.gsplats.batch.manifest import BatchManifest, load_manifest
+from luxar.gsplats.batch.manifest import (
+    BatchManifest,
+    floor_erased_slices,
+    load_manifest,
+)
 
 
 @dataclass
@@ -41,6 +45,13 @@ def check_batch_status(output_dir: Path) -> BatchStatus:
     status = BatchStatus(total_tasks=manifest.total_tasks)
 
     tiles_dir = output_dir / "tiles"
+    erased_slices = floor_erased_slices(manifest, tiles_dir)
+    erased_ids = {
+        job.task_id
+        for job in manifest.jobs
+        if (job.timepoint, job.channel) in erased_slices
+    }
+    status.failed += len(erased_ids)
 
     # 1. Check output files. A slot is "completed" if its store exists OR it
     # produced a legitimately-empty result (a `<output>.empty` marker — content
@@ -48,6 +59,8 @@ def check_batch_status(output_dir: Path) -> BatchStatus:
     # failed/unknown below.
     completed_ids: set = set()
     for job in manifest.jobs:
+        if job.task_id in erased_ids:
+            continue
         tile_path = tiles_dir / job.output_filename
         if tile_path.exists() or Path(f"{tile_path}.empty").exists():
             status.completed += 1
@@ -57,11 +70,11 @@ def check_batch_status(output_dir: Path) -> BatchStatus:
     # ELEMENT index; with packing (tasks_per_job > 1) each element covers
     # tasks_per_job consecutive flat task ids, so map through the packing.
     tpj = max(1, manifest.tasks_per_job)
-    remaining = manifest.total_tasks - status.completed
+    remaining = manifest.total_tasks - status.completed - len(erased_ids)
     if remaining > 0 and manifest.array_job_id is not None:
         sacct_states = _query_sacct(manifest.array_job_id)
         for task_id in range(manifest.total_tasks):
-            if task_id in completed_ids:
+            if task_id in completed_ids or task_id in erased_ids:
                 continue
             state = sacct_states.get(task_id // tpj)
             if state is None:

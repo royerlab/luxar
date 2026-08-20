@@ -225,6 +225,35 @@ def run_batch_local_orchestration(
         aprint("Dry run -- omit --dry-run to actually fit.")
         raise typer.Exit(0)
 
+    if manifest.floor_deferred:
+        from luxar.cli.gsplat_ops.batch.denoise_workers import (
+            resolve_deferred_batch_floor,
+        )
+        from luxar.gsplats.batch.manifest import save_manifest
+        from luxar.gsplats.preprocessing.denoise_pipeline import calibrate_all_channels
+
+        if manifest.denoise_h is None:
+            h_values = calibrate_all_channels(
+                input_path=Path(manifest.input_path),
+                n_timepoints=manifest.n_timepoints,
+                n_channels=manifest.n_channels,
+                channel_indices=manifest.channel_indices,
+                timepoint_indices=manifest.timepoint_indices,
+                array_key=manifest.array_key,
+                calibration_samples=manifest.calibration_samples,
+                patch_size=manifest.denoise_patch_size,
+                search_distance=manifest.denoise_search_distance,
+                backend=manifest.denoise_backend,
+            )
+            manifest.denoise_h_values = {
+                str(key): value for key, value in h_values.items()
+            }
+        save_manifest(manifest, output_dir)
+        resolve_deferred_batch_floor(output_dir)
+        from luxar.gsplats.batch.manifest import load_manifest
+
+        manifest = load_manifest(output_dir)
+
     final_path = run_batch_local(
         manifest,
         output_dir,

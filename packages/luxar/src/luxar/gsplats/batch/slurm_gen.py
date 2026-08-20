@@ -185,6 +185,8 @@ def generate_fit_sbatch(
             fit_cmd_parts.append(f"    {flag}")  # boolean flag
         else:
             fit_cmd_parts.append(f"    {flag} {shlex.quote(value)}")
+    if manifest.floor_deferred:
+        fit_cmd_parts.append("    --floor $FLOOR_LEVEL")
     if manifest.axes:
         # Forward the explicit axis order so each task loads the same shape the
         # planner discovered (else the positional heuristic can mis-order axes).
@@ -313,6 +315,16 @@ def generate_fit_sbatch(
                 '    local DENOISE_H=$(python3 -c "import json,sys; '
                 "d=json.load(open(sys.argv[1])); "
                 'print(d.get(str(int(sys.argv[2])), 0.04))" "$H_JSON" "$C")',
+            ]
+        )
+
+    if manifest.floor_deferred:
+        floor_json_path = shlex.quote(f"{output_dir}/floor_level.json")
+        lines.extend(
+            [
+                f"    local FLOOR_JSON={floor_json_path}",
+                '    local FLOOR_LEVEL=$(python3 -c "import json,sys; '
+                'print(json.load(open(sys.argv[1]))[\'forward\'])" "$FLOOR_JSON")',
             ]
         )
 
@@ -518,6 +530,38 @@ def generate_denoise_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
     )
     lines.append("")
 
+    return "\n".join(lines)
+
+
+def generate_floor_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
+    """Generate the single dependent job that resolves a denoised floor."""
+    output_dir = _validated_output_dir(manifest.output_dir)
+    lines = [
+        "#!/bin/bash",
+        "#SBATCH --job-name=luxar-floor",
+        f"#SBATCH --partition={manifest.slurm_partition}",
+        "#SBATCH --ntasks=1",
+        "#SBATCH --cpus-per-task=4",
+        f"#SBATCH --mem={max(manifest.slurm_mem_gb, 32)}G",
+        "#SBATCH --time=01:00:00",
+        f"#SBATCH --output={_slurm_log_path(output_dir, 'floor.out')}",
+        f"#SBATCH --error={_slurm_log_path(output_dir, 'floor.err')}",
+    ]
+    if manifest.denoise_mode == "on-the-fly":
+        lines.append("#SBATCH --gpus-per-task=1")
+    if manifest.slurm_account:
+        lines.append(f"#SBATCH --account={manifest.slurm_account}")
+    if manifest.slurm_qos:
+        lines.append(f"#SBATCH --qos={manifest.slurm_qos}")
+    lines.extend(
+        [
+            "",
+            env_preamble,
+            "",
+            f"luxar gsplat batch-fit resolve-floor {shlex.quote(output_dir)}",
+            "",
+        ]
+    )
     return "\n".join(lines)
 
 

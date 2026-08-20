@@ -1139,11 +1139,87 @@ def resolve_volume_norm_range(
     return (lo, hi)
 
 
+def resolve_volume_norm_range_denoised(
+    volume: Any,
+    norm_percentile: float,
+    *,
+    denoise_h: float | None,
+    denoise_params: dict[str, Any] | None,
+    subtract: float | None = None,
+    verbose: bool = False,
+) -> tuple[float, float]:
+    """Resolve the shared normalization range on the data tiles will fit.
+
+    With denoising disabled this is exactly :func:`resolve_volume_norm_range`.
+    Otherwise the raw whole-volume range is shifted by the denoise-induced
+    endpoint change measured on the deterministic shape-preserving probe used
+    for floor correction.  When the volume fits the probe budget, the probe is
+    the whole volume and the result exactly matches resolving after a full
+    denoise, as the non-tiled path does.
+    """
+    raw_lo, raw_hi = resolve_volume_norm_range(volume, norm_percentile)
+    if denoise_h is None or denoise_params is None:
+        lo, hi = raw_lo, raw_hi
+    else:
+        blocks = _sample_blocks_for_denoise_probe(volume, DENOISE_PROBE_BUDGET_VOXELS)
+        if not blocks:
+            lo, hi = raw_lo, raw_hi
+        else:
+            try:
+                from luxar.gsplats.preprocessing.denoise_pipeline import (
+                    denoise_volume_array,
+                )
+
+                raw_probe = np.concatenate([block.ravel() for block in blocks])
+                denoised_probe = np.concatenate(
+                    [
+                        denoise_volume_array(
+                            block, h=denoise_h, **denoise_params
+                        ).ravel()
+                        for block in blocks
+                    ]
+                )
+                if norm_percentile == 0.0:
+                    probe_raw_lo = float(np.min(raw_probe))
+                    probe_raw_hi = float(np.max(raw_probe))
+                    probe_denoised_lo = float(np.min(denoised_probe))
+                    probe_denoised_hi = float(np.max(denoised_probe))
+                else:
+                    probe_raw_lo = float(np.percentile(raw_probe, norm_percentile))
+                    probe_raw_hi = float(
+                        np.percentile(raw_probe, 100.0 - norm_percentile)
+                    )
+                    probe_denoised_lo = float(
+                        np.percentile(denoised_probe, norm_percentile)
+                    )
+                    probe_denoised_hi = float(
+                        np.percentile(denoised_probe, 100.0 - norm_percentile)
+                    )
+                lo = raw_lo + probe_denoised_lo - probe_raw_lo
+                hi = raw_hi + probe_denoised_hi - probe_raw_hi
+                if not np.isfinite(lo) or not np.isfinite(hi):
+                    lo, hi = raw_lo, raw_hi
+            except Exception as exc:
+                aprint(
+                    "Denoised normalization-range probe failed "
+                    f"({exc}); keeping the raw-basis range."
+                )
+                lo, hi = raw_lo, raw_hi
+
+    if subtract is not None:
+        lo = max(0.0, lo - float(subtract))
+        hi = max(lo + NORM_RANGE_MIN_SPAN, hi - float(subtract))
+    if verbose:
+        aprint(f"Whole-volume normalization range: [{lo:.6g}, {hi:.6g}]")
+    return (lo, hi)
+
+
 def _floor_level_and_sample_max(
     volume: Any,
     floor: "str | float | None",
     *,
     guard_numeric: bool = False,
+    sample_budget: int | None = None,
 ) -> "tuple[float | None, float | None]":
     """The resolved whole-volume floor level AND the sampled max it was judged on.
 
@@ -1175,7 +1251,8 @@ def _floor_level_and_sample_max(
         # 0 disables; a negative level is legitimate (see Notes).
         return _resolve_floor(np.empty(0, dtype=np.float32), floor), None
 
-    sample = _sample_volume_for_floor(volume, int(FLOOR_SAMPLE_BUDGET_VOXELS))
+    budget = FLOOR_SAMPLE_BUDGET_VOXELS if sample_budget is None else sample_budget
+    sample = _sample_volume_for_floor(volume, int(budget))
     if sample is None:
         return None, None
 
@@ -1503,6 +1580,7 @@ def resolve_volume_floor_denoised(
     denoise_h: "float | None" = None,
     denoise_params: "dict[str, Any] | None" = None,
     guard_numeric: bool = False,
+    sample_budget: int | None = None,
     verbose: bool = False,
 ) -> "float | None":
     """Resolve a ``floor`` spec as a property of the DENOISED data.
@@ -1673,7 +1751,10 @@ def resolve_volume_floor_denoised(
     # The sampled max comes back with the level so the guard below can judge the
     # CORRECTED level on the very same basis, without a second bounded read.
     level_raw, raw_sample_max = _floor_level_and_sample_max(
-        volume, floor, guard_numeric=guard_numeric
+        volume,
+        floor,
+        guard_numeric=guard_numeric,
+        sample_budget=sample_budget,
     )
     if level_raw is None:
         # Disabled, or refused by the "erases all signal" guard — nothing to

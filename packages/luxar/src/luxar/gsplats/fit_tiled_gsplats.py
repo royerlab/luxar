@@ -14,6 +14,10 @@ denoises the whole volume first, estimates (#1178). That match is exact for a
 volume within the denoise probe's budget; above it, only a ``pNN`` floor is
 corrected onto the denoised basis and the default ``auto`` keeps its raw-basis
 level with a printed note.
+The shared normalization range follows the same basis: its whole-volume
+endpoints are shifted by the denoise-induced change measured on the bounded
+shape-preserving probe, so tiles are not normalized against raw extremes they
+never see.
 """
 
 from __future__ import annotations
@@ -31,7 +35,7 @@ from luxar.gsplats.fitting.preprocessing import (
     NORM_RANGE_MIN_SPAN,
     _floor_spec_is_volume_derived,
     resolve_volume_floor_denoised,
-    resolve_volume_norm_range,
+    resolve_volume_norm_range_denoised,
 )
 from luxar.gsplats.fitting.results import stamp_voxels_per_splat
 from luxar.gsplats.fitting.validation import _validate_floor
@@ -318,8 +322,9 @@ def _tile_norm_range(
 ) -> "tuple[float, float] | None":
     """Shared ``(image_min, image_max)`` for every tile of ``volume``.
 
-    The top comes from :func:`resolve_volume_norm_range` (whole volume, shifted
-    into post-floor terms). The bottom is pinned at **zero**, which is where the
+    The top comes from :func:`resolve_volume_norm_range_denoised` (whole volume,
+    shifted onto the denoised and post-floor basis). The bottom is pinned at
+    **zero**, which is where the
     array each tile fitter actually sees starts: the floor subtraction clips at
     0 and the Hann window then tapers every overlapped face down to 0.
 
@@ -364,9 +369,11 @@ def _tile_norm_range(
     this dim (a float stack topping out at 1e-13, floor or not) keeps its shared
     scale, because normalizing by its own true extent is exactly right.
     """
-    _, hi = resolve_volume_norm_range(
+    _, hi = resolve_volume_norm_range_denoised(
         volume,
         fit_kwargs.get("norm_percentile", 0.0),
+        denoise_h=fit_kwargs.get("_denoise_h"),
+        denoise_params=fit_kwargs.get("_denoise_params"),
         subtract=applied_floor,
         verbose=verbose,
     )

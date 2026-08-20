@@ -18,6 +18,7 @@ def submit_batch_jobs(
     preamble: str,
     calibrate_script: Optional[str],
     denoise_script: Optional[str],
+    floor_script: Optional[str],
     preempt_fit_script: Optional[str],
     total_tasks: int,
     preempt_partition: Optional[str],
@@ -43,6 +44,8 @@ def submit_batch_jobs(
         (out / "calibrate.sbatch").write_text(calibrate_script)
     if denoise_script:
         (out / "denoise_array.sbatch").write_text(denoise_script)
+    if floor_script:
+        (out / "resolve_floor.sbatch").write_text(floor_script)
     if preempt_fit_script:
         (out / "fit_array_preempt.sbatch").write_text(preempt_fit_script)
     save_manifest(manifest, out)
@@ -102,8 +105,24 @@ def submit_batch_jobs(
         denoise_total = denoise_n_t * denoise_n_c
         aprint(f"  Denoise array job: {denoise_job_id} ({denoise_total} tasks)")
 
-    # Submit fitting array (depends on denoise or calibrate)
-    fit_dep_id = denoise_job_id or calibrate_job_id
+    floor_job_id = None
+    floor_dep_id = denoise_job_id or calibrate_job_id
+    if floor_script:
+        aprint("Submitting denoised floor-resolution job...")
+        floor_cmd = ["sbatch"]
+        if floor_dep_id:
+            floor_cmd.append(f"--dependency=afterok:{floor_dep_id}")
+        floor_cmd.append(str(out / "resolve_floor.sbatch"))
+        result = subprocess.run(floor_cmd, capture_output=True, text=True)  # nosec B603
+        if result.returncode != 0:
+            aprint(f"Error submitting floor job: {result.stderr}")
+            raise typer.Exit(1)
+        floor_job_id = _parse_job_id(result.stdout)
+        manifest.floor_job_id = floor_job_id
+        aprint(f"  Floor resolution job: {floor_job_id}")
+
+    # Submit fitting array (depends on floor, denoise, or calibration)
+    fit_dep_id = floor_job_id or floor_dep_id
     aprint("Submitting fitting array job...")
     fit_cmd = ["sbatch"]
     if fit_dep_id:

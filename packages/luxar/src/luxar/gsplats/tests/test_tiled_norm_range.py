@@ -82,6 +82,28 @@ def test_subtract_shifts_the_range_into_post_floor_terms(ramp_volume):
     assert shifted[1] == pytest.approx(plain[1] - 10.0)
 
 
+def test_tiled_range_tracks_the_denoised_basis(monkeypatch):
+    """The shared top must describe the array tiles fit, not the raw input."""
+    volume = np.arange(8 * 16 * 16, dtype=np.float32).reshape(8, 16, 16)
+
+    def _compress_extremes(block, h, **kwargs):
+        del h, kwargs
+        return np.asarray(block, dtype=np.float32) * 0.5
+
+    monkeypatch.setattr(
+        "luxar.gsplats.preprocessing.denoise_pipeline.denoise_volume_array",
+        _compress_extremes,
+    )
+
+    resolved = _tile_norm_range(
+        volume,
+        {"_denoise_h": 0.04, "_denoise_params": {}},
+        None,
+    )
+
+    assert resolved == pytest.approx((0.0, float(volume.max()) * 0.5))
+
+
 def test_subtract_clamps_at_zero(ramp_volume):
     """A floor above the volume minimum must not produce a negative image_min."""
     lo, hi = resolve_volume_norm_range(ramp_volume, 0.0, subtract=1e6)
