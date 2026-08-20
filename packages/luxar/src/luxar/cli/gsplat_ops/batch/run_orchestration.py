@@ -33,9 +33,7 @@ def _resolve_local_deferred_floor(
             search_distance=manifest.denoise_search_distance,
             backend=manifest.denoise_backend,
         )
-        manifest.denoise_h_values = {
-            str(key): value for key, value in h_values.items()
-        }
+        manifest.denoise_h_values = {str(key): value for key, value in h_values.items()}
     save_manifest(manifest, output_dir)
     resolve_deferred_batch_floor(output_dir)
     return load_manifest(output_dir)

@@ -37,9 +37,7 @@ def _slurm_log_path(output_dir: str, log_name: str) -> str:
     return shlex.quote(f"{output_dir.replace('%', '%%')}/logs/{log_name}")
 
 
-def _runtime_denoise_floor_lines(
-    manifest: BatchManifest, output_dir: str
-) -> list[str]:
+def _runtime_denoise_floor_lines(manifest: BatchManifest, output_dir: str) -> list[str]:
     """Bash lines that load deferred denoise/floor values without hiding errors."""
     lines: list[str] = []
     if (
