@@ -237,9 +237,9 @@ def _reject_a_partition_beside_a_stored_ladder(
     The rule "a query must not pre-empt the builder's own fault report" is
     preserved exactly where it belongs: on an UNLADDERED store the fallback is 1
     rung, so the leaf still skips and the builder still reports the malformed spec
-    one level down, on a store that has no conflict of its own (residual (i)
-    below — and residual (ii) is the price of the same fallback). The accepted cost
-    is one over-refusal, on the other side: ``{"recompute": True, "breakpoints":
+    one level down, on a store that has no conflict of its own (the reporting
+    residual below). The accepted cost is one over-refusal, on the other side:
+    ``{"recompute": True, "breakpoints":
     [1.0]}`` on a LADDERED store is refused although it would in fact resolve to a
     single rung. That is identical to pre-#1632 behaviour — nothing regresses —
     and it is the conservative direction: refuse with an empty store, never write
@@ -684,8 +684,8 @@ def graft_gsplat_node(
     derives its thresholds in
     :func:`~luxar.core.group.gsplats_pipeline.lod_dispatch.add_gsplats_as_lod_group_impl`
     (via ``derive_coverage_fractions``), not in this function. That matrix-shaped
-    route pre-validates child-wide inputs before creating its wrapper, so its
-    known child failures do not require this graft transaction.
+    route is not transactional: a per-child kwarg failure such as an invalid
+    ``extend_to_all`` can still leave its wrapper behind (tracked in #1784).
     """
     if _under_partition is None:
         return _graft_gsplat_node_transaction(
@@ -800,8 +800,8 @@ def graft_gsplat_node(
         #     higher up THIS grafted subtree (the recursion's own flag, which
         #     excludes a one-part partition — see the partition branch), or, at the
         #     entry call, a ``kind=partition`` already in the SCENE above the
-        #     insertion point (the ``is_partition_bound`` walk at the top of this
-        #     function).
+        #     insertion point (the ``is_partition_bound`` walk in
+        #     ``_graft_gsplat_node_transaction``).
         #   * a child that IS a ``GSplatPartition`` — the ``overview`` recipe's
         #     cap↔fine pair, the common reachable case here.
         # The scene-side half is DEFENSIVE, not the fix for the everyday per-part
