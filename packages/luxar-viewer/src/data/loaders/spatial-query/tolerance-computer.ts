@@ -472,13 +472,21 @@ function regularizedHiddenBand(truncationRadius: number | undefined): number {
  * KNOWN LIMITS. The first two are "your axis is mis-declared", not "widen this
  * epsilon" (widening it reintroduces the over-fetch it replaces); the third is
  * "do not author that node":
- * - **Coordinates far from the origin.** `mins = (chunk_centers - extents)` is
- *   stored float32, so an expansion smaller than half an ULP of the coordinate is
- *   rounded away entirely. A float32 ULP is `|coord| × 2^-23 … 2^-24`, so with
- *   `T = 2.75` **any** `σ_d ≲ (1.1–2.2)e-8 × |coord|` behaves exactly like zero
- *   variance, not just an exactly-zero one. Combined with term 1, a dim whose
- *   coordinates sit more than ~8000 steps from the origin can round outside this
- *   window. Re-origin the axis, or declare it discrete.
+ * - **Coordinates far from the origin.** No longer the write side's doing: since
+ *   #1655 `io/_ordering/gsplats.py::compute_chunk_bounds_gsplats` accumulates
+ *   `chunk_centers ± extents` in float64 and narrows it to the float32 store with
+ *   OUTWARD rounding (`_store_outward_f32_array`), exactly as the points builder
+ *   does — so an expansion smaller than half a float32 ULP is widened to a full
+ *   ULP instead of being discarded, and a small `σ_d` on a large coordinate no
+ *   longer behaves like zero variance. (It used to, and a store written before
+ *   that fix still carries the tight bounds: with `T = 2.75`, **any**
+ *   `σ_d ≲ (1.1–2.2)e-8 × |coord|` rounded away entirely.) What remains is the
+ *   stored COORDINATE, not the pad — a dim with genuinely zero variance still
+ *   gets a zero-width bound (the outward step has nothing to widen), sitting on a
+ *   float32 value while the query position is a float64 `start + k × step`, and
+ *   the float32 spacing at `|coord|` is `|coord| × 1.2e-7`. So a dim whose
+ *   coordinates sit more than ~8000 steps from the origin can still fall outside
+ *   term 1's window. Re-origin the axis, or declare it discrete.
  * - **A second CONTINUOUS-hidden dim with very large σ.** The regularization floor is
  *   RELATIVE — `sqrt(maxDiag × CHOLESKY_RELATIVE_EPSILON)`, i.e.
  *   `σ_max × 1e-6` — whenever the hidden block is not all-zero. That block is the
