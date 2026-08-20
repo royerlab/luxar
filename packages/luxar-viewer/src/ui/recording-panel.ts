@@ -104,6 +104,9 @@ export class RecordingPanel {
   private formatController: Controller | null = null;
   private captureController: Controller | null = null;
 
+  /** LOD-quiescence predicate for the offline loop — see {@link setLODSettledProvider}. */
+  private lodSettledProvider: (() => boolean) | null = null;
+
   constructor(
     private readonly sceneManager: SceneManager,
     animationController: AnimationController
@@ -148,6 +151,12 @@ export class RecordingPanel {
       renderFrameToCanvas,
       downloadBlob,
       generateFilename,
+      // Let the offline loop wait (bounded) for the auto-LOD selector to
+      // settle before exporting each frame, so a tile reloading its fine
+      // level after re-entering the frustum is not filmed coarse (#1695).
+      // Read through the injected provider (see setLODSettledProvider); no
+      // provider ⇒ nothing to wait for.
+      isLODSettled: () => this.lodSettledProvider?.() ?? true,
     });
 
     this.gui = new GUI({
@@ -235,6 +244,25 @@ export class RecordingPanel {
 
   setOverlayManager(manager: OverlayManager | null): void {
     this.session.overlayManager = manager;
+  }
+
+  /**
+   * Supply the predicate the offline capture loop drains on before exporting
+   * each frame: "is every in-frame LOD group showing its selected level at
+   * final quality?" (`LODGroupRegistry.isCaptureQuiescent()`). Without it an
+   * orbiting turntable bakes coarse-level pops into the sequence whenever a
+   * tile re-enters the frustum mid-reload (#1695).
+   *
+   * INJECTED rather than read directly: reaching the registry means importing
+   * `data/scene-loader-manager`, which pulls the whole data/cache stack into
+   * this module's graph and breaks every consumer that stubs a minimal
+   * `config`. `core/app/init/pipeline` already imports `getSceneLoader` and
+   * already wires this panel's other cross-cutting predicates (render-skip,
+   * pacing-suspend), so it is the natural place. Unset ⇒ the loop never waits,
+   * which is the pre-#1695 behaviour.
+   */
+  setLODSettledProvider(provider: (() => boolean) | null): void {
+    this.lodSettledProvider = provider;
   }
 
   async captureScreenshot(): Promise<void> {

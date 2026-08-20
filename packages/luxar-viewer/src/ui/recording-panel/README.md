@@ -144,7 +144,8 @@ frame-by-frame capture for turntable + EXR-sequence modes:
    it stuck true would leave a dark viewport with no recovery but a
    reload.
 8. For each frame: register a per-frame callback that orbits the
-   camera one step, `await requestAnimationFrame`, then call
+   camera one step, `await requestAnimationFrame`, remove the orbit
+   callback, **drain on `hooks.isLODSettled`** (below), then call
    `driver.captureFrame(ctx, frameIndex, progress)`. Tolerate up to
    `MAX_CONSECUTIVE_ERRORS = 3` consecutive frame failures before
    bailing.
@@ -153,6 +154,76 @@ frame-by-frame capture for turntable + EXR-sequence modes:
     finalize didn't succeed, remove per-frame callbacks, hide the
     indicator + overlay, restore auto-rotate + recording state, wake
     the loop once more, and clear the abort controller reference.
+
+### Step 8's LOD settle drain
+
+Because the rAF loop runs for the whole capture (that is what makes the
+turntable rotate at all), the auto-LOD selector is live for the entire
+sweep — and it is frustum-aware. On a `tiles` / `adaptive` / `overview`
+gsplat scene, a tile whose world bbox leaves the frustum mid-orbit is
+demoted to its coarsest ready level, and the resident-byte budget may
+release the fine one. When it swings back into view the fine level
+reloads **asynchronously**, so a loop that takes exactly one rAF per
+exported frame writes those frames at the coarse level and pops back a
+few frames later (#1695).
+
+So each frame, after the orbit callback has been removed, the loop spends
+extra rAF ticks until `hooks.isLODSettled()` reports every in-frame LOD
+group is showing its selected level at final quality
+(`LODGroupRegistry.isCaptureQuiescent()`, injected from
+`core/app/init/pipeline` via `RecordingPanel.setLODSettledProvider`). The
+drain sits **after** the callback removal on purpose: the camera pose is
+fixed from that point on, so the extra frames only let pending loads
+land. Draining before it would keep advancing the turntable while waiting
+and smear the sweep. An absent hook makes the drain a strict no-op — not
+even one extra rAF — which is what the unit tests that don't supply it
+get.
+
+The **first** of those ticks is mandatory, not part of the wait, and the
+reason is per-frame callback ordering. `AnimationController.animate` runs
+`controls.update()`, then every per-frame callback in Map insertion
+order, then the render. The LOD selector (`lod-group-selector`) is
+registered once at pipeline init, while this loop removes and re-adds its
+orbit callback on every iteration — so the orbit callback is always
+_last_ in that Map, and `LuxarOrbitControls.applyOrbitRotation` moves the
+camera synchronously. Inside the single rAF the loop awaits for frame N,
+therefore: the selector evaluates pose N−1, and only afterwards does the
+camera advance to pose N. Polling immediately would read
+`desiredChildIndex` / `activeChildIndex` / `offScreen` computed for the
+_previous_ pose, and on the exact frame a tile re-enters the frustum the
+selector has not seen the re-entry yet — the predicate would report
+settled and that frame would still be filmed coarse. That is one popped
+frame per re-entry, i.e. a slice of the very bug being fixed. One extra
+tick puts the selector on the pose about to be captured.
+
+The cost is one rAF per frame even on a fully settled scene. Against a
+full pipeline render plus an asynchronous GPU readback plus an encode for
+every frame, ~16 ms is noise.
+
+The wait is bounded by `LOD_SETTLE_TIMEOUT_MS = 2000` **and**
+`LOD_SETTLE_MAX_FRAMES = 120` (≈2 s at 60 fps, inclusive of the mandatory
+catch-up tick), whichever trips first.
+The frame cap is not redundant with the deadline: under a stubbed or
+frozen clock — unit tests, fake timers, a suspended tab — `Date.now()`
+never advances and the ms bound alone would spin forever. After
+`MAX_CONSECUTIVE_LOD_TIMEOUTS = 3` consecutive timeouts the loop stops
+draining for the rest of the run and warns once; otherwise a scene that
+can never settle (resident-byte thrash on an over-budget partition) would
+multiply the capture's wall-clock by the timeout on every remaining
+frame. A successful settle resets the counter. At the end of the run, any
+timeouts at all produce a `log.warning` with the count (and whether
+waiting was stopped early) plus a toast, so a degraded sequence is
+visible rather than a mystery.
+
+Waiting rather than forcing is deliberate. `?lod-finest`
+(`LODGroupRegistryDeps.getForceFinestLOD`) would pin the finest level and
+skip the off-screen gate outright, but a capture visits the whole scene:
+peak residency would become the entire dataset, which is exactly what the
+resident-byte budget exists to prevent. Waiting costs time, not memory.
+Also deliberately left alone: the distance-driven coverage cross-fade. Its
+weight is a function of projected bbox area, not wall-clock, so across a
+turntable it already spreads smoothly over consecutive exported frames —
+draining it would turn a dissolve into a hard cut.
 
 Step 7's wake-up is load-bearing, not belt-and-braces: the turntable's
 rotation is applied from a per-frame callback, those only run while the

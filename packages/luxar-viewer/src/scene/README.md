@@ -429,6 +429,29 @@ registry.setSelectorMode(path, 'auto');
 registry.setSelectorMode(path, { lockLevel: 2 });
 ```
 
+**Capture quiescence:** `registry.isCaptureQuiescent()` answers "is
+every lod_group that contributes pixels to the current view already
+showing its own selected level at final quality?" — i.e. would one more
+frame of waiting improve what is on screen. The offline turntable
+capture drains on it (bounded) before exporting each frame, because the
+rAF loop — and therefore this frustum-aware selector — runs for the
+whole sweep: a tile that leaves the frustum mid-orbit is demoted, may
+have its fine level released by the byte budget, and reloads
+asynchronously on re-entry, which a one-rAF-per-frame capture would
+otherwise film at the coarse level (#1695). Off-screen entries are
+skipped (they draw nothing and are held coarse on purpose); an entry
+blocks while its displayed level differs from the aspiration, while the
+aspiration is not ready / not fresh / still streaming additive LODs,
+while any of its children is `loading`, or while the selector's
+`desiredChildIndex` is finer than the aspiration. That last clause is
+the subtle one: `activeChildIndex` only advances onto a READY level, so
+in the frame where a lazy level's load lands (`ready` true, `loading`
+cleared) the swap has not happened yet — a predicate reading only
+ready/loading/displayed would call that window settled. A `desired`
+level that has `failed` does not block, since it can never become ready
+this frame. Forcing the finest level instead was rejected: a capture
+visits the whole scene, so peak residency would be the entire dataset.
+
 **Retention + VRAM budget:** swaps never `release()` outgoing
 geometry — retention keeps loaded levels resident so swapping back is
 a sub-millisecond visibility toggle. Memory is bounded once per frame

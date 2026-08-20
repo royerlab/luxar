@@ -457,6 +457,26 @@ export interface LODGroupEntry {
    * mistaken for a selection bug. Updated each ``evaluatePerFrame``.
    */
   offScreen?: boolean;
+  /**
+   * The level index the selector WANTED this frame, recorded BEFORE the
+   * ready/freshness gates below it get a say. Written by ``evaluateEntry`` on
+   * every path that computes a ``desired`` — the explicit lock and all three
+   * auto branches (off-screen hold, screen-area pick, legacy coverage pick).
+   * ``undefined`` (never evaluated) ⇒ read it as ``activeChildIndex``.
+   *
+   * Purely diagnostic for the renderer — nothing about display reads it. It
+   * exists so an OFFLINE CAPTURE can tell "the selector wants a finer level it
+   * has not got yet" apart from "settled" (see
+   * {@link LODGroupRegistry.isCaptureQuiescent}). ``activeChildIndex`` alone
+   * cannot express that: the aspiration only ever advances ONTO A READY LEVEL,
+   * so in the frame where a lazy fine level's async load lands (the thunk sets
+   * ``ready=true`` and clears ``loading``) the registry has not swapped yet —
+   * that happens on the NEXT selector pass. A quiescence predicate reading only
+   * ``loading`` / ``ready`` / ``displayedChildIndex`` would call that window
+   * "settled" and the capture would film the coarse level one frame before the
+   * swap, which is exactly the LOD pop this field exists to close.
+   */
+  desiredChildIndex?: number;
 }
 
 /**
@@ -712,6 +732,85 @@ export class LODGroupRegistry {
   }
 
   /**
+   * Whether every lod_group that contributes pixels to the CURRENT view is
+   * already showing its own selected level at final quality — i.e. one more
+   * frame of waiting would not improve what is on screen.
+   *
+   * **Why this exists.** An offline turntable capture (``OfflineCaptureStrategy``)
+   * takes exactly one ``requestAnimationFrame`` per exported frame. Since the
+   * rAF loop runs for the whole sweep, the auto-selector is live and
+   * frustum-aware, so a tile that leaves the frustum mid-orbit is demoted to
+   * its coarsest ready level and the resident-byte budget may release its fine
+   * one. When it swings back into view the fine level reloads ASYNCHRONOUSLY —
+   * and without a wait those frames go into the ZIP/MP4 at the coarse level and
+   * pop back a few frames later. The capture loop therefore drains on this
+   * predicate (bounded) before grabbing each frame. Forcing finest instead was
+   * deliberately rejected: a capture visits the whole scene, so peak residency
+   * would be the entire dataset.
+   *
+   * Per entry, in order:
+   *
+   * - **Off-screen entries are skipped entirely.** ``offScreen`` means the
+   *   selector is deliberately holding the group coarse *because it draws
+   *   nothing this frame* — blocking on it would wait for a level that will
+   *   never be selected while it is culled.
+   * - ``displayed !== activeChildIndex`` ⇒ not quiescent. A stale slice
+   *   fallback or a never-downgrade hold is on screen instead of the
+   *   aspiration, so what renders is not what the selector settled on.
+   * - ``desired !== activeChildIndex`` ⇒ not quiescent — UNLESS that desired
+   *   child is ``failed``. The aspiration only advances onto a READY level, so
+   *   this is the one-frame window after a lazy load lands but before the next
+   *   selector pass swaps (see ``LODGroupEntry.desiredChildIndex``); it is also
+   *   the whole in-flight load. A ``failed`` level can never become ready this
+   *   frame, so blocking on it only buys a timeout — treat it as the best
+   *   available and keep checking the rest.
+   * - The aspiration must exist and be ``isReady``.
+   * - When freshness is tracked (``getViewVersion`` wired), the aspiration must
+   *   be FRESH for the current view version — via the group-aware
+   *   {@link childFreshAndCount}, not the leaf-only ``isFresh``, so a deferred
+   *   ``kind=partition`` subtree stamped for an older slice counts as stale.
+   * - The aspiration's additive ladder must be complete: ``hasMoreLODs()``
+   *   still true means only a prefix of the level has committed.
+   * - No child of the entry may be ``loading`` — an in-flight commit can change
+   *   what renders on a later frame.
+   *
+   * An empty registry (and an entry-free scene) is quiescent: there is nothing
+   * to wait for.
+   *
+   * Called from the capture drain, NOT from the rAF hot path, so the cost is
+   * irrelevant — but it still uses plain indexed loops and allocates nothing,
+   * matching this file's hot-path style.
+   */
+  isCaptureQuiescent(): boolean {
+    const version = this.deps.getViewVersion?.();
+    for (const entry of this.entries.values()) {
+      // Deliberately excluded: an off-screen group is held coarse on purpose
+      // and contributes no pixels to the frame being captured.
+      if (entry.offScreen === true) continue;
+
+      const active = entry.activeChildIndex;
+      const desired = entry.desiredChildIndex ?? active;
+      const displayed = entry.displayedChildIndex ?? active;
+      if (displayed !== active) return false;
+      if (desired !== active) {
+        const target = entry.children[desired];
+        // A failed level never becomes ready, so waiting on it only times out.
+        if (!target || target.failed !== true) return false;
+      }
+
+      const aspiration = entry.children[active];
+      if (!aspiration || !isReady(aspiration)) return false;
+      if (version != null && !this.childFreshAndCount(aspiration, version).fresh) return false;
+      if (aspiration.hasMoreLODs?.() === true) return false;
+
+      for (let i = 0; i < entry.children.length; i++) {
+        if (entry.children[i].loading) return false;
+      }
+    }
+    return true;
+  }
+
+  /**
    * Retry a LAZY lod_group level by its LEAF path (the path of the level's
    * placeholder mesh — leaf lazy children are named with their node path by
    * the node factory; anonymous deferred-GROUP placeholders carry no name and
@@ -938,6 +1037,12 @@ export class LODGroupRegistry {
         entry.offScreen = false;
       }
     }
+
+    // Record what the selector WANTS this frame, before any of the ready /
+    // freshness gates below can veto it. Read by ``isCaptureQuiescent`` only —
+    // see ``LODGroupEntry.desiredChildIndex`` for why the aspiration index
+    // cannot answer the same question.
+    entry.desiredChildIndex = desired;
 
     // ── Advance the aspiration (``activeChildIndex``) toward ``desired`` ──
     // The aspiration is the hysteresis anchor and only moves onto a READY level;

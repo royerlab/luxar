@@ -59,6 +59,10 @@ function makeRecordingPanelStub() {
   return {
     setPanelStateCallbacks: vi.fn(),
     setAdaptiveDPRManager: vi.fn(),
+    // The offline loop's LOD-quiescence predicate (#1695) is injected here
+    // too, since reaching `getSceneLoader` from the panel itself would pull
+    // the whole data/cache stack into its module graph.
+    setLODSettledProvider: vi.fn(),
     // The two capture flags the pipeline's injected predicates read.
     // `isCurrentlyRecording()` covers BOTH capture kinds; only the
     // narrower `isLoopRenderSuppressed()` may gate the render skip.

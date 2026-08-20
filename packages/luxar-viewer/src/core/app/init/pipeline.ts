@@ -528,6 +528,20 @@ export async function runInitPipeline(
   // the canvas after its own awaited frame rather than depending on the
   // loop's cadence.
   animationController.setPacingSuspendPredicate(() => recordingPanel.isCurrentlyRecording());
+  // An offline turntable keeps the rAF loop running, so the auto-LOD selector
+  // is live and frustum-aware for the whole sweep: a tile that left the
+  // frustum mid-orbit is demoted (and may have had its fine level released by
+  // the resident-byte budget), then reloads ASYNCHRONOUSLY on re-entry.
+  // Without a wait those frames are exported at the coarse level and pop back
+  // a few frames later (#1695). Force-finest was rejected as the fix — a
+  // capture visits the whole scene, so pinning finest across a tiled partition
+  // would make peak residency the entire dataset — so the capture waits
+  // (bounded) instead. Read live: the scene loader is created after the panel,
+  // and a scene with no lod_group has no registry, hence `?? true` = nothing
+  // to wait for.
+  recordingPanel.setLODSettledProvider(
+    () => getSceneLoader('default')?.lodGroupRegistry?.isCaptureQuiescent() ?? true
+  );
 
   // Initialize layers panel (per-node controls)
   const layersPanel = factories.layersPanel(document.body, animationController);
