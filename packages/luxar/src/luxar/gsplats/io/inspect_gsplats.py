@@ -22,9 +22,10 @@ def inspect_gsplats_zarr(path: str | Path) -> Dict[str, Any]:
 
     "Without loading arrays" is about the ARRAY DATA, not about I/O in general.
     A directory store and a *flat* zip (store at the archive root, opened in
-    place as a ``ZipStore`` — the one point where this reads a shape the loader
-    does not, see ``resolve_store_path``'s ``flat_zip_in_place``) cost nothing
-    beyond reading metadata documents. A NESTED archive — what
+    place as a ``ZipStore`` — the one point where this resolves a shape the
+    loader resolves by EXTRACTION instead, see ``resolve_store_path``'s
+    ``flat_zip_in_place``) cost nothing beyond reading metadata documents. A
+    NESTED archive — what
     ``save_gsplats(..., compress=…)`` writes — is EXTRACTED to a temp directory
     to resolve its store root, so inspecting one costs its full uncompressed
     size in temp space for the duration of the call (measured: a 3.17 MB archive
@@ -58,8 +59,9 @@ def inspect_gsplats_zarr(path: str | Path) -> Dict[str, Any]:
         raise FileNotFoundError(f"GSplats zarr not found: {path}")
 
     # `flat_zip_in_place`: a flat zip is metadata-readable in place as a
-    # ZipStore, and always was, so refusing it here would be a new regression.
-    # The loader does NOT opt in — see `resolve_store_path`.
+    # ZipStore, for no temp space at all — extracting one (which is how every
+    # other reader resolves the shape) would cost this metadata-only call the
+    # dataset's full uncompressed size. See `resolve_store_path`.
     zarr_path, temp_dir = resolve_store_path(path, flat_zip_in_place=True)
     try:
         return _inspect_store(path, zarr_path)

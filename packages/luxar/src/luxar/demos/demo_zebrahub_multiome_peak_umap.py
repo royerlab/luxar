@@ -50,6 +50,11 @@ DEMO_META = {
     },
     "caches": ["zebrahub_multiome_peak"],
     "outputs": ["zebrahub_multiome_peak_umap", "zebrahub_umap"],
+    "citation": {
+        # First author of the Zebrahub-Multiome preprint this demo cites above.
+        "short": "Kim et al. 2024",
+        "doi": "10.1101/2024.10.18.618987",
+    },
 }
 
 import sys
@@ -257,7 +262,9 @@ def create_zebrahub_scene(
 
         # Create scene
         with LuxarZarrCompiler(output_path) as compiler:
-            scene = compiler.create_scene(dimensions=dims)
+            scene = compiler.create_scene(
+                dimensions=dims, citation=DEMO_META["citation"]
+            )
 
             # Add points with small radii for dense point cloud
             total_points = len(positions_combined)
@@ -334,7 +341,7 @@ def create_zebrahub_scene(
                         )
 
             scene.add_text(
-                f"{n_points:,} peaks • Zebrafish • 3D UMAP • Lange et al., Cell 2024",
+                f"{n_points:,} peaks • Zebrafish • 3D UMAP • Kim et al. 2024",
                 position=(0.98, 0.97),
                 font_size=0.012,
                 anchor="bottom-right",

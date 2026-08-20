@@ -66,7 +66,7 @@ Each Gaussian splat is parameterized by:
 
 | Field | Shape | Dtype | Semantic Type | Description |
 |-------|-------|-------|---------------|-------------|
-| `centers` | (N, d) | uint16 / float32 | COORDINATE | Splat center positions (not broadcastable). AUTO/MEMORY: uint16 per-axis fixed-point (`linear_perchannel_u16`), decoded to float32; PRECISION / large-extent / able to displace splats past their own σ (see the sigma rail below): float32 |
+| `centers` | (N, d) | uint16 / float32 | COORDINATE | Splat center positions (not broadcastable). AUTO/MEMORY: uint16 per-axis fixed-point (`linear_perchannel_u16`), decoded to float32, with a *gridded* axis snapped so it round-trips exactly; PRECISION / large-extent / able to displace splats past their own σ on an axis no grid describes (see the sigma rail below): float32 |
 | `amplitudes` | (N,) or (1,) | uint8/uint16/float32 | POSITIVE_SCALAR | Non-negative intensity |
 | `cholesky_factors_diag` | (N, d) or (1, d) | uint8/uint16/float32 | CHOLESKY_DIAG | Diagonal of L (positive, scale-like) |
 | `cholesky_factors_offdiag` | (N, d*(d-1)/2) or (1, …) | uint8/uint16/float32 | CHOLESKY_OFFDIAG | Strictly-lower elements of L (signed); absent when d=1 |
@@ -192,12 +192,13 @@ fitted.gsplats.zarr/
 ├── .zattrs           # type: "gsplats", n_splats, ndim, has_colors, ordering,
 │                     # ordering_min/max/bits, slice_dims, ordering_dims,
 │                     # chunk_size, amplitude_range, amplitude_data_range,
+│                     # amplitude_mass, amplitude_mass_weighted_mean,
 │                     # center_bounds, position_bounds, truncation_radius,
 │                     # opacity, absorption, gamma, intensity, offset, blending_mode?,
 │                     # format_version: "3.4", format_type: "gsplats_zarr",
 │                     # timestamp, luxar_gsplats_version, description?
 ├── .zmetadata        # Consolidated metadata for fast loading
-├── centers                   # (N, d) uint16 (AUTO; float32 if an axis extent ≥ 2¹⁶ or the grid is too coarse for the splats' σ) / float32 (PRECISION), spatially ordered
+├── centers                   # (N, d) uint16 (AUTO; float32 if an axis extent ≥ 2¹⁶, or if a NON-gridded axis's grid is too coarse for the splats' σ) / float32 (PRECISION), spatially ordered
 ├── amplitudes                # (N,) uint8/uint16 (AUTO) / float32 (PRECISION)
 ├── cholesky_factors_diag     # (N, d) uint8 (AUTO, certified — escalates to uint16 if the covariance certificate fails) / float32 (PRECISION)  (diagonal of L)
 ├── cholesky_factors_offdiag  # (N, d*(d-1)/2) uint8 (AUTO, certified as above) / float32 (PRECISION) (off-diagonal; absent if d=1)
@@ -455,6 +456,8 @@ attrs are `type`, `kind`, `selector`, `default_level`, `display_type`,
   "chunk_size": 2048,
   "amplitude_range": {"min": 0.01, "max": 1.5},
   "amplitude_data_range": [0.01, 1.5],
+  "amplitude_mass": 8421.7,
+  "amplitude_mass_weighted_mean": 0.32,
   "center_bounds": {
     "min": [0.0, 0.0, 0.0],
     "max": [256.0, 256.0, 128.0]
@@ -492,11 +495,110 @@ by the ellipsoidal extent). Encoding metadata on each array carries tighter
 per-array quantization bounds.
 
 **Amplitude ranges**: `amplitude_range` (`{"min", "max"}` dict) is the
-metadata bounds record; `amplitude_data_range` (`[min, max]` list, written
-alongside it whenever amplitudes are given as a non-empty array — a scalar amplitude
-skips it) mirrors the Points/Lines
-`color_data_range` convention and seeds the viewer's layer display-range
-controls. Both hold the min/max of the original (pre-quantization) amplitudes.
+metadata bounds record and holds the true min/max of the original
+(pre-quantization) amplitudes. `amplitude_data_range` (`[min, max]` list,
+written alongside it whenever amplitudes are given as a non-empty array — a
+scalar amplitude skips it) mirrors the Points/Lines `color_data_range`
+convention and is the viewer's colormap **window**, seeding the layer
+display-range controls. Each writer first derives it per node as
+`[min(a), p99.9(a)]` (gsplat amplitudes are heavily right-skewed, so a `[0, max]`
+window would map ~99% of splats to near-black), and then **finalize HARMONIZES
+it across each gsplat structure**.
+
+**Window harmonization (#1691)**. A per-node window is right for one flat leaf
+and wrong for a multi-node structure: on a `kind=lod` ladder a coarse level's
+merged representatives carry the same mass in far fewer splats, so its p99.9
+lands ~4.5x above the finest level's and the object re-tones and pops in
+brightness at every LOD switch; adjacent `kind=partition` tiles of one object
+were measured windowed ~100x apart. So for every maximal `kind in {lod,
+partition}` group holding gsplats, one reference window is taken and handed
+down:
+
+- **LOD levels** take the reference window scaled by
+  `child.amplitude_mass_weighted_mean / reference.amplitude_mass_weighted_mean` —
+  the mass-weighted amplitude ratio measures exactly the representation change a
+  substitutive reduction makes (measured luminance ratio vs the finest level:
+  1.04 / 1.01 / 1.00, against 0.49 / 0.51 / 0.71 for per-level windows). The
+  ratio is **clamped into `[1/10, 10]`** (mirroring
+  `gsplats/lod/substitutive.py`'s `_MASS_SCALE_BOUND`): real ratios are ~1.1-1.2,
+  `mwma` is a second-moment ratio and so not robust on heavy-tailed amplitudes,
+  and a 10x rescale would be a bigger switch pop than the defect. Out of bounds
+  the ratio is clamped, not discarded — discarding applies the full uncorrected
+  error, clamping caps it (at a genuine ratio of 0.02, scale 1.0 leaves the level
+  50x too wide and it renders black; clamping to 0.1 caps that at 5x). Scale 1.0
+  is kept only when there is no usable ratio at all: missing statistics, a
+  non-positive `mwma`, a non-finite quotient.
+- **Partition parts** share the window **verbatim**, unscaled: parts are
+  disjoint pieces of ONE object with no representation change between them, and
+  a dim tile really is dim (measured 1.00 shared vs 0.62 per-part). A partition's
+  own reference is pooled from its parts: `lo` is the exact union minimum, `hi`
+  the **count-weighted mean of the usable part tops** (weights = each part's
+  `n_splats`). Both candidate rules are biased, in opposite directions, and
+  neither recovers the union's true p99.9: `max` over part tops drifts upward
+  without bound in the part count (1.05x at 2 parts, 1.58x at 256, 3.40x at 5000,
+  ~1500x for 60 dim tiles plus one small bright one, at which point the whole
+  object renders black), while the count-weighted mean is biased slightly low
+  (a part's own p99.9 already under-estimates the union's). The mean is chosen
+  because its bias does not grow with the part count —
+  `write_partition_streaming` routinely emits thousands of parts — and because
+  its failure mode, clipping outlier-bright content, is what a p99.9 window does
+  by design. It is neither unbiased nor a consistent estimator of what a flat
+  store would derive.
+- **Reference child**: the finest child that actually carries a **usable**
+  `amplitude_data_range` (`hi > lo`), walking finest→coarsest — not necessarily
+  the literal finest. `add_points(substitutive_lod=…)` puts a Points leaf there,
+  a scalar-amplitude level writes no window at all, and a constant-amplitude
+  level writes the degenerate `[x, x]`; taking the finest child unconditionally
+  left the whole structure un-harmonized in all three cases. That donor supplies
+  both the window and the reference `mwma`. A degenerate part top is likewise
+  excluded from the partition pool (its `lo` still bounds the union minimum).
+- **Child enumeration** is name-agnostic: `Node.add_lod_group()` /
+  `add_partition_group()` are public, so LOD levels and partition parts are
+  every child group whose `type` is one of
+  `group`/`gsplats`/`points`/`lines`/`mesh`, whatever it is named — minus the
+  reserved root buckets `fitting` / `provenance` / `pipeline`, which are excluded
+  by name too (`pipeline_info` is an open passthrough of caller keys, so a stray
+  `type` in it must not rank `pipeline` as the finest child). LOD children are
+  ordered coarsest→finest by `child_index` when every candidate has one, else by
+  a `child_<i>` numeric suffix, else by sorted name — that last rule assuming
+  alphabetically-last is finest, and unreachable from any Python producer, which
+  always stamps `child_index`. (`additive_<i>` sub-LODs keep the prefix+digit
+  rule — those names are writer-owned.)
+- **Fallback**: a level whose statistics are missing (a legacy store) shares the
+  reference window verbatim, i.e. scale 1.0. That is not necessarily better than
+  the self-consistent window that level already had — it can be clipped by the
+  shared one — but it is the honest answer with no ratio to scale by, and it puts
+  the structure on ONE window, as the partition arm does regardless.
+
+The pass only ever OVERWRITES an existing `amplitude_data_range`; it never
+creates one on a node that lacked it, so the attr set on disk is unchanged. It
+also refuses to write anything that is not a finite `lo < hi` (a degenerate
+`[x, x]` reads as identity in the viewer, an inverted `lo > hi` inverts the
+colormap), leaving the writer's value in place. One consequence of pooling is
+cross-recipe: a `levels` structure's reference top is a real p99.9 while an
+`overview` / `adaptive` one is a pooled estimate, so the same splats can tone
+slightly differently depending on the topology they were written in (measured
+222.34 vs 160.50 on one dataset).
+
+**Mass statistics** — two per-leaf `float` attrs the writer stamps on each splat
+set, including each `additive_<i>` sub-LOD (whose parent carries the ladder
+aggregate `Σ massᵢ` and `Σ(massᵢ·mwmaᵢ) / Σ massᵢ`). They are independent of
+`amplitude_data_range` — a scalar amplitude skips the window but still gets
+these — and, unlike it, **unconditional**: an empty, mass-less or otherwise
+degenerate set is stamped `0.0` / `0.0` rather than skipped (there is no
+non-finite case to skip; `compute_amplitude_mass_stats` normalizes them all to
+zero, so a bare `NaN`/`Infinity` token, which is not JSON and would cost a
+strict reader the whole store, can never be produced). A ladder parent whose
+summed mass is not positive likewise stamps `0.0` / `0.0`: "present and zero"
+and "absent" must stay distinguishable, because the harmonization reads absence
+as a legacy store. Both use the RAW amplitudes, the same units
+`amplitude_data_range` windows, and drop the shared `(2π)^{D/2}` constant:
+
+- **`amplitude_mass`** — total integral mass `Σᵢ aᵢ·|Σᵢ|^½`, with
+  `|Σ|^½ = Π diag(L)`.
+- **`amplitude_mass_weighted_mean`** — `Σᵢ aᵢ²·|Σᵢ|^½ / Σᵢ aᵢ·|Σᵢ|^½`, i.e.
+  total self-energy over total mass: the amplitude a unit of mass typically
+  carries. This is the quantity the harmonization scales LOD windows by.
 
 **Note**: Broadcasting information is stored per-array via encoding metadata
 (see Broadcasting Convention above), not in the group attributes.
@@ -1010,22 +1112,32 @@ Quantization is handled by `luxar.encoding` based on semantic types:
 MEMORY — each axis quantized over its own [min, max] to 65536 levels, decoded back to
 float32 (visually lossless, sub-unit, ~2× smaller). float16 is NOT used (relative
 precision is a footgun for absolute positions); a per-axis extent ≥ 2¹⁶ falls back to
-float32. A second, geometry-aware **sigma rail** also falls back to float32 (with a
-`UserWarning`) when **half** an axis's grid step `(hi - lo) / 65535` — the worst-case
-round-trip displacement — exceeds `MAX_CENTER_DISPLACEMENT_SIGMAS` (1.0) × the marginal
-σ of **more than `MAX_UNREPRESENTABLE_SPLAT_FRACTION` (0.1%) of the splats** on that
-axis, i.e. when quantization can move those centers clear of the cores they were fitted
-to describe and out of a slice query that used to match them. That is what keeps a
-stacked/categorical axis built with `sigma=0` (e.g. `combine_as_new_dimension`, where
-100% of the splats fail) landing exactly on its integer frame coordinates, and it also
-catches a degenerate *minority* — a 2,000-splat track stack merged into a
-300,000-splat fit is 0.662% of the store and displaced by up to 1,373 σ. Sub-σ
-displacement is deliberately left alone: an 8192-voxel axis has a 0.125-voxel step, so
-its worst displacement is 0.0625 voxel, and the handful of needle splats every real fit
-contains (measured ≤ 0.03% under this criterion) keeps the uint16 size win. Only
-`centers` escalates; the Cholesky tier is unaffected. An escalated `centers` array is
-never stored as an `array_ref` — the encoder's content dedup is keyed on the centers
-bytes, which do not determine the rail's verdict.
+float32.
+
+A **gridded axis** — one whose distinct values all sit on a single regular grid, which a
+stacked/categorical axis built with `sigma=0` (e.g. `combine_as_new_dimension`) always
+is — keeps its uint16 encoding but has its grid **snapped onto the data's own spacing**:
+the stored `col_hi` is widened to `col_lo + step·65535`, so every value round-trips
+bit-exactly. That is what lands a stacked axis exactly on its integer frame coordinates,
+and it changes no dtype and no bytes on disk (`col_lo`/`col_hi` are stored per axis
+regardless).
+
+A third, geometry-aware **sigma rail** backstops what no grid can cover, falling back to
+float32 (with a `UserWarning`) when **half** an axis's grid step `(hi - lo) / 65535` —
+the worst-case round-trip displacement — exceeds `MAX_CENTER_DISPLACEMENT_SIGMAS` (1.0)
+× the marginal σ of **more than `MAX_UNREPRESENTABLE_SPLAT_FRACTION` (0.1%) of the
+splats** on that axis, i.e. when quantization can move those centers clear of the cores
+they were fitted to describe and out of a slice query that used to match them. An axis
+the snap will store exactly is skipped, so the case this catches is a degenerate
+sub-population on a **non-gridded** axis — a 2,000-splat `sigma=0` track stack merged
+into a 300,000-splat fit whose time axis is continuous is 0.662% of the store and
+displaced by up to 1,373 σ. Sub-σ displacement is deliberately left alone: an
+8192-voxel axis has a 0.125-voxel step, so its worst displacement is 0.0625 voxel, and
+the handful of needle splats every real fit contains (measured ≤ 0.03% under this
+criterion) keeps the uint16 size win. Only `centers` escalates; the Cholesky tier is
+unaffected. An escalated `centers` array is never stored as an `array_ref` — the
+encoder's content dedup is keyed on the centers bytes, which do not determine the rail's
+verdict.
 **Cholesky factors** are stored split (diagonal + off-diagonal); bit depth
 follows the mode: PRECISION→float32; AUTO→uint8, escalating to uint16 only when the
 encode-time covariance certificate measures excessive Σ error (float32 as the
@@ -1486,6 +1598,20 @@ finest level instead). Both paths go through the shared
 ---
 
 ## Changelog
+
+- **amplitude mass statistics** (2026-08-19, format-additive, no version bump):
+  each written splat set may now carry `amplitude_mass` and
+  `amplitude_mass_weighted_mean` (see **Mass statistics** above) alongside its
+  `amplitude_data_range`. Every splat set a current writer produces carries both
+  (a degenerate or mass-less one as `0.0` / `0.0`), but they remain OPTIONAL in
+  the format: a reader that does not know them is unaffected, and a store
+  written before they existed stays valid — the harmonization reads their
+  absence as a legacy store and falls back to sharing the reference window
+  verbatim. They exist so finalize can put every node of a `kind=lod` /
+  `kind=partition` structure on ONE colormap window (**Window harmonization
+  (#1691)** above) instead of a per-node `[min(a), p99.9(a)]`. No existing attr
+  changed meaning; only `amplitude_data_range` **values** are corrected, and
+  only where a writer had already stamped one.
 
 - **v3.4.0** (2026-08-12): `kind=lod` gains the `selector: "screen-area"` mode
   - Per-child `coverage_fraction` under this selector is a literal screen-area

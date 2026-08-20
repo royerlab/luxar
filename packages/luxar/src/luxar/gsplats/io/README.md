@@ -48,7 +48,11 @@ save_gsplats(
 
 Transparently handles compressed formats (`.gsplats.zarr.zip`, `.gsplats.zarr.tar.gz`) by extracting to a temporary directory automatically (via the shared, hardened `_archive.extract_compressed_zarr` — it rejects links/devices, validates every member before extracting, and caps member count / total size to guard against path-traversal and archive-bomb attacks). Arrays are decoded from their stored encoding (quantization, broadcasting, etc.) to float32.
 
-Its read-only sibling `_archive.read_archive_root_attrs` extracts *nothing*: it scans the archive index (zip central directory / tar headers) for the store root's `.zattrs`, reads that one member's bytes, and returns the parsed attrs. Only that one payload is ever *read*, but only a zip has a real index: a gzipped tar's headers are walked lazily and the walk stops at the first top-level `*.gsplats.zarr/.zattrs` — member #1 of everything a compressed save writes — so the normal layout costs a couple of headers. The unnamed-fallback layout gets no such stop (a later member could still outrank the candidate, and the sole-top-level-directory rule needs the whole member list), and reaching the end of a gzip stream means inflating it, so *that* shape costs one decompression pass. It answers `{}` when there is no root `.zattrs` to read (and for a missing path or a non-archive file), but a *corrupt* archive raises — `BadZipFile`, `tarfile.ReadError`, `json.JSONDecodeError` — and it is `load_gsplats.read_authored_appearance` that absorbs those into `{}` for its best-effort carry. The store root is resolved as the same *kind* of node `extract_compressed_zarr` picks — the top-level `*.gsplats.zarr` directory, else, **only when it is the sole top-level directory**, that directory whatever it is named — which for any archive holding one store (every archive a compressed save writes) is the very node the extractor loads. An archive holding *several* `*.gsplats.zarr` directories is not a single dataset; the extractor picks among them arbitrarily (`iterdir()` order) and the peek may pick another. Either way a child group's attrs is never mistaken for the root's, and no link is ever followed. An archive with several top-level directories and no `*.gsplats.zarr`-named one is ambiguous (the extractor settles it by unpredictable `iterdir()` order) and deliberately carries nothing rather than guessing a sibling's attrs. Used by `load_gsplats.read_authored_appearance`, which carries a source root's authored compositing attrs across a structure-only rebuild (`gsplat lod`) for archive inputs as well as directories.
+The store root is resolved from the extracted tree in three tiers: a top-level `*.gsplats.zarr` directory (what a compressed save writes); else the archive ROOT itself when a zarr group document (`zarr.json` / `.zgroup`) sits at depth 0 — the *flat* shape `zip -r x.gsplats.zarr.zip .` from inside a store produces; else the first top-level directory whatever it is called (a stray depth-0 file beside it — a `README.md`, a `.DS_Store` — must not decide the outcome, and `iterdir()` order is not a decision). The named directory deliberately keeps winning over the flat reading, matching `_zip_is_flat_store`. A flat tree is moved one level down under a store-shaped name so the returned path's parent is still a removable temp directory, which is the contract every caller relies on.
+
+Ranking the flat tier above the directory tier reversed one shape: an archive that carries a depth-0 group document *and* the real store one level down under a non-`*.gsplats.zarr` name (`zip -r x.gsplats.zarr.zip .` from inside a parent zarr group that merely contains the store) used to fall through to the directory and load, and now resolves to the wrapper and fails loudly with `Invalid format_type: None`. The order is nonetheless right: nothing in an archive tells "a store whose root has one child group" apart from "a wrapper around a store", and gating the flat tier on "the sole child is not itself a group" would break the flat partition that is #1628's own repro. Re-archive the inner directory on its own to read such a wrapper.
+
+Its read-only sibling `_archive.read_archive_root_attrs` extracts *nothing*: it scans the archive index (zip central directory / tar headers) for the store root's metadata document — `.zattrs` at zarr format 2, `zarr.json` at format 3 — reads that one member's bytes, and returns the attrs (unwrapping them out of the node document at format 3). Only that one payload is ever *read*, but only a zip has a real index: a gzipped tar's headers are walked lazily and the walk stops at the first top-level `*.gsplats.zarr/` root document. How early that stop comes depends on the on-disk format, because `tarfile.add` walks a directory in sorted order: a format-2 store's `.zattrs` is a dotfile and lands second (measured: member 1 of 24), so that layout really does cost a couple of headers, but a format-3 store's `zarr.json` sorts *after* every array sub-directory and lands last (measured: member 26 of 27) — so on the format Luxar writes by default the stop effectively never fires and the peek pays a full inflate. The other two layouts get no such stop (a later member could still outrank the candidate, and both the flat and the sole-top-level-directory rules need the whole member list), and reaching the end of a gzip stream means inflating it, so *those* shapes cost one decompression pass. The member is budgeted by its document *name*, and the two budgets are far apart on purpose: a `.zattrs` **is** the attributes mapping and keeps a small 4 MiB cap, while a format-3 `zarr.json` at a consolidated root also carries the entire consolidated index of the tree (one entry per *node*: measured ~8-10 KB per part for bare leaves, ~48-54 KB with a 6-step `stream` ladder, ~100-110 KB for an `adaptive`-shaped part) and gets 128 MiB; a member whose bytes actually exceeded 4 MiB — only ever a `zarr.json` read under the raised budget — has the attributes it unwraps to re-capped at 4 MiB, so raising the document budget cannot raise what the peek hands back. Any size refusal emits a `UserWarning` naming the archive, member, measured size and budget — `{}` is indistinguishable from "this dataset authored no appearance", so a *silent* refusal would reach the user only as a rebuild that quietly reset the look. It answers `{}` quietly when there is no root metadata document to read (and for a missing path or a non-archive file), but a *corrupt* archive raises — `BadZipFile`, `tarfile.ReadError`, `json.JSONDecodeError` — and it is `load_gsplats.read_authored_appearance` that absorbs those into `{}` for its best-effort carry. The store root is resolved as the same *kind* of node `extract_compressed_zarr` picks, tier for tier — the top-level `*.gsplats.zarr` directory; else the archive root itself, **only when a zarr group document sits at depth 0 and no top-level `*.gsplats.zarr` directory is present** (the flat shape); else, **only when it is the sole top-level directory**, that directory whatever it is named — which for any archive holding one store (every archive a compressed save writes) is the very node the extractor loads. Those are `_zip_is_flat_store`'s rules exactly, all three, so the peek and the extractor classify the same archives as flat — including the *bare* `x.gsplats.zarr/` directory entry `zip -r` emits for an empty subdirectory, which is tracked separately from the top-level-directory set because the sole-directory tier deliberately ignores it (an empty directory holds no store, so counting it there would manufacture false ambiguity). The group-document condition on the flat tier is what keeps a stray depth-0 `.zattrs` (a name that also sits beside an array) from outranking a real store one directory down, and the sole-directory tier is refused outright once the archive is flat, so a flat store that authored no root attrs carries nothing rather than an array sub-directory's attrs. A store carrying *both* format documents at its root — a half-finished in-place migration — is settled here by archive order, so this index-only peek can answer the stale format-2 view where `open_group` sees format 3; a known limitation rather than a contract, and no Luxar writer produces the state. An archive holding *several* `*.gsplats.zarr` directories is not a single dataset; the extractor picks among them arbitrarily (`iterdir()` order) and the peek may pick another. Either way a child group's attrs is never mistaken for the root's, and no link is ever followed. An archive with several top-level directories and no `*.gsplats.zarr`-named one is ambiguous (the extractor settles it by unpredictable `iterdir()` order) and deliberately carries nothing rather than guessing a sibling's attrs. Used by `load_gsplats.read_authored_appearance`, which carries a source root's authored compositing attrs across a structure-only rebuild (`gsplat lod`) for archive inputs as well as directories.
 
 ```python
 from luxar.gsplats.io import load_gsplats
@@ -167,7 +171,7 @@ This package uses `luxar.encoding` for semantic type-aware array encoding:
 
 | Array | Semantic Type | MEMORY Mode Encoding |
 |-------|---------------|---------------------|
-| `centers` | COORDINATE | `linear_perchannel_u16` per-axis fixed-point (AUTO/MEMORY; extent rail falls back to `float32`) / `float32` (PRECISION) |
+| `centers` | COORDINATE | `linear_perchannel_u16` per-axis fixed-point (AUTO/MEMORY, with a gridded axis's grid snapped so it is exact; extent rail and sigma rail fall back to `float32`) / `float32` (PRECISION) |
 | `amplitudes` | POSITIVE_SCALAR | canonical positive-scalar encoding (may quantize to uint8) |
 | `cholesky_factors_diag` | CHOLESKY_DIAG | per-channel log: `log_perchannel_u8` (AUTO — certified, escalates to `u16`; MEMORY) / `float32` (PRECISION) |
 | `cholesky_factors_offdiag` | CHOLESKY_OFFDIAG | per-channel signed-log: `signed_log_perchannel_u8` (escalates with the diagonal — one shared tier) / `float32`; absent if d==1 |
@@ -179,20 +183,35 @@ This package uses `luxar.encoding` for semantic type-aware array encoding:
 *relative* precision is a footgun for absolute positions, so the writer
 disables it (there is no `float16_allowed` knob).
 
-**Sigma rail (a second, geometry-aware fallback).** The extent rail above only
-sees coordinates. The gsplat writer also has the Cholesky factors in hand, so it
-compares **half** each axis's grid step `(hi - lo) / 65535` — the worst-case
-round-trip displacement — against *each splat's own* marginal σ on that axis: a
-splat is **unrepresentable** there when that displacement exceeds
+**Grid snap (what keeps a stacked axis exact).** A time or channel axis built with
+`combine_as_new_dimension(..., sigma=0.0)` has a tiny extent (so it passes the
+extent rail) but essentially no width, so an ordinary uint16 grid step of
+thousands of σ knocks every interior frame off its integer coordinate — measured
+at 7 320 σ on a 100-frame stack, with only the two endpoints surviving (#1748).
+Such an axis is **gridded**, though, so the encoder widens its stored `hi` until
+the quantization grid coincides with the data's own spacing and every value
+round-trips bit-exactly at uint16. It costs nothing (`lo`/`hi` are stored per axis
+regardless — a scale choice, not a dtype change) and needs no action from the
+caller, so it reports through arbol rather than warning. See
+`luxar/encoding/README.md` for the eligibility test.
+
+**Sigma rail (a geometry-aware backstop).** The rails above only see coordinates.
+The gsplat writer also has the Cholesky factors in hand, so it compares **half**
+each axis's grid step `(hi - lo) / 65535` — the worst-case round-trip
+displacement — against *each splat's own* marginal σ on that axis: a splat is
+**unrepresentable** there when that displacement exceeds
 `MAX_CENTER_DISPLACEMENT_SIGMAS` (1.0) × its σ, i.e. when quantization can push
 the center clear of its own core and out of a slice query that used to match it.
 The centers are stored as `float32` (with a `UserWarning`) once more than
 `MAX_UNREPRESENTABLE_SPLAT_FRACTION` (0.1%) of the splats are unrepresentable on
-some axis. This is what keeps a **stacked axis** exact: a time axis built with
-`combine_as_new_dimension(..., sigma=0.0)` has a tiny extent (so it passes the
-extent rail) but essentially no width, so *all* of its splats fail and a step of
-thousands of σ would otherwise knock every interior frame off its integer
-coordinate.
+some axis. An axis the snap covers is **not** an offender: the rail runs the
+encoder's own `gridded_axis_step` on any axis that trips the population gate
+(lazily — `np.unique` per axis is 0.30 s of a 2.85 s encode on 5M×3 coordinates,
+and a tripped axis is rare) and skips it when the encoder will store it exactly.
+So a stacked dataset keeps uint16 centers and stays silent, and what is left for
+the rail is a degenerate sub-population on a **non-gridded** axis — a `sigma=0`
+track stack merged into a fit whose time axis is continuous, or an axis with more
+distinct values than uint16 has levels — where the splats really are destroyed.
 
 Both numbers are set by harm rather than by jitter. Sub-σ displacement is
 invisible — a whole-volume light-sheet fit over an 8192-voxel axis has a
@@ -487,8 +506,10 @@ is `luxar gsplat migrate-format`.
   Also `read_authored_appearance(path)` — the source root's authored compositing
   attrs (`AUTHORED_APPEARANCE_ATTRS`), for a command that rewrites a dataset to
   hand back to `write_gsplats_tree(root_attrs=…)` / `GSplatData.save(root_attrs=…)`
-  so a structure-only rebuild does not silently reset the look. Best-effort:
-  a missing/unreadable store, or an archive input, yields `{}`.
+  so a structure-only rebuild does not silently reset the look. Archive inputs
+  are carried too — a `.gsplats.zarr.zip` / `.tar.gz` is peeked in place via
+  `_archive.read_archive_root_attrs` (see above), no extraction. Best-effort:
+  a missing/unreadable store yields `{}`.
 - **`inspect_gsplats.py`**: Metadata inspection without loading arrays
   (`inspect_gsplats_zarr`, `format_gsplats_info`).
 - **`migrate.py`**: Legacy-format migration (`migrate_format`,

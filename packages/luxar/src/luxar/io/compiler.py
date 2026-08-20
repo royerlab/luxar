@@ -15,6 +15,7 @@ from typing import (
     Dict,
     List,
     Literal,
+    Mapping,
     Optional,
     Sequence,
     Tuple,
@@ -59,6 +60,7 @@ from ._compiler.context import (
     GSplatsWriteCtx,
     OrderingCtx,
 )
+from ._compiler.finalize.amplitude_window import harmonize_gsplat_amplitude_windows
 from ._compiler.finalize.hashing import compute_content_hashes
 from ._compiler.finalize.lod_backfill import (
     finalize_lod_display_types,
@@ -311,6 +313,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         self,
         dimensions: Dimensions,
         viewer_config: Optional["ViewerConfig"] = None,
+        citation: Optional[Mapping[str, str]] = None,
     ) -> "Scene":
         """Create a scene with this compiler as writer.
 
@@ -321,6 +324,10 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             viewer_config: Optional viewer configuration hints. Stored in
                 the zarr file and read by the viewer at load time as
                 scene-specific defaults.
+            citation: Optional credit for whoever produced the underlying
+                dataset -- ``{"short", "doi"?, "license"?, "url"?}``. Stored in
+                the root attributes so it travels with the data. ``None`` means
+                there is no external dataset to credit.
 
         Returns:
             Scene object configured with this compiler as writer
@@ -345,7 +352,12 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         self.store.attrs["scene_dimensions"] = dimensions.to_dict()
 
         # Create scene with writer injection and optional viewer config
-        scene = Scene(writer=self, dimensions=dimensions, viewer_config=viewer_config)
+        scene = Scene(
+            writer=self,
+            dimensions=dimensions,
+            viewer_config=viewer_config,
+            citation=citation,
+        )
         self._scene = scene  # Store reference for finalize-time hover overlay injection
         aprint("✅ Scene created with progressive writer")
 
@@ -1389,6 +1401,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
     def _finalize_lod_display_types(self, store: zarr.Group) -> None:
         finalize_lod_display_types(store)
 
+    def _harmonize_gsplat_amplitude_windows(self, store: zarr.Group) -> None:
+        harmonize_gsplat_amplitude_windows(store)
+
     def _warn_one_part_partition_anchors(self, store: zarr.Group) -> None:
         """Report a fills-screen LOD ladder under a ONE-part kind=partition.
 
@@ -1534,6 +1549,12 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             # (which never carried their own bounds) and the LOD
             # selector can't see them.
             self._finalize_lod_position_bounds(store)
+
+            # Put every node of each gsplat structure on ONE colormap window
+            # (per-LOD-level scaled by the mass-weighted amplitude ratio,
+            # verbatim across partition parts). Runs before the content hashes
+            # so the stamped hashes cover the corrected attrs.
+            self._harmonize_gsplat_amplitude_windows(store)
 
             # Report — never rewrite — a per-TILE (fills-screen) LOD ladder
             # sitting under a ONE-part kind=partition. The scene adders derive

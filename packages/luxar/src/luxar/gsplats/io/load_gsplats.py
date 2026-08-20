@@ -80,17 +80,27 @@ def read_authored_appearance(path: str | Path) -> Dict[str, Any]:
         if p.is_dir():
             # The facade, not a bare ``zarr.open_group``: every zarr read routes
             # through ``luxar._zarr_compat``, and it opts reads out of
-            # consolidated metadata, so a directory store is read from the same
-            # per-node ``.zattrs`` the archive peek below reads. Measured on zarr
-            # 3.3, the two spellings agree for a ROOT GROUP'S OWN ATTRS even with
-            # a stale ``.zmetadata`` present — ``.zmetadata`` governs child
-            # lookups, not the root's attrs — so this is the module convention
+            # consolidated metadata, so a directory store is read from the ROOT
+            # NODE'S OWN metadata document — the same one the archive peek below
+            # reads, and the same one the loader's own group-open sees. Which
+            # document that is depends on the store's format: `.zattrs` at
+            # format 2, the `attributes` half of `zarr.json` at format 3, where
+            # the node document also carries the consolidated index of the tree
+            # (which the facade ignores). Measured on zarr 3.3, the facade and a
+            # bare open agree for a ROOT GROUP'S OWN ATTRS even with a stale
+            # consolidated index present, so this is the module convention
             # holding rather than a divergence being papered over.
             root = zc_open_group(p, mode="r")
             attrs = dict(root.attrs)
         else:
-            # An archive is peeked, not extracted: only the root `.zattrs`
-            # member's bytes are read, and nothing is written to disk.
+            # An archive is peeked, not extracted: only the ROOT NODE'S metadata
+            # member is read — `.zattrs` at format 2, `zarr.json` at format 3,
+            # where the attributes are unwrapped out of the node document — and
+            # nothing is written to disk. The two are budgeted differently
+            # because a format-3 root document also carries the consolidated
+            # index of the whole tree; an over-budget member warns rather than
+            # silently answering {} (see `_archive._warn_size_refusal` — which
+            # the `except` below swallows if it is promoted to an error).
             # A regular file that is not an archive yields {} from the helper.
             attrs = read_archive_root_attrs(p)
     except Exception:
@@ -117,8 +127,10 @@ def load_gsplat_node(
     if not path.exists():
         raise FileNotFoundError(f"GSplats zarr not found: {path}")
 
-    # Archive resolution is shared with inspect_gsplats_zarr, but this caller
-    # deliberately does NOT opt into `flat_zip_in_place` (see its docstring).
+    # Archive resolution is shared with inspect_gsplats_zarr; this caller reads
+    # array data, so it wants a resolved DIRECTORY store and does not opt into
+    # `flat_zip_in_place` (the inspector's temp-space shortcut — see its
+    # docstring). Every archive shape, flat included, resolves by extraction.
     zarr_path, temp_dir = resolve_store_path(path)
 
     try:

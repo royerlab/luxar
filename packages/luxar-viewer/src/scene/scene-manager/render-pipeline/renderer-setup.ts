@@ -10,7 +10,7 @@
  *     capabilities snapshot, configure HDR.
  *   - `createWebGPURenderer` — construct a `WebGPURenderer`,
  *     request a high-limit core adapter / device (workaround for
- *     compat-mode limits in r184), init() it, and build the
+ *     compat-mode limits), init() it, and build the
  *     capabilities snapshot.
  *
  * Each `create*Renderer` function returns
@@ -221,7 +221,7 @@ export type CreateWebGPUResult = (CreatedRenderer & { fallback: false }) | { fal
 /**
  * Construct a `WebGPURenderer`. Negotiates a "core" adapter with
  * raised vertex-buffer / buffer-size / texture-dimension limits to
- * bypass r184's compat-mode defaults (see
+ * bypass three's compat-mode defaults (see
  * {@link forwardedAdapterLimits}). Performs `await renderer.init()`
  * before returning.
  *
@@ -246,7 +246,8 @@ export async function createWebGPURenderer(
   // ============================================================
   // Bypass Three.js's `featureLevel: 'compatibility'` default.
   // See the long-form rationale in the original setupWebGPURenderer
-  // implementation: r184 hard-codes compat mode which caps
+  // implementation: three still hard-codes compat mode at the pinned r185,
+  // as it did at r184, and that caps
   // `maxVertexBuffers=8`, breaking the line material that binds 12+
   // attributes on hardware that natively supports many more.
   // Workaround: build a core adapter + device with raised limits
@@ -338,7 +339,7 @@ export async function createWebGPURenderer(
   }
 
   // Loaded HERE, not at module scope: a static `import { WebGPURenderer }`
-  // makes the ~173 kB gzipped `three-webgpu` chunk a dependency of the entry
+  // makes the ~182 kB gzipped `three-webgpu` chunk a dependency of the entry
   // bundle, which every WebGL session then downloads and never runs (issue
   // #1679). `selectBackend()` is pure and synchronous and has already chosen
   // WebGPU by the time we get here, so this await costs the WebGPU path one

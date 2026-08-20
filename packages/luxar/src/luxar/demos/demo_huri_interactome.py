@@ -102,6 +102,10 @@ DEMO_META = {
     },
     "caches": ["huri"],
     "outputs": ["huri_interactome"],
+    "citation": {
+        "short": "Luck et al. 2020",
+        "doi": "10.1038/s41586-020-2188-x",
+    },
 }
 
 import shutil
@@ -749,7 +753,9 @@ def build_scene(
         )
 
         with LuxarZarrCompiler(output_path) as compiler:
-            scene = compiler.create_scene(dimensions=dims)
+            scene = compiler.create_scene(
+                dimensions=dims, citation=DEMO_META["citation"]
+            )
 
             scene.add_points(
                 "Proteins",

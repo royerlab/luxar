@@ -19,7 +19,16 @@ import type { PostProcessingManager } from '../rendering/post-processing/post-pr
 import { materialManager } from '../rendering';
 import { loadTslMaterials } from '../rendering/tsl/load';
 import { disposeColormapTextures } from '../rendering/colormap-textures';
-import type { Renderer, RendererCapabilities } from '../rendering/renderer-capabilities';
+import {
+  clearBlendModeProgramWarmup,
+  configureBlendModeProgramWarmup,
+  warmSceneBlendModePrograms,
+} from '../rendering/webgl-blend-warmup';
+import {
+  type Renderer,
+  type RendererCapabilities,
+  isWebGLRenderer,
+} from '../rendering/renderer-capabilities';
 import {
   BoundingBox,
   getBoundingBoxDiagonal,
@@ -132,7 +141,7 @@ export class SceneManager extends THREE.EventDispatcher<{
    * Every method called on this field across the codebase
    * (`PostProcessingManager`, `picking-system`, `BloomChain`,
    * `FxaaPass`, UI panels) is part of the common `Renderer` surface
-   * in Three r184 — no `WebGLRenderer`-only API is used
+   * in Three r185 — no `WebGLRenderer`-only API is used
    * unconditionally. The discriminator for callers that genuinely
    * must branch is `this.capabilities.apiSurface` (see
    * `RendererCapabilities`).
@@ -322,6 +331,8 @@ export class SceneManager extends THREE.EventDispatcher<{
    * bench. Off by default; flipped via `?perf-timestamp` URL param.
    */
   private perfTimestamp = false;
+  /** WebGL-only blend-variant warm-up (`?no-blend-warmup` disables). */
+  private blendWarmup = true;
 
   /**
    * Initialize the renderer pipeline.
@@ -354,16 +365,26 @@ export class SceneManager extends THREE.EventDispatcher<{
      * `?perf-timestamp` URL flag set by the perf bench.
      */
     perfTimestamp?: boolean;
+    /**
+     * WebGL-only blend warm-up. When true, classic `THREE.WebGLRenderer`
+     * sessions pre-compile each DISTINCT blend-mode program variant a
+     * material can reach, one compile per post-frame idle opportunity, so the first
+     * Layers-panel blend switch does not pay SwiftShader's synchronous
+     * link cost on the click path.
+     */
+    blendWarmup?: boolean;
   }): Promise<void> {
     this.canvasElement = options.canvas;
     this.debug = options.debug ?? false;
     this.rendererOverride = options.renderer;
     this.webgpuForceWebGL = options.webgpuForceWebGL ?? false;
     this.perfTimestamp = options.perfTimestamp ?? false;
+    this.blendWarmup = options.blendWarmup ?? true;
     await this.setupRenderer();
     this.setupContextLossHandling(); // Setup context loss recovery
     this.setupScene();
     this.setupCamera();
+    this.configureBlendWarmup();
     this.setupControls();
     this.setupPostProcessing();
 
@@ -452,7 +473,7 @@ export class SceneManager extends THREE.EventDispatcher<{
 
     // Fetch the TSL/WebGPU material cone before anything can ask for a
     // material. This is the ONLY place it is loaded on the production path, and
-    // the reason the default WebGL session never downloads the ~173 kB gzipped
+    // the reason the default WebGL session never downloads the ~182 kB gzipped
     // `three-webgpu` chunk (issue #1679).
     //
     // Ordering is load-bearing and already guaranteed: `init()` awaits
@@ -507,9 +528,15 @@ export class SceneManager extends THREE.EventDispatcher<{
         renderer: this.renderer as THREE.WebGLRenderer,
         getPostProcessing: () => this.postProcessing ?? null,
         updateRendererSize: () => this.resizeToCanvas(),
-        onContextRestored: () => this.dispatchEvent({ type: 'webgl-context-restored' }),
+        onContextRestored: () => {
+          this.dispatchEvent({ type: 'webgl-context-restored' });
+          void this.warmBlendModePrograms();
+        },
         triggerChange: () => this.dispatchEvent({ type: 'change' }),
-        onContextLost: () => reduceGpuByteBudgetForContextLoss(),
+        onContextLost: () => {
+          clearBlendModeProgramWarmup();
+          reduceGpuByteBudgetForContextLoss();
+        },
       });
       this.contextRecovery.attach();
       return;
@@ -551,6 +578,16 @@ export class SceneManager extends THREE.EventDispatcher<{
    */
   public isWebGLContextLost(): boolean {
     return this.contextRecovery?.getIsContextLost() ?? false;
+  }
+
+  private configureBlendWarmup(): void {
+    const renderer = isWebGLRenderer(this.renderer) ? this.renderer : null;
+    configureBlendModeProgramWarmup({
+      enabled: this.blendWarmup && this.capabilities.apiSurface === 'webgl2' && renderer !== null,
+      renderer,
+      camera: this.camera,
+      targetScene: this.scene,
+    });
   }
 
   /**
@@ -743,6 +780,11 @@ export class SceneManager extends THREE.EventDispatcher<{
     return root?.userData?.viewerConfig as ZarrViewerConfig | undefined;
   }
 
+  /** Arm WebGL blend warm-up after all scene-dependent dataset setup completes. */
+  public warmBlendModePrograms(): Promise<void> {
+    return warmSceneBlendModePrograms(this.scene);
+  }
+
   /**
    * Apply viewer config from zarr (camera position/target/up, background
    * color). Thin delegate over `applyZarrViewerConfig` in
@@ -763,6 +805,7 @@ export class SceneManager extends THREE.EventDispatcher<{
    * scene-manager/render-pipeline/scene-disposal.
    */
   private clearSceneContent(): void {
+    clearBlendModeProgramWarmup();
     this.invalidateBoundsCache();
     const removed = clearLoadedSceneContent(this.scene);
     log.info(Modules.SCENE_MANAGER, `Cleared ${removed} objects from scene`);
@@ -1187,6 +1230,7 @@ export class SceneManager extends THREE.EventDispatcher<{
   dispose(): void {
     // Cancel any pending resize operations to prevent memory leaks.
     this.resizer.dispose();
+    clearBlendModeProgramWarmup();
 
     // Tear down the WebGL context-recovery listeners.
     if (this.contextRecovery) {

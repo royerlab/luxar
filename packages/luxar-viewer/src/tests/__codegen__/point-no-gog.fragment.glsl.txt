@@ -1,6 +1,6 @@
 #version 300 es
 
-// Three.js r184 - Node System
+// Three.js r185 - Node System
 
 
 // extensions
@@ -39,18 +39,18 @@ layout( location = 0 ) out vec4 fragColor;
 // uniforms
 
 layout( std140 ) uniform object {
-	mat4 nodeUniform1;
+	float nodeUniform0;
+	float nodeUniform1;
 	float nodeUniform2;
 	float nodeUniform3;
-	float nodeUniform4;
-	float nodeUniform5;
+	mat3 nodeUniform5;
+	uint nodeUniform6;
 	mat3 nodeUniform7;
 	uint nodeUniform8;
 	mat3 nodeUniform9;
 	uint nodeUniform10;
-	mat3 nodeUniform11;
-	uint nodeUniform12;
-	float nodeUniform13;
+	float nodeUniform11;
+	mat4 nodeUniform13;
 	float nodeUniform15;
 	float nodeUniform16;
 	float nodeUniform17;
@@ -90,7 +90,7 @@ void main() {
 	if ( ( nodeVarying1 <= 0.0 ) ) {
 
 		discard;
-		
+
 
 	}
 
@@ -99,23 +99,23 @@ void main() {
 	if ( ( nodeVar1 > 0.25 ) ) {
 
 		discard;
-		
+
 
 	}
 
 	nodeVar2 = min( ( nodeVarying4 / 1.5 ), 1.0 );
-	nodeVar3 = ( ( ( ( max( ( exp( ( pow( sqrt( ( nodeVar1 * 4.0 ) ), nodeVarying2 ) * -4.6051702 ) ) - 0.01 ), 0.0 ) * 1.0101010101010102 ) * nodeUniform2 ) * ( nodeVar2 * nodeVar2 ) ) * nodeVarying5 );
+	nodeVar3 = ( ( ( ( max( ( exp( ( pow( sqrt( ( nodeVar1 * 4.0 ) ), nodeVarying2 ) * -4.6051702 ) ) - 0.01 ), 0.0 ) * 1.0101010101010102 ) * nodeUniform0 ) * ( nodeVar2 * nodeVar2 ) ) * nodeVarying5 );
 	nodeVar4 = ( nodeVar3 * nodeVarying6 );
 
 	if ( ( max( nodeVarying3.x, max( nodeVarying3.y, nodeVarying3.z ) ) < 0.0001 ) ) {
 
 		discard;
-		
+
 
 	}
 
-	DiffuseColor = vec4( pow( nodeVarying3, vec3( nodeUniform3 ) ), nodeVar4 );
-	DiffuseColor.w = ( DiffuseColor.w * nodeUniform4 );
+	DiffuseColor = vec4( pow( nodeVarying3, vec3( nodeUniform1 ) ), nodeVar4 );
+	DiffuseColor.w = ( DiffuseColor.w * nodeUniform2 );
 	nodeVar6 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
 	Output = nodeVar6;
 

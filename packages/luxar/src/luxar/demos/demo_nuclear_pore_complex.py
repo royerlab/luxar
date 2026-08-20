@@ -87,6 +87,10 @@ DEMO_META = {
     },
     "caches": ["nuclear_pore_complex"],
     "outputs": ["nuclear_pore_complex"],
+    "citation": {
+        "short": "Bui et al. 2013",
+        "doi": "10.1016/j.cell.2013.10.055",
+    },
 }
 
 import shutil
@@ -574,7 +578,9 @@ def generate_nuclear_pore_complex(
                         Dimension("z", unit="nm", display=True),
                     ]
                 )
-                scene = compiler.create_scene(dimensions=dims)
+                scene = compiler.create_scene(
+                    dimensions=dims, citation=DEMO_META["citation"]
+                )
 
                 # Sharpness for crisp, sharp protein atoms (normalized [0, 1] knob)
                 sharpness = np.full(len(sym_positions), 0.85, dtype=np.float32)

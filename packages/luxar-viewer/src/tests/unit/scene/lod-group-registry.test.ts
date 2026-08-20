@@ -3326,3 +3326,352 @@ describe('LODGroupRegistry — blending-mode-switch stamp-clear recovery (depth-
     expect(coarse.object.visible).toBe(false);
   });
 });
+
+describe('LODGroupRegistry — capture quiescence (isCaptureQuiescent)', () => {
+  /** Bounds that fall entirely outside the identity camera's NDC frustum. */
+  const FAR_BOUNDS = { min: [100, 100, 100], max: [101, 101, 101] };
+
+  it('reports quiescent for an empty registry (nothing to wait for)', () => {
+    expect(makeRegistry().isCaptureQuiescent()).toBe(true);
+  });
+
+  it('reports quiescent for a settled single-level group', () => {
+    const reg = makeRegistry();
+    const children = [makeChild(0)];
+    reg.register(makeEntry(children, 0, '/g'));
+    reg.evaluatePerFrame();
+    expect(reg.isCaptureQuiescent()).toBe(true);
+  });
+
+  it('reports quiescent for a multi-level group whose every level is already resident', () => {
+    const reg = makeRegistry();
+    const children = [makeChild(0), makeChild(0.5), makeChild(1.0)];
+    reg.register(makeEntry(children, 0, '/g'));
+    // Several passes so the selector reaches its steady state (a non-lazy
+    // target swaps on the very frame it is desired).
+    for (let f = 0; f < 3; f++) reg.evaluatePerFrame();
+    const entry = reg.get('/g')!;
+    expect(entry.desiredChildIndex).toBe(entry.activeChildIndex);
+    expect(reg.isCaptureQuiescent()).toBe(true);
+  });
+
+  // ── The regression that motivates the whole predicate ──
+  it('is NOT quiescent in the one-frame window after a lazy level loads but before the swap', () => {
+    const reg = makeRegistry();
+    const children = [makeChild(0), makeLazyChild(0.5, () => {})];
+    reg.register(makeEntry(children, 0, '/g'));
+    // Lock so the test does not depend on projection math; the lock branch
+    // writes ``desiredChildIndex`` exactly like the auto branches do.
+    reg.setSelectorMode('/g', { lockLevel: 1 });
+
+    reg.evaluatePerFrame(); // desired 1, not ready → kicks the load, no swap
+    const entry = reg.get('/g')!;
+    expect(entry.desiredChildIndex).toBe(1); // the selector WANTS the fine level
+    expect(entry.activeChildIndex).toBe(0); // …but the aspiration only moves onto a READY level
+    expect(reg.isCaptureQuiescent()).toBe(false); // in flight
+
+    // The thunk lands: ready flips true and loading clears. The registry has
+    // NOT swapped — that happens on the next selector pass.
+    children[1].ready = true;
+    children[1].loading = false;
+
+    // Nothing is `loading`, level 0 is ready, and displayed === active === 0,
+    // so a predicate reading only ready/loading/displayed would call this
+    // "settled" and the capture would film the coarse level one frame before
+    // the swap. `desiredChildIndex` is what closes that hole.
+    expect(reg.isCaptureQuiescent()).toBe(false);
+
+    reg.evaluatePerFrame(); // the swap
+    expect(reg.get('/g')!.activeChildIndex).toBe(1);
+    expect(reg.isCaptureQuiescent()).toBe(true);
+  });
+
+  it('is NOT quiescent while any child of an in-frame group is loading', () => {
+    const reg = makeRegistry();
+    const children = [makeChild(0), makeLazyChild(0.5, () => {})];
+    reg.register(makeEntry(children, 0, '/g'));
+    reg.setSelectorMode('/g', { lockLevel: 0 }); // pin the coarse level: nothing to load
+    reg.evaluatePerFrame();
+    expect(reg.isCaptureQuiescent()).toBe(true); // coarse selected, nothing in flight
+
+    // A load kicked for a level the selector is not (yet) aspiring to still
+    // means the frame can change under the capture.
+    children[1].loading = true;
+    expect(reg.isCaptureQuiescent()).toBe(false);
+  });
+
+  it('is NOT quiescent when a fallback level is displayed instead of the aspiration', () => {
+    const reg = makeRegistry();
+    const children = [makeChild(0), makeChild(0.5)];
+    reg.register(makeEntry(children, 1, '/g'));
+    reg.setSelectorMode('/g', { lockLevel: 1 });
+    reg.evaluatePerFrame();
+    expect(reg.isCaptureQuiescent()).toBe(true);
+
+    // Isolate the clause: everything else about the entry is settled, only the
+    // DISPLAYED level differs from the aspiration — what a slice fallback or a
+    // never-downgrade hold leaves on screen.
+    reg.get('/g')!.displayedChildIndex = 0;
+    expect(reg.isCaptureQuiescent()).toBe(false);
+  });
+
+  it('is NOT quiescent while a re-slice shows the coarse fallback for a stale aspiration', () => {
+    // The same clause reached through a real evaluation pass: bump the view
+    // version so the fine level's committed geometry is stale and the
+    // slice-aware fallback displays the fresh coarse level instead.
+    let version = 1;
+    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => version);
+    const coarse = makeGsplatChild(0, 1);
+    const fine = makeGsplatChild(0.5, 1);
+    reg.register(makeEntry([coarse, fine], 1, '/g'));
+    reg.setSelectorMode('/g', { lockLevel: 1 });
+    reg.evaluatePerFrame();
+    expect(reg.isCaptureQuiescent()).toBe(true);
+
+    version = 2;
+    (coarse.object.userData as { loadedViewVersion?: number }).loadedViewVersion = 2;
+    reg.evaluatePerFrame();
+    const entry = reg.get('/g')!;
+    expect(entry.activeChildIndex).toBe(1);
+    expect(entry.displayedChildIndex).toBe(0);
+    expect(reg.isCaptureQuiescent()).toBe(false);
+  });
+
+  it('is NOT quiescent while the displayed level still has additive LODs to stream', () => {
+    const reg = makeRegistry();
+    const children = [makeChild(0)];
+    children[0].hasMoreLODs = () => true;
+    reg.register(makeEntry(children, 0, '/g'));
+    reg.evaluatePerFrame();
+    expect(reg.isCaptureQuiescent()).toBe(false); // only a prefix has committed
+
+    children[0].hasMoreLODs = () => false; // ladder completes
+    expect(reg.isCaptureQuiescent()).toBe(true);
+  });
+
+  it('is NOT quiescent while an EAGER leaf aspiration is still climbing its own ladder', () => {
+    // `load-lod-group-node` attaches `hasMoreLODs` only on the DEFERRED path,
+    // so the eagerly-loaded default level never has one — its ladder is
+    // advanced by the sweep-driven background refinement loop instead. Reading
+    // the thunk alone therefore declared a still-streaming coarse level
+    // complete, and a Capture pressed before the initial load finished
+    // exported its first frames at chunk-1. The commit stamp is the signal
+    // that exists on this shape.
+    const reg = makeRegistry();
+    const leaf = makeChild(0);
+    leaf.object.userData = {
+      nodeType: 'gsplats',
+      visibleSplatCount: 1000,
+      committedLadderComplete: false,
+    };
+    expect(leaf.hasMoreLODs).toBeUndefined();
+    reg.register(makeEntry([leaf], 0, '/g'));
+    reg.evaluatePerFrame();
+    expect(reg.isCaptureQuiescent()).toBe(false);
+
+    leaf.object.userData.committedLadderComplete = true; // final chunk commits
+    expect(reg.isCaptureQuiescent()).toBe(true);
+  });
+
+  it('does not block on a leaf that carries no ladder stamp at all', () => {
+    // A non-progressive loader stamps nothing (`stamp-view-version` only writes
+    // `committedLadderComplete` when it has a loader to ask), and an unstamped
+    // leaf must read as complete rather than wedging the drain.
+    const reg = makeRegistry();
+    const leaf = makeChild(0);
+    leaf.object.userData = { nodeType: 'points', visiblePointCount: 500 };
+    reg.register(makeEntry([leaf], 0, '/g'));
+    reg.evaluatePerFrame();
+    expect(reg.isCaptureQuiescent()).toBe(true);
+  });
+
+  /**
+   * A deferred-GROUP LOD child, as ``loadLodGroupNode``'s ``canDeferGroup``
+   * path builds it: a placeholder ``THREE.Group`` holding a loaded subtree, and
+   * — decisively — NO ``hasMoreLODs`` thunk (that call site passes only five
+   * arguments). Its one stamped part leaf carries the ladder-completeness stamp
+   * the fold reads.
+   */
+  function makeDeferredGroupChild(
+    coverageFraction: number,
+    ladderComplete: boolean
+  ): LODGroupChild {
+    const group = new THREE.Group();
+    const partLeaf = new THREE.Group();
+    partLeaf.userData = {
+      nodeType: 'gsplats',
+      visibleSplatCount: 1000,
+      committedLadderComplete: ladderComplete,
+    };
+    group.add(partLeaf);
+    return {
+      object: group,
+      coverageFraction,
+      positionBounds: { min: [0, 0, 0], max: [10, 10, 10] },
+      ready: true,
+    };
+  }
+
+  it('is NOT quiescent while a deferred GROUP aspiration sits at chunk-1 of its parts ladders', () => {
+    // The `overview` shape: the fine `kind=partition` branch is a GROUP child
+    // with no `hasMoreLODs` thunk, so the leaf-only completeness clause is a
+    // no-op for it — yet its part leaves are at chunk-1 by construction the
+    // moment the branch loads (the deferred-group call site kicks refinement
+    // precisely because of that). Ready, fresh, nothing loading: without the
+    // subtree fold the predicate calls this settled and the frame is exported
+    // at the first additive chunk, refining in over the next seconds.
+    const reg = makeRegistry();
+    const child = makeDeferredGroupChild(0, false);
+    reg.register(makeEntry([child], 0, '/ov'));
+    reg.evaluatePerFrame();
+    // Documents the shape this case is about — a deferred GROUP child carries
+    // no ladder thunk — but only for the literal built above. It pins nothing
+    // about production: the deferred-group call site in the node factory is
+    // free to start passing a `hasMoreLODs`, and this assertion would stay
+    // green while the case below stopped exercising the subtree fold.
+    expect(child.hasMoreLODs).toBeUndefined();
+    expect(reg.isCaptureQuiescent()).toBe(false);
+
+    // Control: the same subtree with its ladders complete IS quiescent, so the
+    // false above is the completeness fold and not some unrelated blocker.
+    (
+      child.object.children[0].userData as { committedLadderComplete?: boolean }
+    ).committedLadderComplete = true;
+    expect(reg.isCaptureQuiescent()).toBe(true);
+  });
+
+  it('treats an entry with no child at the aspiration index as nothing to wait for', () => {
+    // `children` is legitimately EMPTY when every level failed its
+    // `getObjectByName` attach in `load-lod-group-node` (it warns and carries
+    // on). Nothing at a missing index can ever become ready, so blocking would
+    // make the predicate permanently false: each frame burns the whole drain
+    // budget (2 s / 120 rAFs) until three in a row latch draining off — ~6 s
+    // spent, and the run then reports frames filmed at a coarse LOD that no
+    // level was ever going to improve.
+    const reg = makeRegistry();
+    reg.register(makeEntry([], 0, '/broken'));
+    expect(reg.isCaptureQuiescent()).toBe(true);
+
+    // The same trap through an out-of-range aspiration on a populated entry.
+    const reg2 = makeRegistry();
+    const children = [makeChild(0)];
+    const entry = makeEntry(children, 0, '/g');
+    reg2.register(entry);
+    reg2.evaluatePerFrame();
+    expect(reg2.isCaptureQuiescent()).toBe(true);
+    entry.activeChildIndex = 7;
+    entry.displayedChildIndex = 7;
+    expect(reg2.isCaptureQuiescent()).toBe(true);
+
+    // …and through an out-of-range DESIRED index, which is the same shape one
+    // clause earlier: no child there either, so nothing to block on.
+    entry.activeChildIndex = 0;
+    entry.displayedChildIndex = 0;
+    entry.desiredChildIndex = 7;
+    expect(reg2.isCaptureQuiescent()).toBe(true);
+  });
+
+  it('excludes an OFF-SCREEN group that is deliberately held at its coarse level', () => {
+    const reg = makeRegistry();
+    const coarse = { ...makeChild(0), positionBounds: FAR_BOUNDS };
+    const fine = { ...makeLazyChild(0.5, () => {}), positionBounds: FAR_BOUNDS };
+    fine.loading = true; // a load kicked before the tile left the frustum
+    const entry = makeEntry([coarse, fine], 0, '/g');
+    reg.register(entry);
+
+    reg.evaluatePerFrame();
+    expect(entry.offScreen).toBe(true);
+    // Skipped entirely: an off-screen group draws nothing this frame and is
+    // held coarse on purpose, so waiting for its fine level only times out.
+    expect(reg.isCaptureQuiescent()).toBe(true);
+
+    // Control — the exclusion is what makes it quiescent, not the entry being
+    // vacuously settled: the same entry on screen would block on the load.
+    entry.offScreen = false;
+    expect(reg.isCaptureQuiescent()).toBe(false);
+  });
+
+  it('excludes a group hidden by an ancestor, whose desired level can never load', () => {
+    // The permanently-false trap. `kickDeferredLoadIfVisible` refuses to START
+    // a deferred load while the group is effectively hidden, but the
+    // selector's frustum test is pure geometry and still records a fine
+    // `desiredChildIndex`. So `desired !== active` with nothing loading,
+    // nothing failing and nothing ever becoming ready: without the
+    // visibility skip the predicate could never be satisfied again, and every
+    // capture frame would burn its whole drain budget before giving up.
+    const reg = makeRegistry();
+    const children = [makeChild(0), makeLazyChild(0.5, () => {})];
+    const entry = makeEntry(children, 0, '/g');
+    // The hidden flag sits on an ANCESTOR (a layer toggled off in the panel),
+    // not on the lod_group itself — which is why the check has to be the
+    // ancestor-aware one.
+    const layer = new THREE.Group();
+    layer.visible = false;
+    layer.add(entry.groupObject);
+    reg.register(entry);
+    reg.setSelectorMode('/g', { lockLevel: 1 });
+
+    reg.evaluatePerFrame();
+    expect(entry.desiredChildIndex).toBe(1); // the selector wants the fine level
+    expect(entry.activeChildIndex).toBe(0); // …which never loaded
+    expect(children[1].loading).toBeFalsy(); // the load gate refused to start it
+    expect(children[1].failed).toBeFalsy(); // …so it cannot fail out either
+    expect(reg.isCaptureQuiescent()).toBe(true);
+
+    // Control — the exclusion is what makes it quiescent, not the entry being
+    // vacuously settled: the same entry visible blocks on the pending level.
+    layer.visible = true;
+    expect(reg.isCaptureQuiescent()).toBe(false);
+  });
+
+  it('is NOT quiescent while the DISPLAYED aspiration is stale for the current view version', () => {
+    // Isolates the freshness clause: unlike the re-slice test above (which
+    // returns false two clauses earlier, at displayed !== active), this group
+    // has a single level, so the slice-aware fallback has nothing coarser to
+    // fall back to and keeps displaying the aspiration. Only the stale stamp
+    // distinguishes the two answers — delete the freshness check and this
+    // test goes green on a group that is showing the previous slice.
+    let version = 1;
+    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => version);
+    const only = makeGsplatChild(0, 1);
+    const entry = makeEntry([only], 0, '/g');
+    reg.register(entry);
+    reg.evaluatePerFrame();
+    expect(entry.displayedChildIndex).toBe(entry.activeChildIndex);
+    expect(reg.isCaptureQuiescent()).toBe(true);
+
+    // A slice/displayDims scrub: the committed geometry now describes the
+    // previous view version, and nothing has re-committed it yet.
+    version = 2;
+    reg.evaluatePerFrame();
+    expect(entry.displayedChildIndex).toBe(entry.activeChildIndex); // same clause NOT hit
+    expect(entry.desiredChildIndex).toBe(entry.activeChildIndex); // …nor this one
+    expect(only.loading).toBeFalsy(); // …nor the loading one
+    expect(reg.isCaptureQuiescent()).toBe(false);
+
+    // The re-commit lands with a fresh stamp → settled again.
+    (only.object.userData as { loadedViewVersion?: number }).loadedViewVersion = 2;
+    expect(reg.isCaptureQuiescent()).toBe(true);
+  });
+
+  it('does not block forever on a desired level that FAILED to load', () => {
+    const reg = makeRegistry();
+    const children = [makeChild(0), makeLazyChild(0.5, () => {})];
+    reg.register(makeEntry(children, 0, '/g'));
+    reg.setSelectorMode('/g', { lockLevel: 1 });
+    reg.evaluatePerFrame(); // kicks the load
+    expect(reg.isCaptureQuiescent()).toBe(false);
+
+    // The thunk fails: ready never flips, loading clears, failed is set.
+    children[1].failed = true;
+    children[1].loading = false;
+    reg.evaluatePerFrame();
+
+    const entry = reg.get('/g')!;
+    expect(entry.desiredChildIndex).toBe(1); // the selector still WANTS it
+    expect(entry.activeChildIndex).toBe(0);
+    // …but a failed level can never become ready this frame, so blocking on it
+    // would buy a timeout on every remaining capture frame.
+    expect(reg.isCaptureQuiescent()).toBe(true);
+  });
+});

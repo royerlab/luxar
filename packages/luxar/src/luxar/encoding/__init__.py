@@ -12,6 +12,12 @@ This package handles:
 # numcodecs — required on BOTH the write and the read path (zarr resolves
 # ``.zarray`` filters through the numcodecs registry).
 from ._encoders.delta_codec import LuxarDelta
+
+# The COORDINATE grid-snap predicate. Exported because the gsplat writer's sigma
+# rail must ask the SAME question the encoder will ask ("will this axis be stored
+# exactly?") before it escalates centers to float32 — two implementations of that
+# test would be two chances to disagree.
+from ._encoders.perchannel import COORDINATE_LEVELS, gridded_axis_step
 from .decoder import ArrayDecoder
 from .encoder import ArrayEncoder
 from .modes import EncodingMode
@@ -27,4 +33,7 @@ __all__ = [
     "ArrayRefRegistry",
     "ArrayRefMatch",
     "LuxarDelta",
+    # COORDINATE grid snap (shared with the gsplat centers sigma rail)
+    "gridded_axis_step",
+    "COORDINATE_LEVELS",
 ]

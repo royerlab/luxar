@@ -72,8 +72,8 @@ describe('assertThreeRevision', () => {
     vi.resetModules();
   });
 
-  it('returns silently when REVISION >= default minimum (184)', async () => {
-    const { assertThreeRevision: fn } = await importGuardsWithRevision('184');
+  it('returns silently when REVISION >= default minimum (185)', async () => {
+    const { assertThreeRevision: fn } = await importGuardsWithRevision('185');
     expect(() => fn()).not.toThrow();
   });
 
@@ -83,19 +83,21 @@ describe('assertThreeRevision', () => {
   });
 
   it('throws when REVISION is below default minimum', async () => {
-    const { assertThreeRevision: fn } = await importGuardsWithRevision('183');
-    expect(() => fn()).toThrow(/three@>=0\.184\.0/);
-    expect(() => fn()).toThrow(/found r183/);
+    const { assertThreeRevision: fn } = await importGuardsWithRevision('184');
+    expect(() => fn()).toThrow(/three@>=0\.185\.0/);
+    expect(() => fn()).toThrow(/found r184/);
   });
 
   it('throws when REVISION is far below minimum', async () => {
     const { assertThreeRevision: fn } = await importGuardsWithRevision('150');
-    expect(() => fn()).toThrow(/three@>=0\.184\.0/);
+    expect(() => fn()).toThrow(/three@>=0\.185\.0/);
   });
 
   it('honors a custom minRevision override', async () => {
     const { assertThreeRevision: fn } = await importGuardsWithRevision('190');
-    expect(() => fn(184)).not.toThrow();
+    // 180 is BELOW the default floor, so a passing call proves the override is
+    // read rather than the default silently applying.
+    expect(() => fn(180)).not.toThrow();
     expect(() => fn(190)).not.toThrow();
     expect(() => fn(191)).toThrow(/three@>=0\.191\.0/);
   });
@@ -115,19 +117,61 @@ describe('assertThreeRevision', () => {
   it('treats a non-numeric REVISION as below-min (NaN guard)', async () => {
     const { assertThreeRevision: fn } = await importGuardsWithRevision('not-a-number');
     // parseInt yields NaN which Number.isFinite rejects → throw.
-    expect(() => fn()).toThrow(/three@>=0\.184\.0/);
+    expect(() => fn()).toThrow(/three@>=0\.185\.0/);
   });
 
   it('boundary: exactly the minimum revision is accepted (off-by-one guard)', async () => {
-    const { assertThreeRevision: fn } = await importGuardsWithRevision('184');
-    // `< minRevision` (not `<=`) so 184 must pass for minRevision=184.
-    expect(() => fn(184)).not.toThrow();
+    const { assertThreeRevision: fn } = await importGuardsWithRevision('185');
+    // `< minRevision` (not `<=`) so 185 must pass for minRevision=185.
+    expect(() => fn(185)).not.toThrow();
+  });
+
+  it('default floor tracks the minor of the `three` peer range', async () => {
+    // Nothing else couples these: the peer range is what npm enforces for an
+    // embedder, the floor is what the viewer enforces at runtime, and a bump that
+    // moves one and forgets the other leaves the guard admitting a revision the
+    // package refuses to install. Read the manifest and compare.
+    // `import.meta.url` is not a file: URL under the jsdom environment this file
+    // runs in, so the manifest is located from the process cwd — which is the
+    // package dir for every entry point the repo actually uses, and the repo root
+    // if someone runs vitest with an explicit `--root`. Both are accepted rather
+    // than leaving the test to fail on the caller's choice of cwd.
+    const { readFileSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const candidates = [
+      join(process.cwd(), 'package.json'),
+      join(process.cwd(), 'packages', 'luxar-viewer', 'package.json'),
+    ];
+    let manifest: { name?: string; peerDependencies?: Record<string, string> } | undefined;
+    for (const candidate of candidates) {
+      try {
+        const parsed = JSON.parse(readFileSync(candidate, 'utf8')) as typeof manifest;
+        if (parsed?.name === '@royerlab/luxar-viewer') {
+          manifest = parsed;
+          break;
+        }
+      } catch {
+        // Not this one — try the next candidate.
+      }
+    }
+    expect(manifest, `viewer package.json not found from cwd ${process.cwd()}`).toBeDefined();
+    const range = manifest!.peerDependencies?.three;
+    expect(range).toBeDefined();
+    const peerMinor = Number(/^[~^]?0\.(\d+)\./.exec(range!)?.[1]);
+    expect(Number.isFinite(peerMinor)).toBe(true);
+
+    // This pins the default to EQUAL the peer minor, in both directions: the
+    // revision below it must throw (so the default cannot be lower), and the
+    // thrown message must name `peerMinor` (so it cannot be higher either).
+    expect(() => assertThreeRevision()).not.toThrow();
+    const { assertThreeRevision: fn } = await importGuardsWithRevision(String(peerMinor - 1));
+    expect(() => fn()).toThrow(new RegExp(`three@>=0\\.${peerMinor}\\.0`));
   });
 
   it('current bundled THREE revision passes the default guard (sanity)', () => {
     // The real module imported at the top of this file uses the real
     // THREE. If our peer-dep declaration is honored, the bundled
-    // revision must be >= 184.
+    // revision must be >= 185.
     expect(() => assertThreeRevision()).not.toThrow();
   });
 });

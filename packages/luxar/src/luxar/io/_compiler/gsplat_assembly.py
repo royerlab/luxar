@@ -10,6 +10,7 @@ free functions, a scene leaf is byte-identical to a standalone one.
 
 from __future__ import annotations
 
+import math
 import warnings
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
@@ -21,7 +22,12 @@ from numpy.typing import NDArray
 from luxar._zarr_compat import create_array
 
 from ...core.dimensions import Dimensions
-from ...encoding import EncodingMode, SemanticType
+from ...encoding import (
+    COORDINATE_LEVELS,
+    EncodingMode,
+    SemanticType,
+    gridded_axis_step,
+)
 from ...encoding.compression import resolve_compressor
 from ...typing_utils.constants import (
     COORDINATE_U16_MAX_EXTENT,
@@ -40,11 +46,19 @@ from .dataset_writers.scalars import write_positive_scalar
 #:
 #: ``AUTO``/``MEMORY`` store centers as per-axis uint16 fixed point, so the step
 #: on axis *i* is ``(hi_i - lo_i) / 65535`` — a property of the axis EXTENT, not
-#: of how sharp the splats are. A stacked axis (``combine_as_new_dimension``
-#: with ``sigma=0``, whose σ is floored to 1e-7) has an extent of one unit per
-#: frame and essentially no width, so the grid step lands thousands of σ away
-#: from the integer frame coordinate and every interior frame stops matching a
-#: slice query — silently, since the endpoints quantize exactly and so look fine.
+#: of how sharp the splats are. A degenerate axis (σ floored to 1e-7 by
+#: ``combine_as_new_dimension(..., sigma=0)``) therefore sits thousands of σ from
+#: the grid, and every such splat stops matching the slice query it belongs to —
+#: silently, since the axis endpoints quantize exactly and so look fine.
+#:
+#: This rail is the BACKSTOP, not the primary defence. A *gridded* axis — the
+#: common stacked/categorical case, whose distinct values all sit on one regular
+#: grid — is stored exactly by the encoder's own grid snap
+#: (:func:`~luxar.encoding.gridded_axis_step`) at no cost in bytes, so the rail
+#: skips it. What is left for the rail is a degenerate sub-population on a
+#: NON-gridded axis: a ``sigma=0`` track stack merged into a fit whose time axis
+#: is continuous, or any axis with more distinct values than uint16 has levels.
+#: There the snap declines and the splats really are destroyed.
 #:
 #: The number is keyed on *harm*, not on jitter. A splat moved by less than one
 #: σ is still centred inside its own core, and the displacement is bounded by
@@ -57,8 +71,8 @@ from .dataset_writers.scalars import write_positive_scalar
 #: a diagonal Σ — 2 σ at *d* = 4, more when the axes are correlated) with every
 #: per-axis check still passing. What 1 σ does rule out is the failure this rail
 #: exists for: past its own core the center leaves the footprint the splat was
-#: fitted to describe altogether, which is how a stacked frame ends up thousands
-#: of σ from its integer coordinate and vanishes from every query. A tighter
+#: fitted to describe altogether, which is how a merged-in track ends up
+#: thousands of σ from its own coordinate and vanishes from every query. A tighter
 #: line (this rail shipped at 0.25 σ of *jitter*, i.e. 0.125 σ of displacement)
 #: charges 2× the centers bytes for sub-voxel error: measured on 200k splats
 #: over an 8192-voxel axis with 5% pinned at the fitter's
@@ -114,9 +128,6 @@ MAX_CENTER_DISPLACEMENT_SIGMAS = 1.0
 #: where the bytes it protects begin to matter.
 MAX_UNREPRESENTABLE_SPLAT_FRACTION = 0.001
 
-#: Number of quantization intervals of a uint16 fixed-point grid (2**16 - 1).
-_UINT16_LEVELS = 65535.0
-
 
 def _center_quantization_offender(
     centers: NDArray[np.float32],
@@ -132,12 +143,24 @@ def _center_quantization_offender(
     An axis offends when MORE THAN :data:`MAX_UNREPRESENTABLE_SPLAT_FRACTION` of
     the splats are unrepresentable on it — a population test, not a minimum, so
     a few needle splats cannot flip an otherwise ordinary array (see that
-    constant).
+    constant) — AND the encoder is not going to store that axis exactly anyway.
 
     Returns ``(axis, step, n_unrepresentable, fraction, sigma_median)`` for the
     worst offender — the axis with the largest affected *fraction* — or ``None``
     when no axis offends. ``sigma_median`` is the median marginal σ of the
     unrepresentable splats, i.e. a representative of what is being displaced.
+
+    An axis the encoder will GRID-SNAP is not an offender. The encoder widens
+    ``hi`` on an axis whose distinct values all sit on one regular grid so the
+    quantization grid coincides with the data's own, and then every value
+    round-trips bit-exactly at uint16 — for free, since ``lo``/``hi`` are stored
+    per axis regardless. Escalating such an axis would double the centers bytes
+    and emit a warning for data that was never at risk, so the same predicate the
+    encoder uses (:func:`~luxar.encoding.gridded_axis_step`, deliberately shared
+    rather than re-derived) is consulted here and the axis skipped. It is
+    consulted LAZILY, only for an axis that has already tripped the population
+    gate: ``np.unique`` per axis is real time (0.30 s of a 2.85 s encode on 5M×3
+    coordinates) and a tripped axis is rare.
 
     ``None`` is also returned when some axis already spans
     :data:`~luxar.typing_utils.constants.COORDINATE_U16_MAX_EXTENT`: the
@@ -170,8 +193,19 @@ def _center_quantization_offender(
     if n_rows == 0:
         return None
 
-    lo = np.min(centers, axis=0).astype(np.float64)
-    hi = np.max(centers, axis=0).astype(np.float64)
+    # Derived EXACTLY as `_encode_coordinate` derives them (float64 upcast first,
+    # then min/max), because the grid replay below is only a guarantee about what
+    # the encoder will do if it is fed the encoder's own numbers.
+    arr = np.asarray(centers).astype(np.float64)
+    if arr.ndim != 2:
+        # Neither this rail nor the encoder's snap reasons about a non-(N, d)
+        # coordinate array — both are per-axis, and the encoder falls through to
+        # its generic per-column quantizer. Unreachable from either call site
+        # (validate_gsplat_inputs normalizes to (N, d)); declining keeps the
+        # per-axis indexing below honest instead of guessing at an axis layout.
+        return None
+    lo = arr.min(axis=0)
+    hi = arr.max(axis=0)
     extents = hi - lo
     # Defer to the encoder's own extent rail: at/above COORDINATE_U16_MAX_EXTENT
     # it already stores the centers as float32 — exactly, so nothing is lost —
@@ -182,7 +216,7 @@ def _center_quantization_offender(
     # (that verdict is a function of the centers bytes alone).
     if float(np.max(extents[:n_dims])) >= COORDINATE_U16_MAX_EXTENT:
         return None
-    steps = extents / _UINT16_LEVELS
+    steps = extents / COORDINATE_LEVELS
 
     worst: Optional[Tuple[int, float, int, float, float]] = None
     worst_fraction = MAX_UNREPRESENTABLE_SPLAT_FRACTION
@@ -206,15 +240,28 @@ def _center_quantization_offender(
         # A uniform Cholesky is one broadcast row standing in for every splat,
         # so the row fraction IS the splat fraction in both layouts.
         fraction = n_bad_rows / n_rows
-        if fraction > worst_fraction:
-            worst_fraction = fraction
-            worst = (
-                axis,
-                step,
-                n_bad_rows if n_rows == n_splats else int(round(fraction * n_splats)),
-                fraction,
-                float(np.median(sigma[unrepresentable])),
+        if fraction <= worst_fraction:
+            continue
+        # Only now — for an axis that already tripped the population gate, which
+        # is rare — pay for np.unique and ask whether the encoder is going to
+        # grid-snap this axis and store it exactly anyway. If it is, there is
+        # nothing to protect: escalating would double the centers bytes and warn
+        # about data that round-trips bit for bit.
+        if (
+            gridded_axis_step(
+                arr[:, axis], float(lo[axis]), float(extents[axis]), COORDINATE_LEVELS
             )
+            is not None
+        ):
+            continue
+        worst_fraction = fraction
+        worst = (
+            axis,
+            step,
+            n_bad_rows if n_rows == n_splats else int(round(fraction * n_splats)),
+            fraction,
+            float(np.median(sigma[unrepresentable])),
+        )
     return worst
 
 
@@ -229,7 +276,8 @@ def _resolve_centers_encoding_mode(
     Only ``AUTO``/``MEMORY`` quantize coordinates (``PRECISION`` is already
     exact and ``CUSTOM`` is rejected downstream for COORDINATE), so only those
     two are checked. The escalation is centers-only: the Cholesky, amplitude and
-    color tiers keep whatever the caller asked for.
+    color tiers keep whatever the caller asked for. An axis the encoder will
+    grid-snap never gets here — see :func:`_center_quantization_offender`.
     """
     if mode not in (EncodingMode.AUTO, EncodingMode.MEMORY):
         return mode
@@ -245,11 +293,12 @@ def _resolve_centers_encoding_mode(
         f"median sigma of those {sigma_median:.4g}) that worst case exceeds "
         f"{MAX_CENTER_DISPLACEMENT_SIGMAS:g}·sigma, i.e. it can move the center "
         "clear of the splat's own core and out of a slice query that used to "
-        "match it. The centers are therefore stored as float32 (exact) instead; "
-        "the Cholesky/amplitude/color tiers are unchanged. A figure near 100% "
-        "means the axis itself is degenerate (sigma ~ 0), the usual cause being "
-        "a stacked/categorical axis built with "
-        "combine_as_new_dimension(..., sigma=0).",
+        "match it. The axis is not on a regular grid, so the encoder's grid snap "
+        "cannot store it exactly; the centers are therefore stored as float32 "
+        "(exact) instead, and the Cholesky/amplitude/color tiers are unchanged. "
+        "A figure near 100% means the axis itself is degenerate (sigma ~ 0); a "
+        "small figure usually means a degenerate sub-population was merged onto "
+        "a continuous axis (e.g. a sigma=0 track stack merged into a fit).",
         UserWarning,
         stacklevel=2,
     )
@@ -456,6 +505,109 @@ def apply_gsplat_spatial_ordering(
     return centers, amplitudes, cholesky_factors, colors, ordering_data
 
 
+def compute_amplitude_mass_stats(
+    amplitudes: Union[NDArray[np.float32], float],
+    chol_diag: NDArray[np.float32],
+    n_splats: int,
+) -> Tuple[float, float]:
+    """Total integral mass and mass-weighted mean amplitude of a splat set.
+
+    Two cheap O(N) statistics that let the finalize pass
+    (:func:`~luxar.io._compiler.finalize.amplitude_window.
+    harmonize_gsplat_amplitude_windows`) put every level of an LOD ladder on ONE
+    colormap window:
+
+    * **mass** ``Σᵢ aᵢ·|Σᵢ|^½`` — the integral of the mixture (the shared
+      ``(2π)^{D/2}`` constant is dropped, exactly as in
+      ``gsplats.lod.substitutive._subset_mass`` and
+      ``gsplats.lod.additive._mass_score``). ``|Σ|^½ = Π diag(L)``.
+    * **mass-weighted mean amplitude** ``Σᵢ aᵢ²·|Σᵢ|^½ / Σᵢ aᵢ·|Σᵢ|^½`` — total
+      self-energy over total mass, i.e. the amplitude a unit of mass typically
+      carries. This is the estimator that tracks how a substitutive reduction
+      re-scales the *rendered* amplitude scalar (a coarse level packs the same
+      mass into fewer, brighter splats); a robust upper percentile does not.
+
+    Amplitudes are the **RAW** ones, deliberately — not the alpha-effective
+    ``A·α`` the LOD orderers rank by. ``amplitude_data_range`` windows the raw
+    amplitude scalar the shader reads, so the statistic that rescales that
+    window must be in the same units.
+
+    Scalar (broadcast) amplitudes and a uniform single-row Cholesky are
+    broadcast to ``n_splats`` first, so the totals are true totals rather than
+    one splat's. Returns ``(0.0, 0.0)`` for an empty set or a non-positive mass.
+    """
+    if n_splats <= 0:
+        return 0.0, 0.0
+    # ``.abs()`` on the diagonal, matching both implementations cited above: a
+    # negative pivot would otherwise flip the sign of that splat's determinant
+    # and CANCEL mass against its neighbours instead of adding to it. Taken
+    # AFTER the product rather than per element — ``Π|xᵢ| == |Π xᵢ|`` bit for
+    # bit in IEEE (the sign is a separate field), and reducing straight out of
+    # the float32 input with ``dtype=`` allocates only the (N,) result instead
+    # of two full (N, d) float64 copies, which on a multi-million-splat leaf is
+    # hundreds of MB of transient the writer does not need.
+    det_sqrt = np.abs(np.prod(np.asarray(chol_diag), axis=-1, dtype=np.float64))
+    det_sqrt = np.asarray(det_sqrt, dtype=np.float64).reshape(-1)
+    if det_sqrt.shape[0] != n_splats:
+        # Uniform (single-row) Cholesky: every splat shares one covariance.
+        det_sqrt = np.broadcast_to(det_sqrt[:1], (n_splats,))
+    if isinstance(amplitudes, np.ndarray):
+        # No shape fallback here: ``validate_gsplat_inputs`` rejects an
+        # amplitude array whose length is not ``n_splats`` on BOTH its
+        # ``check_values`` paths, so the only broadcast case is the true scalar
+        # below. Silently taking ``amps[:1]`` would answer a wrong total.
+        amps = np.asarray(amplitudes, dtype=np.float64).reshape(-1)
+    else:
+        amps = np.full(n_splats, float(amplitudes), dtype=np.float64)
+    mass = float(np.sum(amps * det_sqrt))
+    if not math.isfinite(mass) or mass <= 0.0:
+        return 0.0, 0.0
+    self_energy = float(np.sum(amps * amps * det_sqrt))
+    mwma = self_energy / mass
+    if not math.isfinite(self_energy) or not math.isfinite(mwma):
+        return 0.0, 0.0
+    return mass, mwma
+
+
+#: Metadata keys ``apply_gsplat_group_attrs`` re-stamps onto the colormap-bearing
+#: node when the array writer produced them (see the call site for why).
+_OPTIONAL_AMPLITUDE_ATTRS: Tuple[str, ...] = (
+    "amplitude_data_range",
+    "amplitude_mass",
+    "amplitude_mass_weighted_mean",
+)
+
+
+def amplitude_mass_stats_attrs(
+    amplitudes: Union[NDArray[np.float32], float],
+    chol_diag: NDArray[np.float32],
+    n_splats: int,
+) -> Dict[str, float]:
+    """:func:`compute_amplitude_mass_stats` as the attrs it is stamped under.
+
+    Always BOTH keys, never an empty dict. There is nothing to skip:
+    :func:`compute_amplitude_mass_stats` already normalizes every non-finite
+    path to ``(0.0, 0.0)``, so a bare ``NaN`` / ``Infinity`` token — which is not
+    JSON, and would cost a strict reader (the viewer) the whole store; see
+    :func:`~luxar.io._compiler.gsplat_tree.json_safe_value` — cannot reach here.
+
+    Stamping unconditionally is also what keeps "present and zero" (a mass-less
+    splat set) distinguishable from "absent" (a legacy store), which the
+    finalize-time window harmonization relies on.
+    """
+    mass, mwma = compute_amplitude_mass_stats(amplitudes, chol_diag, n_splats)
+    return {"amplitude_mass": mass, "amplitude_mass_weighted_mean": mwma}
+
+
+def _copy_present(
+    group: zarr.Group, metadata: dict[str, Any], keys: Sequence[str]
+) -> None:
+    """Copy whichever of ``keys`` ``metadata`` carries onto ``group.attrs``."""
+    for key in keys:
+        if key in metadata:
+            group.attrs[key] = metadata[key]
+
+
 def write_gsplat_arrays(
     group: zarr.Group,
     centers: NDArray[np.float32],
@@ -486,21 +638,31 @@ def write_gsplat_arrays(
     ``tests/test_scene_leaf_parity.py`` true.
 
     The **centers** encoding carries one extra rail on top of the encoder's own
-    extent check: under ``AUTO``/``MEMORY`` half the per-axis uint16 grid step
-    (the worst-case round-trip displacement) is compared against each splat's
-    own marginal σ on that axis, and centers fall back to float32 (with a
-    ``UserWarning``) when MORE THAN
+    extent check and grid snap: under ``AUTO``/``MEMORY`` half the per-axis
+    uint16 grid step (the worst-case round-trip displacement) is compared
+    against each splat's own marginal σ on that axis, and centers fall back to
+    float32 (with a ``UserWarning``) when MORE THAN
     :data:`MAX_UNREPRESENTABLE_SPLAT_FRACTION` of the splats could be displaced
     by over :data:`MAX_CENTER_DISPLACEMENT_SIGMAS` of their own σ — far enough
     to leave the core the splat was fitted to describe. It is a population
     test, so a few needle splats (which every real fit has) keep the uint16
-    size win, while a degenerate axis — where every splat fails — does not.
-    Only the centers escalate; the Cholesky/amplitude/color tiers are
-    untouched. An escalated write also opts OUT of content dedup (see below).
+    size win.
+
+    That rail is the BACKSTOP. The common degenerate case — a stacked or
+    categorical axis built with ``combine_as_new_dimension(..., sigma=0)`` — is
+    *gridded*, and the encoder snaps its quantization grid onto the data's own
+    spacing so it round-trips bit-exactly at uint16 for free; the rail skips
+    every such axis (:func:`_center_quantization_offender` asks the encoder's own
+    :func:`~luxar.encoding.gridded_axis_step`). What is left for the rail is a
+    degenerate sub-population on a NON-gridded axis, e.g. a ``sigma=0`` track
+    stack merged into a fit whose time axis is continuous. Only the centers
+    escalate; the Cholesky/amplitude/color tiers are untouched, and an escalated
+    write also opts OUT of content dedup (see below).
 
     Returns:
         Metadata dict with n_splats, ndim, has_colors, amplitude_range,
-        center_bounds, and ordering info.
+        amplitude_mass, amplitude_mass_weighted_mean, center_bounds, and
+        ordering info.
     """
     # Write centers
     chunks_centers = calculate_intelligent_chunks(
@@ -510,7 +672,8 @@ def write_gsplat_arrays(
         per_array_bytes=True,
     )
     # Sigma rail: a lossy (uint16 fixed-point) center grid is only legitimate
-    # when half its step is small against the splats' own σ on that axis. See
+    # when half its step is small against the splats' own σ on that axis — or
+    # when the encoder will grid-snap the axis and store it exactly. See
     # MAX_CENTER_DISPLACEMENT_SIGMAS — this is the single shared choke point
     # where centers AND cholesky_factors are both in hand.
     centers_mode = _resolve_centers_encoding_mode(
@@ -581,14 +744,23 @@ def write_gsplat_arrays(
         amp_data_range = [lo, hi]
         group.attrs["amplitude_data_range"] = amp_data_range
 
-    # Write cholesky_factors as two arrays. The diagonal (positive, scale-like)
-    # and the off-diagonal (signed, zero-centred) are split so each can be
-    # encoded/quantised independently on disk. They are recombined into the
-    # packed (N, k) form immediately on read (Python reader + viewer loader),
-    # so nothing downstream of the storage boundary sees the split.
+    # Split cholesky_factors into the diagonal (positive, scale-like) and the
+    # off-diagonal (signed, zero-centred) so each can be encoded/quantised
+    # independently on disk. They are recombined into the packed (N, k) form
+    # immediately on read (Python reader + viewer loader), so nothing downstream
+    # of the storage boundary sees the split. Split UP HERE because the mass
+    # statistics below need the diagonal too (|Σ|^½ = Π diag(L)) — one split,
+    # two consumers.
     from ...gsplats.utils.trils import split_tril
 
     chol_diag, chol_offdiag = split_tril(cholesky_factors, n_dims)
+
+    # Mass statistics for the finalize-time colormap-window harmonization
+    # (see ``compute_amplitude_mass_stats``). Stamped HERE, alongside
+    # ``amplitude_data_range``, so the "lightweight" ``additive_<i>`` sub-LOD
+    # groups carry them too.
+    mass_stats = amplitude_mass_stats_attrs(amplitudes, chol_diag, n_splats)
+    group.attrs.update(mass_stats)
 
     if cholesky_is_uniform:
         n_elems_chol: Optional[int] = n_splats
@@ -655,6 +827,7 @@ def write_gsplat_arrays(
         "amplitude_range": {"min": amplitude_min, "max": amplitude_max},
         "center_bounds": {"min": center_min, "max": center_max},
     }
+    metadata.update(mass_stats)
     if amp_data_range is not None:
         # Robust display window; propagated onto the colormap-bearing group by
         # apply_gsplat_group_attrs (the colormap node is often a parent of the
@@ -784,9 +957,11 @@ def apply_gsplat_group_attrs(
     # Robust display window on the SAME node as the colormap (set above), so the
     # viewer reads colormap + range together. Without this, an additive-ladder
     # level carries the colormap but not the range (that lives on its sublods),
-    # and the viewer falls back to [0, 1] → a near-black render.
-    if "amplitude_data_range" in metadata:
-        group.attrs["amplitude_data_range"] = metadata["amplitude_data_range"]
+    # and the viewer falls back to [0, 1] → a near-black render. The mass
+    # statistics ride along for the same reason: the finalize-time window
+    # harmonization reads them off whichever node carries the window it is
+    # about to correct (see finalize/amplitude_window.py).
+    _copy_present(group, metadata, _OPTIONAL_AMPLITUDE_ATTRS)
     group.attrs["center_bounds"] = metadata["center_bounds"]
     group.attrs["ordering"] = metadata["ordering"]
 

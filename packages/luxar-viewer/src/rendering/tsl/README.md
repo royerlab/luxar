@@ -9,7 +9,7 @@ session via `?renderer=webgpu` or `VITE_LUXAR_USE_WEBGPU=1`. But the TSL
 material classes all `extend NodeMaterial` from `three/webgpu`, and until
 issue #1679 twenty-three production modules imported that subpath as a value.
 One such import anywhere the entry point reaches is enough to pin the whole
-`three-webgpu` chunk — **~173 kB gzipped, about a quarter of the initial JS** —
+`three-webgpu` chunk — **~182 kB gzipped, about a quarter of the initial JS** —
 into the eager graph, where every WebGL user downloaded and parsed a renderer
 that never ran.
 

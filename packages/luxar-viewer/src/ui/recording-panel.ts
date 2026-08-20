@@ -104,6 +104,9 @@ export class RecordingPanel {
   private formatController: Controller | null = null;
   private captureController: Controller | null = null;
 
+  /** LOD-quiescence predicate for the offline loop — see {@link setLODSettledProvider}. */
+  private lodSettledProvider: (() => boolean | null) | null = null;
+
   constructor(
     private readonly sceneManager: SceneManager,
     animationController: AnimationController
@@ -148,6 +151,16 @@ export class RecordingPanel {
       renderFrameToCanvas,
       downloadBlob,
       generateFilename,
+      // Let the offline loop wait (bounded) for the auto-LOD selector to
+      // settle before exporting each frame, so a tile reloading its fine
+      // level after re-entering the frustum is not filmed coarse (#1695).
+      // Read through the injected provider (see setLODSettledProvider). No
+      // provider ⇒ `null`, NOT `true`: the loop distinguishes "settled" (which
+      // still costs it a mandatory selector-catch-up rAF per frame) from
+      // "there is no lod_group here to wait for", and only the latter is free.
+      // Answering `true` would charge every provider-less capture an extra
+      // frame for nothing.
+      isLODSettled: () => this.lodSettledProvider?.() ?? null,
     });
 
     this.gui = new GUI({
@@ -235,6 +248,35 @@ export class RecordingPanel {
 
   setOverlayManager(manager: OverlayManager | null): void {
     this.session.overlayManager = manager;
+  }
+
+  /**
+   * Supply the predicate the offline capture loop drains on before exporting
+   * each frame: "is every in-frame LOD group showing its selected level at
+   * final quality?" (`LODGroupRegistry.isCaptureQuiescent()`). Without it an
+   * orbiting turntable bakes coarse-level pops into the sequence whenever a
+   * tile re-enters the frustum mid-reload (#1695).
+   *
+   * TRI-STATE: the provider returns `null` for "this scene has no lod_group to
+   * wait for" (no scene loader, no LOD registry, or a registry with none in
+   * it), which makes the loop skip the drain entirely — including the one
+   * mandatory catch-up rAF a `true` still costs. The provider is wired
+   * unconditionally at init, so a plain points/lines scene depends on that
+   * `null` to stay exactly as fast as it was pre-#1695. It is not a claim that
+   * nothing in the scene can be mid-load: a `--recipe stream` leaf answers
+   * `null` while its additive ladder is still streaming (see the hook's JSDoc
+   * in `recording-panel/offline-capture-strategy`).
+   *
+   * INJECTED rather than read directly: reaching the registry means importing
+   * `data/scene-loader-manager`, which pulls the whole data/cache stack into
+   * this module's graph and breaks every consumer that stubs a minimal
+   * `config`. `core/app/init/pipeline` already imports `getSceneLoader` and
+   * already wires this panel's other cross-cutting predicates (render-skip,
+   * pacing-suspend), so it is the natural place. Unset ⇒ the hook answers
+   * `null` and the loop never waits, which is the pre-#1695 behaviour.
+   */
+  setLODSettledProvider(provider: (() => boolean | null) | null): void {
+    this.lodSettledProvider = provider;
   }
 
   async captureScreenshot(): Promise<void> {

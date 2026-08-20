@@ -3,7 +3,7 @@
  * Assert that the WebGPU/TSL cone stays OFF the app's critical path.
  *
  * The production default backend is WebGL (`selectBackend()` in
- * renderer-setup.ts), so the ~173 kB gzipped `three-webgpu` chunk must be
+ * renderer-setup.ts), so the ~182 kB gzipped `three-webgpu` chunk must be
  * fetched only when a session actually opts into WebGPU. Issue #1679: it used
  * to be a static dependency of the entry chunk AND `modulepreload`ed from
  * `index.html`, so every WebGL user downloaded and parsed a renderer that never

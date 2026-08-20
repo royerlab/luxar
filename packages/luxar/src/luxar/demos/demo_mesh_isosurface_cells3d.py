@@ -100,6 +100,14 @@ DEMO_META = {
     },
     "caches": [],
     "outputs": ["mesh_isosurface_cells3d"],
+    # scikit-image ships the sample, but the images are the Allen Institute's
+    # (see the Dataset block above and skimage's own cells3d docstring). The
+    # van der Walt PeerJ paper credits the LIBRARY, so citing it here would
+    # attribute someone else's microscopy to the software that loads it; the
+    # header keeps that software citation where it belongs.
+    "citation": {
+        "short": "Allen Institute for Cell Science (scikit-image cells3d)",
+    },
 }
 
 import numpy as np
@@ -288,6 +296,7 @@ def create_scene(output_path) -> None:
                         up=(1.0, 0.0, 0.0),
                     ),
                 ),
+                citation=DEMO_META["citation"],
             )
 
             for channel, vertices, faces, normals in surfaces:

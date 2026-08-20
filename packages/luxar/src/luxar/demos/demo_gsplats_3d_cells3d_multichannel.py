@@ -75,6 +75,14 @@ DEMO_META = {
     },
     "caches": ["gsplats_cells3d"],
     "outputs": ["gsplats_3d_cells3d_multichannel"],
+    # scikit-image ships the sample, but the images are the Allen Institute's
+    # (see the Dataset block above and skimage's own cells3d docstring). The
+    # van der Walt PeerJ paper credits the LIBRARY, so citing it here would
+    # attribute someone else's microscopy to the software that loads it; the
+    # header keeps that software citation where it belongs.
+    "citation": {
+        "short": "Allen Institute for Cell Science (scikit-image cells3d)",
+    },
 }
 
 from pathlib import Path
@@ -293,6 +301,7 @@ def create_luxar_scene(gsplats_list, output_path=None):
             scene = compiler.create_scene(
                 dimensions=Dimensions.default_3d(),
                 viewer_config=ViewerConfig(tone_mapping="ACES"),
+                citation=DEMO_META["citation"],
             )
 
             scene.attrs["title"] = "GSplats: 3D Cells Multi-Channel (BOP layers)"
