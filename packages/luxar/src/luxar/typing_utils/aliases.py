@@ -7,7 +7,7 @@ For constants, see constants.py.
 """
 
 from pathlib import Path
-from typing import Any, Dict, Generator, List, Optional, Tuple, Union
+from typing import Any, Dict, Generator, List, MutableMapping, Optional, Tuple, Union
 
 import numpy as np
 from numpy.typing import NDArray
@@ -65,7 +65,7 @@ ColorRGBA = Tuple[ColorValue, ColorValue, ColorValue, ColorValue]
 
 # Scene hierarchy types
 SceneHierarchy = Generator[Tuple[int, Any], None, None]  # (depth, node) pairs
-GroupAttrs = Dict[str, Any]  # Zarr group attributes
+GroupAttrs = MutableMapping[str, Any]  # Write-through Zarr group attributes
 
 # Validation type aliases
 ValidationResult = Tuple[bool, Optional[str]]  # (is_valid, error_message)
