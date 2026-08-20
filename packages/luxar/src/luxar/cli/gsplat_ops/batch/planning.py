@@ -1169,26 +1169,24 @@ def _assemble_fit_args(
 def _announce_seed_split(mode: str, fit_args: dict, n_tiles: int) -> None:
     """Announce how an integer ``--seeds`` budget divides across a task's tiles.
 
-    Emitted ONCE at plan time — the only place the tile count is known before
-    any task runs, so both ``batch-fit run`` and ``batch-fit submit --dry-run``
-    show it. Every task is a ``--tile k/M`` fit that divides the budget itself,
-    but its own notice never reaches the console: the task pool captures worker
-    output (``task_pool.py``, ``capture_output=True``) and Slurm sends it to a
-    log. The split's return value is deliberately DROPPED — applying it here
-    would double-divide the count that goes into ``fit_args``. Content plans
-    ignore ``--seeds`` (per-box budgets come from the density), so they are
-    skipped.
+    Emitted ONCE at plan time as a lower bound: planning knows the geometric
+    tile count but does not hold the task's array to count non-empty tiles. Both
+    ``batch-fit run`` and ``batch-fit submit --dry-run`` therefore show what is
+    guaranteed, while each ``--tile k/M`` task resolves the exact divisor. Task
+    output does not reach this console: the local pool captures it and Slurm
+    sends it to a log. Content plans ignore ``--seeds`` because per-box budgets
+    come from the density model.
     """
     if mode == "content" or not fit_args.get("seeds"):
         return
     from luxar.cli.gsplat_config import parse_seeds
-    from luxar.cli.gsplat_ops.fitting.fit_utils import split_seeds_across_tiles
+    from luxar.cli.gsplat_ops.fitting.fit_utils import announce_seed_split_lower_bound
 
     # batch does not parse --seeds itself (it forwards the string verbatim, and
     # each task's own `fit` validates it), so guard: a malformed value must fail
     # in the task as it always has, not break planning here over a notice.
     try:
-        split_seeds_across_tiles(parse_seeds(fit_args["seeds"]), n_tiles)
+        announce_seed_split_lower_bound(parse_seeds(fit_args["seeds"]), n_tiles)
     except ValueError:
         pass
 

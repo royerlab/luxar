@@ -71,6 +71,43 @@ _QUALITY_BUDGET_MEM_FRACTION = 0.5
 #: loses the whole fit.
 _QUALITY_PEAK_VOLUMES = 8
 
+_TILE_SIGNAL_EPS = 1e-8
+
+
+def tile_has_signal(tile_data: np.ndarray) -> bool:
+    """Whether a prepared tile should enter the fitter rather than be skipped."""
+    return not bool(tile_data.max() < _TILE_SIGNAL_EPS)
+
+
+def count_nonempty_tiles(
+    volume: Any,
+    specs: Sequence[TileSpec],
+    applied_floor: "float | None",
+) -> int:
+    """Count tiles that survive floor subtraction and Hann apodization.
+
+    The operations and predicate mirror :func:`fit_tile`'s skip decision. If
+    the scan finds no signal at all, use the geometric count as the safe
+    divisor: that avoids division by zero and errs toward over-seeding if later
+    preprocessing makes a tile fit-worthy.
+    """
+    nonempty = 0
+    for spec in specs:
+        tile_data = np.asarray(volume[spec.slices], dtype=np.float32)
+        if applied_floor is not None:
+            tile_data = np.clip(tile_data - applied_floor, 0.0, None)
+        tile_data = tile_data * cosine_window(spec)
+        if tile_has_signal(tile_data):
+            nonempty += 1
+    if nonempty > 0:
+        return nonempty
+    if specs:
+        aprint(
+            "Seed-budget scan found no non-empty tiles; using the full grid "
+            "count as the divisor."
+        )
+    return len(specs)
+
 
 def _available_ram_gb() -> "float | None":
     """Free physical memory in GiB, or ``None`` where it cannot be measured."""
@@ -545,7 +582,7 @@ def fit_tile(
     tile_data = tile_data * window
 
     # 3. Skip fitting if tile has negligible signal (e.g., windowed to near-zero)
-    if tile_data.max() < 1e-8:
+    if not tile_has_signal(tile_data):
         from luxar.gsplats.utils.trils import tril_size
 
         ndim = tile_data.ndim

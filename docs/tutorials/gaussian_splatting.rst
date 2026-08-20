@@ -365,10 +365,11 @@ A default ``cal`` measures :math:`K^{\star}` over the **whole volume**, and an
 integer ``--seeds`` is read as a whole-volume budget to match: when the fit is
 tiled (``--tiling uniform``, a large ``--tiling auto`` volume, a ``--tile k/M``
 worker, or a uniform-mode ``batch-fit`` task) the budget is *divided* across
-that volume's tiles instead of being handed to each tile in full, so the total
-tracks the number you asked for rather than the tile count. It is not an exact
-count: tiles that window to near-zero signal are skipped, and a
-:math:`K^{\star}` smaller than the tile count floors at one seed per tile. A
+the tiles that survive floor subtraction and Hann windowing instead of being
+handed to each tile in full. Every worker derives the same non-empty count from
+the volume, tile grid, and resolved floor, so sparse volumes retain the whole
+budget. A :math:`K^{\star}` smaller than that count floors at one seed per
+non-empty tile. A
 *ratio* ``--seeds`` (a float in ``(0, 1]``) is scale-free and is applied to
 each tile unchanged. Under ``--tiling content`` ``--seeds`` is ignored entirely
 — per-box budgets come from the density plan.

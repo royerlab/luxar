@@ -92,10 +92,9 @@ def run_fit_volume(
         help=(
             "Seed count (int), compression ratio (float in (0,1]), or 'auto'. "
             "An integer is a WHOLE-VOLUME budget (what a default `gsplat cal` "
-            "reports): a tiled fit divides it across its tiles instead of "
-            "giving every tile the full count. Not an exact count — tiles with "
-            "no signal are skipped (a sparse volume realizes less) and a K "
-            "below the tile count gives one seed per tile. A ratio is "
+            "reports): a tiled fit divides it across the tiles that contain "
+            "signal instead of giving every tile the full count. A K below "
+            "the non-empty tile count gives one seed per such tile. A ratio is "
             "scale-free and is applied per tile unchanged."
         ),
     ),

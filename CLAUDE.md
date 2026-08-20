@@ -330,9 +330,9 @@ luxar gsplat fit volume.tiff splats.gsplats.zarr --floor none    # disable (hard
 # culling); pass `--flat` for a single flat leaf. Whole-volume fits
 # (`--tiling none`/small auto) stay a single leaf.
 # An integer `--seeds K` is a WHOLE-VOLUME budget (what a default `cal`
-# reports): a tiled fit DIVIDES it across its tiles instead of giving each
-# tile the full count. Not an exact count — signal-free tiles are skipped
-# (sparse volumes realize less) and K below the tile count gives 1 per tile.
+# reports): a tiled fit DIVIDES it across the tiles that survive the resolved
+# floor plus Hann window instead of giving each tile the full count. Every
+# worker derives the same non-empty count; K below it gives 1 per such tile.
 
 # Uniform tiled fitting for large volumes (Hann cosine apodization, seamless stitching)
 luxar gsplat fit large.zarr splats.gsplats.zarr --tiling uniform --tile-size 256 --overlap 32
