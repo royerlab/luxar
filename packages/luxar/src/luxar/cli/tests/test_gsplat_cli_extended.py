@@ -6882,12 +6882,17 @@ class TestReencode:
     ) -> None:
         """`reencode` re-encodes the CENTERS too, which its name does not suggest.
 
-        `auto` and `memory` both quantize a coordinate column to uint16 over its
-        own [min, max], so the endpoints land on exact codes and every INTERIOR
-        value rounds. Worst on a degenerate stacked axis: `sigma=0` gives each
-        splat sigma=1e-7 in that column, so the 1.5e-5 drift below sits ~150
-        sigma from its own slice and the slice renders as nothing. Only
-        `precision` round-trips the column exactly.
+        `auto` and `memory` quantize a coordinate column to uint16 over its own
+        [min, max], so a CONTINUOUS column keeps its endpoints exactly and rounds
+        every interior value. Only `precision` round-trips such a column exactly.
+
+        A stacked axis is the exception, and deliberately so: it is gridded, so
+        the encoder snaps the quantization grid onto the data's own spacing and
+        every frame round-trips exactly under all three modes (#1748). This test
+        previously asserted the opposite — that the stacked axis drifted — and
+        described the consequence in its own docstring ("sits ~150 sigma from its
+        own slice and the slice renders as nothing"). That was the bug, pinned as
+        expected behaviour; `test_gridded_axis_snap.py` now covers the fix.
         """
         from luxar.encoding import EncodingMode
         from luxar.gsplats.gsplat_data import GSplatData
@@ -6918,16 +6923,23 @@ class TestReencode:
         )
         assert result.exit_code == 0, result.output
 
-        # Compare the SET of stacked coordinates: save/load reorders rows.
-        stacked = np.unique(GSplatData.load(out).centers[:, 3])
+        got = GSplatData.load(out)
+
+        # The STACKED axis is gridded, so it is exact under every mode.
+        stacked = np.unique(got.centers[:, 3])
         assert stacked.shape == (3,)
-        np.testing.assert_array_equal(stacked[[0, 2]], [0.0, 2.0])  # endpoints exact
+        np.testing.assert_array_equal(stacked, [0.0, 1.0, 2.0])
+
+        # A CONTINUOUS column is what distinguishes the modes: bit-exact only
+        # under precision, and within one quantization step otherwise.
+        src_x = np.unique(GSplatData.load(src).centers[:, 0])
+        got_x = np.unique(got.centers[:, 0])
         if exact:
-            assert stacked[1] == 1.0
+            np.testing.assert_array_equal(got_x, src_x)
         else:
-            assert stacked[1] != 1.0
-            # One quantization step over the column's [0, 2] extent.
-            assert abs(stacked[1] - 1.0) < 2.0 / 65535.0
+            assert not np.array_equal(got_x, src_x)
+            extent = float(src_x.max() - src_x.min())
+            assert np.abs(got_x - src_x).max() < extent / 65535.0
 
     def test_reencode_preserves_pipeline_provenance(
         self, runner: CliRunner, tmp_path: Path
