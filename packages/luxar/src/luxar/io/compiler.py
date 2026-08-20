@@ -59,6 +59,7 @@ from ._compiler.context import (
     GSplatsWriteCtx,
     OrderingCtx,
 )
+from ._compiler.finalize.amplitude_window import harmonize_gsplat_amplitude_windows
 from ._compiler.finalize.hashing import compute_content_hashes
 from ._compiler.finalize.lod_backfill import (
     finalize_lod_display_types,
@@ -1389,6 +1390,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
     def _finalize_lod_display_types(self, store: zarr.Group) -> None:
         finalize_lod_display_types(store)
 
+    def _harmonize_gsplat_amplitude_windows(self, store: zarr.Group) -> None:
+        harmonize_gsplat_amplitude_windows(store)
+
     def _warn_one_part_partition_anchors(self, store: zarr.Group) -> None:
         """Report a fills-screen LOD ladder under a ONE-part kind=partition.
 
@@ -1534,6 +1538,12 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             # (which never carried their own bounds) and the LOD
             # selector can't see them.
             self._finalize_lod_position_bounds(store)
+
+            # Put every node of each gsplat structure on ONE colormap window
+            # (per-LOD-level scaled by the mass-weighted amplitude ratio,
+            # verbatim across partition parts). Runs before the content hashes
+            # so the stamped hashes cover the corrected attrs.
+            self._harmonize_gsplat_amplitude_windows(store)
 
             # Report — never rewrite — a per-TILE (fills-screen) LOD ladder
             # sitting under a ONE-part kind=partition. The scene adders derive

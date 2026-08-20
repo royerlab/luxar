@@ -151,7 +151,7 @@ The pipelines are stateless: they read only the narrow config in the `Ctx` datac
    - `write_labels_csr(group, labels, n_splats, ctx.compressor, sort_order)` — if `labels is not None`
    - `write_image_labels_csr(group, image_labels, n_splats, ctx.compressor, sort_order)` — if `image_labels is not None`
 
-7. **Return metadata**: the `metadata` dict from `write_gsplat_arrays` — `{"n_splats", "ndim", "has_colors", "amplitude_range", "center_bounds"}` plus ordering keys, `position_bounds` (added by `apply_gsplat_group_attrs`), and conditionally `amplitude_data_range` (when `amplitudes` is a non-empty array), `has_labels` / `has_image_labels` (no `"type"` or `"lut_tone_mapping_warned"` key)
+7. **Return metadata**: the `metadata` dict from `write_gsplat_arrays` — `{"n_splats", "ndim", "has_colors", "amplitude_range", "center_bounds"}` plus ordering keys, `position_bounds` (added by `apply_gsplat_group_attrs`), and — all conditional — `amplitude_data_range` (when `amplitudes` is a non-empty array; note that finalize then HARMONIZES that window across the whole gsplat structure — see `finalize/amplitude_window.py`), the mass statistics `amplitude_mass` / `amplitude_mass_weighted_mean` (skipped when either is non-finite), `has_labels` / `has_image_labels` (no `"type"` or `"lut_tone_mapping_warned"` key)
 
 ### GSplat Subtree Pipeline (`write_gsplat_leaf_subtree`)
 

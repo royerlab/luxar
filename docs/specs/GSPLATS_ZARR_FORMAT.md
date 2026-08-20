@@ -192,6 +192,7 @@ fitted.gsplats.zarr/
 ├── .zattrs           # type: "gsplats", n_splats, ndim, has_colors, ordering,
 │                     # ordering_min/max/bits, slice_dims, ordering_dims,
 │                     # chunk_size, amplitude_range, amplitude_data_range,
+│                     # amplitude_mass, amplitude_mass_weighted_mean,
 │                     # center_bounds, position_bounds, truncation_radius,
 │                     # opacity, absorption, gamma, intensity, offset, blending_mode?,
 │                     # format_version: "3.4", format_type: "gsplats_zarr",
@@ -455,6 +456,8 @@ attrs are `type`, `kind`, `selector`, `default_level`, `display_type`,
   "chunk_size": 2048,
   "amplitude_range": {"min": 0.01, "max": 1.5},
   "amplitude_data_range": [0.01, 1.5],
+  "amplitude_mass": 8421.7,
+  "amplitude_mass_weighted_mean": 0.32,
   "center_bounds": {
     "min": [0.0, 0.0, 0.0],
     "max": [256.0, 256.0, 128.0]
@@ -492,11 +495,82 @@ by the ellipsoidal extent). Encoding metadata on each array carries tighter
 per-array quantization bounds.
 
 **Amplitude ranges**: `amplitude_range` (`{"min", "max"}` dict) is the
-metadata bounds record; `amplitude_data_range` (`[min, max]` list, written
-alongside it whenever amplitudes are given as a non-empty array — a scalar amplitude
-skips it) mirrors the Points/Lines
-`color_data_range` convention and seeds the viewer's layer display-range
-controls. Both hold the min/max of the original (pre-quantization) amplitudes.
+metadata bounds record and holds the true min/max of the original
+(pre-quantization) amplitudes. `amplitude_data_range` (`[min, max]` list,
+written alongside it whenever amplitudes are given as a non-empty array — a
+scalar amplitude skips it) mirrors the Points/Lines `color_data_range`
+convention and is the viewer's colormap **window**, seeding the layer
+display-range controls. Each writer first derives it per node as
+`[min(a), p99.9(a)]` (gsplat amplitudes are heavily right-skewed, so a `[0, max]`
+window would map ~99% of splats to near-black), and then **finalize HARMONIZES
+it across each gsplat structure**.
+
+**Window harmonization (#1691)**. A per-node window is right for one flat leaf
+and wrong for a multi-node structure: on a `kind=lod` ladder a coarse level's
+merged representatives carry the same mass in far fewer splats, so its p99.9
+lands ~4.5x above the finest level's and the object re-tones and pops in
+brightness at every LOD switch; adjacent `kind=partition` tiles of one object
+were measured windowed ~100x apart. So for every maximal `kind in {lod,
+partition}` group holding gsplats, one reference window is taken and handed
+down:
+
+- **LOD levels** take the reference window scaled by
+  `child.amplitude_mass_weighted_mean / reference.amplitude_mass_weighted_mean` —
+  the mass-weighted amplitude ratio measures exactly the representation change a
+  substitutive reduction makes (measured luminance ratio vs the finest level:
+  1.04 / 1.01 / 1.00, against 0.49 / 0.51 / 0.71 for per-level windows). The
+  ratio is **bounded to `[1/10, 10]`** (mirroring
+  `gsplats/lod/substitutive.py`'s `_MASS_SCALE_BOUND`): real ratios are ~1.1-1.2,
+  `mwma` is a second-moment ratio and so not robust on heavy-tailed amplitudes,
+  and a 10x rescale would be a bigger switch pop than the defect. Outside the
+  bound — or with a non-positive/non-finite ratio — the level shares the window
+  verbatim and a warning names it.
+- **Partition parts** share the window **verbatim**, unscaled: parts are
+  disjoint pieces of ONE object with no representation change between them, and
+  a dim tile really is dim (measured 1.00 shared vs 0.62 per-part). A partition's
+  own reference is pooled from its parts: `lo` is the exact union minimum, `hi`
+  the **count-weighted mean of the part tops** (weights = each part's
+  `n_splats`). Not their max — each part's top is that part's own p99.9, so the
+  max of N of them grows with N toward the global maximum p99.9 exists to avoid
+  (1.14x the union's true p99.9 at 16 parts, 1.58x at 256, 3.40x at 5000), and
+  `write_partition_streaming` routinely emits thousands of parts.
+- **Reference child**: the finest child that actually carries an
+  `amplitude_data_range`, walking finest→coarsest — not necessarily the literal
+  finest. `add_points(substitutive_lod=…)` puts a Points leaf there, and a
+  scalar-amplitude level writes no window at all; taking the finest child
+  unconditionally left the whole structure un-harmonized. That donor supplies
+  both the window and the reference `mwma`.
+- **Child enumeration** is name-agnostic: `Node.add_lod_group()` /
+  `add_partition_group()` are public, so LOD levels and partition parts are
+  every child group whose `type` is one of
+  `group`/`gsplats`/`points`/`lines`/`mesh`, whatever it is named. LOD children
+  are ordered coarsest→finest by `child_index` when every candidate has one,
+  else by a `child_<i>` numeric suffix, else by sorted name. (`additive_<i>`
+  sub-LODs keep the prefix+digit rule — those names are writer-owned.)
+- **Fallback**: a level whose statistics are missing (a legacy store) shares the
+  reference window verbatim, i.e. scale 1.0.
+
+The pass only ever OVERWRITES an existing `amplitude_data_range`; it never
+creates one on a node that lacked it, so the attr set on disk is unchanged. It
+also refuses to write anything that is not a finite `lo < hi` (a degenerate
+`[x, x]` reads as identity in the viewer, an inverted `lo > hi` inverts the
+colormap), leaving the writer's value in place.
+
+**Mass statistics** — two per-leaf `float` attrs the writer stamps on each splat
+set, including each `additive_<i>` sub-LOD (whose parent carries the ladder
+aggregate `Σ massᵢ` and `Σ(massᵢ·mwmaᵢ) / Σ massᵢ`). They are independent of
+`amplitude_data_range` — a scalar amplitude skips the window but still gets
+these — and, like it, **conditional**: skipped when either value is non-finite
+(a bare `NaN`/`Infinity` token is not JSON and would cost a strict reader the
+whole store), and on a ladder parent when its summed mass is not positive.
+Both use the RAW amplitudes, the same units `amplitude_data_range` windows,
+and drop the shared `(2π)^{D/2}` constant:
+
+- **`amplitude_mass`** — total integral mass `Σᵢ aᵢ·|Σᵢ|^½`, with
+  `|Σ|^½ = Π diag(L)`.
+- **`amplitude_mass_weighted_mean`** — `Σᵢ aᵢ²·|Σᵢ|^½ / Σᵢ aᵢ·|Σᵢ|^½`, i.e.
+  total self-energy over total mass: the amplitude a unit of mass typically
+  carries. This is the quantity the harmonization scales LOD windows by.
 
 **Note**: Broadcasting information is stored per-array via encoding metadata
 (see Broadcasting Convention above), not in the group attributes.
@@ -1470,6 +1544,18 @@ finest level instead). Both paths go through the shared
 ---
 
 ## Changelog
+
+- **amplitude mass statistics** (2026-08-19, format-additive, no version bump):
+  each written splat set may now carry `amplitude_mass` and
+  `amplitude_mass_weighted_mean` (see **Mass statistics** above) alongside its
+  `amplitude_data_range`. Both are optional and conditional — skipped when
+  non-finite, and on a ladder parent when the summed mass is not positive — so
+  a reader that does not know them is unaffected and a store written without
+  them stays valid. They exist so finalize can put every node of a `kind=lod` /
+  `kind=partition` structure on ONE colormap window (**Window harmonization
+  (#1691)** above) instead of a per-node `[min(a), p99.9(a)]`. No existing attr
+  changed meaning; only `amplitude_data_range` **values** are corrected, and
+  only where a writer had already stamped one.
 
 - **v3.4.0** (2026-08-12): `kind=lod` gains the `selector: "screen-area"` mode
   - Per-child `coverage_fraction` under this selector is a literal screen-area

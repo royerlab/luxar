@@ -43,6 +43,9 @@ if TYPE_CHECKING:
     from luxar.gsplats.tree import GSplatNode
 
 from luxar.encoding import EncodingMode
+from luxar.io._compiler.finalize.amplitude_window import (
+    harmonize_gsplat_amplitude_windows,
+)
 from luxar.io._compiler.gsplat_tree import (
     json_safe_value,
     make_dataset_ctx,
@@ -643,6 +646,10 @@ def write_gsplats_tree(
             # other buckets do not consume. Optional group: absent for plain fits.
             root.create_group("pipeline").attrs.update(pipeline_info)
 
+        # One colormap window per gsplat structure (#1691) — before the hash so
+        # the stamp covers the corrected attrs.
+        harmonize_gsplat_amplitude_windows(root)
+
         # Stamp BEFORE consolidating so the hash lands in ``.zmetadata`` too.
         _stamp_content_hash(root)
         consolidate(root)
@@ -816,6 +823,10 @@ def write_partition_streaming(
             root.create_group("provenance").attrs.update(provenance_info)
         if pipeline_info:
             root.create_group("pipeline").attrs.update(pipeline_info)
+
+        # One colormap window per gsplat structure (#1691) — before the hash so
+        # the stamp covers the corrected attrs.
+        harmonize_gsplat_amplitude_windows(root)
 
         # Stamp BEFORE consolidating so the hash lands in ``.zmetadata`` too.
         _stamp_content_hash(root)
