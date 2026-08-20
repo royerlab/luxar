@@ -805,7 +805,8 @@ model is deliberately minimal and light-free:
   `normal_dims == displayDims` (§3.4), where
   §5.4's parity post-pass keeps winding coherent — specifically its **index post-pass** form, since the
   flip consumes `gl_FrontFacing` and needs it to correlate with the authored orientation — so the flip
-  gives the back face the same view-anchored gradient as the front.
+  puts the back face on the lit side of its own view-anchored gradient instead of the inverted,
+  `uAmbient`-collapsing side.
 - **Base color:** the colormap LUT applied to `aScalar` under `USE_COLORMAP`, else the vertex `color`
   attribute — which is opaque white when `colors` is absent (§6.1, filled CPU-side exactly as
   `create-points-node.ts:91` does for points). So the minimal `add_mesh(vertices, faces)` call (no
