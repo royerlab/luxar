@@ -39,9 +39,30 @@ def _is_reveal(level: "SubstitutiveLevel") -> bool:
 
 def _lod_energy(lod: "AdditiveSubLOD") -> float:
     from luxar.gsplats.gsplat_data import GSplatData
-    from luxar.gsplats.lod.quality import total_self_energy
+    from luxar.gsplats.lod.energy import total_self_energy
 
     return total_self_energy(GSplatData.from_additive_sublods([lod]))
+
+
+def _restore_node_meta(fresh: "GSplatNode", inherited: "GSplatNode") -> "GSplatNode":
+    """Overlay refreshed metadata without dropping unrelated node attributes."""
+    from luxar.gsplats.tree import GSplatLeaf, GSplatLodGroup, GSplatPartition
+
+    if isinstance(fresh, GSplatLeaf) and isinstance(inherited, GSplatLeaf):
+        return replace(fresh, meta={**inherited.meta, **fresh.meta})
+    if isinstance(fresh, GSplatLodGroup) and isinstance(inherited, GSplatLodGroup):
+        children = [
+            _restore_node_meta(fresh_child, inherited_child)
+            for fresh_child, inherited_child in zip(fresh.children, inherited.children)
+        ]
+        return replace(fresh, children=children, meta={**inherited.meta, **fresh.meta})
+    if isinstance(fresh, GSplatPartition) and isinstance(inherited, GSplatPartition):
+        children = [
+            _restore_node_meta(fresh_child, inherited_child)
+            for fresh_child, inherited_child in zip(fresh.children, inherited.children)
+        ]
+        return replace(fresh, children=children, meta={**inherited.meta, **fresh.meta})
+    return fresh
 
 
 def refresh_reduction_lod_stats(
@@ -76,7 +97,7 @@ def refresh_reduction_lod_stats(
         ]
 
     from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData, SubstitutiveLevel
-    from luxar.gsplats.lod.quality import mixture_quality, total_self_energy
+    from luxar.gsplats.lod.energy import total_self_energy
 
     finest = result.at_substitutive(0).flattened()
     reference_energy = total_self_energy(finest)
@@ -152,6 +173,8 @@ def refresh_reduction_lod_stats(
                 level_stats["quality"] = 1.0
             else:
                 try:
+                    from luxar.gsplats.lod.quality import mixture_quality
+
                     level_stats["quality"] = mixture_quality(
                         result.at_substitutive(index).flattened(), finest
                     ).quality
@@ -173,7 +196,10 @@ def refresh_reduction_lod_stats(
             )
         )
 
-    return GSplatData.from_substitutive_levels(new_levels, stats=result.stats)
+    rebuilt = GSplatData.from_substitutive_levels(new_levels, stats=result.stats)
+    return GSplatData.from_tree(
+        _restore_node_meta(rebuilt.tree, result.tree), stats=result.stats
+    )
 
 
 def refresh_reduction_lod_tree(
@@ -188,14 +214,14 @@ def refresh_reduction_lod_tree(
     """
     from luxar.gsplats.gsplat_data import GSplatData
     from luxar.gsplats.lod.annotate import _node_content
-    from luxar.gsplats.lod.quality import mixture_quality, total_self_energy
+    from luxar.gsplats.lod.energy import total_self_energy
     from luxar.gsplats.tree import GSplatLeaf, GSplatLodGroup, GSplatPartition
 
     if isinstance(result, GSplatLeaf) and isinstance(source, GSplatLeaf):
         refreshed = refresh_reduction_lod_stats(
             GSplatData.from_tree(result), GSplatData.from_tree(source)
         )
-        return refreshed.tree
+        return _restore_node_meta(refreshed.tree, result)
 
     if isinstance(result, GSplatPartition) and isinstance(source, GSplatPartition):
         children = [
@@ -233,11 +259,20 @@ def refresh_reduction_lod_tree(
             if reference_authored:
                 stats["reference_energy"] = float(reference_energy)
             if quality_authored:
-                stats["quality"] = (
-                    1.0
-                    if index == len(children) - 1
-                    else mixture_quality(content, finest).quality
-                )
+                if index == len(children) - 1:
+                    stats["quality"] = 1.0
+                else:
+                    try:
+                        from luxar.gsplats.lod.quality import mixture_quality
+
+                        stats["quality"] = mixture_quality(content, finest).quality
+                    except Exception as exc:
+                        stats.pop("quality", None)
+                        warnings.warn(
+                            f"could not recompute LOD quality after rewrite: {exc}",
+                            UserWarning,
+                            stacklevel=2,
+                        )
             stamped_children.append(replace(child, meta={**child.meta, "stats": stats}))
         return replace(result, children=stamped_children)
 

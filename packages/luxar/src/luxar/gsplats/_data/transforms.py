@@ -7,6 +7,7 @@ every per-level op in the sibling mixins rebuilds its ladder through.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import TYPE_CHECKING, Callable, List
 
 import numpy as np
@@ -69,6 +70,7 @@ class TransformsMixin(_GSplatDataOps):
         ``if self.n_additive_sublods > 1``.
         """
         from luxar.gsplats.gsplat_data import GSplatData, SubstitutiveLevel
+        from luxar.gsplats.tree import GSplatLeaf
 
         new_lods: List["AdditiveSubLOD"] = []
         offset = 0
@@ -77,7 +79,7 @@ class TransformsMixin(_GSplatDataOps):
             new_lods.append(fn(lod, offset, n))
             offset += n
         source_level = self.substitutive_levels[0]
-        return GSplatData.from_substitutive_levels(
+        rebuilt = GSplatData.from_substitutive_levels(
             [
                 SubstitutiveLevel(
                     additive_sublods=new_lods,
@@ -87,6 +89,12 @@ class TransformsMixin(_GSplatDataOps):
                     stats=dict(source_level.stats),
                 )
             ],
+            stats=dict(self.stats),
+        )
+        node = rebuilt.tree
+        assert isinstance(node, GSplatLeaf)
+        return GSplatData.from_tree(
+            replace(node, meta={**self._finest_leaf().meta, **node.meta}),
             stats=dict(self.stats),
         )
 
