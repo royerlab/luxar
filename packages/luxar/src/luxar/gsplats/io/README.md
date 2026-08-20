@@ -451,8 +451,10 @@ is `luxar gsplat migrate-format`.
   Also `read_authored_appearance(path)` — the source root's authored compositing
   attrs (`AUTHORED_APPEARANCE_ATTRS`), for a command that rewrites a dataset to
   hand back to `write_gsplats_tree(root_attrs=…)` / `GSplatData.save(root_attrs=…)`
-  so a structure-only rebuild does not silently reset the look. Best-effort:
-  a missing/unreadable store, or an archive input, yields `{}`.
+  so a structure-only rebuild does not silently reset the look. Archive inputs
+  are carried too — a `.gsplats.zarr.zip` / `.tar.gz` is peeked in place via
+  `_archive.read_archive_root_attrs` (see above), no extraction. Best-effort:
+  a missing/unreadable store yields `{}`.
 - **`inspect_gsplats.py`**: Metadata inspection without loading arrays
   (`inspect_gsplats_zarr`, `format_gsplats_info`).
 - **`migrate.py`**: Legacy-format migration (`migrate_format`,

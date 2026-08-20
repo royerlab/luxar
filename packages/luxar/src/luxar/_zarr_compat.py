@@ -399,7 +399,7 @@ NODE_GROUP_DOCS: tuple[str, ...] = (_V3_METADATA_DOC, ".zgroup")
 #: ordered best-first as DOCUMENTATION for a future iterating consumer, both of
 #: today's consumers test membership, and a positional read would silently swap
 #: the meaning of anything keyed on it if that order were ever revisited.
-V3_NODE_DOC = _V3_METADATA_DOC
+V3_NODE_DOC: str = _V3_METADATA_DOC
 
 
 def attrs_from_node_doc(parsed: Any, *, doc_name: str | None = None) -> dict[str, Any]:

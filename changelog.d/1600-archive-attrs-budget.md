@@ -31,11 +31,15 @@ gets 128 MiB — roughly 1,300-2,800 parts of headroom on the laddered shapes
 people actually publish, ~16,000 on bare leaves, and no more than that because
 the document is parsed whole, so the transient parse rather than the byte count
 is the real ceiling. Raising the document budget does not raise what the peek can
-hand back: a document read under it has the *attributes* it unwraps to re-checked
-against the small budget (a `.zattrs`, already bounded by that same number as a
-member, is not measured a second time — the re-check measures a re-serialization,
-which for non-ASCII attrs is 2-3x the bytes on disk and would refuse something
-the member budget just admitted). The tar path also now bounds its read to the
+hand back: a format-3 document has the *attributes* it unwraps to re-checked
+against the small budget. A `.zattrs`, already bounded by that same number as a
+member, is not measured a second time — the re-check measures a re-serialization
+rather than the bytes on disk, so there it could only ever refuse something the
+member budget just admitted. That re-serialization is compact and
+`ensure_ascii=False`, so non-ASCII attributes are not inflated 3x by escaping the
+way a default `json.dumps` inflates them (which is what makes the re-check that
+*does* run safe); and which branch a member takes is decided by the document's
+*name*, never by comparing budget values. The tar path also now bounds its read to the
 budget instead of trusting the header size, which is what the zip path already
 did.
 
