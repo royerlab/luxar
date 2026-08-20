@@ -7,10 +7,16 @@ the pass that consumes them
 harmonize_gsplat_amplitude_windows`) across every gsplat structure shape: a
 substitutive ``kind=lod`` ladder (writer-named and hand-authored), levels
 carrying their default ``additive_<i>`` stream ladders, a ``kind=partition``
-(in-memory and streamed), the ``adaptive`` partition-of-ladders, the
-``overview`` lod-over-partition, a ladder whose finest child is Points, the
-no-stats legacy fallback, the scale/degeneracy guards, and the scene-compiler
-path.
+(in-memory and streamed, with flat and with ``kind=lod`` parts), the
+``adaptive`` partition-of-ladders, the ``overview`` lod-over-partition, a ladder
+whose finest child is Points, the no-stats legacy fallback, the
+scale/degeneracy guards, and the scene-compiler path.
+
+Two of them are built by the SHIPPED producer
+(:mod:`luxar.gsplats.lod.recipes`) rather than by hand, so the pass stays
+coupled to what ``gsplat lod`` actually writes — including the
+constant-amplitude ``levels`` ladder that ``gsplat import`` produces, whose
+finest level is windowed degenerately.
 """
 
 from __future__ import annotations
@@ -28,6 +34,7 @@ from luxar.core.dimensions import Dimensions
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData, SubstitutiveLevel
 from luxar.gsplats.io.save_gsplats import write_gsplats_tree, write_partition_streaming
+from luxar.gsplats.lod.recipes import RecipeParams, build_recipe
 from luxar.gsplats.tree import GSplatLeaf, GSplatLodGroup, GSplatNode, GSplatPartition
 from luxar.io._compiler.finalize.amplitude_window import (
     _SCALE_BOUND,
@@ -165,6 +172,59 @@ def _mild_leaf(index: int, *, seed: int) -> GSplatLeaf:
     return GSplatLeaf(additive_sublods=[_simple_level(index, seed=seed)])
 
 
+def _uniform_amplitude_leaf(n: int, *, seed: int, amplitude: float) -> GSplatLeaf:
+    """A leaf whose amplitudes are all ``amplitude``.
+
+    ``write_gsplat_arrays`` cannot derive a usable window from a constant set —
+    ``p99.9 == min``, so it falls back to ``max`` and stamps the DEGENERATE
+    ``[x, x]``. With ``amplitude == 0`` it also stamps ``amplitude_mass`` and
+    ``amplitude_mass_weighted_mean`` as ``0.0`` (present, not absent), which is
+    the reachable stand-in for an "empty" leaf — a 0-splat write raises
+    ``ValidationError``, so that case cannot be produced at all.
+    """
+    rng = np.random.default_rng(seed)
+    chol = np.zeros((n, 6), dtype=np.float32)
+    chol[:, _DIAG_3D] = rng.uniform(0.5, 2.0, size=(n, 3)).astype(np.float32)
+    return GSplatLeaf(
+        additive_sublods=[
+            AdditiveSubLOD(
+                centers=rng.uniform(0.0, 64.0, size=(n, 3)).astype(np.float32),
+                amplitudes=np.full(n, amplitude, dtype=np.float32),
+                cholesky_factors=chol,
+            )
+        ]
+    )
+
+
+def _pareto_data(n: int, *, seed: int) -> GSplatData:
+    """A flat heavy-tailed 3D set, ready for :func:`build_recipe`."""
+    rng = np.random.default_rng(seed)
+    chol = np.zeros((n, 6), dtype=np.float32)
+    chol[:, _DIAG_3D] = rng.uniform(0.5, 2.0, size=(n, 3)).astype(np.float32)
+    return GSplatData(
+        centers=rng.uniform(0.0, 64.0, size=(n, 3)).astype(np.float32),
+        amplitudes=(0.05 + rng.pareto(2.0, size=n)).astype(np.float32),
+        cholesky_factors=chol,
+    )
+
+
+def _constant_amplitude_data(n: int = 4000, *, seed: int = 0) -> GSplatData:
+    """A flat set with CONSTANT amplitudes — the ``gsplat import`` shape.
+
+    ``gsplats/interop/_convert.py`` sets ``amplitudes = np.ones(n)`` for EVERY
+    imported classical splat file (INRIA PLY, ``.splat``, SPZ, SuperSplat), so
+    ``gsplat import`` → ``gsplat lod --recipe levels`` produces exactly this.
+    """
+    rng = np.random.default_rng(seed)
+    chol = np.zeros((n, 6), dtype=np.float32)
+    chol[:, _DIAG_3D] = rng.uniform(0.5, 2.0, size=(n, 3)).astype(np.float32)
+    return GSplatData(
+        centers=rng.uniform(0.0, 64.0, size=(n, 3)).astype(np.float32),
+        amplitudes=np.ones(n, dtype=np.float32),
+        cholesky_factors=chol,
+    )
+
+
 def _leaf_amps(leaf: GSplatLeaf) -> NDArray[np.float32]:
     """Every amplitude in a leaf, concatenated over its additive ladder."""
     return np.concatenate(
@@ -193,6 +253,22 @@ def _window(group: zarr.Group, path: str) -> List[float]:
 
 def _mwma(group: zarr.Group, path: str) -> float:
     return float(_attrs(group, path)["amplitude_mass_weighted_mean"])  # type: ignore[arg-type]
+
+
+def _disk_amps(group: zarr.Group, path: str) -> NDArray[np.float32]:
+    """The amplitudes actually stored at ``path`` (PRECISION → exact float32)."""
+    return np.asarray(group[f"{path}/amplitudes"][:], dtype=np.float32)
+
+
+def _child_count(group: zarr.Group, path: str, prefix: str) -> int:
+    """How many ``prefix<i>`` child groups the node at ``path`` has."""
+    node = group[path] if path else group
+    return sum(1 for k in node.group_keys() if str(k).startswith(prefix))
+
+
+def _clamped(scale: float) -> float:
+    """``scale`` as the pass applies it — clamped into the bound, never reset."""
+    return min(max(scale, 1.0 / _SCALE_BOUND), _SCALE_BOUND)
 
 
 # ────────────────────────────────────────────────────────────────────────
@@ -322,6 +398,43 @@ def test_additive_ladder_parent_aggregates_the_statistics(tmp_path: Path) -> Non
     assert int(root.attrs["n_additive_sublods"]) == 2
 
 
+def test_zero_mass_ladder_parent_still_stamps_the_statistics(tmp_path: Path) -> None:
+    """A ladder parent stamps ``0.0`` / ``0.0``; it never OMITS them.
+
+    Omitting made the node read back as statistic-LESS — indistinguishable from
+    a legacy store — and one such part drops its whole enclosing structure to
+    scale 1.0.
+    """
+    zero_ladder = GSplatLeaf(
+        additive_sublods=[
+            _uniform_amplitude_leaf(60, seed=101, amplitude=0.0).additive_sublods[0],
+            _uniform_amplitude_leaf(60, seed=102, amplitude=0.0).additive_sublods[0],
+        ]
+    )
+    root = _write(
+        tmp_path,
+        GSplatLodGroup(
+            children=[
+                _mild_leaf(3, seed=104),
+                GSplatPartition(
+                    children=[_mild_leaf(0, seed=103), zero_ladder],
+                    max_elements=4096,
+                ),
+            ]
+        ),
+    )
+
+    assert int(_attrs(root, "child_1/part_1")["n_additive_sublods"]) == 2  # type: ignore[arg-type]
+    assert float(_attrs(root, "child_1/part_1")["amplitude_mass"]) == 0.0  # type: ignore[arg-type]
+    assert _mwma(root, "child_1/part_1") == 0.0
+
+    # …so the combine keeps its statistics and the coarse cap is still scaled.
+    ref = _window(root, "child_1/part_0")
+    scale = _mwma(root, "child_0") / _mwma(root, "child_1/part_0")
+    assert scale != pytest.approx(1.0, rel=1e-3)
+    assert _window(root, "child_0")[1] == pytest.approx(ref[1] * scale, rel=1e-6)
+
+
 # ────────────────────────────────────────────────────────────────────────
 # 2. A substitutive kind=lod ladder
 # ────────────────────────────────────────────────────────────────────────
@@ -381,8 +494,17 @@ def test_lod_window_tops_span_far_less_than_the_per_level_p999(
     assert max(after) / min(after) == pytest.approx(2.7579, rel=1e-3)
 
 
-def test_ten_level_ladder_references_the_true_finest_level(tmp_path: Path) -> None:
-    """A >=10-level ladder: ``child_10`` must not sort before ``child_2``."""
+def test_twelve_level_ladder_references_the_child_index_finest_level(
+    tmp_path: Path,
+) -> None:
+    """A >=10-level ladder, ordered by ``child_index`` (rule (a)).
+
+    Every store a Python producer writes carries ``child_index``, so this is the
+    path the shipped ladders take — the ``child_<i>``-suffix and sorted-name
+    fallbacks are exercised separately below. What it pins is that the reference
+    is the true finest level (most splats, last ``child_index``), not whichever
+    child a name sort would have put last.
+    """
     n = 12
     sublods = _simple_ladder(n)  # finest first
     root = _write(tmp_path, _lod_group_coarsest_first(sublods))
@@ -406,6 +528,71 @@ def test_ten_level_ladder_references_the_true_finest_level(tmp_path: Path) -> No
         )
     assert _window(root, "child_9") != pytest.approx(
         _authored_window(np.asarray(sublods[n - 1 - 9].amplitudes)), rel=1e-3
+    )
+
+
+def test_ladder_without_child_index_falls_back_to_the_numeric_suffix(
+    tmp_path: Path,
+) -> None:
+    """Rule (b): no ``child_index``, so the ``child_<i>`` digits order the levels.
+
+    Unreachable from a Python producer (``core/node/node.py`` always stamps
+    ``child_index``), so it is reached here by deleting the attr — the point
+    being that ``child_10``/``child_11`` must not sort before ``child_2``.
+    """
+    n = 12
+    sublods = _simple_ladder(n)  # finest first
+    root = _write(tmp_path, _lod_group_coarsest_first(sublods))
+
+    # Drop child_index AND restore each level's own authored window, so the
+    # re-run starts from the pre-fix state and the donor is observable.
+    edits: Dict[str, Dict[str, object]] = {
+        f"child_{i}": {
+            "child_index": None,
+            "amplitude_data_range": list(
+                _authored_window(np.asarray(sublods[n - 1 - i].amplitudes))
+            ),
+        }
+        for i in range(n)
+    }
+    _, reread = _rewrite_and_reopen(root, edits)
+
+    # child_11 donated (it keeps its own window), not the name-sorted child_9.
+    assert tuple(_window(reread, f"child_{n - 1}")) == pytest.approx(
+        _authored_window(np.asarray(sublods[0].amplitudes)), rel=1e-9
+    )
+    assert _window(reread, "child_9")[1] != pytest.approx(
+        _authored_window(np.asarray(sublods[n - 1 - 9].amplitudes))[1], rel=1e-3
+    )
+
+
+def test_ladder_with_neither_index_nor_child_names_sorts_by_name(
+    tmp_path: Path,
+) -> None:
+    """Rule (c): author-named children with no ``child_index`` — sorted name wins.
+
+    The last resort, assuming alphabetically-last is finest (the convention
+    ``finalize/lod_backfill.py`` already uses). Also unreachable from a Python
+    producer; reached here by deleting ``child_index`` from a hand-authored
+    ladder whose names happen to sort coarsest→finest.
+    """
+    names = ["level_a", "level_b", "level_c"]  # coarsest → finest
+    root = _hand_built_ladder(tmp_path / "sorted.luxar.zarr", names)
+
+    edits: Dict[str, Dict[str, object]] = {}
+    for i, name in enumerate(names):
+        sub = _simple_level(len(names) - 1 - i, seed=53)
+        edits[f"ladder/{name}"] = {
+            "child_index": None,
+            "amplitude_data_range": list(_authored_window(np.asarray(sub.amplitudes))),
+        }
+    _, reread = _rewrite_and_reopen(root, edits)
+
+    assert tuple(_window(reread, "ladder/level_c")) == pytest.approx(
+        _authored_window(np.asarray(_simple_level(0, seed=53).amplitudes)), rel=1e-9
+    )
+    assert _window(reread, "ladder/level_a")[1] != pytest.approx(
+        _authored_window(np.asarray(_simple_level(2, seed=53).amplitudes))[1], rel=1e-3
     )
 
 
@@ -481,6 +668,54 @@ def test_partition_top_is_the_count_weighted_mean_not_the_max(tmp_path: Path) ->
     assert shared[1] < 0.2 * max(tops)
 
 
+def test_degenerate_part_window_is_excluded_from_the_pooled_top(
+    tmp_path: Path,
+) -> None:
+    """A ``[x, x]`` part carries no window information — pooling it clips the rest."""
+    n_const, n_real = 3000, 300
+    const = _uniform_amplitude_leaf(n_const, seed=81, amplitude=1.0)
+    real = _plain_leaf(n_real, seed=82, amp_scale=1.0)
+    root = _write(tmp_path, GSplatPartition(children=[const, real], max_elements=8192))
+
+    real_lo, real_top = _authored_window(_leaf_amps(real))
+    shared = _window(root, "part_0")
+    assert shared == _window(root, "part_1")
+
+    # The real part's own top survives intact…
+    assert shared[1] == pytest.approx(real_top, rel=1e-6)
+    # …whereas admitting the degenerate top at its full 3000-splat weight would
+    # have collapsed the window and over-brightened the real part several-fold.
+    naive = (1.0 * n_const + real_top * n_real) / (n_const + n_real)
+    assert naive < 0.5 * shared[1]
+    # The degenerate part's own LO is still a real observation of the union.
+    assert shared[0] == pytest.approx(min(1.0, real_lo), rel=1e-6)
+
+
+def test_part_without_n_splats_is_pooled_rather_than_erased(tmp_path: Path) -> None:
+    """An ABSENT ``n_splats`` means "weight unknown" (pool at 1), not "weight 0"."""
+    leaves = [
+        _plain_leaf(100, seed=91, amp_scale=1.0),
+        _plain_leaf(100, seed=92, amp_scale=1.0),
+        _plain_leaf(100, seed=93, amp_scale=9.0),
+    ]
+    root = _write(tmp_path, GSplatPartition(children=leaves, max_elements=4096))
+    tops = [_authored_window(_leaf_amps(leaf))[1] for leaf in leaves]
+
+    edits: Dict[str, Dict[str, object]] = {
+        f"part_{i}": {
+            "amplitude_data_range": list(_authored_window(_leaf_amps(leaves[i])))
+        }
+        for i in range(3)
+    }
+    edits["part_2"]["n_splats"] = None
+    _, reread = _rewrite_and_reopen(root, edits)
+
+    pooled = (tops[0] * 100 + tops[1] * 100 + tops[2] * 1) / 201
+    assert _window(reread, "part_0")[1] == pytest.approx(pooled, rel=1e-6)
+    # Weighting the attr-less part 0 would have dropped it from the pool.
+    assert _window(reread, "part_0")[1] > (tops[0] * 100 + tops[1] * 100) / 200
+
+
 def test_write_partition_streaming_harmonizes_its_parts(tmp_path: Path) -> None:
     """The streaming (batch-fit merge) writer, the pass's second shipped call site."""
     leaves = [
@@ -513,6 +748,49 @@ def test_write_partition_streaming_harmonizes_its_parts(tmp_path: Path) -> None:
     )
     # Not merely "all equal": each part's own authored top really did differ.
     assert max(tops) / min(tops) > 5.0
+
+
+def test_write_partition_streaming_with_lod_parts(tmp_path: Path) -> None:
+    """The shape ``batch-fit merge --recipe`` writes: each part is a ladder.
+
+    The flat-leaf streaming case above never enters the ``kind=lod`` branch of
+    the assignment walk, so the per-level scaling under a streamed part was
+    untested.
+    """
+    n = 3
+    ladders = [
+        _lod_group_coarsest_first(_mixture_ladder(n, seed=seed)) for seed in (3, 17)
+    ]
+
+    def parts() -> Iterator[GSplatNode]:
+        yield from ladders
+
+    out = tmp_path / "streamed_lod.gsplats.zarr"
+    assert (
+        write_partition_streaming(
+            out,
+            parts,
+            max_elements=8192,
+            ordering="none",
+            encoding_mode=EncodingMode.PRECISION,
+        )
+        == 2
+    )
+
+    root = open_group(str(out), mode="r")
+    finest = [_window(root, f"part_{p}/child_{n - 1}") for p in range(2)]
+    assert finest[0] == finest[1]
+
+    for p in range(2):
+        ref = _window(root, f"part_{p}/child_{n - 1}")
+        ref_mwma = _mwma(root, f"part_{p}/child_{n - 1}")
+        for i in range(n):
+            scale = _clamped(_mwma(root, f"part_{p}/child_{i}") / ref_mwma)
+            assert _window(root, f"part_{p}/child_{i}")[1] == pytest.approx(
+                ref[1] * scale, rel=1e-6
+            )
+        # A coarse level really is scaled away from its part's reference.
+        assert _window(root, f"part_{p}/child_0")[1] != pytest.approx(ref[1], rel=1e-3)
 
 
 # ────────────────────────────────────────────────────────────────────────
@@ -693,6 +971,93 @@ def test_lod_group_whose_finest_child_is_points(tmp_path: Path) -> None:
 
 
 # ────────────────────────────────────────────────────────────────────────
+# 5b. Structures built by the SHIPPED producer (gsplats.lod.recipes)
+# ────────────────────────────────────────────────────────────────────────
+
+
+def test_constant_amplitude_levels_recipe_falls_through_to_a_usable_donor(
+    tmp_path: Path,
+) -> None:
+    """``gsplat import`` → ``gsplat lod --recipe levels``: the finest is ``[1, 1]``.
+
+    The finest level holds the untouched constant amplitudes, so its writer
+    window is degenerate and it cannot donate. Treating "finite" as "usable"
+    made the pass pick it anyway, refuse every write, and leave the ladder on
+    its per-level windows with no log line at all.
+    """
+    result = build_recipe(
+        _constant_amplitude_data(),
+        "levels",
+        RecipeParams(
+            compression_factor=4,
+            levels=3,
+            additive_ladders=False,
+            quality_stamps=False,
+            seed=1,
+        ),
+    )
+    out = tmp_path / "const.gsplats.zarr"
+    result.save(out, ordering="none", encoding_mode=EncodingMode.PRECISION)
+    root = zarr.open_group(str(out), mode="r")
+
+    n = _child_count(root, "", "child_")
+    assert n >= 3
+    # The finest level really is constant (hence degenerate) on disk.
+    finest_amps = _disk_amps(root, f"child_{n - 1}")
+    assert float(finest_amps.min()) == float(finest_amps.max())
+
+    # The donor is the next-finest level, and it keeps its own authored window.
+    donor = f"child_{n - 2}"
+    assert tuple(_window(root, donor)) == pytest.approx(
+        _authored_window(_disk_amps(root, donor)), rel=1e-6
+    )
+
+    ref, ref_mwma = _window(root, donor), _mwma(root, donor)
+    for i in range(n):
+        lo, hi = _window(root, f"child_{i}")
+        assert hi > lo  # every level ends on a USABLE window
+        scale = _clamped(_mwma(root, f"child_{i}") / ref_mwma)
+        assert hi == pytest.approx(ref[1] * scale, rel=1e-6)
+    # …including the constant finest level, which no longer reads as [1, 1].
+    assert _window(root, f"child_{n - 1}")[1] > _window(root, f"child_{n - 1}")[0]
+
+
+def test_recipe_built_adaptive_structure_is_harmonized(tmp_path: Path) -> None:
+    """An ``adaptive`` partition-of-ladders straight out of :func:`build_recipe`."""
+    result = build_recipe(
+        _pareto_data(800, seed=2),
+        "adaptive",
+        RecipeParams(
+            max_elements=300,
+            compression_factor=4,
+            levels=2,
+            additive_ladders=False,
+            quality_stamps=False,
+            seed=1,
+        ),
+    )
+    root = _write(tmp_path, result, name="adaptive.gsplats.zarr")
+
+    n_parts = _child_count(root, "", "part_")
+    assert n_parts >= 2
+    n_levels = _child_count(root, "part_0", "child_")
+    assert n_levels >= 2
+
+    finest = f"child_{n_levels - 1}"
+    shared = {tuple(_window(root, f"part_{p}/{finest}")) for p in range(n_parts)}
+    assert len(shared) == 1  # every part's finest level on ONE window
+
+    for p in range(n_parts):
+        ref = _window(root, f"part_{p}/{finest}")
+        ref_mwma = _mwma(root, f"part_{p}/{finest}")
+        for i in range(n_levels):
+            scale = _clamped(_mwma(root, f"part_{p}/child_{i}") / ref_mwma)
+            assert _window(root, f"part_{p}/child_{i}")[1] == pytest.approx(
+                ref[1] * scale, rel=1e-6
+            )
+
+
+# ────────────────────────────────────────────────────────────────────────
 # 6. Guards — no degenerate, inverted, or wildly rescaled window
 # ────────────────────────────────────────────────────────────────────────
 
@@ -718,24 +1083,63 @@ def _rewrite_and_reopen(
     return rw, open_group(path, mode="r")
 
 
-def test_out_of_bound_mass_ratio_falls_back_to_the_verbatim_window(
-    tmp_path: Path,
+@pytest.mark.parametrize(
+    "factor, expected_scale",
+    [
+        pytest.param(500.0, _SCALE_BOUND, id="above-the-bound"),
+        pytest.param(1.0 / 500.0, 1.0 / _SCALE_BOUND, id="below-the-bound"),
+    ],
+)
+def test_out_of_bound_mass_ratio_is_clamped_to_the_bound(
+    tmp_path: Path, factor: float, expected_scale: float
 ) -> None:
-    """A ratio outside ``[1/10, 10]`` is a degenerate statistic, not a rescale."""
+    """A wild ratio is CLAMPED, not reset to 1.0.
+
+    Resetting is the worst of the three answers: at a genuine ratio of 0.02,
+    scale 1.0 leaves the level windowed 50x too wide (it renders black), while
+    clamping to 0.1 caps the error at 5x.
+    """
     sublods = _mixture_ladder()
     root = _write(tmp_path, _lod_group_coarsest_first(sublods))
     ref_before = _window(root, "child_2")
 
     _, reread = _rewrite_and_reopen(
         root,
-        {"child_0": {"amplitude_mass_weighted_mean": 500.0 * _mwma(root, "child_2")}},
+        {"child_0": {"amplitude_mass_weighted_mean": factor * _mwma(root, "child_2")}},
     )
-    # Not 500x the reference window — shared verbatim instead.
-    assert _window(reread, "child_0") == pytest.approx(ref_before, rel=1e-9)
-    # The in-bound sibling is still scaled.
+    # Neither 500x nor verbatim: exactly the bound.
+    assert _window(reread, "child_0") == pytest.approx(
+        [ref_before[0] * expected_scale, ref_before[1] * expected_scale], rel=1e-9
+    )
+    assert _window(reread, "child_0")[1] != pytest.approx(ref_before[1], rel=1e-3)
+    # The in-bound sibling is still scaled by its own true ratio.
     assert _window(reread, "child_1")[1] == pytest.approx(
         ref_before[1] * (_mwma(reread, "child_1") / _mwma(reread, "child_2")), rel=1e-6
     )
+
+
+def test_the_bound_warning_is_one_rolled_up_line_per_structure(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Not one line per level: a 40-rung ladder would flood the finalize console."""
+    n = 12
+    sublods = _simple_ladder(n)
+    root = _write(tmp_path, _lod_group_coarsest_first(sublods))
+    ref_mwma = _mwma(root, f"child_{n - 1}")
+
+    # Push EVERY coarse level far outside the bound.
+    edits: Dict[str, Dict[str, object]] = {
+        f"child_{i}": {"amplitude_mass_weighted_mean": (i + 2) * 100.0 * ref_mwma}
+        for i in range(n - 1)
+    }
+    capsys.readouterr()
+    _rewrite_and_reopen(root, edits)
+    lines = [ln for ln in capsys.readouterr().out.splitlines() if "clamped" in ln]
+
+    assert len(lines) == 1
+    assert f"{n - 1} LOD level(s)" in lines[0]
+    # …and it names the most extreme ratio seen, not the last one.
+    assert f"{(n - 1 + 1) * 100.0:.4g}" in lines[0]
 
 
 @pytest.mark.parametrize("bad_mwma", [0.0, -1.5])
@@ -755,11 +1159,22 @@ def test_degenerate_or_negative_mwma_never_writes_a_bad_window(
     assert (lo, hi) == pytest.approx(tuple(ref_before), rel=1e-9)
 
 
-def test_empty_sibling_does_not_disable_scaling_for_the_rest(tmp_path: Path) -> None:
-    """An ``n_splats == 0`` part is stamped ``mass = mwma = 0``, not "no stats"."""
+def test_mass_less_sibling_does_not_disable_scaling_for_the_rest(
+    tmp_path: Path,
+) -> None:
+    """A mass-less part is stamped ``mass = mwma = 0``, not "no stats".
+
+    A 0-splat leaf cannot be written at all (``ValidationError``), so the
+    reachable analogue is a leaf whose amplitudes are all zero: mass 0, both
+    statistics PRESENT as ``0.0``, and a degenerate ``[0, 0]`` window. Nothing
+    is hand-poked here — the store is what the writer produced.
+    """
     # Mild (pareto(2.0)) levels, so the surviving ratios stay inside
     # ``_SCALE_BOUND`` and the test reads the scaling path, not the guard.
-    parts = [_mild_leaf(0, seed=71), _mild_leaf(2, seed=72)]
+    parts = [
+        _mild_leaf(0, seed=71),
+        _uniform_amplitude_leaf(200, seed=72, amplitude=0.0),
+    ]
     coarse = _mild_leaf(3, seed=73)
     root = _write(
         tmp_path,
@@ -768,24 +1183,32 @@ def test_empty_sibling_does_not_disable_scaling_for_the_rest(tmp_path: Path) -> 
         ),
     )
 
-    # Empty the SECOND part the way the writer stamps a zero-splat leaf.
-    _, reread = _rewrite_and_reopen(
-        root,
-        {
-            "child_1/part_1": {
-                "amplitude_mass": 0.0,
-                "amplitude_mass_weighted_mean": 0.0,
-                "n_splats": 0,
-            }
-        },
-    )
+    # The writer stamped the statistics as present-and-zero, not absent.
+    assert float(_attrs(root, "child_1/part_1")["amplitude_mass"]) == 0.0  # type: ignore[arg-type]
+    assert _mwma(root, "child_1/part_1") == 0.0
 
-    ref = _window(reread, "child_1/part_0")
-    # The surviving part alone now sets the combined mwma, and the coarse cap is
-    # STILL scaled against it — the empty part did not poison the structure.
-    scale = _mwma(reread, "child_0") / _mwma(reread, "child_1/part_0")
+    ref = _window(root, "child_1/part_0")
+    # The mass-less part is harmonized onto the shared window like any other…
+    assert _window(root, "child_1/part_1") == ref
+    # …and the surviving part alone sets the combined mwma, so the coarse cap is
+    # STILL scaled against it — the mass-less part did not poison the structure.
+    scale = _mwma(root, "child_0") / _mwma(root, "child_1/part_0")
     assert scale != pytest.approx(1.0, rel=1e-3)
-    assert _window(reread, "child_0")[1] == pytest.approx(ref[1] * scale, rel=1e-6)
+    assert _window(root, "child_0")[1] == pytest.approx(ref[1] * scale, rel=1e-6)
+
+
+def test_running_the_pass_twice_writes_nothing_the_second_time(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Idempotence: every window identical, and no console line the second run."""
+    sublods = _mixture_ladder()
+    root = _write(tmp_path, _lod_group_coarsest_first(sublods))
+    before = [_window(root, f"child_{i}") for i in range(len(sublods))]
+
+    capsys.readouterr()
+    _, reread = _rewrite_and_reopen(root, {})
+    assert "Harmonized amplitude_data_range" not in capsys.readouterr().out
+    assert [_window(reread, f"child_{i}") for i in range(len(sublods))] == before
 
 
 # ────────────────────────────────────────────────────────────────────────

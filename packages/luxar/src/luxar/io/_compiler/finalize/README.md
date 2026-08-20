@@ -186,42 +186,64 @@ past in search of more roots — one reference window is taken and handed down:
   luminance vs the finest level came out 1.04 / 1.01 / 1.00 (chroma L1
   0.048 / 0.028 / 0.028) against 0.49 / 0.51 / 0.71 (0.187 / 0.183 / 0.100) for
   the per-level windows. The p99.9 the window itself uses does not track it at
-  all. The ratio is **bounded to `[1/10, 10]`** (`_SCALE_BOUND`, mirroring
+  all. The ratio is **clamped into `[1/10, 10]`** (`_SCALE_BOUND`, mirroring
   `gsplats/lod/substitutive.py::_MASS_SCALE_BOUND`): the real ratios are
   ~1.1-1.2, `mwma` is a second-moment ratio and so not robust on heavy-tailed
   amplitudes, and a 10x rescale would be a bigger switch pop than the ~2x defect
-  this fixes. Outside the bound — or with a non-positive / non-finite ratio —
-  the level shares the window verbatim and a warning names it.
+  this fixes. Out of bounds the ratio is clamped, **not discarded** — at a
+  genuine ratio of 0.02, scale 1.0 leaves the level windowed 50x too wide (it
+  renders black) while clamping to 0.1 caps the error at 5x. Scale 1.0 is kept
+  only for the genuinely unusable cases: missing statistics on either side, a
+  non-positive `mwma`, a non-finite quotient.
 - **Partition parts** share the window **verbatim**. Parts are disjoint pieces
   of one object with no representation change between them — a dim tile really
   is dim (measured 1.00 / chroma 0.0001 shared, vs 0.62 / 0.123 per-part). Their
   pooled reference is `min(part lows)` (exact) and the **count-weighted mean of
-  the part tops** (weights = each part's `n_splats`) — not their max, which
-  climbs with the part count toward the global maximum p99.9 exists to avoid
-  (1.14x the union's true p99.9 at 16 parts, 1.58x at 256, 3.40x at 5000; the
-  streaming merge routinely writes thousands).
-- **Reference child**: the finest LOD child that actually carries a window,
-  walking finest→coarsest — not necessarily the literal finest.
-  `add_points/add_lines(substitutive_lod=…)` puts a Points/Lines leaf there, and
-  a scalar-amplitude level writes no window at all; either used to leave the
-  whole structure un-harmonized. The donor supplies both the window and the
-  reference `mwma`.
+  the part tops** (weights = each part's `n_splats`). Both candidate rules are
+  biased and neither recovers the union's true p99.9: `max` over part tops
+  drifts UPWARD without bound in the part count (1.05x at 2 parts, 1.58x at 256,
+  3.40x at 5000, ~1500x for 60 dim tiles plus one small bright one — the whole
+  object renders black), while the weighted mean is biased slightly LOW, since a
+  part's own p99.9 already under-estimates the union's. The mean is chosen
+  because its bias does not grow with the part count (the streaming merge
+  routinely writes thousands) and because its failure mode — clipping
+  outlier-bright content — is what a p99.9 window does by design. It is neither
+  unbiased nor consistent; do not read it as either.
+- **Reference child**: the finest LOD child that actually carries a **usable**
+  window (`hi > lo`), walking finest→coarsest — not necessarily the literal
+  finest. `add_points/add_lines(substitutive_lod=…)` puts a Points/Lines leaf
+  there, a scalar-amplitude level writes no window at all, and a
+  constant-amplitude level (every imported classical splat file, via
+  `gsplats/interop`) writes a degenerate `[x, x]` one. Any of the three used to
+  leave the whole structure un-harmonized, silently. The donor supplies both the
+  window and the reference `mwma`. A degenerate part top is likewise excluded
+  from the partition pool (its `lo` still counts toward the union minimum).
 - **Child enumeration** is name-agnostic. `Node.add_lod_group()` /
   `add_partition_group()` are public, so the child names may be the author's
   (`examples/partition_of_lod_example.py` uses `lod_coarse` / `lod_fine`): levels
   and parts are every child group whose `type` is one of
   `group`/`gsplats`/`points`/`lines`/`mesh` (the type filter keeps a `labels` or
-  other auxiliary subgroup from being mistaken for the finest level). LOD
-  children are ordered coarsest→finest by `child_index` when every candidate has
-  one, else by a `child_<i>` numeric suffix, else by sorted name. An
+  other auxiliary subgroup from being mistaken for the finest level), minus the
+  reserved root buckets `fitting` / `provenance` / `pipeline` (excluded by name
+  too, because `pipeline_info` is an open passthrough of caller keys and a stray
+  `type` in it would rank `pipeline` last, i.e. "finest"). LOD children are
+  ordered coarsest→finest by `child_index` when every candidate has one, else by
+  a `child_<i>` numeric suffix, else by sorted name. That last rule assumes
+  alphabetically-last is finest — the same convention `lod_backfill.py` uses —
+  and is unreachable from any Python producer (`core/node/node.py` always stamps
+  `child_index`); it exists for a hand-edited or third-party store. An
   `additive_<i>` sub-LOD keeps the prefix+digit rule — those names are
   writer-owned.
 - **Legacy fallback**: a level missing the two mass statistics
   (`amplitude_mass`, `amplitude_mass_weighted_mean`, stamped per leaf by
   `gsplat_assembly.write_gsplat_arrays`) shares the reference window verbatim
-  rather than guessing. "Missing" means absent or non-finite — a legitimately
-  EMPTY leaf is stamped `0.0` / `0.0` and does not count as missing, so it no
-  longer drops the enclosing structure to scale 1.0.
+  rather than guessing. "Missing" means absent or non-finite — a mass-less leaf
+  is stamped `0.0` / `0.0` and does not count as missing, so it no longer drops
+  the enclosing structure to scale 1.0. Sharing is not provably better than the
+  self-consistent window a legacy sibling already had (it can be clipped by the
+  shared one); it is the honest answer when there is no ratio to scale by, and
+  it puts the structure on ONE window, which is what the partition arm does
+  anyway.
 
 - **Only ever overwrites** an existing `amplitude_data_range`; never creates one
   where the writers left none (a scalar-amplitude leaf, a group wrapper), so
@@ -231,12 +253,21 @@ past in search of more roots — one reference window is taken and handed down:
   already equals the new one — so a re-run, and the reference level itself, cost
   no `zarr.json` rewrite.
 - Never raises: a malformed or hand-edited subtree is skipped with a warning and
-  keeps the windows the writers gave it.
+  the rest of the tree is still processed. It is **not** transactional, though —
+  the assignment walk writes incrementally, so a failure partway through one
+  structure leaves that structure PARTIALLY rewritten (the warning reports how
+  many nodes had already been written).
 - Touches nothing but gsplats — points/lines/mesh `scalar_data_range` is left
   alone, and a plain gsplats leaf on its own is a no-op.
 - One `aprint` line per harmonized structure, emitted only when at least one
   window actually changed (so a re-run over an already-harmonized store is
-  silent), plus one warning per level whose ratio hit the bound.
+  silent), plus at most ONE rolled-up warning per structure reporting how many
+  levels were clamped to the bound and the most extreme ratio seen.
+
+A cross-recipe consequence worth knowing: a `levels` structure's reference top
+is one level's real p99.9, while an `overview` / `adaptive` one is a pooled
+estimate over parts, so the same splats can tone slightly differently depending
+on the topology they were written in (measured 222.34 vs 160.50 on one dataset).
 
 ### `validation.validate_discrete_dimension_ranges(store, scene_bounds) -> None`
 

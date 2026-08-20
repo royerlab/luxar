@@ -306,14 +306,17 @@ def amplitude_mass_stats_attrs(
 ) -> Dict[str, float]:
     """:func:`compute_amplitude_mass_stats` as the attrs it is stamped under.
 
-    Empty when either statistic is non-finite: zarr writes bare ``NaN`` /
-    ``Infinity`` tokens, which are not JSON, and one of those in the
-    consolidated root document costs a strict reader — the viewer — the whole
-    store (see :func:`~luxar.io._compiler.gsplat_tree.json_safe_value`).
+    Always BOTH keys, never an empty dict. There is nothing to skip:
+    :func:`compute_amplitude_mass_stats` already normalizes every non-finite
+    path to ``(0.0, 0.0)``, so a bare ``NaN`` / ``Infinity`` token — which is not
+    JSON, and would cost a strict reader (the viewer) the whole store; see
+    :func:`~luxar.io._compiler.gsplat_tree.json_safe_value` — cannot reach here.
+
+    Stamping unconditionally is also what keeps "present and zero" (a mass-less
+    splat set) distinguishable from "absent" (a legacy store), which the
+    finalize-time window harmonization relies on.
     """
     mass, mwma = compute_amplitude_mass_stats(amplitudes, chol_diag, n_splats)
-    if not (math.isfinite(mass) and math.isfinite(mwma)):
-        return {}
     return {"amplitude_mass": mass, "amplitude_mass_weighted_mean": mwma}
 
 

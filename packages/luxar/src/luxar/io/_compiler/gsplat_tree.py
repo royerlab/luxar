@@ -385,9 +385,16 @@ def write_gsplat_leaf(
         # Aggregate robust display window across the ladder's sub-LODs, so the
         # colormap-bearing ladder node carries a range (not the [0,1] fallback).
         agg_meta["amplitude_data_range"] = [min(disp_los), max(disp_his)]
-    if total_mass > 0.0:
-        agg_meta["amplitude_mass"] = total_mass
-        agg_meta["amplitude_mass_weighted_mean"] = total_self_energy / total_mass
+    # Stamped UNCONDITIONALLY, ``0.0`` / ``0.0`` for a zero-mass ladder, exactly
+    # as a leaf stamps them: the finalize harmonization distinguishes "present
+    # and zero" (a mass-less node, scaled locally) from "absent" (a legacy store
+    # with no ratio to scale by, which drops its whole structure to scale 1.0).
+    # Omitting them here made a zero-mass ladder read back as statistic-LESS and
+    # poison its enclosing combine.
+    agg_meta["amplitude_mass"] = total_mass
+    agg_meta["amplitude_mass_weighted_mean"] = (
+        total_self_energy / total_mass if total_mass > 0.0 else 0.0
+    )
     parent_attrs = dict(attrs or {})
     apply_gsplat_group_attrs(
         group,
