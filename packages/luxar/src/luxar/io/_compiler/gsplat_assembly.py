@@ -266,8 +266,13 @@ def compute_amplitude_mass_stats(
         return 0.0, 0.0
     # ``.abs()`` on the diagonal, matching both implementations cited above: a
     # negative pivot would otherwise flip the sign of that splat's determinant
-    # and CANCEL mass against its neighbours instead of adding to it.
-    det_sqrt = np.prod(np.abs(np.asarray(chol_diag, dtype=np.float64)), axis=-1)
+    # and CANCEL mass against its neighbours instead of adding to it. Taken
+    # AFTER the product rather than per element — ``Π|xᵢ| == |Π xᵢ|`` bit for
+    # bit in IEEE (the sign is a separate field), and reducing straight out of
+    # the float32 input with ``dtype=`` allocates only the (N,) result instead
+    # of two full (N, d) float64 copies, which on a multi-million-splat leaf is
+    # hundreds of MB of transient the writer does not need.
+    det_sqrt = np.abs(np.prod(np.asarray(chol_diag), axis=-1, dtype=np.float64))
     det_sqrt = np.asarray(det_sqrt, dtype=np.float64).reshape(-1)
     if det_sqrt.shape[0] != n_splats:
         # Uniform (single-row) Cholesky: every splat shares one covariance.
