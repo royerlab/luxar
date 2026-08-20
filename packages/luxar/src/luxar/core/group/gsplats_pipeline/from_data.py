@@ -404,6 +404,16 @@ def resolve_partition_beside_an_additive_ladder(
     )
 
 
+def _preflight_wrapper_extend_to_all(
+    group: "Group",
+    extend_to_all: Optional[Union[List[str], str]],
+    centers: Any,
+) -> None:
+    """Validate an explicit scene-level spec before a LOD wrapper exists."""
+    if extend_to_all is not None:
+        group._find_scene()._resolve_extend_to_all(extend_to_all, centers, "splats")
+
+
 def _reject_before_wrapper(
     group: "Group",
     *,
@@ -413,6 +423,7 @@ def _reject_before_wrapper(
     fill: Optional[Dict[str, float]],
     fill_sigma: Optional[Dict[str, float]],
     colormap: Any,
+    extend_to_all: Optional[Union[List[str], str]],
     attrs: Optional[Dict[str, Any]] = None,
     labels: Any = None,
     image_labels: Any = None,
@@ -648,6 +659,11 @@ def _reject_before_wrapper(
         # function exists to prevent, one key over — see the helper, which also
         # states why ``False`` and a sub-2-D width are skipped rather than judged.
         reject_bad_partition_spec(attrs, effective_ndim)
+        # This scene-level spec does not depend on a particular LOD child. An
+        # explicit invalid value must be refused before ``add_lod_group`` writes
+        # the wrapper; ``None`` remains child-only so its advisory warning is not
+        # emitted once more for the unsplit source array.
+        _preflight_wrapper_extend_to_all(group, extend_to_all, centers)
         # The leaf's WHOLE colours validator, run against EVERY rung of EVERY
         # level, for the same reason the colours/colormap question above is asked
         # of every level — and below the width, because that is where the flat
@@ -803,6 +819,7 @@ def add_gsplats_from_data_impl(
             fill=fill,
             fill_sigma=fill_sigma,
             colormap=attrs.get("colormap"),
+            extend_to_all=extend_to_all,
             # The un-split caller attrs, for the node-attrs gate — see the
             # docstring. Handed whole (colormap/labels/image_labels included):
             # ``validate_render_attrs`` does not stop at KEYS (unknown-attr /

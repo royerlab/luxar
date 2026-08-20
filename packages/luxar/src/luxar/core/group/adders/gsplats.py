@@ -35,6 +35,17 @@ if TYPE_CHECKING:
     from ..group import Group
 
 
+def _preflight_partition_extend_to_all(
+    scene: Any,
+    partition: Any,
+    extend_to_all: Optional[Union[List[str], str]],
+    centers: np.ndarray,
+) -> None:
+    """Validate an explicit scene-level spec before a partition wrapper exists."""
+    if partition is not None and extend_to_all is not None:
+        scene._resolve_extend_to_all(extend_to_all, centers, "splats")
+
+
 def add_gsplats_impl(
     group: "Group",
     *,
@@ -160,6 +171,12 @@ def add_gsplats_impl(
         # Apply compiler-level auto-partition heuristic (opt-in; default
         # off). User-explicit ``partition=`` always wins.
         partition = resolve_auto_partition(scene, n_splats, partition)
+
+        # A partition wrapper is written before any child resolves this scene-
+        # level option. Refuse an invalid explicit spec while the store and scene
+        # graph are still untouched; ``None`` stays child-only because that path
+        # emits the advisory extend-candidate warning.
+        _preflight_partition_extend_to_all(scene, partition, extend_to_all, ctr_arr)
 
         # Partition branch — decompose into N children if the user opted in
         # AND the BSP produces more than one part.
