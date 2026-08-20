@@ -482,6 +482,12 @@ def graft_gsplat_node(
     FALLBACK ``coverage_fraction`` derivation uses (see the lod branch). Callers
     leave it at the default.
 
+    The entry call is transactional. If any descendant builder fails after a
+    wrapper has been written, the new top-level subtree is removed from both the
+    Zarr store and the insertion parent's in-memory child list before the original
+    exception is re-raised. Recursive calls carry a concrete ``_under_partition``
+    and participate in that one outer transaction rather than opening their own.
+
     Note what does NOT come here: only a **non-matrix-shaped** subtree is grafted
     at all. ``add_gsplats_from_file_impl`` sends every matrix-shaped tree — a bare
     leaf, an additive ladder, or a ``kind=lod`` group whose children are all
@@ -492,6 +498,33 @@ def graft_gsplat_node(
     :func:`~luxar.core.group.gsplats_pipeline.lod_dispatch.add_gsplats_as_lod_group_impl`
     (via ``derive_coverage_fractions``), not in this function.
     """
+    parent_node = parent or group
+    if _under_partition is None:
+        from ..lod.group import is_partition_bound
+
+        writer = group._require_scene_writer(group._find_scene())
+        path = f"{parent_node.path}/{name}" if parent_node.path else name
+        path_existed = writer.node_exists(path)
+        children_before = list(parent_node.children)
+        try:
+            return graft_gsplat_node(
+                group,
+                name=name,
+                node=node,
+                parent=parent,
+                extend_to_all=extend_to_all,
+                _under_partition=is_partition_bound(parent_node),
+                **attrs,
+            )
+        except Exception as error:
+            parent_node.children[:] = children_before
+            if not path_existed:
+                try:
+                    writer.delete_node(path)
+                except Exception as rollback_error:
+                    error.add_note(f"Graft rollback also failed: {rollback_error}")
+            raise
+
     from luxar.gsplats.gsplat_data import GSplatData
     from luxar.gsplats.tree import GSplatLeaf, GSplatLodGroup, GSplatPartition
 
@@ -534,20 +567,12 @@ def graft_gsplat_node(
             **attrs,
         )
 
-    parent_node = parent or group
-    # The SCENE side of the binding is read exactly ONCE, here at the entry call
-    # (``_under_partition is None``), and then threaded down by the recursion.
-    # Below the entry it must NOT be re-asked: ``parent_node`` is then a wrapper
-    # this graft itself just created, so the walk would answer about our own
-    # freshly-written ``kind=partition`` and override the recursion's decision —
-    # in particular the one-part exclusion in the partition branch.
-    under_partition: bool
-    if _under_partition is None:
-        from ..lod.group import is_partition_bound
-
-        under_partition = is_partition_bound(parent_node)
-    else:
-        under_partition = _under_partition
+    # The entry transaction resolved the SCENE side of the binding exactly once
+    # and every recursive call threads a concrete bool. It must not be re-asked
+    # below the entry: ``parent_node`` is then a wrapper this graft itself just
+    # created, so the walk would answer about our own freshly-written partition
+    # and override the recursion's one-part exclusion.
+    under_partition = _under_partition
     wrapper_attrs = {k: v for k, v in attrs.items() if k in COMPOSITING_ATTRS}
     child_attrs = {k: v for k, v in attrs.items() if k not in COMPOSITING_ATTRS}
     # `blending_mode` stays on the WRAPPER ONLY, like every other compositing

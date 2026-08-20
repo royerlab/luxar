@@ -458,6 +458,21 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             group.attrs.clear()
             group.attrs.update(attrs)
 
+    def node_exists(self, path: NodePath) -> bool:
+        """Return whether a node path exists in the Zarr store."""
+        self._check_not_finalized("node_exists")
+        normalized_path = path.lstrip("/")
+        return not normalized_path or normalized_path in self.store
+
+    def delete_node(self, path: NodePath) -> None:
+        """Delete a node and its whole subtree from the Zarr store."""
+        self._check_not_finalized("delete_node")
+        normalized_path = path.lstrip("/")
+        if not normalized_path:
+            raise ValueError("Cannot delete the scene root")
+        if normalized_path in self.store:
+            del self.store[normalized_path]
+
     @arbol_warnings()
     def write_points(  # type: ignore[override]
         self,

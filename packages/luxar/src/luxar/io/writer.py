@@ -339,6 +339,14 @@ class ZarrWriterProtocol(Protocol):
         """
         ...
 
+    def node_exists(self, path: NodePath) -> bool:
+        """Return whether a node path exists in the Zarr store."""
+        ...
+
+    def delete_node(self, path: NodePath) -> None:
+        """Delete a node and its whole subtree from the Zarr store."""
+        ...
+
     def finalize(self) -> None:
         """Finalize the Zarr store.
 

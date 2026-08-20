@@ -2274,3 +2274,55 @@ class TestGSplatsPartitionNodeAttrsGate:
         assert "Did you mean 'blending_mode'?" in str(split)
         assert "g" not in compiler.store
         assert "g" not in finalized_group_keys(compiler, path)
+
+
+class TestFailedGraftRollsBackItsWrapper:
+    """A child refusal must not leave the graft's wrapper in either tree."""
+
+    def _file(self, tmp_path: Any, filename: str) -> str:
+        from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+
+        file_path = str(tmp_path / filename)
+        write_gsplats_tree(file_path, _nested_partition_tree(3))
+        return file_path
+
+    @pytest.mark.parametrize(
+        "additive_lod,message",
+        [
+            ({"breakpoints": [0.5, 1.0]}, "partition= is not supported alongside"),
+            ({"n_lods": 0, "recompute": True}, "n_lods must be positive"),
+        ],
+    )
+    def test_child_failure_removes_the_whole_new_graft(
+        self, tmp_path: Any, additive_lod: Any, message: str
+    ) -> None:
+        file_path = self._file(tmp_path, "unladdered_failed.gsplats.zarr")
+        compiler, scene, path = open_scene(tmp_path, "failed_graft.luxar.zarr")
+
+        exc = refusal(
+            lambda: scene.add_gsplats_from_file(
+                "g",
+                file_path,
+                partition={"max_elements": 4},
+                additive_lod=additive_lod,
+            )
+        )
+
+        assert message in str(exc)
+        assert "g" not in compiler.store
+        assert all(child.name != "g" for child in scene.children)
+        assert finalized_group_keys(compiler, path) == set()
+
+    def test_duplicate_name_failure_keeps_the_existing_node(
+        self, tmp_path: Any
+    ) -> None:
+        file_path = self._file(tmp_path, "duplicate.gsplats.zarr")
+        compiler, scene, _ = open_scene(tmp_path, "duplicate_graft.luxar.zarr")
+        existing = scene.add_group("g", opacity=0.25)
+
+        exc = refusal(lambda: scene.add_gsplats_from_file("g", file_path))
+
+        assert "Duplicate child name 'g'" in str(exc)
+        assert "g" in compiler.store
+        assert compiler.store["g"].attrs["opacity"] == 0.25
+        assert scene.children == [existing]
