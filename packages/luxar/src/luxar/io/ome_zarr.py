@@ -262,6 +262,7 @@ def discover_ome_zarr_shape(
         elif "0" in store:
             # OME-NGFF standard: resolution level "0" is highest resolution
             arr = store["0"]
+            _reject_auto_selected_group(arr, path)
         else:
             # Find the largest array, searching recursively into sub-groups
             arrays = _find_all_arrays(store)
@@ -289,10 +290,11 @@ def discover_ome_zarr_shape(
     # independent pyramid; its dataset paths are relative to that group, not the
     # store root. `unusable` records WHY a block that IS present could not be
     # read, so the give-up notice below can say so.
-    ngff_attrs, ngff_array_key = _resolve_ngff_owner(store, attrs, array_key)
-    ms, unusable = _usable_multiscales(resolve_ngff_attrs(ngff_attrs), ndim)
+    ms, unusable, ngff_array_key = _usable_ngff_for_selection(
+        store, attrs, array_key, ndim
+    )
     if ms is not None:
-        return _parse_ngff_metadata(ms, shape, path, store, ngff_array_key)
+        return _parse_ngff_metadata(ms, shape, path, ngff_array_key)
 
     # Try custom axes attribute (e.g. Keller-lab zarr.zip files store
     # axes = ['time', 'camera', 'channel', 'z', 'y', 'x']).
@@ -305,6 +307,39 @@ def discover_ome_zarr_shape(
     info = _heuristic_ome_info(shape, ndim, path)
     _announce_guessed_axes(info, path, unusable)
     return info
+
+
+def _reject_auto_selected_group(arr: Any, path: Path) -> None:
+    """Name the selectable levels when root key ``0`` is an image group."""
+    import zarr
+
+    if not isinstance(arr, zarr.Group):
+        return
+    levels = list(arr.keys())
+    example = f"0/{levels[0]}" if levels else "0/<level>"
+    raise ValueError(
+        f"Auto-selected '0' in {path}, but it is a group, not an array. "
+        f"Available levels under '0': {levels}. Select one with "
+        f"--array-key {example}."
+    )
+
+
+def _usable_ngff_for_selection(
+    store: Any,
+    attrs: Dict[str, Any],
+    array_key: Optional[str],
+    ndim: int,
+) -> Tuple[Optional[Dict[str, Any]], Optional[str], Optional[str]]:
+    """Prefer a nested owner's usable block, otherwise retry the root block."""
+    ngff_attrs, ngff_array_key = _resolve_ngff_owner(store, attrs, array_key)
+    ms, unusable = _usable_multiscales(resolve_ngff_attrs(ngff_attrs), ndim)
+    if ms is not None or ngff_array_key == array_key:
+        return ms, unusable, ngff_array_key
+
+    root_ms, root_problem = _usable_multiscales(resolve_ngff_attrs(attrs), ndim)
+    if root_ms is not None:
+        return root_ms, None, array_key
+    return None, unusable or root_problem, ngff_array_key
 
 
 def _resolve_ngff_owner(
@@ -559,7 +594,6 @@ def _parse_ngff_metadata(
     ms: Dict[str, Any],
     shape: Tuple[int, ...],
     path: Path,
-    store: Any,
     array_key: Optional[str] = None,
 ) -> OMEZarrInfo:
     """Parse NGFF v0.4+ multiscales metadata.

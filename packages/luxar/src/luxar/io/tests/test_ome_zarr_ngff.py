@@ -530,14 +530,8 @@ def test_an_unambiguous_3d_store_stays_quiet(
     assert "--axes" not in capsys.readouterr().out
 
 
-def test_a_bioformats2raw_layout_is_still_not_discovered(tmp_path: Path) -> None:
-    """KNOWN NON-GOAL, pinned so the day it is fixed this test says so.
-
-    bioformats2raw writes ``{"ome": {"bioformats2raw.layout": 3}}`` at the ROOT
-    and puts ``multiscales`` on a CHILD image group. Discovery reads attributes
-    from the root only, and auto-selection picks the child GROUP (not an array),
-    so it dies on ``.shape``. Unchanged by this fix, before and after.
-    """
+def test_a_bioformats2raw_layout_names_its_selectable_level(tmp_path: Path) -> None:
+    """Auto-selection cannot choose a group, but discovery names the workaround."""
     path = tmp_path / "b2r.zarr"
     root = open_group(path, mode="w", zarr_format=3)
     image = root.create_group("0")
@@ -550,8 +544,12 @@ def test_a_bioformats2raw_layout_is_still_not_discovered(tmp_path: Path) -> None
     }
     root.attrs["ome"] = {"version": "0.5", "bioformats2raw.layout": 3}
 
-    with pytest.raises(AttributeError, match="no attribute 'shape'"):
+    with pytest.raises(ValueError, match=r"levels under '0': \['0'\].*--array-key 0/0"):
         discover_ome_zarr_shape(path)
+
+    info = discover_ome_zarr_shape(path, array_key="0/0")
+    assert info.axes == list(_TZYX)
+    assert info.voxel_size == (2.0, 0.3, 0.3)
 
 
 # ---------------------------------------------------------------------------
@@ -1273,6 +1271,51 @@ def test_a_nested_array_key_uses_the_pyramid_which_owns_it(
         9.0,
         9.0,
     )
+
+
+@pytest.mark.parametrize(
+    "bad_multiscales",
+    [
+        ["not a block"],
+        [{"axes": None, "datasets": [{"path": "0"}]}],
+        [{"axes": _axes_meta(_ZYX), "datasets": [{"path": "0"}]}],
+    ],
+)
+def test_an_unusable_nested_owner_falls_back_to_matching_root_metadata(
+    tmp_path: Path, bad_multiscales: Any
+) -> None:
+    """A malformed parent block must not hide valid root metadata for the array."""
+    path = tmp_path / "nested_owner_fallback.zarr"
+    root = open_group(path, mode="w", zarr_format=3)
+    sub = root.create_group("sub")
+    create_array(
+        sub,
+        "0",
+        data=np.zeros((2, 3, 8, 16, 16), dtype=np.float32),
+        compressor="auto",
+    )
+    root.attrs["ome"] = {
+        "version": "0.5",
+        "multiscales": [
+            {
+                "axes": _axes_meta(_TCZYX),
+                "datasets": [
+                    {
+                        "path": "sub/0",
+                        "coordinateTransformations": [
+                            {"type": "scale", "scale": [1, 1, 4, 0.5, 0.5]}
+                        ],
+                    }
+                ],
+            }
+        ],
+    }
+    sub.attrs["ome"] = {"version": "0.5", "multiscales": bad_multiscales}
+
+    info = discover_ome_zarr_shape(path, array_key="sub/0")
+
+    assert info.axes == list(_TCZYX)
+    assert info.voxel_size == (4.0, 0.5, 0.5)
 
 
 def test_an_implicit_nested_parent_does_not_break_discovery(tmp_path: Path) -> None:

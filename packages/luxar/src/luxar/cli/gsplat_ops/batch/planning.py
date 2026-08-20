@@ -935,8 +935,9 @@ def _refuse_layout_the_workers_cannot_slice(
     raise typer.BadParameter(
         f"the store's axes are '{','.join(labels)}' with shape "
         f"{tuple(info.shape)}, a layout batch-fit's per-task volume loader "
-        f"cannot reproduce: without --axes it slices by POSITION (time first, "
-        f"then the channel-like axes, then exactly 3 spatial axes). Planning "
+        f"cannot reproduce: without --axes it slices by POSITION — at most a "
+        f"leading timepoint and the channel-like axes before the last three, "
+        f"and at 3-D or less nothing at all. Planning "
         f"would fan out over axes the workers never see, producing duplicate "
         f"tiles. {advice}"
     )
