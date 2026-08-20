@@ -11,6 +11,7 @@ import numpy as np
 from luxar.utils.lod_methods import is_reveal_method
 
 if TYPE_CHECKING:
+    from luxar.gsplats._data.base import _GSplatDataOps
     from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData, SubstitutiveLevel
     from luxar.gsplats.tree import GSplatNode
 
@@ -66,7 +67,7 @@ def _restore_node_meta(fresh: "GSplatNode", inherited: "GSplatNode") -> "GSplatN
 
 
 def refresh_reduction_lod_stats(
-    result: "GSplatData", source: "GSplatData"
+    result: "GSplatData", source: "_GSplatDataOps"
 ) -> "GSplatData":
     """Return ``result`` with inherited artifact-local LOD stamps refreshed.
 

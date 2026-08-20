@@ -316,7 +316,7 @@ def scrub_measured_stats(result: "GSplatData") -> None:
 
 
 def _stats_after_content_change(
-    result: "GSplatData", *, changed: bool, source: "GSplatData"
+    result: "GSplatData", *, changed: bool, source: _GSplatDataOps
 ) -> "GSplatData":
     """Drop the measured scores from ``result`` when the splat set ``changed``.
 

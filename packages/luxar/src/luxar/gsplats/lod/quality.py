@@ -59,12 +59,12 @@ import numpy as np
 import torch
 
 from luxar.gsplats.gsplat_data import GSplatData
-from luxar.gsplats.lod.energy import total_self_energy
 from luxar.gsplats.lod._substitutive.refine import (
     L2RefineConfig,
     _hash_cell_size,
     _pair_K_sum_chunked,
 )
+from luxar.gsplats.lod.energy import total_self_energy
 from luxar.gsplats.utils.alpha import effective_amplitudes
 from luxar.gsplats.utils.device import resolve_torch_device
 from luxar.gsplats.utils.trils import unpack_tril
