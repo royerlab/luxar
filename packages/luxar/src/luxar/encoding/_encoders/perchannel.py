@@ -6,6 +6,7 @@ from typing import Any, Optional
 
 import numpy as np
 import zarr
+from arbol import aprint
 
 from luxar._zarr_compat import create_array
 
@@ -17,6 +18,61 @@ from .delta_codec import probe_delta_filter
 
 class PerChannelEncoderMixin(BaseEncoderMixin):
     """Per-channel / scalar dtype encoding strategies for :class:`ArrayEncoder`."""
+
+    #: An axis is treated as "gridded" only if it has few enough distinct values to
+    #: enumerate cheaply. Above this it is ordinary continuous data and snapping
+    #: would be both expensive and wrong.
+    _GRID_MAX_DISTINCT = 4096
+
+    def _snap_gridded_axes(
+        self, name: str, arr: np.ndarray, lo: np.ndarray, hi: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Widen `hi` on gridded axes so their values quantize exactly.
+
+        Returns possibly-adjusted ``(lo, hi)``. An axis qualifies when it holds at
+        most ``_GRID_MAX_DISTINCT`` distinct values, those values are evenly
+        spaced, and the resulting grid still fits in uint16. Anything else is left
+        exactly as it was.
+        """
+        lo = np.array(lo, dtype=np.float64, copy=True)
+        hi = np.array(hi, dtype=np.float64, copy=True)
+        snapped = []
+        for axis in range(arr.shape[1]):
+            col = arr[:, axis]
+            extent = float(hi[axis] - lo[axis])
+            if extent <= 0.0:
+                continue  # constant axis: already exact
+            uniq = np.unique(col)
+            if uniq.size < 2 or uniq.size > self._GRID_MAX_DISTINCT:
+                continue
+            gaps = np.diff(uniq)
+            step = float(gaps.min())
+            if step <= 0.0:
+                continue
+            # Evenly spaced? Allow a tolerance so float32 inputs still qualify.
+            if not np.allclose(gaps, step, rtol=1e-6, atol=step * 1e-6):
+                continue
+            # The snapped grid must still fit in uint16.
+            if extent / step > 65535.0:
+                continue
+            hi[axis] = lo[axis] + step * 65535.0
+            snapped.append((axis, uniq.size, step))
+
+        if snapped:
+            detail = ", ".join(
+                "axis %d (%d values, step %.6g)" % (a, n, st) for a, n, st in snapped
+            )
+            # Reported, not warned. `warnings.warn` means "the caller should act";
+            # this is a transparent correctness fix that costs nothing and needs no
+            # action, and warning here would fire on every stacked scene (and break
+            # tests that legitimately assert their own code stays silent).
+            aprint(
+                f"  ✓ COORDINATE '{name}': snapped the quantization grid to the "
+                f"data's own spacing on {detail} — those values now round-trip "
+                "exactly (a stacked axis has effectively zero extent, so ordinary "
+                "uint16 rounding would move every interior value off its frame)"
+            )
+        return lo, hi
 
     def _encode_coordinate(
         self,
@@ -91,6 +147,17 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
                     UserWarning,
                     stacklevel=2,
                 )
+
+        # A GRIDDED axis (few distinct values, regularly spaced) is snapped so the
+        # quantization grid coincides with the data's own. This is what keeps a
+        # stacked/categorical axis usable: `combine_as_new_dimension(sigma=0)`
+        # gives such an axis an effective sigma of 1e-7, so ANY rounding puts a
+        # frame thousands of sigma from where it belongs and it stops matching a
+        # slice query at all — every frame but the two endpoints disappears
+        # (#1748). Widening `hi` costs nothing: `lo`/`hi` are already stored per
+        # axis, so this is a scale choice, not a format or dtype change.
+        if lo is not None and hi is not None:
+            lo, hi = self._snap_gridded_axes(name, arr, lo, hi)
 
         # Coordinates always u16 (never u8) for both AUTO and MEMORY. The decode
         # contract for COORDINATE is float32 (GPU/viewer target) regardless of the

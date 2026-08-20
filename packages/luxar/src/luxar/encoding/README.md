@@ -378,6 +378,19 @@ footgun for absolute positions). An **array-local extent rail** warns when a per
 extent exceeds 2¹² and falls back to float32 at/above 2¹⁶ (where uint16 can't resolve a
 unit step).
 
+A **gridded axis** — at most 4096 distinct values, evenly spaced — has its quantization
+grid **snapped onto the data's own spacing**: `hi` is widened to `lo + step·65535` so the
+stored grid coincides with the values, and they round-trip exactly. This is what keeps a
+stacked axis usable. `combine_as_new_dimension(sigma=0)` gives a time or channel axis an
+effective sigma of 1e-7 (the epsilon `trils.py` substitutes to keep the covariance
+positive-definite), so ordinary rounding puts an interior frame *thousands* of sigma from
+where it belongs and it stops matching a slice query — measured at 7 320 σ on a 100-frame
+stack, with only the two endpoints surviving (#1748). Snapping costs nothing: `lo`/`hi`
+are already stored per axis, so it is a scale choice rather than a dtype change (a
+float32 fallback would also be exact but converts *every* axis, measured at +78%).
+Continuous coordinates, irregularly spaced values, constant axes and grids finer than
+the cap are all left exactly as they were.
+
 **Usage Example:**
 ```python
 from luxar.encoding import EncodingMode
