@@ -95,12 +95,13 @@ def open_volume_lazy(path: Path, array_key: Optional[str] = None) -> Any:
     The returned object supports ``.shape`` and numpy basic indexing — the
     contract :func:`~luxar.gsplats.lod.volume_regions.select_sub_volume` needs.
 
-    Array selection within a group follows the SAME rules as
-    :func:`load_volume` / :func:`~luxar.io.ome_zarr.discover_ome_zarr_shape` —
-    explicit ``array_key``, else the OME-NGFF resolution level ``"0"``, else the
-    largest array found recursively. It has to: the caller re-opens a store some
-    other command already read the shape of, and a different choice here would
-    silently re-fit against a different (e.g. downsampled) array.
+    Array selection within a group is literally the SAME code as
+    :func:`load_volume` / :func:`~luxar.io.ome_zarr.discover_ome_zarr_shape` use
+    (:func:`_select_zarr_array`) — explicit ``array_key`` (blank counts as
+    absent), else the OME-NGFF resolution level ``"0"``, else the largest array
+    found recursively. It has to be: the caller re-opens a store some other
+    command already read the shape of, and a different choice here would silently
+    re-fit against a different (e.g. downsampled) array.
     """
     if is_zarr_path(path):
         import zarr
@@ -112,27 +113,7 @@ def open_volume_lazy(path: Path, array_key: Optional[str] = None) -> Any:
         # `normalize_store_arg`, zarr 3 does not, and a bare
         # `zarr.open(str(path))` on an archive raises GroupNotFoundError.
         node = zarr.open(store=open_store(path, mode="r"), mode="r")
-        if array_key:
-            try:
-                node = node[array_key]
-            except (KeyError, TypeError) as e:
-                raise ValueError(
-                    f"array key {array_key!r} not found in {path.name}"
-                ) from e
-        elif isinstance(node, zarr.Group):
-            if "0" in node:
-                node = node["0"]  # OME-NGFF: level "0" is full resolution
-            else:
-                arrays = _find_all_arrays(node)
-                if not arrays:
-                    raise ValueError(f"No arrays found in zarr group: {path}")
-                node = max(arrays, key=lambda kv: int(np.prod(kv[1].shape)))[1]
-        if not hasattr(node, "shape"):
-            raise ValueError(
-                f"{path.name} is a zarr GROUP; pass an array_key naming the "
-                "array to re-fit against"
-            )
-        return node
+        return _select_zarr_array(node, path, array_key)[0]
     return load_volume(path, array_key=array_key)
 
 
@@ -399,18 +380,237 @@ def load_volume(
 
 
 def _find_all_arrays(group: Any, prefix: str = "") -> list:
-    """Recursively find all arrays in a zarr group, returning (key_path, array) pairs."""
+    """Recursively find all arrays in a zarr group.
+
+    Returns ``(key_path, array, owner_group)`` triples — the owning group comes
+    for free here (this function holds it open), sparing the caller a second
+    metadata request to re-open it. Keys are walked SORTED rather than in
+    ``keys()`` order, which zarr does not stabilise across opens; see
+    :func:`_pick_largest` for why that matters.
+    """
     import zarr
 
     results = []
-    for k in group.keys():
+    for k in sorted(group.keys()):
         item = group[k]
         key_path = f"{prefix}/{k}" if prefix else k
         if isinstance(item, zarr.Array):
-            results.append((key_path, item))
+            results.append((key_path, item, group))
         elif isinstance(item, zarr.Group):
             results.extend(_find_all_arrays(item, key_path))
     return results
+
+
+def _pick_largest(candidates: list) -> Optional[Tuple[str, Any, Any]]:
+    """The candidate with the most elements; the LOWEST key path breaks a tie.
+
+    ``None`` for an empty list. The tie-break is what makes selection
+    REPRODUCIBLE: zarr does not stabilise ``Group.keys()`` order across opens, so
+    a plain ``max()`` over two equal-sized candidates can answer differently for
+    the same store — and the batch planner reading the shape and a per-tile
+    worker re-opening it are different processes. Sorting by
+    ``(-element_count, key_path)`` is a total order, so they cannot disagree.
+    """
+    if not candidates:
+        return None
+    best: Tuple[str, Any, Any] = min(
+        candidates, key=lambda kv: (-int(np.prod(kv[1].shape)), kv[0])
+    )
+    return best
+
+
+def _largest_array(group: Any, prefix: str = "") -> Optional[Tuple[str, Any, Any]]:
+    """The ``(key_path, array, owner)`` with the most elements under ``group``.
+
+    Searches recursively. ``None`` when there is no array anywhere below it.
+    ``prefix`` is prepended to every key path, so a search scoped to a SUBGROUP
+    still reports paths relative to the store root.
+    """
+    return _pick_largest(_find_all_arrays(group, prefix))
+
+
+def _declared_levels(group: Any, prefix: str) -> list:
+    """The arrays ``group``'s own NGFF ``multiscales`` block names as its levels.
+
+    ``datasets[*]["path"]``, resolved relative to ``group``. A declared path that
+    is missing or is not an array is skipped, so a half-written block degrades to
+    the searches in :func:`_image_group_array` instead of raising.
+    """
+    import zarr
+
+    block = group.attrs.get("multiscales")
+    if not (isinstance(block, list) and block and isinstance(block[0], dict)):
+        return []
+    datasets = block[0].get("datasets")
+    if not isinstance(datasets, list):
+        return []
+    results = []
+    for entry in datasets:
+        rel = entry.get("path") if isinstance(entry, dict) else None
+        if not isinstance(rel, str) or not rel.strip("/"):
+            continue
+        rel = rel.strip("/")
+        try:
+            item = group[rel]
+        except KeyError:
+            continue
+        if isinstance(item, zarr.Array):
+            results.append(
+                (f"{prefix}/{rel}" if prefix else rel, item, _owner_group(group, rel))
+            )
+    return results
+
+
+def _image_group_array(group: Any, prefix: str) -> Optional[Tuple[str, Any, Any]]:
+    """The full-resolution array of an image GROUP (a bioformats2raw series).
+
+    The candidates are RESTRICTED rather than swept for recursively, because NGFF
+    puts an image's segmentation masks at ``<image>/labels/<name>/<level>``: a
+    recursive largest-array search reaches those, so a mask as big as (or bigger
+    than) level 0 can win — and a fit would then silently run against the mask.
+    In order:
+
+    1. the arrays the group's own ``multiscales`` block declares as its levels —
+       the principled answer, since that block names its own pyramid;
+    2. else the largest DIRECT array child: NGFF requires the levels to be direct
+       children of the image group, so this cannot reach ``labels/``;
+    3. else the largest array anywhere below, skipping a ``labels`` subgroup —
+       for a store that declares nothing and nests its levels further down.
+
+    ``prefix`` is prepended to the reported key path, which therefore stays
+    relative to the store ROOT (``"0/0"``, not ``"0"``).
+    """
+    import zarr
+
+    declared = _pick_largest(_declared_levels(group, prefix))
+    if declared is not None:
+        return declared
+
+    direct: list = []
+    subgroups: list = []
+    for key in sorted(group.keys()):
+        item = group[key]
+        key_path = f"{prefix}/{key}" if prefix else key
+        if isinstance(item, zarr.Array):
+            direct.append((key_path, item, group))
+        elif isinstance(item, zarr.Group) and key != "labels":
+            # `labels/` holds THIS image's segmentation masks, never its levels.
+            subgroups.append((key_path, item))
+    if direct:
+        return _pick_largest(direct)
+
+    nested: list = []
+    for key_path, subgroup in subgroups:
+        nested.extend(_find_all_arrays(subgroup, key_path))
+    return _pick_largest(nested)
+
+
+def _owner_group(root: Any, key_path: str) -> Any:
+    """The group that immediately CONTAINS the array at ``key_path``.
+
+    Only for a path whose parent the caller does NOT already hold open (an
+    explicit nested ``array_key``): every search helper above reports its owner
+    directly, which is one metadata request cheaper on a remote store.
+    """
+    key_path = key_path.strip("/")
+    parent = key_path.rsplit("/", 1)[0] if "/" in key_path else ""
+    return root[parent] if parent else root
+
+
+def _select_zarr_array(
+    node: Any, path: Path, array_key: Optional[str] = None
+) -> Tuple[Any, str, Any]:
+    """Pick the array to read out of an already-opened zarr store.
+
+    ONE copy of the selection rule, shared by :func:`load_volume`,
+    :func:`open_volume_lazy` and
+    :func:`~luxar.io.ome_zarr.discover_ome_zarr_shape`. They MUST agree: a caller
+    routinely re-opens a store another command already read the shape of, and a
+    different choice here would silently re-fit against a different (e.g.
+    downsampled) array.
+
+    The rule, in order: an explicit ``array_key``; else the OME-NGFF resolution
+    level ``"0"``; else the largest array found recursively. A key that names a
+    GROUP resolves through :func:`_image_group_array` (never a ``labels/``
+    sub-image), and a size tie is broken on the key path so two processes reading
+    the same store cannot disagree.
+
+    Returns ``(array, key_path, owner_group)`` — the chosen array, its path
+    relative to the store ROOT (``""`` when the store itself is an array), and
+    the group that immediately contains it (``None`` in that same case). The
+    owner is not always the root, and it is the node carrying the NGFF
+    ``multiscales``/``axes`` attributes that describe the chosen array.
+
+    Raises:
+        ValueError: If ``array_key`` is not a string, is not found, or names a
+            group holding no array; if the store holds no array at all; or if the
+            store is neither an array nor a group.
+    """
+    import zarr
+
+    if isinstance(node, zarr.Array):
+        return node, "", None
+    if not isinstance(node, zarr.Group):
+        raise ValueError(f"Unexpected zarr object type: {type(node)}")
+
+    if array_key is not None and not isinstance(array_key, str):
+        # A hand-edited manifest can carry a non-string here; the old code caught
+        # the TypeError from the lookup below and reported it as a ValueError.
+        raise ValueError(
+            f"Array key {array_key!r} is not a key path string "
+            f"(got {type(array_key).__name__})."
+        )
+    # A blank or slash-only key means NO key: typer hands back `""` for an
+    # omitted `--array-key`, and `node[""]` is the ROOT group, which would then
+    # be descended by an unscoped search and could answer with a different image
+    # entirely. Normalising here is what keeps the three entry points in
+    # agreement (`open_volume_lazy` used to test a plain `if array_key:`).
+    key = array_key.strip("/") if array_key is not None else ""
+
+    if key:
+        try:
+            selected = node[key]
+        except (KeyError, TypeError) as e:
+            raise ValueError(
+                f"Array key '{array_key}' not found in {path}. "
+                f"Available keys: {sorted(node.keys())}"
+            ) from e
+        if isinstance(selected, zarr.Array):
+            return selected, key, _owner_group(node, key)
+        # The key names a GROUP — an image group in a bioformats2raw store, or
+        # any multiscale group. Descend with the image-group rule rather than
+        # handing back a Group whose `.shape` the caller is about to read.
+        found = _image_group_array(selected, key)
+        if found is None:
+            raise ValueError(
+                f"Array key '{array_key}' names a zarr group holding no array "
+                f"in {path}. That group holds {sorted(selected.keys())}; the "
+                f"store holds {sorted(node.keys())} — pass an array_key "
+                f"(--array-key) naming an array."
+            )
+        return found[1], found[0], found[2]
+
+    found = None
+    if "0" in node:
+        level_zero = node["0"]
+        if isinstance(level_zero, zarr.Array):
+            # OME-NGFF convention: "0" is the highest resolution level.
+            return level_zero, "0", node
+        # bioformats2raw puts an image GROUP at "0" and its pyramid levels one
+        # level down ("0/0", "0/1", …). Resolve INSIDE that group only: the store
+        # root also holds the other series ("1", "2", …) and an `OME` metadata
+        # group, so a whole-store search could hand back level 0 of a DIFFERENT
+        # image. Scoping preserves the existing intent — full resolution of the
+        # first image.
+        found = _image_group_array(level_zero, "0")
+
+    if found is None:
+        # Largest array anywhere in the group, searching recursively into
+        # sub-groups (e.g. h2afva/fused, mezzo/fused).
+        found = _largest_array(node)
+    if found is None:
+        raise ValueError(f"No arrays found in zarr group: {path}")
+    return found[1], found[0], found[2]
 
 
 def _load_zarr_volume(
@@ -438,35 +638,18 @@ def _load_zarr_volume(
     # documented entry point, so the dispatch is explicit here.
     store = zarr.open(store=open_store(path, mode="r"), mode="r")
 
-    # Navigate to the target array
-    if isinstance(store, zarr.Array):
-        arr = store
-    elif isinstance(store, zarr.Group):
-        if array_key is not None:
-            try:
-                arr = store[array_key]
-            except KeyError:
-                available = list(store.keys())
-                raise ValueError(
-                    f"Array key '{array_key}' not found in {path}. "
-                    f"Available keys: {available}"
-                )
-            aprint(f"  Using array '{array_key}'")
-        elif "0" in store:
-            # OME-ZARR convention: "0" is highest resolution
-            aprint("  Detected OME-ZARR layout (using resolution level '0')")
-            arr = store["0"]
-        else:
-            # Find the largest array in the group, searching recursively
-            # into sub-groups (e.g. h2afva/fused, mezzo/fused).
-            arrays = _find_all_arrays(store)
-            if not arrays:
-                raise ValueError(f"No arrays found in zarr group: {path}")
-            best_key = max(arrays, key=lambda kv: int(np.prod(kv[1].shape)))[0]
-            arr = store[best_key]
-            aprint(f"  Using array '{best_key}'")
-    else:
-        raise ValueError(f"Unexpected zarr object type: {type(store)}")
+    # Navigate to the target array. The rule lives in `_select_zarr_array` so
+    # this, `open_volume_lazy` and `discover_ome_zarr_shape` cannot drift apart.
+    arr, key_path, _ = _select_zarr_array(store, path, array_key)
+    # `not array_key`, not `array_key is None`: the selector treats a blank key as
+    # absent, so the log line has to agree with what it actually did.
+    if not array_key and key_path == "0":
+        # OME-ZARR convention: "0" is highest resolution
+        aprint("  Detected OME-ZARR layout (using resolution level '0')")
+    elif key_path:
+        # Names the array actually landed on — for a bioformats2raw store that is
+        # a level INSIDE the image group ("0/0"), not the group itself.
+        aprint(f"  Using array '{key_path}'")
 
     shape = arr.shape
     ndim = len(shape)

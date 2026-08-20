@@ -12,9 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-import numpy as np
-
-from luxar.io.volume import _find_all_arrays
+from luxar.io.volume import _select_zarr_array
 
 __all__ = [
     "CHANNEL_LIKE_AXIS_LABELS",
@@ -114,6 +112,23 @@ class OMEZarrInfo:
     """Path to the zarr store."""
 
 
+def _describes(block: Any, ndim: int) -> bool:
+    """Is an OWNING group's ``multiscales`` block usable for the selected array?
+
+    The gate applies to the owner's block ONLY (the root's keeps whatever
+    behaviour it had). A group can carry a block describing something other than
+    the array selected below it — another series, a stale hand-written attribute —
+    and adopting that on the strength of its mere existence would silently rewrite
+    a T/C decomposition the root already had right, which is a wrong `batch-fit`
+    plan rather than an error. An axis count that disagrees with the array is the
+    cheap, decisive test: such a block is not metadata about this array.
+    """
+    if not (isinstance(block, list) and block and isinstance(block[0], dict)):
+        return False
+    axes = block[0].get("axes")
+    return isinstance(axes, list) and len(axes) == ndim
+
+
 def discover_ome_zarr_shape(
     path: Path,
     axes_override: Optional[List[str]] = None,
@@ -151,34 +166,27 @@ def discover_ome_zarr_shape(
     # so the ZipStore dispatch has to be explicit or `.zarr.zip` inputs raise.
     store = zarr.open(store=open_store(path, mode="r"), mode="r")
 
-    # Navigate to the group/array
+    # Navigate to the group/array. The rule lives in `_select_zarr_array` so this
+    # and the two volume-loading entry points cannot drift apart — an
+    # `array_key` may be nested (e.g. "h2afva/fused") and may name a group.
+    attrs: Dict[str, Any]
+    # `multiscales` / `axes` describe the array they sit BESIDE, and that is not
+    # always the root: a bioformats2raw store puts the NGFF block on the image
+    # group ("0") and leaves only `bioformats2raw.layout` at the root, so reading
+    # the root alone finds nothing and falls through to the shape heuristic —
+    # which GUESSES the T/C roles and recovers no voxel size. So the owning
+    # group's attributes are consulted FIRST, per key and only when usable for
+    # the array actually selected (see `_describes`); otherwise the root's stand,
+    # which is the plain OME-NGFF case (there the owner IS the root).
+    owner_attrs: Dict[str, Any] = {}
     if isinstance(store, zarr.Array):
         arr = store
-        attrs: Dict[str, Any] = dict(getattr(store, "attrs", {}))
-    elif isinstance(store, zarr.Group):
-        attrs = dict(store.attrs)
-        if array_key is not None:
-            # User-specified array key (may be nested, e.g. "h2afva/fused")
-            try:
-                arr = store[array_key]
-            except KeyError:
-                available = list(store.keys())
-                raise ValueError(
-                    f"Array key '{array_key}' not found in {path}. "
-                    f"Available keys: {available}"
-                )
-        elif "0" in store:
-            # OME-NGFF standard: resolution level "0" is highest resolution
-            arr = store["0"]
-        else:
-            # Find the largest array, searching recursively into sub-groups
-            arrays = _find_all_arrays(store)
-            if not arrays:
-                raise ValueError(f"No arrays found in zarr group: {path}")
-            # Pick the array with the most elements
-            arr = max(arrays, key=lambda kv: int(np.prod(kv[1].shape)))[1]
+        attrs = dict(getattr(store, "attrs", {}))
     else:
-        raise ValueError(f"Unexpected zarr object type: {type(store)}")
+        arr, _, owner = _select_zarr_array(store, path, array_key)
+        attrs = dict(store.attrs)
+        if owner is not None and owner is not store:
+            owner_attrs = dict(owner.attrs)
 
     shape = tuple(arr.shape)
     ndim = len(shape)
@@ -193,14 +201,22 @@ def discover_ome_zarr_shape(
         return _parse_custom_axes_attr(axes_override, shape, path)
 
     # Try NGFF multiscales metadata
-    multiscales = attrs.get("multiscales")
+    owner_ms = owner_attrs.get("multiscales")
+    multiscales = owner_ms if _describes(owner_ms, ndim) else attrs.get("multiscales")
     if multiscales and isinstance(multiscales, list) and len(multiscales) > 0:
         ms = multiscales[0]
         return _parse_ngff_metadata(ms, shape, path, store)
 
     # Try custom axes attribute (e.g. Keller-lab zarr.zip files store
     # axes = ['time', 'camera', 'channel', 'z', 'y', 'x'])
-    custom_axes = attrs.get("axes")
+    # Same owner-first rule, same usability test in its `axes` form: one label
+    # per dimension of the array actually selected, or the root's list stands.
+    owner_axes = owner_attrs.get("axes")
+    custom_axes = (
+        owner_axes
+        if isinstance(owner_axes, list) and len(owner_axes) == ndim
+        else attrs.get("axes")
+    )
     if custom_axes and isinstance(custom_axes, list) and len(custom_axes) == ndim:
         return _parse_custom_axes_attr(custom_axes, shape, path)
 

@@ -317,7 +317,33 @@ sources fed to gsplat fitting/calibration), independent of the compiled
   the honest denominator of any size/compression figure quoted about the result.
 - `ome_zarr.discover_ome_zarr_shape(path, ...)` → `OMEZarrInfo` — discovers the
   T/C/Z/Y/X layout, voxel size, unit, and resolution levels from NGFF
-  `multiscales` (with custom-`axes` and shape-heuristic fallbacks).
+  `multiscales` (with custom-`axes` and shape-heuristic fallbacks). The root's
+  block is what is used, **unless** the group that OWNS the selected array
+  declares a usable one of its own — then that wins, per key: a bioformats2raw
+  store puts the block on the image group and leaves only
+  `bioformats2raw.layout` at the root, so reading the root alone would silently
+  fall through to the shape heuristic. "Usable" means the owner's block names as
+  many axes as the selected array has dimensions; a block that disagrees is not
+  metadata about that array, and adopting it would rewrite a T/C decomposition
+  the root already had right.
+
+Which array gets read out of a group is ONE rule, `volume._select_zarr_array`,
+shared by `load_volume`, `open_volume_lazy` and `discover_ome_zarr_shape` — they
+have to agree, because a re-fit re-opens a store whose shape another command
+already read, and a different choice would silently target a downsampled level.
+In order: an explicit `array_key` (which may be nested, `h2afva/fused`, and may
+name a *group* — then the rule descends into it; blank counts as absent); else
+the OME-NGFF resolution level `"0"`; else the largest array found recursively,
+with a size tie broken on the lowest key path so two processes reading the same
+store cannot disagree. When `"0"` (or the key) is a **group** rather than an
+array — the bioformats2raw layout, whose pyramid levels are `0/0`, `0/1`, … —
+resolution is scoped to that image group, so a store holding several series (`0`,
+`1`, …) plus an `OME` metadata group still resolves to full resolution of the
+*first* image. Within the image group the candidates are the levels its own
+`multiscales` block declares, else its direct array children, else (skipping
+`labels/`) whatever is nested below: NGFF puts an image's segmentation masks at
+`<image>/labels/<name>/<level>`, and a mask as big as level 0 must never be
+selected as the image.
 
 These are domain-layer helpers (no CLI dependency); the gsplat CLI re-exports
 them. Dimension inference from a splat bounding box lives in
