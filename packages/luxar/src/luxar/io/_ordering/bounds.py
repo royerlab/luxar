@@ -23,10 +23,12 @@ import numpy as np
 #
 # KNOWN LIMIT (large coordinates): the outward float32 store below never lets a
 # pad vanish, so the pad a barrier axis EFFECTIVELY gets is
-# ``max(_BARRIER_BOUND_EPS, one float32 ULP at |x|)`` — 1e-3 near the origin, but
-# 1.0 at |x| = 2**23, 2.0 at 2e7, 8.0 at 1e8. Integers stay exactly float32
-# representable through 2**24, so a unit-step categorical axis with large
-# absolute values (a millisecond timestamp, an acquisition index offset into an
+# ``max(_BARRIER_BOUND_EPS, up to one float32 ULP at |x|)`` — 1e-3 near the
+# origin, but 2.0 at 2e7 and 8.0 at 1e8. The two ends are asymmetric at an exact
+# power of two, where the ULP below the binade boundary is half the one above:
+# at |x| = 2**23 the low end moves 0.5 and the high end 1.0. Integers stay
+# exactly float32 representable through 2**24, so a unit-step categorical axis
+# with large absolute values (a millisecond timestamp, an acquisition index offset into an
 # experiment) is a legitimate layout there and will over-fetch a whole
 # neighbouring category. That is the deliberate trade — over-fetching a
 # neighbour beats dropping the chunk at its own category value — but re-base
@@ -37,17 +39,25 @@ _BARRIER_BOUND_EPS = 1e-3
 def _normalise_slice_dims(slice_dims: Optional[Sequence[int]], ndim: int) -> set[int]:
     """Coerce a ``slice_dims`` argument to a validated set of column indices.
 
-    One sanitiser for all four bound builders, which otherwise diverged three
-    ways behind this shared module (a range filter that silently ignored a bad
-    index, an ``int()`` coercion that raised ``IndexError`` deep in the loop, and
-    a plain membership test that ignored negatives too).
+    One sanitiser for all four bound builders, which otherwise diverged two ways
+    behind this shared module. ``gsplats.py`` coerced with
+    ``set(int(d) for d in slice_dims)`` and then INDEXED ``mins[d]``: a positive
+    out-of-range index blew up with ``IndexError`` deep in the loop, but a
+    NEGATIVE one resolved to the LAST dim — the σ-expansion skip (a ``d in
+    discrete_dims`` test over ``range(ndim)``) never matched it, so that dim was
+    σ-expanded in the reduce and then had its bound OVERWRITTEN with the tight
+    barrier interval, leaving a genuinely spatial axis with no extent at all.
+    ``points.py`` and both ``lines.py`` builders used the membership test on both
+    sides, so out-of-range AND negative entries were ignored outright.
 
     An out-of-range index is an ERROR rather than an ignored entry: it means a
     categorical axis silently loses its barrier treatment and gets the geometric
     extent expansion instead, which bleeds a chunk into its neighbour's
-    category — a wrong answer with nothing to notice. No in-tree caller can
-    produce one (they all build the list by ``enumerate``-ing the actual dims),
-    so this only fires on a genuinely new bug.
+    category — a wrong answer with nothing to notice. The gsplats negative-index
+    case is the sharpest argument for raising: it stored a bound that was neither
+    the barrier's nor the spatial one, dropping splats at the edge of the last
+    axis. No in-tree caller can produce a bad index (they all build the list by
+    ``enumerate``-ing the actual dims), so this only fires on a genuinely new bug.
 
     Args:
         slice_dims: Barrier/discrete column indices, or ``None``
@@ -117,9 +127,12 @@ def _store_outward_f32_array(
     the outward-store BRANCHING, and is NOT a reason to vectorise the min/max
     REDUCE that produces ``lo``/``hi`` as well: both lines builders reduce per
     dimension on purpose, because NumPy's outer-axis reduce over a 3-or-4-element
-    inner row is several times slower than one reduce per column (measured 5-9x
-    end-to-end at 1M elements and repo-default chunk sizes, bitwise-identical
-    output either way). ``compute_chunk_bounds_gsplats`` keeps its ``min(axis=0)``
+    inner row is several times slower than one reduce per column (measured
+    end-to-end at 1M vertices/segments and repo-default chunk sizes: ~4-6x for
+    ``compute_vertex_chunk_bounds``, ~2.5-3.5x for
+    ``compute_segment_chunk_bounds``, whose per-chunk gather dominates more of
+    the work; bitwise-identical output either way).
+    ``compute_chunk_bounds_gsplats`` keeps its ``min(axis=0)``
     only because it materialises the padded ``(n, d)`` array anyway.
 
     Args:

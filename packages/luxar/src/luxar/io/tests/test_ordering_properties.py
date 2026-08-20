@@ -21,6 +21,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 from hypothesis.extra import numpy as hnp
 
+from luxar.io._ordering.bounds import _store_outward_f32_array
 from luxar.io.ordering import (
     _BARRIER_BOUND_EPS,
     compute_chunk_bounds_gsplats,
@@ -29,6 +30,7 @@ from luxar.io.ordering import (
     compute_vertex_chunk_bounds,
     hilbert_encode_nd,
     morton_encode_nd,
+    sort_splats_spatial,
 )
 
 
@@ -140,6 +142,16 @@ _MAGNITUDES = [
     2.0**24 + 1,
     2.0**25,
     1e9,
+    # From 1e15 up the pad no longer survives FLOAT64 either, so these cells
+    # assert less than they look like they do. At 1e15 the float64 spacing is
+    # 0.125, so ``m - 1e-3 == m`` and every small pad is already gone from the
+    # builder's float64 accumulation AND from this test's expected footprint,
+    # identically — the assertion degrades to plain coordinate containment (the
+    # 100.0 pad still resolves there). By 1e20 the spacing is 1.638e4 and even
+    # that one collapses. Not a bug — a float64 accumulator cannot preserve what
+    # float64 cannot represent — but do not read the 3e38 cell as evidence that
+    # a pad is preserved. The regime this fix is actually about is 2**23..1e9,
+    # where float64 holds the pad and float32 does not.
     1e15,
     1e20,
     1e30,
@@ -293,13 +305,15 @@ def test_padless_vertex_bounds_are_exact_at_every_magnitude(
 def test_out_of_range_slice_dims_raise_in_every_builder() -> None:
     """An unresolvable barrier index fails loudly instead of being ignored.
 
-    The four builders used to sanitise ``slice_dims`` three different ways
-    (range filter, bare ``int()`` that blew up with ``IndexError`` deep in the
-    loop, membership test) even though they now sit behind one ``bounds.py``.
-    An out-of-range index means a categorical axis silently loses its barrier
-    treatment and takes the geometric-extent expansion instead — a chunk
-    bleeding into its neighbour's category, with nothing to notice — so all four
-    reject it with the same ``ValueError``.
+    The four builders used to sanitise ``slice_dims`` two different ways even
+    though they now sit behind one ``bounds.py``: gsplats coerced with ``int()``
+    and indexed, so a positive index raised ``IndexError`` deep in the loop while
+    a negative one silently resolved to the LAST dim; points and both lines
+    builders used a membership test that ignored out-of-range and negative
+    entries outright. An out-of-range index means a categorical axis silently
+    loses its barrier treatment and takes the geometric-extent expansion
+    instead — a chunk bleeding into its neighbour's category, with nothing to
+    notice — so all four reject it with the same ``ValueError``.
     """
     coords = np.zeros((4, 3), dtype=np.float32)
     segments = np.array([[0, 1], [2, 3]], dtype=np.uint32)
@@ -317,3 +331,36 @@ def test_out_of_range_slice_dims_raise_in_every_builder() -> None:
             compute_segment_chunk_bounds(
                 coords, segments, widths, chunk_size=2, slice_dims=bad
             )
+
+
+def test_out_of_range_slice_dims_raise_in_the_gsplat_sort_too() -> None:
+    """The gsplat SORT rejects a bad barrier index at the first door.
+
+    ``apply_gsplat_spatial_ordering`` hands one ``slice_dims`` list to both
+    ``sort_splats_spatial`` and ``compute_chunk_bounds_gsplats``. A positive
+    out-of-range index already died inside ``_compound_sort``
+    (``coords[:, slice_dims]`` → ``IndexError``), but a NEGATIVE one used to sort
+    silently — grouping by the LAST center column — and get written into the
+    store's ``slice_dims`` attr before the bounds builder finally raised. Both
+    now fail on the same ``ValueError``, before any splat is reordered.
+    """
+    centers = np.zeros((4, 3), dtype=np.float32)
+    for bad in ([7], [-1]):
+        with pytest.raises(ValueError, match="out of range"):
+            sort_splats_spatial(centers, slice_dims=bad)
+
+
+def test_outward_store_array_rejects_float32_input() -> None:
+    """The array store refuses anything but float64, loudly.
+
+    A pad already rounded away by float32 arithmetic upstream cannot be
+    recovered by rounding outward, so accepting a float32 interval here would
+    quietly hand back an under-tight bound that only shows up at large
+    coordinate magnitudes. Refuse it instead of casting it up.
+    """
+    lo = np.array([1.0], dtype=np.float32)
+    hi = np.array([2.0], dtype=np.float32)
+    with pytest.raises(TypeError, match="requires float64 bounds"):
+        _store_outward_f32_array(lo, hi)
+    with pytest.raises(TypeError, match="requires float64 bounds"):
+        _store_outward_f32_array(lo.astype(np.float64), hi)

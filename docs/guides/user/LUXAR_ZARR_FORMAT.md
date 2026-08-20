@@ -1308,7 +1308,7 @@ consumers must treat missing and `"none"` identically.
 - **Compression:** Blosc with zstd, level 9 (width-aware shuffle policy)
 - **Description:** Bounding box [min, max] for each dimension of each chunk
 - **Example:** For chunk 5 in a 4D dataset: `chunk_bounds[5, :, :]` = `[[x_min, x_max], [y_min, y_max], [z_min, z_max], [t_min, t_max]]`
-- **Note:** Bounds include point radii extent to ensure hyperspheres are found. A node with no `radii/` array is bounded by `DEFAULT_POINT_RADIUS` (0.5) — the radius it will be drawn at — not by zero. Discrete/barrier axes get no radius extent at all, only a tiny float-boundary epsilon, so a categorical value never bleeds into its neighbour.
+- **Note:** Bounds include point radii extent to ensure hyperspheres are found. A node with no `radii/` array is bounded by `DEFAULT_POINT_RADIUS` (0.5) — the radius it will be drawn at — not by zero. Discrete/barrier axes get no radius extent at all, only a tiny float-boundary epsilon, so a categorical value never bleeds into its neighbour. **A stored interval is never tighter than the chunk's footprint, at any coordinate magnitude**: every pad is a small *absolute* quantity that would fall under half a float32 ULP past `|x| ~ 2**23`, so producers accumulate the interval in float64 and narrow it to this float32 array by rounding each end *away* from the interval (a bound moves one ULP outward only when the cast moved it the wrong way, so a padless axis still stores its coordinates exactly). Consumers may rely on containment; they may not assume the bound is tight.
 
 #### Per-Element Labels (CSR-style)
 

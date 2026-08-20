@@ -37,14 +37,24 @@ def sort_splats_spatial(
         method: Spatial curve method ("morton" or "hilbert")
         resolution: Ignored (kept for signature stability; the grid resolution
             is derived per-axis from the bit budget, as it always has been).
-        slice_dims: Barrier/categorical column indices to order by first.
+        slice_dims: Barrier/categorical column indices to order by first. An
+            index outside ``[0, d)`` raises ``ValueError`` (see
+            :func:`_normalise_slice_dims`) — the SAME check
+            :func:`compute_chunk_bounds_gsplats` applies, so the failure lands at
+            the first door. ``apply_gsplat_spatial_ordering`` hands the same list
+            to both: without this, a negative index would sort silently, be
+            written into the store's ``slice_dims`` attr, and only then raise
+            from the bounds builder.
 
     Returns:
         sort_indices: Indices to reorder splats
         metadata: Dict with ordering metadata (incl. slice_dims / ordering_dims)
+
+    Raises:
+        ValueError: If a ``slice_dims`` entry is outside ``[0, d)``.
     """
     ndim = centers.shape[1]
-    slice_set = set(int(d) for d in slice_dims) if slice_dims else set()
+    slice_set = _normalise_slice_dims(slice_dims, ndim)
     ordering_dims = [d for d in range(ndim) if d not in slice_set]
     return _compound_sort(centers, sorted(slice_set), ordering_dims, method)
 
