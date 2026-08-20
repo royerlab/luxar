@@ -164,7 +164,17 @@ is no `additive_lod=` in an `add_gsplats_from_file` call to drop.
 `resolve_partition_beside_an_additive_ladder` holds the data door's half, above
 the route branch so both routes answer alike; `_reject_a_partition_beside_a_stored_ladder`
 holds the file door's, above the spec-shape gate at both of its call sites so the
-two doors rank the two faults the same way.
+two doors rank the two faults the same way. Which remedy the file door names is
+decided per call rather than fixed, and by the OFFENDING leaf's store alone: a
+leaf whose store carries a ladder gets `gsplat flatten` (that ladder survives
+dropping the kwarg, so "drop one of the two" would only buy a second refusal),
+and one laddered solely by the call's own `additive_lod=` gets "drop one of the
+two". "Offending", not "anywhere in the tree": on a mixed store where the kwarg
+COLLAPSES the laddered leaf and LADDERS the flat one, the blocking leaf is the
+flat one, so the message names `additive_lod=` while a stored ladder sits
+untouched next door. That is the right answer — `gsplat flatten` would rewrite a
+ladder that is not in the way, and dropping either half of "drop one of the two"
+really does resolve it.
 
 `partition=False` is not a request and is never refused — but it stranded the
 same wrappers all the same, arriving at the multi-LOD writer as an unknown node
@@ -173,15 +183,82 @@ attribute. It is DELETED instead, and only when that writer is the destination:
 it, so stripping it earlier would silently re-enable a compiler-level
 `auto_partition_max_elements`.
 
-The file door's half reads the ladder off the STORE, which makes it the one of
-the two that can be told to look at the wrong thing: an `additive_lod=False` in
-the same call is the documented "collapse the ladder" spelling, and
-`resolve_additive_axis_gsplats` flattens every level to a single sub-LOD before
-the data door asks the same question — so that kwarg is skipped here, or the gate
-refuses a laddered store that would have partitioned perfectly well. Only the
-`False` spelling, not a `recompute` dict that happens to resolve to one rung:
-telling `{"n_lods": 1, "recompute": True}` apart from `{"n_lods": 2}` needs the
-resolved rung count rather than the spec, the same missing query #1632 is about.
+The file door's half runs before any data exists, so it has to ask what the
+ladder WILL be rather than what the store holds — and `additive_lod=` moves that
+answer in both directions (#1632). It can take a ladder away: `False`, or any
+dict resolving to a single rung, flattens every level before the data door asks
+the same question, so refusing on the stored ladder would refuse a call that
+partitions perfectly well. And it can add one the store has not got:
+`additive_lod=` is not a parameter of `graft_gsplat_node` at all, it rides in
+`**attrs` down to each part's own `add_gsplats_from_data_impl`, which BUILDS the
+ladder there — one level below the `kind=partition` wrapper the graft has
+already written, which is exactly the strand this gate exists to prevent.
+
+So each leaf is asked through `lod.gsplats.resolve_additive_rungs`, which states
+`resolve_additive_axis_gsplats`'s vocabulary a second time as an ordering-free
+rung COUNT (`None`/`True` → stored, `False` → 1, `dict` → stored unless the
+resolver would compute, in which case `gsplats.lod.additive.additive_rung_count`
+over the same `n_lods=4` default). Presence of the kwarg is not the question:
+`{"n_lods": 1}` is one rung and legitimate, `{"method": "radial"}` carries no
+`n_lods` to read and takes the `n_lods=4` default — four rungs on a leaf of at
+least 4 splats, fewer on a smaller one, where equal-count cuts clamp to `n`.
+`additive_rung_count` shares `make_additive_lod`'s own cut resolver, which is
+what makes equal-count / `stream:` / explicit counts exact rather than
+re-derived.
+
+An explicit `counts:` list is judged in the resolver's ORDER — strict
+`validate_counts_breakpoints` first, `clamp_counts_breakpoints` only after —
+because a single grafted leaf IS the `substitutive_levels[0]` that validator
+measures against, while the clamp exists for the coarser levels of a pyramid
+whose N the caller cannot know. Clamping first answered a confident wrong count
+where the resolver raises: `{"recompute": True, "breakpoints": [100]}` on a
+laddered 12-splat leaf clamped to `[12]`, counted one rung, and stranded the
+wrapper. A rejected list is UNKNOWN instead, which the fallback below turns into
+a clean refusal.
+
+Energy-fraction breakpoints and any spec the resolver would reject answer
+UNKNOWN, and an unknown count FALLS BACK TO THE STORE: `None` says the gate
+cannot read the kwarg, not that the store's ladder went away. Skipping the leaf
+instead re-stranded the very wrapper this gate closes — measured on a laddered
+`kind=partition`, `{"recompute": True, "breakpoints": [0.3, 1.0]}`,
+`{"recompute": True, "n_lods": 0}` and a junk `"stream"` all answered from inside
+`part_0` and left `g` childless on disk. The fallback restores the pre-#1632
+store-only verdict for those calls exactly, at the cost of over-refusing a
+`{"recompute": True, "breakpoints": [1.0]}` that would in fact collapse to one
+rung — which pre-#1632 also refused, and which is the conservative direction.
+"A query must not pre-empt the builder's own fault report" still holds where it
+belongs, and the same fallback leaves two residuals open on an unladdered store —
+different KINDS, worth keeping apart. (i) An INVALID call: `additive_lod=True`
+there, or a malformed spec, counts 1 rung, skips, and is reported by the builder
+one level down with its own message. Both strand identically without
+`partition=`, so the fault is the call's and the verdict is the builder's. (ii) A
+VALID energy-fraction spec (tracked as #1763): `partition={"max_elements": 4},
+additive_lod={"breakpoints": [0.5, 1.0]}` on an unladdered store counts UNKNOWN,
+falls back to a stored 1, skips — and then hits THIS conflict from inside
+`part_0`, one level too late, leaving `g` childless. The spec is well-formed and
+the builder really does make 2 rungs from it; the count is unknowable only
+because energy cuts need the ordering and the energy curve, the expensive half
+this query exists to avoid. Refusing on UNKNOWN instead was rejected
+deliberately: `{"breakpoints": [1.0]}` resolves to a single rung and partitions
+fine, so a gate refusing every uncountable spec would refuse what the flat path
+accepts — its own regression.
+
+Two consequences worth stating plainly. The reason BODY of the kwarg-built
+refusal is byte-identical to the data door's (they share
+`partition_beside_a_ladder_reason`), and the whole message matches only on the
+MATRIX-shaped branch, where the data door names the caller's node anyway — on the
+GRAFT branch it says `'g'` where the data door would have said `part_0`, which is
+the point of hoisting the question. Even the body matches only for a call whose
+ONLY fault is this conflict: this gate runs above the data door's `lod_group=`
+resolution, so
+`add_gsplats_from_file(..., lod_group="bogus", partition={…}, additive_lod={"n_lods": 2})`
+answers the conflict where `add_gsplats_from_data` with the same effective
+arguments answers `TypeError: lod_group must be …`. Both refuse and write
+nothing, so it is naming only — the same sanctioned divergence this package
+documents for "a NaN position, an unknown attr". And a fault the COUNT cannot
+see (a bad `method`, a stray `substitutive_level` key) is now masked by the
+refusal rather than reported by the builder: the same trade, the conflict being
+the more fundamental fault.
 
 ### `from_io.py` — load/fit then delegate
 

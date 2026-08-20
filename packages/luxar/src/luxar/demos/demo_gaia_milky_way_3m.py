@@ -48,8 +48,8 @@ Data Source & Attribution:
     https://doi.org/10.1051/0004-6361/202243940
 
 Data Generation Method:
-    The raw data was fetched using the script:
-    scripts/generate_galaxy_simple.py
+    The raw data is built by luxar.demos._gaia_catalog. The compatibility CLI
+    remains available as scripts/generate_galaxy_simple.py in a source checkout.
 
     Query executed via ESA Gaia Archive TAP service:
     ```sql
@@ -97,6 +97,8 @@ Reference Markers:
 
 Usage:
     python demo_gaia_milky_way_3m.py
+    python demo_gaia_milky_way_3m.py --build-catalog
+    python demo_gaia_milky_way_3m.py --recompute
 
 Controls:
     - Mouse drag: Rotate view
@@ -118,14 +120,13 @@ DEMO_META = {
     "category": "astronomy",
     "geometry": "points",
     "requirements": {
-        # Nothing is downloaded: the catalog is placed (or rebuilt) by hand.
-        "download_mb": 0,
+        # The opt-in first build queries the Gaia archive; cached runs are local.
+        "download_mb": 500,
         "compute": "medium",
         "gpu": "none",
-        # The catalog is CC BY-NC, so it is not shipped in-tree: rebuild it with
-        # `scripts/generate_galaxy_simple.py` (or place a copy in the cache by
-        # hand) until #1575 does that from the ESA archive automatically on
-        # first run (see `resolve_data_file`).
+        # The catalog is CC BY-NC, so it is not shipped in-tree. The explicit
+        # build/prompt keeps unattended `run-all` from starting a 90-minute TAP
+        # query, so the registry still classifies it as opt-in local data.
         "local_data": "manual-file",
     },
     # Claiming the cache namespace is what ATTRIBUTES that directory to this
@@ -161,42 +162,32 @@ from luxar import (
 )
 from luxar._zarr_compat import open_group
 from luxar.demos import launch_viewer, substitutive_lod_or_flat
+from luxar.demos._gaia_catalog import DEFAULT_CATALOG_FILE, RAW_ZARR_NAME
 from luxar.utils.paths import get_demos_output_dir
 
 # The Gaia catalog is CC BY-NC 3.0 IGO. NonCommercial survives derivation, so it
 # applies to this point cloud too and is incompatible with a BSD-3 repository —
 # the file is therefore NOT shipped, and is read from the local cache when a
-# machine happens to have one. Rebuilding it from the ESA archive by hand is
-# `scripts/generate_galaxy_simple.py`; doing that AUTOMATICALLY on first run is
-# issue #1575. Until that lands, a machine with neither the cached file nor a
-# hand-run rebuild cannot run this demo, and `resolve_data_file` says so — with
-# the command — rather than failing obscurely.
+# machine happens to have one. The opt-in builder queries the ESA archive and
+# caches the result locally; nothing is fetched at import time.
 SCRIPT_DIR = Path(__file__).parent
-CACHE_FILE = (
-    Path.home()
-    / ".cache"
-    / "luxar"
-    / "milky_way_gaia_3m"
-    / "milky_way_gaia_3m.zarr.zip"
-)
+CACHE_FILE = DEFAULT_CATALOG_FILE
 #: Legacy in-repo location, kept in the search order so a checkout that still
 #: has the file (or a user who restores it by hand) keeps working.
 REPO_FILE = SCRIPT_DIR / "data" / "milky_way_gaia_3m.zarr.zip"
 #: The one top-level directory the catalog zip must contain. Derived from
 #: CACHE_FILE rather than restated, because what names that member is exactly the
 #: `--output` stem the rebuild command is given (= the cache file without .zip).
-RAW_ZARR_NAME = CACHE_FILE.with_suffix("").name
 #: The raw table columns `load_and_convert_gaia_data` reads. Checked once at
 #: extraction so a store that is not this table says which columns are missing,
 #: instead of the converter dying on a bare `KeyError` half-way through the read.
 RAW_TABLE_FIELDS = ("x_kpc", "y_kpc", "z_kpc", "phot_g_mean_mag", "bp_rp")
-#: The rebuild command every unusable-catalog message below ends with. One
-#: spelling, because the `--count`/`--output` pair is the load-bearing part and
-#: five copies of it drift.
-REBUILD_COMMAND = (
-    "  hatch run python scripts/generate_galaxy_simple.py --count 3000000 "
-    f"--output {CACHE_FILE.with_suffix('')}"
-)
+REBUILD_COMMAND = "  luxar demo run gaia_milky_way -- --build-catalog"
+#: What to run when a catalog IS present but unusable. NOT `--build-catalog`:
+#: the builder returns an already-cached zip untouched, so pointing a
+#: wrong-stem/truncated/foreign-table copy at it is a no-op and the reader loops
+#: on the same error. `--recompute` is the only spelling that replaces one.
+REPLACE_COMMAND = "  luxar demo run gaia_milky_way -- --recompute"
 
 
 class CatalogUnusable(FileNotFoundError):
@@ -210,7 +201,9 @@ class CatalogUnusable(FileNotFoundError):
     """
 
 
-def resolve_data_file() -> Path:
+def resolve_data_file(
+    *, build_catalog_requested: bool = False, recompute: bool = False
+) -> Path:
     """The star catalog: local cache first, then the legacy in-repo copy.
 
     ``is_file()``, not ``exists()``: a *directory* at the catalog path is an easy
@@ -223,24 +216,44 @@ def resolve_data_file() -> Path:
     that is not a regular file (a directory, a broken symlink, a FIFO ``ZipFile``
     would block on) is simply not a candidate.
     """
+    if recompute:
+        from luxar.demos._gaia_catalog import build_catalog
+
+        return build_catalog(cache_dir=CACHE_FILE.parent, recompute=True)
+
     for candidate in (CACHE_FILE, REPO_FILE):
         if candidate.is_file():
             return candidate
+
+    should_build = build_catalog_requested
+    stdin_is_tty = bool(
+        sys.stdin is not None and getattr(sys.stdin, "isatty", lambda: False)()
+    )
+    if not should_build and stdin_is_tty:
+        try:
+            answer = input(
+                "The Gaia catalog is not cached. Build it now from the ESA archive "
+                "(~90 minutes for 3M stars)? [y/N] "
+            )
+        except EOFError:
+            answer = ""
+        should_build = answer.strip().lower() in {"y", "yes"}
+    if should_build:
+        from luxar.demos._gaia_catalog import build_catalog
+
+        return build_catalog(cache_dir=CACHE_FILE.parent)
+
     raise CatalogUnusable(
         "Gaia star catalog not found.\n\n"
         "This dataset is CC BY-NC 3.0 IGO (NonCommercial), which the derived "
         "point cloud inherits, so it is deliberately not distributed with "
         "Luxar.\n"
         f"Put a copy of the catalog at exactly {CACHE_FILE} (that full path, "
-        "filename included), or rebuild it from the ESA Gaia archive with\n"
+        "filename included), or build it from the ESA Gaia archive with\n"
         f"{REBUILD_COMMAND}\n"
-        "That rebuild runs from a source checkout only (the script is not in the "
-        "wheel), needs `astroquery` + `astropy` (no Luxar extra provides "
-        "astroquery, so `luxar demo deps --install` cannot supply it), and takes "
-        "~90 minutes for 3M stars.\n"
-        "The --output stem is load-bearing: the zip must contain a top-level "
-        "`milky_way_gaia_3m.zarr/` directory. Building the catalog automatically "
-        "on first run is royerlab/luxar#1575.\n"
+        "Install the demo dependencies first with `luxar demo deps --install`; "
+        "the 3M-star query and CPU transform take about 90 minutes. Use "
+        "`--recompute` instead of `--build-catalog` to replace a cached copy.\n"
         "Required acknowledgement when using Gaia data: this work has made use "
         "of data from the ESA mission Gaia, processed by the Gaia Data "
         "Processing and Analysis Consortium (DPAC)."
@@ -292,7 +305,7 @@ def _extract_raw_zarr(data_zip_path: Path, dest: Path) -> Path:
             f"{data_zip_path} is not a readable zip archive ({exc}) — most "
             "likely a truncated or partial copy.\n"
             "Delete it and put a complete copy back, or rebuild it with\n"
-            f"{REBUILD_COMMAND}"
+            f"{REPLACE_COMMAND}"
         ) from exc
     raw_zarr_path = dest / RAW_ZARR_NAME
     if not raw_zarr_path.is_dir():
@@ -300,8 +313,9 @@ def _extract_raw_zarr(data_zip_path: Path, dest: Path) -> Path:
             f"{data_zip_path} extracted, but holds no top-level "
             f"`{RAW_ZARR_NAME}/` directory — so the raw catalog is not where "
             "this demo reads it.\n"
-            "The --output stem is load-bearing: rebuild with\n"
-            f"{REBUILD_COMMAND}"
+            "That top-level name is load-bearing (it is the compatibility "
+            "script's --output stem); replace this copy with\n"
+            f"{REPLACE_COMMAND}"
         )
     try:
         # ``luxar._zarr_compat.open_group``, never a bare ``zarr.open``, and for
@@ -351,7 +365,7 @@ def _extract_raw_zarr(data_zip_path: Path, dest: Path) -> Path:
             "not read as this demo's raw star table: it is not a zarr store, or "
             f"one of its columns has unreadable metadata ({exc}).\n"
             "Delete it and put a complete copy back, or rebuild it with\n"
-            f"{REBUILD_COMMAND}"
+            f"{REPLACE_COMMAND}"
         ) from exc
     if missing:
         raise CatalogUnusable(
@@ -359,7 +373,7 @@ def _extract_raw_zarr(data_zip_path: Path, dest: Path) -> Path:
             f"Gaia column(s) {', '.join(missing)} — this demo reads a flat table "
             f"of {', '.join(RAW_TABLE_FIELDS)}, one value per star.\n"
             "Rebuild it (which writes exactly those columns) with\n"
-            f"{REBUILD_COMMAND}"
+            f"{REPLACE_COMMAND}"
         )
     return raw_zarr_path
 
@@ -780,7 +794,10 @@ def main() -> None:
     # is the whole point of the missing-file path, so it must not surface as a
     # raw traceback on the default (serve) invocation either.
     try:
-        data_file = resolve_data_file()
+        data_file = resolve_data_file(
+            build_catalog_requested="--build-catalog" in sys.argv,
+            recompute="--recompute" in sys.argv,
+        )
     except CatalogUnusable as e:
         _exit_with_advice(e)
 
@@ -864,7 +881,7 @@ def main() -> None:
     aprint("  https://doi.org/10.1051/0004-6361/202243940")
     aprint("")
     aprint("Data Generation:")
-    aprint("  See: scripts/generate_galaxy_simple.py for data generation")
+    aprint("  Built locally with `luxar demo run gaia_milky_way -- --build-catalog`")
     aprint("  Source: ESA Gaia DR3 (https://gea.esac.esa.int/archive/)")
     aprint("")
     aprint("Coordinate System:")
