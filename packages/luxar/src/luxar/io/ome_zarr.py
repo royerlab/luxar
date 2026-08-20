@@ -318,6 +318,11 @@ def _usable_multiscales(
     array of the store than the one selected (a 5D ``TCZYX`` image whose
     ``labels/…`` companion is 3D), and its axis indices then run off the end of
     this array's shape — a bare ``IndexError`` out of the parser.
+
+    The ``axes`` entry is type-checked before it is measured, like every other
+    field this module reads: ``{"axes": null}`` (or a number) is not a list, and
+    ``len()`` of it is a ``TypeError`` straight out of discovery rather than the
+    fallback this module promises everywhere else.
     """
     multiscales = ngff.get("multiscales")
     if multiscales is None:
@@ -325,7 +330,10 @@ def _usable_multiscales(
     ms = multiscales[0] if isinstance(multiscales, list) and multiscales else None
     if not isinstance(ms, Mapping):
         return None, "its `multiscales` attribute is empty or not a list of blocks"
-    n_axes = len(ms.get("axes", []))
+    axes = ms.get("axes")
+    if not isinstance(axes, (list, tuple)):
+        return None, "its `multiscales` block declares no `axes` list"
+    n_axes = len(axes)
     if n_axes == ndim:
         return dict(ms), None
     return None, (
@@ -575,8 +583,10 @@ def _parse_ngff_metadata(
                 unit = u
                 break
 
-    # Count resolution levels
-    n_levels = len(datasets) if datasets else 1
+    # Count resolution levels. Type-checked, not just truthiness-checked: a
+    # `datasets` that is a number is a `len()` TypeError, and this module
+    # degrades on malformed metadata rather than raising out of discovery.
+    n_levels = len(datasets) if isinstance(datasets, (list, tuple)) and datasets else 1
 
     return OMEZarrInfo(
         axes=axes,

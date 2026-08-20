@@ -227,8 +227,9 @@ invalidation* below).
 ```python
 from luxar.io.optimise import optimise_store, plan_optimisation, summarise_chunk_layout
 
-plan = optimise_store("scene.luxar.zarr", "out.luxar.zarr", target_bytes=65_536,
-                      verify=True)
+plan = optimise_store(
+    "scene.luxar.zarr", "out.luxar.zarr", target_bytes=65_536, verify=True
+)
 print(plan.source_n_chunks, "→", plan.target_n_chunks)
 ```
 
@@ -334,7 +335,9 @@ sources fed to gsplat fitting/calibration), independent of the compiled
   be made honestly (an `array_key` matching no entry of a multi-level pyramid, or
   two scale vectors of different lengths) it reports no spacing rather than a
   plausible wrong one. Malformed metadata degrades to a fallback throughout, never
-  a traceback. Falling through to the shape heuristic on a ≥4D store guesses the
+  a traceback — a `multiscales` whose `axes` is not a list (`{"axes": null}`) or
+  whose `datasets` is not a list of mappings, an axis record with no `name` or a
+  `null` `type`, a `scale` carrying a `null` or a non-numeric string. Falling through to the shape heuristic on a ≥4D store guesses the
   T/C roles and recovers no voxel size, so it says so on the console — stating
   whether nothing was declared or something was declared but unusable — and points
   at `axes_override` / `--axes`.

@@ -94,6 +94,7 @@ def _write_store(
     path: Path,
     shape: Sequence[int],
     *,
+    data: Optional[np.ndarray] = None,
     labels: Optional[Sequence[Any]] = None,
     scale: Optional[Sequence[float]] = None,
     nested: bool = True,
@@ -113,7 +114,10 @@ def _write_store(
     """
     root = open_group(path, mode="w", zarr_format=zarr_format)
     create_array(
-        root, "0", data=np.zeros(tuple(shape), dtype=np.float32), compressor="auto"
+        root,
+        "0",
+        data=np.zeros(tuple(shape), dtype=np.float32) if data is None else data,
+        compressor="auto",
     )
     for i, level_shape in enumerate(extra_level_shapes or (), start=1):
         create_array(
@@ -555,7 +559,7 @@ def test_a_bioformats2raw_layout_is_still_not_discovered(tmp_path: Path) -> None
 # ---------------------------------------------------------------------------
 
 
-def _plan(src: Path, out_dir: Path) -> Any:
+def _plan(src: Path, out_dir: Path, **overrides: Any) -> Any:
     from luxar.cli.gsplat_ops.batch.planning import (
         ContentKnobs,
         DenoiseConfig,
@@ -564,7 +568,7 @@ def _plan(src: Path, out_dir: Path) -> Any:
         plan_batch,
     )
 
-    return plan_batch(
+    options: Dict[str, Any] = dict(
         input_path=src,
         output_dir=out_dir,
         tiling="uniform",
@@ -579,6 +583,37 @@ def _plan(src: Path, out_dir: Path) -> Any:
         content=ContentKnobs(),
         merge=MergeConfig(),
     )
+    options.update(overrides)
+    return plan_batch(**options)
+
+
+def _worker_loaded_volume(manifest: Any) -> Any:
+    """The volume a real worker's ``load_volume`` returns for the LAST task.
+
+    The guard in ``planning`` is a hand-written mirror of
+    :func:`luxar.io.volume._load_zarr_volume`, so a test that only re-asserts the
+    plan proves nothing about the loader: flipping the loader's 4D
+    channel-over-timepoint preference left the whole suite green. This drives the
+    real pair — the task argv is built by
+    :func:`~luxar.gsplats.batch.fit_command.build_task_fit_argv`, so the
+    ``--channel`` / ``--timepoint`` flags are exactly the ones the guard reasons
+    about, and the LAST job carries the largest indices (a wrongly-fanned axis
+    goes out of range or lands on a duplicate there first).
+    """
+    from luxar.gsplats.batch.fit_command import build_task_fit_argv
+    from luxar.io.volume import load_volume
+
+    job = manifest.jobs[-1]
+    argv = build_task_fit_argv(manifest, job, "unused.gsplats.zarr", argv0=["luxar"])
+    kwargs: Dict[str, Any] = {}
+    for flag, name in (("--channel", "channel"), ("--timepoint", "timepoint")):
+        if flag in argv:
+            kwargs[name] = int(argv[argv.index(flag) + 1])
+    if "--array-key" in argv:
+        kwargs["array_key"] = argv[argv.index("--array-key") + 1]
+    if "--axes" in argv:
+        kwargs["axes"] = argv[argv.index("--axes") + 1]
+    return load_volume(Path(manifest.input_path), **kwargs)
 
 
 def test_the_batch_planner_fans_out_over_the_recovered_time_axis(
@@ -632,67 +667,21 @@ def _plan_axes(src: Path, out_dir: Path, axes_list: List[str]) -> Any:
     )
 
 
-def test_a_layout_the_workers_cannot_slice_is_refused(tmp_path: Path) -> None:
-    """A ``(t, c, y, x)`` store: the plan and the workers would disagree.
-
-    The manifest carries no ``--axes`` (the user gave none), so every worker
-    slices POSITIONALLY: at 4D it prefers ``--channel`` and IGNORES
-    ``--timepoint``. Planning 5 timepoints × 3 channels there yields 3 distinct
-    volumes repeated 5 times, silently. It must fail loudly instead.
-    """
-    src = _write_store(
-        tmp_path / "tcyx.zarr",
-        (5, 3, 128, 128),
-        labels=("t", "c", "y", "x"),
-        scale=(1.0, 1.0, 0.325, 0.325),
-    )
-
-    with pytest.raises(typer.BadParameter) as excinfo:
-        _plan(src, tmp_path / "out")
-
-    message = str(excinfo.value)
-    assert "t,c,y,x" in message
-    assert "--axes t,c,y,x" in message
-
-
-@pytest.mark.parametrize(
-    ("labels", "shape", "expected_t", "expected_c"),
-    [
-        (_TCZYX, (3, 2, 8, 16, 16), 3, 2),
-        (_TZYX, (3, 8, 16, 16), 3, 1),
-        (_CZYX, (2, 8, 16, 16), 1, 2),
-        (_ZYX, (8, 16, 16), 1, 1),
-    ],
-)
-def test_positionally_sliceable_layouts_still_plan(
-    tmp_path: Path,
-    labels: Sequence[str],
-    shape: Sequence[int],
-    expected_t: int,
-    expected_c: int,
-) -> None:
-    """The guard must only refuse what the worker really cannot reproduce."""
-    src = _write_store(
-        tmp_path / f"{''.join(labels)}.zarr",
-        shape,
-        labels=labels,
-        scale=tuple(1.0 for _ in labels),
-    )
-
-    plan = _plan(src, tmp_path / f"out_{''.join(labels)}")
-
-    assert plan.manifest.n_timepoints == expected_t
-    assert plan.manifest.n_channels == expected_c
-
-
 # ---------------------------------------------------------------------------
-# The guard asks discovery's OWN decomposition, not the axis labels
+# Every layout that PLANS is one the worker's own loader reproduces
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
-    ("name", "labels", "shape", "expected_t", "expected_c", "expected_spatial"),
+    ("name", "labels", "shape", "expected_t", "expected_c", "expected_spatial", "opts"),
     [
+        # --- the canonical layouts ------------------------------------------
+        ("tczyx", _TCZYX, (3, 2, 8, 16, 16), 3, 2, (8, 16, 16), {}),
+        ("tzyx", _TZYX, (3, 8, 16, 16), 3, 1, (8, 16, 16), {}),
+        ("czyx", _CZYX, (2, 8, 16, 16), 1, 2, (8, 16, 16), {}),
+        ("zyx", _ZYX, (8, 16, 16), 1, 1, (8, 16, 16), {}),
+        ("yx", ("y", "x"), (16, 16), 1, 1, (16, 16), {}),
+        # --- NGFF classifies by `type`, so name and type may disagree --------
         # A canonical 5D store whose channel axis is NAMED for its stain. NGFF
         # classifies by `type`, so discovery is perfect and `arr[t, c]` matches
         # exactly — but a name-driven rule reads `stain` as spatial and refuses.
@@ -703,6 +692,7 @@ def test_positionally_sliceable_layouts_still_plan(
             2,
             3,
             (8, 16, 16),
+            {},
         ),
         # Same, for a time axis TYPED time but named `timepoint`.
         (
@@ -712,16 +702,33 @@ def test_positionally_sliceable_layouts_still_plan(
             2,
             3,
             (8, 16, 16),
+            {},
         ),
-        # Non-spatial axes that are all singletons: `load_volume` squeezes the
-        # whole-array positional result, so these load exactly the planned shape
-        # however they are ordered. 2D gsplats are a first-class authoring path.
-        ("tcyx_singleton", ("t", "c", "y", "x"), (1, 1, 32, 32), 1, 1, (32, 32)),
-        ("zyxc_singleton", ("z", "y", "x", "c"), (16, 32, 32, 1), 1, 1, (16, 32, 32)),
-        ("tyx_singleton", ("t", "y", "x"), (1, 64, 64), 1, 1, (64, 64)),
+        # --- singleton non-spatial axes: `load_volume` squeezes them away ----
+        # 2D gsplats are a first-class authoring path, so these must plan.
+        ("tcyx_1_1", ("t", "c", "y", "x"), (1, 1, 32, 32), 1, 1, (32, 32), {}),
+        ("zyxc_1", ("z", "y", "x", "c"), (16, 32, 32, 1), 1, 1, (16, 32, 32), {}),
+        ("tyx_1", ("t", "y", "x"), (1, 64, 64), 1, 1, (64, 64), {}),
+        # A 2D TIMELAPSE with a singleton channel. The worker's `arr[3]` on the
+        # `--timepoint` branch IS the planned volume, but a per-ndim table that
+        # demands an exact axis partition refused it — while admitting the T=1
+        # sibling above, so its verdict flipped on the size of T alone.
+        ("tcyx_5_1", ("t", "c", "y", "x"), (5, 1, 32, 32), 5, 1, (32, 32), {}),
+        # A singleton CHANNEL axis explicitly sliced: `--timepoints 0` makes the
+        # argv carry `--timepoint`, which the loader spends on axis 0 — harmless,
+        # because a size-1 axis can only be indexed at 0 either way.
+        (
+            "czyx_1_tp0",
+            _CZYX,
+            (1, 16, 32, 32),
+            1,
+            1,
+            (16, 32, 32),
+            {"timepoints_slice": "0"},
+        ),
     ],
 )
-def test_layouts_the_worker_does_reproduce_are_not_refused(
+def test_every_planned_layout_is_one_the_worker_actually_loads(
     tmp_path: Path,
     name: str,
     labels: Sequence[Any],
@@ -729,11 +736,14 @@ def test_layouts_the_worker_does_reproduce_are_not_refused(
     expected_t: int,
     expected_c: int,
     expected_spatial: Sequence[int],
+    opts: Dict[str, Any],
 ) -> None:
-    """False refusals, all of which planned and loaded consistently before.
+    """The guard must refuse only what the worker really cannot reproduce.
 
-    Every one of these was rejected while the guard re-derived the layout from
-    the axis NAMES instead of reading the decomposition discovery published.
+    Two assertions per row, and the second is the load-bearing one: the plan's
+    ``spatial_shape`` is what every downstream stage (tile grid, BSP split
+    planes, merge) is built on, so it has to be the shape ``load_volume``
+    actually hands the worker for a real task.
     """
     src = _write_store(
         tmp_path / f"{name}.zarr",
@@ -742,11 +752,120 @@ def test_layouts_the_worker_does_reproduce_are_not_refused(
         scale=tuple(1.0 for _ in labels),
     )
 
-    plan = _plan(src, tmp_path / f"out_{name}")
+    plan = _plan(src, tmp_path / f"out_{name}", **opts)
 
     assert plan.manifest.n_timepoints == expected_t
     assert plan.manifest.n_channels == expected_c
     assert tuple(plan.manifest.spatial_shape) == tuple(expected_spatial)
+    assert _worker_loaded_volume(plan.manifest).shape == tuple(expected_spatial)
+
+
+def test_a_6d_custom_axes_store_plans_and_loads(tmp_path: Path) -> None:
+    """``time,camera,channel,z,y,x`` — a headline supported input, end to end.
+
+    The Keller-lab ``axes`` attribute route, and the only layout that exercises
+    the loader's ``ndim >= 6`` branch: axis 0 takes the timepoint and axes 1..2
+    fold into the flat channel index, which is exactly the decomposition the
+    custom-axes parser publishes. Task ``(t=1, c=5)`` is the far corner of that
+    fold — a mis-ordered fold lands on the wrong camera there, and a wrongly
+    guessed one goes out of range.
+    """
+    src = _write_store(
+        tmp_path / "keller6d.zarr",
+        (2, 2, 3, 8, 16, 16),
+        extra_attrs={"axes": ["time", "camera", "channel", "z", "y", "x"]},
+    )
+
+    plan = _plan(src, tmp_path / "out_keller6d")
+
+    assert plan.manifest.n_timepoints == 2
+    assert plan.manifest.n_channels == 6  # camera x channel, folded
+    assert tuple(plan.manifest.spatial_shape) == (8, 16, 16)
+    assert _worker_loaded_volume(plan.manifest).shape == (8, 16, 16)
+
+
+def test_the_worker_reads_the_slice_the_job_names_not_merely_a_right_shape(
+    tmp_path: Path,
+) -> None:
+    """At 4D the loader consumes ONE axis, and it must be the one the plan fanned.
+
+    ``--timepoints 0`` on a ``(c, z, y, x)`` store puts BOTH flags on the task
+    argv, which is the only situation where the loader's channel-over-timepoint
+    preference is observable — and every channel has the same shape, so only the
+    CONTENT distinguishes "read channel 2" from "read index 0 of the same axis".
+    Without this the guard is a mirror of a contract nothing pins: flipping that
+    preference in ``_load_zarr_volume`` left the whole suite green.
+    """
+    values = np.arange(3, dtype=np.float32)[:, None, None, None]
+    src = _write_store(
+        tmp_path / "content_czyx.zarr",
+        (3, 8, 16, 16),
+        data=np.broadcast_to(values, (3, 8, 16, 16)).astype(np.float32),
+        labels=_CZYX,
+        scale=(1.0, 1.0, 1.0, 1.0),
+    )
+
+    plan = _plan(src, tmp_path / "out_content", timepoints_slice="0")
+    job = plan.manifest.jobs[-1]
+    assert (job.channel, job.timepoint) == (2, 0)
+
+    volume = _worker_loaded_volume(plan.manifest)
+
+    assert volume.shape == (8, 16, 16)
+    assert volume.min() == volume.max() == 2.0  # channel 2, not timepoint 0
+
+
+# ---------------------------------------------------------------------------
+# ... and every layout it cannot is REFUSED, on discovery's own decomposition
+# ---------------------------------------------------------------------------
+
+
+def test_a_layout_the_workers_would_duplicate_is_refused(tmp_path: Path) -> None:
+    """A 3D ``(c, y, x)`` store: the plan fans, the worker reads it whole.
+
+    The loader's ``ndim <= 3`` branch is ``np.array(arr)`` — it IGNORES both
+    flags — so planning 3 channels here yields the same ``(3, 64, 64)`` array
+    three times, and each task then tiles a volume with one axis more than the
+    plan's ``(64, 64)``.
+    """
+    src = _write_store(
+        tmp_path / "cyx.zarr",
+        (3, 64, 64),
+        labels=("c", "y", "x"),
+        scale=(1.0, 1.0, 1.0),
+    )
+
+    assert discover_ome_zarr_shape(src).spatial_shape == (64, 64)
+
+    with pytest.raises(typer.BadParameter) as excinfo:
+        _plan(src, tmp_path / "out_cyx")
+
+    assert "c,y,x" in str(excinfo.value)
+
+
+def test_a_4d_store_sliced_by_no_flag_at_all_is_refused(tmp_path: Path) -> None:
+    """The 4D whole-array branch: nothing is consumed, so nothing may be fanned.
+
+    Two ``type: channel`` axes is a layout the NGFF parser cannot represent — it
+    keeps the LAST as the channel and drops the other from every role — so the
+    plan's ``(32, 32)`` omits an axis that is still there. With T=1 and C=1 the
+    argv carries neither flag, the worker loads the whole array and squeezes to
+    ``(2, 32, 32)``, and the tile grid is built on the wrong rank.
+    """
+    src = _write_store(
+        tmp_path / "ccyx.zarr",
+        (2, 1, 32, 32),
+        labels=(("c0", "channel"), ("c1", "channel"), "y", "x"),
+        scale=(1.0, 1.0, 1.0, 1.0),
+    )
+
+    info = discover_ome_zarr_shape(src)
+    assert info.spatial_shape == (32, 32) and info.n_channels == 1
+
+    with pytest.raises(typer.BadParameter) as excinfo:
+        _plan(src, tmp_path / "out_ccyx")
+
+    assert "c0,c1,y,x" in str(excinfo.value)
 
 
 def test_a_view_typed_leading_axis_is_refused(tmp_path: Path) -> None:
@@ -816,6 +935,44 @@ def test_the_suggested_axes_string_is_one_that_actually_works(tmp_path: Path) ->
     assert plan.manifest.n_timepoints == 5
     assert plan.manifest.n_channels == 3
     assert tuple(plan.manifest.spatial_shape) == (32, 32)
+    assert _worker_loaded_volume(plan.manifest).shape == (32, 32)
+
+
+def test_no_axes_spec_is_quoted_for_a_second_channel_like_axis(
+    tmp_path: Path,
+) -> None:
+    """A vocabulary check is not enough: ``--axes`` cannot address a fold.
+
+    ``_apply_axes_spec`` pins EVERY channel-kind axis with the same ``--channel``
+    value — it never decodes the flat channel index the tasks carry. So on this
+    ``camera,time,channel`` store, following a quoted spec would plan 4 channel
+    tasks of which task 1 silently loads (camera 1, channel 1) and tasks 2-3 die
+    out of range. Both halves are asserted below: the suggestion is withdrawn,
+    and the reason it had to be is real.
+    """
+    from luxar.io.volume import load_volume
+
+    src = _write_store(
+        tmp_path / "camera_time_channel.zarr",
+        (2, 3, 2, 8, 16, 16),
+        extra_attrs={"axes": ["camera", "time", "channel", "z", "y", "x"]},
+    )
+    spec = "camera,time,channel,z,y,x"
+
+    with pytest.raises(typer.BadParameter) as excinfo:
+        _plan(src, tmp_path / "out_ctc")
+    message = str(excinfo.value)
+
+    assert f"--axes {spec}" not in message  # it would not have worked
+    assert "more than one channel-like axis" in message
+    assert "'camera'" in message and "'channel'" in message
+
+    # Why it would not have worked, measured against the real slicer.
+    forced = _plan_axes(src, tmp_path / "out_ctc_axes", spec.split(","))
+    assert forced.manifest.n_channels == 4  # camera x channel
+    assert load_volume(src, channel=1, timepoint=0, axes=spec).shape == (8, 16, 16)
+    with pytest.raises(ValueError, match="out of range for the 'camera' axis"):
+        load_volume(src, channel=2, timepoint=0, axes=spec)
 
 
 # ---------------------------------------------------------------------------
@@ -907,6 +1064,7 @@ def _raw_ms_store(tmp_path: Path, shape: Sequence[int], ms: Any) -> Path:
         },  # a dict — `datasets[0]` is a KeyError
         [],  # empty
         "0",  # not a container of entries at all
+        5,  # not even sized — `len(datasets)` for the level count
     ],
 )
 def test_a_malformed_datasets_list_costs_the_voxel_size_not_a_traceback(
@@ -951,6 +1109,26 @@ def test_a_malformed_scale_vector_degrades_to_no_voxel_size(
     )
 
     assert discover_ome_zarr_shape(path).voxel_size == expected
+
+
+@pytest.mark.parametrize("axes", [None, 5, "zyx", {"0": "z"}])
+def test_a_malformed_axes_entry_degrades_instead_of_raising(
+    tmp_path: Path, axes: Any, capsys: pytest.CaptureFixture
+) -> None:
+    """``{"axes": null}`` used to be a ``TypeError`` straight out of discovery.
+
+    The sibling of the ``"type": null`` record below: ``len(ms.get("axes", []))``
+    measured whatever was there. Discovery must fall through to the heuristic
+    with a reason, like every other unusable block.
+    """
+    path = _raw_ms_store(tmp_path, (2, 3, 8, 16, 16), {"axes": axes, "datasets": []})
+
+    info = discover_ome_zarr_shape(path)
+
+    assert info.spatial_shape == (8, 16, 16)  # the 5D heuristic
+    out = capsys.readouterr().out
+    assert "no OME-Zarr/NGFF metadata found" not in out
+    assert "no `axes` list" in out
 
 
 @pytest.mark.parametrize(

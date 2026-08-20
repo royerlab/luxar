@@ -666,6 +666,11 @@ def voxel_size_of(image_store: Path) -> tuple[float, float, float]:
     ngff_scale_transform`, which SEARCHES ``coordinateTransformations`` for the
     ``type == "scale"`` entry: indexing ``[0]`` here broke on any store whose
     first transform is a ``translation``.
+
+    The two ways this can fail say different things, because they are fixed
+    differently: no ``multiscales`` at all (the store is not the OME-Zarr crop
+    this demo downloads) versus a ``multiscales`` that declares no ``scale``
+    transform (it is, but it states no spacing).
     """
     import zarr
 
@@ -674,18 +679,20 @@ def voxel_size_of(image_store: Path) -> tuple[float, float, float]:
     group = zarr.open_group(str(image_store), mode="r")
     attrs = dict(group.attrs)
     root = resolve_ngff_attrs(attrs)
-    scale = (
-        ngff_scale_transform(
-            root["multiscales"][0]["datasets"][0].get("coordinateTransformations")
-        )
-        if root.get("multiscales")
-        else None
-    )
-    if scale is None:
+    if not root.get("multiscales"):
         raise ValueError(
             f"{image_store} has no OME-Zarr `multiscales` metadata "
             f"(attributes present: {sorted(attrs)}); the crop's voxel size is "
             "read from it."
+        )
+    scale = ngff_scale_transform(
+        root["multiscales"][0]["datasets"][0].get("coordinateTransformations")
+    )
+    if scale is None:
+        raise ValueError(
+            f"{image_store} declares OME-Zarr `multiscales` metadata but its "
+            "first dataset states no `scale` coordinateTransformation; the "
+            "crop's voxel size is read from it."
         )
     return tuple(float(s) for s in scale[1:])  # drop the time axis
 

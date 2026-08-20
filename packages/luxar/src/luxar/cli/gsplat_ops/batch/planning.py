@@ -716,6 +716,39 @@ def _validate_merge_refine_source(
         raise typer.BadParameter(f"--merge-refine volume: {problem}")
 
 
+def _loader_task_axes(
+    ndim: int, emits_channel: bool, emits_timepoint: bool
+) -> "Tuple[Optional[int], Tuple[int, ...]]":
+    """Which axes the POSITIONAL loader indexes away for one task, and as what.
+
+    Returns ``(time_axis, channel_axes)``: the axis the loader hands the task's
+    ``--timepoint`` to (or ``None``), and the axes it folds the flat ``--channel``
+    index over, in decode order. Everything else is left for the volume. Read off
+    :func:`luxar.io.volume._load_zarr_volume` branch by branch:
+
+    * ``ndim >= 6``: ``arr[t, *decode_flat_channel_index(channel, shape[1:ndim-3])]``
+      — axis 0 takes the timepoint, axes ``1 … ndim-4`` fold the channel index.
+    * ``ndim == 5``: ``arr[t, c, :, :, :]``.
+    * ``ndim == 4``: ``arr[channel]`` when the argv carries ``--channel``, else
+      ``arr[timepoint]`` when it carries ``--timepoint``, else the whole array.
+      At most ONE axis is consumed and channel wins — the one ndim where the
+      branch depends on which flags :func:`~luxar.gsplats.batch.fit_command.build_task_fit_argv`
+      emitted.
+    * ``ndim <= 3``: ``np.array(arr)`` — nothing is consumed and both flags are
+      ignored.
+    """
+    if ndim >= 6:
+        return 0, tuple(range(1, ndim - 3))
+    if ndim == 5:
+        return 0, (1,)
+    if ndim == 4:
+        if emits_channel:
+            return None, (0,)
+        if emits_timepoint:
+            return 0, ()
+    return None, ()
+
+
 def _worker_reproduces_the_plan(
     info: "OMEZarrInfo", emits_channel: bool, emits_timepoint: bool
 ) -> bool:
@@ -731,80 +764,126 @@ def _worker_reproduces_the_plan(
     name rule (a false pass, whose plan tiles a 4-D "spatial" shape the worker
     never sees).
 
-    ``emits_channel`` / ``emits_timepoint`` say whether the per-task command line
-    will carry ``--channel`` / ``--timepoint``; see
-    :func:`luxar.gsplats.batch.fit_command.build_task_fit_argv`, which emits each
-    only when that axis has more than one value or was explicitly sliced. They
-    matter at 4D, the one ndim where the loader's branch depends on them.
+    Two sets are compared, rather than a per-ndim table of whole layouts (which
+    demanded an exact axis partition and so refused ``t,c,y,x`` at ``(5, 1,
+    32, 32)`` — a 2D timelapse with a singleton channel — while admitting its
+    ``T=1`` sibling):
 
-    One row per branch of :func:`luxar.io.volume._load_zarr_volume`.
+    * what the loader CONSUMES for a task (:func:`_loader_task_axes`), and
+    * what the plan FANS over, ``{time_axis} | channel_indices``, one task per
+      combination.
+
+    Reproducible when both of these hold:
+
+    1. the two agree axis for axis, once singleton axes are dropped from both:
+       the loader's time axis is the plan's (or neither varies), and its folded
+       channel axes are the plan's channel axes in the same order. Dropping
+       singletons is exact, not a fudge — a size-1 axis is indexed at 0 whatever
+       the task index says, and ``decode_flat_channel_index`` gives it digit 0
+       and a stride of 1, so it contributes nothing to either side. This is the
+       clause that makes each task a DISTINCT volume. It also subsumes "no axis
+       the plan calls spatial is indexed away": a consumed non-singleton axis
+       outside the fan shows up on the loader's side of this comparison and on
+       nothing on the plan's.
+    2. the shape the loader hands back — the axes it did not consume — is the
+       plan's ``spatial_shape``, both with size-1 axes dropped, because
+       ``load_volume`` squeezes its positional result (``luxar/io/volume.py``,
+       the ``np.squeeze`` in the ``axes is None`` branch). That squeeze is what
+       lets a layout whose non-spatial axes are all singletons — ``z,y,x,c`` at
+       ``(16, 32, 32, 1)``, ``t,c,y,x`` at ``(1, 1, 32, 32)`` — plan even though
+       its axes do not lead.
+
+    KNOWN GAP, deliberately left as it is: a size-1 SPATIAL axis. ``load_volume``
+    squeezes it away while the plan's ``spatial_shape`` keeps it, so a canonical
+    ``t,c,z,y,x`` store at ``(3, 1, 1, 512, 512)`` plans a 3-D ``(1, 512, 512)``
+    volume the worker loads as 2-D ``(512, 512)``, and the merged partition's BSP
+    split planes then name center columns that do not exist. Clause 2 compares
+    squeezed to squeezed precisely so this keeps planning exactly as it does
+    today: the gap predates this guard, needs its own design (the plan's spatial
+    shape has to lose the axis too, everywhere), and is tracked separately.
     """
-    ndim = len(info.shape)
-    t_axis = info.time_axis
-    channels = tuple(info.channel_indices)
-    spatial = tuple(info.spatial_indices)
+    shape = tuple(info.shape)
+    ndim = len(shape)
+    loader_t, loader_c = _loader_task_axes(ndim, emits_channel, emits_timepoint)
 
-    # The non-spatial axes must LEAD (time first, then the channel-like ones in
-    # fold order) with the spatial axes TRAILING in order — the shape every
-    # positional branch below assumes.
-    leading = ((t_axis,) if t_axis is not None else ()) + channels
-    ordered = leading == tuple(range(len(leading))) and spatial == tuple(
-        range(len(leading), ndim)
-    )
-    # `load_volume` squeezes the positional result (every size-1 axis, wherever it
-    # sits), so a WHOLE-array load reproduces the planned spatial shape exactly
-    # when the two agree once their size-1 axes are dropped. That is what makes a
-    # layout whose non-spatial axes are all singletons — `z,y,x,c` at
-    # (16,32,32,1), `t,c,y,x` at (1,1,32,32) — reproducible despite not leading.
-    squeeze_matches = tuple(s for s in info.shape if s != 1) == tuple(
+    def _varying(axis: Optional[int]) -> Optional[int]:
+        return axis if axis is not None and shape[axis] > 1 else None
+
+    # 1. same axes, same roles, same fold order (singletons excluded: they carry
+    #    no index either way).
+    if _varying(loader_t) != _varying(info.time_axis):
+        return False
+    if tuple(a for a in loader_c if shape[a] > 1) != tuple(
+        a for a in info.channel_indices if shape[a] > 1
+    ):
+        return False
+
+    # 2. what is left after the loader's indexing IS the planned volume.
+    consumed = set(loader_c) | ({loader_t} if loader_t is not None else set())
+    loaded = tuple(s for i, s in enumerate(shape) if i not in consumed)
+    return tuple(s for s in loaded if s != 1) == tuple(
         s for s in info.spatial_shape if s != 1
     )
-
-    if ndim >= 6:
-        # `arr[t, *decode_flat_channel_index(channel, shape[1:ndim-3])]`: axis 0
-        # is T, axes 1..ndim-4 fold into the flat channel index in that order, the
-        # last 3 axes are the volume.
-        return ordered and t_axis == 0 and len(spatial) == 3
-    if ndim == 5:
-        # `arr[t, c, :, :, :]` — axis 0 is T, axis 1 is C, exactly 3 spatial.
-        return t_axis == 0 and channels == (1,) and spatial == (2, 3, 4)
-    if ndim == 4:
-        # `arr[channel]` if --channel was emitted, else `arr[timepoint]` if
-        # --timepoint was, else the WHOLE array. At most ONE leading axis is
-        # consumed, and channel is preferred over timepoint.
-        if emits_channel:
-            return t_axis is None and channels == (0,) and spatial == (1, 2, 3)
-        if emits_timepoint:
-            return t_axis == 0 and channels == () and spatial == (1, 2, 3)
-        return squeeze_matches
-    # ndim <= 3: `np.array(arr)` — the whole array, no slicing at all (the
-    # --channel/--timepoint flags are ignored on this branch).
-    return squeeze_matches
 
 
 def _axes_spec_luxar_can_slice(
     labels: Sequence[str],
-) -> "Tuple[Optional[str], List[str]]":
-    """``(spec, [])`` when ``--axes`` would accept every label, else ``(None, bad)``.
+) -> "Tuple[Optional[str], Optional[str]]":
+    """``(spec, None)`` when ``--axes <spec>`` would really run, else ``(None, why)``.
 
-    Asked of :func:`luxar.io.volume._axis_kind` itself rather than of a copied
-    word list, because that function IS the ``--axes`` vocabulary — and it is
-    deliberately narrower than discovery's (no ``view``/``angle``, and it raises
-    rather than defaulting to spatial). Only its ``ValueError`` is caught, and
-    only per label, so nothing else is swallowed.
+    Two conditions, both asked of :func:`luxar.io.volume._axis_kind` itself rather
+    than of a copied word list, because that function IS the ``--axes``
+    vocabulary — and it is deliberately narrower than discovery's (no
+    ``view``/``angle``, and it raises rather than defaulting to spatial). Only its
+    ``ValueError`` is caught, and only per label, so nothing else is swallowed.
+
+    1. every label is in that vocabulary, else the spec is rejected outright;
+    2. at most ONE channel-like label and at most ONE time label.
+       :func:`luxar.io.volume._apply_axes_spec` pins EVERY channel-kind axis with
+       the same ``--channel`` value and every time-kind axis with the same
+       ``--timepoint`` — it never decodes the flat channel index the batch tasks
+       carry. So on a ``camera,time,channel,z,y,x`` store at ``(2, 3, 2, …)`` the
+       plan fans 4 channel tasks and following the spec gives ``--channel 1`` =
+       (camera 1, channel 1) — silently the wrong volume — while ``--channel
+       2``/``3`` die with "index 2 is out of range for the 'camera' axis".
+       Quoting a spec that mis-slices is worse than quoting none, so this returns
+       the reason instead and the caller asks for one the user writes.
+
+    (The flat-index limitation in ``_apply_axes_spec`` is pre-existing and tracked
+    separately; this only stops the guard from RECOMMENDING it.)
     """
     from luxar.io.volume import _axis_kind
 
     normalised = [str(label).strip().lower() for label in labels]
+    kinds: List[str] = []
     unrecognised: List[str] = []
     for label in normalised:
         try:
-            _axis_kind(label)
+            kinds.append(_axis_kind(label))
         except ValueError:
             unrecognised.append(label)
     if unrecognised:
-        return None, unrecognised
-    return ",".join(normalised), []
+        return None, (
+            f"this store's own labels are not ones luxar can slice by "
+            f"({', '.join(repr(u) for u in unrecognised)} unrecognised), so they "
+            f"cannot be quoted back at you"
+        )
+    for kind, what, flag in (
+        ("c", "channel-like", "--channel"),
+        ("t", "time", "--timepoint"),
+    ):
+        folded = [
+            label for label, k in zip(normalised, kinds, strict=True) if k == kind
+        ]
+        if len(folded) > 1:
+            return None, (
+                f"this store folds more than one {what} axis "
+                f"({', '.join(repr(label) for label in folded)}) and `--axes` pins "
+                f"every one of them with the SAME {flag} value — the flat index "
+                f"each task carries cannot address them individually, so the "
+                f"discovered labels cannot be quoted back at you"
+            )
+    return ",".join(normalised), None
 
 
 def _refuse_layout_the_workers_cannot_slice(
@@ -818,8 +897,9 @@ def _refuse_layout_the_workers_cannot_slice(
     A no-op when the user passed ``--axes`` (``axes_list``), which the manifest
     forwards to every worker so it slices by LABEL. Otherwise the manifest records
     no axes and every worker falls back to the POSITIONAL slicing in
-    :func:`luxar.io.volume._load_zarr_volume`, whose per-ndim contract
-    :func:`_worker_reproduces_the_plan` mirrors row by row.
+    :func:`luxar.io.volume._load_zarr_volume`, whose per-task indexing
+    :func:`_loader_task_axes` reads off branch by branch and
+    :func:`_worker_reproduces_the_plan` compares against the plan's own fan.
 
     Discovery now reads real NGFF labels, so it can learn a layout — a ``(t, c,
     y, x)`` store, say — that the positional loader silently mis-slices: the plan
@@ -827,12 +907,14 @@ def _refuse_layout_the_workers_cannot_slice(
     and ignores ``--timepoint``, so the merged partition is the same 3 volumes
     repeated. Nothing raises, so this does.
 
-    The ``--axes`` escape hatch is only SUGGESTED when it would actually work.
-    ``volume._axis_kind`` backs that spec with a narrower vocabulary than
-    discovery's, so quoting the discovered labels back at a store with a ``stain``
-    channel or heuristic ``dim0…dimN`` labels prints a command that fails — and
-    worse, ``plan_batch``'s override path is lenient enough to ACCEPT it (folding
-    the unknown label into the tile grid) before every worker dies on it.
+    The ``--axes`` escape hatch is only SUGGESTED when running it would really
+    reproduce the plan (:func:`_axes_spec_luxar_can_slice`): the spec's
+    vocabulary is narrower than discovery's, and its slicer pins every
+    channel-like axis with the same ``--channel``. Quoting the discovered labels
+    back at a store with a ``stain`` channel, heuristic ``dim0…dimN`` labels, or a
+    second channel-like axis prints a command that fails or silently mis-slices —
+    and worse, ``plan_batch``'s override path is lenient enough to ACCEPT it
+    before the workers do either.
     """
     if axes_list is not None:
         return
@@ -840,18 +922,16 @@ def _refuse_layout_the_workers_cannot_slice(
         return
 
     labels = [str(a) for a in info.axes]
-    spec, unrecognised = _axes_spec_luxar_can_slice(labels)
-    advice = (
-        f"Pass '--axes {spec}' to slice by label instead."
-        if spec is not None
-        else (
-            "This store's own labels are not ones luxar can slice by "
-            f"({', '.join(repr(u) for u in unrecognised)} unrecognised), so "
-            f"they cannot be quoted back at you: pass '--axes' with {len(labels)} "
+    spec, why = _axes_spec_luxar_can_slice(labels)
+    if spec is not None:
+        advice = f"Pass '--axes {spec}' to slice by label instead."
+    else:
+        reason = why or "this store's labels cannot be quoted back at you"
+        advice = (
+            f"{reason[0].upper()}{reason[1:]}: pass '--axes' with {len(labels)} "
             "labels of your own — time/t, channel/c/ch/camera/cam or z/y/x, one "
             "per dimension — saying what each axis means."
         )
-    )
     raise typer.BadParameter(
         f"the store's axes are '{','.join(labels)}' with shape "
         f"{tuple(info.shape)}, a layout batch-fit's per-task volume loader "
