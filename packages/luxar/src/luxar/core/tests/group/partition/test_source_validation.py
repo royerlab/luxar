@@ -1267,7 +1267,7 @@ class TestGraftedFilePartitionBesideAResolvedLadder:
     whether the kwarg also rebuilds the ladder or by what the rest of the tree
     stores: a stored ladder is the obstacle that survives dropping the kwarg.
 
-    NOT pinned here, deliberately — one residual the gate leaves open. A
+    NOT pinned here, deliberately — one residual the gate leaves open (#1763). A
     WELL-FORMED energy-fraction spec on an UNLADDERED store
     (``partition={"max_elements": 4}, additive_lod={"breakpoints": [0.5, 1.0]}``)
     still strands: the count is UNKNOWN (energy cuts need the ordering and the

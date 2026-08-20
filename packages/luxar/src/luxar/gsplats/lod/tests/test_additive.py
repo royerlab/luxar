@@ -1321,8 +1321,12 @@ def test_energy_fraction_breakpoints_are_unknown_not_guessed() -> None:
     """Those cuts need the ordering AND the energy curve — the expensive half.
 
     Answering ``len(fracs)`` would be a guess: the resolver de-duplicates cuts
-    that land on the same k and appends a final N. UNKNOWN is the honest answer,
-    and callers skip on it.
+    that land on the same k and appends a final N — measured on a 12-splat leaf,
+    ``[1.0]`` builds one rung and ``[0.5]`` builds two, so neither the list
+    length nor "one fraction means one rung" is a safe stand-in. UNKNOWN is the
+    honest answer, and callers fall back to what they already know rather than
+    skipping (the gate falls back to the leaf's STORED rung count — skipping was
+    the round-1 bug that re-stranded the wrapper this query exists to prevent).
     """
     from luxar.gsplats.lod.additive import additive_rung_count
 

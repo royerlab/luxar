@@ -306,7 +306,8 @@ def _reject_a_partition_beside_a_stored_ladder(
     gate must not do.
 
     (ii) A VALID energy-fraction spec, which genuinely still strands — and what
-    fires is THIS refusal, one level too late, not a builder fault. Measured:
+    fires is THIS refusal, one level too late, not a builder fault. Tracked as
+    #1763. Measured:
     ``partition={"max_elements": 4}, additive_lod={"breakpoints": [0.5, 1.0]}``
     on an unladdered nested store answers ``Could not add gsplats 'part_0':
     partition= is not supported alongside an additive_lod= ladder …`` with ``g``

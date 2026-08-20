@@ -232,7 +232,7 @@ different KINDS, worth keeping apart. (i) An INVALID call: `additive_lod=True`
 there, or a malformed spec, counts 1 rung, skips, and is reported by the builder
 one level down with its own message. Both strand identically without
 `partition=`, so the fault is the call's and the verdict is the builder's. (ii) A
-VALID energy-fraction spec: `partition={"max_elements": 4},
+VALID energy-fraction spec (tracked as #1763): `partition={"max_elements": 4},
 additive_lod={"breakpoints": [0.5, 1.0]}` on an unladdered store counts UNKNOWN,
 falls back to a stored 1, skips — and then hits THIS conflict from inside
 `part_0`, one level too late, leaving `g` childless. The spec is well-formed and
