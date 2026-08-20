@@ -52,10 +52,11 @@ class BatchManifest:
     """Key path to a specific array within the zarr store (e.g. 'h2afva/fused')."""
 
     axes: Optional[str] = None
-    """Explicit axis-order override (e.g. ``'t,c,z,y,x'``) used both to discover
-    the dataset shape AND forwarded to every fit task (``fit --axes``). Without
-    it, tasks fall back to the positional ndim heuristic — which must then agree
-    with the shape the planner used, or the tile grid / merge corrupts."""
+    """Explicit axis-order override (e.g. ``'t,c,z,y,x'``) used to discover and
+    reload the source dataset. Direct fit tasks receive it as ``fit --axes``;
+    preprocess fits do not, because ``denoised.zarr`` has canonical
+    ``(t, c, *spatial)`` layout. Without it, source readers fall back to the
+    positional ndim heuristic and may select a different volume than the plan."""
 
     # Dataset shape
     n_timepoints: int = 1

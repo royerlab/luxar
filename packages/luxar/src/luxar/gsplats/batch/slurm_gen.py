@@ -213,6 +213,10 @@ def generate_fit_sbatch(
         fit_cmd_parts[0] = (
             f'luxar gsplat fit {shlex.quote(manifest.denoised_zarr_path)} "${{STAGING}}"'
         )
+        # ``--axes`` describes the source array, not this canonical store.
+        fit_cmd_parts = [
+            part for part in fit_cmd_parts if not part.strip().startswith("--axes ")
+        ]
         # Replace or add --array-key data to point at the denoised dataset
         array_key_replaced = False
         for i, part in enumerate(fit_cmd_parts):
