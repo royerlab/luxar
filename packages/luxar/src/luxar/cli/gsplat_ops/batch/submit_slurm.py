@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import typer
 from arbol import aprint
@@ -107,9 +107,7 @@ def submit_batch_jobs(
         aprint(f"  Denoise array job: {denoise_job_id} ({denoise_total} tasks)")
 
     floor_dep_id = denoise_job_id or calibrate_job_id
-    floor_job_id = _submit_floor_job(
-        out, floor_script, floor_dep_id, _parse_job_id, subprocess.run
-    )
+    floor_job_id = _submit_floor_job(out, floor_script, floor_dep_id, _parse_job_id)
     manifest.floor_job_id = floor_job_id
 
     # Submit fitting array (depends on floor, denoise, or calibration)
@@ -201,7 +199,14 @@ def submit_batch_jobs(
     aprint(f"Check status: luxar gsplat batch-fit status {out}")
 
 
-def _submit_floor_job(out, floor_script, dependency_id, parse_job_id, run):
+def _submit_floor_job(
+    out: Path,
+    floor_script: Optional[str],
+    dependency_id: Optional[int],
+    parse_job_id: Callable[[str], Optional[int]],
+) -> Optional[int]:
+    import subprocess  # nosec B404
+
     if not floor_script:
         return None
     aprint("Submitting denoised floor-resolution job...")
@@ -209,7 +214,9 @@ def _submit_floor_job(out, floor_script, dependency_id, parse_job_id, run):
     if dependency_id:
         floor_cmd.append(f"--dependency=afterok:{dependency_id}")
     floor_cmd.append(str(out / "resolve_floor.sbatch"))
-    result = run(floor_cmd, capture_output=True, text=True)
+    result = subprocess.run(  # nosec B603
+        floor_cmd, capture_output=True, text=True
+    )
     if result.returncode != 0:
         aprint(f"Error submitting floor job: {result.stderr}")
         raise typer.Exit(1)

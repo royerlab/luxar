@@ -343,7 +343,7 @@ def _should_defer_floor_resolution(
     mode: str,
     denoise: DenoiseConfig,
     floor_spec: "str | float | None",
-    denoise_mode: str,
+    denoise_mode: Optional[str],
 ) -> bool:
     """Whether a uniform denoise plan must resolve its floor after planning."""
     from luxar.cli.gsplat_ops.fitting.fit_utils import floor_spec_needs_volume
@@ -578,8 +578,8 @@ def resolve_batch_floor(
                 # and provides both the level and sampled maximum.
                 level_here = resolve_volume_floor(sample, floor_spec)
             else:
-                # The denoised path needs the lazy slice again: its probe helper
-                # samples shape-preserving blocks rather than this flat floor sample.
+                # Workers normalize against the whole slice. Read exact endpoints
+                # here, then let the probe helper sample shape-preserving blocks.
                 import numpy as np
 
                 full_slice = np.asarray(view[...])
