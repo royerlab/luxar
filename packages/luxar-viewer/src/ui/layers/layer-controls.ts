@@ -258,7 +258,7 @@ export class LayerControls {
 
     // --- Mesh shading (§6.2) ------------------------------------------------
     //
-    // Four sliders, all hidden unless the primary selection is a MESH layer (see
+    // Five sliders, all hidden unless the primary selection is a MESH layer (see
     // syncMeshAppearanceVisibility). Mesh is the only shaded geometry type, so these
     // are the first controls in this panel that are type-gated rather than mode-gated.
     //
@@ -337,7 +337,7 @@ export class LayerControls {
       label: 'Shininess',
       min: 0.001,
       max: 128,
-      step: 0.001,
+      step: 0.5,
       initialValue: MESH_DEFAULTS.shininess,
       constrain: (v) => Math.max(0.001, v),
       onChange: (val) => {
@@ -707,11 +707,11 @@ export class LayerControls {
   }
 
   /**
-   * Show the four mesh shading sliders only when they can do something.
+   * Show the five mesh shading sliders only when they can do something.
    *
    * TYPE-gated, which is new for this panel — every other control here is either
    * universal or mode-gated. Mesh is the only geometry type that shades (§6.2), so on a
-   * points/lines/gsplat layer these three have no uniform to write and would be
+   * points/lines/gsplat layer these five have no uniform to write and would be
    * controls that visibly do nothing.
    *
    * `alphaCutoff` carries the mode gate ON TOP: the cutout only exists in `opaque`, so

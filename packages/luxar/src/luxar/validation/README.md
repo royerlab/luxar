@@ -59,6 +59,8 @@ Provides basic validation functions used for type guards, property validation, a
 - `validate_node_type()`: Validate node type strings
 - `validate_physical_unit()`: Validate physical unit strings
 - `validate_opacity()`: Validate opacity values (0.0-1.0)
+- `validate_appearance_fraction()`: Validate finite mesh appearance fractions (0.0-1.0)
+- `validate_positive_finite()`: Validate finite, positive mesh appearance exponents
 - `validate_absorption()`: Validate absorption coefficients (volumetric kappa; >= 0, finite)
 - `validate_truncation_radius()`: Validate a GSplat truncation radius `T` in sigmas (positive, finite, and within the float32-safe range MIN_TRUNCATION_RADIUS_FLOAT32-MAX_TRUNCATION_RADIUS_FLOAT32 where both `1 / (1 - exp(-T^2/2))` and `T^2` stay finite)
 - `validate_gamma()`: Validate gamma values (0.1-10.0)

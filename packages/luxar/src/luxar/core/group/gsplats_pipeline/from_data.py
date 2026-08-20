@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 from ..compositing import (
     ABSENT_WHEN_NONE_RENDER_ATTRS,
+    reject_mesh_only_appearance,
     strip_absent_attr_kwargs,
 )
 from .lod_dispatch import (
@@ -745,6 +746,7 @@ def add_gsplats_from_data_impl(
     # the call it is about to make, so it is the more fundamental fault of the two
     # and there is nothing below it worth reporting first.
     reject_data_owned_channels(name, attrs)
+    reject_mesh_only_appearance("gsplats", name, attrs)
 
     # Propagate truncation_radius through attrs (unless caller overrode it — and
     # an explicit ``truncation_radius=None`` is NOT an override, having just been

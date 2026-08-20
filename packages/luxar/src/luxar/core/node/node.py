@@ -379,9 +379,12 @@ class Node:
             ValueError: If group creation fails
         """
         from ..group import Group
+        from ..group.compositing import reject_mesh_only_appearance
 
         try:
             aprint(f"Adding child group '{name}' to node '{self.name}'.")
+
+            reject_mesh_only_appearance("group", name, attrs)
 
             # Duplicate child check and writing to storage, attr validation,
             # and caching are all handled by Node.__init__.

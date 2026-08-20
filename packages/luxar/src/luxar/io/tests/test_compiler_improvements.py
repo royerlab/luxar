@@ -1964,6 +1964,43 @@ class TestUnknownRenderAttrRejected:
             assert root["styled"].attrs["join"] == "none"
             assert "join" not in root["styled"]["lns"].attrs
 
+    @pytest.mark.parametrize(
+        "attr,value",
+        [
+            ("ambient", 0.3),
+            ("shade_exponent", 1.5),
+            ("specular", 0.5),
+            ("shininess", 24.0),
+            ("alpha_cutoff", 0.2),
+        ],
+    )
+    @pytest.mark.parametrize("node_type", ["points", "lines", "gsplats", "group"])
+    def test_mesh_appearance_refused_on_a_non_mesh_node(
+        self, node_type: str, attr: str, value: float
+    ) -> None:
+        """Mesh appearance attrs must not persist as dead non-mesh metadata."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path, compiler, scene = self._scene(tmpdir)
+            with pytest.raises(ValueError, match="mesh-only attribute"):
+                attrs = {attr: value}
+                if node_type == "points":
+                    scene.add_points("node", self.POS, **attrs)
+                elif node_type == "lines":
+                    scene.add_lines("node", self.POS, 0.5, **attrs)
+                elif node_type == "gsplats":
+                    scene.add_gsplats(
+                        "node",
+                        centers=self.POS,
+                        amplitudes=np.ones(len(self.POS), dtype=np.float32),
+                        cholesky_factors=np.ones((len(self.POS), 6), dtype=np.float32),
+                        **attrs,
+                    )
+                else:
+                    scene.add_group("node", **attrs)
+            compiler.finalize()
+            root = zarr.open_group(str(zarr_path), mode="r")
+            assert "node" not in root
+
     @pytest.mark.parametrize("geometry_type", ["points", "gsplats", "mesh"])
     @pytest.mark.parametrize("via", ["property", "set_join"])
     def test_line_join_setter_refused_on_a_non_lines_leaf(

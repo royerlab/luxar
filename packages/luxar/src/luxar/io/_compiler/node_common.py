@@ -22,6 +22,10 @@ import zarr
 from numpy.typing import NDArray
 
 from ...core.dimensions import Dimensions
+from ...validation.types import (
+    validate_appearance_fraction,
+    validate_positive_finite,
+)
 
 # Writer-authoritative attrs each geometry writer stamps unconditionally.
 # User-supplied values for these keys are rejected in the fail-fast gate:
@@ -153,6 +157,14 @@ KNOWN_RENDER_ATTRS: FrozenSet[str] = frozenset(
         "visible",
     }
 )
+
+_MESH_APPEARANCE_VALIDATORS = {
+    "ambient": (validate_appearance_fraction, "Ambient"),
+    "specular": (validate_appearance_fraction, "Specular"),
+    "alpha_cutoff": (validate_appearance_fraction, "Alpha cutoff"),
+    "shade_exponent": (validate_positive_finite, "Shade exponent"),
+    "shininess": (validate_positive_finite, "Shininess"),
+}
 
 # Non-appearance keys that legitimately reach :func:`validate_render_attrs` and
 # must NOT be flagged as unknown. These are user-settable node attrs that are
@@ -571,30 +583,7 @@ def validate_render_attrs(
 
         validate_opacity(attrs["opacity"])
 
-    if "ambient" in attrs:
-        from ...validation.types import validate_appearance_fraction
-
-        validate_appearance_fraction(attrs["ambient"], "Ambient")
-
-    if "specular" in attrs:
-        from ...validation.types import validate_appearance_fraction
-
-        validate_appearance_fraction(attrs["specular"], "Specular")
-
-    if "alpha_cutoff" in attrs:
-        from ...validation.types import validate_appearance_fraction
-
-        validate_appearance_fraction(attrs["alpha_cutoff"], "Alpha cutoff")
-
-    if "shade_exponent" in attrs:
-        from ...validation.types import validate_positive_finite
-
-        validate_positive_finite(attrs["shade_exponent"], "Shade exponent")
-
-    if "shininess" in attrs:
-        from ...validation.types import validate_positive_finite
-
-        validate_positive_finite(attrs["shininess"], "Shininess")
+    _validate_mesh_appearance_attrs(attrs)
 
     if "truncation_radius" in attrs:
         from ...validation.types import validate_truncation_radius
@@ -630,3 +619,10 @@ def validate_render_attrs(
         from ...validation.types import validate_colormap
 
         validate_colormap(attrs["colormap"])
+
+
+def _validate_mesh_appearance_attrs(attrs: Dict[str, Any]) -> None:
+    """Validate the five mesh-only appearance values in the shared attr gate."""
+    for key, (validator, label) in _MESH_APPEARANCE_VALIDATORS.items():
+        if key in attrs:
+            validator(attrs[key], label)

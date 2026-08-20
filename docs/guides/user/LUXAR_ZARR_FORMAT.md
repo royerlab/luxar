@@ -1089,8 +1089,9 @@ Any scene-graph node — `points`, `lines`, `gsplats`, `mesh`, or a container
 `group` — may be exposed as a layer in the viewer's Layers panel by setting
 `layer: true` in its zarr attrs. The panel (toggled with **L**) provides
 per-layer visibility, display-range, gamma, opacity, absorption (volumetric
-mode's κ), blending mode, and colormap controls, plus three mesh-only shading
-controls (ambient, shade falloff, alpha cutoff).
+mode's κ), blending mode, and colormap controls, plus five mesh-only shading
+controls (ambient, shade falloff, specular, shininess, alpha cutoff). The five
+shading attrs are valid only on mesh leaves and do not inherit through groups.
 
 ```javascript
 {

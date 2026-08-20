@@ -1480,13 +1480,14 @@ describe('LayersPanel — blend select drives the leaf material', () => {
   it('mesh shading sliders: shown for a mesh layer and hidden for every other type', () => {
     // TYPE-gated, which is new for this panel — every other control here is universal
     // or mode-gated. Mesh is the only SHADED geometry type, so on a points layer these
-    // three have no uniform to write and would be controls that visibly do nothing.
+    // five have no uniform to write and would be controls that visibly do nothing.
     mountMeshLayer(container, animationController);
     for (const label of ['Ambient', 'Shade falloff', 'Specular', 'Shininess', 'Alpha cutoff']) {
       const group = findControlGroup(container, label);
       expect(group, `${label} control should exist`).not.toBeNull();
       expect(group!.style.display, `${label} should be visible on a mesh layer`).not.toBe('none');
     }
+    expect(findControlGroup(container, 'Shininess')!.querySelector('input')!.step).toBe('0.5');
 
     // The converse, on a fresh panel over a POINTS layer.
     document.body.innerHTML = '';
@@ -1520,7 +1521,7 @@ describe('LayersPanel — blend select drives the leaf material', () => {
   });
 
   it('mesh Alpha cutoff is gated on the MODE as well as the type', () => {
-    // Narrower than the other two: the cutout only exists in `opaque`, so in any other
+    // Narrower than the other four: the cutout only exists in `opaque`, so in any other
     // mesh mode the threshold is read by no branch of the fragment shader. And the gate
     // must move on the dropdown CLICK, not on the next selection refresh.
     mountMeshLayer(container, animationController);

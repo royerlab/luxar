@@ -776,7 +776,7 @@ model is deliberately minimal and light-free:
   `mesh-additive`/`mesh-max`/`mesh-colormap` siblings (§6.4) — renormalizes the interpolated normal in
   the fragment stage and then flips it to face the camera BEFORE the lighting term:
   `N = gl_FrontFacing ? N : -N` in GLSL, and the TSL twin via the `frontFacing` node. Without it, a
-  back-facing fragment has `dot(N, V) < 0`, so the wrap term `dot(N, V) * 0.5 + 0.5` lands in `[0, 0.5)`
+  back-facing fragment has `dot(N, V) < 0`, so the wrap term `dot(N, L) * 0.5 + 0.5` lands in `[0, 0.5)`
   and the back side shades with a dimmed, inverted gradient collapsing toward `uAmbient` (dark at the
   head-on interior, rising to a mid value at the silhouette) instead of the front-facing gradient —
   visible immediately because `double_sided` defaults **true** (§3.3) and §5's whole-triangle cull

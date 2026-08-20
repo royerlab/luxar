@@ -32,6 +32,7 @@ from ..compositing import (
     is_broadcast_color,
     position_bounds_from_array,
     reject_lines_only_join,
+    reject_mesh_only_appearance,
     slice_optional_array,
     strip_absent_attr_kwargs,
     sync_custom_colormap_attr,
@@ -103,6 +104,7 @@ def add_points_impl(
         (parent or group)._ensure_no_duplicate_child(name)
         reject_mismatched_partition_parent(parent or group, "points", name)
         reject_lines_only_join("points", name, attrs)
+        reject_mesh_only_appearance("points", name, attrs)
 
         scene = group._find_scene()
 

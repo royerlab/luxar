@@ -111,7 +111,7 @@ Press **L** to toggle the Layers panel (Escape closes when focus is inside the p
 - **Arrow Up / Arrow Down** move the keyboard focus through rows (and select on simple navigation)
 - **Enter / Space** select the focused row (honouring Ctrl/Cmd/Shift modifiers)
 - The bound labels on either side of the display-range slider are click-to-edit and scroll-to-adjust (hold **Shift** for finer increments)
-- Controls below the list (display range, gamma, opacity, absorption, the four mesh shading sliders, blend, colormap) apply to all selected layers; the absorption, mesh-shading, colormap, and **Active level** controls auto-hide when the primary selected layer doesn't support them
+- Controls below the list (display range, gamma, opacity, absorption, the five mesh shading sliders, blend, colormap) apply to all selected layers; the absorption, mesh-shading, colormap, and **Active level** controls auto-hide when the primary selected layer doesn't support them
 
 ## Architecture
 
