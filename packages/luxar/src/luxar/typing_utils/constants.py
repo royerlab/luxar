@@ -101,6 +101,13 @@ COLOR_SDR_MIN: Final[float] = 0.0  # Standard dynamic range minimum
 COLOR_SDR_MAX: Final[float] = 1.0  # Standard dynamic range maximum
 COLOR_HDR_TYPICAL_MAX: Final[float] = 10.0  # Typical HDR maximum
 
+# Per-axis COORDINATE extent at/above which uint16 per-axis fixed-point can no
+# longer resolve a unit step, so AUTO/MEMORY store float32 instead. Read by the
+# encoder that applies it (encoding._encoders.perchannel) AND by the gsplat
+# writer's sigma rail (io._compiler.gsplat_assembly), which defers to it rather
+# than pre-empting its clearer diagnosis — the two must not drift apart.
+COORDINATE_U16_MAX_EXTENT: Final[float] = 65_536.0
+
 # Chunk size constants (SINGLE SOURCE OF TRUTH - bytes, not elements)
 # Consumers (io, gsplats.io) convert to element counts based on array dtype
 TARGET_CHUNK_BYTES: Final[int] = 65_536  # 64KB target chunk size

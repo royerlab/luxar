@@ -9,6 +9,7 @@ import zarr
 
 from luxar._zarr_compat import create_array
 
+from ...typing_utils.constants import COORDINATE_U16_MAX_EXTENT
 from ..compression import resolve_compressor
 from ..modes import EncodingMode
 from .base import BaseEncoderMixin
@@ -87,7 +88,7 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
             lo = arr.min(axis=0)
             hi = arr.max(axis=0)
             max_extent = float((hi - lo).max())
-            if max_extent >= 65536.0:
+            if max_extent >= COORDINATE_U16_MAX_EXTENT:
                 warnings.warn(
                     f"COORDINATE '{name}': per-axis extent {max_extent:.0f} ≥ 2¹⁶; "
                     "uint16 fixed-point cannot resolve a unit step — storing float32.",

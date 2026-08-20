@@ -209,7 +209,11 @@ the displacement criterion the benign populations measure 0.03% or less, so
 Cholesky/amplitude/color tiers keep whatever the mode selected. An escalated
 centers array is also written with `deduplicate=False`: the encoder's content
 registry is keyed on the centers bytes alone, and would otherwise hand the
-escalated node an `array_ref` to a sibling's quantized array.
+escalated node an `array_ref` to a sibling's quantized array. The sigma rail
+stands down entirely once an axis reaches `COORDINATE_U16_MAX_EXTENT` (2¹⁶):
+the extent rail above already stores that array as float32, so it leaves the
+clearer "extent ≥ 2¹⁶" diagnosis in place — and leaves the array its dedup,
+which is safe for a verdict that depends only on the centers bytes.
 
 **Encoding modes**:
 - `AUTO`: Analyzes data and selects encoding (may quantize)

@@ -114,14 +114,16 @@ def test_ordinary_spatial_data_keeps_uint16_centers() -> None:
 def test_non_finite_extent_is_declined_rather_than_escalated(
     bad_value: float,
 ) -> None:
-    """The ``not np.isfinite(step)`` early-out, exercised directly.
+    """A non-finite extent is declined, not escalated.
 
     A non-finite extent makes the grid step ``inf``/``nan``. ``inf`` beats every
-    sigma, so without the early-out the rail would escalate EVERY such array —
+    sigma, so without an early-out the rail would escalate EVERY such array —
     including one whose only problem is a stray sentinel the value validators
-    own and report far better than a size rail can. (``nan`` compares False
-    downstream, so only the ``inf`` arm is load-bearing; both are pinned because
-    the branch handles them together.)
+    own and report far better than a size rail can. Two guards cover the two
+    arms: an ``inf`` extent exceeds ``COORDINATE_U16_MAX_EXTENT`` and declines
+    with the over-wide axes, while ``nan`` slips past that comparison and is
+    caught by the per-axis ``not np.isfinite(step)`` check (its own downstream
+    comparisons are False anyway).
     """
     n = 100
     rng = np.random.default_rng(17)
@@ -134,6 +136,41 @@ def test_non_finite_extent_is_declined_rather_than_escalated(
     chol[:, [2, 5]] = rng.uniform(0.5, 1.5, size=(n, 2))
 
     assert _center_quantization_offender(centers, chol, 3) is None
+
+
+def test_over_wide_axis_is_left_to_the_encoders_own_extent_rail() -> None:
+    """An axis at/above 2¹⁶ is the encoder's case, not this rail's.
+
+    The encoder already stores such an array as float32 — exactly — and says
+    why ("extent ... ≥ 2¹⁶; uint16 fixed-point cannot resolve a unit step"),
+    which is the useful diagnosis. The sigma rail fires on the same data (a
+    ~100,000-unit axis has a ~1.5 step, so a σ of 0.3 is over-run for every
+    splat) and, unhandled, would pre-empt that message with one pointing at a
+    degenerate/stacked axis that is not there — and would drop the array's
+    content dedup for a verdict that depends on the centers bytes alone.
+    """
+    n = 2000
+    rng = np.random.default_rng(19)
+    centers = np.column_stack(
+        [rng.random(n) * 100_000.0, rng.random((n, 2)) * 10.0]
+    ).astype(np.float32)
+    chol = np.zeros((n, 6), dtype=np.float32)
+    chol[:, [0, 2, 5]] = 0.3  # far under half of the 1.53 step on axis 0
+
+    assert _center_quantization_offender(centers, chol, 3) is None
+
+    data = GSplatData(
+        centers=centers,
+        amplitudes=rng.random(n).astype(np.float32) + 0.1,
+        cholesky_factors=chol,
+    )
+    with tempfile.TemporaryDirectory() as tmpdir:
+        path = Path(tmpdir) / "wide.gsplats.zarr"
+        with pytest.warns(UserWarning, match=r"extent \d+ ≥ 2¹⁶"):
+            data.save(path, encoding_mode=EncodingMode.MEMORY)
+
+        root = zarr.open_group(str(path), mode="r")
+        assert root["centers"].attrs["encoding"]["name"] == "float32"
 
 
 def test_constant_axis_does_not_trip_the_guard() -> None:

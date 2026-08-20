@@ -23,7 +23,10 @@ from luxar._zarr_compat import create_array
 from ...core.dimensions import Dimensions
 from ...encoding import EncodingMode, SemanticType
 from ...encoding.compression import resolve_compressor
-from ...typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
+from ...typing_utils.constants import (
+    COORDINATE_U16_MAX_EXTENT,
+    DEFAULT_TRUNCATION_RADIUS,
+)
 from .chunking import calculate_intelligent_chunks
 from .colormap import write_colormap_lut_if_needed
 from .context import DatasetCtx, OrderingCtx
@@ -136,6 +139,12 @@ def _center_quantization_offender(
     when no axis offends. ``sigma_median`` is the median marginal σ of the
     unrepresentable splats, i.e. a representative of what is being displaced.
 
+    ``None`` is also returned when some axis already spans
+    :data:`~luxar.typing_utils.constants.COORDINATE_U16_MAX_EXTENT`: the
+    encoder's own extent rail then stores the whole array as float32 anyway, so
+    there is nothing left for this one to protect and it would only replace a
+    warning that names the real cause with one blaming a degenerate σ.
+
     ``cholesky_factors`` is the packed row-major lower-triangular ``(N, k)``
     form (or a single broadcast ``(1, k)`` row when the Cholesky is uniform), so
     row *i* of the matrix occupies packed columns ``[i(i+1)/2, i(i+1)/2 + i]``
@@ -163,7 +172,17 @@ def _center_quantization_offender(
 
     lo = np.min(centers, axis=0).astype(np.float64)
     hi = np.max(centers, axis=0).astype(np.float64)
-    steps = (hi - lo) / _UINT16_LEVELS
+    extents = hi - lo
+    # Defer to the encoder's own extent rail: at/above COORDINATE_U16_MAX_EXTENT
+    # it already stores the centers as float32 — exactly, so nothing is lost —
+    # and its warning names the real cause (an axis too wide for a unit step)
+    # instead of this one blaming a degenerate sigma. Escalating here as well
+    # would only replace that message with a misleading one and cost the array
+    # its content dedup, which is safe for a purely extent-driven fallback
+    # (that verdict is a function of the centers bytes alone).
+    if float(np.max(extents[:n_dims])) >= COORDINATE_U16_MAX_EXTENT:
+        return None
+    steps = extents / _UINT16_LEVELS
 
     worst: Optional[Tuple[int, float, int, float, float]] = None
     worst_fraction = MAX_UNREPRESENTABLE_SPLAT_FRACTION
