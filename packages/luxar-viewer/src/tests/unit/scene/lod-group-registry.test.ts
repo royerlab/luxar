@@ -3449,6 +3449,42 @@ describe('LODGroupRegistry — capture quiescence (isCaptureQuiescent)', () => {
     expect(reg.isCaptureQuiescent()).toBe(true);
   });
 
+  it('is NOT quiescent while an EAGER leaf aspiration is still climbing its own ladder', () => {
+    // `load-lod-group-node` attaches `hasMoreLODs` only on the DEFERRED path,
+    // so the eagerly-loaded default level never has one — its ladder is
+    // advanced by the sweep-driven background refinement loop instead. Reading
+    // the thunk alone therefore declared a still-streaming coarse level
+    // complete, and a Capture pressed before the initial load finished
+    // exported its first frames at chunk-1. The commit stamp is the signal
+    // that exists on this shape.
+    const reg = makeRegistry();
+    const leaf = makeChild(0);
+    leaf.object.userData = {
+      nodeType: 'gsplats',
+      visibleSplatCount: 1000,
+      committedLadderComplete: false,
+    };
+    expect(leaf.hasMoreLODs).toBeUndefined();
+    reg.register(makeEntry([leaf], 0, '/g'));
+    reg.evaluatePerFrame();
+    expect(reg.isCaptureQuiescent()).toBe(false);
+
+    leaf.object.userData.committedLadderComplete = true; // final chunk commits
+    expect(reg.isCaptureQuiescent()).toBe(true);
+  });
+
+  it('does not block on a leaf that carries no ladder stamp at all', () => {
+    // A non-progressive loader stamps nothing (`stamp-view-version` only writes
+    // `committedLadderComplete` when it has a loader to ask), and an unstamped
+    // leaf must read as complete rather than wedging the drain.
+    const reg = makeRegistry();
+    const leaf = makeChild(0);
+    leaf.object.userData = { nodeType: 'points', visiblePointCount: 500 };
+    reg.register(makeEntry([leaf], 0, '/g'));
+    reg.evaluatePerFrame();
+    expect(reg.isCaptureQuiescent()).toBe(true);
+  });
+
   /**
    * A deferred-GROUP LOD child, as ``loadLodGroupNode``'s ``canDeferGroup``
    * path builds it: a placeholder ``THREE.Group`` holding a loaded subtree, and

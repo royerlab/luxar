@@ -462,19 +462,25 @@ ready/loading/displayed would call that window settled. A `desired`
 level that has `failed` does not block, since it can never become ready
 this frame.
 
-"Still streaming additive LODs" is shape-dependent, and getting it wrong
-was a real hole. A tracked **leaf** answers with its own `hasMoreLODs()`
-thunk. A deferred **group** child — a nested `kind=partition` /
-`kind=lod` subtree, i.e. the `overview` recipe's fine branch — carries no
-such thunk, so it answers with the folded `committedLadderComplete` of
-its visible stamped leaves (`subtreeDisplayProgress().complete`, surfaced
-through the registry's `childFreshAndCount`). Without that fold the drain
-released the frame the instant the fine branch became ready, and its part
-leaves are at chunk-1 by construction at that instant: the frame is
-exported at the first additive chunk and refines in over the next
-seconds, which is the exact artifact class #1695 exists to remove. A
-ready group with no stamped leaf beneath it carries no signal and counts
-as complete.
+"Still streaming additive LODs" takes **both** available signals, and
+either one alone leaves a hole. A lazy child's live `hasMoreLODs()` thunk
+answers first. Then the commit-time `committedLadderComplete` stamp,
+surfaced as `subtreeLadderComplete` through the registry's
+`childFreshAndCount` — read off the child itself for a tracked **leaf**,
+and folded over the visible stamped leaves
+(`subtreeDisplayProgress().complete`) for a deferred **group** child, i.e.
+a nested `kind=partition` / `kind=lod` subtree such as the `overview`
+recipe's fine branch. Neither is sufficient on its own: a group child
+carries no thunk, so without the fold the drain released the frame the
+instant the fine branch became ready, with its part leaves at chunk-1 by
+construction; and `load-lod-group-node` attaches the thunk only on the
+DEFERRED path, so without the stamp the eagerly-loaded default level —
+still climbing its ladder under the sweep-driven background refinement
+loop — read as complete. Either way the frame is exported at the first
+additive chunk and refines in over the next seconds, which is the exact
+artifact class #1695 exists to remove. Anything carrying no stamp at all
+(never committed, or a non-progressive loader) counts as complete and
+never blocks.
 
 Forcing the finest level instead was rejected: a capture
 visits the whole scene, so peak residency would be the entire dataset.

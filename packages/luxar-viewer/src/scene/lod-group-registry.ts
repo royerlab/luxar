@@ -801,18 +801,21 @@ export class LODGroupRegistry {
    *   be FRESH for the current view version — via the group-aware
    *   {@link childFreshAndCount}, not the leaf-only ``isFresh``, so a deferred
    *   ``kind=partition`` subtree stamped for an older slice counts as stale.
-   * - The aspiration's additive ladder must be complete, and this clause is
-   *   SHAPE-DEPENDENT. A tracked LEAF answers with its own ``hasMoreLODs()``
-   *   thunk: still true means only a prefix of the level has committed. A
-   *   deferred GROUP child (a nested ``kind=partition`` / ``kind=lod``
-   *   subtree — the ``overview`` recipe's fine branch) carries NO such thunk,
-   *   so it answers with the folded ``committedLadderComplete`` of its visible
-   *   stamped leaves ({@link childFreshAndCount}'s
-   *   ``subtreeLadderComplete``). Without the fold the drain released the
-   *   frame the moment such a branch became ready — and its part leaves are at
-   *   chunk-1 by construction at that instant, which is exactly the pop this
-   *   predicate exists to remove. A ready group with no stamped leaf under it
-   *   carries no signal at all and counts as complete.
+   * - The aspiration's additive ladder must be complete, on BOTH available
+   *   signals. A lazy child's live ``hasMoreLODs()`` thunk answers first:
+   *   still true means only a prefix of the level has committed. Then
+   *   {@link childFreshAndCount}'s ``subtreeLadderComplete`` — the
+   *   commit-time ``committedLadderComplete`` stamp, taken from the child
+   *   itself for a tracked LEAF and folded over the visible stamped leaves of
+   *   a deferred GROUP child (a nested ``kind=partition`` / ``kind=lod``
+   *   subtree — the ``overview`` recipe's fine branch). Neither alone is
+   *   enough: a group child carries no thunk, so without the fold the drain
+   *   released the frame the moment such a branch became ready, with its part
+   *   leaves at chunk-1 by construction; and only the DEFERRED path gets a
+   *   thunk, so without the stamp the eagerly-loaded default level — still
+   *   climbing its ladder under the sweep-driven refinement loop — read as
+   *   complete. Anything with no stamp at all (never committed, or a
+   *   non-progressive loader) carries no signal and counts as complete.
    * - No child of the entry may be ``loading`` — an in-flight commit can change
    *   what renders on a later frame.
    *
@@ -1452,15 +1455,24 @@ export class LODGroupRegistry {
    * no stamped leaf (nested group with no slice-dependent geometry) carries no
    * per-slice staleness signal and reports ``fresh: true, count: null``.
    *
-   * ``subtreeLadderComplete`` is the GROUP-only third answer, folded from the
-   * same walk (``SubtreeDisplayProgress.complete``): false when any visible
-   * stamped leaf under the subtree has committed only a prefix of its additive
-   * ladder. A tracked LEAF always reports ``true`` here — that is not a claim
-   * about its ladder, it is where the leaf's ladder state deliberately does NOT
-   * live: the child's own ``hasMoreLODs()`` thunk is the single authority for a
-   * leaf (it is also what re-fires ``ensureLoaded`` to advance the ladder), and
-   * callers read it directly. Only {@link isCaptureQuiescent} consults this
-   * field; the display paths ignore it.
+   * ``subtreeLadderComplete`` is the third answer, folded from the same walk
+   * (``SubtreeDisplayProgress.complete``): false when any visible stamped leaf
+   * under the subtree has committed only a prefix of its additive ladder. A
+   * tracked LEAF has no subtree to fold, so it answers with its OWN
+   * ``committedLadderComplete`` stamp.
+   *
+   * That stamp rather than the child's ``hasMoreLODs()`` thunk, because the
+   * thunk does not exist on every leaf: ``load-lod-group-node`` attaches it
+   * only on the DEFERRED path, so the eagerly-loaded default level — whose
+   * ladder is advanced by the sweep-driven background refinement loop — has
+   * none, and reporting an unconditional ``true`` here declared a still-
+   * streaming coarse level complete. The stamp is also the safer of the two
+   * where both exist (see ``lod-display-gate``'s "committed state only" note:
+   * a live getter flips when the last fetch resolves, frames before the commit
+   * lands). Callers still read ``hasMoreLODs()`` directly on top of this, since
+   * it is what re-fires ``ensureLoaded`` to advance a lazy ladder. Only
+   * {@link isCaptureQuiescent} consults this field; the display paths ignore
+   * it.
    *
    * ``version === null`` means no view-version tracking is wired: the per-slice
    * staleness test is skipped and every READY child reads fresh — which is
@@ -1478,7 +1490,10 @@ export class LODGroupRegistry {
       return {
         fresh: version == null ? isReady(child) : isFresh(child, version),
         count: visibleElementCount(child),
-        subtreeLadderComplete: true, // a leaf answers with ``hasMoreLODs()`` — see above
+        // The leaf's own commit stamp — absent (never committed, or a
+        // non-progressive loader) reads as complete, so an unstamped leaf
+        // never blocks. See the doc above for why not ``hasMoreLODs()``.
+        subtreeLadderComplete: child.object.userData?.committedLadderComplete !== false,
       };
     }
     // Ready gate for group children (the leaf branch gets it from ``isFresh``).
