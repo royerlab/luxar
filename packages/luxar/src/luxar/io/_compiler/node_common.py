@@ -87,6 +87,10 @@ GSPLATS_RESERVED_ATTRS: FrozenSet[str] = frozenset(
         "has_image_labels",
         "amplitude_range",
         "amplitude_data_range",
+        # Writer-derived mass statistics that drive the finalize-time
+        # amplitude-window harmonization (see finalize/amplitude_window.py).
+        "amplitude_mass",
+        "amplitude_mass_weighted_mean",
         "center_bounds",
         "position_bounds",
         "ordering",

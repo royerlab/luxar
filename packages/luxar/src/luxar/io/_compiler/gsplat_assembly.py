@@ -10,6 +10,7 @@ free functions, a scene leaf is byte-identical to a standalone one.
 
 from __future__ import annotations
 
+import math
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
@@ -230,6 +231,109 @@ def apply_gsplat_spatial_ordering(
     return centers, amplitudes, cholesky_factors, colors, ordering_data
 
 
+def compute_amplitude_mass_stats(
+    amplitudes: Union[NDArray[np.float32], float],
+    chol_diag: NDArray[np.float32],
+    n_splats: int,
+) -> Tuple[float, float]:
+    """Total integral mass and mass-weighted mean amplitude of a splat set.
+
+    Two cheap O(N) statistics that let the finalize pass
+    (:func:`~luxar.io._compiler.finalize.amplitude_window.
+    harmonize_gsplat_amplitude_windows`) put every level of an LOD ladder on ONE
+    colormap window:
+
+    * **mass** ``Σᵢ aᵢ·|Σᵢ|^½`` — the integral of the mixture (the shared
+      ``(2π)^{D/2}`` constant is dropped, exactly as in
+      ``gsplats.lod.substitutive._subset_mass`` and
+      ``gsplats.lod.additive._mass_score``). ``|Σ|^½ = Π diag(L)``.
+    * **mass-weighted mean amplitude** ``Σᵢ aᵢ²·|Σᵢ|^½ / Σᵢ aᵢ·|Σᵢ|^½`` — total
+      self-energy over total mass, i.e. the amplitude a unit of mass typically
+      carries. This is the estimator that tracks how a substitutive reduction
+      re-scales the *rendered* amplitude scalar (a coarse level packs the same
+      mass into fewer, brighter splats); a robust upper percentile does not.
+
+    Amplitudes are the **RAW** ones, deliberately — not the alpha-effective
+    ``A·α`` the LOD orderers rank by. ``amplitude_data_range`` windows the raw
+    amplitude scalar the shader reads, so the statistic that rescales that
+    window must be in the same units.
+
+    Scalar (broadcast) amplitudes and a uniform single-row Cholesky are
+    broadcast to ``n_splats`` first, so the totals are true totals rather than
+    one splat's. Returns ``(0.0, 0.0)`` for an empty set or a non-positive mass.
+    """
+    if n_splats <= 0:
+        return 0.0, 0.0
+    # ``.abs()`` on the diagonal, matching both implementations cited above: a
+    # negative pivot would otherwise flip the sign of that splat's determinant
+    # and CANCEL mass against its neighbours instead of adding to it. Taken
+    # AFTER the product rather than per element — ``Π|xᵢ| == |Π xᵢ|`` bit for
+    # bit in IEEE (the sign is a separate field), and reducing straight out of
+    # the float32 input with ``dtype=`` allocates only the (N,) result instead
+    # of two full (N, d) float64 copies, which on a multi-million-splat leaf is
+    # hundreds of MB of transient the writer does not need.
+    det_sqrt = np.abs(np.prod(np.asarray(chol_diag), axis=-1, dtype=np.float64))
+    det_sqrt = np.asarray(det_sqrt, dtype=np.float64).reshape(-1)
+    if det_sqrt.shape[0] != n_splats:
+        # Uniform (single-row) Cholesky: every splat shares one covariance.
+        det_sqrt = np.broadcast_to(det_sqrt[:1], (n_splats,))
+    if isinstance(amplitudes, np.ndarray):
+        # No shape fallback here: ``validate_gsplat_inputs`` rejects an
+        # amplitude array whose length is not ``n_splats`` on BOTH its
+        # ``check_values`` paths, so the only broadcast case is the true scalar
+        # below. Silently taking ``amps[:1]`` would answer a wrong total.
+        amps = np.asarray(amplitudes, dtype=np.float64).reshape(-1)
+    else:
+        amps = np.full(n_splats, float(amplitudes), dtype=np.float64)
+    mass = float(np.sum(amps * det_sqrt))
+    if not math.isfinite(mass) or mass <= 0.0:
+        return 0.0, 0.0
+    self_energy = float(np.sum(amps * amps * det_sqrt))
+    mwma = self_energy / mass
+    if not math.isfinite(self_energy) or not math.isfinite(mwma):
+        return 0.0, 0.0
+    return mass, mwma
+
+
+#: Metadata keys ``apply_gsplat_group_attrs`` re-stamps onto the colormap-bearing
+#: node when the array writer produced them (see the call site for why).
+_OPTIONAL_AMPLITUDE_ATTRS: Tuple[str, ...] = (
+    "amplitude_data_range",
+    "amplitude_mass",
+    "amplitude_mass_weighted_mean",
+)
+
+
+def amplitude_mass_stats_attrs(
+    amplitudes: Union[NDArray[np.float32], float],
+    chol_diag: NDArray[np.float32],
+    n_splats: int,
+) -> Dict[str, float]:
+    """:func:`compute_amplitude_mass_stats` as the attrs it is stamped under.
+
+    Always BOTH keys, never an empty dict. There is nothing to skip:
+    :func:`compute_amplitude_mass_stats` already normalizes every non-finite
+    path to ``(0.0, 0.0)``, so a bare ``NaN`` / ``Infinity`` token — which is not
+    JSON, and would cost a strict reader (the viewer) the whole store; see
+    :func:`~luxar.io._compiler.gsplat_tree.json_safe_value` — cannot reach here.
+
+    Stamping unconditionally is also what keeps "present and zero" (a mass-less
+    splat set) distinguishable from "absent" (a legacy store), which the
+    finalize-time window harmonization relies on.
+    """
+    mass, mwma = compute_amplitude_mass_stats(amplitudes, chol_diag, n_splats)
+    return {"amplitude_mass": mass, "amplitude_mass_weighted_mean": mwma}
+
+
+def _copy_present(
+    group: zarr.Group, metadata: dict[str, Any], keys: Sequence[str]
+) -> None:
+    """Copy whichever of ``keys`` ``metadata`` carries onto ``group.attrs``."""
+    for key in keys:
+        if key in metadata:
+            group.attrs[key] = metadata[key]
+
+
 def write_gsplat_arrays(
     group: zarr.Group,
     centers: NDArray[np.float32],
@@ -261,7 +365,8 @@ def write_gsplat_arrays(
 
     Returns:
         Metadata dict with n_splats, ndim, has_colors, amplitude_range,
-        center_bounds, and ordering info.
+        amplitude_mass, amplitude_mass_weighted_mean, center_bounds, and
+        ordering info.
     """
     # Write centers
     chunks_centers = calculate_intelligent_chunks(
@@ -321,14 +426,23 @@ def write_gsplat_arrays(
         amp_data_range = [lo, hi]
         group.attrs["amplitude_data_range"] = amp_data_range
 
-    # Write cholesky_factors as two arrays. The diagonal (positive, scale-like)
-    # and the off-diagonal (signed, zero-centred) are split so each can be
-    # encoded/quantised independently on disk. They are recombined into the
-    # packed (N, k) form immediately on read (Python reader + viewer loader),
-    # so nothing downstream of the storage boundary sees the split.
+    # Split cholesky_factors into the diagonal (positive, scale-like) and the
+    # off-diagonal (signed, zero-centred) so each can be encoded/quantised
+    # independently on disk. They are recombined into the packed (N, k) form
+    # immediately on read (Python reader + viewer loader), so nothing downstream
+    # of the storage boundary sees the split. Split UP HERE because the mass
+    # statistics below need the diagonal too (|Σ|^½ = Π diag(L)) — one split,
+    # two consumers.
     from ...gsplats.utils.trils import split_tril
 
     chol_diag, chol_offdiag = split_tril(cholesky_factors, n_dims)
+
+    # Mass statistics for the finalize-time colormap-window harmonization
+    # (see ``compute_amplitude_mass_stats``). Stamped HERE, alongside
+    # ``amplitude_data_range``, so the "lightweight" ``additive_<i>`` sub-LOD
+    # groups carry them too.
+    mass_stats = amplitude_mass_stats_attrs(amplitudes, chol_diag, n_splats)
+    group.attrs.update(mass_stats)
 
     if cholesky_is_uniform:
         n_elems_chol: Optional[int] = n_splats
@@ -395,6 +509,7 @@ def write_gsplat_arrays(
         "amplitude_range": {"min": amplitude_min, "max": amplitude_max},
         "center_bounds": {"min": center_min, "max": center_max},
     }
+    metadata.update(mass_stats)
     if amp_data_range is not None:
         # Robust display window; propagated onto the colormap-bearing group by
         # apply_gsplat_group_attrs (the colormap node is often a parent of the
@@ -524,9 +639,11 @@ def apply_gsplat_group_attrs(
     # Robust display window on the SAME node as the colormap (set above), so the
     # viewer reads colormap + range together. Without this, an additive-ladder
     # level carries the colormap but not the range (that lives on its sublods),
-    # and the viewer falls back to [0, 1] → a near-black render.
-    if "amplitude_data_range" in metadata:
-        group.attrs["amplitude_data_range"] = metadata["amplitude_data_range"]
+    # and the viewer falls back to [0, 1] → a near-black render. The mass
+    # statistics ride along for the same reason: the finalize-time window
+    # harmonization reads them off whichever node carries the window it is
+    # about to correct (see finalize/amplitude_window.py).
+    _copy_present(group, metadata, _OPTIONAL_AMPLITUDE_ATTRS)
     group.attrs["center_bounds"] = metadata["center_bounds"]
     group.attrs["ordering"] = metadata["ordering"]
 
