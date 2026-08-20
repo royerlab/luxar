@@ -1208,6 +1208,25 @@ def _worker_spatial_shape(
     return tuple(size for size in spatial_shape if size != 1)
 
 
+def _validate_worker_axes(axes_list: Optional[List[str]]) -> None:
+    """Reject axis specs the per-task volume loader cannot apply."""
+    if axes_list is None:
+        return
+
+    from luxar.io.volume import _axis_kind
+
+    labels = [str(label).strip().lower() for label in axes_list]
+    try:
+        kinds = [_axis_kind(label) for label in labels]
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    if sum(kind == "t" for kind in kinds) > 1:
+        raise typer.BadParameter(
+            f"--axes {','.join(labels)!r} names more than one time axis; one "
+            "--timepoint cannot index them independently."
+        )
+
+
 def plan_batch(
     *,
     input_path: Path,
@@ -1277,6 +1296,7 @@ def plan_batch(
         denoised_zarr_path = str(output_dir.resolve() / "denoised.zarr")
 
     # 2. Discover dataset shape + apply --timepoints/--channels slicing.
+    _validate_worker_axes(axes_list)
     with asection("Discovering dataset shape"):
         ome_info = discover_ome_zarr_shape(
             input_path, axes_override=axes_list, array_key=array_key

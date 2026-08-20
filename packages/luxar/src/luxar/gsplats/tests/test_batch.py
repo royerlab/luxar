@@ -812,6 +812,48 @@ class TestBatchPlanRegression:
             camera, channel = job.channel_coords
             np.testing.assert_array_equal(loaded, data[camera, job.timepoint, channel])
 
+    @pytest.mark.parametrize(
+        ("axes", "error"),
+        [
+            (["time", "t", "z", "y", "x"], "more than one time axis"),
+            (["time", "view", "z", "y", "x"], "label 'view' not recognised"),
+        ],
+    )
+    def test_plan_rejects_axes_workers_cannot_load(
+        self, tmp_path: Path, axes: list[str], error: str
+    ) -> None:
+        import typer
+        import zarr
+
+        from luxar.cli.gsplat_ops.batch.planning import (
+            ContentKnobs,
+            DenoiseConfig,
+            FitConfig,
+            MergeConfig,
+            plan_batch,
+        )
+
+        path = tmp_path / "unsupported-axes.zarr"
+        root = zarr.open(str(path), mode="w")
+        create_array(root, "0", data=np.zeros((3, 2, 2, 3, 4), dtype=np.uint16))
+
+        with pytest.raises(typer.BadParameter, match=error):
+            plan_batch(
+                input_path=path,
+                output_dir=tmp_path / "out",
+                tiling="uniform",
+                tile_size=8,
+                tile_overlap=0,
+                axes_list=axes,
+                array_key=None,
+                timepoints_slice=None,
+                channels_slice=None,
+                fit=FitConfig(floor="none"),
+                denoise=DenoiseConfig(),
+                content=ContentKnobs(),
+                merge=MergeConfig(),
+            )
+
     def test_plan_squeezes_singleton_spatial_axes_for_positional_workers(
         self, tmp_path: Path
     ) -> None:
