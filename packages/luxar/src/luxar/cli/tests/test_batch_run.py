@@ -98,8 +98,9 @@ def test_run_dry_run_announces_whole_volume_seed_split(tmp_path: Path) -> None:
     )
     assert res.exit_code == 0, res.output
     assert "whole-volume budget" in res.output
-    assert "100 per tile" in res.output  # 800 / 8 tiles
-    assert "8 tiles" in res.output
+    assert "at least 100 per non-empty tile" in res.output
+    assert "8 grid tiles" in res.output
+    assert "exact non-empty count" in res.output
 
 
 def test_run_dry_run_no_seed_notice_without_seeds(tmp_path: Path) -> None:
