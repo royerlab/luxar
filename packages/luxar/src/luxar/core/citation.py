@@ -26,6 +26,32 @@ _DOI_SHAPE = re.compile(r"10\.\d{4,9}/\S+")
 #: that cannot be displayed is not a citation.
 CITATION_KEYS = ("short", "doi", "license", "url")
 
+#: Schemes a citation URL may use. A credit's URL is the one field a UI turns
+#: into a link, and a citation travels inside data that is copied, published and
+#: opened by whoever receives it -- so a ``javascript:`` or ``data:`` payload has
+#: no business being storable here.
+_URL_SCHEMES = ("http://", "https://")
+
+
+def _reject_unprintable(field: str, text: str) -> None:
+    """Refuse line breaks and control/format characters in a citation field.
+
+    "Single line" has to mean every line break and control character, not just
+    ``\\n``: a lone ``\\r`` still breaks a line in plenty of renderers, a tab
+    wrecks a tile's alignment, and a bidi override (U+202E) can make a rendered
+    credit read differently from the string that was stored -- which in an
+    attribution field is a spoofing vector, not a cosmetic issue. That reasoning
+    is not specific to ``short``: a licence, a DOI and a URL are all rendered,
+    and a DOI's suffix in particular is otherwise free to contain anything
+    non-whitespace.
+    """
+    bad = {ch for ch in text if unicodedata.category(ch) in ("Cc", "Cf", "Zl", "Zp")}
+    if bad:
+        raise ValueError(
+            f"citation.{field} must be a single line of printable text; it "
+            "contains " + ", ".join(sorted("U+%04X" % ord(ch) for ch in bad))
+        )
+
 
 def validate_citation(value: Any) -> Optional[dict[str, str]]:
     """Validate a citation payload and return a plain, copied dict.
@@ -61,21 +87,23 @@ def validate_citation(value: Any) -> Optional[dict[str, str]]:
     short = value.get("short")
     if not isinstance(short, str) or not short.strip():
         raise ValueError("citation.short must be a non-empty string")
-    # "Single line" has to mean every line break and control character, not just
-    # ``\n``: a lone ``\r`` still breaks a line in plenty of renderers, a tab
-    # wrecks a tile's alignment, and a bidi override (U+202E) can make a rendered
-    # credit read differently from the string that was stored -- which in an
-    # attribution field is a spoofing vector, not a cosmetic issue.
-    bad = {ch for ch in short if unicodedata.category(ch) in ("Cc", "Cf", "Zl", "Zp")}
-    if bad:
-        raise ValueError(
-            "citation.short must be a single line of printable text; it contains "
-            + ", ".join(sorted("U+%04X" % ord(ch) for ch in bad))
-        )
+    _reject_unprintable("short", short)
 
     for key in ("doi", "license", "url"):
-        if key in value and (not isinstance(value[key], str) or not value[key].strip()):
+        if key not in value:
+            continue
+        if not isinstance(value[key], str) or not value[key].strip():
             raise ValueError(f"citation.{key} must be a non-empty string when present")
+        _reject_unprintable(key, value[key])
+
+    url = value.get("url")
+    # Scheme allowlist, not a full URL parse: the point is to keep an executable
+    # or inline-payload scheme out of a field a viewer will render as a link.
+    if url is not None and not url.strip().lower().startswith(_URL_SCHEMES):
+        raise ValueError(
+            f"citation.url {url!r} must be an http:// or https:// URL "
+            "(it is rendered as a link)"
+        )
 
     doi = value.get("doi")
     # Shape only: a DOI is ``10.<registrant>/<suffix>``. Whether it RESOLVES is an

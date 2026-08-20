@@ -72,6 +72,20 @@ def test_key_order_is_canonical_regardless_of_input_order() -> None:
         ({"short": "A", "author": "B"}, "unknown keys ['author']"),
         ({"short": "A", "license": ""}, "license must be a non-empty string"),
         ({"short": "A", "url": None}, "url must be a non-empty string"),
+        # The single-line/no-spoofing rule is not specific to `short`: every
+        # field here is rendered, and a DOI suffix is otherwise free to hold
+        # anything non-whitespace.
+        ({"short": "A", "license": "CC BY 4.0\nand also"}, "license must be a single"),
+        ({"short": "A", "doi": "10.1000/x\u202ey"}, "doi must be a single"),
+        (
+            {"short": "A", "url": "https://example.org/\u202egpj.exe"},
+            "url must be a single",
+        ),
+        # A credit's URL becomes a link, so an executable/inline-payload scheme
+        # must not be storable in data that is copied and published onward.
+        ({"short": "A", "url": "javascript:alert(1)"}, "must be an http"),
+        ({"short": "A", "url": "data:text/html,<script>"}, "must be an http"),
+        ({"short": "A", "url": "example.org/dataset"}, "must be an http"),
         ({"short": "A", "doi": "https://doi.org/10.1000/x"}, "must be a bare DOI"),
         ({"short": "A", "doi": "doi:10.1000/x"}, "must be a bare DOI"),
     ],
@@ -105,6 +119,7 @@ def test_citation_keys_matches_what_the_validator_accepts() -> None:
     accepted = dict.fromkeys(CITATION_KEYS, "x")
     accepted["short"] = "A et al. 2020"
     accepted["doi"] = "10.1000/x"
+    accepted["url"] = "https://example.org/dataset"
     assert set(validate_citation(accepted)) == set(CITATION_KEYS)
 
 
@@ -123,6 +138,25 @@ def _write(tmp_path, name: str, **kwargs):
 def test_citation_reaches_the_store_root(tmp_path) -> None:
     store = _write(tmp_path, "cited", citation=FULL)
     assert dict(zarr.open_group(store, mode="r").attrs["citation"]) == FULL
+
+
+def test_citation_and_viewer_config_both_survive(tmp_path) -> None:
+    """Two separate root writes, one attrs dict — neither may clobber the other.
+
+    Every credited microscopy demo passes both, so a root write that replaced
+    attrs instead of merging them would silently strip whichever came first.
+    """
+    from luxar.core.viewer_config import ViewerConfig
+
+    store = _write(
+        tmp_path,
+        "both",
+        citation=FULL,
+        viewer_config=ViewerConfig(tone_mapping="ACES"),
+    )
+    attrs = zarr.open_group(store, mode="r").attrs
+    assert dict(attrs["citation"]) == FULL
+    assert attrs["viewer_config"]["tone_mapping"] == "ACES"
 
 
 def test_uncredited_scene_carries_no_citation_key(tmp_path) -> None:

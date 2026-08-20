@@ -237,13 +237,16 @@ opens it.
 ```
 
 Only `short` is required: a citation that cannot be displayed is not a
-citation. It must be a single line of printable text — every line break and
-control character is refused, including a bare `\r` and a bidi override, since a
-credit that renders differently from the string that was stored is a spoofing
-risk rather than a cosmetic one. `doi`, when present, must match the full
-`10.<registrant>/<suffix>` shape, so the near-misses people paste (a URL, a
+citation. Every field must be a single line of printable text — every line break
+and control character is refused, including a bare `\r` and a bidi override,
+since a credit that renders differently from the string that was stored is a
+spoofing risk rather than a cosmetic one. `doi`, when present, must match the
+full `10.<registrant>/<suffix>` shape, so the near-misses people paste (a URL, a
 `doi:` prefix, a registrant whose suffix was lost) are refused rather than
-stored. The key is **absent** — not `null`, not an empty object — when the
+stored. `url`, when present, must be `http://` or `https://`: it is the one
+field a UI turns into a link, and a citation travels inside data that is copied
+and published onward, so an executable or inline-payload scheme is not storable
+here. The key is **absent** — not `null`, not an empty object — when the
 scene owes no credit, which is the normal case for procedurally generated data.
 Readers should therefore treat a missing `citation` as "unknown or not
 applicable" and never as a claim that the data has no author.
