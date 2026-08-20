@@ -1372,8 +1372,17 @@ behaviour is otherwise unchanged — a gallery sweep stays quiet. (#1380)
 A mesh can now be a level of a `kind=lod` group, and `add_mesh(substitutive_lod=…)`
 / `luxar mesh lod` build the ladder: coarse children are progressively **decimated**
 copies of the surface, the finest child is the original, and the viewer shows exactly
-one at a time by screen coverage. The producer is `luxar.mesh.decimate` — vertex
-clustering, pure NumPy, `method` in `{auto, cluster}`; a `qem` tier is #1348.
+one at a time by screen coverage. The original producer was pure-NumPy vertex
+clustering with `method` in `{auto, cluster}`; the QEM tier below extends that set.
+
+#### Mesh QEM preserves manifoldness across coarse LOD levels (#1348)
+
+Mesh decimation now also accepts `method="qem"`: Garland-Heckbert quadric edge
+collapse with lazy heap invalidation and a link-condition veto, so a collapse that
+would create a boundary or non-manifold edge is refused. `auto` uses QEM through
+5,000 source vertices and keeps the vectorized clustering tier above that; the
+selected tier is printed with the size-based reason. `luxar mesh lod` exposes the
+same choice through `--subst-method qem`.
 
 The spec called the viewer side "a two-line widening". It was wrong twice, in the same
 way in two places, and both are worth recording.

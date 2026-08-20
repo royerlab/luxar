@@ -894,15 +894,12 @@ SUBSTITUTIVE_METHODS = frozenset(
 #: nothing the code can do, so it is refused with the reason rather than
 #: silently mapped onto something else.
 #:
-#: ``qem`` — Garland-Heckbert edge collapse — is the tier this set is shaped to
-#: admit next (issue #1348). It is not listed until it exists: a method name
-#: that validates and then raises is worse than one that never validated.
-MESH_SUBSTITUTIVE_METHODS = frozenset({"auto", "cluster"})
+#: ``qem`` is Garland-Heckbert edge collapse with a link-condition veto;
+#: ``cluster`` is the vectorized large-mesh tier.
+MESH_SUBSTITUTIVE_METHODS = frozenset({"auto", "cluster", "qem"})
 
-#: Default mesh coarsening method. ``auto`` resolves to ``cluster`` today — the
-#: only implemented tier — and becomes a real size-derived choice when ``qem``
-#: lands (#1348). Kept as the default anyway so that upgrade is not a
-#: behaviour change for anyone who wrote ``method="auto"``.
+#: Default mesh coarsening method. ``auto`` uses topology-preserving QEM through
+#: 5k vertices and the vectorized clustering tier above that measured limit.
 DEFAULT_MESH_SUBSTITUTIVE_METHOD: str = "auto"
 
 

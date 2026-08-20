@@ -12,7 +12,12 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from ..decimate import decimate_cluster
+from ..decimate import (
+    QEM_AUTO_VERTEX_LIMIT,
+    decimate_cluster,
+    resolve_decimation_method,
+)
+from ..qem import decimate_qem
 
 
 def octasphere(subdivisions: int = 4) -> tuple[np.ndarray, np.ndarray]:
@@ -430,3 +435,87 @@ def test_the_cell_search_is_robust_to_non_monotone_cluster_counts() -> None:
         assert int(r.faces.max()) < r.vertices.shape[0], (
             f"target {target}: face index out of range"
         )
+
+
+class TestDecimateQEM:
+    def test_link_condition_preserves_the_closed_sphere_at_every_level(self) -> None:
+        v, f = octasphere(5)
+        cluster = decimate_cluster(v, f, target_vertices=500)
+        _, cluster_boundary, cluster_nonmanifold = edge_audit(
+            len(cluster.vertices), cluster.faces
+        )
+        assert (cluster_boundary, cluster_nonmanifold) == (120, 60)
+
+        for target in (1000, 500, 150):
+            result = decimate_qem(v, f, target_vertices=target)
+            edges, boundary, nonmanifold = edge_audit(
+                len(result.vertices), result.faces
+            )
+            assert len(result.vertices) == target
+            assert len(result.vertices) - edges + len(result.faces) == 2
+            assert boundary == 0
+            assert nonmanifold == 0
+
+    def test_attributes_are_aggregated_and_normals_are_recomputed(self) -> None:
+        v, f = octasphere(3)
+        colors = np.round((v + 1.0) * 127.5).astype(np.uint8)
+        scalars = np.arange(len(v), dtype=np.float32)
+        result = decimate_qem(
+            v,
+            f,
+            target_vertices=50,
+            normals=np.zeros_like(v),
+            normal_dims=(0, 1, 2),
+            colors=colors,
+            scalars=scalars,
+        )
+        assert result.colors is not None and result.colors.dtype == np.uint8
+        assert result.colors.shape == (50, 3)
+        assert result.scalars.shape == (50,)
+        assert result.normals is not None
+        np.testing.assert_allclose(
+            np.linalg.norm(result.normals, axis=1), 1.0, atol=1e-5
+        )
+
+    def test_an_open_surface_keeps_one_boundary_and_no_nonmanifold_edges(self) -> None:
+        side = 8
+        vertices = np.array(
+            [(x, y, 0) for y in range(side) for x in range(side)], np.float32
+        )
+        faces = []
+        for y in range(side - 1):
+            for x in range(side - 1):
+                a = y * side + x
+                b, c, d = a + 1, a + side, a + side + 1
+                faces.extend(((a, b, d), (a, d, c)))
+        result = decimate_qem(
+            vertices, np.asarray(faces, np.uint32), target_vertices=24
+        )
+        edges, boundary, nonmanifold = edge_audit(len(result.vertices), result.faces)
+        assert len(result.vertices) - edges + len(result.faces) == 1
+        assert boundary > 0
+        assert nonmanifold == 0
+
+    def test_nonspatial_columns_are_hard_collapse_barriers(self) -> None:
+        vertices, faces = octasphere(1)
+        barrier = np.arange(len(vertices), dtype=np.float32)[:, None]
+        stacked = np.concatenate([vertices, barrier], axis=1)
+        result = decimate_qem(
+            stacked,
+            faces,
+            target_vertices=4,
+            spatial_dims=(0, 1, 2),
+        )
+        np.testing.assert_array_equal(result.vertices, stacked)
+        np.testing.assert_array_equal(result.faces, faces)
+
+    def test_auto_uses_qem_only_inside_its_measured_envelope(self) -> None:
+        assert (
+            resolve_decimation_method("auto", QEM_AUTO_VERTEX_LIMIT, announce=False)
+            == "qem"
+        )
+        assert (
+            resolve_decimation_method("auto", QEM_AUTO_VERTEX_LIMIT + 1, announce=False)
+            == "cluster"
+        )
+        assert resolve_decimation_method("qem", 1_000, announce=False) == "qem"

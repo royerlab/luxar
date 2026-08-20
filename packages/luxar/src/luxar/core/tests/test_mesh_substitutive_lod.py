@@ -279,9 +279,16 @@ class TestLadderShape:
 
         levels = level_colors(store)
         assert len(levels) == 4, "3 coarse levels + the original"
-        # Integer channels round to whole values, so allow one step of slack there
-        # and none worth speaking of for the float rows.
-        slack = 1.0 if np.issubdtype(np.dtype(dtype), np.integer) else 1e-4
+        # Integer channels round to whole values. SDR float colours may take the
+        # encoder's documented rgb_uint8 path when QEM's per-collapse means are
+        # mostly unique (clustering's symmetric rows happened to trigger an exact
+        # LUT), so allow one 8-bit code step there. HDR stays wide-range float.
+        if np.issubdtype(np.dtype(dtype), np.integer):
+            slack = 1.0
+        elif high <= 1.0:
+            slack = 1.0 / 255.0 + 1e-6
+        else:
+            slack = 1e-4
         for index, level in enumerate(levels):
             assert level.dtype == dtype, (
                 f"level {index} came back as {level.dtype}, not {dtype.__name__} — "
@@ -982,9 +989,9 @@ class TestVocabulary:
         assert key in message
         assert "does not apply to a mesh" in message
 
-    def test_cluster_and_auto_both_build_a_ladder(self, tmp_path):
+    def test_every_decimation_method_builds_a_ladder(self, tmp_path):
         verts, faces = octasphere(4)
-        for method in ("auto", "cluster"):
+        for method in ("auto", "cluster", "qem"):
             nodes = write_ladder(
                 tmp_path / method, verts, faces, substitutive_lod={"method": method}
             )

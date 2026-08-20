@@ -1066,7 +1066,8 @@ def lod_command(
         help=(
             "Decimation method, one of "
             f"{', '.join(sorted(MESH_SUBSTITUTIVE_METHODS))}. 'auto' resolves to "
-            "'cluster' today. Named `--subst-method` to match `gsplat lod`, where "
+            "'qem' through 5,000 vertices and 'cluster' above that. Named "
+            "`--subst-method` to match `gsplat lod`, where "
             "it selects the substitutive (level-replacing) reduction — though the "
             "algorithms differ: these decimate a surface, those reduce a Gaussian "
             "mixture."
@@ -1178,7 +1179,7 @@ def lod_command(
       luxar mesh lod bunny.luxar.zarr bunny_lod.luxar.zarr
       luxar mesh lod scan.luxar.zarr scan_lod.luxar.zarr -L 4 -K 3
       luxar mesh lod multi.luxar.zarr out.luxar.zarr --node surfaces/skull
-      luxar mesh lod bunny.luxar.zarr bunny_lod.luxar.zarr --subst-method cluster
+      luxar mesh lod bunny.luxar.zarr bunny_lod.luxar.zarr --subst-method qem
     """
     # NOT routed through `LEGACY_METHOD_FLAGS`, deliberately: that table maps
     # `--method` → `--add-method`, which is right for every gsplat surface and

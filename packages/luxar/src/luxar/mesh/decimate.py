@@ -58,10 +58,13 @@ the topology underneath it, and two co-planar opaque triangles z-fight.
 
 from __future__ import annotations
 
-from typing import Any, NamedTuple
+from typing import Any, Literal, NamedTuple, cast
 
 import numpy as np
+from arbol import aprint
 from numpy.typing import NDArray
+
+QEM_AUTO_VERTEX_LIMIT = 5_000
 
 
 class DecimatedMesh(NamedTuple):
@@ -330,6 +333,47 @@ def decimate_cluster(
     return best
 
 
+def resolve_decimation_method(
+    method: str, n_vertices: int, *, announce: bool = True
+) -> Literal["cluster", "qem"]:
+    """Resolve ``auto`` once from the source mesh size."""
+    normalized = str(method).replace("-", "_")
+    if normalized == "auto":
+        normalized = "qem" if n_vertices <= QEM_AUTO_VERTEX_LIMIT else "cluster"
+        if announce:
+            comparison = "at or below" if normalized == "qem" else "above"
+            aprint(
+                f"  📐 Mesh decimation auto-selected '{normalized}': "
+                f"{n_vertices:,} vertices is {comparison} the "
+                f"{QEM_AUTO_VERTEX_LIMIT:,}-vertex QEM limit."
+            )
+    if normalized not in {"cluster", "qem"}:
+        raise ValueError(
+            "mesh decimation method must be one of ['auto', 'cluster', 'qem']; "
+            f"got {method!r}"
+        )
+    return cast(Literal["cluster", "qem"], normalized)
+
+
+def decimate(
+    vertices: NDArray[np.float32],
+    faces: NDArray[np.uint32],
+    *,
+    target_vertices: int,
+    method: str = "auto",
+    **kwargs: Any,
+) -> DecimatedMesh:
+    """Dispatch to the selected mesh decimator."""
+    resolved = resolve_decimation_method(method, len(vertices))
+    if resolved == "cluster":
+        return decimate_cluster(
+            vertices, faces, target_vertices=target_vertices, **kwargs
+        )
+    from .qem import decimate_qem
+
+    return decimate_qem(vertices, faces, target_vertices=target_vertices, **kwargs)
+
+
 def _average_per_cluster(
     values: NDArray[Any],
     inverse: NDArray[np.int64],
@@ -493,4 +537,10 @@ def _recompute_normals(
     return out.astype(np.float32)
 
 
-__all__ = ["DecimatedMesh", "decimate_cluster"]
+__all__ = [
+    "DecimatedMesh",
+    "QEM_AUTO_VERTEX_LIMIT",
+    "decimate",
+    "decimate_cluster",
+    "resolve_decimation_method",
+]
