@@ -388,7 +388,7 @@ def fit_gaussian_splats(
 
         - "auto": histogram-mode estimate (capped at the median; a no-op on
           clean data with no pedestal).
-        - "pN" (e.g. "p10"): the Nth intensity percentile.
+        - "pN" (e.g. "p10"): the Nth percentile of non-zero intensities.
         - float: a fixed intensity value.
         - "none" / 0 / None: disabled (today's hard-min normalization).
 
