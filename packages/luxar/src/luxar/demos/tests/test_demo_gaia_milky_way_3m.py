@@ -343,7 +343,7 @@ class TestRawZarrExtraction:
         # `is_dir()` check gone the store read below fails and its "not a zarr
         # store" advice carries all three of those strings too.
         assert "holds no top-level" in message
-        assert "scripts/generate_galaxy_simple.py" in message
+        assert "--build-catalog" in message
         assert "--output" in message
 
     def test_a_foreign_table_names_the_columns_the_demo_reads(
@@ -366,7 +366,7 @@ class TestRawZarrExtraction:
         # holding a table with other names and has to map all five.
         for field in RAW_TABLE_FIELDS:
             assert field in message
-        assert "scripts/generate_galaxy_simple.py" in message
+        assert "--build-catalog" in message
 
     def test_a_consolidated_store_missing_a_column_is_still_caught(
         self, tmp_path: Path
@@ -411,7 +411,7 @@ class TestRawZarrExtraction:
         # RAW_TABLE_FIELDS as "what this demo reads" whatever is missing, so the
         # assertion has to reach the MISSING list specifically.
         assert f"column(s) {removed}" in message
-        assert "scripts/generate_galaxy_simple.py" in message
+        assert "--build-catalog" in message
 
     def test_a_directory_that_is_not_a_zarr_store_names_the_rebuild(
         self, tmp_path: Path
@@ -437,7 +437,7 @@ class TestRawZarrExtraction:
 
         message = str(excinfo.value)
         assert "not a zarr store" in message
-        assert "scripts/generate_galaxy_simple.py" in message
+        assert "--build-catalog" in message
 
     @pytest.mark.parametrize("kind", ["v3-array-store", "corrupt-column-metadata"])
     def test_a_store_zarr_cannot_open_as_this_table_reaches_the_advice(
@@ -497,7 +497,7 @@ class TestRawZarrExtraction:
 
         message = str(excinfo.value)
         assert "not a zarr store" in message
-        assert "scripts/generate_galaxy_simple.py" in message
+        assert "--build-catalog" in message
 
     def test_the_checked_columns_are_the_ones_the_converter_reads(
         self, tmp_path: Path
@@ -530,7 +530,7 @@ class TestRawZarrExtraction:
         message = str(excinfo.value)
         assert str(zip_path) in message
         assert "truncated" in message
-        assert "scripts/generate_galaxy_simple.py" in message
+        assert "--build-catalog" in message
 
     @pytest.mark.parametrize("extra_argv", [[], ["--no-serve"]], ids=["serve", "build"])
     @pytest.mark.parametrize(
@@ -584,7 +584,7 @@ class TestRawZarrExtraction:
         # wrong stem, the unreadable file for a partial copy, the columns the demo
         # reads for a table that is not this one.
         assert expected in out
-        assert "scripts/generate_galaxy_simple.py" in out
+        assert "--build-catalog" in out
         assert "Traceback" not in out
 
     def test_an_unrelated_missing_file_keeps_its_traceback(
@@ -669,7 +669,7 @@ class TestDataFileResolution:
 
         with pytest.raises(FileNotFoundError) as excinfo:
             demo.resolve_data_file()
-        assert "scripts/generate_galaxy_simple.py" in str(excinfo.value)
+        assert "--build-catalog" in str(excinfo.value)
 
     def test_absent_everywhere_explains_why(self, tmp_path: Path, monkeypatch) -> None:
         import luxar.demos.demo_gaia_milky_way_3m as demo
@@ -677,17 +677,99 @@ class TestDataFileResolution:
         cache = tmp_path / "cache" / "milky_way_gaia_3m.zarr.zip"
         monkeypatch.setattr(demo, "CACHE_FILE", cache)
         monkeypatch.setattr(demo, "REPO_FILE", tmp_path / "repo" / "absent.zip")
+        monkeypatch.setattr(demo.sys, "stdin", None)
 
         with pytest.raises(FileNotFoundError) as excinfo:
             demo.resolve_data_file()
         message = str(excinfo.value)
         assert str(cache) in message
-        # Why it is absent, and the rebuild that fills the gap until #1575
-        # automates it — both are what the message owes the reader.
+        # Why it is absent, and the opt-in build that fills the gap.
         assert "NonCommercial" in message
-        assert "scripts/generate_galaxy_simple.py" in message
-        assert "1575" in message
+        assert "--build-catalog" in message
+        assert "luxar demo deps --install" in message
         # Using Gaia data at all obliges the acknowledgement, so it travels with
         # the instructions rather than only living in the module docstring.
         assert "Gaia Data Processing and Analysis Consortium (DPAC)" in message
         assert "git lfs" not in message.lower()
+
+    def test_interactive_decline_keeps_the_actionable_error(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        import luxar.demos.demo_gaia_milky_way_3m as demo
+
+        class InteractiveInput:
+            @staticmethod
+            def isatty() -> bool:
+                return True
+
+        monkeypatch.setattr(
+            demo, "CACHE_FILE", tmp_path / "cache" / "milky_way_gaia_3m.zarr.zip"
+        )
+        monkeypatch.setattr(demo, "REPO_FILE", tmp_path / "repo" / "absent.zip")
+        monkeypatch.setattr(demo.sys, "stdin", InteractiveInput())
+        monkeypatch.setattr("builtins.input", lambda _prompt: "no")
+
+        with pytest.raises(demo.CatalogUnusable, match="--build-catalog"):
+            demo.resolve_data_file()
+
+    def test_explicit_build_populates_the_cache(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        import luxar.demos._gaia_catalog as builder
+        import luxar.demos.demo_gaia_milky_way_3m as demo
+
+        cache = tmp_path / "cache" / "milky_way_gaia_3m.zarr.zip"
+        monkeypatch.setattr(demo, "CACHE_FILE", cache)
+        monkeypatch.setattr(demo, "REPO_FILE", tmp_path / "repo" / "absent.zip")
+        calls: list[tuple[Path, bool]] = []
+
+        def fake_build(*, cache_dir: Path, recompute: bool = False) -> Path:
+            calls.append((cache_dir, recompute))
+            return cache
+
+        monkeypatch.setattr(builder, "build_catalog", fake_build)
+
+        assert demo.resolve_data_file(build_catalog_requested=True) == cache
+        assert calls == [(cache.parent, False)]
+
+    def test_recompute_replaces_an_existing_cache(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        import luxar.demos._gaia_catalog as builder
+        import luxar.demos.demo_gaia_milky_way_3m as demo
+
+        cache = tmp_path / "cache" / "milky_way_gaia_3m.zarr.zip"
+        cache.parent.mkdir(parents=True)
+        cache.write_bytes(b"old")
+        monkeypatch.setattr(demo, "CACHE_FILE", cache)
+        monkeypatch.setattr(demo, "REPO_FILE", tmp_path / "repo" / "absent.zip")
+        calls: list[tuple[Path, bool]] = []
+
+        def fake_build(*, cache_dir: Path, recompute: bool = False) -> Path:
+            calls.append((cache_dir, recompute))
+            return cache
+
+        monkeypatch.setattr(builder, "build_catalog", fake_build)
+
+        assert demo.resolve_data_file(recompute=True) == cache
+        assert calls == [(cache.parent, True)]
+
+    def test_interactive_first_run_offers_the_build(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        import luxar.demos._gaia_catalog as builder
+        import luxar.demos.demo_gaia_milky_way_3m as demo
+
+        class InteractiveInput:
+            @staticmethod
+            def isatty() -> bool:
+                return True
+
+        cache = tmp_path / "cache" / "milky_way_gaia_3m.zarr.zip"
+        monkeypatch.setattr(demo, "CACHE_FILE", cache)
+        monkeypatch.setattr(demo, "REPO_FILE", tmp_path / "repo" / "absent.zip")
+        monkeypatch.setattr(demo.sys, "stdin", InteractiveInput())
+        monkeypatch.setattr("builtins.input", lambda _prompt: "yes")
+        monkeypatch.setattr(builder, "build_catalog", lambda **_kwargs: cache)
+
+        assert demo.resolve_data_file() == cache
