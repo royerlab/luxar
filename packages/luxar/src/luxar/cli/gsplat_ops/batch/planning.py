@@ -187,6 +187,41 @@ def effective_floor_spec(fit: FitConfig) -> "str | float | None":
     )
 
 
+def effective_norm_percentile(fit: FitConfig) -> float:
+    """The ``norm_percentile`` every task will inherit from preset/config."""
+    from luxar.cli.gsplat_config import load_fit_config
+
+    try:
+        value = float(
+            load_fit_config(preset=fit.preset, config_path=fit.config).get(
+                "norm_percentile", 0.0
+            )
+        )
+    except (TypeError, ValueError) as exc:
+        raise typer.BadParameter(f"config `norm_percentile` is invalid: {exc}") from exc
+    if not 0.0 <= value < 50.0:
+        raise typer.BadParameter(
+            f"config `norm_percentile` must be in [0, 50), got {value}"
+        )
+    return value
+
+
+def effective_norm_range(fit: FitConfig) -> "Optional[Tuple[float, float]]":
+    """A deliberate ``norm_range`` from preset/config, if one was supplied."""
+    from luxar.cli.gsplat_config import load_fit_config
+    from luxar.gsplats.fitting.validation import _validate_norm_range
+
+    raw = load_fit_config(preset=fit.preset, config_path=fit.config).get("norm_range")
+    if raw is None:
+        return None
+    try:
+        _validate_norm_range(raw)
+        norm_range = (float(raw[0]), float(raw[1]))
+    except (IndexError, TypeError, ValueError) as exc:
+        raise typer.BadParameter(f"config `norm_range` is invalid: {exc}") from exc
+    return norm_range
+
+
 def _floor_axis_pins(
     axes_labels: List[str],
     channel_shape: Tuple[int, ...],
@@ -397,6 +432,43 @@ def _floor_sample_pairs(n_timepoints: int, n_channels: int) -> List[Tuple[int, i
     return [(t, c) for c in channels for t in times]
 
 
+def _sample_batch_slices(
+    input_path: Path,
+    *,
+    n_timepoints: int,
+    n_channels: int,
+    array_key: Optional[str],
+    axes: Optional[str],
+    axes_labels: Optional[List[str]],
+    channel_shape: Tuple[int, ...],
+    spatial_shape: Optional[Tuple[int, ...]],
+) -> "List[Tuple[int, int, Any]]":
+    """Read the shared bounded samples used by batch floor and range resolution."""
+    from luxar.gsplats.fitting.preprocessing import (
+        FLOOR_SAMPLE_BUDGET_VOXELS,
+        _sample_volume_for_floor,
+    )
+
+    pairs = _floor_sample_pairs(n_timepoints, n_channels)
+    budget = max(1, int(FLOOR_SAMPLE_BUDGET_VOXELS) // len(pairs))
+    sampled = []
+    for t, c in pairs:
+        view = _pinned_slice_volume(
+            input_path,
+            channel=c,
+            timepoint=t,
+            array_key=array_key,
+            axes=axes,
+            axes_labels=axes_labels,
+            channel_shape=channel_shape,
+            spatial_shape=spatial_shape,
+        )
+        sample = _sample_volume_for_floor(view, budget)
+        if sample is not None and sample.size:
+            sampled.append((t, c, sample))
+    return sampled
+
+
 def resolve_batch_floor(
     input_path: Path,
     floor_spec: "str | float | None",
@@ -408,6 +480,7 @@ def resolve_batch_floor(
     axes_labels: Optional[List[str]] = None,
     channel_shape: Tuple[int, ...] = (),
     spatial_shape: Optional[Tuple[int, ...]] = None,
+    sampled_slices: "Optional[List[Tuple[int, int, Any]]]" = None,
 ) -> "Tuple[Optional[float], Optional[str | float]]":
     """Resolve the batch's background floor ONCE, globally for the whole run.
 
@@ -472,11 +545,7 @@ def resolve_batch_floor(
         resolve_shared_floor,
         validate_floor_spec,
     )
-    from luxar.gsplats.fitting.preprocessing import (
-        FLOOR_SAMPLE_BUDGET_VOXELS,
-        _sample_volume_for_floor,
-        resolve_volume_floor,
-    )
+    from luxar.gsplats.fitting.preprocessing import resolve_volume_floor
 
     if floor_spec is None:
         return None, None
@@ -492,27 +561,25 @@ def resolve_batch_floor(
         )
 
     pairs = _floor_sample_pairs(n_timepoints, n_channels)
-    budget = max(1, int(FLOOR_SAMPLE_BUDGET_VOXELS) // len(pairs))
+    samples = sampled_slices
+    if samples is None:
+        samples = _sample_batch_slices(
+            input_path,
+            n_timepoints=n_timepoints,
+            n_channels=n_channels,
+            array_key=array_key,
+            axes=axes,
+            axes_labels=axes_labels,
+            channel_shape=channel_shape,
+            spatial_shape=spatial_shape,
+        )
     levels: List[Optional[float]] = []
     maxima: List[float] = []
     with asection(
         f"Resolving background floor '{floor_spec}' (minimum over "
         f"{len(pairs)} slices spanning T={n_timepoints}, C={n_channels})"
     ):
-        for t, c in pairs:
-            view = _pinned_slice_volume(
-                input_path,
-                channel=c,
-                timepoint=t,
-                array_key=array_key,
-                axes=axes,
-                axes_labels=axes_labels,
-                channel_shape=channel_shape,
-                spatial_shape=spatial_shape,
-            )
-            sample = _sample_volume_for_floor(view, budget)
-            if sample is None or sample.size == 0:
-                continue
+        for t, c, sample in samples:
             # `sample` is already within `budget`, so re-sampling it inside
             # resolve_volume_floor reads it whole: one read, level + max both.
             level_here = resolve_volume_floor(sample, floor_spec)
@@ -579,6 +646,7 @@ def _resolve_and_record_floor(
     axes_labels: Optional[List[str]] = None,
     channel_shape: Tuple[int, ...] = (),
     spatial_shape: Optional[Tuple[int, ...]] = None,
+    sampled_slices: "Optional[List[Tuple[int, int, Any]]]" = None,
 ) -> "Tuple[Optional[float], Optional[float]]":
     """:func:`resolve_batch_floor` + write the level into ``fit_args``/the manifest.
 
@@ -597,6 +665,7 @@ def _resolve_and_record_floor(
         axes_labels=axes_labels,
         channel_shape=channel_shape,
         spatial_shape=spatial_shape,
+        sampled_slices=sampled_slices,
     )
     recorded: Optional[float] = None
     if forward is not None:
@@ -604,6 +673,56 @@ def _resolve_and_record_floor(
         if not isinstance(forward, str):
             recorded = float(forward)
     return level, recorded
+
+
+def resolve_batch_norm_range(
+    input_path: Path,
+    norm_percentile: float,
+    *,
+    n_timepoints: int = 1,
+    n_channels: int = 1,
+    array_key: Optional[str] = None,
+    axes: Optional[str] = None,
+    axes_labels: Optional[List[str]] = None,
+    channel_shape: Tuple[int, ...] = (),
+    spatial_shape: Optional[Tuple[int, ...]] = None,
+    sampled_slices: "Optional[List[Tuple[int, int, Any]]]" = None,
+) -> Tuple[float, float]:
+    """Resolve one raw-input normalization range for the whole batch run."""
+    import numpy as _np
+
+    from luxar.gsplats.fitting.preprocessing import resolve_volume_norm_range
+
+    pairs = _floor_sample_pairs(n_timepoints, n_channels)
+    sampled = sampled_slices
+    if sampled is None:
+        sampled = _sample_batch_slices(
+            input_path,
+            n_timepoints=n_timepoints,
+            n_channels=n_channels,
+            array_key=array_key,
+            axes=axes,
+            axes_labels=axes_labels,
+            channel_shape=channel_shape,
+            spatial_shape=spatial_shape,
+        )
+    with asection(
+        f"Resolving normalization range over {len(pairs)} slices spanning "
+        f"T={n_timepoints}, C={n_channels}"
+    ):
+        if not sampled:
+            aprint("No sampled voxels; using fallback normalization range [0, 1]")
+            return (0.0, 1.0)
+        norm_range = resolve_volume_norm_range(
+            _np.concatenate([sample for _, _, sample in sampled]),
+            norm_percentile,
+            verbose=False,
+        )
+        aprint(
+            f"Every (t, c) task uses normalization range "
+            f"[{norm_range[0]:.6g}, {norm_range[1]:.6g}]"
+        )
+        return norm_range
 
 
 def _load_scan_volume(
@@ -1356,6 +1475,32 @@ def plan_batch(
     # depend on the --timepoints/--channels selection (see resolve_batch_floor).
     # Deliberately not the content plan's max-projection either, whose per-voxel
     # maximum biases the background mode upward relative to any single slice.
+    # Reject a malformed floor before the bounded norm-range read. Floor
+    # resolution validates too, but sampling first would turn a cheap usage error
+    # into I/O against a potentially multi-terabyte store.
+    from luxar.cli.gsplat_ops.fitting.fit_utils import (
+        floor_spec_needs_volume,
+        validate_floor_spec,
+    )
+
+    floor_spec = effective_floor_spec(fit)
+    validate_floor_spec(floor_spec)
+    norm_percentile = effective_norm_percentile(fit)
+    configured_norm_range = effective_norm_range(fit)
+    sampled_slices = (
+        _sample_batch_slices(
+            input_path,
+            n_timepoints=n_t_full,
+            n_channels=n_c_full,
+            array_key=array_key,
+            axes=",".join(axes_list) if axes_list else None,
+            axes_labels=list(ome_info.axes),
+            channel_shape=tuple(ome_info.channel_shape),
+            spatial_shape=tuple(spatial),
+        )
+        if floor_spec_needs_volume(floor_spec) or configured_norm_range is None
+        else []
+    )
     floor_level, recorded_floor_level = _resolve_and_record_floor(
         input_path,
         fit,
@@ -1370,7 +1515,21 @@ def plan_batch(
         axes_labels=list(ome_info.axes),
         channel_shape=tuple(ome_info.channel_shape),
         spatial_shape=tuple(spatial),
+        sampled_slices=sampled_slices,
     )
+    norm_range = configured_norm_range or resolve_batch_norm_range(
+        input_path,
+        norm_percentile,
+        n_timepoints=n_t_full,
+        n_channels=n_c_full,
+        array_key=array_key,
+        axes=",".join(axes_list) if axes_list else None,
+        axes_labels=list(ome_info.axes),
+        channel_shape=tuple(ome_info.channel_shape),
+        spatial_shape=tuple(spatial),
+        sampled_slices=sampled_slices,
+    )
+    fit_args["norm_range"] = f"{norm_range[0]:.17g},{norm_range[1]:.17g}"
 
     if mode == "content":
         import numpy as _np
@@ -1540,6 +1699,7 @@ def plan_batch(
         preset=fit.preset,
         fit_args=fit_args,
         floor_level=recorded_floor_level,
+        norm_range=norm_range,
         grid_scale=grid_scale,
         gpu_name=resolved_gpu,
         estimated_seconds_per_task=est_seconds,

@@ -30,6 +30,26 @@ from .fit_utils import (
 )
 
 
+def _parse_norm_range(value: Optional[str]) -> "Optional[tuple[float, float]]":
+    """Parse the internal ``--norm-range LO,HI`` worker handoff."""
+    if value is None:
+        return None
+    try:
+        parts = [float(part.strip()) for part in value.split(",")]
+    except ValueError as exc:
+        raise typer.BadParameter("--norm-range must be LO,HI") from exc
+    if len(parts) != 2:
+        raise typer.BadParameter("--norm-range must be LO,HI")
+    from luxar.gsplats.fitting.validation import _validate_norm_range
+
+    norm_range = (parts[0], parts[1])
+    try:
+        _validate_norm_range(norm_range)
+    except ValueError as exc:
+        raise typer.BadParameter(f"--norm-range: {exc}") from exc
+    return norm_range
+
+
 def _stamp_source_dtype(fit_config: dict, source_info: dict) -> None:
     """Carry the loader-observed source dtype into the fit config.
 
@@ -159,10 +179,13 @@ def run_fit_volume(
         "fixed value | none = disable (hard-min normalization). Unset lets a "
         "`floor:` in --config/preset apply, else defaults to auto. Under any "
         "--tiling the spec is resolved against the WHOLE volume — never a tile "
-        "or box crop — so every tile/box works from the same level. (Uniform "
-        "tiles subtract it before apodization, so their boundaries match; a "
-        "--tiling content box whose crop lies entirely above the level still "
-        "normalizes against its own crop minimum.)",
+        "or box crop — so every tile/box works from the same level.",
+    ),
+    norm_range: Optional[str] = typer.Option(
+        None,
+        "--norm-range",
+        hidden=True,
+        help="Internal worker handoff: raw-input normalization range LO,HI.",
     ),
     seed_method: Optional[str] = typer.Option(
         None, "--seed-method", help="Seed generation method"
@@ -563,6 +586,7 @@ def run_fit_volume(
     if not input_path.exists():
         aprint(f"Error: Input file not found: {input_path}")
         raise typer.Exit(1)
+    parsed_norm_range = _parse_norm_range(norm_range)
 
     try:
         from luxar.gsplats import fit_gaussian_splats
@@ -631,6 +655,7 @@ def run_fit_volume(
                 axes=axes,
                 lr=lr,
                 floor=floor,
+                norm_range=parsed_norm_range,
                 seed_method=seed_method,
                 verbose=verbose,
                 downscale=downscale,
@@ -732,6 +757,7 @@ def run_fit_volume(
                     loss=loss,
                     lr=lr,
                     floor=floor,
+                    norm_range=parsed_norm_range,
                     cull_retention=cull_retention,
                     device=device,
                     jobs=jobs,

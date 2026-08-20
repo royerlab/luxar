@@ -47,6 +47,19 @@ ProgressCallback = Callable[[int, int, str], None]
 CONTENT_CULL_RETENTION: float = 0.999
 
 
+def _ensure_planned_norm_range(
+    volume: np.ndarray, fit_kwargs: dict[str, Any], verbose: bool
+) -> None:
+    """Resolve one raw-input normalization range for all planned boxes."""
+    if fit_kwargs.get("norm_range") is not None:
+        return
+    from luxar.gsplats.fitting.preprocessing import resolve_volume_norm_range
+
+    fit_kwargs["norm_range"] = resolve_volume_norm_range(
+        volume, float(fit_kwargs.get("norm_percentile", 0.0)), verbose=verbose
+    )
+
+
 def _padded_bounds(
     box: PlanBox, overlap: int, shape: Tuple[int, int, int]
 ) -> Tuple[int, int, int, int, int, int]:
@@ -280,10 +293,11 @@ def fit_planned(
     boundaries. The CLI resolves it once against the whole volume before calling
     here (``luxar.cli.gsplat_ops.fitting.fit_utils.resolve_shared_floor``). What
     is shared is the floor ARGUMENT, not the input: every box is still handed its
-    own crop, and the subtraction is not bit-exact either, because the
-    normalization floor is clamped up to a crop's own minimum
-    (``image_min = max(level, min(crop))``) — so a box lying entirely above the
-    pedestal subtracts its own minimum instead.
+    own crop, but the resolved level remains its physical zero point.
+
+    ``fit_kwargs["norm_range"]`` should likewise describe the whole source volume
+    in raw input units. When omitted, this function resolves it once from
+    ``volume`` and forwards the same pair to every box.
 
     With ``partition=True`` (the CLI default) the per-box splats are kept as a
     ``kind=partition`` tree — one part per box (boxes are core-disjoint, so this
@@ -305,6 +319,7 @@ def fit_planned(
     fit_kwargs.setdefault("cull_retention", CONTENT_CULL_RETENTION)
     fit_kwargs.setdefault("verbose", False)
     fit_kwargs["device"] = device
+    _ensure_planned_norm_range(V, fit_kwargs, verbose)
 
     # Per-box saturation cap (from the calibration): the halo inflation must not
     # push the fit past the K the calibration measured as over-saturated.

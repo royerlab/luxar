@@ -75,6 +75,7 @@ class FitPipelineCtx:
     axes: Optional[str]
     lr: Optional[float]
     floor: Optional[str]
+    norm_range: "Optional[tuple[float, float]]"
     seed_method: Optional[str]
     verbose: bool
     downscale: Optional[str]
@@ -363,6 +364,7 @@ def assemble_fit_config(ctx: FitPipelineCtx, is_tiled: bool) -> "tuple[dict, Any
         "loss_type": ctx.loss,
         "lr": ctx.lr,
         "floor": ctx.floor,
+        "norm_range": ctx.norm_range,
         "seed_method": ctx.seed_method,
         "verbose": ctx.verbose,
         "cull_retention": ctx.cull_retention,

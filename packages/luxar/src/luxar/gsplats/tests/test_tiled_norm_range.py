@@ -293,6 +293,54 @@ def test_fit_tiled_resolves_a_declined_range_once_for_the_grid(monkeypatch):
     assert len(calls) == 1
 
 
+def test_supplied_raw_range_is_shifted_to_the_floor_subtracted_tile_basis():
+    """Batch workers receive raw units; tile fitting consumes post-floor units."""
+    from luxar.gsplats import fit_tiled_gsplats as ftg
+
+    fit_kwargs = {"norm_range": (10.0, 110.0)}
+    ftg._ensure_tile_norm_range(
+        np.zeros((4, 4, 4), dtype=np.float32), fit_kwargs, applied_floor=30.0
+    )
+    assert fit_kwargs["norm_range"] == pytest.approx((0.0, 80.0))
+
+    collapsed = {"norm_range": (10.0, 30.0)}
+    ftg._ensure_tile_norm_range(
+        np.zeros((4, 4, 4), dtype=np.float32), collapsed, applied_floor=30.0
+    )
+    assert collapsed["norm_range"] is None
+
+
+def test_fit_tiled_marks_a_supplied_range_after_shifting_it_once(monkeypatch):
+    """The orchestrator's converted range must not be shifted again by fit_tile."""
+    from luxar.gsplats import fit_tiled_gsplats as ftg
+
+    seen = {}
+
+    class _Stop(Exception):
+        pass
+
+    def _capture(volume, spec, **fit_kwargs):
+        seen.update(fit_kwargs)
+        raise _Stop
+
+    monkeypatch.setattr(ftg, "fit_tile", _capture)
+    volume = np.full((8, 8, 8), 50.0, dtype=np.float32)
+    volume[4, 4, 4] = 100.0
+
+    with pytest.raises(_Stop):
+        ftg.fit_tiled(
+            volume,
+            tile_size=8,
+            overlap=0,
+            floor=30.0,
+            norm_range=(10.0, 110.0),
+            verbose=False,
+        )
+
+    assert seen["norm_range"] == pytest.approx((0.0, 80.0))
+    assert seen["_norm_range_resolved"] is True
+
+
 def test_collapsed_range_would_amplify_signal_by_1e12():
     """Pin the hazard the decline above avoids, so that guard is not vacuous."""
     tile = np.zeros((4, 8, 8), dtype=np.float32)

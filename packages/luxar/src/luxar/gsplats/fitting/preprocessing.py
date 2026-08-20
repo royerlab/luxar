@@ -1114,14 +1114,9 @@ def resolve_volume_norm_range(
     -----
     Determinism matters as much as it does for the floor: the sample is a pure
     function of ``volume.shape`` and the fixed budget, so independent workers
-    (``--tile k/M``, ``-j N``, batch-fit) all resolve the SAME range for the
-    volume they are HANDED, without coordinating. That scope is where this
-    stops short of the floor: a ``batch-fit`` task is handed one ``(t, c)``
-    sub-volume, so its tiles share a range while two timepoints do not,
-    whereas the floor level is pinned once for the whole run in the manifest.
-    Amplitudes stay physically comparable either way (``finalize_results``
-    rescales by ``intensity_range``); what differs across timepoints is the
-    absolute convergence tolerance. #1616 tracks the remaining scopes.
+    resolve the same range for the volume they are handed. ``batch-fit`` widens
+    that scope at plan time by combining bounded samples across representative
+    ``(t, c)`` slices and forwarding the resulting raw-input range to every task.
     """
     sample = _sample_volume_for_floor(volume, int(FLOOR_SAMPLE_BUDGET_VOXELS))
     if sample is None or sample.size == 0:
@@ -1754,11 +1749,10 @@ def _normalize_data(
 ) -> tuple[np.ndarray, float, float, float, "float | None"]:
     """Normalize input data to [0, 1] range.
 
-    ``floor`` (see :func:`_resolve_floor`) overrides how ``image_min`` is
-    chosen: an explicit background level raises ``image_min`` so the pedestal
-    is clipped to 0 by the existing ``np.clip((V - image_min) / range, 0, 1)``.
-    ``norm_percentile`` still governs ``image_max`` (bright-outlier clipping),
-    so the two are orthogonal.
+    ``floor`` (see :func:`_resolve_floor`) overrides ``image_min`` outright: the
+    resolved level is the physical zero point, even when this crop lies wholly
+    above it. ``norm_percentile`` still governs ``image_max`` (bright-outlier
+    clipping).
 
     ``norm_range`` supplies ``(image_min, image_max)`` outright, bypassing
     ``norm_percentile``'s derivation from ``V``. Tiled fitting passes a range
@@ -1772,7 +1766,9 @@ def _normalize_data(
     # Configurable normalization - store parameters for intensity rescaling
     image_min, image_max = _resolve_norm_bounds(V, norm_percentile, verbose, norm_range)
 
-    # Background floor suppression: raise image_min to the resolved floor.
+    # Background floor suppression: pin image_min to the resolved floor. A crop
+    # lying wholly above the pedestal must not silently subtract its own minimum;
+    # abutting independently fitted crops need the same physical zero point.
     resolved_floor = _resolve_floor(V, floor)
     applied_floor: "float | None" = None
     if resolved_floor is not None:
@@ -1785,12 +1781,7 @@ def _normalize_data(
                     f"{image_max:.6g}; ignoring (would erase all signal)"
                 )
         else:
-            # Only ever RAISE image_min (never below the percentile-based value
-            # chosen above): the floor is orthogonal to norm_percentile's low-end
-            # clipping. Clamp into [image_min, image_max) so the range stays
-            # strictly positive. (When norm_percentile==0, image_min == min(V),
-            # so this reduces to max(resolved_floor, min(V)) as before.)
-            image_min = float(max(resolved_floor, image_min))
+            image_min = float(resolved_floor)
             applied_floor = image_min
             if verbose:
                 aprint(

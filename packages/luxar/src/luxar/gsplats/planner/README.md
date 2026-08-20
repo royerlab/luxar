@@ -79,12 +79,11 @@ Both drivers expect the background floor to arrive as a **concrete level** (or
 `"none"`): the CLI resolves `--floor` once against the whole volume and hands the
 same number to every box and to the density scan. A spec (`auto`/`pNN`) forwarded
 into the per-box fit would be re-estimated against each box CROP, so abutting
-core-kept boxes would subtract wildly different pedestals and normalize by different
-ranges — visible brightness steps at box boundaries. What is shared is the floor
-ARGUMENT, not the input: every box is still handed its own crop, and the
-normalization floor inside a box is still clamped up to that crop's own minimum
-(`image_min = max(level, min(crop))`), so a box lying entirely above the pedestal
-subtracts its own minimum.
+core-kept boxes would subtract wildly different pedestals — visible brightness
+steps at box boundaries. The resolved level remains every crop's physical zero
+point. The raw normalization range is likewise resolved once against the whole
+volume and handed to every box, so absolute optimizer thresholds do not vary with
+local crop contrast.
 
 ## Consumers
 

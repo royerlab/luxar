@@ -368,10 +368,27 @@ def _ensure_tile_norm_range(
     underscore-prefixed tile-internal keys.
     """
     already_resolved = fit_kwargs.pop("_norm_range_resolved", False)
-    if not already_resolved and fit_kwargs.get("norm_range") is None:
+    if already_resolved:
+        return
+    supplied = fit_kwargs.get("norm_range")
+    if supplied is None:
         fit_kwargs["norm_range"] = _tile_norm_range(
             volume, fit_kwargs, applied_floor, verbose=verbose
         )
+        return
+
+    # A CLI/batch-supplied range is expressed in RAW input units. Uniform tiles
+    # see floor-subtracted, apodized data, whose bottom is always zero; shift only
+    # the top into that basis. Keep the no-ceiling semantics in _normalize_data.
+    hi = float(supplied[1]) - float(applied_floor or 0.0)
+    if (
+        not np.isfinite(hi)
+        or hi <= 0.0
+        or (applied_floor is not None and hi <= NORM_RANGE_MIN_SPAN)
+    ):
+        fit_kwargs["norm_range"] = None
+    else:
+        fit_kwargs["norm_range"] = (0.0, hi)
 
 
 def fit_tile(
@@ -936,6 +953,9 @@ def fit_tiled(
         fit_kwargs["norm_range"] = _tile_norm_range(
             volume, fit_kwargs, applied_floor, verbose=verbose
         )
+    else:
+        _ensure_tile_norm_range(volume, fit_kwargs, applied_floor, verbose=verbose)
+        fit_kwargs["_norm_range_resolved"] = True
 
     volume_shape = tuple(volume.shape)
     specs = compute_tile_specs(volume_shape, tile_size, overlap)

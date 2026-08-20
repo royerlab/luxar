@@ -147,6 +147,7 @@ def run_content_fit(
     loss: Optional[str] = None,
     lr: Optional[float] = None,
     floor: Optional[str] = None,
+    norm_range: "Optional[tuple[float, float]]" = None,
     cull_retention: Optional[float] = None,
     device: Optional[str] = None,
     jobs: str = "1",
@@ -215,6 +216,7 @@ def run_content_fit(
                 "loss_type": loss,
                 "lr": lr,
                 "floor": floor,
+                "norm_range": norm_range,
                 # `0.0` ("keep every splat") is not None, so it still wins here.
                 "cull_retention": cull_retention,
             },
@@ -321,6 +323,19 @@ def run_content_fit(
     # about. Accepted rather than refused, because dark-frame-corrected data fit
     # fine before and refusing would make it unfittable.
     box_fit_kwargs["floor"] = floor_forward
+
+    # One raw-input scale for every content box. A batch worker receives the
+    # plan-time range through --norm-range; a direct content fit resolves it once
+    # here against the whole selected volume. The floor remains a separate raw
+    # zero point and _normalize_data combines the two without clipping the top.
+    if box_fit_kwargs.get("norm_range") is None:
+        from luxar.gsplats.fitting.preprocessing import resolve_volume_norm_range
+
+        box_fit_kwargs["norm_range"] = resolve_volume_norm_range(
+            vol,
+            float(box_fit_kwargs.get("norm_percentile", 0.0)),
+            verbose=verbose,
+        )
 
     # ── obtain a plan: load --plan, or scan + plan ──
     created_plan = False
@@ -446,6 +461,7 @@ def run_content_fit(
             # The RESOLVED level, not the spec: each worker would otherwise
             # re-estimate on its own box crop (#1174).
             floor=floor_forward,
+            norm_range=box_fit_kwargs["norm_range"],
             channel=channel,
             timepoint=timepoint,
             array_key=array_key,

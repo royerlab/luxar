@@ -101,6 +101,14 @@ class BatchManifest:
     this field — in the last two cases the run keeps its recorded ``fit_args``
     floor SPEC, so a resumed old batch behaves exactly as it did when planned."""
 
+    norm_range: Optional[Tuple[float, float]] = None
+    """The ONE raw-input normalization range resolved at plan time and forwarded
+    to every ``(t, c)`` task through ``fit_args["norm_range"]``. It is measured
+    from bounded samples of the same representative slices used for
+    ``floor_level``, so normalized absolute thresholds do not vary with time or
+    channel. ``None`` means the manifest predates this field; its tasks keep their
+    historical per-sub-volume range resolution."""
+
     grid_scale: Optional[List[float]] = None
     """Per-axis factor mapping the VOXEL tile grid onto the frame the fit tasks'
     splats actually come back in (``uniform`` mode; #1587).
