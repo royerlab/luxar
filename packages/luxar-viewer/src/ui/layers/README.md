@@ -215,15 +215,15 @@ after the last panel commit kept its own window until the next one, so load
 order decided how a level looked (#1753).
 
 So for a **colormap-active** leaf under a LOD ladder, `applyComposed`
-re-expresses the composed window in that leaf's own range before pushing it,
+re-expresses the layer's window in that leaf's own range before pushing it,
 preserving its relative position
 (`rendering/display-range.ts::remapWindowToLeafRange`): the middle 40% of the
 layer's signal stays the middle 40% of each level's signal. The window is
 returned **unchanged** when either range is missing, when either is
 non-remappable — degenerate, inverted, or non-finite (`[x, x]` is legitimate:
 every classical splat import has `amplitudes = 1`; a sub-`1e-10` reference span
-means `computeUniforms` already collapsed the composed window to the identity
-`[0, 1]`, so it is not in the reference basis at all; and a zero-span _leaf_
+means the layer's window was seeded from a single point and `t₀`/`t₁` come out
+as `0/0`; and a zero-span _leaf_
 range collapses the window to a point, which `computeScalarRangeUniforms`
 answers with the **LUT midpoint** (#631), i.e. one flat neutral colour for the
 whole leaf) — or when the two ranges are equal, the common case, short-circuited
@@ -333,8 +333,18 @@ remapping it would corrupt a window that was already correct. Four arms decline:
   which mirrors `resolveColormapWindow`'s "non-identity raw leaf gain ⇒ the
   composed gain IS the window" rule.
 
-Ancestors _above_ the layer are not gated: their gain composes so the panel lands
-on exactly the window the node factory computes at creation.
+Ancestors _above_ the layer are not gated — but they are not remapped through
+either. What gets re-expressed is the layer's OWN window (`displayMin` /
+`displayMax`), the only one actually stated in reference units, and the ancestor
+gain is re-applied to the result. Remapping the _composed_ window instead would
+read a position that already carries that gain as if it were a reference-basis
+position; the error cancels when `ref₀/refSpan == leaf₀/leafSpan` — notably when
+both ranges start at 0, as gsplat amplitude ranges nearly always do — and not
+otherwise. With `ref = [1, 3]`, `leaf = [0, 8]` and an ancestor `intensity = 2`
+it gives `[-2, 2]`, a quarter of the LUT spent below the leaf's own minimum,
+where node creation gives `[0, 4]`. Swapping the layer's contribution reproduces
+`resolveColormapWindow`'s ancestor-only branch identically for every range pair,
+which is what the two positive controls in the test file pin.
 
 One asymmetry this does **not** close: a leaf declaring no range at all keeps the
 composed window from the panel, while `create-gsplats-node.ts` gives the same

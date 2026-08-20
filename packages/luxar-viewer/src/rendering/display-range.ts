@@ -131,16 +131,15 @@ function isRemappableRange(range: readonly [number, number]): boolean {
  * which would otherwise silently produce a *different* window rather than a
  * refined one:
  *
- * - **Either range missing.** Nothing to map between; the composed window is
+ * - **Either range missing.** Nothing to map between; the incoming window is
  *   already the best available answer.
  * - **A non-remappable reference range** (`isRemappableRange`, file-private). A
  *   degenerate `[x, x]` range is legitimate — every classical splat import has
  *   `amplitudes = 1`, and constant-amplitude producers emit it on purpose — and
  *   dividing by its ~zero span would yield ±∞/NaN. Below `1e-10` there is a
- *   sharper reason than the arithmetic: `computeUniforms` has ALREADY answered
- *   such a span with the identity `{1, 0}`, so the composed window is `[0, 1]`
- *   and not the reference window at all — mapping it would extrapolate by up to
- *   1e10.
+ *   sharper reason than the arithmetic: the panel seeds the layer's window FROM
+ *   this range, so a degenerate one means the incoming window is a single point
+ *   as well, and `t₀`/`t₁` come out as 0/0 or an arbitrary multiple of 1e10.
  * - **A non-remappable leaf range.** A degenerate leaf range collapses the
  *   window to a single point, and `updateScalarRange` hands that straight to
  *   `computeScalarRangeUniforms`, which answers a sub-eps span with the LUT
@@ -151,8 +150,13 @@ function isRemappableRange(range: readonly [number, number]): boolean {
  *   Short-circuiting keeps the window bit-exact instead of round-tripping it
  *   through two floating-point divisions.
  *
- * @param window     The composed layer window (`computeDisplayRange` of the
- *                   effective gain/offset).
+ * @param window     The layer's OWN window (`LayerInfo.displayMin/Max`), which
+ *                   is the one stated in `ref` units. Deliberately not the
+ *                   COMPOSED window: that one already carries whatever gain the
+ *                   ancestry above the layer contributes, so reading it as a
+ *                   position inside `ref` is a basis error (it cancels only when
+ *                   `ref₀/refSpan === leafRange₀/leafSpan`). The caller
+ *                   re-applies the ancestor gain to the result instead.
  * @param ref        The layer's reference scalar range (`LayerInfo.scalarDataRange`).
  * @param leafRange  This leaf's own `scalar_data_range` / `amplitude_data_range`.
  */

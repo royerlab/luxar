@@ -42,7 +42,12 @@ import {
   type EffectiveAttrs,
 } from '../../data/attrs-composer';
 import { getBlendingState, liveLayerAttrs as deriveLiveLayerAttrs } from './attrs-utils';
-import { computeDisplayRange, type LayerInfo, type LayerStateManager } from './layer-state';
+import {
+  computeDisplayRange,
+  computeUniforms,
+  type LayerInfo,
+  type LayerStateManager,
+} from './layer-state';
 import { remapWindowToLeafRange } from '../../rendering/display-range';
 import {
   applyColorAdjustments,
@@ -318,10 +323,13 @@ export class LayerApplyEngine {
    *    says the same thing at load time: a non-identity RAW LEAF gain means the
    *    composed gain IS the window and the data range is not consulted.
    *
-   * Ancestors ABOVE the edited layer are deliberately NOT gated: their gain
-   * composes so that the panel result matches `resolveColormapWindow`'s
-   * ancestor-only branch exactly (ancestor `intensity = 2`, reference `[0, 2]`,
-   * leaf `[0, 8]` → both give `[0, 4]`), and that agreement is itself pinned.
+   * Ancestors ABOVE the edited layer are deliberately NOT gated — but they are
+   * not folded into the remap either. `leafScalarWindow` re-expresses the
+   * LAYER'S OWN window and re-applies the ancestor gain afterwards, which is
+   * what makes the panel match `resolveColormapWindow`'s ancestor-only branch
+   * exactly (ancestor `intensity = 2`, reference `[0, 2]`, leaf `[0, 8]` → both
+   * give `[0, 4]`) — see the note there for why remapping the COMPOSED window
+   * instead only agrees when the two ranges happen to share a relative origin.
    */
   private composedWindowIsInReferenceBasis(
     leafPath: string,
@@ -393,9 +401,25 @@ export class LayerApplyEngine {
    * happen, live in the pure `remapWindowToLeafRange`; the common single-range
    * layer short-circuits there and gets the composed window back bit-exact.
    *
+   * What gets remapped is the LAYER'S OWN window, not the composed one, and the
+   * ancestor gain is re-applied to the result. Only the layer's own window is a
+   * position inside `layer.scalarDataRange`; the composed window is that
+   * position already transformed by whatever gain the ancestry above the layer
+   * contributes, and reading it as a reference-basis position is a basis error
+   * of exactly the kind {@link composedWindowIsInReferenceBasis} exists to
+   * refuse. It cancels out when the two ranges share a relative origin
+   * (`ref₀/refSpan === leaf₀/leafSpan` — notably when both start at 0) and not
+   * otherwise: with `ref = [1, 3]`, `leaf = [0, 8]` and an ancestor
+   * `intensity = 2`, remapping the composed window gives `[-2, 2]` where node
+   * creation gives `[0, 4]`. Swapping the layer's contribution reproduces
+   * `resolveColormapWindow`'s ancestor-only branch identically for every range
+   * pair.
+   *
    * Only meaningful for a colormap-active material: a direct-colour leaf has no
    * scalar window (its gain/offset are a colour GOG), which is the same condition
-   * `applyColorAdjustments` routes on.
+   * `applyColorAdjustments` routes on. That is also why `eff` here is never the
+   * `identityLayerWindow` composition — that substitution is made only for
+   * direct-colour leaves, which never reach this helper.
    */
   private leafScalarWindow(
     leaf: SceneNode,
@@ -407,7 +431,23 @@ export class LayerApplyEngine {
     if (!this.composedWindowIsInReferenceBasis(leaf.path, layer.path, ancestors)) return composed;
     const leafRange = (leaf.attrs.scalar_data_range || leaf.attrs.amplitude_data_range) as
       [number, number] | undefined;
-    return remapWindowToLeafRange(composed, layer.scalarDataRange, leafRange);
+    const own = { min: layer.displayMin, max: layer.displayMax };
+    const remapped = remapWindowToLeafRange(own, layer.scalarDataRange, leafRange);
+    // `remapWindowToLeafRange` hands back the very object it was given when it
+    // declines, so identity is the cheapest "nothing to re-express" test.
+    if (remapped === own) return composed;
+    const from = computeUniforms(own.min, own.max);
+    // Nothing above the layer contributes a gain (the overwhelmingly common
+    // case): `eff` IS the layer's own window, so the remapped window is the
+    // answer verbatim — and bit-exactly, without a multiply/divide round trip.
+    if (eff.intensity === from.intensity && eff.offset === from.offset) return remapped;
+    // Otherwise swap the layer's contribution from its own window to the leaf's
+    // and leave the ancestor gain in `eff` exactly where it was.
+    const to = computeUniforms(remapped.min, remapped.max);
+    return computeDisplayRange(
+      (eff.intensity * to.intensity) / from.intensity,
+      eff.offset - from.offset + to.offset
+    );
   }
 
   private applyBlendingStateToMaterial(mat: LuxarMaterial, mode: string): void {

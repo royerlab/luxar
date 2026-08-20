@@ -575,8 +575,9 @@ describe('the remap declines when the composed window is not in the reference ba
 
   it('a gain on a non-layer ANCESTOR still remaps, and agrees with creation', () => {
     // The positive control for the arms above: an ancestor ABOVE the edited
-    // layer is deliberately NOT gated, because its gain composes so that the
-    // panel lands on exactly the window the node factory computes at creation.
+    // layer is deliberately NOT gated, because the remap re-expresses the
+    // LAYER'S OWN window and re-applies the ancestor gain afterwards, landing
+    // on exactly the window the node factory computes at creation.
     const h = harness(
       LOD_WRAPPER,
       [
@@ -618,6 +619,56 @@ describe('the remap declines when the composed window is not in the reference ba
     expect(
       norm(resolveColormapWindow([0, 8], { intensity: 1, offset: 0 }, { intensity: 2, offset: 0 }))
     ).toEqual([0, 4]);
+  });
+
+  it('…including when the ranges do NOT start at zero', () => {
+    // The case above agrees for either implementation, because every range in
+    // it starts at 0. Remapping the COMPOSED window (which already carries the
+    // ancestor gain) reads it as a position inside the reference range, and
+    // that only cancels when `ref₀/refSpan === leaf₀/leafSpan`. Shift the
+    // reference off zero and the two part company: the composed window is
+    // [0.5, 1.5] and remapping THAT onto [0, 8] gives [-2, 2] — a quarter of
+    // the LUT spent below the leaf's own minimum — where creation gives [0, 4].
+    const h = harness(
+      LOD_WRAPPER,
+      [
+        {
+          name: 'coarse',
+          type: 'gsplats',
+          attrs: {
+            amplitude_data_range: [0, 8],
+            n_splats: 100,
+            has_scalars: true,
+            colormap: 'viridis',
+          },
+        },
+        {
+          name: 'fine',
+          type: 'gsplats',
+          attrs: {
+            amplitude_data_range: [1, 3],
+            n_splats: 1600,
+            has_scalars: true,
+            colormap: 'viridis',
+          },
+        },
+      ],
+      { intensity: 2 }
+    );
+    expect(h.layer().scalarDataRange).toEqual([1, 3]);
+
+    h.apply();
+
+    expect(windowOf(h.mats.get('coarse')!)).toEqual([0, 4]);
+    expect(
+      norm(resolveColormapWindow([0, 8], { intensity: 1, offset: 0 }, { intensity: 2, offset: 0 }))
+    ).toEqual([0, 4]);
+    // The reference level itself short-circuits, so it keeps the composed
+    // window — which is also what creation gives it.
+    expect(windowOf(h.mats.get('fine')!)).toEqual([0.5, 1.5]);
+    expect(
+      norm(resolveColormapWindow([1, 3], { intensity: 1, offset: 0 }, { intensity: 2, offset: 0 }))
+    ).toEqual([0.5, 1.5]);
   });
 });
 
