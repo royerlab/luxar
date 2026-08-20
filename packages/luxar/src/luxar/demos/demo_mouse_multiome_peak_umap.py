@@ -294,7 +294,12 @@ def create_mouse_scene(
                         )
 
             scene.add_text(
-                f"{n_points:,} peaks • Mouse E7.5–E8.75 • 3D UMAP • Lange et al., Cell 2024",
+                # No credit here on purpose: this footer used to name "Lange et al.,
+                # Cell 2024", which is the ZEBRAFISH Zebrahub atlas -- copy-pasted
+                # from the zebrafish sibling demo onto mouse data, and supported by
+                # nothing in this file. Removed rather than replaced, because the
+                # real source is not recorded anywhere here (see #1744).
+                f"{n_points:,} peaks • Mouse E7.5–E8.75 • 3D UMAP",
                 position=(0.98, 0.97),
                 font_size=0.012,
                 anchor="bottom-right",

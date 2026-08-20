@@ -60,6 +60,10 @@ DEMO_META = {
     },
     "caches": ["global_rivers_earth"],
     "outputs": ["global_rivers_earth"],
+    "citation": {
+        "short": "ETOPO 2022 / HydroSHEDS",
+        "doi": "10.25921/fd45-gt74",
+    },
 }
 
 from pathlib import Path
@@ -358,7 +362,9 @@ def build_scene(etopo_path: Path, shp_path: Path, output_path: Path) -> Path:
         )
         with LuxarZarrCompiler(output_path, encoding_mode=EncodingMode.PRECISION) as c:
             scene = c.create_scene(
-                dimensions=dims, viewer_config=ViewerConfig(tone_mapping="ACES")
+                dimensions=dims,
+                viewer_config=ViewerConfig(tone_mapping="ACES"),
+                citation=DEMO_META["citation"],
             )
             scene.attrs["title"] = "Rivers of Earth — global topography + HydroRIVERS"
             scene.add_points(

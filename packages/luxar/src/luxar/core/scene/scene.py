@@ -9,13 +9,14 @@ from __future__ import annotations
 
 from os import PathLike
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Mapping, Optional, Tuple, Union
 
 import numpy as np
 from arbol import aprint
 
 from ...io.writer import ZarrWriterProtocol
 from ...utils.atomic_copy import atomic_copytree
+from ..citation import validate_citation
 from ..dimensions import Dimensions
 from ..group import Group
 from ..overlay import Overlay
@@ -59,6 +60,7 @@ class Scene(Group):
         writer: ZarrWriterProtocol,
         dimensions: Dimensions,
         viewer_config: Optional[ViewerConfig] = None,
+        citation: Optional[Mapping[str, str]] = None,
     ) -> None:
         """Initialize a new Luxar scene.
 
@@ -68,9 +70,15 @@ class Scene(Group):
                 Defines the coordinate system for all data in the scene.
             viewer_config: Optional viewer configuration hints. Stored in
                 the zarr file and used by the viewer as scene-specific defaults.
+            citation: Optional credit for whoever produced the underlying
+                dataset -- ``{"short", "doi"?, "license"?, "url"?}``. Written to
+                the store's root attributes so the attribution travels with the
+                data rather than only with the page that happens to show it.
+                ``None`` means no external dataset to credit.
 
         Raises:
-            ValueError: If writer is None, dimensions is None, or initialization fails
+            ValueError: If writer is None, dimensions is None, the citation is
+                malformed, or initialization fails
         """
         try:
             if writer is None:
@@ -98,6 +106,13 @@ class Scene(Group):
             if viewer_config is not None:
                 writer.write_group("/", viewer_config=viewer_config.to_dict())
 
+            # Store the dataset credit if provided. Validated here rather than
+            # trusted, because a malformed citation that reaches the store is
+            # then baked into every copy of the data.
+            self._citation: Optional[dict[str, str]] = validate_citation(citation)
+            if self._citation is not None:
+                writer.write_group("/", citation=self._citation)
+
             # Overlay state
             self._overlay_counter: int = 0
             self._overlays: List[Overlay] = []
@@ -112,6 +127,11 @@ class Scene(Group):
         except Exception as e:
             aprint(f"Failed to initialize Scene: {e}")
             raise ValueError(f"Could not initialize Scene: {e}") from e
+
+    @property
+    def citation(self) -> Optional[dict[str, str]]:
+        """Dataset credit stamped into the store root, or None if none is owed."""
+        return dict(self._citation) if self._citation is not None else None
 
     # ---------------------------------------------------------- hierarchy
 

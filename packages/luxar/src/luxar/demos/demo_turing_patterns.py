@@ -53,6 +53,8 @@ DEMO_META = {
     },
     "caches": [],
     "outputs": ["turing_patterns"],
+    # Procedurally generated: no external dataset, nothing to credit.
+    "citation": None,
 }
 
 import sys

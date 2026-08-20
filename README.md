@@ -999,7 +999,7 @@ providers, under their respective licenses. Each demo script's docstring carries
 the full citation.
 
 **Microscopy & cell biology**
-- **Cells3D** — fluorescence microscopy sample data via scikit-image (`skimage.data.cells3d`); van der Walt et al. (2014), *PeerJ* 2:e453, [doi:10.7717/peerj.453](https://doi.org/10.7717/peerj.453).
+- **Cells3D** — fluorescence microscopy provided by the [Allen Institute for Cell Science](https://www.allencell.org/), distributed as scikit-image sample data (`skimage.data.cells3d`); scikit-image itself: van der Walt et al. (2014), *PeerJ* 2:e453, [doi:10.7717/peerj.453](https://doi.org/10.7717/peerj.453).
 - **3D Organoid** — Blin et al. (2019), via the [Image Data Resource](https://idr.openmicroscopy.org/) (IDR; Williams et al. 2017, *Nat. Methods*, [doi:10.1038/nmeth.4326](https://doi.org/10.1038/nmeth.4326)).
 - **Zebrafish Neuromast** — Adrian Jacobo lab (CZ Biohub SF / Rockefeller); iSIM, deconvolved 4D timelapse.
 - **Tribolium Embryo** — [Cell Tracking Challenge](https://celltrackingchallenge.net/) ([Zenodo](https://zenodo.org/records/5270323)); Yin et al. (2022), *J. Cell Sci.*, [doi:10.1242/jcs.259022](https://doi.org/10.1242/jcs.259022); Maška et al. (2023), *Nat. Methods*.
@@ -1025,7 +1025,7 @@ the full citation.
 **Single-cell atlases & embeddings**
 - **Tabula Sapiens** — Tabula Sapiens Consortium (2022), *Science*, [doi:10.1126/science.abl4896](https://doi.org/10.1126/science.abl4896); accessed via [CZ CELLxGENE Discover](https://cellxgene.cziscience.com/) (CC BY 4.0).
 - **Zebrahub** — [CZ Biohub Zebrahub](https://zebrahub.org); Zebrahub-Multiome, Kim et al. (2024), [bioRxiv:2024.10.18.618987](https://www.biorxiv.org/content/10.1101/2024.10.18.618987v2).
-- **Protein Landscape** — CAFA5 protein embeddings via ProtT5 (Elnaggar et al. 2021, *IEEE TPAMI*, [doi:10.1109/TPAMI.2021.3095381](https://doi.org/10.1109/TPAMI.2021.3095381)); [CAFA5 challenge](https://www.kaggle.com/competitions/cafa-5-protein-function-prediction).
+- **Protein Landscape** — CAFA5 protein embeddings via ProtT5 (Elnaggar et al. 2022, *IEEE TPAMI*, [doi:10.1109/TPAMI.2021.3095381](https://doi.org/10.1109/TPAMI.2021.3095381)); [CAFA5 challenge](https://www.kaggle.com/competitions/cafa-5-protein-function-prediction).
 - **Spotify Tracks** — [`maharshipandya/spotify-tracks-dataset`](https://huggingface.co/datasets/maharshipandya/spotify-tracks-dataset) (Hugging Face), derived from the Spotify Web API audio features.
 - **Human Multiome** — peak-accessibility UMAP of a human single-cell multiome; data from Domcke et al. (2020), *A human cell atlas of fetal chromatin accessibility*, *Science* 370:eaba7612, [doi:10.1126/science.aba7612](https://doi.org/10.1126/science.aba7612); peak-UMAP analysis from Zebrahub-Multiome, Kim et al. (2024), [bioRxiv:2024.10.18.618987](https://www.biorxiv.org/content/10.1101/2024.10.18.618987v2).
 - **Mouse Multiome** — peak-accessibility UMAP of a mouse single-cell multiome; data from Argelaguet et al. (2022), *Decoding gene regulation in the mouse embryo using single-cell multi-omics*, [bioRxiv:2022.06.15.496239](https://doi.org/10.1101/2022.06.15.496239); peak-UMAP analysis from Zebrahub-Multiome, Kim et al. (2024), [bioRxiv:2024.10.18.618987](https://www.biorxiv.org/content/10.1101/2024.10.18.618987v2).

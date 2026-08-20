@@ -66,6 +66,10 @@ DEMO_META = {
     },
     "caches": ["gsplats_milkyway_dust"],
     "outputs": ["gsplats_3d_milky_way_dust"],
+    "citation": {
+        "short": "Leike et al. 2020",
+        "doi": "10.1051/0004-6361/202038169",
+    },
 }
 
 import sys
@@ -318,6 +322,7 @@ def create_luxar_scene(gsplats_data: GSplatData, output_path: Path) -> Path:
             scene = compiler.create_scene(
                 dimensions=dims,
                 viewer_config=ViewerConfig(tone_mapping="ACES", exposure=-0.17),
+                citation=DEMO_META["citation"],
             )
             scene.attrs["title"] = (
                 "GSplats: Milky Way Interstellar Dust (Leike & Enßlin 2020)"

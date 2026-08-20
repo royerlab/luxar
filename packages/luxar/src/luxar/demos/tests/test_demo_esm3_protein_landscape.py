@@ -406,16 +406,20 @@ class TestMainReportsQuarantine:
         assert corrupt in reported, "serve-path call did not forward the reported set"
 
 
-def _write_instant_cache(cache_dir: Path, n: int = 40) -> int:
-    """Fabricate the two artifacts the instant path reads (sample_size=0/esmc-300m).
+def _write_instant_cache(
+    cache_dir: Path, n: int = 40, model_name: str = "esmc-300m"
+) -> int:
+    """Fabricate the two artifacts the instant path reads (sample_size=0).
 
     Returns ``n`` so callers can assert the generator's protein count (the scene
-    itself carries ``2 * n`` rows — one block per coloring).
+    itself carries ``2 * n`` rows — one block per coloring). The UMAP cache is
+    keyed on the model, so ``model_name`` must match the generator's.
     """
     cache_dir.mkdir(parents=True, exist_ok=True)
     rng = np.random.default_rng(0)
     positions = rng.standard_normal((n, 3)).astype(np.float32)
-    np.savez(cache_dir / "umap3d_esmc_300m_all.npz", positions=positions)
+    tag = model_name.replace("-", "_")
+    np.savez(cache_dir / f"umap3d_{tag}_all.npz", positions=positions)
 
     # Realistic kingdoms present in TAXON_COLORS/_DOMAIN_OF, plus an unknown one
     # ("Slime Mold") to exercise the "Other" fallback.
@@ -529,4 +533,54 @@ class TestCompleteCacheRunsWithoutLodDeps:
         assert (proteins / "child_0").exists(), "LOD group missing child_0"
         assert not (proteins / "positions").exists(), (
             "LOD group must not write top-level positions"
+        )
+
+
+class TestCitationNamesTheModelThatRan:
+    """The stored credit must name the model that produced these embeddings.
+
+    The demo picks its model at runtime (``--model=``), so a static credit taken
+    straight from ``DEMO_META`` would write "embeddings by ESM-3" into a store
+    whose coordinates came from ESM C — contradicting the scene's own footer and
+    crediting the wrong party on whichever path was not the default.
+    """
+
+    @pytest.mark.parametrize(
+        ("model_name", "expected"),
+        [
+            ("esmc-300m", "EvolutionaryScale ESM C, 2024"),
+            ("esm3-open", "Hayes et al. 2025"),
+        ],
+    )
+    def test_root_citation_follows_the_model(
+        self, tmp_path, model_name, expected
+    ) -> None:
+        cache_dir = tmp_path / "cache"
+        _write_instant_cache(cache_dir, model_name=model_name)
+
+        out_path = tmp_path / f"esm3_{model_name}.luxar.zarr"
+        generate_esm3_landscape(
+            out_path, sample_size=0, model_name=model_name, cache_dir=cache_dir
+        )
+
+        citation = (read_node_attrs(out_path) or {}).get("citation")
+        assert citation is not None, "scene wrote no citation"
+        assert citation["short"] == f"UniProt/Swiss-Prot; embeddings by {expected}", (
+            f"credit does not name the model that ran: {citation['short']!r}"
+        )
+        # The dataset half is not the model's to claim, and the licence rides
+        # along from DEMO_META rather than being dropped by the override.
+        assert citation.get("license") == "CC BY 4.0"
+
+    def test_default_model_matches_the_static_credit(self, tmp_path) -> None:
+        """A caller omitting ``model_name`` gets the model DEMO_META credits."""
+        cache_dir = tmp_path / "cache"
+        _write_instant_cache(cache_dir)
+
+        out_path = tmp_path / "esm3_default.luxar.zarr"
+        generate_esm3_landscape(out_path, sample_size=0, cache_dir=cache_dir)
+
+        citation = (read_node_attrs(out_path) or {}).get("citation")
+        assert citation["short"] == demo.DEMO_META["citation"]["short"], (
+            "the default run's credit disagrees with DEMO_META's"
         )

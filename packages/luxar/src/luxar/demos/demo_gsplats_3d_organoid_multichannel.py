@@ -21,28 +21,30 @@ Dataset:
 --------
 Image ID: 6001240 (idr6001240)
 Source: Image Data Resource (IDR) - https://idr.openmicroscopy.org/
-Study: idr0062 - Intestinal organoid development and nuclear segmentation
+Study: idr0062-blin-nuclearsegmentation - nuclear segmentation benchmark
 Format: OME-ZARR 5D (Time × Channel × Z × Y × X)
-Data Type: High-resolution 3D light microscopy of mouse intestinal organoid
+Data Type: High-resolution 3D confocal microscopy of a mouse blastocyst (E3.5),
+           imaged for segmentation benchmarking
 
 Original Authors & Study:
 --------------------------
-Principal Investigator: Prisca Liberali
-Institution: Friedrich Miescher Institute for Biomedical Research (FMI)
+Principal Investigator: Sally Lowell
+Institution: University of Edinburgh (data published by the University of Dundee)
 
-This data is part of research on intestinal organoid development, nuclear
-segmentation, and symmetry breaking in organoids.
+The image is one of the benchmark volumes behind Nessys, a nuclear-segmentation
+method for dense 3D tissue.
 
 How to Cite:
 ------------
 If you use this dataset, please cite:
 
-1. Original Research:
-   Blin, G., et al. (2019). "A conserved role for β-catenin in
-   organ-specific branching morphogenesis."
-   (Or related publications from Liberali lab associated with IDR study idr0062)
+1. Original Research (what the credit in DEMO_META names):
+   Blin, G., Sadurska, D., Portero Migueles, R., Chen, N., Watson, J.A.,
+   Lowell, S. (2019). "Nessys: A new set of tools for the automated detection
+   of nuclei within intact tissues and dense 3D cultures." PLoS Biology.
+   DOI: 10.1371/journal.pbio.3000388 (CC BY 4.0)
 
-2. Image Data Resource (IDR):
+2. Image Data Resource (IDR) — the repository, not the data's authors:
    Williams, E. et al. (2017). "The Image Data Resource: a bioimage data
    integration and publication platform."
    Nature Methods, 14(8), 775-781.
@@ -103,6 +105,15 @@ DEMO_META = {
     },
     "caches": ["gsplats_multichannel"],
     "outputs": ["gsplats_3d_organoid_multichannel"],
+    # The study that produced the image, not the repository that hosts it:
+    # IDR's own record for idr0062 names Blin et al. and the PLoS Biology DOI,
+    # and crediting the IDR platform paper instead would attribute someone
+    # else's data to the archive it happens to sit in.
+    "citation": {
+        "short": "Blin et al. 2019",
+        "doi": "10.1371/journal.pbio.3000388",
+        "license": "CC BY 4.0",
+    },
 }
 
 # Enable MPS→CPU fallback for unsupported PyTorch ops (must be before torch import)
@@ -191,12 +202,12 @@ def load_multichannel_data():
         here and so are their own source.
 
     Data Source: Image Data Resource (IDR) study idr0062, Image 6001240
-    Original Authors: Prisca Liberali lab, FMI
-    Citation: Blin et al. (2019) + Williams et al. (2017) Nature Methods 14(8):775-781
+    Original Authors: Blin et al., Lowell lab (University of Edinburgh)
+    Citation: Blin et al. (2019), PLoS Biology, doi:10.1371/journal.pbio.3000388
     """
     with asection("Loading multi-channel microscopy data"):
         aprint(f"Source: {ZARR_URL}")
-        aprint("Dataset: IDR idr0062, Image 6001240 (Liberali lab, FMI)")
+        aprint("Dataset: IDR idr0062, Image 6001240 (Blin et al. 2019, Lowell lab)")
         aprint("Resolution: native (no zoom resample)")
 
         try:
@@ -446,6 +457,7 @@ def create_luxar_scene(gsplats_list, output_path: Path | None = None):
             scene = compiler.create_scene(
                 dimensions=Dimensions.default_3d(),
                 viewer_config=ViewerConfig(tone_mapping="ACES"),
+                citation=DEMO_META["citation"],
             )
 
             # Add scene metadata
@@ -459,9 +471,9 @@ Gaussian splats with per-channel colors as separate layers.
 
 Data Source:
   - Image Data Resource (IDR) study idr0062, Image 6001240
-  - High-resolution 3D microscopy of mouse intestinal organoid
-  - Original research: Prisca Liberali lab, FMI
-  - Citation: Blin et al. (2019) + Williams et al. (2017) Nat Methods 14(8):775-781
+  - High-resolution 3D confocal microscopy of a mouse blastocyst (E3.5)
+  - Original research: Blin et al. (2019), PLoS Biology (Lowell lab, Edinburgh),
+    doi:10.1371/journal.pbio.3000388, CC BY 4.0
 
 Each channel is a separate layer with its own colormap:
 - Magenta: Channel 0
