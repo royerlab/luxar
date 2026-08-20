@@ -33,11 +33,17 @@ import shutil
 import stat
 import tarfile
 import tempfile
+import warnings
 import zipfile
 from pathlib import Path, PurePosixPath
-from typing import Any, Dict, Optional
+from typing import IO, Any, Callable, Dict, Optional
 
-from luxar._zarr_compat import NODE_ATTR_DOCS, NODE_GROUP_DOCS, attrs_from_node_doc
+from luxar._zarr_compat import (
+    NODE_ATTR_DOCS,
+    NODE_GROUP_DOCS,
+    V3_NODE_DOC,
+    attrs_from_node_doc,
+)
 
 __all__ = ["extract_compressed_zarr", "read_archive_root_attrs", "resolve_store_path"]
 
@@ -45,10 +51,185 @@ __all__ = ["extract_compressed_zarr", "read_archive_root_attrs", "resolve_store_
 _MAX_MEMBERS = 5_000_000
 #: Reject archives whose declared total uncompressed size exceeds this (256 GiB).
 _MAX_TOTAL_UNCOMPRESSED_BYTES = 256 * 1024**3
-#: Refuse a ``.zattrs`` bigger than this (4 MiB). A zarr group's attrs are a
-#: small JSON object; anything this large is not attrs, and reading it into
-#: memory during a best-effort peek is not a cost worth paying.
+#: Refuse ATTRIBUTES bigger than this (4 MiB) — the user-authored mapping this
+#: peek hands back, once any format-3 document has been unwrapped to it. A zarr
+#: node's attrs really are a small JSON object (a Luxar root carries a couple of
+#: dozen scalars); anything this large is not attrs, and materializing it during
+#: a best-effort peek is not a cost worth paying.
+#:
+#: Applied in two places, which is the point: as the member budget for a
+#: format-2 ``.zattrs``, which literally IS the attributes mapping, and again
+#: after parsing (:func:`_parse_attrs`) — but there ONLY when the member's own
+#: bytes exceeded this number, i.e. only when the raised budget below was
+#: actually USED, so that raising THAT budget cannot raise what this peek can
+#: hand a caller. A member already inside this number is never measured twice:
+#: the second check measures a re-serialization rather than the bytes on disk,
+#: so there it could only ever refuse something this very budget admitted (see
+#: :func:`_parse_attrs` for why the two are not the same currency). For a
+#: ``.zattrs`` that is arithmetic rather than convention — its member budget IS
+#: this number, so the re-cap condition is unreachable for it.
 _MAX_ATTRS_BYTES = 4 * 1024**2
+
+#: Refuse a format-3 node DOCUMENT (``zarr.json``) bigger than this (128 MiB).
+#:
+#: A separate and much larger budget, because a ``zarr.json`` is not the
+#: attributes: it carries the node's structural fields beside them and — at a
+#: CONSOLIDATED store root, which every Luxar store is — the whole consolidated
+#: index of every descendant, nested under ``consolidated_metadata``. So the
+#: document grows with the SHAPE OF THE TREE while its ``attributes`` stay a
+#: handful of scalars, and the attrs budget above is simply the wrong ruler for
+#: it. (This is why the two budgets exist at all: before the move to zarr format
+#: 3 the root document WAS ``.zattrs``, so one number covered both.)
+#:
+#: The index has one entry per NODE, not per part, so the rate depends on the
+#: SHAPE of each part and not only on how many there are. Measured twice
+#: independently on real ``write_gsplats_tree`` partitions at format 3, as
+#: APPROXIMATE bytes of root ``zarr.json`` per part — the exact count moves with
+#: the leaf's own shape, so these are ranges spanning both measurements, an order
+#: of magnitude and not a closed interval. The crossover part counts take the
+#: conservative (largest-per-part) end:
+#:
+#: * bare leaf part (one additive sub-LOD): ~8-10 KB (a real ``gsplat
+#:   partition``: ~9 KB) — 4 MiB crossed at ~400 parts, 128 MiB at ~13,000.
+#: * per-part 6-step ``stream`` ladder: ~48-54 KB — 4 MiB at ~78 parts, 128 MiB
+#:   at ~2,500.
+#: * per-part 3 levels x 4 sub-LODs (``adaptive``-shaped): ~100-110 KB — 4 MiB
+#:   at ~37 parts, 128 MiB at ~1,200.
+#:
+#: So the old single budget was far MORE reachable than a part count suggests:
+#: the recommended ``--recipe stream|levels|adaptive`` multiply nodes per part by
+#: 6-12x, and a ~37-part ``adaptive`` partition already crossed 4 MiB. Past that
+#: point this peek's ``{}`` reads as "this dataset authored no appearance" rather
+#: than as an error, so every rewriting command silently overwrote a
+#: zipped/tarred partition's appearance with the writer's defaults while the SAME
+#: tree as a directory store answered correctly. 128 MiB buys ~1,200-2,500 parts
+#: of headroom on the laddered shapes people actually publish (and ~13,000 on
+#: bare leaves) — real headroom, not unlimited, which is why a refusal now warns
+#: loudly (:func:`_warn_size_refusal`) instead of answering ``{}`` in silence.
+#:
+#: Not larger, because this is still an archive-bomb bound and the document is
+#: parsed whole: at the ~3-4x measured below, 128 MiB of JSON materializes
+#: several hundred MiB of Python objects, and that parse — not the byte count —
+#: is the real ceiling.
+#:
+#: Raising it does not widen the PRODUCT's exposure, which was verified rather
+#: than assumed: every caller of the peek also LOADS the same store, and
+#: ``luxar._zarr_compat.open_group`` opts reads out of consolidated metadata but
+#: still reads and parses the root document whole. Measured on ~8.4 MB
+#: consolidated roots — one ``LocalStore.get`` returning the whole document, a
+#: single ``json.loads`` over all of it, and a tracemalloc peak of ~3-4x the
+#: document (24.5 MiB peak on an 8,385,305-byte root, 32.6 MiB on an
+#: 8,384,150-byte one; the multiplier moves with the INDEX SHAPE, the structural
+#: claims do not) — so zarr materializes what this peek does, and more, for the same
+#: store. The exposure that IS new belongs to a caller invoking
+#: :func:`read_archive_root_attrs` directly on an untrusted archive and never
+#: opening it: that caller gets the raised ceiling with no load behind it.
+_MAX_NODE_DOC_BYTES = 128 * 1024**2
+
+
+def _is_node_document(member_name: str) -> bool:
+    """Whether an archive member is a format-3 node document (``zarr.json``).
+
+    THE single classification the NAME-keyed differences key on — the byte
+    budget (:func:`_max_member_bytes`) and the word used for it in a refusal
+    message. One predicate rather than two, and a predicate over the NAME rather
+    than over the budget VALUE, because a budget value is not a stable signal: a
+    test (or a future retune) that lowers :data:`_MAX_NODE_DOC_BYTES` below
+    :data:`_MAX_ATTRS_BYTES` inverts any ``cap > _MAX_ATTRS_BYTES`` comparison,
+    and a ``zarr.json`` then silently describes itself as attributes.
+
+    The post-parse re-cap of the unwrapped attributes is deliberately NOT keyed
+    on this. It exists solely to stop the RAISED budget from raising what the
+    peek hands back, so its honest trigger is "was the raised budget actually
+    used" — a fact about THIS MEMBER'S BYTES, not about its name and not about
+    how the two constants happen to be ordered (:func:`_parse_attrs`).
+
+    The name comes from the facade (:data:`~luxar._zarr_compat.V3_NODE_DOC`),
+    which owns metadata-document names, rather than being spelled again here or
+    read positionally out of :data:`NODE_ATTR_DOCS` — a positional read would let
+    a reordering of that tuple silently swap the two formats' treatment.
+    """
+    return PurePosixPath(member_name).name == V3_NODE_DOC
+
+
+def _max_member_bytes(member_name: str) -> int:
+    """Byte budget for a root metadata member, chosen by the document's NAME.
+
+    The name is the whole signal, and it is exact — it is also how the member was
+    selected in the first place (:func:`_root_attrs_rank`). A format-2
+    ``.zattrs`` is the attributes mapping itself and keeps the small
+    :data:`_MAX_ATTRS_BYTES` budget; nothing about format 2 changed. A format-3
+    ``zarr.json`` is a whole node document carrying the consolidated index and
+    gets :data:`_MAX_NODE_DOC_BYTES`. :func:`_is_node_document` is the one place
+    that distinction is made.
+
+    This rides on the SELECTION above, and inherits its one known limitation: a
+    root carrying BOTH documents ranks them equally, so the tie-break is archive
+    order and the peek budgets whichever one it happened to select, while
+    ``open_group`` resolves format 3 either way. No Luxar writer produces that
+    state and #1600 deliberately defers changing it (preferring the v3 document
+    at equal rank would cost the tar walk its rank-0 early stop), so this is a
+    recorded limitation and not an invariant being relied on.
+
+    Raising the document budget does not raise what the peek can hand back:
+    :func:`_parse_attrs` re-checks the unwrapped attributes against the small
+    budget whenever a member's bytes actually exceeded it — which only a
+    ``zarr.json`` read under the raised budget ever can.
+    """
+    return _MAX_NODE_DOC_BYTES if _is_node_document(member_name) else _MAX_ATTRS_BYTES
+
+
+def _warn_size_refusal(
+    archive_path: Path,
+    member_name: str,
+    what: str,
+    measured_bytes: int,
+    budget_bytes: int,
+    budget_name: str,
+) -> None:
+    """Say out loud that a size budget just cost this archive its appearance.
+
+    Every refusal in this peek returns ``{}``, and ``{}`` is indistinguishable
+    from "this dataset authored no appearance" at every layer above:
+    ``read_authored_appearance`` filters the mapping and only reports a NON-empty
+    carry, so a silent refusal reaches the user as a rebuild that quietly reset
+    the look — the exact undiagnosable symptom #1600 point 4 objects to, and the
+    reason the budgets themselves had to be revisited. The budgets are larger now
+    but still finite, so the next person to cross one gets a message naming the
+    archive, the member, the measured size and the budget instead of nothing.
+
+    A warning rather than console output because this is a library read path
+    (``luxar.gsplats.io`` warns; it does not print). Note the caller
+    ``load_gsplats.read_authored_appearance`` wraps this whole peek in
+    ``except Exception``, so under ``-W error`` the promoted warning is swallowed
+    there and the carry degrades to the same ``{}`` — louder is not available on
+    that path, and turning a best-effort carry into a hard failure is not wanted.
+
+    ``stacklevel=1`` deliberately: the warning is attributed to THIS module, which
+    is where it is raised and the only stable answer. There is no single correct
+    constant to thread it out with — the two callers
+    (:func:`_read_selected_member`, :func:`_parse_attrs`) sit at different depths,
+    and both are inside this file anyway, so a bumped level would still point at
+    an internal frame while merely being wrong about which one. Users suppressing
+    or routing this key on ``module=r"luxar\\.gsplats\\.io\\._archive"``, which
+    stacklevel does not affect.
+
+    Under the default warning filter this therefore dedupes per ARCHIVE: the
+    ``default`` action keys on message+category+module+lineno and the archive path
+    is in the message, so peeking the same archive twice in one process warns
+    once, while three different oversized archives warn three times.
+    """
+    warnings.warn(
+        f"Appearance peek refused the {what} '{member_name}' in {archive_path}: "
+        f"{measured_bytes:,} bytes exceeds the {budget_name} budget of "
+        f"{budget_bytes:,} bytes. This archive's ROOT ATTRIBUTES will not be "
+        "read, which every caller sees as 'no appearance was authored' — a "
+        "command rewriting this dataset will therefore write its own appearance "
+        "defaults over the authored look. Extract the archive and pass the "
+        "directory store to carry it.",
+        UserWarning,
+        stacklevel=1,
+    )
 
 
 def _is_zip(path: Path) -> bool:
@@ -574,7 +755,13 @@ def _zip_member_is_symlink(info: zipfile.ZipInfo) -> bool:
     return stat.S_ISLNK(info.external_attr >> 16)
 
 
-def _parse_attrs(raw: bytes, member_name: str) -> Dict[str, Any]:
+def _parse_attrs(
+    raw: bytes,
+    member_name: str,
+    *,
+    recap_attrs: bool,
+    archive_path: Path,
+) -> Dict[str, Any]:
     """Decode a node metadata payload; anything but a JSON object yields ``{}``.
 
     Both formats' documents arrive here, so the unwrapping is the facade's:
@@ -583,10 +770,154 @@ def _parse_attrs(raw: bytes, member_name: str) -> Dict[str, Any]:
     own name is what settles which — it is how the member was selected in the
     first place — so the facade is told rather than left to infer it from the
     content.
+
+    The unwrapped ATTRIBUTES are then capped at :data:`_MAX_ATTRS_BYTES`, but
+    ONLY when this member's own bytes exceeded that number (``recap_attrs``,
+    computed in :func:`_read_selected_member` as ``len(raw) > _MAX_ATTRS_BYTES``).
+    The re-cap exists for exactly one reason — a format-3 node document is
+    allowed :data:`_MAX_NODE_DOC_BYTES` because of the consolidated index it
+    carries, and that allowance must not become licence to hand a caller a
+    100 MiB attrs mapping — so the honest trigger is "was the raised budget
+    actually used", which is a fact about the bytes, not about the document's
+    name and not about how the two constants happen to be ordered.
+
+    Keying it on the bytes is what makes the three cases fall out, one of them
+    provably:
+
+    * a ``.zattrs`` can never be re-capped, and that is arithmetic rather than a
+      convention: its member budget IS :data:`_MAX_ATTRS_BYTES`
+      (:func:`_max_member_bytes`), so the declared-size and length gates refuse
+      first and ``len(raw) > _MAX_ATTRS_BYTES`` is unreachable on that branch;
+    * a ``zarr.json`` at or under :data:`_MAX_ATTRS_BYTES` is not re-capped
+      either, so nothing the single pre-#1600 budget admitted is newly refused —
+      which is a real case and not a courtesy, because a re-serialization is not
+      bounded by the source bytes (below);
+    * a ``zarr.json`` OVER it — the only member that actually used the raised
+      budget — is re-capped, which is the whole point.
+
+    That the re-cap can only ever REFUSE, never admit, is a property of the
+    CURRENCY it measures in, not of any one input, which is why the two
+    mitigations here are independent rather than one covering for the other:
+
+    * the measure is a COMPACT, faithful re-serialization — ``ensure_ascii`` off,
+      no separator padding — so it does not inflate non-ASCII attrs the way a
+      default ``json.dumps`` does (measured: attrs that are 1,800,029 bytes on
+      disk measure 1,800,026 compact but 5,400,029 ASCII-escaped, i.e. a 1.7 MiB
+      ``.zattrs`` would cross a 4 MiB cap purely by being escaped). That is the
+      whole reason the re-cap that DOES run — on a big format-3 document, whose
+      unwrapped attributes may legitimately be non-ASCII too — is not a fresh
+      silent-``{}`` trap.
+    * a re-serialization still cannot be assumed ``<=`` the source bytes even
+      after the escaping is removed, because ``json.loads`` is not
+      round-trip-preserving: exponent notation is one verified case
+      (``{"a":1e10}`` is 10 bytes and re-serializes to 19). That is precisely
+      why the re-cap must not run on a member the raised budget did not admit —
+      a 2.61 MiB ``zarr.json`` of such literals measures 4.24 MiB and would be
+      refused for nothing, reintroducing the silent ``{}`` this whole change
+      exists to remove.
+
+    Measuring by re-serializing at all is honest about the cost: the document is
+    already parsed and resident by this point, so this is one more pass over data
+    we are holding anyway, and no incremental accounting is possible once the
+    parse has happened.
     """
-    return attrs_from_node_doc(
+    attrs = attrs_from_node_doc(
         json.loads(raw.decode("utf-8")),
         doc_name=PurePosixPath(member_name).name,
+    )
+    if not recap_attrs:
+        return attrs
+    measured = len(
+        json.dumps(attrs, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    )
+    if measured > _MAX_ATTRS_BYTES:
+        _warn_size_refusal(
+            archive_path,
+            member_name,
+            "attributes unwrapped from",
+            measured,
+            _MAX_ATTRS_BYTES,
+            "attributes",
+        )
+        return {}
+    return attrs
+
+
+def _read_selected_member(
+    archive_path: Path,
+    member_name: str,
+    declared_size: int,
+    open_payload: Callable[[], Optional[IO[bytes]]],
+) -> Dict[str, Any]:
+    """Read the ONE member both peeks settled on, under its name's budget.
+
+    The zip and tar walks differ entirely — a central directory versus a lazy
+    header stream — but everything after the winner is chosen is identical, so it
+    lives here once: budget by DOCUMENT NAME (:func:`_max_member_bytes`; a
+    format-3 ``zarr.json`` root carries the whole consolidated index and is
+    orders of magnitude bigger than the attrs it nests), refuse on the size the
+    ARCHIVE declares, then bound the read itself rather than trusting that
+    declaration, then parse.
+
+    The parse re-caps the unwrapped attributes only when the bytes actually READ
+    exceeded :data:`_MAX_ATTRS_BYTES` — i.e. only when the raised document budget
+    was actually used, which is the one thing that re-cap exists to bound. The
+    budget and the refusal LABEL are keyed on the document's name; the re-cap is
+    keyed on this member's bytes, and :func:`_parse_attrs` says why the two
+    signals are not interchangeable.
+
+    ``open_payload`` is a zero-argument callable rather than an already-open
+    handle so nothing is decompressed for a member that the declared-size gate is
+    about to refuse; it may return ``None``, which is what ``tarfile``'s
+    ``extractfile`` gives for a member with no payload.
+
+    The bounding read (``cap + 1``) cannot actually over-deliver in either
+    format — ``ZipExtFile`` truncates the decompressed stream at the declared
+    ``file_size`` (a tampered central-directory size raises ``BadZipFile`` on the
+    CRC instead) and ``ExFileObject`` truncates at the tar header's size — so it
+    is belt-and-braces against a size the archive itself supplied.
+
+    The two member-level refusals word themselves DIFFERENTLY ("declared size"
+    versus "bytes read") even though they share a budget. They are not the same
+    gate: the declared-size one is the security-relevant half — it refuses
+    BEFORE ``open_payload`` is called, so an archive-bomb member is never
+    decompressed at all — while the second only catches a payload that outran its
+    own header. Identical wording made them indistinguishable to a
+    ``pytest.warns(match=…)``, so a test aimed at the first passed just as
+    happily when it was deleted and the second fired instead.
+    """
+    cap = _max_member_bytes(member_name)
+    budget_name = "document" if _is_node_document(member_name) else "attributes"
+    if declared_size > cap:
+        _warn_size_refusal(
+            archive_path,
+            member_name,
+            "metadata member (declared size)",
+            declared_size,
+            cap,
+            budget_name,
+        )
+        return {}
+    handle = open_payload()
+    if handle is None:
+        return {}
+    with handle:
+        raw = handle.read(cap + 1)
+    if len(raw) > cap:
+        _warn_size_refusal(
+            archive_path,
+            member_name,
+            "metadata member (bytes read)",
+            len(raw),
+            cap,
+            budget_name,
+        )
+        return {}
+    return _parse_attrs(
+        raw,
+        member_name,
+        recap_attrs=len(raw) > _MAX_ATTRS_BYTES,
+        archive_path=archive_path,
     )
 
 
@@ -618,18 +949,14 @@ def _read_zip_root_attrs(path: Path) -> Dict[str, Any]:
         )
         if best is None:
             return {}
-        if best.file_size > _MAX_ATTRS_BYTES:
-            return {}
-        with zip_ref.open(best, "r") as handle:
-            # Bound the read itself rather than trusting the size check above.
-            # The extra byte cannot actually arrive: `ZipExtFile` truncates the
-            # decompressed stream at the declared `file_size`, and a member whose
-            # central-directory size was tampered with raises `BadZipFile` on the
-            # CRC instead (absorbed by the best-effort caller).
-            raw = handle.read(_MAX_ATTRS_BYTES + 1)
-        if len(raw) > _MAX_ATTRS_BYTES:
-            return {}
-        return _parse_attrs(raw, best.filename)
+        winner = best
+        # Budgeting, bounded read and parse are shared with the tar path.
+        return _read_selected_member(
+            path,
+            winner.filename,
+            winner.file_size,
+            lambda: zip_ref.open(winner, "r"),
+        )
 
 
 #: The best possible ``_root_attrs_rank``: the root attrs document of a
@@ -711,13 +1038,15 @@ def _read_targz_root_attrs(path: Path) -> Dict[str, Any]:
         )
         if best is None:
             return {}
-        if best.size > _MAX_ATTRS_BYTES:
-            return {}
-        handle = tar_ref.extractfile(best)
-        if handle is None:
-            return {}
-        with handle:
-            return _parse_attrs(handle.read(), best.name)
+        winner = best
+        # Budgeting, bounded read and parse are shared with the zip path;
+        # `extractfile` is the tar's payload opener and may answer `None`.
+        return _read_selected_member(
+            path,
+            winner.name,
+            winner.size,
+            lambda: tar_ref.extractfile(winner),
+        )
 
 
 def read_archive_root_attrs(path: str | Path) -> Dict[str, Any]:
@@ -763,14 +1092,34 @@ def read_archive_root_attrs(path: str | Path) -> Dict[str, Any]:
     are the same PATH — the store root's own ``.zattrs`` — so no foreign node's
     attrs can be reached either way), and the early stop is worth keeping.
 
-    Reading ``.zattrs`` directly — not consolidated ``.zmetadata`` — is the
-    correct source, for an invariant rather than a version: the peek must see
-    exactly what the loader's own group-open sees, and the loader never opens a
-    store with consolidated metadata (under zarr 2 that takes an explicit
-    ``open_consolidated``; the zarr 3 path disables it deliberately). So per-node
-    ``.zattrs`` is authoritative even for a store that also carries a
-    ``.zmetadata``, and preferring ``.zmetadata`` would introduce a divergence
-    from the directory-store path, not fix one.
+    The member is read under a budget chosen by its document NAME
+    (:func:`_max_member_bytes`), because the two formats' documents are not
+    remotely the same size: a format-2 ``.zattrs`` IS the attributes, while a
+    format-3 ``zarr.json`` at a consolidated root carries the whole consolidated
+    index of the tree beside them (measured: ~8-10 KB per part for BARE-LEAF
+    parts, ~48-54 KB with a 6-step ``stream`` ladder, ~100-110 KB for an
+    ``adaptive``-shaped part — the index has one entry per NODE, not per part).
+    That budget is keyed on the document NAME (:func:`_is_node_document`), never
+    on the budget values. A member whose bytes actually exceeded
+    :data:`_MAX_ATTRS_BYTES` — only ever a ``zarr.json`` read under the raised
+    budget — additionally has the ATTRIBUTES it unwraps to re-capped at that
+    small number, so raising the document budget cannot raise what this peek
+    hands back. Anything already inside it, every ``.zattrs`` included, is not
+    measured twice.
+
+    Reading the store's OWN per-node document — never a consolidated index —
+    is the correct source, for an invariant rather than a version: the peek must
+    see exactly what the loader's own group-open sees, and the loader never reads
+    a store THROUGH consolidated metadata (under zarr 2 that took an explicit
+    ``open_consolidated``; the zarr 3 path passes ``use_consolidated=False``
+    deliberately). At format 2 that distinction is a choice of file — ``.zattrs``
+    over ``.zmetadata``. At format 3 the two live in the SAME file, since the root
+    ``zarr.json`` carries both the root's own ``attributes`` and the
+    ``consolidated_metadata`` index of its descendants: the peek unwraps
+    ``attributes`` and ignores the index (:func:`~luxar._zarr_compat.attrs_from_node_doc`),
+    which is precisely what ``open_group`` does with the same bytes. Either way,
+    answering from an index would introduce a divergence from the directory-store
+    path rather than fix one.
 
     Args:
         path: Path to a ``.gsplats.zarr.zip`` or ``.gsplats.zarr.tar.gz``.
@@ -778,8 +1127,17 @@ def read_archive_root_attrs(path: str | Path) -> Dict[str, Any]:
     Returns:
         The root attrs as a dict. ``{}`` when the path is missing or is not one of
         the two supported archive formats, when no root attrs member exists,
-        when the store root is ambiguous (above), or when the payload is oversized
-        or not a JSON object.
+        when the store root is ambiguous (above), when the metadata document
+        exceeds its name's budget or the attributes inside it exceed
+        :data:`_MAX_ATTRS_BYTES`, or when the payload is not a JSON object.
+
+    Warns:
+        UserWarning: On any SIZE refusal, naming the archive, the member, the
+            measured size and the budget (:func:`_warn_size_refusal`). ``{}``
+            otherwise reads as "this dataset authored no appearance" all the way
+            up, so a size refusal is the one ``{}`` that must not be silent. The
+            other empty answers above are ordinary — no archive, no root member,
+            an ambiguous root — and stay quiet.
 
     Raises:
         OSError, zipfile.BadZipFile, tarfile.TarError, UnicodeDecodeError,
