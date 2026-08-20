@@ -285,11 +285,25 @@ def discover_ome_zarr_shape(
         return _parse_custom_axes_attr(axes_override, shape, path)
 
     # Try NGFF multiscales metadata, in either OME-Zarr layout (0.4 top-level or
-    # 0.5 nested under `ome`). `unusable` records WHY a block that IS present
-    # could not be read, so the give-up notice below can say so.
-    ms, unusable = _usable_multiscales(resolve_ngff_attrs(attrs), ndim)
+    # 0.5 nested under `ome`). A nested array's immediate parent may own an
+    # independent pyramid; its dataset paths are relative to that group, not the
+    # store root. `unusable` records WHY a block that IS present could not be
+    # read, so the give-up notice below can say so.
+    ngff_attrs = attrs
+    ngff_array_key = array_key
+    if array_key is not None and isinstance(store, zarr.Group):
+        wanted = str(array_key).strip("/")
+        parent_key, separator, relative_key = wanted.rpartition("/")
+        if separator:
+            parent = store[parent_key]
+            if isinstance(parent, zarr.Group):
+                parent_attrs = dict(parent.attrs)
+                if resolve_ngff_attrs(parent_attrs).get("multiscales"):
+                    ngff_attrs = parent_attrs
+                    ngff_array_key = relative_key
+    ms, unusable = _usable_multiscales(resolve_ngff_attrs(ngff_attrs), ndim)
     if ms is not None:
-        return _parse_ngff_metadata(ms, shape, path, store, array_key)
+        return _parse_ngff_metadata(ms, shape, path, store, ngff_array_key)
 
     # Try custom axes attribute (e.g. Keller-lab zarr.zip files store
     # axes = ['time', 'camera', 'channel', 'z', 'y', 'x']).
@@ -426,14 +440,11 @@ def ngff_scale_transform(transforms: Any) -> Optional[List[float]]:
 def _dataset_path_matches(entry: Mapping[str, Any], wanted: str) -> bool:
     """Whether a ``datasets[]`` entry's ``path`` names the array ``wanted``.
 
-    ``path`` is relative to the multiscales group while ``array_key`` is relative
-    to the store ROOT, so ``--array-key labels/cells/1`` must be matched against
-    the entry's ``"1"``. The trailing segment is tried as well as the whole key.
+    The caller makes ``wanted`` relative to the group that owns the multiscales
+    block, so only an exact match can identify the selected level safely.
     """
     path = str(entry.get("path", "")).strip("/")
-    if not path:
-        return False
-    return path == wanted or path == wanted.rsplit("/", 1)[-1]
+    return bool(path) and path == wanted
 
 
 def _selected_dataset(
@@ -478,8 +489,14 @@ def _composed_scale(
     number is not the spacing this promises, so that yields ``None`` rather than
     the per-dataset vector on its own.
     """
-    scale = ngff_scale_transform(selected.get("coordinateTransformations"))
-    ms_scale = ngff_scale_transform(ms.get("coordinateTransformations"))
+    transforms = selected.get("coordinateTransformations")
+    ms_transforms = ms.get("coordinateTransformations")
+    scale = ngff_scale_transform(transforms)
+    ms_scale = ngff_scale_transform(ms_transforms)
+    if scale is None and _has_scale_entry(transforms):
+        return None
+    if ms_scale is None and _has_scale_entry(ms_transforms):
+        return None
     if ms_scale is None:
         return scale
     if scale is None:
@@ -487,6 +504,14 @@ def _composed_scale(
     if len(ms_scale) != len(scale):
         return None
     return [a * b for a, b in zip(scale, ms_scale)]
+
+
+def _has_scale_entry(transforms: Any) -> bool:
+    """Whether a transformations list declares a scale, valid or malformed."""
+    return isinstance(transforms, list) and any(
+        isinstance(transform, Mapping) and transform.get("type") == "scale"
+        for transform in transforms
+    )
 
 
 def _ngff_voxel_size(

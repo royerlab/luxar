@@ -843,7 +843,13 @@ def test_a_layout_the_workers_would_duplicate_is_refused(tmp_path: Path) -> None
     assert "c,y,x" in str(excinfo.value)
 
 
-def test_a_4d_store_sliced_by_no_flag_at_all_is_refused(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "slice_opts",
+    [{}, {"channels_slice": ""}, {"timepoints_slice": ""}],
+)
+def test_a_4d_store_sliced_by_no_flag_at_all_is_refused(
+    tmp_path: Path, slice_opts: Dict[str, Any]
+) -> None:
     """The 4D whole-array branch: nothing is consumed, so nothing may be fanned.
 
     Two ``type: channel`` axes is a layout the NGFF parser cannot represent — it
@@ -863,9 +869,53 @@ def test_a_4d_store_sliced_by_no_flag_at_all_is_refused(tmp_path: Path) -> None:
     assert info.spatial_shape == (32, 32) and info.n_channels == 1
 
     with pytest.raises(typer.BadParameter) as excinfo:
-        _plan(src, tmp_path / "out_ccyx")
+        _plan(src, tmp_path / "out_ccyx", **slice_opts)
 
     assert "c0,c1,y,x" in str(excinfo.value)
+
+
+def test_empty_slice_strings_do_not_model_flags_the_worker_will_not_receive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The guard's emission mirror must use the argv builder's truthiness rule."""
+    from luxar.cli.gsplat_ops.batch import planning
+    from luxar.gsplats.batch.fit_command import build_task_fit_argv
+
+    src = _write_store(
+        tmp_path / "zyx_empty_slices.zarr",
+        (8, 16, 16),
+        labels=_ZYX,
+        scale=(1.0, 1.0, 1.0),
+    )
+    emitted: Dict[str, bool] = {}
+
+    def capture_emission(
+        axes_list: Optional[List[str]],
+        info: Any,
+        emits_channel: bool,
+        emits_timepoint: bool,
+    ) -> None:
+        emitted.update(channel=emits_channel, timepoint=emits_timepoint)
+
+    monkeypatch.setattr(
+        planning, "_refuse_layout_the_workers_cannot_slice", capture_emission
+    )
+    plan = _plan(
+        src,
+        tmp_path / "out_empty_slices",
+        channels_slice="",
+        timepoints_slice="",
+    )
+    argv = build_task_fit_argv(
+        plan.manifest,
+        plan.manifest.jobs[0],
+        "unused.gsplats.zarr",
+        argv0=["luxar"],
+    )
+
+    assert emitted == {"channel": False, "timepoint": False}
+    assert "--channel" not in argv
+    assert "--timepoint" not in argv
 
 
 def test_a_view_typed_leading_axis_is_refused(tmp_path: Path) -> None:
@@ -1181,16 +1231,18 @@ def test_an_uncomposable_multiscales_level_scale_yields_no_voxel_size(
     assert discover_ome_zarr_shape(path).voxel_size is None
 
 
-def test_a_nested_array_key_matches_its_dataset_by_the_trailing_segment(
+def test_a_nested_array_key_uses_the_pyramid_which_owns_it(
     tmp_path: Path,
 ) -> None:
-    """``datasets[].path`` is relative to the multiscales group, ``array_key`` is not.
-
-    Comparing the whole ``labels/cells/1`` against the entry's ``"1"`` never
-    matched, so a 2x-downsampled array was quoted level 0's spacing.
-    """
+    """A nested pyramid must not borrow a same-named level from the root pyramid."""
     path = tmp_path / "nested_levels.zarr"
     root = open_group(path, mode="w", zarr_format=3)
+    create_array(
+        root, "0", data=np.zeros((16, 32, 32), dtype=np.float32), compressor="auto"
+    )
+    create_array(
+        root, "1", data=np.zeros((8, 16, 16), dtype=np.float32), compressor="auto"
+    )
     cells = root.create_group("labels").create_group("cells")
     create_array(
         cells, "0", data=np.zeros((8, 16, 16), dtype=np.float32), compressor="auto"
@@ -1204,17 +1256,54 @@ def test_a_nested_array_key_matches_its_dataset_by_the_trailing_segment(
             _ZYX, (1.0, 0.5, 0.5), extra_levels=[(2.0, 1.0, 1.0)]
         ),
     }
+    cells.attrs["ome"] = {
+        "version": "0.5",
+        "multiscales": _multiscales(
+            _ZYX, (9.0, 9.0, 9.0), extra_levels=[(18.0, 18.0, 18.0)]
+        ),
+    }
 
     assert discover_ome_zarr_shape(path, array_key="labels/cells/1").voxel_size == (
-        2.0,
-        1.0,
-        1.0,
+        18.0,
+        18.0,
+        18.0,
     )
     assert discover_ome_zarr_shape(path, array_key="labels/cells/0").voxel_size == (
-        1.0,
-        0.5,
-        0.5,
+        9.0,
+        9.0,
+        9.0,
     )
+
+
+@pytest.mark.parametrize("malformed_side", ["dataset", "multiscales"])
+def test_a_malformed_component_of_a_composed_scale_yields_no_voxel_size(
+    tmp_path: Path, malformed_side: str
+) -> None:
+    """A declared but malformed scale is not an absent identity transform."""
+    dataset_scale: Sequence[Any] = (1.0, None, 1.0)
+    multiscales_scale: Sequence[Any] = (2.0, 2.0, 2.0)
+    if malformed_side == "multiscales":
+        dataset_scale, multiscales_scale = multiscales_scale, dataset_scale
+    path = _raw_ms_store(
+        tmp_path,
+        (8, 16, 16),
+        {
+            "axes": _axes_meta(_ZYX),
+            "datasets": [
+                {
+                    "path": "0",
+                    "coordinateTransformations": [
+                        {"type": "scale", "scale": list(dataset_scale)}
+                    ],
+                }
+            ],
+            "coordinateTransformations": [
+                {"type": "scale", "scale": list(multiscales_scale)}
+            ],
+        },
+    )
+
+    assert discover_ome_zarr_shape(path).voxel_size is None
 
 
 def test_an_unmatched_array_key_in_a_pyramid_reports_no_voxel_size(

@@ -1510,8 +1510,8 @@ def plan_batch(
         _refuse_layout_the_workers_cannot_slice(
             axes_list,
             ome_info,
-            emits_channel=n_c_full > 1 or channels_slice is not None,
-            emits_timepoint=n_t_full > 1 or timepoints_slice is not None,
+            emits_channel=n_c_full > 1 or bool(channels_slice),
+            emits_timepoint=n_t_full > 1 or bool(timepoints_slice),
         )
 
         t_indices = (

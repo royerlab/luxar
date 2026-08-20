@@ -328,9 +328,10 @@ sources fed to gsplat fitting/calibration), independent of the compiled
   an empty `ome.multiscales` displaces a top-level 0.4 pyramid. A `multiscales`
   block whose `axes` count disagrees with the SELECTED array's ndim is not
   metadata about that array (a 5D image beside its 3D `labels/…`) and is skipped
-  rather than parsed. Voxel size follows the `datasets[]` entry whose `path`
-  matches `array_key` — the trailing segment too, since `path` is relative to the
-  multiscales group — and composes any multiscales-level
+  rather than parsed. For a nested `array_key`, discovery first uses a non-empty
+  `multiscales` block on the array's parent group; dataset paths are matched
+  exactly relative to that owner, so a same-named root pyramid level cannot be
+  mistaken for the nested array. Voxel size composes any multiscales-level
   `coordinateTransformations` on top; where that match or that composition cannot
   be made honestly (an `array_key` matching no entry of a multi-level pyramid, or
   two scale vectors of different lengths) it reports no spacing rather than a
