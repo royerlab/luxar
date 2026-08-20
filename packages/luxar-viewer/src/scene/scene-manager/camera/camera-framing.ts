@@ -209,8 +209,8 @@ export interface FitCameraOptions {
  *   - For perspective cameras: compute the FOV/aspect-aware distance,
  *     position the camera at `lookAtTarget + (0, 0, distance)`, and
  *     set distance limits to `ZOOM_IN_FACTOR` in / `ZOOM_OUT_FACTOR` out.
- *   - For orthographic cameras: compute the zoom that fits the largest
- *     dimension into the frustum, position the camera at
+ *   - For orthographic cameras: compute the zoom that fits the largest X/Y
+ *     extent into the shorter frustum axis, position the camera at
  *     `lookAtTarget + (0, 0, diagonal)`, and set zoom limits to
  *     `ZOOM_IN_FACTOR` in / `ZOOM_OUT_FACTOR` out.
  *   - Run `lookAt(lookAtTarget) → updateMatrixWorld(true) →
@@ -250,17 +250,17 @@ export function fitCameraToBounds(
       near: camera.near,
       far: camera.far,
     };
-    const distance = calculateCameraDistance(bounds, cameraConfig);
+    const distance = calculateCameraDistance(bounds, cameraConfig, undefined, lookAtTarget);
     camera.position.set(lookAtTarget.x, lookAtTarget.y, lookAtTarget.z + distance);
     controls.setDistanceLimits(distance / ZOOM_IN_FACTOR, distance * ZOOM_OUT_FACTOR);
   } else if (isOrthographicCamera(camera)) {
     const frustumHeight = camera.top - camera.bottom;
     const frustumWidth = camera.right - camera.left;
-    const maxDim = Math.max(sizeX, sizeY, sizeZ);
-    if (maxDim > 0 && frustumHeight > 0 && frustumWidth > 0) {
+    const screenPlaneSize = Math.max(sizeX, sizeY);
+    if (screenPlaneSize > 0 && frustumHeight > 0 && frustumWidth > 0) {
       const fitRatio = config.scene.defaultFitRatio;
-      const zoomH = frustumHeight / (maxDim / fitRatio);
-      const zoomW = frustumWidth / (maxDim / fitRatio);
+      const zoomH = frustumHeight / (screenPlaneSize / fitRatio);
+      const zoomW = frustumWidth / (screenPlaneSize / fitRatio);
       camera.zoom = Math.min(zoomH, zoomW);
       camera.updateProjectionMatrix();
       // Ortho zoom-IN means a LARGER camera.zoom, so the factors swap

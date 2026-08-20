@@ -81,30 +81,41 @@ export function getBoundingBoxDiagonal(box: BoundingBox): number {
 }
 
 /**
- * Calculates optimal camera distance to fit bounding box in view
+ * Calculates the +Z camera distance that fits a bounding box in view.
+ * X/Y are the screen plane and Z is depth, matching fitCameraToBounds' fixed
+ * face-on pose. The larger X/Y extent fills fitRatio of the shorter viewport
+ * axis at the nearest Z face.
  *
  * @param box - Bounding box to fit
  * @param camera - Camera configuration
  * @param fitRatio - How much of the view to fill (0-1, default 0.75)
- * @returns Optimal camera distance from center
+ * @param target - Look-at target; defaults to the bounding-box center
+ * @returns Optimal +Z camera distance from the look-at target
  */
 export function calculateCameraDistance(
   box: BoundingBox,
   camera: CameraConfig,
-  fitRatio: number = config.scene.defaultFitRatio
+  fitRatio: number = config.scene.defaultFitRatio,
+  target: { x: number; y: number; z: number } = getBoundingBoxCenter(box)
 ): number {
-  const maxDim = getBoundingBoxMaxDimension(box);
-
-  // Calculate distance based on FOV
   const fovRadians = (camera.fov * Math.PI) / 180;
   const halfFov = fovRadians / 2;
+  const nearestDepth = Math.max(0, box.max.z - target.z);
+  const screenPlaneRadius = Math.max(
+    Math.abs(box.min.x - target.x),
+    Math.abs(box.max.x - target.x),
+    Math.abs(box.min.y - target.y),
+    Math.abs(box.max.y - target.y)
+  );
 
-  // Consider aspect ratio to ensure object fits in both dimensions
-  const verticalFit = maxDim / fitRatio / (2 * Math.tan(halfFov));
-  const horizontalFit = maxDim / fitRatio / (2 * Math.tan(halfFov) * camera.aspect);
+  // Fit the larger screen-plane extent against the shorter viewport axis at
+  // the nearest face of the box. Depth does not enlarge the silhouette
+  // directly, but it brings that face closer and increases its projection.
+  const verticalFit = nearestDepth + screenPlaneRadius / fitRatio / Math.tan(halfFov);
+  const horizontalFit =
+    nearestDepth + screenPlaneRadius / fitRatio / (Math.tan(halfFov) * camera.aspect);
 
-  // Use the larger distance to ensure complete fit
-  return Math.max(verticalFit, horizontalFit) * 1.2; // Add 20% margin
+  return Math.max(verticalFit, horizontalFit);
 }
 
 /**
