@@ -262,7 +262,11 @@ COMPOSITING_ATTRS = frozenset(
 #:   group (``apply_gsplat_group_attrs``), which sits nearer the leaf than the
 #:   root. It is not composed, so the nearer value wins.
 #: * ``amplitude_data_range`` / ``scalar_data_range`` — likewise not composed,
-#:   and each level re-derives its own from its (post-reduction) amplitudes.
+#:   and each level re-derives its own from its (post-reduction) values, which
+#:   sits nearer the leaf than the root. The gsplat window harmonization
+#:   (``finalize/amplitude_window.py``) does not change that: it only ever
+#:   rewrites windows on LEAVES, so a root stamp on a group-rooted result
+#:   survives untouched — and is still shadowed by every leaf's own.
 #: * ``truncation_radius`` — auto-defaulted per leaf by design (see the note on
 #:   ``COMPOSITING_ATTRS``); each leaf already carries the source value through
 #:   ``GSplatData.truncation_radius``, so the footprint survives anyway.

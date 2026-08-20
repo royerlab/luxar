@@ -333,21 +333,23 @@ def create_luxar_scene(gsplats_data: GSplatData, output_path: Path) -> Path:
                 # structure the way full kappa=1 absorption would.
                 blending_mode="volumetric",
                 absorption=0.3,
-                # Display window [0, 0.095]. The shipped fit's robust range
+                # A 1/0.095 display gain. The shipped fit's robust range
                 # (p99.9) tops out near 0.081, so this holds the faint diffuse
                 # filaments just below clipping — brighter and the dense cores
-                # flatten into featureless white.
+                # flatten into featureless white. (The gain composes onto this
+                # kind=lod GROUP while every child leaf keeps the stamped
+                # default intensity=1.0, so what the shader sees is each leaf's
+                # own window scaled by it — not a literal [0, 0.095].)
                 #
                 # Calibrated on the FINEST level, which is the one this figure
-                # was measured against. With the `levels` topology the gain
-                # lands on the kind=lod wrapper, leaving each level's own gain
-                # at identity, so the viewer folds this window onto each
-                # level's own robust range rather than onto a shared one — and
-                # a coarse level's merged representatives carry the same mass in
-                # fewer splats, so its p99.9 sits higher. Measured on synthetic
-                # fits the spread across four levels runs 1.6x-5.2x depending
-                # on how heavy the amplitude tail is, i.e. the appearance is
-                # level-dependent, not fixed by this number alone.
+                # was measured against — and since #1691 that is also the level
+                # every other one is windowed from. Finalize harmonizes
+                # `amplitude_data_range` over the whole kind=lod structure (one
+                # reference window from the finest content, scaled per level by
+                # the mass-weighted amplitude ratio), so the levels now share
+                # one window instead of each deriving its own: the coarse
+                # levels tone and brighten like the finest instead of drifting
+                # with their own p99.9.
                 intensity=1.0 / 0.095,
                 layer=True,
             )
