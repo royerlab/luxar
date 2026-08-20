@@ -1021,6 +1021,23 @@ def test_axes_spec_is_quoted_for_folded_channel_like_axes(
         np.testing.assert_array_equal(loaded, data[camera, job.timepoint, channel])
 
 
+def test_axes_spec_is_not_quoted_for_folded_time_axes(tmp_path: Path) -> None:
+    """One flat ``--timepoint`` cannot address two discovered time axes."""
+    src = _write_store(
+        tmp_path / "folded_time.zarr",
+        (3, 2, 4, 8, 8),
+        extra_attrs={"axes": ["t", "time", "z", "y", "x"]},
+    )
+
+    with pytest.raises(typer.BadParameter) as excinfo:
+        _plan(src, tmp_path / "out_folded_time")
+
+    message = str(excinfo.value)
+    assert "more than one time axis ('t', 'time')" in message
+    assert "one --timepoint cannot address them independently" in message
+    assert "Pass '--axes t,time,z,y,x'" not in message
+
+
 # ---------------------------------------------------------------------------
 # The decomposition discovery used is PUBLISHED, not left to be re-derived
 # ---------------------------------------------------------------------------
