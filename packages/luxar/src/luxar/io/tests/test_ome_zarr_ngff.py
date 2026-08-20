@@ -1275,6 +1275,25 @@ def test_a_nested_array_key_uses_the_pyramid_which_owns_it(
     )
 
 
+def test_an_implicit_nested_parent_does_not_break_discovery(tmp_path: Path) -> None:
+    """Zarr v2 permits arrays below groups with no explicit metadata node."""
+    path = tmp_path / "implicit_groups.zarr"
+    root = open_group(path, mode="w", zarr_format=2)
+    create_array(
+        root,
+        "labels/cells/1",
+        data=np.zeros((4, 8, 8), dtype=np.uint16),
+        compressor="auto",
+    )
+    (path / "labels" / ".zgroup").unlink()
+    (path / "labels" / "cells" / ".zgroup").unlink()
+
+    info = discover_ome_zarr_shape(path, array_key="labels/cells/1")
+
+    assert info.shape == (4, 8, 8)
+    assert info.spatial_shape == (4, 8, 8)
+
+
 @pytest.mark.parametrize("malformed_side", ["dataset", "multiscales"])
 def test_a_malformed_component_of_a_composed_scale_yields_no_voxel_size(
     tmp_path: Path, malformed_side: str
@@ -1337,20 +1356,40 @@ def test_a_single_level_pyramid_still_answers_for_an_unmatched_key(
     """With one level there is nothing to be wrong about — keep answering."""
     path = tmp_path / "single_level.zarr"
     root = open_group(path, mode="w", zarr_format=3)
-    fused = root.create_group("fused")
     create_array(
-        fused, "b", data=np.zeros((8, 16, 16), dtype=np.float32), compressor="auto"
+        root, "s0", data=np.zeros((8, 16, 16), dtype=np.float32), compressor="auto"
     )
     root.attrs["ome"] = {
         "version": "0.5",
         "multiscales": _multiscales(_ZYX, (1.0, 0.5, 0.5)),
     }
 
-    assert discover_ome_zarr_shape(path, array_key="fused/b").voxel_size == (
+    assert discover_ome_zarr_shape(path, array_key="s0").voxel_size == (
         1.0,
         0.5,
         0.5,
     )
+
+
+def test_a_single_level_pyramid_does_not_describe_an_array_in_another_group(
+    tmp_path: Path,
+) -> None:
+    """A nested independent array must not inherit the root level's spacing."""
+    path = tmp_path / "independent_nested_array.zarr"
+    root = open_group(path, mode="w", zarr_format=3)
+    create_array(
+        root, "0", data=np.zeros((8, 16, 16), dtype=np.float32), compressor="auto"
+    )
+    cells = root.create_group("labels").create_group("cells")
+    create_array(
+        cells, "0", data=np.zeros((8, 16, 16), dtype=np.float32), compressor="auto"
+    )
+    root.attrs["ome"] = {
+        "version": "0.5",
+        "multiscales": _multiscales(_ZYX, (1.0, 0.5, 0.5)),
+    }
+
+    assert discover_ome_zarr_shape(path, array_key="labels/cells/0").voxel_size is None
 
 
 # ---------------------------------------------------------------------------

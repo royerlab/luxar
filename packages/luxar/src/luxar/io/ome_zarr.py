@@ -289,18 +289,7 @@ def discover_ome_zarr_shape(
     # independent pyramid; its dataset paths are relative to that group, not the
     # store root. `unusable` records WHY a block that IS present could not be
     # read, so the give-up notice below can say so.
-    ngff_attrs = attrs
-    ngff_array_key = array_key
-    if array_key is not None and isinstance(store, zarr.Group):
-        wanted = str(array_key).strip("/")
-        parent_key, separator, relative_key = wanted.rpartition("/")
-        if separator:
-            parent = store[parent_key]
-            if isinstance(parent, zarr.Group):
-                parent_attrs = dict(parent.attrs)
-                if resolve_ngff_attrs(parent_attrs).get("multiscales"):
-                    ngff_attrs = parent_attrs
-                    ngff_array_key = relative_key
+    ngff_attrs, ngff_array_key = _resolve_ngff_owner(store, attrs, array_key)
     ms, unusable = _usable_multiscales(resolve_ngff_attrs(ngff_attrs), ndim)
     if ms is not None:
         return _parse_ngff_metadata(ms, shape, path, store, ngff_array_key)
@@ -316,6 +305,30 @@ def discover_ome_zarr_shape(
     info = _heuristic_ome_info(shape, ndim, path)
     _announce_guessed_axes(info, path, unusable)
     return info
+
+
+def _resolve_ngff_owner(
+    store: Any, attrs: Dict[str, Any], array_key: Optional[str]
+) -> Tuple[Dict[str, Any], Optional[str]]:
+    """Use a selected nested array's immediate parent metadata when available."""
+    import zarr
+
+    if array_key is None or not isinstance(store, zarr.Group):
+        return attrs, array_key
+    wanted = str(array_key).strip("/")
+    parent_key, separator, relative_key = wanted.rpartition("/")
+    if not separator:
+        return attrs, array_key
+    try:
+        parent = store[parent_key]
+    except KeyError:
+        return attrs, array_key
+    if not isinstance(parent, zarr.Group):
+        return attrs, array_key
+    parent_attrs = dict(parent.attrs)
+    if resolve_ngff_attrs(parent_attrs).get("multiscales"):
+        return parent_attrs, relative_key
+    return attrs, array_key
 
 
 def _usable_multiscales(
@@ -456,11 +469,10 @@ def _selected_dataset(
     quoting level 0's spacing for it halves every number. Matched on the entry's
     ``path`` (see :func:`_dataset_path_matches`).
 
-    ``None`` — "unknowable", not "level 0" — when an ``array_key`` was asked for,
-    nothing matched, and the pyramid has more than one level: the caller selected
-    SOME array and this cannot say which, so a wrong spacing quoted as fact would
-    be worse than none. A single-level pyramid has nothing to be wrong about and
-    still answers.
+    ``None`` — "unknowable", not "level 0" — when an ``array_key`` was asked for
+    and nothing matched, unless the unmatched key is flat and the pyramid has one
+    level. A nested unmatched key names an array outside the block's owner, so even
+    a single-level pyramid cannot describe it.
 
     Never raises: a ``datasets`` that is not a list of mappings is metadata this
     cannot read.
@@ -474,7 +486,7 @@ def _selected_dataset(
     for d in datasets:
         if isinstance(d, Mapping) and _dataset_path_matches(d, wanted):
             return d
-    return None if len(datasets) > 1 else first
+    return None if "/" in wanted or len(datasets) > 1 else first
 
 
 def _composed_scale(
