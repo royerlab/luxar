@@ -60,14 +60,19 @@ are cached but nothing is written to disk.
 
 ### Attributes and persistence
 
-The `attrs` property exposes the cached attribute dict. The private
-`_persist_attr(key, value)` helper updates both the cache and the on-disk Zarr
-store via the writer. If the writer has already been finalized (after the
-`LuxarZarrCompiler` context exits, or after `Scene.to_zarr`), the on-disk
-attribute can no longer be updated through it — the in-memory cache is still
-updated, but a `UserWarning` is raised so the disk/memory drift is not silent.
-Set attributes inside the compiler context (or before `to_zarr`) for
-persistence.
+The `attrs` property exposes a mutable view of the cached attributes. Mutating
+that mapping writes through to the Zarr store: item assignment, deletion, and
+the standard mutable-mapping helpers (`update`, `pop`, `clear`, `setdefault`)
+all use the same persistence path as the node property setters. Recognized
+render attributes are assigned through those setters first, preserving their
+validation and transform normalization; other keys are checked by the writer's
+schema before the cache changes.
+
+If the writer has already been finalized (after the `LuxarZarrCompiler` context
+exits, or after `Scene.to_zarr`), the on-disk attribute can no longer be updated
+through it — the in-memory cache is still updated, but a `UserWarning` is raised
+so the disk/memory drift is not silent. Set attributes inside the compiler
+context (or before `to_zarr`) for persistence.
 
 Clearing an attribute (`_delete_attr`, reached by setting `transform` /
 `nd_transform` to `None`) has the same post-finalize contract: it updates the

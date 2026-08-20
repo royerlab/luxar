@@ -217,6 +217,12 @@ The root `.zattrs` file contains scene-wide configuration:
 }
 ```
 
+Additional JSON-serializable scene metadata may be authored through
+`scene.attrs`, for example `title`, `description`, or `sample`. Mutations made
+while the `LuxarZarrCompiler` is open write through to the root `.zattrs`;
+mutating the live mapping after finalization only updates its in-memory cache
+and emits a warning.
+
 ### `citation` (optional root attr)
 
 `citation` credits whoever produced the data the scene shows. It is written to

@@ -4,9 +4,104 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+import zarr
 
 from luxar import Dimension, Dimensions
+from luxar.core.viewer_config import ViewerConfig
 from luxar.io.compiler import LuxarZarrCompiler
+
+
+class TestNodeAttrsPersistence:
+    """Test that the public attrs mapping stays honest with the zarr store."""
+
+    def test_scene_attrs_write_through_and_delete(self, tmp_path: Path) -> None:
+        store_path = tmp_path / "test.luxar.zarr"
+
+        with LuxarZarrCompiler(store_path) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.attrs.update(
+                title="Example scene",
+                description="Authored provenance",
+                sample="sample-7",
+            )
+            assert scene.attrs.copy()["title"] == "Example scene"
+            del scene.attrs["sample"]
+
+        attrs = zarr.open_group(str(store_path), mode="r").attrs
+        assert attrs["title"] == "Example scene"
+        assert attrs["description"] == "Authored provenance"
+        assert "sample" not in attrs
+
+    def test_validating_setters_are_used_for_attrs_assignment(
+        self, tmp_path: Path
+    ) -> None:
+        store_path = tmp_path / "test.luxar.zarr"
+        matrix = np.array(
+            [
+                [1.0, 2.0, 0.0, 4.0],
+                [0.0, 1.0, 3.0, 5.0],
+                [0.0, 0.0, 1.0, 6.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ],
+            dtype=np.float32,
+        )
+
+        with LuxarZarrCompiler(store_path) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            group = scene.add_group("group")
+            group.attrs["transform"] = matrix
+            points = scene.add_points(
+                "points", np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
+            )
+            with pytest.raises(ValueError, match="lines-only attribute"):
+                points.attrs["join"] = "miter"
+
+        stored = zarr.open_group(str(store_path), mode="r")["group"].attrs
+        assert np.array_equal(group.transform, matrix)
+        assert stored["transform"] == matrix.T.flatten().tolist()
+
+    def test_unknown_node_attr_does_not_pollute_cache(self, tmp_path: Path) -> None:
+        store_path = tmp_path / "test.luxar.zarr"
+
+        with LuxarZarrCompiler(store_path) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            group = scene.add_group("group")
+            with pytest.raises(ValueError, match="Unknown node attribute"):
+                group.attrs["typo"] = "value"
+            assert "typo" not in group.attrs
+
+    def test_viewer_config_none_deletes_the_stored_attr(self, tmp_path: Path) -> None:
+        store_path = tmp_path / "test.luxar.zarr"
+
+        with LuxarZarrCompiler(store_path) as compiler:
+            scene = compiler.create_scene(
+                dimensions=Dimensions.default_3d(),
+                viewer_config=ViewerConfig(tone_mapping="ACES"),
+            )
+            scene.viewer_config = None
+
+        assert "viewer_config" not in zarr.open_group(str(store_path), mode="r").attrs
+
+    def test_attrs_warn_after_finalize(self, tmp_path: Path) -> None:
+        store_path = tmp_path / "test.luxar.zarr"
+
+        with LuxarZarrCompiler(store_path) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.attrs["title"] = "Stored title"
+
+        with pytest.warns(UserWarning, match="after the writer has been finalized"):
+            scene.attrs["title"] = "Cache-only title"
+        assert scene.attrs["title"] == "Cache-only title"
+        assert (
+            zarr.open_group(str(store_path), mode="r").attrs["title"] == "Stored title"
+        )
+
+        with pytest.warns(UserWarning, match="after the writer has been finalized"):
+            del scene.attrs["title"]
+        assert "title" not in scene.attrs
+        assert (
+            zarr.open_group(str(store_path), mode="r").attrs["title"] == "Stored title"
+        )
 
 
 class TestNodeProperties:
