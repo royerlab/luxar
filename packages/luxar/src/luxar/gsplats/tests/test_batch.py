@@ -884,7 +884,34 @@ class TestBatchPlanRegression:
         )
 
         assert view.shape == (8, 8)
+        assert not isinstance(view, np.ndarray)
         np.testing.assert_array_equal(view[:], data[2, 0, 0])
+
+    def test_planning_scan_eager_fallback_squeezes_singleton_spatial_axes(
+        self, tmp_path: Path
+    ) -> None:
+        import zarr
+
+        from luxar.cli.gsplat_ops.batch.planning import _pinned_slice_volume
+
+        path = tmp_path / "thin-fallback.zarr"
+        data = np.arange(3 * 1 * 1 * 8 * 8, dtype=np.float32).reshape(3, 1, 1, 8, 8)
+        root = zarr.open(str(path), mode="w")
+        create_array(root, "0", data=data)
+
+        view = _pinned_slice_volume(
+            path,
+            channel=0,
+            timepoint=2,
+            array_key=None,
+            axes=None,
+            axes_labels=["t", "c", "z", "y", "x"],
+            channel_shape=(1, 1),
+            spatial_shape=(8, 8),
+        )
+
+        assert view.shape == (8, 8)
+        np.testing.assert_array_equal(view, data[2, 0, 0])
 
     def test_tasks_per_job_manifest(self) -> None:
         """Manifest fields are serializable and have correct defaults."""

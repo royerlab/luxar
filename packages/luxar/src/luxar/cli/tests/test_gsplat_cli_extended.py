@@ -6687,6 +6687,33 @@ class TestAxesSpec:
         )
         np.testing.assert_array_equal(out, arr[1, 1, 0])
 
+    def test_apply_axes_spec_reports_folded_channel_shape(self) -> None:
+        from luxar.io.volume import _apply_axes_spec
+
+        arr = np.zeros((2, 3, 2, 4, 5, 6), dtype=np.float32)
+        with pytest.raises(
+            ValueError,
+            match=r"--channel.*camera=2.*channel=2",
+        ):
+            _apply_axes_spec(
+                arr,
+                "camera,time,channel,z,y,x",
+                channel=4,
+                timepoint=1,
+            )
+
+    def test_apply_axes_spec_rejects_multiple_time_axes(self) -> None:
+        from luxar.io.volume import _apply_axes_spec
+
+        arr = np.zeros((4, 3, 2, 3, 4), dtype=np.float32)
+        with pytest.raises(ValueError, match="more than one time axis"):
+            _apply_axes_spec(
+                arr,
+                "time,t,z,y,x",
+                channel=None,
+                timepoint=2,
+            )
+
     def test_apply_axes_spec_defaults_to_zero(self) -> None:
         from luxar.io.volume import _apply_axes_spec
 

@@ -304,7 +304,7 @@ def _pinned_slice_volume(
                     timepoint=timepoint,
                     array_key=array_key,
                     axes=",".join(axes_labels),
-                )
+                ).squeeze()
             except ValueError as exc:
                 # load_volume's --axes vocabulary is narrower than discovery's
                 # (no `view`/`angle`), so an exotic label lands here.
@@ -1199,6 +1199,15 @@ def _announce_seed_split(mode: str, fit_args: dict, n_tiles: int) -> None:
         pass
 
 
+def _worker_spatial_shape(
+    spatial_shape: Tuple[int, ...], axes_list: Optional[List[str]]
+) -> Tuple[int, ...]:
+    """Return the spatial shape the task's volume loader will expose."""
+    if axes_list is not None:
+        return spatial_shape
+    return tuple(size for size in spatial_shape if size != 1)
+
+
 def plan_batch(
     *,
     input_path: Path,
@@ -1274,13 +1283,11 @@ def plan_batch(
         )
         n_t_full = ome_info.n_timepoints
         n_c_full = ome_info.n_channels
-        spatial = ome_info.spatial_shape
-        if axes_list is None:
-            # Positional workers call load_volume without --axes, whose legacy
-            # post-processing squeezes every size-1 dimension. Plan the exact
-            # spatial volume those workers fit so tile coordinates and the
-            # merge's stacked-axis index use the same dimensionality.
-            spatial = tuple(size for size in spatial if size != 1)
+        # Positional workers call load_volume without --axes, whose legacy
+        # post-processing squeezes every size-1 dimension. Plan the exact
+        # spatial volume those workers fit so tile coordinates and the merge's
+        # stacked-axis index use the same dimensionality.
+        spatial = _worker_spatial_shape(ome_info.spatial_shape, axes_list)
         aprint(f"Axes: {ome_info.axes}")
         aprint(f"Shape: {ome_info.shape}")
         aprint(f"T={n_t_full}, C={n_c_full}, spatial={'x'.join(map(str, spatial))}")
