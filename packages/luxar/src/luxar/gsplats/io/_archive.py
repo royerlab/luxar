@@ -39,10 +39,70 @@ __all__ = ["extract_compressed_zarr", "read_archive_root_attrs", "resolve_store_
 _MAX_MEMBERS = 5_000_000
 #: Reject archives whose declared total uncompressed size exceeds this (256 GiB).
 _MAX_TOTAL_UNCOMPRESSED_BYTES = 256 * 1024**3
-#: Refuse a ``.zattrs`` bigger than this (4 MiB). A zarr group's attrs are a
-#: small JSON object; anything this large is not attrs, and reading it into
-#: memory during a best-effort peek is not a cost worth paying.
+#: Refuse ATTRIBUTES bigger than this (4 MiB) — the user-authored mapping this
+#: peek hands back, once any format-3 document has been unwrapped to it. A zarr
+#: node's attrs really are a small JSON object (a Luxar root carries a couple of
+#: dozen scalars); anything this large is not attrs, and materializing it during
+#: a best-effort peek is not a cost worth paying.
+#:
+#: Applied in two places, which is the point: as the member budget for a
+#: format-2 ``.zattrs``, which literally IS the attributes mapping, and again
+#: after parsing (:func:`_parse_attrs`), so that raising the DOCUMENT budget
+#: below cannot raise what this peek can hand a caller.
 _MAX_ATTRS_BYTES = 4 * 1024**2
+
+#: Refuse a format-3 node DOCUMENT (``zarr.json``) bigger than this (128 MiB).
+#:
+#: A separate and much larger budget, because a ``zarr.json`` is not the
+#: attributes: it carries the node's structural fields beside them and — at a
+#: CONSOLIDATED store root, which every Luxar store is — the whole consolidated
+#: index of every descendant, nested under ``consolidated_metadata``. So the
+#: document grows with the SHAPE OF THE TREE while its ``attributes`` stay a
+#: handful of scalars, and the attrs budget above is simply the wrong ruler for
+#: it. (This is why the two budgets exist at all: before the move to zarr format
+#: 3 the root document WAS ``.zattrs``, so one number covered both.)
+#:
+#: Measured on ``gsplat partition`` output at format 3: ~8 KB of root
+#: ``zarr.json`` per part (4 parts = 33,834 B; 16 = 136,922 B; 33 = 264,547 B;
+#: 64 = 511,766 B). A single 4 MiB budget therefore started refusing at roughly
+#: 500 parts — routine for a ``batch-fit merge`` — and this peek's ``{}`` reads
+#: as "this dataset authored no appearance" rather than as an error, so every
+#: rewriting command silently overwrote a zipped/tarred large partition's
+#: appearance with the writer's defaults while the SAME tree as a directory store
+#: answered correctly. 128 MiB is ~16,000 parts of headroom at that measured
+#: rate, comfortably past any real merge.
+#:
+#: Not larger, because this is still an archive-bomb bound and the document is
+#: parsed whole: 128 MiB of JSON materializes on the order of a gigabyte of
+#: Python objects, and that parse — not the byte count — is the real ceiling.
+_MAX_NODE_DOC_BYTES = 128 * 1024**2
+
+#: The format-3 node document's name. Taken from the facade's own ordered tuple
+#: rather than spelled again here: :data:`NODE_ATTR_DOCS` is documented as
+#: FORMAT 3 FIRST (that order is load-bearing for a node carrying both
+#: documents), so its head is ``zarr.json`` and the two spellings cannot drift.
+_V3_NODE_DOC = NODE_ATTR_DOCS[0]
+
+
+def _max_member_bytes(member_name: str) -> int:
+    """Byte budget for a root metadata member, chosen by the document's NAME.
+
+    The name is the whole signal, and it is exact — it is also how the member was
+    selected in the first place (:func:`_root_attrs_rank`). A format-2
+    ``.zattrs`` is the attributes mapping itself and keeps the small
+    :data:`_MAX_ATTRS_BYTES` budget; nothing about format 2 changed. A format-3
+    ``zarr.json`` is a whole node document carrying the consolidated index and
+    gets :data:`_MAX_NODE_DOC_BYTES`.
+
+    Raising the document budget does not raise what the peek can hand back:
+    :func:`_parse_attrs` re-checks the unwrapped attributes against the small
+    budget.
+    """
+    return (
+        _MAX_NODE_DOC_BYTES
+        if PurePosixPath(member_name).name == _V3_NODE_DOC
+        else _MAX_ATTRS_BYTES
+    )
 
 
 def _is_zip(path: Path) -> bool:
@@ -378,11 +438,23 @@ def _parse_attrs(raw: bytes, member_name: str) -> Dict[str, Any]:
     own name is what settles which — it is how the member was selected in the
     first place — so the facade is told rather than left to infer it from the
     content.
+
+    The unwrapped ATTRIBUTES are then capped at :data:`_MAX_ATTRS_BYTES`, which
+    is not the budget the member was read under: a format-3 document is allowed
+    :data:`_MAX_NODE_DOC_BYTES` because of the consolidated index it carries, and
+    that allowance must not become licence to hand a caller a 100 MiB attrs
+    mapping. Measured by re-serializing, which is honest about the cost: the
+    document is already parsed and resident by this point, so this is one more
+    pass over data we are holding anyway, and no incremental accounting is
+    possible once ``json.loads`` has run.
     """
-    return attrs_from_node_doc(
+    attrs = attrs_from_node_doc(
         json.loads(raw.decode("utf-8")),
         doc_name=PurePosixPath(member_name).name,
     )
+    if len(json.dumps(attrs).encode("utf-8")) > _MAX_ATTRS_BYTES:
+        return {}
+    return attrs
 
 
 def _read_zip_root_attrs(path: Path) -> Dict[str, Any]:
@@ -407,7 +479,11 @@ def _read_zip_root_attrs(path: Path) -> Dict[str, Any]:
                 best, best_rank = info, rank
         if best is None or not _fallback_is_unambiguous(best_rank, top_dirs):
             return {}
-        if best.file_size > _MAX_ATTRS_BYTES:
+        # Budget by DOCUMENT NAME: a format-3 `zarr.json` root carries the whole
+        # consolidated index and is orders of magnitude bigger than the attrs it
+        # nests (see `_max_member_bytes`).
+        cap = _max_member_bytes(best.filename)
+        if best.file_size > cap:
             return {}
         with zip_ref.open(best, "r") as handle:
             # Bound the read itself rather than trusting the size check above.
@@ -415,8 +491,8 @@ def _read_zip_root_attrs(path: Path) -> Dict[str, Any]:
             # decompressed stream at the declared `file_size`, and a member whose
             # central-directory size was tampered with raises `BadZipFile` on the
             # CRC instead (absorbed by the best-effort caller).
-            raw = handle.read(_MAX_ATTRS_BYTES + 1)
-        if len(raw) > _MAX_ATTRS_BYTES:
+            raw = handle.read(cap + 1)
+        if len(raw) > cap:
             return {}
         return _parse_attrs(raw, best.filename)
 
@@ -480,13 +556,25 @@ def _read_targz_root_attrs(path: Path) -> Dict[str, Any]:
                     break
         if best is None or not _fallback_is_unambiguous(best_rank, top_dirs):
             return {}
-        if best.size > _MAX_ATTRS_BYTES:
+        # Budget by DOCUMENT NAME, exactly as the zip path does — a format-3
+        # `zarr.json` root carries the whole consolidated index (see
+        # `_max_member_bytes`).
+        cap = _max_member_bytes(best.name)
+        if best.size > cap:
             return {}
         handle = tar_ref.extractfile(best)
         if handle is None:
             return {}
         with handle:
-            return _parse_attrs(handle.read(), best.name)
+            # Bound the read itself rather than trusting the header size, the
+            # same way the zip path does; this used to be an unbounded `read()`.
+            # The extra byte cannot actually arrive either (`ExFileObject`
+            # truncates at the member size the header declares), so this is
+            # belt-and-braces against a size the archive itself supplied.
+            raw = handle.read(cap + 1)
+        if len(raw) > cap:
+            return {}
+        return _parse_attrs(raw, best.name)
 
 
 def read_archive_root_attrs(path: str | Path) -> Dict[str, Any]:
@@ -522,6 +610,14 @@ def read_archive_root_attrs(path: str | Path) -> Dict[str, Any]:
     are the same PATH — the store root's own ``.zattrs`` — so no foreign node's
     attrs can be reached either way), and the early stop is worth keeping.
 
+    The member is read under a budget chosen by its document NAME
+    (:func:`_max_member_bytes`), because the two formats' documents are not
+    remotely the same size: a format-2 ``.zattrs`` IS the attributes, while a
+    format-3 ``zarr.json`` at a consolidated root carries the whole consolidated
+    index of the tree beside them (~8 KB per part of a ``gsplat partition``,
+    measured). Whichever it was, the ATTRIBUTES handed back are capped at the
+    small :data:`_MAX_ATTRS_BYTES` after parsing.
+
     Reading ``.zattrs`` directly — not consolidated ``.zmetadata`` — is the
     correct source, for an invariant rather than a version: the peek must see
     exactly what the loader's own group-open sees, and the loader never opens a
@@ -537,8 +633,9 @@ def read_archive_root_attrs(path: str | Path) -> Dict[str, Any]:
     Returns:
         The root attrs as a dict. ``{}`` when the path is missing or is not one of
         the two supported archive formats, when no root attrs member exists,
-        when the store root is ambiguous (above), or when the payload is oversized
-        or not a JSON object.
+        when the store root is ambiguous (above), when the metadata document
+        exceeds its name's budget or the attributes inside it exceed
+        :data:`_MAX_ATTRS_BYTES`, or when the payload is not a JSON object.
 
     Raises:
         OSError, zipfile.BadZipFile, tarfile.TarError, UnicodeDecodeError,

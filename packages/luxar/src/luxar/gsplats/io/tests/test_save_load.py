@@ -2028,6 +2028,149 @@ class TestArchiveRootAttrsPeek:
         self._write(archive, fmt, [("x.gsplats.zarr/.zattrs", '{"opacity": 0.75}')])
         assert _archive.read_archive_root_attrs(archive) == {}
 
+    @staticmethod
+    def _fat_v3_root_doc(attributes: dict[str, object], min_bytes: int) -> str:
+        """A format-3 root ``zarr.json`` padded past ``min_bytes`` HONESTLY.
+
+        Real shape throughout — ``zarr_format: 3``, ``node_type: "group"``, the
+        caller's real ``attributes`` — and the bulk is where a real one's bulk is:
+        an inline ``consolidated_metadata`` holding one valid group record per
+        child. That is what makes a format-3 root document grow with the tree
+        while its attributes stay a handful of scalars, and it is why the one
+        4 MiB budget that used to cover both was the wrong ruler (measured ~8 KB
+        of root ``zarr.json`` per part of a real ``gsplat partition``, so ~500
+        parts crossed it).
+
+        Synthesised rather than produced by a real ``gsplat partition``: the
+        hundreds of parts needed to cross 4 MiB take far too long to fit for a
+        unit test. The per-child record is padded to roughly the measured
+        per-part size, and the entry count is derived arithmetically so this
+        stays one ``json.dumps``.
+        """
+        entry = {
+            "zarr_format": 3,
+            "node_type": "group",
+            "attributes": {"pad": "x" * 7000},
+        }
+        per_entry = len(json.dumps({"part_0": entry}))
+        count = min_bytes // per_entry + 8
+        return json.dumps(
+            {
+                "zarr_format": 3,
+                "node_type": "group",
+                "attributes": attributes,
+                "consolidated_metadata": {
+                    "kind": "inline",
+                    "must_understand": False,
+                    "metadata": {f"part_{i}": entry for i in range(count)},
+                },
+            }
+        )
+
+    @pytest.mark.parametrize("fmt", ["zip", "tar.gz"])
+    def test_a_fat_consolidated_root_document_peeks_like_the_directory(
+        self, tmp_path: Path, fmt: str
+    ) -> None:
+        """A >4 MiB format-3 root document is peeked, not refused (#1600).
+
+        The single 4 MiB budget was written for a format-2 ``.zattrs``, which
+        literally IS the attributes mapping. A format-3 ``zarr.json`` at a
+        CONSOLIDATED root — which every Luxar store is — carries the whole
+        consolidated index beside attributes that are still a handful of scalars,
+        so the document grows with the tree and crosses 4 MiB at roughly 500
+        parts (routine for a ``batch-fit merge``). The peek then returned ``{}``,
+        which reads as "this dataset authored no appearance", so every rewriting
+        command (``gsplat lod``, ``additive``, ``flatten``, ``decimate``,
+        ``reencode``, ``cull``, ``filter``, ``transform``, ``partition``,
+        ``migrate-format``) silently wrote its own defaults over the authored
+        appearance of a zipped/tarred large partition.
+
+        Deliberately run with the REAL, unpatched constants: a monkeypatched
+        budget is exactly what the pre-existing oversize test used, and it passed
+        just as happily with this bug present.
+
+        The assertion is AGREEMENT with the same tree opened as a directory
+        store, not a hard-coded dict — that disagreement between the two input
+        shapes is the actual defect, so the test tracks the real contract.
+        """
+        from luxar.gsplats.io._archive import read_archive_root_attrs
+        from luxar.gsplats.io.load_gsplats import read_authored_appearance
+
+        authored = {
+            "format_type": "gsplats_zarr",
+            "blending_mode": "additive",
+            "opacity": 0.9,
+            "gamma": 1.4,
+        }
+        raw = self._fat_v3_root_doc(authored, 4 * 1024**2)
+        # Not vacuous: the document really is over the attrs budget.
+        assert len(raw.encode("utf-8")) > 4 * 1024**2
+
+        directory = tmp_path / "x.gsplats.zarr"
+        directory.mkdir()
+        (directory / "zarr.json").write_text(raw)
+
+        archive = tmp_path / f"fat_root.gsplats.zarr.{fmt}"
+        self._write(archive, fmt, [("x.gsplats.zarr/zarr.json", raw)])
+
+        peeked = read_archive_root_attrs(archive)
+        assert peeked == authored
+        assert read_authored_appearance(archive) == read_authored_appearance(directory)
+        # And the carry is not the empty agreement of two broken paths.
+        assert read_authored_appearance(archive) == {
+            "blending_mode": "additive",
+            "gamma": 1.4,
+            "opacity": 0.9,
+        }
+
+    @pytest.mark.parametrize("fmt", ["zip", "tar.gz"])
+    def test_an_oversized_zattrs_is_still_refused_at_the_small_budget(
+        self, tmp_path: Path, fmt: str
+    ) -> None:
+        """The old guard is intact for format 2, at the real 4 MiB constant.
+
+        Nothing about a ``.zattrs`` changed: it IS the attributes mapping, so the
+        larger document budget must not reach it. Written without monkeypatching
+        so a future refactor that collapsed the two budgets back into one would
+        be caught here rather than hidden by a patched-down number.
+        """
+        from luxar.gsplats.io._archive import read_archive_root_attrs
+
+        raw = json.dumps({"opacity": 0.75, "pad": "x" * (4 * 1024**2 + 4096)})
+        assert len(raw.encode("utf-8")) > 4 * 1024**2
+        archive = tmp_path / f"fat_zattrs.gsplats.zarr.{fmt}"
+        self._write(archive, fmt, [("x.gsplats.zarr/.zattrs", raw)])
+        assert read_archive_root_attrs(archive) == {}
+
+    @pytest.mark.parametrize("fmt", ["zip", "tar.gz"])
+    def test_oversized_attributes_inside_a_node_document_are_refused(
+        self, tmp_path: Path, fmt: str
+    ) -> None:
+        """A fat ``attributes`` mapping is refused even in a within-budget document.
+
+        The document budget had to grow for the consolidated index; that must not
+        become licence to hand a caller an arbitrarily large attrs mapping. The
+        post-parse cap in ``_parse_attrs`` is what keeps the two independent, so
+        this document sits far below the 128 MiB document budget and is refused
+        purely on the size of what it unwraps to.
+        """
+        from luxar.gsplats.io._archive import read_archive_root_attrs
+
+        raw = json.dumps(
+            {
+                "zarr_format": 3,
+                "node_type": "group",
+                "attributes": {
+                    "format_type": "gsplats_zarr",
+                    "pad": "x" * (4 * 1024**2 + 4096),
+                },
+            }
+        )
+        assert len(raw.encode("utf-8")) < 128 * 1024**2
+        archive = tmp_path / f"fat_attrs.gsplats.zarr.{fmt}"
+        self._write(archive, fmt, [("x.gsplats.zarr/zarr.json", raw)])
+        assert read_archive_root_attrs(archive) == {}
+
 
 def test_write_gsplats_tree_stamps_child_index_on_children() -> None:
     """Bare-root .gsplats.zarr trees stamp ``child_index`` (insertion order) on
