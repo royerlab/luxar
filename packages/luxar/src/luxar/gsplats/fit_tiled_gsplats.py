@@ -89,12 +89,15 @@ def count_nonempty_tiles(
     The floor, window, and predicate mirror :func:`fit_tile`'s skip decision,
     but the scan deliberately does not replay optional per-tile denoising. If
     the scan finds no signal at all, use the geometric count as the safe divisor:
-    that avoids division by zero and errs toward over-seeding if later
+    that avoids division by zero and errs toward under-seeding if later
     preprocessing makes a tile fit-worthy.
     """
     nonempty = 0
+    floor = 0.0 if applied_floor is None else applied_floor
     for spec in specs:
         tile_data = np.asarray(volume[spec.slices], dtype=np.float32)
+        if float(tile_data.max()) - floor < _TILE_SIGNAL_EPS:
+            continue
         if applied_floor is not None:
             tile_data = np.clip(tile_data - applied_floor, 0.0, None)
         tile_data = tile_data * cosine_window(spec)
@@ -459,7 +462,7 @@ def fit_tile(
         All other keyword arguments forwarded to the fitting function.
         ``seeds`` here is **per tile**: an integer is the count for THIS tile
         alone. The CLI's ``--seeds`` is a whole-volume budget and is divided by
-        the tile count before reaching this function (see
+        the non-empty tile count before reaching this function (see
         ``luxar.cli.gsplat_ops.fitting.fit_utils.split_seeds_across_tiles``);
         a direct Python caller does that division itself if it wants the same
         semantics.
@@ -888,7 +891,7 @@ def fit_tiled(
         ``seeds`` is handed to EVERY tile as-is, so an integer here is a
         **per-tile** count, not a whole-volume budget: N tiles fit ~N x seeds
         splats. The CLI's ``--seeds`` IS a whole-volume budget and is divided
-        by the tile count before this call (see
+        by the non-empty tile count before this call (see
         ``luxar.cli.gsplat_ops.fitting.fit_utils.split_seeds_across_tiles``);
         a direct Python caller that wants the same semantics divides itself.
 
@@ -930,32 +933,36 @@ def fit_tiled(
     # against "floor >= max erases everything" too (matching the non-tiled
     # path, which warns and ignores such a floor).
     floor_spec = fit_kwargs.pop("floor", "auto")
-    _validate_floor(floor_spec)
-    # Every tile is denoised before the level is subtracted, so a volume-derived
-    # spec is resolved on the DENOISED basis (#1178) — otherwise this path
-    # removes a different pedestal than `--tiling none` does on the same input.
-    # PEEK at the denoise keys: `fit_kwargs` is forwarded to `fit_tile`, which
-    # pops them itself.
-    applied_floor = resolve_volume_floor_denoised(
-        volume,
-        floor_spec,
-        denoise_h=fit_kwargs.get("_denoise_h"),
-        denoise_params=fit_kwargs.get("_denoise_params"),
-        guard_numeric=True,
-        # Log the DENOISED basis the level was resolved on (raw level + the
-        # measured shift) — the one number the summary line below cannot show.
-        # Gated on a VOLUME-DERIVED spec (`auto`/`pNN`) and on denoising actually
-        # being active, so `--denoise` off, and any absolute level, print exactly
-        # what they printed before #1178. `isinstance(str)` would not do: the CLI
-        # hands `--floor 110` down as the STRING "110", which is an absolute the
-        # summary line below already echoes.
-        verbose=(
-            verbose
-            and _floor_spec_is_volume_derived(floor_spec)
-            and fit_kwargs.get("_denoise_h") is not None
-            and fit_kwargs.get("_denoise_params") is not None
-        ),
-    )
+    floor_already_resolved = fit_kwargs.pop("_floor_resolved", False)
+    if floor_already_resolved:
+        applied_floor = None if floor_spec == "none" else float(floor_spec)
+    else:
+        _validate_floor(floor_spec)
+        # Every tile is denoised before the level is subtracted, so a
+        # volume-derived spec is resolved on the DENOISED basis (#1178) —
+        # otherwise this path removes a different pedestal than `--tiling none`
+        # does on the same input. PEEK at the denoise keys: `fit_kwargs` is
+        # forwarded to `fit_tile`, which pops them itself.
+        applied_floor = resolve_volume_floor_denoised(
+            volume,
+            floor_spec,
+            denoise_h=fit_kwargs.get("_denoise_h"),
+            denoise_params=fit_kwargs.get("_denoise_params"),
+            guard_numeric=True,
+            # Log the DENOISED basis the level was resolved on (raw level + the
+            # measured shift) — the one number the summary line below cannot show.
+            # Gated on a VOLUME-DERIVED spec (`auto`/`pNN`) and on denoising actually
+            # being active, so `--denoise` off, and any absolute level, print exactly
+            # what they printed before #1178. `isinstance(str)` would not do: the CLI
+            # hands `--floor 110` down as the STRING "110", which is an absolute the
+            # summary line below already echoes.
+            verbose=(
+                verbose
+                and _floor_spec_is_volume_derived(floor_spec)
+                and fit_kwargs.get("_denoise_h") is not None
+                and fit_kwargs.get("_denoise_params") is not None
+            ),
+        )
     if verbose and applied_floor is not None:
         aprint(
             f"Floor suppression: subtracting background level "

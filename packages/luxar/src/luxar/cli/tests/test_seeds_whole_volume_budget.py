@@ -150,6 +150,13 @@ def _make_sparse_volume(path: Path) -> None:
     np.save(path, volume)
 
 
+def _make_floor_sparse_volume(path: Path) -> None:
+    """A pedestal fills the grid, but the resolved floor leaves one corner."""
+    volume = np.full((96, 96), 2.0, np.float32)
+    volume[:24, :24] = 10.0
+    np.save(path, volume)
+
+
 def _one_splat_result() -> GSplatData:
     """A minimal valid 2D leaf so the CLI's save + summary path completes."""
     chol = np.zeros((1, tril_size(2)), dtype=np.float32)
@@ -175,6 +182,15 @@ def test_sparse_corner_counts_only_tiles_that_will_fit() -> None:
 
     assert len(specs) == 25
     assert count_nonempty_tiles(volume, specs, applied_floor=None) == 4
+
+
+def test_resolved_floor_excludes_pedestal_only_tiles() -> None:
+    volume = np.full((96, 96), 2.0, np.float32)
+    volume[:24, :24] = 10.0
+    specs = compute_tile_specs(volume.shape, 24, 4)
+
+    assert count_nonempty_tiles(volume, specs, applied_floor=None) == len(specs)
+    assert count_nonempty_tiles(volume, specs, applied_floor=3.0) == 4
 
 
 def test_all_empty_scan_falls_back_to_grid_count() -> None:
@@ -317,6 +333,50 @@ def test_cli_sequential_sparse_fit_splits_over_nonempty_tiles(
 
     assert result.exit_code == 0, result.output
     assert seen["seeds"] == 50
+    assert "4 non-empty tiles (25 grid tiles)" in result.output
+
+
+@pytest.mark.skipif(not HAS_TORCH, reason="the fit CLI imports the torch fitter")
+def test_cli_sequential_divisor_reuses_resolved_floor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: dict[str, Any] = {}
+
+    def _fake_fit_tiled(volume: Any, **kwargs: Any) -> GSplatData:
+        seen.update(kwargs)
+        return _one_splat_result()
+
+    monkeypatch.setattr("luxar.gsplats.fit_tiled_gsplats.fit_tiled", _fake_fit_tiled)
+
+    volume = tmp_path / "floor-sparse.npy"
+    _make_floor_sparse_volume(volume)
+    result = runner.invoke(
+        app,
+        [
+            "gsplat",
+            "fit",
+            str(volume),
+            str(tmp_path / "floor-sparse.gsplats.zarr"),
+            "--tiling",
+            "uniform",
+            "--tile-size",
+            "24",
+            "--overlap",
+            "4",
+            "--flat",
+            "--floor",
+            "3",
+            "--seeds",
+            "200",
+            "--device",
+            "cpu",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert seen["seeds"] == 50
+    assert seen["floor"] == 3.0
+    assert seen["_floor_resolved"] is True
     assert "4 non-empty tiles (25 grid tiles)" in result.output
 
 
@@ -509,9 +569,10 @@ def test_cli_parallel_forwards_raw_budget_and_announces_split(
         f"worker must get the raw whole-volume budget, got {argv}"
     )
 
-    # The parent announces the division the workers will perform.
+    # The parent cannot inspect the workers' final grid, so it announces only
+    # the geometric lower bound; each worker prints the exact split internally.
     assert "whole-volume budget" in result.output
-    assert "10 per tile across 9 non-empty tiles" in result.output
+    assert "at least 10 per non-empty tile across 9 grid tiles" in result.output
 
 
 @pytest.mark.skipif(not HAS_TORCH, reason="the fit CLI imports the torch fitter")

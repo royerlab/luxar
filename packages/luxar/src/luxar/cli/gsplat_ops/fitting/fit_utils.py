@@ -659,37 +659,17 @@ def dispatch_parallel_tiled(
             f"Parallel tiled fitting: {n_tiles} tiles, grid={grid_shape}, "
             f"{n_jobs} concurrent worker(s)"
         )
-        # Announce the seed split HERE, in the parent. Each worker splits the
-        # budget itself (and prints this same notice), but workers run under
+        # Announce a conservative seed split HERE, in the parent. Each worker
+        # resolves the exact non-empty count itself, but workers run under
         # subprocess.run(capture_output=True), so on success their stdout is
         # discarded and the user would only ever see the parent's undivided
-        # "Seeds: K" line. The return value is deliberately DROPPED — applying
-        # it here as well would double-divide, since the raw whole-volume
-        # count is what gets forwarded to the workers below.
+        # "Seeds: K" line. The raw whole-volume count is still forwarded below;
+        # dividing it here as well would double-divide in each worker.
         from luxar.cli.gsplat_config import parse_seeds
 
         parent_seeds = parse_seeds(ctx.seeds)
         if _needs_nonempty_tile_scan(parent_seeds, n_tiles):
-            if ds_factors is not None:
-                announce_seed_split_lower_bound(parent_seeds, n_tiles)
-            else:
-                from luxar.gsplats.fit_tiled_gsplats import count_nonempty_tiles
-                from luxar.gsplats.fitting.preprocessing import (
-                    resolve_volume_floor_denoised,
-                )
-
-                floor_spec = fit_config.get("floor", "auto")
-                resolved_floor = resolve_volume_floor_denoised(
-                    volume,
-                    floor_spec,
-                    denoise_h=fit_config.get("_denoise_h"),
-                    denoise_params=fit_config.get("_denoise_params"),
-                    guard_numeric=False,
-                )
-                nonempty_tiles = count_nonempty_tiles(volume, specs, resolved_floor)
-                split_seeds_across_tiles(
-                    parent_seeds, nonempty_tiles, grid_tiles=n_tiles
-                )
+            announce_seed_split_lower_bound(parent_seeds, n_tiles)
 
         # Format downscale for worker argv (scalar or per-axis).
         ds_arg: Optional[str] = None
@@ -1267,11 +1247,17 @@ def fit_sequential_tiled(
             denoise_h=fit_config.get("_denoise_h"),
             denoise_params=fit_config.get("_denoise_params"),
             guard_numeric=True,
+            verbose=bool(fit_config.get("verbose", True))
+            and floor_spec_needs_volume(floor_spec)
+            and fit_config.get("_denoise_h") is not None
+            and fit_config.get("_denoise_params") is not None,
         )
         nonempty_tiles = count_nonempty_tiles(volume, specs, resolved_floor)
         tile_seeds = split_seeds_across_tiles(
             parsed_seeds, nonempty_tiles, grid_tiles=len(specs)
         )
+        fit_config["floor"] = resolved_floor if resolved_floor is not None else "none"
+        fit_config["_floor_resolved"] = True
     else:
         tile_seeds = split_seeds_across_tiles(parsed_seeds, len(specs))
 
