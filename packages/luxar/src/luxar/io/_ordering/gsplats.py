@@ -7,7 +7,11 @@ from typing import Literal, Optional, Sequence
 import numpy as np
 
 from ...typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
-from .bounds import _BARRIER_BOUND_EPS
+from .bounds import (
+    _BARRIER_BOUND_EPS,
+    _normalise_slice_dims,
+    _store_outward_f32_array,
+)
 from .compound import _compound_sort
 
 
@@ -62,6 +66,11 @@ def compute_chunk_bounds_gsplats(
     from straddling categories, which is what makes single-timepoint queries fetch
     only their own chunks.
 
+    The extent is accumulated in float64 and narrowed to the float32 store with
+    OUTWARD rounding (see :func:`_store_outward_f32_array`), so a stored bound is
+    never tighter than the footprint at any coordinate magnitude — not only where
+    a small σ happens to survive float32 arithmetic and a round-to-nearest store.
+
     Args:
         centers: Splat centers (already sorted), shape (N, d)
         cholesky_factors: Packed Cholesky factors (already sorted), shape
@@ -78,16 +87,18 @@ def compute_chunk_bounds_gsplats(
             ``truncation_radius`` positionally. The default here only applies to
             a direct call.
         slice_dims: Barrier/categorical dimension indices (no σ expansion).
-            Default None → expand all axes (historical behavior).
+            Default None → expand all axes (historical behavior). An index
+            outside ``[0, d)`` raises ``ValueError`` (see
+            :func:`_normalise_slice_dims`).
 
     Returns:
         chunk_bounds: Bounding boxes, shape (num_chunks, d, 2)
     """
     n_splats, ndim = centers.shape
+    discrete_dims = _normalise_slice_dims(slice_dims, ndim)
     if n_splats == 0:
         return np.zeros((0, ndim, 2), dtype=np.float32)
     num_chunks = (n_splats + chunk_size - 1) // chunk_size
-    discrete_dims = set(int(d) for d in slice_dims) if slice_dims else set()
 
     # Uniform-Cholesky convenience: a single packed row (shape (1, k)) is shared
     # by all splats and never expanded to (N, k). It must be used for every
@@ -102,16 +113,18 @@ def compute_chunk_bounds_gsplats(
         start_idx = chunk_idx * chunk_size
         end_idx = min(start_idx + chunk_size, n_splats)
 
-        chunk_centers = centers[start_idx:end_idx]
+        # float64 throughout: a small σ added to a large center is lost outright
+        # in float32 arithmetic, before the outward store below can rescue it.
+        chunk_centers = centers[start_idx:end_idx].astype(np.float64, copy=False)
         chunk_cholesky = (
             cholesky_factors
             if uniform_cholesky
             else cholesky_factors[start_idx:end_idx]
-        )
+        ).astype(np.float64, copy=False)
 
         # Ellipsoidal extent (per spec:
         # extent[d] = sqrt(covariance[d,d]) * coverage_sigma)
-        extents = np.zeros((end_idx - start_idx, ndim), dtype=np.float32)
+        extents = np.zeros((end_idx - start_idx, ndim), dtype=np.float64)
 
         for d in range(ndim):
             if d in discrete_dims:
@@ -138,7 +151,8 @@ def compute_chunk_bounds_gsplats(
             mins[d] = chunk_centers[:, d].min() - _BARRIER_BOUND_EPS
             maxs[d] = chunk_centers[:, d].max() + _BARRIER_BOUND_EPS
 
-        chunk_bounds[chunk_idx, :, 0] = mins
-        chunk_bounds[chunk_idx, :, 1] = maxs
+        lo32, hi32 = _store_outward_f32_array(mins, maxs)
+        chunk_bounds[chunk_idx, :, 0] = lo32
+        chunk_bounds[chunk_idx, :, 1] = hi32
 
     return chunk_bounds

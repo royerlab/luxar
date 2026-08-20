@@ -13,7 +13,11 @@ import numpy as np
 
 from luxar.core import Dimension
 
-from .bounds import _BARRIER_BOUND_EPS
+from .bounds import (
+    _BARRIER_BOUND_EPS,
+    _normalise_slice_dims,
+    _store_outward_f32_array,
+)
 from .curves.hilbert import hilbert_encode_nd
 from .curves.morton import morton_encode_128bit, morton_encode_nd
 from .grid import normalize_coords_to_grid
@@ -272,19 +276,26 @@ def compute_vertex_chunk_bounds(
 ) -> np.ndarray:
     """Compute chunk bounding boxes for vertices (no radius/width expansion).
 
+    Spatial axes carry no pad (a vertex is a point), so the interval is exact;
+    the barrier epsilon, however, is a small ABSOLUTE quantity. Both are computed
+    in float64 and narrowed to the float32 store with OUTWARD rounding (see
+    :func:`_store_outward_f32_array`), so a stored bound is never tighter than
+    the footprint at any coordinate magnitude.
+
     Args:
         vertices: Vertex positions (already sorted), shape (V, D)
         chunk_size: Number of vertices per chunk
         slice_dims: Indices of discrete (non-spatial) dimensions (padded by a
             float-boundary epsilon only — the reader's per-dimension tolerance
-            owns the query reach)
+            owns the query reach). An index outside ``[0, D)`` raises
+            ``ValueError`` (see :func:`_normalise_slice_dims`).
 
     Returns:
         chunk_bounds: Bounding boxes, shape (num_chunks, D, 2)
     """
     n_vertices, n_dims = vertices.shape
     num_chunks = (n_vertices + chunk_size - 1) // chunk_size
-    discrete_dims = set(slice_dims) if slice_dims else set()
+    discrete_dims = _normalise_slice_dims(slice_dims, n_dims)
 
     chunk_bounds = np.zeros((num_chunks, n_dims, 2), dtype=np.float32)
 
@@ -293,20 +304,27 @@ def compute_vertex_chunk_bounds(
         end_idx = min(start_idx + chunk_size, n_vertices)
         chunk_verts = vertices[start_idx:end_idx]
 
+        # Reduce per DIMENSION, not with a single ``min(axis=0)``: numpy's
+        # outer-axis reduce over a 3-or-4-element inner row is several times
+        # slower than one contiguous reduce per column, and these run over every
+        # chunk of every dataset. Only the outward STORE is vectorised.
+        mins = np.empty(n_dims, dtype=np.float64)
+        maxs = np.empty(n_dims, dtype=np.float64)
         for d in range(n_dims):
-            if d in discrete_dims:
-                # Discrete: tight bounds padded by a float-boundary epsilon only
-                # (the reader's per-dimension tolerance owns the query reach).
-                chunk_bounds[chunk_idx, d, 0] = (
-                    chunk_verts[:, d].min() - _BARRIER_BOUND_EPS
-                )
-                chunk_bounds[chunk_idx, d, 1] = (
-                    chunk_verts[:, d].max() + _BARRIER_BOUND_EPS
-                )
-            else:
-                # Spatial: exact bounds (no size expansion for vertices)
-                chunk_bounds[chunk_idx, d, 0] = chunk_verts[:, d].min()
-                chunk_bounds[chunk_idx, d, 1] = chunk_verts[:, d].max()
+            col = chunk_verts[:, d]
+            mins[d] = col.min()
+            maxs[d] = col.max()
+        for d in discrete_dims:
+            # Discrete: tight bounds padded by a float-boundary epsilon only
+            # (the reader's per-dimension tolerance owns the query reach).
+            mins[d] -= _BARRIER_BOUND_EPS
+            maxs[d] += _BARRIER_BOUND_EPS
+
+        # Spatial dims keep their exact min/max; the outward store only ever
+        # moves a bound by the one ULP the cast itself would have swallowed.
+        lo32, hi32 = _store_outward_f32_array(mins, maxs)
+        chunk_bounds[chunk_idx, :, 0] = lo32
+        chunk_bounds[chunk_idx, :, 1] = hi32
 
     return chunk_bounds
 
@@ -323,6 +341,12 @@ def compute_segment_chunk_bounds(
     Segment bounds are in D-dimensional space (not 2×D) for view frustum
     intersection tests. Each segment's bounds include the line width extent.
 
+    The width interval is accumulated in float64 and narrowed to the float32
+    store with OUTWARD rounding (see :func:`_store_outward_f32_array`), so a
+    stored bound is never tighter than the footprint at any coordinate
+    magnitude — not only where a small width happens to survive float32
+    arithmetic and a round-to-nearest store.
+
     IMPORTANT: widths must be a full (V,) array. Broadcast widths should be
     expanded with np.full(V, width_value) before calling this function.
 
@@ -333,7 +357,8 @@ def compute_segment_chunk_bounds(
         chunk_size: Number of segments per chunk
         slice_dims: Indices of discrete (non-spatial) dimensions (padded by a
             float-boundary epsilon only — the reader's per-dimension tolerance
-            owns the query reach)
+            owns the query reach). An index outside ``[0, D)`` raises
+            ``ValueError`` (see :func:`_normalise_slice_dims`).
 
     Returns:
         chunk_bounds: Bounding boxes, shape (num_chunks, D, 2)
@@ -341,7 +366,7 @@ def compute_segment_chunk_bounds(
     _V, D = vertices.shape
     S = segments.shape[0]
     num_chunks = (S + chunk_size - 1) // chunk_size
-    discrete_dims = set(slice_dims) if slice_dims else set()
+    discrete_dims = _normalise_slice_dims(slice_dims, D)
 
     chunk_bounds = np.zeros((num_chunks, D, 2), dtype=np.float32)
 
@@ -350,31 +375,39 @@ def compute_segment_chunk_bounds(
         end_idx = min(start_idx + chunk_size, S)
         chunk_segs = segments[start_idx:end_idx]
 
-        # Get vertex positions and widths for this chunk's segments
-        p1 = vertices[chunk_segs[:, 0]]  # Start vertex positions
-        p2 = vertices[chunk_segs[:, 1]]  # End vertex positions
-        w1 = widths[chunk_segs[:, 0]]  # Start vertex widths
-        w2 = widths[chunk_segs[:, 1]]  # End vertex widths
-        max_w = np.maximum(w1, w2)  # Conservative bound per segment
+        # Get vertex positions and widths for this chunk's segments. The width
+        # is widened to float64 so every ``coord ± width`` below is a float64
+        # sum: a small width added to a large coordinate is lost outright in
+        # float32 arithmetic, before the outward store can rescue it.
+        p1 = vertices[chunk_segs[:, 0]]
+        p2 = vertices[chunk_segs[:, 1]]
+        w1 = widths[chunk_segs[:, 0]].astype(np.float64, copy=False)
+        w2 = widths[chunk_segs[:, 1]].astype(np.float64, copy=False)
+        max_w = np.maximum(w1, w2)  # (n,) conservative bound per segment
 
+        # Reduce per DIMENSION, not with a single ``min(axis=0)``: numpy's
+        # outer-axis reduce over a 3-or-4-element inner row is several times
+        # slower than one reduce per column, and these run over every chunk of
+        # every dataset. Only the outward STORE below is vectorised.
+        mins = np.empty(D, dtype=np.float64)
+        maxs = np.empty(D, dtype=np.float64)
         for d in range(D):
+            c1 = p1[:, d]
+            c2 = p2[:, d]
             if d in discrete_dims:
                 # Discrete: no width expansion, only a float-boundary epsilon.
                 # The reader's per-dimension tolerance owns the query reach
-                # (see _BARRIER_BOUND_EPS).
-                chunk_bounds[chunk_idx, d, 0] = (
-                    min(p1[:, d].min(), p2[:, d].min()) - _BARRIER_BOUND_EPS
-                )
-                chunk_bounds[chunk_idx, d, 1] = (
-                    max(p1[:, d].max(), p2[:, d].max()) + _BARRIER_BOUND_EPS
-                )
+                # (see _BARRIER_BOUND_EPS). float() keeps the epsilon in
+                # float64 — a float32 column min would demote the subtraction.
+                mins[d] = min(float(c1.min()), float(c2.min())) - _BARRIER_BOUND_EPS
+                maxs[d] = max(float(c1.max()), float(c2.max())) + _BARRIER_BOUND_EPS
             else:
-                # Spatial: include width extent
-                chunk_bounds[chunk_idx, d, 0] = min(
-                    (p1[:, d] - max_w).min(), (p2[:, d] - max_w).min()
-                )
-                chunk_bounds[chunk_idx, d, 1] = max(
-                    (p1[:, d] + max_w).max(), (p2[:, d] + max_w).max()
-                )
+                # Spatial: include the full endpoint width extent (no /2).
+                mins[d] = min((c1 - max_w).min(), (c2 - max_w).min())
+                maxs[d] = max((c1 + max_w).max(), (c2 + max_w).max())
+
+        lo32, hi32 = _store_outward_f32_array(mins, maxs)
+        chunk_bounds[chunk_idx, :, 0] = lo32
+        chunk_bounds[chunk_idx, :, 1] = hi32
 
     return chunk_bounds

@@ -19,7 +19,7 @@ Provide the **shared spatial-ordering infrastructure** that drives all three geo
 | **curves/hilbert.py** | Hilbert curve encoding | `hilbert_encode_nd(coords, bits_per_dim=16)` |
 | **grid.py** | Grid normalization | `normalize_coords_to_grid(coords, min_coords, max_coords, resolution)`, `compute_auto_resolution(coords, max_resolution=2**16)` |
 | **compound.py** | Compound ordering core | `_compound_sort(coords, slice_dims, ordering_dims, method="hilbert")`, `detect_barrier_dims(centers, max_cardinality=1024)` |
-| **bounds.py** | Shared chunk-bounds constants | `_BARRIER_BOUND_EPS` |
+| **bounds.py** | Shared chunk-bounds constants, `slice_dims` sanitising, and the float32 outward store | `_BARRIER_BOUND_EPS`, `_normalise_slice_dims(slice_dims, ndim)`, `_store_outward_f32(lo, hi)`, `_store_outward_f32_array(lo, hi)` |
 | **points.py** | Points-specific glue | `sort_points_compound(positions, dimensions, method="hilbert")`, `compute_chunk_bounds_points(positions, radii, chunk_size, slice_dims=None)` |
 | **lines.py** | Lines-specific glue | `convert_to_indexed(n_vertices, line_type, indices)`, `order_lines_spatial(vertices, segments, dimensions, method="hilbert")`, `sort_segments_compound(segment_coords_2d, dimensions, method="hilbert")`, `compute_vertex_chunk_bounds(vertices, chunk_size, slice_dims=None)`, `compute_segment_chunk_bounds(vertices, segments, widths, chunk_size, slice_dims=None)` |
 | **gsplats.py** | GSplats-specific glue | `sort_splats_spatial(centers, method="hilbert", resolution=None, slice_dims=None)`, `compute_chunk_bounds_gsplats(centers, cholesky_factors, chunk_size, coverage_sigma=3.0, slice_dims=None)` |
@@ -89,7 +89,19 @@ Both encoders are **permutation-equivariant**: reordering the input rows reorder
 
 `_BARRIER_BOUND_EPS = 1e-3` — absolute padding added to barrier/discrete-dimension chunk bounds. This is ONLY a float-boundary safety margin (the query "reach" lives entirely in the reader's per-dimension tolerance). It used to be 0.5 (half a step); combined with the reader's own half-step tolerance that summed to a full step and made a single-category query (e.g., one timepoint) pull in the entire neighbouring category. Keep this tiny.
 
-**KNOWN LIMIT**: The pad is absolute while the reader's reach is step-scaled (`0.25 × step`), so for pathological discrete steps below ~1.3e-3 the pad reaches past the neighbour category's quarter-step boundary and the over-fetch returns. Step metadata is not plumbed into these bound builders; discrete/categorical dims with milli-scale steps are not a supported layout (rescale the axis instead).
+**KNOWN LIMIT (small steps)**: The pad is absolute while the reader's reach is step-scaled (`0.25 × step`), so for pathological discrete steps below ~1.3e-3 the pad reaches past the neighbour category's quarter-step boundary and the over-fetch returns. Step metadata is not plumbed into these bound builders; discrete/categorical dims with milli-scale steps are not a supported layout (rescale the axis instead).
+
+**KNOWN LIMIT (large coordinates)**: The outward float32 store (below) never lets a pad vanish, so the pad a barrier axis EFFECTIVELY gets is `max(_BARRIER_BOUND_EPS, one float32 ULP at |x|)` — 1e-3 near the origin, but 1.0 at `|x| = 2**23`, 2.0 at 2e7, 8.0 at 1e8. Integers stay exactly float32-representable through `2**24`, so a unit-step categorical axis with large absolute values (a millisecond timestamp, an acquisition index offset into an experiment) is a legitimate layout there and will over-fetch a whole neighbouring category. That is the deliberate trade — over-fetching a neighbour beats dropping the chunk at its own category value — but re-base such an axis near the origin if the extra traffic matters.
+
+### Float32 Outward Store (`bounds.py`)
+
+`_store_outward_f32(lo, hi)` (scalar, used by Points) and `_store_outward_f32_array(lo, hi)` (per-chunk `(d,)` vectors, used by GSplats and Lines) narrow a float64 interval to the float32 `chunk_bounds` array by rounding each end AWAY from the interval. Every pad the builders add is a small **absolute** quantity — a point radius, a gsplat's `coverage_sigma·σ`, a line endpoint width, `_BARRIER_BOUND_EPS` — so past `|x| ~ 2**23` it falls under half a float32 ULP and a round-to-nearest store discards it, leaving a bound TIGHTER than the footprint (elements silently dropped from queries at their own edge). Every builder therefore accumulates its interval in **float64** first and stores it through these helpers: an extent already lost to float32 arithmetic is invisible to the outward step, so the array form rejects a float32 input outright rather than casting it up.
+
+A bound is stepped one ULP outward **only** when the cast moved it the wrong way, never unconditionally — a padless spatial vertex dim comes out exactly equal to its float32 input (pinned by `test_padless_vertex_bounds_are_exact_at_every_magnitude`).
+
+The array form vectorises only the outward-store **branching** over an already-reduced `(d,)` vector — it is not a way to vectorise the min/max **reduce** as well. Both lines builders reduce per dimension on purpose: NumPy's outer-axis reduce over a 3-or-4-element inner row is several times slower than one reduce per column, and these run over every chunk of every dataset (measured 5-9x end-to-end at 1M vertices/segments and repo-default chunk sizes; bitwise-identical output either way). `compute_chunk_bounds_gsplats` keeps its `(chunk_centers ± extents).min(axis=0)` because it materialises that padded `(n, d)` array anyway.
+
+`_normalise_slice_dims(slice_dims, ndim)` is the single sanitiser all four builders use: it coerces each entry with `int()` and raises `ValueError` for anything outside `[0, ndim)`. Ignoring a bad index would silently cost that categorical axis its barrier treatment (it would take the geometric-extent expansion instead and bleed into the neighbouring category), so it fails loudly. No in-tree caller can produce one — they all build the list by `enumerate`-ing the actual dims.
 
 ### Per-Geometry Glue
 
@@ -137,13 +149,15 @@ Both encoders are **permutation-equivariant**: reordering the input rows reorder
 
 5. **Conservative barrier detection**: `detect_barrier_dims` errs toward NOT flagging an axis as a barrier (a false positive drops splats; a false negative only causes over-fetch).
 
-6. **Bits budget**: The bit budget is split across ONLY the spatial (ordering) dims, so excluding a barrier axis gives the spatial axes more resolution (e.g., 3D + time: barrier=time, ordering=xyz gets 21 bits/dim vs 16 if all 4 dims were spatial).
+6. **Never tighter than the footprint**: A stored `chunk_bounds` interval contains the chunk's geometric footprint at ANY coordinate magnitude. All four builders (points, gsplats, segments, vertices) accumulate in float64 and narrow to the float32 store with outward rounding — see *Float32 Outward Store* above. Swept over magnitudes `{0, 1e-6, 1, 100, 2**23, 2**24, 2**24+1, 2**25, 1e9, 1e15, 1e20, 1e30, 3e38}` × sign × pad by `io/tests/test_ordering_properties.py::test_chunk_bounds_contain_the_footprint_at_every_magnitude`.
+
+7. **Bits budget**: The bit budget is split across ONLY the spatial (ordering) dims, so excluding a barrier axis gives the spatial axes more resolution (e.g., 3D + time: barrier=time, ordering=xyz gets 21 bits/dim vs 16 if all 4 dims were spatial).
 
 ## Testing
 
 The ordering primitives are exercised by multiple test suites:
 
-- **io/tests/test_ordering_properties.py** — Hypothesis property tests (permutation equivariance, Numba/NumPy parity)
+- **io/tests/test_ordering_properties.py** — Hypothesis property tests (permutation equivariance, Numba/NumPy parity) plus the cross-builder chunk-bounds sweeps (Key Invariant 6 across magnitudes, padless exactness, `slice_dims` range checking)
 - **io/tests/test_ordering_points.py** / **io/tests/test_ordering_lines.py** / **io/tests/test_ordering_gsplats.py** — Integration tests for each geometry (barrier dims, chunk-straddling invariant)
 - **gsplats/io/tests/test_ordering.py** — GSplat-specific ordering tests (barrier detection, chunk bounds)
 

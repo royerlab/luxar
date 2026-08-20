@@ -9,7 +9,7 @@ import numpy as np
 from luxar.core import Dimension
 from luxar.typing_utils.constants import DEFAULT_POINT_RADIUS
 
-from .bounds import _BARRIER_BOUND_EPS
+from .bounds import _BARRIER_BOUND_EPS, _normalise_slice_dims, _store_outward_f32
 from .compound import _compound_sort
 
 
@@ -37,32 +37,6 @@ def sort_points_compound(
     slice_dims = [i for i, d in enumerate(dimensions) if d.discrete and not d.display]
     ordering_dims = [i for i, d in enumerate(dimensions) if not d.discrete or d.display]
     return _compound_sort(positions, slice_dims, ordering_dims, method)
-
-
-def _store_outward_f32(lo: float, hi: float) -> tuple[np.float32, np.float32]:
-    """Narrow a float64 interval to float32 OUTWARD (``lo`` down, ``hi`` up).
-
-    ``chunk_bounds`` is a float32 array, but every pad added below is a small
-    ABSOLUTE quantity (``DEFAULT_POINT_RADIUS``, a per-point radius,
-    ``_BARRIER_BOUND_EPS``) while the coordinate it is added to can be large.
-    Past ``|x| ~ 2**23`` a 0.5 pad is under half a float32 ULP, so a
-    round-to-nearest store throws it away entirely and the stored bound is
-    TIGHTER than the footprint the renderer draws — precisely what the pad
-    exists to prevent. The hole is not new and is not specific to the default
-    radius: the removed scale-relative fudge vanished the same way whenever 1%
-    of a chunk's own range fell under half an ULP (0.1 against a half-ULP of 1.0
-    at ``|x| = 2e7``, say), and so does an authored per-point radius. Stepping
-    one ULP outward whenever the cast moved a bound the wrong way closes it for
-    every path at once: if a pad ``r`` was lost to rounding then ``r`` was below
-    half an ULP, so one ULP outward is strictly more than ``r``.
-    """
-    lo32 = np.float32(lo)
-    if float(lo32) > lo:
-        lo32 = np.nextafter(lo32, np.float32(-np.inf))
-    hi32 = np.float32(hi)
-    if float(hi32) < hi:
-        hi32 = np.nextafter(hi32, np.float32(np.inf))
-    return lo32, hi32
 
 
 def compute_chunk_bounds_points(
@@ -117,7 +91,9 @@ def compute_chunk_bounds_points(
                None (⇒ the renderer's ``DEFAULT_POINT_RADIUS``)
         chunk_size: Number of points per chunk
         slice_dims: Indices of discrete (non-spatial) dimensions where radius
-                   expansion should NOT be applied. Default: None (apply to all dims)
+                   expansion should NOT be applied. Default: None (apply to all
+                   dims). An index outside ``[0, d)`` raises ``ValueError``
+                   (see :func:`_normalise_slice_dims`).
 
     Returns:
         chunk_bounds: Bounding boxes, shape (num_chunks, d, 2)
@@ -125,8 +101,7 @@ def compute_chunk_bounds_points(
     n_points, ndim = positions.shape
     num_chunks = (n_points + chunk_size - 1) // chunk_size
 
-    # Convert slice_dims to a set for fast lookup
-    discrete_dims = set(slice_dims) if slice_dims else set()
+    discrete_dims = _normalise_slice_dims(slice_dims, ndim)
 
     chunk_bounds = np.zeros((num_chunks, ndim, 2), dtype=np.float32)
 
