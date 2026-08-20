@@ -841,6 +841,80 @@ class TestAnArrayKeyNamingAnArray:
         )
 
 
+class TestAnExplicitKeyDescribesTheArrayTheWayNoKeyDoes:
+    """Naming the array explicitly must not lose the metadata that describes it.
+
+    ``_select_zarr_array``'s whole contract is that its three callers agree about
+    one store, and ``discover_ome_zarr_shape`` reads the OWNER it reports. The
+    auto-selection paths hand back the DECLARING group; the explicit-key branch
+    handed back the array's immediate parent, which for a level declared one group
+    deeper (``datasets[0].path == "res/0"``) declares nothing — so
+    ``--array-key 0/res/0`` fell through to the ndim heuristic and planned a
+    different ``batch-fit`` T×C fan-out than the same store planned with no key.
+    """
+
+    @pytest.mark.parametrize("zarr_format", ZARR_FORMATS)
+    def test_a_deep_explicit_key_keeps_the_declaring_groups_metadata(
+        self, tmp_path: Path, zarr_format: int
+    ) -> None:
+        path = tmp_path / "deep_key.zarr"
+        root = zarr.open_group(str(path), mode="w", zarr_format=zarr_format)
+        image = root.create_group("0")
+        create_array(image.create_group("res"), "0", data=_ramp((3, 10, 4, 5, 5)))
+        # A CTZYX block — the heuristic's 5D guess is TCZYX, so adopting the
+        # declaration is what puts 10 timepoints and 3 channels the right way
+        # round (the heuristic answers 3 x 10 and no voxel size at all).
+        image.attrs["multiscales"] = _multiscales(
+            ["c", "t", "z", "y", "x"], ["res/0"], scale=[1.0, 1.0, 9.0, 9.0, 9.0]
+        )
+
+        for key in (None, "0", "0/res/0"):
+            info = discover_ome_zarr_shape(path, array_key=key)
+
+            # Asserted against the DECLARED values, not just across the three
+            # calls: agreeing on the heuristic's answer is not agreement.
+            assert info.shape == (3, 10, 4, 5, 5), key
+            assert info.axes == ["c", "t", "z", "y", "x"], key
+            assert (info.n_timepoints, info.n_channels) == (10, 3), key
+            assert info.channel_shape == (3,), key
+            assert info.voxel_size == (9.0, 9.0, 9.0), key
+
+
+class TestADroppedDeclaredLevelIsReported:
+    """A declared level that will not resolve is skipped — and must SAY so.
+
+    The survivors of a half-written block can perfectly well be a DOWNSAMPLED
+    level, so a silent skip reports a plausible wrong shape: half the resolution
+    the store actually holds, with no message anywhere to explain it.
+    """
+
+    @pytest.mark.parametrize("zarr_format", ZARR_FORMATS)
+    def test_an_unresolvable_declared_level_is_named_on_the_console(
+        self, tmp_path: Path, zarr_format: int, capsys: pytest.CaptureFixture
+    ) -> None:
+        full = _ramp((2, 8, 16, 16))
+        half = _ramp((2, 4, 8, 8), start=40_000)
+        path = tmp_path / "half_written.zarr"
+        root = zarr.open_group(str(path), mode="w", zarr_format=zarr_format)
+        image = root.create_group("0")
+        create_array(image, "0", data=full)
+        create_array(image, "1", data=half)
+        # Level 0 declared through a path zarr itself rejects — the portable
+        # stand-in for a level whose metadata document is corrupt or momentarily
+        # unreadable on a remote backend.
+        image.attrs["multiscales"] = _tzyx_multiscales(2, paths=["../0/0", "1"])
+
+        info = discover_ome_zarr_shape(path)
+
+        out = capsys.readouterr().out
+        assert "Skipping declared level" in out
+        assert "../0/0" in out
+        # Still lands on a declared level of this image — the half-resolution one,
+        # which is exactly why staying quiet about it is not an option.
+        assert info.shape == half.shape
+        assert info.axes == ["t", "z", "y", "x"]
+
+
 class TestAZippedArchive:
     """``.zarr.zip`` is a documented input and its ZipStore dispatch is a trap.
 

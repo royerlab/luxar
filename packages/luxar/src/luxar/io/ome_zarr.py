@@ -203,12 +203,16 @@ def discover_ome_zarr_shape(
         arr = store
         attrs = dict(getattr(store, "attrs", {}))
     else:
-        arr, _, owner = _select_zarr_array(store, path, array_key)
+        arr, _, owner, declares = _select_zarr_array(store, path, array_key)
         attrs = dict(store.attrs)
         if owner is not None and owner is not store:
             owner_attrs = dict(owner.attrs)
             if "multiscales" in owner_attrs:
-                owner_declares_selected = _declares_array(owner, arr)
+                # The selection already knows, for a declared level: re-resolving
+                # its paths here fetched every level's metadata a second time.
+                owner_declares_selected = (
+                    _declares_array(owner, arr) if declares is None else declares
+                )
 
     shape = tuple(arr.shape)
     ndim = len(shape)
