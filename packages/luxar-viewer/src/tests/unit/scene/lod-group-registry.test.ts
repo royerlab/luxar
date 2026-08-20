@@ -1118,6 +1118,9 @@ describe('LODGroupRegistry — opening-framing anchor (FILL_FACTOR)', () => {
     // too: the half-depth term no longer changes relative to the projected
     // screen-plane extent as aspect changes.
     expect(VIEWPORTS.length).toBeGreaterThanOrEqual(7);
+    expect(
+      VIEWPORTS.filter((viewport) => viewport.width < viewport.height).length
+    ).toBeGreaterThanOrEqual(3);
     for (const shape of SHAPES) {
       const ratios = VIEWPORTS.map((viewport) =>
         rawCoverageRatio(shape.bounds, framedCamera(shape.bounds, viewport), viewport)

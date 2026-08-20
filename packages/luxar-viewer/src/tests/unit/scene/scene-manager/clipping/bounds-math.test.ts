@@ -157,7 +157,8 @@ describe('bounds-math', () => {
 
       const distance = calculateCameraDistance(box, camera);
 
-      // Should be approximately 10 / tan(30°) * 1.1 * fitRatio factor
+      // The nearest face contributes half the depth; the screen-plane radius
+      // contributes the perspective fit distance.
       expect(distance).toBeGreaterThan(10);
       expect(distance).toBeLessThan(50);
     });
@@ -224,6 +225,17 @@ describe('bounds-math', () => {
       );
     });
 
+    it('uses depth as a fallback extent for a line aligned with the view axis', () => {
+      const box: BoundingBox = {
+        min: { x: 0, y: 0, z: 0 },
+        max: { x: 0, y: 0, z: 100 },
+      };
+      const camera: CameraConfig = { fov: 60, aspect: 1, near: 0.1, far: 1000 };
+      const expected = 50 + 50 / 0.75 / Math.tan(Math.PI / 6);
+
+      expect(calculateCameraDistance(box, camera, 0.75)).toBeCloseTo(expected, 6);
+    });
+
     it('fits bounds relative to an off-center look-at target', () => {
       const box: BoundingBox = {
         min: { x: 0, y: 0, z: 0 },
@@ -244,7 +256,10 @@ describe('bounds-math', () => {
       };
       const camera: CameraConfig = { fov: 60, aspect: 1, near: 0.1, far: 1000 };
 
-      expect(calculateCameraDistance(box, camera, 0.75, { x: 0, y: 0, z: 20 })).toBeGreaterThan(0);
+      expect(calculateCameraDistance(box, camera, 0.75, { x: 0, y: 0, z: 20 })).toBeCloseTo(
+        5 / 0.75 / Math.tan(Math.PI / 6),
+        6
+      );
     });
 
     it('should scale distance proportionally with scene size', () => {
@@ -262,9 +277,9 @@ describe('bounds-math', () => {
       const smallDist = calculateCameraDistance(smallBox, camera);
       const largeDist = calculateCameraDistance(largeBox, camera);
 
-      // Distance scales linearly with scene size (maxDim ratio is exactly 500).
+      // Distance scales linearly with scene size (every extent ratio is exactly 500).
       // M2: the original tolerance of 0 digits (±5) let a constant-offset
-      // mutant (`maxDim/fitRatio + 1`) survive — it shifts the ratio only to
+      // mutant (adding 1 to the fitted distance) survive — it shifts the ratio only to
       // ~499.8. Tighten to 3 digits (±5e-4): pure linear scaling gives 500.0,
       // any additive constant breaks it.
       expect(largeDist / smallDist).toBeCloseTo(500, 3);

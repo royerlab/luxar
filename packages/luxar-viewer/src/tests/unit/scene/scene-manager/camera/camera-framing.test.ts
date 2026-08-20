@@ -390,6 +390,28 @@ describe('fitCameraToBounds', () => {
     expect(ortho.zoom).toBeCloseTo(7.5, 6);
   });
 
+  it('perspective: frames a line aligned with the view axis in front of the camera', () => {
+    const { controls, setDistanceLimits } = makeControls();
+    fitCameraToBounds(perspectiveCamera, controls, makeBounds([0, 0, 0], [0, 0, 100]), {
+      lookAtTarget: new THREE.Vector3(0, 0, 50),
+    });
+
+    expect(perspectiveCamera.position.z).toBeGreaterThan(100);
+    expect(setDistanceLimits).toHaveBeenCalledTimes(1);
+  });
+
+  it('orthographic: frames a line aligned with the view axis and resets zoom limits', () => {
+    const ortho = new THREE.OrthographicCamera(-5, 5, 5, -5, 0.1, 1000);
+    ortho.zoom = 9;
+    const { controls, setZoomLimits } = makeControls();
+    fitCameraToBounds(ortho, controls, makeBounds([0, 0, 0], [0, 0, 100]), {
+      lookAtTarget: new THREE.Vector3(0, 0, 50),
+    });
+
+    expect(ortho.zoom).toBeCloseTo(0.075, 6);
+    expect(setZoomLimits).toHaveBeenCalledTimes(1);
+  });
+
   // G2: degenerate-but-nonzero geometry. A flat slab (zero Y extent) still has
   // a positive diagonal, so the perspective path must frame it (return > 0,
   // set scene scale) rather than short-circuit like the zero-extent case.

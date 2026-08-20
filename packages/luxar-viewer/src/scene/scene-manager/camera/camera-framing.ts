@@ -210,7 +210,8 @@ export interface FitCameraOptions {
  *     position the camera at `lookAtTarget + (0, 0, distance)`, and
  *     set distance limits to `ZOOM_IN_FACTOR` in / `ZOOM_OUT_FACTOR` out.
  *   - For orthographic cameras: compute the zoom that fits the largest X/Y
- *     extent into the shorter frustum axis, position the camera at
+ *     extent into the shorter frustum axis (falling back to Z when both are
+ *     degenerate), position the camera at
  *     `lookAtTarget + (0, 0, diagonal)`, and set zoom limits to
  *     `ZOOM_IN_FACTOR` in / `ZOOM_OUT_FACTOR` out.
  *   - Run `lookAt(lookAtTarget) → updateMatrixWorld(true) →
@@ -256,7 +257,7 @@ export function fitCameraToBounds(
   } else if (isOrthographicCamera(camera)) {
     const frustumHeight = camera.top - camera.bottom;
     const frustumWidth = camera.right - camera.left;
-    const screenPlaneSize = Math.max(sizeX, sizeY);
+    const screenPlaneSize = Math.max(sizeX, sizeY) || sizeZ;
     if (screenPlaneSize > 0 && frustumHeight > 0 && frustumWidth > 0) {
       const fitRatio = config.scene.defaultFitRatio;
       const zoomH = frustumHeight / (screenPlaneSize / fitRatio);

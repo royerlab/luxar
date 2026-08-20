@@ -84,7 +84,8 @@ export function getBoundingBoxDiagonal(box: BoundingBox): number {
  * Calculates the +Z camera distance that fits a bounding box in view.
  * X/Y are the screen plane and Z is depth, matching fitCameraToBounds' fixed
  * face-on pose. The larger X/Y extent fills fitRatio of the shorter viewport
- * axis at the nearest Z face.
+ * axis at the nearest Z face. If both projected extents are zero, half the Z
+ * extent is used as a conservative fallback so the camera stays off the geometry.
  *
  * @param box - Bounding box to fit
  * @param camera - Camera configuration
@@ -107,13 +108,13 @@ export function calculateCameraDistance(
     Math.abs(box.min.y - target.y),
     Math.abs(box.max.y - target.y)
   );
+  const fitRadius = screenPlaneRadius > 0 ? screenPlaneRadius : Math.abs(box.max.z - box.min.z) / 2;
 
   // Fit the larger screen-plane extent against the shorter viewport axis at
   // the nearest face of the box. Depth does not enlarge the silhouette
   // directly, but it brings that face closer and increases its projection.
-  const verticalFit = nearestDepth + screenPlaneRadius / fitRatio / Math.tan(halfFov);
-  const horizontalFit =
-    nearestDepth + screenPlaneRadius / fitRatio / (Math.tan(halfFov) * camera.aspect);
+  const verticalFit = nearestDepth + fitRadius / fitRatio / Math.tan(halfFov);
+  const horizontalFit = nearestDepth + fitRadius / fitRatio / (Math.tan(halfFov) * camera.aspect);
 
   return Math.max(verticalFit, horizontalFit);
 }
@@ -207,7 +208,8 @@ export function minNearForRadius(expandedRadius: number): number {
  * out to be nearly free, so C is set for MARGIN above the binding constraint
  * rather than at it:
  *
- *  - **C > 551, don't clip the zoom target.** At maximum zoom-in the
+ *  - **C > 551, don't clip the zoom target under the scale-multiplier floor.**
+ *    At maximum zoom-in the
  *    orbit target sits at `minDistance = 1e-3 · diagonal`
  *    (`controls.scaleMultipliers`) = `1.905e-3 · R`, while `far ≈ 1.05 · R`.
  *    Keeping it in front of the near plane needs `1.05 R / C < 1.905e-3 R`.
@@ -217,6 +219,11 @@ export function minNearForRadius(expandedRadius: number): number {
  *    `minDistance`. All four types are inside the fade-suppressed region
  *    throughout that band by construction, so at most the sub-1% line residual
  *    described in the next bullet is lost there, and this does not move C.
+ *    Auto-framing installs a separate `distance / ZOOM_IN_FACTOR` limit. The
+ *    projected-bounds fit can make `distance / diagonal` as small as 0.515 for
+ *    a view-axis-elongated box, raising this target constraint to about 1102;
+ *    C = 1200 still clears it, with a measured 1.14x near-plane margin at the
+ *    most extreme supported zoom.
  *  - **C ≥ 992, keep everything the floor clips inside the near fade, for all
  *    four geometry types.** Every one of them already suppresses anything
  *    closer than `nearCull = 1e-3 · diagonal` via `perspectiveNearFade`
