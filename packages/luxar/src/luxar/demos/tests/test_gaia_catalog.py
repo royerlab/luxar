@@ -42,6 +42,23 @@ def test_build_catalog_uses_the_required_zip_member_name(
         )
 
 
+def test_build_catalog_returns_an_existing_archive_untouched(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A cached zip short-circuits the build — which is why a BROKEN cached zip
+    has to be pointed at ``--recompute``, never ``--build-catalog``."""
+    cached = tmp_path / f"{catalog.RAW_ZARR_NAME}.zip"
+    cached.write_bytes(b"unusable but present")
+
+    def should_not_query(*_args: object, **_kwargs: object) -> int:
+        raise AssertionError("a cached archive must not trigger the TAP query")
+
+    monkeypatch.setattr(catalog, "generate_raw_catalog", should_not_query)
+
+    assert catalog.build_catalog(cache_dir=tmp_path) == cached
+    assert cached.read_bytes() == b"unusable but present"
+
+
 def test_build_catalog_resumes_from_the_completed_raw_table(
     tmp_path: Path, monkeypatch
 ) -> None:

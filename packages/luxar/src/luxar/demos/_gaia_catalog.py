@@ -15,6 +15,7 @@ from arbol import aprint
 
 from luxar._zarr_compat import create_array, open_group
 from luxar.demos._dependencies import MissingDependencyError, require_module
+from luxar.encoding.compression import WIDTH_AWARE_DEFAULT, resolve_compressor
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -117,12 +118,17 @@ def create_zarr(frame: pd.DataFrame, output_path: Path) -> None:
             output_path.unlink()
 
     store = open_group(output_path, mode="w")
+    # Named, never defaulted: this module now lives in the package, where an
+    # omitted compressor silently means "auto" (Blosc/lz4/5 at format 2, zstd at
+    # format 3) rather than Luxar's measured width-aware policy.
+    compressor = resolve_compressor(WIDTH_AWARE_DEFAULT, np.float32)
     for name in ("x_kpc", "y_kpc", "z_kpc", "phot_g_mean_mag", "bp_rp"):
         create_array(
             store,
             name,
             data=frame[name].values.astype(np.float32),
             chunks=(100_000,),
+            compressor=compressor,
         )
 
     store.attrs["num_stars"] = len(frame)

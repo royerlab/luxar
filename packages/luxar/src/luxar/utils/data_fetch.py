@@ -491,10 +491,10 @@ def load_dataset_gsplats(
           ``gsplats_acto3d_heart``, ``gsplats_tng_cosmic_web`` and
           ``milky_way_gaia_3m`` are marked ``local-compute`` and no longer ship
           files in-repo, so this returns ``None`` for them and the demo takes its
-          own build path: a GPU refit for the three gsplat ones, and for Gaia a
-          hand-run ``scripts/generate_galaxy_simple.py`` rebuild (or a copy the
-          user already placed in the cache). Migrate a demo only once its dataset
-          is ``zenodo``.
+          own build path: a GPU refit for the three gsplat ones, and for Gaia an
+          opt-in ``--build-catalog`` query of the ESA archive (or a copy the user
+          already placed in the cache). Migrate a demo only once its dataset is
+          ``zenodo``.
     """
     if recompute:
         return None

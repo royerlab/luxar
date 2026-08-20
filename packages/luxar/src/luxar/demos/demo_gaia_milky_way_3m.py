@@ -183,6 +183,11 @@ REPO_FILE = SCRIPT_DIR / "data" / "milky_way_gaia_3m.zarr.zip"
 #: instead of the converter dying on a bare `KeyError` half-way through the read.
 RAW_TABLE_FIELDS = ("x_kpc", "y_kpc", "z_kpc", "phot_g_mean_mag", "bp_rp")
 REBUILD_COMMAND = "  luxar demo run gaia_milky_way -- --build-catalog"
+#: What to run when a catalog IS present but unusable. NOT `--build-catalog`:
+#: the builder returns an already-cached zip untouched, so pointing a
+#: wrong-stem/truncated/foreign-table copy at it is a no-op and the reader loops
+#: on the same error. `--recompute` is the only spelling that replaces one.
+REPLACE_COMMAND = "  luxar demo run gaia_milky_way -- --recompute"
 
 
 class CatalogUnusable(FileNotFoundError):
@@ -300,7 +305,7 @@ def _extract_raw_zarr(data_zip_path: Path, dest: Path) -> Path:
             f"{data_zip_path} is not a readable zip archive ({exc}) — most "
             "likely a truncated or partial copy.\n"
             "Delete it and put a complete copy back, or rebuild it with\n"
-            f"{REBUILD_COMMAND}"
+            f"{REPLACE_COMMAND}"
         ) from exc
     raw_zarr_path = dest / RAW_ZARR_NAME
     if not raw_zarr_path.is_dir():
@@ -308,8 +313,9 @@ def _extract_raw_zarr(data_zip_path: Path, dest: Path) -> Path:
             f"{data_zip_path} extracted, but holds no top-level "
             f"`{RAW_ZARR_NAME}/` directory — so the raw catalog is not where "
             "this demo reads it.\n"
-            "The --output stem is load-bearing: rebuild with\n"
-            f"{REBUILD_COMMAND}"
+            "That top-level name is load-bearing (it is the compatibility "
+            "script's --output stem); replace this copy with\n"
+            f"{REPLACE_COMMAND}"
         )
     try:
         # ``luxar._zarr_compat.open_group``, never a bare ``zarr.open``, and for
@@ -359,7 +365,7 @@ def _extract_raw_zarr(data_zip_path: Path, dest: Path) -> Path:
             "not read as this demo's raw star table: it is not a zarr store, or "
             f"one of its columns has unreadable metadata ({exc}).\n"
             "Delete it and put a complete copy back, or rebuild it with\n"
-            f"{REBUILD_COMMAND}"
+            f"{REPLACE_COMMAND}"
         ) from exc
     if missing:
         raise CatalogUnusable(
@@ -367,7 +373,7 @@ def _extract_raw_zarr(data_zip_path: Path, dest: Path) -> Path:
             f"Gaia column(s) {', '.join(missing)} — this demo reads a flat table "
             f"of {', '.join(RAW_TABLE_FIELDS)}, one value per star.\n"
             "Rebuild it (which writes exactly those columns) with\n"
-            f"{REBUILD_COMMAND}"
+            f"{REPLACE_COMMAND}"
         )
     return raw_zarr_path
 
@@ -875,7 +881,7 @@ def main() -> None:
     aprint("  https://doi.org/10.1051/0004-6361/202243940")
     aprint("")
     aprint("Data Generation:")
-    aprint("  See: scripts/generate_galaxy_simple.py for data generation")
+    aprint("  Built locally with `luxar demo run gaia_milky_way -- --build-catalog`")
     aprint("  Source: ESA Gaia DR3 (https://gea.esac.esa.int/archive/)")
     aprint("")
     aprint("Coordinate System:")

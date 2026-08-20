@@ -343,8 +343,14 @@ class TestRawZarrExtraction:
         # `is_dir()` check gone the store read below fails and its "not a zarr
         # store" advice carries all three of those strings too.
         assert "holds no top-level" in message
-        assert "--build-catalog" in message
         assert "--output" in message
+        # `--recompute`, and specifically NOT `--build-catalog`: the builder
+        # returns an already-cached zip untouched, so telling the reader to
+        # `--build-catalog` a copy that is present-but-unusable is a no-op that
+        # reproduces this very message. Every present-but-unusable guard below
+        # owes the same distinction.
+        assert "--recompute" in message
+        assert "--build-catalog" not in message
 
     def test_a_foreign_table_names_the_columns_the_demo_reads(
         self, tmp_path: Path
@@ -366,7 +372,7 @@ class TestRawZarrExtraction:
         # holding a table with other names and has to map all five.
         for field in RAW_TABLE_FIELDS:
             assert field in message
-        assert "--build-catalog" in message
+        assert "--recompute" in message
 
     def test_a_consolidated_store_missing_a_column_is_still_caught(
         self, tmp_path: Path
@@ -411,7 +417,7 @@ class TestRawZarrExtraction:
         # RAW_TABLE_FIELDS as "what this demo reads" whatever is missing, so the
         # assertion has to reach the MISSING list specifically.
         assert f"column(s) {removed}" in message
-        assert "--build-catalog" in message
+        assert "--recompute" in message
 
     def test_a_directory_that_is_not_a_zarr_store_names_the_rebuild(
         self, tmp_path: Path
@@ -437,7 +443,7 @@ class TestRawZarrExtraction:
 
         message = str(excinfo.value)
         assert "not a zarr store" in message
-        assert "--build-catalog" in message
+        assert "--recompute" in message
 
     @pytest.mark.parametrize("kind", ["v3-array-store", "corrupt-column-metadata"])
     def test_a_store_zarr_cannot_open_as_this_table_reaches_the_advice(
@@ -497,7 +503,7 @@ class TestRawZarrExtraction:
 
         message = str(excinfo.value)
         assert "not a zarr store" in message
-        assert "--build-catalog" in message
+        assert "--recompute" in message
 
     def test_the_checked_columns_are_the_ones_the_converter_reads(
         self, tmp_path: Path
@@ -530,7 +536,7 @@ class TestRawZarrExtraction:
         message = str(excinfo.value)
         assert str(zip_path) in message
         assert "truncated" in message
-        assert "--build-catalog" in message
+        assert "--recompute" in message
 
     @pytest.mark.parametrize("extra_argv", [[], ["--no-serve"]], ids=["serve", "build"])
     @pytest.mark.parametrize(
@@ -584,7 +590,7 @@ class TestRawZarrExtraction:
         # wrong stem, the unreadable file for a partial copy, the columns the demo
         # reads for a table that is not this one.
         assert expected in out
-        assert "--build-catalog" in out
+        assert "--recompute" in out
         assert "Traceback" not in out
 
     def test_an_unrelated_missing_file_keeps_its_traceback(
@@ -666,6 +672,10 @@ class TestDataFileResolution:
         cache.mkdir(parents=True)
         monkeypatch.setattr(demo, "CACHE_FILE", cache)
         monkeypatch.setattr(demo, "REPO_FILE", tmp_path / "repo" / "absent.zip")
+        # No candidate resolves, so this reaches the first-run prompt; pytest's
+        # stdin is not a tty, but `-s` hands the test the real one and the run
+        # would block on `input()`.
+        monkeypatch.setattr(demo.sys, "stdin", None)
 
         with pytest.raises(FileNotFoundError) as excinfo:
             demo.resolve_data_file()
