@@ -464,10 +464,19 @@ def _declared_levels(
     owner is used as "the node carrying the metadata that describes this array",
     and it is ``group`` that declared it. For a level nested one deeper
     (``datasets[0].path == "res/0"``) the immediate parent declares nothing.
+
+    Both OME-Zarr layouts are read — 0.4's top-level ``multiscales`` and 0.5's
+    block nested under ``ome`` — through the one resolver every reader of NGFF
+    attributes goes through. Spelling ``attrs["multiscales"]`` here instead would
+    make WHICH ARRAY IS SELECTED depend on the OME-Zarr version: a 0.5 image group
+    would fall past this branch and could answer with a bigger undeclared sibling
+    where the identical 0.4 store answers with its declared level.
     """
     import zarr
 
-    block = group.attrs.get("multiscales")
+    from luxar.io.ome_zarr import resolve_ngff_attrs
+
+    block = resolve_ngff_attrs(group.attrs).get("multiscales")
     if not (isinstance(block, list) and block and isinstance(block[0], dict)):
         return []
     datasets = block[0].get("datasets")
@@ -597,12 +606,24 @@ def _declaring_owner(root: Any, key_path: str, array: Any) -> Tuple[Any, bool]:
     :func:`_declared_levels` hands back — so ``--array-key 0/res/0`` would fall
     through to the ndim heuristic and plan a different ``batch-fit`` T×C fan-out
     than the very same store planned without the key.
+
+    An ancestor that will not OPEN is skipped rather than raised through: zarr v2
+    permits an array below a group with no metadata document of its own (a
+    hand-written store, or one whose intermediate ``.zgroup`` was never written),
+    and `root["labels/cells"]` is then a ``KeyError`` even though
+    ``root["labels/cells/1"]`` resolves perfectly well. The array is right there,
+    so failing the whole read to ask a bookkeeping question about its ancestry
+    would be absurd — the walk simply carries on upward. The store ROOT always
+    opens, so the fallback below always has something to report.
     """
     segments = key_path.strip("/").split("/")[:-1]
     parent: Any = None
     for depth in range(len(segments), -1, -1):
         prefix = "/".join(segments[:depth])
-        group = root[prefix] if prefix else root
+        try:
+            group = root[prefix] if prefix else root
+        except (KeyError, ValueError, OSError, TypeError):
+            continue
         if parent is None:
             parent = group
         if _declares_array(group, array):

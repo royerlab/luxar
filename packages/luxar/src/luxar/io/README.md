@@ -227,8 +227,9 @@ invalidation* below).
 ```python
 from luxar.io.optimise import optimise_store, plan_optimisation, summarise_chunk_layout
 
-plan = optimise_store("scene.luxar.zarr", "out.luxar.zarr", target_bytes=65_536,
-                      verify=True)
+plan = optimise_store(
+    "scene.luxar.zarr", "out.luxar.zarr", target_bytes=65_536, verify=True
+)
 print(plan.source_n_chunks, "→", plan.target_n_chunks)
 ```
 
@@ -317,21 +318,58 @@ sources fed to gsplat fitting/calibration), independent of the compiled
   the honest denominator of any size/compression figure quoted about the result.
 - `ome_zarr.discover_ome_zarr_shape(path, ...)` → `OMEZarrInfo` — discovers the
   T/C/Z/Y/X layout, voxel size, unit, and resolution levels from NGFF
-  `multiscales` (with custom-`axes` and shape-heuristic fallbacks). The root's
-  block is what is used, **unless** the group that OWNS the selected array
-  declares that very array as one of its own `multiscales` levels — then that
-  block wins: a bioformats2raw store puts the block on the image group and leaves
-  only `bioformats2raw.layout` at the root, so reading the root alone would
-  silently fall through to the shape heuristic. The override is gated on
-  **evidence**, not on the block merely existing: one of the owner's
-  `datasets[*].path` entries has to resolve to the selected array (and the block
-  has to be parseable for it — one axis per dimension, `datasets` a list of
-  dicts). A same-length but permuted axis list is not evidence, and adopting it
-  would rewrite a T/C decomposition the root already had right — a silently wrong
-  `batch-fit` fan-out rather than an error. The custom (non-NGFF) bare `axes`
+  `multiscales` (with custom-`axes` and shape-heuristic fallbacks). Both
+  OME-Zarr layouts parse: 0.4's top-level block and 0.5's block nested under an
+  `ome` key — resolved by the exported `ome_zarr.resolve_ngff_attrs(attrs)`,
+  which every reader of NGFF attributes should go through (the layout can not be
+  inferred from the store's zarr format version, and it decides which array gets
+  SELECTED as well as how it is described). The nested block wins only when it
+  carries a NON-EMPTY `multiscales` (or when the top level declares none at all),
+  so neither an `ome` block holding just `omero` rendering metadata nor an empty
+  `ome.multiscales` displaces a top-level 0.4 pyramid. A `multiscales` block
+  whose `axes` count disagrees with the SELECTED array's ndim is not metadata
+  about that array (a 5D image beside its 3D `labels/…`) and is skipped rather
+  than parsed.
+- **Whose block describes the selected array.** The root's is what is used,
+  **unless** the group that OWNS the array declares that very array as one of its
+  own `multiscales` levels — then that block wins: a bioformats2raw store puts
+  the block on the image group and leaves only `bioformats2raw.layout` at the
+  root, so reading the root alone would silently fall through to the shape
+  heuristic. The override is gated on **evidence**, not on the block merely
+  existing: one of the owner's `datasets[*].path` entries has to resolve to the
+  selected array, and its `datasets` has to be a list of entries this reader can
+  identify a level in. A same-length but permuted axis list is not evidence, and
+  adopting it would rewrite a T/C decomposition the root already had right — a
+  silently wrong `batch-fit` fan-out rather than an error. An owner block that
+  wins the evidence gate but is then unusable (wrong axis count, no `axes` list)
+  does not hide the root's; the root's is retried. Dataset paths are matched
+  exactly relative to whichever group won, so a same-named root pyramid level
+  cannot be mistaken for a nested array. The custom (non-NGFF) bare `axes`
   attribute goes the other way round, **root first**, because such a list names
   nothing and so no evidence about it is obtainable; an owner's `axes` is
   consulted only when the root has no usable list of its own.
+- Voxel size composes any multiscales-level `coordinateTransformations` on top;
+  where that match or that composition cannot be made honestly (an `array_key`
+  matching no entry of a multi-level pyramid, or two scale vectors of different
+  lengths) it reports no spacing rather than a plausible wrong one. Malformed
+  metadata degrades to a fallback throughout, never a traceback — a `multiscales`
+  whose `axes` is not a list (`{"axes": null}`) or whose `datasets` is not a list
+  of mappings, an axis record with no `name` or a `null` `type`, a `scale`
+  carrying a `null` or a non-numeric string. Falling through to the shape
+  heuristic on a ≥4D store guesses the T/C roles and recovers no voxel size, so it
+  says so on the console — stating whether nothing was declared or something was
+  declared but unusable — and points at `axes_override` / `--axes`.
+- The returned `OMEZarrInfo` publishes the decomposition it used, not just its
+  results: `time_axis`, `channel_indices` and `spatial_indices` are indices into
+  `shape`. **Read those rather than re-classifying `info.axes`** — NGFF is
+  classified by the axis `type` field, so a name-driven rule disagrees in both
+  directions (a channel axis named `stain`; an axis typed `view`, which discovery
+  treats as spatial), and two vocabularies deciding the same question is how a
+  consumer silently plans against a layout discovery never reported.
+- `ome_zarr.ngff_scale_transform(transforms)` → the `scale` vector of a NGFF
+  `coordinateTransformations` list, or `None`. The list is SEARCHED for the
+  `type == "scale"` entry rather than indexed at `[0]`, which breaks on any store
+  whose first transform is a `translation`.
 
 Which array gets read out of a group is ONE rule, `volume._select_zarr_array`,
 shared by `load_volume`, `open_volume_lazy` and `discover_ome_zarr_shape` — they
@@ -343,16 +381,17 @@ the OME-NGFF resolution level `"0"`; else the largest array found recursively,
 with a size tie broken on the lowest key path so two processes reading the same
 store cannot disagree. When `"0"` (or the key) is a **group** rather than an
 array — the bioformats2raw layout, whose pyramid levels are `0/0`, `0/1`, … —
-resolution is scoped to that image group, so a store holding several series (`0`,
-`1`, …) plus an `OME` metadata group still resolves to full resolution of the
-*first* image. Within the image group the candidates are the levels its own
-`multiscales` block declares, else its direct array children, else (skipping
-`labels/` at any depth) whatever is nested below: NGFF puts an image's
+that is resolved, not refused, and scoped to that image group, so a store holding
+several series (`0`, `1`, …) plus an `OME` metadata group still resolves to full
+resolution of the *first* image. Within the image group the candidates are the
+levels its own `multiscales` block declares, else its direct array children, else
+(skipping `labels/` at any depth) whatever is nested below: NGFF puts an image's
 segmentation masks at `<image>/labels/<name>/<level>`, and inside an image group
 a mask as big as level 0 must never be selected as the image. That last
 guarantee belongs to the **image-group branch only** — the whole-store fallback
 (no `"0"` key at all: the `h2afva/fused` layout) sweeps every group recursively,
-`labels/` included, as it always has.
+`labels/` included, as it always has. A store with no array anywhere is still a
+clear `ValueError`, naming the key and what the store does hold.
 
 These are domain-layer helpers (no CLI dependency); the gsplat CLI re-exports
 them. Dimension inference from a splat bounding box lives in
