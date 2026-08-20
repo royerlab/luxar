@@ -156,8 +156,14 @@ export interface MeshMetadata {
    */
   ambient?: number;
 
-  /** Headlight wrap exponent (§6.2). Clamped positive — `pow(0, 0)` is undefined GLSL. */
+  /** Wrapped-diffuse exponent (§6.2). Clamped positive — `pow(0, 0)` is undefined GLSL. */
   shade_exponent?: number;
+
+  /** Additive specular strength in `[0, 1]` (§6.2). */
+  specular?: number;
+
+  /** Specular highlight exponent (> 0) (§6.2). */
+  shininess?: number;
 
   /** `opaque`-mode alpha cutout threshold in `[0, 1]` (§6.2). */
   alpha_cutoff?: number;

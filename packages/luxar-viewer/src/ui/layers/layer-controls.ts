@@ -64,6 +64,8 @@ export class LayerControls {
    */
   private ambientSlider: LabeledSlider | null = null;
   private shadeExponentSlider: LabeledSlider | null = null;
+  private specularSlider: LabeledSlider | null = null;
+  private shininessSlider: LabeledSlider | null = null;
   private alphaCutoffSlider: LabeledSlider | null = null;
   private blendSelect: HTMLSelectElement | null = null;
   private colormapSelect: HTMLSelectElement | null = null;
@@ -134,6 +136,10 @@ export class LayerControls {
     this.ambientSlider = null;
     this.shadeExponentSlider?.dispose();
     this.shadeExponentSlider = null;
+    this.specularSlider?.dispose();
+    this.specularSlider = null;
+    this.shininessSlider?.dispose();
+    this.shininessSlider = null;
     this.alphaCutoffSlider?.dispose();
     this.alphaCutoffSlider = null;
     this.blendSelect = null;
@@ -252,13 +258,12 @@ export class LayerControls {
 
     // --- Mesh shading (§6.2) ------------------------------------------------
     //
-    // Three sliders, all hidden unless the primary selection is a MESH layer (see
+    // Four sliders, all hidden unless the primary selection is a MESH layer (see
     // syncMeshAppearanceVisibility). Mesh is the only shaded geometry type, so these
     // are the first controls in this panel that are type-gated rather than mode-gated.
     //
-    // Linear tracks, unlike absorption's log one: all three are bounded fractions or a
-    // small exponent with a meaningful midpoint, not a scale-free coefficient spanning
-    // decades.
+    // Linear tracks, unlike absorption's log one: the bounded fractions and
+    // exponents have useful finite ranges, rather than spanning decades.
     this.ambientSlider = new LabeledSlider({
       container: this.controlsEl,
       label: 'Ambient',
@@ -305,6 +310,48 @@ export class LayerControls {
       },
     });
     this.shadeExponentSlider.setVisible(false);
+
+    this.specularSlider = new LabeledSlider({
+      container: this.controlsEl,
+      label: 'Specular',
+      min: 0,
+      max: 1,
+      step: 0.01,
+      initialValue: MESH_DEFAULTS.specular,
+      constrain: (v) => Math.min(1, Math.max(0, v)),
+      onChange: (val) => {
+        this.controlsInteracting = true;
+        this.deps.state.applyToSelected((l) => {
+          l.specular = val;
+        });
+        for (const sel of this.deps.state.getSelected()) {
+          this.deps.apply.applyMeshAppearance(sel);
+        }
+        this.controlsInteracting = false;
+      },
+    });
+    this.specularSlider.setVisible(false);
+
+    this.shininessSlider = new LabeledSlider({
+      container: this.controlsEl,
+      label: 'Shininess',
+      min: 0.001,
+      max: 128,
+      step: 0.001,
+      initialValue: MESH_DEFAULTS.shininess,
+      constrain: (v) => Math.max(0.001, v),
+      onChange: (val) => {
+        this.controlsInteracting = true;
+        this.deps.state.applyToSelected((l) => {
+          l.shininess = val;
+        });
+        for (const sel of this.deps.state.getSelected()) {
+          this.deps.apply.applyMeshAppearance(sel);
+        }
+        this.controlsInteracting = false;
+      },
+    });
+    this.shininessSlider.setVisible(false);
 
     this.alphaCutoffSlider = new LabeledSlider({
       container: this.controlsEl,
@@ -585,6 +632,8 @@ export class LayerControls {
     // layer's numbers.
     this.ambientSlider?.setValue(primary.ambient);
     this.shadeExponentSlider?.setValue(primary.shadeExponent);
+    this.specularSlider?.setValue(primary.specular);
+    this.shininessSlider?.setValue(primary.shininess);
     this.alphaCutoffSlider?.setValue(primary.alphaCutoff);
 
     if (this.blendSelect) {
@@ -658,7 +707,7 @@ export class LayerControls {
   }
 
   /**
-   * Show the three mesh shading sliders only when they can do something.
+   * Show the four mesh shading sliders only when they can do something.
    *
    * TYPE-gated, which is new for this panel — every other control here is either
    * universal or mode-gated. Mesh is the only geometry type that shades (§6.2), so on a
@@ -680,6 +729,8 @@ export class LayerControls {
     const isMesh = primary?.type === 'mesh';
     this.ambientSlider?.setVisible(isMesh);
     this.shadeExponentSlider?.setVisible(isMesh);
+    this.specularSlider?.setVisible(isMesh);
+    this.shininessSlider?.setVisible(isMesh);
     this.alphaCutoffSlider?.setVisible(
       isMesh && resolveLayerBlendingMode(primary.type, primary.blendingMode) === 'opaque'
     );

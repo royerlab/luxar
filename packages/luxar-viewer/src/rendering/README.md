@@ -317,10 +317,7 @@ See `materials/mesh/README.md` and `docs/specs/MESH_NODE_SPEC.md` §6.2.
 
 **Key features:**
 
-- **View-anchored headlight**, no scene light and no scene-graph change:
-  `shade = mix(uAmbient, 1, pow(saturate(dot(N, V) · 0.5 + 0.5), uShadeExponent))` with
-  `V` the fixed view axis `(0, 0, 1)`, so `dot(N, V)` reduces to `N.z`. `uAmbient = 1`
-  collapses the term and reproduces the emissive look of the other three.
+- **View-anchored offset key light**, no scene light and no scene-graph change. Wrapped diffuse uses a fixed above-left `L`; additive Blinn–Phong uses the constant half-vector between `L` and the fixed view axis `V = (0, 0, 1)`.
 - **Two normal sources, chosen at COMPILE time** (`LUXAR_MESH_FLAT_NORMAL`): the stored
   `normal` attribute when `shading == "smooth"` AND `normal_dims` equals the displayed
   axes, else screen-space derivatives of the view position. A compile-time variant
@@ -328,7 +325,7 @@ See `materials/mesh/README.md` and `docs/specs/MESH_NODE_SPEC.md` §6.2.
   `(0, 0, 0, 1)` — there is no runtime value meaning "no normals".
 - **`opaque` is a hard alpha CUTOUT**, so node `opacity` sweeps a threshold rather than
   dimming; a smooth fade means selecting `normal`.
-- **Three per-node appearance knobs** — `ambient`, `shade_exponent`, `alpha_cutoff` —
+- **Five per-node appearance knobs** — `ambient`, `shade_exponent`, `specular`, `shininess`, `alpha_cutoff` —
   exposed as the mesh-only Layers-panel sliders.
 
 **Two hazards worth knowing before touching these shaders**, both of which fail on

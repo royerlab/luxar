@@ -133,6 +133,8 @@ MESH_RESERVED_ATTRS: FrozenSet[str] = frozenset(
 KNOWN_RENDER_ATTRS: FrozenSet[str] = frozenset(
     {
         "absorption",
+        "alpha_cutoff",
+        "ambient",
         "blending_mode",
         "colormap",
         "gamma",
@@ -145,6 +147,9 @@ KNOWN_RENDER_ATTRS: FrozenSet[str] = frozenset(
         "layer",
         "offset",
         "opacity",
+        "shade_exponent",
+        "shininess",
+        "specular",
         "visible",
     }
 )
@@ -486,8 +491,8 @@ def validate_render_attrs(
     Called as the FIRST step of every geometry writer — before the zarr group
     is created — so an invalid value fails the write without leaving a partial
     node on disk. Covers every pure attr validator (no store access needed):
-    blending_mode / absorption / opacity / gamma / intensity / offset / layer /
-    visible / colormap. The values are validated only (not converted) — the
+    blending_mode / absorption / opacity / gamma / intensity / offset / mesh
+    appearance / layer / visible / colormap. The values are validated only (not converted) — the
     writer stores the caller's attrs unchanged.
 
     When ``reject_unknown`` is set, any attr key that is neither a known render
@@ -565,6 +570,31 @@ def validate_render_attrs(
         from ...validation.types import validate_opacity
 
         validate_opacity(attrs["opacity"])
+
+    if "ambient" in attrs:
+        from ...validation.types import validate_appearance_fraction
+
+        validate_appearance_fraction(attrs["ambient"], "Ambient")
+
+    if "specular" in attrs:
+        from ...validation.types import validate_appearance_fraction
+
+        validate_appearance_fraction(attrs["specular"], "Specular")
+
+    if "alpha_cutoff" in attrs:
+        from ...validation.types import validate_appearance_fraction
+
+        validate_appearance_fraction(attrs["alpha_cutoff"], "Alpha cutoff")
+
+    if "shade_exponent" in attrs:
+        from ...validation.types import validate_positive_finite
+
+        validate_positive_finite(attrs["shade_exponent"], "Shade exponent")
+
+    if "shininess" in attrs:
+        from ...validation.types import validate_positive_finite
+
+        validate_positive_finite(attrs["shininess"], "Shininess")
 
     if "truncation_radius" in attrs:
         from ...validation.types import validate_truncation_radius

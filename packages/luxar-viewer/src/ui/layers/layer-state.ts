@@ -153,7 +153,7 @@ function deriveColormapFromDescendants(node: SceneNode): string | undefined {
 }
 
 /**
- * A numeric mesh shading attr (`ambient` / `shade_exponent` / `alpha_cutoff`) read
+ * A numeric mesh appearance attr read
  * from `node`, else from the first descendant that carries one.
  *
  * Same shape and same reason as {@link deriveColormapFromDescendants}: these are
@@ -236,20 +236,24 @@ export interface LayerInfo {
   /** Absorption coefficient κ (≥ 0; only meaningful in volumetric mode) */
   absorption: number;
   /**
-   * Mesh shade floor (0–1) — the §6.2 headlight's `ambient`. Only meaningful on a
+   * Mesh shade floor (0–1) — the §6.2 wrapped-diffuse `ambient`. Only meaningful on a
    * mesh layer, where it is what keeps a silhouette readable rather than black; `1.0`
-   * collapses the shade term and reproduces the other three types' emissive look.
+   * removes the diffuse gradient; specular remains independently controlled.
    */
   ambient: number;
   /**
-   * Mesh headlight falloff exponent (> 0) — the §6.2 `shade_exponent`. `1.0` is the
-   * plain linear wrap. Mesh-only, like the two around it.
+   * Mesh wrapped-diffuse falloff exponent (> 0) — the §6.2 `shade_exponent`. `1.0` is the
+   * plain linear wrap. Mesh-only, like the three around it.
    */
   shadeExponent: number;
+  /** Mesh additive specular strength (0–1). */
+  specular: number;
+  /** Mesh specular highlight exponent (> 0). */
+  shininess: number;
   /**
    * Mesh `opaque`-mode cutout threshold (0–1) — the §6.2 `alpha_cutoff`.
    *
-   * Only meaningful in `opaque`, which is a NARROWER condition than the other two
+   * Only meaningful in `opaque`, which is a NARROWER condition than the other four
    * (they apply in every mesh mode), so the panel gates its slider on the mode as well
    * as the type — the same shape as absorption's volumetric gate.
    */
@@ -578,6 +582,8 @@ export class LayerStateManager {
           ambient: deriveMeshAttrFromDescendants(node, 'ambient') ?? MESH_DEFAULTS.ambient,
           shadeExponent:
             deriveMeshAttrFromDescendants(node, 'shade_exponent') ?? MESH_DEFAULTS.shadeExponent,
+          specular: deriveMeshAttrFromDescendants(node, 'specular') ?? MESH_DEFAULTS.specular,
+          shininess: deriveMeshAttrFromDescendants(node, 'shininess') ?? MESH_DEFAULTS.shininess,
           alphaCutoff:
             deriveMeshAttrFromDescendants(node, 'alpha_cutoff') ?? MESH_DEFAULTS.alphaCutoff,
           displayMin,

@@ -1426,7 +1426,7 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     return null;
   }
 
-  /** A mesh leaf whose material records the three shading setters. */
+  /** A mesh leaf whose material records the shading setters. */
   function mountMeshLayer(
     container: HTMLElement,
     animationController: AnimationController,
@@ -1435,6 +1435,8 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     const calls = {
       ambient: vi.fn(),
       shadeExponent: vi.fn(),
+      specular: vi.fn(),
+      shininess: vi.fn(),
       alphaCutoff: vi.fn(),
       pickAlphaCutoff: vi.fn(),
     };
@@ -1449,6 +1451,8 @@ describe('LayersPanel — blend select drives the leaf material', () => {
       applyBlendingMode: vi.fn(),
       updateAmbient: calls.ambient,
       updateShadeExponent: calls.shadeExponent,
+      updateSpecular: calls.specular,
+      updateShininess: calls.shininess,
       updateAlphaCutoff: calls.alphaCutoff,
     };
     stubMat.clone = vi.fn(() => stubMat);
@@ -1478,7 +1482,7 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     // or mode-gated. Mesh is the only SHADED geometry type, so on a points layer these
     // three have no uniform to write and would be controls that visibly do nothing.
     mountMeshLayer(container, animationController);
-    for (const label of ['Ambient', 'Shade falloff', 'Alpha cutoff']) {
+    for (const label of ['Ambient', 'Shade falloff', 'Specular', 'Shininess', 'Alpha cutoff']) {
       const group = findControlGroup(container, label);
       expect(group, `${label} control should exist`).not.toBeNull();
       expect(group!.style.display, `${label} should be visible on a mesh layer`).not.toBe('none');
@@ -1510,7 +1514,7 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     panel2.initFromScene(rootGroup, makeLayeredSceneGraph('points'));
     panel2.show();
     panel2.layerState.select('/cloud', 'single');
-    for (const label of ['Ambient', 'Shade falloff', 'Alpha cutoff']) {
+    for (const label of ['Ambient', 'Shade falloff', 'Specular', 'Shininess', 'Alpha cutoff']) {
       expect(findControlGroup(other, label)!.style.display, `${label} on points`).toBe('none');
     }
   });
@@ -1554,6 +1558,14 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     expect(calls.shadeExponent).toHaveBeenCalledWith(expect.closeTo(2.5, 6));
     expect(panel.layerState.getLayer('/cloud')!.shadeExponent).toBeCloseTo(2.5, 6);
 
+    drag('Specular', 0.3);
+    expect(calls.specular).toHaveBeenCalledWith(expect.closeTo(0.3, 6));
+    expect(panel.layerState.getLayer('/cloud')!.specular).toBeCloseTo(0.3, 6);
+
+    drag('Shininess', 48);
+    expect(calls.shininess).toHaveBeenCalledWith(expect.closeTo(48, 6));
+    expect(panel.layerState.getLayer('/cloud')!.shininess).toBeCloseTo(48, 6);
+
     drag('Alpha cutoff', 0.8);
     expect(calls.alphaCutoff).toHaveBeenCalledWith(expect.closeTo(0.8, 6));
     expect(panel.layerState.getLayer('/cloud')!.alphaCutoff).toBeCloseTo(0.8, 6);
@@ -1587,18 +1599,24 @@ describe('LayersPanel — blend select drives the leaf material', () => {
       input.dispatchEvent(new Event('input', { bubbles: true }));
     };
 
-    // Move all three away from their authored defaults.
+    // Move all five away from their authored defaults.
     drag('Ambient', 0.7);
     drag('Shade falloff', 2.5);
+    drag('Specular', 0.3);
+    drag('Shininess', 48);
     drag('Alpha cutoff', 0.8);
     // Sanity: the layer state actually moved before we reset.
     expect(panel.layerState.getLayer('/cloud')!.ambient).toBeCloseTo(0.7, 6);
     expect(panel.layerState.getLayer('/cloud')!.shadeExponent).toBeCloseTo(2.5, 6);
+    expect(panel.layerState.getLayer('/cloud')!.specular).toBeCloseTo(0.3, 6);
+    expect(panel.layerState.getLayer('/cloud')!.shininess).toBeCloseTo(48, 6);
     expect(panel.layerState.getLayer('/cloud')!.alphaCutoff).toBeCloseTo(0.8, 6);
 
     // Only the reset-driven setter calls should be observed below.
     calls.ambient.mockClear();
     calls.shadeExponent.mockClear();
+    calls.specular.mockClear();
+    calls.shininess.mockClear();
     calls.alphaCutoff.mockClear();
     calls.pickAlphaCutoff.mockClear();
 
@@ -1610,6 +1628,8 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     expect(calls.shadeExponent).toHaveBeenCalledWith(
       expect.closeTo(MESH_DEFAULTS.shadeExponent, 6)
     );
+    expect(calls.specular).toHaveBeenCalledWith(expect.closeTo(MESH_DEFAULTS.specular, 6));
+    expect(calls.shininess).toHaveBeenCalledWith(expect.closeTo(MESH_DEFAULTS.shininess, 6));
     expect(calls.alphaCutoff).toHaveBeenCalledWith(expect.closeTo(MESH_DEFAULTS.alphaCutoff, 6));
     // The pick material applies the identical cutout, so it must reset too.
     expect(calls.pickAlphaCutoff).toHaveBeenCalledWith(
@@ -2488,6 +2508,8 @@ describe('LayersPanel — blend select drives the leaf material', () => {
         updateOpacity: vi.fn(),
         updateAmbient: vi.fn(),
         updateShadeExponent: vi.fn(),
+        updateSpecular: vi.fn(),
+        updateShininess: vi.fn(),
         updateAlphaCutoff: vi.fn(),
         applyBlendingMode: vi.fn(),
       };
@@ -2525,7 +2547,14 @@ describe('LayersPanel — blend select drives the leaf material', () => {
             name: `part_${i}`,
             path: `/surface/part_${i}`,
             type: 'mesh',
-            attrs: { type: 'mesh', ambient: 0.4, shade_exponent: 3, alpha_cutoff: 0.25 },
+            attrs: {
+              type: 'mesh',
+              ambient: 0.4,
+              shade_exponent: 3,
+              specular: 0.2,
+              shininess: 32,
+              alpha_cutoff: 0.25,
+            },
             children: [],
           })),
         },
@@ -2552,6 +2581,8 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     // what the parts are actually rendering with — not on the material defaults.
     expect(layer.ambient).toBe(0.4);
     expect(layer.shadeExponent).toBe(3);
+    expect(layer.specular).toBe(0.2);
+    expect(layer.shininess).toBe(32);
     expect(layer.alphaCutoff).toBe(0.25);
 
     layer.ambient = 0.1;
@@ -2562,6 +2593,8 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     for (const mat of materials) {
       expect(mat.updateAmbient).toHaveBeenCalledWith(0.1);
       expect(mat.updateShadeExponent).toHaveBeenCalledWith(3);
+      expect(mat.updateSpecular).toHaveBeenCalledWith(0.2);
+      expect(mat.updateShininess).toHaveBeenCalledWith(32);
       expect(mat.updateAlphaCutoff).toHaveBeenCalledWith(0.25);
     }
   });
