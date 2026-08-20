@@ -66,6 +66,7 @@ class IntensityMixin(_GSplatDataOps):
                     )
                 ),
                 changed=changed,
+                source=self,
             )
         return _stats_after_content_change(
             GSplatData(
@@ -77,6 +78,7 @@ class IntensityMixin(_GSplatDataOps):
                 truncation_radius=self.truncation_radius,
             ),
             changed=changed,
+            source=self,
         )
 
     def _map_amplitudes_per_level(
@@ -92,7 +94,9 @@ class IntensityMixin(_GSplatDataOps):
         """
         out = self._map_substitutive(fn)
         return _stats_after_content_change(
-            out, changed=amplitudes_changed(self.amplitudes, out.amplitudes)
+            out,
+            changed=amplitudes_changed(self.amplitudes, out.amplitudes),
+            source=self,
         )
 
     def with_colors(self, colors: "np.ndarray | tuple[float, ...]") -> "GSplatData":

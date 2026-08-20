@@ -799,26 +799,23 @@ store must apply both rules:
   outright. An operation that stamps its own record does so *after* the scrub, so
   a rewrite publishes the reduction it actually performed and no other.
 
-  **Known separate case, out of scope of this rule:** the LOD Q·e ladder stamps —
+  **Artifact-local measured stamps:** the LOD Q·e ladder stamps —
   `lod_stats.energy_fraction_cum` (a rung's prefix energy e(k)),
   `level_stats.reference_energy` (its weight w) and `level_stats.quality` (a
   level's measured Q against its group's finest). These are measured on the
   artifact's **own content** rather than against a source volume, so a coarse
-  level's stamps are statements about that coarse level and the argument above
-  does not reach them; the scene-authoring path builds every coarse child of a
-  `kind=lod` group through the same `at_substitutive` accessor and copies exactly
-  these numbers onto it. Deleting them is also not free downstream: `gsplat
-  annotate-quality` writes a leaf-local `reference_energy` only when none is
-  present, so removing w licenses it to fabricate a group-inconsistent one. A
-  reduction does make them stale, and the likely right answer is to **recompute**
-  them (cheap, O(N), no volume — what `annotate-quality` already does) rather than
-  to drop them; that needs its own design pass. Until then a tool that rewrites a
-  store should either leave them alone or re-run `annotate-quality` deliberately.
+  level's stamps are statements about that coarse level and a plain accessor keeps
+  them exactly as authored; the scene-authoring path builds every coarse child of
+  a `kind=lod` group through `at_substitutive` and copies those numbers onto it. A
+  content-changing rewrite, however, **recomputes** the counts, e(k), the
+  group-consistent finest-content w and any authored Q from the rewritten
+  artifact. It does not drop the pair: `gsplat annotate-quality` writes a
+  leaf-local `reference_energy` only when none is present, so deleting w would
+  license a group-inconsistent replacement that then looks correctly stamped.
   A `--refine l2|volume` level's `level_stats.refine_stats` (`mse_seed` /
-  `mse_refit`) belongs to the same known-separate case even though it *is* measured
-  against the source volume: it records the build step that produced that level
-  rather than the artifact's published quality, and a reduction wants it recomputed
-  for the same reason.
+  `mse_refit`) is source-volume measured and cannot be remeasured by a rewriter;
+  a reduction removes that nested block while keeping the descriptive `refine`
+  method.
 
   A geometry-only transform (scale / rotate / translate / center) **keeps** them:
   the splat set is identical and only the frame moved. Note this is a weaker

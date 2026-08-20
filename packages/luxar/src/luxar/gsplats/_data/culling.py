@@ -162,7 +162,9 @@ class CullingMixin(_GSplatDataOps):
             # `dict(self.stats)` — the dict `gsplat info` reads `psnr_db` from.
             # Scrub BEFORE stamping: the scrub also takes the inherited cull record
             # (`culled` / `n_original` / ...), which is what this update replaces.
-            _stats_after_content_change(out, changed=out.n_splats != self.n_splats)
+            out = _stats_after_content_change(
+                out, changed=out.n_splats != self.n_splats, source=self
+            )
             out.stats.update(
                 {
                     "culled": True,

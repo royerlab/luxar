@@ -347,19 +347,10 @@ def test_decimate_keeps_the_provenance_and_drops_the_score(tmp_path: Path) -> No
         )
 
 
-def test_a_laddered_store_keeps_its_q_e_stamps_across_a_cull(tmp_path: Path) -> None:
-    """The Q·e ladder stamps survive a rewrite, on disk — the narrowed contract.
-
-    ``lod_stats.energy_fraction_cum`` (a rung's prefix energy e(k)),
-    ``level_stats.reference_energy`` (its weight w) and ``level_stats.quality`` are
-    measured on the artifact's OWN content, not against the source volume, so this
-    rule does not claim them: deleting them stripped the viewer's ``e(k) >= 0.6``
-    upgrade release and its ``1/e(k)`` compensation, and deleting w licensed
-    ``annotate-quality``'s leaf-local ``reference_energy`` fallback to fabricate a
-    group-inconsistent one. A reduction DOES make them stale; recomputing them (as
-    ``annotate-quality`` does) is the open follow-up, and dropping them is not the
-    interim answer.
-    """
+def test_a_laddered_store_recomputes_its_q_e_stamps_across_a_cull(
+    tmp_path: Path,
+) -> None:
+    """The persisted e(k)/w pair and counts describe the culled artifact."""
     src = _fixture(tmp_path / "fit.gsplats.zarr")
     laddered = tmp_path / "lad.gsplats.zarr"
     _run(("lod", "{in}", "{out}", "--recipe", "stream", "--n-lods", "3"), src, laddered)
@@ -377,19 +368,22 @@ def test_a_laddered_store_keeps_its_q_e_stamps_across_a_cull(tmp_path: Path) -> 
 
     after = _all_leaf_stats(culled)
     assert len(after) == len(before), "the cull changed the tree shape"
-    # (``level_stats`` itself does not reach a mask-rebuilt store at all — the
-    # rebuild constructs a fresh leaf with empty ``meta`` — so the on-disk claim
-    # here is about the per-rung e(k). The level scope is covered in memory by the
-    # domain test's scene-authoring case, which is the path that reads it.)
-    for i, (_level_stats, rungs) in enumerate(after):
+    for i, (level_stats, rungs) in enumerate(after):
         assert len(rungs) == len(before[i][1]), f"leaf {i} changed ladder shape"
+        cumulative_n = 0
         for j, rung in enumerate(rungs):
-            assert rung.get("energy_fraction_cum") == pytest.approx(
-                before[i][1][j]["energy_fraction_cum"]
-            ), f"leaf {i} rung {j} lost its e(k)"
+            cumulative_n += int(rung["lod_n_splats"])
+            assert rung["lod_cumulative_n"] == cumulative_n
+            assert 0.0 < rung["energy_fraction_cum"] <= 1.0
             # ...while the fit's MEASURED scores (this rule's actual subject) go.
             survivors = [k for k in _CONTENT_SCOPED_STATS_KEYS if k in rung]
             assert not survivors, f"leaf {i} rung {j} kept {survivors}"
+        assert rungs[-1]["energy_fraction_cum"] == pytest.approx(1.0)
+        assert level_stats["n_splats_total"] == cumulative_n
+        assert level_stats["reference_energy"] > 0.0
+        assert level_stats["reference_energy"] != pytest.approx(
+            before[i][0]["reference_energy"]
+        )
     assert not [k for k in _CONTENT_SCOPED_STATS_KEYS if k in _root_stats(culled)], (
         "the culled store still publishes the fit's score at the root"
     )

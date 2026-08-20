@@ -401,6 +401,7 @@ def run_transform_dataset(
                 # remap below (it is only known once the centroid is measured).
                 center_shift: "Optional[np.ndarray]" = None
                 intensity = _IntensityChangeRecorder()
+                source_node = node
 
                 def _leaf_op(
                     op: "Callable[[GSplatData], GSplatData]",
@@ -411,7 +412,7 @@ def run_transform_dataset(
                         # The coverage_fraction threshold is scrubbed AFTER all
                         # transforms (from leaf AND group nodes) — see below.
                         new_leaf = op(GSplatData.from_tree(leaf)).tree
-                        return replace(new_leaf, meta=dict(leaf.meta))
+                        return replace(new_leaf, meta={**leaf.meta, **new_leaf.meta})
 
                     return _fn
 
@@ -481,6 +482,10 @@ def run_transform_dataset(
                                 ),
                             )
                 intensity.scrub_root(stats)
+                if intensity.changed:
+                    from luxar.gsplats.lod.restamp import refresh_reduction_lod_tree
+
+                    node = refresh_reduction_lod_tree(node, source_node)
                 # Scrub the coverage_fraction LOD-switch threshold from EVERY node
                 # (leaves AND group nodes — an overview partition child, an adaptive
                 # per-part lod group) after a geometry transform so the writer

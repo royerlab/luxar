@@ -68,7 +68,7 @@ class TransformsMixin(_GSplatDataOps):
         callers guard the multi-sub-LOD branch with
         ``if self.n_additive_sublods > 1``.
         """
-        from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.gsplat_data import GSplatData, SubstitutiveLevel
 
         new_lods: List["AdditiveSubLOD"] = []
         offset = 0
@@ -76,7 +76,19 @@ class TransformsMixin(_GSplatDataOps):
             n = lod.n_splats
             new_lods.append(fn(lod, offset, n))
             offset += n
-        return GSplatData.from_additive_sublods(new_lods, stats=dict(self.stats))
+        source_level = self.substitutive_levels[0]
+        return GSplatData.from_substitutive_levels(
+            [
+                SubstitutiveLevel(
+                    additive_sublods=new_lods,
+                    compression_factor=source_level.compression_factor,
+                    parent_method=source_level.parent_method,
+                    level_index=source_level.level_index,
+                    stats=dict(source_level.stats),
+                )
+            ],
+            stats=dict(self.stats),
+        )
 
     def transform(self, matrix: np.ndarray) -> "GSplatData":
         """Apply affine transformation to all splats.

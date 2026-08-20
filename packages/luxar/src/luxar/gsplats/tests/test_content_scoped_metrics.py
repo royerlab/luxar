@@ -109,13 +109,9 @@ _OP_RECORD: Dict[str, Any] = {
     "amplitude_retention": 0.95,
 }
 
-#: The LOD Q·e ladder stamps, DELIBERATELY out of scope (see the module docstring
-#: of ``_data/filtering.py``): e(k) per rung, and the measured Q with its
-#: aggregation weight w per level. They are measured on the artifact's own content,
-#: the scene-authoring path copies them onto every coarse child of a ``kind=lod``
-#: group through ``at_substitutive``, and deleting w licenses
-#: ``annotate-quality``'s leaf-local fallback. Every case asserts they are left
-#: exactly as authored.
+#: The LOD Q·e ladder stamps, at deliberately false values. A content-changing
+#: rewrite must replace these with measurements of the rewritten artifact; a
+#: content-preserving rewrite must keep them byte-for-byte.
 _SUBLOD_LADDER: Dict[str, Any] = {
     "energy_fraction_cum": 0.6923,
     "lod_n_splats": 2,
@@ -453,6 +449,34 @@ def _assert_descriptive_intact(stats: Dict[str, Any], label: str) -> None:
         assert stats.get(key) == value, f"{label} lost descriptive stat {key!r}"
 
 
+def _assert_q_e_counts_match(data: GSplatData, label: str) -> None:
+    """The authored ladder family is complete and describes ``data``."""
+    for level_index, level in enumerate(data.substitutive_levels):
+        assert level.stats["n_splats_total"] == level.n_splats_total, (
+            f"{label} level {level_index} kept a stale total count"
+        )
+        assert level.stats["reference_energy"] >= 0.0
+        cumulative_n = 0
+        fractions: list[float] = []
+        missing_fraction = False
+        for rung_index, lod in enumerate(level.additive_sublods):
+            cumulative_n += lod.n_splats
+            assert lod.stats["lod_n_splats"] == lod.n_splats, (
+                f"{label} level {level_index} rung {rung_index} kept a stale count"
+            )
+            assert lod.stats["lod_cumulative_n"] == cumulative_n
+            if "energy_fraction_cum" in lod.stats:
+                fractions.append(float(lod.stats["energy_fraction_cum"]))
+            else:
+                missing_fraction = True
+        if missing_fraction:
+            assert not fractions, f"{label} left a half-stamped energy ladder"
+            assert level.stats["reference_energy"] == 0.0
+            continue
+        assert fractions == sorted(fractions)
+        assert fractions[-1] == pytest.approx(1.0)
+
+
 def test_the_fixture_covers_the_implementation_constant() -> None:
     """The fixture is the anchor; the constant may not shrink out from under it.
 
@@ -472,10 +496,8 @@ def test_the_fixture_covers_the_implementation_constant() -> None:
         "the reduction-record fixture and its implementation constant disagree"
     )
     assert set(_REGION) == set(_REGION_SCOPED_STATS_KEYS)
-    # The Q·e stamps are OUT of both content-scoped sets, on purpose: they are
-    # measured on the artifact's own content and the scene-authoring path copies
-    # them onto coarse levels through `at_substitutive`. Adding one here would
-    # break `lod_dispatch.py` (see the module docstring of `_data/filtering.py`).
+    # The Q·e stamps stay OUT of the source-volume metric scrub: reductions
+    # recompute them from the rewritten artifact instead of deleting them.
     scoped = set(_CONTENT_SCOPED_STATS_KEYS) | set(_CONTENT_SCOPED_OP_RECORD_KEYS)
     for key in ("energy_fraction_cum", "reference_energy", "quality"):
         assert key not in scoped, (
@@ -522,12 +544,6 @@ def test_sublod_dicts_follow_the_top_level(
             assert not survivors, (
                 f"stale measured scores survived in sub-LOD {i}: {sorted(survivors)}"
             )
-            if case_id not in _DROPS_SUBLOD_STATS | _REBUILDS_SUBLOD_FROM_TOP:
-                # ...and the rung's own Q·e stamp is NOT collateral: it is
-                # measured on this rung's content and is out of scope here.
-                assert lod.stats["energy_fraction_cum"] == 0.6923, (
-                    f"sub-LOD {i} lost its e(k) to the PSNR scrub"
-                )
         elif case_id not in _DROPS_SUBLOD_STATS:
             for key, value in _METRICS.items():
                 assert lod.stats[key] == value, (
@@ -535,6 +551,8 @@ def test_sublod_dicts_follow_the_top_level(
                 )
             if case_id not in _REBUILDS_SUBLOD_FROM_TOP:
                 assert lod.stats["energy_fraction_cum"] == 0.6923
+    if changes_content and case_id not in _DROPS_SUBLOD_STATS:
+        _assert_q_e_counts_match(out, case_id)
 
 
 @pytest.mark.parametrize("case_id,op,changes_content", _PARAMS)
@@ -606,15 +624,15 @@ def test_a_reduced_view_does_not_inherit_the_score(
         assert "psnr_db" not in view.stats
     else:
         assert view.stats["psnr_db"] == _METRICS["psnr_db"]
-    # Either way the view's OWN Q·e stamps survive: a reduced view scrubs only the
-    # INHERITED top-level scores it cannot claim. The scene-authoring path builds
-    # every coarse child of a `kind=lod` group with `at_substitutive(s)` and reads
-    # these off the view (`lod_dispatch.py`), so scrubbing them here silently
-    # stripped the viewer's e(k) gate and 1/e(k) compensation from coarse levels.
-    for i, lod in enumerate(view.additive_sublods):
-        assert lod.stats["energy_fraction_cum"] == 0.6923, (
-            f"{case_id} rung {i} lost e(k)"
-        )
+    if case_id == "additive_prefix_strict":
+        _assert_q_e_counts_match(view, case_id)
+    else:
+        # Full-prefix and substitutive views are accessors, not rewrites. The
+        # scene-authoring path relies on their authored stamps verbatim.
+        for i, lod in enumerate(view.additive_sublods):
+            assert lod.stats["energy_fraction_cum"] == 0.6923, (
+                f"{case_id} rung {i} lost e(k)"
+            )
     # (An `additive_prefix` view is built from bare rungs, so it has no level
     # stats to keep; the substitutive views carry the level's own Q/w.)
     if case_id.startswith("at_substitutive"):
@@ -683,57 +701,119 @@ def test_a_pyramid_scrubs_its_rebuilt_top_level(
         pytest.param(lambda gs: gs.filter_by(amplitude_min=0.3), id="filter_by"),
         pytest.param(lambda gs: gs.cull(method="cumulative", retention=0.5), id="cull"),
         pytest.param(lambda gs: gs.scale_intensity(0.5), id="scale_intensity"),
-        pytest.param(_decimate(2, "prefix"), id="decimate_prefix"),
     ],
 )
-def test_the_q_e_ladder_stamps_are_left_exactly_as_authored(
+def test_a_reduction_recomputes_the_q_e_ladder_stamps(
     op: Callable[[GSplatData], GSplatData],
 ) -> None:
-    """The NARROWED contract, in the direction a future change must not break.
-
-    ``energy_fraction_cum`` / ``reference_energy`` / level ``quality`` are measured
-    on the artifact's own content — a coarse level's Q is that level against its
-    group's finest, its e(k) is its own prefix energy — so the "measured against
-    the source volume, therefore invalidated by a rewrite" argument does not reach
-    them, and this rule leaves them alone. Scrubbing them broke two things at once:
-    ``lod_dispatch.py`` builds every coarse child of a ``kind=lod`` group with
-    ``at_substitutive(s)`` and copies these numbers off the view (so coarse levels
-    lost the viewer's ``e(k) >= 0.6`` upgrade release and its ``1/e(k)`` brightness
-    compensation), and ``lod/annotate.py:332`` writes a leaf-local
-    ``reference_energy`` only when none is present — so deleting w licenses a
-    fabricated, group-inconsistent one on a store that then LOOKS well stamped.
-    """
-    from luxar.gsplats.tree import iter_leaves
+    """Artifact-local Q·e stamps and counts describe the rewritten splats."""
+    from luxar.gsplats.lod.quality import mixture_quality, total_self_energy
 
     source = _pyramid()
-    assert source.substitutive_levels[0].stats["reference_energy"] == 1234.5
-    assert source.additive_sublods[0].stats["energy_fraction_cum"] == 0.6923
+    from luxar.gsplats.tree import iter_leaves
+
+    for leaf in iter_leaves(source.tree):
+        leaf.meta["stats"]["refine_stats"] = {"mse_seed": 9.0, "mse_refit": 3.0}
 
     out = op(source)
-    # The PSNR family really did go (or this proves nothing about the narrowing).
-    assert not _metric_keys_present(out.stats), "the metric scrub stopped working"
-    # Each level's own Q/w, where the level stats live: the leaf's ``meta``, which
-    # is what the writer persists as ``level_stats``. (``decimate`` rebuilds from
-    # bare arrays and has no level stats at all — nothing to preserve there.)
-    for leaf in iter_leaves(out.tree):
-        level_stats = leaf.meta.get("stats") or {}
-        if level_stats:
-            assert level_stats["reference_energy"] == 1234.5, "w was scrubbed"
-            assert level_stats["quality"] == 0.9, "the level's measured Q was scrubbed"
+    assert not _metric_keys_present(out.stats), (
+        "the source-volume scrub stopped working"
+    )
 
-    # The per-rung e(k), on the fixture whose ladder survives the rewrite: a
-    # `_map_substitutive` rebuild replaces a level's single rung stats with that
-    # level's rebuilt top-level dict (pre-existing, unrelated to this rule), while
-    # `_map_additive` carries every rung's own dict over — which is where a scrub
-    # would show.
-    laddered_src = _laddered()
-    laddered = op(laddered_src)
-    assert not _metric_keys_present(laddered.stats)
-    if laddered.n_additive_sublods == laddered_src.n_additive_sublods:
-        for i, lod in enumerate(laddered.additive_sublods):
-            assert lod.stats.get("energy_fraction_cum") == 0.6923, (
-                f"rung {i} lost its e(k) to the PSNR scrub"
+    levels = out.substitutive_levels
+    finest = out.at_substitutive(0).flattened()
+    expected_w = total_self_energy(finest)
+    for index, level in enumerate(levels):
+        assert level.stats["n_splats_total"] == level.n_splats_total
+        assert level.stats["reference_energy"] == pytest.approx(expected_w)
+        expected_q = (
+            1.0
+            if index == 0
+            else mixture_quality(out.at_substitutive(index).flattened(), finest).quality
+        )
+        assert level.stats["quality"] == pytest.approx(expected_q)
+        assert level.stats["quality"] != 0.9 or expected_q == pytest.approx(0.9)
+        assert "refine_stats" not in level.stats
+
+        cumulative_n = 0
+        energies = [
+            total_self_energy(GSplatData.from_additive_sublods([lod]))
+            for lod in level.additive_sublods
+        ]
+        total = sum(energies)
+        cumulative_energy = 0.0
+        for lod, energy in zip(level.additive_sublods, energies):
+            cumulative_n += lod.n_splats
+            cumulative_energy += energy
+            assert lod.stats["lod_n_splats"] == lod.n_splats
+            assert lod.stats["lod_cumulative_n"] == cumulative_n
+            assert lod.stats["energy_fraction_cum"] == pytest.approx(
+                cumulative_energy / total
             )
+
+
+def test_decimate_recomputes_a_complete_single_rung_stamp() -> None:
+    from luxar.gsplats.lod.quality import total_self_energy
+
+    out = _decimate(2, "prefix")(_laddered())
+    level = out.substitutive_levels[0]
+    lod = level.additive_sublods[0]
+    assert lod.stats["lod_n_splats"] == out.n_splats
+    assert lod.stats["lod_cumulative_n"] == out.n_splats
+    assert lod.stats["energy_fraction_cum"] == 1.0
+    assert level.stats["n_splats_total"] == out.n_splats
+    assert level.stats["quality"] == 1.0
+    assert level.stats["reference_energy"] == pytest.approx(total_self_energy(out))
+
+
+def test_content_preserving_rewrite_keeps_authored_q_e_stamps() -> None:
+    source = _laddered()
+    out = source.translate(np.array([1.0, 2.0, 3.0]))
+    assert out.substitutive_levels[0].stats == source.substitutive_levels[0].stats
+    assert [lod.stats for lod in out.additive_sublods] == [
+        lod.stats for lod in source.additive_sublods
+    ]
+
+
+def test_reveal_ladder_stays_without_energy_compensation_after_reduction() -> None:
+    from luxar.gsplats.tree import iter_leaves
+
+    source = _laddered()
+    for leaf in iter_leaves(source.tree):
+        leaf.meta["stats"].pop("reference_energy", None)
+        for lod in leaf.additive_sublods:
+            lod.stats["lod_method"] = "radial"
+            lod.stats.pop("energy_fraction_cum", None)
+
+    out = source.scale_intensity(0.5)
+    assert "reference_energy" not in out.substitutive_levels[0].stats
+    assert all("energy_fraction_cum" not in lod.stats for lod in out.additive_sublods)
+
+
+def test_tree_restamp_measures_lod_children_against_one_finest_level() -> None:
+    from luxar.gsplats.lod.quality import mixture_quality, total_self_energy
+    from luxar.gsplats.lod.restamp import refresh_reduction_lod_tree
+    from luxar.gsplats.tree import map_leaves
+
+    source = _pyramid().tree
+
+    def scale_leaf(leaf: Any) -> Any:
+        return GSplatData.from_tree(leaf).scale_intensity(0.5).tree
+
+    result = refresh_reduction_lod_tree(map_leaves(source, scale_leaf), source)
+    data = GSplatData.from_tree(result)
+    finest = data.at_substitutive(0).flattened()
+    expected_w = total_self_energy(finest)
+    for index, level in enumerate(data.substitutive_levels):
+        expected_q = (
+            1.0
+            if index == 0
+            else mixture_quality(
+                data.at_substitutive(index).flattened(), finest
+            ).quality
+        )
+        assert level.stats["quality"] == pytest.approx(expected_q)
+        assert level.stats["reference_energy"] == pytest.approx(expected_w)
 
 
 def test_the_scene_authoring_path_keeps_a_coarse_level_stamped() -> None:
@@ -893,7 +973,7 @@ def test_the_fitters_keep_the_score_across_their_own_closing_trim() -> None:
         assert lod.stats["cumulative_psnr_db"] == _METRICS["cumulative_psnr_db"], (
             f"sub-LOD {i}'s ladder score was not restored"
         )
-        assert lod.stats["energy_fraction_cum"] == 0.6923
+    _assert_q_e_counts_match(trimmed, "closing trim")
     # The nested per-pass dicts are deep-copied into the snapshot, or the scrub
     # would have emptied them in place before the restore could read them.
     assert trimmed.stats["pass_stats"][0]["cumulative_psnr_db"] == 40.0
