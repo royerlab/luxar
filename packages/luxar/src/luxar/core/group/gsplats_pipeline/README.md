@@ -227,15 +227,16 @@ store-only verdict for those calls exactly, at the cost of over-refusing a
 `{"recompute": True, "breakpoints": [1.0]}` that would in fact collapse to one
 rung — which pre-#1632 also refused, and which is the conservative direction.
 "A query must not pre-empt the builder's own fault report" still holds where it
-belongs, and the same fallback leaves two residuals open on an unladdered store —
-different KINDS, worth keeping apart. (i) An INVALID call: `additive_lod=True`
+belongs. An INVALID call — `additive_lod=True`
 there, or a malformed spec, counts 1 rung, skips, and is reported by the builder
-one level down with its own message. Both strand identically without
-`partition=`, so the fault is the call's and the verdict is the builder's. (ii) A
-VALID energy-fraction spec (tracked as #1763): `partition={"max_elements": 4},
+one level down with its own message. Both fail identically without
+`partition=`, so the fault is the call's and the verdict is the builder's; the
+outer transaction removes any partial graft. A
+VALID energy-fraction spec — `partition={"max_elements": 4},
 additive_lod={"breakpoints": [0.5, 1.0]}` on an unladdered store counts UNKNOWN,
 falls back to a stored 1, skips — and then hits THIS conflict from inside
-`part_0`, one level too late, leaving `g` childless. The spec is well-formed and
+`part_0`. The outer graft transaction removes `g` and every descendant before
+re-raising that builder verdict. The spec is well-formed and
 the builder really does make 2 rungs from it; the count is unknowable only
 because energy cuts need the ordering and the energy curve, the expensive half
 this query exists to avoid. Refusing on UNKNOWN instead was rejected
