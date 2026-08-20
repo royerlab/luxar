@@ -1188,7 +1188,11 @@ def fit_timepoint(volume: np.ndarray, index: int, label: str) -> GSplatData:
 
     cache_file = _frame_cache_file(index)
     if cache_file.exists() and not RECOMPUTE:
-        result = GSplatData.load(cache_file, include_stats=False)
+        # include_stats=True: the cache carries the fit's normalization
+        # provenance (floor / image_min / image_max), and `concatenate` only
+        # propagates a background floor into the stacked scene when every part
+        # that has an opinion reports one (#1175).
+        result = GSplatData.load(cache_file, include_stats=True)
         aprint(f"  Loaded {result.n_splats:,} cached splats ({label})")
         return result
 
@@ -1219,7 +1223,10 @@ def fit_timepoint(volume: np.ndarray, index: int, label: str) -> GSplatData:
             compress="zip",
             zip_deflate=True,
         )
-        return result
+        # Return what was STORED (see the note on the main fit path below). This
+        # placeholder is saved without fitting info, so there are no stats to
+        # find; the flag matches the other two loads so all three agree.
+        return GSplatData.load(cache_file, include_stats=True)
 
     if DEVICE is None:
         DEVICE = detect_device()
@@ -1259,7 +1266,13 @@ def fit_timepoint(volume: np.ndarray, index: int, label: str) -> GSplatData:
         compress="zip",
         zip_deflate=True,
     )
-    return result
+    # Return what was STORED, not the in-memory fit: the cache is written under
+    # a lossy encoding (and a stream ladder), so returning `result` here would
+    # make a cold run and a warm run (the cache-hit branch at the top, which
+    # loads the store back) produce different scenes. Same include_stats=True as
+    # that branch, so the two agree AND the fit's normalization provenance
+    # survives into the stacked scene.
+    return GSplatData.load(cache_file, include_stats=True)
 
 
 def fit_all_timepoints(paths: list[Path], indices: list[int]) -> list[GSplatData]:

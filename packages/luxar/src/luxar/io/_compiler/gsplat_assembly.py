@@ -10,6 +10,7 @@ free functions, a scene leaf is byte-identical to a standalone one.
 
 from __future__ import annotations
 
+import warnings
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
@@ -20,7 +21,7 @@ from numpy.typing import NDArray
 from luxar._zarr_compat import create_array
 
 from ...core.dimensions import Dimensions
-from ...encoding import SemanticType
+from ...encoding import EncodingMode, SemanticType
 from ...encoding.compression import resolve_compressor
 from ...typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
 from .chunking import calculate_intelligent_chunks
@@ -28,6 +29,212 @@ from .colormap import write_colormap_lut_if_needed
 from .context import DatasetCtx, OrderingCtx
 from .dataset_writers.colors import write_colors
 from .dataset_writers.scalars import write_positive_scalar
+
+#: Worst-case round-trip center displacement, measured in the splat's OWN
+#: marginal σ on that axis, above which the splat counts as *unrepresentable*
+#: there. Applied as ``step / 2 > MAX_CENTER_DISPLACEMENT_SIGMAS * sigma``,
+#: since half a grid step is the largest error uint16 rounding can produce.
+#:
+#: ``AUTO``/``MEMORY`` store centers as per-axis uint16 fixed point, so the step
+#: on axis *i* is ``(hi_i - lo_i) / 65535`` — a property of the axis EXTENT, not
+#: of how sharp the splats are. A stacked axis (``combine_as_new_dimension``
+#: with ``sigma=0``, whose σ is floored to 1e-7) has an extent of one unit per
+#: frame and essentially no width, so the grid step lands thousands of σ away
+#: from the integer frame coordinate and every interior frame stops matching a
+#: slice query — silently, since the endpoints quantize exactly and so look fine.
+#:
+#: The number is keyed on *harm*, not on jitter. A splat moved by less than one
+#: σ is still centred inside its own core, and the displacement is bounded by
+#: the splat's OWN width rather than by the axis extent — it renders essentially
+#: where it did. That is not a promise that every query answer is preserved: a
+#: slice query matches out to roughly ``tolerance + coverage_sigma·σ``, so a
+#: splat sitting on that boundary and pushed the permitted 1.0 σ outward stops
+#: matching. Nor is the bound joint — the test is PER AXIS, so a *d*-dimensional
+#: center may move a full σ on every axis at once (√d σ in Mahalanobis terms for
+#: a diagonal Σ — 2 σ at *d* = 4, more when the axes are correlated) with every
+#: per-axis check still passing. What 1 σ does rule out is the failure this rail
+#: exists for: past its own core the center leaves the footprint the splat was
+#: fitted to describe altogether, which is how a stacked frame ends up thousands
+#: of σ from its integer coordinate and vanishes from every query. A tighter
+#: line (this rail shipped at 0.25 σ of *jitter*, i.e. 0.125 σ of displacement)
+#: charges 2× the centers bytes for sub-voxel error: measured on 200k splats
+#: over an 8192-voxel axis with 5% pinned at the fitter's
+#: ``sqrt(1/12) ≈ 0.2887`` σ floor, the step is
+#: 0.125 voxel, so the worst displacement is 0.0625 voxel = 0.217 σ — 12.9% of
+#: splats "unrepresentable" at 0.25 σ, and 0.03% here.
+MAX_CENTER_DISPLACEMENT_SIGMAS = 1.0
+
+#: Largest fraction of the splats that may be unrepresentable (per
+#: :data:`MAX_CENTER_DISPLACEMENT_SIGMAS`) on one axis before the centers
+#: escalate to float32.
+#:
+#: The per-splat criterion alone cannot drive the escalation, because a
+#: *minimum* over splats is an outlier statistic: any real fit contains a few
+#: needle Gaussians (an SPZ import decodes scales as ``exp(u8/16 - 10)``, floor
+#: 4.5e-5; a random-Cholesky test fixture draws σ from ``U(0, 1)``), and one
+#: such splat in 20,000 would flip the whole array. Displacing a handful of
+#: needles is cosmetically negligible, and not worth doubling every centers
+#: array on disk (measured: +96% on centers, +54% on a 600k-splat store).
+#:
+#: 0.1% is set by what the *displacement* criterion above leaves behind.
+#: Benign populations collapse to essentially nothing under it — measured worst
+#: axis: 0.015% for a 20k random-``U(0, 1)``-Cholesky fixture, 0.0005% for a
+#: 200k SPZ-like log-normal scale distribution (0.001% with an added σ=1e-6
+#: needle), 0.03% for the 8192-voxel light-sheet case above — so 0.1% still
+#: clears every one of them by 3× or more. What it now also catches is a
+#: *minority* degenerate sub-population, which a 1% gate missed: merging a
+#: 2,000-splat ``sigma=0`` track stack into a 300,000-splat fit with a real
+#: σ_t = 3.0 leaves 0.662% of the splats destroyed (max displacement 1,373 σ)
+#: — under the old gate the rail stayed silent and only 10% of the tracks still
+#: landed on their own frame.
+#:
+#: The residual, stated plainly, because a population gate always has one: up to
+#: 0.1% of any store can still be destroyed with NO warning — 1,650 splats on a
+#: 1.65M-splat fit. Reproduced end to end: 150,000 splats on a real time axis
+#: (σ_t = 3.0, extent 4) with 100 ``sigma=0`` track splats merged in is 0.0667%,
+#: under the gate, so saving under ``AUTO`` leaves the rail silent and 61 of the
+#: 100 tracks are knocked off their integer frame (worst offset 305 σ). Lowering
+#: the fraction further is not the fix, because displacement *magnitude* does
+#: not separate the two populations: a ``U(0, 1)`` Cholesky draw on perfectly
+#: ordinary data can produce σ = 1e-9 and thousands of σ of displacement, so an
+#: absolute-magnitude second tier would only reintroduce the false positives
+#: this gate exists to prevent. A dataset carrying a small sub-population that
+#: must land exactly on its own coordinate — a track stack, a categorical axis —
+#: should be saved with :attr:`~luxar.encoding.EncodingMode.PRECISION` instead
+#: of relying on the rail to notice it.
+#:
+#: Small *N* is the other edge of a fraction: ``fraction > 0.001`` means ONE
+#: unrepresentable splat trips the whole array whenever N ≤ 999 (measured: N =
+#: 10 / 100 / 500 / 999 escalate on a single bad splat, N = 1000 / 1001 / 2000
+#: stay silent). The "a few needle splats cannot flip an otherwise ordinary
+#: array" guarantee therefore holds only above 1,000 splats — which is also
+#: where the bytes it protects begin to matter.
+MAX_UNREPRESENTABLE_SPLAT_FRACTION = 0.001
+
+#: Number of quantization intervals of a uint16 fixed-point grid (2**16 - 1).
+_UINT16_LEVELS = 65535.0
+
+
+def _center_quantization_offender(
+    centers: NDArray[np.float32],
+    cholesky_factors: NDArray[np.float32],
+    n_dims: int,
+) -> Optional[Tuple[int, float, int, float, float]]:
+    """Find the axis whose uint16 center grid is too coarse for its own splats.
+
+    A splat is *unrepresentable* on axis *i* when the worst-case round-trip
+    displacement there — half the grid step — exceeds
+    :data:`MAX_CENTER_DISPLACEMENT_SIGMAS` times that splat's own marginal σ on
+    that axis, i.e. when quantization can push the center out of its own core.
+    An axis offends when MORE THAN :data:`MAX_UNREPRESENTABLE_SPLAT_FRACTION` of
+    the splats are unrepresentable on it — a population test, not a minimum, so
+    a few needle splats cannot flip an otherwise ordinary array (see that
+    constant).
+
+    Returns ``(axis, step, n_unrepresentable, fraction, sigma_median)`` for the
+    worst offender — the axis with the largest affected *fraction* — or ``None``
+    when no axis offends. ``sigma_median`` is the median marginal σ of the
+    unrepresentable splats, i.e. a representative of what is being displaced.
+
+    ``cholesky_factors`` is the packed row-major lower-triangular ``(N, k)``
+    form (or a single broadcast ``(1, k)`` row when the Cholesky is uniform), so
+    row *i* of the matrix occupies packed columns ``[i(i+1)/2, i(i+1)/2 + i]``
+    and the marginal variance is ``Σ[i,i] = Σ_{j≤i} L[i,j]²``. Summing those
+    slices directly costs one pass over ``N·k`` and avoids materializing the
+    ``(N, d, d)`` array :meth:`~luxar.gsplats.GSplatData.marginal_sigmas` builds.
+    """
+    n_splats = centers.shape[0]
+    if n_splats == 0 or n_dims == 0:
+        return None
+
+    # The packed (N, k) layout is load-bearing: handed an UNPACKED (N, d, d)
+    # Cholesky this would slice the middle axis, read σ = 0 everywhere and
+    # escalate unconditionally — a silently wrong answer, which is the exact bug
+    # class this rail exists to prevent. Both call sites go through
+    # validate_gsplat_inputs so it cannot happen today; decline rather than
+    # raise, because this is an opportunistic size/precision rail and not a
+    # validator (the validators own shape errors, and own them earlier).
+    chol = np.asarray(cholesky_factors, dtype=np.float64)
+    if chol.ndim != 2 or chol.shape[1] < n_dims * (n_dims + 1) // 2:
+        return None
+    n_rows = chol.shape[0]
+    if n_rows == 0:
+        return None
+
+    lo = np.min(centers, axis=0).astype(np.float64)
+    hi = np.max(centers, axis=0).astype(np.float64)
+    steps = (hi - lo) / _UINT16_LEVELS
+
+    worst: Optional[Tuple[int, float, int, float, float]] = None
+    worst_fraction = MAX_UNREPRESENTABLE_SPLAT_FRACTION
+    for axis in range(n_dims):
+        step = float(steps[axis])
+        # A constant axis (hi == lo) has a zero step and can never be violated;
+        # a non-finite extent is not something this rail can reason about (the
+        # value validators own that) so it is left to the encoder.
+        if not np.isfinite(step) or step <= 0.0:
+            continue
+        start = axis * (axis + 1) // 2
+        row = chol[:, start : start + axis + 1]
+        sigma = np.sqrt(np.sum(row * row, axis=1))
+        # Multiply rather than divide: σ == 0 (a true delta axis) is
+        # unrepresentable for any step > 0, and a NaN σ compares False and is
+        # left to the value validators.
+        unrepresentable = 0.5 * step > MAX_CENTER_DISPLACEMENT_SIGMAS * sigma
+        n_bad_rows = int(np.count_nonzero(unrepresentable))
+        if n_bad_rows == 0:
+            continue
+        # A uniform Cholesky is one broadcast row standing in for every splat,
+        # so the row fraction IS the splat fraction in both layouts.
+        fraction = n_bad_rows / n_rows
+        if fraction > worst_fraction:
+            worst_fraction = fraction
+            worst = (
+                axis,
+                step,
+                n_bad_rows if n_rows == n_splats else int(round(fraction * n_splats)),
+                fraction,
+                float(np.median(sigma[unrepresentable])),
+            )
+    return worst
+
+
+def _resolve_centers_encoding_mode(
+    centers: NDArray[np.float32],
+    cholesky_factors: NDArray[np.float32],
+    n_dims: int,
+    mode: EncodingMode,
+) -> EncodingMode:
+    """Escalate the centers encoding to ``PRECISION`` when uint16 cannot hold it.
+
+    Only ``AUTO``/``MEMORY`` quantize coordinates (``PRECISION`` is already
+    exact and ``CUSTOM`` is rejected downstream for COORDINATE), so only those
+    two are checked. The escalation is centers-only: the Cholesky, amplitude and
+    color tiers keep whatever the caller asked for.
+    """
+    if mode not in (EncodingMode.AUTO, EncodingMode.MEMORY):
+        return mode
+    offender = _center_quantization_offender(centers, cholesky_factors, n_dims)
+    if offender is None:
+        return mode
+    axis, step, n_bad, fraction, sigma_median = offender
+    n_splats = centers.shape[0]
+    warnings.warn(
+        f"GSplat centers: axis {axis} has a uint16 fixed-point step of "
+        f"{step:.4g}, so quantizing can displace a center along it by up to "
+        f"{step / 2:.4g}. For {n_bad} of {n_splats} splats ({fraction:.2%}; "
+        f"median sigma of those {sigma_median:.4g}) that worst case exceeds "
+        f"{MAX_CENTER_DISPLACEMENT_SIGMAS:g}·sigma, i.e. it can move the center "
+        "clear of the splat's own core and out of a slice query that used to "
+        "match it. The centers are therefore stored as float32 (exact) instead; "
+        "the Cholesky/amplitude/color tiers are unchanged. A figure near 100% "
+        "means the axis itself is degenerate (sigma ~ 0), the usual cause being "
+        "a stacked/categorical axis built with "
+        "combine_as_new_dimension(..., sigma=0).",
+        UserWarning,
+        stacklevel=2,
+    )
+    return EncodingMode.PRECISION
 
 
 def validate_gsplat_inputs(
@@ -259,6 +466,19 @@ def write_gsplat_arrays(
     the scene ⇄ standalone parity invariant in
     ``tests/test_scene_leaf_parity.py`` true.
 
+    The **centers** encoding carries one extra rail on top of the encoder's own
+    extent check: under ``AUTO``/``MEMORY`` half the per-axis uint16 grid step
+    (the worst-case round-trip displacement) is compared against each splat's
+    own marginal σ on that axis, and centers fall back to float32 (with a
+    ``UserWarning``) when MORE THAN
+    :data:`MAX_UNREPRESENTABLE_SPLAT_FRACTION` of the splats could be displaced
+    by over :data:`MAX_CENTER_DISPLACEMENT_SIGMAS` of their own σ — far enough
+    to leave the core the splat was fitted to describe. It is a population
+    test, so a few needle splats (which every real fit has) keep the uint16
+    size win, while a degenerate axis — where every splat fails — does not.
+    Only the centers escalate; the Cholesky/amplitude/color tiers are
+    untouched. An escalated write also opts OUT of content dedup (see below).
+
     Returns:
         Metadata dict with n_splats, ndim, has_colors, amplitude_range,
         center_bounds, and ordering info.
@@ -270,14 +490,35 @@ def write_gsplat_arrays(
         dtype=centers.dtype,
         per_array_bytes=True,
     )
+    # Sigma rail: a lossy (uint16 fixed-point) center grid is only legitimate
+    # when half its step is small against the splats' own σ on that axis. See
+    # MAX_CENTER_DISPLACEMENT_SIGMAS — this is the single shared choke point
+    # where centers AND cholesky_factors are both in hand.
+    centers_mode = _resolve_centers_encoding_mode(
+        centers, cholesky_factors, n_dims, ctx.encoding_mode
+    )
+    # An escalated write must bypass the encoder's content-dedup registry.
+    # Dedup is keyed on the centers BYTES alone, but the rail makes the chosen
+    # mode depend on a SIBLING array (cholesky_factors) the registry knows
+    # nothing about — so two nodes with byte-identical centers and different
+    # Cholesky would collapse onto whichever was written first, and an
+    # escalated node ref'ing an already-registered uint16 target would silently
+    # inherit the exact quantization the rail just refused (issue #1748
+    # verbatim, plus a warning claiming it had been prevented). Skipping the
+    # registry is sufficient and is the whole fix: `ArrayRefRegistry.check` both
+    # looks up AND registers, so an escalated array that never calls it neither
+    # resolves to a lossy target nor becomes a target itself. Non-escalated
+    # nodes keep the size win.
+    centers_escalated = centers_mode != ctx.encoding_mode
     ctx.encoder.encode(
         data=centers,
         zarr_group=group,
         name="centers",
         semantic_type=SemanticType.COORDINATE,
-        mode=ctx.encoding_mode,
+        mode=centers_mode,
         chunks=chunks_centers,
         compressor=ctx.compressor,
+        deduplicate=not centers_escalated,
     )
 
     # Compute amplitude range up-front for the layer-control

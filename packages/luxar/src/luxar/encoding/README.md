@@ -376,7 +376,18 @@ PRECISION's float32 cast) — visually lossless
 too coarse) and never **float16** (its *relative* precision degrades with magnitude — a
 footgun for absolute positions). An **array-local extent rail** warns when a per-axis
 extent exceeds 2¹² and falls back to float32 at/above 2¹⁶ (where uint16 can't resolve a
-unit step).
+unit step). That rail sees only the coordinates; a second, geometry-aware **sigma rail**
+lives at the gsplat write choke point (`io/_compiler/gsplat_assembly.py`), which also
+holds the Cholesky factors and escalates centers to float32 when HALF an axis's grid
+step — the worst-case round-trip displacement — exceeds the per-splat marginal σ for
+more than 0.1% of the splats on that axis, i.e. when quantization can move those
+centers clear of their own cores. That is the case of a stacked/categorical axis built
+with `sigma=0`, where every splat fails, and of a degenerate *minority* merged into an
+ordinary fit, where under a percent of them do. It is a population test on purpose: the
+few needle splats in an ordinary fit must not cost the whole array its uint16 win.
+An escalated centers array is written with `deduplicate=False`, because the rail's
+verdict depends on a sibling array (`cholesky_factors`) that this registry does not
+key on.
 
 **Usage Example:**
 ```python

@@ -179,6 +179,38 @@ This package uses `luxar.encoding` for semantic type-aware array encoding:
 *relative* precision is a footgun for absolute positions, so the writer
 disables it (there is no `float16_allowed` knob).
 
+**Sigma rail (a second, geometry-aware fallback).** The extent rail above only
+sees coordinates. The gsplat writer also has the Cholesky factors in hand, so it
+compares **half** each axis's grid step `(hi - lo) / 65535` — the worst-case
+round-trip displacement — against *each splat's own* marginal σ on that axis: a
+splat is **unrepresentable** there when that displacement exceeds
+`MAX_CENTER_DISPLACEMENT_SIGMAS` (1.0) × its σ, i.e. when quantization can push
+the center clear of its own core and out of a slice query that used to match it.
+The centers are stored as `float32` (with a `UserWarning`) once more than
+`MAX_UNREPRESENTABLE_SPLAT_FRACTION` (0.1%) of the splats are unrepresentable on
+some axis. This is what keeps a **stacked axis** exact: a time axis built with
+`combine_as_new_dimension(..., sigma=0.0)` has a tiny extent (so it passes the
+extent rail) but essentially no width, so *all* of its splats fail and a step of
+thousands of σ would otherwise knock every interior frame off its integer
+coordinate.
+
+Both numbers are set by harm rather than by jitter. Sub-σ displacement is
+invisible — a whole-volume light-sheet fit over an 8192-voxel axis has a
+0.125-voxel step, so its worst displacement is 0.0625 voxel, and paying 2× the
+centers bytes for that is not worth it. The test is over the population rather
+than the minimum because real fits contain a few needle Gaussians (an SPZ import
+decodes scales as `exp(u8/16 - 10)`; a random-Cholesky fixture draws σ from
+`U(0, 1)`), and one of those must not cost the whole array its uint16 win — but
+0.1% rather than 1%, because a degenerate *minority* is just as destroyed as a
+degenerate whole: merging a 2,000-splat `sigma=0` track stack into a
+300,000-splat fit leaves 0.662% of the splats displaced by up to 1,373 σ. Under
+the displacement criterion the benign populations measure 0.03% or less, so
+0.1% still clears them by 3× or more. Only the centers escalate — the
+Cholesky/amplitude/color tiers keep whatever the mode selected. An escalated
+centers array is also written with `deduplicate=False`: the encoder's content
+registry is keyed on the centers bytes alone, and would otherwise hand the
+escalated node an `array_ref` to a sibling's quantized array.
+
 **Encoding modes**:
 - `AUTO`: Analyzes data and selects encoding (may quantize)
 - `PRECISION`: Full float32, lossless (broadcasting still allowed)

@@ -43,6 +43,21 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
         step at uint16, so AUTO/MEMORY fall back to float32; an extent > 2¹² warns
         that sub-unit headroom is shrinking.
 
+        That rail only knows the coordinates. A *second*, geometry-aware rail lives
+        at the gsplat write choke point
+        (:func:`~luxar.io._compiler.gsplat_assembly.write_gsplat_arrays`), which
+        also has the Cholesky factors in hand: it escalates centers to
+        ``PRECISION`` when HALF an axis's grid step — the worst-case round-trip
+        displacement — exceeds the per-splat marginal σ for more than 0.1% of the
+        splats on that axis, i.e. when quantization can move those centers clear
+        of their own cores (a population test, so the odd needle splat does not
+        cost the array its uint16 win). A
+        stacked/categorical axis (built with ``sigma=0``) has a small extent — so
+        it passes *this* rail — yet a step of thousands of σ for *every* splat,
+        which would knock every interior frame off its integer coordinate. Callers
+        encoding COORDINATE data that carries its own notion of extent should route
+        through that choke point rather than here.
+
         Args:
             zarr_group: Zarr group to write to
             name: Array name

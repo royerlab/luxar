@@ -66,7 +66,7 @@ Each Gaussian splat is parameterized by:
 
 | Field | Shape | Dtype | Semantic Type | Description |
 |-------|-------|-------|---------------|-------------|
-| `centers` | (N, d) | uint16 / float32 | COORDINATE | Splat center positions (not broadcastable). AUTO/MEMORY: uint16 per-axis fixed-point (`linear_perchannel_u16`), decoded to float32; PRECISION / large-extent: float32 |
+| `centers` | (N, d) | uint16 / float32 | COORDINATE | Splat center positions (not broadcastable). AUTO/MEMORY: uint16 per-axis fixed-point (`linear_perchannel_u16`), decoded to float32; PRECISION / large-extent / able to displace splats past their own σ (see the sigma rail below): float32 |
 | `amplitudes` | (N,) or (1,) | uint8/uint16/float32 | POSITIVE_SCALAR | Non-negative intensity |
 | `cholesky_factors_diag` | (N, d) or (1, d) | uint8/uint16/float32 | CHOLESKY_DIAG | Diagonal of L (positive, scale-like) |
 | `cholesky_factors_offdiag` | (N, d*(d-1)/2) or (1, …) | uint8/uint16/float32 | CHOLESKY_OFFDIAG | Strictly-lower elements of L (signed); absent when d=1 |
@@ -197,7 +197,7 @@ fitted.gsplats.zarr/
 │                     # format_version: "3.4", format_type: "gsplats_zarr",
 │                     # timestamp, luxar_gsplats_version, description?
 ├── .zmetadata        # Consolidated metadata for fast loading
-├── centers                   # (N, d) uint16 (AUTO; float32 if an axis extent ≥ 2¹⁶) / float32 (PRECISION), spatially ordered
+├── centers                   # (N, d) uint16 (AUTO; float32 if an axis extent ≥ 2¹⁶ or the grid is too coarse for the splats' σ) / float32 (PRECISION), spatially ordered
 ├── amplitudes                # (N,) uint8/uint16 (AUTO) / float32 (PRECISION)
 ├── cholesky_factors_diag     # (N, d) uint8 (AUTO, certified — escalates to uint16 if the covariance certificate fails) / float32 (PRECISION)  (diagonal of L)
 ├── cholesky_factors_offdiag  # (N, d*(d-1)/2) uint8 (AUTO, certified as above) / float32 (PRECISION) (off-diagonal; absent if d=1)
@@ -1010,7 +1010,23 @@ Quantization is handled by `luxar.encoding` based on semantic types:
 MEMORY — each axis quantized over its own [min, max] to 65536 levels, decoded back to
 float32 (visually lossless, sub-unit, ~2× smaller). float16 is NOT used (relative
 precision is a footgun for absolute positions); a per-axis extent ≥ 2¹⁶ falls back to
-float32. **Cholesky factors** are stored split (diagonal + off-diagonal); bit depth
+float32. A second, geometry-aware **sigma rail** also falls back to float32 (with a
+`UserWarning`) when **half** an axis's grid step `(hi - lo) / 65535` — the worst-case
+round-trip displacement — exceeds `MAX_CENTER_DISPLACEMENT_SIGMAS` (1.0) × the marginal
+σ of **more than `MAX_UNREPRESENTABLE_SPLAT_FRACTION` (0.1%) of the splats** on that
+axis, i.e. when quantization can move those centers clear of the cores they were fitted
+to describe and out of a slice query that used to match them. That is what keeps a
+stacked/categorical axis built with `sigma=0` (e.g. `combine_as_new_dimension`, where
+100% of the splats fail) landing exactly on its integer frame coordinates, and it also
+catches a degenerate *minority* — a 2,000-splat track stack merged into a
+300,000-splat fit is 0.662% of the store and displaced by up to 1,373 σ. Sub-σ
+displacement is deliberately left alone: an 8192-voxel axis has a 0.125-voxel step, so
+its worst displacement is 0.0625 voxel, and the handful of needle splats every real fit
+contains (measured ≤ 0.03% under this criterion) keeps the uint16 size win. Only
+`centers` escalates; the Cholesky tier is unaffected. An escalated `centers` array is
+never stored as an `array_ref` — the encoder's content dedup is keyed on the centers
+bytes, which do not determine the rail's verdict.
+**Cholesky factors** are stored split (diagonal + off-diagonal); bit depth
 follows the mode: PRECISION→float32; AUTO→uint8, escalating to uint16 only when the
 encode-time covariance certificate measures excessive Σ error (float32 as the
 practically-unreachable last rung); MEMORY→uint8.

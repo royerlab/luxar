@@ -21,7 +21,7 @@ def create_test_cholesky(n_splats: int, ndim: int) -> np.ndarray:
         Array of shape (n_splats, k) where k = ndim*(ndim+1)/2
     """
     k = ndim * (ndim + 1) // 2
-    return np.random.rand(n_splats, k).astype(np.float32) * 0.1
+    return (np.random.random((n_splats, k)) * 0.1).astype(np.float32)
 
 
 class TestGSplatsExtendToAll:
@@ -113,9 +113,18 @@ class TestGSplatsExtendToAll:
             )
             cholesky = create_test_cholesky(3, 4)
 
-            # Should NOT warn because Time has multiple values
+            # Should NOT warn because Time has multiple values. Scoped to the
+            # extend_to_all warning rather than `simplefilter("error")`: this
+            # is the only case here whose centers span more than one value, so
+            # a blanket filter also asserts on writer-side warnings that have
+            # nothing to do with extend_to_all (the centers sigma rail fires on
+            # ~0.05% of the random Cholesky draws below) and makes this test
+            # hostage to their thresholds.
             with warnings.catch_warnings():
-                warnings.simplefilter("error")  # Turn warnings into errors
+                warnings.simplefilter("ignore")
+                warnings.filterwarnings(
+                    "error", message=r"Dimension\(s\) .* have single values"
+                )
                 scene.add_gsplats(
                     "gsplats",
                     centers,

@@ -692,7 +692,9 @@ luxar gsplat migrate-format old_pyr/ v3.gsplats.zarr                          # 
 # Re-quantize a fitted (current-format) .gsplats.zarr's Cholesky encoding (writes a copy).
 # Structure-preserving round-trip (leaf/lod/partition/nested + fitting/pipeline
 # groups kept); auto/memory also re-quantize the CENTERS to per-axis uint16
-# fixed-point, so centers are bit-exact only under -e precision; decode is always
+# fixed-point, so on ordinary spatial data centers are bit-exact only under
+# -e precision (an axis whose grid would displace splats past their own
+# sigma — a stacked sigma=0 axis — stays float32 in every mode); decode is always
 # float32 so viewer/GPU/WASM are unaffected. Unlike migrate-format (legacy→current,
 # float32 vs AUTO-uint16 only) this exposes the full ladder incl. memory=uint8.
 luxar gsplat reencode fit.gsplats.zarr fit_u8.gsplats.zarr -e memory      # uint8 (smallest, ~93 dB)

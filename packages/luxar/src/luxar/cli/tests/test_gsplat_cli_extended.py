@@ -6,6 +6,7 @@ Also tests the config system (presets, YAML loading, dump) and volume loader.
 from __future__ import annotations
 
 import re
+import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -6770,17 +6771,68 @@ class TestReencode:
     @pytest.mark.parametrize(
         "encoding,exact", [("precision", True), ("auto", False), ("memory", False)]
     )
-    def test_centers_are_bit_exact_only_under_precision(
+    def test_ordinary_centers_are_bit_exact_only_under_precision(
         self, runner: CliRunner, tmp_path: Path, encoding: str, exact: bool
     ) -> None:
         """`reencode` re-encodes the CENTERS too, which its name does not suggest.
 
-        `auto` and `memory` both quantize a coordinate column to uint16 over its
-        own [min, max], so the endpoints land on exact codes and every INTERIOR
-        value rounds. Worst on a degenerate stacked axis: `sigma=0` gives each
-        splat sigma=1e-7 in that column, so the 1.5e-5 drift below sits ~150
-        sigma from its own slice and the slice renders as nothing. Only
-        `precision` round-trips the column exactly.
+        On ordinary spatial splats `auto` and `memory` both quantize a coordinate
+        column to uint16 over its own [min, max], so the endpoints land on exact
+        codes and every INTERIOR value rounds. Only `precision` round-trips the
+        column exactly. (The degenerate stacked case is the *exception* — see
+        `test_stacked_axis_centers_stay_exact_in_every_mode` below.)
+        """
+        from luxar.encoding import EncodingMode
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        # Ordinary 3-D splats with a well-resolved sigma of 1 per axis: the
+        # centers sigma rail leaves these on uint16, so the quantization is
+        # actually exercised. The middle value of a [0, 2] column is not
+        # representable on that column's 65535-interval grid.
+        src = tmp_path / "plain.gsplats.zarr"
+        GSplatData(
+            centers=np.array(
+                [[0.0, 0.0, 0.0], [1.0, 1.0, 1.0], [2.0, 2.0, 2.0]], dtype=np.float32
+            ),
+            amplitudes=np.array([1.0, 2.0, 3.0], dtype=np.float32),
+            cholesky_factors=np.tile(
+                np.array([1.0, 0, 1.0, 0, 0, 1.0], dtype=np.float32), (3, 1)
+            ),
+        ).save(src, encoding_mode=EncodingMode.PRECISION)
+
+        out = tmp_path / f"{encoding}.gsplats.zarr"
+        result = runner.invoke(
+            app, ["gsplat", "reencode", str(src), str(out), "-e", encoding]
+        )
+        assert result.exit_code == 0, result.output
+        assert zarr.open_array(str(out / "centers"), mode="r").dtype == (
+            np.float32 if exact else np.uint16
+        )
+
+        # Compare the SET of coordinates on one column: save/load reorders rows.
+        col = np.unique(GSplatData.load(out).centers[:, 0])
+        assert col.shape == (3,)
+        np.testing.assert_array_equal(col[[0, 2]], [0.0, 2.0])  # endpoints exact
+        if exact:
+            assert col[1] == 1.0
+        else:
+            assert col[1] != 1.0
+            # One quantization step over the column's [0, 2] extent.
+            assert abs(col[1] - 1.0) < 2.0 / 65535.0
+
+    @pytest.mark.parametrize("encoding", ["precision", "auto", "memory"])
+    def test_stacked_axis_centers_stay_exact_in_every_mode(
+        self, runner: CliRunner, tmp_path: Path, encoding: str
+    ) -> None:
+        """A degenerate (sigma=0) stacked axis is exempt from the quantization.
+
+        `combine_as_new_dimension(..., sigma=0)` floors that column's sigma to
+        1e-7, so a uint16 grid step of 3e-5 could displace a center by ~150
+        sigma and every interior frame would stop matching a slice query.
+        The centers sigma rail (issue #1748) sees that 100% of the splats are
+        unrepresentable on the column and stores the centers as float32, so
+        `auto`/`memory` come back exact here even though they do not on the
+        ordinary fixture above.
         """
         from luxar.encoding import EncodingMode
         from luxar.gsplats.gsplat_data import GSplatData
@@ -6806,21 +6858,16 @@ class TestReencode:
         ).save(src, encoding_mode=EncodingMode.PRECISION)
 
         out = tmp_path / f"{encoding}.gsplats.zarr"
-        result = runner.invoke(
-            app, ["gsplat", "reencode", str(src), str(out), "-e", encoding]
-        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            result = runner.invoke(
+                app, ["gsplat", "reencode", str(src), str(out), "-e", encoding]
+            )
         assert result.exit_code == 0, result.output
 
         # Compare the SET of stacked coordinates: save/load reorders rows.
         stacked = np.unique(GSplatData.load(out).centers[:, 3])
-        assert stacked.shape == (3,)
-        np.testing.assert_array_equal(stacked[[0, 2]], [0.0, 2.0])  # endpoints exact
-        if exact:
-            assert stacked[1] == 1.0
-        else:
-            assert stacked[1] != 1.0
-            # One quantization step over the column's [0, 2] extent.
-            assert abs(stacked[1] - 1.0) < 2.0 / 65535.0
+        np.testing.assert_array_equal(stacked, [0.0, 1.0, 2.0])
 
     def test_reencode_preserves_pipeline_provenance(
         self, runner: CliRunner, tmp_path: Path

@@ -847,9 +847,14 @@ def preprocess_timepoint(
 
 
 def _load_cached(cache_file: Path, label: str) -> GSplatData | None:
-    """Try loading a cached GSplatData.  Returns None on failure."""
+    """Try loading a cached GSplatData.  Returns None on failure.
+
+    ``include_stats=True``: the cache carries the fit's normalization provenance
+    (floor / image_min / image_max), and ``concatenate`` only propagates a
+    background floor into the stacked scene when every part reports one (#1175).
+    """
     try:
-        result = GSplatData.load(cache_file, include_stats=False)
+        result = GSplatData.load(cache_file, include_stats=True)
         aprint(f"  Loaded {len(result.amplitudes):,} cached splats ({label})")
         return result
     except Exception as e:
@@ -926,7 +931,12 @@ def fit_timepoint(
     )
     tmp_file.unlink(missing_ok=True)  # save complete — remove marker
 
-    return result
+    # Return what was STORED, not the in-memory fit: the cache is written under
+    # a lossy encoding, so returning `result` here would make a cold run
+    # (unquantized) and a warm run (the `_load_cached` branch above) produce
+    # different scenes. Same include_stats=True as that branch, so the two agree
+    # AND the fit's normalization provenance survives into the stacked scene.
+    return GSplatData.load(cache_file, include_stats=True)
 
 
 def preprocess_and_fit_all_timepoints(tiff_files: list) -> list:

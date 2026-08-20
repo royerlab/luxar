@@ -375,8 +375,9 @@ def reencode_command(
     are unchanged, and decode is always to float32, so viewer/GPU/WASM paths are
     unaffected — but the Cholesky factors are not the only array re-encoded:
     ``auto`` and ``memory`` also re-quantize the CENTERS to per-axis uint16
-    fixed-point (float32 only once an axis spans 2**16), so center values are
-    bit-exact only under ``precision``.
+    fixed-point (float32 once an axis spans 2**16, or once that grid would
+    displace splats past their own sigma), so on ordinary spatial data center
+    values are bit-exact only under ``precision``.
 
     Unlike ``migrate-format`` (legacy layout → current, which only exposes
     float32 vs the AUTO uint8-first policy via ``--lossless``), this exposes the

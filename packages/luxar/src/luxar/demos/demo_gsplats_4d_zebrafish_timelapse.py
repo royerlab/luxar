@@ -331,7 +331,11 @@ def fit_timepoint(
     # Check cache
     if cache_file.exists() and not RECOMPUTE:
         try:
-            result = GSplatData.load(cache_file, include_stats=False)
+            # include_stats=True: the cache carries the fit's normalization
+            # provenance (floor / image_min / image_max), and `concatenate`
+            # only propagates a background floor into the stacked scene when
+            # every part reports one (#1175).
+            result = GSplatData.load(cache_file, include_stats=True)
             aprint(f"  Loaded {len(result.amplitudes):,} cached splats ({label})")
             return result
         except Exception as e:
@@ -373,7 +377,13 @@ def fit_timepoint(
         zip_deflate=True,
     )
 
-    return result
+    # Return what was STORED, not the in-memory fit: the cache is written under
+    # a lossy encoding, so returning `result` here would make a cold run
+    # (unquantized) and a warm run (the cache-hit branch above, which loads the
+    # quantized store) build different scenes. Same include_stats=True as that
+    # branch, so the two agree AND the fit's normalization provenance survives
+    # into the stacked scene.
+    return GSplatData.load(cache_file, include_stats=True)
 
 
 def fit_all_timepoints(
