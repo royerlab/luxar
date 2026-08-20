@@ -902,6 +902,47 @@ class TestBatchPlanRegression:
             assert loaded.shape == manifest.spatial_shape
             np.testing.assert_array_equal(loaded, data[job.timepoint, 0, 0])
 
+    def test_content_plan_rejects_spatial_shape_squeezed_below_3d(
+        self, tmp_path: Path
+    ) -> None:
+        import typer
+        import zarr
+
+        from luxar.cli.gsplat_ops.batch.planning import (
+            ContentKnobs,
+            DenoiseConfig,
+            FitConfig,
+            MergeConfig,
+            plan_batch,
+        )
+
+        path = tmp_path / "thin-content.zarr"
+        root = zarr.open(str(path), mode="w")
+        create_array(root, "0", data=np.ones((3, 2, 1, 64, 64), dtype=np.float32))
+
+        with pytest.raises(typer.BadParameter) as excinfo:
+            plan_batch(
+                input_path=path,
+                output_dir=tmp_path / "out",
+                tiling="content",
+                tile_size=None,
+                tile_overlap=8,
+                axes_list=None,
+                array_key=None,
+                timepoints_slice=None,
+                channels_slice=None,
+                fit=FitConfig(floor="none"),
+                denoise=DenoiseConfig(),
+                content=ContentKnobs(k_star_ref=4000, n_features_ref=200),
+                merge=MergeConfig(),
+            )
+
+        message = str(excinfo.value)
+        assert "spatial axes squeeze to (64, 64)" in message
+        assert "--tiling uniform" in message
+        assert "--axes" in message
+        assert not (tmp_path / "out").exists()
+
     def test_planning_scan_squeezes_singleton_spatial_axes_lazily(
         self, tmp_path: Path
     ) -> None:

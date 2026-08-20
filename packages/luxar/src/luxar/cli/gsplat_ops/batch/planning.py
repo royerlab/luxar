@@ -1581,6 +1581,20 @@ def plan_batch(
 
     # 3. Decompose the spatial volume into the slots fanned across (t, c).
     mode = "content" if tiling == "content" else "uniform"
+    if mode == "content" and len(spatial) != 3:
+        if axes_list is None:
+            reason = (
+                f"the store's spatial axes squeeze to {spatial} because the "
+                "positional volume loader drops singleton dimensions"
+            )
+            alternative = "Use --tiling uniform, or pass --axes to keep the axis."
+        else:
+            reason = f"--axes resolves the store's spatial shape to {spatial}"
+            alternative = "Use --tiling uniform, or provide a 3-D spatial array."
+        raise typer.BadParameter(
+            f"--tiling content requires exactly 3 spatial dimensions, but {reason}. "
+            f"{alternative}"
+        )
     content_plan = None
     plan_path_str: Optional[str] = None
     total_voxels = math.prod(spatial)
