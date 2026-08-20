@@ -1416,6 +1416,27 @@ def _worker_spatial_shape(
     return tuple(size for size in spatial_shape if size != 1)
 
 
+def _validate_content_spatial_shape(
+    mode: str, spatial: Tuple[int, ...], axes_list: Optional[List[str]]
+) -> None:
+    """Reject content scans whose worker-visible volume is not 3-D."""
+    if mode != "content" or len(spatial) == 3:
+        return
+    if axes_list is None:
+        reason = (
+            f"the store's spatial axes squeeze to {spatial} because the "
+            "positional volume loader drops singleton dimensions"
+        )
+        alternative = "Use --tiling uniform, or pass --axes to keep the axis."
+    else:
+        reason = f"--axes resolves the store's spatial shape to {spatial}"
+        alternative = "Use --tiling uniform, or provide a 3-D spatial array."
+    raise typer.BadParameter(
+        f"--tiling content requires exactly 3 spatial dimensions, but {reason}. "
+        f"{alternative}"
+    )
+
+
 def _validate_worker_axes(axes_list: Optional[List[str]]) -> None:
     """Reject axis specs the per-task volume loader cannot apply."""
     if axes_list is None:
@@ -1580,20 +1601,7 @@ def plan_batch(
 
     # 3. Decompose the spatial volume into the slots fanned across (t, c).
     mode = "content" if tiling == "content" else "uniform"
-    if mode == "content" and len(spatial) != 3:
-        if axes_list is None:
-            reason = (
-                f"the store's spatial axes squeeze to {spatial} because the "
-                "positional volume loader drops singleton dimensions"
-            )
-            alternative = "Use --tiling uniform, or pass --axes to keep the axis."
-        else:
-            reason = f"--axes resolves the store's spatial shape to {spatial}"
-            alternative = "Use --tiling uniform, or provide a 3-D spatial array."
-        raise typer.BadParameter(
-            f"--tiling content requires exactly 3 spatial dimensions, but {reason}. "
-            f"{alternative}"
-        )
+    _validate_content_spatial_shape(mode, spatial, axes_list)
     content_plan = None
     plan_path_str: Optional[str] = None
     total_voxels = math.prod(spatial)
