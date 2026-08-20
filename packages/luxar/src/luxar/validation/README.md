@@ -76,10 +76,10 @@ Provides basic validation functions used for type guards, property validation, a
 - `validate_integral_axis_indices()`: Refuse a fractional `spatial_dims` entry before `int()` truncates it to a different column than the one named
 
 Note: all of the above are re-exported at the package level except
-`validate_intensity`, `validate_offset`, `validate_layer`, `validate_visible`,
-`validate_colormap`, `validate_finite_reveal_coords` and
-`validate_integral_axis_indices`, which must be imported directly from
-`luxar.validation.types`.
+`validate_appearance_fraction`, `validate_positive_finite`, `validate_intensity`,
+`validate_offset`, `validate_layer`, `validate_visible`, `validate_colormap`,
+`validate_finite_reveal_coords` and `validate_integral_axis_indices`, which must
+be imported directly from `luxar.validation.types`.
 
 **Type Guards:**
 - `is_position_array()`: Check if object is valid position array

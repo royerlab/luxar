@@ -160,13 +160,13 @@ an accepted value always affects the rendered mesh rather than becoming dead met
 
 All five are clamped at the material boundary because they are fractions or exponents, not gains:
 
-| Knob             | Clamp      | Why it is not merely tidiness                               |
-| ---------------- | ---------- | ----------------------------------------------------------- |
-| `ambient`        | `[0, 1]`   | It is a bounded interpolation floor.                        |
-| `specular`       | `[0, 1]`   | It is an additive highlight strength.                       |
-| `alpha_cutoff`   | `[0, 1]`   | It is compared with coverage, which is already in `[0, 1]`. |
-| `shade_exponent` | `>= 0.001` | Avoids undefined `pow(0, 0)` at an unlit fragment.          |
-| `shininess`      | `>= 0.001` | Keeps the specular `pow()` in the same defined domain.      |
+| Knob             | Clamp      | Why it is not merely tidiness                                                                                                                                |
+| ---------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `ambient`        | `[0, 1]`   | It is the shade floor. `1e9` multiplies the surface to white.                                                                                                |
+| `specular`       | `[0, 1]`   | It is an additive white term. `1e9` overwhelms the surface colour and clips the result.                                                                      |
+| `alpha_cutoff`   | `[0, 1]`   | Compared against a coverage already in `[0, 1]`. `1e9` discards every fragment — the mesh vanishes with no diagnostic.                                       |
+| `shade_exponent` | `>= 0.001` | `pow(wrap, 0)` where `wrap` is exactly 0 (any face-away fragment) is **undefined** GLSL — driver-dependent 1, 0 or NaN. Same hazard `clampGamma` exists for. |
+| `shininess`      | `>= 0.001` | `pow(max(dot(N, H), 0), 0)` is likewise undefined where the half-vector term is 0; negative values can diverge there.                                        |
 
 NaN/Inf route to the documented default rather than to a range boundary, matching the
 sibling shaders' sanitizer policy: corruption resolves loudly, not to a value that

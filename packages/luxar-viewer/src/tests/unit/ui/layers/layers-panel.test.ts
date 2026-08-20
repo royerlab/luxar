@@ -1589,8 +1589,8 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     // The mesh shading uniforms are applied through applyMeshAppearance, which is NOT
     // routed through applyComposed (they have no composition rule). So `resetAllLayers`
     // must call applyMeshAppearance explicitly — otherwise the surface keeps the dragged
-    // uAmbient/uShadeExponent/uAlphaCutoff (on both the visual AND pick materials) while
-    // the readouts show the reset defaults (#1283).
+    // uAmbient/uShadeExponent/uSpecular/uShininess/uAlphaCutoff on the surface, and
+    // uAlphaCutoff on the pick material, while the readouts show reset defaults (#1283).
     const { panel, calls } = mountMeshLayer(container, animationController);
 
     const drag = (label: string, value: number): void => {
@@ -1623,8 +1623,8 @@ describe('LayersPanel — blend select drives the leaf material', () => {
 
     panel.resetAllLayers();
 
-    // The scene graph has no ambient/shade_exponent/alpha_cutoff attrs, so reset
-    // falls back to MESH_DEFAULTS — and those must reach the material, not just the row.
+    // The scene graph has no mesh appearance attrs, so reset falls back to
+    // MESH_DEFAULTS — and those must reach the material, not just the row.
     expect(calls.ambient).toHaveBeenCalledWith(expect.closeTo(MESH_DEFAULTS.ambient, 6));
     expect(calls.shadeExponent).toHaveBeenCalledWith(
       expect.closeTo(MESH_DEFAULTS.shadeExponent, 6)

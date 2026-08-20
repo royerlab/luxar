@@ -52,8 +52,8 @@ README gallery table.
   `preserveDrawingBuffer: false`, so an in-page `gl.readPixels` reads an empty
   buffer) and picks an exposure in three phases: drive the lit foreground's p99
   just below clipping; then, if the lit histogram turns out to be *narrow*
-  (p99 − p10 < `NARROW_SPREAD_MAX` — a headlit shaded mesh, where p99 says
-  nothing about where the subject sits), re-target the lit *median* to
+  (p99 − p10 < `NARROW_SPREAD_MAX`, where p99 says nothing about where the
+  subject sits), re-target the lit *median* to
   `TARGET_MID` so the surface keeps its colour instead of washing out in the
   ACES shoulder; finally step down while the subject is blown to white or the
   background is lifted to grey. The decision logic lives in
