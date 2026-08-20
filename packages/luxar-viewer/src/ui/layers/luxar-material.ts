@@ -112,17 +112,27 @@ export function isColormapActive(mat: LuxarMaterial): boolean {
  * mode, on the color otherwise). Opacity and blending are handled by the
  * caller. See the material shaders' `USE_COLORMAP` path.
  *
+ * `scalarWindow`, when supplied, REPLACES the window this function would
+ * otherwise recover from `intensity`/`offset` — and only on the colormap route,
+ * which is the only one that has a scalar window at all. `layer-apply.ts` uses
+ * it to hand each leaf the layer's window re-expressed in that leaf's OWN data
+ * range (`remapWindowToLeafRange`), so a `kind=lod` / `kind=partition` layer
+ * stops rendering every level on the finest level's window (#1753). The
+ * gain/offset pair still drives the direct-color branch and the #936 identity
+ * reset, so a caller that passes nothing gets exactly the previous behaviour.
+ *
  * Applied by `layer-apply.ts` when committing a layer's effective appearance.
  */
 export function applyColorAdjustments(
   mat: LuxarMaterial,
   gamma: number,
   intensity: number,
-  offset: number
+  offset: number,
+  scalarWindow?: { min: number; max: number }
 ): void {
   mat.updateGamma(gamma);
   if (isColormapActive(mat) && mat.updateScalarRange) {
-    const { min, max } = computeDisplayRange(intensity, offset);
+    const { min, max } = scalarWindow ?? computeDisplayRange(intensity, offset);
     mat.updateScalarRange(min, max);
     // The window now lives in the LUT lookup; clear any previously-stamped
     // post-LUT color gain so it does not double-apply (#936).
