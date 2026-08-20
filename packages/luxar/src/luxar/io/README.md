@@ -319,13 +319,19 @@ sources fed to gsplat fitting/calibration), independent of the compiled
   T/C/Z/Y/X layout, voxel size, unit, and resolution levels from NGFF
   `multiscales` (with custom-`axes` and shape-heuristic fallbacks). The root's
   block is what is used, **unless** the group that OWNS the selected array
-  declares a usable one of its own — then that wins, per key: a bioformats2raw
-  store puts the block on the image group and leaves only
-  `bioformats2raw.layout` at the root, so reading the root alone would silently
-  fall through to the shape heuristic. "Usable" means the owner's block names as
-  many axes as the selected array has dimensions; a block that disagrees is not
-  metadata about that array, and adopting it would rewrite a T/C decomposition
-  the root already had right.
+  declares that very array as one of its own `multiscales` levels — then that
+  block wins: a bioformats2raw store puts the block on the image group and leaves
+  only `bioformats2raw.layout` at the root, so reading the root alone would
+  silently fall through to the shape heuristic. The override is gated on
+  **evidence**, not on the block merely existing: one of the owner's
+  `datasets[*].path` entries has to resolve to the selected array (and the block
+  has to be parseable for it — one axis per dimension, `datasets` a list of
+  dicts). A same-length but permuted axis list is not evidence, and adopting it
+  would rewrite a T/C decomposition the root already had right — a silently wrong
+  `batch-fit` fan-out rather than an error. The custom (non-NGFF) bare `axes`
+  attribute goes the other way round, **root first**, because such a list names
+  nothing and so no evidence about it is obtainable; an owner's `axes` is
+  consulted only when the root has no usable list of its own.
 
 Which array gets read out of a group is ONE rule, `volume._select_zarr_array`,
 shared by `load_volume`, `open_volume_lazy` and `discover_ome_zarr_shape` — they
@@ -341,9 +347,12 @@ resolution is scoped to that image group, so a store holding several series (`0`
 `1`, …) plus an `OME` metadata group still resolves to full resolution of the
 *first* image. Within the image group the candidates are the levels its own
 `multiscales` block declares, else its direct array children, else (skipping
-`labels/`) whatever is nested below: NGFF puts an image's segmentation masks at
-`<image>/labels/<name>/<level>`, and a mask as big as level 0 must never be
-selected as the image.
+`labels/` at any depth) whatever is nested below: NGFF puts an image's
+segmentation masks at `<image>/labels/<name>/<level>`, and inside an image group
+a mask as big as level 0 must never be selected as the image. That last
+guarantee belongs to the **image-group branch only** — the whole-store fallback
+(no `"0"` key at all: the `h2afva/fused` layout) sweeps every group recursively,
+`labels/` included, as it always has.
 
 These are domain-layer helpers (no CLI dependency); the gsplat CLI re-exports
 them. Dimension inference from a splat bounding box lives in

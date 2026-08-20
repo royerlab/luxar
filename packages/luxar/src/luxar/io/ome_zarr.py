@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from luxar.io.volume import _select_zarr_array
+from luxar.io.volume import _declares_array, _select_zarr_array
 
 __all__ = [
     "CHANNEL_LIKE_AXIS_LABELS",
@@ -113,20 +113,36 @@ class OMEZarrInfo:
 
 
 def _describes(block: Any, ndim: int) -> bool:
-    """Is an OWNING group's ``multiscales`` block usable for the selected array?
+    """Is an OWNING group's ``multiscales`` block PARSEABLE for the selected array?
 
     The gate applies to the owner's block ONLY (the root's keeps whatever
-    behaviour it had). A group can carry a block describing something other than
-    the array selected below it — another series, a stale hand-written attribute —
-    and adopting that on the strength of its mere existence would silently rewrite
-    a T/C decomposition the root already had right, which is a wrong `batch-fit`
-    plan rather than an error. An axis count that disagrees with the array is the
-    cheap, decisive test: such a block is not metadata about this array.
+    behaviour it had), and it is the second half of the owner test: the first and
+    decisive half is EVIDENCE — the block has to declare the selected array as
+    one of its own levels (:func:`~luxar.io.volume._declares_array`). Arity alone
+    is not evidence, because a permuted axis list has exactly the right length,
+    so a block that exists but describes something else would be adopted over a
+    root block that had the T/C decomposition right — a silently wrong
+    `batch-fit` plan rather than an error.
+
+    What is left for this function is the SHAPE the parser assumes:
+    one axis entry per array dimension, and ``datasets`` (if present) a list of
+    dicts. :func:`_parse_ngff_metadata` reads ``datasets[0].get(...)``
+    unconditionally, so a block whose ``datasets`` is a mapping or holds a bare
+    string crashes it with ``KeyError``/``AttributeError`` — and such a block must
+    fall back to the root or the heuristic, exactly as it did before the owner was
+    consulted at all.
     """
     if not (isinstance(block, list) and block and isinstance(block[0], dict)):
         return False
     axes = block[0].get("axes")
-    return isinstance(axes, list) and len(axes) == ndim
+    if not (isinstance(axes, list) and len(axes) == ndim):
+        return False
+    datasets = block[0].get("datasets")
+    if datasets is None:
+        return True
+    return isinstance(datasets, list) and all(
+        isinstance(entry, dict) for entry in datasets
+    )
 
 
 def discover_ome_zarr_shape(
@@ -175,10 +191,14 @@ def discover_ome_zarr_shape(
     # group ("0") and leaves only `bioformats2raw.layout` at the root, so reading
     # the root alone finds nothing and falls through to the shape heuristic —
     # which GUESSES the T/C roles and recovers no voxel size. So the owning
-    # group's attributes are consulted FIRST, per key and only when usable for
-    # the array actually selected (see `_describes`); otherwise the root's stand,
-    # which is the plain OME-NGFF case (there the owner IS the root).
+    # group's `multiscales` overrides the root's — but only on EVIDENCE that it
+    # describes the array actually selected, i.e. it declares that array as one
+    # of its own levels (`_declares_array`) and is parseable for it
+    # (`_describes`). Otherwise the root's stands, which is both the plain
+    # OME-NGFF case (there the owner IS the root) and the safe answer for a group
+    # carrying a block about something else.
     owner_attrs: Dict[str, Any] = {}
+    owner_declares_selected = False
     if isinstance(store, zarr.Array):
         arr = store
         attrs = dict(getattr(store, "attrs", {}))
@@ -187,6 +207,8 @@ def discover_ome_zarr_shape(
         attrs = dict(store.attrs)
         if owner is not None and owner is not store:
             owner_attrs = dict(owner.attrs)
+            if "multiscales" in owner_attrs:
+                owner_declares_selected = _declares_array(owner, arr)
 
     shape = tuple(arr.shape)
     ndim = len(shape)
@@ -202,20 +224,32 @@ def discover_ome_zarr_shape(
 
     # Try NGFF multiscales metadata
     owner_ms = owner_attrs.get("multiscales")
-    multiscales = owner_ms if _describes(owner_ms, ndim) else attrs.get("multiscales")
+    multiscales = (
+        owner_ms
+        if owner_declares_selected and _describes(owner_ms, ndim)
+        else attrs.get("multiscales")
+    )
     if multiscales and isinstance(multiscales, list) and len(multiscales) > 0:
         ms = multiscales[0]
         return _parse_ngff_metadata(ms, shape, path, store)
 
     # Try custom axes attribute (e.g. Keller-lab zarr.zip files store
     # axes = ['time', 'camera', 'channel', 'z', 'y', 'x'])
-    # Same owner-first rule, same usability test in its `axes` form: one label
-    # per dimension of the array actually selected, or the root's list stands.
-    owner_axes = owner_attrs.get("axes")
+    # ROOT-FIRST here, unlike `multiscales` above: a bare `axes` list is a custom
+    # (non-NGFF) attribute that names nothing, so there is no evidence available
+    # that an owner's list is about the selected array — and a same-length
+    # PERMUTATION of the root's list would silently rewrite the T/C decomposition
+    # (a Keller-lab store's `['z','y','x','time','camera','channel']` on the
+    # intermediate group vs the root's correct `['time','camera',...]` moves
+    # n_timepoints from 2 to 4 and n_channels from 6 to 16). So the root's list
+    # wins whenever it is usable and the owner's is a FALLBACK — which still
+    # fixes the bioformats2raw case, whose root carries only
+    # `bioformats2raw.layout`.
+    root_axes = attrs.get("axes")
     custom_axes = (
-        owner_axes
-        if isinstance(owner_axes, list) and len(owner_axes) == ndim
-        else attrs.get("axes")
+        root_axes
+        if isinstance(root_axes, list) and len(root_axes) == ndim
+        else owner_attrs.get("axes")
     )
     if custom_axes and isinstance(custom_axes, list) and len(custom_axes) == ndim:
         return _parse_custom_axes_attr(custom_axes, shape, path)

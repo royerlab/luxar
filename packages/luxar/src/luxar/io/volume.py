@@ -379,25 +379,35 @@ def load_volume(
     return volume
 
 
-def _find_all_arrays(group: Any, prefix: str = "") -> list:
+def _find_all_arrays(
+    group: Any, prefix: str = "", skip: "frozenset[str]" = frozenset()
+) -> List[Tuple[str, Any, Any]]:
     """Recursively find all arrays in a zarr group.
 
     Returns ``(key_path, array, owner_group)`` triples — the owning group comes
     for free here (this function holds it open), sparing the caller a second
     metadata request to re-open it. Keys are walked SORTED rather than in
-    ``keys()`` order, which zarr does not stabilise across opens; see
+    ``keys()`` order, which zarr does not guarantee to be stable; see
     :func:`_pick_largest` for why that matters.
+
+    ``skip`` names subgroup keys the walk must not descend into, AT EVERY DEPTH
+    (``{"labels"}`` for an image group: NGFF puts a mask at
+    ``<image>/labels/<name>/<level>``, and nothing says an image's levels cannot
+    themselves be nested, so a first-level-only filter would still reach a mask
+    one group further down).
     """
     import zarr
 
-    results = []
+    results: List[Tuple[str, Any, Any]] = []
     for k in sorted(group.keys()):
+        if k in skip:
+            continue
         item = group[k]
         key_path = f"{prefix}/{k}" if prefix else k
         if isinstance(item, zarr.Array):
             results.append((key_path, item, group))
         elif isinstance(item, zarr.Group):
-            results.extend(_find_all_arrays(item, key_path))
+            results.extend(_find_all_arrays(item, key_path, skip))
     return results
 
 
@@ -405,11 +415,14 @@ def _pick_largest(candidates: list) -> Optional[Tuple[str, Any, Any]]:
     """The candidate with the most elements; the LOWEST key path breaks a tie.
 
     ``None`` for an empty list. The tie-break is what makes selection
-    REPRODUCIBLE: zarr does not stabilise ``Group.keys()`` order across opens, so
-    a plain ``max()`` over two equal-sized candidates can answer differently for
-    the same store — and the batch planner reading the shape and a per-tile
-    worker re-opening it are different processes. Sorting by
-    ``(-element_count, key_path)`` is a total order, so they cannot disagree.
+    REPRODUCIBLE: zarr gives no GUARANTEE that ``Group.keys()`` yields members in
+    a stable order (it depends on the store implementation, and a remote or
+    archive store need not enumerate the way a directory does), so a plain
+    ``max()`` over two equal-sized candidates could answer differently for the
+    same store — and the batch planner reading the shape and a per-tile worker
+    re-opening it are different processes. Sorting by ``(-element_count,
+    key_path)`` is a total order, so they cannot disagree whatever the
+    enumeration does. Defensive rather than a fix for an observed flip.
     """
     if not candidates:
         return None
@@ -429,12 +442,20 @@ def _largest_array(group: Any, prefix: str = "") -> Optional[Tuple[str, Any, Any
     return _pick_largest(_find_all_arrays(group, prefix))
 
 
-def _declared_levels(group: Any, prefix: str) -> list:
+def _declared_levels(group: Any, prefix: str) -> List[Tuple[str, Any, Any]]:
     """The arrays ``group``'s own NGFF ``multiscales`` block names as its levels.
 
     ``datasets[*]["path"]``, resolved relative to ``group``. A declared path that
-    is missing or is not an array is skipped, so a half-written block degrades to
-    the searches in :func:`_image_group_array` instead of raising.
+    is missing, is not an array, or is not even a legal zarr path (``".."``
+    segments, a null byte, a segment longer than a filename — all of which zarr 3
+    rejects with something other than ``KeyError``) is skipped, so a half-written
+    block degrades to the searches in :func:`_image_group_array` instead of
+    raising.
+
+    The reported owner is ``group`` ITSELF, not the level's immediate parent: the
+    owner is used as "the node carrying the metadata that describes this array",
+    and it is ``group`` that declared it. For a level nested one deeper
+    (``datasets[0].path == "res/0"``) the immediate parent declares nothing.
     """
     import zarr
 
@@ -444,7 +465,7 @@ def _declared_levels(group: Any, prefix: str) -> list:
     datasets = block[0].get("datasets")
     if not isinstance(datasets, list):
         return []
-    results = []
+    results: List[Tuple[str, Any, Any]] = []
     for entry in datasets:
         rel = entry.get("path") if isinstance(entry, dict) else None
         if not isinstance(rel, str) or not rel.strip("/"):
@@ -452,13 +473,40 @@ def _declared_levels(group: Any, prefix: str) -> list:
         rel = rel.strip("/")
         try:
             item = group[rel]
-        except KeyError:
+        except (KeyError, ValueError, OSError, TypeError):
             continue
         if isinstance(item, zarr.Array):
-            results.append(
-                (f"{prefix}/{rel}" if prefix else rel, item, _owner_group(group, rel))
-            )
+            results.append((f"{prefix}/{rel}" if prefix else rel, item, group))
     return results
+
+
+def _declares_array(group: Any, array: Any) -> bool:
+    """Does ``group``'s own ``multiscales`` block DECLARE ``array`` as a level?
+
+    The EVIDENCE test for "this block is metadata about that array". Arity is not
+    evidence: a permuted axis list has exactly the right length, so a block that
+    exists but describes something else (another series, a stale hand-written
+    attribute) would be adopted over a root block that had the T/C decomposition
+    right — a silently wrong ``batch-fit`` plan rather than an error. A block that
+    names the selected array among its own ``datasets[*]["path"]`` entries, on the
+    other hand, is talking about it by construction.
+
+    Compared on the arrays' store-relative ``path``, so the same array reached by
+    two different lookups matches.
+    """
+    target = getattr(array, "path", None)
+    if not isinstance(target, str):
+        return False
+    target = target.strip("/")
+    return any(
+        str(getattr(item, "path", "")).strip("/") == target
+        for _, item, _ in _declared_levels(group, "")
+    )
+
+
+# Subgroup keys an IMAGE-GROUP search must never descend into: NGFF puts an
+# image's segmentation masks at `<image>/labels/<name>/<level>`.
+_LABELS = frozenset({"labels"})
 
 
 def _image_group_array(group: Any, prefix: str) -> Optional[Tuple[str, Any, Any]]:
@@ -474,8 +522,9 @@ def _image_group_array(group: Any, prefix: str) -> Optional[Tuple[str, Any, Any]
        the principled answer, since that block names its own pyramid;
     2. else the largest DIRECT array child: NGFF requires the levels to be direct
        children of the image group, so this cannot reach ``labels/``;
-    3. else the largest array anywhere below, skipping a ``labels`` subgroup —
-       for a store that declares nothing and nests its levels further down.
+    3. else the largest array anywhere below, skipping a ``labels`` subgroup AT
+       ANY DEPTH — for a store that declares nothing and nests its levels further
+       down, which is also exactly the store whose masks are nested further down.
 
     ``prefix`` is prepended to the reported key path, which therefore stays
     relative to the store ROOT (``"0/0"``, not ``"0"``).
@@ -486,31 +535,33 @@ def _image_group_array(group: Any, prefix: str) -> Optional[Tuple[str, Any, Any]
     if declared is not None:
         return declared
 
-    direct: list = []
-    subgroups: list = []
+    direct: List[Tuple[str, Any, Any]] = []
+    subgroups: List[Tuple[str, Any]] = []
     for key in sorted(group.keys()):
+        if key in _LABELS:
+            # `labels/` holds THIS image's segmentation masks, never its levels.
+            continue
         item = group[key]
         key_path = f"{prefix}/{key}" if prefix else key
         if isinstance(item, zarr.Array):
             direct.append((key_path, item, group))
-        elif isinstance(item, zarr.Group) and key != "labels":
-            # `labels/` holds THIS image's segmentation masks, never its levels.
+        elif isinstance(item, zarr.Group):
             subgroups.append((key_path, item))
     if direct:
         return _pick_largest(direct)
 
-    nested: list = []
+    nested: List[Tuple[str, Any, Any]] = []
     for key_path, subgroup in subgroups:
-        nested.extend(_find_all_arrays(subgroup, key_path))
+        nested.extend(_find_all_arrays(subgroup, key_path, _LABELS))
     return _pick_largest(nested)
 
 
 def _owner_group(root: Any, key_path: str) -> Any:
     """The group that immediately CONTAINS the array at ``key_path``.
 
-    Only for a path whose parent the caller does NOT already hold open (an
-    explicit nested ``array_key``): every search helper above reports its owner
-    directly, which is one metadata request cheaper on a remote store.
+    For a path whose parent the caller does NOT already hold open (an explicit
+    nested ``array_key``): the search helpers above report an owner directly,
+    which is one metadata request cheaper on a remote store.
     """
     key_path = key_path.strip("/")
     parent = key_path.rsplit("/", 1)[0] if "/" in key_path else ""
@@ -530,16 +581,28 @@ def _select_zarr_array(
     downsampled) array.
 
     The rule, in order: an explicit ``array_key``; else the OME-NGFF resolution
-    level ``"0"``; else the largest array found recursively. A key that names a
-    GROUP resolves through :func:`_image_group_array` (never a ``labels/``
-    sub-image), and a size tie is broken on the key path so two processes reading
-    the same store cannot disagree.
+    level ``"0"``; else the largest array found recursively. A key (or a ``"0"``)
+    that names a GROUP resolves through :func:`_image_group_array`, whose search
+    is scoped to that image group and skips ``labels/`` at any depth, so an
+    image's own segmentation masks cannot be selected as the image. That
+    guarantee is the IMAGE-GROUP branch's: the whole-store fallback below —
+    reached only when there is no ``"0"`` key at all, the pre-existing
+    ``h2afva/fused`` path — sweeps recursively and is not scoped that way. A size
+    tie is broken on the key path so two processes reading the same store cannot
+    disagree.
+
+    When the store ROOT is itself an array, ``array_key`` is deliberately IGNORED
+    (any value, including a non-string or a key that names nothing): there is
+    exactly one array to read, and the three entry points must agree on it — a
+    lazy re-open with a stale key must not diverge from the read that produced
+    the shape. So the ``Raises`` below only describe the group case.
 
     Returns ``(array, key_path, owner_group)`` — the chosen array, its path
     relative to the store ROOT (``""`` when the store itself is an array), and
-    the group that immediately contains it (``None`` in that same case). The
-    owner is not always the root, and it is the node carrying the NGFF
-    ``multiscales``/``axes`` attributes that describe the chosen array.
+    the group carrying the NGFF ``multiscales``/``axes`` attributes that may
+    describe the chosen array (``None`` in that same case). That is the array's
+    immediate parent, except for a DECLARED level, where it is the group whose
+    ``multiscales`` block declared it (see :func:`_declared_levels`).
 
     Raises:
         ValueError: If ``array_key`` is not a string, is not found, or names a
@@ -570,7 +633,13 @@ def _select_zarr_array(
     if key:
         try:
             selected = node[key]
-        except (KeyError, TypeError) as e:
+        except (KeyError, ValueError, OSError, TypeError) as e:
+            # Not just KeyError: zarr 3 rejects a path with `..` segments or an
+            # embedded null byte with ValueError, and a segment longer than a
+            # filename surfaces as OSError(ENAMETOOLONG) from the store. All of
+            # those are "that key is not in this store" as far as a caller is
+            # concerned, and must report the documented message rather than
+            # zarr's internal one.
             raise ValueError(
                 f"Array key '{array_key}' not found in {path}. "
                 f"Available keys: {sorted(node.keys())}"
