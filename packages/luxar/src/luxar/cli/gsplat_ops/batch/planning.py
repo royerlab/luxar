@@ -282,6 +282,12 @@ def _pinned_slice_volume(
         else:
             if spatial_shape is None or tuple(view.shape) == tuple(spatial_shape):
                 return view
+            singleton_pins = {
+                axis: 0 for axis, size in enumerate(view.shape) if int(size) == 1
+            }
+            squeezed_view = pin_volume_axes(view, singleton_pins)
+            if tuple(squeezed_view.shape) == tuple(spatial_shape):
+                return squeezed_view
             problem = (
                 f"pinning {pins} left shape {tuple(view.shape)}, not the "
                 f"discovered spatial shape {tuple(spatial_shape)}"
@@ -1269,6 +1275,12 @@ def plan_batch(
         n_t_full = ome_info.n_timepoints
         n_c_full = ome_info.n_channels
         spatial = ome_info.spatial_shape
+        if axes_list is None:
+            # Positional workers call load_volume without --axes, whose legacy
+            # post-processing squeezes every size-1 dimension. Plan the exact
+            # spatial volume those workers fit so tile coordinates and the
+            # merge's stacked-axis index use the same dimensionality.
+            spatial = tuple(size for size in spatial if size != 1)
         aprint(f"Axes: {ome_info.axes}")
         aprint(f"Shape: {ome_info.shape}")
         aprint(f"T={n_t_full}, C={n_c_full}, spatial={'x'.join(map(str, spatial))}")

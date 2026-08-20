@@ -6673,6 +6673,20 @@ class TestAxesSpec:
         assert out.shape == (4, 5, 6)
         np.testing.assert_array_equal(out, arr[2, :, 1, :, :])
 
+    def test_apply_axes_spec_decodes_folded_channel_axes(self) -> None:
+        from luxar.io.volume import _apply_axes_spec
+
+        arr = np.arange(2 * 3 * 2 * 4 * 5 * 6, dtype=np.float32).reshape(
+            2, 3, 2, 4, 5, 6
+        )
+        out = _apply_axes_spec(
+            arr,
+            "camera,time,channel,z,y,x",
+            channel=2,
+            timepoint=1,
+        )
+        np.testing.assert_array_equal(out, arr[1, 1, 0])
+
     def test_apply_axes_spec_defaults_to_zero(self) -> None:
         from luxar.io.volume import _apply_axes_spec
 

@@ -221,11 +221,12 @@ def _apply_axes_spec(
     ``axes`` is a comma-separated label per array dimension (e.g.
     ``"z,c,y,x"`` or ``"t,z,y,x"``). Recognised: time (``t``/``time``),
     channel (``c``/``channel``/``ch``/``camera``/``cam``), spatial
-    (``z``/``y``/``x``/``depth``/``height``/``width``). Each time/channel axis is
-    indexed (by ``timepoint``/``channel``, default 0) and dropped; the remaining
-    spatial axes are kept in their given order. This is the single-volume
-    counterpart of ``batch-fit submit --axes`` — it lets ``fit``/``cal`` consume
-    data whose axis order isn't the assumed TCZYX/CZYX/ZYX.
+    (``z``/``y``/``x``/``depth``/``height``/``width``). Time axes are indexed by
+    ``timepoint``; a flat ``channel`` index is decoded across all channel-like axes
+    in row-major order. Those axes are dropped and the remaining spatial axes stay
+    in their given order. This is the single-volume counterpart of ``batch-fit
+    submit --axes`` — it lets ``fit``/``cal`` consume data whose axis order isn't
+    the assumed TCZYX/CZYX/ZYX.
     """
     labels = [a.strip().lower() for a in axes.split(",") if a.strip() != ""]
     if len(labels) != arr.ndim:
@@ -235,11 +236,21 @@ def _apply_axes_spec(
         )
 
     kinds = [_axis_kind(label) for label in labels]
+    channel_indices = [i for i, kind in enumerate(kinds) if kind == "c"]
+    channel_shape = tuple(arr.shape[i] for i in channel_indices)
+    channel_coords = (
+        decode_flat_channel_index(0 if channel is None else int(channel), channel_shape)
+        if channel_shape
+        else ()
+    )
+    channel_coord_by_axis = dict(zip(channel_indices, channel_coords))
     index: list = [slice(None)] * arr.ndim
     for i, k in enumerate(kinds):
         if k in ("t", "c"):
             which, idx = (
-                ("--timepoint", timepoint) if k == "t" else ("--channel", channel)
+                ("--timepoint", timepoint)
+                if k == "t"
+                else ("--channel", channel_coord_by_axis[i])
             )
             idx = 0 if idx is None else int(idx)
             size = arr.shape[i]
