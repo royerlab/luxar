@@ -81,7 +81,7 @@ problems:
 |---|---|---|
 | Input | **Legacy** layout (v1.0 … v3.1) | **Current-format** dataset |
 | Output | Current v3.3 layout | Same structure, re-quantized |
-| Changes | Layout **and** encoding (AUTO; `--lossless` for float32) | The on-disk Cholesky encoding, **and** under `auto`/`memory` the centers too (per-axis uint16 fixed-point — centers are bit-exact only under `precision`) |
+| Changes | Layout **and** encoding (AUTO; `--lossless` for float32) | The on-disk Cholesky encoding, **and** under `auto`/`memory` the centers too (per-axis uint16 fixed-point — on ordinary spatial data centers are bit-exact only under `precision`; a *gridded* axis such as a stacked `sigma=0` time axis keeps uint16 but has its grid snapped onto the data's own spacing, and a *non-gridded* axis whose grid would displace splats past their own σ for **more than 0.1% of the splats** falls back to float32 — so a gridded axis is exact in every mode, while a smaller degenerate population on a non-gridded axis is quantized away with no warning) |
 | Encoding choices | float32 vs AUTO (certified u8→u16 ladder) via `--lossless` | Full ladder: `-e memory` (uint8) / `precision` (float32) / `auto` |
 | Structure | May restructure legacy tree | Structure-preserving (leaf/lod/partition/nested; the `fitting`/`provenance`/`pipeline` groups carry over for directory stores) |
 
