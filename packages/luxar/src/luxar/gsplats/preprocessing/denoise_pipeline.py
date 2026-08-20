@@ -225,6 +225,7 @@ def calibrate_h_for_channel(
 
     Loads the central 2D slice at each sample timepoint, normalizes to [0,1],
     runs Noise2Self calibration, and returns the median h across timepoints.
+    ``axes`` explicitly labels the source array when positional slicing is unsafe.
     """
     import torch
 
@@ -290,6 +291,8 @@ def calibrate_all_channels(
     axes: Optional[str] = None,
 ) -> dict[int, float]:
     """Calibrate NLM h for all channels.
+
+    ``axes`` explicitly labels the source array when positional slicing is unsafe.
 
     Returns
     -------

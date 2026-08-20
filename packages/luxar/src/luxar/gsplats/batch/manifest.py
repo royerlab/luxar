@@ -54,9 +54,9 @@ class BatchManifest:
     axes: Optional[str] = None
     """Explicit axis-order override (e.g. ``'t,c,z,y,x'``) used to discover and
     reload the source dataset. Direct fit tasks receive it as ``fit --axes``;
-    preprocess fits do not, because ``denoised.zarr`` has canonical
-    ``(t, c, *spatial)`` layout. Without it, source readers fall back to the
-    positional ndim heuristic and may select a different volume than the plan."""
+    preprocess fits receive the corresponding canonical ``t,c,*spatial`` axes
+    for ``denoised.zarr``. Without it, source readers fall back to the positional
+    ndim heuristic and may select a different volume than the plan."""
 
     # Dataset shape
     n_timepoints: int = 1
