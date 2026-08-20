@@ -5,6 +5,7 @@ Also tests the config system (presets, YAML loading, dump) and volume loader.
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -1783,6 +1784,24 @@ class TestViewCommand:
 
         def _fake_serve_data(target, *args, **kwargs):
             captured["serve_target"] = target
+            # Recorded from INSIDE the server thread, while the target is still
+            # on disk: `view` removes any temp directory it extracted as soon as
+            # it returns, so an archive case cannot be inspected afterwards.
+            captured["target_is_dir"] = target.is_dir()
+            try:
+                captured["root_format_type"] = zc_open_group(
+                    str(target), mode="r"
+                ).attrs.get("format_type")
+            except Exception as exc:  # not a store root — a finding, not a crash
+                captured["root_format_type"] = repr(exc)
+
+        def _fake_wait(_host, _port, thread=None, **_kwargs):
+            # Join the data thread instead of racing it: `_serve_data` is the
+            # only thing that records what the command served, and every
+            # assertion here is about exactly that.
+            if thread is not None:
+                thread.join(timeout=30)
+            return True
 
         with (
             patch("luxar.cli.utils.check_viewer_built", return_value=True),
@@ -1790,12 +1809,23 @@ class TestViewCommand:
                 "luxar.cli.utils.find_available_port",
                 side_effect=lambda p, **_kw: p,
             ),
-            patch("luxar.cli.utils.wait_for_server", return_value=True),
+            patch("luxar.cli.utils.wait_for_server", side_effect=_fake_wait),
             patch("luxar.cli.serving._serve_data", side_effect=_fake_serve_data),
             patch("luxar.cli.serving._serve_viewer"),
         ):
             result = runner.invoke(app, ["gsplat", "view", str(path), "--no-open"])
         return result, captured
+
+    @staticmethod
+    def _flat_zip(store: Path, archive: Path) -> Path:
+        """Zip a store with its root AT THE ARCHIVE ROOT (the #1628 shape)."""
+        import zipfile
+
+        with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zip_ref:
+            for f in sorted(store.rglob("*")):
+                if f.is_file():
+                    zip_ref.write(f, arcname=str(f.relative_to(store)))
+        return archive
 
     def test_view_leaf_serves_directly(
         self, runner: CliRunner, sample_gsplats: Path
@@ -1821,6 +1851,83 @@ class TestViewCommand:
         result, captured = self._invoke_view(runner, part)
         assert result.exit_code == 0, f"view on partition failed: {result.stdout}"
         assert captured["serve_target"] == part
+
+    def test_view_refuses_a_plain_file(self, runner: CliRunner, tmp_path: Path) -> None:
+        """A regular file that is not an archive gets a one-line refusal."""
+        path = tmp_path / "notes.txt"
+        path.write_text("not a zarr store")
+        result, captured = self._invoke_view(runner, path)
+        assert result.exit_code == 1, result.stdout
+        assert "Not a .gsplats.zarr directory or archive" in _plain(result.stdout)
+        assert "serve_target" not in captured
+
+    @pytest.mark.skipif(
+        not hasattr(os, "mkfifo"), reason="no os.mkfifo on this platform"
+    )
+    def test_view_refuses_a_non_regular_file(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """A FIFO is refused too, not served as a store directory.
+
+        The refusal cannot be delegated to ``resolve_store_path``: that raises for
+        ``path.is_file()``, i.e. for REGULAR files only, so a FIFO or a device node
+        (both of which satisfy typer's ``exists=True``) fell through and became the
+        serve target — the data server thread then died on "Data mount root must be
+        a directory" while the command sat blocked on a viewer serving nothing.
+        """
+        fifo = tmp_path / "f.fifo"
+        os.mkfifo(fifo)
+        result, captured = self._invoke_view(runner, fifo)
+        assert result.exit_code == 1, result.stdout
+        assert "Not a .gsplats.zarr directory or archive" in _plain(result.stdout)
+        assert "serve_target" not in captured
+
+    def test_view_serves_a_flat_archive_as_a_directory(
+        self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """A FLAT archive is EXTRACTED and the extraction is what gets served.
+
+        Nothing else in this class invokes `view` on an archive at all, so both
+        the "Extracting compressed dataset..." branch and this change's own claim
+        that a flat archive works here were unexercised. A store is mounted over
+        HTTP as a DIRECTORY, so resolving with ``flat_zip_in_place=True`` — which
+        hands back the zip itself — would give the data server a file as its
+        mount root and fail inside the server thread while the command sat
+        blocked on a viewer serving nothing.
+        """
+        archive = self._flat_zip(sample_gsplats, tmp_path / "flat.gsplats.zarr.zip")
+
+        result, captured = self._invoke_view(runner, archive)
+        assert result.exit_code == 0, f"view on a flat archive failed: {result.stdout}"
+        assert "Extracting compressed dataset" in _plain(result.stdout)
+        assert captured["serve_target"] != archive
+        assert captured["target_is_dir"] is True, captured["serve_target"]
+        # And it is the store ROOT, not one of its array sub-directories: that
+        # arbitrary-child resolution is the bug #1628 is about.
+        assert captured["root_format_type"] == "gsplats_zarr"
+
+    def test_view_removes_its_extraction_on_a_normal_return(
+        self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path, monkeypatch
+    ) -> None:
+        """The extracted copy is cleaned up when `view` simply finishes.
+
+        Cleanup used to live only in the `KeyboardInterrupt` and generic
+        `except` handlers, so a normal return from the blocking viewer — the
+        ordinary way this command ends — left a full uncompressed copy of the
+        dataset in ``/tmp``. ``tempfile.tempdir`` is redirected so the probe
+        cannot see (or be confused by) a concurrent process's extraction.
+        """
+        import tempfile
+
+        monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+        archive = self._flat_zip(sample_gsplats, tmp_path / "flat.gsplats.zarr.zip")
+
+        result, captured = self._invoke_view(runner, archive)
+        assert result.exit_code == 0, f"view on a flat archive failed: {result.stdout}"
+        # The premise: something WAS extracted under the redirected temp root.
+        served = captured["serve_target"]
+        assert str(served).startswith(str(tmp_path)), served
+        assert list(tmp_path.glob("luxar_gsplat_*")) == []
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -6775,12 +6882,17 @@ class TestReencode:
     ) -> None:
         """`reencode` re-encodes the CENTERS too, which its name does not suggest.
 
-        `auto` and `memory` both quantize a coordinate column to uint16 over its
-        own [min, max], so the endpoints land on exact codes and every INTERIOR
-        value rounds. Worst on a degenerate stacked axis: `sigma=0` gives each
-        splat sigma=1e-7 in that column, so the 1.5e-5 drift below sits ~150
-        sigma from its own slice and the slice renders as nothing. Only
-        `precision` round-trips the column exactly.
+        `auto` and `memory` quantize a coordinate column to uint16 over its own
+        [min, max], so a CONTINUOUS column keeps its endpoints exactly and rounds
+        every interior value. Only `precision` round-trips such a column exactly.
+
+        A stacked axis is the exception, and deliberately so: it is gridded, so
+        the encoder snaps the quantization grid onto the data's own spacing and
+        every frame round-trips exactly under all three modes (#1748). This test
+        previously asserted the opposite — that the stacked axis drifted — and
+        described the consequence in its own docstring ("sits ~150 sigma from its
+        own slice and the slice renders as nothing"). That was the bug, pinned as
+        expected behaviour; `test_gridded_axis_snap.py` now covers the fix.
         """
         from luxar.encoding import EncodingMode
         from luxar.gsplats.gsplat_data import GSplatData
@@ -6811,16 +6923,23 @@ class TestReencode:
         )
         assert result.exit_code == 0, result.output
 
-        # Compare the SET of stacked coordinates: save/load reorders rows.
-        stacked = np.unique(GSplatData.load(out).centers[:, 3])
+        got = GSplatData.load(out)
+
+        # The STACKED axis is gridded, so it is exact under every mode.
+        stacked = np.unique(got.centers[:, 3])
         assert stacked.shape == (3,)
-        np.testing.assert_array_equal(stacked[[0, 2]], [0.0, 2.0])  # endpoints exact
+        np.testing.assert_array_equal(stacked, [0.0, 1.0, 2.0])
+
+        # A CONTINUOUS column is what distinguishes the modes: bit-exact only
+        # under precision, and within one quantization step otherwise.
+        src_x = np.unique(GSplatData.load(src).centers[:, 0])
+        got_x = np.unique(got.centers[:, 0])
         if exact:
-            assert stacked[1] == 1.0
+            np.testing.assert_array_equal(got_x, src_x)
         else:
-            assert stacked[1] != 1.0
-            # One quantization step over the column's [0, 2] extent.
-            assert abs(stacked[1] - 1.0) < 2.0 / 65535.0
+            assert not np.array_equal(got_x, src_x)
+            extent = float(src_x.max() - src_x.min())
+            assert np.abs(got_x - src_x).max() < extent / 65535.0
 
     def test_reencode_preserves_pipeline_provenance(
         self, runner: CliRunner, tmp_path: Path
@@ -7199,6 +7318,73 @@ class TestInfoPartitionSize:
         from luxar.cli.utils import format_memory_size
 
         assert f"Size: {format_memory_size(_store_size(out))}" in text, text
+
+
+class TestInfoFlatArchivedPartition:
+    """`gsplat info` on a FLAT-archived partition reports the WHOLE tree (#1628).
+
+    A "flat" archive holds the store at its ROOT (``zarr.json``/``.zgroup`` and
+    ``part_0/…`` at depth 0), which is what ``zip -r x.gsplats.zarr.zip .`` from
+    inside a store produces. The store-root resolution used to define the store
+    as a top-level DIRECTORY, so its fallback landed on an arbitrary child picked
+    by ``iterdir()`` order — for a partition, ``fitting`` or one of the ``part_N``
+    groups. Measured on this code that is exit 1 with "Invalid format_type: None",
+    and it can be nothing else: only the store ROOT carries that key, and the
+    ``Root kind:`` line is printed only after the node load has SUCCEEDED. The
+    issue was filed with `Root kind: leaf`, one part's splat count and exit 0
+    instead, which means a store shaped differently from a `gsplat partition`
+    output. Same root cause, and either answer is wrong.
+    """
+
+    N_SPLATS = 40
+    PARTS = 4
+
+    @staticmethod
+    def _flat_zip(store: Path, archive: Path) -> Path:
+        import zipfile
+
+        with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zip_ref:
+            for f in sorted(store.rglob("*")):
+                if f.is_file():
+                    zip_ref.write(f, arcname=str(f.relative_to(store)))
+        return archive
+
+    def test_info_reports_the_partition_not_one_part(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        n = self.N_SPLATS
+        src = tmp_path / "src.gsplats.zarr"
+        GSplatData(
+            centers=np.random.default_rng(0).random((n, 3)).astype(np.float32) * 10,
+            amplitudes=np.random.default_rng(1).random(n).astype(np.float32),
+            cholesky_factors=np.tile(
+                np.array([1.0, 0, 1.0, 0, 0, 1.0], dtype=np.float32), (n, 1)
+            ),
+        ).save(src)
+
+        part = tmp_path / "part.gsplats.zarr"
+        r = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "partition",
+                str(src),
+                str(part),
+                "--parts",
+                str(self.PARTS),
+            ],
+        )
+        assert r.exit_code == 0, f"partition failed:\n{r.stdout}"
+        archive = self._flat_zip(part, tmp_path / "flat.gsplats.zarr.zip")
+
+        r = runner.invoke(app, ["gsplat", "info", str(archive)])
+        assert r.exit_code == 0, f"info failed:\n{r.stdout}"
+        text = _plain(r.stdout)
+        assert "Root kind: partition" in text, text
+        assert f"Parts: {self.PARTS}" in text, text
+        assert f"Total splats (all leaves): {n:,}" in text, text
 
 
 class TestParallelTiledDownscaleFactorsThreading:

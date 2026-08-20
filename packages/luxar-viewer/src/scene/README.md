@@ -429,6 +429,62 @@ registry.setSelectorMode(path, 'auto');
 registry.setSelectorMode(path, { lockLevel: 2 });
 ```
 
+**Capture quiescence:** `registry.isCaptureQuiescent()` answers "is
+every lod_group that contributes pixels to the current view already
+showing its own selected level at final quality?" — i.e. would one more
+frame of waiting improve what is on screen. The offline turntable
+capture drains on it (bounded) before exporting each frame, because the
+rAF loop — and therefore this frustum-aware selector — runs for the
+whole sweep: a tile that leaves the frustum mid-orbit is demoted, may
+have its fine level released by the byte budget, and reloads
+asynchronously on re-entry, which a one-rAF-per-frame capture would
+otherwise film at the coarse level (#1695). Off-screen entries are
+skipped (they draw nothing and are held coarse on purpose), and so are
+entries that are not _effectively_ visible — a layer toggled off or
+authored `visible=false` anywhere up the ancestor chain. That second
+skip is load-bearing, not tidiness: a hidden group cannot start a
+deferred load (`kickDeferredLoadIfVisible` refuses), while the
+frustum-only selector still records a fine `desiredChildIndex` for it,
+so blocking on it would never resolve and every capture frame would
+burn its whole drain budget. An entry whose aspiration index holds no
+child is skipped for that same reason — `children` is empty when every
+level failed its `getObjectByName` attach at load — since nothing at a
+missing index can ever become ready. An entry blocks while its displayed
+level differs from the aspiration, while the aspiration is not ready /
+not fresh / still streaming additive LODs, while any of its children is
+`loading`, or while the selector's `desiredChildIndex` differs from the
+aspiration **at all** — a finer level it has not got yet, but equally a
+coarser one the aspiration has not moved onto. That last clause is the
+subtle one: `activeChildIndex` only advances onto a READY level, so in
+the frame where a lazy level's load lands (`ready` true, `loading`
+cleared) the swap has not happened yet — a predicate reading only
+ready/loading/displayed would call that window settled. A `desired`
+level that has `failed` does not block, since it can never become ready
+this frame.
+
+"Still streaming additive LODs" takes **both** available signals, and
+either one alone leaves a hole. A lazy child's live `hasMoreLODs()` thunk
+answers first. Then the commit-time `committedLadderComplete` stamp,
+surfaced as `subtreeLadderComplete` through the registry's
+`childFreshAndCount` — read off the child itself for a tracked **leaf**,
+and folded over the visible stamped leaves
+(`subtreeDisplayProgress().complete`) for a deferred **group** child, i.e.
+a nested `kind=partition` / `kind=lod` subtree such as the `overview`
+recipe's fine branch. Neither is sufficient on its own: a group child
+carries no thunk, so without the fold the drain released the frame the
+instant the fine branch became ready, with its part leaves at chunk-1 by
+construction; and `load-lod-group-node` attaches the thunk only on the
+DEFERRED path, so without the stamp the eagerly-loaded default level —
+still climbing its ladder under the sweep-driven background refinement
+loop — read as complete. Either way the frame is exported at the first
+additive chunk and refines in over the next seconds, which is the exact
+artifact class #1695 exists to remove. Anything carrying no stamp at all
+(never committed, or a non-progressive loader) counts as complete and
+never blocks.
+
+Forcing the finest level instead was rejected: a capture
+visits the whole scene, so peak residency would be the entire dataset.
+
 **Retention + VRAM budget:** swaps never `release()` outgoing
 geometry — retention keeps loaded levels resident so swapping back is
 a sub-millisecond visibility toggle. Memory is bounded once per frame

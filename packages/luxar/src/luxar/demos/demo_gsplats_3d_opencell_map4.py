@@ -81,6 +81,10 @@ DEMO_META = {
     },
     "caches": ["gsplats_opencell_map4"],
     "outputs": ["gsplats_3d_opencell_map4"],
+    "citation": {
+        "short": "Cho et al. 2022",
+        "doi": "10.1126/science.abi6983",
+    },
 }
 
 # Enable MPS->CPU fallback for unsupported PyTorch ops (must be before torch import)
@@ -336,7 +340,9 @@ def create_luxar_scene(
                     Dimension("z", unit="px", display=True),
                 ]
             )
-            scene = compiler.create_scene(dimensions=dims)
+            scene = compiler.create_scene(
+                dimensions=dims, citation=DEMO_META["citation"]
+            )
 
             scene.attrs["title"] = "GSplats: OpenCell MAP4 (Microtubule Cytoskeleton)"
             scene.attrs["description"] = """

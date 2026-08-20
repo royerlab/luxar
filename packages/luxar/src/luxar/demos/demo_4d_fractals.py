@@ -54,6 +54,8 @@ DEMO_META = {
     },
     "caches": [],
     "outputs": ["fractals_4d"],
+    # Procedurally generated: no external dataset, nothing to credit.
+    "citation": None,
 }
 
 import sys

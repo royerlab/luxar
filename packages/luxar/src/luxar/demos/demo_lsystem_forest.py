@@ -81,6 +81,8 @@ DEMO_META = {
     },
     "caches": ["forest"],
     "outputs": ["forest"],
+    # Procedurally generated: no external dataset, nothing to credit.
+    "citation": None,
 }
 
 import html

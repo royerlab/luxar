@@ -72,6 +72,10 @@ DEMO_META = {
     },
     "caches": ["dipc_genome"],
     "outputs": ["dipc_3d_genome"],
+    "citation": {
+        "short": "Tan et al. 2018",
+        "doi": "10.1126/science.aat5641",
+    },
 }
 
 import tempfile
@@ -484,7 +488,9 @@ def build_scene(output_path: Path, polylines: list[dict]) -> int:
         )
         total = 0
         with LuxarZarrCompiler(output_path) as compiler:
-            scene = compiler.create_scene(dimensions=dims)
+            scene = compiler.create_scene(
+                dimensions=dims, citation=DEMO_META["citation"]
+            )
             scene.attrs["title"] = "Dip-C: Single-Cell 3D Genome"
 
             vparts: list[np.ndarray] = []

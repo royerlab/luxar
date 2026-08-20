@@ -77,6 +77,11 @@ DEMO_META = {
     },
     "caches": ["gsplats_ct_totalsegmentator"],
     "outputs": ["gsplats_3d_ct_totalsegmentator"],
+    "citation": {
+        "short": "Wasserthal et al. 2023",
+        "doi": "10.1148/ryai.230024",
+        "license": "CC BY 4.0",
+    },
 }
 
 from pathlib import Path
@@ -793,6 +798,7 @@ def create_luxar_scene(fit: GSplatData, labels: np.ndarray, output_path: Path) -
             scene = compiler.create_scene(
                 dimensions=dims,
                 viewer_config=ViewerConfig(tone_mapping="ACES", camera=camera),
+                citation=DEMO_META["citation"],
             )
             scene.attrs["title"] = "GSplats: CT Anatomical Atlas (TotalSegmentator)"
             # One toggle-able layer per tissue supergroup (Layers panel); each

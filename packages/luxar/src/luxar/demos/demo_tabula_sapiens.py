@@ -35,6 +35,10 @@ DEMO_META = {
     },
     "caches": ["tabula_sapiens"],
     "outputs": ["tabula_sapiens"],
+    "citation": {
+        "short": "Tabula Sapiens Consortium 2022",
+        "doi": "10.1126/science.abl4896",
+    },
 }
 
 import sys
@@ -683,7 +687,9 @@ def generate_tabula_sapiens(
         )
 
         with LuxarZarrCompiler(output_path) as compiler:
-            scene = compiler.create_scene(dimensions=dims)
+            scene = compiler.create_scene(
+                dimensions=dims, citation=DEMO_META["citation"]
+            )
 
             sharpness = np.full(n_cells, 0.6, dtype=np.float32)
 

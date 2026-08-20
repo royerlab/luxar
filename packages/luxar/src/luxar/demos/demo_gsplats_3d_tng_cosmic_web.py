@@ -69,6 +69,10 @@ DEMO_META = {
     },
     "caches": ["gsplats_tng_cosmic_web"],
     "outputs": ["gsplats_3d_tng_cosmic_web"],
+    "citation": {
+        "short": "Nelson et al. 2019",
+        "doi": "10.1186/s40668-019-0028-x",
+    },
 }
 
 import os
@@ -338,6 +342,7 @@ def create_luxar_scene(gsplats_data: GSplatData, output_path: Path) -> Path:
             scene = compiler.create_scene(
                 dimensions=dims,
                 viewer_config=ViewerConfig(tone_mapping="ACES"),
+                citation=DEMO_META["citation"],
             )
             scene.attrs["title"] = "GSplats: IllustrisTNG Cosmic Web (TNG300-3-Dark)"
             scene.add_gsplats_from_data(

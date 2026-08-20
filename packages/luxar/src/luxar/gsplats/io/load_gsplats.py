@@ -123,8 +123,10 @@ def load_gsplat_node(
     if not path.exists():
         raise FileNotFoundError(f"GSplats zarr not found: {path}")
 
-    # Archive resolution is shared with inspect_gsplats_zarr, but this caller
-    # deliberately does NOT opt into `flat_zip_in_place` (see its docstring).
+    # Archive resolution is shared with inspect_gsplats_zarr; this caller reads
+    # array data, so it wants a resolved DIRECTORY store and does not opt into
+    # `flat_zip_in_place` (the inspector's temp-space shortcut — see its
+    # docstring). Every archive shape, flat included, resolves by extraction.
     zarr_path, temp_dir = resolve_store_path(path)
 
     try:

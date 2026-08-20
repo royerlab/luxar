@@ -188,6 +188,11 @@ DEMO_META = {
     },
     "caches": ["dmri_tractography"],
     "outputs": ["dmri_tractography"],
+    "citation": {
+        "short": "Yeh 2022",
+        "doi": "10.1038/s41467-022-32595-4",
+        "license": "CC BY-SA 4.0",
+    },
 }
 
 import gzip
@@ -997,6 +1002,7 @@ def build_scene(bundles: dict, output_path: Path, *, points: int) -> Path:
                     tone_mapping="ACES",
                     camera=brain_camera(extent),
                 ),
+                citation=DEMO_META["citation"],
             )
             scene.attrs["title"] = (
                 "Human White-Matter Tractography — HCP-1065 population atlas"

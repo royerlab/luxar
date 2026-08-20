@@ -126,6 +126,10 @@ DEMO_META = {
     },
     "caches": ["atp_synthase"],
     "outputs": ["atp_synthase"],
+    "citation": {
+        "short": "Zhou et al. 2015",
+        "doi": "10.7554/eLife.10180",
+    },
 }
 
 import shutil
@@ -480,7 +484,9 @@ def generate_atp_synthase(
                         Dimension("z", unit="nm", display=True),
                     ]
                 )
-                scene = compiler.create_scene(dimensions=dims)
+                scene = compiler.create_scene(
+                    dimensions=dims, citation=DEMO_META["citation"]
+                )
 
                 # Sharpness for protein atoms (normalized [0, 1] knob; 0.5 = Gaussian)
                 sharpness = np.full(len(positions), 0.5, dtype=np.float32)

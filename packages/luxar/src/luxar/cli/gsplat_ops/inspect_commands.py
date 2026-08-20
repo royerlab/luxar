@@ -490,6 +490,34 @@ def napari_viewer(
         raise typer.Exit(1)
 
 
+def _resolve_view_target(path: Path) -> tuple[Path, Optional[Path]]:
+    """Resolve a ``gsplat view`` argument to a servable store + its temp dir.
+
+    Through :func:`~luxar.gsplats.io._archive.resolve_store_path`, the same call
+    the loader makes, so this command cannot disagree with it about which node an
+    archive holds. A store is served over HTTP as a DIRECTORY, so the archive
+    file itself is never a usable target here (no ``flat_zip_in_place``).
+
+    The pre-check keys on the SUFFIX, not on the file type: anything not named
+    ``*.zip`` / ``*.tar.gz`` must be a directory or it is refused HERE rather
+    than by the resolver, which only rejects a REGULAR file — so a FIFO or a
+    device node (both of which pass typer's ``exists=True``) would otherwise be
+    handed to the data server as the mount root, which fails deep inside a
+    background thread while the command sits blocked on a viewer serving
+    nothing. The converse is not covered and never was: a DIRECTORY named
+    ``x.zip`` takes the archive branch and dies in the extractor. An unusable or
+    unsafe ARCHIVE is a real error and propagates.
+    """
+    from luxar.gsplats.io._archive import resolve_store_path
+
+    if str(path).endswith((".zip", ".tar.gz")):
+        aprint("Extracting compressed dataset...")
+    elif not path.is_dir():
+        aprint(f"❌ Not a .gsplats.zarr directory or archive: {path}")
+        raise typer.Exit(1)
+    return resolve_store_path(path)
+
+
 def quick_view(
     path: Path = typer.Argument(
         ..., exists=True, help="Path to .gsplats.zarr dataset (or .zip/.tar.gz)"
@@ -518,6 +546,10 @@ def quick_view(
         open_browser: Whether to open browser automatically
         cors_origin: Allowed CORS origin for both servers (default "local").
     """
+    # Bound before the `try` so the `finally` below can test it: the store
+    # resolver answers None for a directory store, and `rmtree(None)` raises —
+    # turning a real error into an unrelated one.
+    temp_dir: Optional[Path] = None
     try:
         import threading
 
@@ -528,7 +560,6 @@ def quick_view(
             pick_port,
             wait_for_server,
         )
-        from luxar.gsplats.io._archive import extract_compressed_zarr
 
         # Check viewer is built
         if not ensure_viewer_built():
@@ -539,15 +570,7 @@ def quick_view(
             # a temp dir, otherwise serve the directory in place. No GSplatData
             # round-trip — the viewer consumes the node tree directly, which is
             # the only path that supports partition/nested roots.
-            if str(path).endswith((".zip", ".tar.gz")):
-                aprint("Extracting compressed dataset...")
-                serve_target = extract_compressed_zarr(path)
-                temp_dir = serve_target.parent
-            elif path.is_dir():
-                serve_target = path
-            else:
-                aprint(f"❌ Not a .gsplats.zarr directory or archive: {path}")
-                raise typer.Exit(1)
+            serve_target, temp_dir = _resolve_view_target(path)
 
             aprint(f"Serving node tree directly: {serve_target.name}")
 
@@ -596,9 +619,6 @@ def quick_view(
 
     except KeyboardInterrupt:
         aprint("\n🛑 Shutting down viewer...")
-        # Cleanup temp directory
-        if "temp_dir" in locals():
-            shutil.rmtree(temp_dir, ignore_errors=True)
     except typer.Exit:
         raise
     except Exception as e:
@@ -606,10 +626,15 @@ def quick_view(
         import traceback
 
         traceback.print_exc()
-        # Cleanup temp directory
-        if "temp_dir" in locals():
-            shutil.rmtree(temp_dir, ignore_errors=True)
         raise typer.Exit(1)
+    finally:
+        # Every exit removes the extraction, not just the two error handlers
+        # that used to: a NORMAL return from `_serve_viewer`, and the
+        # `typer.Exit` a failed `pick_port` raises AFTER the archive has been
+        # extracted, both left a full uncompressed copy of the dataset behind
+        # in /tmp.
+        if temp_dir is not None:
+            shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 def _print_quality_comparison(
@@ -857,7 +882,7 @@ def _print_gsplat_tree_summary(path: Path) -> None:
     import shutil
 
     from luxar._zarr_compat import open_group as zarr_open_group
-    from luxar.gsplats.io._archive import extract_compressed_zarr
+    from luxar.gsplats.io._archive import resolve_store_path
     from luxar.gsplats.tree import (
         GSplatLodGroup,
         GSplatPartition,
@@ -871,8 +896,12 @@ def _print_gsplat_tree_summary(path: Path) -> None:
     tmp = None
     try:
         if path.is_file():  # compressed archive
-            zarr_path = extract_compressed_zarr(path)
-            tmp = zarr_path.parent
+            # The same resolver `load_gsplat_node` gated on just above: `info`
+            # uses that load purely as a gate and then re-resolves here, so the
+            # two must not be able to disagree about which node the archive holds
+            # (they did for a FLAT archive — the gate saw one node, this saw an
+            # arbitrary child).
+            zarr_path, tmp = resolve_store_path(path)
         root = zarr_open_group(str(zarr_path), mode="r")
         node = read_gsplat_node(root, root)
 
