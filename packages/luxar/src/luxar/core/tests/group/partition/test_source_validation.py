@@ -2820,6 +2820,19 @@ class TestGSplatsPartitionNodeAttrsGate:
 class TestFailedGraftRollsBackItsWrapper:
     """A child refusal must not leave the graft's wrapper in either tree."""
 
+    def _late_failure_tree(self, *, invalid_selector: bool) -> Any:
+        from luxar.gsplats.tree import GSplatLodGroup, GSplatPartition
+
+        leaves = list(_nested_partition_tree(3, counts=(8, 6, 5)).children)
+        second_meta = {"selector": "bogus"} if invalid_selector else {}
+        return GSplatPartition(
+            children=[
+                GSplatLodGroup(children=[leaves[0]]),
+                GSplatLodGroup(children=[leaves[1], leaves[2]], meta=second_meta),
+            ],
+            max_elements=8,
+        )
+
     def _file(self, tmp_path: Any, filename: str) -> str:
         from luxar.gsplats.io.save_gsplats import write_gsplats_tree
 
@@ -2860,18 +2873,8 @@ class TestFailedGraftRollsBackItsWrapper:
         self, tmp_path: Any
     ) -> None:
         from luxar.core.group.gsplats_pipeline.from_io import graft_gsplat_node
-        from luxar.gsplats.tree import GSplatLodGroup, GSplatPartition
 
-        leaves = list(_nested_partition_tree(3, counts=(8, 6, 5)).children)
-        node = GSplatPartition(
-            children=[
-                GSplatLodGroup(children=[leaves[0]]),
-                GSplatLodGroup(
-                    children=[leaves[1], leaves[2]], meta={"selector": "bogus"}
-                ),
-            ],
-            max_elements=8,
-        )
+        node = self._late_failure_tree(invalid_selector=True)
         compiler, scene, path = open_scene(tmp_path, "late_failed_graft.luxar.zarr")
         scene.add_points(
             "anchor",
@@ -2895,6 +2898,76 @@ class TestFailedGraftRollsBackItsWrapper:
         store = zarr.open_group(path, mode="r")
         assert "g" not in store["container"]
         assert store.attrs["position_bounds"] == bounds_before
+
+    def test_retry_after_late_failure_writes_decodable_arrays(
+        self, tmp_path: Any
+    ) -> None:
+        from luxar.core.group.gsplats_pipeline.from_io import graft_gsplat_node
+        from luxar.encoding.decoder import ArrayDecoder
+
+        compiler, scene, _ = open_scene(tmp_path, "retry_failed_graft.luxar.zarr")
+        failed = self._late_failure_tree(invalid_selector=True)
+        expected = failed.children[0].children[0].additive_sublods[0].centers
+
+        refusal(lambda: graft_gsplat_node(scene, name="g", node=failed))
+        graft_gsplat_node(
+            scene, name="g", node=self._late_failure_tree(invalid_selector=False)
+        )
+
+        centers = compiler.store["g/part_0/child_0/centers"]
+        assert centers.attrs["encoding"]["name"] != "array_ref"
+        decoded = ArrayDecoder().decode(centers, zarr_root=compiler.store)
+        assert decoded.shape == expected.shape
+
+    def test_late_failure_does_not_poison_later_deduplication(
+        self, tmp_path: Any
+    ) -> None:
+        from luxar.core.group.gsplats_pipeline.from_io import graft_gsplat_node
+        from luxar.encoding.decoder import ArrayDecoder
+
+        compiler, scene, _ = open_scene(tmp_path, "dedup_after_failed_graft.luxar.zarr")
+        failed = self._late_failure_tree(invalid_selector=True)
+        data = failed.children[0].children[0].additive_sublods[0]
+
+        refusal(lambda: graft_gsplat_node(scene, name="g", node=failed))
+        scene.add_gsplats(
+            "h",
+            centers=data.centers,
+            amplitudes=data.amplitudes,
+            cholesky_factors=data.cholesky_factors,
+        )
+
+        centers = compiler.store["h/centers"]
+        assert centers.attrs["encoding"]["name"] != "array_ref"
+        decoded = ArrayDecoder().decode(centers, zarr_root=compiler.store)
+        assert decoded.shape == data.centers.shape
+
+    def test_finalized_writer_keeps_the_builder_error(self, tmp_path: Any) -> None:
+        from luxar.core.group.gsplats_pipeline.from_io import graft_gsplat_node
+
+        node = self._late_failure_tree(invalid_selector=False)
+        expected_compiler, expected_scene, _ = open_scene(
+            tmp_path, "finalized_expected.luxar.zarr"
+        )
+        expected_compiler.finalize()
+        expected = refusal(
+            lambda: graft_gsplat_node(
+                expected_scene,
+                name="g",
+                node=node,
+                _under_partition=False,
+            )
+        )
+        actual_compiler, actual_scene, _ = open_scene(
+            tmp_path, "finalized_actual.luxar.zarr"
+        )
+        actual_compiler.finalize()
+
+        actual = refusal(lambda: graft_gsplat_node(actual_scene, name="g", node=node))
+
+        assert type(actual) is type(expected)
+        assert str(actual) == str(expected)
+        assert "Cannot write_group after the writer has been finalized" in str(actual)
 
     def test_invalid_name_keeps_the_builder_validation_error(
         self, tmp_path: Any

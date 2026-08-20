@@ -33,6 +33,7 @@ RollbackState = Tuple[
     Optional[dict[str, List[float]]],
     frozenset[Tuple[str, str]],
     bool,
+    Tuple[dict[tuple, tuple[str, str]], dict[str, str]],
 ]
 
 

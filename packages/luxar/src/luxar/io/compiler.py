@@ -485,12 +485,18 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             scene_bounds,
             frozenset(self._authoring_warnings),
             self._lut_tone_mapping_warned,
+            self._encoder.snapshot(),
         )
 
     def restore_rollback_state(self, state: RollbackState) -> None:
         """Restore compiler state captured before a rolled-back write."""
         self._check_not_finalized("restore_rollback_state")
-        scene_bounds, authoring_warnings, lut_tone_mapping_warned = state
+        (
+            scene_bounds,
+            authoring_warnings,
+            lut_tone_mapping_warned,
+            encoder_state,
+        ) = state
         self._scene_bounds = (
             None
             if scene_bounds is None
@@ -498,6 +504,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         )
         self._authoring_warnings = set(authoring_warnings)
         self._lut_tone_mapping_warned = lut_tone_mapping_warned
+        self._encoder.restore(encoder_state)
 
     @arbol_warnings()
     def write_points(  # type: ignore[override]

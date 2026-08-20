@@ -604,7 +604,10 @@ def _graft_gsplat_node_transaction(
     writer = group._require_scene_writer(group._find_scene())
     path = f"{parent_node.path}/{name}" if parent_node.path else name
     children_before = list(parent_node.children)
-    rollback_state = writer.snapshot_rollback_state()
+    try:
+        rollback_state = writer.snapshot_rollback_state()
+    except Exception:
+        rollback_state = None
     try:
         path_existed = writer.node_exists(path)
     except Exception:
@@ -621,10 +624,11 @@ def _graft_gsplat_node_transaction(
         )
     except BaseException as error:
         parent_node.children[:] = children_before
-        try:
-            writer.restore_rollback_state(rollback_state)
-        except BaseException as rollback_error:
-            error.add_note(f"Graft state rollback also failed: {rollback_error}")
+        if rollback_state is not None:
+            try:
+                writer.restore_rollback_state(rollback_state)
+            except BaseException as rollback_error:
+                error.add_note(f"Graft state rollback also failed: {rollback_error}")
         if not path_existed:
             try:
                 writer.delete_node(path)
@@ -657,12 +661,12 @@ def graft_gsplat_node(
     and is TRI-STATE. ``None`` — the caller default — means "entry call: read the
     binding off the SCENE" by walking ``parent`` links up from the insertion point
     (:func:`~luxar.core.group.lod.group.is_partition_bound`), which is resolved
-    once near the top of this function; the recursion then threads a concrete bool
-    down. It is ``True`` once a ``kind=partition`` with **more than one part** has
-    been crossed (a one-part partition is not a tiling — see the partition branch),
-    and an outer ``True`` is never lost on the way down. It selects which anchor the
-    FALLBACK ``coverage_fraction`` derivation uses (see the lod branch). Callers
-    leave it at the default.
+    once by :func:`_graft_gsplat_node_transaction`; the recursion then threads a
+    concrete bool down. It is ``True`` once a ``kind=partition`` with **more than
+    one part** has been crossed (a one-part partition is not a tiling — see the
+    partition branch), and an outer ``True`` is never lost on the way down. It
+    selects which anchor the FALLBACK ``coverage_fraction`` derivation uses (see
+    the lod branch). Callers leave it at the default.
 
     The entry call is transactional. If any descendant builder fails after a
     wrapper has been written, the new top-level subtree is removed from the Zarr
@@ -679,7 +683,9 @@ def graft_gsplat_node(
     ``add_gsplats_from_file`` per part into a hand-built ``kind=partition``" case
     derives its thresholds in
     :func:`~luxar.core.group.gsplats_pipeline.lod_dispatch.add_gsplats_as_lod_group_impl`
-    (via ``derive_coverage_fractions``), not in this function.
+    (via ``derive_coverage_fractions``), not in this function. That matrix-shaped
+    route pre-validates child-wide inputs before creating its wrapper, so its
+    known child failures do not require this graft transaction.
     """
     if _under_partition is None:
         return _graft_gsplat_node_transaction(
