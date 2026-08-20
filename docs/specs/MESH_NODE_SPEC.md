@@ -1511,14 +1511,14 @@ been widened deliberately, each behind its capability flag.
       `shading="smooth"`, and the SAME mesh under `shading="flat"` selects `mesh-flat-normal.fragment`
       and shades from screen-space derivatives (§3.4, §6.2). Verified to differ — a build that ignores
       `shading` renders both identically and the test goes red. And under `shading="smooth"` on a
-      `double_sided` mesh, a **back-viewed** face shades with the SAME view-anchored gradient as the
-      **front-viewed** face (both lit symmetrically), NOT collapsed to flat `uAmbient` — verified to go
-      **red** without the §6.2 `gl_FrontFacing` normal flip (the back face shades the inverted,
-      `uAmbient`-collapsing gradient instead of the front-facing one). And on the same back-viewed mesh
+      `double_sided` mesh, a **back-viewed** face shades on the lit side of its own view-anchored
+      gradient, NOT collapsed toward flat `uAmbient` — verified to go **red** without the §6.2
+      `gl_FrontFacing` normal flip (the back face shades the unflipped, inverted gradient instead). And
+      on the same back-viewed mesh
       with one vertex's stored normal zeroed, the fragments where §3.5's epsilon guard fires shade from
-      the substituted derivative normal **without** the flip — the same camera-facing gradient as the
-      front view — verified to go **red** against a build that applies `gl_FrontFacing ? N : -N` to the
-      fallback normal (§6.2's per-fragment exemption)
+      the substituted viewer-facing derivative normal **without** the flip — verified to go **red**
+      against a build that applies `gl_FrontFacing ? N : -N` to the fallback normal (§6.2's
+      per-fragment exemption)
 - [x] TS unit (**both backends** — GLSL and TSL): **stored-normal view-space transform** — a
       smooth-shaded mesh whose stored per-vertex normals equal its geometric face normals, with at least
       one face normal that **mixes the differently-scaled axes** — a nonzero component both along z and

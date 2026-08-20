@@ -262,8 +262,9 @@ export class LayerControls {
     // syncMeshAppearanceVisibility). Mesh is the only shaded geometry type, so these
     // are the first controls in this panel that are type-gated rather than mode-gated.
     //
-    // Linear tracks, unlike absorption's log one: the bounded fractions and
-    // exponents have useful finite ranges, rather than spanning decades.
+    // Linear tracks, unlike absorption's log one: the bounded fractions and small
+    // exponents have meaningful midpoints, rather than being scale-free coefficients
+    // spanning decades.
     this.ambientSlider = new LabeledSlider({
       container: this.controlsEl,
       label: 'Ambient',
