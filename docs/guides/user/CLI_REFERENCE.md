@@ -309,7 +309,9 @@ the substitutive, level-replacing reduction — but **not its values**: this one
 Gaussian mixture, which a surface is not. QEM is Garland-Heckbert edge collapse with a
 link-condition veto, so it preserves manifold topology; clustering is the vectorized
 large-mesh tier. `auto` uses QEM through 5,000 source vertices and clustering above that
-measured Python-heap envelope, and prints the choice with the reason.
+measured Python-heap envelope. QEM also requires at least three coarsening dimensions;
+`auto` falls back to clustering for a one- or two-dimensional coarsening, while explicit
+`qem` is refused. The selected tier is printed with the reason.
 
 The flag was called `--method` before August 2026, and `-m` was its short form. `--method`
 is gone, and `-m` has since been **claimed** by `--add-method` — the additive ordering it

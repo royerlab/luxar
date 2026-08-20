@@ -424,6 +424,41 @@ class TestMeshLod:
             )
         assert (out / "keepme.txt").read_text() == "previous output"
 
+    def test_two_dimensional_qem_refusal_leaves_existing_output_intact(
+        self, tmp_path: Path
+    ) -> None:
+        from luxar import Dimension, Dimensions, LuxarZarrCompiler
+        from luxar.cli.mesh_ops.lod_commands import run_lod
+
+        source = tmp_path / "src.luxar.zarr"
+        vertices, faces = _grid_mesh()
+        dimensions = Dimensions(
+            [
+                Dimension("x", unit="um", display=True),
+                Dimension("y", unit="um", display=True),
+                Dimension("t", unit="s", display=False, discrete=True),
+            ]
+        )
+        with LuxarZarrCompiler(source) as compiler:
+            scene = compiler.create_scene(dimensions=dimensions)
+            scene.add_mesh("surf", vertices, faces)
+
+        out = tmp_path / "out.luxar.zarr"
+        out.mkdir()
+        (out / "keepme.txt").write_text("previous output")
+
+        with pytest.raises(ValueError, match="requires at least 3 coarsening"):
+            run_lod(
+                input_path=source,
+                output_path=out,
+                node_name=None,
+                levels=2,
+                compression_factor=4,
+                method="qem",
+                overwrite=True,
+            )
+        assert (out / "keepme.txt").read_text() == "previous output"
+
     def test_the_renamed_method_flag_works_and_the_old_one_points_at_it(
         self, tmp_path: Path
     ) -> None:

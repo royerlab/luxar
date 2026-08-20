@@ -685,6 +685,8 @@ def _build_ladder_specs(
     reveal_centre: Optional[str],
     spatial_dims: Optional[str],
     ndim: int,
+    n_vertices: int,
+    coarsen_ndim: int,
 ) -> "tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]":
     """Build the ``(substitutive, additive)`` spec pair for ``recipe``.
 
@@ -704,6 +706,7 @@ def _build_ladder_specs(
         resolve_additive_axis_mesh,
         resolve_substitutive_axis_mesh,
     )
+    from ...mesh.decimate import resolve_decimation_method
 
     if recipe == RECIPE_REVEAL:
         additive_spec = _build_reveal_spec(
@@ -733,6 +736,9 @@ def _build_ladder_specs(
         "method": method,
     }
     resolve_substitutive_axis_mesh(substitutive_spec)
+    resolve_decimation_method(
+        method, n_vertices, spatial_ndim=coarsen_ndim, announce=False
+    )
     return substitutive_spec, None
 
 
@@ -864,6 +870,12 @@ def run_lod(
             reveal_centre=reveal_centre,
             spatial_dims=spatial_dims,
             ndim=int(data.vertices.shape[1]),
+            n_vertices=int(data.vertices.shape[0]),
+            coarsen_ndim=(
+                len(source.dimensions.displayed)
+                if int(source.dimensions.ndim) == int(data.vertices.shape[1])
+                else int(data.vertices.shape[1])
+            ),
         )
 
         # The authored ATTRS of the source node: the placement (transform /

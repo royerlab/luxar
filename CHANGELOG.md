@@ -1381,8 +1381,9 @@ Mesh decimation now also accepts `method="qem"`: Garland-Heckbert quadric edge
 collapse with lazy heap invalidation and a link-condition veto, so a collapse that
 would create a boundary or non-manifold edge is refused. `auto` uses QEM through
 5,000 source vertices and keeps the vectorized clustering tier above that; the
-selected tier is printed with the size-based reason. `luxar mesh lod` exposes the
-same choice through `--subst-method qem`.
+selected tier is printed with the reason. QEM requires at least three coarsening
+dimensions: `auto` falls back to clustering below that, while explicit `qem` is
+refused. `luxar mesh lod` exposes the same choice through `--subst-method qem`.
 
 The spec called the viewer side "a two-line widening". It was wrong twice, in the same
 way in two places, and both are worth recording.

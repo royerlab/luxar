@@ -890,9 +890,9 @@ to ship after). Sequencing is at the bottom.
      half #1515, integrating through **draft holding PR #1499**, with design
      follow-ups filed (#1506 cumulative-vs-per-level counts, #1507 prefix
      contiguity on closed surfaces, #1514 stacked-nD sequencing, #1517
-     per-level vs per-node budgets). **Decimation-quality backlog:** qem tier
-     for manifoldness (#1348), colour loss/corruption for non-uint8 inputs
-     (#1355), `luxar mesh lod` dropping transform/scalars/labels/siblings
+     per-level vs per-node budgets). **Decimation-quality backlog:** colour
+     loss/corruption for non-uint8 inputs (#1355), `luxar mesh lod` dropping
+     transform/scalars/labels/siblings
      (#1357). Related: the nD-clipping deferral measurement is item 29.
 
 22 - ~~**Level-of-Detail (LOD) with PartitionNode**~~: **DONE for release** (code-verified 2026-07-11). Beyond the core (archive item 22-core), the 2026-07 wave shipped: intent-first `--recipe` topologies (flat/stream/levels/tiles/overview/adaptive) with stream ladders on by default, viewport-relative coverage-fraction switching (`sqrt(N_i/N_finest)`, self-calibrating — no threshold knob), Q·e quality stamps + energy-gated upgrade release (`e(k) ≥ 0.6`), the never-downgrade display gate with subtree aggregation and refinement kick, sibling-aware ladders, per-part LOD at fit/merge time (`--recipe` on tiled fits and batch-fit merges), coverage inflation + mass conservation + `--refine l2|volume`, `annotate-quality` retrofitting, and byte-budget VRAM residency (coarse eager levels stay resident; fine lazy levels load on demand and evict off-screen-first under pressure). The advanced refinements formerly listed here were re-verified against the code (2026-07-11: 3 missing, 4 partial) and **demoted to Future/Exploratory item 25** — none is release-gating.

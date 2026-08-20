@@ -1281,7 +1281,9 @@ def add_mesh_substitutive_lod_wrapper_impl(
         else None
     )
 
-    method = resolve_decimation_method(spec["method"], n_vertices)
+    method = resolve_decimation_method(
+        spec["method"], n_vertices, spatial_ndim=len(spatial_dims)
+    )
     coarse: List[Any] = []
     previous = 0
     for power in range(levels, 0, -1):

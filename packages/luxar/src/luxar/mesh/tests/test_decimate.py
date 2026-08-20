@@ -14,6 +14,7 @@ import pytest
 
 from ..decimate import (
     QEM_AUTO_VERTEX_LIMIT,
+    decimate,
     decimate_cluster,
     resolve_decimation_method,
 )
@@ -545,6 +546,78 @@ class TestDecimateQEM:
 
         assert len(result.vertices) == 20
         assert int((result.vertices[:, 0] > 2).sum()) == 4
+
+    def test_a_detached_open_component_is_not_annihilated(self) -> None:
+        sphere_vertices, sphere_faces = octasphere(4)
+        triangle_vertices = np.array(
+            [[3, 0, 0], [4, 0, 0], [3.5, 1, 0]], dtype=np.float32
+        )
+        triangle_faces = np.array([[0, 1, 2]], dtype=np.uint32) + len(sphere_vertices)
+        vertices = np.concatenate([sphere_vertices, triangle_vertices])
+        faces = np.concatenate([sphere_faces, triangle_faces])
+
+        result = decimate_qem(vertices, faces, target_vertices=20)
+
+        assert len(result.vertices) == 20
+        assert int((result.vertices[:, 0] > 2).sum()) == 3
+
+    def test_an_attached_triangle_patch_is_not_annihilated(self) -> None:
+        sphere_vertices, sphere_faces = octasphere(4)
+        patch_vertices = np.array([[3, 0, 0], [3.5, 1, 0]], dtype=np.float32)
+        patch_face = np.array(
+            [[0, len(sphere_vertices), len(sphere_vertices) + 1]], dtype=np.uint32
+        )
+        vertices = np.concatenate([sphere_vertices, patch_vertices])
+        faces = np.concatenate([sphere_faces, patch_face])
+
+        result = decimate_qem(vertices, faces, target_vertices=20)
+
+        assert len(result.vertices) == 20
+        assert int((result.vertices[:, 0] > 2).sum()) == 2
+
+    def test_two_dimensional_auto_falls_back_but_explicit_qem_is_refused(
+        self,
+    ) -> None:
+        side = 8
+        vertices = np.array(
+            [(x, y) for y in range(side) for x in range(side)], np.float32
+        )
+        faces = []
+        for y in range(side - 1):
+            for x in range(side - 1):
+                a = y * side + x
+                b, c, d = a + 1, a + side, a + side + 1
+                faces.extend(((a, b, d), (a, d, c)))
+        face_array = np.asarray(faces, np.uint32)
+
+        automatic = decimate(
+            vertices,
+            face_array,
+            target_vertices=24,
+            method="auto",
+            spatial_dims=(0, 1),
+        )
+        clustered = decimate_cluster(
+            vertices, face_array, target_vertices=24, spatial_dims=(0, 1)
+        )
+
+        np.testing.assert_array_equal(automatic.vertices, clustered.vertices)
+        np.testing.assert_array_equal(automatic.faces, clustered.faces)
+        with pytest.raises(ValueError, match="requires at least 3 coarsening"):
+            decimate(
+                vertices,
+                face_array,
+                target_vertices=24,
+                method="qem",
+                spatial_dims=(0, 1),
+            )
+        with pytest.raises(ValueError, match="requires at least 3 coarsening"):
+            decimate_qem(
+                vertices,
+                face_array,
+                target_vertices=24,
+                spatial_dims=(0, 1),
+            )
 
     def test_a_degenerate_surface_is_refused_instead_of_returned_empty(self) -> None:
         vertices = np.zeros((10, 3), dtype=np.float32)

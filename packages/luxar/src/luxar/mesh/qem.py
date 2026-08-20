@@ -58,6 +58,21 @@ def _vertex_quadrics(
     return out
 
 
+def _require_nondegenerate_surface(
+    positions: NDArray[np.float64], faces: NDArray[np.uint32]
+) -> None:
+    """Refuse input with no triangle spanning a two-dimensional surface."""
+    triangles = positions[faces]
+    edges = triangles[:, 1:] - triangles[:, :1]
+    if np.any(np.linalg.matrix_rank(edges, tol=1e-12) >= 2):
+        return
+    raise ValueError(
+        f"decimation collapsed every triangle of a {positions.shape[0]}-vertex, "
+        f"{faces.shape[0]}-face mesh, leaving no surface. The input is "
+        "degenerate (collinear or coincident vertices) rather than merely fine."
+    )
+
+
 def _edge_target(
     u: int,
     v: int,
@@ -133,6 +148,16 @@ def _link_condition(
         if vertex != u and vertex != v
     }
     if (neighbors[u] - {v}) & (neighbors[v] - {u}) != opposite:
+        return False
+    endpoint_faces = {
+        index for index in vertex_faces[u] | vertex_faces[v] if active_faces[index]
+    }
+    if endpoint_faces == incident:
+        return False
+    if any(
+        {index for index in vertex_faces[vertex] if active_faces[index]} <= incident
+        for vertex in opposite
+    ):
         return False
 
     boundary_u = _boundary_vertex(u, neighbors, vertex_faces, active_faces)
@@ -455,16 +480,37 @@ def decimate_qem(
     scalars: Any = None,
     spatial_dims: tuple[int, ...] | None = None,
 ) -> DecimatedMesh:
-    """Reduce a mesh by quadric edge collapse without violating the link condition."""
+    """Reduce a mesh by quadric edge collapse without violating the link condition.
+
+    Args:
+        vertices: ``(N, D)`` vertex coordinates.
+        faces: ``(F, 3)`` triangle indices.
+        target_vertices: Approximate maximum vertex count for the result.
+        normals: Optional per-vertex normals.
+        normal_dims: Three coordinate columns defining the normal frame.
+        colors: Optional per-vertex colours.
+        scalars: Optional per-vertex scalars or a uniform scalar value.
+        spatial_dims: Coordinate columns QEM may coarsen across. At least three
+            are required; use :func:`decimate` for automatic clustering fallback.
+
+    Raises:
+        ValueError: If the inputs are invalid or the surface collapses completely.
+    """
     vertices = np.ascontiguousarray(vertices, dtype=np.float32)
     input_faces = np.ascontiguousarray(faces, dtype=np.uint32)
     spatial_dims = _validate_decimate_inputs(
         vertices, input_faces, target_vertices, normals, normal_dims, spatial_dims
     )
+    if len(spatial_dims) < 3:
+        raise ValueError(
+            "QEM mesh decimation requires at least 3 coarsening dimensions; "
+            f"got {len(spatial_dims)}"
+        )
     if len(vertices) <= target_vertices:
         return DecimatedMesh(vertices, input_faces, normals, colors, scalars)
 
     positions = vertices[:, spatial_dims].astype(np.float64)
+    _require_nondegenerate_surface(positions, input_faces)
     barrier_dims = tuple(
         index for index in range(vertices.shape[1]) if index not in spatial_dims
     )

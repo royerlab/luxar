@@ -1616,7 +1616,9 @@ nothing.
 The producer is `luxar.mesh.decimate`: vectorized vertex clustering for very large
 surfaces, or Garland-Heckbert QEM edge collapse with a link-condition veto when
 manifoldness must survive. `method="auto"` selects QEM through 5,000 vertices and
-clustering above that measured Python-heap envelope. It is reached from
+clustering above that measured Python-heap envelope. A QEM quadric also requires a
+normal direction outside the triangle span, so fewer than three coarsening dimensions
+make `auto` fall back to clustering and make explicit `qem` invalid. It is reached from
 `add_mesh(substitutive_lod=…)` or `luxar mesh lod`. Per-level picking needed no work,
 exactly as the row predicted: the LOD registry hides inactive levels and the picking system
 skips hidden nodes.
