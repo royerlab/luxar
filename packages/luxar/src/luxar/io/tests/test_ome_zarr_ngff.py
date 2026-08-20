@@ -986,23 +986,20 @@ def test_the_suggested_axes_string_is_one_that_actually_works(tmp_path: Path) ->
     assert _worker_loaded_volume(plan.manifest).shape == (32, 32)
 
 
-def test_no_axes_spec_is_quoted_for_a_second_channel_like_axis(
+def test_axes_spec_is_quoted_for_folded_channel_like_axes(
     tmp_path: Path,
 ) -> None:
-    """A vocabulary check is not enough: ``--axes`` cannot address a fold.
-
-    ``_apply_axes_spec`` pins EVERY channel-kind axis with the same ``--channel``
-    value — it never decodes the flat channel index the tasks carry. So on this
-    ``camera,time,channel`` store, following a quoted spec would plan 4 channel
-    tasks of which task 1 silently loads (camera 1, channel 1) and tasks 2-3 die
-    out of range. Both halves are asserted below: the suggestion is withdrawn,
-    and the reason it had to be is real.
-    """
+    """A flat task channel addresses every folded channel-like coordinate."""
     from luxar.io.volume import load_volume
 
+    data = np.empty((2, 3, 2, 8, 16, 16), dtype=np.float32)
+    for camera in range(2):
+        for channel in range(2):
+            data[camera, :, channel] = 10 * camera + channel
     src = _write_store(
         tmp_path / "camera_time_channel.zarr",
-        (2, 3, 2, 8, 16, 16),
+        data.shape,
+        data=data,
         extra_attrs={"axes": ["camera", "time", "channel", "z", "y", "x"]},
     )
     spec = "camera,time,channel,z,y,x"
@@ -1011,16 +1008,18 @@ def test_no_axes_spec_is_quoted_for_a_second_channel_like_axis(
         _plan(src, tmp_path / "out_ctc")
     message = str(excinfo.value)
 
-    assert f"--axes {spec}" not in message  # it would not have worked
-    assert "more than one channel-like axis" in message
-    assert "'camera'" in message and "'channel'" in message
+    assert f"Pass '--axes {spec}'" in message
 
-    # Why it would not have worked, measured against the real slicer.
     forced = _plan_axes(src, tmp_path / "out_ctc_axes", spec.split(","))
-    assert forced.manifest.n_channels == 4  # camera x channel
-    assert load_volume(src, channel=1, timepoint=0, axes=spec).shape == (8, 16, 16)
-    with pytest.raises(ValueError, match="out of range for the 'camera' axis"):
-        load_volume(src, channel=2, timepoint=0, axes=spec)
+    manifest = forced.manifest
+    assert manifest.n_channels == 4  # camera x channel
+    assert len(manifest.jobs) == 12  # 3 timepoints x 4 folded channels
+    for job in manifest.jobs:
+        loaded = load_volume(
+            src, channel=job.channel, timepoint=job.timepoint, axes=spec
+        )
+        camera, channel = job.channel_coords
+        np.testing.assert_array_equal(loaded, data[camera, job.timepoint, channel])
 
 
 # ---------------------------------------------------------------------------

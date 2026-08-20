@@ -143,8 +143,9 @@ def run_fit_volume(
         "--axes",
         help="Per-dimension axis labels overriding the positional "
         "TCZYX/CZYX/ZYX heuristic, e.g. 'z,c,y,x' or 't,z,y,x'. Use when your "
-        "data's axis order differs. Time/channel axes are sliced (by "
-        "--timepoint/--channel) and dropped; spatial axes kept in the given order.",
+        "data's axis order differs. Time/channel axes are sliced and dropped; "
+        "--channel is a flat row-major index across all channel-like axes, and "
+        "more than one time axis is rejected. Spatial axes stay in the given order.",
         rich_help_panel="Input selection",
     ),
     # Frequently used fit params

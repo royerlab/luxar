@@ -799,14 +799,9 @@ def _worker_reproduces_the_plan(
        ``(16, 32, 32, 1)``, ``t,c,y,x`` at ``(1, 1, 32, 32)`` — plan even though
        its axes do not lead.
 
-    KNOWN GAP, deliberately left as it is: a size-1 SPATIAL axis. ``load_volume``
-    squeezes it away while the plan's ``spatial_shape`` keeps it, so a canonical
-    ``t,c,z,y,x`` store at ``(3, 1, 1, 512, 512)`` plans a 3-D ``(1, 512, 512)``
-    volume the worker loads as 2-D ``(512, 512)``, and the merged partition's BSP
-    split planes then name center columns that do not exist. Clause 2 compares
-    squeezed to squeezed precisely so this keeps planning exactly as it does
-    today: the gap predates this guard, needs its own design (the plan's spatial
-    shape has to lose the axis too, everywhere), and is tracked separately.
+    The plan now applies the same singleton-spatial-axis squeeze through
+    :func:`_worker_spatial_shape`, so clause 2's squeezed-to-squeezed comparison
+    is an equality between the shape the plan records and the worker emits.
     """
     shape = tuple(info.shape)
     ndim = len(shape)
@@ -844,19 +839,10 @@ def _axes_spec_luxar_can_slice(
     ``ValueError`` is caught, and only per label, so nothing else is swallowed.
 
     1. every label is in that vocabulary, else the spec is rejected outright;
-    2. at most ONE channel-like label and at most ONE time label.
-       :func:`luxar.io.volume._apply_axes_spec` pins EVERY channel-kind axis with
-       the same ``--channel`` value and every time-kind axis with the same
-       ``--timepoint`` — it never decodes the flat channel index the batch tasks
-       carry. So on a ``camera,time,channel,z,y,x`` store at ``(2, 3, 2, …)`` the
-       plan fans 4 channel tasks and following the spec gives ``--channel 1`` =
-       (camera 1, channel 1) — silently the wrong volume — while ``--channel
-       2``/``3`` die with "index 2 is out of range for the 'camera' axis".
-       Quoting a spec that mis-slices is worse than quoting none, so this returns
-       the reason instead and the caller asks for one the user writes.
-
-    (The flat-index limitation in ``_apply_axes_spec`` is pre-existing and tracked
-    separately; this only stops the guard from RECOMMENDING it.)
+    2. at most ONE time label. One ``--timepoint`` cannot address multiple time
+       axes independently, and :func:`luxar.io.volume._apply_axes_spec` rejects
+       such a spec. Multiple channel-like labels are valid: ``--channel`` is a
+       flat row-major index decoded across all of them.
     """
     from luxar.io.volume import _axis_kind
 
@@ -874,21 +860,16 @@ def _axes_spec_luxar_can_slice(
             f"({', '.join(repr(u) for u in unrecognised)} unrecognised), so they "
             f"cannot be quoted back at you"
         )
-    for kind, what, flag in (
-        ("c", "channel-like", "--channel"),
-        ("t", "time", "--timepoint"),
-    ):
-        folded = [
-            label for label, k in zip(normalised, kinds, strict=True) if k == kind
-        ]
-        if len(folded) > 1:
-            return None, (
-                f"this store folds more than one {what} axis "
-                f"({', '.join(repr(label) for label in folded)}) and `--axes` pins "
-                f"every one of them with the SAME {flag} value — the flat index "
-                f"each task carries cannot address them individually, so the "
-                f"discovered labels cannot be quoted back at you"
-            )
+    time_labels = [
+        label for label, kind in zip(normalised, kinds, strict=True) if kind == "t"
+    ]
+    if len(time_labels) > 1:
+        return None, (
+            f"this store folds more than one time axis "
+            f"({', '.join(repr(label) for label in time_labels)}), but one "
+            "--timepoint cannot address them independently, so the discovered "
+            "labels cannot be quoted back at you"
+        )
     return ",".join(normalised), None
 
 

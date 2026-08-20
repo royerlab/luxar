@@ -61,6 +61,7 @@ class BatchManifest:
     n_timepoints: int = 1
     n_channels: int = 1
     spatial_shape: Tuple[int, ...] = ()
+    """Spatial shape emitted by workers; positional loading removes singleton axes."""
 
     # Tiling
     mode: str = "uniform"
