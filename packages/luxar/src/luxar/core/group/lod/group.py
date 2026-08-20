@@ -309,11 +309,6 @@ def coverage_fractions(element_counts: list[int]) -> list[float]:
     assumes the author's detail is meant to be viewed full screen and steps
     predictably with zoom, whatever the compression factor.
 
-    The default viewer framing now puts a whole-object ladder on its finest rung
-    at the opening full-frame view by construction. If detail must remain deferred
-    there, re-numbering these thresholds cannot express that contract; use an
-    ``overview`` topology above a spatial partition instead.
-
     Args:
         element_counts: One entry per child, in coarsest→finest order. Must be
             non-empty and the finest (last) entry must be > 0 (an empty finest

@@ -140,11 +140,12 @@ const FINE_RELOAD_SETTLE_TICKS = 8;
  * ``fittedAxisPx`` is EXACTLY invariant across aspect and absolute viewport
  * size for the default centre fit modelled here. Preserving an authored
  * off-centre controls target changes which depth face bounds each side of the
- * projected rectangle, so that framing is only approximately invariant (3.5%
- * drift in the measured 8×8×100 extreme-target case). The test matrix verifies
- * the centre-fit identity to 9 decimal digits for a cube, pancake, in-plane rod,
- * UMAP-like box, and a 1×1×100 view-axis rod from 1:4 portrait through 32:9
- * ultrawide.
+ * projected rectangle. The identity remains exact while the target lies inside
+ * the box's screen-plane footprint, then degrades with distance outside it: for
+ * an 8×8×100 box, a target 20 units off-axis drifts 23.8%. The test matrix
+ * verifies the centre-fit identity to 9 decimal digits for a cube, pancake,
+ * in-plane rod, UMAP-like box, and a 1×1×100 view-axis rod from 1:4 portrait
+ * through 32:9 ultrawide.
  *
  * Why 0.5 and not 1.0: at 1.0 the finest level only activates once the object
  * OVERFILLS the fitted axis, reproducing the original #1361 symptom at the
