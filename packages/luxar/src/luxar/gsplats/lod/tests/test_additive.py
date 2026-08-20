@@ -1255,3 +1255,106 @@ def test_resolve_truncation_sigmas_accepts_a_tiny_positive_value() -> None:
     # Numpy scalars and ints round-trip through the same coercion.
     assert resolve_truncation_sigmas(np.float32(2.5), data) == pytest.approx(2.5)
     assert resolve_truncation_sigmas(4, data) == pytest.approx(4.0)
+
+
+# ── additive_rung_count (#1632) ────────────────────────────────────────
+#
+# The whole value of this query is that it agrees with the BUILDER, so every
+# case below is scored against ``make_additive_lod(...).n_additive_sublods``
+# rather than against a hand-written expectation — a re-derivation is exactly
+# the drift the shared ``_resolve_breakpoints`` call exists to rule out.
+
+_RUNG_SPECS: list[tuple[int, object]] = [
+    # equal-count, including n_lods > n (which clamps to n) and n_lods == 1.
+    (1, "equal-count"),
+    (2, "equal-count"),
+    (3, "equal-count"),
+    (4, "equal-count"),
+    (5, "equal-count"),
+    (32, "equal-count"),
+    (40, "equal-count"),
+    # stream:<c> — a chunk that yields several rungs, and one >= n (single rung).
+    (4, "stream:4"),
+    (4, "stream:8"),
+    (4, "stream:32"),
+    (4, "stream:64"),
+    # explicit cumulative counts — a full list ending at N and a partial one
+    # (``_resolve_breakpoints`` appends the final N, which is one more rung).
+    (4, [8, 16, 32]),
+    (4, [5, 11]),
+    (4, [32]),
+]
+
+
+@pytest.mark.parametrize("n_lods,breakpoints", _RUNG_SPECS)
+def test_additive_rung_count_matches_the_builder(
+    n_lods: int, breakpoints: object
+) -> None:
+    """Parity with ``make_additive_lod`` itself, per breakpoint kind (#1632).
+
+    The gate in ``from_io._reject_a_partition_beside_a_stored_ladder`` refuses a
+    call on the strength of this number, so an answer that merely looks
+    plausible is not good enough: it must be the count of sub-LODs the build
+    loop would EMIT, ``if end <= prev: continue`` de-duplication included.
+    """
+    from luxar.gsplats.lod.additive import additive_rung_count
+
+    data = _make_random_gsplat(n=32, ndim=3, seed=11)
+    built = make_additive_lod(
+        data, n_lods, method="self_energy", breakpoints=breakpoints
+    )
+    assert additive_rung_count(32, n_lods, breakpoints) == built.n_additive_sublods
+
+
+def test_additive_rung_count_on_an_empty_leaf_matches_the_builder() -> None:
+    """``n == 0`` is 1, not 0: the empty branch emits one ``lod_method="none"``."""
+    from luxar.gsplats.lod.additive import additive_rung_count
+
+    empty = _make_empty_gsplat(ndim=3)
+    built = make_additive_lod(empty, 4, method="self_energy")
+    assert built.n_additive_sublods == 1
+    assert additive_rung_count(0, 4) == 1
+    assert additive_rung_count(-1, 4) == 1
+
+
+def test_energy_fraction_breakpoints_are_unknown_not_guessed() -> None:
+    """Those cuts need the ordering AND the energy curve — the expensive half.
+
+    Answering ``len(fracs)`` would be a guess: the resolver de-duplicates cuts
+    that land on the same k and appends a final N. UNKNOWN is the honest answer,
+    and callers skip on it.
+    """
+    from luxar.gsplats.lod.additive import additive_rung_count
+
+    assert additive_rung_count(32, 4, [0.5, 0.9, 1.0]) is None
+    assert additive_rung_count(32, 4, [1.0]) is None
+
+
+@pytest.mark.parametrize(
+    "n_lods,breakpoints",
+    [
+        (0, "equal-count"),  # n_lods must be positive
+        (-3, "equal-count"),
+        (4, "nonsense"),  # unknown breakpoints string
+        (4, []),  # empty list
+        (4, [1, 0.5]),  # mixed int/float
+        (4, [8, 8]),  # not strictly increasing
+        (4, [-1, 4]),  # non-positive count
+        (4, [100_000]),  # largest breakpoint exceeds N
+        (4, 42),  # not a string and not a list
+        (None, "equal-count"),  # unusable n_lods
+    ],
+)
+def test_a_malformed_spec_is_unknown_and_does_not_raise(
+    n_lods: object, breakpoints: object
+) -> None:
+    """A query must not pre-empt the builder's own fault report (#1632).
+
+    Every one of these aborts a real ``make_additive_lod`` build, at its own
+    site with its own message. Raising here too would move that verdict into a
+    gate that has no business owning it — and, at the gate, would turn a
+    diagnosable build failure into a partition refusal.
+    """
+    from luxar.gsplats.lod.additive import additive_rung_count
+
+    assert additive_rung_count(32, n_lods, breakpoints) is None  # type: ignore[arg-type]

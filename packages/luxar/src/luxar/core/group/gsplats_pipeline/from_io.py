@@ -16,6 +16,8 @@ from .from_data import (
     ABSENT_WHEN_NONE_ATTRS,
     GRAFT_REMEDY,
     GRAFT_STRUCTURE,
+    LADDER_REMEDY,
+    LADDER_STRUCTURE,
     STORED_LADDER_REMEDY,
     STORED_LADDER_STRUCTURE,
     add_gsplats_from_data_impl,
@@ -195,34 +197,169 @@ def _reject_a_partition_beside_a_stored_ladder(
     stranding (measured pre-fix: the same childless ``kind=partition``, this time
     from ``Unknown node attribute 'partition'``).
 
-    An ``additive_lod=False`` in the same call is likewise not judged, and for the
-    reason the data door reads the RESOLVED result rather than the store: that is
-    the documented "collapse the ladder" spelling, and
-    ``resolve_additive_axis_gsplats(False)`` flattens every level to a single
-    sub-LOD before the data door asks this same question — so the store's ladder
-    is not the one that would be written and there is no conflict left to refuse.
-    Measured: a laddered leaf file and a laddered ``kind=partition`` both split
-    into real parts with that kwarg, so judging the STORE alone refused two calls
-    that work. A ``recompute`` dict resolving to a single rung
-    (``{"n_lods": 1, "recompute": True}``) is the same shape and is NOT covered
-    here — telling it apart from ``{"n_lods": 2}`` needs the resolved rung count
-    rather than the spec, which is the design question #1632 owns.
+    THE LADDER THIS GATE JUDGES IS THE RESOLVED ONE, not the stored one (#1632).
+    Reading only ``iter_leaves`` was wrong in both directions, because
+    ``additive_lod=`` can add a ladder the store has not got AND take away one it
+    has:
+
+    * an UNLADDERED nested store plus ``additive_lod={"n_lods": 2}`` stranded
+      exactly the wrapper this gate exists to prevent — ``additive_lod=`` is not a
+      parameter of :func:`graft_gsplat_node`, it rides in ``**attrs`` down to each
+      part's ``add_gsplats_from_data_impl``, which BUILDS the ladder there, one
+      level below the ``kind=partition`` that already exists. Measured: ``Could
+      not add gsplats 'part_0': partition= is not supported alongside an
+      additive_lod= ladder …`` with ``g`` surviving ``finalize()`` childless.
+    * a LADDERED store plus a spec that COLLAPSES it —
+      ``additive_lod={"n_lods": 1, "recompute": True}`` — resolves to a single
+      rung, takes the flat route and partitions fine, yet the store-only test
+      refused it (the ``False`` spelling was skipped by hand; this one was not).
+
+    So each leaf is asked through :func:`~luxar.core.group.lod.gsplats.resolve_additive_rungs`,
+    which states ``resolve_additive_axis_gsplats``'s own vocabulary as a rung
+    count, over ``leaf.n_splats`` — the ladder's UNION, which is exactly the N
+    ``make_additive_lod`` resolves its cuts against.
+
+    AN UNKNOWN COUNT FALLS BACK TO THE STORE. ``None`` (energy-fraction
+    breakpoints, a malformed dict, a non-dict junk spec) is a statement about the
+    KWARG, not about the store: it says this gate cannot tell what the kwarg does,
+    not that the store's ladder went away. Skipping the leaf instead threw away a
+    conflict already visible in ``iter_leaves`` and re-stranded exactly the
+    childless wrapper this gate exists to prevent — measured on a stored
+    ``kind=partition`` of 2-sublod leaves with ``partition={"max_elements": 4}``,
+    all three of ``{"recompute": True, "breakpoints": [0.3, 1.0]}``,
+    ``{"recompute": True, "n_lods": 0}`` and a junk ``"stream"`` answered from
+    inside ``part_0`` (the latter two with the builder's own ``n_lods must be
+    positive`` / ``additive_lod must be None, bool, or dict``) and left ``g`` on
+    disk as a childless ``kind=partition``. Falling back to ``stored_rungs``
+    restores, byte for byte, the verdict the pre-#1632 store-only gate gave those
+    same three calls.
+
+    The rule "a query must not pre-empt the builder's own fault report" is
+    preserved exactly where it belongs: on an UNLADDERED store the fallback is 1
+    rung, so the leaf still skips and the builder still reports the malformed spec
+    one level down, on a store that has no conflict of its own (residual (i)
+    below — and residual (ii) is the price of the same fallback). The accepted cost
+    is one over-refusal, on the other side: ``{"recompute": True, "breakpoints":
+    [1.0]}`` on a LADDERED store is refused although it would in fact resolve to a
+    single rung. That is identical to pre-#1632 behaviour — nothing regresses —
+    and it is the conservative direction: refuse with an empty store, never write
+    a wrapper and strand it.
+
+    WHICH REMEDY is decided by the OFFENDING leaf's store alone —
+    ``len(leaf.additive_sublods) > 1``, asked of a leaf whose RESOLVED count
+    already exceeds 1 — not by whether the kwarg also builds that leaf's ladder.
+    If any offending leaf is stored-laddered, the stored pair wins ('gsplat
+    flatten'): unchanged wording for every call that passes no ``additive_lod=``,
+    and the right answer in the usual MIXED case (one leaf stored-laddered,
+    another laddered by the kwarg) and in the BOTH case (a laddered store plus
+    ``{"n_lods": 4, "recompute": True}``) too, because the store's ladder is the
+    obstacle that survives dropping the kwarg. Naming ``additive_lod=`` there
+    would tell the caller to drop a kwarg whose removal only buys a SECOND
+    refusal. Otherwise the ladder exists only because the kwarg builds it, and
+    the ``additive_lod=`` pair applies.
+
+    Note what keying on the OFFENDING leaf costs, deliberately: a stored ladder
+    somewhere in the tree does NOT by itself force the stored wording. In a
+    MIXED-COLLAPSE store — a laddered 4-splat leaf beside a flat 8-splat one
+    under ``{"recompute": True, "breakpoints": [4]}``, which collapses the first
+    to one rung and ladders the second — the only offending leaf is the FLAT one,
+    so the message is the ``additive_lod=`` pair although a stored ladder sits
+    untouched next door. That is the right call, not a miss: 'gsplat flatten'
+    would send the caller to rewrite a ladder that is not in the way, whereas
+    dropping either half of "drop one of the two" genuinely resolves it. The
+    discriminator is which leaf BLOCKS the call, not which ladders exist.
+
+    The reason BODY of that kwarg-built refusal is byte-identical to the one
+    :func:`~.from_data.resolve_partition_beside_an_additive_ladder` raises for the
+    same call one step later — :func:`partition_beside_a_ladder_reason` is
+    literally the shared text. The whole MESSAGE matches only on the
+    MATRIX-shaped branch of ``add_gsplats_from_file``, where the data door names
+    the caller's own node anyway. On the GRAFT branch it deliberately does not:
+    the data door would have said ``part_0``, and saying ``'g'`` instead is the
+    entire point of hoisting the question up here — the tests assert that
+    difference. And even the body matches only for a call whose ONLY fault is
+    this conflict. This gate runs ABOVE the data door's ``lod_group=`` resolution, so a
+    call carrying a second fault can be answered differently by NAME: measured,
+    ``add_gsplats_from_file(..., lod_group="bogus", partition={…},
+    additive_lod={"n_lods": 2})`` answers the conflict (``ValueError``) where
+    ``add_gsplats_from_data`` with the same effective arguments answers
+    ``TypeError: lod_group must be None, bool, or dict; got str``. Both refuse and
+    both write nothing, so the divergence is in naming only — the same sanctioned
+    class this module already documents for "a NaN position, an unknown attr".
+    For the same reason a fault the COUNT cannot see (a bad ``method``, a stray
+    ``substitutive_level`` key) is now MASKED by this refusal rather than reported
+    by the builder: the same trade, taken because the conflict is the more
+    fundamental fault and nothing is written either way.
+
+    TWO RESIDUALS stay open, and they are different KINDS. Both need an
+    UNLADDERED store, where the fallback is 1 rung and there is no stored
+    conflict to judge.
+
+    (i) An INVALID call, reported by the builder — as it should be.
+    ``additive_lod=True`` on an unladdered store counts 1 rung, skips here, and
+    fails from inside ``part_0`` with "additive_lod=True requires every
+    substitutive level to already carry an additive ladder"; a malformed spec
+    does the same with its own message, there being no
+    ``_reject_a_bad_additive_lod_spec_on_a_graft`` to hold it. Both strand
+    identically WITHOUT ``partition=`` at all, so the fault is the call's and the
+    verdict is the builder's, and pre-empting either would be the very thing this
+    gate must not do.
+
+    (ii) A VALID energy-fraction spec, which genuinely still strands — and what
+    fires is THIS refusal, one level too late, not a builder fault. Measured:
+    ``partition={"max_elements": 4}, additive_lod={"breakpoints": [0.5, 1.0]}``
+    on an unladdered nested store answers ``Could not add gsplats 'part_0':
+    partition= is not supported alongside an additive_lod= ladder …`` with ``g``
+    surviving ``finalize()`` childless. The spec is well-formed and
+    ``make_additive_lod`` really does build 2 rungs from it; the count is UNKNOWN
+    only because energy cuts need the ORDERING and the energy curve — the
+    expensive half this query exists to avoid.
+
+    Refusing on UNKNOWN instead was considered and rejected. ``{"breakpoints":
+    [1.0]}`` resolves to a SINGLE rung and partitions perfectly well, so a gate
+    that refused every uncountable spec would refuse a call the flat path
+    accepts. That is its own regression, and a broader one than a strand reached
+    only by asking for a multi-rung ENERGY ladder beside ``partition=``.
     """
     from luxar.gsplats.tree import iter_leaves
 
+    from ..lod.gsplats import resolve_additive_rungs
     from ..partition import is_requested
 
     if not is_requested(attrs.get("partition")):
         return
-    if attrs.get("additive_lod") is False:
+    spec = attrs.get("additive_lod")
+    offending = False
+    from_the_store = False
+    for leaf in iter_leaves(node):
+        stored_rungs = len(leaf.additive_sublods)
+        rungs = resolve_additive_rungs(
+            spec,
+            stored_rungs=stored_rungs,
+            n_splats=leaf.n_splats,
+        )
+        if rungs is None:
+            # UNKNOWN is about the KWARG, not the store — see the docstring's
+            # AN UNKNOWN COUNT paragraph. The store's own ladder still stands.
+            rungs = stored_rungs
+        if rungs <= 1:
+            continue
+        offending = True
+        if stored_rungs > 1:
+            # A stored ladder outranks a kwarg-built one — see WHICH REMEDY
+            # above; nothing later in the walk can change the answer.
+            from_the_store = True
+            break
+    if not offending:
         return
-    if not any(len(leaf.additive_sublods) > 1 for leaf in iter_leaves(node)):
-        return
+    structure, remedy = (
+        (STORED_LADDER_STRUCTURE, STORED_LADDER_REMEDY)
+        if from_the_store
+        else (LADDER_STRUCTURE, LADDER_REMEDY)
+    )
     raise ValueError(
         f"Could not add gsplats '{name}': "
-        + partition_beside_a_ladder_reason(
-            STORED_LADDER_STRUCTURE, STORED_LADDER_REMEDY
-        )
+        + partition_beside_a_ladder_reason(structure, remedy)
     )
 
 
