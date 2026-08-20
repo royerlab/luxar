@@ -1267,18 +1267,17 @@ class TestGraftedFilePartitionBesideAResolvedLadder:
     whether the kwarg also rebuilds the ladder or by what the rest of the tree
     stores: a stored ladder is the obstacle that survives dropping the kwarg.
 
-    NOT pinned here, deliberately — one residual the gate leaves open (#1763). A
-    WELL-FORMED energy-fraction spec on an UNLADDERED store
+    A WELL-FORMED energy-fraction spec on an UNLADDERED store
     (``partition={"max_elements": 4}, additive_lod={"breakpoints": [0.5, 1.0]}``)
-    still strands: the count is UNKNOWN (energy cuts need the ordering and the
+    still reaches the child: the count is UNKNOWN (energy cuts need the ordering
+    and the
     energy curve), the fallback is the store's single rung, the leaf skips, and
-    this same conflict fires from inside ``part_0`` one level too late, ``g``
-    surviving ``finalize()`` childless. That is measured behaviour, not desired
-    behaviour, so there is no test asserting it — a test would enshrine the
-    strand. Refusing on UNKNOWN instead was rejected deliberately:
+    this same conflict fires from inside ``part_0``. The graft transaction now
+    removes ``g`` and every descendant before re-raising that builder verdict.
+    Refusing on UNKNOWN instead remains rejected deliberately:
     ``{"breakpoints": [1.0]}`` resolves to a single rung and partitions fine (a
     gate refusing what the flat path accepts is its own regression), so closing
-    this residual needs a cheaper energy count, not a blunter gate.
+    the transaction preserves that accepted case without leaving partial output.
     """
 
     def _unladdered(self, tmp_path: Any, filename: str) -> str:
@@ -2851,9 +2850,73 @@ class TestFailedGraftRollsBackItsWrapper:
         )
 
         assert message in str(exc)
+        if additive_lod == {"breakpoints": [0.5, 1.0]}:
+            assert "part_0" in str(exc)
         assert "g" not in compiler.store
         assert all(child.name != "g" for child in scene.children)
         assert finalized_group_keys(compiler, path) == set()
+
+    def test_late_child_failure_removes_written_descendants_and_bounds(
+        self, tmp_path: Any
+    ) -> None:
+        from luxar.core.group.gsplats_pipeline.from_io import graft_gsplat_node
+        from luxar.gsplats.tree import GSplatLodGroup, GSplatPartition
+
+        leaves = list(_nested_partition_tree(3, counts=(8, 6, 5)).children)
+        node = GSplatPartition(
+            children=[
+                GSplatLodGroup(children=[leaves[0]]),
+                GSplatLodGroup(
+                    children=[leaves[1], leaves[2]], meta={"selector": "bogus"}
+                ),
+            ],
+            max_elements=8,
+        )
+        compiler, scene, path = open_scene(tmp_path, "late_failed_graft.luxar.zarr")
+        scene.add_points(
+            "anchor",
+            np.array([[100.0, 101.0, 102.0], [103.0, 104.0, 105.0]], dtype=np.float32),
+        )
+        assert compiler._scene_bounds is not None
+        bounds_before = {
+            key: list(values) for key, values in compiler._scene_bounds.items()
+        }
+        container = scene.add_group("container")
+
+        exc = refusal(
+            lambda: graft_gsplat_node(scene, name="g", node=node, parent=container)
+        )
+
+        assert "bogus" in str(exc)
+        assert "container/g" not in compiler.store
+        assert container.children == []
+        assert compiler._scene_bounds == bounds_before
+        compiler.finalize()
+        store = zarr.open_group(path, mode="r")
+        assert "g" not in store["container"]
+        assert store.attrs["position_bounds"] == bounds_before
+
+    def test_invalid_name_keeps_the_builder_validation_error(
+        self, tmp_path: Any
+    ) -> None:
+        from luxar.core.group.gsplats_pipeline.from_io import graft_gsplat_node
+
+        file_path = self._file(tmp_path, "invalid_name.gsplats.zarr")
+        _, scene, _ = open_scene(tmp_path, "invalid_name_scene.luxar.zarr")
+
+        expected = refusal(
+            lambda: graft_gsplat_node(
+                scene,
+                name="../victim",
+                node=_nested_partition_tree(3),
+                _under_partition=False,
+            )
+        )
+        actual = refusal(lambda: scene.add_gsplats_from_file("../victim", file_path))
+
+        assert type(actual) is type(expected)
+        assert str(actual) == str(expected)
+        assert "node name: Name cannot contain '/'" in str(actual)
 
     def test_duplicate_name_failure_keeps_the_existing_node(
         self, tmp_path: Any

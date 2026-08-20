@@ -291,27 +291,26 @@ def _reject_a_partition_beside_a_stored_ladder(
     by the builder: the same trade, taken because the conflict is the more
     fundamental fault and nothing is written either way.
 
-    TWO RESIDUALS stay open, and they are different KINDS. Both need an
-    UNLADDERED store, where the fallback is 1 rung and there is no stored
-    conflict to judge.
-
-    (i) An INVALID call, reported by the builder — as it should be.
+    One reporting residual stays open on an UNLADDERED store, where the fallback
+    is 1 rung and there is no stored conflict to judge: an INVALID call, reported
+    by the builder — as it should be.
     ``additive_lod=True`` on an unladdered store counts 1 rung, skips here, and
     fails from inside ``part_0`` with "additive_lod=True requires every
     substitutive level to already carry an additive ladder"; a malformed spec
     does the same with its own message, there being no
-    ``_reject_a_bad_additive_lod_spec_on_a_graft`` to hold it. Both strand
+    ``_reject_a_bad_additive_lod_spec_on_a_graft`` to hold it. Both fail
     identically WITHOUT ``partition=`` at all, so the fault is the call's and the
     verdict is the builder's, and pre-empting either would be the very thing this
-    gate must not do.
+    gate must not do. The outer transaction removes any partial graft.
 
-    (ii) A VALID energy-fraction spec, which genuinely still strands — and what
-    fires is THIS refusal, one level too late, not a builder fault. Tracked as
-    #1763. Measured:
+    A VALID energy-fraction spec also reaches the child because its rung count is
+    unknowable without building the energy curve. What fires is THIS refusal,
+    not a builder fault. Measured:
     ``partition={"max_elements": 4}, additive_lod={"breakpoints": [0.5, 1.0]}``
     on an unladdered nested store answers ``Could not add gsplats 'part_0':
     partition= is not supported alongside an additive_lod= ladder …`` with ``g``
-    surviving ``finalize()`` childless. The spec is well-formed and
+    being removed with every written descendant by the outer graft transaction.
+    The spec is well-formed and
     ``make_additive_lod`` really does build 2 rungs from it; the count is UNKNOWN
     only because energy cuts need the ORDERING and the energy curve — the
     expensive half this query exists to avoid.
@@ -439,15 +438,15 @@ def _reject_labels_on_a_grafted_wrapper(
       would raise on the same arrays, for a SINGLE-FAULT call.
 
       That closes the wrong-LENGTH case, which is the only one anything
-      upstream of the wrapper can judge. A RIGHT-length list can still strand
-      the same wrapper, when a DECOMPOSITION kwarg is forwarded through the
-      graft onto this same exempt leaf: ``partition=`` (including implicitly,
-      under an auto-partitioning compiler), ``lod_group=`` or
+      upstream of the wrapper can judge. A RIGHT-length list can still be
+      refused one level down when a DECOMPOSITION kwarg is forwarded through
+      the graft onto this same exempt leaf: ``partition=`` (including
+      implicitly, under an auto-partitioning compiler), ``lod_group=`` or
       ``additive_lod=`` is each refused by the leaf ADDER (``Group.add_gsplats``
-      and the ``from_data`` dispatch below it), one level down, for that
-      kwarg's own reason. Pre-existing #1496-family residual, unchanged in
-      both directions here and out of scope for a LENGTH fix — and untouched
-      by #1496's own ``**attrs`` normalisation at the top of
+      and the ``from_data`` dispatch below it), for that kwarg's own reason. The
+      outer transaction removes the partial wrapper, but the child-named verdict
+      remains the pre-existing #1496-family residual, out of scope for a LENGTH
+      fix — and untouched by #1496's own ``**attrs`` normalisation at the top of
       ``graft_gsplat_node`` either, which only reads a ``None`` as absent and
       refuses a data-owned CHANNEL: a decomposition kwarg carrying a real
       value is neither.
@@ -469,10 +468,10 @@ def _reject_labels_on_a_grafted_wrapper(
     * ONE SUB-LOD — because ``write_gsplat_leaf_subtree``, where a laddered leaf
       goes, has no labels channel at all. Exempting a laddered leaf would make
       this gate's contract a lie: the refusal then comes from inside ``part_0``
-      one level down, with the one-part wrapper already on disk. That is a
-      DIFFERENT fault, so it gets :func:`labels_on_a_laddered_leaf_reason`
-      instead of the shared wrapper template, whose slicing argument would read
-      as nonsense for a single leaf.
+      one level down. The transaction removes the one-part wrapper, but that is
+      still a DIFFERENT fault, so it gets
+      :func:`labels_on_a_laddered_leaf_reason` instead of the shared wrapper
+      template, whose slicing argument would read as nonsense for a single leaf.
 
     Why multi-leaf cannot simply SLICE the way ``add_gsplats(partition=…)`` does:
     that path slices because it is handed the BSP ``parts: List[np.ndarray]`` it
@@ -532,10 +531,10 @@ def _validate_labelled_leaf_length(
     HERE, before this function returns and ``graft_gsplat_node`` proceeds to
     build the wrapper — for a wrong-LENGTH list specifically, there is no gate
     below this one that runs before ``part_0``'s own leaf write (#1505). (A
-    RIGHT-length list can still strand the same wrapper via a decomposition
-    kwarg forwarded onto the leaf — see the ONE LEAF bullet of
-    :func:`_reject_labels_on_a_grafted_wrapper`'s docstring; that is a
-    different, pre-existing residual this length check does not touch.)
+    RIGHT-length list can still be refused from inside the child via a
+    decomposition kwarg forwarded onto the leaf — see the ONE LEAF bullet of
+    :func:`_reject_labels_on_a_grafted_wrapper`'s docstring; the transaction
+    cleans the wrapper, but this length check does not change that verdict.)
 
     ``n_splats`` is the exempt leaf's OWN count (``GSplatLeaf.n_splats`` sums
     over every additive sub-LOD, but this is only ever called with a leaf that
@@ -589,6 +588,51 @@ def _validate_labelled_leaf_length(
         raise ValueError(f"Could not add gsplats '{name}': {e}") from e
 
 
+def _graft_gsplat_node_transaction(
+    group: "Group",
+    *,
+    name: str,
+    node: Any,
+    parent: Optional["Node"],
+    extend_to_all: Optional[Union[List[str], str]],
+    attrs: Dict[str, Any],
+) -> Union["GSplats", "Group"]:
+    """Run one top-level graft with store, graph, and compiler-state rollback."""
+    from ..lod.group import is_partition_bound
+
+    parent_node = parent or group
+    writer = group._require_scene_writer(group._find_scene())
+    path = f"{parent_node.path}/{name}" if parent_node.path else name
+    children_before = list(parent_node.children)
+    rollback_state = writer.snapshot_rollback_state()
+    try:
+        path_existed = writer.node_exists(path)
+    except Exception:
+        path_existed = True
+    try:
+        return graft_gsplat_node(
+            group,
+            name=name,
+            node=node,
+            parent=parent,
+            extend_to_all=extend_to_all,
+            _under_partition=is_partition_bound(parent_node),
+            **attrs,
+        )
+    except BaseException as error:
+        parent_node.children[:] = children_before
+        try:
+            writer.restore_rollback_state(rollback_state)
+        except BaseException as rollback_error:
+            error.add_note(f"Graft state rollback also failed: {rollback_error}")
+        if not path_existed:
+            try:
+                writer.delete_node(path)
+            except BaseException as rollback_error:
+                error.add_note(f"Graft store rollback also failed: {rollback_error}")
+        raise
+
+
 def graft_gsplat_node(
     group: "Group",
     *,
@@ -621,10 +665,11 @@ def graft_gsplat_node(
     leave it at the default.
 
     The entry call is transactional. If any descendant builder fails after a
-    wrapper has been written, the new top-level subtree is removed from both the
-    Zarr store and the insertion parent's in-memory child list before the original
-    exception is re-raised. Recursive calls carry a concrete ``_under_partition``
-    and participate in that one outer transaction rather than opening their own.
+    wrapper has been written, the new top-level subtree is removed from the Zarr
+    store, the insertion parent's child list and compiler-side bounds/warning
+    state are restored, and the original exception is re-raised. Recursive calls
+    carry a concrete ``_under_partition`` and participate in that one outer
+    transaction rather than opening their own.
 
     Note what does NOT come here: only a **non-matrix-shaped** subtree is grafted
     at all. ``add_gsplats_from_file_impl`` sends every matrix-shaped tree — a bare
@@ -636,37 +681,22 @@ def graft_gsplat_node(
     :func:`~luxar.core.group.gsplats_pipeline.lod_dispatch.add_gsplats_as_lod_group_impl`
     (via ``derive_coverage_fractions``), not in this function.
     """
-    parent_node = parent or group
     if _under_partition is None:
-        from ..lod.group import is_partition_bound
-
-        writer = group._require_scene_writer(group._find_scene())
-        path = f"{parent_node.path}/{name}" if parent_node.path else name
-        path_existed = writer.node_exists(path)
-        children_before = list(parent_node.children)
-        try:
-            return graft_gsplat_node(
-                group,
-                name=name,
-                node=node,
-                parent=parent,
-                extend_to_all=extend_to_all,
-                _under_partition=is_partition_bound(parent_node),
-                **attrs,
-            )
-        except Exception as error:
-            parent_node.children[:] = children_before
-            if not path_existed:
-                try:
-                    writer.delete_node(path)
-                except Exception as rollback_error:
-                    error.add_note(f"Graft rollback also failed: {rollback_error}")
-            raise
+        return _graft_gsplat_node_transaction(
+            group,
+            name=name,
+            node=node,
+            parent=parent,
+            extend_to_all=extend_to_all,
+            attrs=attrs,
+        )
 
     from luxar.gsplats.gsplat_data import GSplatData
     from luxar.gsplats.tree import GSplatLeaf, GSplatLodGroup, GSplatPartition
 
     from ..compositing import COMPOSITING_ATTRS
+
+    parent_node = parent or group
 
     # The graft door's half of the #1496 ``**attrs`` normalisation — the identical
     # pair the ``from_data`` entry and ``add_gsplats_from_file_impl`` run, so a
@@ -675,12 +705,14 @@ def graft_gsplat_node(
     # every other door and a non-None ``colors=`` is refused here rather than from
     # inside ``part_0``.
     #
-    # Only the REFUSAL can be observed here, and it is genuinely load-bearing:
-    # this function builds its wrappers from the on-disk tree BEFORE the first
-    # leaf write, so a collision judged one level down (by
+    # Only the REFUSAL can be observed here, and it is genuinely load-bearing for
+    # the error contract: this function builds its wrappers from the on-disk tree
+    # BEFORE the first leaf write, so a collision judged one level down (by
     # ``add_gsplats_from_data_impl``, where every terminal leaf write does funnel
-    # through) leaves a childless ``kind=partition`` / ``kind=lod`` group behind —
-    # measured, with these two lines removed. The ``strip_absent_attr_kwargs``
+    # through) names ``part_0`` / ``child_0`` after transiently writing a wrapper.
+    # The transaction now removes that wrapper, but this gate preserves the
+    # caller's top-level name and avoids the write altogether. The
+    # ``strip_absent_attr_kwargs``
     # call, by contrast, is UNREACHABLE IN EFFECT and no test can cover it: the
     # very next statement strips the same dict again (defensively, see
     # :func:`_reject_labels_on_a_grafted_wrapper`), and the per-leaf calls

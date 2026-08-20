@@ -933,6 +933,22 @@ class TestTransformCentralization:
             with pytest.raises(KeyError):
                 _ = store["missing"]
 
+    def test_node_rollback_primitives(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path = Path(tmpdir) / "test.luxar.zarr"
+            compiler = LuxarZarrCompiler(zarr_path)
+            compiler.create_scene(dimensions=Dimensions.default_3d())
+            compiler.write_group("parent/child", opacity=0.5)
+
+            assert compiler.node_exists("parent/child")
+            assert not compiler.node_exists("missing")
+            compiler.delete_node("missing")
+            compiler.delete_node("parent")
+
+            assert not compiler.node_exists("parent")
+            with pytest.raises(ValueError, match="Cannot delete the scene root"):
+                compiler.delete_node("")
+
 
 class TestSpatialOrdering:
     """Test spatial ordering with Morton/Hilbert curves."""
@@ -1333,6 +1349,19 @@ class TestFinalizeGuards:
 
             with pytest.raises(RuntimeError, match="finalized"):
                 compiler.delete_group_attr("pts", "transform")
+
+    @pytest.mark.parametrize("method_name", ["node_exists", "delete_node"])
+    def test_node_rollback_primitives_after_finalize_raise(
+        self, method_name: str
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path = Path(tmpdir) / "test.luxar.zarr"
+            compiler = LuxarZarrCompiler(zarr_path)
+            compiler.create_scene(dimensions=Dimensions.default_3d())
+            compiler.finalize()
+
+            with pytest.raises(RuntimeError, match="finalized"):
+                getattr(compiler, method_name)("missing")
 
     def test_writes_inside_context_still_work(self) -> None:
         """Sanity check: the guard only fires after finalize, not at context entry."""
