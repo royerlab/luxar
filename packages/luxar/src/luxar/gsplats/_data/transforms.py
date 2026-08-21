@@ -104,8 +104,9 @@ class TransformsMixin(_GSplatDataOps):
         """Apply a single-level transform to EVERY substitutive level, rebuild.
 
         ``fn`` maps a single-substitutive-level view (``n_substitutive == 1``)
-        to a transformed single-level ``GSplatData``; per-level metadata
-        (compression_factor / parent_method / level_index / stats) is preserved.
+        to a transformed single-level ``GSplatData``; per-level ancestry is
+        preserved while structural stats are refreshed and count-invalidated
+        measurements are removed.
         Mirrors :meth:`filter_by`'s per-level rebuild so spatial
         and intensity ops never silently collapse the substitutive LOD ladder
         to the finest level. Callers guard with ``if self.n_substitutive > 1``.
@@ -113,19 +114,18 @@ class TransformsMixin(_GSplatDataOps):
         from luxar.gsplats.gsplat_data import GSplatData, SubstitutiveLevel
 
         new_levels: List["SubstitutiveLevel"] = []
-        finest_count_changed = False
-        for s, src in enumerate(self.substitutive_levels):
+        any_count_changed = False
+        for src in self.substitutive_levels:
             out = fn(self._view_of_level(src))
             out_level = out.substitutive_levels[0]
             count_changed = sum(
                 lod.n_splats for lod in out_level.additive_sublods
             ) != sum(lod.n_splats for lod in src.additive_sublods)
+            any_count_changed = any_count_changed or count_changed
             cutpoints = [
                 int(c)
                 for c in np.cumsum([lod.n_splats for lod in out_level.additive_sublods])
             ]
-            if s == 0:
-                finest_count_changed = count_changed
             new_levels.append(
                 SubstitutiveLevel(
                     additive_sublods=out_level.additive_sublods,
@@ -139,16 +139,20 @@ class TransformsMixin(_GSplatDataOps):
                     ),
                 )
             )
-        finest_cutpoints = [
+        summary_level = int(self.stats.get("lod_substitutive_level", 0))
+        summary_level = min(max(summary_level, 0), len(new_levels) - 1)
+        root_cutpoints = [
             int(c)
-            for c in np.cumsum([lod.n_splats for lod in new_levels[0].additive_sublods])
+            for c in np.cumsum(
+                [lod.n_splats for lod in new_levels[summary_level].additive_sublods]
+            )
         ]
         return GSplatData.from_substitutive_levels(
             new_levels,
             stats=_stats_after_ladder_rebuild(
                 self.stats,
-                finest_cutpoints,
-                count_changed=finest_count_changed,
+                root_cutpoints,
+                count_changed=any_count_changed,
             ),
         )
 
@@ -160,7 +164,8 @@ class TransformsMixin(_GSplatDataOps):
         ``fn`` receives ``(lod, offset, n)`` — the sub-LOD, its start offset
         into the flattened finest-leaf arrays, and its splat count — and returns
         a replacement :class:`AdditiveSubLOD` (which may change N, ndim, or
-        array widths). The additive-dimension sibling of :meth:`_map_substitutive`.
+        array widths). Empty rungs are removed when another rung survives. The
+        additive-dimension sibling of :meth:`_map_substitutive`.
         """
         from luxar.gsplats.gsplat_data import GSplatData, SubstitutiveLevel
 

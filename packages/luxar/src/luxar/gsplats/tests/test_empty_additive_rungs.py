@@ -184,6 +184,62 @@ def test_multi_level_pruning_refreshes_root_summary_from_finest_level() -> None:
     assert "n_splats_total" not in result.stats
 
 
+@pytest.mark.parametrize(
+    ("selector", "expected_cutpoints"),
+    [(1, [2]), (99, [2]), (-1, [2, 4])],
+)
+def test_multi_level_root_tracks_selected_level_and_any_count_change(
+    selector: int, expected_cutpoints: list[int]
+) -> None:
+    summary = {
+        "lod_n_lods": 2,
+        "lod_cutpoints": [2, 4],
+        "lod_substitutive_level": selector,
+        "reference_energy": 99.0,
+        "quality": 30.0,
+        "n_splats_total": 4,
+    }
+    source = GSplatData.from_substitutive_levels(
+        [
+            SubstitutiveLevel(
+                additive_sublods=[
+                    _wide_rung(0.0, [10.0, 9.0], 0),
+                    _wide_rung(1.0, [8.0, 7.0], 1),
+                ],
+                stats=dict(summary),
+            ),
+            SubstitutiveLevel(
+                additive_sublods=[
+                    _wide_rung(2.0, [10.0, 9.0], 0),
+                    _wide_rung(3.0, [0.2, 0.1], 1),
+                ],
+                compression_factor=4,
+                level_index=1,
+                stats=dict(summary),
+            ),
+        ],
+        stats=dict(summary),
+    )
+
+    def _drop_coarse_tail(level: GSplatData) -> GSplatData:
+        if level.substitutive_levels[0].level_index == 0:
+            return level.translate(np.zeros(3, dtype=np.float32))
+        return level.filter(np.array([True, True, False, False]))
+
+    result = source._map_substitutive(_drop_coarse_tail)
+
+    assert [
+        [lod.n_splats for lod in level.additive_sublods]
+        for level in result.substitutive_levels
+    ] == [[2, 2], [2]]
+    assert result.stats["lod_substitutive_level"] == selector
+    assert result.stats["lod_n_lods"] == len(expected_cutpoints)
+    assert result.stats["lod_cutpoints"] == expected_cutpoints
+    assert "reference_energy" not in result.stats
+    assert "quality" not in result.stats
+    assert "n_splats_total" not in result.stats
+
+
 def test_count_change_refreshes_ladder_stamps_without_pruning() -> None:
     summary = {
         "lod_n_lods": 2,

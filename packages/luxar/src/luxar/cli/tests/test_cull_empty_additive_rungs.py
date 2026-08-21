@@ -65,6 +65,7 @@ def test_cull_cli_writes_stream_and_levels_after_rung_empties(
         stats={
             "lod_n_lods": 3,
             "lod_cutpoints": [100, 200, 300],
+            "lod_substitutive_level": n_levels - 1,
             "reference_energy": 99.0,
             "quality": 30.0,
             "n_splats_total": 300,
@@ -107,9 +108,11 @@ def test_cull_cli_writes_stream_and_levels_after_rung_empties(
             lod.stats["lod_cumulative_n"] for lod in level.additive_sublods
         ] == list(np.cumsum(counts))
     pipeline_stats = dict(zarr.open_group(str(output), mode="r")["pipeline"].attrs)
-    assert pipeline_stats["lod_n_lods"] == len(loaded.additive_sublods)
+    selected_level = loaded.substitutive_levels[n_levels - 1]
+    assert pipeline_stats["lod_substitutive_level"] == n_levels - 1
+    assert pipeline_stats["lod_n_lods"] == len(selected_level.additive_sublods)
     assert pipeline_stats["lod_cutpoints"] == list(
-        np.cumsum([lod.n_splats for lod in loaded.additive_sublods])
+        np.cumsum([lod.n_splats for lod in selected_level.additive_sublods])
     )
     assert "reference_energy" not in pipeline_stats
     assert "quality" not in pipeline_stats
