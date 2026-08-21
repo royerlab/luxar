@@ -1619,7 +1619,8 @@ describe('LayersPanel — blend select drives the leaf material', () => {
   });
 
   it('reset reapplies an inherited custom palette with its composed LUT bytes', () => {
-    const lut = new Uint8Array([0, 0, 0, 255, 255, 255]);
+    const lut = new Uint8Array(768);
+    lut[767] = 255;
     const material = makeColormapRoutingStub();
     const mesh = new THREE.Mesh(new THREE.BufferGeometry(), material as unknown as THREE.Material);
     mesh.name = '/palette/gs';
