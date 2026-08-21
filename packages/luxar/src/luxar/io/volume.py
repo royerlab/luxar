@@ -481,7 +481,8 @@ def _declared_levels(
 ) -> List[Tuple[str, Any, Any]]:
     """The arrays ``group``'s own NGFF ``multiscales`` block names as its levels.
 
-    ``datasets[*]["path"]``, resolved relative to ``group``. A declared path that
+    ``datasets[*]["path"]``, resolved relative to ``group`` after normalising
+    cosmetic NGFF spellings such as ``"./0"`` to ``"0"``. A declared path that
     is missing, is not an array, or is not even a legal zarr path (``".."``
     segments, a null byte, a segment longer than a filename — all of which zarr 3
     rejects with something other than ``KeyError``) is skipped — and REPORTED,
@@ -508,7 +509,7 @@ def _declared_levels(
     """
     import zarr
 
-    from luxar.io.ome_zarr import resolve_ngff_attrs
+    from luxar.io.ome_zarr import _normalised_dataset_path, resolve_ngff_attrs
 
     block = resolve_ngff_attrs(group.attrs).get("multiscales")
     if not (isinstance(block, list) and block and isinstance(block[0], dict)):
@@ -518,11 +519,12 @@ def _declared_levels(
         return []
     results: List[Tuple[str, Any, Any]] = []
     for entry in datasets:
-        rel = entry.get("path") if isinstance(entry, dict) else None
-        if not isinstance(rel, str) or not rel.strip("/"):
+        raw_rel = entry.get("path") if isinstance(entry, dict) else None
+        if not isinstance(raw_rel, str) or not raw_rel.strip("/"):
             continue
-        rel = rel.strip("/")
-        declared_path = f"{prefix}/{rel}" if prefix else rel
+        display_rel = raw_rel.strip("/")
+        rel = _normalised_dataset_path(raw_rel) or display_rel
+        declared_path = f"{prefix}/{display_rel}" if prefix else display_rel
         try:
             item = group[rel]
         except (KeyError, ValueError, OSError, TypeError) as e:

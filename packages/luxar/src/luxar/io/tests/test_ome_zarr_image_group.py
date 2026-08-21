@@ -888,6 +888,42 @@ class TestTheNearestDeclaringAncestorWins:
         assert info.voxel_size == (2.0, 0.3, 0.3)
 
 
+class TestDeclaredLevelPathSpellings:
+    """A cosmetic leading ``./`` cannot change which pyramid level is loaded."""
+
+    @pytest.mark.parametrize("zarr_format", ZARR_FORMATS)
+    @pytest.mark.parametrize(
+        "prefix", ["", "./"], ids=["canonical", "explicitly-relative"]
+    )
+    def test_both_spellings_select_the_declared_full_resolution_level(
+        self, tmp_path: Path, zarr_format: int, prefix: str
+    ) -> None:
+        full = _ramp((2, 8, 16, 16))
+        half = _ramp((2, 4, 8, 8), start=20_000)
+        undeclared = _ramp((3, 9, 18, 18), start=40_000)
+        spelling = "relative" if prefix else "plain"
+        path = tmp_path / f"declared_{spelling}.zarr"
+        root = open_group(path, mode="w", zarr_format=zarr_format)
+        image = root.create_group("0")
+        create_array(image, "0", data=full)
+        create_array(image, "1", data=half)
+        create_array(image, "undeclared", data=undeclared)
+        image.attrs["multiscales"] = _multiscales(
+            ["t", "z", "y", "x"],
+            [f"{prefix}0", f"{prefix}1"],
+            scale=[1.0, 2.0, 0.5, 0.5],
+        )
+
+        info = discover_ome_zarr_shape(path)
+
+        assert info.shape == full.shape
+        assert info.axes == ["t", "z", "y", "x"]
+        assert (info.n_timepoints, info.n_channels) == (2, 1)
+        assert info.voxel_size == (2.0, 0.5, 0.5)
+        np.testing.assert_array_equal(np.asarray(open_volume_lazy(path)[...]), full)
+        np.testing.assert_array_equal(load_volume(path), full.astype(np.float32))
+
+
 class TestSelectionIsDeterministic:
     """A size TIE resolves the same way on every fresh open (one process here).
 
