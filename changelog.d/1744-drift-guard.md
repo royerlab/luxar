@@ -16,8 +16,9 @@ read, with each `{...}` hole left in place as an explicit break so two fragments
 that are never adjacent on screen cannot be spliced into a credit nobody wrote.
 An overlay is not only an `add_text` call in the demo's own file: a `credit=`
 argument to any call is read too, because the six `gsplats_interop` demos paint
-their footer through a shared helper and a demo-file-only reader would have
-reported green on them having read nothing.
+their footer through a shared helper. Those six are uncredited today; this branch
+starts judging one as soon as it declares a citation, when a demo-file-only reader
+would otherwise report green after reading none of its footer.
 
 The comparison is deliberately narrow. A credit footer states two things a
 machine can check, a year and the names in front of it: the year must appear in

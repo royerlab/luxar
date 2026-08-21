@@ -585,8 +585,9 @@ def test_written_cache_dirs_are_declared(path: Path) -> None:
 # the legitimate spellings the corpus already uses. Overlay text means the first
 # (or ``text=`` / ``html=``) argument of an ``add_text`` / ``add_html`` call, plus
 # a ``credit=`` keyword passed to ANY call — six ``demo_gsplats_interop_*`` demos
-# paint their footer through ``_interop_common.build_interop_scene(credit=...)``,
-# and reading the demo file alone would have covered none of them.
+# paint their footer through ``_interop_common.build_interop_scene(credit=...)``.
+# They are uncredited today; this branch starts judging one as soon as it declares
+# a citation, when reading only the demo's own overlay calls would cover none of it.
 #
 # WHAT IT DOES NOT CHECK:
 #   * a year that yields no name group: a footer with no year at all, a year cut
@@ -814,8 +815,9 @@ def _overlay_strings(source: str) -> list[str]:
     Two shapes are read (see the section comment above for the full reach): an
     ``add_text`` / ``add_html`` call's first (or ``text=`` / ``html=``) argument,
     and a ``credit=`` keyword passed to ANY call. The second is not decoration —
-    it is the only way the six ``demo_gsplats_interop_*`` footers are seen at all,
-    the same demo-file-only blind spot ``tests/_scanned_modules.py`` exists for.
+    the six ``demo_gsplats_interop_*`` demos are uncredited today, but it is the
+    only way their footers will be seen if one declares a citation. This is the
+    same demo-file-only blind spot ``tests/_scanned_modules.py`` exists for.
 
     AST-only, for the same reason the registry is: importing a demo module runs
     heavy optional imports and import-time side effects.
@@ -1052,8 +1054,8 @@ def test_a_credit_painted_through_a_shared_helper_is_read() -> None:
     """A ``credit=`` argument counts as overlay text wherever it is passed.
 
     Six ``demo_gsplats_interop_*`` demos hand their footer to
-    ``_interop_common.build_interop_scene(credit=...)``; reading only the demo's
-    own ``add_text`` calls saw none of them.
+    ``_interop_common.build_interop_scene(credit=...)``. They are uncredited
+    today; this keeps their footer visible to the guard if one gains a citation.
     """
     source = textwrap.dedent(
         """
