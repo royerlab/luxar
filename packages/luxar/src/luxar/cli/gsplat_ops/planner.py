@@ -105,10 +105,9 @@ def _stamp_content_floor(
         return
     target["floor"] = floor_level
     # Since #1616 the boxes share one norm_range, so their bounds agree with each
-    # other; still, drop any image_min that would
-    # contradict `floor` rather than leave the invariant broken. Only meaningful when a
-    # floor WAS applied: with none, `image_min` is just the normalization
-    # minimum and owes `floor` nothing.
+    # other. Still, drop any image_min that would contradict `floor` rather than
+    # leave the invariant broken. Only meaningful when a floor WAS applied: with
+    # none, `image_min` is just the normalization minimum and owes `floor` nothing.
     bound = target.get("image_min")
     if (
         floor_level is not None

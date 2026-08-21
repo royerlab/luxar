@@ -1968,6 +1968,7 @@ def plan_batch(
         mode, denoise, floor_spec, denoise_mode
     )
     configured_norm_range = effective_norm_range(fit)
+    resolve_sampled_norm_range = configured_norm_range is None and not denoise.denoise
     sampled_slices = (
         _sample_batch_slices(
             input_path,
@@ -1980,7 +1981,7 @@ def plan_batch(
             spatial_shape=tuple(spatial),
         )
         if (not floor_deferred and floor_spec_needs_volume(floor_spec))
-        or configured_norm_range is None
+        or resolve_sampled_norm_range
         else []
     )
     floor_level, recorded_floor_level = _resolve_planned_floor(
@@ -1998,18 +1999,25 @@ def plan_batch(
         spatial_shape=tuple(spatial),
         sampled_slices=sampled_slices,
     )
-    norm_range = configured_norm_range or resolve_batch_norm_range(
-        input_path,
-        effective_norm_percentile(fit),
-        n_timepoints=n_t_full,
-        n_channels=n_c_full,
-        array_key=array_key,
-        axes=",".join(axes_list) if axes_list else None,
-        axes_labels=list(ome_info.axes),
-        channel_shape=tuple(ome_info.channel_shape),
-        spatial_shape=tuple(spatial),
-        sampled_slices=sampled_slices,
-    )
+    norm_range = configured_norm_range
+    if resolve_sampled_norm_range:
+        norm_range = resolve_batch_norm_range(
+            input_path,
+            effective_norm_percentile(fit),
+            n_timepoints=n_t_full,
+            n_channels=n_c_full,
+            array_key=array_key,
+            axes=",".join(axes_list) if axes_list else None,
+            axes_labels=list(ome_info.axes),
+            channel_shape=tuple(ome_info.channel_shape),
+            spatial_shape=tuple(spatial),
+            sampled_slices=sampled_slices,
+        )
+    elif denoise.denoise and configured_norm_range is None:
+        aprint(
+            "Denoising is enabled; each task resolves its normalization range "
+            "on the data it fits."
+        )
     _record_batch_norm_range(fit_args, norm_range)
 
     if mode == "content":

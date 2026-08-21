@@ -355,6 +355,24 @@ def test_batch_plan_resolves_one_global_normalization_range(tmp_path: Path) -> N
     assert ranges == {manifest.fit_args["norm_range"]}
 
 
+def test_batch_denoise_does_not_pin_a_raw_sampled_normalization_range(
+    tmp_path: Path,
+) -> None:
+    """Denoising tasks resolve their scale on the data they actually fit."""
+    src = tmp_path / "movie.zarr"
+    _make_timelapse_zarr(src)
+
+    manifest = _plan(
+        src,
+        tmp_path / "out",
+        floor="none",
+        denoise_kwargs={"denoise": True, "denoise_h": 0.04},
+    ).manifest
+
+    assert manifest.norm_range is None
+    assert "norm_range" not in manifest.fit_args
+
+
 def test_batch_declines_a_degenerate_shared_normalization_range(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -384,6 +402,28 @@ def test_batch_plan_preserves_an_explicit_config_normalization_range(
     monkeypatch.setattr(planning, "_sample_batch_slices", _no_sample)
     manifest = _plan(
         src, tmp_path / "out", floor=None, config=config, preset="standard"
+    ).manifest
+
+    assert manifest.norm_range == pytest.approx((2.5, 90.0))
+    assert manifest.fit_args["norm_range"] == "2.5,90"
+
+
+def test_batch_denoise_preserves_an_explicit_config_normalization_range(
+    tmp_path: Path,
+) -> None:
+    """A configured range remains an explicit override under denoising."""
+    src = tmp_path / "movie.zarr"
+    _make_timelapse_zarr(src)
+    config = tmp_path / "fit.yaml"
+    config.write_text("norm_range: [2.5, 90.0]\nfloor: none\n")
+
+    manifest = _plan(
+        src,
+        tmp_path / "out",
+        floor=None,
+        config=config,
+        preset="standard",
+        denoise_kwargs={"denoise": True, "denoise_h": 0.04},
     ).manifest
 
     assert manifest.norm_range == pytest.approx((2.5, 90.0))
@@ -821,6 +861,16 @@ def test_manifest_predating_shared_normalization_loads_and_keeps_its_specs(
     )
     assert argv[argv.index("--floor") + 1] == "auto"
     assert "--norm-range" not in argv
+
+
+def test_manifest_round_trips_normalization_range_as_a_tuple(tmp_path: Path) -> None:
+    from luxar.gsplats.batch.manifest import BatchManifest, load_manifest, save_manifest
+
+    save_manifest(BatchManifest(norm_range=(2.5, 90.0)), tmp_path)
+
+    loaded = load_manifest(tmp_path)
+    assert loaded.norm_range == (2.5, 90.0)
+    assert isinstance(loaded.norm_range, tuple)
 
 
 def test_effective_floor_spec_reads_the_config_chain(tmp_path: Path) -> None:
