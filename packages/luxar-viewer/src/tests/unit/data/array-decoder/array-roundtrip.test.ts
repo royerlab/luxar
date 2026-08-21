@@ -4,7 +4,10 @@
  * Python generates fixtures and a `roundtrip_expectations.json` file by decoding
  * every relevant fixture array with `luxar.encoding.ArrayDecoder`. These tests
  * load the same zarr arrays in Node.js and require the TypeScript ArrayDecoder to
- * reproduce the same flattened float32 values byte-for-byte.
+ * reproduce the same flattened float32 values byte-for-byte, except log-scalar
+ * arrays: their viewer contract is the Rust/WASM f32 kernel, while Python keeps
+ * its f64 decode helper. Those remain numerically close to Python and must match
+ * exactly between full-array and range decoding.
  *
  * This is intentionally non-browser and non-WebGL so it can run in the fast
  * Vitest suite while still exercising real Python-written zarr stores.
@@ -114,6 +117,20 @@ function assertSamples(
   }
 }
 
+function assertLogScalarSamplesNearPython(
+  values: Float32Array,
+  expected: ArrayOperationExpectation | ArrayExpectation
+): void {
+  for (const sample of expected.samples) {
+    const tolerance = Math.max(1e-7, Math.abs(sample.value) * 5e-7);
+    expect(Math.abs(values[sample.index] - sample.value)).toBeLessThanOrEqual(tolerance);
+  }
+}
+
+function isLogScalarEncoding(encoding: string): boolean {
+  return encoding === 'log_scalar_uint8' || encoding === 'log_scalar_uint16';
+}
+
 function assertManifestCoverage(manifest: ContractManifest): void {
   for (const [category, requiredValues] of Object.entries(manifest.required)) {
     const observed = manifest.observed[category] ?? {};
@@ -167,7 +184,9 @@ describe('Python-TypeScript encoded array round-trip', () => {
   for (const [fixtureName, fixture] of Object.entries(EXPECTATIONS.fixtures)) {
     describe(fixtureName, () => {
       for (const [arrayPath, expected] of Object.entries(fixture.arrays)) {
-        it(`decodes ${arrayPath} (${expected.encoding}) like Python`, async () => {
+        const logScalar = isLogScalarEncoding(expected.encoding);
+        const contract = logScalar ? 'with the viewer f32 contract' : 'like Python';
+        it(`decodes ${arrayPath} (${expected.encoding}) ${contract}`, async () => {
           const { array, attrs, rootLoc, store } = await loadArrayWithAttrs(fixtureName, arrayPath);
           const decoder = new ArrayDecoder(new ArrayRefRegistry());
 
@@ -177,8 +196,12 @@ describe('Python-TypeScript encoded array round-trip', () => {
 
           expect(decoded.length).toBe(expected.flat_length);
           expect(decoded.length).toBe(shapeProduct(expected.decoded_shape));
-          assertSamples(decoded, expected);
-          expect(float32Sha256(decoded)).toBe(expected.float32_sha256);
+          if (logScalar) {
+            assertLogScalarSamplesNearPython(decoded, expected);
+          } else {
+            assertSamples(decoded, expected);
+            expect(float32Sha256(decoded)).toBe(expected.float32_sha256);
+          }
 
           const fullOperation = expected.operations.find((operation) => operation.kind === 'full');
           expect(fullOperation?.float32_sha256).toBe(expected.float32_sha256);
@@ -187,8 +210,16 @@ describe('Python-TypeScript encoded array round-trip', () => {
             const rangeDecoded = await decodeRange(array, attrs, store, operation);
             expect(rangeDecoded.length).toBe(operation.flat_length);
             expect(rangeDecoded.length).toBe(shapeProduct(operation.decoded_shape));
-            assertSamples(rangeDecoded, operation);
-            expect(float32Sha256(rangeDecoded)).toBe(operation.float32_sha256);
+            if (logScalar) {
+              assertLogScalarSamplesNearPython(rangeDecoded, operation);
+              const itemWidth = elementsPerItem(expected.decoded_shape);
+              const start = (operation.start ?? 0) * itemWidth;
+              const end = (operation.end ?? operation.start ?? 0) * itemWidth;
+              expect(float32Sha256(rangeDecoded)).toBe(float32Sha256(decoded.subarray(start, end)));
+            } else {
+              assertSamples(rangeDecoded, operation);
+              expect(float32Sha256(rangeDecoded)).toBe(operation.float32_sha256);
+            }
           }
         });
       }
