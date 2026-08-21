@@ -1847,16 +1847,18 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
         decode_log_scalar_u16(codes, maxLog, expected);
       }
 
-      const actual = decoder.dequantizeRange(codes, {
-        bounds: [0, maxLog],
-        dtype,
-        isLogSpace: true,
-      });
       const expectedBits = new Uint32Array(expected.buffer);
-      const actualBits = new Uint32Array(actual.buffer);
-      const firstMismatch = expectedBits.findIndex((bits, index) => bits !== actualBits[index]);
+      const firstMismatches = [codes, Float32Array.from(codes)].map((input) => {
+        const actual = decoder.dequantizeRange(input, {
+          bounds: [0, maxLog],
+          dtype,
+          isLogSpace: true,
+        });
+        const actualBits = new Uint32Array(actual.buffer);
+        return expectedBits.findIndex((bits, index) => bits !== actualBits[index]);
+      });
 
-      expect(firstMismatch).toBe(-1);
+      expect(firstMismatches).toEqual([-1, -1]);
     });
 
     it('maps index 0 → ~0 and max_int → ~1000 (expm1 inverse of log1p)', () => {
