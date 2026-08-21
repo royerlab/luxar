@@ -197,7 +197,7 @@ signatures and can never reach `**attrs`.
    substitutive door is `lod_group=` on the separate `add_gsplats_from_data`
    adder): delegate to the substitutive wrapper, whose coarse levels are
    synthesised gsplats (points/lines) or decimated meshes (mesh) under a
-   `kind=lod` group. Immediately before that wrapper write, validate an explicit
+   `kind=lod` group. Before that wrapper is written, validate an explicit
    `extend_to_all` once against the scene; `None` remains child-only because its
    candidate analysis warns once per written child. Fires before
    (auto-)partition.

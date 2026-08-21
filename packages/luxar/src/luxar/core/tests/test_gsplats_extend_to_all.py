@@ -1,4 +1,4 @@
-"""Tests for extend_to_all functionality in Scene.add_gsplats()."""
+"""Tests for extend_to_all functionality at geometry wrapper doors."""
 
 import warnings
 from typing import Any, cast

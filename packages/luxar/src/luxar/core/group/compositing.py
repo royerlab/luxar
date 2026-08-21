@@ -1,8 +1,9 @@
 """Compositing primitives used by Group's partition-wrapping path.
 
 These helpers are shared by the kind=partition and kind=lod wrapper builders
-(see ``adders/`` and ``gsplats_pipeline/``). They are pure data
-operations — no Group/Node references — and have no side effects.
+(see ``adders/`` and ``gsplats_pipeline/``). Most are pure data operations with
+no Group/Node references; :func:`preflight_extend_to_all` accepts the owning
+Scene solely for read-only validation before a wrapper write.
 
 Exposed:
 
@@ -25,6 +26,9 @@ Exposed:
   gate: the flat ``indexed`` layout/parity check, run before the channels.
 * :func:`position_bounds_from_array` — per-axis min/max of an (N, D)
   position array, in the writer's shape.
+* :func:`preflight_extend_to_all` — validate an explicit scene-level extension
+  spec before a wrapper is written, while leaving the warning-producing
+  ``None`` branch to each written child.
 * :func:`strip_absent_attr_kwargs` + :data:`ABSENT_WHEN_NONE_RENDER_ATTRS` —
   delete the caller-named keys whose present-but-``None`` value means ABSENT,
   and the leaf adders' set of them (``colormap`` / ``coverage_fraction``). The
