@@ -497,6 +497,12 @@ def _declared_levels(
     whose blocks are expected not to match: a stale declaration there explains
     why that block lost and is not a degraded selection to warn about.
 
+    Declared paths use the same canonicalisation as metadata matching. That rule
+    deliberately coerces non-string values: although NGFF requires a string,
+    producers that serialise every level as a number are recoverable, and using
+    one rule here prevents lookup and metadata selection from disagreeing about
+    which declaration names the chosen array.
+
     ``skip_groups`` excludes a declared candidate when any NON-LEAF path segment
     names one of those groups. The leaf is deliberately exempt: an array itself
     may legitimately have the same name as a reserved subgroup.
@@ -515,7 +521,7 @@ def _declared_levels(
     """
     import zarr
 
-    from luxar.io.ome_zarr import resolve_ngff_attrs
+    from luxar.io.ome_zarr import _normalised_dataset_path, resolve_ngff_attrs
 
     block = resolve_ngff_attrs(group.attrs).get("multiscales")
     if not (isinstance(block, list) and block and isinstance(block[0], dict)):
@@ -525,10 +531,13 @@ def _declared_levels(
         return []
     results: List[Tuple[str, Any, Any]] = []
     for entry in datasets:
-        rel = entry.get("path") if isinstance(entry, dict) else None
-        if not isinstance(rel, str) or not rel.strip("/"):
+        if not isinstance(entry, dict) or "path" not in entry:
             continue
-        rel = rel.strip("/")
+        raw = entry["path"]
+        display_rel = str(raw).strip("/")
+        if not display_rel:
+            continue
+        rel = _normalised_dataset_path(raw) or display_rel
         if not skip_groups.isdisjoint(rel.split("/")[:-1]):
             continue
         declared_path = f"{prefix}/{rel}" if prefix else rel

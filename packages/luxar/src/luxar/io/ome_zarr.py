@@ -604,6 +604,11 @@ def _normalised_dataset_path(raw: Any) -> str:
     a level's name, and zarr refuses such a path anyway. ``""`` never matches
     (:func:`_dataset_path_matches` requires a non-empty path), so an unspellable
     entry stays unmatched rather than becoming a bogus match for some other level.
+
+    NGFF requires ``path`` to be a string, but some producers serialise numeric
+    level names as numbers. Coercion is intentional compatibility policy, shared
+    by lookup and matching so malformed metadata cannot name different levels in
+    the two halves of selection.
     """
     path = str(raw).strip("/")
     if path.startswith("./"):
