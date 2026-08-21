@@ -909,10 +909,9 @@ def fit_tiled(
         # Said even on a quiet run: `--tiling uniform` asks for a
         # `kind=partition` merge by default, and nothing about the omission
         # reaches the store, so this notice is the only place it is ever stated.
-        # Keyed on the partition REQUEST, not on the shape the merge returned: a
-        # degenerate merge (a single surviving region, or none at all) hands back
-        # a matrix-shaped leaf, which is why the flatten step is worded as a
-        # condition rather than as a fact about this result.
+        # A degenerate partition request with one surviving region hands back a
+        # matrix-shaped leaf, so derive the compare recourse from the returned
+        # node rather than insisting on a no-op flatten step.
         is_partition = isinstance(merged, GSplatPartition)
         reason = (
             "the merged partition is a tree node with no fit-stats dict to stamp "
