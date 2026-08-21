@@ -437,9 +437,11 @@ describe('WASM vs TypeScript Comparison', () => {
         tsModule.decode_quantized_u16(data, minVal, maxVal, tsOutput);
         wasmModule!.decode_quantized_u16(data, minVal, maxVal, wasmOutput);
 
+        const tsBits = new Uint32Array(tsOutput.buffer);
+        const wasmBits = new Uint32Array(wasmOutput.buffer);
         let mismatchCount = 0;
         for (let i = 0; i < data.length; i++) {
-          if (tsOutput[i] !== wasmOutput[i]) mismatchCount++;
+          if (tsBits[i] !== wasmBits[i]) mismatchCount++;
         }
         expect(mismatchCount).toBe(0);
       }
