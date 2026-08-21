@@ -221,11 +221,12 @@ def _apply_axes_spec(
     ``axes`` is a comma-separated label per array dimension (e.g.
     ``"z,c,y,x"`` or ``"t,z,y,x"``). Recognised: time (``t``/``time``),
     channel (``c``/``channel``/``ch``/``camera``/``cam``), spatial
-    (``z``/``y``/``x``/``depth``/``height``/``width``). Each time/channel axis is
-    indexed (by ``timepoint``/``channel``, default 0) and dropped; the remaining
-    spatial axes are kept in their given order. This is the single-volume
-    counterpart of ``batch-fit submit --axes`` — it lets ``fit``/``cal`` consume
-    data whose axis order isn't the assumed TCZYX/CZYX/ZYX.
+    (``z``/``y``/``x``/``depth``/``height``/``width``). Time axes are indexed by
+    ``timepoint``; a flat ``channel`` index is decoded across all channel-like axes
+    in row-major order. Those axes are dropped and the remaining spatial axes stay
+    in their given order. This is the single-volume counterpart of ``batch-fit
+    submit --axes`` — it lets ``fit``/``cal`` consume data whose axis order isn't
+    the assumed TCZYX/CZYX/ZYX.
     """
     labels = [a.strip().lower() for a in axes.split(",") if a.strip() != ""]
     if len(labels) != arr.ndim:
@@ -235,11 +236,34 @@ def _apply_axes_spec(
         )
 
     kinds = [_axis_kind(label) for label in labels]
+    if sum(kind == "t" for kind in kinds) > 1:
+        raise ValueError(
+            f"--axes {axes!r} names more than one time axis; one --timepoint "
+            "cannot index them independently."
+        )
+    channel_indices = [i for i, kind in enumerate(kinds) if kind == "c"]
+    channel_shape = tuple(arr.shape[i] for i in channel_indices)
+    flat_channel = 0 if channel is None else int(channel)
+    try:
+        channel_coords = (
+            decode_flat_channel_index(flat_channel, channel_shape)
+            if channel_shape
+            else ()
+        )
+    except ValueError as exc:
+        channel_axes = ", ".join(f"{labels[i]}={arr.shape[i]}" for i in channel_indices)
+        raise ValueError(
+            f"--channel index {flat_channel} is invalid for channel-like axes "
+            f"{channel_axes}: {exc}"
+        ) from exc
+    channel_coord_by_axis = dict(zip(channel_indices, channel_coords))
     index: list = [slice(None)] * arr.ndim
     for i, k in enumerate(kinds):
         if k in ("t", "c"):
             which, idx = (
-                ("--timepoint", timepoint) if k == "t" else ("--channel", channel)
+                ("--timepoint", timepoint)
+                if k == "t"
+                else ("--channel", channel_coord_by_axis[i])
             )
             idx = 0 if idx is None else int(idx)
             size = arr.shape[i]
@@ -287,17 +311,19 @@ def load_volume(
 
     Args:
         path: Path to the volume file
-        channel: Channel index for 4D/5D+ OME-ZARR data. If None, defaults
-            to 0 when slicing is needed; for 4D arrays, ``None`` returns
-            the array as-is.
+        channel: Channel index for 4D/5D+ OME-ZARR data. With ``axes``, this is
+            a flat row-major index across every channel-like axis. If None,
+            defaults to 0 when slicing is needed; for 4D arrays without
+            ``axes``, ``None`` returns the array as-is.
         timepoint: Timepoint index for 5D+ OME-ZARR data. If None, defaults
             to 0 when slicing is needed; for 4D arrays, ``None`` returns
             the array as-is.
         array_key: Array key within .npz or .zarr files
         axes: Explicit per-dimension axis labels (e.g. ``"z,c,y,x"``) overriding
             the positional TCZYX/CZYX/ZYX heuristic — for data whose axis order
-            differs. Time/channel axes are sliced (by ``timepoint``/``channel``)
-            and dropped; spatial axes are kept in the given order.
+            differs. The single time axis is sliced by ``timepoint``; the flat
+            ``channel`` index is decoded across all channel-like axes. Those
+            axes are dropped and spatial axes are kept in the given order.
         info: Optional dict, populated with ``source_dtype`` — the element type
             of the array AS STORED, captured before the float32 cast below.
             This is the only place it is knowable: the returned array is always
