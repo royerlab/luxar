@@ -96,9 +96,7 @@ def test_the_packaged_manifest_lists_the_channels_the_demo_expects() -> None:
 
 
 def test_local_fit_paths_rejects_a_truncated_channel(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(
-        demo, "local_fit_path", lambda _dataset, name: tmp_path / name
-    )
+    monkeypatch.setattr(demo, "local_fit_path", lambda _dataset, name: tmp_path / name)
     for name in demo.GSPLATS_FILES:
         with zipfile.ZipFile(tmp_path / name, "w"):
             pass
@@ -108,9 +106,7 @@ def test_local_fit_paths_rejects_a_truncated_channel(tmp_path, monkeypatch) -> N
 
 
 def test_local_fit_paths_accepts_a_complete_zip_set(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(
-        demo, "local_fit_path", lambda _dataset, name: tmp_path / name
-    )
+    monkeypatch.setattr(demo, "local_fit_path", lambda _dataset, name: tmp_path / name)
     expected = [tmp_path / name for name in demo.GSPLATS_FILES]
     for path in expected:
         with zipfile.ZipFile(path, "w"):
