@@ -1,3 +1,20 @@
+/**
+ * Float32 transcendental math matching Rust/WASM's `libm` operation order.
+ *
+ * Ported from `libm` 0.2.15 `expf.rs` and `logf.rs`, which carry the FreeBSD
+ * msun `e_expf.c` and `e_logf.c` implementations. Kernels evaluating `exp` or
+ * `log` on an f32 must use `expf` or `logf`, never host `Math.exp` / `Math.log`.
+ *
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunPro, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
+
 const floatBitsView = new DataView(new ArrayBuffer(4));
 
 function floatToBits(value: number): number {
