@@ -124,8 +124,16 @@ def _edge_target(
     rhs = -quadric[:-1, -1]
     candidates = [positions[u], positions[v], 0.5 * (positions[u] + positions[v])]
     solved = _solve_system(matrix, rhs)
-    if solved is not None:
-        if np.isfinite(solved).all():
+    if solved is not None and np.isfinite(solved).all():
+        lower = np.minimum(positions[u], positions[v])
+        upper = np.maximum(positions[u], positions[v])
+        midpoint = candidates[-1]
+        edge_length = np.linalg.norm(positions[v] - positions[u])
+        if (
+            np.all(solved >= lower)
+            and np.all(solved <= upper)
+            and np.linalg.norm(solved - midpoint) <= edge_length
+        ):
             candidates.append(solved)
     costs = [_quadric_cost(candidate, quadric) for candidate in candidates]
     best = min(range(len(costs)), key=costs.__getitem__)
@@ -137,8 +145,10 @@ def _solve_system(
 ) -> NDArray[np.float64] | None:
     """Solve the common 3x3 QEM system without a small-array LAPACK call."""
     if matrix.shape != (3, 3):
+        if np.linalg.matrix_rank(matrix, tol=1e-12) < matrix.shape[0]:
+            return None
         try:
-            return np.linalg.solve(matrix, rhs)
+            return np.asarray(np.linalg.solve(matrix, rhs), dtype=np.float64)
         except np.linalg.LinAlgError:
             return None
     a, b, c = matrix[0]

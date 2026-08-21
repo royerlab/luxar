@@ -19,7 +19,13 @@ from ..decimate import (
     decimate_cluster,
     resolve_decimation_method,
 )
-from ..qem import _edge_target, _face_quadrics, decimate_qem, decimate_qem_ladder
+from ..qem import (
+    _edge_target,
+    _face_quadrics,
+    _solve_system,
+    decimate_qem,
+    decimate_qem_ladder,
+)
 
 
 def octasphere(subdivisions: int = 4) -> tuple[np.ndarray, np.ndarray]:
@@ -440,6 +446,56 @@ def test_the_cell_search_is_robust_to_non_monotone_cluster_counts() -> None:
 
 
 class TestDecimateQEM:
+    @pytest.mark.parametrize("ndim", [3, 4])
+    def test_small_system_solver_matches_numpy_and_rejects_rank_deficiency(
+        self, ndim: int
+    ) -> None:
+        rng = np.random.default_rng(1798 + ndim)
+        for condition in (1.0, 1e4, 1e8):
+            basis, _ = np.linalg.qr(rng.normal(size=(ndim, ndim)))
+            eigenvalues = np.geomspace(1.0, 1.0 / condition, ndim)
+            matrix = basis @ np.diag(eigenvalues) @ basis.T
+            rhs = rng.normal(size=ndim)
+
+            solved = _solve_system(matrix, rhs)
+
+            assert solved is not None
+            np.testing.assert_allclose(
+                solved, np.linalg.solve(matrix, rhs), rtol=1e-6, atol=1e-8
+            )
+
+        rank_deficient = np.eye(ndim, dtype=np.float64)
+        rank_deficient[-1] = rank_deficient[-2]
+        assert _solve_system(rank_deficient, np.ones(ndim)) is None
+
+    def test_a_flat_four_dimensional_ladder_stays_inside_its_input_bounds(
+        self,
+    ) -> None:
+        side = 20
+        vertices = np.array(
+            [(x, y, 0, 0) for y in np.linspace(0, 1, side) for x in np.linspace(0, 1, side)],
+            dtype=np.float32,
+        )
+        faces = []
+        for y in range(side - 1):
+            for x in range(side - 1):
+                a = y * side + x
+                b, c, d = a + 1, a + side, a + side + 1
+                faces.extend(((a, b, d), (a, d, c)))
+
+        levels = decimate_qem_ladder(
+            vertices,
+            np.asarray(faces, dtype=np.uint32),
+            target_vertices=[25, 100],
+            spatial_dims=(0, 1, 2, 3),
+        )
+
+        lower = vertices.min(axis=0)
+        upper = vertices.max(axis=0)
+        for level in levels:
+            assert np.all(level.vertices >= lower)
+            assert np.all(level.vertices <= upper)
+
     def test_a_ladder_reuses_one_collapse_sequence(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
