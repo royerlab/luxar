@@ -506,9 +506,11 @@ describe('WASM vs TypeScript Comparison', () => {
     it
       .skipIf(!wasmFilesExist)
       .each(
-        ['u8', 'u16'].flatMap((label) =>
-          [Math.log(2), Math.log(10), Math.log(1e5)].map((maxLog) => ({ label, maxLog }))
-        )
+        ['u8', 'u16']
+          .flatMap((label) =>
+            [Math.log(2), Math.log(10), Math.log(1e5)].map((maxLog) => ({ label, maxLog }))
+          )
+          .concat({ label: 'u8', maxLog: 1.3732879469562715 })
       )(
       'decode_log_scalar_$label should stay within one ULP across every code at maxLog=$maxLog',
       ({ label, maxLog }) => {
