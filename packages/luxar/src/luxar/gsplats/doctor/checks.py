@@ -207,12 +207,16 @@ def _recover_frame_scale(
     """
     from luxar.core.group.partition import (
         map_serialized_bsp_tree,
+        serialized_bsp_tree_axis_overlap_floors,
         serialized_bsp_tree_straddles_centers,
     )
 
+    overlap_floors = serialized_bsp_tree_axis_overlap_floors(stored, boxes)
+    if overlap_floors is None:
+        return None
     ratios: Dict[int, List[float]] = {0: [], 1: [], 2: []}
     ranges: Dict[int, List[Tuple[float, float]]] = {0: [], 1: [], 2: []}
-    if not _collect_frame_scale_ranges(stored, boxes, ratios, ranges):
+    if not _collect_frame_scale_ranges(stored, boxes, overlap_floors, ratios, ranges):
         return None
     factors = _resolve_frame_factors(ratios, ranges, len(boxes[0][0]))
     if factors is None:
@@ -226,6 +230,7 @@ def _recover_frame_scale(
 def _collect_frame_scale_ranges(
     node: Dict[str, Any],
     boxes: "List[Tuple[np.ndarray, np.ndarray]]",
+    overlap_floors: "Tuple[float, float, float]",
     ratios: Dict[int, List[float]],
     ranges: Dict[int, List[Tuple[float, float]]],
 ) -> bool:
@@ -244,20 +249,27 @@ def _collect_frame_scale_ranges(
         right_low = min(float(boxes[i][0][axis]) for i in right)
     except (KeyError, TypeError, ValueError, IndexError, OverflowError):
         return False
+    overlap = max(overlap_floors[axis], left_high - right_low)
+    band_low, band_high = sorted((right_low, left_high))
+    band_low -= overlap
+    band_high += overlap
     if split == 0.0:
-        low, high = sorted((right_low, left_high))
-        valid = low <= 0.0 <= high
+        valid = band_low <= 0.0 <= band_high
     else:
         ratio = 0.5 * (left_high + right_low) / split
-        low, high = sorted((right_low / split, left_high / split))
+        low, high = sorted((band_low / split, band_high / split))
         valid = np.isfinite(ratio) and ratio > 0.0 and high > 0.0
         if valid:
             ratios[axis].append(ratio)
             ranges[axis].append((max(low, np.nextafter(0.0, 1.0)), high))
     return (
         valid
-        and _collect_frame_scale_ranges(node["left"], boxes, ratios, ranges)
-        and _collect_frame_scale_ranges(node["right"], boxes, ratios, ranges)
+        and _collect_frame_scale_ranges(
+            node["left"], boxes, overlap_floors, ratios, ranges
+        )
+        and _collect_frame_scale_ranges(
+            node["right"], boxes, overlap_floors, ratios, ranges
+        )
     )
 
 
@@ -276,7 +288,9 @@ def _resolve_frame_factors(
         if low > high:
             return None
         estimate = float(np.median(ratios[axis]))
-        factors.append(min(max(estimate, low), high))
+        if not low <= estimate <= high:
+            return None
+        factors.append(estimate)
     return tuple(factors)
 
 

@@ -455,6 +455,10 @@ class TestSplitPlanesCheck:
             assert finding.severity == "error"
             assert finding.fixable
 
+            repaired = diagnose_store(path, fix=True)
+            assert repaired.healthy
+            assert _root_attrs(path)["bsp_tree"] == before
+
     def test_an_approximate_tree_is_recovered_without_overclaiming_scale(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = _uniform_tiled_store(Path(tmp))

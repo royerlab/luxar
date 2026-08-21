@@ -30,7 +30,8 @@ This module hosts:
   polyline-atomic variants for ``add_lines``.
 * :func:`prune_serialized_bsp_tree` / :func:`map_serialized_bsp_tree` /
   :func:`reconstruct_serialized_bsp_tree` / :func:`serialized_bsp_tree_separates` /
-  :func:`serialized_bsp_tree_straddles_centers`
+  :func:`serialized_bsp_tree_straddles_centers` /
+  :func:`serialized_bsp_tree_axis_overlap_floors`
   — the algebra on the *serialized* (``bsp_tree`` attr) form of that tree:
   renumbering it after empty regions are dropped, mapping its split coordinates
   through an affine on the centers (or refusing, when the affine is not
@@ -503,11 +504,30 @@ def serialized_bsp_tree_straddles_centers(
         labels = serialized_bsp_leaf_labels(tree)
         if sorted(labels) != list(range(len(boxes))):
             return False
-        overlap_floors = [0.0, 0.0, 0.0]
-        _collect_axis_overlap_floors(tree, boxes, overlap_floors)
+        overlap_floors = serialized_bsp_tree_axis_overlap_floors(tree, boxes)
+        if overlap_floors is None:
+            return False
         return _node_straddles_centers(tree, boxes, overlap_floors)
     except (KeyError, TypeError, ValueError, IndexError, OverflowError):
         return False
+
+
+def serialized_bsp_tree_axis_overlap_floors(
+    tree: Optional[Dict[str, Any]],
+    boxes: "Sequence[tuple[NDArray[np.floating], NDArray[np.floating]]]",
+) -> "Optional[Tuple[float, float, float]]":
+    """Largest measured part-box interpenetration on each serialized axis."""
+    if tree is None:
+        return None
+    try:
+        labels = serialized_bsp_leaf_labels(tree)
+        if sorted(labels) != list(range(len(boxes))):
+            return None
+        overlap_floors = [0.0, 0.0, 0.0]
+        _collect_axis_overlap_floors(tree, boxes, overlap_floors)
+        return overlap_floors[0], overlap_floors[1], overlap_floors[2]
+    except (KeyError, TypeError, ValueError, IndexError, OverflowError):
+        return None
 
 
 def _collect_axis_overlap_floors(
