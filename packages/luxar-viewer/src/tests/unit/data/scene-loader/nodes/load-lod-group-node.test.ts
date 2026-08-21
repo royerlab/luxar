@@ -441,6 +441,7 @@ describe('loadLodGroupNode — registry registration', () => {
     ['non-empty', { min: [], max: [] }],
     ['equal min/max lengths', { min: [-1, -1, -1], max: [1, 1] }],
     ['3 values per bound', { min: [-1, -1], max: [1, 1] }],
+    ['numeric entries', { min: [0, 0, 'bad'], max: [1, 1, 1] }],
     ['finite numbers', { min: [0, 0, Number.NaN], max: [1, 1, 1] }],
     ['ordered bounds', { min: [0, 0.8, 0], max: [1, 0.2, 1] }],
     ['bounds contained in position_bounds', { min: [-1, 0, 0], max: [1, 1, 1] }],

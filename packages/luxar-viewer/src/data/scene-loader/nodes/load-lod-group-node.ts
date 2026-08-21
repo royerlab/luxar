@@ -11,8 +11,9 @@
  *      ladders span [0, 1/2], a partition tile anchors at 1.0 — or the legacy
  *      diagonal metric under ``'coverage'``, up to 4.0 ==
  *      ``SCREEN_FILL_DIAGONAL_RATIO / FILL_FACTOR``)
- *      plus its own ``position_bounds`` (the raw nD AABB). Both are read from
- *      the child's zarr attrs.
+ *      plus its own ``position_bounds`` (the raw nD AABB) and optional
+ *      ``lod_bounds`` (a robust selector-only AABB). All are read from the
+ *      child's zarr attrs.
  *      Legacy (pre-v3.2) datasets that still carry ``min_pixel_size`` /
  *      selector ``'pixel_size'`` are auto-adapted with a warning
  *      (see ``resolveCoverageFractions``).
@@ -34,8 +35,9 @@
  * matters for their substitutive ladders, whose finest child is the full
  * cloud / line set / full-resolution surface (eager-loading it would defeat
  * progressive loading). The selector math needs
- * only the per-child ``coverage_fraction`` / ``position_bounds`` attrs (read here),
- * not loaded geometry, so deferral is fully correct.
+ * only the per-child ``coverage_fraction`` / ``position_bounds`` / optional
+ * ``lod_bounds`` attrs (read here), not loaded geometry, so deferral is fully
+ * correct.
  *
  * Sibling of `data/scene-loader/nodes/load-scene-nodes.ts` (dispatch),
  * `data/scene-loader/nodes/load-gsplats-node.ts` +
@@ -307,7 +309,7 @@ function readLodBounds(
   const max = raw.max;
   for (let i = 0; i < min.length; i++) {
     if (typeof min[i] !== 'number' || typeof max[i] !== 'number') {
-      return reject('finite numbers');
+      return reject('numeric entries');
     }
     if (!Number.isFinite(min[i]) || !Number.isFinite(max[i])) return reject('finite numbers');
     if (min[i] > max[i]) return reject('ordered bounds');
