@@ -436,9 +436,7 @@ class TestAddPartitionGroup:
             assert grp.attrs["max_elements"] == 500
 
         store = zarr.open(str(tmp_path / "t.luxar.zarr"), mode="r")
-        attrs = store["manual"].attrs
-        assert attrs["type"] == "group"
-        assert attrs["kind"] == "partition"
+        assert "manual" not in store
 
     def test_invalid_display_type_rejected(self, tmp_path) -> None:
         with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:

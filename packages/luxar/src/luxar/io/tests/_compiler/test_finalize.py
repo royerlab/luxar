@@ -26,30 +26,52 @@ from luxar.io._compiler.finalize.lod_backfill import (
     warn_one_part_partition_anchors,
 )
 from luxar.io._compiler.finalize.validation import (
+    prune_childless_wrappers,
     validate_discrete_dimension_ranges,
-    validate_wrapper_children,
 )
 from luxar.typing_utils._format_contract import GEOMETRY_TYPES
 from luxar.typing_utils.geometry_capabilities import lod_capable_types
 
 
 @pytest.mark.parametrize("kind", ["partition", "lod"])
-def test_validate_wrapper_children_rejects_childless_wrapper(kind: str) -> None:
+def test_prune_childless_wrappers_removes_childless_wrapper(kind: str) -> None:
     root = zarr.group()
     wrapper = root.create_group("broken")
     wrapper.attrs["kind"] = kind
 
-    with pytest.raises(ValueError, match=rf"Childless kind={kind} wrapper at 'broken'"):
-        validate_wrapper_children(root)
+    with pytest.warns(UserWarning, match=rf"childless kind={kind} wrapper at 'broken'"):
+        prune_childless_wrappers(root)
+
+    assert "broken" not in root
 
 
-def test_validate_wrapper_children_accepts_populated_wrapper() -> None:
+def test_prune_childless_wrappers_accepts_populated_wrapper() -> None:
     root = zarr.group()
     wrapper = root.create_group("valid")
     wrapper.attrs["kind"] = "partition"
     wrapper.create_group("part_0")
 
-    validate_wrapper_children(root)
+    prune_childless_wrappers(root)
+
+    assert "valid" in root
+
+
+def test_prune_childless_wrappers_removes_empty_wrapper_chain_post_order() -> None:
+    root = zarr.group()
+    lod = root.create_group("lod")
+    lod.attrs["kind"] = "lod"
+    partition = lod.create_group("partition")
+    partition.attrs["kind"] = "partition"
+
+    with pytest.warns(UserWarning) as warnings_seen:
+        prune_childless_wrappers(root)
+
+    assert "lod" not in root
+    assert [str(item.message) for item in warnings_seen] == [
+        "Pruning childless kind=partition wrapper at 'lod/partition'; "
+        "it was created but never populated.",
+        "Pruning childless kind=lod wrapper at 'lod'; it was created but never populated.",
+    ]
 
 
 def _lod_tree() -> zarr.Group:

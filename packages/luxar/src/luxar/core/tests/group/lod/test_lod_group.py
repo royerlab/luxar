@@ -75,11 +75,7 @@ class TestAddLodGroup:
             assert lod.attrs["default_level"] == 0
 
         store = zarr.open(str(output_path), mode="r")
-        attrs = store["multires"].attrs
-        assert attrs["type"] == "group"
-        assert attrs["kind"] == "lod"
-        assert attrs["selector"] == "coverage"
-        assert attrs["default_level"] == 0
+        assert "multires" not in store
 
     def test_add_lod_group_with_explicit_default_level(self, tmp_path) -> None:
         """The default_level kwarg lands on the zarr attrs."""
@@ -90,7 +86,7 @@ class TestAddLodGroup:
             scene.add_lod_group("multires", default_level=2)
 
         store = zarr.open(str(output_path), mode="r")
-        assert store["multires"].attrs["default_level"] == 2
+        assert "multires" not in store
 
     def test_add_lod_group_children_are_subgroups_with_coverage_fraction(
         self, tmp_path
@@ -135,9 +131,7 @@ class TestAddLodGroup:
             g.add_lod_group("multires")
 
         store = zarr.open(str(output_path), mode="r")
-        nested = store["scene_root"]["multires"]
-        assert nested.attrs["type"] == "group"
-        assert nested.attrs["kind"] == "lod"
+        assert "multires" not in store["scene_root"]
 
 
 # ────────────────────────────────────────────────────────────────────────
@@ -167,7 +161,7 @@ class TestLODGroupValidation:
             assert lod.attrs["selector"] == "screen-area"
 
         store = zarr.open(str(output_path), mode="r")
-        assert store["multires"].attrs["selector"] == "screen-area"
+        assert "multires" not in store
 
     def test_negative_default_level_rejected(self, tmp_path) -> None:
         with LuxarZarrCompiler(tmp_path / "x.luxar.zarr") as compiler:

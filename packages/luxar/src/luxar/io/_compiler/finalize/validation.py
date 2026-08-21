@@ -1,4 +1,4 @@
-"""Finalize-time validation: discrete-dimension range vs. data-extent checks."""
+"""Finalize-time tree cleanup and discrete-dimension validation."""
 
 from __future__ import annotations
 
@@ -8,17 +8,26 @@ from typing import Dict, List, Optional
 import zarr
 
 
-def validate_wrapper_children(store: zarr.Group) -> None:
-    """Reject childless partition/LOD wrappers before publishing the scene."""
+def prune_childless_wrappers(store: zarr.Group) -> None:
+    """Remove childless partition/LOD wrappers before publishing the scene."""
 
-    def visit(group: zarr.Group, path: str) -> None:
-        kind = group.attrs.get("kind")
+    def visit(group: zarr.Group, path: str) -> bool:
         child_names = list(group.group_keys())
-        if kind in {"partition", "lod"} and not child_names:
-            raise ValueError(f"Childless kind={kind} wrapper at '{path}'")
         for child_name in child_names:
             child_path = f"{path}/{child_name}" if path else child_name
-            visit(group[child_name], child_path)
+            if visit(group[child_name], child_path):
+                del group[child_name]
+
+        kind = group.attrs.get("kind")
+        if path and kind in {"partition", "lod"} and not list(group.group_keys()):
+            warnings.warn(
+                f"Pruning childless kind={kind} wrapper at '{path}'; "
+                "it was created but never populated.",
+                UserWarning,
+                stacklevel=3,
+            )
+            return True
+        return False
 
     visit(store, "")
 
