@@ -441,6 +441,11 @@ _DROPS_SUBLOD_STATS = {"decimate_prefix", "decimate_merge", "decimate_full_count
 #: assert the shared metric set, which the top-level dict carries.
 _REBUILDS_SUBLOD_FROM_TOP = {"flattened"}
 
+# These crops empty the second rung of ``_laddered``. Structural pruning drops
+# the surviving rung's e(k), because it no longer describes the completed
+# ladder; ordinary content rewrites that keep every rung still preserve e(k).
+_PRUNES_EMPTY_SUBLOD = {"filter_by_bbox_crop", "slice_by_crop"}
+
 _PARAMS = [pytest.param(cid, op, ch, id=cid) for cid, _m, op, ch in _CASES]
 
 
@@ -523,11 +528,15 @@ def test_sublod_dicts_follow_the_top_level(
                 f"stale measured scores survived in sub-LOD {i}: {sorted(survivors)}"
             )
             if case_id not in _DROPS_SUBLOD_STATS | _REBUILDS_SUBLOD_FROM_TOP:
-                # ...and the rung's own Q·e stamp is NOT collateral: it is
-                # measured on this rung's content and is out of scope here.
-                assert lod.stats["energy_fraction_cum"] == 0.6923, (
-                    f"sub-LOD {i} lost its e(k) to the PSNR scrub"
-                )
+                if case_id in _PRUNES_EMPTY_SUBLOD:
+                    assert out.n_additive_sublods == 1
+                    assert "energy_fraction_cum" not in lod.stats
+                else:
+                    # ...and the rung's own Q·e stamp is NOT collateral when
+                    # the ladder shape survives the rewrite.
+                    assert lod.stats["energy_fraction_cum"] == 0.6923, (
+                        f"sub-LOD {i} lost its e(k) to the PSNR scrub"
+                    )
         elif case_id not in _DROPS_SUBLOD_STATS:
             for key, value in _METRICS.items():
                 assert lod.stats[key] == value, (
@@ -1028,3 +1037,4 @@ def test_every_rewrite_method_is_classified() -> None:
     assert any(ch for _c, _m, _o, ch in _CASES)
     assert any(not ch for _c, _m, _o, ch in _CASES)
     assert _DROPS_SUBLOD_STATS <= set(ids), "a stats-free exemption names no case"
+    assert _PRUNES_EMPTY_SUBLOD <= set(ids), "a prune exemption names no case"
