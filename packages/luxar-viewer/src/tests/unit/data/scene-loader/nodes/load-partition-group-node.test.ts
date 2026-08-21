@@ -327,6 +327,34 @@ describe('loadPartitionGroupNode', () => {
     expect(wrapper.userData.bspTree).toBeUndefined();
   });
 
+  it.each([
+    ['duplicates a leaf label', { axis: 0, split: 0, left: { part: 0 }, right: { part: 0 } }],
+    ['uses an absent 2D axis', { axis: 2, split: 0, left: { part: 0 }, right: { part: 1 } }],
+    ['has no right subtree', { axis: 0, split: 0, left: { part: 0 } }],
+  ])('drops a malformed bsp_tree that %s', async (_reason, bspTree) => {
+    attachStubChildren();
+    const ctx = makeCtx();
+    const parts = [
+      makePartNode('/partition/part_0', 'points', {
+        position_bounds: { min: [-2, 0], max: [0.5, 1] },
+      }),
+      makePartNode('/partition/part_1', 'points', {
+        position_bounds: { min: [-0.5, 0], max: [2, 1] },
+      }),
+    ];
+    const node = makePartitionGroupNode(parts, { bsp_tree: bspTree });
+
+    const wrapper = await loadPartitionGroupNode(
+      node,
+      new THREE.Group(),
+      makeStubLoc(),
+      ctx,
+      loadSceneNodesMock
+    );
+
+    expect(wrapper.userData.bspTree).toBeUndefined();
+  });
+
   it('drops a bsp_tree when part bounds are missing or malformed', async () => {
     attachStubChildren();
     const ctx = makeCtx();

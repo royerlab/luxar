@@ -35,6 +35,13 @@ interface PositionBounds {
   max: readonly number[];
 }
 
+interface BspBoundsSummary {
+  minCenter: number[];
+  maxCenter: number[];
+  minLow: number[];
+  maxHigh: number[];
+}
+
 function partIndexForChild(child: SceneNode, loadIndex: number): number {
   return (child.attrs?.child_index as number | undefined) ?? loadIndex;
 }
@@ -78,13 +85,44 @@ function indexedPartBounds(children: SceneNode[]): PositionBounds[] | null {
     : null;
 }
 
-function straddlingLeafLabels(node: unknown, bounds: PositionBounds[]): number[] | null {
+function summarizeLeaf(bounds: PositionBounds): BspBoundsSummary {
+  const center = bounds.min.map((low, axis) => 0.5 * (low + bounds.max[axis]));
+  return {
+    minCenter: center.slice(),
+    maxCenter: center,
+    minLow: [...bounds.min],
+    maxHigh: [...bounds.max],
+  };
+}
+
+function mergeSummaries(left: BspBoundsSummary, right: BspBoundsSummary): BspBoundsSummary {
+  return {
+    minCenter: left.minCenter.map((value, axis) => Math.min(value, right.minCenter[axis])),
+    maxCenter: left.maxCenter.map((value, axis) => Math.max(value, right.maxCenter[axis])),
+    minLow: left.minLow.map((value, axis) => Math.min(value, right.minLow[axis])),
+    maxHigh: left.maxHigh.map((value, axis) => Math.max(value, right.maxHigh[axis])),
+  };
+}
+
+function summarizeStraddlingTree(
+  node: unknown,
+  bounds: PositionBounds[],
+  seenParts: boolean[]
+): BspBoundsSummary | null {
   if (!node || typeof node !== 'object') return null;
   const record = node as Record<string, unknown>;
   if (Object.prototype.hasOwnProperty.call(record, 'part')) {
-    return Number.isInteger(record.part) && (record.part as number) >= 0
-      ? [record.part as number]
-      : null;
+    const part = record.part;
+    if (
+      !Number.isInteger(part) ||
+      (part as number) < 0 ||
+      (part as number) >= bounds.length ||
+      seenParts[part as number]
+    ) {
+      return null;
+    }
+    seenParts[part as number] = true;
+    return summarizeLeaf(bounds[part as number]);
   }
 
   const axis = record.axis;
@@ -100,44 +138,26 @@ function straddlingLeafLabels(node: unknown, bounds: PositionBounds[]): number[]
     return null;
   }
 
-  const leftLabels = straddlingLeafLabels(record.left, bounds);
-  const rightLabels = straddlingLeafLabels(record.right, bounds);
-  if (!leftLabels || !rightLabels) return null;
-  const labels = [...leftLabels, ...rightLabels];
-  if (labels.some((part) => part >= bounds.length)) return null;
+  const left = summarizeStraddlingTree(record.left, bounds, seenParts);
+  const right = summarizeStraddlingTree(record.right, bounds, seenParts);
+  if (!left || !right) return null;
 
   const splitAxis = axis as number;
-  let leftCenter = -Infinity;
-  let rightCenter = Infinity;
-  let leftHigh = -Infinity;
-  let rightLow = Infinity;
-  for (const part of leftLabels) {
-    leftCenter = Math.max(
-      leftCenter,
-      0.5 * (bounds[part].min[splitAxis] + bounds[part].max[splitAxis])
-    );
-    leftHigh = Math.max(leftHigh, bounds[part].max[splitAxis]);
+  const overlap = Math.max(0, left.maxHigh[splitAxis] - right.minLow[splitAxis]);
+  if (split < left.maxCenter[splitAxis] - overlap || split > right.minCenter[splitAxis] + overlap) {
+    return null;
   }
-  for (const part of rightLabels) {
-    rightCenter = Math.min(
-      rightCenter,
-      0.5 * (bounds[part].min[splitAxis] + bounds[part].max[splitAxis])
-    );
-    rightLow = Math.min(rightLow, bounds[part].min[splitAxis]);
-  }
-  const overlap = Math.max(0, leftHigh - rightLow);
-  if (split < leftCenter - overlap || split > rightCenter + overlap) return null;
-  return labels;
+  return mergeSummaries(left, right);
 }
 
 function validatedBspTree(tree: unknown, children: SceneNode[]): BspTreeNode | undefined {
   const bounds = indexedPartBounds(children);
   if (!bounds) return undefined;
   try {
-    const labels = straddlingLeafLabels(tree, bounds);
-    if (!labels || labels.length !== bounds.length) return undefined;
-    labels.sort((a, b) => a - b);
-    if (labels.some((label, index) => label !== index)) return undefined;
+    const seenParts = new Array<boolean>(bounds.length).fill(false);
+    if (!summarizeStraddlingTree(tree, bounds, seenParts) || !seenParts.every(Boolean)) {
+      return undefined;
+    }
     return tree as BspTreeNode;
   } catch {
     return undefined;
