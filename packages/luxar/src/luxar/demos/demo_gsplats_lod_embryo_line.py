@@ -102,7 +102,6 @@ DEMO_META = {
     "citation": {
         "short": "Barry 2021 (GIANI)",
         "doi": "10.5281/zenodo.5270323",
-        "license": "CC BY 4.0",
     },
 }
 
