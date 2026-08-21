@@ -331,10 +331,9 @@ def discover_ome_zarr_shape(
             coarser pyramid level reports its own spacing, not level 0's, and
             that holds for the auto path too (which can perfectly well land on a
             coarser level, e.g. when level 0's declared path does not resolve).
-            The price is that a block whose ``datasets[*].path`` spells the
-            selected array non-canonically (``"./0"`` for the array at ``"0"``)
-            no longer matches, and reports no spacing rather than level 0's; see
-            :func:`_selected_dataset`.
+            The match is exact, but on the NORMALISED spellings, so a block
+            writing its own levels explicitly relative (``"./0"`` for the array at
+            ``"0"``) still names them; see :func:`_selected_dataset`.
 
     Returns:
         :class:`OMEZarrInfo` with discovered metadata.
