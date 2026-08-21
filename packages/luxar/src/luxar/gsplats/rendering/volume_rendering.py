@@ -167,8 +167,8 @@ def render_to_volume(
     shape : Tuple[int, ...]
         Output volume shape (e.g., (128, 128, 128) for 3D).
     device : str, optional
-        Device to use for rendering. If None, auto-detects the best device.
-        Options: "cuda", "mps", "cpu".
+        Device to use for rendering. ``None`` and ``"auto"`` auto-detect the
+        best device. Options: "auto", "cuda", "mps", "cpu".
     truncate : float, default=DEFAULT_TRUNCATION_RADIUS
         Truncation radius in standard deviations. Gaussians are evaluated within
         this radius from their centers.
