@@ -17,6 +17,7 @@ def resolve_deferred_batch_floor(output_dir: Path) -> None:
 
     from luxar.cli.gsplat_ops.batch.planning import resolve_batch_floor
     from luxar.gsplats.batch.manifest import load_manifest, save_manifest
+    from luxar.gsplats.batch.slurm_gen import _preprocessed_axes
 
     manifest = load_manifest(output_dir)
     if not manifest.floor_deferred:
@@ -24,15 +25,16 @@ def resolve_deferred_batch_floor(output_dir: Path) -> None:
 
     if manifest.denoise_mode == "preprocess":
         source = Path(manifest.denoised_zarr_path or output_dir / "denoised.zarr")
-        spatial_axes = ["z", "y", "x"][-len(manifest.spatial_shape) :]
+        canonical_axes = _preprocessed_axes(manifest)
+        axes_labels = canonical_axes.split(",") if canonical_axes is not None else None
         level, forward = resolve_batch_floor(
             source,
             manifest.floor_spec,
             n_timepoints=manifest.n_timepoints,
             n_channels=manifest.n_channels,
             array_key="data",
-            axes=",".join(["time", "channel", *spatial_axes]),
-            axes_labels=["time", "channel", *spatial_axes],
+            axes=canonical_axes,
+            axes_labels=axes_labels,
             channel_shape=(manifest.n_channels,),
             spatial_shape=tuple(manifest.spatial_shape),
         )

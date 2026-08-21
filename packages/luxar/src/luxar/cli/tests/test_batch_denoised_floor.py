@@ -84,9 +84,10 @@ def test_preprocess_floor_passes_lazy_axis_metadata(
     monkeypatch.setattr(planning, "_pinned_slice_volume", _view)
     manifest = BatchManifest(
         output_dir=str(tmp_path),
+        axes="channel,time,x,y",
         n_timepoints=1,
         n_channels=1,
-        spatial_shape=[4, 4, 4],
+        spatial_shape=[4, 4],
         denoise=True,
         denoise_mode="preprocess",
         denoised_zarr_path=str(tmp_path / "denoised.zarr"),
