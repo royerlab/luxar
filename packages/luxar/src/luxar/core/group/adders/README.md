@@ -197,15 +197,23 @@ signatures and can never reach `**attrs`.
    substitutive door is `lod_group=` on the separate `add_gsplats_from_data`
    adder): delegate to the substitutive wrapper, whose coarse levels are
    synthesised gsplats (points/lines) or decimated meshes (mesh) under a
-   `kind=lod` group. Fires before (auto-)partition.
+   `kind=lod` group. Before that wrapper is written, validate an explicit
+   `extend_to_all` once against the scene; `None` remains child-only because its
+   candidate analysis warns once per written child. Fires before
+   (auto-)partition.
 7. **Resolve auto-partition** via `resolve_auto_partition(scene, n, partition)`
    — an opt-in compiler heuristic (default off). A user-explicit `partition=`
    always wins. (Lines does not yet wire the auto-partition heuristic; it
    honors only explicit `partition=`.)
 8. **Partition branch** (when `partition` is set and `D >= 2`): run a BSP
    (`median` / `midpoint` / `sah`) capped at `max_elements`, and if it yields
-   more than one part, delegate to the partition wrapper. A single part falls
-   through to the regular write.
+   more than one part, validate an explicit `extend_to_all` immediately before
+   delegating to the partition wrapper. The preflight sits below partition-spec,
+   image-label, topology and split resolution so those existing faults keep
+   precedence, but still above the wrapper write; `None` remains child-only to
+   avoid an extra advisory warning. Mesh is the exception: its shared
+   `extend_to_all` resolution already runs above the structural branches in
+   `mesh.py:add_mesh_impl`. A single part falls through to the regular write.
 9. **Additive-LOD branch** (points/lines/mesh, when `additive_lod` is set —
    GSplats has no `additive_lod=` on `add_gsplats`; its own additive door is
    `additive_lod=` on the separate `add_gsplats_from_data` adder): build
@@ -287,15 +295,15 @@ channel added to a writer's gate is covered here too. Without the gate
 whose own count happens to match accepts it, so the write succeeds with values on
 the wrong elements. Mesh does the same thing in `_validate_partition_sources`;
 the gate belongs at the top of the wrapper, never the leaf adder — that
-placement is still correct for the CHANNEL gate on its own. Two other checks
-now outrank it, though, and both sit at the adder entry, above the branch
-that enters this wrapper: the scene-dimension count (#1446), and the
-node-attrs gate (`validate_render_attrs`, see step 5 of "Add-Path
-Anatomy") — since #1529 for Points/Lines and #1534 for Mesh/GSplats. So a
-call that also trips one of those reports THAT fault first, not the channel
-one; only once both have passed does a wrong-length channel get reported
-here. This is not an accident of hoisting order: it mirrors the flat writer's
-own step ordering (node attrs at step 0a, the channel sweep at steps 0d–0f
+placement is still correct for the CHANNEL gate on its own. Three checks now
+outrank it: the scene-dimension count (#1446) and node-attrs gate
+(`validate_render_attrs`, see step 5 of "Add-Path Anatomy") sit at the adder
+entry, while the explicit `extend_to_all` preflight sits at each split branch
+immediately before the wrapper hand-off. So a call that also trips one of those
+reports THAT fault first, not the channel one; only once all three have passed
+does a wrong-length channel get reported here. This is not an accident of
+hoisting order: it mirrors the flat writer's own step ordering (node attrs at
+step 0a, `extend_to_all` before the write, then the channel sweep at steps 0d–0f
 for Points / 0e–0h for Lines — see `geometry_writers/points.py` /
 `geometry_writers/lines.py`), so the split paths now agree
 with the flat path where, before #1529/#1534, they disagreed (a split call
