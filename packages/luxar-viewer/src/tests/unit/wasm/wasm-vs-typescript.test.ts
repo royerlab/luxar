@@ -1252,11 +1252,14 @@ describe('WASM vs TypeScript Comparison', () => {
     });
 
     it.skipIf(!wasmFilesExist)('interpolate_clipped_positions should match', () => {
-      const positions = new Float32Array([-4.11237096786499, 0, 0, 0, 0.3802664279937744, 0, 0, 0]);
+      const positions = new Float32Array([
+        -4.11237096786499, 3.7138946056365967, -2.3870370388031006, 0, 0.3802664279937744,
+        -4.748578071594238, 1.6990193128585815, 0,
+      ]);
       const segments = new Uint32Array([0, 1]);
       const visibility = new Uint8Array([1]);
       const t1Params = new Float32Array([0.8854133486747742]);
-      const t2Params = new Float32Array([0.8854133486747742]);
+      const t2Params = new Float32Array([0.5823075771331787]);
       const displayDims = new Uint32Array([0, 1, 2]);
 
       const tsStart = new Float32Array(3);
@@ -1299,7 +1302,7 @@ describe('WASM vs TypeScript Comparison', () => {
       const segments = new Uint32Array([0, 1]);
       const visibility = new Uint8Array([1]);
       const t1Params = new Float32Array([0.8854133486747742]);
-      const t2Params = new Float32Array([0.8854133486747742]);
+      const t2Params = new Float32Array([0.5823075771331787]);
 
       const tsStart = new Float32Array(1);
       const tsEnd = new Float32Array(1);
@@ -1333,11 +1336,14 @@ describe('WASM vs TypeScript Comparison', () => {
     });
 
     it.skipIf(!wasmFilesExist)('interpolate_colors_batch should match', () => {
-      const colors = new Float32Array([-4.11237096786499, 0, 0, 0.3802664279937744, 0, 0]);
+      const colors = new Float32Array([
+        -4.11237096786499, 3.7138946056365967, -2.3870370388031006, 0.3802664279937744,
+        -4.748578071594238, 1.6990193128585815,
+      ]);
       const segments = new Uint32Array([0, 1]);
       const visibility = new Uint8Array([1]);
       const t1Params = new Float32Array([0.8854133486747742]);
-      const t2Params = new Float32Array([0.8854133486747742]);
+      const t2Params = new Float32Array([0.5823075771331787]);
 
       const tsStart = new Float32Array(3);
       const tsEnd = new Float32Array(3);
