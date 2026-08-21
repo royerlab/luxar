@@ -35,9 +35,8 @@
  * It lives here, in the layer-neutral `types/`, rather than in `rendering/`
  * because `config/url-params.ts` must both parse it and install it, and
  * `config/` may not import from `rendering/` (see `.dependency-cruiser.cjs`).
- * Both pieces of session state (override + policy) are installed once at
- * startup, before any line material is constructed — the same shape as
- * `?lineJoin=`.
+ * The override and policy are installed once at startup; the aggregate load
+ * is replaced for each scene before any line material is constructed.
  *
  * @module types/line-primitive
  */
@@ -188,7 +187,12 @@ export function setLinePrimitiveOverride(primitive: LinePrimitive | null): void 
  */
 let sessionPolicy: LinePrimitivePolicy = 'auto';
 
-/** Aggregate effective line load for the scene currently being constructed. */
+/**
+ * Aggregate effective line load for the scene currently being constructed.
+ * Production owns one loader under the `default` id. Multi-loader embeddings
+ * are therefore last-load-wins, and disposing any loader resets this shared
+ * value.
+ */
 let sessionSceneLineLoad = 0;
 
 /** Install the session policy (call once from bootstrap). */
@@ -281,15 +285,17 @@ export function effectiveSegmentLoad(load: LineNodeLoad): number {
  * concurrently. Plain groups and partitions sum their children; LOD groups
  * take the maximum because their levels are substitutive. Two levels can
  * overlap briefly during a cross-fade; accepting that at-most-2× transient
- * undercount keeps the frozen default biased toward capsule quality. A lines
- * node is a leaf for this purpose: additive line ladders already advertise
- * their summed total in the parent node's authored `n_segments`.
+ * undercount keeps the frozen default biased toward capsule quality. The max
+ * also treats every independent ladder as if it reached its finest level at
+ * once, which can over-count a normally framed scene and choose the lower-
+ * quality quad. Using each ladder's `default_level` instead was rejected
+ * because the decision must remain safe after view-driven level changes. A
+ * lines node is a leaf for this purpose: additive line ladders already
+ * advertise their summed total in the parent node's authored `n_segments`.
  */
 export function sceneEffectiveLineLoad(node: SceneLineLoadNode): number {
   if (node.type === 'lines') {
-    return effectiveSegmentLoad(
-      lineNodeLoadFromAttrs(node.attrs as Partial<LinesMetadata>)
-    );
+    return effectiveSegmentLoad(lineNodeLoadFromAttrs(node.attrs as Partial<LinesMetadata>));
   }
 
   const childLoads = node.children?.map(sceneEffectiveLineLoad) ?? [];

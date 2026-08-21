@@ -292,8 +292,9 @@ force one primitive) > the `auto` rule. Auto keeps the capsule default
 but builds the cheaper quad when the scene's aggregate concurrent
 effective segment load — authored `n_segments` × a rendered-width
 factor normalized by each node's authored extent — reaches 2 M. The
-threshold is a measured budget choice, not a crossover: on a discrete NVIDIA GPU the capsule's
-GPU pass costs ~1.5× the quad at every thin-line count and 3.16–3.38×
+threshold is a measured budget choice, not a crossover: on a discrete
+NVIDIA GPU the capsule's GPU pass costs ~1.5× the quad at every thin-line
+count and 3.16–3.38×
 on wide lines, while an Apple GPU barely registers the difference
 (1.04–1.11×); past ~2 M thin segments the capsule's GPU pass alone
 costs over a quarter of a 60 fps frame on the NVIDIA class (4.6 ms of
@@ -306,7 +307,7 @@ children; `kind=lod` groups take the maximum because levels are
 substitutive. The resulting scene load is installed before any line
 material is built, so sibling line nodes resolve uniformly. Runtime
 visibility is deliberately not an input: the authored all-layers-on
-total is the frozen conservative budget.
+total is the frozen worst-case budget.
 
 ## Capsule primitive (the DEFAULT since the #1352 flip)
 
