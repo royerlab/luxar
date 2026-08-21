@@ -152,16 +152,26 @@ LOD wrapper builders:
   `absorption`, `gamma`, `intensity`, `offset`, `blending_mode`, `layer`,
   `visible`, `nd_transform`) that ride on the wrapper `Group` rather than being copied onto
   each child; compositing semantics flow down to children via Group inheritance
-  at render time. `colormap` and `truncation_radius` are deliberately excluded —
-  they are auto-defaulted per leaf and would otherwise shadow a parent under
-  nearest-ancestor-wins.
+  at render time. `truncation_radius` is deliberately excluded — it is
+  auto-defaulted per leaf and would otherwise shadow a parent under
+  nearest-ancestor-wins. `colormap` is not routed here either, but only as a
+  preference: it DOES compose in the viewer since #1600, and copying it onto
+  each child is the shape the layers panel's `deriveColormapFromDescendants`
+  reads back.
 - `AUTHORED_APPEARANCE_ATTRS` — the subset a structure-only rebuild (`gsplat lod`
   and the rest of the rewriting family) carries from the source root to the
   output root, so re-laddering a dataset does not silently reset the look
-  (#1600). `COMPOSITING_ATTRS` minus `transform`, which is excluded because the
-  stored matrix is already column-major and the writer would transpose it a
-  second time. Read with
+  (#1600). `COMPOSITING_ATTRS` minus `transform`, plus `colormap`. `transform`
+  is excluded because the stored matrix is already column-major and the writer
+  would transpose it a second time; `colormap` is included now that the writer
+  no longer manufactures a shadowing per-leaf `"gray"` and the viewer composes
+  the attr root→leaf (the `'custom'` sentinel is the one value not carried — its
+  LUT lives in a sibling array the attrs-only read cannot reach). Read with
   `luxar.gsplats.io.load_gsplats.read_authored_appearance`.
+- `mirror_written_colormap(attrs, writer, path)` — copy the colormap the writer
+  actually stamped onto the adder's attrs, so the returned node's attr
+  write-back cannot put a manufactured `"gray"` on disk that the writer
+  declined.
 - `slice_optional_array(value, indices, n_elements)` — slice a per-element leaf
   parameter by index; pass scalars / `None` / mis-sized inputs through unchanged.
 - `validate_labels_before_split(labels, n_elements)` — its companion guard: reject

@@ -16,6 +16,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Per-test attrs lookup the zarr.open mock walks at runtime.
 const attrsByPath: Record<string, Record<string, unknown>> = {};
+const arrayDataByPath: Record<string, Uint8Array> = {};
 const openCalls: string[] = [];
 
 // Stub zarr location: resolve() composes paths so the mock can echo
@@ -37,8 +38,13 @@ vi.mock('zarrita', () => ({
   root: (_store: unknown) => makeStubLoc(''),
   open: vi.fn(async (loc: { path: string }, _opts: unknown) => {
     openCalls.push(loc.path);
-    return { attrs: attrsByPath[`/${loc.path}`] ?? {} };
+    return { attrs: attrsByPath[`/${loc.path}`] ?? {}, path: loc.path };
   }),
+  get: vi.fn(async (array: { path: string }) => ({
+    data: arrayDataByPath[`/${array.path}`],
+    shape: [256, 3],
+    stride: [3, 1],
+  })),
   withMaybeConsolidatedMetadata: undefined,
 }));
 
@@ -59,6 +65,7 @@ function makeRootAttrs(): ZarrSceneAttrs {
 
 beforeEach(() => {
   for (const k of Object.keys(attrsByPath)) delete attrsByPath[k];
+  for (const k of Object.keys(arrayDataByPath)) delete arrayDataByPath[k];
   openCalls.length = 0;
   enumerateStoreMock.mockReset();
 });
@@ -417,6 +424,28 @@ describe('buildSceneGraph — gsplats internal-subtree skip', () => {
 });
 
 describe('buildSceneGraph — bare node root (standalone .gsplats.zarr)', () => {
+  it('loads a custom LUT authored on a bare partition root', async () => {
+    enumerateStoreMock.mockResolvedValue([
+      { path: '/part_0', kind: 'group' },
+      { path: '/part_1', kind: 'group' },
+    ]);
+    attrsByPath['/part_0'] = { type: 'gsplats', n_splats: 20 };
+    attrsByPath['/part_1'] = { type: 'gsplats', n_splats: 20 };
+    const lut = new Uint8Array(256 * 3).map((_, index) => index & 0xff);
+    arrayDataByPath['/colormap_lut'] = lut;
+    const rootAttrs = {
+      type: 'group',
+      kind: 'partition',
+      display_type: 'gsplats',
+      colormap: 'custom',
+    } as unknown as ZarrSceneAttrs;
+
+    const root = await buildSceneGraph(makeStubLoc('') as never, rootAttrs, {} as never);
+
+    expect((root.attrs as Record<string, unknown>).customLutBytes).toEqual(lut);
+    expect(openCalls).toContain('colormap_lut');
+  });
+
   it('a bare gsplats leaf root becomes a childless gsplats node', async () => {
     // A single-set v3.0 standalone file: arrays live directly under root,
     // there are no child GROUPS. The root IS the gsplats leaf.

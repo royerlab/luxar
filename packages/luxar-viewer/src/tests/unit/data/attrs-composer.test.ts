@@ -5,6 +5,7 @@ import {
   collectAncestorAttrs,
   getEffectiveAttrs,
 } from '../../../data/attrs-composer';
+import { applyEffectiveAttrs } from '../../../data/scene-loader/view-state/effective-attrs';
 import type { SceneNode } from '../../../data/data-loader-types';
 import { defaultBlendingMode } from '../../../types/geometry-capabilities';
 import { GEOMETRY_TYPES } from '../../../types/format-contract';
@@ -465,5 +466,139 @@ describe('composeAttrs — an unset blending chain stays undefined (spec §6.3)'
     // A group carries no default of its own — its descendants decide.
     expect(defaultBlendingMode('group')).toBe('additive');
     expect(defaultBlendingMode(undefined)).toBe('additive');
+  });
+});
+
+// [#1600] `colormap` composes root→leaf, nearest-setter-wins, with its custom
+// LUT bytes travelling as part of the SAME record.
+//
+// Before the fix it was not composed at all: `applyEffectiveAttrs` let it
+// survive only inside the raw `...node.attrs` spread, so every consumer read
+// the node's OWN value and an ancestor-authored palette never arrived. The
+// Python half of the same bug manufactured a per-leaf `'gray'` that would have
+// out-competed the ancestor even once composition existed.
+describe('composeAttrs — colormap (#1600)', () => {
+  it('is undefined for an unset chain', () => {
+    expect(composeAttrs([]).colormap).toBeUndefined();
+    expect(composeAttrs([{ opacity: 0.5 }, { gamma: 2 }]).colormap).toBeUndefined();
+    expect(composeAttrs([{ opacity: 0.5 }]).customLutBytes).toBeUndefined();
+  });
+
+  it('inherits an ancestor palette when the leaf sets none', () => {
+    expect(composeAttrs([{ colormap: 'plasma' }, { opacity: 0.5 }]).colormap).toBe('plasma');
+  });
+
+  it('lets the leaf override an ancestor palette (nearest-setter-wins)', () => {
+    expect(composeAttrs([{ colormap: 'plasma' }, { colormap: 'inferno' }]).colormap).toBe(
+      'inferno'
+    );
+  });
+
+  it('takes the LAST setter across a three-level chain', () => {
+    expect(
+      composeAttrs([{ colormap: 'gray' }, { colormap: 'plasma' }, { opacity: 0.5 }]).colormap
+    ).toBe('plasma');
+  });
+
+  it('carries the custom LUT bytes down with an inherited palette', () => {
+    const lut = new Uint8Array([1, 2, 3]);
+    const e = composeAttrs([{ colormap: 'custom', customLutBytes: lut }, { opacity: 0.5 }]);
+    expect(e.colormap).toBe('custom');
+    expect(e.customLutBytes).toBe(lut);
+  });
+
+  it('never pairs one node’s name with another node’s bytes', () => {
+    const ancestorLut = new Uint8Array([9, 9, 9]);
+    // A leaf that names a BUILTIN palette must not inherit the ancestor's
+    // custom bytes — `getColormapTexture('viridis', <other LUT>)` would paint
+    // the ancestor's palette under the leaf's name.
+    const e = composeAttrs([
+      { colormap: 'custom', customLutBytes: ancestorLut },
+      { colormap: 'viridis' },
+    ]);
+    expect(e.colormap).toBe('viridis');
+    expect(e.customLutBytes).toBeUndefined();
+
+    // ...and the reverse: a leaf's own custom bytes win outright.
+    const leafLut = new Uint8Array([4, 5, 6]);
+    const e2 = composeAttrs([
+      { colormap: 'custom', customLutBytes: ancestorLut },
+      { colormap: 'custom', customLutBytes: leafLut },
+    ]);
+    expect(e2.customLutBytes).toBe(leafLut);
+  });
+});
+
+describe('applyEffectiveAttrs — colormap reaches the consumer record (#1600)', () => {
+  const lut = new Uint8Array([7, 7, 7, 7]);
+
+  /** group authors a custom palette; the gsplats leaf authors none. */
+  const graph: SceneNode = {
+    path: '/',
+    type: 'scene',
+    hasSpatialIndex: false,
+    attrs: {},
+    children: [
+      {
+        path: '/layer',
+        type: 'group',
+        hasSpatialIndex: false,
+        attrs: { layer: true, colormap: 'custom', customLutBytes: lut },
+        children: [
+          {
+            path: '/layer/gs',
+            type: 'gsplats',
+            hasSpatialIndex: true,
+            // `has_colors` on purpose: see the assertion below.
+            attrs: { has_colors: true, opacity: 0.5 },
+          },
+          {
+            path: '/layer/pts',
+            type: 'points',
+            hasSpatialIndex: true,
+            attrs: { has_scalars: false },
+          },
+        ],
+      },
+    ],
+  };
+
+  it('hands a gsplats leaf the ancestor palette AND its LUT bytes', () => {
+    const leaf = graph.children![0].children![0];
+    const eff = applyEffectiveAttrs(graph, leaf);
+    expect(eff.colormap).toBe('custom');
+    expect(eff.customLutBytes).toBe(lut);
+  });
+
+  it('applies the inherited palette to a gsplats leaf that has its OWN colors', () => {
+    // The deliberate semantics (#1600): a gsplats leaf is always
+    // colormap-capable — its amplitude IS the scalar — so an ancestor's
+    // palette overrides per-splat colours there, exactly as the Layers panel's
+    // `applyColormap` fan-out already does. Points/lines/mesh gate on
+    // `has_scalars` instead, so an inherited palette is a no-op for them
+    // without a scalar channel (asserted below).
+    const leaf = graph.children![0].children![0];
+    expect(leaf.attrs.has_colors).toBe(true);
+    expect(applyEffectiveAttrs(graph, leaf).colormap).toBe('custom');
+  });
+
+  it('still hands a scalar-less points leaf the palette, for its own gate to refuse', () => {
+    const pts = graph.children![0].children![1];
+    const eff = applyEffectiveAttrs(graph, pts);
+    expect(eff.colormap).toBe('custom');
+    // `createPointsMaterial` requires `has_scalars` before it builds a LUT, so
+    // composition stays type-agnostic and the consumer owns the decision.
+    expect(eff.has_scalars).toBe(false);
+  });
+
+  it('leaves an unset chain without a colormap', () => {
+    const bare: SceneNode = {
+      path: '/',
+      type: 'scene',
+      hasSpatialIndex: false,
+      attrs: {},
+      children: [{ path: '/gs', type: 'gsplats', hasSpatialIndex: true, attrs: {} }],
+    };
+    expect(applyEffectiveAttrs(bare, bare.children![0]).colormap).toBeUndefined();
   });
 });
