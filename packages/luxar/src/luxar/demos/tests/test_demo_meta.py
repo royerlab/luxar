@@ -862,6 +862,7 @@ def _credit_claims(text: str) -> list[tuple[tuple[str, ...], str]]:
     visible rather than mistaking them for markup.
     """
     text = html.unescape(re.sub(r"<[^>]*>", " ", text))
+    text = re.sub(r"([•—–·|/])", r" \1 ", text)
     tokens = [(m.group(), m.start()) for m in re.finditer(r"\S+", text)]
     claims: list[tuple[tuple[str, ...], str]] = []
     for match in _YEAR_RE.finditer(text):
@@ -1024,8 +1025,8 @@ def test_overlay_extraction_covers_the_call_and_argument_shapes() -> None:
     """``add_html``, the keyword forms, and explicit ``+`` concatenation.
 
     Of those three, only ``add_html`` is live in the corpus today: 37 of the 227
-    overlay calls (190 are ``add_text``), whose first arguments are 148
-    ``Constant``, 47 f-string, 20 ``Name``, 11 ``Call`` and 1 conditional — zero
+    overlay calls (190 are ``add_text``), whose first arguments are 147
+    ``Constant``, 48 f-string, 20 ``Name``, 11 ``Call`` and 1 conditional — zero
     ``+``, and ``text=``/``html=`` never used. The keyword and ``+`` branches are
     therefore defensive coverage of shapes the helper claims to handle, pinned so
     they cannot rot before something writes them.
@@ -1155,6 +1156,13 @@ def test_either_conjunction_holds_a_name_group_together() -> None:
     assert not _credit_contradictions(
         "Leike et al. 2020", ["<b>dust • Leike &amp; Enßlin 2020</b>"]
     )
+
+
+@pytest.mark.parametrize("separator", ["•", "—", "–", "·", "|", "/", "&mdash;"])
+def test_unspaced_field_separator_ends_the_name_group(separator: str) -> None:
+    footer = f"Zebrahub{separator}Kim et al. 2024"
+    assert _credit_claims(footer) == [(("Kim",), "2024")]
+    assert not _credit_contradictions("Kim et al. 2024", [footer])
 
 
 def test_a_capitalized_non_name_beside_a_year_is_not_a_credit() -> None:
