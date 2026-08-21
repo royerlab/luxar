@@ -76,6 +76,10 @@ DEMO_META = {
     },
     "caches": ["cytoself"],
     "outputs": ["cytoself_protein_landscape", "cytoself_landscape"],
+    "citation": {
+        "short": "OpenCell (Cho et al. 2022); embeddings by cytoself (Kobayashi et al. 2022)",
+        "doi": "10.1126/science.abi6983",
+    },
 }
 
 import errno
@@ -1935,7 +1939,9 @@ def create_cytoself_scene(
         )
 
         with LuxarZarrCompiler(output_path) as compiler:
-            scene = compiler.create_scene(dimensions=dims)
+            scene = compiler.create_scene(
+                dimensions=dims, citation=DEMO_META["citation"]
+            )
 
             total_points = len(positions_combined)
             radii = np.full(total_points, POINT_RADIUS, dtype=np.float32)

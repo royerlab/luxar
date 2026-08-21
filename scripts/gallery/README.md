@@ -145,10 +145,10 @@ README gallery table.
 
 ## Manifest fields
 
-Required: `id` (media + dataset stem), `title` (caption), `geometry`,
-`category`, `script` (`demo_*.py`, or `null` for a feature-branch demo whose
-dataset must be pre-generated; currently unused), `dataset` (path under
-`datasets/demos/`).
+Required: `id` (gallery media filename stem; must equal the demo key), `title`
+(caption), `geometry`, `category`, `script` (`demo_*.py`, or `null` for a
+feature-branch demo whose dataset must be pre-generated; currently unused), `dataset`
+(authoritative store path under `datasets/demos/`).
 
 Optional capture hints (see the `DemoEntry` interface in the capture spec for
 the authoritative list and defaults): `exposure` (log2 stops, overrides
@@ -161,6 +161,14 @@ beside it), `dimensionNav`
 (`{key, steps}` for nD), `timelapse` (`{framePoint}` for 4D series), `lodFinest`,
 `readme` (a current top README pick), `note` (free-text human annotation; the
 capture code never reads it).
+
+`citation` (optional, not a capture hint): the dataset credit, copied verbatim
+from the demo's `DEMO_META["citation"]["short"]`. It is here so a tile's credit
+is reviewable in the repo instead of only on the rendered page;
+`test_demo_meta.py` pins it equal to the demo's own value. Only demos that
+declare a real credit carry it — an absent key means "unknown or not yet
+recorded", which is deliberately *not* the same claim as "nothing to credit", so
+a procedurally generated demo has no `citation` here either.
 
 ## Requirements
 

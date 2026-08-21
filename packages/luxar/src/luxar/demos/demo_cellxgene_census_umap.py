@@ -51,6 +51,10 @@ DEMO_META = {
     },
     "caches": [],
     "outputs": ["cellxgene_census_umap"],
+    "citation": {
+        "short": "CZ CELLxGENE Discover (CZI Cell Science Program 2024)",
+        "doi": "10.1093/nar/gkae1142",
+    },
 }
 
 import colorsys
@@ -204,7 +208,9 @@ def build_scene(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with asection(f"Building substitutive-LOD scene (device={device})"):
         with LuxarZarrCompiler(str(output_path)) as compiler:
-            scene = compiler.create_scene(dimensions=dims)
+            scene = compiler.create_scene(
+                citation=DEMO_META["citation"], dimensions=dims
+            )
             scene.add_points(
                 "cells",
                 positions,

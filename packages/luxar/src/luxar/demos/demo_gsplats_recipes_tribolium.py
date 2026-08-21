@@ -68,7 +68,7 @@ DATA SOURCE & CITATIONS:
 ========================
 Source:  Cell Tracking Challenge / Zenodo record 5270323 (GIANI paper)
 Imaging: Zeiss LightSheet Z.1, Tribolium castaneum, 0.381 um isotropic
-Cite:    Yin et al. (2022). GIANI. J. Cell Sci. 135(5), jcs259022.
+Cite:    Barry et al. (2022). GIANI. J. Cell Sci. 135, jcs259511.
          Maska et al. (2023). Cell Tracking Challenge. Nat. Methods 20, 1010-1020.
 
 USAGE:
@@ -105,6 +105,13 @@ DEMO_META = {
     },
     "caches": ["gsplats_tribolium"],
     "outputs": ["gsplats_recipes_tribolium"],
+    "citation": {
+        "short": (
+            "Barry 2021 (GIANI, Zenodo 5270323); "
+            "Cell Tracking Challenge (Maška et al. 2023)"
+        ),
+        "doi": "10.5281/zenodo.5270323",
+    },
 }
 
 import colorsys
@@ -485,6 +492,7 @@ def create_luxar_scene(
             output_path, encoding_mode=EncodingMode.PRECISION
         ) as compiler:
             scene = compiler.create_scene(
+                citation=DEMO_META["citation"],
                 dimensions=dims,
                 # No tone mapping at all (#1459). Colour here IS the encoding
                 # (hue = which part, shade = which LOD level) and the whole
@@ -519,7 +527,7 @@ shade jump.
   (the per-part swap shows as that part's shade jumping).
 
 Pan across the row; zoom into a column to watch its level switch. Data: Cell
-Tracking Challenge / Zenodo 5270323. Cite: Yin et al. 2022; Maska et al. 2023.
+Tracking Challenge / Zenodo 5270323. Cite: Barry et al. 2022; Maska et al. 2023.
             """
 
             for i, recipe in enumerate(RECIPES):

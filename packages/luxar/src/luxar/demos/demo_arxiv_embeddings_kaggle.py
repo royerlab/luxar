@@ -95,6 +95,10 @@ DEMO_META = {
     },
     "caches": ["arxiv_kaggle"],
     "outputs": ["arxiv_papers_kaggle"],
+    "citation": {
+        "short": "arXiv metadata by Cornell University; embeddings by tomtum",
+        "url": "https://www.kaggle.com/datasets/tomtum/openai-arxiv-embeddings",
+    },
 }
 
 import sys
@@ -663,7 +667,9 @@ def generate_paper_landscape(
         )
 
         with LuxarZarrCompiler(output_path) as compiler:
-            scene = compiler.create_scene(dimensions=dims)
+            scene = compiler.create_scene(
+                citation=DEMO_META["citation"], dimensions=dims
+            )
 
             # Substitutive Points LOD for the large (up to 2M) paper cloud —
             # coarse merged levels when zoomed out (census-style wiring; coarse

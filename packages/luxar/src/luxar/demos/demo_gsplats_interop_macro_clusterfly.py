@@ -60,6 +60,11 @@ DEMO_META = {
     },
     "caches": ["gsplats_interop_macro"],
     "outputs": ["gsplats_interop_macro_clusterfly"],
+    "citation": {
+        "short": "Dany Bittel (danybittel.ch)",
+        "license": "CC BY 4.0",
+        "url": "https://danybittel.ch/macro",
+    },
 }
 
 from pathlib import Path
@@ -151,6 +156,7 @@ def build_scene() -> Path:
         title="Macro cluster fly (Dany Bittel) → Luxar",
         layer_name="cluster_fly",
         credit=CREDIT,
+        citation=DEMO_META["citation"],
     )
 
 

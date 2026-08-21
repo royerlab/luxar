@@ -105,6 +105,10 @@ DEMO_META = {
     },
     "caches": ["arxiv_semantic_scholar"],
     "outputs": ["arxiv_papers_semantic_scholar"],
+    "citation": {
+        "short": "Semantic Scholar Academic Graph (Ammar et al. 2018)",
+        "doi": "10.18653/v1/N18-3011",
+    },
 }
 
 import sys
@@ -570,7 +574,9 @@ def generate_paper_landscape(
         )
 
         with LuxarZarrCompiler(output_path) as compiler:
-            scene = compiler.create_scene(dimensions=dims)
+            scene = compiler.create_scene(
+                citation=DEMO_META["citation"], dimensions=dims
+            )
 
             # Substitutive Points LOD for the (potentially large) paper cloud —
             # coarse merged levels when zoomed out (census-style wiring; coarse

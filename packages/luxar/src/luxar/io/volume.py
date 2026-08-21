@@ -497,9 +497,47 @@ def _declared_levels(
     whose blocks are expected not to match: a stale declaration there explains
     why that block lost and is not a degraded selection to warn about.
 
+    A declared path is NORMALISED before it is looked up
+    (:func:`~luxar.io.ome_zarr._normalised_dataset_path`, the same rule the
+    metadata-MATCHING side uses, so both halves apply the same rule to every
+    spelling). ``"./0"`` is a legal NGFF spelling of ``"0"`` and writers do emit
+    it, while zarr REFUSES a path holding a ``.`` segment outright — so the raw
+    spelling resolved no level at all, the block stopped being evidence about the
+    array it declares (:func:`_declares_array`), and a 4D ``TZYX`` image group
+    fell onto the ``CZYX`` shape heuristic. Although NGFF requires a string, real
+    numeric scalars are deliberately recoverable; other non-string values name
+    nothing. Using one rule prevents lookup and metadata selection from
+    disagreeing about which declaration names the chosen array.
+
     ``skip_groups`` excludes a declared candidate when any NON-LEAF path segment
     names one of those groups. The leaf is deliberately exempt: an array itself
-    may legitimately have the same name as a reserved subgroup.
+    may legitimately have the same name as a reserved subgroup. It is asked of
+    the spelling the lookup uses — the NORMALISED one, or the SLASH-STRIPPED
+    original when normalisation yields nothing — and neither can weaken the
+    exclusion: they never ADD a non-leaf segment or move the leaf (which is
+    ``split("/")[-1]`` under every spelling), and only DROP a leading ``"."`` or
+    an empty segment (``".//0"`` checks ``{"", "."}`` raw and ``{}`` normalised).
+    No caller skips a group named ``"."`` or ``""``, so ``"./labels/0"`` stays
+    excluded exactly as ``"labels/0"`` is.
+
+    Every path this REPORTS — the ``Skipping declared level`` diagnostic and the
+    returned key alike — is built from the spelling the lookup actually used, so
+    one entry can never be described two ways. For a level that resolves that is
+    the canonical spelling (``"0/0"``, never ``"0/./0"``), which matters because
+    the key is what :func:`_select_zarr_array` hands back as "the array's path
+    relative to the store root": :func:`load_volume` PRINTS it as the array in
+    use and :func:`~luxar.io.ome_zarr._relative_key` re-expresses it against the
+    owner, so a spelling zarr itself refuses would advertise an ``array_key`` the
+    very next command rejects. Two stores whose declarations NORMALISE ALIKE
+    therefore select, log and match identically, however they spell themselves.
+    Only a declaration still holding a ``.`` SEGMENT (``"."``, ``"a/./b"``) falls
+    back to the SLASH-STRIPPED original, and for the same reason: normalisation
+    yields nothing for it, so that is the spelling the lookup used. Those are not
+    normalised alike and do not log alike — ``"a/./b"`` reports ``'0/a/./b'``
+    while the POSIX-equivalent ``"./a/./b"`` reports ``'0/./a/./b'`` — but neither
+    names a level under any spelling. Everything else is quoted canonically
+    whether or not it resolves: a merely MISSING ``"./7"`` reads as ``"7"`` in the
+    diagnostic, which is the key that was looked up and the one to go check.
 
     The reported owner is ``group`` ITSELF, not the level's immediate parent: the
     owner is used as "the node carrying the metadata that describes this array",
@@ -515,7 +553,7 @@ def _declared_levels(
     """
     import zarr
 
-    from luxar.io.ome_zarr import resolve_ngff_attrs
+    from luxar.io.ome_zarr import _normalised_dataset_path, resolve_ngff_attrs
 
     block = resolve_ngff_attrs(group.attrs).get("multiscales")
     if not (isinstance(block, list) and block and isinstance(block[0], dict)):
@@ -525,10 +563,14 @@ def _declared_levels(
         return []
     results: List[Tuple[str, Any, Any]] = []
     for entry in datasets:
-        rel = entry.get("path") if isinstance(entry, dict) else None
-        if not isinstance(rel, str) or not rel.strip("/"):
+        raw = entry.get("path") if isinstance(entry, dict) else None
+        # A string retaining a `.` segment cannot resolve, but keep its own
+        # spelling so the failed lookup is reported instead of disappearing.
+        rel = _normalised_dataset_path(raw) or (
+            raw.strip("/") if isinstance(raw, str) else ""
+        )
+        if not rel:
             continue
-        rel = rel.strip("/")
         if not skip_groups.isdisjoint(rel.split("/")[:-1]):
             continue
         declared_path = f"{prefix}/{rel}" if prefix else rel
@@ -543,6 +585,15 @@ def _declared_levels(
             continue
         if isinstance(item, zarr.Array):
             results.append((declared_path, item, group))
+        elif report:
+            # Resolving to a GROUP is a dropped level exactly like a failed
+            # lookup, and was the only declaration that RESOLVED and was then
+            # discarded silently — the store degrades to the ndim heuristic with
+            # no per-level explanation of why its own declaration was not used.
+            aprint(
+                f"  Skipping declared level '{declared_path}': "
+                f"names a {type(item).__name__}, not an array"
+            )
     return results
 
 

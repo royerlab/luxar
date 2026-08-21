@@ -22,6 +22,31 @@ from ..validation.category_validation import (  # noqa: E402
 )
 
 
+def _as_builtin(value: Any) -> Any:
+    """A numpy scalar as its Python equivalent; anything else unchanged.
+
+    Duck-typed on ``.item()`` to avoid an isinstance ladder over numpy's scalar
+    types. The conversion preserves integrality, so an integer range stays integral.
+    """
+    # Identify a numpy scalar by carrying BOTH `.item` and `.dtype`, not by
+    # failing an isinstance check against the builtins: np.float64 SUBCLASSES
+    # float, so `not isinstance(value, float)` skips exactly the dtype most
+    # likely to turn up here.
+    if hasattr(value, "item") and hasattr(value, "dtype"):
+        return value.item()
+    return value
+
+
+def _as_builtin_range(value: Any) -> Any:
+    """Convert each scalar in a range while preserving malformed inputs."""
+    if value is None:
+        return None
+    try:
+        return tuple(_as_builtin(item) for item in value)
+    except TypeError:
+        return value
+
+
 @dataclass
 class Dimension:
     """Definition of a single dimension in a scene.
@@ -54,6 +79,23 @@ class Dimension:
 
     def __post_init__(self) -> None:
         """Validate dimension parameters and auto-determine spatial flag."""
+        # Normalise numpy scalars to builtins BEFORE anything else reads them.
+        # `to_dict` emits these fields verbatim, and a numpy scalar there makes
+        # the scene unserialisable at save time -- after the compiler has
+        # already created the store, so the failure leaves a stub directory
+        # rather than nothing (see demo_ppi_flow_field).
+        # Element-wise, NOT `lo, hi = self.range`: a malformed range (say a
+        # 3-element list) must still reach the length check below and get its
+        # own "Range must be a tuple of (min, max)" rather than dying here on
+        # an unpacking error. Non-iterables pass through for the same reason.
+        self.range = _as_builtin_range(self.range)
+        self.step = _as_builtin(self.step)
+        self.display = _as_builtin(self.display)
+        self.discrete = _as_builtin(self.discrete)
+        self.cyclic = _as_builtin(self.cyclic)
+        self.scale = _as_builtin(self.scale)
+        self.spatial = _as_builtin(self.spatial)
+
         # Validate and handle categorical dimensions
         self.categories = _validate_categories(self.categories)
         if self.categories is not None:

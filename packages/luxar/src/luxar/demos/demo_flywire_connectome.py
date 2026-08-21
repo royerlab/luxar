@@ -92,6 +92,11 @@ DEMO_META = {
     },
     "caches": ["flywire"],
     "outputs": ["flywire_connectome"],
+    "citation": {
+        "short": "FlyWire Consortium 2024; Schlegel et al. 2024 annotations",
+        "doi": "10.5281/zenodo.10676866",
+        "license": "CC BY 4.0",
+    },
 }
 
 import sys
@@ -603,6 +608,7 @@ def build_scene(
                 # pixels blown to 5.4% at the same exposure, and back to 0.9%
                 # at the manifest's re-tuned -1.5 stops.
                 viewer_config=ViewerConfig(tone_mapping="ACES"),
+                citation=DEMO_META["citation"],
             )
 
             # One toggleable Points layer per super_class — optic, central,

@@ -100,6 +100,11 @@ DEMO_META = {
     },
     "caches": ["gsplats_codex_pancreas"],
     "outputs": ["gsplats_2d_codex_pancreas"],
+    "citation": {
+        "short": "Björklund et al. 2023",
+        "doi": "10.5281/zenodo.7742474",
+        "license": "CC BY 4.0",
+    },
 }
 
 # Enable MPS->CPU fallback for unsupported PyTorch ops (must be before torch import)
@@ -484,7 +489,11 @@ def create_luxar_scene(
                 tone_mapping="ACES",
                 ui=UIConfig(show_scale_bar=True),
             )
-            scene = compiler.create_scene(dimensions=dims, viewer_config=viewer_config)
+            scene = compiler.create_scene(
+                dimensions=dims,
+                viewer_config=viewer_config,
+                citation=DEMO_META["citation"],
+            )
 
             ch_list = "\n".join(f"  - {ch['name']}" for ch in CHANNELS)
             scene.attrs["title"] = "GSplats 2D: CODEX Pancreas (12-Channel Multiplexed)"
