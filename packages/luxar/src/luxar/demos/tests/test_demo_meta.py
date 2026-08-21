@@ -236,15 +236,13 @@ def _manifest_problems(
     """Every disagreement between the gallery manifest and the demo registry.
 
     An entry is matched to its demo by script name, or — for a ``script: null``
-    entry, one whose demo lives only on a feature branch and whose dataset is
-    pre-generated — by ``id`` against the demo key. On a branch that DOES carry
-    the demo, the scriptless entry therefore still resolves, and once it does, the
-    manifest and the demo are two descriptions of the same thing: every
-    comparison runs, credit and structure alike. All three of today's scriptless
-    entries resolve, and running the structural checks on them is what caught
-    ``gsplats_3d_cryoem_virus``, filed ``microscopy`` in the manifest against the
-    ``structural`` its demo (and both its peers, ``nuclear_pore_complex`` and
-    ``atp_synthase``) declares.
+    entry, documented to mean a demo that lives only on a feature branch — by
+    ``id`` against the demo key. Once an entry resolves either way, the manifest
+    and the demo are two descriptions of the same thing, so every comparison runs
+    on it: credit and structure alike. Running the structural half on the
+    scriptless entries is what caught ``gsplats_3d_cryoem_virus``, filed
+    ``microscopy`` in the manifest against the ``structural`` its demo (and both
+    its peers, ``nuclear_pore_complex`` and ``atp_synthase``) declares.
 
     Only "the script is on disk" stays script-gated: a scriptless entry has no
     script to be missing. The id/key comparison is kept for both paths for
@@ -308,45 +306,59 @@ def test_manifest_citation_check_catches_drift() -> None:
     # Whitespace/spelling drift is drift: the field is a verbatim copy.
     assert _manifest_citation_problems("d.py", {"citation": "Kim et al.  2024"}, real)
     # A written-out null is not absence: absence says "not recorded yet", null
-    # would be a second spelling of it, and neither is a string to compare.
-    assert _manifest_citation_problems("d.py", {"citation": None}, None)
-    assert _manifest_citation_problems("d.py", {"citation": None}, real)
-    assert _manifest_citation_problems("d.py", {"citation": 2024}, real)
+    # would be a second spelling of it, and neither is a string to compare. Every
+    # non-string is already caught downstream, as an invented or a mismatched
+    # credit, so the non-string branch earns its place only through the message it
+    # writes — assert on that, or it is untested code.
+    for entry, declared in (
+        ({"citation": None}, None),
+        ({"citation": None}, real),
+        ({"citation": 2024}, real),
+    ):
+        (problem,) = _manifest_citation_problems("d.py", entry, declared)
+        assert "left out entirely" in problem, problem
 
 
 @pytest.mark.skipif(not MANIFEST_PATH.exists(), reason="gallery manifest not in tree")
 def test_scriptless_manifest_entries_are_fully_checked() -> None:
     """A ``script: null`` entry must not escape the cross-check.
 
-    It used to: the cross-check skipped every entry without a script, and one of
-    them (``gsplats_3d_ct_totalsegmentator``, a README tile) had already lost the
-    ``Wasserthal et al. 2023`` its demo declares. Resolving the entry by ``id``
-    against the demo key brings all three of today's scriptless entries back under
-    the rule — credit AND structure, which is how ``gsplats_3d_cryoem_virus``'s
-    wrong category surfaced. This pins that they resolve, and drives the real
-    cross-check with a perturbed credit and a perturbed category on each to prove
-    both halves reach them.
+    It used to: the cross-check skipped every entry without a script, so the
+    ``citation`` backfill passed over those entries and left them un-backfilled —
+    ``gsplats_3d_ct_totalsegmentator`` (a README tile) carries the
+    ``Wasserthal et al. 2023`` its demo declares only because resolving these
+    entries by ``id`` put them back under the rule. The structural half caught a
+    genuinely pre-existing drift at the same time: ``gsplats_3d_cryoem_virus`` was
+    filed ``microscopy`` against the ``structural`` its demo declares.
+
+    All three of today's scriptless entries resolve to demo files that ARE on
+    disk, which is not the manifest's documented meaning for ``null`` (a demo that
+    lives only on a feature branch). That staleness is tracked separately and this
+    test must not stand in the way of repairing it, so it drives whatever
+    scriptless entries exist and synthesizes the shape when there are none.
     """
     manifest = json.loads(MANIFEST_PATH.read_text())["demos"]
     demos = list(iter_demos())
     keys = {d.key for d in demos}
 
-    scriptless = [e for e in manifest if not e.get("script")]
-    assert scriptless, "the scriptless-entry shape this test guards is gone"
+    scriptless = [e for e in manifest if not e.get("script") and e["id"] in keys]
+    if not scriptless:  # every entry has been given its script back: still guard
+        scriptless = [{**e, "script": None} for e in manifest if e["id"] in keys][:1]
+    assert scriptless, "no gallery entry resolves to a demo in this tree"
+
     for entry in scriptless:
-        assert entry["id"] in keys, (
-            f"manifest id {entry['id']!r} has no script and resolves to no demo; "
-            "if that is deliberate (a feature-branch demo) this test needs to "
-            "allow it, but today all three resolve"
+        assert not _manifest_problems([entry], demos), (
+            f"scriptless entry id={entry['id']} disagrees with the demo it names"
         )
-        wrong_credit = {**entry, "citation": "Nobody et al. 1999"}
-        assert _manifest_problems([wrong_credit], demos), (
-            f"a scriptless entry (id={entry['id']}) escaped the credit check"
-        )
-        wrong_category = {**entry, "category": "not-a-category"}
-        assert _manifest_problems([wrong_category], demos), (
-            f"a scriptless entry (id={entry['id']}) escaped the structural check"
-        )
+        # Perturb each half so neither can be quietly gated back behind `script`.
+        for field, wrong in (
+            ("citation", "Nobody et al. 1999"),
+            ("category", "not-a-category"),
+            ("geometry", "not-a-geometry"),
+        ):
+            assert _manifest_problems([{**entry, field: wrong}], demos), (
+                f"a scriptless entry (id={entry['id']}) escaped the {field} check"
+            )
 
 
 def test_validate_meta_rejects_bad_blocks(tmp_path: Path) -> None:
@@ -561,34 +573,30 @@ def test_written_cache_dirs_are_declared(path: Path) -> None:
 # A demo credits its data twice: structurally in ``DEMO_META["citation"]`` and
 # visibly in an ``add_text`` / ``add_html`` footer painted onto the scene. Nothing
 # keeps the two in step, and the drift is not hypothetical — PR #1745 fixed three
-# footers that named the wrong paper. This is the guard for that class.
+# footers that named the wrong paper. This is the guard for that class, and the
+# canonical account of its reach: the code below points back here instead of
+# restating it.
 #
-# Every corpus count written into this section (86 demos, 26 credited, 8 painting
-# a dated credit, and the shape tallies below) is indicative of the corpus at the
-# time of writing: nothing derives them, and only the two pinned constants —
-# :data:`_KNOWN_CORPUS_CREDITS` and :data:`_DEMOS_PAINTING_A_CREDIT` — go red when
-# they move.
+# WHAT IT CHECKS: in a demo that declares a credit, every YEAR a statically
+# resolvable overlay string paints, together with the NAMES immediately in front
+# of it. The year must appear in ``citation["short"]``, and at least one of those
+# names must too. That is all a credit footer states in a machine-checkable way;
+# anything softer either misses the real mistake (a whole other paper) or fires on
+# the legitimate spellings the corpus already uses. Overlay text means the first
+# (or ``text=`` / ``html=``) argument of an ``add_text`` / ``add_html`` call, plus
+# a ``credit=`` keyword passed to ANY call — six ``demo_gsplats_interop_*`` demos
+# paint their footer through ``_interop_common.build_interop_scene(credit=...)``,
+# and reading the demo file alone would have covered none of them.
 #
-# What it checks, exactly: in a demo that declares a credit, every YEAR a statically
-# resolvable overlay string paints, together with the NAMES immediately in front of
-# that year. The year must appear in ``citation["short"]``, and at least one of
-# those names must too. That is all a credit footer states in a machine-checkable
-# way; anything softer either misses the real mistake (a whole other paper) or
-# fires on the legitimate spellings the corpus already uses.
-#
-# Which strings count as overlay text: the first (or ``text=`` / ``html=``)
-# argument of an ``add_text`` / ``add_html`` call, plus a ``credit=`` keyword
-# passed to ANY call — six ``demo_gsplats_interop_*`` demos paint their footer
-# through ``_interop_common.build_interop_scene(credit=...)``, and reading the
-# demo file alone would have covered none of them. A credit a helper assembles by
-# other means (from its own constants, from a parameter that is not spelled
-# ``credit``) is still out of reach.
-#
-# What it does NOT check, and why it is still worth having:
-#   * a footer that names the wrong dataset without giving a year — no claim to
-#     compare;
-#   * a credit assembled at runtime (an f-string hole, a ``list.append`` joined
-#     later) — nothing statically resolvable to read;
+# WHAT IT DOES NOT CHECK:
+#   * a year that yields no name group: a footer with no year at all, a year cut
+#     off from its names by a field bullet ("Lange et al. • 2024") or written in
+#     front of them ("2024 Lange et al."), and a lowercase surname, which the walk
+#     reads as prose and stops on;
+#   * a credit that is not statically resolvable — an f-string hole, a
+#     ``list.append`` joined later, a conditional nested inside another (only the
+#     outer two branches unfold), a helper that assembles the footer from its own
+#     constants or from a parameter not spelled ``credit``;
 #   * a demo that declares no credit at all — there is no declared fact to
 #     contradict, so a footer painting an uncredited attribution is invisible here
 #     (that is the inverse hazard, and it is why ``citation`` is worth backfilling
@@ -596,17 +604,17 @@ def test_written_cache_dirs_are_declared(path: Path) -> None:
 #   * a footer that names a dataset the ``short`` form also names while attributing
 #     it to the wrong author — the name group matches on the dataset token and the
 #     wrong surname rides along. Worked: a short of "HCP-1065 / Yeh 2022" against a
-#     footer of "HCP-1065 (Tournier 2022)" passes. (Note it is the YEAR that has to
-#     agree for the hole to open: the same footer dated 2019 is caught, on the year.)
-#     Measured cost of the any-name rule on today's corpus: 5 of the 26 credited
-#     demos would accept a wrong author at the right year, because their ``short``
-#     carries two or more name-shaped tokens for a footer to match instead of the
-#     surname — ``gaia_milky_way_3m``, ``global_rivers_earth``,
-#     ``gsplats_4d_nexrad_supercell``, ``protein_embeddings_cafa5``,
-#     ``tabula_sapiens`` (and ``esm3_protein_landscape``, whose ``short`` this
-#     reader cannot follow anyway). The other 21 still catch it.
+#     footer of "HCP-1065 (Tournier 2022)" passes. (It is the YEAR that has to
+#     agree for the hole to open: the same footer dated 2019 is caught, on the
+#     year.) Measured cost of that any-name rule today: 6 of the 26 credited demos
+#     have a ``short`` carrying a year AND two or more name-shaped tokens, so a
+#     wrong author at the right year would pass on them — ``gaia_milky_way_3m``,
+#     ``global_rivers_earth``, ``gsplats_4d_nexrad_supercell``,
+#     ``protein_embeddings_cafa5``, ``tabula_sapiens``, and
+#     ``esm3_protein_landscape`` (whose ``short`` this reader cannot follow
+#     anyway). The other 20 still catch it.
 #
-# Why keep the any-name rule at that cost: the alternative — demand the LEADING
+# WHY KEEP THE ANY-NAME RULE at that cost: the alternative — demand the LEADING
 # name of the group — rejects ZERO of today's real footers, but it is one deleted
 # lowercase word away from rejecting the real dmri one. "HCP-1065 atlas (Yeh 2022,
 # CC BY-SA 4.0)" passes a leading-name rule only because the lowercase "atlas"
@@ -616,6 +624,10 @@ def test_written_cache_dirs_are_declared(path: Path) -> None:
 # are worse: ``_MAX_CREDIT_GROUP_NAMES = 1`` rejects the real
 # "Leike & Enßlin 2020" footer, and a year-only rule drops the wrong-author class
 # the guard exists for.
+#
+# Every corpus count here (86 demos, 26 credited, 8 painting a dated credit, the
+# AST tallies below) describes the corpus at the time of writing; nothing derives
+# them, and only :data:`_KNOWN_CORPUS_CREDITS` goes red when they move.
 
 #: A publication year. Bounded on both sides so a longer digit run (``12020241``
 #: in an accession) is not read as a date. A four-digit number that IS bounded
@@ -627,8 +639,12 @@ _YEAR_RE = re.compile(r"(?<!\d)(?:19|20)\d{2}(?!\d)")
 #: Punctuation stripped off a token's ends before it is judged. A token that is
 #: *nothing but* punctuation is a field separator (``•``, ``—``, ``|``) and ends
 #: the name group — that is what keeps "3D UMAP • Kim et al. 2024" from reading
-#: "UMAP" as part of the credit.
-_TOKEN_TRIM = "()[]{}<>«»\"'“”‘’.,;:!?•—–-…/|*&"
+#: "UMAP" as part of the credit. Every character of
+#: :data:`_CREDIT_CONJUNCTIONS` must be listed here: a conjunction is re-admitted
+#: below only once it has trimmed to nothing, so a ``+`` missing from this string
+#: is read as a name-shaped token, breaks the walk, and drops the name in front
+#: of it ("Leike + Enßlin 2020" would yield only "Enßlin").
+_TOKEN_TRIM = "()[]{}<>«»\"'“”‘’.,;:!?•—–-…/|*&+"
 
 #: Tokens that sit *inside* a name group without being names.
 _CREDIT_GLUE = {"et", "al", "and", "with"}
@@ -638,19 +654,21 @@ _CREDIT_CONJUNCTIONS = {"&", "+"}
 
 #: Capitalized words that start a sentence or a phrase rather than a name.
 #:
-#: Deliberately defensive, NOT tuned against observations: a second reviewer
-#: measured that removing this whole set changes no outcome on today's corpus. It
-#: exists so an ordinary footer edit cannot go red for the wrong reason — a
-#: capitalized non-name in front of a year still forms a claim, so "… Kim et al.
-#: 2024 • Copyright 2024 Zebrahub", "… • Released 2023", "Snapshot March 2024 • …"
-#: and "Collected 2018–2024 • …" all fired against a CORRECT ``short`` before the
-#: date-adjacent words were listed.
+#: Deliberately defensive, NOT tuned against observations: removing this whole
+#: set changes no outcome on today's corpus. It exists so an ordinary footer edit
+#: cannot go red for the wrong reason — a capitalized non-name in front of a year
+#: still forms a claim, so "… Kim et al. 2024 • Copyright 2024 Zebrahub",
+#: "… • Released 2023", "Snapshot March 2024 • …" and "Collected 2018–2024 • …"
+#: all fired against a CORRECT ``short`` before the date-adjacent words were
+#: listed. :func:`test_a_capitalized_non_name_beside_a_year_is_not_a_credit` pins
+#: the first of those, so emptying the set cannot go unnoticed.
 #:
-#: A stopword is a missed claim, never a false one, so the cost of listing a word
-#: that is also a surname is that the guard stops checking it: "May et al. 2024"
-#: and "March et al. 2024" are now unclaimable. The list is knowingly incomplete —
-#: "Winter 2023 build" still forms a claim — because every addition pays that
-#: cost, and calendar words earn it more clearly than season words do.
+#: A stopword is SKIPPED, not treated as the end of the group, so listing a word
+#: that is also a surname costs only that name: "Bühlmann & May 2024" is still
+#: claimed on "Bühlmann", and only a footer whose credit group is stopwords all
+#: the way down ("May et al. 2024") becomes unclaimable. The list is knowingly
+#: incomplete — "Winter 2023 build" still forms a claim — because calendar words
+#: earn their place more clearly than season words do.
 _NAME_STOPWORDS = {
     "the",
     "a",
@@ -790,15 +808,11 @@ def _overlay_branches(node: ast.expr) -> list[ast.expr]:
 def _overlay_strings(source: str) -> list[str]:
     """Every statically resolvable overlay string in *source*.
 
-    Two shapes are read: an ``add_text`` / ``add_html`` call's first (or ``text=``
-    / ``html=``) argument, and a ``credit=`` keyword passed to ANY call. The
-    second is not decoration — the six ``demo_gsplats_interop_*`` demos paint
-    their footer through ``_interop_common.build_interop_scene(credit=...)``, so a
-    reader that only looked at ``add_text`` in the demo's own file would report
-    green having read nothing (the same demo-file-only blind spot that
-    ``tests/_scanned_modules.py`` exists for). A credit a helper builds some other
-    way — from its own constants, or from a parameter not spelled ``credit`` — is
-    still out of reach.
+    Two shapes are read (see the section comment above for the full reach): an
+    ``add_text`` / ``add_html`` call's first (or ``text=`` / ``html=``) argument,
+    and a ``credit=`` keyword passed to ANY call. The second is not decoration —
+    it is the only way the six ``demo_gsplats_interop_*`` footers are seen at all,
+    the same demo-file-only blind spot ``tests/_scanned_modules.py`` exists for.
 
     AST-only, for the same reason the registry is: importing a demo module runs
     heavy optional imports and import-time side effects.
@@ -832,10 +846,8 @@ def _credit_claims(text: str) -> list[tuple[tuple[str, ...], str]]:
     Walks back from each year over the tokens that make up its credit group and
     returns ALL the names it collected, in walk order (so "Leike & Enßlin 2020"
     gives ``("Enßlin", "Leike")``). The caller treats the claim as backed when ANY
-    of them appears in the declared credit: a footer routinely leads with a title
-    or a dataset name ("Dip-C, Tan et al. 2018"), so requiring one particular name
-    — the first, the last — rejects correct credits, while requiring all of them
-    rejects "Leike & Enßlin 2020" against a short of "Leike et al. 2020".
+    of them appears in the declared credit — the section comment above argues that
+    rule and prices it.
 
     A year the walk finds no name for yields NO claim: a bare number is not an
     attribution, and "2048³ voxels" or "1920 x 1080" would otherwise be read as
@@ -867,13 +879,10 @@ def _credit_claims(text: str) -> list[tuple[tuple[str, ...], str]]:
             folded = _fold(word)
             if folded in _CREDIT_GLUE:
                 continue
-            name_shaped = (
-                word[0].isupper()
-                and sum(ch.isalpha() for ch in word) >= 3
-                and folded not in _NAME_STOPWORDS
-            )
-            if not name_shaped:
-                break
+            if not (word[0].isupper() and sum(ch.isalpha() for ch in word) >= 3):
+                break  # lowercase prose or a short token: the group starts after it
+            if folded in _NAME_STOPWORDS:
+                continue  # capitalized, but not a name; keep walking past it
             names.append(word)
         if names:
             claims.append((tuple(names), match.group()))
@@ -883,12 +892,9 @@ def _credit_claims(text: str) -> list[tuple[tuple[str, ...], str]]:
 def _mentions(needle: str, folded_short: str) -> bool:
     """True when *needle* appears in the already-folded *folded_short* as a token.
 
-    Token-bounded, not a substring: "Kim" must not be satisfied by "Kimura", "Tan"
-    by "Constant", "Lee" by "Leeuwenhoek", and a year must not be satisfied by a
-    digit run it happens to sit inside. "Kim" and "Tan" are live surnames in this
-    corpus; the others are the same shape, kept as tests rather than observations.
-    Punctuation still bounds a token, so "Elnaggar" matches inside "(Elnaggar et
-    al. 2022)" and "2013" inside "(KTLX, 2013-05-31)".
+    Token-bounded, not a substring: "Kim" (a live surname here) must not be
+    satisfied by "Kimura", nor a year by a digit run it sits inside. Punctuation
+    still bounds a token, so "Elnaggar" matches inside "(Elnaggar et al. 2022)".
 
     The boundary is ``\\w``-based rather than an ASCII ``[0-9a-z]`` class, because
     :func:`_fold` does not fold a non-ASCII letter away — it strips combining
@@ -920,17 +926,13 @@ def _credit_contradictions(short: str, overlays: list[str]) -> list[str]:
 def test_overlay_credits_agree_with_declared_citation(path: Path) -> None:
     """An on-scene credit footer may not contradict the demo's own citation.
 
-    Checked: every year a statically resolvable overlay string paints, plus the
-    names in front of it — the year and at least one of those names must appear in
-    ``citation["short"]``. Not checked: a footer with no year in its literal text,
-    and a credit built at runtime.
-
-    Only demos that declare a real (non-``None``) citation are swept: with no
-    declared credit there is nothing to contradict, and the 60 demos that have not
-    been credited yet must not be blocked on their footers. Of the 26 that do
-    declare one, 8 paint a year-bearing credit today (pinned by
-    :func:`test_corpus_yields_the_credits_the_sweep_judges`) — the rest are visited
-    and found to claim nothing.
+    The section comment above states exactly what is and is not compared. Only
+    demos that declare a real (non-``None``) citation are swept: with no declared
+    credit there is nothing to contradict, and the 60 demos that have not been
+    credited yet must not be blocked on their footers. Of the 26 that do declare
+    one, 8 paint a year-bearing credit today (pinned by
+    :func:`test_corpus_yields_the_credits_the_sweep_judges`) — the rest are
+    visited and found to claim nothing.
 
     Known limitation: ``DEMO_META`` is the proxy for the credit, and
     ``demo_esm3_protein_landscape.py`` overrides its ``short`` at ``create_scene``
@@ -1012,13 +1014,12 @@ def test_credit_claim_extraction_reads_the_corpus_shapes() -> None:
 def test_overlay_extraction_covers_the_call_and_argument_shapes() -> None:
     """``add_html``, the keyword forms, and explicit ``+`` concatenation.
 
-    Only ``add_html`` is live in the corpus today (37 calls; the first-argument
-    shapes are 148 ``Constant``, 47 f-string, 20 ``Name``, 11 ``Call``, 1
-    conditional, and zero ``+``, with ``text=``/``html=`` never used). The keyword
-    and ``+`` branches are therefore defensive coverage of shapes the helper
-    claims to handle, pinned so they cannot rot before something writes them.
-    Implicit concatenation needs no case: CPython folds it into one ``Constant``
-    before the helper runs, so it never reaches the ``+`` branch.
+    Of those three, only ``add_html`` is live in the corpus today: 37 of the 227
+    overlay calls (190 are ``add_text``), whose first arguments are 148
+    ``Constant``, 47 f-string, 20 ``Name``, 11 ``Call`` and 1 conditional — zero
+    ``+``, and ``text=``/``html=`` never used. The keyword and ``+`` branches are
+    therefore defensive coverage of shapes the helper claims to handle, pinned so
+    they cannot rot before something writes them.
     """
     source = textwrap.dedent(
         """
@@ -1044,10 +1045,8 @@ def test_a_credit_painted_through_a_shared_helper_is_read() -> None:
     """A ``credit=`` argument counts as overlay text wherever it is passed.
 
     Six ``demo_gsplats_interop_*`` demos hand their footer to
-    ``_interop_common.build_interop_scene(credit=...)``, which is the call that
-    runs ``scene.add_text``. Reading only the demo's own ``add_text`` calls saw
-    none of them: the sweep would report green having read nothing the moment one
-    of those demos backfills its ``citation``.
+    ``_interop_common.build_interop_scene(credit=...)``; reading only the demo's
+    own ``add_text`` calls saw none of them.
     """
     source = textwrap.dedent(
         """
@@ -1067,12 +1066,7 @@ def test_a_credit_painted_through_a_shared_helper_is_read() -> None:
 
 
 def test_a_conditional_overlay_yields_both_branches() -> None:
-    """``a if cond else b`` is two possible footers, not an unreadable one.
-
-    ``demo_gsplats_4d_nexrad_supercell`` writes its per-frame timestamp this way;
-    before this the whole argument resolved to ``None`` and the demo's only dated
-    overlay was invisible to the reader.
-    """
+    """``a if cond else b`` is two possible footers, not an unreadable one."""
     source = textwrap.dedent(
         """
         def build(scene, stamp):
@@ -1116,11 +1110,7 @@ def test_fstring_holes_break_a_credit_instead_of_splicing_one() -> None:
 
 
 def test_a_bare_year_is_not_a_credit_claim() -> None:
-    """A four-digit number with no name in front of it is a number.
-
-    ``2048`` (a volume edge) and ``2016`` (an epoch) both match :data:`_YEAR_RE`;
-    only the name walk separates them from a date.
-    """
+    """A four-digit number with no name in front of it is a number."""
     assert _credit_claims("Gaia DR3 • epoch 2016.0") == []
     assert _credit_claims("recorded 1999–2013") == []
     assert _credit_claims("1920 x 1080") == []
@@ -1129,6 +1119,37 @@ def test_a_bare_year_is_not_a_credit_claim() -> None:
     assert not _credit_contradictions(
         "Kim et al. 2024", ["2048³ voxels • Kim et al. 2024"]
     )
+
+
+def test_either_conjunction_holds_a_name_group_together() -> None:
+    """``&`` and ``+`` must behave identically, which needs BOTH lists to agree.
+
+    ``+`` was listed in :data:`_CREDIT_CONJUNCTIONS` but missing from
+    :data:`_TOKEN_TRIM`, so it never trimmed to nothing, never reached the
+    conjunction test, and broke the walk as a name-shaped token instead — dropping
+    the name in front of it and turning a correct credit into a reported problem.
+    The ``&`` row alone cannot see that, which is why both spellings are pinned.
+    """
+    assert _credit_claims("Leike & Enßlin 2020") == [(("Enßlin", "Leike"), "2020")]
+    assert _credit_claims("Leike + Enßlin 2020") == [(("Enßlin", "Leike"), "2020")]
+    assert not _credit_contradictions(
+        "Leike et al. 2020", ["dust • Leike + Enßlin 2020"]
+    )
+
+
+def test_a_capitalized_non_name_beside_a_year_is_not_a_credit() -> None:
+    """A footer routinely dates ITSELF as well as its source.
+
+    Without :data:`_NAME_STOPWORDS` the self-date reads as an attribution to
+    whatever capitalized word precedes it and a correct footer goes red; emptying
+    the set leaves this test as the one that notices.
+    """
+    footer = "95K cells • Kim et al. 2024 • Copyright 2024 Zebrahub"
+    assert _credit_claims(footer) == [(("Kim",), "2024")]
+    assert not _credit_contradictions("Kim et al. 2024", [footer])
+    # Skipped, not fatal: a real surname behind a stopword still forms its claim,
+    # so listing a word that is also a surname costs that name and not the group.
+    assert _credit_claims("Bühlmann & May 2024") == [(("Bühlmann",), "2024")]
 
 
 def test_credit_matching_is_token_bounded() -> None:
@@ -1168,8 +1189,9 @@ def test_credit_matching_is_token_bounded() -> None:
 #: corpus paints today. The sweep above is parametrized over all 86 demos, but 78
 #: of those parametrizations assert on input that cannot produce a problem, so it
 #: stays green even if extraction silently stops working (blanking the citation
-#: lookup left the whole suite passing). This set is the anchor: it fails if a
-#: credit the guard is known to read stops being readable.
+#: lookup left the whole suite passing). This set is the whole floor: one row per
+#: demo that paints a dated credit, so a demo dropping out of the guard's
+#: coverage — or a credit becoming unreadable — shows up as a missing row.
 _KNOWN_CORPUS_CREDITS = frozenset(
     {
         ("demo_dipc_3d_genome", "Tan", "2018"),
@@ -1183,48 +1205,28 @@ _KNOWN_CORPUS_CREDITS = frozenset(
     }
 )
 
-#: How many credited demos paint a year-bearing credit today. A floor, not an
-#: equality: crediting another demo, or giving one a dated footer, may only push
-#: it up. Not an independent signal — it is the same extraction counted a second
-#: way, so it can only fire once someone edits :data:`_KNOWN_CORPUS_CREDITS`; what
-#: it adds is that a demo dropping out of coverage cannot be waved through by
-#: deleting its line from that set.
-_DEMOS_PAINTING_A_CREDIT = 8
-
 
 def test_corpus_yields_the_credits_the_sweep_judges() -> None:
     """The real corpus must keep yielding the credit claims it yields today.
 
-    If you rewrote a footer on purpose, update :data:`_KNOWN_CORPUS_CREDITS` (and
-    :data:`_DEMOS_PAINTING_A_CREDIT` if a demo now paints no dated credit at all)
-    in the same commit — and check the rewrite did not move the credit into an
+    If you rewrote a footer on purpose, update :data:`_KNOWN_CORPUS_CREDITS` in
+    the same commit — and check the rewrite did not move the credit into an
     f-string hole or a runtime join, which is how a demo silently leaves the
     guard's coverage.
     """
     observed: set[tuple[str, str, str]] = set()
-    painting = 0
     for path in DEMO_PATHS:
         if not extract_demo_meta(path).get("citation"):
             continue
-        claims = [
-            claim
-            for text in _overlay_strings(path.read_text())
-            for claim in _credit_claims(text)
-        ]
-        painting += bool(claims)
-        for names, year in claims:
-            observed |= {(path.stem, name, year) for name in names}
+        for text in _overlay_strings(path.read_text()):
+            for names, year in _credit_claims(text):
+                observed |= {(path.stem, name, year) for name in names}
 
     missing = sorted(_KNOWN_CORPUS_CREDITS - observed)
     assert not missing, (
         f"credits the guard used to read are no longer extracted: {missing}. "
         "Either the footer changed (update _KNOWN_CORPUS_CREDITS) or extraction "
         "broke (the sweep would go green while checking nothing)."
-    )
-    assert painting >= _DEMOS_PAINTING_A_CREDIT, (
-        f"only {painting} credited demos paint a readable dated credit, down from "
-        f"{_DEMOS_PAINTING_A_CREDIT}. A demo dropped out of the guard's coverage; "
-        "lower the floor only if that was deliberate."
     )
 
 
@@ -1283,14 +1285,11 @@ def test_credit_guard_flags_a_contradicting_footer(short: str, overlay: str) -> 
         ),
         # The rest are the shape a footer takes when a title or a dataset name
         # leads the credit. They are CONSTRUCTED, not painted: each pairs a real
-        # ``short`` with a title-led footer nobody writes today (three of the four
-        # demos paint no dated footer at all, and the Dip-C row is not the footer
-        # `demo_dipc_3d_genome` paints — that one is the first row above). A
-        # leading-name rule rejects all four as a wrong
-        # author ('Nuclear', 'OpenCell', 'Dip-C', 'Human'); what saves them is that
-        # ANY name in the group may back the claim. They are hypotheticals about a
-        # rule, which is why the argument for keeping that rule rests on the row
-        # below them — a real footer minus one word — and not on these.
+        # ``short`` with a title-led footer nobody writes today, and a
+        # leading-name rule would reject all four ('Nuclear', 'OpenCell',
+        # 'Dip-C', 'Human'). Being hypotheticals, they are not the argument for
+        # the any-name rule — the row below them, a real footer minus one word,
+        # is (see the section comment).
         ("Bui et al. 2013", "Nuclear Pore Complex (Bui et al. 2013)"),
         ("Cho et al. 2022", "OpenCell MAP4 (Cho et al. 2022)"),
         ("Tan et al. 2018", "Dip-C, Tan et al. 2018"),
