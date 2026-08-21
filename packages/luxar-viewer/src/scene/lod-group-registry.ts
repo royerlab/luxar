@@ -4,16 +4,16 @@
  * Tracks every `lod_group` scene-graph node currently loaded. For each
  * one, every frame:
  *
- *   1. Fold each child's nD ``lodBounds`` (falling back to
- *      ``positionBounds``) directly into a cached
- *      per-entry **local-space** :type:`BoundingBox`, using the current
- *      ``displayDims`` to map nD axes onto X/Y/Z. (No intermediate
- *      per-child boxes — the union is computed in place.) Raw
- *      ``positionBounds`` remain the authority for frustum gating and
- *      eviction so robust metric bounds cannot hide visible outliers.
- *   2. Transform the local box into world space via
+ *   1. Fold each child's raw nD ``positionBounds`` into a cached per-entry
+ *      **local-space** :type:`BoundingBox`, using the current ``displayDims``
+ *      to map nD axes onto X/Y/Z, then transform it to world space for the
+ *      frustum gate. Eviction uses the same full-geometry box.
+ *   2. Fold the optional robust ``lodBounds`` the same way (falling back per
+ *      child to ``positionBounds``) for metric sizing only, so excluded
+ *      outliers remain visible and resident.
+ *   3. Transform the metric box into world space via
  *      :func:`transformBoundingBox` and the lod_group's ``matrixWorld``.
- *   3. Project the 8 corners through the camera and reduce them to the
+ *   4. Project the 8 corners through the camera and reduce them to the
  *      dimensionless **coverage metric**, on whichever scale the entry's
  *      ``selector`` names — the two branches of ``evaluateEntry``:
  *      - ``'screen-area'`` (what every derived ladder stamps): the fraction of
@@ -25,10 +25,10 @@
  *        extent ``calculateCameraDistance`` actually fits; see the
  *        ``FILL_FACTOR`` doc), so 1.0 == the object's projected diagonal has
  *        reached ``FILL_FACTOR`` of the fitted axis.
- *   4. Pick the **finest** child whose ``coverage_fraction`` threshold is
+ *   5. Pick the **finest** child whose ``coverage_fraction`` threshold is
  *      satisfied by that coverage metric, with 10% asymmetric hysteresis on
  *      the downgrade direction to suppress threshold-edge flicker.
- *   5. If the desired child differs from the current active one, swap
+ *   6. If the desired child differs from the current active one, swap
  *      visibility atomically — gated by the **never-downgrade display
  *      gate**: a fresh aspiration whose additive ladder is still streaming
  *      is not shown while the previously-displayed level looks strictly
@@ -1419,12 +1419,13 @@ export class LODGroupRegistry {
   }
 
   /**
-   * Fold an entry's children nD ``positionBounds`` into a single world-space
+   * Fold an entry's children nD bounds into one world-space
    * :type:`BoundingBox` (see {@link computeEntryWorldBox} in
-   * ``lod-selector-math.ts`` for the math). Shared by the auto selector
-   * (diagonal pick + frustum gate) and the eviction ranking so both reason
-   * over identical geometry. This wrapper supplies the per-entry
-   * ``localBoxScratch`` and the registry's ``matrixScratch``;
+   * ``lod-selector-math.ts`` for the math). The default uses raw
+   * ``positionBounds`` for frustum gating and eviction; ``useLodBounds`` uses
+   * robust bounds with a per-child raw fallback for selector metrics. This
+   * wrapper supplies the per-entry ``localBoxScratch`` and the registry's
+   * ``matrixScratch``;
    * ``transformBoundingBox`` allocates the returned box, so it is independent
    * of those scratches and safe to keep past the next call.
    */
@@ -1726,8 +1727,8 @@ export class LODGroupRegistry {
    * Bound resident LOD geometry to the GPU-pool byte budget — see
    * {@link enforceResidentByteBudget} (``lod-eviction.ts``) for the full
    * policy. This wrapper supplies the registry's entries, the pool-accounting
-   * deps, and the shared per-entry world-box fold (so eviction and the auto
-   * selector reason over identical geometry).
+   * deps, and the raw per-entry world-box fold, so eviction matches the
+   * selector's frustum gate rather than its optional robust metric bounds.
    */
   private enforceByteBudget(
     camera: THREE.Camera,
