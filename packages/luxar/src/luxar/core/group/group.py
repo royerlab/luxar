@@ -190,8 +190,10 @@ class Group(Node):
                 3.0; ``None`` disables).
                 Composes with ``additive_lod``, which then describes how
                 each level streams in (every level gets a streaming ladder by
-                default; pass ``additive_lod=False`` to opt out). Mutually
-                exclusive with ``partition``.
+                default; pass ``additive_lod=False`` to opt out). When combined
+                with an explicit ``partition=``, authors an overview topology:
+                global coarse gsplat levels above a spatially partitioned finest
+                Points branch, selected only once it fills the viewport.
                 ``scalars``+``colormap``
                 points are supported by baking scalars→RGB for the coarse gsplat
                 levels (the finest Points child stays scalar-driven; a live
@@ -229,8 +231,10 @@ class Group(Node):
                   like additive. Defaults to 1.0.
 
         Returns:
-            The created ``Points`` node, or a kind=partition ``Group``
-            wrapper when ``partition=`` produced more than one part.
+            The created ``Points`` node, a kind=partition ``Group`` when
+            ``partition=`` produces multiple parts, or a kind=lod ``Group``
+            when ``substitutive_lod=`` produces coarse levels (with the
+            partition as its finest child when both controls are combined).
         """
         from .adders.points import add_points_impl
 

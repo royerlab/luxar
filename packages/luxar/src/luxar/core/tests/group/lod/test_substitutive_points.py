@@ -862,14 +862,72 @@ class TestPartitionBoundAnchorPoints:
 
 
 class TestSubstitutiveLodGuards:
-    def test_partition_and_substitutive_raises(self, tmp_path) -> None:
-        # Must not silently drop the substitutive ladder when partition= is set.
+    def test_partition_and_substitutive_builds_overview(self, tmp_path) -> None:
+        """The combined spelling authors a coarse cap over fine spatial parts."""
+        out = tmp_path / "t.luxar.zarr"
+        rng = np.random.RandomState(0)
+        pos = rng.uniform(0, 40, (600, 3)).astype(np.float32)
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_points(
+                "pts",
+                pos,
+                radii=1.0,
+                partition={"max_elements": 200},
+                substitutive_lod={
+                    "compression_factor": 4,
+                    "levels": 1,
+                    "method": "kmeans_lloyd",
+                    "device": "cpu",
+                    "seed": 0,
+                },
+                additive_lod=False,
+            )
+
+        group = zarr.open(str(out), mode="r")["pts"]
+        assert group.attrs["kind"] == "lod"
+        assert group.attrs["selector"] == "screen-area"
+        assert group.attrs["display_type"] == "points"
+        assert set(group.keys()) == {"child_0", "child_1"}
+
+        coarse = group["child_0"]
+        fine = group["child_1"]
+        assert coarse.attrs["type"] == "gsplats"
+        assert coarse.attrs["coverage_fraction"] == 0.0
+        assert fine.attrs["kind"] == "partition"
+        assert fine.attrs["display_type"] == "points"
+        assert fine.attrs["coverage_fraction"] == PARTITION_FINEST_AREA
+        part_names = list(fine.keys())
+        assert len(part_names) > 1
+        assert sum(int(fine[name].attrs["n_points"]) for name in part_names) == len(pos)
+        assert all(fine[name].attrs["type"] == "points" for name in part_names)
+
+    def test_one_part_combination_falls_back_to_whole_object_lod(
+        self, tmp_path
+    ) -> None:
+        """A partition request that does not split must not take the overview anchor."""
         out = tmp_path / "t.luxar.zarr"
         pos = np.random.RandomState(0).rand(100, 3).astype(np.float32)
         with LuxarZarrCompiler(out) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-            with pytest.raises(ValueError, match="partition.*substitutive_lod"):
-                scene.add_points("pts", pos, partition=True, substitutive_lod=True)
+            scene.add_points(
+                "pts",
+                pos,
+                radii=1.0,
+                partition={"max_elements": 200},
+                substitutive_lod={
+                    "levels": 1,
+                    "method": "kmeans_lloyd",
+                    "device": "cpu",
+                    "seed": 0,
+                },
+                additive_lod=False,
+            )
+
+        group = zarr.open(str(out), mode="r")["pts"]
+        assert group.attrs["kind"] == "lod"
+        assert group["child_1"].attrs["type"] == "points"
+        assert group["child_1"].attrs["coverage_fraction"] == WHOLE_OBJECT_FINEST_ANCHOR
 
     def test_substitutive_takes_precedence_over_auto_partition(self, tmp_path) -> None:
         # With compiler auto-partition enabled, substitutive_lod must still win
