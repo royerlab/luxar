@@ -7,7 +7,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Optional
 
-from luxar.gsplats.batch.manifest import BatchManifest, load_manifest
+from luxar.gsplats.batch.manifest import (
+    BatchManifest,
+    floor_erased_slices,
+    load_manifest,
+)
 
 
 @dataclass
@@ -20,7 +24,18 @@ class BatchStatus:
     running: int = 0
     pending: int = 0
     unknown: int = 0
+    floor_erased_slices: tuple[tuple[int, int], ...] = ()
     merge_status: str = "not_started"
+
+
+def _floor_erased_task_ids(
+    manifest: BatchManifest, erased_slices: set[tuple[int, int]]
+) -> set[int]:
+    return {
+        job.task_id
+        for job in manifest.jobs
+        if (job.timepoint, job.channel) in erased_slices
+    }
 
 
 def check_batch_status(output_dir: Path) -> BatchStatus:
@@ -41,13 +56,17 @@ def check_batch_status(output_dir: Path) -> BatchStatus:
     status = BatchStatus(total_tasks=manifest.total_tasks)
 
     tiles_dir = output_dir / "tiles"
+    erased_slices = floor_erased_slices(manifest, tiles_dir)
+    status.floor_erased_slices = tuple(sorted(erased_slices))
+    erased_ids = _floor_erased_task_ids(manifest, erased_slices)
+    status.failed += len(erased_ids)
 
     # 1. Check output files. A slot is "completed" if its store exists OR it
     # produced a legitimately-empty result (a `<output>.empty` marker — content
     # boxes / sparse tiles that fit 0 splats), so those aren't miscounted as
     # failed/unknown below.
-    completed_ids: set = set()
-    for job in manifest.jobs:
+    completed_ids: set = set(erased_ids)
+    for job in (job for job in manifest.jobs if job.task_id not in erased_ids):
         tile_path = tiles_dir / job.output_filename
         if tile_path.exists() or Path(f"{tile_path}.empty").exists():
             status.completed += 1
@@ -57,7 +76,7 @@ def check_batch_status(output_dir: Path) -> BatchStatus:
     # ELEMENT index; with packing (tasks_per_job > 1) each element covers
     # tasks_per_job consecutive flat task ids, so map through the packing.
     tpj = max(1, manifest.tasks_per_job)
-    remaining = manifest.total_tasks - status.completed
+    remaining = manifest.total_tasks - status.completed - len(erased_ids)
     if remaining > 0 and manifest.array_job_id is not None:
         sacct_states = _query_sacct(manifest.array_job_id)
         for task_id in range(manifest.total_tasks):
@@ -144,6 +163,17 @@ def format_status_report(
         details.append(f"{status.unknown} unknown")
     if details:
         lines.append(f"    {', '.join(details)}")
+
+    if status.floor_erased_slices:
+        pairs = ", ".join(
+            f"(t={timepoint}, c={channel})"
+            for timepoint, channel in status.floor_erased_slices
+        )
+        lines.append(f"  Floor-erased slices: {pairs}")
+        lines.append(
+            "    Remove those slices' .empty markers and re-plan with a lower "
+            "floor or --floor none."
+        )
 
     lines.append(f"  Merge: {status.merge_status}")
 

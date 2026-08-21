@@ -263,6 +263,7 @@ def _plan(
     channels_slice: "str | None" = None,
     tile_size: int = 64,
     tile_overlap: int = 8,
+    denoise_kwargs: "dict[str, object] | None" = None,
     **fit_kwargs: object,
 ):
     """Plan a uniform batch over a (T, Z, Y, X) store — one tile by default.
@@ -294,7 +295,7 @@ def _plan(
         timepoints_slice=timepoints_slice,
         channels_slice=channels_slice,
         fit=FitConfig(**fit_kwargs),  # type: ignore[arg-type]
-        denoise=DenoiseConfig(),
+        denoise=DenoiseConfig(**(denoise_kwargs or {})),  # type: ignore[arg-type]
         content=ContentKnobs(),
         merge=MergeConfig(),
     )
@@ -361,7 +362,7 @@ def test_batch_declines_a_degenerate_shared_normalization_range(
 
     sample = np.full(64, 50.0, np.float32)
     monkeypatch.setattr(
-        planning, "_sample_batch_slices", lambda *a, **k: [(0, 0, sample)]
+        planning, "_sample_batch_slices", lambda *args, **kwargs: [(0, 0, sample)]
     )
     assert planning.resolve_batch_norm_range(tmp_path / "unused.zarr", 0.0) is None
 
@@ -387,6 +388,45 @@ def test_batch_plan_preserves_an_explicit_config_normalization_range(
 
     assert manifest.norm_range == pytest.approx((2.5, 90.0))
     assert manifest.fit_args["norm_range"] == "2.5,90"
+
+
+@pytest.mark.parametrize(
+    ("floor", "preprocess"),
+    [("p10", False), ("auto", True)],
+)
+def test_batch_plan_defers_volume_floor_until_denoise_basis_exists(
+    tmp_path: Path, floor: str, preprocess: bool
+) -> None:
+    src = tmp_path / "movie.zarr"
+    _make_timelapse_zarr(src)
+
+    manifest = _plan(
+        src,
+        tmp_path / "out",
+        floor=floor,
+        denoise_kwargs={"denoise": True, "denoise_h": 0.04, "preprocess": preprocess},
+    ).manifest
+
+    assert manifest.floor_deferred is True
+    assert manifest.floor_spec == floor
+    assert manifest.floor_level is None
+    assert "floor" not in manifest.fit_args
+
+
+def test_batch_plan_does_not_defer_on_the_fly_auto_floor(tmp_path: Path) -> None:
+    src = tmp_path / "movie.zarr"
+    _make_timelapse_zarr(src)
+
+    manifest = _plan(
+        src,
+        tmp_path / "out",
+        floor="auto",
+        denoise_kwargs={"denoise": True, "denoise_h": 0.04, "preprocess": False},
+    ).manifest
+
+    assert manifest.floor_deferred is False
+    assert manifest.floor_spec is None
+    assert manifest.floor_level is not None
 
 
 def test_batch_plan_global_level_cannot_erase_a_sampled_slice(tmp_path: Path) -> None:

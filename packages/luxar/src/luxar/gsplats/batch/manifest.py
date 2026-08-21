@@ -52,10 +52,12 @@ class BatchManifest:
     """Key path to a specific array within the zarr store (e.g. 'h2afva/fused')."""
 
     axes: Optional[str] = None
-    """Explicit axis-order override (e.g. ``'t,c,z,y,x'``) used both to discover
-    the dataset shape AND forwarded to every fit task (``fit --axes``). Without
-    it, tasks fall back to the positional ndim heuristic — which must then agree
-    with the shape the planner used, or the tile grid / merge corrupts."""
+    """Explicit axis-order override (e.g. ``'t,c,z,y,x'``) used to discover and
+    reload the source dataset. Direct fit tasks receive it as ``fit --axes``;
+    preprocess fits receive the corresponding canonical ``t,c,*spatial`` axes
+    for ``denoised.zarr``. Without it, source readers retain the positional ndim
+    heuristic while preprocess fits derive canonical axes from the recorded
+    worker-visible spatial rank."""
 
     # Dataset shape
     n_timepoints: int = 1
@@ -82,33 +84,42 @@ class BatchManifest:
     fit_args: Dict[str, Any] = field(default_factory=dict)
 
     floor_level: Optional[float] = None
-    """The ONE background floor level resolved at plan time, subtracted by every
-    ``(t, c)`` task. ``batch-fit`` deliberately uses a single global level for the
+    """The ONE background floor level resolved before fitting, subtracted by every
+    ``(t, c)`` task. Resolution normally happens at plan time; denoised-basis
+    plans defer it to one dependent job after calibration/preprocessing.
+    ``batch-fit`` deliberately uses a single global level for the
     whole timelapse rather than letting each task re-estimate on its own
     sub-volume, which would be a time-varying pedestal (brightness flicker) across
     the merged partition. It is the MINIMUM of the levels resolved on a bounded set
     of evenly spaced ``(t, c)`` slices spanning the store's full extent (see
     :func:`luxar.cli.gsplat_ops.batch.planning.resolve_batch_floor`): a minimum is
     a lower bound on every SAMPLED slice's pedestal, so it cannot clip a sampled
-    sub-volume to zero (which would drop that slice silently from the merge) — a
+    sub-volume to zero — a
     dimmer non-sampled slice still can, bounded sampling being bounded — and it
-    does not depend on the ``--timepoints``/``--channels`` selection. The level
-    that actually drives the fits is the concrete number in ``fit_args["floor"]``;
-    this field RECORDS it for inspection (nothing reads it back — notably the
-    merge-time ``refine='volume'`` re-fit does not, so its coarse levels
-    re-estimate their own ``auto`` floor per crop). ``None`` means "no level is
+    does not depend on the ``--timepoints`` selection for raw and on-the-fly
+    denoise runs. Raw-basis resolution also ignores ``--channels``; on-the-fly
+    denoised resolution follows the selected channels because NLM ``h`` is
+    calibrated per channel. Preprocess runs necessarily resolve against the
+    selected-only ``denoised.zarr`` store, so both axes are selection-scoped. The
+    level that actually drives the fits is the concrete number in ``fit_args["floor"]``;
+    this field records it for inspection and merge provenance. ``None`` means "no level is
     pinned": suppression is disabled, or the resolved level was negative so the
     SPEC was forwarded and each task resolves it itself, or the manifest predates
     this field — in the last two cases the run keeps its recorded ``fit_args``
     floor SPEC, so a resumed old batch behaves exactly as it did when planned."""
 
+    floor_spec: Any = None
+    """Original effective floor spec when resolution must happen after denoising."""
+
+    floor_deferred: bool = False
+    """Whether a dependent runtime stage resolves ``floor_spec`` on denoised data."""
+
     norm_range: Optional[Tuple[float, float]] = None
-    """The ONE raw-input normalization range resolved at plan time and forwarded
-    to every ``(t, c)`` task through ``fit_args["norm_range"]``. It is measured
-    from bounded samples of the same representative slices used for
-    ``floor_level``, so normalized absolute thresholds do not vary with time or
-    channel. ``None`` means the manifest predates this field; its tasks keep their
-    historical per-sub-volume range resolution."""
+    """The ONE raw-input normalization range forwarded to every fit task.
+
+    ``None`` means the manifest predates shared normalization or no usable range
+    could be resolved, so tasks retain their historical per-sub-volume behavior.
+    """
 
     grid_scale: Optional[List[float]] = None
     """Per-axis factor mapping the VOXEL tile grid onto the frame the fit tasks'
@@ -227,9 +238,45 @@ class BatchManifest:
     # Post-submit state
     calibrate_job_id: Optional[int] = None
     denoise_job_id: Optional[int] = None
+    floor_job_id: Optional[int] = None
     array_job_id: Optional[int] = None
     preemptible_job_id: Optional[int] = None
     merge_job_id: Optional[int] = None
+
+
+def floor_suppression_applied(manifest: BatchManifest) -> bool:
+    """Whether workers subtract a non-zero background level/spec."""
+    value = manifest.fit_args.get("floor")
+    if value is None:
+        return False
+    if isinstance(value, str) and value.strip().lower() in ("", "none"):
+        return False
+    try:
+        return float(value) != 0.0
+    except (TypeError, ValueError):
+        return True
+
+
+def floor_erased_slices(
+    manifest: BatchManifest, tiles_dir: Path
+) -> set[tuple[int, int]]:
+    """Return uniform ``(t, c)`` pairs wholly empty under an applied floor.
+
+    Content plans may legitimately place no box over a slice, so an all-empty
+    content slot is ambiguous and deliberately excluded.
+    """
+    if manifest.mode != "uniform" or not floor_suppression_applied(manifest):
+        return set()
+    by_slice: dict[tuple[int, int], list[BatchJob]] = {}
+    for job in manifest.jobs:
+        by_slice.setdefault((job.timepoint, job.channel), []).append(job)
+    erased = set()
+    for pair, jobs in by_slice.items():
+        if jobs and all(
+            Path(f"{tiles_dir / job.output_filename}.empty").exists() for job in jobs
+        ):
+            erased.add(pair)
+    return erased
 
 
 def save_manifest(manifest: BatchManifest, output_dir: Path) -> Path:
@@ -270,8 +317,6 @@ def load_manifest(output_dir: Path) -> BatchManifest:
     # Convert tuple-valued fields back to tuples
     data["spatial_shape"] = tuple(data.get("spatial_shape", ()))
     data["channel_shape"] = tuple(data.get("channel_shape", ()))
-    if data.get("norm_range") is not None:
-        data["norm_range"] = tuple(data["norm_range"])
 
     # Filter to known fields (forward-compatible with newer manifests)
     known_fields = {f.name for f in dataclasses.fields(BatchManifest)}

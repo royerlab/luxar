@@ -25,7 +25,11 @@ from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Optional, Sequence,
 from arbol import aprint, asection
 
 from luxar.core.group.partition import prune_serialized_bsp_tree
-from luxar.gsplats.batch.manifest import BatchManifest, output_filename
+from luxar.gsplats.batch.manifest import (
+    BatchManifest,
+    floor_erased_slices,
+    output_filename,
+)
 
 if TYPE_CHECKING:
     from luxar.gsplats.gsplat_data import GSplatData
@@ -71,6 +75,14 @@ def merge_batch_results(
             "merge_batch_results: `flat` and `recipe` are mutually exclusive — "
             "the flat path produces a single leaf with no spatial parts to carry "
             "a per-part LOD ladder. Drop --flat to get a per-part LOD partition."
+        )
+    erased = floor_erased_slices(manifest, Path(output_dir) / "tiles")
+    if erased:
+        pairs = ", ".join(f"(t={t}, c={c})" for t, c in sorted(erased))
+        raise RuntimeError(
+            "Background floor suppression erased every spatial tile for "
+            f"{pairs}; refusing to merge missing slices. Remove those slices' "
+            ".empty markers and re-plan with a lower floor or --floor none."
         )
     if flat and manifest.mode == "content":
         raise ValueError(
