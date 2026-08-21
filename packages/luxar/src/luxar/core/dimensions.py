@@ -22,6 +22,21 @@ from ..validation.category_validation import (  # noqa: E402
 )
 
 
+def _as_builtin(value: Any) -> Any:
+    """A numpy scalar as its Python equivalent; anything else unchanged.
+
+    Duck-typed on ``.item()`` so this module keeps no numpy dependency. The
+    conversion preserves integrality, so an integer range stays integral.
+    """
+    # Identify a numpy scalar by carrying BOTH `.item` and `.dtype`, not by
+    # failing an isinstance check against the builtins: np.float64 SUBCLASSES
+    # float, so `not isinstance(value, float)` skips exactly the dtype most
+    # likely to turn up here.
+    if hasattr(value, "item") and hasattr(value, "dtype"):
+        return value.item()
+    return value
+
+
 @dataclass
 class Dimension:
     """Definition of a single dimension in a scene.
@@ -54,6 +69,23 @@ class Dimension:
 
     def __post_init__(self) -> None:
         """Validate dimension parameters and auto-determine spatial flag."""
+        # Normalise numpy scalars to builtins BEFORE anything else reads them.
+        # `to_dict` emits these three verbatim, and a numpy scalar there makes
+        # the scene unserialisable at save time -- after the compiler has
+        # already created the store, so the failure leaves a stub directory
+        # rather than nothing (see demo_ppi_flow_field).
+        if self.range is not None:
+            try:
+                # Element-wise, NOT `lo, hi = self.range`: a malformed range
+                # (say a 3-element list) must still reach the length check
+                # below and get its own "Range must be a tuple of (min, max)"
+                # rather than dying here on an unpacking error.
+                self.range = tuple(_as_builtin(v) for v in self.range)
+            except TypeError:
+                pass  # not iterable at all; the validation below reports it
+        self.step = _as_builtin(self.step)
+        self.scale = _as_builtin(self.scale)
+
         # Validate and handle categorical dimensions
         self.categories = _validate_categories(self.categories)
         if self.categories is not None:
