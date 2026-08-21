@@ -703,7 +703,7 @@ def run_fit_volume(
                     )
                     if on
                 ]
-                if _unsupported and plan_box is None:
+                if _unsupported:
                     aprint(
                         f"⚠ {', '.join(_unsupported)} are not supported with "
                         "--tiling content and are ignored."

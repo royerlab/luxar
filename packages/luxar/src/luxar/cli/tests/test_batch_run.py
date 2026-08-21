@@ -258,6 +258,7 @@ def _plan(
     src: Path,
     out: Path,
     *,
+    tiling: str = "uniform",
     axes_list: "list[str] | None" = None,
     timepoints_slice: "str | None" = None,
     channels_slice: "str | None" = None,
@@ -287,7 +288,7 @@ def _plan(
     return plan_batch(
         input_path=src,
         output_dir=out,
-        tiling="uniform",
+        tiling=tiling,
         tile_size=tile_size,
         tile_overlap=tile_overlap,
         axes_list=(_TZYX if axes_list is None else (axes_list or None)),
@@ -299,6 +300,20 @@ def _plan(
         content=ContentKnobs(),
         merge=MergeConfig(),
     )
+
+
+def test_batch_plan_rejects_content_denoising_before_discovery(tmp_path: Path) -> None:
+    """Content workers do not denoise, so planning must not emit such tasks."""
+    with pytest.raises(
+        typer.BadParameter,
+        match=r"--tiling content.*--denoise.*not supported",
+    ):
+        _plan(
+            tmp_path / "missing.zarr",
+            tmp_path / "out",
+            tiling="content",
+            denoise_kwargs={"denoise": True},
+        )
 
 
 def test_batch_plan_resolves_one_global_floor_level(tmp_path: Path) -> None:

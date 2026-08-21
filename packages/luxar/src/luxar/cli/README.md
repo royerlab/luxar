@@ -455,7 +455,7 @@ luxar gsplat benchmark --slurm --partition gpu        # Submit benchmark to Slur
 luxar gsplat benchmark --list                         # Show profiled GPUs
 ```
 
-The `batch-fit` group fits a whole nD dataset at scale (the scaled-up sibling of `gsplat fit`), either **locally across GPUs** (`run`) or on a **Slurm cluster** (`submit`). Both plan the decomposition once (uniform tiles or a shared content box plan over T×C) and then run a memory-safe streaming merge to a single `kind=partition`. `status`/`validate`/`merge`/`cancel` are shared.
+The `batch-fit` group fits a whole nD dataset at scale (the scaled-up sibling of `gsplat fit`), either **locally across GPUs** (`run`) or on a **Slurm cluster** (`submit`). Both plan the decomposition once (uniform tiles or a shared content box plan over T×C) and then run a memory-safe streaming merge to a single `kind=partition`. `status`/`validate`/`merge`/`cancel` are shared. Denoising is supported with uniform tiling; `--tiling content --denoise` is rejected because content-box workers do not denoise yet.
 
 #### `luxar gsplat batch-fit run`
 Fit a whole timelapse **locally** across multiple GPUs (no Slurm), then merge. One worker is pinned per GPU via `CUDA_VISIBLE_DEVICES`; per-GPU concurrency is sized from each card's free VRAM. Resumable — re-running skips tiles already on disk.

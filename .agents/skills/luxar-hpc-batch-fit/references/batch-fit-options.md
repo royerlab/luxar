@@ -23,7 +23,9 @@ box plan is scanned from a temporal **max-projection** over up to `--plan-sample
 evenly-spaced timepoints (covers signal at ANY t); `--plan-timepoint N` pins one
 timepoint instead. Tuning: `--saturation-exponent` (0.44), `--saturation-cap`,
 `--feature-threshold`, `--feature-metric` (peaks/edges/intensity), `--cell` (16),
-`--target-features`, `--min-leaf` (256), `--max-leaf` (512).
+`--target-features`, `--min-leaf` (256), `--max-leaf` (512). Denoising is not yet
+implemented by content-box workers, so `--tiling content --denoise` is rejected at
+plan time instead of emitting tasks that would fit raw data.
 
 ## Shared fit params
 `--preset` (standard), `--config PATH`, `--seeds`, `--iters`/`-n`, `--progressive`,

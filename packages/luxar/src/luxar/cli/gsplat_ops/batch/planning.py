@@ -1685,6 +1685,11 @@ def plan_batch(
             f"'{input_path.name}'. Convert it to zarr first, or use `gsplat fit` "
             f"for a single {input_path.suffix.lower()} volume."
         )
+    if tiling == "content" and denoise.denoise:
+        raise typer.BadParameter(
+            "--tiling content with --denoise is not supported: content workers "
+            "do not denoise yet. Use --tiling uniform or preprocess the input."
+        )
 
     fit_args, denoise_mode, _ = _assemble_fit_args(fit, denoise)
     denoised_zarr_path = None
