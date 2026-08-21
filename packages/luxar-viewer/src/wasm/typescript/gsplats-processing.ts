@@ -15,6 +15,7 @@ import {
   GSPLAT_CHOLESKY_EPSILON as CHOLESKY_EPSILON,
   MAX_SUPPORTED_DIMS,
 } from '../../config/constants';
+import { expf, logf } from './float32-math';
 
 /** Maximum packed Cholesky size for MAX_SUPPORTED_DIMS. */
 const MAX_PACKED_CHOLESKY_SIZE = (MAX_SUPPORTED_DIMS * (MAX_SUPPORTED_DIMS + 1)) / 2;
@@ -214,11 +215,11 @@ function computeDisplayCholesky3D(
   for (let i = 0; i < n; i++) {
     const diag = output[outputOffset + packedIndex(i, i)];
     if (diag > 0) {
-      logSum += Math.log(diag);
+      logSum += logf(diag);
       counted++;
     }
   }
-  const phantom = counted > 0 ? Math.exp(logSum / counted) : Math.sqrt(CHOLESKY_EPSILON);
+  const phantom = counted > 0 ? expf(logSum / counted) : Math.sqrt(CHOLESKY_EPSILON);
 
   let idx = outputOffset + (n * (n + 1)) / 2;
   for (let row = n; row < 3; row++) {
@@ -353,7 +354,7 @@ export function project_gsplats_nd_to_3d(
   const numDisplay = Math.min(displayDims.length, 3);
   const fullPackedSize = (ndim * (ndim + 1)) / 2;
 
-  const shiftC = Math.exp(-0.5 * truncate * truncate);
+  const shiftC = expf(-0.5 * truncate * truncate);
   const invOneMinusC = 1.0 / (1.0 - shiftC);
 
   // Grow the fused scratch when numContinuous > 16 (the uncapped >16-D backend);
@@ -401,7 +402,7 @@ export function project_gsplats_nd_to_3d(
       // Pass `diff` whole — mahalanobisDistanceInternal reads only [0, ndim), so a
       // `.subarray(0, numContinuous)` view would allocate once PER SPLAT here.
       const mahalDist = mahalanobisDistanceInternal(diff, hiddenCholesky, numContinuous, _fusedY);
-      const rawExp = Math.exp(-0.5 * mahalDist * mahalDist);
+      const rawExp = expf(-0.5 * mahalDist * mahalDist);
       // Clamp at 0 with a comparison rather than Math.max: Rust's `f32::max`
       // IGNORES NaN and returns 0.0, while `Math.max(0, NaN)` is NaN. A NaN
       // anywhere in a splat's center/covariance would otherwise leave this

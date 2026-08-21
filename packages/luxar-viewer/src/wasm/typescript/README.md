@@ -17,6 +17,7 @@ here automatically — not just when WASM is missing.
 | `lines-clipping.ts`     | Liang-Barsky segment clipping, batched position/scalar/color interpolation, segment lengths, per-endpoint cap suppression                   |
 | `mesh-culling.ts`       | Whole-triangle nD culling: per-vertex slab membership + face compaction preserving original vertex indices. `Math.fround`s the slab bounds  |
 | `gsplats-processing.ts` | Marginal Cholesky factorization, Mahalanobis distance, fused nD→3D projection (`project_gsplats_nd_to_3d`)                                  |
+| `float32-math.ts`       | Exact TypeScript ports of the compiler-builtins `expf` / `logf` routines used by Rust's wasm32 target                                       |
 | `effective-radii.ts`    | `calculate_effective_radii` — `R_eff = sqrt(R² − D²)` for nD points sliced by a hyperplane                                                  |
 | `decode.ts`             | LUT / quantized / log-scalar / geolog-scalar / per-channel (linear, log, signed-log, geolog) decoders + `decode_broadcasted`                |
 | `projection.ts`         | nD→3D position extraction (`extract_3d_positions`)                                                                                          |
