@@ -15,6 +15,7 @@ from typing import Any
 
 import numpy as np
 import pytest
+import typer
 
 from luxar.cli.gsplat_ops.fitting.fit_utils import resolve_floor_with_calibration
 from luxar.gsplats.calibration import CalibrationResult, HeldOutPeak, NoiseFloor
@@ -284,6 +285,101 @@ def test_parallel_content_fit_hands_the_loaded_volume_to_the_merge(
     )
 
     assert seen["volume"] is volume
+
+
+def test_parallel_content_fit_rejects_an_external_plan_for_another_grid(
+    monkeypatch, tmp_path: Path
+) -> None:
+    import importlib
+
+    from luxar.cli.gsplat_ops import planner
+    from luxar.gsplats import fit_tiled_parallel
+    from luxar.gsplats.planner import FitPlan, PlanBox
+
+    parallel_module = importlib.import_module(
+        "luxar.gsplats.planner.fit_planned_parallel"
+    )
+    plan = FitPlan(
+        volume_shape=[8, 8, 8],
+        boxes=[PlanBox(box=[0, 8, 0, 8, 0, 8], n_features=10, budget=10)],
+        overlap=1,
+        feature_method="peaks",
+        min_leaf=8,
+        max_leaf=8,
+        density={"saturation_cap": 100},
+    )
+    plan_path = tmp_path / "plan.json"
+    plan.to_json(plan_path)
+    called = False
+
+    def _fake_parallel(fitplan: Any, **kwargs: Any) -> Any:
+        nonlocal called
+        called = True
+        return _stub_leaf()
+
+    monkeypatch.setattr(parallel_module, "fit_planned_parallel", _fake_parallel)
+    monkeypatch.setattr(fit_tiled_parallel, "resolve_jobs", lambda *args, **kwargs: 2)
+
+    with pytest.raises(typer.BadParameter, match="does not match the plan grid"):
+        planner.run_content_fit(
+            tmp_path / "unused.npy",
+            tmp_path / "out.gsplats.zarr",
+            volume=np.zeros((16, 16, 16), np.float32),
+            plan=plan_path,
+            jobs="2",
+            k_star_ref=100,
+            n_features_ref=10,
+            floor="none",
+            flat=True,
+            verbose=False,
+        )
+
+    assert called is False
+
+
+def test_content_plan_box_rejects_a_volume_from_another_grid(
+    monkeypatch, tmp_path: Path
+) -> None:
+    import importlib
+
+    from luxar.cli.gsplat_ops import planner
+    from luxar.gsplats.planner import FitPlan, PlanBox
+
+    plan = FitPlan(
+        volume_shape=[8, 8, 8],
+        boxes=[PlanBox(box=[0, 8, 0, 8, 0, 8], n_features=10, budget=10)],
+        overlap=1,
+        feature_method="peaks",
+        min_leaf=8,
+        max_leaf=8,
+        density={"saturation_cap": 100},
+    )
+    plan_path = tmp_path / "plan.json"
+    plan.to_json(plan_path)
+    fit_planned_module = importlib.import_module("luxar.gsplats.planner.fit_planned")
+    called = False
+
+    def _fake_box(*args: Any, **kwargs: Any) -> Any:
+        nonlocal called
+        called = True
+        return _stub_leaf()
+
+    monkeypatch.setattr(fit_planned_module, "_fit_one_box", _fake_box)
+
+    with pytest.raises(typer.BadParameter, match="does not match the plan grid"):
+        planner.run_content_fit(
+            tmp_path / "unused.npy",
+            tmp_path / "box.gsplats.zarr",
+            volume=np.zeros((16, 16, 16), np.float32),
+            plan=plan_path,
+            plan_box=0,
+            k_star_ref=100,
+            n_features_ref=10,
+            floor="none",
+            verbose=False,
+        )
+
+    assert called is False
 
 
 def test_the_content_stamp_never_contradicts_the_boxes(tmp_path: Path) -> None:

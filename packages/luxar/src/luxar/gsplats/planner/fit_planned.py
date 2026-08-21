@@ -388,6 +388,11 @@ def fit_planned(
     V = np.asarray(volume, dtype=np.float32)
     if V.ndim != 3:
         raise ValueError(f"fit_planned expects a 3-D volume, got shape {V.shape}")
+    plan_shape = tuple(int(size) for size in plan.volume_shape)
+    if V.shape != plan_shape:
+        raise ValueError(
+            f"volume shape {V.shape} does not match the plan grid {plan_shape}"
+        )
     pad = int(plan.overlap)
     fit_kwargs.setdefault("cull_retention", CONTENT_CULL_RETENTION)
     fit_kwargs.setdefault("verbose", False)

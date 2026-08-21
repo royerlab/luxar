@@ -51,6 +51,16 @@ def _internal_plan_json(output: Path, token: str) -> Path:
     return output.parent / f".{output.name}.plan.{token}.json"
 
 
+def _require_plan_volume_shape(volume: Any, fitplan: Any) -> None:
+    """Reject a plan whose boxes were built for a different voxel grid."""
+    actual = tuple(int(size) for size in np.shape(volume))
+    expected = tuple(int(size) for size in fitplan.volume_shape)
+    if actual != expected:
+        raise typer.BadParameter(
+            f"volume shape {actual} does not match the plan grid {expected}"
+        )
+
+
 def _save_fit_result(
     result: Any,
     output: Path,
@@ -252,6 +262,7 @@ def run_content_fit(
                 f"--plan-box {plan_box} out of range [0, {len(fitplan.boxes)})"
             )
         vol = _load_vol()
+        _require_plan_volume_shape(vol, fitplan)
         fk = _fit_kwargs()
         fk["device"] = device
         # The parent resolved the level and forwarded it as a number — echoed
@@ -407,6 +418,8 @@ def run_content_fit(
         fitplan.to_json(plan_json_path)
         created_plan = True
 
+    _require_plan_volume_shape(vol, fitplan)
+
     if plan_only:  # --plan-only with an explicit --plan: nothing to compute
         if verbose:
             aprint(f"Plan: {plan_json_path}")
@@ -486,6 +499,7 @@ def run_content_fit(
             )
     else:
         fk = box_fit_kwargs  # already carries the one resolved floor level
+        fk.pop("verbose", None)
         with _section(f"Fitting {fitplan.n_boxes} boxes"):
 
             def _prog(i: int, n: int, msg: str) -> None:
@@ -500,6 +514,7 @@ def run_content_fit(
                 recipe=recipe,
                 recipe_params=recipe_params,
                 progress_callback=_prog,
+                verbose=verbose,
                 **fk,
             )
 

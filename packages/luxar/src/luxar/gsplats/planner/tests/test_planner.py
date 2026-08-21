@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import math
 import sys
 import textwrap
@@ -1339,6 +1340,27 @@ class TestPlannedFitTruncationRadius:
         notice = capsys.readouterr().out
         assert "Merged quality metrics skipped" in notice
         assert "LUXAR_TILED_QUALITY_MAX_GB" in notice
+
+    def test_rejects_a_volume_from_a_different_plan_grid(self, monkeypatch):
+        from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.planner import fit_planned as fit_planned_fn
+
+        fit_planned_module = importlib.import_module(
+            "luxar.gsplats.planner.fit_planned"
+        )
+        plan = _toy_plan(n_boxes=1)
+
+        def _fake_fit(*args, **kwargs):
+            return GSplatData(
+                centers=np.array([[4.0, 4.0, 4.0]], np.float32),
+                amplitudes=np.ones((1,), np.float32),
+                cholesky_factors=np.array([[1, 0, 1, 0, 0, 1]], np.float32),
+            )
+
+        monkeypatch.setattr(fit_planned_module, "_fit_one_box", _fake_fit)
+
+        with pytest.raises(ValueError, match="does not match the plan grid"):
+            fit_planned_fn(np.zeros((8, 8, 8), np.float32), plan)
 
     def test_partition_parts_keep_the_configured_radius_and_box_stats(
         self, tmp_path, capsys
