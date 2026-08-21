@@ -158,7 +158,7 @@ def _solve_system(
             [cofactor02, b * g - a * h, a * e - b * d],
         ]
     )
-    return inverse @ rhs / determinant
+    return np.asarray(inverse @ rhs / determinant, dtype=np.float64)
 
 
 def _quadric_cost(position: NDArray[np.float64], quadric: NDArray[np.float64]) -> float:

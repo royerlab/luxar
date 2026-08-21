@@ -444,6 +444,8 @@ class TestDecimateQEM:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         vertices, faces = octasphere(4)
+        colors = np.round((vertices + 1.0) * 127.5).astype(np.uint8)
+        scalars = np.arange(len(vertices), dtype=np.float32)
         build_heap = qem._build_heap
         heap_builds = 0
 
@@ -454,11 +456,29 @@ class TestDecimateQEM:
 
         monkeypatch.setattr(qem, "_build_heap", counted_build_heap)
 
-        levels = decimate_qem_ladder(vertices, faces, target_vertices=[40, 120, 400])
+        targets = [40, 120, 400]
+        levels = decimate_qem_ladder(
+            vertices,
+            faces,
+            target_vertices=targets,
+            colors=colors,
+            scalars=scalars,
+        )
 
         assert heap_builds == 1
-        assert [len(level.vertices) for level in levels] == [40, 120, 400]
-        for level in levels:
+        assert [len(level.vertices) for level in levels] == targets
+        for target, level in zip(targets, levels, strict=True):
+            independent = decimate_qem(
+                vertices,
+                faces,
+                target_vertices=target,
+                colors=colors,
+                scalars=scalars,
+            )
+            np.testing.assert_array_equal(level.vertices, independent.vertices)
+            np.testing.assert_array_equal(level.faces, independent.faces)
+            np.testing.assert_array_equal(level.colors, independent.colors)
+            np.testing.assert_array_equal(level.scalars, independent.scalars)
             edges, boundary, nonmanifold = edge_audit(len(level.vertices), level.faces)
             assert len(level.vertices) - edges + len(level.faces) == 2
             assert boundary == 0
