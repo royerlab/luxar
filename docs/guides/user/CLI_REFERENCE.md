@@ -308,8 +308,9 @@ the substitutive, level-replacing reduction — but **not its values**: this one
 `auto`, `qem`, or `cluster`, because a mesh is decimated where a gsplat level reduces a
 Gaussian mixture, which a surface is not. QEM is Garland-Heckbert edge collapse with a
 link-condition veto, so it preserves manifold topology; clustering is the vectorized
-large-mesh tier. `auto` uses QEM through 300 source vertices and clustering above that
-measured worst-case open-surface envelope. On an open near-planar surface QEM's
+large-mesh tier. `auto` uses QEM through 10,000 source vertices and clustering above that
+measured worst-case open-surface envelope. A QEM ladder builds one collapse sequence and
+snapshots every level from it. On an open near-planar surface QEM's
 orientation veto can stop well above the requested count and shorten the ladder; use
 `cluster` when closely hitting the count matters more than topology preservation. QEM
 also requires at least three coarsening dimensions;

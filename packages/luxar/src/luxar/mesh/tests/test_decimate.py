@@ -9,16 +9,26 @@ stand-in for anything).
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 import pytest
 
+from .. import qem
 from ..decimate import (
     QEM_AUTO_VERTEX_LIMIT,
     decimate,
     decimate_cluster,
+    decimate_ladder,
     resolve_decimation_method,
 )
-from ..qem import _face_quadrics, decimate_qem
+from ..qem import (
+    _edge_target,
+    _face_quadrics,
+    _solve_system,
+    decimate_qem,
+    decimate_qem_ladder,
+)
 
 
 def octasphere(subdivisions: int = 4) -> tuple[np.ndarray, np.ndarray]:
@@ -439,11 +449,249 @@ def test_the_cell_search_is_robust_to_non_monotone_cluster_counts() -> None:
 
 
 class TestDecimateQEM:
+    def test_boundary_and_incident_face_caches_stay_exact_after_each_collapse(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        segments = 64
+        angles = np.linspace(0, 2 * np.pi, segments, endpoint=False)
+        inner = np.column_stack((np.cos(angles), np.sin(angles), np.zeros(segments)))
+        outer = inner * np.array([2.0, 2.0, 1.0])
+        vertices = np.concatenate((inner, outer)).astype(np.float32)
+        faces = []
+        for index in range(segments):
+            following = (index + 1) % segments
+            faces.extend(
+                (
+                    (index, segments + index, segments + following),
+                    (index, segments + following, following),
+                )
+            )
+
+        apply_collapse = qem._apply_collapse
+        collapse_count = 0
+
+        def checked_apply_collapse(*args: Any, **kwargs: Any) -> None:
+            nonlocal collapse_count
+            apply_collapse(*args, **kwargs)
+            collapse_count += 1
+            work_faces = kwargs["work_faces"]
+            active_faces = kwargs["active_faces"]
+            alive = kwargs["alive"]
+            vertex_faces = kwargs["vertex_faces"]
+            boundary_vertices = kwargs["boundary_vertices"]
+
+            expected_faces = [set() for _ in range(len(alive))]
+            edge_counts: dict[tuple[int, int], int] = {}
+            for face_index in np.flatnonzero(active_faces):
+                face = work_faces[face_index]
+                for vertex in face:
+                    expected_faces[int(vertex)].add(int(face_index))
+                for first, second in (
+                    (face[0], face[1]),
+                    (face[1], face[2]),
+                    (face[2], face[0]),
+                ):
+                    edge = tuple(sorted((int(first), int(second))))
+                    edge_counts[edge] = edge_counts.get(edge, 0) + 1
+
+            expected_boundary = np.zeros(len(alive), dtype=bool)
+            for (first, second), count in edge_counts.items():
+                if count == 1:
+                    expected_boundary[[first, second]] = True
+
+            for vertex in np.flatnonzero(alive):
+                assert vertex_faces[vertex] == expected_faces[vertex]
+            np.testing.assert_array_equal(
+                boundary_vertices[alive], expected_boundary[alive]
+            )
+
+        monkeypatch.setattr(qem, "_apply_collapse", checked_apply_collapse)
+
+        result = decimate_qem(
+            vertices, np.asarray(faces, dtype=np.uint32), target_vertices=48
+        )
+
+        assert collapse_count > 0
+        assert len(result.vertices) == 48
+
+    @pytest.mark.parametrize("ndim", [3, 4])
+    def test_small_system_solver_matches_numpy_and_rejects_rank_deficiency(
+        self, ndim: int
+    ) -> None:
+        rng = np.random.default_rng(1798 + ndim)
+        for condition in (1.0, 1e4, 1e8):
+            basis, _ = np.linalg.qr(rng.normal(size=(ndim, ndim)))
+            eigenvalues = np.geomspace(1.0, 1.0 / condition, ndim)
+            matrix = basis @ np.diag(eigenvalues) @ basis.T
+            rhs = rng.normal(size=ndim)
+
+            solved = _solve_system(matrix, rhs)
+
+            assert solved is not None
+            np.testing.assert_allclose(
+                solved, np.linalg.solve(matrix, rhs), rtol=1e-6, atol=1e-8
+            )
+
+        rank_deficient = np.eye(ndim, dtype=np.float64)
+        rank_deficient[-1] = rank_deficient[-2]
+        assert _solve_system(rank_deficient, np.ones(ndim)) is None
+
+    def test_non_three_dimensional_solver_rejects_near_singularity(self) -> None:
+        matrix = np.diag([1.0, 1.0, 1.0, 1e-15])
+        rhs = np.ones(4)
+
+        assert np.linalg.matrix_rank(matrix, tol=1e-12) == 3
+        assert np.linalg.norm(np.linalg.solve(matrix, rhs)) > 1e14
+        assert _solve_system(matrix, rhs) is None
+
+    def test_a_flat_four_dimensional_ladder_stays_inside_its_input_bounds(
+        self,
+    ) -> None:
+        side = 20
+        vertices = np.array(
+            [
+                (x, y, 0, 0)
+                for y in np.linspace(0, 1, side)
+                for x in np.linspace(0, 1, side)
+            ],
+            dtype=np.float32,
+        )
+        faces = []
+        for y in range(side - 1):
+            for x in range(side - 1):
+                a = y * side + x
+                b, c, d = a + 1, a + side, a + side + 1
+                faces.extend(((a, b, d), (a, d, c)))
+
+        levels = decimate_qem_ladder(
+            vertices,
+            np.asarray(faces, dtype=np.uint32),
+            target_vertices=[25, 100],
+            spatial_dims=(0, 1, 2, 3),
+        )
+
+        lower = vertices.min(axis=0)
+        upper = vertices.max(axis=0)
+        for level in levels:
+            assert np.all(level.vertices >= lower)
+            assert np.all(level.vertices <= upper)
+
+    def test_a_ladder_reuses_one_collapse_sequence(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        vertices, faces = octasphere(4)
+        colors = np.round((vertices + 1.0) * 127.5).astype(np.uint8)
+        scalars = np.arange(len(vertices), dtype=np.float32)
+        build_heap = qem._build_heap
+        heap_builds = 0
+
+        def counted_build_heap(*args: object, **kwargs: object) -> object:
+            nonlocal heap_builds
+            heap_builds += 1
+            return build_heap(*args, **kwargs)
+
+        monkeypatch.setattr(qem, "_build_heap", counted_build_heap)
+
+        targets = [40, 120, 400]
+        levels = decimate_ladder(
+            vertices,
+            faces,
+            target_vertices=targets,
+            method="qem",
+            colors=colors,
+            scalars=scalars,
+        )
+
+        assert heap_builds == 1
+        assert [len(level.vertices) for level in levels] == targets
+        for target, level in zip(targets, levels, strict=True):
+            independent = decimate_qem(
+                vertices,
+                faces,
+                target_vertices=target,
+                colors=colors,
+                scalars=scalars,
+            )
+            np.testing.assert_array_equal(level.vertices, independent.vertices)
+            np.testing.assert_array_equal(level.faces, independent.faces)
+            np.testing.assert_array_equal(level.colors, independent.colors)
+            np.testing.assert_array_equal(level.scalars, independent.scalars)
+            edges, boundary, nonmanifold = edge_audit(len(level.vertices), level.faces)
+            assert len(level.vertices) - edges + len(level.faces) == 2
+            assert boundary == 0
+            assert nonmanifold == 0
+
+    def test_cluster_ladder_dispatch_matches_independent_levels(self) -> None:
+        vertices, faces = octasphere(3)
+        targets = [40, 80]
+
+        levels = decimate_ladder(
+            vertices, faces, target_vertices=targets, method="cluster"
+        )
+
+        for target, level in zip(targets, levels, strict=True):
+            independent = decimate_cluster(vertices, faces, target_vertices=target)
+            np.testing.assert_array_equal(level.vertices, independent.vertices)
+            np.testing.assert_array_equal(level.faces, independent.faces)
+
+    def test_edge_target_does_not_run_an_svd_per_candidate(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        positions = np.array([[0.0, 0.0, 0.0], [2.0, 0.0, 0.0]])
+        quadrics = np.zeros((2, 4, 4), dtype=np.float64)
+        quadrics[:, :3, :3] = np.eye(3)
+        quadrics[0, :3, 3] = quadrics[0, 3, :3] = [-0.25, 0.0, 0.0]
+        quadrics[1, :3, 3] = quadrics[1, 3, :3] = [-0.75, 0.0, 0.0]
+
+        def reject_svd(*args: object, **kwargs: object) -> None:
+            raise AssertionError(
+                "the per-edge target path must not compute matrix rank"
+            )
+
+        monkeypatch.setattr(np.linalg, "matrix_rank", reject_svd)
+
+        _, target = _edge_target(0, 1, positions, quadrics)
+
+        np.testing.assert_allclose(target, [0.5, 0.0, 0.0])
+
+    def test_edge_target_rejects_an_out_of_envelope_solve(self) -> None:
+        positions = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
+        quadrics = np.zeros((2, 4, 4), dtype=np.float64)
+        quadrics[:, :3, :3] = np.diag([1.0, 1.0, 1e-13]) / 2.0
+        quadrics[:, :3, 3] = quadrics[:, 3, :3] = np.array([-0.5, 0.0, 1e-3]) / 2.0
+
+        solved = _solve_system(
+            (quadrics[0] + quadrics[1])[:3, :3],
+            -(quadrics[0] + quadrics[1])[:3, 3],
+        )
+        assert solved is not None
+        assert solved[2] == pytest.approx(-1e10)
+
+        _, target = _edge_target(0, 1, positions, quadrics)
+
+        np.testing.assert_array_equal(target, [0.5, 0.0, 0.0])
+
     def test_an_at_target_mesh_is_returned_unchanged(self) -> None:
         vertices, faces = octasphere(1)
         result = decimate_qem(vertices, faces, target_vertices=len(vertices))
         np.testing.assert_array_equal(result.vertices, vertices)
         np.testing.assert_array_equal(result.faces, faces)
+
+    def test_single_and_ladder_at_target_paths_accept_a_degenerate_surface(
+        self,
+    ) -> None:
+        vertices = np.array(
+            [[0, 0, 0], [1, 0, 0], [2, 0, 0], [3, 0, 0]], dtype=np.float32
+        )
+        faces = np.array([[0, 1, 2], [1, 2, 3]], dtype=np.uint32)
+
+        single = decimate_qem(vertices, faces, target_vertices=10)
+        ladder = decimate_qem_ladder(vertices, faces, target_vertices=[10])[0]
+
+        np.testing.assert_array_equal(single.vertices, vertices)
+        np.testing.assert_array_equal(single.faces, faces)
+        np.testing.assert_array_equal(ladder.vertices, vertices)
+        np.testing.assert_array_equal(ladder.faces, faces)
 
     def test_link_condition_preserves_the_closed_sphere_at_every_level(self) -> None:
         v, f = octasphere(5)
@@ -562,9 +810,7 @@ class TestDecimateQEM:
 
     def test_distant_component_does_not_zero_local_face_quadrics(self) -> None:
         vertices, faces = octasphere(2)
-        far = np.array(
-            [[1e9, 0, 0], [1e9 + 1, 0, 0], [1e9, 1, 0]], dtype=np.float64
-        )
+        far = np.array([[1e9, 0, 0], [1e9 + 1, 0, 0], [1e9, 1, 0]], dtype=np.float64)
         positions = np.concatenate([vertices.astype(np.float64), far])
         all_faces = np.concatenate(
             [faces, np.array([[len(vertices), len(vertices) + 1, len(vertices) + 2]])]
@@ -587,7 +833,9 @@ class TestDecimateQEM:
         )
         groups, counts = np.unique(result.vertices[:, 0], return_counts=True)
 
-        assert len(result.vertices) < len(vertices), "collapses must happen within groups"
+        assert len(result.vertices) < len(vertices), (
+            "collapses must happen within groups"
+        )
         assert groups.tolist() == [0.0, 1.0], "barrier values must not blend"
         assert np.all(counts > 10), "each barrier group must keep its own surface"
         assert result.scalars is not None
