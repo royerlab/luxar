@@ -529,7 +529,6 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
     @contextmanager
     def transaction(self, path: NodePath) -> Iterator[None]:
         """Roll back writes below ``path`` while preserving the original error."""
-        self._check_not_finalized("transaction")
         if self._transaction_depth:
             self._transaction_depth += 1
             try:

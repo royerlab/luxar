@@ -134,3 +134,15 @@ def test_file_graft_nested_transaction_rolls_back_once(
     assert compiler._transaction_depth == 0
     assert "broken" not in compiler.store
     assert not scene.children
+
+
+def test_add_after_finalize_reports_the_attempted_write_without_context(
+    tmp_path: object,
+) -> None:
+    compiler, scene, _ = open_scene(tmp_path, "transaction-finalized.zarr")
+    compiler.finalize()
+
+    with pytest.raises(RuntimeError, match="Cannot write_points") as caught:
+        scene.add_points("late", np.zeros((1, 3), dtype=np.float32))
+
+    assert caught.value.__context__ is None
