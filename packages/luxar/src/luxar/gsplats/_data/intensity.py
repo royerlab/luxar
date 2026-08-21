@@ -49,7 +49,7 @@ class IntensityMixin(_GSplatDataOps):
         rescaled, clamped or soft-attenuated splat set renders different values
         than the one the fit scored.
         """
-        from luxar.gsplats.gsplat_data import AdditiveSubLOD
+        from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData
 
         changed = amplitudes_changed(self.amplitudes, new_amplitudes)
 

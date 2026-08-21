@@ -733,6 +733,8 @@ def test_a_reduction_recomputes_energy_stamps_and_drops_quality(
     from luxar.gsplats.lod.quality import total_self_energy
 
     source = _pyramid()
+    for level in source.substitutive_levels:
+        level.stats["lod_cutpoints"] = [999]
     from luxar.gsplats.tree import iter_leaves
 
     for leaf in iter_leaves(source.tree):
@@ -751,6 +753,7 @@ def test_a_reduction_recomputes_energy_stamps_and_drops_quality(
         assert level.stats["reference_energy"] == pytest.approx(expected_w)
         assert "quality" not in level.stats
         assert "refine_stats" not in level.stats
+        assert "lod_cutpoints" not in level.stats
 
         cumulative_n = 0
         energies = [

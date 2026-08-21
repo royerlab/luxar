@@ -92,6 +92,7 @@ def _refresh_level(
     level_stats = dict(level.stats)
     level_stats.pop("quality", None)
     level_stats.pop("refine_stats", None)
+    level_stats.pop("lod_cutpoints", None)
     if total_count_authored or ladder_authored:
         level_stats["n_splats_total"] = int(level.n_splats_total)
 
@@ -204,7 +205,7 @@ def refresh_reduction_lod_tree(
         refreshed = refresh_reduction_lod_stats(
             GSplatData.from_tree(result), GSplatData.from_tree(source)
         )
-        return _restore_node_meta(refreshed.tree, result)
+        return refreshed.tree
 
     if isinstance(result, GSplatPartition) and isinstance(source, GSplatPartition):
         children = [
@@ -255,7 +256,9 @@ def _refresh_lod_group(result: "GSplatNode", source: "GSplatNode") -> "GSplatNod
         stats.pop("quality", None)
         stats.pop("refine_stats", None)
         if total_count_authored or reference_authored:
-            stats["n_splats_total"] = int(_node_content(child).n_splats)
+            stats["n_splats_total"] = sum(
+                lod.n_splats for lod in child.additive_sublods
+            )
         if reference_authored:
             stats["reference_energy"] = reference_energy
         stamped_children.append(replace(child, meta={**child.meta, "stats": stats}))
