@@ -388,11 +388,13 @@ def fit_gaussian_splats(
 
         - "auto": histogram-mode estimate (capped at the median; a no-op on
           clean data with no pedestal).
-        - "pN" (e.g. "p10"): the Nth intensity percentile.
+        - "pN" (e.g. "p10"): the Nth percentile of non-zero intensities.
         - float: a fixed intensity value.
         - "none" / 0 / None: disabled (today's hard-min normalization).
 
-        Orthogonal to ``norm_percentile`` (which still governs image_max).
+        Orthogonal to ``norm_percentile`` unless the floor overtakes its
+        percentile-derived high endpoint; then image_max expands to the data
+        maximum and bright-outlier clipping is dropped to preserve signal.
     norm_range : tuple of float, or None, default=None
         Explicit ``(image_min, image_max)`` for normalization, replacing the
         pair ``norm_percentile`` would derive from ``V`` itself. Tiled fitting

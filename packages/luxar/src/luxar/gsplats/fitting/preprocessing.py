@@ -941,7 +941,7 @@ def _resolve_floor(V: np.ndarray, floor: "str | float | None") -> "float | None"
     ``image_min`` (hard ``min``/``norm_percentile``). Accepted forms:
 
     - ``"auto"`` → histogram-mode estimate (see :func:`estimate_floor`).
-    - ``"pN"`` (e.g. ``"p10"``) → the Nth intensity percentile.
+    - ``"pN"`` (e.g. ``"p10"``) → the Nth percentile of non-zero intensities.
     - ``"none"`` / ``"0"`` / ``0`` / ``None`` → disabled (returns ``None``).
     - ``float`` / numeric string → that fixed intensity value.
     """
@@ -957,7 +957,9 @@ def _resolve_floor(V: np.ndarray, floor: "str | float | None") -> "float | None"
             return float(estimate_floor(V, method="mode"))
         if f.startswith("p"):
             pct = float(f[1:])
-            return float(np.percentile(V, pct))
+            V = np.asarray(V)
+            values = V[V != 0.0] if np.any(V != 0.0) else V
+            return float(np.percentile(values, pct))
         value = float(f)  # numeric string
     else:
         value = float(floor)
@@ -1875,7 +1877,9 @@ def _normalize_data(
     chosen: an explicit background level raises ``image_min`` so the pedestal
     is clipped to 0 by the existing ``np.clip((V - image_min) / range, 0, 1)``.
     ``norm_percentile`` still governs ``image_max`` (bright-outlier clipping),
-    so the two are orthogonal.
+    so the two are normally orthogonal. If the floor overtakes a
+    percentile-derived high endpoint, that endpoint expands to the data maximum,
+    dropping bright-outlier clipping to preserve usable signal.
 
     ``norm_range`` supplies ``(image_min, image_max)`` outright, bypassing
     ``norm_percentile``'s derivation from ``V``. Tiled fitting passes a range
@@ -1893,13 +1897,14 @@ def _normalize_data(
     resolved_floor = _resolve_floor(V, floor)
     applied_floor: "float | None" = None
     if resolved_floor is not None:
-        if resolved_floor >= image_max:
-            # A floor at/above the brightest voxel would erase all signal
-            # (empty [0,1] range). Refuse it and keep the default image_min.
+        guard_max = image_max if norm_range is not None else float(np.max(V))
+        if resolved_floor >= guard_max:
+            # A floor at/above the normalization ceiling would leave no usable
+            # range. Refuse it and keep the default image_min.
             if verbose:
                 aprint(
                     f"Warning: floor {resolved_floor:.6g} >= image max "
-                    f"{image_max:.6g}; ignoring (would erase all signal)"
+                    f"{guard_max:.6g}; ignoring (would erase all signal)"
                 )
         else:
             # Only ever RAISE image_min (never below the percentile-based value
@@ -1908,6 +1913,13 @@ def _normalize_data(
             # strictly positive. (When norm_percentile==0, image_min == min(V),
             # so this reduces to max(resolved_floor, min(V)) as before.)
             image_min = float(max(resolved_floor, image_min))
+            if image_min >= image_max:
+                image_max = float(np.max(V))
+                if verbose:
+                    aprint(
+                        f"Normalization: expanding high endpoint to data max "
+                        f"{image_max:.6g} so floor {image_min:.6g} preserves signal"
+                    )
             applied_floor = image_min
             if verbose:
                 aprint(

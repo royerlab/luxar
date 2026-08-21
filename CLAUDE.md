@@ -298,7 +298,7 @@ luxar gsplat fit --dump-config --preset hifi > config.yaml  # Generate config te
 # estimate (capped at the median; a no-op on clean data with no pedestal).
 #
 # STAY ON `auto` UNLESS YOU HAVE MEASURED OTHERWISE. A `pN` floor subtracts the
-# Nth percentile OF ALL VOXELS, which on sparse data lands wherever the sparsity
+# Nth percentile OF NON-ZERO VOXELS, which on sparse data lands wherever the sparsity
 # puts it, not where the noise ends. On a 96x640x640 crop of a sparse light-sheet
 # brain (1.01% of voxels foreground = >10% of max; 12.9% in the dim band 1-10%),
 # p99 sat at 1.34% of THAT CROP's max — squarely inside signal. (Over the whole

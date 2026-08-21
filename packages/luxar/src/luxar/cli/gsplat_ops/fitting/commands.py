@@ -197,8 +197,9 @@ def calibrate_command(
         None,
         "--axes",
         help="Per-dimension axis labels overriding the TCZYX/CZYX/ZYX heuristic "
-        "(e.g. 'z,c,y,x'). Time/channel axes are sliced by --timepoint/--channel "
-        "and dropped; spatial axes kept in the given order.",
+        "(e.g. 'z,c,y,x'). Time/channel axes are sliced and dropped; --channel "
+        "is a flat row-major index across all channel-like axes, and more than "
+        "one time axis is rejected. Spatial axes stay in the given order.",
     ),
     # Regime-robust extensions (all opt-in; defaults preserve manuscript behaviour)
     k_star_metric: str = typer.Option(
