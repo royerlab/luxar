@@ -20,7 +20,7 @@
  * diverges visibility for near-parallel segments (this was previously 1e-10 here
  * vs 1e-7 in Rust).
  */
-const SEGMENT_PARALLEL_EPSILON = 1e-7;
+const SEGMENT_PARALLEL_EPSILON = Math.fround(1e-7);
 
 /**
  * `f32::max` / `f32::min`, which IGNORE a NaN operand and return the other —
@@ -35,6 +35,66 @@ const SEGMENT_PARALLEL_EPSILON = 1e-7;
  */
 const maxIgnoringNaN = (a: number, b: number): number => (b > a ? b : a);
 const minIgnoringNaN = (a: number, b: number): number => (b < a ? b : a);
+
+let clippedT1 = 0.0;
+let clippedT2 = 1.0;
+
+function clipSegmentCore(
+  p1: Float32Array,
+  p2: Float32Array,
+  p1Offset: number,
+  p2Offset: number,
+  slicePosition: Float32Array,
+  tolerance: Float32Array,
+  displaySet: Uint8Array,
+  ndim: number
+): boolean {
+  clippedT1 = 0.0;
+  clippedT2 = 1.0;
+  // These stay f32 without another fround: the initial values are exact and
+  // accumulation only selects from already-rounded f32 candidates.
+  for (let dim = 0; dim < ndim; dim++) {
+    if (displaySet[dim]) continue;
+
+    const tol = tolerance[dim];
+    const sliceCenter = slicePosition[dim];
+    const sliceMin = Math.fround(sliceCenter - tol);
+    const sliceMax = Math.fround(sliceCenter + tol);
+    const v1 = p1[p1Offset + dim];
+    const v2 = p2[p2Offset + dim];
+
+    if (!Number.isFinite(v1) || !Number.isFinite(v2)) return false;
+
+    const p1In = v1 >= sliceMin && v1 <= sliceMax;
+    const p2In = v2 >= sliceMin && v2 <= sliceMax;
+    if (p1In && p2In) continue;
+
+    if (!p1In && !p2In && ((v1 < sliceMin && v2 < sliceMin) || (v1 > sliceMax && v2 > sliceMax))) {
+      return false;
+    }
+
+    const dv = Math.fround(v2 - v1);
+    if (Math.abs(dv) < SEGMENT_PARALLEL_EPSILON) continue;
+
+    // Rust rounds the reciprocal before multiplying; a single JS division can
+    // differ by one ulp and then change the accumulated range or its early-out.
+    const invDv = Math.fround(1.0 / dv);
+    const tMin = Math.fround(Math.fround(sliceMin - v1) * invDv);
+    const tMax = Math.fround(Math.fround(sliceMax - v1) * invDv);
+
+    if (dv > 0) {
+      clippedT1 = maxIgnoringNaN(clippedT1, tMin);
+      clippedT2 = minIgnoringNaN(clippedT2, tMax);
+    } else {
+      clippedT1 = maxIgnoringNaN(clippedT1, tMax);
+      clippedT2 = minIgnoringNaN(clippedT2, tMin);
+    }
+
+    if (clippedT1 >= clippedT2) return false;
+  }
+
+  return true;
+}
 
 /**
  * Clip a single segment to the nD slice and return interpolation parameters.
@@ -56,9 +116,6 @@ export function clip_segment_single(
   ndim: number,
   workspace?: Uint8Array
 ): Float32Array {
-  let t1 = 0.0;
-  let t2 = 1.0;
-
   // MED-20: reuse caller-provided workspace when available, otherwise
   // allocate one. We zero the first `ndim` slots before populating —
   // the caller may reuse the same buffer across many segments and we
@@ -74,69 +131,11 @@ export function clip_segment_single(
     displaySet[displayDims[i]] = 1;
   }
 
-  for (let dim = 0; dim < ndim; dim++) {
-    if (displaySet[dim]) {
-      continue; // Skip displayed dimensions
-    }
-
-    const tol = tolerance[dim];
-    const sliceCenter = slicePosition[dim];
-    const sliceMin = sliceCenter - tol;
-    const sliceMax = sliceCenter + tol;
-
-    const v1 = p1[dim];
-    const v2 = p2[dim];
-
-    // #806: a non-finite (NaN or ±Inf) coordinate on a slicing (non-displayed)
-    // dimension cannot be localized against the slice, so the segment is
-    // treated as invisible. Enforced here, identically in the Rust backend
-    // (`lines_clipping.rs`), so the two backends stay in parity — without this
-    // the comparisons below are all false for NaN, the "both out, same side"
-    // check falls through, and NaN t-params leak out as a "visible" result.
-    if (!Number.isFinite(v1) || !Number.isFinite(v2)) {
-      return new Float32Array([0.0, 0.0, 0.0]); // [visible=0, t1, t2]
-    }
-
-    // Classify endpoints relative to slice
-    const p1In = v1 >= sliceMin && v1 <= sliceMax;
-    const p2In = v2 >= sliceMin && v2 <= sliceMax;
-
-    if (p1In && p2In) {
-      continue; // Both in - no clipping for this dimension
-    }
-
-    if (!p1In && !p2In) {
-      // Both out - check if on same side (Case E: invisible)
-      if ((v1 < sliceMin && v2 < sliceMin) || (v1 > sliceMax && v2 > sliceMax)) {
-        return new Float32Array([0.0, 0.0, 0.0]); // [visible=0, t1, t2]
-      }
-      // Opposite sides - will clip both (Case D)
-    }
-
-    // Compute intersection parameters
-    const dv = v2 - v1;
-    if (Math.abs(dv) < SEGMENT_PARALLEL_EPSILON) {
-      continue; // Parallel to slice
-    }
-
-    const tMin = (sliceMin - v1) / dv;
-    const tMax = (sliceMax - v1) / dv;
-
-    // Clip t1 (entry) and t2 (exit)
-    if (dv > 0) {
-      t1 = maxIgnoringNaN(t1, tMin);
-      t2 = minIgnoringNaN(t2, tMax);
-    } else {
-      t1 = maxIgnoringNaN(t1, tMax);
-      t2 = minIgnoringNaN(t2, tMin);
-    }
-
-    if (t1 >= t2) {
-      return new Float32Array([0.0, 0.0, 0.0]); // No valid range
-    }
+  if (!clipSegmentCore(p1, p2, 0, 0, slicePosition, tolerance, displaySet, ndim)) {
+    return new Float32Array([0.0, 0.0, 0.0]);
   }
 
-  return new Float32Array([1.0, t1, t2]); // [visible=1, t1, t2]
+  return new Float32Array([1.0, clippedT1, clippedT2]);
 }
 
 /**
@@ -179,71 +178,20 @@ export function clip_segments_batch(
     const p1Offset = v0 * ndim;
     const p2Offset = v1 * ndim;
 
-    let t1 = 0.0;
-    let t2 = 1.0;
-    let visible = true;
-
-    for (let dim = 0; dim < ndim; dim++) {
-      if (displaySetBatch[dim]) {
-        continue;
-      }
-
-      const tol = tolerance[dim];
-      const sliceCenter = slicePosition[dim];
-      const sliceMin = sliceCenter - tol;
-      const sliceMax = sliceCenter + tol;
-
-      const v1Val = positions[p1Offset + dim];
-      const v2Val = positions[p2Offset + dim];
-
-      // #806: a non-finite (NaN or ±Inf) coordinate on a slicing (non-displayed)
-      // dimension cannot be localized against the slice, so the segment is
-      // treated as invisible. Enforced here, identically in the Rust backend
-      // (`lines_clipping.rs`), so the two backends stay in parity.
-      if (!Number.isFinite(v1Val) || !Number.isFinite(v2Val)) {
-        visible = false;
-        break;
-      }
-
-      const p1In = v1Val >= sliceMin && v1Val <= sliceMax;
-      const p2In = v2Val >= sliceMin && v2Val <= sliceMax;
-
-      if (p1In && p2In) {
-        continue;
-      }
-
-      if (!p1In && !p2In) {
-        if ((v1Val < sliceMin && v2Val < sliceMin) || (v1Val > sliceMax && v2Val > sliceMax)) {
-          visible = false;
-          break;
-        }
-      }
-
-      const dv = v2Val - v1Val;
-      if (Math.abs(dv) < SEGMENT_PARALLEL_EPSILON) {
-        continue;
-      }
-
-      const tMin = (sliceMin - v1Val) / dv;
-      const tMax = (sliceMax - v1Val) / dv;
-
-      if (dv > 0) {
-        t1 = maxIgnoringNaN(t1, tMin);
-        t2 = minIgnoringNaN(t2, tMax);
-      } else {
-        t1 = maxIgnoringNaN(t1, tMax);
-        t2 = minIgnoringNaN(t2, tMin);
-      }
-
-      if (t1 >= t2) {
-        visible = false;
-        break;
-      }
-    }
+    const visible = clipSegmentCore(
+      positions,
+      positions,
+      p1Offset,
+      p2Offset,
+      slicePosition,
+      tolerance,
+      displaySetBatch,
+      ndim
+    );
 
     outputVisibility[segIdx] = visible ? 1 : 0;
-    outputT1[segIdx] = t1;
-    outputT2[segIdx] = t2;
+    outputT1[segIdx] = clippedT1;
+    outputT2[segIdx] = clippedT2;
 
     if (visible) {
       visibleCount++;
@@ -303,9 +251,13 @@ export function interpolate_clipped_positions(
       const p2Val = positions[p2Offset + d];
 
       // Clipped start: p1 + t1 * (p2 - p1)
-      outputStart[outIdx * 3 + outD] = p1Val + t1 * (p2Val - p1Val);
+      outputStart[outIdx * 3 + outD] = Math.fround(
+        p1Val + Math.fround(t1 * Math.fround(p2Val - p1Val))
+      );
       // Clipped end: p1 + t2 * (p2 - p1)
-      outputEnd[outIdx * 3 + outD] = p1Val + t2 * (p2Val - p1Val);
+      outputEnd[outIdx * 3 + outD] = Math.fround(
+        p1Val + Math.fround(t2 * Math.fround(p2Val - p1Val))
+      );
     }
 
     // Pad to 3D if fewer than 3 display dims
@@ -358,8 +310,8 @@ export function interpolate_scalars_batch(
     const val0 = values[v0];
     const val1 = values[v1];
 
-    outputStart[outIdx] = val0 + t1 * (val1 - val0);
-    outputEnd[outIdx] = val0 + t2 * (val1 - val0);
+    outputStart[outIdx] = Math.fround(val0 + Math.fround(t1 * Math.fround(val1 - val0)));
+    outputEnd[outIdx] = Math.fround(val0 + Math.fround(t2 * Math.fround(val1 - val0)));
 
     outIdx++;
   }
@@ -406,8 +358,8 @@ export function interpolate_colors_batch(
       const c0 = colors[v0 * 3 + c];
       const c1 = colors[v1 * 3 + c];
 
-      outputStart[outIdx * 3 + c] = c0 + t1 * (c1 - c0);
-      outputEnd[outIdx * 3 + c] = c0 + t2 * (c1 - c0);
+      outputStart[outIdx * 3 + c] = Math.fround(c0 + Math.fround(t1 * Math.fround(c1 - c0)));
+      outputEnd[outIdx * 3 + c] = Math.fround(c0 + Math.fround(t2 * Math.fround(c1 - c0)));
     }
 
     outIdx++;
