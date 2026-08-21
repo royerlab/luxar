@@ -25,6 +25,9 @@ if TYPE_CHECKING:
     )
 
 
+_PRUNED_LEVEL_STATS = ("reference_energy", "quality", "n_splats_total")
+
+
 def _prune_empty_additive_sublods(
     lods: "List[AdditiveSubLOD]",
 ) -> "tuple[List[AdditiveSubLOD], list[int] | None]":
@@ -41,7 +44,7 @@ def _prune_empty_additive_sublods(
 
     authored_rung_keys = {
         key
-        for lod in lods
+        for lod in nonempty
         for key in ("lod_level", "lod_n_splats", "lod_cumulative_n")
         if key in lod.stats
     }
@@ -52,6 +55,7 @@ def _prune_empty_additive_sublods(
         cumulative += int(lod.n_splats)
         cutpoints.append(cumulative)
         stats = dict(lod.stats)
+        stats.pop("energy_fraction_cum", None)
         if "lod_level" in authored_rung_keys:
             stats["lod_level"] = level
         if "lod_n_splats" in authored_rung_keys:
@@ -69,6 +73,14 @@ def _refresh_ladder_summary(stats: dict, cutpoints: list[int]) -> dict:
         refreshed["lod_n_lods"] = len(cutpoints)
     if "lod_cutpoints" in refreshed:
         refreshed["lod_cutpoints"] = list(cutpoints)
+    return refreshed
+
+
+def _stats_after_rung_prune(stats: dict, cutpoints: list[int]) -> dict:
+    """Refresh structural stamps and remove measurements invalidated by pruning."""
+    refreshed = _refresh_ladder_summary(stats, cutpoints)
+    for key in _PRUNED_LEVEL_STATS:
+        refreshed.pop(key, None)
     return refreshed
 
 
@@ -107,7 +119,13 @@ class TransformsMixin(_GSplatDataOps):
                     stats=level_stats,
                 )
             )
-        return GSplatData.from_substitutive_levels(new_levels, stats=dict(self.stats))
+        finest_cutpoints = list(
+            np.cumsum([lod.n_splats for lod in new_levels[0].additive_sublods])
+        )
+        return GSplatData.from_substitutive_levels(
+            new_levels,
+            stats=_refresh_ladder_summary(self.stats, finest_cutpoints),
+        )
 
     def _map_additive(
         self, fn: "Callable[[AdditiveSubLOD, int, int], AdditiveSubLOD]"
@@ -130,10 +148,17 @@ class TransformsMixin(_GSplatDataOps):
             new_lods.append(fn(lod, offset, n))
             offset += n
         new_lods, cutpoints = _prune_empty_additive_sublods(new_lods)
-        if cutpoints is None:
-            return GSplatData.from_additive_sublods(new_lods, stats=dict(self.stats))
-
         source_level = self.substitutive_levels[0]
+        level_stats = (
+            {}
+            if cutpoints is None
+            else _stats_after_rung_prune(source_level.stats, cutpoints)
+        )
+        root_stats = (
+            dict(self.stats)
+            if cutpoints is None
+            else _stats_after_rung_prune(self.stats, cutpoints)
+        )
         return GSplatData.from_substitutive_levels(
             [
                 SubstitutiveLevel(
@@ -141,10 +166,10 @@ class TransformsMixin(_GSplatDataOps):
                     compression_factor=source_level.compression_factor,
                     parent_method=source_level.parent_method,
                     level_index=source_level.level_index,
-                    stats=_refresh_ladder_summary(source_level.stats, cutpoints),
+                    stats=level_stats,
                 )
             ],
-            stats=_refresh_ladder_summary(self.stats, cutpoints),
+            stats=root_stats,
         )
 
     def transform(self, matrix: np.ndarray) -> "GSplatData":

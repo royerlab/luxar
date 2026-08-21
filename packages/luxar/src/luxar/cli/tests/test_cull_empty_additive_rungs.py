@@ -6,6 +6,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+import zarr
 from typer.testing import CliRunner
 
 from luxar.cli import app
@@ -57,7 +58,8 @@ def test_cull_cli_writes_stream_and_levels_after_rung_empties(
     source = tmp_path / "source.gsplats.zarr"
     output = tmp_path / "culled.gsplats.zarr"
     GSplatData.from_substitutive_levels(
-        [_level(10 * index, level_index=index) for index in range(n_levels)]
+        [_level(10 * index, level_index=index) for index in range(n_levels)],
+        stats={"lod_n_lods": 3, "lod_cutpoints": [100, 200, 300]},
     ).save(source)
 
     result = CliRunner().invoke(
@@ -80,6 +82,7 @@ def test_cull_cli_writes_stream_and_levels_after_rung_empties(
     for level in loaded.substitutive_levels:
         counts = [lod.n_splats for lod in level.additive_sublods]
         assert counts
+        assert len(counts) < 3
         assert all(count > 0 for count in counts)
         assert level.stats["lod_n_lods"] == len(counts)
         assert level.stats["lod_cutpoints"] == list(np.cumsum(counts))
@@ -90,3 +93,8 @@ def test_cull_cli_writes_stream_and_levels_after_rung_empties(
         assert [
             lod.stats["lod_cumulative_n"] for lod in level.additive_sublods
         ] == list(np.cumsum(counts))
+    pipeline_stats = dict(zarr.open_group(str(output), mode="r")["pipeline"].attrs)
+    assert pipeline_stats["lod_n_lods"] == len(loaded.additive_sublods)
+    assert pipeline_stats["lod_cutpoints"] == list(
+        np.cumsum([lod.n_splats for lod in loaded.additive_sublods])
+    )
