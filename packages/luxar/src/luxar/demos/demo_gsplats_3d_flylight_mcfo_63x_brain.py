@@ -109,7 +109,7 @@ PIPELINE (how the bundled gsplats were produced — provenance, NOT re-run here)
     camera below is derived from the loaded bounds rather than hard-coded.
 
 WHY ``--floor auto`` AND NOT A PERCENTILE:
-    A ``pN`` floor subtracts the Nth percentile of ALL voxels, which on sparse
+    A ``pN`` floor subtracts the Nth percentile of non-zero voxels, which on sparse
     data lands wherever the sparsity puts it rather than where the noise ends.
 
     The sweep below is a 96 x 640 x 640 CROP of this specimen (39 Mvoxel), not

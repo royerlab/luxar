@@ -81,9 +81,9 @@ therefore background-relative. `--floor` is ON by default (`auto`):
 
 - `auto` — histogram-mode estimate, capped at the median (a no-op on clean data
   with no pedestal).
-- `pNN` — subtract that percentile, e.g. `--floor p10`.
+- `pNN` — subtract that percentile of non-zero voxels, e.g. `--floor p10`.
 - a plain number — subtract a fixed value, e.g. `--floor 110`.
-- `none` — disable (legacy hard-min behaviour; use to reproduce old numbers).
+- `none` or `0` — disable (legacy hard-min behaviour; use to reproduce old numbers).
 
 `cal` applies the same `--floor` up front so K* is measured on floor-suppressed
 data, matching how you fit.
@@ -105,8 +105,8 @@ bounds only what it samples, so pass `--floor none` or an explicit numeric
 `--floor N` when a particular slice must survive.
 
 **Stay on `auto` unless you have measured otherwise.** A `pNN` floor subtracts a
-percentile of *all* voxels, so on sparse data it lands wherever the sparsity puts
-it rather than where the noise ends. On a 96x640x640 crop of a sparse light-sheet
+percentile of non-zero voxels, so on sparse data it lands wherever the sparsity
+puts it rather than where the noise ends. On a 96x640x640 crop of a sparse light-sheet
 brain — 1.01% of its voxels foreground (above 10% of max), 12.9% in the dim band
 (1–10%, where thin faint neurites live) — `p99` sat at **1.34% of that crop's
 max**, squarely inside signal. Note it is a crop figure: over the whole stack the

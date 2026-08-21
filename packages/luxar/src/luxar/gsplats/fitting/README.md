@@ -152,7 +152,8 @@ The fitting pipeline orchestrates the entire process of fitting n-dimensional Ga
 1. **Background floor suppression** (`config.floor`, default `"auto"`): subtracts a
    constant background pedestal / DC offset before normalization by raising the
    effective `image_min` (`_resolve_floor` → `estimate_floor`). `auto` = capped
-   histogram mode (a no-op on clean data), `pN` = Nth percentile, `<float>` =
+   histogram mode (a no-op on clean data), `pN` = Nth percentile of non-zero
+   intensities, `<float>` =
    fixed, `none` = disabled. Whole-volume/tiled floor resolution reads at most
    `FLOOR_SAMPLE_BUDGET_VOXELS` from deterministic contiguous slabs; oversized
    cross-sections are center-cropped along additional axes rather than exceeding
