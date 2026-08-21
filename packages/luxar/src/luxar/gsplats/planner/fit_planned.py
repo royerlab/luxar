@@ -23,6 +23,11 @@ from typing import TYPE_CHECKING, Any, Callable, Optional, Tuple
 
 import numpy as np
 
+from luxar.gsplats.merged_quality import (
+    announce_unscored_merge,
+    stamp_merged_quality,
+)
+
 from .spec import FitPlan, PlanBox
 
 if TYPE_CHECKING:
@@ -47,17 +52,13 @@ ProgressCallback = Callable[[int, int, str], None]
 CONTENT_CULL_RETENTION: float = 0.999
 
 
-def _announce_unscored_planned_merge(reason: str, *, partition: bool = False) -> None:
-    """Explain why a planned merge carries no whole-volume quality metrics."""
-    from arbol import aprint
-
-    recourse = (
-        "Flatten the written archive with `luxar gsplat flatten`, then run "
-        "`luxar gsplat compare`."
-        if partition
-        else "Run `luxar gsplat compare` on the written archive instead."
-    )
-    aprint(f"No merged quality metrics: {reason}. {recourse}")
+def _require_plan_volume_shape(volume: np.ndarray, plan: FitPlan) -> None:
+    """Reject a volume whose voxel grid differs from the plan's boxes."""
+    plan_shape = tuple(int(size) for size in plan.volume_shape)
+    if volume.shape != plan_shape:
+        raise ValueError(
+            f"volume shape {volume.shape} does not match the plan grid {plan_shape}"
+        )
 
 
 def _score_planned_flat_merge(
@@ -70,29 +71,27 @@ def _score_planned_flat_merge(
 ) -> None:
     """Score a flat planned merge, or explain why no score can be recorded."""
     if volume is None:
-        _announce_unscored_planned_merge(
-            "this parallel merge was not given a reference volume"
-        )
+        announce_unscored_merge("this parallel merge was not given a reference volume")
         return
 
     shape = getattr(volume, "shape", None)
     if shape is None:
-        _announce_unscored_planned_merge(
-            "the supplied reference volume does not expose a shape"
-        )
+        announce_unscored_merge("the supplied reference volume does not expose a shape")
         return
 
     reference_shape = tuple(int(s) for s in shape)
     if reference_shape != plan_shape:
-        _announce_unscored_planned_merge(
+        announce_unscored_merge(
             f"reference shape {reference_shape} does not match the plan grid "
             f"{plan_shape}"
         )
         return
 
-    from luxar.gsplats.fit_tiled_gsplats import _stamp_merged_quality
-
-    _stamp_merged_quality(
+    # Forward guard for content-box denoising: once boxes can denoise, this
+    # raw reference retains acquisition noise while the merge reconstructs the
+    # denoised crops, so the score is intentionally not comparable to a
+    # whole-volume denoise scored against its own smoothed reference.
+    stamp_merged_quality(
         merged,
         volume,
         volume_shape=plan_shape,
@@ -388,11 +387,7 @@ def fit_planned(
     V = np.asarray(volume, dtype=np.float32)
     if V.ndim != 3:
         raise ValueError(f"fit_planned expects a 3-D volume, got shape {V.shape}")
-    plan_shape = tuple(int(size) for size in plan.volume_shape)
-    if V.shape != plan_shape:
-        raise ValueError(
-            f"volume shape {V.shape} does not match the plan grid {plan_shape}"
-        )
+    _require_plan_volume_shape(V, plan)
     pad = int(plan.overlap)
     fit_kwargs.setdefault("cull_retention", CONTENT_CULL_RETENTION)
     fit_kwargs.setdefault("verbose", False)
@@ -449,7 +444,7 @@ def fit_planned(
             bsp_tree=plan.bsp_tree,
             region_labels=region_boxes,
         )
-        _announce_unscored_planned_merge(
+        announce_unscored_merge(
             "the result is kind=partition, whose root has no fit-stats dict to stamp",
             partition=True,
         )

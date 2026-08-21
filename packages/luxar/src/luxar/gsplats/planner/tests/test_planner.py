@@ -1202,8 +1202,16 @@ class TestFitPlannedParallel:
             verbose=False,
         )
 
-        assert np.isfinite(merged.stats["psnr_db"])
-        assert np.isfinite(merged.stats["foreground_psnr_db"])
+        quality_keys = {
+            "mse",
+            "psnr_db",
+            "ssim",
+            "foreground_psnr_db",
+            "foreground_threshold",
+            "foreground_fraction",
+        }
+        assert quality_keys <= merged.stats.keys()
+        assert all(np.isfinite(merged.stats[key]) for key in quality_keys)
 
     def test_mismatched_reference_shape_is_announced(self, tmp_path, capsys):
         plan = _toy_plan(n_boxes=1)
@@ -1306,7 +1314,17 @@ class TestPlannedFitTruncationRadius:
         assert merged.stats["n_boxes_fit"] >= 1
         assert merged.stats["overlap"] == plan.overlap
         assert list(merged.stats["volume_shape"]) == list(V.shape)
-        assert np.isfinite(merged.stats["psnr_db"])
+        quality_keys = {
+            "mse",
+            "psnr_db",
+            "ssim",
+            "foreground_psnr_db",
+            "foreground_threshold",
+            "foreground_fraction",
+        }
+        assert quality_keys <= merged.stats.keys()
+        assert merged.stats["psnr_db"] > 10
+        assert 0 < merged.stats["ssim"] <= 1
         assert np.isfinite(merged.stats["foreground_psnr_db"])
         # Wall clock for the fit loop, so it is bounded by the wall clock of the
         # whole call — the SUM of the boxes' own fit times need not be.

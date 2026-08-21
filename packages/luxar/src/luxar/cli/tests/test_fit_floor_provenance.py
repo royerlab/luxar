@@ -280,11 +280,13 @@ def test_parallel_content_fit_hands_the_loaded_volume_to_the_merge(
         k_star_ref=100,
         n_features_ref=10,
         floor="none",
+        device="cpu",
         flat=True,
         verbose=False,
     )
 
     assert seen["volume"] is volume
+    assert seen["device"] == "cpu"
 
 
 def test_parallel_content_fit_rejects_an_external_plan_for_another_grid(

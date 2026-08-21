@@ -19,12 +19,12 @@ from typing import Any
 import numpy as np
 import pytest
 
-from luxar.gsplats import fit_tiled_gsplats
-from luxar.gsplats.fit_tiled_gsplats import (
+from luxar.gsplats import merged_quality
+from luxar.gsplats.fit_tiled_gsplats import fit_tiled
+from luxar.gsplats.merged_quality import (
     _QUALITY_BUDGET_GB,
     _QUALITY_PEAK_VOLUMES,
     _quality_budget_gb,
-    fit_tiled,
 )
 
 #: Anisotropic on purpose: an isotropic spacing would hide a per-axis error in
@@ -146,16 +146,16 @@ def test_the_default_budget_is_held_under_the_memory_actually_free(
     """
     monkeypatch.delenv("LUXAR_TILED_QUALITY_MAX_GB", raising=False)
 
-    monkeypatch.setattr(fit_tiled_gsplats, "_available_ram_gb", lambda: 4.0)
+    monkeypatch.setattr(merged_quality, "_available_ram_gb", lambda: 4.0)
     assert _quality_budget_gb() == pytest.approx(2.0)
 
     # A machine with room to spare gets the ceiling, not a multiple of its RAM.
-    monkeypatch.setattr(fit_tiled_gsplats, "_available_ram_gb", lambda: 1024.0)
+    monkeypatch.setattr(merged_quality, "_available_ram_gb", lambda: 1024.0)
     assert _quality_budget_gb() == pytest.approx(_QUALITY_BUDGET_GB)
 
     # Unmeasurable (a platform without SC_AVPHYS_PAGES) falls back to the ceiling
     # rather than declining to score at all.
-    monkeypatch.setattr(fit_tiled_gsplats, "_available_ram_gb", lambda: None)
+    monkeypatch.setattr(merged_quality, "_available_ram_gb", lambda: None)
     assert _quality_budget_gb() == pytest.approx(_QUALITY_BUDGET_GB)
 
 
@@ -163,7 +163,7 @@ def test_an_explicit_override_still_wins_over_the_memory_cap(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The operator knows what the machine can take; the cap is for the default."""
-    monkeypatch.setattr(fit_tiled_gsplats, "_available_ram_gb", lambda: 4.0)
+    monkeypatch.setattr(merged_quality, "_available_ram_gb", lambda: 4.0)
     monkeypatch.setenv("LUXAR_TILED_QUALITY_MAX_GB", "64")
     assert _quality_budget_gb() == pytest.approx(64.0)
 
@@ -177,7 +177,7 @@ def test_a_nan_override_cannot_switch_the_guard_off(
     trip it — every volume would look in-budget — so it has to be refused like
     any other unusable value, not accepted because ``float()`` took it.
     """
-    monkeypatch.setattr(fit_tiled_gsplats, "_available_ram_gb", lambda: 1024.0)
+    monkeypatch.setattr(merged_quality, "_available_ram_gb", lambda: 1024.0)
     for raw in ("nan", "NaN", "-nan"):
         monkeypatch.setenv("LUXAR_TILED_QUALITY_MAX_GB", raw)
         budget = _quality_budget_gb()
