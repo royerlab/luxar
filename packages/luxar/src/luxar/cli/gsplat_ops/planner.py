@@ -88,12 +88,13 @@ def _stamp_content_floor(
     could honestly claim, so nothing is written.
 
     A level the BOXES already recorded wins over the planned one, and is left
-    exactly as it stands. Since #1616 the boxes share one ``norm_range`` and pin
-    ``image_min`` to the resolved floor (never raising it to a crop's own
-    minimum), so a recorded level and the planned one now agree; the guard below
-    still refuses to overwrite a differing box-recorded ``floor`` — which would
-    ship a store whose ``floor`` and ``image_min`` contradict each other and
-    break the spec's ``image_min == floor`` invariant.
+    exactly as it stands. Since #1616 the boxes share one ``norm_range``, so their
+    recorded bounds agree with each other instead of following each crop's own
+    minimum. The applied level can still exceed the planned one when the shared
+    low endpoint does, so the guard below refuses to overwrite a differing
+    box-recorded ``floor`` — which would ship a store whose ``floor`` and
+    ``image_min`` contradict each other and break the spec's
+    ``image_min == floor`` invariant.
     """
     if isinstance(floor_forward, str) and floor_forward != "none":
         return
@@ -103,8 +104,8 @@ def _stamp_content_floor(
     if "floor" in target and target["floor"] != floor_level:
         return
     target["floor"] = floor_level
-    # Since #1616 the boxes share one norm_range and pin image_min to the floor,
-    # so they now agree on the bounds; still, drop any image_min that would
+    # Since #1616 the boxes share one norm_range, so their bounds agree with each
+    # other; still, drop any image_min that would
     # contradict `floor` rather than leave the invariant broken. Only meaningful when a
     # floor WAS applied: with none, `image_min` is just the normalization
     # minimum and owes `floor` nothing.

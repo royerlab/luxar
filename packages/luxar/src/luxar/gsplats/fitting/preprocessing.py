@@ -1128,14 +1128,11 @@ def resolve_volume_norm_range(
     -----
     Determinism matters as much as it does for the floor: the sample is a pure
     function of ``volume.shape`` and the fixed budget, so independent workers
-    (``--tile k/M``, ``-j N``, batch-fit) all resolve the SAME range for the
-    volume they are HANDED, without coordinating. That scope is where this
-    stops short of the floor: a ``batch-fit`` task is handed one ``(t, c)``
-    sub-volume, so its tiles share a range while two timepoints do not,
-    whereas the floor level is pinned once for the whole run in the manifest.
-    Amplitudes stay physically comparable either way (``finalize_results``
-    rescales by ``intensity_range``); what differs across timepoints is the
-    absolute convergence tolerance. #1616 tracks the remaining scopes.
+    (``--tile k/M``, ``-j N``) resolve the SAME range for the volume they are
+    HANDED, without coordinating. Batch-fit instead resolves one range across
+    its bounded plan-time ``(t, c)`` samples, records it in the manifest, and
+    forwards it to every task, so spatial and temporal children share the same
+    normalization scale.
     """
     sample = _sample_volume_for_floor(volume, int(FLOOR_SAMPLE_BUDGET_VOXELS))
     if sample is None or sample.size == 0:

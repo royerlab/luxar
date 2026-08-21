@@ -367,10 +367,6 @@ def fit_progressive_gaussian_splats(
     )
     if applied_floor is not None:
         V_original = np.clip(V_original - applied_floor, 0.0, None).astype(np.float32)
-        if verbose:
-            aprint(
-                f"Floor suppression: subtracted background level {applied_floor:.6g}"
-            )
 
     accumulated_lods: list[AdditiveSubLOD] = []
     prev_psnr = 0.0

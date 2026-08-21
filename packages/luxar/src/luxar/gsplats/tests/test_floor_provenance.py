@@ -376,6 +376,28 @@ def test_progressive_shifts_a_supplied_range_after_floor_subtraction() -> None:
         assert progressive.stats[key] == pytest.approx(flat.stats[key], abs=1e-3)
 
 
+def test_progressive_fit_announces_floor_suppression_once(capsys) -> None:
+    pytest.importorskip("torch")
+    from luxar.gsplats.fit_progressive_gsplats import fit_progressive_gaussian_splats
+
+    V = np.full((8, 8, 8), 100.0, np.float32)
+    V[2:6, 2:6, 2:6] = 350.0
+    fit_progressive_gaussian_splats(
+        V,
+        floor=5.0,
+        max_splats=8,
+        max_splats_per_pass=8,
+        iters_per_pass=2,
+        residual_pass_min_iters=2,
+        max_passes=1,
+        device="cpu",
+        verbose=True,
+    )
+
+    output = capsys.readouterr().out
+    assert output.count("Floor suppression:") == 1
+
+
 def test_progressive_fit_records_a_disabled_floor_as_null() -> None:
     pytest.importorskip("torch")
     from luxar.gsplats.fit_progressive_gsplats import fit_progressive_gaussian_splats

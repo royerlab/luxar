@@ -54,6 +54,10 @@ recorded in the manifest (`floor_level`), and handed as a concrete number to eve
 timepoint or per tile: that would be a time-varying pedestal, i.e. brightness
 flicker across the merged partition.
 
+The plan likewise records one sampled raw-input normalization range (`norm_range`)
+and forwards it to every task, keeping normalized optimizer thresholds consistent
+across timepoints, channels, and spatial partitions.
+
 That one level is the **minimum** of the levels resolved on a bounded set of at
 most 16 evenly spaced `(t, c)` slices spanning the store's **full** extent: up to 4
 timepoints x up to 4 channel-like coordinates, capped independently so neither axis
