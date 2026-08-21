@@ -198,6 +198,13 @@ signatures and can never reach `**attrs`.
    adder): delegate to the substitutive wrapper, whose coarse levels are
    synthesised gsplats (points/lines) or decimated meshes (mesh) under a
    `kind=lod` group. Fires before (auto-)partition.
+
+The pre-write gates above remain the message-quality layer: known scene-level
+faults are rejected before a wrapper exists, so errors name the caller's node
+rather than a synthesized child. Structural correctness does not depend on
+anticipating every future child failure here; each public `Group.add_*` runs in
+a writer transaction that removes a new subtree and restores authoring state on
+failure, and finalize warns and prunes wrappers created but never populated.
 7. **Resolve auto-partition** via `resolve_auto_partition(scene, n, partition)`
    — an opt-in compiler heuristic (default off). A user-explicit `partition=`
    always wins. (Lines does not yet wire the auto-partition heuristic; it

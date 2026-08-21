@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from ..conftest import open_scene
+from .test_source_validation import _nested_partition_tree
 
 
 def test_partition_late_child_failure_rolls_back_store_graph_and_bounds(
@@ -103,5 +104,33 @@ def test_lod_late_child_failure_rolls_back_wrapper(
         )
 
     assert calls == 2
+    assert "broken" not in compiler.store
+    assert not scene.children
+
+
+def test_file_graft_nested_transaction_rolls_back_once(
+    tmp_path: object, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+
+    file_path = str(tmp_path / "nested.gsplats.zarr")
+    write_gsplats_tree(file_path, _nested_partition_tree(3, (5, 4)))
+    compiler, scene, _ = open_scene(tmp_path, "transaction-graft.zarr")
+    write_gsplats = compiler.write_gsplats
+    calls = 0
+
+    def fail_second_leaf(*args: object, **kwargs: object) -> object:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise RuntimeError("late graft failure")
+        return write_gsplats(*args, **kwargs)
+
+    monkeypatch.setattr(compiler, "write_gsplats", fail_second_leaf)
+    with pytest.raises(RuntimeError, match="late graft failure"):
+        scene.add_gsplats_from_file("broken", file_path)
+
+    assert calls == 2
+    assert compiler._transaction_depth == 0
     assert "broken" not in compiler.store
     assert not scene.children

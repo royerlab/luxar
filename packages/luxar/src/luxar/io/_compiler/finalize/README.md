@@ -20,7 +20,7 @@ finalize/
 ├── hashing.py           compute_content_hashes()
 ├── lod_backfill.py      finalize_lod_position_bounds(), finalize_lod_display_types(),
 │                        warn_one_part_partition_anchors()
-└── validation.py        validate_discrete_dimension_ranges()
+└── validation.py        prune_childless_wrappers(), validate_discrete_dimension_ranges()
 ```
 
 ## API
@@ -269,6 +269,12 @@ is one level's real p99.9, while an `overview` / `adaptive` one is a pooled
 estimate over parts, so the same splats can tone slightly differently depending
 on the topology they were written in (measured 222.34 vs 160.50 on one dataset).
 
+### `validation.prune_childless_wrappers(store) -> None`
+
+Post-order cleanup of empty `kind=partition` and `kind=lod` wrapper chains.
+Each removal emits a warning naming the path, keeping caught child-add refusals
+recoverable without publishing a structurally empty wrapper.
+
 ### `validation.validate_discrete_dimension_ranges(store, scene_bounds) -> None`
 
 Emits `UserWarning`s when a discrete, non-displayed dimension's declared
@@ -306,7 +312,10 @@ from ._compiler.finalize.lod_backfill import (
     finalize_lod_position_bounds,
     warn_one_part_partition_anchors,
 )
-from ._compiler.finalize.validation import validate_discrete_dimension_ranges
+from ._compiler.finalize.validation import (
+    prune_childless_wrappers,
+    validate_discrete_dimension_ranges,
+)
 ```
 
 `harmonize_gsplat_amplitude_windows` is the one pass here that also runs

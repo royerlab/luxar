@@ -145,6 +145,12 @@ re-trigger auto-partition.
 
 ### `compositing.py` — partition/LOD wrapper primitives
 
+Pre-wrapper gates provide the best caller-facing diagnostics, while writer
+transactions hold the structural invariant: every public geometry add removes
+its new subtree and restores scene/compiler authoring state if a descendant
+write fails. Finalize warns and prunes wrappers created in a separate successful
+call that still have no children, so caught child refusals remain publishable.
+
 Pure data operations (no `Group`/`Node` references) shared by the partition and
 LOD wrapper builders:
 
