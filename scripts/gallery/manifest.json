@@ -783,6 +783,15 @@
       "category": "microscopy",
       "script": "demo_gsplats_3d_decimation_study.py",
       "dataset": "datasets/demos/gsplats_3d_decimation_study.luxar.zarr"
+    },
+    {
+      "id": "gsplats_2d_codex_pancreas",
+      "title": "Human Pancreas (CODEX, 12 channels)",
+      "geometry": "gsplats",
+      "category": "microscopy",
+      "script": "demo_gsplats_2d_codex_pancreas.py",
+      "dataset": "datasets/demos/gsplats_2d_codex_pancreas.luxar.zarr",
+      "lodFinest": false
     }
   ]
 }
