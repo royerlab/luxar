@@ -195,7 +195,7 @@ def check_partition_split_planes(root: "zarr.Group") -> List[Finding]:
 def _recover_frame_scale(
     stored: Dict[str, Any], boxes: "List[Tuple[np.ndarray, np.ndarray]]"
 ) -> "Optional[Tuple[Dict[str, Any], Tuple[float, ...], bool]]":
-    """Recover a single positive multiplier per split axis, or decline.
+    """Recover a tree, per-axis factors, and whether they prove a frame scale.
 
     The known producer failures are pure coordinate-frame scales
     (``--downscale`` and ``voxel_size``). Each node estimates its intended cut
@@ -282,7 +282,7 @@ def _resolve_frame_factors(
 def _frame_scale_is_supported(
     ratios: Dict[int, List[float]], factors: Tuple[float, ...]
 ) -> bool:
-    """Whether every changed axis has tightly agreeing scale evidence."""
+    """Whether changed axes have repeated evidence or store-wide corroboration."""
     proven_factors = []
     singleton_ratios = []
     for axis, factor in enumerate(factors):
