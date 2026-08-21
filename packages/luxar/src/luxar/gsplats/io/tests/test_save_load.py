@@ -452,6 +452,13 @@ class TestSaveGsplats:
             # (linear_perchannel_u16). float16 is intentionally disabled (WebGL has no
             # native float16 and float16 on coordinates is a precision footgun);
             # coordinates never use uint8 (too coarse). Decodes back to float32.
+            # It also depends on the sigma rail (io/_compiler/gsplat_assembly.py)
+            # staying quiet: the rail escalates centers to float32 when >0.1% of
+            # splats have a marginal sigma under half the u16 grid step, and at
+            # N=100 one such splat is already 1%. The rng.random((n, 6)) Cholesky
+            # above draws under the extent-10 half-step (7.6e-5) for ~0.76% of
+            # seeds; this seed is pinned to one that does not, so a mismatch here
+            # would be the rail firing rather than an encoder tier change.
             p_mem = Path(tmpdir) / "memory.gsplats.zarr"
             save_gsplats(
                 path=p_mem, **splats, encoding_mode=EncodingMode.MEMORY, ordering="none"

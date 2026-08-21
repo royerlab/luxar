@@ -760,6 +760,284 @@ class TestBatchPlanRegression:
         loaded = _load_zarr_volume(path, channel=5, timepoint=2, array_key=None)
         np.testing.assert_array_equal(loaded, data[2, 1, 1])
 
+    def test_labeled_multi_channel_plan_jobs_load_named_voxels(
+        self, tmp_path: Path
+    ) -> None:
+        import zarr
+
+        from luxar.cli.gsplat_ops.batch.planning import (
+            ContentKnobs,
+            DenoiseConfig,
+            FitConfig,
+            MergeConfig,
+            plan_batch,
+        )
+        from luxar.gsplats.batch.fit_command import build_task_fit_argv
+        from luxar.io.volume import load_volume
+
+        path = tmp_path / "multi-channel.zarr"
+        data = np.arange(2 * 3 * 2 * 4 * 5 * 6, dtype=np.float32).reshape(
+            2, 3, 2, 4, 5, 6
+        )
+        root = zarr.open(str(path), mode="w")
+        create_array(root, "0", data=data)
+        axes = ["camera", "time", "channel", "z", "y", "x"]
+
+        manifest = plan_batch(
+            input_path=path,
+            output_dir=tmp_path / "out",
+            tiling="uniform",
+            tile_size=8,
+            tile_overlap=0,
+            axes_list=axes,
+            array_key=None,
+            timepoints_slice=None,
+            channels_slice=None,
+            fit=FitConfig(floor="none"),
+            denoise=DenoiseConfig(),
+            content=ContentKnobs(),
+            merge=MergeConfig(),
+        ).manifest
+
+        assert manifest.n_timepoints == 3
+        assert manifest.n_channels == 4
+        for job in manifest.jobs:
+            argv = build_task_fit_argv(manifest, job, "unused", argv0=["luxar"])
+            loaded = load_volume(
+                path,
+                channel=int(argv[argv.index("--channel") + 1]),
+                timepoint=int(argv[argv.index("--timepoint") + 1]),
+                axes=argv[argv.index("--axes") + 1],
+            )
+            camera, channel = job.channel_coords
+            np.testing.assert_array_equal(loaded, data[camera, job.timepoint, channel])
+
+    @pytest.mark.parametrize(
+        ("axes", "error"),
+        [
+            (["time", "t", "z", "y", "x"], "more than one time axis"),
+            (["time", "view", "z", "y", "x"], "label 'view' not recognised"),
+        ],
+    )
+    def test_plan_rejects_axes_workers_cannot_load(
+        self, tmp_path: Path, axes: list[str], error: str
+    ) -> None:
+        import typer
+        import zarr
+
+        from luxar.cli.gsplat_ops.batch.planning import (
+            ContentKnobs,
+            DenoiseConfig,
+            FitConfig,
+            MergeConfig,
+            plan_batch,
+        )
+
+        path = tmp_path / "unsupported-axes.zarr"
+        root = zarr.open(str(path), mode="w")
+        create_array(root, "0", data=np.zeros((3, 2, 2, 3, 4), dtype=np.uint16))
+
+        with pytest.raises(typer.BadParameter, match=error):
+            plan_batch(
+                input_path=path,
+                output_dir=tmp_path / "out",
+                tiling="uniform",
+                tile_size=8,
+                tile_overlap=0,
+                axes_list=axes,
+                array_key=None,
+                timepoints_slice=None,
+                channels_slice=None,
+                fit=FitConfig(floor="none"),
+                denoise=DenoiseConfig(),
+                content=ContentKnobs(),
+                merge=MergeConfig(),
+            )
+
+    def test_plan_squeezes_singleton_spatial_axes_for_positional_workers(
+        self, tmp_path: Path
+    ) -> None:
+        import zarr
+
+        from luxar.cli.gsplat_ops.batch.planning import (
+            ContentKnobs,
+            DenoiseConfig,
+            FitConfig,
+            MergeConfig,
+            plan_batch,
+        )
+        from luxar.gsplats.batch.fit_command import build_task_fit_argv
+        from luxar.io.volume import load_volume
+
+        path = tmp_path / "thin-movie.zarr"
+        data = np.arange(3 * 1 * 1 * 8 * 8, dtype=np.float32).reshape(3, 1, 1, 8, 8)
+        root = zarr.open(str(path), mode="w")
+        create_array(root, "0", data=data)
+
+        manifest = plan_batch(
+            input_path=path,
+            output_dir=tmp_path / "out",
+            tiling="uniform",
+            tile_size=8,
+            tile_overlap=0,
+            axes_list=None,
+            array_key=None,
+            timepoints_slice=None,
+            channels_slice=None,
+            fit=FitConfig(floor="none"),
+            denoise=DenoiseConfig(),
+            content=ContentKnobs(),
+            merge=MergeConfig(),
+        ).manifest
+
+        assert manifest.spatial_shape == (8, 8)
+        assert manifest.n_tiles == 1
+        for job in manifest.jobs:
+            argv = build_task_fit_argv(manifest, job, "unused", argv0=["luxar"])
+            assert "--axes" not in argv
+            loaded = load_volume(
+                path,
+                timepoint=int(argv[argv.index("--timepoint") + 1]),
+            )
+            assert loaded.shape == manifest.spatial_shape
+            np.testing.assert_array_equal(loaded, data[job.timepoint, 0, 0])
+
+    def test_content_plan_rejects_spatial_shape_squeezed_below_3d(
+        self, tmp_path: Path
+    ) -> None:
+        import typer
+        import zarr
+
+        from luxar.cli.gsplat_ops.batch.planning import (
+            ContentKnobs,
+            DenoiseConfig,
+            FitConfig,
+            MergeConfig,
+            plan_batch,
+        )
+
+        path = tmp_path / "thin-content.zarr"
+        root = zarr.open(str(path), mode="w")
+        create_array(root, "0", data=np.ones((3, 2, 1, 64, 64), dtype=np.float32))
+
+        with pytest.raises(typer.BadParameter) as excinfo:
+            plan_batch(
+                input_path=path,
+                output_dir=tmp_path / "out",
+                tiling="content",
+                tile_size=None,
+                tile_overlap=8,
+                axes_list=None,
+                array_key=None,
+                timepoints_slice=None,
+                channels_slice=None,
+                fit=FitConfig(floor="none"),
+                denoise=DenoiseConfig(),
+                content=ContentKnobs(k_star_ref=4000, n_features_ref=200),
+                merge=MergeConfig(),
+            )
+
+        message = str(excinfo.value)
+        assert "spatial axes squeeze to (64, 64)" in message
+        assert "--tiling uniform" in message
+        assert "--axes" in message
+        assert not (tmp_path / "out").exists()
+
+    def test_content_plan_rejects_already_2d_spatial_shape(
+        self, tmp_path: Path
+    ) -> None:
+        import typer
+        import zarr
+
+        from luxar.cli.gsplat_ops.batch.planning import (
+            ContentKnobs,
+            DenoiseConfig,
+            FitConfig,
+            MergeConfig,
+            plan_batch,
+        )
+
+        path = tmp_path / "plain-2d-content.zarr"
+        root = zarr.open(str(path), mode="w")
+        create_array(root, "0", data=np.ones((64, 64), dtype=np.float32))
+
+        with pytest.raises(typer.BadParameter) as excinfo:
+            plan_batch(
+                input_path=path,
+                output_dir=tmp_path / "out",
+                tiling="content",
+                tile_size=None,
+                tile_overlap=8,
+                axes_list=None,
+                array_key=None,
+                timepoints_slice=None,
+                channels_slice=None,
+                fit=FitConfig(floor="none"),
+                denoise=DenoiseConfig(),
+                content=ContentKnobs(k_star_ref=4000, n_features_ref=200),
+                merge=MergeConfig(),
+            )
+
+        message = str(excinfo.value)
+        assert "spatial shape (64, 64) is already 2-D" in message
+        assert "squeeze" not in message
+        assert "--tiling uniform" in message
+        assert "--axes" not in message
+        assert not (tmp_path / "out").exists()
+
+    def test_planning_scan_squeezes_singleton_spatial_axes_lazily(
+        self, tmp_path: Path
+    ) -> None:
+        import zarr
+
+        from luxar.cli.gsplat_ops.batch.planning import _pinned_slice_volume
+
+        path = tmp_path / "thin-scan.zarr"
+        data = np.arange(3 * 1 * 1 * 8 * 8, dtype=np.float32).reshape(3, 1, 1, 8, 8)
+        root = zarr.open(str(path), mode="w")
+        create_array(root, "0", data=data)
+
+        view = _pinned_slice_volume(
+            path,
+            channel=0,
+            timepoint=2,
+            array_key=None,
+            axes=None,
+            axes_labels=["t", "c", "z", "y", "x"],
+            channel_shape=(1,),
+            spatial_shape=(8, 8),
+        )
+
+        assert view.shape == (8, 8)
+        assert not isinstance(view, np.ndarray)
+        np.testing.assert_array_equal(view[:], data[2, 0, 0])
+
+    def test_planning_scan_eager_fallback_squeezes_singleton_spatial_axes(
+        self, tmp_path: Path
+    ) -> None:
+        import zarr
+
+        from luxar.cli.gsplat_ops.batch.planning import _pinned_slice_volume
+
+        path = tmp_path / "thin-fallback.zarr"
+        data = np.arange(3 * 1 * 1 * 8 * 8, dtype=np.float32).reshape(3, 1, 1, 8, 8)
+        root = zarr.open(str(path), mode="w")
+        create_array(root, "0", data=data)
+
+        view = _pinned_slice_volume(
+            path,
+            channel=0,
+            timepoint=2,
+            array_key=None,
+            axes=None,
+            axes_labels=["t", "c", "z", "y", "x"],
+            channel_shape=(1, 1),
+            spatial_shape=(8, 8),
+        )
+
+        assert view.shape == (8, 8)
+        np.testing.assert_array_equal(view, data[2, 0, 0])
+
     def test_tasks_per_job_manifest(self) -> None:
         """Manifest fields are serializable and have correct defaults."""
         import json

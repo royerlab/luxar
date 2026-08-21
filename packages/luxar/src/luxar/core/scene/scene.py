@@ -104,7 +104,7 @@ class Scene(Group):
             # Store viewer config if provided
             self._viewer_config: Optional[ViewerConfig] = viewer_config
             if viewer_config is not None:
-                writer.write_group("/", viewer_config=viewer_config.to_dict())
+                self._persist_attr("viewer_config", viewer_config.to_dict())
 
             # Store the dataset credit if provided. Validated here rather than
             # trusted, because a malformed citation that reaches the store is
@@ -334,11 +334,9 @@ class Scene(Group):
         self._viewer_config = vc
         if vc is not None:
             vc.validate()
-            self.attrs["viewer_config"] = vc.to_dict()
-            if self._writer:
-                self._writer.write_group("/", viewer_config=vc.to_dict())
-        elif "viewer_config" in self.attrs:
-            del self.attrs["viewer_config"]
+            self._persist_attr("viewer_config", vc.to_dict())
+        else:
+            self._delete_attr("viewer_config")
 
     # ---------------------------------------------------------- overlays
 

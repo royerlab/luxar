@@ -81,6 +81,12 @@ INSTALL_SPECS: dict[str, DependencySpec] = {
         "skips the model entirely.",
     ),
     "astropy": DependencySpec("astropy>=6.0.0", "demos"),
+    "astroquery": DependencySpec(
+        "astroquery>=0.4.7",
+        "demos",
+        "Queries the ESA Gaia archive only when the Gaia Milky Way catalog is "
+        "built locally; a cached catalog skips it entirely.",
+    ),
     "cellxgene_census": DependencySpec("cellxgene-census>=1.0.0", "demos"),
     "gdown": DependencySpec(
         "gdown",

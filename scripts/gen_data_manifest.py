@@ -472,7 +472,7 @@ DATASETS: dict[str, dict] = {
         dir="",
         source="ESA Gaia DR3 archive",
         reason="CC BY-NC (non-commercial) — incompatible with a cleanly-reusable host.",
-        strategy="Rebuild by hand with scripts/generate_galaxy_simple.py (queries the ESA Gaia archive, no GPU) into ~/.cache/luxar/, or place a copy there; building it automatically on first run is royerlab/luxar#1575. Requires the ESA/Gaia/DPAC acknowledgement.",
+        strategy="Build on demand with `luxar demo run gaia_milky_way -- --build-catalog` (queries the ESA Gaia archive, no GPU) into ~/.cache/luxar/, or place a copy there. Requires the ESA/Gaia/DPAC acknowledgement.",
     ),
     "gsplats_tng_cosmic_web": dict(
         bucket="local-compute",

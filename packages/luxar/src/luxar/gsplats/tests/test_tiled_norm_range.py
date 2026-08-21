@@ -392,6 +392,7 @@ def test_progressive_residual_passes_drop_the_shared_range(monkeypatch):
         max_passes=2,
         device="cpu",
         verbose=False,
+        floor="none",
         norm_range=(0.0, 4.0),
     )
 

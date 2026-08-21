@@ -773,6 +773,82 @@ def _resolve_breakpoints(
     )
 
 
+def additive_rung_count(
+    n: int,
+    n_lods: int = 4,
+    breakpoints: BreakpointSpec = "equal-count",
+) -> int | None:
+    """How many rungs would this spec leave on a leaf of ``n`` splats? (#1632)
+
+    A cheap, ordering-free query. The exactness comes from SHARING the cut
+    resolver :func:`make_additive_lod` uses (:func:`_resolve_breakpoints`): the
+    answer is counted off the very cuts that build would consume, so for
+    equal-count / ``stream:`` / explicit counts it is the number of
+    :class:`AdditiveSubLOD` objects that build would EMIT, not a re-derivation
+    free to drift. The loop below also MIRRORS that build loop's ``if end <=
+    prev: continue`` de-duplication — but as a mirror only, so the two cannot
+    diverge if a future cut resolver ever emits a duplicate. It is not a live
+    filter and is not what makes the count exact: every non-energy path of
+    :func:`_resolve_breakpoints` returns strictly-increasing positive cuts, so
+    neither loop can skip one today. Pinned against
+    ``make_additive_lod(...).n_additive_sublods`` per breakpoint kind in
+    ``tests/test_additive.py``.
+
+    It exists because the callers that must decide *whether a ladder will exist*
+    cannot afford to build one. The live one is the file/graft door's
+    partition-vs-ladder gate
+    (:func:`~luxar.core.group.gsplats_pipeline.from_io._reject_a_partition_beside_a_stored_ladder`,
+    via the spec-level wrapper
+    :func:`~luxar.core.group.lod.gsplats.resolve_additive_rungs`): ``partition=``
+    and a multi-rung ladder are mutually exclusive, and that gate runs before
+    ``graft_gsplat_node`` builds a ``kind=partition`` wrapper it would otherwise
+    strand. Presence of the ``additive_lod=`` kwarg is not the question —
+    ``{"n_lods": 1}`` resolves to one rung and partitions perfectly well, while
+    ``{"method": "radial"}`` carries no ``n_lods`` to read and falls to the
+    ``n_lods=4`` default — four rungs on any leaf of >= 4 splats, and ``n`` on a
+    smaller one, since equal-count cuts clamp to the leaf's own size.
+
+    Returns ``None`` for UNKNOWN, never raises:
+
+    * ``kind == "energy-fractions"`` — those cuts need the ordering and the
+      energy curve, i.e. exactly the expensive half this query exists to avoid.
+    * anything :func:`_resolve_breakpoints` would reject (a non-positive
+      ``n_lods``, an unknown breakpoints string, a mixed list, a counts list
+      exceeding ``n``, …). Swallowing the fault is deliberate: this is a QUERY,
+      and the real build must stay the thing that reports it, at its own site,
+      with its own message. ``None`` says nothing about the INPUT, only that this
+      spec is unreadable here, so a caller that cannot act on it should fall back
+      to what it already knows rather than assume "no ladder".
+
+    Note the converse, for the gate: a fault this COUNT cannot see — a bad
+    ``method``, a stray ``substitutive_level`` key, anything past the cut
+    resolver — makes no difference to the number, so a caller refusing on the
+    count MASKS it rather than letting the builder report it. Same trade in the
+    other direction, and an acceptable one where the caller's own conflict is the
+    more fundamental fault and nothing is written either way.
+
+    ``n <= 0`` returns ``1``, mirroring :func:`make_additive_lod`'s empty-leaf
+    branch, which emits exactly one sub-LOD labelled ``lod_method="none"``.
+    """
+    if n <= 0:
+        return 1
+    try:
+        cuts_or_fracs, kind = _resolve_breakpoints(n, n_lods, breakpoints)
+    except (ValueError, TypeError):
+        return None
+    if kind == "energy-fractions":
+        return None
+    rungs = 0
+    prev = 0
+    for end in cuts_or_fracs:
+        end = int(end)
+        if end <= prev:
+            continue
+        rungs += 1
+        prev = end
+    return rungs
+
+
 def _energy_fraction_cuts(
     fracs: list[float],
     gram_csr: sparse.csr_matrix,

@@ -435,7 +435,10 @@ def assemble_fit_config(ctx: FitPipelineCtx, is_tiled: bool) -> "tuple[dict, Any
 
 
 def split_seeds_across_tiles(
-    parsed_seeds: "int | float | None", n_tiles: int
+    parsed_seeds: "int | float | None",
+    n_tiles: int,
+    *,
+    grid_tiles: "int | None" = None,
 ) -> "int | float | None":
     """Split a whole-volume ``--seeds`` budget across a tiled fit's tiles.
 
@@ -444,15 +447,16 @@ def split_seeds_across_tiles(
     value to EVERY tile, so an undivided integer budget realizes roughly
     ``K x n_tiles`` splats (issue #1556: ``--seeds 256000`` on a volume
     auto-tiled into 21 tiles produced 2.4M splats). An integer ``--seeds K`` is
-    therefore a whole-volume budget: each of ``n_tiles`` tiles is seeded with
-    ``ceil(K / n_tiles)``, so the budget is divided across the tiles instead of
-    being multiplied by them.
+    therefore a whole-volume budget: each of ``n_tiles`` non-empty tiles is
+    seeded with ``ceil(K / n_tiles)``, so the budget is divided across the
+    tiles instead of being multiplied by them.
 
     ``ceil`` itself guarantees at least one seed per tile for any positive K, so
-    ``0 < K < n_tiles`` gives 1 per tile and realizes ``n_tiles``, not ``K``. It
-    is not an exact count in the other direction either: tiles that window to
-    near-zero signal are skipped by the fitter, so a sparse volume realizes
-    ``K x (non-empty tiles / all tiles)``.
+    ``0 < K < n_tiles`` gives 1 per tile and realizes ``n_tiles``, not ``K``.
+    Empty tiles are excluded from the divisor using the fitter's
+    floor-subtracted, Hann-windowed predicate. The scan deliberately does not
+    replay optional per-tile denoising, so denoising can still skip a tile that
+    the budget scan counted.
 
     A **non-positive** K is returned UNCHANGED: it is invalid input, and the
     fitter rejects it with "seeds as int must be positive" exactly as it does on
@@ -463,22 +467,59 @@ def split_seeds_across_tiles(
     UNCHANGED. A ratio is a fraction of the voxels it is applied to, so it is
     already scale-free — per tile it means exactly the density it means
     whole-volume — and must never be divided by the tile count. ``None``
-    (auto) is likewise unchanged, as is any ``n_tiles <= 1`` (a single tile
-    already IS the whole volume, so there is nothing to split).
+    (auto) is likewise unchanged. A non-positive ``n_tiles`` is a defensive
+    no-op. When one non-empty tile survives a larger grid, K is unchanged but
+    the sparse-grid divisor is still announced.
     """
     if not isinstance(parsed_seeds, int) or isinstance(parsed_seeds, bool):
         return parsed_seeds
-    if n_tiles <= 1 or parsed_seeds <= 0:
+    if n_tiles <= 0 or parsed_seeds <= 0:
         return parsed_seeds
     # Integer ceiling division (not math.ceil on a quotient): a budget is an
     # arbitrary-precision Python int, and going through a float would round
     # wrong above 2**53 (and raise OverflowError on an absurdly large one).
+    per_tile = parsed_seeds if n_tiles == 1 else -(-parsed_seeds // n_tiles)
+    if n_tiles > 1 or (grid_tiles is not None and grid_tiles > n_tiles):
+        tile_label = "tile" if n_tiles == 1 else "tiles"
+        aprint(
+            f"Seeds: {parsed_seeds:,} whole-volume budget -> {per_tile:,} per tile "
+            f"across {n_tiles} non-empty {tile_label}"
+            + (
+                f" ({grid_tiles} grid tiles)"
+                if grid_tiles is not None and grid_tiles != n_tiles
+                else ""
+            )
+        )
+    return per_tile
+
+
+def announce_seed_split_lower_bound(
+    parsed_seeds: "int | float | None", n_tiles: int
+) -> None:
+    """Announce the conservative split when plan time cannot inspect content."""
+    if (
+        not isinstance(parsed_seeds, int)
+        or isinstance(parsed_seeds, bool)
+        or parsed_seeds <= 0
+        or n_tiles <= 1
+    ):
+        return
     per_tile = -(-parsed_seeds // n_tiles)
     aprint(
-        f"Seeds: {parsed_seeds:,} whole-volume budget -> {per_tile:,} per tile "
-        f"across {n_tiles} tiles"
+        f"Seeds: {parsed_seeds:,} whole-volume budget -> at least "
+        f"{per_tile:,} per non-empty tile across {n_tiles} grid tiles "
+        "(each worker resolves the exact non-empty count)"
     )
-    return per_tile
+
+
+def _needs_nonempty_tile_scan(parsed_seeds: "int | float | None", n_tiles: int) -> bool:
+    """Whether an integer budget will actually be divided across this grid."""
+    return (
+        isinstance(parsed_seeds, int)
+        and not isinstance(parsed_seeds, bool)
+        and parsed_seeds > 0
+        and n_tiles > 1
+    )
 
 
 def reject_rescaled_volume_refit(
@@ -623,16 +664,17 @@ def dispatch_parallel_tiled(
             f"Parallel tiled fitting: {n_tiles} tiles, grid={grid_shape}, "
             f"{n_jobs} concurrent worker(s)"
         )
-        # Announce the seed split HERE, in the parent. Each worker splits the
-        # budget itself (and prints this same notice), but workers run under
+        # Announce a conservative seed split HERE, in the parent. Each worker
+        # resolves the exact non-empty count itself, but workers run under
         # subprocess.run(capture_output=True), so on success their stdout is
         # discarded and the user would only ever see the parent's undivided
-        # "Seeds: K" line. The return value is deliberately DROPPED — applying
-        # it here as well would double-divide, since the raw whole-volume
-        # count is what gets forwarded to the workers below.
+        # "Seeds: K" line. The raw whole-volume count is still forwarded below;
+        # dividing it here as well would double-divide in each worker.
         from luxar.cli.gsplat_config import parse_seeds
 
-        split_seeds_across_tiles(parse_seeds(ctx.seeds), n_tiles)
+        parent_seeds = parse_seeds(ctx.seeds)
+        if _needs_nonempty_tile_scan(parent_seeds, n_tiles):
+            announce_seed_split_lower_bound(parent_seeds, n_tiles)
 
         # Format downscale for worker argv (scalar or per-axis).
         ds_arg: Optional[str] = None
@@ -1065,7 +1107,7 @@ def fit_single_tile(
     ctx: FitPipelineCtx, volume: "Any", fit_config: dict, parsed_seeds: "Any"
 ) -> "Any":
     """Single-tile mode (Slurm-ready): fit tile ``--tile N/M`` of the grid."""
-    from luxar.gsplats.fit_tiled_gsplats import fit_tile
+    from luxar.gsplats.fit_tiled_gsplats import count_nonempty_tiles, fit_tile
     from luxar.gsplats.tiling import compute_tile_specs
 
     assert ctx.tile is not None
@@ -1089,11 +1131,6 @@ def fit_single_tile(
     if tile_idx < 0 or tile_idx >= len(specs):
         aprint(f"Error: tile index {tile_idx} out of range [0, {len(specs)})")
         raise typer.Exit(1)
-
-    # An integer --seeds is a WHOLE-VOLUME budget (what `gsplat cal` reports),
-    # so this worker only gets its share of it. Split against the ACTUAL grid
-    # count, matching the tile the worker is about to fit.
-    tile_seeds = split_seeds_across_tiles(parsed_seeds, len(specs))
 
     # Extract params that are explicit in fit_tile to avoid
     # "got multiple values" conflicts with **fit_config
@@ -1161,6 +1198,16 @@ def fit_single_tile(
         )
     fit_config["floor"] = resolved_floor if resolved_floor is not None else "none"
 
+    # Every independent worker scans the same volume, grid and resolved floor,
+    # so all of them derive one identical divisor without parent-only state.
+    if _needs_nonempty_tile_scan(parsed_seeds, len(specs)):
+        nonempty_tiles = count_nonempty_tiles(volume, specs, resolved_floor)
+        tile_seeds = split_seeds_across_tiles(
+            parsed_seeds, nonempty_tiles, grid_tiles=len(specs)
+        )
+    else:
+        tile_seeds = split_seeds_across_tiles(parsed_seeds, len(specs))
+
     with asection(
         f"Fitting tile {tile_idx}/{len(specs)} grid={specs[tile_idx].grid_index}"
     ):
@@ -1187,17 +1234,38 @@ def fit_sequential_tiled(
     recipe_params: "Any",
 ) -> "Any":
     """Full (in-process, sequential) tiled fitting."""
-    from luxar.gsplats.fit_tiled_gsplats import fit_tiled
+    from luxar.gsplats.fit_tiled_gsplats import count_nonempty_tiles, fit_tiled
+    from luxar.gsplats.fitting.preprocessing import resolve_volume_floor_denoised
+    from luxar.gsplats.fitting.validation import _validate_floor
     from luxar.gsplats.tiling import compute_tile_specs
 
     # An integer --seeds is a WHOLE-VOLUME budget (what `gsplat cal` reports);
     # fit_tiled hands its `seeds` to EVERY tile, so split it across the grid
     # first. ``volume`` is already downscaled when --downscale is in play,
     # which is exactly the grid fit_tiled will build below.
-    tile_seeds = split_seeds_across_tiles(
-        parsed_seeds,
-        len(compute_tile_specs(volume.shape, ctx.tile_size, ctx.tile_overlap)),
-    )
+    specs = compute_tile_specs(volume.shape, ctx.tile_size, ctx.tile_overlap)
+    floor_spec = fit_config.get("floor", "auto")
+    _validate_floor(floor_spec)
+    if _needs_nonempty_tile_scan(parsed_seeds, len(specs)):
+        resolved_floor = resolve_volume_floor_denoised(
+            volume,
+            floor_spec,
+            denoise_h=fit_config.get("_denoise_h"),
+            denoise_params=fit_config.get("_denoise_params"),
+            guard_numeric=True,
+            verbose=bool(fit_config.get("verbose", True))
+            and floor_spec_needs_volume(floor_spec)
+            and fit_config.get("_denoise_h") is not None
+            and fit_config.get("_denoise_params") is not None,
+        )
+        nonempty_tiles = count_nonempty_tiles(volume, specs, resolved_floor)
+        tile_seeds = split_seeds_across_tiles(
+            parsed_seeds, nonempty_tiles, grid_tiles=len(specs)
+        )
+        fit_config["floor"] = resolved_floor if resolved_floor is not None else "none"
+        fit_config["_floor_resolved"] = True
+    else:
+        tile_seeds = split_seeds_across_tiles(parsed_seeds, len(specs))
 
     # Extract params that are explicit in fit_tiled to avoid
     # "got multiple values" conflicts with **fit_config

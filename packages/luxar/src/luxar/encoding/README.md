@@ -208,6 +208,8 @@ encoder.encode(
 **Methods:**
 - `encode(data, zarr_group, name, semantic_type, mode=AUTO, n_elements=None, bounds=None, positive_scalar_encoding="linear", custom_encoder=None, color_mode=None, chunks=None, compressor=None, deduplicate=True)` - Encode and write array or scalar
 - `reset()` - Clear internal registry (call between scenes)
+- `snapshot()` - Capture deduplication state for a transactional writer operation
+- `restore(state)` - Restore deduplication state after a transactional writer rollback
 
 **Key keyword arguments:**
 - `n_elements` - Broadcast target count. Required for scalar/tuple/list input; optional for arrays (opts into broadcast/uniform validation when given).
@@ -397,7 +399,29 @@ equality. That admits a grid with **missing rungs** (frames `0,1,2,7,8,9`, which
 spatial tile of a stacked dataset sees) and a grid float32 only approximates (a 0.1 s
 frame interval), both of which a gap-equality test rejects while leaving them broken.
 Continuous coordinates, values that lie on no regular grid, and constant axes are all left
-exactly as they were.
+exactly as they were. The predicate is exported as `gridded_axis_step` because the sigma
+rail below has to ask the same question.
+
+Neither the extent rail nor the snap sees anything but the coordinates. A
+geometry-aware **sigma rail** lives at the gsplat write choke point (`io/_compiler/gsplat_assembly.py`), which also
+holds the Cholesky factors and escalates centers to float32 when HALF an axis's grid
+step — the worst-case round-trip displacement — exceeds the per-splat marginal σ for
+more than 0.1% of the splats on that axis, i.e. when quantization can move those
+centers clear of their own cores. It is a population test on purpose: the few needle
+splats in an ordinary fit must not cost the whole array its uint16 win. Tripping that
+gate is **necessary but not sufficient**, because the rail stands down wherever this
+encoder is going to store the array exactly anyway. It is **snap-aware** — it runs
+`gridded_axis_step` on any axis that trips the population gate
+and skips it when the encoder will store it exactly, so a stacked axis (where 100% of
+the splats formally fail) keeps its uint16 centers and stays silent instead of doubling
+in size — and it is **LUT-aware**: it asks `ArrayEncoder.encodes_as_lut` before
+escalating, since a LUT-eligible centers array is already stored verbatim, exactly, at
+~1 B/value, and escalating it would quadruple those bytes for nothing. What is left for
+the rail is a degenerate sub-population on a *non-gridded*, non-LUT
+axis: a `sigma=0` track stack merged into a fit whose time axis is continuous, where
+the splats are destroyed and no grid can rescue them. An escalated
+centers array is written with `deduplicate=False`, because the rail's verdict depends on
+a sibling array (`cholesky_factors`) that this registry does not key on.
 
 **Usage Example:**
 ```python
@@ -447,6 +471,12 @@ else:
 # Clear registry between scenes
 registry.clear()
 ```
+
+**Methods:**
+- `check(data, path)` - Check for a duplicate and register new array content
+- `clear()` - Clear all registered array references
+- `snapshot()` - Return an independent snapshot of the registry maps
+- `restore(state)` - Replace the registry maps from a snapshot
 
 **Detection Algorithm:**
 1. **Quick Check** (for arrays > 32KB): Hash first 32KB + dtype + shape

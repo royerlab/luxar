@@ -141,6 +141,10 @@ dataset without loading the pixel data.
 
 .. autofunction:: luxar.io.ome_zarr.discover_ome_zarr_shape
 
+.. autofunction:: luxar.io.ome_zarr.resolve_ngff_attrs
+
+.. autofunction:: luxar.io.ome_zarr.ngff_scale_transform
+
 .. autoclass:: luxar.io.ome_zarr.OMEZarrInfo
    :members:
    :undoc-members:

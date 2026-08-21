@@ -219,6 +219,13 @@ class TestFormatCompliance:
             root = zarr.open_group(str(path), mode="r")
             # COORDINATE → uint16 per-axis fixed-point in AUTO/MEMORY
             # (float16 disabled; coordinates never quantize to uint8).
+            # Also asserts the sigma rail (io/_compiler/gsplat_assembly.py) stays
+            # quiet: it escalates centers to float32 when >0.1% of splats have a
+            # marginal sigma under half the u16 grid step, and at N=100 a SINGLE
+            # such splat is 1%. This fixture's rng.random((n, 6)) Cholesky draws
+            # under the extent-10 half-step (7.6e-5) for ~0.76% of seeds; the seed
+            # is pinned to one that does not, so a future mismatch here is the
+            # rail firing, not the encoder changing tiers.
             assert (
                 root["centers"].attrs.get("encoding", {})["name"]
                 == "linear_perchannel_u16"

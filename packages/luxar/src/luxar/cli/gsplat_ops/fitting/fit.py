@@ -112,10 +112,9 @@ def run_fit_volume(
         help=(
             "Seed count (int), compression ratio (float in (0,1]), or 'auto'. "
             "An integer is a WHOLE-VOLUME budget (what a default `gsplat cal` "
-            "reports): a tiled fit divides it across its tiles instead of "
-            "giving every tile the full count. Not an exact count — tiles with "
-            "no signal are skipped (a sparse volume realizes less) and a K "
-            "below the tile count gives one seed per tile. A ratio is "
+            "reports): a tiled fit divides it across the tiles that contain "
+            "signal instead of giving every tile the full count. A K below "
+            "the non-empty tile count gives one seed per such tile. A ratio is "
             "scale-free and is applied per tile unchanged."
         ),
     ),
@@ -164,8 +163,9 @@ def run_fit_volume(
         "--axes",
         help="Per-dimension axis labels overriding the positional "
         "TCZYX/CZYX/ZYX heuristic, e.g. 'z,c,y,x' or 't,z,y,x'. Use when your "
-        "data's axis order differs. Time/channel axes are sliced (by "
-        "--timepoint/--channel) and dropped; spatial axes kept in the given order.",
+        "data's axis order differs. Time/channel axes are sliced and dropped; "
+        "--channel is a flat row-major index across all channel-like axes, and "
+        "more than one time axis is rejected. Spatial axes stay in the given order.",
         rich_help_panel="Input selection",
     ),
     # Frequently used fit params
@@ -176,7 +176,15 @@ def run_fit_volume(
         help="Background floor / DC-offset suppression before normalization "
         "(default: auto). auto = histogram-mode estimate (capped at median; "
         "no-op on clean data) | pN = Nth percentile (e.g. p10) | <float> = "
-        "fixed value | none = disable (hard-min normalization). Unset lets a "
+        "fixed value | none or 0 = disable (hard-min normalization). auto and "
+        "pN ignore exact-zero padding. Negative user levels are rejected; a "
+        "negative estimate from dark-frame-corrected data is preserved. The "
+        "erase-all guard compares against a `norm_range:` supplied in "
+        "--config; "
+        "otherwise it uses the data maximum, not the configured normalization "
+        "percentile's high endpoint. A configured "
+        "norm_percentile may still raise the applied low endpoint above the "
+        "requested floor. Unset lets a "
         "`floor:` in --config/preset apply, else defaults to auto. Under any "
         "--tiling the spec is resolved against the WHOLE volume — never a tile "
         "or box crop — so every tile/box works from the same level.",

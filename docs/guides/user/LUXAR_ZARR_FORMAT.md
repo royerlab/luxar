@@ -217,6 +217,19 @@ The root `.zattrs` file contains scene-wide configuration:
 }
 ```
 
+Additional JSON-serializable scene metadata may be authored through
+`scene.attrs`, for example `title`, `description`, or `sample`. Mutations made
+while the `LuxarZarrCompiler` is open write through to the root `.zattrs`;
+mutating the live mapping after finalization only updates its in-memory cache
+and emits a warning.
+
+The structured root attrs Luxar owns — `scene_dimensions`, `viewer_config`,
+`citation` — each have a dedicated validating API (`Scene.dimensions`,
+`Scene.viewer_config`, `create_scene(citation=...)`). Author them there, not
+through `scene.attrs`: the mapping accepts free-form keys at the root, so
+writing one of those by hand skips its validation and leaves the `Scene`
+object's own copy stale.
+
 ### `citation` (optional root attr)
 
 `citation` credits whoever produced the data the scene shows. It is written to
@@ -1308,7 +1321,8 @@ consumers must treat missing and `"none"` identically.
 - **Compression:** Blosc with zstd, level 9 (width-aware shuffle policy)
 - **Description:** Bounding box [min, max] for each dimension of each chunk
 - **Example:** For chunk 5 in a 4D dataset: `chunk_bounds[5, :, :]` = `[[x_min, x_max], [y_min, y_max], [z_min, z_max], [t_min, t_max]]`
-- **Note:** Bounds include point radii extent to ensure hyperspheres are found. A node with no `radii/` array is bounded by `DEFAULT_POINT_RADIUS` (0.5) — the radius it will be drawn at — not by zero. Discrete/barrier axes get no radius extent at all, only a tiny float-boundary epsilon, so a categorical value never bleeds into its neighbour.
+- **Note:** Bounds include point radii extent to ensure hyperspheres are found. A node with no `radii/` array is bounded by `DEFAULT_POINT_RADIUS` (0.5) — the radius it will be drawn at — not by zero. Discrete/barrier axes get no radius extent at all, only a tiny float-boundary epsilon, so a categorical value never bleeds into its neighbour. **A stored interval is never tighter than the chunk's footprint of the AUTHORED coordinates, at any coordinate magnitude**: every pad is a small *absolute* quantity that would fall under half a float32 ULP past `|x| ~ 2**23`, so producers accumulate the interval in float64 and narrow it to this float32 array by rounding each end *away* from the interval (a bound moves one ULP outward only when the cast moved it the wrong way, so a padless axis still stores its coordinates exactly). Consumers may rely on containment; they may not assume the bound is tight.
+- **Note (known slack — quantised coordinates):** the containment guarantee above is stated against the coordinates as authored. `chunk_bounds` is always float32, but the coordinate arrays themselves are stored as **per-axis uint16 fixed point** under the default AUTO encoding, so a *decoded* coordinate can land up to half a quantum (`extent/131070`) outside its own chunk's bound on a **non-gridded** axis — 7.6e-3 at an axis extent of 1000, far above the float32 ULP the outward store closes. A **gridded** axis (a stacked integer time/channel axis) is snapped so its values round-trip exactly and is unaffected, and gsplats escalate a centers axis to float32 whenever half its grid step exceeds the per-splat marginal σ for more than 0.1% of the splats. Points and lines have no equivalent rail; encode coordinates as `PRECISION` (float32) if a consumer needs decoded containment.
 
 #### Per-Element Labels (CSR-style)
 

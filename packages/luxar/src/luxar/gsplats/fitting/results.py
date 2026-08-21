@@ -283,15 +283,11 @@ def lift_normalization_stats(
     the input volume's own units on every writer path, matching the single-pass
     fitter where ``image_min`` IS the applied level.
 
-    ``floor`` is ``applied_floor`` itself, and ``image_min`` lifts back to it.
-    Pass 0 is handed a zero-based range measured on the already floor-subtracted
-    ``V_original`` (the same zero pin ``fit_tile`` uses), so it no longer
-    re-derives a remaining ``image_min`` from the subtracted array's own minimum:
-    its inner ``image_min`` is 0, and adding ``applied_floor`` back yields
-    ``image_min == floor``. That matches the single-pass fitter, which since
-    #1616 pins ``image_min`` to the resolved floor rather than raising it to the
-    crop's own minimum, so both paths record the same level for the same volume
-    and the same ``--floor``.
+    ``floor`` is the effective baseline the single-pass fitter would record: the
+    greater of the resolved floor and the configured low normalization endpoint.
+    Pass 0 receives the same bounds shifted onto the already-subtracted basis,
+    so adding that baseline back yields the same ``image_min``, ``image_max`` and
+    ``intensity_range`` as a flat fit.
     """
     dest["floor"] = applied_floor
     if not passes:

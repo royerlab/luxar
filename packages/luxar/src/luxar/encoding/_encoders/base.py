@@ -265,6 +265,13 @@ class BaseEncoderMixin:
         cycles. After the first encode→decode→re-encode, the decoded values lie
         within ``[lo, hi]`` per column, so re-deriving ``lo``/``hi`` here yields
         the same scales and the same codes — subsequent cycles add zero error.
+
+        A 1-D input is treated as ONE column and its rails are still emitted as
+        length-1 LISTS. The reductions below give 0-d scalars there, and a bare
+        scalar ``col_lo``/``col_hi`` is not decodable — the decoder requires
+        equal-length 1-D rails and raises on shapes ``()``, so the array would
+        be written successfully and be unreadable. ``np.atleast_1d`` is a no-op
+        on the (N, C) path every production writer uses.
         """
         levels = (1 << bits) - 1
         udtype = np.uint8 if bits == 8 else np.uint16
@@ -278,7 +285,11 @@ class BaseEncoderMixin:
             hi = y.max(axis=0)
         rng = np.maximum(hi - lo, 1e-30)
         u = np.round((np.clip(y, lo, hi) - lo) / rng * levels).astype(udtype)
-        return u, lo.astype(np.float64).tolist(), hi.astype(np.float64).tolist()
+        return (
+            u,
+            np.atleast_1d(lo).astype(np.float64).tolist(),
+            np.atleast_1d(hi).astype(np.float64).tolist(),
+        )
 
     @staticmethod
     def _geolog_forward(

@@ -660,27 +660,40 @@ def _device() -> str:
 def voxel_size_of(image_store: Path) -> tuple[float, float, float]:
     """Read the crop's ZYX voxel size (um) from its OME-Zarr metadata.
 
-    Both metadata layouts are accepted. OME-Zarr **0.5** (which is what a zarr v3
-    store declares) nests everything under an ``ome`` key, while 0.4 puts
-    ``multiscales`` at the top level — and a zarr v3 store written by a 0.4-era
-    tool has the v3 chunk layout with the 0.4 attributes, so neither spelling can
-    be assumed from the store version alone.
+    Both metadata layouts are accepted — see
+    :func:`luxar.io.ome_zarr.resolve_ngff_attrs`, which owns that resolution. The
+    scale vector is likewise looked up by :func:`luxar.io.ome_zarr.
+    ngff_scale_transform`, which SEARCHES ``coordinateTransformations`` for the
+    ``type == "scale"`` entry: indexing ``[0]`` here broke on any store whose
+    first transform is a ``translation``.
+
+    The two ways this can fail say different things, because they are fixed
+    differently: no ``multiscales`` at all (the store is not the OME-Zarr crop
+    this demo downloads) versus a ``multiscales`` that declares no ``scale``
+    transform (it is, but it states no spacing).
     """
     import zarr
 
+    from luxar.io.ome_zarr import ngff_scale_transform, resolve_ngff_attrs
+
     group = zarr.open_group(str(image_store), mode="r")
     attrs = dict(group.attrs)
-    ome = attrs.get("ome")
-    root = ome if isinstance(ome, dict) and "multiscales" in ome else attrs
-    if "multiscales" not in root:
+    root = resolve_ngff_attrs(attrs)
+    if not root.get("multiscales"):
         raise ValueError(
             f"{image_store} has no OME-Zarr `multiscales` metadata "
             f"(attributes present: {sorted(attrs)}); the crop's voxel size is "
             "read from it."
         )
-    scale = root["multiscales"][0]["datasets"][0]["coordinateTransformations"][0][
-        "scale"
-    ]
+    scale = ngff_scale_transform(
+        root["multiscales"][0]["datasets"][0].get("coordinateTransformations")
+    )
+    if scale is None:
+        raise ValueError(
+            f"{image_store} declares OME-Zarr `multiscales` metadata but its "
+            "first dataset states no `scale` coordinateTransformation; the "
+            "crop's voxel size is read from it."
+        )
     return tuple(float(s) for s in scale[1:])  # drop the time axis
 
 
@@ -749,7 +762,11 @@ def fit_timelapse(
             marker = cache_file.with_suffix(cache_file.suffix + ".tmp")
             if not FLAGS["recompute"] and is_cached(t):
                 try:
-                    results.append(GSplatData.load(cache_file, include_stats=False))
+                    # include_stats=True: the cache carries the fit's
+                    # normalization provenance (floor / image_min / image_max),
+                    # and `concatenate` only propagates a background floor into
+                    # the stacked scene when every part reports one (#1175).
+                    results.append(GSplatData.load(cache_file, include_stats=True))
                     continue
                 except Exception as exc:  # noqa: BLE001
                     aprint(f"  t={t} cache unreadable ({exc}); re-fitting")
@@ -790,7 +807,13 @@ def fit_timelapse(
                 zip_deflate=True,
             )
             marker.unlink(missing_ok=True)
-            results.append(fitted)
+            # Stack what was STORED, not the in-memory fit: the cache is written
+            # under a lossy encoding, so appending `fitted` here would make a
+            # cold run (unquantized) and a warm run (the cache-hit branch above,
+            # which loads the quantized store) produce different scenes. Same
+            # include_stats=True as that branch, so the two agree AND the fit's
+            # normalization provenance survives into the stacked scene.
+            results.append(GSplatData.load(cache_file, include_stats=True))
             if (t + 1) % 10 == 0 or t == n_timepoints - 1:
                 aprint(f"  {t + 1}/{n_timepoints} fitted ({fitted.n_splats:,} splats)")
     return results

@@ -80,7 +80,7 @@ from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
 
 def _pin_pass0_norm_range(
     pass_i: int,
-    V_original: np.ndarray,
+    image_max: float,
     applied_floor: "float | None",
     pass_kwargs: dict[str, Any],
 ) -> None:
@@ -89,19 +89,10 @@ def _pin_pass0_norm_range(
         return
     from luxar.gsplats.fitting.preprocessing import NORM_RANGE_MIN_SPAN
 
-    supplied_range = pass_kwargs.get("norm_range")
-    if supplied_range is None:
-        norm_percentile = float(pass_kwargs.get("norm_percentile", 0.0))
-        image_max = (
-            float(np.percentile(V_original, 100.0 - norm_percentile))
-            if norm_percentile > 0.0
-            else float(V_original.max())
-        )
-    else:
-        image_max = float(supplied_range[1]) - float(applied_floor)
+    shifted_max = float(image_max) - float(applied_floor)
     pass_kwargs["norm_range"] = (
-        (0.0, image_max)
-        if np.isfinite(image_max) and image_max > NORM_RANGE_MIN_SPAN
+        (0.0, shifted_max)
+        if np.isfinite(shifted_max) and shifted_max > NORM_RANGE_MIN_SPAN
         else None
     )
 
@@ -328,7 +319,7 @@ def fit_progressive_gaussian_splats(
     on the same GPU and fill the utilization gap.
     """
     from luxar.gsplats.fit_gsplats import fit_gaussian_splats
-    from luxar.gsplats.fitting.preprocessing import _resolve_floor
+    from luxar.gsplats.fitting.preprocessing import _resolve_applied_norm_bounds
     from luxar.gsplats.fitting.validation import _validate_floor
     from luxar.gsplats.rendering.volume_rendering import render_to_volume_tensor
 
@@ -367,17 +358,13 @@ def fit_progressive_gaussian_splats(
 
     start_time = time.time()
     V_original = V.astype(np.float32)
-    applied_floor = _resolve_floor(V_original, floor_spec)
-    # A floor at/above the brightest voxel would clip everything to 0; refuse it
-    # (mirrors the single-pass guard in _normalize_data). `auto` is capped at the
-    # median, so only an explicit too-high float/percentile can reach here.
-    if applied_floor is not None and applied_floor >= float(V_original.max()):
-        if verbose:
-            aprint(
-                f"Warning: floor {applied_floor:.6g} >= volume max "
-                f"{float(V_original.max()):.6g}; ignoring (would erase all signal)."
-            )
-        applied_floor = None
+    _, image_max, applied_floor = _resolve_applied_norm_bounds(
+        V_original,
+        float(kwargs.get("norm_percentile", 0.0)),
+        verbose,
+        floor_spec,
+        kwargs.get("norm_range"),
+    )
     if applied_floor is not None:
         V_original = np.clip(V_original - applied_floor, 0.0, None).astype(np.float32)
         if verbose:
@@ -503,11 +490,9 @@ def fit_progressive_gaussian_splats(
         # wrongly eat signal.
         pass_kwargs["floor"] = "none"
 
-        # When the pedestal was subtracted up front, pin pass 0 to that same
-        # zero-based basis. Preserve the caller's requested top-end rule: a
-        # percentile fit uses the percentile of the already-subtracted volume,
-        # while a supplied raw-input range is shifted by the applied floor.
-        _pin_pass0_norm_range(pass_i, V_original, applied_floor, pass_kwargs)
+        # When the effective baseline was subtracted up front, pin pass 0 to the
+        # same zero-based bounds resolved by the single-pass fitter.
+        _pin_pass0_norm_range(pass_i, image_max, applied_floor, pass_kwargs)
 
         # A supplied whole-volume intensity scale describes the VOLUME, not the
         # residual chain built from it. Pass 0 shares it (that is the point);

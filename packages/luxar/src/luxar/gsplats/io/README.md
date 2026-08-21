@@ -171,7 +171,7 @@ This package uses `luxar.encoding` for semantic type-aware array encoding:
 
 | Array | Semantic Type | MEMORY Mode Encoding |
 |-------|---------------|---------------------|
-| `centers` | COORDINATE | `linear_perchannel_u16` per-axis fixed-point (AUTO/MEMORY; extent rail falls back to `float32`) / `float32` (PRECISION) |
+| `centers` | COORDINATE | `linear_perchannel_u16` per-axis fixed-point (AUTO/MEMORY, with a gridded axis's grid snapped so it is exact; extent rail and sigma rail fall back to `float32`) / `float32` (PRECISION) |
 | `amplitudes` | POSITIVE_SCALAR | canonical positive-scalar encoding (may quantize to uint8) |
 | `cholesky_factors_diag` | CHOLESKY_DIAG | per-channel log: `log_perchannel_u8` (AUTO — certified, escalates to `u16`; MEMORY) / `float32` (PRECISION) |
 | `cholesky_factors_offdiag` | CHOLESKY_OFFDIAG | per-channel signed-log: `signed_log_perchannel_u8` (escalates with the diagonal — one shared tier) / `float32`; absent if d==1 |
@@ -182,6 +182,63 @@ This package uses `luxar.encoding` for semantic type-aware array encoding:
 ≥ 2¹⁶ falls back to float32). float16 is never used on coordinates — its
 *relative* precision is a footgun for absolute positions, so the writer
 disables it (there is no `float16_allowed` knob).
+
+**Grid snap (what keeps a stacked axis exact).** A time or channel axis built with
+`combine_as_new_dimension(..., sigma=0.0)` has a tiny extent (so it passes the
+extent rail) but essentially no width, so an ordinary uint16 grid step of
+thousands of σ knocks every interior frame off its integer coordinate — measured
+at 7 320 σ on a 100-frame stack, with only the two endpoints surviving (#1748).
+Such an axis is **gridded**, though, so the encoder widens its stored `hi` until
+the quantization grid coincides with the data's own spacing and every value
+round-trips bit-exactly at uint16. It costs nothing (`lo`/`hi` are stored per axis
+regardless — a scale choice, not a dtype change) and needs no action from the
+caller, so it reports through arbol rather than warning. See
+`luxar/encoding/README.md` for the eligibility test.
+
+**Sigma rail (a geometry-aware backstop).** The rails above only see coordinates.
+The gsplat writer also has the Cholesky factors in hand, so it compares **half**
+each axis's grid step `(hi - lo) / 65535` — the worst-case round-trip
+displacement — against *each splat's own* marginal σ on that axis: a splat is
+**unrepresentable** there when that displacement exceeds
+`MAX_CENTER_DISPLACEMENT_SIGMAS` (1.0) × its σ, i.e. when quantization can push
+the center clear of its own core and out of a slice query that used to match it.
+The centers are stored as `float32` (with a `UserWarning`) once more than
+`MAX_UNREPRESENTABLE_SPLAT_FRACTION` (0.1%) of the splats are unrepresentable on
+some axis **and** the encoder has no exact path of its own for that array —
+tripping the population gate is necessary but not sufficient. An axis the snap
+covers is **not** an offender: the rail runs the
+encoder's own `gridded_axis_step` on any axis that trips the population gate
+(lazily — `np.unique` per axis is 0.30 s of a 2.85 s encode on 5M×3 coordinates,
+and a tripped axis is rare) and skips it when the encoder will store it exactly.
+Nor is a **LUT-eligible** centers array, which the encoder already stores verbatim
+(exactly, at ~1 B/value) — the rail asks `ArrayEncoder.encodes_as_lut` before
+escalating, since float32 would be 4× the bytes for no gain in fidelity.
+So a stacked dataset keeps uint16 centers and stays silent, and what is left for
+the rail is a degenerate sub-population on a **non-gridded**, non-LUT axis — a
+`sigma=0` track stack merged into a fit whose time axis is continuous, or an axis
+with more distinct values than uint16 has levels — where the splats really are
+destroyed.
+
+Both numbers are set by harm rather than by jitter. Sub-σ displacement is
+invisible — a whole-volume light-sheet fit over an 8192-voxel axis has a
+0.125-voxel step, so its worst displacement is 0.0625 voxel, and paying 2× the
+centers bytes for that is not worth it. The test is over the population rather
+than the minimum because real fits contain a few needle Gaussians (an SPZ import
+decodes scales as `exp(u8/16 - 10)`; a random-Cholesky fixture draws σ from
+`U(0, 1)`), and one of those must not cost the whole array its uint16 win — but
+0.1% rather than a looser 1%, because a degenerate *minority* is just as destroyed
+as a degenerate whole: merging a 2,000-splat `sigma=0` track stack into a
+300,000-splat fit leaves 0.662% of the splats displaced by up to 1,373 σ. Under
+the displacement criterion the benign populations measure 0.03% or less, so
+0.1% still clears them by 3× or more. Only the centers escalate — the
+Cholesky/amplitude/color tiers keep whatever the mode selected. An escalated
+centers array is also written with `deduplicate=False`: the encoder's content
+registry is keyed on the centers bytes alone, and would otherwise hand the
+escalated node an `array_ref` to a sibling's quantized array. The sigma rail
+stands down entirely once an axis reaches `COORDINATE_U16_MAX_EXTENT` (2¹⁶):
+the extent rail above already stores that array as float32, so it leaves the
+clearer "extent ≥ 2¹⁶" diagnosis in place — and leaves the array its dedup,
+which is safe for a verdict that depends only on the centers bytes.
 
 **Encoding modes**:
 - `AUTO`: Analyzes data and selects encoding (may quantize)
