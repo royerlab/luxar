@@ -7,6 +7,7 @@ every per-level op in the sibling mixins rebuilds its ladder through.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import TYPE_CHECKING, Callable, List
 
 import numpy as np
@@ -22,6 +23,53 @@ if TYPE_CHECKING:
         GSplatData,
         SubstitutiveLevel,
     )
+
+
+def _prune_empty_additive_sublods(
+    lods: "List[AdditiveSubLOD]",
+) -> "tuple[List[AdditiveSubLOD], list[int] | None]":
+    """Drop zero-width ladder rungs and refresh their structural stamps.
+
+    A wholly empty leaf keeps its existing rung so the normal empty-dataset
+    validation remains responsible for rejecting an unwritable result.  When
+    at least one rung survives, empty rungs carry no prefix information and are
+    removed while the remaining rungs keep their original order.
+    """
+    nonempty = [lod for lod in lods if lod.n_splats > 0]
+    if not nonempty or len(nonempty) == len(lods):
+        return lods, None
+
+    authored_rung_keys = {
+        key
+        for lod in lods
+        for key in ("lod_level", "lod_n_splats", "lod_cumulative_n")
+        if key in lod.stats
+    }
+    cumulative = 0
+    cutpoints: list[int] = []
+    refreshed: List["AdditiveSubLOD"] = []
+    for level, lod in enumerate(nonempty):
+        cumulative += int(lod.n_splats)
+        cutpoints.append(cumulative)
+        stats = dict(lod.stats)
+        if "lod_level" in authored_rung_keys:
+            stats["lod_level"] = level
+        if "lod_n_splats" in authored_rung_keys:
+            stats["lod_n_splats"] = int(lod.n_splats)
+        if "lod_cumulative_n" in authored_rung_keys:
+            stats["lod_cumulative_n"] = cumulative
+        refreshed.append(replace(lod, stats=stats))
+    return refreshed, cutpoints
+
+
+def _refresh_ladder_summary(stats: dict, cutpoints: list[int]) -> dict:
+    """Refresh authored ladder-size metadata after empty-rung pruning."""
+    refreshed = dict(stats)
+    if "lod_n_lods" in refreshed:
+        refreshed["lod_n_lods"] = len(cutpoints)
+    if "lod_cutpoints" in refreshed:
+        refreshed["lod_cutpoints"] = list(cutpoints)
+    return refreshed
 
 
 class TransformsMixin(_GSplatDataOps):
@@ -45,13 +93,18 @@ class TransformsMixin(_GSplatDataOps):
         new_levels: List["SubstitutiveLevel"] = []
         for s, src in enumerate(self.substitutive_levels):
             out = fn(self._view_of_level(src))
+            out_level = out.substitutive_levels[0]
+            level_stats = dict(src.stats)
+            for key in ("lod_n_lods", "lod_cutpoints"):
+                if key in out_level.stats:
+                    level_stats[key] = out_level.stats[key]
             new_levels.append(
                 SubstitutiveLevel(
-                    additive_sublods=out.substitutive_levels[0].additive_sublods,
+                    additive_sublods=out_level.additive_sublods,
                     compression_factor=src.compression_factor,
                     parent_method=src.parent_method,
                     level_index=src.level_index,
-                    stats=dict(src.stats),
+                    stats=level_stats,
                 )
             )
         return GSplatData.from_substitutive_levels(new_levels, stats=dict(self.stats))
@@ -68,7 +121,7 @@ class TransformsMixin(_GSplatDataOps):
         callers guard the multi-sub-LOD branch with
         ``if self.n_additive_sublods > 1``.
         """
-        from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.gsplat_data import GSplatData, SubstitutiveLevel
 
         new_lods: List["AdditiveSubLOD"] = []
         offset = 0
@@ -76,7 +129,23 @@ class TransformsMixin(_GSplatDataOps):
             n = lod.n_splats
             new_lods.append(fn(lod, offset, n))
             offset += n
-        return GSplatData.from_additive_sublods(new_lods, stats=dict(self.stats))
+        new_lods, cutpoints = _prune_empty_additive_sublods(new_lods)
+        if cutpoints is None:
+            return GSplatData.from_additive_sublods(new_lods, stats=dict(self.stats))
+
+        source_level = self.substitutive_levels[0]
+        return GSplatData.from_substitutive_levels(
+            [
+                SubstitutiveLevel(
+                    additive_sublods=new_lods,
+                    compression_factor=source_level.compression_factor,
+                    parent_method=source_level.parent_method,
+                    level_index=source_level.level_index,
+                    stats=_refresh_ladder_summary(source_level.stats, cutpoints),
+                )
+            ],
+            stats=_refresh_ladder_summary(self.stats, cutpoints),
+        )
 
     def transform(self, matrix: np.ndarray) -> "GSplatData":
         """Apply affine transformation to all splats.
