@@ -798,6 +798,28 @@ describe('LODGroupRegistry — auto evaluation', () => {
     );
   });
 
+  it("selector='screen-area': contained lod_bounds cannot select finer than position_bounds", () => {
+    const rawBounds = { min: [-0.5, -0.0021, -0.5], max: [0.5, 0.0021, 0.5] };
+    const robustBounds = { min: [-0.4, -0.0004, -0.5], max: [0.4, 0.0004, 0.5] };
+    const reg = makeRegistry();
+    const children = [0, 0.1].map((threshold) =>
+      withLodBounds({ ...makeChild(threshold), positionBounds: rawBounds }, robustBounds)
+    );
+    const entry = makeEntry(children, 0, '/g');
+    entry.selector = 'screen-area';
+    reg.register(entry);
+
+    reg.evaluatePerFrame();
+
+    expect(children[0].object.visible, 'raw metric is 0.00105, below the fine threshold').toBe(
+      true
+    );
+    expect(
+      children[1].object.visible,
+      'the thin-box ramp makes the robust metric 0.24 unless it is clamped to raw'
+    ).toBe(false);
+  });
+
   it("selector='coverage': sizes the node from lod_bounds instead of an outlier-dominated raw AABB", () => {
     const rawBounds = { min: [-4, -4, -0.5], max: [4, 4, 0.5] };
     const robustBounds = { min: [-0.05, -0.05, -0.5], max: [0.05, 0.05, 0.5] };

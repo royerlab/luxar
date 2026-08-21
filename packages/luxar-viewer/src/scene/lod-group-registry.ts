@@ -1085,6 +1085,15 @@ export class LODGroupRegistry {
             // a partition tile anchors at 1.0), so no FILL_FACTOR normalisation.
             // Camera inside the box → +Infinity → finest, same as the diagonal path.
             coverageMetric = projectBoxAreaFraction(metricWorldBox, camera, FRUSTUM_MATRIX_SCRATCH);
+            if (cache.hasLodBounds) {
+              // The thin-rectangle ramp is not monotone under box containment:
+              // trimming the thin axis can increase the robust metric. Robust
+              // bounds may only keep or reduce the raw-bounds selection.
+              coverageMetric = Math.min(
+                coverageMetric,
+                projectBoxAreaFraction(worldBox, camera, FRUSTUM_MATRIX_SCRATCH)
+              );
+            }
           } else {
             // Legacy 'coverage' selector (the default for older stores).
             // Reuse the per-frame projection×view product (FRUSTUM_MATRIX_SCRATCH,

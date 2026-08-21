@@ -324,7 +324,10 @@ and axis order as `position_bounds`, and be contained within that complete
 bound. A bound that is not contained is rejected and the child falls back to
 `position_bounds`. This is a producer-chosen robust extent — for example
 percentile bounds that exclude a sparse tail — and affects only the selector
-metric. Frustum gating, eviction, root framing, clipping, and scene ranges
+metric. A robust bound MUST NOT make a node select a finer level than its
+complete `position_bounds`; the screen-area selector clamps the robust metric
+to the complete-bound metric to preserve that invariant. Frustum gating,
+eviction, root framing, clipping, and scene ranges
 continue to use the complete `position_bounds`, so excluded outliers remain
 part of the drawable geometry. A missing or malformed `lod_bounds` falls back
 to that child's `position_bounds`; producers SHOULD stamp every child in a
