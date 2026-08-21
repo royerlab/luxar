@@ -71,6 +71,25 @@ def _authored_level_for(
     return source_levels[min(index, len(source_levels) - 1)]
 
 
+def _refreshed_level_stats(
+    level: "SubstitutiveLevel", authored: "SubstitutiveLevel"
+) -> dict:
+    """Refresh authored structural level stamps before energy restamping."""
+    stats = dict(level.stats)
+    stats.pop("quality", None)
+    stats.pop("refine_stats", None)
+    if "lod_n_lods" in authored.stats:
+        stats["lod_n_lods"] = len(level.additive_sublods)
+    if "lod_cutpoints" in authored.stats:
+        stats["lod_cutpoints"] = [
+            int(value)
+            for value in np.cumsum([lod.n_splats for lod in level.additive_sublods])
+        ]
+    else:
+        stats.pop("lod_cutpoints", None)
+    return stats
+
+
 def _refresh_level(
     level: "SubstitutiveLevel",
     authored: "SubstitutiveLevel",
@@ -89,10 +108,7 @@ def _refresh_level(
         for lod in authored.additive_sublods
     )
     ladder_authored = energy_authored or reference_authored
-    level_stats = dict(level.stats)
-    level_stats.pop("quality", None)
-    level_stats.pop("refine_stats", None)
-    level_stats.pop("lod_cutpoints", None)
+    level_stats = _refreshed_level_stats(level, authored)
     if total_count_authored or ladder_authored:
         level_stats["n_splats_total"] = int(level.n_splats_total)
 
