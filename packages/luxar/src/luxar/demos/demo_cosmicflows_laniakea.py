@@ -41,6 +41,10 @@ DEMO_META = {
     },
     "caches": ["laniakea"],
     "outputs": ["cosmicflows_laniakea_full", "cosmicflows_laniakea"],
+    "citation": {
+        "short": "Tully et al. 2023 (Cosmicflows-4); Laniakea, Tully et al. 2014",
+        "doi": "10.3847/1538-4357/ac94d8",
+    },
 }
 
 import argparse
@@ -659,7 +663,11 @@ def write_laniakea_scene(
         )
 
         with LuxarZarrCompiler(output_path) as compiler:
-            scene = compiler.create_scene(dimensions=dims, viewer_config=viewer_config)
+            scene = compiler.create_scene(
+                citation=DEMO_META["citation"],
+                dimensions=dims,
+                viewer_config=viewer_config,
+            )
 
             scene.add_points(
                 "CF4 galaxies (55,486 in plus-minus 500 Mpc cube)",

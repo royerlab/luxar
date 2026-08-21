@@ -52,6 +52,10 @@ DEMO_META = {
     },
     "caches": ["huri"],
     "outputs": ["ppi_flow_field_full"],
+    "citation": {
+        "short": "Luck et al. 2020",
+        "doi": "10.1038/s41586-020-2188-x",
+    },
 }
 
 import argparse
@@ -1056,24 +1060,28 @@ def write_scene(
     )
 
     with asection("Writing Luxar PPI flow scene"):
+        # float() the grid bounds: they come out of numpy as float32, which
+        # zarr cannot JSON-serialise, so the scene aborted right after the
+        # compiler opened -- leaving a 4 KB store holding nothing but
+        # zarr.json ("Object of type float32 is not JSON serializable").
         dims = Dimensions(
             [
                 Dimension(
                     "x",
                     unit="flow-UMAP",
-                    range=(flow.grid_min[0], flow.grid_max[0]),
+                    range=(float(flow.grid_min[0]), float(flow.grid_max[0])),
                     display=True,
                 ),
                 Dimension(
                     "y",
                     unit="flow-UMAP",
-                    range=(flow.grid_min[1], flow.grid_max[1]),
+                    range=(float(flow.grid_min[1]), float(flow.grid_max[1])),
                     display=True,
                 ),
                 Dimension(
                     "z",
                     unit="flow-UMAP",
-                    range=(flow.grid_min[2], flow.grid_max[2]),
+                    range=(float(flow.grid_min[2]), float(flow.grid_max[2])),
                     display=True,
                 ),
             ]
@@ -1104,7 +1112,11 @@ def write_scene(
         )
 
         with LuxarZarrCompiler(output_path) as compiler:
-            scene = compiler.create_scene(dimensions=dims, viewer_config=viewer_config)
+            scene = compiler.create_scene(
+                dimensions=dims,
+                viewer_config=viewer_config,
+                citation=DEMO_META["citation"],
+            )
 
             scene.add_points(
                 "Proteins (community color, PageRank radius)",

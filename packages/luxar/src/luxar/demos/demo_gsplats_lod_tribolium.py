@@ -53,7 +53,7 @@ DATA SOURCE & CITATIONS:
 ========================
 Source:  Cell Tracking Challenge / Zenodo record 5270323 (GIANI paper)
 Imaging: Zeiss LightSheet Z.1, Tribolium castaneum, 0.381 um isotropic
-Cite:    Yin et al. (2022). GIANI. J. Cell Sci. 135(5), jcs259022.
+Cite:    Barry et al. (2022). GIANI. J. Cell Sci. 135, jcs259511.
          Maska et al. (2023). Cell Tracking Challenge. Nat. Methods 20, 1010-1020.
 
 USAGE:
@@ -96,6 +96,13 @@ DEMO_META = {
     },
     "caches": ["gsplats_tribolium"],
     "outputs": ["gsplats_lod_tribolium"],
+    "citation": {
+        "short": (
+            "Barry 2021 (GIANI, Zenodo 5270323); "
+            "Cell Tracking Challenge (Maška et al. 2023)"
+        ),
+        "doi": "10.5281/zenodo.5270323",
+    },
 }
 
 import sys
@@ -296,6 +303,7 @@ def create_luxar_scene(colored: GSplatData, output_path: Path) -> Path:
             output_path, encoding_mode=EncodingMode.PRECISION
         ) as compiler:
             scene = compiler.create_scene(
+                citation=DEMO_META["citation"],
                 dimensions=dims,
                 # ACES, set explicitly + matched intensity, consistent with the
                 # other gsplat demos. NOTE: the per-level debug colours
@@ -321,7 +329,7 @@ the screen can show. Debug colors (green→amber→red, finest→coarsest) mark
 which level is currently on screen.
 
 Data: Cell Tracking Challenge / Zenodo 5270323, Zeiss LightSheet Z.1.
-Cite: Yin et al. (2022) J. Cell Sci. 135(5); Maska et al. (2023) Nat. Methods 20.
+Cite: Barry et al. (2022) J. Cell Sci. 135; Maska et al. (2023) Nat. Methods 20.
 
 Navigation:
   - Mouse drag to rotate, scroll to zoom, right-click drag to pan

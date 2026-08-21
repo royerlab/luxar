@@ -72,6 +72,11 @@ DEMO_META = {
     },
     "caches": ["desi_galaxies"],
     "outputs": ["desi_galaxies"],
+    "citation": {
+        "short": "DESI Collaboration 2025 (DR1)",
+        "doi": "10.48550/arXiv.2503.14745",
+        "license": "CC BY 4.0",
+    },
 }
 
 from pathlib import Path
@@ -624,7 +629,9 @@ def create_scene(
 
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(
-                dimensions=dims, viewer_config=ViewerConfig(camera=camera)
+                citation=DEMO_META["citation"],
+                dimensions=dims,
+                viewer_config=ViewerConfig(camera=camera),
             )
             scene.attrs["title"] = "DESI DR1 — The Cosmic Web"
 

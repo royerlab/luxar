@@ -58,6 +58,11 @@ DEMO_META = {
     },
     "caches": ["gsplats_cryoem_virus"],
     "outputs": ["gsplats_3d_cryoem_virus"],
+    "citation": {
+        "short": "Zhang et al. 2011 (EMDB EMD-5384)",
+        "doi": "10.1073/pnas.1107847108",
+        "license": "CC0 1.0",
+    },
 }
 
 import sys
@@ -270,6 +275,7 @@ def create_luxar_scene(gsplats_data: GSplatData, output_path: Path) -> Path:
             output_path, encoding_mode=EncodingMode.PRECISION
         ) as compiler:
             scene = compiler.create_scene(
+                citation=DEMO_META["citation"],
                 dimensions=dims,
                 viewer_config=ViewerConfig(tone_mapping="ACES"),
             )
