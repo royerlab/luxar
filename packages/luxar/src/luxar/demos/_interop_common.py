@@ -12,6 +12,7 @@ Not a demo itself (no ``demo_`` prefix), so the demo import smoke test skips it.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Optional
 
@@ -92,7 +93,7 @@ def build_interop_scene(
     tone_mapping: str = "Neutral",
     intensity: float = 1.0,
     camera: Optional[CameraConfig] = None,
-    citation: Optional[dict] = None,
+    citation: Optional[Mapping[str, str]] = None,
 ) -> Path:
     """Build a single-layer scene from a cached (possibly LOD'd) ``.gsplats.zarr``.
 
