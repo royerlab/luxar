@@ -203,6 +203,7 @@ def _recover_frame_scale(
     )
 
     ratios: Dict[int, List[float]] = {0: [], 1: [], 2: []}
+    ranges: Dict[int, List[Tuple[float, float]]] = {0: [], 1: [], 2: []}
 
     def collect(node: Dict[str, Any]) -> bool:
         if "part" in node:
@@ -212,61 +213,46 @@ def _recover_frame_scale(
             split = float(node["split"])
             left = serialized_bsp_leaf_labels(node["left"])
             right = serialized_bsp_leaf_labels(node["right"])
-            if axis not in ratios or not np.isfinite(split) or split == 0.0:
+            if axis not in ratios or not np.isfinite(split):
                 return False
             left_high = max(float(boxes[i][1][axis]) for i in left)
             right_low = min(float(boxes[i][0][axis]) for i in right)
+            if right_low > left_high:
+                return False
             expected = 0.5 * (left_high + right_low)
+            if split == 0.0:
+                if not right_low <= 0.0 <= left_high:
+                    return False
+                return collect(node["left"]) and collect(node["right"])
             ratio = expected / split
+            low, high = sorted((right_low / split, left_high / split))
         except (KeyError, TypeError, ValueError, IndexError):
             return False
-        if not np.isfinite(ratio) or ratio <= 0.0:
+        if not np.isfinite(ratio) or ratio <= 0.0 or high <= 0.0:
             return False
         ratios[axis].append(ratio)
+        ranges[axis].append((max(low, np.nextafter(0.0, 1.0)), high))
         return collect(node["left"]) and collect(node["right"])
 
     if not collect(stored):
         return None
     ndim = len(boxes[0][0])
-    factors = tuple(
-        float(np.median(ratios[axis])) if ratios.get(axis) else 1.0
-        for axis in range(ndim)
-    )
+    factors_list = []
+    for axis in range(ndim):
+        if not ranges[axis]:
+            factors_list.append(1.0)
+            continue
+        low = max(bounds[0] for bounds in ranges[axis])
+        high = min(bounds[1] for bounds in ranges[axis])
+        if low > high:
+            return None
+        estimate = float(np.median(ratios[axis]))
+        factors_list.append(min(max(estimate, low), high))
+    factors = tuple(factors_list)
     repaired = map_serialized_bsp_tree(stored, linear=np.diag(factors))
-    if (
-        repaired is None
-        or not _planes_cross_overlap_bands(repaired, boxes)
-        or not serialized_bsp_tree_straddles_centers(repaired, boxes)
-    ):
+    if repaired is None or not serialized_bsp_tree_straddles_centers(repaired, boxes):
         return None
     return repaired, factors
-
-
-def _planes_cross_overlap_bands(
-    tree: Dict[str, Any], boxes: "List[Tuple[np.ndarray, np.ndarray]]"
-) -> bool:
-    """True when every split lies inside the two sides' measured shared band."""
-    from luxar.core.group.partition import serialized_bsp_leaf_labels
-
-    def walk(node: Dict[str, Any]) -> bool:
-        if "part" in node:
-            return True
-        try:
-            axis = int(node["axis"])
-            split = float(node["split"])
-            left = serialized_bsp_leaf_labels(node["left"])
-            right = serialized_bsp_leaf_labels(node["right"])
-            left_high = max(float(boxes[i][1][axis]) for i in left)
-            right_low = min(float(boxes[i][0][axis]) for i in right)
-        except (KeyError, TypeError, ValueError, IndexError):
-            return False
-        return (
-            right_low <= split <= left_high
-            and walk(node["left"])
-            and walk(node["right"])
-        )
-
-    return walk(tree)
 
 
 def _labels_name_the_parts(stored: Dict[str, Any], n_parts: int) -> bool:

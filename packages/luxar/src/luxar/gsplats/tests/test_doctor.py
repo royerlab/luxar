@@ -307,7 +307,9 @@ class TestSplitPlanesCheck:
         with tempfile.TemporaryDirectory() as tmp:
             path = _uniform_tiled_store(Path(tmp))
             healthy = _root_attrs(path)["bsp_tree"]
-            _set_root_attr(path, "bsp_tree", _scale_tree_planes(healthy, (0.25,) * 3))
+            _set_root_attr(
+                path, "bsp_tree", _scale_tree_planes(healthy, (0.25, 0.5, 0.125))
+            )
 
             report = diagnose_store(path)
             (finding,) = report.findings
@@ -315,6 +317,8 @@ class TestSplitPlanesCheck:
             assert finding.fixable
             assert "coordinate frame" in finding.summary
             assert "4" in finding.detail
+            assert "2" in finding.detail
+            assert "8" in finding.detail
 
             repaired = diagnose_store(path, fix=True)
             assert repaired.healthy
