@@ -68,6 +68,51 @@ def test_preprocess_reads_source_axes_then_fits_canonical_store(
     assert "--axes t,c,z,y,x" in script
 
 
+def test_preprocess_reads_explicit_singleton_timepoint_and_channel(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from luxar.cli.gsplat_ops.batch.denoise_workers import (
+        run_batch_denoise_preprocess_cmd,
+    )
+    from luxar.gsplats.preprocessing import denoise_pipeline
+
+    source = tmp_path / "source.zarr"
+    data = np.zeros((3, 4, 2, 3, 4), dtype=np.float32)
+    for channel in range(3):
+        for timepoint in range(4):
+            data[channel, timepoint] = 10 * channel + timepoint
+    root = open_group(source, mode="w")
+    create_array(root, "data", data=data)
+
+    output = tmp_path / "batch"
+    manifest = BatchManifest(
+        input_path=str(source),
+        output_dir=str(output),
+        array_key="data",
+        axes="channel,time,z,y,x",
+        n_timepoints=1,
+        n_channels=1,
+        timepoint_indices=[3],
+        channel_indices=[2],
+        spatial_shape=(2, 3, 4),
+        n_tiles=1,
+        total_tasks=1,
+        denoise=True,
+        denoise_mode="preprocess",
+        denoised_zarr_path=str(output / "denoised.zarr"),
+    )
+    save_manifest(manifest, output)
+    (output / "denoise_h_values.json").write_text(json.dumps({"2": 0.04}))
+    monkeypatch.setattr(
+        denoise_pipeline, "denoise_volume_array", lambda volume, **_: volume
+    )
+
+    run_batch_denoise_preprocess_cmd(output, task_id=0)
+
+    denoised = open_group(output / "denoised.zarr", mode="r")["data"]
+    np.testing.assert_array_equal(denoised[0, 0], data[2, 3])
+
+
 def test_preprocess_fit_uses_explicit_axes_for_2d_store(tmp_path: Path) -> None:
     from luxar.gsplats.batch.slurm_gen import generate_fit_sbatch
 

@@ -110,8 +110,17 @@ def run_batch_denoise_preprocess_cmd(
             # Load volume
             volume = load_volume(
                 Path(manifest.input_path),
-                channel=c_real if manifest.n_channels > 1 else None,
-                timepoint=t_real if manifest.n_timepoints > 1 else None,
+                channel=(
+                    c_real
+                    if manifest.n_channels > 1 or manifest.channel_indices is not None
+                    else None
+                ),
+                timepoint=(
+                    t_real
+                    if manifest.n_timepoints > 1
+                    or manifest.timepoint_indices is not None
+                    else None
+                ),
                 array_key=manifest.array_key,
                 axes=manifest.axes,
             )
