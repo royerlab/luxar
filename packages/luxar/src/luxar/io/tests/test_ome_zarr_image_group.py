@@ -472,6 +472,27 @@ class TestTheDeclaredLevelsBranch:
         np.testing.assert_array_equal(load_volume(path), level_zero.astype(np.float32))
 
     @pytest.mark.parametrize("zarr_format", ZARR_FORMATS)
+    def test_a_missing_numeric_path_is_reported(
+        self,
+        tmp_path: Path,
+        zarr_format: int,
+        capsys: pytest.CaptureFixture,
+    ) -> None:
+        """Coercion must not make an unresolved malformed declaration silent."""
+        block = _multiscales(["t", "z", "y", "x"], ["7"])
+        block[0]["datasets"][0]["path"] = 7
+        path = _bioformats2raw_store(
+            tmp_path / "missing_numeric_path.zarr",
+            zarr_format,
+            [("0", [_ramp((2, 4, 4, 4))])],
+            image_attrs={"multiscales": block},
+        )
+
+        discover_ome_zarr_shape(path)
+
+        assert "Skipping declared level '0/7'" in capsys.readouterr().out
+
+    @pytest.mark.parametrize("zarr_format", ZARR_FORMATS)
     def test_a_level_declared_one_group_deeper_keeps_its_declarers_metadata(
         self, tmp_path: Path, zarr_format: int
     ) -> None:
