@@ -657,17 +657,23 @@ def resolve_batch_floor(
 
     pairs = _floor_resolution_pairs(n_timepoints, n_channels, denoise_h_values)
     budget = max(1, int(FLOOR_SAMPLE_BUDGET_VOXELS) // len(pairs))
+    resolved_pairs = [
+        (
+            timepoint_indices[t] if timepoint_indices is not None else t,
+            channel_indices[c] if channel_indices is not None else c,
+        )
+        if denoise_h_values is None
+        else (t, c)
+        for t, c in pairs
+    ]
+    sampled_times = sorted({t for t, _ in resolved_pairs})
+    sampled_channels = sorted({c for _, c in resolved_pairs})
     levels: List[Optional[float]] = []
     with asection(
         f"Resolving background floor '{floor_spec}' (minimum over "
-        f"{len(pairs)} slices spanning T={n_timepoints}, C={n_channels})"
+        f"{len(pairs)} slices; sampled T={sampled_times}, C={sampled_channels})"
     ):
-        for t_pos, c_pos in pairs:
-            if denoise_h_values is None:
-                t = timepoint_indices[t_pos] if timepoint_indices is not None else t_pos
-                c = channel_indices[c_pos] if channel_indices is not None else c_pos
-            else:
-                t, c = t_pos, c_pos
+        for t, c in resolved_pairs:
             view = _pinned_slice_volume(
                 input_path,
                 channel=c,
@@ -1805,8 +1811,10 @@ def plan_batch(
     # FULL extent, reduced by MINIMUM — a level above some slice's maximum would
     # clip that whole sub-volume to zero and drop it silently from the merge, so
     # the level is made a lower bound on every SAMPLED slice's pedestal (bounded
-    # sampling cannot bound an unsampled one), and must not
-    # depend on the --timepoints/--channels selection (see resolve_batch_floor).
+    # sampling cannot bound an unsampled one). Raw resolution must not depend on
+    # either selection; on-the-fly denoised resolution spans the full time extent
+    # but follows the selected channels because NLM h is calibrated per channel
+    # (see resolve_batch_floor).
     # Deliberately not the content plan's max-projection either, whose per-voxel
     # maximum biases the background mode upward relative to any single slice.
     floor_spec = effective_floor_spec(fit)

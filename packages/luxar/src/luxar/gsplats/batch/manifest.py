@@ -94,10 +94,12 @@ class BatchManifest:
     a lower bound on every SAMPLED slice's pedestal, so it cannot clip a sampled
     sub-volume to zero — a
     dimmer non-sampled slice still can, bounded sampling being bounded — and it
-    does not depend on the ``--timepoints``/``--channels`` selection for raw and
-    on-the-fly denoise runs. Preprocess runs necessarily resolve against the
-    selected-only ``denoised.zarr`` store, so their level is selection-scoped. The level
-    that actually drives the fits is the concrete number in ``fit_args["floor"]``;
+    does not depend on the ``--timepoints`` selection for raw and on-the-fly
+    denoise runs. Raw-basis resolution also ignores ``--channels``; on-the-fly
+    denoised resolution follows the selected channels because NLM ``h`` is
+    calibrated per channel. Preprocess runs necessarily resolve against the
+    selected-only ``denoised.zarr`` store, so both axes are selection-scoped. The
+    level that actually drives the fits is the concrete number in ``fit_args["floor"]``;
     this field records it for inspection and merge provenance. ``None`` means "no level is
     pinned": suppression is disabled, or the resolved level was negative so the
     SPEC was forwarded and each task resolves it itself, or the manifest predates

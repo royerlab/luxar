@@ -11,7 +11,10 @@ import typer
 
 from luxar._zarr_compat import create_array, open_group
 from luxar.cli.gsplat_ops.batch.denoise_workers import resolve_deferred_batch_floor
+from luxar.cli.gsplat_ops.batch.run_orchestration import _resolve_local_deferred_floor
 from luxar.cli.gsplat_ops.batch.submit_slurm import submit_batch_jobs
+from luxar.gsplats.batch.fit_command import build_task_fit_argv
+from luxar.gsplats.batch.local_runner import _denoise_h_for_job
 from luxar.gsplats.batch.manifest import (
     BatchJob,
     BatchManifest,
@@ -20,7 +23,7 @@ from luxar.gsplats.batch.manifest import (
 )
 from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
 from luxar.gsplats.batch.slurm_gen import generate_fit_sbatch, generate_floor_sbatch
-from luxar.gsplats.batch.status import check_batch_status
+from luxar.gsplats.batch.status import check_batch_status, format_status_report
 
 
 def _write_canonical_store(path: Path, data: np.ndarray) -> None:
@@ -142,7 +145,7 @@ def test_on_the_fly_percentile_uses_each_channels_calibrated_h(monkeypatch) -> N
     ]
 
 
-def test_on_the_fly_floor_samples_only_calibrated_channels(monkeypatch) -> None:
+def test_on_the_fly_floor_samples_only_calibrated_channels(monkeypatch, capsys) -> None:
     from luxar.cli.gsplat_ops.batch import planning
     from luxar.gsplats.fitting import preprocessing
 
@@ -168,6 +171,95 @@ def test_on_the_fly_floor_samples_only_calibrated_channels(monkeypatch) -> None:
 
     assert level == forward == pytest.approx(9.0)
     assert sampled_channels == [3]
+    assert "sampled T=[0], C=[3]" in capsys.readouterr().out
+
+
+def test_local_deferred_floor_pins_calibrated_h_into_worker_argv(
+    tmp_path: Path, monkeypatch
+) -> None:
+    source = tmp_path / "movie.zarr"
+    data = np.stack(
+        [
+            np.full((2, 4, 4, 4), 10.0, dtype=np.float32),
+            np.full((2, 4, 4, 4), 20.0, dtype=np.float32),
+        ]
+    )
+    data[:, :, 2, 2, 2] = 100.0
+    _write_canonical_store(source, data)
+    open_group(source, mode="a").attrs["axes"] = ["t", "c", "z", "y", "x"]
+
+    def _calibrate(
+        *,
+        input_path,
+        n_timepoints,
+        n_channels,
+        channel_indices,
+        timepoint_indices,
+        array_key,
+        calibration_samples,
+        patch_size,
+        search_distance,
+        backend,
+    ):
+        assert input_path == source
+        assert (n_timepoints, n_channels) == (2, 1)
+        assert channel_indices == [1]
+        assert timepoint_indices is None
+        assert array_key == "data"
+        assert calibration_samples > 0
+        assert patch_size > 0
+        assert search_distance > 0
+        assert backend == "auto"
+        return {1: 0.05}
+
+    monkeypatch.setattr(
+        "luxar.gsplats.preprocessing.denoise_pipeline.calibrate_all_channels",
+        _calibrate,
+    )
+    monkeypatch.setattr(
+        "luxar.gsplats.preprocessing.denoise_pipeline.denoise_volume_array",
+        lambda volume, **_kwargs: np.asarray(volume, dtype=np.float32),
+    )
+    job = BatchJob(
+        task_id=0,
+        timepoint=0,
+        channel=1,
+        tile_index=0,
+        output_filename="tile.gsplats.zarr",
+        estimated_wall_seconds=0.0,
+    )
+    manifest = BatchManifest(
+        input_path=str(source),
+        output_dir=str(tmp_path),
+        array_key="data",
+        axes="time,channel,z,y,x",
+        n_timepoints=2,
+        n_channels=1,
+        channel_shape=[2],
+        channel_indices=[1],
+        spatial_shape=[4, 4, 4],
+        n_tiles=1,
+        total_tasks=1,
+        denoise=True,
+        denoise_mode="on-the-fly",
+        floor_spec="p10",
+        floor_deferred=True,
+        jobs=[job],
+    )
+
+    resolved = _resolve_local_deferred_floor(manifest, tmp_path)
+
+    assert resolved.denoise_h_values == {"1": pytest.approx(0.05)}
+    assert resolved.floor_deferred is False
+    assert resolved.floor_level == pytest.approx(10.0)
+    argv = build_task_fit_argv(
+        resolved,
+        job,
+        tmp_path / "tile.gsplats.zarr",
+        argv0=[],
+        denoise_h=_denoise_h_for_job(resolved, job),
+    )
+    assert argv[argv.index("--denoise-h") + 1] == "0.05"
 
 
 def test_exact_norm_range_scan_is_memory_bounded() -> None:
@@ -375,6 +467,39 @@ def test_unparseable_floor_job_id_stops_submission(tmp_path: Path, monkeypatch) 
         )
 
 
+def test_unparseable_fit_job_id_stops_before_merge(tmp_path: Path, monkeypatch) -> None:
+    class Result:
+        returncode = 0
+        stderr = ""
+        stdout = "submission accepted"
+
+    calls: list[list[str]] = []
+
+    def _run(argv, **_kwargs):
+        calls.append(argv)
+        return Result()
+
+    monkeypatch.setattr("subprocess.run", _run)
+
+    with pytest.raises(typer.Exit):
+        submit_batch_jobs(
+            output_dir=tmp_path,
+            manifest=BatchManifest(output_dir=str(tmp_path), total_tasks=1),
+            fit_script="fit",
+            merge_script="merge",
+            preamble="env",
+            calibrate_script=None,
+            denoise_script=None,
+            floor_script=None,
+            preempt_fit_script=None,
+            total_tasks=1,
+            preempt_partition=None,
+        )
+
+    assert len(calls) == 1
+    assert calls[0][-1].endswith("fit_array.sbatch")
+
+
 def test_slurm_fit_waits_for_denoised_floor_resolution(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -451,9 +576,13 @@ def test_all_empty_floor_slice_is_failed_by_status_and_merge(tmp_path: Path) -> 
         (tiles / f"{job.output_filename}.empty").touch()
 
     status = check_batch_status(tmp_path)
+    report = format_status_report(status, manifest)
 
     assert status.completed == 0
     assert status.failed == 2
+    assert status.floor_erased_slices == ((0, 0),)
+    assert "Floor-erased slices: (t=0, c=0)" in report
+    assert "Remove those slices' .empty markers and re-plan" in report
     with pytest.raises(RuntimeError, match="erased every spatial tile"):
         merge_batch_results(manifest, tmp_path)
 

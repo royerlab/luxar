@@ -24,11 +24,13 @@ class BatchStatus:
     running: int = 0
     pending: int = 0
     unknown: int = 0
+    floor_erased_slices: tuple[tuple[int, int], ...] = ()
     merge_status: str = "not_started"
 
 
-def _floor_erased_task_ids(manifest: BatchManifest, tiles_dir: Path) -> set[int]:
-    erased_slices = floor_erased_slices(manifest, tiles_dir)
+def _floor_erased_task_ids(
+    manifest: BatchManifest, erased_slices: set[tuple[int, int]]
+) -> set[int]:
     return {
         job.task_id
         for job in manifest.jobs
@@ -54,7 +56,9 @@ def check_batch_status(output_dir: Path) -> BatchStatus:
     status = BatchStatus(total_tasks=manifest.total_tasks)
 
     tiles_dir = output_dir / "tiles"
-    erased_ids = _floor_erased_task_ids(manifest, tiles_dir)
+    erased_slices = floor_erased_slices(manifest, tiles_dir)
+    status.floor_erased_slices = tuple(sorted(erased_slices))
+    erased_ids = _floor_erased_task_ids(manifest, erased_slices)
     status.failed += len(erased_ids)
 
     # 1. Check output files. A slot is "completed" if its store exists OR it
@@ -159,6 +163,17 @@ def format_status_report(
         details.append(f"{status.unknown} unknown")
     if details:
         lines.append(f"    {', '.join(details)}")
+
+    if status.floor_erased_slices:
+        pairs = ", ".join(
+            f"(t={timepoint}, c={channel})"
+            for timepoint, channel in status.floor_erased_slices
+        )
+        lines.append(f"  Floor-erased slices: {pairs}")
+        lines.append(
+            "    Remove those slices' .empty markers and re-plan with a lower "
+            "floor or --floor none."
+        )
 
     lines.append(f"  Merge: {status.merge_status}")
 

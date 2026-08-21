@@ -1194,8 +1194,8 @@ def resolve_volume_norm_range_denoised(
                     probe_denoised_hi = float(
                         np.percentile(denoised_probe, 100.0 - norm_percentile)
                     )
-                lo = raw_lo + probe_denoised_lo - probe_raw_lo
-                hi = raw_hi + probe_denoised_hi - probe_raw_hi
+                lo = probe_denoised_lo + (raw_lo - probe_raw_lo)
+                hi = probe_denoised_hi + (raw_hi - probe_raw_hi)
                 if not np.isfinite(lo) or not np.isfinite(hi):
                     lo, hi = raw_lo, raw_hi
         except Exception as exc:

@@ -128,6 +128,9 @@ def submit_batch_jobs(
         raise typer.Exit(1)
 
     fit_job_id = _parse_job_id(result.stdout)
+    if fit_job_id is None:
+        aprint(f"Error: could not parse fit job id from sbatch output: {result.stdout}")
+        raise typer.Exit(1)
     aprint(f"  Fitting array job: {fit_job_id} ({total_tasks} tasks)")
 
     # Submit preemptible fit array (if enabled)

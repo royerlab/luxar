@@ -106,6 +106,35 @@ def test_tiled_range_tracks_the_denoised_basis(monkeypatch):
     assert resolved == pytest.approx((0.0, float(volume.max()) * 0.5))
 
 
+def test_denoised_range_endpoint_shift_is_bit_exact(monkeypatch):
+    from luxar.gsplats.fitting import preprocessing
+
+    raw_endpoint = 1_000_000.5
+    denoised_endpoint = 123_456.78
+    monkeypatch.setattr(
+        preprocessing,
+        "resolve_volume_norm_range",
+        lambda *_args, **_kwargs: (raw_endpoint, raw_endpoint),
+    )
+    monkeypatch.setattr(
+        preprocessing,
+        "_denoise_probe_arrays",
+        lambda *_args, **_kwargs: (
+            np.asarray([raw_endpoint]),
+            np.asarray([denoised_endpoint]),
+        ),
+    )
+
+    resolved = resolve_volume_norm_range_denoised(
+        np.asarray([raw_endpoint]),
+        0.0,
+        denoise_h=0.04,
+        denoise_params={},
+    )
+
+    assert resolved == (denoised_endpoint, denoised_endpoint)
+
+
 def test_floor_and_norm_range_reuse_one_denoise_probe(monkeypatch):
     volume = np.arange(8 * 16 * 16, dtype=np.float32).reshape(8, 16, 16)
     calls = 0
