@@ -30,6 +30,8 @@ _PRUNED_LEVEL_STATS = ("reference_energy", "quality", "n_splats_total")
 
 def _prune_empty_additive_sublods(
     lods: "List[AdditiveSubLOD]",
+    *,
+    refresh_structural: bool,
 ) -> "tuple[List[AdditiveSubLOD], list[int] | None]":
     """Drop zero-width rungs and refresh surviving structural stamps.
 
@@ -37,8 +39,9 @@ def _prune_empty_additive_sublods(
     validation remains responsible for rejecting an unwritable result.  When
     at least one rung survives, empty rungs carry no prefix information and are
     removed while the remaining rungs keep their original order.  Structural
-    stamps are refreshed even when no rung empties; pruning additionally drops
-    the per-rung energy fraction because its prefix ladder changed shape.
+    stamps are refreshed when rung widths or ladder shape changed; pruning
+    additionally drops the per-rung energy fraction because its prefix ladder
+    changed shape.
     """
     nonempty = [lod for lod in lods if lod.n_splats > 0]
     if not nonempty:
@@ -60,11 +63,11 @@ def _prune_empty_additive_sublods(
         stats = dict(lod.stats)
         if pruned:
             stats.pop("energy_fraction_cum", None)
-        if "lod_level" in authored_rung_keys:
+        if refresh_structural and "lod_level" in authored_rung_keys:
             stats["lod_level"] = level
-        if "lod_n_splats" in authored_rung_keys:
+        if refresh_structural and "lod_n_splats" in authored_rung_keys:
             stats["lod_n_splats"] = int(lod.n_splats)
-        if "lod_cumulative_n" in authored_rung_keys:
+        if refresh_structural and "lod_cumulative_n" in authored_rung_keys:
             stats["lod_cumulative_n"] = cumulative
         refreshed.append(replace(lod, stats=stats))
     return refreshed, cutpoints
@@ -157,9 +160,7 @@ class TransformsMixin(_GSplatDataOps):
         ``fn`` receives ``(lod, offset, n)`` — the sub-LOD, its start offset
         into the flattened finest-leaf arrays, and its splat count — and returns
         a replacement :class:`AdditiveSubLOD` (which may change N, ndim, or
-        array widths). The additive-dimension sibling of :meth:`_map_substitutive`;
-        callers guard the multi-sub-LOD branch with
-        ``if self.n_additive_sublods > 1``.
+        array widths). The additive-dimension sibling of :meth:`_map_substitutive`.
         """
         from luxar.gsplats.gsplat_data import GSplatData, SubstitutiveLevel
 
@@ -169,8 +170,15 @@ class TransformsMixin(_GSplatDataOps):
             n = lod.n_splats
             new_lods.append(fn(lod, offset, n))
             offset += n
-        new_lods, cutpoints = _prune_empty_additive_sublods(new_lods)
         source_level = self.substitutive_levels[0]
+        structure_changed = len(new_lods) != len(source_level.additive_sublods) or any(
+            new_lod.n_splats != old_lod.n_splats
+            for new_lod, old_lod in zip(new_lods, source_level.additive_sublods)
+        )
+        new_lods, cutpoints = _prune_empty_additive_sublods(
+            new_lods,
+            refresh_structural=structure_changed,
+        )
         count_changed = sum(lod.n_splats for lod in new_lods) != sum(
             lod.n_splats for lod in source_level.additive_sublods
         )
@@ -218,7 +226,7 @@ class TransformsMixin(_GSplatDataOps):
             >>> M = np.eye(4); M[:3, 3] = [10, 20, 30]
             >>> transformed = data.transform(M)
         """
-        from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData
+        from luxar.gsplats.gsplat_data import AdditiveSubLOD
         from luxar.gsplats.utils.trils import pack_tril, unpack_tril
 
         # Multi-substitutive: transform every level and rebuild the pyramid
@@ -248,31 +256,18 @@ class TransformsMixin(_GSplatDataOps):
             )
 
         if self.n_splats == 0:
-            if self.n_additive_sublods > 1:
-                return GSplatData.from_additive_sublods(
-                    [
-                        AdditiveSubLOD(
-                            centers=lod.centers.copy(),
-                            amplitudes=lod.amplitudes,
-                            cholesky_factors=lod.cholesky_factors.copy(),
-                            colors=lod.colors,
-                            stats=dict(lod.stats),
-                            truncation_radius=lod.truncation_radius,
-                        )
-                        for lod in self.additive_sublods
-                    ],
-                    stats=dict(self.stats),
+            return self._map_additive(
+                lambda lod, offset, n: AdditiveSubLOD(
+                    centers=lod.centers.copy(),
+                    amplitudes=lod.amplitudes,
+                    cholesky_factors=lod.cholesky_factors.copy(),
+                    colors=lod.colors,
+                    stats=dict(lod.stats),
+                    truncation_radius=lod.truncation_radius,
                 )
-            return GSplatData(
-                centers=self.centers.copy(),
-                amplitudes=self.amplitudes,
-                cholesky_factors=self.cholesky_factors.copy(),
-                colors=self.colors,
-                stats=dict(self.stats),
-                truncation_radius=self.truncation_radius,
             )
 
-        # Precompute cholesky transform (shared between single/multi-LOD paths)
+        # Precompute cholesky transform.
         is_diagonal = np.count_nonzero(A - np.diag(np.diagonal(A))) == 0
         if is_diagonal:
             diag = np.diagonal(A)
@@ -289,40 +284,22 @@ class TransformsMixin(_GSplatDataOps):
             L_new = np.linalg.cholesky(Sigma_new)
             return pack_tril(L_new).astype(chol.dtype)
 
-        # Multi-LOD path: transform each LOD independently
-        if self.n_additive_sublods > 1:
+        def _transform_lod(
+            lod: "AdditiveSubLOD", offset: int, n: int
+        ) -> "AdditiveSubLOD":
+            lod_centers = (lod.centers.astype(np.float64) @ A.T + t).astype(
+                lod.centers.dtype
+            )
+            return AdditiveSubLOD(
+                centers=lod_centers,
+                amplitudes=lod.amplitudes,
+                cholesky_factors=_transform_cholesky(lod.cholesky_factors),
+                colors=lod.colors,
+                stats=dict(lod.stats),
+                truncation_radius=lod.truncation_radius,
+            )
 
-            def _transform_lod(
-                lod: "AdditiveSubLOD", offset: int, n: int
-            ) -> "AdditiveSubLOD":
-                lod_centers = (lod.centers.astype(np.float64) @ A.T + t).astype(
-                    lod.centers.dtype
-                )
-                return AdditiveSubLOD(
-                    centers=lod_centers,
-                    amplitudes=lod.amplitudes,
-                    cholesky_factors=_transform_cholesky(lod.cholesky_factors),
-                    colors=lod.colors,
-                    stats=dict(lod.stats),
-                    truncation_radius=lod.truncation_radius,
-                )
-
-            return self._map_additive(_transform_lod)
-
-        # Single-LOD fast path
-        new_centers = (self.centers.astype(np.float64) @ A.T + t).astype(
-            self.centers.dtype
-        )
-        new_cholesky = _transform_cholesky(self.cholesky_factors)
-
-        return GSplatData(
-            centers=new_centers,
-            amplitudes=self.amplitudes,
-            cholesky_factors=new_cholesky,
-            colors=self.colors,
-            stats=dict(self.stats),
-            truncation_radius=self.truncation_radius,
-        )
+        return self._map_additive(_transform_lod)
 
     def translate(self, offset: np.ndarray) -> "GSplatData":
         """Translate all splat centers by an offset vector.
@@ -337,32 +314,21 @@ class TransformsMixin(_GSplatDataOps):
             >>> # Shift all splats by [10, 20, 30]
             >>> translated = data.translate(np.array([10, 20, 30]))
         """
-        from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData
+        from luxar.gsplats.gsplat_data import AdditiveSubLOD
 
         # Multi-substitutive: translate every level and rebuild the pyramid.
         if self.n_substitutive > 1:
             return self._map_substitutive(lambda lvl: lvl.translate(offset))
 
-        # Multi-LOD path: translate each LOD independently
-        if self.n_additive_sublods > 1:
-            return self._map_additive(
-                lambda lod, offset_, n: AdditiveSubLOD(
-                    centers=lod.centers + offset,
-                    amplitudes=lod.amplitudes,
-                    cholesky_factors=lod.cholesky_factors,
-                    colors=lod.colors,
-                    stats=dict(lod.stats),
-                    truncation_radius=lod.truncation_radius,
-                )
+        return self._map_additive(
+            lambda lod, offset_, n: AdditiveSubLOD(
+                centers=lod.centers + offset,
+                amplitudes=lod.amplitudes,
+                cholesky_factors=lod.cholesky_factors,
+                colors=lod.colors,
+                stats=dict(lod.stats),
+                truncation_radius=lod.truncation_radius,
             )
-
-        return GSplatData(
-            centers=self.centers + offset,
-            amplitudes=self.amplitudes,
-            cholesky_factors=self.cholesky_factors,
-            colors=self.colors,
-            stats=dict(self.stats),
-            truncation_radius=self.truncation_radius,
         )
 
     def center_at_centroid(self) -> "GSplatData":

@@ -322,26 +322,47 @@ sources fed to gsplat fitting/calibration), independent of the compiled
   OME-Zarr layouts parse: 0.4's top-level block and 0.5's block nested under an
   `ome` key — resolved by the exported `ome_zarr.resolve_ngff_attrs(attrs)`,
   which every reader of NGFF attributes should go through (the layout can not be
-  inferred from the store's zarr format version). The nested block wins only
-  when it carries a NON-EMPTY `multiscales` (or when the top level declares none
-  at all), so neither an `ome` block holding just `omero` rendering metadata nor
-  an empty `ome.multiscales` displaces a top-level 0.4 pyramid. A `multiscales`
-  block whose `axes` count disagrees with the SELECTED array's ndim is not
-  metadata about that array (a 5D image beside its 3D `labels/…`) and is skipped
-  rather than parsed. For a nested `array_key`, discovery first uses a non-empty
-  `multiscales` block on the array's parent group; dataset paths are matched
-  exactly relative to that owner, so a same-named root pyramid level cannot be
-  mistaken for the nested array. Voxel size composes any multiscales-level
-  `coordinateTransformations` on top; where that match or that composition cannot
-  be made honestly (an `array_key` matching no entry of a multi-level pyramid, or
-  two scale vectors of different lengths) it reports no spacing rather than a
-  plausible wrong one. Malformed metadata degrades to a fallback throughout, never
-  a traceback — a `multiscales` whose `axes` is not a list (`{"axes": null}`) or
-  whose `datasets` is not a list of mappings, an axis record with no `name` or a
-  `null` `type`, a `scale` carrying a `null` or a non-numeric string. Falling through to the shape heuristic on a ≥4D store guesses the
-  T/C roles and recovers no voxel size, so it says so on the console — stating
-  whether nothing was declared or something was declared but unusable — and points
-  at `axes_override` / `--axes`.
+  inferred from the store's zarr format version, and it decides which array gets
+  SELECTED as well as how it is described). The nested block wins only when it
+  carries a NON-EMPTY `multiscales` (or when the top level declares none at all),
+  so neither an `ome` block holding just `omero` rendering metadata nor an empty
+  `ome.multiscales` displaces a top-level 0.4 pyramid. A `multiscales` block
+  whose `axes` count disagrees with the SELECTED array's ndim is not metadata
+  about that array (a 5D image beside its 3D `labels/…`) and is skipped rather
+  than parsed.
+- **Whose block describes the selected array.** The root's is what is used,
+  **unless** the group that OWNS the array declares that very array as one of its
+  own `multiscales` levels — then that block wins: a bioformats2raw store puts
+  the block on the image group and leaves only `bioformats2raw.layout` at the
+  root, so reading the root alone would silently fall through to the shape
+  heuristic. The override is gated on **evidence**, not on the block merely
+  existing: one of the owner's `datasets[*].path` entries has to resolve to the
+  selected array. A same-length but permuted axis list is not evidence, and
+  adopting it would rewrite a T/C decomposition the root already had right — a
+  silently wrong `batch-fit` fan-out rather than an error. Evidence is the *only*
+  gate — the parser degrades honestly on a malformed `datasets`, so a second
+  shape check could only discard a block that does describe the selected array.
+  An owner block that fails the evidence gate is reported as such in the give-up
+  notice ("declares a `multiscales` block that does not name it"), because the
+  store plainly declared something. An owner block that wins the evidence gate
+  but is then unusable (wrong axis count, no `axes` list) does not hide the
+  root's; the root's is retried. Dataset paths are matched
+  exactly relative to whichever group won, so a same-named root pyramid level
+  cannot be mistaken for a nested array. The custom (non-NGFF) bare `axes`
+  attribute goes the other way round, **root first**, because such a list names
+  nothing and so no evidence about it is obtainable; an owner's `axes` is
+  consulted only when the root has no usable list of its own.
+- Voxel size composes any multiscales-level `coordinateTransformations` on top;
+  where that match or that composition cannot be made honestly (an `array_key`
+  matching no entry of a multi-level pyramid, or two scale vectors of different
+  lengths) it reports no spacing rather than a plausible wrong one. Malformed
+  metadata degrades to a fallback throughout, never a traceback — a `multiscales`
+  whose `axes` is not a list (`{"axes": null}`) or whose `datasets` is not a list
+  of mappings, an axis record with no `name` or a `null` `type`, a `scale`
+  carrying a `null` or a non-numeric string. Falling through to the shape
+  heuristic on a ≥4D store guesses the T/C roles and recovers no voxel size, so it
+  says so on the console — stating whether nothing was declared or something was
+  declared but unusable — and points at `axes_override` / `--axes`.
 - The returned `OMEZarrInfo` publishes the decomposition it used, not just its
   results: `time_axis`, `channel_indices` and `spatial_indices` are indices into
   `shape`. **Read those rather than re-classifying `info.axes`** — NGFF is
@@ -353,6 +374,45 @@ sources fed to gsplat fitting/calibration), independent of the compiled
   `coordinateTransformations` list, or `None`. The list is SEARCHED for the
   `type == "scale"` entry rather than indexed at `[0]`, which breaks on any store
   whose first transform is a `translation`.
+
+Which array gets read out of a group is ONE rule, `volume._select_zarr_array`,
+shared by `load_volume`, `open_volume_lazy` and `discover_ome_zarr_shape` — they
+have to agree, because a re-fit re-opens a store whose shape another command
+already read, and a different choice would silently target a downsampled level.
+In order: an explicit `array_key` (which may be nested, `h2afva/fused`, and may
+name a *group* — then the rule descends into it; blank counts as absent); else
+the OME-NGFF resolution level `"0"`; else the largest array found recursively,
+with a size tie broken on the lowest key path so two processes reading the same
+store cannot disagree. When `"0"` (or the key) is a **group** rather than an
+array — the bioformats2raw layout, whose pyramid levels are `0/0`, `0/1`, … —
+that is resolved, not refused, and scoped to that image group, so a store holding
+several series (`0`, `1`, …) plus an `OME` metadata group still resolves to full
+resolution of the *first* image. Within the image group the candidates are the
+levels its own `multiscales` block declares, else its direct array children, else
+(skipping `labels/` at any depth) whatever is nested below: NGFF puts an image's
+segmentation masks at `<image>/labels/<name>/<level>`, and inside an image group
+a mask as big as level 0 must never be selected as the image. That guarantee is
+**terminal**: an image group that resolves to no array of its own is a
+`ValueError`, never a fall-through to the whole-store sweep — an image group
+holding only `0/labels/seg/0` would otherwise select the *mask*, and an empty one
+a *different series*, both silently — and on the very same store an explicit
+`--array-key 0` used to crash outright (`AttributeError: 'Group' object has no
+attribute 'shape'`), so one store answered three different ways depending on how
+(or whether) the key was spelled. All three now raise the same clear `ValueError`.
+The whole-store fallback is therefore reached only when there is no `"0"` key at
+all (the `h2afva/fused` layout), and it sweeps every group recursively, `labels/`
+included, as it always has. A store with no array
+anywhere is still a clear `ValueError`, naming what led there — the key, or the
+OME-NGFF `"0"` convention when no key was passed, since blaming a key the caller
+never typed sends them hunting their own command line — what the store does hold,
+and the array keys that *would* work. Whichever spelling reaches an array — no
+key at all (the whole-store sweep included, which reports the level's immediate
+parent), the image group, an intermediate group, or the level itself — its
+**owner** is resolved by one rule (the nearest ancestor whose `multiscales`
+declares it), so all of them describe the store the same way. Leaving any single
+route out of that is not a rule: the one left out gives the same array a
+different owner, hence different axes and a different voxel size, decided by
+nothing but the spelling.
 
 These are domain-layer helpers (no CLI dependency); the gsplat CLI re-exports
 them. Dimension inference from a splat bounding box lives in

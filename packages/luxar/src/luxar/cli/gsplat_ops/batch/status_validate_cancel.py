@@ -246,6 +246,7 @@ def run_batch_cancel_cmd(*, output_dir: Path) -> None:
         for attr in (
             "calibrate_job_id",
             "denoise_job_id",
+            "floor_job_id",
             "array_job_id",
             "merge_job_id",
         ):

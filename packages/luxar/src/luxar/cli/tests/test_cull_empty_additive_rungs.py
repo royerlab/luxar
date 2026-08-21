@@ -95,9 +95,10 @@ def test_cull_cli_writes_stream_and_levels_after_rung_empties(
         assert all(count > 0 for count in counts)
         assert level.stats["lod_n_lods"] == len(counts)
         assert level.stats["lod_cutpoints"] == list(np.cumsum(counts))
-        assert "reference_energy" not in level.stats
+        assert level.stats["reference_energy"] != 99.0
+        assert np.isfinite(level.stats["reference_energy"])
         assert "quality" not in level.stats
-        assert "n_splats_total" not in level.stats
+        assert level.stats["n_splats_total"] == sum(counts)
         assert [lod.stats["lod_level"] for lod in level.additive_sublods] == list(
             range(len(counts))
         )

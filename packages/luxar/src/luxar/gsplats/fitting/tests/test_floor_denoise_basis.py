@@ -118,6 +118,26 @@ class _CountingArray:
         return self._data[key]
 
 
+def test_raw_basis_fallback_honors_sample_budget() -> None:
+    data = np.arange(64**3, dtype=np.float32).reshape(64, 64, 64)
+    volume = _CountingArray(data)
+    budget = 1_000
+
+    level = resolve_volume_floor_denoised(
+        volume,
+        "p10",
+        denoise_h=None,
+        denoise_params=_prod_params(data),
+        sample_budget=budget,
+    )
+
+    assert level is not None
+    voxels_read = sum(
+        np.empty(volume.shape, dtype=np.uint8)[region].size for region in volume.regions
+    )
+    assert voxels_read <= budget
+
+
 class TestDenoisedBasisResolution:
     def test_level_is_the_denoised_estimate_not_the_raw_one(self) -> None:
         """``auto`` resolves to the DENOISED whole-volume mode, not the raw one."""

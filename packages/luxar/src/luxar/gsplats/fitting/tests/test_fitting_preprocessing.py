@@ -173,6 +173,32 @@ class TestPreprocessData:
         assert result.image_min == pytest.approx(0.25, abs=1e-6)
         assert result.floor == pytest.approx(0.25, abs=1e-6)
 
+    def test_floor_below_crop_min_remains_the_zero_point(self, mock_config_2d) -> None:
+        """A crop entirely above the floor must not subtract its own minimum."""
+        mock_config_2d.V = np.array([[20.0, 25.0], [30.0, 35.0]], dtype=np.float32)
+        mock_config_2d.floor = 10.0
+        mock_config_2d.norm_range = (10.0, 40.0)
+
+        result = preprocess_data(mock_config_2d)
+
+        assert result.image_min == pytest.approx(10.0)
+        assert result.intensity_range == pytest.approx(30.0)
+        assert result.V_normalized[0, 1] == pytest.approx(0.5)
+        assert result.V_normalized.min() > 0.0
+
+    def test_uniform_crop_above_floor_does_not_enter_uniform_branch(
+        self, mock_config_2d
+    ) -> None:
+        """A real shared range keeps a uniform-above-floor crop at its value."""
+        mock_config_2d.V = np.full((8, 8), 20.0, dtype=np.float32)
+        mock_config_2d.floor = 10.0
+        mock_config_2d.norm_range = (10.0, 30.0)
+
+        result = preprocess_data(mock_config_2d)
+
+        assert result.intensity_range == pytest.approx(20.0)
+        assert np.allclose(result.V_normalized, 0.5)
+
     def test_floor_above_max_is_ignored(self, mock_config_2d) -> None:
         """A floor >= image max would erase all signal — it is refused, not
         applied (no degenerate uniform-0.5 volume)."""

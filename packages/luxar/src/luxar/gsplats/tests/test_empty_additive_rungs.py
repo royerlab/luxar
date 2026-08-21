@@ -91,7 +91,7 @@ def test_cull_prunes_empty_middle_rung_and_rederives_structure(tmp_path) -> None
     assert loaded.substitutive_levels[0].stats["lod_cutpoints"] == [1, 2]
 
 
-def test_pruning_drops_stale_quality_stamps_without_inventing_rung_keys() -> None:
+def test_pruning_recomputes_authored_ladder_stamps() -> None:
     first = _rung(0.0, 10.0, 0)
     first = AdditiveSubLOD(
         centers=first.centers,
@@ -125,12 +125,20 @@ def test_pruning_drops_stale_quality_stamps_without_inventing_rung_keys() -> Non
     assert result.substitutive_levels[0].compression_factor == 4
     assert result.substitutive_levels[0].parent_method == "greedy"
     assert result.substitutive_levels[0].level_index == 2
-    assert result.additive_sublods[0].stats == {"label": "keep"}
-    assert result.substitutive_levels[0].stats == {
-        "lod_n_lods": 1,
-        "lod_cutpoints": [1],
+    assert result.additive_sublods[0].stats == {
+        "energy_fraction_cum": 1.0,
+        "lod_n_splats": 1,
+        "lod_cumulative_n": 1,
         "label": "keep",
     }
+    level_stats = result.substitutive_levels[0].stats
+    assert level_stats["lod_n_lods"] == 1
+    assert level_stats["lod_cutpoints"] == [1]
+    assert level_stats["n_splats_total"] == 1
+    assert level_stats["reference_energy"] != 10.0
+    assert np.isfinite(level_stats["reference_energy"])
+    assert "quality" not in level_stats
+    assert level_stats["label"] == "keep"
     assert result.stats["label"] == "keep"
     assert "reference_energy" not in result.stats
 
@@ -165,9 +173,10 @@ def test_multi_level_pruning_refreshes_root_summary_from_finest_level() -> None:
     for level in result.substitutive_levels:
         assert level.stats["lod_n_lods"] == 1
         assert level.stats["lod_cutpoints"] == [1]
-        assert "reference_energy" not in level.stats
+        assert level.stats["reference_energy"] != 99.0
+        assert np.isfinite(level.stats["reference_energy"])
         assert "quality" not in level.stats
-        assert "n_splats_total" not in level.stats
+        assert level.stats["n_splats_total"] == 1
     assert result.stats["lod_n_lods"] == 1
     assert result.stats["lod_cutpoints"] == [1]
     assert "reference_energy" not in result.stats
@@ -210,11 +219,13 @@ def test_count_change_refreshes_ladder_stamps_without_pruning() -> None:
     assert level.compression_factor == 4
     assert level.parent_method == "greedy"
     assert level.level_index == 2
-    assert level.stats == {
-        "lod_n_lods": 2,
-        "lod_cutpoints": [2, 3],
-        "label": "keep",
-    }
+    assert level.stats["lod_n_lods"] == 2
+    assert level.stats["lod_cutpoints"] == [2, 3]
+    assert level.stats["n_splats_total"] == 3
+    assert level.stats["reference_energy"] != 99.0
+    assert np.isfinite(level.stats["reference_energy"])
+    assert "quality" not in level.stats
+    assert level.stats["label"] == "keep"
     assert result.stats == {
         "lod_n_lods": 2,
         "lod_cutpoints": [2, 3],

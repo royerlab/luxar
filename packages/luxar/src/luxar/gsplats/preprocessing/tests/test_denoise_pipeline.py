@@ -122,6 +122,7 @@ def _make_denoise_ctx(volume, denoise_h):
         axes=None,
         lr=None,
         floor=None,
+        norm_range=None,
         seed_method=None,
         verbose=False,
         downscale=None,

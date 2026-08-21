@@ -1609,12 +1609,20 @@ The **Python** side was assumed free and is not, for a reason that only shows up
 LIFTING to gsplats, so its vocabulary carries `truncation_radius`, `max_aspect`, `device`
 and `seed` — four keys that exist only because of that lift — plus a `method` set of
 Gaussian-mixture reducers. A mesh is decimated instead, so it needs its own resolver
-(`core/group/lod/mesh.py`) with `method` in `{auto, cluster}` and each lift-only key
+(`core/group/lod/mesh.py`) with `method` in `{auto, cluster, qem}` and each lift-only key
 refused by name. Widening the shared one would have accepted five words that quietly do
 nothing.
 
-The producer is `luxar.mesh.decimate` (vertex clustering; `qem` is issue #1348), reached
-from `add_mesh(substitutive_lod=…)` or `luxar mesh lod`. Per-level picking needed no work,
+The producer is `luxar.mesh.decimate`: vectorized vertex clustering for very large
+surfaces, or Garland-Heckbert QEM edge collapse with a link-condition veto when
+manifoldness must survive. `method="auto"` selects QEM through 300 vertices and
+clustering above that measured worst-case open-surface envelope. On an open near-planar
+surface the orientation veto can stop well above the requested count and therefore
+shorten the ladder; `cluster` is the tier to use when closely hitting the count matters
+more than topology preservation. A QEM quadric also requires a
+normal direction outside the triangle span, so fewer than three coarsening dimensions
+make `auto` fall back to clustering and make explicit `qem` invalid. It is reached from
+`add_mesh(substitutive_lod=…)` or `luxar mesh lod`. Per-level picking needed no work,
 exactly as the row predicted: the LOD registry hides inactive levels and the picking system
 skips hidden nodes.
 

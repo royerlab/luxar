@@ -36,7 +36,9 @@ is built only on demand.
 | `pyramid.py` | `make_lod_pyramid` — chains substitutive (outer) × additive (inner) |
 | `recipes.py` | intent-first recipe layer (`build_recipe`, `RecipeParams`): composes the builders above into the `flat`/`stream`/`levels`/`tiles`/`overview`/`adaptive` topologies (CLI `gsplat lod --recipe`) |
 | `volume_refit.py` | `refine="volume"`: warm-start re-fit of a coarse level against the source volume (thin orchestration over `fit_gaussian_splats`) |
-| `quality.py` | measured approximation quality: `mixture_quality` (constant-cost sampled mixture-L² → Q ∈ [0,1]) and `total_self_energy` (the reference weight w) — the Q of the viewer's recursive Q·e quality algebra |
+| `energy.py` | torch-free artifact-local self-energy (`total_self_energy`), the reference weight w in the viewer's recursive Q·e quality algebra |
+| `quality.py` | measured approximation quality: `mixture_quality` (constant-cost sampled mixture-L² → Q ∈ [0,1]) |
+| `restamp.py` | refresh inherited additive energy/count stamps after a content-changing rewrite; stale `quality` / source-volume `refine_stats` are dropped |
 | `annotate.py` | `annotate_quality_store` — retrofit the Q·e stamps (`energy_fraction_cum` / `reference_energy` / `quality`) onto an existing `.gsplats.zarr` IN PLACE, no refit (CLI: `luxar gsplat annotate-quality`) |
 | `_kernels.py` | shared closed-form Gaussian-mixture math (numpy + torch) |
 | `_substitutive/` | private support subpackage for `substitutive.py`: `warm_start.py` (Morton partition), `kmeans_lloyd.py` (cost-increment Lloyd), `greedy.py` (Runnalls lazy-heap merge), `refine.py` (L2 mixture-to-mixture refit) |
