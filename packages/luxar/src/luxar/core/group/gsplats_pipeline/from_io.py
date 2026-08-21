@@ -684,8 +684,9 @@ def graft_gsplat_node(
     derives its thresholds in
     :func:`~luxar.core.group.gsplats_pipeline.lod_dispatch.add_gsplats_as_lod_group_impl`
     (via ``derive_coverage_fractions``), not in this function. That matrix-shaped
-    route is not transactional: a per-child kwarg failure such as an invalid
-    ``extend_to_all`` can still leave its wrapper behind (tracked in #1784).
+    route is not generally transactional. Explicit ``extend_to_all`` values are
+    preflighted before its wrapper is written, but another per-child failure can
+    still leave that wrapper behind.
     """
     if _under_partition is None:
         return _graft_gsplat_node_transaction(

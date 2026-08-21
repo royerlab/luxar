@@ -197,15 +197,22 @@ signatures and can never reach `**attrs`.
    substitutive door is `lod_group=` on the separate `add_gsplats_from_data`
    adder): delegate to the substitutive wrapper, whose coarse levels are
    synthesised gsplats (points/lines) or decimated meshes (mesh) under a
-   `kind=lod` group. Fires before (auto-)partition.
+   `kind=lod` group. Immediately before that wrapper write, validate an explicit
+   `extend_to_all` once against the scene; `None` remains child-only because its
+   candidate analysis warns once per written child. Fires before
+   (auto-)partition.
 7. **Resolve auto-partition** via `resolve_auto_partition(scene, n, partition)`
    — an opt-in compiler heuristic (default off). A user-explicit `partition=`
    always wins. (Lines does not yet wire the auto-partition heuristic; it
    honors only explicit `partition=`.)
 8. **Partition branch** (when `partition` is set and `D >= 2`): run a BSP
    (`median` / `midpoint` / `sah`) capped at `max_elements`, and if it yields
-   more than one part, delegate to the partition wrapper. A single part falls
-   through to the regular write.
+   more than one part, validate an explicit `extend_to_all` immediately before
+   delegating to the partition wrapper. The preflight sits below partition-spec,
+   image-label, topology and split resolution so those existing faults keep
+   precedence, but still above the wrapper write; `None` remains child-only to
+   avoid an extra advisory warning. A single part falls through to the regular
+   write.
 9. **Additive-LOD branch** (points/lines/mesh, when `additive_lod` is set —
    GSplats has no `additive_lod=` on `add_gsplats`; its own additive door is
    `additive_lod=` on the separate `add_gsplats_from_data` adder): build

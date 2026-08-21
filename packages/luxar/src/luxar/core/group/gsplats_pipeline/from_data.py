@@ -507,6 +507,13 @@ def _reject_before_wrapper(
     validates node attrs at its entry and resolves the spec inside its
     partition branch, further down.
 
+    An explicit ``extend_to_all`` is checked next. Its invalid branches depend
+    only on the scene dimensions, not on a particular LOD child, so they can be
+    refused before the wrapper exists. It remains below the partition-spec gate
+    to match the leaf's order and above the per-rung colours loop because the
+    leaf resolves it before the writer's channel sweep. ``None`` stays
+    child-only so candidate analysis still warns once per written child.
+
     ``labels`` / ``image_labels`` are the ONE check here with no flat-path
     counterpart (#1471), which is why they come LAST. Both ride into every child
     unsliced through ``child_attrs``, so a real ladder — whose levels are merged
