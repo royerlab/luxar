@@ -605,35 +605,18 @@ def _graft_gsplat_node_transaction(
     path = f"{parent_node.path}/{name}" if parent_node.path else name
     children_before = list(parent_node.children)
     try:
-        rollback_state = writer.snapshot_rollback_state()
-    except Exception:
-        rollback_state = None
-    try:
-        path_existed = writer.node_exists(path)
-    except Exception:
-        path_existed = True
-    try:
-        return graft_gsplat_node(
-            group,
-            name=name,
-            node=node,
-            parent=parent,
-            extend_to_all=extend_to_all,
-            _under_partition=is_partition_bound(parent_node),
-            **attrs,
-        )
-    except BaseException as error:
+        with writer.transaction(path):
+            return graft_gsplat_node(
+                group,
+                name=name,
+                node=node,
+                parent=parent,
+                extend_to_all=extend_to_all,
+                _under_partition=is_partition_bound(parent_node),
+                **attrs,
+            )
+    except BaseException:
         parent_node.children[:] = children_before
-        if rollback_state is not None:
-            try:
-                writer.restore_rollback_state(rollback_state)
-            except BaseException as rollback_error:
-                error.add_note(f"Graft state rollback also failed: {rollback_error}")
-        if not path_existed:
-            try:
-                writer.delete_node(path)
-            except BaseException as rollback_error:
-                error.add_note(f"Graft store rollback also failed: {rollback_error}")
         raise
 
 
