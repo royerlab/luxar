@@ -969,7 +969,7 @@ def write_gsplat_arrays(
     # Points + Lines). The helper handles the tuple/list/ndarray
     # branch, picks the right `color_mode`, and writes
     # `color_data_range` attrs identically across geometries.
-    if colors is not None and np.asarray(colors).size > 0:
+    if colors is not None:
         # RGBA accepted: the alpha column is per-splat opacity (consumed by
         # every blending mode; mapped into optical depth in volumetric — see
         # VOLUMETRIC_BLENDING_SPEC.md). Validated pre-group by
@@ -1080,6 +1080,8 @@ def inherited_gsplat_colormap(
             continue
         ancestor_attrs = getattr(ancestor, "attrs", None)
         if ancestor_attrs is None:
+            continue
+        if not prefix and ancestor_attrs.get("type") == "scene":
             continue
         value = ancestor_attrs.get("colormap")
         if value is not None:

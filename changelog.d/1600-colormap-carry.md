@@ -1,6 +1,6 @@
 #### An ancestor-authored `colormap` now reaches the leaf
 
-A `colormap` set on a Group (or on a scene / `.gsplats.zarr` root) never
+A `colormap` set on a Group (or on a `.gsplats.zarr` node root) never
 rendered. Two independent causes, each of which made the other invisible: the
 writer manufactured `colormap="gray"` on every colorless gsplats leaf, which
 sits nearer the leaf than the authored value, and the viewer never composed the
@@ -32,6 +32,9 @@ A Group is now a legitimate place to author a palette, so
 `LuxarZarrCompiler.write_group` resolves an ndarray LUT or a
 matplotlib/colorcet name into a sibling `colormap_lut` array there too, exactly
 as the leaf writers do.
+
+The scene root remains a carrier rather than a composable node. Author a
+scene-wide palette on a Group containing the geometry, not on the scene root.
 
 An inherited palette applies where the geometry can use one: Points / Lines /
 Mesh still require `has_scalars`, while a GSplats leaf is always

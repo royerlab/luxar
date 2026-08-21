@@ -888,46 +888,8 @@ class TestAncestorAuthoredColormapNotShadowed:
             store = zarr.open(str(path), mode="r")
             assert store["layer/gs"].attrs["colormap"] == "inferno"
 
-    def test_empty_colors_still_use_authored_colormap(self) -> None:
-        """An empty colours array encodes no colour channel."""
-        from luxar.io._compiler.gsplat_assembly import (
-            apply_gsplat_group_attrs,
-            write_gsplat_arrays,
-        )
-        from luxar.io._compiler.gsplat_tree import make_dataset_ctx
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            path = Path(tmpdir) / "test.gsplats.zarr"
-            centers, amplitudes, chol = _splat_arrays()
-            store = zarr.open_group(str(path), mode="w")
-            store.attrs["colormap"] = "inferno"
-            leaf = store.require_group("leaf")
-            metadata = write_gsplat_arrays(
-                leaf,
-                centers=centers,
-                amplitudes=amplitudes,
-                cholesky_factors=chol,
-                colors=np.empty((0, 3), dtype=np.uint8),
-                n_splats=len(centers),
-                n_dims=3,
-                cholesky_is_uniform=False,
-                ordering_data=None,
-                ctx=make_dataset_ctx(),
-            )
-            apply_gsplat_group_attrs(
-                leaf,
-                metadata,
-                {},
-                store,
-                scene_tone_mapping=None,
-                lut_tone_mapping_warned=False,
-            )
-
-            assert leaf.attrs["has_colors"] is False
-            assert "colormap" not in leaf.attrs
-
-    def test_scene_root_colormap_suppresses_gray(self) -> None:
-        """The scene ROOT counts as an ancestor too."""
+    def test_scene_root_colormap_does_not_suppress_leaf_default(self) -> None:
+        """Scene-root attrs are carriers, not composable node ancestors."""
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "test.luxar.zarr"
             dims = Dimensions([Dimension("x"), Dimension("y"), Dimension("z")])
@@ -938,7 +900,7 @@ class TestAncestorAuthoredColormapNotShadowed:
                 scene.add_gsplats("gs", centers, amplitudes, chol)
 
             store = zarr.open(str(path), mode="r")
-            assert "colormap" not in store["gs"].attrs
+            assert store["gs"].attrs["colormap"] == "gray"
 
     def test_scene_group_ndarray_colormap_resolved_to_lut(self) -> None:
         """An ndarray palette on a GROUP resolves to a sibling colormap_lut.

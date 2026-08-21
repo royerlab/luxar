@@ -1135,7 +1135,7 @@ eye icon in the panel and is **not** persisted back to zarr.
 
 ### Rendering Attribute Composition
 
-Rendering attributes compose along the scene graph (root → leaf):
+Rendering attributes compose along the scene graph (nearest data/group root → leaf):
 
 - `opacity`, `absorption`, `gamma`, `intensity` — multiplied (`absorption`
   has identity 1.0, is floored at 0, and has no upper clamp)
@@ -1144,6 +1144,11 @@ Rendering attributes compose along the scene graph (root → leaf):
   (`join` is lines-only; a `colormap='custom'` carries its sibling
   `colormap_lut` bytes down with the name, and a leaf that names a different
   palette does *not* inherit those bytes)
+
+The scene root is a carrier and is excluded from this composition chain. Put a
+scene-wide palette on a Group containing the geometry rather than on the scene
+root. A standalone `.gsplats.zarr` root is a data node, not a scene root, so its
+palette does compose into its children.
 
 Example: a group with `opacity=0.5` and a child with `opacity=0.5` yields
 an effective opacity of `0.25` for the child's material. Unset values are
