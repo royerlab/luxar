@@ -300,7 +300,8 @@ def test_manifest_citation_check_catches_drift() -> None:
     )
     assert not _manifest_citation_problems("d.py", {}, None)
 
-    assert _manifest_citation_problems("d.py", {}, real)  # credit dropped
+    (problem,) = _manifest_citation_problems("d.py", {}, real)
+    assert "would drop the credit" in problem, problem
     assert _manifest_citation_problems("d.py", {"citation": "Kim et al. 2024"}, None)
     assert _manifest_citation_problems("d.py", {"citation": "Kim et al. 2023"}, real)
     # Whitespace/spelling drift is drift: the field is a verbatim copy.
