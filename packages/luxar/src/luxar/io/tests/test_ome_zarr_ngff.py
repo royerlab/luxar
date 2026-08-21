@@ -26,7 +26,11 @@ import pytest
 import typer
 
 from luxar._zarr_compat import create_array, open_group
-from luxar.io.ome_zarr import discover_ome_zarr_shape, resolve_ngff_attrs
+from luxar.io.ome_zarr import (
+    _dataset_path_matches,
+    discover_ome_zarr_shape,
+    resolve_ngff_attrs,
+)
 
 _TCZYX = ("t", "c", "z", "y", "x")
 _TZYX = ("t", "z", "y", "x")
@@ -1457,6 +1461,74 @@ def test_an_unmatched_array_key_in_a_pyramid_reports_no_voxel_size(
     }
 
     assert discover_ome_zarr_shape(path, array_key="fused/b").voxel_size is None
+
+
+@pytest.mark.parametrize("zarr_format", (2, 3))
+def test_an_explicitly_relative_dataset_path_still_names_its_level(
+    tmp_path: Path, zarr_format: int
+) -> None:
+    """``"./0"`` and ``"0"`` are the same child, so the match must see through it.
+
+    Writers do emit the explicitly relative spelling. Comparing the raw strings
+    made every entry of such a pyramid unmatchable, and a multi-LEVEL pyramid has
+    no single-level fall-back to ``datasets[0]``, so the store silently lost its
+    voxel size — silently because the block itself parses, so not even the
+    "present but unusable" notice fires. Each level carries its OWN spacing here,
+    so this pins that the right ENTRY matched, not merely that some entry did.
+    """
+    path = tmp_path / "relative_paths.zarr"
+    root = open_group(path, mode="w", zarr_format=zarr_format)
+    create_array(
+        root, "0", data=np.zeros((2, 8, 16, 16), dtype=np.float32), compressor="auto"
+    )
+    create_array(
+        root, "1", data=np.zeros((2, 4, 8, 8), dtype=np.float32), compressor="auto"
+    )
+    root.attrs["multiscales"] = [
+        {
+            "version": "0.4",
+            "axes": _axes_meta(_TZYX),
+            "datasets": [
+                {
+                    "path": "./0",
+                    "coordinateTransformations": [
+                        {"type": "scale", "scale": [1.0, 2.0, 0.5, 0.5]}
+                    ],
+                },
+                {
+                    "path": "./1",
+                    "coordinateTransformations": [
+                        {"type": "scale", "scale": [1.0, 4.0, 1.0, 1.0]}
+                    ],
+                },
+            ],
+        }
+    ]
+
+    assert discover_ome_zarr_shape(path).voxel_size == (2.0, 0.5, 0.5)
+    assert discover_ome_zarr_shape(path, array_key="0").voxel_size == (2.0, 0.5, 0.5)
+    assert discover_ome_zarr_shape(path, array_key="1").voxel_size == (4.0, 1.0, 1.0)
+
+
+@pytest.mark.parametrize(
+    ("declared", "matches"),
+    [
+        ("0", True),
+        ("/0", True),
+        ("./0", True),
+        # A bare current-directory path names the OWNER, not a level inside it,
+        # and `a/./b` is a path zarr refuses outright — neither may be collapsed
+        # into a match for whichever level happens to be selected.
+        (".", False),
+        ("./", False),
+        ("0/./0", False),
+        ("", False),
+    ],
+)
+def test_which_dataset_path_spellings_name_the_level_zero_array(
+    declared: str, matches: bool
+) -> None:
+    assert _dataset_path_matches({"path": declared}, "0") is matches
 
 
 def test_a_single_level_pyramid_still_answers_for_an_unmatched_key(

@@ -589,13 +589,36 @@ def ngff_scale_transform(transforms: Any) -> Optional[List[float]]:
     return None
 
 
+def _normalised_dataset_path(raw: Any) -> str:
+    """A ``datasets[].path`` (or a selected key) reduced to its canonical spelling.
+
+    Surrounding slashes and ONE leading ``./`` are cosmetic — ``"0"``, ``"/0"``
+    and ``"./0"`` all name the same child — and NGFF writers do emit the explicitly
+    relative form. Treating them as distinct made a multi-level pyramid spelled
+    ``"./0"``, ``"./1"`` match no entry at all, so it silently lost its voxel size
+    (``len(datasets) > 1`` denies it the single-level fall-back to ``datasets[0]``),
+    with no give-up notice either, since the block itself parsed fine.
+
+    Anything still carrying a ``.`` SEGMENT after that — ``"."``, ``"./"``, a
+    nested ``"a/./b"`` — normalises to ``""``, i.e. "names nothing": those are not
+    a level's name, and zarr refuses such a path anyway. ``""`` never matches
+    (:func:`_dataset_path_matches` requires a non-empty path), so an unspellable
+    entry stays unmatched rather than becoming a bogus match for some other level.
+    """
+    path = str(raw).strip("/")
+    if path.startswith("./"):
+        path = path[2:].strip("/")
+    return "" if "." in path.split("/") else path
+
+
 def _dataset_path_matches(entry: Mapping[str, Any], wanted: str) -> bool:
     """Whether a ``datasets[]`` entry's ``path`` names the array ``wanted``.
 
     The caller makes ``wanted`` relative to the group that owns the multiscales
-    block, so only an exact match can identify the selected level safely.
+    block, so only an exact match — of the two spellings NORMALISED
+    (:func:`_normalised_dataset_path`) — can identify the selected level safely.
     """
-    path = str(entry.get("path", "")).strip("/")
+    path = _normalised_dataset_path(entry.get("path", ""))
     return bool(path) and path == wanted
 
 
@@ -615,9 +638,10 @@ def _selected_dataset(
     ``None`` — "unknowable", not "level 0" — when a key was matched against and
     nothing matched, unless the unmatched key is flat and the pyramid has one
     level. A nested unmatched key names an array outside the block's owner, so even
-    a single-level pyramid cannot describe it. A block that spells its own level
-    non-canonically (``"./0"`` for the array at ``"0"``) therefore reports no
-    spacing; an exact match is the only one that can identify a level safely.
+    a single-level pyramid cannot describe it. An exact match is the only one that
+    can identify a level safely — exact after both spellings are normalised, so a
+    block writing its own level as ``"./0"`` still matches the array at ``"0"``
+    (:func:`_normalised_dataset_path`).
 
     Never raises: a ``datasets`` that is not a list of mappings is metadata this
     cannot read.
@@ -627,7 +651,7 @@ def _selected_dataset(
     first = datasets[0] if isinstance(datasets[0], Mapping) else None
     if array_key is None:
         return first
-    wanted = str(array_key).strip("/")
+    wanted = _normalised_dataset_path(array_key)
     for d in datasets:
         if isinstance(d, Mapping) and _dataset_path_matches(d, wanted):
             return d

@@ -559,9 +559,11 @@ class TestAnImageGroupWithNoArrayIsTerminal:
     The whole-store fallback is unscoped — it descends ``labels/`` at every depth
     and every other series — so falling into it from the image-group branch throws
     away the two guarantees that branch exists for. Both failures are plausible
-    wrong ANSWERS rather than errors, and the very same store already raised for
-    an explicit ``--array-key 0``, so one store answered three different ways
-    depending on how (or whether) the key was spelled.
+    wrong ANSWERS rather than errors, while on the very same store an explicit
+    ``--array-key 0`` crashed outright (``AttributeError: 'Group' object has no
+    attribute 'shape'``) — so one store answered three different ways depending on
+    how (or whether) the key was spelled. All three now raise the same clear
+    ``ValueError``.
     """
 
     @pytest.mark.parametrize("zarr_format", ZARR_FORMATS)
@@ -577,8 +579,8 @@ class TestAnImageGroupWithNoArrayIsTerminal:
             lambda: discover_ome_zarr_shape(path),
             lambda: load_volume(path),
             lambda: open_volume_lazy(path),
-            # The explicit spelling already raised; it must keep doing so, and
-            # with the same message.
+            # The explicit spelling used to crash with an ``AttributeError``; it
+            # must now raise, with the same message as the auto routes.
             lambda: discover_ome_zarr_shape(path, array_key="0"),
         ):
             with pytest.raises(ValueError, match="names a zarr group holding no array"):
@@ -844,6 +846,46 @@ class TestTheOwnerIsAskedWhenTheSelectionNeverDecided:
         assert info.axes == ["t", "z", "y", "x"]
         assert (info.n_timepoints, info.n_channels) == (2, 1)
         assert info.voxel_size == (3.0, 0.25, 0.25)
+
+
+class TestTheNearestDeclaringAncestorWins:
+    """Two ancestors declare the same array; the NEAREST one describes it.
+
+    The walk stops at the first declaring ancestor, which is not merely a cost
+    optimisation — on a bioformats2raw store the root's block habitually names
+    every series' level 0 (``"0/0"``, ``"1/0"``, …) at the coarse whole-plate
+    spacing while each image group's own block carries that series' real axes and
+    scale. Preferring the farthest declaration (the store root) hands the image
+    the wrong block: same arity, T and C transposed, and a voxel size off by 30x.
+    Nothing pinned this, so "nearest" could be silently rewritten to "farthest".
+    """
+
+    @pytest.mark.parametrize("zarr_format", ZARR_FORMATS)
+    @pytest.mark.parametrize("array_key", [None, "0", "0/0"])
+    def test_the_image_groups_own_block_beats_the_roots(
+        self, tmp_path: Path, zarr_format: int, array_key: Optional[str]
+    ) -> None:
+        path = tmp_path / "both_declare.zarr"
+        root = open_group(path, mode="w", zarr_format=zarr_format)
+        image = root.create_group("0")
+        create_array(image, "0", data=_ramp((2, 4, 4, 4)))
+        # The nearest declaration: the image group, naming its level relative to
+        # itself.
+        image.attrs["multiscales"] = _multiscales(
+            ["t", "z", "y", "x"], ["0"], scale=[1.0, 2.0, 0.3, 0.3]
+        )
+        # The farthest one: the store ROOT, naming the very same array through
+        # the image group, with T/C the other way round and a coarse spacing.
+        root.attrs["multiscales"] = _multiscales(
+            ["c", "z", "y", "x"], ["0/0"], scale=[1.0, 9.0, 9.0, 9.0]
+        )
+
+        info = discover_ome_zarr_shape(path, array_key=array_key)
+
+        assert info.shape == (2, 4, 4, 4)
+        assert info.axes == ["t", "z", "y", "x"]
+        assert (info.n_timepoints, info.n_channels) == (2, 1)
+        assert info.voxel_size == (2.0, 0.3, 0.3)
 
 
 class TestSelectionIsDeterministic:

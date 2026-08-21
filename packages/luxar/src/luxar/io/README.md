@@ -395,10 +395,13 @@ a mask as big as level 0 must never be selected as the image. That guarantee is
 **terminal**: an image group that resolves to no array of its own is a
 `ValueError`, never a fall-through to the whole-store sweep — an image group
 holding only `0/labels/seg/0` would otherwise select the *mask*, and an empty one
-a *different series*, both silently, and both on a store that already raised for
-an explicit `--array-key 0`. The whole-store fallback is therefore reached only
-when there is no `"0"` key at all (the `h2afva/fused` layout), and it sweeps every
-group recursively, `labels/` included, as it always has. A store with no array
+a *different series*, both silently — and on the very same store an explicit
+`--array-key 0` used to crash outright (`AttributeError: 'Group' object has no
+attribute 'shape'`), so one store answered three different ways depending on how
+(or whether) the key was spelled. All three now raise the same clear `ValueError`.
+The whole-store fallback is therefore reached only when there is no `"0"` key at
+all (the `h2afva/fused` layout), and it sweeps every group recursively, `labels/`
+included, as it always has. A store with no array
 anywhere is still a clear `ValueError`, naming what led there — the key, or the
 OME-NGFF `"0"` convention when no key was passed, since blaming a key the caller
 never typed sends them hunting their own command line — what the store does hold,
