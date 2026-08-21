@@ -869,7 +869,8 @@
       "timelapse": {
         "framePoint": 0.85
       },
-      "fillTarget": 0.75
+      "fillTarget": 0.75,
+      "note": "fillTarget:0.75 keeps the 3x2 matrix in frame: the default lit 22.9% of the capture-frame perimeter and 0.85 still lit 15.5%, despite coverage reading 92%. lodFinest:false lets coverage LOD draw the ~30K-splat coarse levels instead of forcing the ~24M-splat finest levels"
     }
   ]
 }
