@@ -152,7 +152,7 @@ def resolve_substitutive_axis_mesh(spec: Any) -> Optional[Dict[str, Any]]:
       (alias ``n_lods``), ``method``, ``coverage_fractions``, ``coarsen_dims``.
 
     ``method`` accepts :data:`MESH_SUBSTITUTIVE_METHODS`. ``auto`` resolves to
-    topology-preserving ``qem`` through 300 vertices and vectorized ``cluster``
+    topology-preserving ``qem`` through 10,000 vertices and vectorized ``cluster``
     above that performance envelope.
 
     Raises:

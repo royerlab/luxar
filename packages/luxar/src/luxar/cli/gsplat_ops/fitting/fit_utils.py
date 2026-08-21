@@ -22,6 +22,9 @@ if TYPE_CHECKING:
     pass
 
 
+CONTENT_UNSUPPORTED_FIT_FLAGS = ("--denoise", "--downscale", "--progressive")
+
+
 def _invocation_token() -> str:
     """Unique per-invocation token for parallel-fit staging paths.
 

@@ -9,7 +9,7 @@ the best for the README gallery (TODO **R19**).
 | File | Role |
 |------|------|
 | `manifest.json` | **Single source of truth** — the demo list + per-demo capture hints. Consumed by both the dataset generator and the capture spec. Add a demo here and nothing else needs editing. |
-| `generate_gallery_datasets.py` | Generates each demo's `.luxar.zarr` under `datasets/demos/` (idempotent; skips ones already present; best-effort). A demo whose `DEMO_META` declares an un-fetchable `local_data` (`manual-file` / `kaggle-auth`) is still run, but a **non-zero exit status** is reported in the soft `manual-data` bucket instead of failing the build — that input may simply not exist on this machine. A `timeout`, a `no-output` or a death by signal (negative return code) stays hard, so one case remains: `arxiv_papers_kaggle` starts without credentials and downloads ~30 GB, which on a cold machine can exhaust the per-demo timeout and still return 1. A demo listed in `UNBUILDABLE_IDS` is the third disposition: it is **never spawned at all** and lands in the soft `unbuildable` bucket, for a demo whose shipped input is known-broken and whose fallback would blow the timeout (today: `gsplats_3d_visible_human_head`, see #1670). That list is meant to be temporary — delete the entry when the input is fixed. |
+| `generate_gallery_datasets.py` | Generates each demo's `.luxar.zarr` under `datasets/demos/` (idempotent; skips ones already present; best-effort). A demo whose `DEMO_META` declares machine-local `local_data` (`manual-file` / `kaggle-auth` / `git-lfs`) is still run, but a **positive non-zero exit status** is reported in the soft `manual-data` bucket instead of failing the build — for `git-lfs`, only while one of the payload files named by its manifest caches is missing or still an unpulled pointer. A `timeout`, a `no-output` or a death by signal (negative return code) stays hard. Two cases remain hard on a cold checkout: `arxiv_papers_kaggle` can exhaust the per-demo timeout during its ~30 GB download, and cacheless `cellxgene_census_umap` has no manifest cache key through which to probe its LFS payload. A demo listed in `UNBUILDABLE_IDS` is the third disposition: it is **never spawned at all** and lands in the soft `unbuildable` bucket, for a demo whose shipped input is known-broken and whose fallback would blow the timeout (today: `gsplats_3d_visible_human_head`, see #1670). That list is meant to be temporary — delete the entry when the input is fixed. |
 | `../../packages/luxar-viewer/src/tests/screenshots/generate-gallery.spec.ts` | Playwright capture: auto-center + fill-to-frame, auto-exposure, orbit, still + video. |
 | `../../packages/luxar-viewer/src/tests/screenshots/exposure-policy.ts` | The auto-exposure **decision** + its tuning constants, split out of the spec so it is unit-testable without a browser (`src/tests/unit/gallery-exposure-policy.test.ts`). |
 | `../../packages/luxar-viewer/src/tests/screenshots/crop-policy.ts` | The border-lit (**cropped subject**) verdict + its warning floor, split out of the spec so it is unit-testable without a browser (`src/tests/unit/gallery-crop-policy.test.ts`). |
@@ -147,7 +147,8 @@ README gallery table.
 
 Required: `id` (media + dataset stem), `title` (caption), `geometry`,
 `category`, `script` (`demo_*.py`, or `null` for a feature-branch demo whose
-dataset must be pre-generated), `dataset` (path under `datasets/demos/`).
+dataset must be pre-generated; currently unused), `dataset` (path under
+`datasets/demos/`).
 
 Optional capture hints (see the `DemoEntry` interface in the capture spec for
 the authoritative list and defaults): `exposure` (log2 stops, overrides
@@ -160,6 +161,14 @@ beside it), `dimensionNav`
 (`{key, steps}` for nD), `timelapse` (`{framePoint}` for 4D series), `lodFinest`,
 `readme` (a current top README pick), `note` (free-text human annotation; the
 capture code never reads it).
+
+`citation` (optional, not a capture hint): the dataset credit, copied verbatim
+from the demo's `DEMO_META["citation"]["short"]`. It is here so a tile's credit
+is reviewable in the repo instead of only on the rendered page;
+`test_demo_meta.py` pins it equal to the demo's own value. Only demos that
+declare a real credit carry it — an absent key means "unknown or not yet
+recorded", which is deliberately *not* the same claim as "nothing to credit", so
+a procedurally generated demo has no `citation` here either.
 
 ## Requirements
 

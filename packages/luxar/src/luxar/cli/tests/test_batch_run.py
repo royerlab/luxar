@@ -258,6 +258,7 @@ def _plan(
     src: Path,
     out: Path,
     *,
+    tiling: str = "uniform",
     axes_list: "list[str] | None" = None,
     timepoints_slice: "str | None" = None,
     channels_slice: "str | None" = None,
@@ -266,7 +267,7 @@ def _plan(
     denoise_kwargs: "dict[str, object] | None" = None,
     **fit_kwargs: object,
 ):
-    """Plan a uniform batch over a (T, Z, Y, X) store — one tile by default.
+    """Plan a batch over a (T, Z, Y, X) store — one uniform tile by default.
 
     ``axes_list`` defaults to the explicit ``t,z,y,x`` labels; pass ``None``
     explicitly via ``axes_list=[]`` — or rely on the store's own ``axes`` attr —
@@ -287,7 +288,7 @@ def _plan(
     return plan_batch(
         input_path=src,
         output_dir=out,
-        tiling="uniform",
+        tiling=tiling,
         tile_size=tile_size,
         tile_overlap=tile_overlap,
         axes_list=(_TZYX if axes_list is None else (axes_list or None)),
@@ -299,6 +300,124 @@ def _plan(
         content=ContentKnobs(),
         merge=MergeConfig(),
     )
+
+
+@pytest.mark.parametrize(
+    ("fit_kwargs", "denoise_kwargs", "expected_flag"),
+    [
+        ({"progressive": True}, None, "--progressive"),
+        ({}, {"denoise": True}, "--denoise"),
+    ],
+)
+def test_batch_plan_rejects_unsupported_content_fit_before_discovery(
+    tmp_path: Path,
+    fit_kwargs: dict[str, object],
+    denoise_kwargs: "dict[str, object] | None",
+    expected_flag: str,
+) -> None:
+    """Content workers must not receive fit flags they silently ignore."""
+    with pytest.raises(
+        typer.BadParameter,
+        match=rf"--tiling content.*{expected_flag}.*not supported",
+    ):
+        _plan(
+            tmp_path / "missing.zarr",
+            tmp_path / "out",
+            tiling="content",
+            denoise_kwargs=denoise_kwargs,
+            **fit_kwargs,
+        )
+
+
+def test_batch_plan_allows_preprocessed_content_denoising(tmp_path: Path) -> None:
+    """Preprocess mode retargets content workers to the denoised store."""
+    from luxar.cli.gsplat_ops.batch.planning import (
+        ContentKnobs,
+        DenoiseConfig,
+        FitConfig,
+        MergeConfig,
+        plan_batch,
+    )
+
+    src = tmp_path / "movie.zarr"
+    _make_timelapse_zarr(src)
+    out = tmp_path / "out"
+    result = plan_batch(
+        input_path=src,
+        output_dir=out,
+        tiling="content",
+        tile_size=None,
+        tile_overlap=8,
+        axes_list=_TZYX,
+        array_key=None,
+        timepoints_slice=None,
+        channels_slice=None,
+        fit=FitConfig(),
+        denoise=DenoiseConfig(denoise=True, preprocess=True),
+        content=ContentKnobs(
+            k_star_ref=60000,
+            n_features_ref=5000,
+            cell=4,
+            min_leaf=8,
+            max_leaf=16,
+        ),
+        merge=MergeConfig(),
+    )
+
+    assert result.manifest.denoise_mode == "preprocess"
+    assert result.manifest.denoised_zarr_path == str(out.resolve() / "denoised.zarr")
+    assert "denoise" not in result.manifest.fit_args
+
+
+@pytest.mark.parametrize(
+    ("extra_args", "expected_flag"),
+    [
+        (["--denoise"], "--denoise"),
+        (["--progressive"], "--progressive"),
+        (["--downscale", "2"], "--downscale"),
+    ],
+)
+def test_content_worker_warns_on_unsupported_fit_flags(
+    tmp_path: Path,
+    extra_args: list[str],
+    expected_flag: str,
+) -> None:
+    """A direct content worker names every fit option it will ignore."""
+    from luxar.gsplats.planner import FitPlan, PlanBox
+
+    src = tmp_path / "vol.zarr"
+    _make_zarr(src)
+    plan = tmp_path / "plan.json"
+    FitPlan(
+        volume_shape=[48, 48, 48],
+        boxes=[PlanBox(box=[0, 48, 0, 48, 0, 48], n_features=0, budget=0)],
+        overlap=0,
+        feature_method="peaks",
+        min_leaf=48,
+        max_leaf=48,
+    ).to_json(plan)
+    output = tmp_path / "box.gsplats.zarr"
+
+    result = runner.invoke(
+        app_gsplat,
+        [
+            "fit",
+            str(src),
+            str(output),
+            "--tiling",
+            "content",
+            "--plan",
+            str(plan),
+            "--plan-box",
+            "0",
+            *extra_args,
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert expected_flag in result.output
+    assert "not supported" in result.output.lower()
+    assert Path(f"{output}.empty").exists()
 
 
 def test_batch_plan_resolves_one_global_floor_level(tmp_path: Path) -> None:

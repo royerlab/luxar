@@ -11,10 +11,12 @@ from pathlib import Path
 from typing import (
     TYPE_CHECKING,
     Any,
+    Callable,
     Dict,
     List,
     Optional,
     Sequence,
+    TypeVar,
     Union,
 )
 
@@ -31,6 +33,8 @@ if TYPE_CHECKING:
     from ...gsplats.gsplat_data import GSplatData
     from ...io.writer import ZarrWriterProtocol
     from ..scene import Scene
+
+TNode = TypeVar("TNode")
 
 
 class Group(Node):
@@ -98,6 +102,24 @@ class Group(Node):
                 "Scene writer is not initialized. Use LuxarZarrCompiler to create scenes."
             )
         return writer
+
+    def _transactional_add(
+        self,
+        name: str,
+        parent: Optional[Node],
+        build: Callable[[], TNode],
+    ) -> TNode:
+        """Run one add call with store, graph, and compiler-state rollback."""
+        parent_node = parent or self
+        writer = self._require_scene_writer(self._find_scene())
+        path = f"{parent_node.path}/{name}" if parent_node.path else name
+        children_before = list(parent_node.children)
+        try:
+            with writer.transaction(path):
+                return build()
+        except BaseException:
+            parent_node.children[:] = children_before
+            raise
 
     # ---------------------------------------------------------- data methods
 
@@ -212,24 +234,28 @@ class Group(Node):
         """
         from .adders.points import add_points_impl
 
-        return add_points_impl(
-            self,
-            name=name,
-            positions=positions,
-            colors=colors,
-            radii=radii,
-            sharpness=sharpness,
-            scalars=scalars,
-            labels=labels,
-            image_labels=image_labels,
-            parent=parent,
-            extend_to_all=extend_to_all,
-            dim_order=dim_order,
-            fill=fill,
-            partition=partition,
-            additive_lod=additive_lod,
-            substitutive_lod=substitutive_lod,
-            **attrs,
+        return self._transactional_add(
+            name,
+            parent,
+            lambda: add_points_impl(
+                self,
+                name=name,
+                positions=positions,
+                colors=colors,
+                radii=radii,
+                sharpness=sharpness,
+                scalars=scalars,
+                labels=labels,
+                image_labels=image_labels,
+                parent=parent,
+                extend_to_all=extend_to_all,
+                dim_order=dim_order,
+                fill=fill,
+                partition=partition,
+                additive_lod=additive_lod,
+                substitutive_lod=substitutive_lod,
+                **attrs,
+            ),
         )
 
     def add_lines(
@@ -326,26 +352,30 @@ class Group(Node):
         """
         from .adders.lines import add_lines_impl
 
-        return add_lines_impl(
-            self,
-            name=name,
-            vertices=vertices,
-            widths=widths,
-            colors=colors,
-            sharpness=sharpness,
-            scalars=scalars,
-            labels=labels,
-            image_labels=image_labels,
-            indices=indices,
-            line_type=line_type,
-            parent=parent,
-            extend_to_all=extend_to_all,
-            dim_order=dim_order,
-            fill=fill,
-            additive_lod=additive_lod,
-            substitutive_lod=substitutive_lod,
-            partition=partition,
-            **attrs,
+        return self._transactional_add(
+            name,
+            parent,
+            lambda: add_lines_impl(
+                self,
+                name=name,
+                vertices=vertices,
+                widths=widths,
+                colors=colors,
+                sharpness=sharpness,
+                scalars=scalars,
+                labels=labels,
+                image_labels=image_labels,
+                indices=indices,
+                line_type=line_type,
+                parent=parent,
+                extend_to_all=extend_to_all,
+                dim_order=dim_order,
+                fill=fill,
+                additive_lod=additive_lod,
+                substitutive_lod=substitutive_lod,
+                partition=partition,
+                **attrs,
+            ),
         )
 
     def add_mesh(
@@ -487,27 +517,31 @@ class Group(Node):
         """
         from .adders.mesh import add_mesh_impl
 
-        return add_mesh_impl(
-            self,
-            name=name,
-            vertices=vertices,
-            faces=faces,
-            normals=normals,
-            normal_dims=normal_dims,
-            colors=colors,
-            scalars=scalars,
-            shading=shading,
-            double_sided=double_sided,
-            labels=labels,
-            image_labels=image_labels,
-            partition=partition,
-            parent=parent,
-            extend_to_all=extend_to_all,
-            dim_order=dim_order,
-            fill=fill,
-            substitutive_lod=substitutive_lod,
-            additive_lod=additive_lod,
-            **attrs,
+        return self._transactional_add(
+            name,
+            parent,
+            lambda: add_mesh_impl(
+                self,
+                name=name,
+                vertices=vertices,
+                faces=faces,
+                normals=normals,
+                normal_dims=normal_dims,
+                colors=colors,
+                scalars=scalars,
+                shading=shading,
+                double_sided=double_sided,
+                labels=labels,
+                image_labels=image_labels,
+                partition=partition,
+                parent=parent,
+                extend_to_all=extend_to_all,
+                dim_order=dim_order,
+                fill=fill,
+                substitutive_lod=substitutive_lod,
+                additive_lod=additive_lod,
+                **attrs,
+            ),
         )
 
     def add_gsplats(
@@ -588,22 +622,26 @@ class Group(Node):
         """
         from .adders.gsplats import add_gsplats_impl
 
-        return add_gsplats_impl(
-            self,
-            name=name,
-            centers=centers,
-            amplitudes=amplitudes,
-            cholesky_factors=cholesky_factors,
-            colors=colors,
-            labels=labels,
-            image_labels=image_labels,
-            parent=parent,
-            extend_to_all=extend_to_all,
-            dim_order=dim_order,
-            fill=fill,
-            fill_sigma=fill_sigma,
-            partition=partition,
-            **attrs,
+        return self._transactional_add(
+            name,
+            parent,
+            lambda: add_gsplats_impl(
+                self,
+                name=name,
+                centers=centers,
+                amplitudes=amplitudes,
+                cholesky_factors=cholesky_factors,
+                colors=colors,
+                labels=labels,
+                image_labels=image_labels,
+                parent=parent,
+                extend_to_all=extend_to_all,
+                dim_order=dim_order,
+                fill=fill,
+                fill_sigma=fill_sigma,
+                partition=partition,
+                **attrs,
+            ),
         )
 
     def add_gsplats_from_data(
@@ -709,18 +747,22 @@ class Group(Node):
         """
         from .gsplats_pipeline.from_data import add_gsplats_from_data_impl
 
-        return add_gsplats_from_data_impl(
-            self,
-            name=name,
-            result=result,
-            parent=parent,
-            extend_to_all=extend_to_all,
-            dim_order=dim_order,
-            fill=fill,
-            fill_sigma=fill_sigma,
-            lod_group=lod_group,
-            additive_lod=additive_lod,
-            **attrs,
+        return self._transactional_add(
+            name,
+            parent,
+            lambda: add_gsplats_from_data_impl(
+                self,
+                name=name,
+                result=result,
+                parent=parent,
+                extend_to_all=extend_to_all,
+                dim_order=dim_order,
+                fill=fill,
+                fill_sigma=fill_sigma,
+                lod_group=lod_group,
+                additive_lod=additive_lod,
+                **attrs,
+            ),
         )
 
     def add_gsplats_from_file(
@@ -782,16 +824,20 @@ class Group(Node):
         """
         from .gsplats_pipeline.from_io import add_gsplats_from_file_impl
 
-        return add_gsplats_from_file_impl(
-            self,
-            name=name,
-            path=path,
-            parent=parent,
-            extend_to_all=extend_to_all,
-            dim_order=dim_order,
-            fill=fill,
-            fill_sigma=fill_sigma,
-            **attrs,
+        return self._transactional_add(
+            name,
+            parent,
+            lambda: add_gsplats_from_file_impl(
+                self,
+                name=name,
+                path=path,
+                parent=parent,
+                extend_to_all=extend_to_all,
+                dim_order=dim_order,
+                fill=fill,
+                fill_sigma=fill_sigma,
+                **attrs,
+            ),
         )
 
     def add_gsplats_from_volume(
@@ -843,24 +889,28 @@ class Group(Node):
         """
         from .gsplats_pipeline.from_io import add_gsplats_from_volume_impl
 
-        return add_gsplats_from_volume_impl(
-            self,
-            name=name,
-            volume=volume,
-            seeds=seeds,
-            n_iters=n_iters,
-            device=device,
-            progressive=progressive,
-            max_splats_per_pass=max_splats_per_pass,
-            psnr_patience=psnr_patience,
-            max_passes=max_passes,
-            parent=parent,
-            extend_to_all=extend_to_all,
-            dim_order=dim_order,
-            fill=fill,
-            fill_sigma=fill_sigma,
-            opacity=opacity,
-            absorption=absorption,
-            blending_mode=blending_mode,
-            **fit_kwargs,
+        return self._transactional_add(
+            name,
+            parent,
+            lambda: add_gsplats_from_volume_impl(
+                self,
+                name=name,
+                volume=volume,
+                seeds=seeds,
+                n_iters=n_iters,
+                device=device,
+                progressive=progressive,
+                max_splats_per_pass=max_splats_per_pass,
+                psnr_patience=psnr_patience,
+                max_passes=max_passes,
+                parent=parent,
+                extend_to_all=extend_to_all,
+                dim_order=dim_order,
+                fill=fill,
+                fill_sigma=fill_sigma,
+                opacity=opacity,
+                absorption=absorption,
+                blending_mode=blending_mode,
+                **fit_kwargs,
+            ),
         )

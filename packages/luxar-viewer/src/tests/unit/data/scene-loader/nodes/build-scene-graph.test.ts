@@ -56,6 +56,7 @@ vi.mock('../../../../../data/scene-loader/nodes/enumerate-store', () => ({
 }));
 
 import { buildSceneGraph } from '../../../../../data/scene-loader/nodes/build-scene-graph';
+import { sceneEffectiveLineLoad } from '../../../../../types/line-primitive';
 import type { ZarrSceneAttrs } from '../../../../../types/zarr';
 import { log } from '../../../../../utils/log';
 
@@ -576,5 +577,30 @@ describe('buildSceneGraph — bare node root (standalone .gsplats.zarr)', () => 
 
     expect(root.type).toBe('scene');
     expect(root.children?.[0].path).toBe('/g');
+  });
+
+  it('folds line load from the production SceneNode graph shape', async () => {
+    enumerateStoreMock.mockResolvedValue([
+      { path: '/line_a', kind: 'group' },
+      { path: '/line_b', kind: 'group' },
+      { path: '/lod', kind: 'group' },
+      { path: '/lod/child_0', kind: 'group' },
+      { path: '/lod/child_1', kind: 'group' },
+      { path: '/partition', kind: 'group' },
+      { path: '/partition/part_0', kind: 'group' },
+      { path: '/partition/part_1', kind: 'group' },
+    ]);
+    attrsByPath['/line_a'] = { type: 'lines', n_segments: 100 };
+    attrsByPath['/line_b'] = { type: 'lines', n_segments: 200 };
+    attrsByPath['/lod'] = { type: 'group', kind: 'lod' };
+    attrsByPath['/lod/child_0'] = { type: 'lines', n_segments: 300 };
+    attrsByPath['/lod/child_1'] = { type: 'lines', n_segments: 400 };
+    attrsByPath['/partition'] = { type: 'group', kind: 'partition' };
+    attrsByPath['/partition/part_0'] = { type: 'lines', n_segments: 500 };
+    attrsByPath['/partition/part_1'] = { type: 'lines', n_segments: 600 };
+
+    const root = await buildSceneGraph(makeStubLoc('') as never, makeRootAttrs(), {} as never);
+
+    expect(sceneEffectiveLineLoad(root)).toBe(1_800);
   });
 });
