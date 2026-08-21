@@ -17,6 +17,13 @@ import {
 
 /** The kernel's source-index recording opt-out (an empty array means "off"). */
 const NO_SOURCE_INDICES = new Uint32Array(0);
+const bitBuffer = new ArrayBuffer(4);
+const bitView = new DataView(bitBuffer);
+
+function toBits(value: number): number {
+  bitView.setFloat32(0, value, true);
+  return bitView.getUint32(0, true);
+}
 
 // ============================================================================
 // GSPLATS PROCESSING TESTS (Mahalanobis distance, Cholesky extraction)
@@ -104,6 +111,62 @@ describe('gsplats_processing: computeMarginalCholesky', () => {
     // Forward substitution: y[0]=1/2=0.5, y[1]=(0-0.5*0.5)/4.031≈-0.0621
     // ||y|| ≈ sqrt(0.25 + 0.00386) ≈ 0.504
     expect(dist).toBeCloseTo(0.5, 1);
+  });
+});
+
+describe('gsplats_processing: float32 transcendental call sites', () => {
+  it('uses expf for hidden-dimension attenuation', () => {
+    const outAmplitudes = new Float32Array(1);
+    const count = project_gsplats_nd_to_3d(
+      new Float32Array([0, 0, 0, 3.412810802459717]),
+      new Float32Array([1, 0, 1, 0, 0, 1, 0, 0, 0, 1]),
+      new Float32Array([1]),
+      new Float32Array([1, 1, 1]),
+      new Uint8Array([1]),
+      new Float32Array(4),
+      new Uint32Array([3]),
+      new Uint32Array([0, 1, 2]),
+      4,
+      1,
+      3,
+      0,
+      20,
+      new Float32Array(3),
+      new Float32Array(6),
+      outAmplitudes,
+      new Float32Array(3),
+      NO_SOURCE_INDICES
+    );
+
+    expect(count).toBe(1);
+    expect(toBits(outAmplitudes[0])).toBe(0x3b41c74e);
+  });
+
+  it('uses logf and expf for the phantom display axis', () => {
+    const outCholesky3d = new Float32Array(6);
+    const count = project_gsplats_nd_to_3d(
+      new Float32Array([0, 0]),
+      new Float32Array([30603.033203125, 0, 862206.5]),
+      new Float32Array([1]),
+      new Float32Array([1, 1, 1]),
+      new Uint8Array([1]),
+      new Float32Array(2),
+      new Uint32Array(0),
+      new Uint32Array([0, 1]),
+      2,
+      1,
+      3,
+      0,
+      3,
+      new Float32Array(3),
+      outCholesky3d,
+      new Float32Array(1),
+      new Float32Array(3),
+      NO_SOURCE_INDICES
+    );
+
+    expect(count).toBe(1);
+    expect(toBits(outCholesky3d[5])).toBe(0x481ea18a);
   });
 });
 
