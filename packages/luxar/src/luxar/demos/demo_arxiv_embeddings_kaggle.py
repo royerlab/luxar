@@ -97,7 +97,7 @@ DEMO_META = {
     "outputs": ["arxiv_papers_kaggle"],
     "citation": {
         "short": "arXiv metadata by Cornell University; embeddings by tomtum",
-        "url": "https://www.kaggle.com/datasets/Cornell-University/arxiv",
+        "url": "https://www.kaggle.com/datasets/tomtum/openai-arxiv-embeddings",
     },
 }
 
