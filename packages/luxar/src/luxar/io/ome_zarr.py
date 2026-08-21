@@ -12,10 +12,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
-import numpy as np
 from arbol import aprint
 
-from luxar.io.volume import _find_all_arrays
+from luxar.io.volume import _declares_array, _select_zarr_array
 
 __all__ = [
     "CHANNEL_LIKE_AXIS_LABELS",
@@ -197,6 +196,98 @@ class OMEZarrInfo:
     """Path to the zarr store."""
 
 
+# The one reason string for "the store declared `multiscales`, but there is no
+# block in it to read". Shared by :func:`_usable_multiscales` (root) and
+# :func:`_owner_ngff_attrs` (owning group) so the SAME malformed declaration is
+# not reported two different ways depending on which node carries it.
+_EMPTY_MULTISCALES_REASON = (
+    "its `multiscales` attribute is empty or not a list of blocks"
+)
+
+
+def _relative_key(owner: Any, key_path: str) -> Optional[str]:
+    """``key_path`` (store-root-relative) re-expressed relative to ``owner``.
+
+    An owning group's ``datasets[*].path`` entries are relative to ITSELF, so the
+    selected array has to be named the same way before
+    :func:`_selected_dataset` can match it: the level a bioformats2raw store
+    reaches at ``"0/0"`` is ``"0"`` to the image group that declares it.
+
+    ``None`` when the selected array does not live under ``owner`` at all — which
+    the selection never produces (an owner is an ancestor by construction) but
+    which must not silently become a bogus match if it ever does.
+    """
+    owner_path = str(getattr(owner, "path", "") or "").strip("/")
+    selected = str(key_path or "").strip("/")
+    if not owner_path:
+        return selected or None
+    prefix = f"{owner_path}/"
+    return selected[len(prefix) :] if selected.startswith(prefix) else None
+
+
+def _owner_ngff_attrs(
+    owner: Any, arr: Any, owner_attrs: Dict[str, Any], declares: Optional[bool]
+) -> "Tuple[Optional[Dict[str, Any]], Optional[str]]":
+    """The owning group's attributes, but only when its block is EVIDENCE.
+
+    ``multiscales`` describes the array it sits BESIDE, and that is not always the
+    root: a bioformats2raw store puts the NGFF block on the image group (``"0"``)
+    and leaves only ``bioformats2raw.layout`` at the root, so reading the root
+    alone finds nothing and falls through to the shape heuristic — which GUESSES
+    the T/C roles and recovers no voxel size.
+
+    So the owner's block may override the root's, but only on evidence that it
+    describes the array actually SELECTED: it has to declare that array as one of
+    its own levels (:func:`~luxar.io.volume._declares_array`). Arity is not
+    evidence — a permuted axis list has exactly the right length, so a block that
+    exists but describes something else (another series, a stale hand-written
+    attribute) would be adopted over a root block that had the T/C decomposition
+    right, a silently wrong ``batch-fit`` fan-out rather than an error.
+
+    ``declares`` is the SELECTION's own answer, plumbed through rather than
+    re-derived (re-resolving a declared pyramid's paths doubles the metadata
+    requests a multi-level store costs); ``None`` means it never needed one, so
+    ask.
+
+    EVIDENCE is the whole test. There is deliberately no second, SHAPE gate on the
+    block's ``datasets``: the parser does not crash on a malformed one (it
+    type-checks every entry it reads and only takes ``len()`` for the level
+    count), so the gate could only throw away a block that IS about the selected
+    array. The one shape that ever reached it with evidence in hand — a MIXED
+    ``["0", {"path": "0", …}]`` list, whose dict entry is what resolved to the
+    array in the first place — is exactly the one the parser reads completely,
+    axes, voxel size and all, and rejecting it dropped a 4D ``TZYX`` store onto
+    the ``CZYX`` heuristic: the silently wrong ``batch-fit`` fan-out this module
+    exists to prevent, caused by the guard against it.
+
+    Returns ``(attrs, problem)`` — ``attrs`` is ``None`` whenever the root's block
+    stands, which is both the plain OME-NGFF case (there the owner IS the root)
+    and the safe answer for a group carrying a block about something else. The
+    latter carries a ``problem``: the store DID declare NGFF metadata, so letting
+    the give-up notice say "no OME-Zarr/NGFF metadata found" would be a lie about
+    a store whose one fixable detail is that its ``datasets[*].path`` entries do
+    not resolve to the array that was selected.
+
+    A PRESENT but falsy ``multiscales`` is that same lie one step earlier, so it
+    is told apart from an absent one and reported with the very reason
+    :func:`_usable_multiscales` gives for the identical declaration sitting on the
+    ROOT — the two must not describe one malformed store differently depending on
+    which node carries it. An explicit ``null`` is the one falsy value that stays
+    "nothing declared", again matching :func:`_usable_multiscales`.
+    """
+    block = resolve_ngff_attrs(owner_attrs).get("multiscales")
+    if block is None:
+        return None, None
+    if not block:
+        return None, _EMPTY_MULTISCALES_REASON
+    if not (_declares_array(owner, arr) if declares is None else declares):
+        return None, (
+            "the group owning the selected array declares a `multiscales` "
+            "block that does not name it"
+        )
+    return owner_attrs, None
+
+
 def discover_ome_zarr_shape(
     path: Path,
     axes_override: Optional[List[str]] = None,
@@ -204,16 +295,24 @@ def discover_ome_zarr_shape(
 ) -> OMEZarrInfo:
     """Discover the shape and axis structure of an OME-Zarr dataset.
 
-    Parses the node's NGFF ``multiscales`` metadata in BOTH OME-Zarr layouts —
+    Which array is read is ONE rule shared with the two volume-loading entry
+    points (:func:`~luxar.io.volume._select_zarr_array`), so a re-fit that
+    re-opens a store cannot land on a different (e.g. downsampled) array than the
+    command that read its shape.
+
+    Parses that array's NGFF ``multiscales`` metadata in BOTH OME-Zarr layouts —
     top-level (0.4) and nested under an ``ome`` key (0.5); see
-    :func:`resolve_ngff_attrs`. A block whose ``axes`` count disagrees with the
-    SELECTED array's ndim is not metadata about that array (a 5D image beside its
-    3D ``labels/…``) and is skipped. Falls back to a custom ``axes`` attribute,
-    then to a shape-based heuristic (5D→TCZYX, 4D→CZYX, 3D→ZYX) for non-NGFF
-    zarr stores. That last fallback GUESSES the T/C roles and recovers no voxel
-    size, so for an ambiguous (≥4D) store it says so on the console — stating
-    whether nothing was declared or something was declared but unusable — and
-    points at ``axes_override``.
+    :func:`resolve_ngff_attrs`. The block is read off the GROUP THAT OWNS the
+    selected array when that group's block is evidence about it
+    (:func:`_owner_ngff_attrs`), off the root otherwise. A block whose ``axes``
+    count disagrees with the SELECTED array's ndim is not metadata about that
+    array (a 5D image beside its 3D ``labels/…``) and is skipped. Falls back to a
+    custom ``axes`` attribute — root-first, owner second, see
+    :func:`_usable_custom_axes` — then to a shape-based heuristic (5D→TCZYX,
+    4D→CZYX, 3D→ZYX) for non-NGFF zarr stores. That last fallback GUESSES the T/C
+    roles and recovers no voxel size, so for an ambiguous (≥4D) store it says so
+    on the console — stating whether nothing was declared or something was
+    declared but unusable — and points at ``axes_override``.
 
     Accepts both plain ``.zarr`` directories and ``.zarr.zip`` archives —
     zarr's ZipStore handles the latter transparently.
@@ -224,9 +323,18 @@ def discover_ome_zarr_shape(
             Overrides all auto-detection when provided.
         array_key: Key path to a specific array within the zarr store
             (e.g. ``"h2afva/fused"``).  When provided, skips auto-selection
-            and navigates directly to this array, and selects the matching
-            ``datasets[]`` entry for the voxel size (so a coarser pyramid level
-            reports its own spacing, not level 0's).
+            and navigates directly to this array (which may itself be a group —
+            then its own full-resolution level is taken).
+
+            The ``datasets[]`` entry for the voxel size is matched against the
+            array that was SELECTED, whether or not a key was passed — so a
+            coarser pyramid level reports its own spacing, not level 0's, and
+            that holds for the auto path too (which can perfectly well land on a
+            coarser level, e.g. when level 0's declared path does not resolve).
+            The price is that a block whose ``datasets[*].path`` spells the
+            selected array non-canonically (``"./0"`` for the array at ``"0"``)
+            no longer matches, and reports no spacing rather than level 0's; see
+            :func:`_selected_dataset`.
 
     Returns:
         :class:`OMEZarrInfo` with discovered metadata.
@@ -243,35 +351,26 @@ def discover_ome_zarr_shape(
     # so the ZipStore dispatch has to be explicit or `.zarr.zip` inputs raise.
     store = zarr.open(store=open_store(path, mode="r"), mode="r")
 
-    # Navigate to the group/array
-    if isinstance(store, zarr.Array):
-        arr = store
-        attrs: Dict[str, Any] = dict(getattr(store, "attrs", {}))
-    elif isinstance(store, zarr.Group):
-        attrs = dict(store.attrs)
-        if array_key is not None:
-            # User-specified array key (may be nested, e.g. "h2afva/fused")
-            try:
-                arr = store[array_key]
-            except KeyError:
-                available = list(store.keys())
-                raise ValueError(
-                    f"Array key '{array_key}' not found in {path}. "
-                    f"Available keys: {available}"
-                )
-        elif "0" in store:
-            # OME-NGFF standard: resolution level "0" is highest resolution
-            arr = store["0"]
-            _reject_auto_selected_group(arr, path)
-        else:
-            # Find the largest array, searching recursively into sub-groups
-            arrays = _find_all_arrays(store)
-            if not arrays:
-                raise ValueError(f"No arrays found in zarr group: {path}")
-            # Pick the array with the most elements
-            arr = max(arrays, key=lambda kv: int(np.prod(kv[1].shape)))[1]
-    else:
-        raise ValueError(f"Unexpected zarr object type: {type(store)}")
+    # Navigate to the group/array. The rule lives in `_select_zarr_array` so this
+    # and the two volume-loading entry points cannot drift apart — an
+    # `array_key` may be nested (e.g. "h2afva/fused") and may name a group, and a
+    # bioformats2raw store's `"0"` IS a group (its levels live at "0/0", "0/1",
+    # …), which the rule descends into rather than reading `.shape` off.
+    arr, key_path, owner, declares = _select_zarr_array(store, path, array_key)
+    attrs: Dict[str, Any] = dict(getattr(store, "attrs", {}))
+
+    # `multiscales` / `axes` describe the array they sit BESIDE, and that is not
+    # always the root — see `_owner_ngff_attrs` for the evidence gate that lets an
+    # owning group's block override the root's, and `_relative_key` for why the
+    # selected array has to be renamed relative to whichever group won.
+    owner_attrs: Dict[str, Any] = {}
+    owner_ngff: Optional[Dict[str, Any]] = None
+    owner_key: Optional[str] = None
+    owner_problem: Optional[str] = None
+    if owner is not None and owner is not store:
+        owner_attrs = dict(owner.attrs)
+        owner_key = _relative_key(owner, key_path)
+        owner_ngff, owner_problem = _owner_ngff_attrs(owner, arr, owner_attrs, declares)
 
     shape = tuple(arr.shape)
     ndim = len(shape)
@@ -286,19 +385,21 @@ def discover_ome_zarr_shape(
         return _parse_custom_axes_attr(axes_override, shape, path)
 
     # Try NGFF multiscales metadata, in either OME-Zarr layout (0.4 top-level or
-    # 0.5 nested under `ome`). A nested array's immediate parent may own an
-    # independent pyramid; its dataset paths are relative to that group, not the
-    # store root. `unusable` records WHY a block that IS present could not be
-    # read, so the give-up notice below can say so.
+    # 0.5 nested under `ome`). The owning group's block wins when it is evidence
+    # about the selected array, the root's otherwise; its dataset paths are
+    # relative to whichever group that is, not to the store root. `unusable`
+    # records WHY a block that IS present could not be read, so the give-up notice
+    # below can say so.
     ms, unusable, ngff_array_key = _usable_ngff_for_selection(
-        store, attrs, array_key, ndim
+        attrs, owner_ngff, owner_key, key_path or None, ndim
     )
     if ms is not None:
         return _parse_ngff_metadata(ms, shape, path, ngff_array_key)
+    unusable = unusable or owner_problem
 
     # Try custom axes attribute (e.g. Keller-lab zarr.zip files store
     # axes = ['time', 'camera', 'channel', 'z', 'y', 'x']).
-    custom_axes, custom_problem = _usable_custom_axes(attrs, ndim)
+    custom_axes, custom_problem = _usable_custom_axes(attrs, ndim, owner_attrs)
     if custom_axes is not None:
         return _parse_custom_axes_attr(custom_axes, shape, path)
     unusable = unusable or custom_problem
@@ -309,61 +410,39 @@ def discover_ome_zarr_shape(
     return info
 
 
-def _reject_auto_selected_group(arr: Any, path: Path) -> None:
-    """Name the selectable levels when root key ``0`` is an image group."""
-    import zarr
-
-    if not isinstance(arr, zarr.Group):
-        return
-    levels = list(arr.keys())
-    example = f"0/{levels[0]}" if levels else "0/<level>"
-    raise ValueError(
-        f"Auto-selected '0' in {path}, but it is a group, not an array. "
-        f"Available levels under '0': {levels}. Select one with "
-        f"--array-key {example}."
-    )
-
-
 def _usable_ngff_for_selection(
-    store: Any,
     attrs: Dict[str, Any],
-    array_key: Optional[str],
+    owner_attrs: Optional[Dict[str, Any]],
+    owner_key: Optional[str],
+    selected_key: Optional[str],
     ndim: int,
 ) -> Tuple[Optional[Dict[str, Any]], Optional[str], Optional[str]]:
-    """Prefer a nested owner's usable block, otherwise retry the root block."""
-    ngff_attrs, ngff_array_key = _resolve_ngff_owner(store, attrs, array_key)
-    ms, unusable = _usable_multiscales(resolve_ngff_attrs(ngff_attrs), ndim)
-    if ms is not None or ngff_array_key == array_key:
-        return ms, unusable, ngff_array_key
+    """Prefer the owning group's usable block, otherwise retry the root's.
 
-    root_ms, root_problem = _usable_multiscales(resolve_ngff_attrs(attrs), ndim)
-    if root_ms is not None:
-        return root_ms, None, array_key
-    return None, unusable or root_problem, ngff_array_key
+    ``owner_attrs`` is already evidence-gated (:func:`_owner_ngff_attrs`) — it is
+    ``None`` whenever the root's block is the one to read, including the plain
+    OME-NGFF case where the owner IS the root. So the only question left here is
+    USABILITY, and it is asked with one predicate (:func:`_usable_multiscales`)
+    for both candidates.
 
+    A block that is present but unusable does not hide the other one: a malformed
+    or wrongly-sized owner block falls back to the root's, and only when NEITHER
+    can be read is a reason returned for the give-up notice.
 
-def _resolve_ngff_owner(
-    store: Any, attrs: Dict[str, Any], array_key: Optional[str]
-) -> Tuple[Dict[str, Any], Optional[str]]:
-    """Use a selected nested array's immediate parent metadata when available."""
-    import zarr
+    The third element is the key to hand :func:`_parse_ngff_metadata`, i.e. the
+    selected array named relative to whichever group's block won.
+    """
+    if owner_attrs is not None:
+        ms, unusable = _usable_multiscales(resolve_ngff_attrs(owner_attrs), ndim)
+        if ms is not None:
+            return ms, None, owner_key
+        root_ms, root_problem = _usable_multiscales(resolve_ngff_attrs(attrs), ndim)
+        if root_ms is not None:
+            return root_ms, None, selected_key
+        return None, unusable or root_problem, selected_key
 
-    if array_key is None or not isinstance(store, zarr.Group):
-        return attrs, array_key
-    wanted = str(array_key).strip("/")
-    parent_key, separator, relative_key = wanted.rpartition("/")
-    if not separator:
-        return attrs, array_key
-    try:
-        parent = store[parent_key]
-    except KeyError:
-        return attrs, array_key
-    if not isinstance(parent, zarr.Group):
-        return attrs, array_key
-    parent_attrs = dict(parent.attrs)
-    if resolve_ngff_attrs(parent_attrs).get("multiscales"):
-        return parent_attrs, relative_key
-    return attrs, array_key
+    ms, unusable = _usable_multiscales(resolve_ngff_attrs(attrs), ndim)
+    return ms, unusable, selected_key
 
 
 def _usable_multiscales(
@@ -391,7 +470,7 @@ def _usable_multiscales(
         return None, None
     ms = multiscales[0] if isinstance(multiscales, list) and multiscales else None
     if not isinstance(ms, Mapping):
-        return None, "its `multiscales` attribute is empty or not a list of blocks"
+        return None, _EMPTY_MULTISCALES_REASON
     axes = ms.get("axes")
     if not isinstance(axes, (list, tuple)):
         return None, "its `multiscales` block declares no `axes` list"
@@ -405,14 +484,39 @@ def _usable_multiscales(
 
 
 def _usable_custom_axes(
-    attrs: Mapping[str, Any], ndim: int
+    attrs: Mapping[str, Any],
+    ndim: int,
+    owner_attrs: Optional[Mapping[str, Any]] = None,
 ) -> "Tuple[Optional[List[str]], Optional[str]]":
     """The custom ``axes`` label list to use, or why the declared one cannot be.
 
     Same ``(value, reason)`` contract as :func:`_usable_multiscales`. Read from
-    the TOP level deliberately: this is a non-NGFF convention (Keller-lab
-    ``.zarr.zip`` files, say), so it never lives inside an ``ome`` block.
+    the TOP level of each node deliberately: this is a non-NGFF convention
+    (Keller-lab ``.zarr.zip`` files, say), so it never lives inside an ``ome``
+    block.
+
+    ROOT-FIRST, the opposite way round from ``multiscales``: a bare ``axes`` list
+    names nothing, so no EVIDENCE that an owner's list is about the selected array
+    is obtainable — and a same-length PERMUTATION of the root's would silently
+    rewrite a decomposition the root already had right (a Keller-lab store's
+    ``['z','y','x','time','camera','channel']`` on the intermediate group against
+    the root's correct ``['time','camera',…]`` moves ``n_timepoints`` 2→4 and
+    ``n_channels`` 6→16). The owner is a FALLBACK, which still fixes the
+    bioformats2raw case, whose root carries only ``bioformats2raw.layout``.
     """
+    axes, problem = _custom_axes_of(attrs, ndim)
+    if axes is not None or owner_attrs is None:
+        return axes, problem
+    owner_axes, owner_problem = _custom_axes_of(owner_attrs, ndim)
+    if owner_axes is not None:
+        return owner_axes, None
+    return None, problem or owner_problem
+
+
+def _custom_axes_of(
+    attrs: Mapping[str, Any], ndim: int
+) -> "Tuple[Optional[List[str]], Optional[str]]":
+    """One node's custom ``axes`` list, or why it cannot be used."""
     custom_axes = attrs.get("axes")
     if custom_axes is None:
         return None, None
@@ -485,13 +589,36 @@ def ngff_scale_transform(transforms: Any) -> Optional[List[float]]:
     return None
 
 
+def _normalised_dataset_path(raw: Any) -> str:
+    """A ``datasets[].path`` (or a selected key) reduced to its canonical spelling.
+
+    Surrounding slashes and ONE leading ``./`` are cosmetic — ``"0"``, ``"/0"``
+    and ``"./0"`` all name the same child — and NGFF writers do emit the explicitly
+    relative form. Treating them as distinct made a multi-level pyramid spelled
+    ``"./0"``, ``"./1"`` match no entry at all, so it silently lost its voxel size
+    (``len(datasets) > 1`` denies it the single-level fall-back to ``datasets[0]``),
+    with no give-up notice either, since the block itself parsed fine.
+
+    Anything still carrying a ``.`` SEGMENT after that — ``"."``, ``"./"``, a
+    nested ``"a/./b"`` — normalises to ``""``, i.e. "names nothing": those are not
+    a level's name, and zarr refuses such a path anyway. ``""`` never matches
+    (:func:`_dataset_path_matches` requires a non-empty path), so an unspellable
+    entry stays unmatched rather than becoming a bogus match for some other level.
+    """
+    path = str(raw).strip("/")
+    if path.startswith("./"):
+        path = path[2:].strip("/")
+    return "" if "." in path.split("/") else path
+
+
 def _dataset_path_matches(entry: Mapping[str, Any], wanted: str) -> bool:
     """Whether a ``datasets[]`` entry's ``path`` names the array ``wanted``.
 
     The caller makes ``wanted`` relative to the group that owns the multiscales
-    block, so only an exact match can identify the selected level safely.
+    block, so only an exact match — of the two spellings NORMALISED
+    (:func:`_normalised_dataset_path`) — can identify the selected level safely.
     """
-    path = str(entry.get("path", "")).strip("/")
+    path = _normalised_dataset_path(entry.get("path", ""))
     return bool(path) and path == wanted
 
 
@@ -500,14 +627,21 @@ def _selected_dataset(
 ) -> Optional[Mapping[str, Any]]:
     """The ``datasets[]`` entry describing the selected array, or ``None``.
 
-    ``array_key`` may select a coarser pyramid LEVEL, which has its own entry;
-    quoting level 0's spacing for it halves every number. Matched on the entry's
-    ``path`` (see :func:`_dataset_path_matches`).
+    ``array_key`` is the SELECTED array named relative to the group whose block
+    this is, and discovery supplies it on every call — not only when the user
+    passed a key. The selection can land on a coarser pyramid LEVEL with no key at
+    all (level 0's declared path may not resolve), and quoting level 0's spacing
+    for it halves every number. Matched on the entry's ``path`` (see
+    :func:`_dataset_path_matches`). ``None`` is passed only for a store whose
+    selected array has no name relative to the owner at all.
 
-    ``None`` — "unknowable", not "level 0" — when an ``array_key`` was asked for
-    and nothing matched, unless the unmatched key is flat and the pyramid has one
+    ``None`` — "unknowable", not "level 0" — when a key was matched against and
+    nothing matched, unless the unmatched key is flat and the pyramid has one
     level. A nested unmatched key names an array outside the block's owner, so even
-    a single-level pyramid cannot describe it.
+    a single-level pyramid cannot describe it. An exact match is the only one that
+    can identify a level safely — exact after both spellings are normalised, so a
+    block writing its own level as ``"./0"`` still matches the array at ``"0"``
+    (:func:`_normalised_dataset_path`).
 
     Never raises: a ``datasets`` that is not a list of mappings is metadata this
     cannot read.
@@ -517,7 +651,7 @@ def _selected_dataset(
     first = datasets[0] if isinstance(datasets[0], Mapping) else None
     if array_key is None:
         return first
-    wanted = str(array_key).strip("/")
+    wanted = _normalised_dataset_path(array_key)
     for d in datasets:
         if isinstance(d, Mapping) and _dataset_path_matches(d, wanted):
             return d
