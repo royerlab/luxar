@@ -143,7 +143,7 @@ Outer zip containing many per-frame `.gsplats.zarr.zip` files. Automatically ext
   - Hosted by the Image Data Resource: Williams et al. (2017) *Nature Methods*
     14(8):775-781
 - **Tribolium data**: Cell Tracking Challenge, Zenodo record 5270323
-  - Yin et al. (2022) J. Cell Sci. 135(5), jcs259022
+  - Barry et al. (2022) J. Cell Sci. 135, jcs259511
 - **C. elegans data**: Zenodo record 6460303
   - Hirsch et al. (2022) DOI: 10.5281/zenodo.6460303
 - **Cryo-EM virus capsid**: EMDB EMD-5384 (PBCV-1, CC0)

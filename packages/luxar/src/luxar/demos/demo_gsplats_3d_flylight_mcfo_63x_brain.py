@@ -164,7 +164,7 @@ DEMO_META = {
     "caches": ["gsplats_flylight_mcfo_63x"],
     "outputs": ["gsplats_3d_flylight_mcfo_63x_brain"],
     "citation": {
-        "short": "Meissner et al. 2023",
+        "short": "Janelia FlyLight Project Team, HHMI (Meissner et al. 2023)",
         "doi": "10.7554/eLife.80660",
         "license": "CC BY 4.0",
     },

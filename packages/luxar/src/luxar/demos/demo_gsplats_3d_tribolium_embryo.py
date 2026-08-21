@@ -33,9 +33,9 @@ Resolution:  0.381 × 0.381 × 0.381 µm (isotropic)
 
 How to Cite:
 ------------
-Yin, Z. et al. (2022).  GIANI — open-source software for automated analysis
-of 3D microscopy images.  *Journal of Cell Science*, 135(5), jcs259022.
-DOI: 10.1242/jcs.259022
+Barry et al. (2022).  GIANI — open-source software for automated analysis
+of 3D microscopy images.  *Journal of Cell Science*, 135, jcs259511.
+DOI: 10.1242/jcs.259511
 
 Cell Tracking Challenge — Maska, M. et al. (2023).  The Cell Tracking
 Challenge: 10 years of objective benchmarking.  *Nature Methods*, 20, 1010–1020.
@@ -87,7 +87,10 @@ DEMO_META = {
     "caches": ["gsplats_tribolium"],
     "outputs": ["gsplats_3d_tribolium_embryo"],
     "citation": {
-        "short": "Barry 2021 (GIANI)",
+        "short": (
+            "Barry 2021 (GIANI, Zenodo 5270323); "
+            "Cell Tracking Challenge (Maška et al. 2023)"
+        ),
         "doi": "10.5281/zenodo.5270323",
     },
 }
@@ -401,7 +404,7 @@ Data Source:
   - Volume: 965 x 1871 x 991 voxels at 0.381 um isotropic
 
 How to Cite:
-  Yin et al. (2022). GIANI. J. Cell Sci. 135(5), jcs259022.
+  Barry et al. (2022). GIANI. J. Cell Sci. 135, jcs259511.
   Maska et al. (2023). Cell Tracking Challenge. Nat. Methods 20, 1010-1020.
 
 Navigation:

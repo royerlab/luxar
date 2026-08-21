@@ -68,7 +68,7 @@ DATA SOURCE & CITATIONS:
 ========================
 Source:  Cell Tracking Challenge / Zenodo record 5270323 (GIANI paper)
 Imaging: Zeiss LightSheet Z.1, Tribolium castaneum, 0.381 um isotropic
-Cite:    Yin et al. (2022). GIANI. J. Cell Sci. 135(5), jcs259022.
+Cite:    Barry et al. (2022). GIANI. J. Cell Sci. 135, jcs259511.
          Maska et al. (2023). Cell Tracking Challenge. Nat. Methods 20, 1010-1020.
 
 USAGE:
@@ -106,7 +106,10 @@ DEMO_META = {
     "caches": ["gsplats_tribolium"],
     "outputs": ["gsplats_recipes_tribolium"],
     "citation": {
-        "short": "Barry 2021 (GIANI)",
+        "short": (
+            "Barry 2021 (GIANI, Zenodo 5270323); "
+            "Cell Tracking Challenge (Maška et al. 2023)"
+        ),
         "doi": "10.5281/zenodo.5270323",
     },
 }
@@ -524,7 +527,7 @@ shade jump.
   (the per-part swap shows as that part's shade jumping).
 
 Pan across the row; zoom into a column to watch its level switch. Data: Cell
-Tracking Challenge / Zenodo 5270323. Cite: Yin et al. 2022; Maska et al. 2023.
+Tracking Challenge / Zenodo 5270323. Cite: Barry et al. 2022; Maska et al. 2023.
             """
 
             for i, recipe in enumerate(RECIPES):
