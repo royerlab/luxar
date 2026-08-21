@@ -1002,6 +1002,92 @@ def write_gsplat_arrays(
     return metadata
 
 
+def inherited_gsplat_colormap(
+    group: zarr.Group,
+    store: zarr.Group,
+    inherited_colormap: Optional[str] = None,
+) -> Optional[str]:
+    """The ``colormap`` an ANCESTOR of ``group`` authored, or ``None``.
+
+    The single rule behind the gray default (see
+    :func:`apply_gsplat_group_attrs`): a leaf only gets the manufactured
+    ``"gray"`` when nothing above it authored a palette. Without this the
+    shadow was structural — ``attrs`` there is the leaf's OWN bag, so a
+    ``colormap`` set on an enclosing Group (or on the scene / gsplats root)
+    was always beaten by a ``"gray"`` sitting nearer the leaf, and the
+    viewer's root→leaf composition (``data/attrs-composer.ts``) could never
+    see it (#1600).
+
+    Two write paths reach it, with two different mechanics — hence the one
+    function taking both:
+
+    * **already on disk** (the scene compiler): a Group node's attrs are
+      written by ``LuxarZarrCompiler.write_group`` at construction time,
+      i.e. BEFORE any child leaf exists, so walking ``group.path`` upward
+      through ``store`` finds them. Consequently the palette must be authored
+      when the ancestor is created; setting ``group.attrs["colormap"]`` after
+      its children were written cannot retroactively suppress their gray.
+    * **still in flight** (the standalone ``.gsplats.zarr`` tree writer): a
+      ``kind=lod`` / ``kind=partition`` wrapper writes its own attrs only
+      AFTER its children, so nothing is on disk to walk. There the value
+      rides DOWN the recursion in ``inherited_colormap`` — the same channel
+      ``coverage_fraction`` / ``child_index`` already use.
+
+    Both are consulted, which is exactly right for a standalone subtree
+    grafted into a scene: the in-flight argument covers the wrapper chain
+    inside the subtree, the disk walk covers the scene groups above it.
+
+    No authored-vs-manufactured distinction is needed. Only LEAF groups ever
+    receive a manufactured ``"gray"`` (``apply_gsplat_group_attrs`` is the one
+    place that stamps it, and it is called only on gsplats leaf groups —
+    ``kind=lod`` / ``kind=partition`` wrappers are groups written straight
+    through by ``gsplat_tree``/``write_group``), and a leaf is never an
+    ancestor of another node. So every ``colormap`` this walk can find was
+    authored by a caller.
+
+    Args:
+        group: The leaf group about to be stamped.
+        store: The store ROOT the walk is relative to (never walks above it).
+        inherited_colormap: A palette handed down by an in-flight ancestor.
+
+    Returns:
+        The nearest inherited palette name, or ``None`` when there is none.
+    """
+    if inherited_colormap is not None:
+        return inherited_colormap
+
+    root_path = (store.path or "").strip("/")
+    node_path = (group.path or "").strip("/")
+    if root_path:
+        if node_path == root_path:
+            node_path = ""
+        elif node_path.startswith(root_path + "/"):
+            node_path = node_path[len(root_path) + 1 :]
+        else:
+            # Not under this root — nothing this store can tell us.
+            return None
+    if not node_path:
+        return None
+
+    segments = node_path.split("/")
+    minimum_depth = int(getattr(store, "attrs", {}).get("type") == "scene")
+    # Nearest ancestor first (the leaf itself is excluded: its own attrs are
+    # the caller's `attrs` bag, checked separately).
+    for depth in range(len(segments) - 1, minimum_depth - 1, -1):
+        prefix = "/".join(segments[:depth])
+        try:
+            ancestor = store[prefix] if prefix else store
+        except KeyError:
+            continue
+        ancestor_attrs = getattr(ancestor, "attrs", None)
+        if ancestor_attrs is None:
+            continue
+        value = ancestor_attrs.get("colormap")
+        if value is not None:
+            return str(value)
+    return None
+
+
 def apply_gsplat_group_attrs(
     group: zarr.Group,
     metadata: dict[str, Any],
@@ -1009,6 +1095,8 @@ def apply_gsplat_group_attrs(
     store: zarr.Group,
     scene_tone_mapping: Optional[str],
     lut_tone_mapping_warned: bool,
+    inherited_colormap: Optional[str] = None,
+    warn_on_missing_tone_mapping: bool = True,
 ) -> bool:
     """Set standard gsplats group attributes and rendering defaults.
 
@@ -1017,16 +1105,30 @@ def apply_gsplat_group_attrs(
     :func:`~luxar.io._compiler.colormap.write_colormap_lut_if_needed`) and the
     updated flag is returned for the caller to store back.
 
+    ``inherited_colormap`` is an in-flight ancestor's palette on the standalone
+    tree path; see :func:`inherited_gsplat_colormap`.
+
     Returns:
         The updated ``lut_tone_mapping_warned`` flag.
     """
-    # Default colormap if no colors and no colormap
-    if not metadata.get("has_colors") and "colormap" not in attrs:
+    # Default colormap if no colors and no colormap — and only when no ancestor
+    # authored one, or the manufactured value would SHADOW it (it sits nearer
+    # the leaf, and the viewer composes nearest-setter-wins). See
+    # `inherited_gsplat_colormap`.
+    if (
+        not metadata.get("has_colors")
+        and "colormap" not in attrs
+        and inherited_gsplat_colormap(group, store, inherited_colormap) is None
+    ):
         attrs["colormap"] = "gray"
 
     # Write colormap LUT if colormap is a custom array
     lut_tone_mapping_warned = write_colormap_lut_if_needed(
-        group, attrs, scene_tone_mapping, lut_tone_mapping_warned
+        group,
+        attrs,
+        scene_tone_mapping,
+        lut_tone_mapping_warned,
+        warn_on_missing_tone_mapping=warn_on_missing_tone_mapping,
     )
 
     # Process transform if present

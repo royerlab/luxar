@@ -41,6 +41,7 @@ import type { DataLoader } from '../../data-loader-types';
 import type { LinesDataLoader } from '../../../types/lines';
 import type { MeshDataLoader } from '../../../types/mesh';
 import type { GSplatsDataLoader } from '../../../types/gsplats';
+import { sceneEffectiveLineLoad, setSceneLineLoad } from '../../../types/line-primitive';
 import type { GPUBufferPool } from '../../../rendering/gpu-buffer-pool';
 import type { UpdateProfiler } from '../../../profiling/update-profiler';
 import type { MultiLevelCachingStore } from '../../../cache/multi-level-caching-store';
@@ -229,6 +230,7 @@ function synthesizeSceneDimensionsFromNode(
  */
 export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.Group> {
   log.custom(LogEmoji.SCENE, Modules.SCENE_LOADER, `Loading scene from ${url}`);
+  setSceneLineLoad(0);
 
   // Clear any existing loaders from monitor before loading new scene
   ctx.monitor()?.disconnectAllLoaders();
@@ -419,6 +421,7 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
   // Build scene graph
   const sceneGraph = await buildSceneGraph(rootLoc, sceneAttrs, zarrStore);
   ctx.setSceneGraph(sceneGraph);
+  setSceneLineLoad(sceneEffectiveLineLoad(sceneGraph));
 
   // Load points / lines / gsplats / nested groups recursively
   await loadSceneNodes(sceneGraph, rootGroup, rootLoc, ctx.makeNodeBuildCtx());

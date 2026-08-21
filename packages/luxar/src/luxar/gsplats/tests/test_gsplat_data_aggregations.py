@@ -712,8 +712,8 @@ class TestSourceStampAfterFilter:
 
         A progressive fit stamps each pass's full fit stats into that pass's
         sub-LOD, and those dicts are persisted as the leaf's `lod_stats`. On the
-        ladder path `filter()` copies each sub-LOD's stats independently, so the
-        pre-crop stamp survives there unless every sub-LOD is cleaned.
+        ladder path `filter()` copies each surviving sub-LOD's stats independently,
+        so the pre-crop stamp survives there unless every survivor is cleaned.
         """
         from luxar.gsplats.gsplat_data import AdditiveSubLOD
 
@@ -733,7 +733,8 @@ class TestSourceStampAfterFilter:
             stats=dict(_SOURCE_STAMP),
         )
         out = laddered.filter_by(bbox=[(0, 60)] * 3)
-        assert out.n_additive_sublods == 2  # the ladder is preserved
+        assert out.n_additive_sublods == 1  # the emptied second rung is pruned
+        assert out.additive_sublods[0].n_splats == 2
         for i, lod in enumerate(out.additive_sublods):
             for key in _REGION_KEYS:
                 assert key not in lod.stats, f"{key!r} survived the crop in sub-LOD {i}"

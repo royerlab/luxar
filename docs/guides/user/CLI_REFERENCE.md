@@ -304,9 +304,18 @@ node is optional when the scene holds exactly one mesh (what `luxar mesh import`
 produces); with several, naming one is required rather than guessed at.
 
 `--subst-method` shares its **name** with `luxar gsplat lod` — on both commands it selects
-the substitutive, level-replacing reduction — but **not its values**: this one takes `auto`
-or `cluster`, because a mesh is decimated where a gsplat level reduces a Gaussian mixture,
-which a surface is not. `auto` resolves to `cluster` today.
+the substitutive, level-replacing reduction — but **not its values**: this one takes
+`auto`, `qem`, or `cluster`, because a mesh is decimated where a gsplat level reduces a
+Gaussian mixture, which a surface is not. QEM is Garland-Heckbert edge collapse with a
+link-condition veto, so it preserves manifold topology; clustering is the vectorized
+large-mesh tier. `auto` uses QEM through 10,000 source vertices and clustering above that
+measured worst-case open-surface envelope. A QEM ladder builds one collapse sequence and
+snapshots every level from it. On an open near-planar surface QEM's
+orientation veto can stop well above the requested count and shorten the ladder; use
+`cluster` when closely hitting the count matters more than topology preservation. QEM
+also requires at least three coarsening dimensions;
+`auto` falls back to clustering for a one- or two-dimensional coarsening, while explicit
+`qem` is refused. The selected tier is printed with the reason.
 
 The flag was called `--method` before August 2026, and `-m` was its short form. `--method`
 is gone, and `-m` has since been **claimed** by `--add-method` — the additive ordering it

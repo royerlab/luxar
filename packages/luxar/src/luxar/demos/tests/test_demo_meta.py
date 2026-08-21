@@ -333,11 +333,10 @@ def test_scriptless_manifest_entries_are_fully_checked() -> None:
     genuinely pre-existing drift at the same time: ``gsplats_3d_cryoem_virus`` was
     filed ``microscopy`` against the ``structural`` its demo declares.
 
-    All three of today's scriptless entries resolve to demo files that ARE on
-    disk, which is not the manifest's documented meaning for ``null`` (a demo that
-    lives only on a feature branch). That staleness is tracked separately and this
-    test must not stand in the way of repairing it, so it drives whatever
-    scriptless entries exist and synthesizes the shape when there are none.
+    The three entries that exposed this hole now carry their on-disk script paths
+    after #1809. The fallback remains part of the manifest contract, so this test
+    drives any scriptless entries that exist and synthesizes the shape when there
+    are none.
     """
     manifest = json.loads(MANIFEST_PATH.read_text())["demos"]
     demos = list(iter_demos())

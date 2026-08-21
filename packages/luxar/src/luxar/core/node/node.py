@@ -233,6 +233,16 @@ class Node:
                 # Dimensions resolved from the parent chain or the writer's own
                 # store.
                 self._writer.write_group(self.path, _transform_normalized=True, **attrs)
+                # Mirror the writer's custom-colormap resolution (ndarray /
+                # non-builtin name → ``"custom"`` + a sibling ``colormap_lut``
+                # array) into the cache, the same way the leaf adders do for
+                # the node they return: ``write_group`` mutates its own
+                # ``**attrs`` copy, so without this a Group authored with an
+                # ndarray LUT would report the array while zarr holds the
+                # sentinel.
+                from ..group.compositing import sync_custom_colormap_attr
+
+                sync_custom_colormap_attr(attrs)
                 self._attrs_cache.update(attrs)
             else:
                 # Metadata-only mode (no writer available)

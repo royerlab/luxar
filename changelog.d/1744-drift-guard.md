@@ -57,4 +57,6 @@ leaving the TotalSegmentator README tile without the `Wasserthal et al. 2023` it
 demo declares. The structural half turned up a genuinely pre-existing drift at
 the same time — the cryo-EM virus capsid tile was filed under `microscopy`
 against the `structural` its demo (and both its structural-biology peers)
-declares. The manifest is corrected to `structural`.
+declares. The manifest is corrected to `structural`. Those entries now carry
+their on-disk script paths after #1809; the id fallback remains guarded for any
+future `script: null` entry.

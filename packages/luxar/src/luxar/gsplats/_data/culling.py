@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from .base import _GSplatDataOps
-from .filtering import _stats_after_content_change
+from .filtering import _stats_after_content_change, _substitutive_counts_changed
 
 if TYPE_CHECKING:
     from luxar.gsplats.gsplat_data import GSplatData
@@ -162,7 +162,9 @@ class CullingMixin(_GSplatDataOps):
             # `dict(self.stats)` — the dict `gsplat info` reads `psnr_db` from.
             # Scrub BEFORE stamping: the scrub also takes the inherited cull record
             # (`culled` / `n_original` / ...), which is what this update replaces.
-            _stats_after_content_change(out, changed=out.n_splats != self.n_splats)
+            out = _stats_after_content_change(
+                out, changed=_substitutive_counts_changed(self, out), source=self
+            )
             out.stats.update(
                 {
                     "culled": True,
