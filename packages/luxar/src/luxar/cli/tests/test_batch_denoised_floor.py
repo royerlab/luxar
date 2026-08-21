@@ -450,9 +450,47 @@ def test_unparseable_floor_job_id_stops_submission(tmp_path: Path, monkeypatch) 
     class Result:
         returncode = 0
         stderr = ""
-        stdout = "submission accepted"
 
-    monkeypatch.setattr("subprocess.run", lambda *_a, **_k: Result())
+        def __init__(self, stdout: str) -> None:
+            self.stdout = stdout
+
+    responses = iter([Result("Submitted batch job 101"), Result("submission accepted")])
+    monkeypatch.setattr("subprocess.run", lambda *_a, **_k: next(responses))
+
+    with pytest.raises(typer.Exit):
+        submit_batch_jobs(
+            output_dir=tmp_path,
+            manifest=BatchManifest(output_dir=str(tmp_path), total_tasks=1),
+            fit_script="fit",
+            merge_script="merge",
+            preamble="env",
+            calibrate_script="calibrate",
+            denoise_script=None,
+            floor_script="floor",
+            preempt_fit_script=None,
+            total_tasks=1,
+            preempt_partition=None,
+        )
+
+    assert load_manifest(tmp_path).calibrate_job_id == 101
+
+
+def test_unparseable_fit_job_id_stops_before_merge(tmp_path: Path, monkeypatch) -> None:
+    class Result:
+        returncode = 0
+        stderr = ""
+
+        def __init__(self, stdout: str) -> None:
+            self.stdout = stdout
+
+    calls: list[list[str]] = []
+    responses = iter([Result("Submitted batch job 101"), Result("submission accepted")])
+
+    def _run(argv, **_kwargs):
+        calls.append(argv)
+        return next(responses)
+
+    monkeypatch.setattr("subprocess.run", _run)
 
     with pytest.raises(typer.Exit):
         submit_batch_jobs(
@@ -469,38 +507,10 @@ def test_unparseable_floor_job_id_stops_submission(tmp_path: Path, monkeypatch) 
             preempt_partition=None,
         )
 
-
-def test_unparseable_fit_job_id_stops_before_merge(tmp_path: Path, monkeypatch) -> None:
-    class Result:
-        returncode = 0
-        stderr = ""
-        stdout = "submission accepted"
-
-    calls: list[list[str]] = []
-
-    def _run(argv, **_kwargs):
-        calls.append(argv)
-        return Result()
-
-    monkeypatch.setattr("subprocess.run", _run)
-
-    with pytest.raises(typer.Exit):
-        submit_batch_jobs(
-            output_dir=tmp_path,
-            manifest=BatchManifest(output_dir=str(tmp_path), total_tasks=1),
-            fit_script="fit",
-            merge_script="merge",
-            preamble="env",
-            calibrate_script=None,
-            denoise_script=None,
-            floor_script=None,
-            preempt_fit_script=None,
-            total_tasks=1,
-            preempt_partition=None,
-        )
-
-    assert len(calls) == 1
-    assert calls[0][-1].endswith("fit_array.sbatch")
+    assert len(calls) == 2
+    assert calls[0][-1].endswith("resolve_floor.sbatch")
+    assert calls[1][-1].endswith("fit_array.sbatch")
+    assert load_manifest(tmp_path).floor_job_id == 101
 
 
 def test_slurm_fit_waits_for_denoised_floor_resolution(

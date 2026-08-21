@@ -14,6 +14,35 @@ def _write_optional_script(path: Path, script: Optional[str]) -> None:
         path.write_text(script)
 
 
+def _persist_job_ids(
+    output_dir: Path,
+    manifest: Any,
+    *,
+    calibrate_job_id: Optional[int] = None,
+    denoise_job_id: Optional[int] = None,
+    floor_job_id: Optional[int] = None,
+    fit_job_id: Optional[int] = None,
+    preemptible_job_id: Optional[int] = None,
+    merge_job_id: Optional[int] = None,
+) -> None:
+    """Persist submitted job ids without clobbering concurrent manifest updates."""
+    from luxar.gsplats.batch.manifest import load_manifest, save_manifest
+
+    job_ids = {
+        "calibrate_job_id": calibrate_job_id,
+        "denoise_job_id": denoise_job_id,
+        "floor_job_id": floor_job_id,
+        "array_job_id": fit_job_id,
+        "preemptible_job_id": preemptible_job_id,
+        "merge_job_id": merge_job_id,
+    }
+    persisted = load_manifest(output_dir)
+    for field, job_id in job_ids.items():
+        setattr(persisted, field, job_id)
+        setattr(manifest, field, job_id)
+    save_manifest(persisted, output_dir)
+
+
 def submit_batch_jobs(
     *,
     output_dir: Path,
@@ -31,7 +60,7 @@ def submit_batch_jobs(
     """Write sbatch scripts, submit dependent jobs, and persist manifest updates."""
     import subprocess  # nosec B404
 
-    from luxar.gsplats.batch.manifest import load_manifest, save_manifest
+    from luxar.gsplats.batch.manifest import save_manifest
 
     out = output_dir.resolve()
     (out / "tiles").mkdir(parents=True, exist_ok=True)
@@ -90,6 +119,7 @@ def submit_batch_jobs(
         )
         if result.returncode != 0:
             aprint(f"Error submitting denoise job: {result.stderr}")
+            _persist_job_ids(out, manifest, calibrate_job_id=calibrate_job_id)
             raise typer.Exit(1)
         denoise_job_id = _parse_job_id(result.stdout)
         manifest.denoise_job_id = denoise_job_id
@@ -107,7 +137,16 @@ def submit_batch_jobs(
         aprint(f"  Denoise array job: {denoise_job_id} ({denoise_total} tasks)")
 
     floor_dep_id = denoise_job_id or calibrate_job_id
-    floor_job_id = _submit_floor_job(out, floor_script, floor_dep_id, _parse_job_id)
+    try:
+        floor_job_id = _submit_floor_job(out, floor_script, floor_dep_id, _parse_job_id)
+    except typer.Exit:
+        _persist_job_ids(
+            out,
+            manifest,
+            calibrate_job_id=calibrate_job_id,
+            denoise_job_id=denoise_job_id,
+        )
+        raise
     manifest.floor_job_id = floor_job_id
 
     # Submit fitting array (depends on floor, denoise, or calibration)
@@ -125,11 +164,25 @@ def submit_batch_jobs(
     )
     if result.returncode != 0:
         aprint(f"Error submitting fit job: {result.stderr}")
+        _persist_job_ids(
+            out,
+            manifest,
+            calibrate_job_id=calibrate_job_id,
+            denoise_job_id=denoise_job_id,
+            floor_job_id=floor_job_id,
+        )
         raise typer.Exit(1)
 
     fit_job_id = _parse_job_id(result.stdout)
     if fit_job_id is None:
         aprint(f"Error: could not parse fit job id from sbatch output: {result.stdout}")
+        _persist_job_ids(
+            out,
+            manifest,
+            calibrate_job_id=calibrate_job_id,
+            denoise_job_id=denoise_job_id,
+            floor_job_id=floor_job_id,
+        )
         raise typer.Exit(1)
     aprint(f"  Fitting array job: {fit_job_id} ({total_tasks} tasks)")
 
@@ -182,21 +235,16 @@ def submit_batch_jobs(
     else:
         aprint(f"  Warning: merge job submission failed: {result.stderr}")
 
-    persisted = load_manifest(out)
-    persisted.calibrate_job_id = calibrate_job_id
-    persisted.denoise_job_id = denoise_job_id
-    persisted.floor_job_id = floor_job_id
-    persisted.array_job_id = fit_job_id
-    persisted.preemptible_job_id = preemptible_job_id
-    persisted.merge_job_id = merge_job_id
-    save_manifest(persisted, out)
-
-    manifest.calibrate_job_id = calibrate_job_id
-    manifest.denoise_job_id = denoise_job_id
-    manifest.floor_job_id = floor_job_id
-    manifest.array_job_id = fit_job_id
-    manifest.preemptible_job_id = preemptible_job_id
-    manifest.merge_job_id = merge_job_id
+    _persist_job_ids(
+        out,
+        manifest,
+        calibrate_job_id=calibrate_job_id,
+        denoise_job_id=denoise_job_id,
+        floor_job_id=floor_job_id,
+        fit_job_id=fit_job_id,
+        preemptible_job_id=preemptible_job_id,
+        merge_job_id=merge_job_id,
+    )
 
     aprint(f"\nManifest: {out / 'manifest.json'}")
     aprint(f"Check status: luxar gsplat batch-fit status {out}")
