@@ -682,9 +682,11 @@ def load_dataset_gsplats(
       manifest's reason/strategy is printed and the caller's existing
       "fit from scratch" branch takes over.
 
-    Everything else raises — an unknown dataset, an unknown variant, a file that
-    is neither cached nor in-repo nor hosted, a checksum that will not verify.
-    Those are faults a demo must not silently route around.
+    :class:`DatasetUnavailable` is the one routable absence: the data is neither
+    cached, in-repo, nor hosted yet, so the caller may build its own copy.
+    Everything else raises — an unknown dataset, an unknown variant, or a
+    checksum that will not verify. Those are faults a demo must not silently
+    route around.
 
     Args:
         name: Manifest dataset key (e.g. ``"gsplats_kidney"``).
