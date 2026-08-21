@@ -1188,8 +1188,7 @@ def add_mesh_substitutive_lod_wrapper_impl(
     is the same degenerate-path behaviour the Points wrapper has.
     """
     from ....io._compiler.geometry_writers.mesh import validate_mesh_arrays
-    from ....mesh.decimate import decimate, resolve_decimation_method
-    from ....mesh.qem import decimate_qem_ladder
+    from ....mesh.decimate import decimate_ladder
     from ..lod.group import resolve_coarsen_dims, resolve_lod_ladder
 
     # Fail-fast pre-write gate, part two: the ARRAYS, run BEFORE any decimation
@@ -1282,40 +1281,23 @@ def add_mesh_substitutive_lod_wrapper_impl(
         else None
     )
 
-    method = resolve_decimation_method(
-        spec["method"], n_vertices, spatial_ndim=len(spatial_dims)
-    )
     targets = [
         n_vertices // (compression_factor**power)
         for power in range(levels, 0, -1)
         if n_vertices // (compression_factor**power) >= 4
     ]
-    if method == "qem":
-        candidates = decimate_qem_ladder(
-            vert_arr,
-            faces_arr.reshape(-1, 3).astype(np.uint32),
-            target_vertices=targets,
-            normals=normals if normals is not None else None,
-            normal_dims=tuple(normal_dims) if normal_dims is not None else None,
-            colors=per_vertex_colors,
-            scalars=per_vertex_scalars,
-            spatial_dims=spatial_dims,
-        )
-    else:
-        candidates = [
-            decimate(
-                vert_arr,
-                faces_arr.reshape(-1, 3).astype(np.uint32),
-                target_vertices=target,
-                method=method,
-                normals=normals if normals is not None else None,
-                normal_dims=tuple(normal_dims) if normal_dims is not None else None,
-                colors=per_vertex_colors,
-                scalars=per_vertex_scalars,
-                spatial_dims=spatial_dims,
-            )
-            for target in targets
-        ]
+    candidates = decimate_ladder(
+        vert_arr,
+        faces_arr.reshape(-1, 3).astype(np.uint32),
+        target_vertices=targets,
+        method=spec["method"],
+        normals=normals if normals is not None else None,
+        # Normals live in their own 3D FRAME, not necessarily the coarsening axes.
+        normal_dims=tuple(normal_dims) if normal_dims is not None else None,
+        colors=per_vertex_colors,
+        scalars=per_vertex_scalars,
+        spatial_dims=spatial_dims,
+    )
 
     coarse: List[Any] = []
     previous = 0

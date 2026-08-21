@@ -19,6 +19,7 @@ from ..decimate import (
     QEM_AUTO_VERTEX_LIMIT,
     decimate,
     decimate_cluster,
+    decimate_ladder,
     resolve_decimation_method,
 )
 from ..qem import (
@@ -584,10 +585,11 @@ class TestDecimateQEM:
         monkeypatch.setattr(qem, "_build_heap", counted_build_heap)
 
         targets = [40, 120, 400]
-        levels = decimate_qem_ladder(
+        levels = decimate_ladder(
             vertices,
             faces,
             target_vertices=targets,
+            method="qem",
             colors=colors,
             scalars=scalars,
         )
@@ -610,6 +612,19 @@ class TestDecimateQEM:
             assert len(level.vertices) - edges + len(level.faces) == 2
             assert boundary == 0
             assert nonmanifold == 0
+
+    def test_cluster_ladder_dispatch_matches_independent_levels(self) -> None:
+        vertices, faces = octasphere(3)
+        targets = [40, 80]
+
+        levels = decimate_ladder(
+            vertices, faces, target_vertices=targets, method="cluster"
+        )
+
+        for target, level in zip(targets, levels, strict=True):
+            independent = decimate_cluster(vertices, faces, target_vertices=target)
+            np.testing.assert_array_equal(level.vertices, independent.vertices)
+            np.testing.assert_array_equal(level.faces, independent.faces)
 
     def test_edge_target_does_not_run_an_svd_per_candidate(
         self, monkeypatch: pytest.MonkeyPatch

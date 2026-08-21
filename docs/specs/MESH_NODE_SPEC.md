@@ -1618,7 +1618,8 @@ surfaces, or Garland-Heckbert QEM edge collapse with a link-condition veto when
 manifoldness must survive. `method="auto"` selects QEM through 10,000 vertices and
 clustering above that measured worst-case open-surface envelope. QEM ladders reuse one
 collapse sequence and snapshot each requested level rather than restarting from the
-original mesh. On an open near-planar
+original mesh. Each coarse level is therefore a strict collapse-subsequence of the finer
+one, so a LOD swap cannot reshuffle the surface between independent approximations. On an open near-planar
 surface the orientation veto can stop well above the requested count and therefore
 shorten the ladder; `cluster` is the tier to use when closely hitting the count matters
 more than topology preservation. A QEM quadric also requires a
