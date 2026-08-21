@@ -42,6 +42,8 @@
  * @module types/line-primitive
  */
 
+import type { LinesMetadata } from './lines';
+
 /** Selectable line primitives. */
 export type LinePrimitive = 'screen-space' | 'capsule';
 
@@ -218,11 +220,6 @@ export interface LineNodeLoad {
   bboxDiagonal?: number;
 }
 
-type AuthoredLineLoadAttrs = Pick<
-  import('./lines').LinesMetadata,
-  'n_segments' | 'max_width' | 'vertex_ordering' | 'segment_ordering' | 'position_bounds'
->;
-
 /** Scene-tree shape needed by {@link sceneEffectiveLineLoad}. */
 export interface SceneLineLoadNode {
   type: string;
@@ -245,7 +242,7 @@ function boundsDiagonal(min: unknown, max: unknown): number | undefined {
  * segment ordering is a conservative √2-large fallback; `position_bounds`
  * keeps width normalization available for unindexed nodes.
  */
-export function lineNodeLoadFromAttrs(attrs: Partial<AuthoredLineLoadAttrs>): LineNodeLoad {
+export function lineNodeLoadFromAttrs(attrs: Partial<LinesMetadata>): LineNodeLoad {
   const ordering = attrs.vertex_ordering ?? attrs.segment_ordering;
   const indexed = ordering && boundsDiagonal(ordering.ordering_min, ordering.ordering_max);
   return {
@@ -291,7 +288,7 @@ export function effectiveSegmentLoad(load: LineNodeLoad): number {
 export function sceneEffectiveLineLoad(node: SceneLineLoadNode): number {
   if (node.type === 'lines') {
     return effectiveSegmentLoad(
-      lineNodeLoadFromAttrs(node.attrs as Partial<AuthoredLineLoadAttrs>)
+      lineNodeLoadFromAttrs(node.attrs as Partial<LinesMetadata>)
     );
   }
 
