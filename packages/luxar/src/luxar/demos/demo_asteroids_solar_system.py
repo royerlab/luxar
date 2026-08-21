@@ -80,6 +80,10 @@ DEMO_META = {
     },
     "caches": ["asteroids"],
     "outputs": ["asteroids_solar_system"],
+    "citation": {
+        "short": "NASA/JPL-Caltech Small-Body Database",
+        "url": "https://ssd.jpl.nasa.gov/",
+    },
 }
 
 import json
@@ -716,7 +720,9 @@ def build_static_scene(output_path: Path, cat: dict) -> int:
         )
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(
-                dimensions=dims, viewer_config=_solar_system_viewer_config()
+                citation=DEMO_META["citation"],
+                dimensions=dims,
+                viewer_config=_solar_system_viewer_config(),
             )
 
             scene.add_points(
@@ -782,7 +788,9 @@ def build_animated_scene(output_path: Path, cat: dict) -> int:
         )
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(
-                dimensions=dims, viewer_config=_solar_system_viewer_config()
+                citation=DEMO_META["citation"],
+                dimensions=dims,
+                viewer_config=_solar_system_viewer_config(),
             )
 
             all_pos = np.empty((n_ast * ANIMATE_FRAMES, 4), dtype=np.float32)

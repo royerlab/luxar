@@ -88,6 +88,10 @@ DEMO_META = {
     },
     "caches": ["gsplats_acto3d_heart"],
     "outputs": ["gsplats_3d_acto3d_heart"],
+    "citation": {
+        "short": "Takeshita et al. 2024 (Acto3D)",
+        "doi": "10.1242/dev.202550",
+    },
 }
 
 # Enable MPS->CPU fallback for unsupported PyTorch ops (must be before torch import)
@@ -527,7 +531,9 @@ def create_luxar_scene(
                     Dimension("z", unit="um", display=True),
                 ]
             )
-            scene = compiler.create_scene(dimensions=dims)
+            scene = compiler.create_scene(
+                citation=DEMO_META["citation"], dimensions=dims
+            )
 
             scene.attrs["title"] = "GSplats: Mouse Embryo Heart E13.5 (Acto3D)"
             scene.attrs["description"] = """

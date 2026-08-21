@@ -105,6 +105,11 @@ DEMO_META = {
     },
     "caches": ["gsplats_tribolium"],
     "outputs": ["gsplats_recipes_tribolium"],
+    "citation": {
+        "short": "Barry 2021 (GIANI)",
+        "doi": "10.5281/zenodo.5270323",
+        "license": "CC BY 4.0",
+    },
 }
 
 import colorsys
@@ -485,6 +490,7 @@ def create_luxar_scene(
             output_path, encoding_mode=EncodingMode.PRECISION
         ) as compiler:
             scene = compiler.create_scene(
+                citation=DEMO_META["citation"],
                 dimensions=dims,
                 # No tone mapping at all (#1459). Colour here IS the encoding
                 # (hue = which part, shade = which LOD level) and the whole

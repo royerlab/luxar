@@ -72,6 +72,10 @@ DEMO_META = {
     },
     "caches": ["gsplats_interop_sog"],
     "outputs": ["gsplats_interop_sog_matrixcity"],
+    "citation": {
+        "short": "Li et al. 2023 (MatrixCity)",
+        "doi": "10.1109/iccv51070.2023.00297",
+    },
 }
 
 from pathlib import Path
@@ -159,6 +163,7 @@ def build_scene() -> Path:
         title="MatrixCity aerial (13.6M splats, SOG) → Luxar overview LOD",
         layer_name="matrixcity",
         credit="MatrixCity • FriendlySplat/SuperSplat • SOG → Luxar • overview LOD",
+        citation=DEMO_META["citation"],
     )
 
 

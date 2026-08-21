@@ -98,6 +98,10 @@ DEMO_META = {
     },
     "caches": ["gsplats_cmu1_pathology"],
     "outputs": ["gsplats_2d_cmu1_pathology"],
+    "citation": {
+        "short": "OpenSlide test data (Goode et al. 2013)",
+        "doi": "10.4103/2153-3539.119005",
+    },
 }
 
 # Enable MPS->CPU fallback for unsupported PyTorch ops (must be before torch import)
@@ -505,7 +509,11 @@ def create_luxar_scene(
                 tone_mapping="ACES",
                 ui=UIConfig(show_scale_bar=True),
             )
-            scene = compiler.create_scene(dimensions=dims, viewer_config=viewer_config)
+            scene = compiler.create_scene(
+                citation=DEMO_META["citation"],
+                dimensions=dims,
+                viewer_config=viewer_config,
+            )
 
             scene.attrs["title"] = "GSplats 2D: Whole-Slide Pathology (CMU-1, H&E)"
             scene.attrs["description"] = f"""

@@ -96,6 +96,11 @@ DEMO_META = {
     },
     "caches": ["gsplats_tribolium"],
     "outputs": ["gsplats_lod_tribolium"],
+    "citation": {
+        "short": "Barry 2021 (GIANI)",
+        "doi": "10.5281/zenodo.5270323",
+        "license": "CC BY 4.0",
+    },
 }
 
 import sys
@@ -296,6 +301,7 @@ def create_luxar_scene(colored: GSplatData, output_path: Path) -> Path:
             output_path, encoding_mode=EncodingMode.PRECISION
         ) as compiler:
             scene = compiler.create_scene(
+                citation=DEMO_META["citation"],
                 dimensions=dims,
                 # ACES, set explicitly + matched intensity, consistent with the
                 # other gsplat demos. NOTE: the per-level debug colours

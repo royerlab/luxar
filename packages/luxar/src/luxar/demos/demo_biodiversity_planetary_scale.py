@@ -321,6 +321,11 @@ DEMO_META = {
     },
     "caches": ["biodiversity_planetary_scale"],
     "outputs": ["biodiversity_planetary_scale"],
+    "citation": {
+        "short": "Movebank: humpback whales (Andrews-Goff et al. 2023), turkey vultures (Bildstein et al. 2014), white storks (Berthold et al. 2022)",
+        "license": "CC0 1.0",
+        "url": "https://datarepository.movebank.org/",
+    },
 }
 
 import json
@@ -2693,6 +2698,7 @@ def build_scene(output_path: Path, sample: GbifSample, tracks: TrackSet) -> Path
             str(output_path), encoding_mode=EncodingMode.PRECISION
         ) as compiler:
             scene = compiler.create_scene(
+                citation=DEMO_META["citation"],
                 dimensions=dims,
                 viewer_config=ViewerConfig(
                     # Neutral, not ACES (#1459): hue here is a CATEGORICAL

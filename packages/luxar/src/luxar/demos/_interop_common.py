@@ -92,6 +92,7 @@ def build_interop_scene(
     tone_mapping: str = "Neutral",
     intensity: float = 1.0,
     camera: Optional[CameraConfig] = None,
+    citation: Optional[dict] = None,
 ) -> Path:
     """Build a single-layer scene from a cached (possibly LOD'd) ``.gsplats.zarr``.
 
@@ -111,6 +112,11 @@ def build_interop_scene(
     matrix and partition caches embed through ``add_gsplats_from_file``, which
     grafts whatever node shape the recipe produced.
 
+    ``citation`` is the dataset credit written to the scene's root attr, so a
+    downloaded store carries its attribution rather than relying on the demo
+    source. These captures are all third-party and several are CC BY, which
+    requires attribution to travel with the data.
+
     ``camera`` sets an initial viewer pose (overriding bounding-sphere
     auto-fit). Immersive 360° environment captures (e.g. Scaniverse room/yard
     scans) reconstruct the *whole surroundings* as a sphere, so auto-fit parks
@@ -123,6 +129,7 @@ def build_interop_scene(
             scene = compiler.create_scene(
                 dimensions=dims,
                 viewer_config=ViewerConfig(tone_mapping=tone_mapping, camera=camera),
+                citation=citation,
             )
             scene.attrs["title"] = title
             attrs: dict[str, object] = dict(

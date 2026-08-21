@@ -99,6 +99,11 @@ DEMO_META = {
     },
     "caches": ["gsplats_tribolium"],
     "outputs": ["gsplats_lod_embryo_line"],
+    "citation": {
+        "short": "Barry 2021 (GIANI)",
+        "doi": "10.5281/zenodo.5270323",
+        "license": "CC BY 4.0",
+    },
 }
 
 import sys
@@ -266,7 +271,9 @@ def create_luxar_scene(
 
         with LuxarZarrCompiler(out, encoding_mode=EncodingMode.PRECISION) as compiler:
             scene = compiler.create_scene(
-                dimensions=dims, viewer_config=ViewerConfig(camera=camera)
+                citation=DEMO_META["citation"],
+                dimensions=dims,
+                viewer_config=ViewerConfig(camera=camera),
             )
 
             scene.attrs["title"] = (

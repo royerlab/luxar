@@ -71,6 +71,10 @@ DEMO_META = {
     },
     "caches": [],
     "outputs": ["gsplats_4d_neuromast_2ch"],
+    "citation": {
+        "short": "Jacobo lab, CZ Biohub San Francisco",
+        "license": "CC BY 4.0",
+    },
 }
 
 import os
@@ -199,6 +203,7 @@ def create_luxar_scene(channel_paths: list[Path], output_path: Path) -> Path:
 
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(
+                citation=DEMO_META["citation"],
                 dimensions=dims,
                 viewer_config=ViewerConfig(tone_mapping="ACES"),
             )

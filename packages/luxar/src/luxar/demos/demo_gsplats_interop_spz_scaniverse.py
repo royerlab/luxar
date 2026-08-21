@@ -52,6 +52,11 @@ DEMO_META = {
     },
     "caches": ["gsplats_interop_spz"],
     "outputs": ["gsplats_interop_spz_hornedlizard", "gsplats_interop_spz_racoonfamily"],
+    "citation": {
+        "short": "Niantic Labs SPZ sample scans",
+        "license": "MIT",
+        "url": "https://github.com/nianticlabs/spz",
+    },
 }
 
 from pathlib import Path
@@ -120,6 +125,7 @@ def build_scene(scene_key: str = "hornedlizard") -> Path:
         layer_name=spec["layer"],
         credit="Niantic spz samples • MIT • SPZ → Luxar",
         camera=SUBJECT_CAMERA,
+        citation=DEMO_META["citation"],
     )
 
 

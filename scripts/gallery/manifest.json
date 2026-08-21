@@ -604,6 +604,137 @@
       "dataset": "datasets/demos/gsplats_3d_tng_cosmic_web.luxar.zarr",
       "autoExpose": false,
       "readme": true
+    },
+    {
+      "id": "cubic_array",
+      "title": "Cubic Array (depth of field)",
+      "geometry": "points",
+      "category": "synthetic",
+      "script": "demo_cubic_array.py",
+      "dataset": "datasets/demos/cubic_array.luxar.zarr"
+    },
+    {
+      "id": "particle_collision_animated",
+      "title": "Particle Collision (animated)",
+      "geometry": "points+lines",
+      "category": "synthetic",
+      "script": "demo_particle_collision_animated.py",
+      "dataset": "datasets/demos/collision_animated.luxar.zarr"
+    },
+    {
+      "id": "network_performance",
+      "title": "Network Performance Test (4D)",
+      "geometry": "points",
+      "category": "synthetic",
+      "script": "demo_network_performance.py",
+      "dataset": "datasets/demos/performance_test.luxar.zarr"
+    },
+    {
+      "id": "ocean_currents_earth",
+      "title": "Ocean Currents of Earth",
+      "geometry": "points+lines",
+      "category": "geoscience",
+      "script": "demo_ocean_currents_earth.py",
+      "dataset": "datasets/demos/ocean_currents_earth.luxar.zarr"
+    },
+    {
+      "id": "chromatrace_choir_umap_sequence",
+      "title": "Chromatrace CHOIR UMAP (cell-type walk)",
+      "geometry": "points",
+      "category": "embeddings",
+      "script": "demo_chromatrace_choir_umap_sequence.py",
+      "dataset": "datasets/demos/chromatrace_choir_umap_sequence.luxar.zarr"
+    },
+    {
+      "id": "zebrahub_velocity_streamlines",
+      "title": "Zebrahub RNA-Velocity Streamlines",
+      "geometry": "points+lines",
+      "category": "embeddings",
+      "script": "demo_zebrahub_velocity_streamlines.py",
+      "dataset": "datasets/demos/zebrahub_velocity_streamlines_standard.luxar.zarr"
+    },
+    {
+      "id": "gsplats_2d_cmu1_pathology",
+      "title": "Whole-Slide Pathology (CMU-1)",
+      "geometry": "gsplats",
+      "category": "medical",
+      "script": "demo_gsplats_2d_cmu1_pathology.py",
+      "dataset": "datasets/demos/gsplats_2d_cmu1_pathology.luxar.zarr"
+    },
+    {
+      "id": "gsplats_3d_flylight_mcfo_63x_brain",
+      "title": "Drosophila Whole Brain (FlyLight MCFO 63x)",
+      "geometry": "gsplats",
+      "category": "microscopy",
+      "script": "demo_gsplats_3d_flylight_mcfo_63x_brain.py",
+      "dataset": "datasets/demos/gsplats_3d_flylight_mcfo_63x_brain.luxar.zarr"
+    },
+    {
+      "id": "gsplats_lod_tribolium",
+      "title": "Adaptive Level of Detail (Tribolium embryo)",
+      "geometry": "gsplats",
+      "category": "microscopy",
+      "script": "demo_gsplats_lod_tribolium.py",
+      "dataset": "datasets/demos/gsplats_lod_tribolium.luxar.zarr"
+    },
+    {
+      "id": "gsplats_recipes_tribolium",
+      "title": "LOD Recipe Gallery (Tribolium embryo)",
+      "geometry": "gsplats",
+      "category": "microscopy",
+      "script": "demo_gsplats_recipes_tribolium.py",
+      "dataset": "datasets/demos/gsplats_recipes_tribolium.luxar.zarr"
+    },
+    {
+      "id": "gsplats_interop_inria_garden",
+      "title": "INRIA Garden (3D Gaussian Splatting)",
+      "geometry": "gsplats",
+      "category": "photogrammetry",
+      "script": "demo_gsplats_interop_inria_garden.py",
+      "dataset": "datasets/demos/gsplats_interop_inria_garden.luxar.zarr"
+    },
+    {
+      "id": "gsplats_interop_mipnerf_garden",
+      "title": "Mip-NeRF 360 Garden",
+      "geometry": "gsplats",
+      "category": "photogrammetry",
+      "script": "demo_gsplats_interop_mipnerf_garden.py",
+      "dataset": "datasets/demos/gsplats_interop_mipnerf_garden.luxar.zarr"
+    },
+    {
+      "id": "gsplats_interop_macro_clusterfly",
+      "title": "Cluster Fly (macro photogrammetry)",
+      "geometry": "gsplats",
+      "category": "photogrammetry",
+      "script": "demo_gsplats_interop_macro_clusterfly.py",
+      "dataset": "datasets/demos/gsplats_interop_macro_clusterfly.luxar.zarr"
+    },
+    {
+      "id": "gsplats_interop_observatory",
+      "title": "Rubin Observatory",
+      "geometry": "gsplats",
+      "category": "photogrammetry",
+      "script": "demo_gsplats_interop_observatory.py",
+      "dataset": "datasets/demos/gsplats_interop_observatory_rubin.luxar.zarr",
+      "note": "the demo also emits a gemini-south capture; one tile per demo"
+    },
+    {
+      "id": "gsplats_interop_spz_scaniverse",
+      "title": "Horned Lizard (Scaniverse capture)",
+      "geometry": "gsplats",
+      "category": "photogrammetry",
+      "script": "demo_gsplats_interop_spz_scaniverse.py",
+      "dataset": "datasets/demos/gsplats_interop_spz_hornedlizard.luxar.zarr",
+      "note": "the demo also emits a racoon-family capture; one tile per demo"
+    },
+    {
+      "id": "gsplats_interop_sog_matrixcity",
+      "title": "MatrixCity Aerial (13.6M splats)",
+      "geometry": "gsplats",
+      "category": "photogrammetry",
+      "script": "demo_gsplats_interop_sog_matrixcity.py",
+      "dataset": "datasets/demos/gsplats_interop_sog_matrixcity.luxar.zarr",
+      "lodFinest": false
     }
   ]
 }

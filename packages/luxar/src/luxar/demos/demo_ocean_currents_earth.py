@@ -87,6 +87,10 @@ DEMO_META = {
     },
     "caches": ["ocean_currents_earth"],
     "outputs": ["ocean_currents_earth"],
+    "citation": {
+        "short": "HYCOM GOFS 3.1 (Chassignet et al. 2007)",
+        "doi": "10.1016/j.jmarsys.2005.09.016",
+    },
 }
 
 from pathlib import Path
@@ -602,6 +606,7 @@ def build_scene(hycom_path: Path, marble_path: Path, output_path: Path) -> Path:
         )
         with LuxarZarrCompiler(output_path, encoding_mode=EncodingMode.PRECISION) as c:
             scene = c.create_scene(
+                citation=DEMO_META["citation"],
                 dimensions=dims,
                 viewer_config=ViewerConfig(
                     # No tone mapping at all (#1459): the ramp is an encoding of

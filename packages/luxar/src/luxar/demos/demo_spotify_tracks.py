@@ -34,6 +34,10 @@ DEMO_META = {
     },
     "caches": ["spotify"],
     "outputs": ["spotify_tracks"],
+    "citation": {
+        "short": "maharshipandya/spotify-tracks-dataset (Spotify Web API features)",
+        "url": "https://huggingface.co/datasets/maharshipandya/spotify-tracks-dataset",
+    },
 }
 
 import sys
@@ -291,7 +295,9 @@ def generate_spotify_landscape(
         )
 
         with LuxarZarrCompiler(output_path) as compiler:
-            scene = compiler.create_scene(dimensions=dims)
+            scene = compiler.create_scene(
+                citation=DEMO_META["citation"], dimensions=dims
+            )
 
             sharpness = np.full(n_tracks, 0.6, dtype=np.float32)
 

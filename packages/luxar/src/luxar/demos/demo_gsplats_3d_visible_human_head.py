@@ -93,6 +93,10 @@ DEMO_META = {
     },
     "caches": ["gsplats_visible_human_head"],
     "outputs": ["gsplats_3d_visible_human_head"],
+    "citation": {
+        "short": "NLM Visible Human Project (Spitzer et al. 1996)",
+        "doi": "10.1136/jamia.1996.96236280",
+    },
 }
 
 from pathlib import Path
@@ -557,6 +561,7 @@ def create_luxar_scene(fit: GSplatData, colors: np.ndarray, output_path: Path) -
             output_path, encoding_mode=EncodingMode.PRECISION
         ) as compiler:
             scene = compiler.create_scene(
+                citation=DEMO_META["citation"],
                 dimensions=dims,
                 viewer_config=ViewerConfig(tone_mapping="ACES"),
             )

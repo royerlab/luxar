@@ -105,6 +105,10 @@ DEMO_META = {
     },
     "caches": ["earthquakes"],
     "outputs": ["earthquakes"],
+    "citation": {
+        "short": "USGS ANSS Comprehensive Catalog",
+        "doi": "10.5066/F7MS3QZH",
+    },
 }
 
 import sys
@@ -1314,7 +1318,9 @@ def generate_earthquake_scene(
         )
 
         with LuxarZarrCompiler(output_path) as compiler:
-            scene = compiler.create_scene(dimensions=dims)
+            scene = compiler.create_scene(
+                citation=DEMO_META["citation"], dimensions=dims
+            )
 
             # Add Earth surface
             earth_radii = np.full(len(earth_positions), 0.003, dtype=np.float32)
