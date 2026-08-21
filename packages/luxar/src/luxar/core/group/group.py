@@ -207,16 +207,18 @@ class Group(Node):
                 When the decomposition yields more than one part, returns a
                 kind=partition ``Group`` wrapper carrying ``display_type=
                 "points"``; the wrapper's children are ``part_<i>`` Points
-                nodes. The wrapper's ``position_bounds`` is the union of
-                the children's so picking treats the layer as one entity.
+                nodes. When ``substitutive_lod=`` is also set, that wrapper is
+                instead the finest child of a kind=lod ``Group``. The partition
+                wrapper's ``position_bounds`` is the union of the children's so
+                picking treats the layer as one entity.
                 ``image_labels`` is not supported alongside ``partition=``
                 (the sparse-dict semantics complicate slicing).
             **attrs: Additional node attributes. Common ones:
 
                 - ``layer`` (bool): Expose this node in the viewer's Layers
-                  panel for per-node control. When ``partition=`` produces a
-                  wrapper, ``layer=True`` lands on the wrapper, not on
-                  each leaf part.
+                  panel for per-node control. When structural options produce
+                  wrappers, ``layer=True`` lands on the outermost wrapper, not
+                  on a nested partition wrapper or each leaf part.
                 - ``visible`` (bool): Initial visibility when scene loads
                   (default ``True``). Used by the Layers panel to start a
                   layer hidden.

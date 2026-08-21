@@ -884,6 +884,8 @@ def add_points_substitutive_lod_wrapper_impl(
         )
         if fine_partition is not None:
             max_elements, parts = fine_partition
+            # Each part sizes its own ladder; sibling-aware whole-cloud sizing
+            # would let the first chunk swallow an entire part.
             return add_points_partition_wrapper_impl(
                 group,
                 name=name,
@@ -992,6 +994,8 @@ def add_points_substitutive_lod_wrapper_impl(
 
     if fine_partition is not None:
         max_elements, parts = fine_partition
+        # Each part sizes its own ladder; sibling-aware whole-cloud sizing
+        # would let the first chunk swallow an entire part.
         add_points_partition_wrapper_impl(
             group,
             name=f"child_{len(coarse_first)}",
