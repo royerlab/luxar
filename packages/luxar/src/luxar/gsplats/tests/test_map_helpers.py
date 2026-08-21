@@ -72,12 +72,22 @@ def _pyramid() -> GSplatData:
 
     return GSplatData.from_substitutive_levels(
         [
-            SubstitutiveLevel(additive_sublods=[_sub(30, 0)], level_index=0),
             SubstitutiveLevel(
-                additive_sublods=[_sub(12, 1)], compression_factor=4, level_index=1
+                additive_sublods=[_sub(30, 0)],
+                level_index=0,
+                stats={"level_label": "fine", "reference_energy": 30.0},
             ),
             SubstitutiveLevel(
-                additive_sublods=[_sub(4, 2)], compression_factor=16, level_index=2
+                additive_sublods=[_sub(12, 1)],
+                compression_factor=4,
+                level_index=1,
+                stats={"level_label": "middle", "reference_energy": 12.0},
+            ),
+            SubstitutiveLevel(
+                additive_sublods=[_sub(4, 2)],
+                compression_factor=16,
+                level_index=2,
+                stats={"level_label": "coarse", "reference_energy": 4.0},
             ),
         ]
     )
@@ -93,6 +103,11 @@ def test_map_substitutive_preserves_levels_and_metadata() -> None:
     assert out.n_substitutive == 3
     # per-level compression_factor metadata carried through
     assert [lvl.compression_factor for lvl in out.substitutive_levels] == [1, 4, 16]
+    assert [lvl.stats for lvl in out.substitutive_levels] == [
+        {"level_label": "fine", "reference_energy": 30.0},
+        {"level_label": "middle", "reference_energy": 12.0},
+        {"level_label": "coarse", "reference_energy": 4.0},
+    ]
     # every level's centers translated by the same shift
     for i, lvl in enumerate(out.substitutive_levels):
         assert np.allclose(lvl.additive_sublods[0].centers, before[i] + shift)

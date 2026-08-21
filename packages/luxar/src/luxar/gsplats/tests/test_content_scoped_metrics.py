@@ -687,30 +687,25 @@ def test_a_pyramid_scrubs_its_rebuilt_top_level(
 
 
 @pytest.mark.parametrize(
-    "op",
+    ("op", "keeps_level_measurements"),
     [
-        pytest.param(lambda gs: gs.filter_by(amplitude_min=0.3), id="filter_by"),
-        pytest.param(lambda gs: gs.cull(method="cumulative", retention=0.5), id="cull"),
-        pytest.param(lambda gs: gs.scale_intensity(0.5), id="scale_intensity"),
-        pytest.param(_decimate(2, "prefix"), id="decimate_prefix"),
+        pytest.param(lambda gs: gs.filter_by(amplitude_min=0.3), False, id="filter_by"),
+        pytest.param(
+            lambda gs: gs.cull(method="cumulative", retention=0.5), False, id="cull"
+        ),
+        pytest.param(lambda gs: gs.scale_intensity(0.5), True, id="scale_intensity"),
+        pytest.param(_decimate(2, "prefix"), False, id="decimate_prefix"),
     ],
 )
-def test_the_q_e_ladder_stamps_are_left_exactly_as_authored(
-    op: Callable[[GSplatData], GSplatData],
+def test_the_q_e_ladder_stamps_follow_the_rebuild_contract(
+    op: Callable[[GSplatData], GSplatData], keeps_level_measurements: bool
 ) -> None:
-    """The NARROWED contract, in the direction a future change must not break.
+    """Preserve Q·e only while the ladder content and shape still match it.
 
     ``energy_fraction_cum`` / ``reference_energy`` / level ``quality`` are measured
-    on the artifact's own content — a coarse level's Q is that level against its
-    group's finest, its e(k) is its own prefix energy — so the "measured against
-    the source volume, therefore invalidated by a rewrite" argument does not reach
-    them, and this rule leaves them alone. Scrubbing them broke two things at once:
-    ``lod_dispatch.py`` builds every coarse child of a ``kind=lod`` group with
-    ``at_substitutive(s)`` and copies these numbers off the view (so coarse levels
-    lost the viewer's ``e(k) >= 0.6`` upgrade release and its ``1/e(k)`` brightness
-    compensation), and ``lod/annotate.py:332`` writes a leaf-local
-    ``reference_energy`` only when none is present — so deleting w licenses a
-    fabricated, group-inconsistent one on a store that then LOOKS well stamped.
+    on the artifact's own content. Count-changing maps invalidate the level's
+    measurements; count-preserving maps keep them. Per-rung e(k) remains authored
+    unless an empty rung is pruned and changes the prefix ladder's shape.
     """
     from luxar.gsplats.tree import iter_leaves
 
@@ -727,8 +722,14 @@ def test_the_q_e_ladder_stamps_are_left_exactly_as_authored(
     for leaf in iter_leaves(out.tree):
         level_stats = leaf.meta.get("stats") or {}
         if level_stats:
-            assert level_stats["reference_energy"] == 1234.5, "w was scrubbed"
-            assert level_stats["quality"] == 0.9, "the level's measured Q was scrubbed"
+            if keeps_level_measurements:
+                assert level_stats["reference_energy"] == 1234.5, "w was scrubbed"
+                assert level_stats["quality"] == 0.9, (
+                    "the level's measured Q was scrubbed"
+                )
+            else:
+                assert "reference_energy" not in level_stats
+                assert "quality" not in level_stats
 
     # The per-rung e(k), on the fixture whose ladder survives the rewrite: a
     # `_map_substitutive` rebuild replaces a level's single rung stats with that

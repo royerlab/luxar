@@ -114,17 +114,26 @@ class TransformsMixin(_GSplatDataOps):
         for s, src in enumerate(self.substitutive_levels):
             out = fn(self._view_of_level(src))
             out_level = out.substitutive_levels[0]
+            count_changed = sum(
+                lod.n_splats for lod in out_level.additive_sublods
+            ) != sum(lod.n_splats for lod in src.additive_sublods)
+            cutpoints = [
+                int(c)
+                for c in np.cumsum([lod.n_splats for lod in out_level.additive_sublods])
+            ]
             if s == 0:
-                finest_count_changed = sum(
-                    lod.n_splats for lod in out_level.additive_sublods
-                ) != sum(lod.n_splats for lod in src.additive_sublods)
+                finest_count_changed = count_changed
             new_levels.append(
                 SubstitutiveLevel(
                     additive_sublods=out_level.additive_sublods,
                     compression_factor=src.compression_factor,
                     parent_method=src.parent_method,
                     level_index=src.level_index,
-                    stats=dict(out_level.stats),
+                    stats=_stats_after_ladder_rebuild(
+                        src.stats,
+                        cutpoints,
+                        count_changed=count_changed,
+                    ),
                 )
             )
         finest_cutpoints = [
