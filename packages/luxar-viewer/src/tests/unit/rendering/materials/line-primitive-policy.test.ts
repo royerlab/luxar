@@ -138,6 +138,7 @@ describe('resolveLinePrimitiveForNode', () => {
     );
     setSceneLineLoad(sceneEffectiveLineLoad(largeScene));
     expect(resolveLinePrimitiveForNode({ nSegments: 1_200_000 })).toBe('screen-space');
+    expect(resolveLinePrimitiveForNode({ nSegments: 100 })).toBe('screen-space');
 
     const smallScene = groupNode(
       undefined,
@@ -178,12 +179,13 @@ describe('resolveLinePrimitiveForNode', () => {
 });
 
 describe('sceneEffectiveLineLoad', () => {
-  it('sums concurrent scene and partition children', () => {
-    const partition = groupNode('partition', [lineNode(700_000), lineNode(800_000)]);
-    const scene = {
-      ...groupNode(undefined, [lineNode(600_000)]),
-      children: [lineNode(600_000), partition],
+  it('composes partition sums over substitutive LOD maxima', () => {
+    const lod = groupNode('lod', [lineNode(400_000), lineNode(1_200_000)]);
+    const partition = {
+      ...groupNode('partition', [lineNode(900_000)]),
+      children: [lineNode(900_000), lod],
     };
+    const scene = { ...groupNode(undefined, []), children: [partition] };
     expect(sceneEffectiveLineLoad(scene)).toBe(2_100_000);
   });
 

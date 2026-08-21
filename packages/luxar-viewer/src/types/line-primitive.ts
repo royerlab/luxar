@@ -282,9 +282,11 @@ export function effectiveSegmentLoad(load: LineNodeLoad): number {
 /**
  * Fold a scene graph into the effective line load that can be drawn
  * concurrently. Plain groups and partitions sum their children; LOD groups
- * take the maximum because their levels are substitutive. A lines node is a
- * leaf for this purpose: additive line ladders already advertise their summed
- * total in the parent node's authored `n_segments`.
+ * take the maximum because their levels are substitutive. Two levels can
+ * overlap briefly during a cross-fade; accepting that at-most-2× transient
+ * undercount keeps the frozen default biased toward capsule quality. A lines
+ * node is a leaf for this purpose: additive line ladders already advertise
+ * their summed total in the parent node's authored `n_segments`.
  */
 export function sceneEffectiveLineLoad(node: SceneLineLoadNode): number {
   if (node.type === 'lines') {
