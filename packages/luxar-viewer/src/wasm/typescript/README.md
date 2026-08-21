@@ -19,7 +19,7 @@ here automatically — not just when WASM is missing.
 | `gsplats-processing.ts` | Marginal Cholesky factorization, Mahalanobis distance, fused nD→3D projection (`project_gsplats_nd_to_3d`)                                                                                         |
 | `effective-radii.ts`    | `calculate_effective_radii` — `R_eff = sqrt(R² − D²)` for nD points sliced by a hyperplane                                                                                                         |
 | `decode.ts`             | LUT / quantized / log-scalar / geolog-scalar / per-channel (linear, log, signed-log, geolog) decoders + `decode_broadcasted`                                                                       |
-| `float32-math.ts`       | Exact TypeScript ports of Rust/WASM float32 transcendentals used where host `Math.*` routines can round to a different f32                                                                         |
+| `float32-math.ts`       | Exact TypeScript port of Rust/WASM `expm1f`, used where host `Math.expm1` can round to a different f32                                                                                             |
 | `projection.ts`         | nD→3D position extraction (`extract_3d_positions`)                                                                                                                                                 |
 | `depth-sort.ts`         | `sort_splats_by_depth` — back-to-front splat ordering; frounds every float step in the Rust op order so WASM↔TS parity is exact-permutation                                                        |
 

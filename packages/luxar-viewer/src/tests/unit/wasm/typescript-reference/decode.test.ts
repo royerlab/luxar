@@ -102,10 +102,12 @@ describe('decode: quantized functions', () => {
   });
 
   it('matches Rust expm1f at a known host-math mismatch', () => {
-    const output = new Float32Array(1);
-    decode_log_scalar_u16(new Uint16Array([29]), 9, output);
+    const output = new Float32Array(2);
+    decode_log_scalar_u16(new Uint16Array([29]), 9, output.subarray(0, 1));
+    decode_log_scalar_u16(new Uint16Array([2]), Math.log(10), output.subarray(1));
 
     expect(toFloatBits(output[0])).toBe(0x3b82c31f);
+    expect(toFloatBits(output[1])).toBe(0x38935f74);
   });
 });
 

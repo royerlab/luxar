@@ -452,18 +452,21 @@ describe('WASM vs TypeScript Comparison', () => {
     it.skipIf(!wasmFilesExist)('log-scalar decoders exactly match across every code', () => {
       const u8Data = Uint8Array.from({ length: 256 }, (_, code) => code);
       const u16Data = Uint16Array.from({ length: 65536 }, (_, code) => code);
-      const tsU8 = new Float32Array(u8Data.length);
-      const wasmU8 = new Float32Array(u8Data.length);
-      const tsU16 = new Float32Array(u16Data.length);
-      const wasmU16 = new Float32Array(u16Data.length);
 
-      tsModule.decode_log_scalar_u8(u8Data, 9, tsU8);
-      wasmModule!.decode_log_scalar_u8(u8Data, 9, wasmU8);
-      tsModule.decode_log_scalar_u16(u16Data, 9, tsU16);
-      wasmModule!.decode_log_scalar_u16(u16Data, 9, wasmU16);
+      for (const maxLog of [9, Math.log(10)]) {
+        const tsU8 = new Float32Array(u8Data.length);
+        const wasmU8 = new Float32Array(u8Data.length);
+        const tsU16 = new Float32Array(u16Data.length);
+        const wasmU16 = new Float32Array(u16Data.length);
 
-      expect(arraysEqual(tsU8, wasmU8)).toBe(true);
-      expect(arraysEqual(tsU16, wasmU16)).toBe(true);
+        tsModule.decode_log_scalar_u8(u8Data, maxLog, tsU8);
+        wasmModule!.decode_log_scalar_u8(u8Data, maxLog, wasmU8);
+        tsModule.decode_log_scalar_u16(u16Data, maxLog, tsU16);
+        wasmModule!.decode_log_scalar_u16(u16Data, maxLog, wasmU16);
+
+        expect(arraysEqual(tsU8, wasmU8)).toBe(true);
+        expect(arraysEqual(tsU16, wasmU16)).toBe(true);
+      }
     });
 
     it.skipIf(!wasmFilesExist)('decode_geolog_scalar_u8 should match', () => {
