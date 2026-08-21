@@ -192,7 +192,7 @@ def _edge_cost(
 
 
 def _edge_faces(u: int, v: int, vertex_faces: list[set[int]]) -> set[int]:
-    """Active triangles incident to both endpoints of an edge."""
+    """Triangles incident to both endpoints; ``vertex_faces`` is active-only."""
     return vertex_faces[u] & vertex_faces[v]
 
 
@@ -401,8 +401,7 @@ def _apply_collapse(
     affected = neighbors[u] | neighbors[v] | {u, v}
     changed_faces = vertex_faces[u] | vertex_faces[v]
     for face_index in changed_faces:
-        if not active_faces[face_index]:
-            continue
+        assert active_faces[face_index]
         old_face = work_faces[face_index].copy()
         for vertex in old_face:
             vertex_faces[int(vertex)].discard(face_index)
@@ -447,6 +446,7 @@ def _preserves_face_orientation(
     before_edge2 = before[:, 2] - before[:, 0]
     after_edge1 = after[:, 1] - after[:, 0]
     after_edge2 = after[:, 2] - after[:, 0]
+    # Binet-Cauchy: cross(e1, e2) dot cross(e1', e2') without two cross products.
     orientation = np.einsum("ij,ij->i", before_edge1, after_edge1) * np.einsum(
         "ij,ij->i", before_edge2, after_edge2
     ) - np.einsum("ij,ij->i", before_edge1, after_edge2) * np.einsum(
@@ -637,59 +637,16 @@ def decimate_qem(
     Raises:
         ValueError: If the inputs are invalid or the surface collapses completely.
     """
-    vertices = np.ascontiguousarray(vertices, dtype=np.float32)
-    input_faces = np.ascontiguousarray(faces, dtype=np.uint32)
-    spatial_dims = _validate_decimate_inputs(
-        vertices, input_faces, target_vertices, normals, normal_dims, spatial_dims
-    )
-    if len(spatial_dims) < 3:
-        raise ValueError(
-            "QEM mesh decimation requires at least 3 coarsening dimensions; "
-            f"got {len(spatial_dims)}"
-        )
-    if len(vertices) <= target_vertices:
-        return DecimatedMesh(vertices, input_faces, normals, colors, scalars)
-
-    positions = vertices[:, spatial_dims].astype(np.float64)
-    _require_nondegenerate_surface(positions, input_faces)
-    barrier_dims = tuple(
-        index for index in range(vertices.shape[1]) if index not in spatial_dims
-    )
-    work_faces = input_faces.astype(np.int64)
-    active_faces = np.ones(len(work_faces), dtype=bool)
-    alive = np.ones(len(vertices), dtype=bool)
-    versions = np.zeros(len(vertices), dtype=np.int64)
-    quadrics = _vertex_quadrics(positions, work_faces)
-    vertex_faces, neighbors, boundary_vertices = _build_topology(
-        work_faces, len(vertices)
-    )
-    state = _collapse_to_target(
-        target_vertices,
-        vertices=vertices,
-        positions=positions,
-        barrier_dims=barrier_dims,
-        work_faces=work_faces,
-        active_faces=active_faces,
-        alive=alive,
-        versions=versions,
-        quadrics=quadrics,
-        vertex_faces=vertex_faces,
-        neighbors=neighbors,
-        boundary_vertices=boundary_vertices,
-    )
-    return _compact_output(
+    return decimate_qem_ladder(
         vertices,
-        input_faces,
-        positions=positions,
-        spatial_dims=spatial_dims,
-        work_faces=work_faces,
-        active_faces=active_faces,
-        parent=state.parent,
+        faces,
+        target_vertices=[target_vertices],
         normals=normals,
         normal_dims=normal_dims,
         colors=colors,
         scalars=scalars,
-    )
+        spatial_dims=spatial_dims,
+    )[0]
 
 
 def decimate_qem_ladder(
@@ -723,7 +680,8 @@ def decimate_qem_ladder(
         )
 
     positions = vertices[:, spatial_dims].astype(np.float64)
-    _require_nondegenerate_surface(positions, input_faces)
+    if min(targets) < len(vertices):
+        _require_nondegenerate_surface(positions, input_faces)
     barrier_dims = tuple(
         index for index in range(vertices.shape[1]) if index not in spatial_dims
     )
