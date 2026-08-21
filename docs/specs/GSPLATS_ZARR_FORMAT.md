@@ -312,6 +312,30 @@ which end of a ladder renders, so consumers must agree on them):
   its true (tiny) visible area because the gate is on the content's raw
   thinness, not the clipped one.
 
+Both selectors size a child from its optional nD `lod_bounds` attribute when
+present:
+
+```json
+{"lod_bounds": {"min": [-1, -1, -1], "max": [1, 1, 1]}}
+```
+
+The arrays MUST be finite, ordered (`min[i] <= max[i]`), have the same length
+and axis order as `position_bounds`, and be contained within that complete
+bound. A bound that is not contained is rejected and the child falls back to
+`position_bounds`. This is a producer-chosen robust extent — for example
+percentile bounds that exclude a sparse tail — and affects only the selector
+metric. A robust bound MUST NOT make a node select a finer level than its
+complete `position_bounds`; the screen-area selector clamps the robust metric
+to the complete-bound metric to preserve that invariant. Frustum gating,
+eviction, root framing, clipping, and scene ranges
+continue to use the complete `position_bounds`, so excluded outliers remain
+part of the drawable geometry. A missing or malformed `lod_bounds` falls back
+to that child's `position_bounds`; producers SHOULD stamp every child in a
+ladder when they intend one consistent robust extent. Any operation that
+decimates, culls, or filters a child MUST recompute or remove its `lod_bounds`.
+Producer-side authoring policy is tracked in #1655. This optional metadata is
+backward-compatible and does not change the v3.4 format version.
+
 Under the legacy `selector: "coverage"`
 (older stores; never written for derived ladders since v3.4) the thresholds
 are diagonal-metric units in `[0, 4]`: the viewer compares them against the

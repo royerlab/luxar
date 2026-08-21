@@ -422,6 +422,14 @@ function makeChild(coverageFraction: number): LODGroupChild {
   };
 }
 
+function withLodBounds(
+  child: LODGroupChild,
+  lodBounds: { min: readonly number[]; max: readonly number[] }
+): LODGroupChild {
+  child.lodBounds = lodBounds;
+  return child;
+}
+
 function makeEntry(
   children: LODGroupChild[],
   activeIndex: number = 0,
@@ -758,6 +766,93 @@ describe('LODGroupRegistry — auto evaluation', () => {
     reg.register(entry);
     reg.evaluatePerFrame();
     expect(children[3].object.visible).toBe(true);
+  });
+
+  it("selector='screen-area': sizes the node from lod_bounds instead of an outlier-dominated raw AABB", () => {
+    const rawBounds = { min: [-4, -4, -0.5], max: [4, 4, 0.5] };
+    const robustBounds = { min: [-0.4, -0.4, -0.5], max: [0.4, 0.4, 0.5] };
+    const rawReg = makeRegistry();
+    const rawChildren = [0, 0.25, 0.5].map((threshold) => ({
+      ...makeChild(threshold),
+      positionBounds: rawBounds,
+    }));
+    const rawEntry = makeEntry(rawChildren, 0, '/raw');
+    rawEntry.selector = 'screen-area';
+    rawReg.register(rawEntry);
+    rawReg.evaluatePerFrame();
+    expect(rawChildren.map((child) => child.object.visible)).toEqual([false, false, true]);
+
+    const reg = makeRegistry();
+    const children = [0, 0.25, 0.5].map((threshold) =>
+      withLodBounds({ ...makeChild(threshold), positionBounds: rawBounds }, robustBounds)
+    );
+    const entry = makeEntry(children, 0, '/g');
+    entry.selector = 'screen-area';
+    reg.register(entry);
+
+    reg.evaluatePerFrame();
+
+    expect(children[0].object.visible, 'robust box occupies only 16% of the viewport').toBe(true);
+    expect(children[2].object.visible, 'raw AABB would clip to full-screen and pick finest').toBe(
+      false
+    );
+  });
+
+  it("selector='screen-area': contained lod_bounds cannot select finer than position_bounds", () => {
+    const rawBounds = { min: [-0.5, -0.0021, -0.5], max: [0.5, 0.0021, 0.5] };
+    const robustBounds = { min: [-0.4, -0.0004, -0.5], max: [0.4, 0.0004, 0.5] };
+    const reg = makeRegistry();
+    const children = [0, 0.1].map((threshold) =>
+      withLodBounds({ ...makeChild(threshold), positionBounds: rawBounds }, robustBounds)
+    );
+    const entry = makeEntry(children, 0, '/g');
+    entry.selector = 'screen-area';
+    reg.register(entry);
+
+    reg.evaluatePerFrame();
+
+    expect(children[0].object.visible, 'raw metric is 0.00105, below the fine threshold').toBe(
+      true
+    );
+    expect(
+      children[1].object.visible,
+      'the thin-box ramp makes the robust metric 0.24 unless it is clamped to raw'
+    ).toBe(false);
+  });
+
+  it("selector='coverage': sizes the node from lod_bounds instead of an outlier-dominated raw AABB", () => {
+    const rawBounds = { min: [-4, -4, -0.5], max: [4, 4, 0.5] };
+    const robustBounds = { min: [-0.05, -0.05, -0.5], max: [0.05, 0.05, 0.5] };
+    const rawReg = makeRegistry();
+    const rawChildren = [0, 0.5].map((threshold) => ({
+      ...makeChild(threshold),
+      positionBounds: rawBounds,
+    }));
+    rawReg.register(makeEntry(rawChildren, 0, '/raw'));
+    rawReg.evaluatePerFrame();
+    expect(rawChildren.map((child) => child.object.visible)).toEqual([false, true]);
+
+    const reg = makeRegistry();
+    const children = [0, 0.5].map((threshold) =>
+      withLodBounds({ ...makeChild(threshold), positionBounds: rawBounds }, robustBounds)
+    );
+    reg.register(makeEntry(children, 0, '/g'));
+
+    reg.evaluatePerFrame();
+
+    expect(children[0].object.visible, 'robust diagonal stays below the fine threshold').toBe(true);
+    expect(children[1].object.visible, 'raw AABB would saturate the legacy metric').toBe(false);
+  });
+
+  it('does not fold a second world box when no child publishes lod_bounds', () => {
+    const reg = makeRegistry();
+    const entry = makeEntry([makeChild(0), makeChild(0.5)], 0, '/g');
+    const updateWorldMatrix = vi.spyOn(entry.groupObject, 'updateWorldMatrix');
+    reg.register(entry);
+
+    reg.evaluatePerFrame();
+
+    expect(updateWorldMatrix).toHaveBeenCalledTimes(1);
   });
 
   it("selector='screen-area' is viewport-size independent (same pick on any monitor)", () => {
@@ -1819,6 +1914,25 @@ describe('LODGroupRegistry — frustum-aware selection & eviction', () => {
     expect(children[1].object.visible).toBe(true);
     expect(children[0].object.visible).toBe(false);
     expect(entry.offScreen).toBe(false); // on-screen → no "(off-screen)" hint
+  });
+
+  it('auto: keeps raw position_bounds for the frustum gate when lod_bounds are off-screen', () => {
+    const reg = registryWith(cameraLookingDownNegZ());
+    const positionBounds = { min: [-1, -1, -1], max: [100, 1, 1] };
+    const lodBounds = { min: [99, -1, -1], max: [100, 1, 1] };
+    const children = [0, 0.5].map((threshold) =>
+      withLodBounds({ ...makeChild(threshold), positionBounds }, lodBounds)
+    );
+    const entry = placeAt(makeEntry(children, 1, '/g'), 0, 0, -5);
+    entry.selector = 'screen-area';
+    reg.register(entry);
+
+    reg.evaluatePerFrame();
+
+    expect(entry.offScreen).toBe(false);
+    expect(children[0].object.visible, 'off-screen robust core still drives a coarse metric').toBe(
+      true
+    );
   });
 
   it('eviction: demotes an off-screen group before an on-screen colder level', () => {
@@ -3216,6 +3330,21 @@ describe('LODGroupRegistry — force-finest capture override (?lod-finest / Luxa
     child.positionBounds = { min: [100, 100, 100], max: [101, 101, 101] };
     return child;
   }
+
+  it('does not fold lod_bounds when force-finest bypasses the selector metric', () => {
+    const reg = makeForceFinestRegistry(true);
+    const children = [0, 0.5].map((threshold) =>
+      withLodBounds(makeChild(threshold), { min: [0, 0, 0], max: [1, 1, 1] })
+    );
+    const entry = makeEntry(children, 0, '/g');
+    const updateWorldMatrix = vi.spyOn(entry.groupObject, 'updateWorldMatrix');
+    reg.register(entry);
+
+    reg.evaluatePerFrame();
+
+    expect(updateWorldMatrix).toHaveBeenCalledTimes(1);
+    expect(children[1].object.visible).toBe(true);
+  });
 
   function settle(reg: LODGroupRegistry): void {
     for (let i = 0; i < 5; i++) reg.evaluatePerFrame();
