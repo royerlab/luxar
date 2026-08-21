@@ -59,10 +59,11 @@ between the two sides' part-box centers, allowing the measured overlap width as
 tolerance. A grosser violation is an error. When one constant multiplier per
 axis moves every plane back into the measured overlap bands, doctor can rescale
 the tree; it names a coordinate-frame scale only when at least two raw ratios on
-each changed axis agree closely. Otherwise it describes the repair as recovering
-the measured band cuts. If no safe factors exist, it removes the misleading tree
-rather than guessing. A geometrically plausible approximate tree is reported as
-a note and kept rather than condemned.
+each changed axis agree closely, or a single ratio agrees with a factor already
+proven by repeated planes on another changed axis. Otherwise it describes the
+repair as recovering the measured band cuts. If no safe factors exist, it removes
+the misleading tree rather than guessing. A geometrically plausible approximate
+tree is reported as a note and kept rather than condemned.
 
 A repair is not always a cure — removing a misleading tree from parts that
 cannot be ordered exactly leaves the lesser "no split planes" condition behind.

@@ -224,9 +224,9 @@ pops at the seams under `normal`/`volumetric` blending; where the parts are
 disjoint the planes are recovered exactly from the part boxes. For overlapping
 uniform-tiled parts, doctor tolerates the measured overlap band but still catches
 planes outside those bands. It can recover the band-bounded cuts, and reports a
-coordinate-frame scale only when repeated planes on each changed axis support
-the same factor. What cannot be repaired is reported with a remedy rather than
-guessed at.
+coordinate-frame scale only when repeated planes support each changed axis, or
+when a single plane agrees with a factor proven on another axis. What cannot be
+repaired is reported with a remedy rather than guessed at.
 
 ### Editing & selection
 

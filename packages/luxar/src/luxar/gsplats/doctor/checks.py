@@ -244,7 +244,8 @@ def _collect_frame_scale_ranges(
     except (KeyError, TypeError, ValueError, IndexError, OverflowError):
         return False
     if split == 0.0:
-        valid = right_low <= 0.0 <= left_high
+        low, high = sorted((right_low, left_high))
+        valid = low <= 0.0 <= high
     else:
         ratio = 0.5 * (left_high + right_low) / split
         low, high = sorted((right_low / split, left_high / split))
@@ -281,18 +282,28 @@ def _resolve_frame_factors(
 def _frame_scale_is_supported(
     ratios: Dict[int, List[float]], factors: Tuple[float, ...]
 ) -> bool:
-    """Whether every changed axis has repeated, tightly agreeing scale evidence."""
+    """Whether every changed axis has tightly agreeing scale evidence."""
+    proven_factors = []
+    singleton_ratios = []
     for axis, factor in enumerate(factors):
         if np.isclose(factor, 1.0):
             continue
         samples = ratios[axis]
         if len(samples) < 2:
-            return False
+            singleton_ratios.extend(samples)
+            continue
         estimate = float(np.median(samples))
         spread = (max(samples) - min(samples)) / abs(estimate)
         if spread > 0.05:
             return False
-    return True
+        proven_factors.append(factor)
+    return not singleton_ratios or (
+        bool(proven_factors)
+        and all(
+            any(abs(ratio - factor) / abs(factor) <= 0.05 for factor in proven_factors)
+            for ratio in singleton_ratios
+        )
+    )
 
 
 def _labels_name_the_parts(stored: Dict[str, Any], n_parts: int) -> bool:

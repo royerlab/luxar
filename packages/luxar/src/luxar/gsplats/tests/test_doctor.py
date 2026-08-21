@@ -115,6 +115,42 @@ def _mixed_overlap_store(tmp: Path) -> tuple[Path, dict]:
     return path, tree
 
 
+def _centered_mixed_overlap_store(tmp: Path) -> tuple[Path, dict]:
+    """Three x-ordered parts with an overlapping cut and a clean cut at zero."""
+    bounds = ((-80.0, -48.0), (-56.0, -24.0), (24.0, 56.0))
+    regions = []
+    for lo_x, hi_x in bounds:
+        lo = np.array([lo_x, 0.0, 0.0], dtype=np.float32)
+        hi = np.array([hi_x, 10.0, 10.0], dtype=np.float32)
+        centers = np.stack((lo, hi))
+        chol = np.zeros((2, 6), dtype=np.float32)
+        chol[:, [0, 2, 5]] = 1.0
+        regions.append(
+            GSplatData(
+                centers=centers,
+                amplitudes=np.ones(2, dtype=np.float32),
+                cholesky_factors=chol,
+            )
+        )
+    tree = {
+        "axis": 0,
+        "split": 0.0,
+        "left": {
+            "axis": 0,
+            "split": -52.0,
+            "left": {"part": 0},
+            "right": {"part": 1},
+        },
+        "right": {"part": 2},
+    }
+    node = GSplatData.partition_from_regions(
+        regions, bsp_tree=tree, region_labels=[0, 1, 2]
+    )
+    path = tmp / "centered-mixed.gsplats.zarr"
+    write_gsplats_tree(path, node)
+    return path, tree
+
+
 def _two_part_overlap_store(tmp: Path) -> tuple[Path, dict]:
     """Two overlapping x-ordered parts with one band-midpoint cut."""
     regions = []
@@ -397,6 +433,35 @@ class TestSplitPlanesCheck:
             (finding,) = report.findings
             assert finding.fixable
             assert "coordinate frame" in finding.summary
+
+            repaired = diagnose_store(path, fix=True)
+            assert repaired.healthy
+            assert _root_attrs(path)["bsp_tree"] == healthy
+
+    def test_a_zero_clean_cut_does_not_disable_overlap_scale_recovery(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path, healthy = _centered_mixed_overlap_store(Path(tmp))
+            _set_root_attr(path, "bsp_tree", _scale_tree_planes(healthy, (0.25,) * 3))
+
+            report = diagnose_store(path)
+            (finding,) = report.findings
+            assert finding.fixable
+
+            repaired = diagnose_store(path, fix=True)
+            assert repaired.healthy
+            assert _root_attrs(path)["bsp_tree"] == healthy
+
+    def test_uniform_scale_across_axes_has_store_wide_support(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = _uniform_tiled_store(Path(tmp))
+            healthy = _root_attrs(path)["bsp_tree"]
+            _set_root_attr(path, "bsp_tree", _scale_tree_planes(healthy, (0.25,) * 3))
+
+            report = diagnose_store(path)
+            (finding,) = report.findings
+            assert finding.fixable
+            assert "coordinate frame" in finding.summary
+            assert "downscale" in finding.detail
 
             repaired = diagnose_store(path, fix=True)
             assert repaired.healthy
