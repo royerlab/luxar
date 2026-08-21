@@ -244,7 +244,9 @@ function boundsDiagonal(min: unknown, max: unknown): number | undefined {
  * Extract the stable authored load inputs used by both scene aggregation and
  * per-node material resolution. Vertex ordering is the tight D-space extent;
  * segment ordering is a conservative √2-large fallback; `position_bounds`
- * keeps width normalization available for unindexed nodes.
+ * keeps width normalization available for unindexed nodes. Never substitute
+ * the worker's projected bounds: the streaming path builds the material on an
+ * empty placeholder mesh before those bounds exist.
  */
 export function lineNodeLoadFromAttrs(attrs: Partial<LinesMetadata>): LineNodeLoad {
   const ordering = attrs.vertex_ordering ?? attrs.segment_ordering;

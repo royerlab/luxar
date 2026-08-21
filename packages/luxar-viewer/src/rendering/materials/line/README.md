@@ -293,12 +293,11 @@ but builds the cheaper quad when the scene's aggregate concurrent
 effective segment load — authored `n_segments` × a rendered-width
 factor normalized by each node's authored extent — reaches 2 M. The
 threshold is a measured budget choice, not a crossover: on a discrete
-NVIDIA GPU the capsule's GPU pass costs ~1.5× the quad at every thin-line
-count and 3.16–3.38×
-on wide lines, while an Apple GPU barely registers the difference
-(1.04–1.11×); past ~2 M thin segments the capsule's GPU pass alone
-costs over a quarter of a 60 fps frame on the NVIDIA class (4.6 ms of
-16.7 ms, vs the quad's 3.0 ms). The resolved
+NVIDIA GPU the capsule's GPU pass costs ~1.5× the quad at every
+thin-line count and 3.16–3.38× on wide lines, while an Apple GPU barely
+registers the difference (1.04–1.11×); past ~2 M thin segments the
+capsule's GPU pass alone costs over a quarter of a 60 fps frame on the
+NVIDIA class (4.6 ms of 16.7 ms, vs the quad's 3.0 ms). The resolved
 primitive is stamped on `userData.linePrimitive` (both backends stamp
 the RESOLVED value) and carried through `clone()`, the node-factory
 retro picking pass, and TSL graph rebuilds — the sizing never re-runs

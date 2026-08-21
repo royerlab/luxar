@@ -68,8 +68,8 @@ export function createLinesNode(
     );
   }
 
-  // Per-node primitive under the auto policy (#1352 follow-up): resolved
-  // ONCE here, at first material build, from the authored size — NOT from
+  // Auto-policy primitive (#1352 follow-up): resolved ONCE here, at first
+  // material build, from the scene load and authored node size — NOT from
   // `processed.segmentCount`, which is 0 on the streaming path (the
   // placeholder mesh) and grows monotonically afterwards while the
   // material is never rebuilt. The width factor normalizes the authored
