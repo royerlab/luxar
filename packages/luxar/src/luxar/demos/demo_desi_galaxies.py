@@ -65,7 +65,7 @@ DEMO_META = {
     "category": "astronomy",
     "geometry": "points",
     "requirements": {
-        "download_mb": 72,
+        "download_mb": 11,
         "compute": "heavy",
         "gpu": "none",
         "local_data": "git-lfs",

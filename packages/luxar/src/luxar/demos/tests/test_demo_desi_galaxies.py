@@ -387,6 +387,30 @@ class TestScenePointCap:
             (cam_dist + float(radial.max())) * 1.5
         )
 
+    def test_shipped_scene_caps_both_finest_children(self) -> None:
+        import json
+        import zipfile
+
+        scene_zip = _demo.SCENE_ZIP_SHIPPED
+        if not scene_zip.exists() or _demo.is_lfs_pointer(scene_zip):
+            pytest.skip("DESI Git LFS scene is not available")
+
+        with zipfile.ZipFile(scene_zip) as archive:
+            names = set(archive.namelist())
+
+            def read_attrs(path: str) -> dict:
+                v3_name = f"{path}/zarr.json"
+                name = v3_name if v3_name in names else f"{path}/.zattrs"
+                document = json.loads(archive.read(name).decode("utf-8"))
+                return document.get("attributes", document)
+
+            for layer_name in ("By tracer type", "By redshift"):
+                layer_attrs = read_attrs(layer_name)
+                finest_attrs = read_attrs(f"{layer_name}/child_3")
+                assert layer_attrs["selector"] == "screen-area"
+                assert finest_attrs["n_points"] == _demo.SCENE_MAX_POINTS
+                assert finest_attrs["n_additive_sublods"] == 5
+
 
 @pytest.mark.slow
 class TestOrbitCentre:
