@@ -346,12 +346,17 @@ sources fed to gsplat fitting/calibration), independent of the compiled
   notice ("declares a `multiscales` block that does not name it"), because the
   store plainly declared something. An owner block that wins the evidence gate
   but is then unusable (wrong axis count, no `axes` list) does not hide the
-  root's; the root's is retried. Dataset paths are matched
-  exactly relative to whichever group won, so a same-named root pyramid level
-  cannot be mistaken for a nested array. The custom (non-NGFF) bare `axes`
-  attribute goes the other way round, **root first**, because such a list names
-  nothing and so no evidence about it is obtainable; an owner's `axes` is
-  consulted only when the root has no usable list of its own.
+  root's; the root's is retried. Dataset paths are matched exactly relative to
+  whichever group won — exactly after normalising surrounding slashes and one
+  leading `./`, since `"0"`, `"/0"` and `"./0"` are three legal NGFF spellings of
+  the same child and writers emit all three — so a same-named root pyramid level
+  cannot be mistaken for a nested array. Resolving a declared level to an actual
+  array normalises the same way, so a pyramid spelled `["./0", "./1"]` selects
+  and describes the same arrays as one spelled `["0", "1"]`. A `path` that is not
+  a string is not coerced — it names nothing on both sides. The custom (non-NGFF)
+  bare `axes` attribute goes the other way round, **root first**, because such a
+  list names nothing and so no evidence about it is obtainable; an owner's `axes`
+  is consulted only when the root has no usable list of its own.
 - Voxel size composes any multiscales-level `coordinateTransformations` on top;
   where that match or that composition cannot be made honestly (an `array_key`
   matching no entry of a multi-level pyramid, or two scale vectors of different

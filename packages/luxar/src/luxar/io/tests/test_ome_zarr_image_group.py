@@ -168,6 +168,21 @@ def _tzyx_multiscales(
     return _multiscales(["t", "z", "y", "x"], level_paths, scale=[1.0, 2.0, 0.5, 0.5])
 
 
+def _levels_with_own_scales(
+    paths: Sequence[str], scales: Sequence[Sequence[float]]
+) -> List[Dict[str, Any]]:
+    """A ``TZYX`` block whose declared levels each carry a DIFFERENT spacing.
+
+    Same block as :func:`_tzyx_multiscales`, except that the voxel size then
+    identifies WHICH entry was matched — with one shared scale, quoting the wrong
+    level's spacing is indistinguishable from quoting the right one's.
+    """
+    block = _tzyx_multiscales(len(paths), paths=paths)
+    for entry, scale in zip(block[0]["datasets"], scales):
+        entry["coordinateTransformations"] = [{"type": "scale", "scale": list(scale)}]
+    return block
+
+
 class TestTheIssueRepro:
     """The exact store from #1777: one image group holding one level."""
 
@@ -1434,6 +1449,280 @@ class TestADroppedDeclaredLevelIsReported:
         # which is exactly why staying quiet about it is not an option.
         assert info.shape == half.shape
         assert info.axes == ["t", "z", "y", "x"]
+
+    @pytest.mark.parametrize("zarr_format", ZARR_FORMATS)
+    def test_a_declared_level_that_names_a_group_is_named_on_the_console(
+        self, tmp_path: Path, zarr_format: int, capsys: pytest.CaptureFixture
+    ) -> None:
+        """RESOLVING is not the same as being usable — a group is dropped too.
+
+        A ``datasets[*].path`` pointing at a GROUP (a pyramid moved one level
+        deeper, a block written against a different layout) opens perfectly well
+        and is then discarded by the "must be an array" filter. The consequence is
+        identical to a failed lookup — the next-best candidate wins, or the whole
+        block stops being evidence and the store falls to the ndim heuristic — so
+        it earns the same line instead of being the one dropped level that says
+        nothing at all.
+        """
+        full = _ramp((2, 8, 16, 16))
+        half = _ramp((2, 4, 8, 8), start=40_000)
+        path = tmp_path / "level_is_a_group.zarr"
+        root = open_group(path, mode="w", zarr_format=zarr_format)
+        image = root.create_group("0")
+        create_array(image.create_group("0"), "0", data=full)
+        create_array(image, "1", data=half)
+        image.attrs["multiscales"] = _tzyx_multiscales(2, paths=["0", "1"])
+
+        info = discover_ome_zarr_shape(path)
+
+        out = capsys.readouterr().out
+        assert "Skipping declared level '0/0': names a Group, not an array" in out
+        assert info.shape == half.shape
+        assert info.axes == ["t", "z", "y", "x"]
+
+
+class TestANonStringDeclaredPath:
+    """``{"path": 0}`` names nothing, and BOTH halves have to agree it does not.
+
+    The lookup half type-rejects a non-``str`` ``path`` outright — it cannot be
+    handed to zarr — while the metadata-MATCHING half coerced it with ``str()``,
+    and ``str(0) == "0"``. So a block mixing a number-valued entry with a legally
+    spelled one resolved its array through the legal entry and then quoted the
+    OTHER entry's spacing: a wrong voxel size, silently, from an entry neither
+    half could honestly read as a level.
+    """
+
+    @pytest.mark.parametrize("zarr_format", ZARR_FORMATS)
+    def test_a_number_valued_path_does_not_steal_the_voxel_size(
+        self, tmp_path: Path, zarr_format: int
+    ) -> None:
+        """One array at ``0/0``; two entries claim it, only one of them legally."""
+        full = _ramp((2, 8, 16, 16))
+        block = _levels_with_own_scales(
+            ["0", "./0"], [(1.0, 7.0, 7.0, 7.0), (1.0, 2.0, 0.5, 0.5)]
+        )
+        # What a hand-written or loosely-typed producer emits: the level's path as
+        # a NUMBER. JSON keeps it a number, and `str()` used to make it match.
+        block[0]["datasets"][0]["path"] = 0
+        path = _bioformats2raw_store(
+            tmp_path / "number_path.zarr",
+            zarr_format,
+            [("0", [full])],
+            image_attrs={"multiscales": block},
+        )
+
+        info = discover_ome_zarr_shape(path)
+
+        # The array still resolves — through the `"./0"` entry, the only one that
+        # names anything — so the block is still evidence and the axes stand.
+        assert info.shape == full.shape
+        assert info.axes == ["t", "z", "y", "x"]
+        # …and the spacing is that same entry's, not the coerced one's (7, 7, 7).
+        assert info.voxel_size == (2.0, 0.5, 0.5)
+
+
+class TestAnExplicitlyRelativeDeclaredPath:
+    """``"./0"`` is a legal NGFF spelling of ``"0"``, and zarr REFUSES it.
+
+    ``group["./0"]`` is a ``ValueError`` ("contains '.' or '..' segments") at both
+    zarr formats, so handing a declared path straight to the store resolved NO
+    level of a pyramid spelled that way. Everything downstream then degrades
+    together and plausibly: the block stops being evidence about the selected
+    array, so the owner's ``multiscales`` is rejected as "does not name it" and a
+    4D ``TZYX`` store is read as ``CZYX`` — a ``batch-fit`` fanned out over the
+    wrong axis — while the declared voxel size is lost and the selection falls
+    back to whichever array in the group happens to be largest.
+
+    The metadata-MATCHING half already normalised the spelling
+    (:func:`~luxar.io.ome_zarr._normalised_dataset_path`); this is the LOOKUP half,
+    and it reuses that one rule rather than growing a second.
+    """
+
+    @pytest.mark.parametrize("zarr_format", ZARR_FORMATS)
+    def test_the_declared_axes_and_voxel_size_survive_the_relative_spelling(
+        self, tmp_path: Path, zarr_format: int
+    ) -> None:
+        """A bioformats2raw store whose block spells its own levels ``"./N"``."""
+        full = _ramp((2, 8, 16, 16))
+        path = _bioformats2raw_store(
+            tmp_path / "relative.zarr",
+            zarr_format,
+            [("0", [full, full[:, ::2, ::2, ::2]])],
+            image_attrs={
+                "multiscales": _levels_with_own_scales(
+                    ["./0", "./1"], [(1.0, 2.0, 0.5, 0.5), (1.0, 4.0, 1.0, 1.0)]
+                )
+            },
+        )
+
+        info = discover_ome_zarr_shape(path)
+
+        assert info.axes == ["t", "z", "y", "x"]
+        # The 4D heuristic would answer CZYX — 1 timepoint, 2 channels.
+        assert (info.n_timepoints, info.n_channels) == (2, 1)
+        assert info.spatial_axes == ["z", "y", "x"]
+        # Level 0's own spacing, not level 1's: the ENTRY that matched is pinned,
+        # not merely that some entry did.
+        assert info.voxel_size == (2.0, 0.5, 0.5)
+        assert info.unit == "micrometer"
+        assert info.resolution_levels == 2
+        # And the array itself is the declared full-resolution level, on all
+        # three entry points.
+        assert info.shape == full.shape
+        assert tuple(open_volume_lazy(path).shape) == full.shape
+        np.testing.assert_array_equal(load_volume(path), full.astype(np.float32))
+
+    @pytest.mark.parametrize("zarr_format", ZARR_FORMATS)
+    def test_the_declared_level_beats_a_bigger_undeclared_sibling(
+        self, tmp_path: Path, zarr_format: int
+    ) -> None:
+        """The sharpest form: resolving nothing SELECTS A DIFFERENT ARRAY.
+
+        A declared level that is smaller than an undeclared array beside it (a
+        derived projection, a scratch copy) is the case where "no declared level
+        resolved" is not merely a lost voxel size — the largest-direct-child
+        fall-back then reads the wrong data entirely, and reports the heuristic's
+        axes for it.
+        """
+        declared = _ramp((2, 4, 4, 4))
+        bigger = _ramp((2, 8, 16, 16), start=30_000)
+        path = tmp_path / "smaller_declared.zarr"
+        root = open_group(path, mode="w", zarr_format=zarr_format)
+        image = root.create_group("0")
+        create_array(image, "0", data=declared)
+        create_array(image, "projection", data=bigger)
+        image.attrs["multiscales"] = _tzyx_multiscales(1, paths=["./0"])
+        root.attrs["bioformats2raw.layout"] = 3
+
+        for key in (None, "0"):
+            info = discover_ome_zarr_shape(path, array_key=key)
+
+            assert info.shape == declared.shape, key
+            assert info.axes == ["t", "z", "y", "x"], key
+            assert info.voxel_size == (2.0, 0.5, 0.5), key
+            # Data, not just shape — the two differ in both here, but a
+            # right-shape/wrong-array answer must not be able to pass.
+            np.testing.assert_array_equal(
+                np.asarray(open_volume_lazy(path, key)[...]), declared
+            )
+            np.testing.assert_array_equal(
+                load_volume(path, array_key=key), declared.astype(np.float32)
+            )
+
+    @pytest.mark.parametrize("zarr_format", ZARR_FORMATS)
+    def test_the_console_names_the_level_by_its_canonical_key(
+        self, tmp_path: Path, zarr_format: int, capsys: pytest.CaptureFixture
+    ) -> None:
+        """``"0/0"`` — the key path, not the declaration's cosmetic spelling.
+
+        The reported key is what a reader is meant to be able to pass back as
+        ``--array-key``, and ``"0/./0"`` is a key zarr rejects, so the line would
+        advertise a lookup the very next command refuses. Two stores differing
+        only in how they spell their levels log the same thing.
+        """
+        path = _bioformats2raw_store(
+            tmp_path / "relative_console.zarr",
+            zarr_format,
+            [("0", [_ramp((2, 4, 4, 4))])],
+            image_attrs={"multiscales": _tzyx_multiscales(1, paths=["./0"])},
+        )
+
+        load_volume(path)
+
+        out = capsys.readouterr().out
+        assert "Using array '0/0'" in out
+        assert "Skipping declared level" not in out
+
+    @pytest.mark.parametrize("zarr_format", ZARR_FORMATS)
+    @pytest.mark.parametrize(
+        ("declared", "reported"),
+        [
+            (".", "0/."),
+            ("a/./b", "0/a/./b"),
+            ("./a/./b", "0/./a/./b"),
+            # Normalises cleanly and STILL does not resolve — the branch where
+            # the raw-spelling fall-back does not fire, so the diagnostic quotes
+            # the canonical key (``"0/missing"``, not ``"0/./missing"``): the one
+            # the lookup used and the one to go check for.
+            ("./missing", "0/missing"),
+        ],
+    )
+    def test_a_path_that_still_holds_a_dot_segment_is_skipped_and_reported(
+        self,
+        tmp_path: Path,
+        zarr_format: int,
+        declared: str,
+        reported: str,
+        capsys: pytest.CaptureFixture,
+    ) -> None:
+        """Normalising must not turn a bad declaration into a SILENT one.
+
+        A single leading ``./`` is cosmetic; a ``.`` segment anywhere else names
+        no level at all. Those normalise to nothing, so the original spelling is
+        what gets looked up, and the skip quotes it verbatim — the spelling a
+        reader can grep the store's metadata for. Collapsing them to ``""`` (or to
+        the owner) would either vanish or become a lookup of some other array.
+        Every OTHER declaration is quoted canonically whether or not it resolves,
+        because that is the key the lookup used; the exact line is asserted, since
+        a bare ``"."`` occurs in almost any console output.
+        """
+        full = _ramp((2, 8, 16, 16))
+        half = _ramp((2, 4, 8, 8), start=40_000)
+        path = tmp_path / "dot_segment.zarr"
+        root = open_group(path, mode="w", zarr_format=zarr_format)
+        image = root.create_group("0")
+        create_array(image, "0", data=full)
+        create_array(image, "1", data=half)
+        image.attrs["multiscales"] = _tzyx_multiscales(2, paths=[declared, "./1"])
+
+        info = discover_ome_zarr_shape(path)
+
+        out = capsys.readouterr().out
+        assert f"Skipping declared level '{reported}': " in out
+        # The surviving declared level — spelled relatively, and resolved.
+        assert info.shape == half.shape
+        assert info.axes == ["t", "z", "y", "x"]
+
+    @pytest.mark.parametrize("zarr_format", ZARR_FORMATS)
+    @pytest.mark.parametrize(
+        "declared",
+        ["./labels/seg/0", "./aux/labels/seg/0"],
+        ids=["direct-labels-group", "nested-labels-group"],
+    )
+    def test_a_relatively_spelled_label_path_is_still_excluded(
+        self, tmp_path: Path, zarr_format: int, declared: str
+    ) -> None:
+        """``labels/`` holds this image's MASKS, whatever the path is spelled like.
+
+        The exclusion is asked of the normalised spelling, so its non-leaf/leaf
+        split lands on the store's real segments. Normalising can only ever drop a
+        leading ``"."`` from the segments checked, and no caller reserves a group
+        named ``"."`` — so a mask stays excluded and a bigger one cannot be
+        selected as the image.
+        """
+        image_data = _ramp((2, 8, 16, 16))
+        path = tmp_path / "relative_label.zarr"
+        root = open_group(path, mode="w", zarr_format=zarr_format)
+        image_group = root.create_group("0")
+        create_array(image_group, "0", data=image_data)
+
+        parent = image_group
+        parts = declared[2:].split("/")
+        for part in parts[:-1]:
+            parent = parent.create_group(part)
+        create_array(parent, parts[-1], data=_ramp((4, 8, 16, 16), start=50_000))
+        image_group.attrs["multiscales"] = _tzyx_multiscales(1, paths=[declared])
+
+        for key in (None, "0"):
+            assert (
+                discover_ome_zarr_shape(path, array_key=key).shape == image_data.shape
+            )
+            np.testing.assert_array_equal(
+                np.asarray(open_volume_lazy(path, key)[...]), image_data
+            )
+            np.testing.assert_array_equal(
+                load_volume(path, array_key=key), image_data.astype(np.float32)
+            )
 
 
 class TestAZippedArchive:

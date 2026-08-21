@@ -331,10 +331,9 @@ def discover_ome_zarr_shape(
             coarser pyramid level reports its own spacing, not level 0's, and
             that holds for the auto path too (which can perfectly well land on a
             coarser level, e.g. when level 0's declared path does not resolve).
-            The price is that a block whose ``datasets[*].path`` spells the
-            selected array non-canonically (``"./0"`` for the array at ``"0"``)
-            no longer matches, and reports no spacing rather than level 0's; see
-            :func:`_selected_dataset`.
+            The match is exact, but on the NORMALISED spellings, so a block
+            writing its own levels explicitly relative (``"./0"`` for the array at
+            ``"0"``) still names them; see :func:`_selected_dataset`.
 
     Returns:
         :class:`OMEZarrInfo` with discovered metadata.
@@ -604,8 +603,17 @@ def _normalised_dataset_path(raw: Any) -> str:
     a level's name, and zarr refuses such a path anyway. ``""`` never matches
     (:func:`_dataset_path_matches` requires a non-empty path), so an unspellable
     entry stays unmatched rather than becoming a bogus match for some other level.
+
+    A ``path`` that is not a string names nothing either, and must say so rather
+    than be coerced: ``str(0)`` is ``"0"``, so a block mixing a non-string entry
+    with a correctly spelled one had its spacing read off the coerced one while
+    the LOOKUP half (:func:`~luxar.io.volume._declared_levels`, which type-rejects
+    a non-string ``path``) resolved the other — a silently wrong voxel size, from
+    metadata neither half could honestly claim to describe a level.
     """
-    path = str(raw).strip("/")
+    if not isinstance(raw, str):
+        return ""
+    path = raw.strip("/")
     if path.startswith("./"):
         path = path[2:].strip("/")
     return "" if "." in path.split("/") else path
