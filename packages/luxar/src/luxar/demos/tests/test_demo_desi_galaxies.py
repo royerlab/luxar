@@ -38,6 +38,7 @@ quantize_positions = _demo.quantize_positions
 dequantize_positions = _demo.dequantize_positions
 save_derived = _demo.save_derived
 load_derived = _demo.load_derived
+sample_scene_catalog = _demo.sample_scene_catalog
 
 
 class TestRadecToXyz:
@@ -118,6 +119,63 @@ class TestQuantizeRoundtrip:
         assert np.max(np.abs(pos2 - pos)) < 0.15
         # float16 redshift → ~3 significant digits.
         np.testing.assert_allclose(z2, z, atol=2e-3)
+
+
+class TestSceneCatalogSampling:
+    def test_caps_deterministically_and_keeps_rows_aligned(self) -> None:
+        n = 100
+        row_ids = np.arange(n, dtype=np.int64)
+        positions = np.column_stack([row_ids, row_ids + 100, row_ids + 200])
+        redshift = row_ids.astype(np.float32)
+        tracer_ids = (row_ids % 4).astype(np.uint8)
+
+        first = sample_scene_catalog(positions, redshift, tracer_ids, max_points=25)
+        second = sample_scene_catalog(positions, redshift, tracer_ids, max_points=25)
+
+        for first_array, second_array in zip(first, second):
+            np.testing.assert_array_equal(first_array, second_array)
+            assert len(first_array) == 25
+        sampled_positions, sampled_redshift, sampled_tracers = first
+        np.testing.assert_array_equal(sampled_positions[:, 0], sampled_redshift)
+        np.testing.assert_array_equal(
+            sampled_tracers, sampled_redshift.astype(np.uint8) % 4
+        )
+        assert len(np.unique(sampled_redshift)) == 25
+
+    def test_does_not_copy_catalog_below_cap(self) -> None:
+        positions = np.zeros((5, 3), dtype=np.float32)
+        redshift = np.zeros(5, dtype=np.float32)
+        tracer_ids = np.zeros(5, dtype=np.uint8)
+
+        sampled = sample_scene_catalog(positions, redshift, tracer_ids, max_points=10)
+
+        assert sampled[0] is positions
+        assert sampled[1] is redshift
+        assert sampled[2] is tracer_ids
+
+    def test_rejects_non_positive_cap(self) -> None:
+        with pytest.raises(ValueError, match="max_points must be >= 1"):
+            sample_scene_catalog(
+                np.zeros((1, 3), dtype=np.float32),
+                np.zeros(1, dtype=np.float32),
+                np.zeros(1, dtype=np.uint8),
+                max_points=0,
+            )
+
+    @pytest.mark.parametrize(
+        ("positions_n", "redshift_n", "tracer_n"),
+        [(3, 2, 3), (3, 3, 2)],
+    )
+    def test_rejects_misaligned_catalog_columns(
+        self, positions_n: int, redshift_n: int, tracer_n: int
+    ) -> None:
+        with pytest.raises(ValueError, match="same number of rows"):
+            sample_scene_catalog(
+                np.zeros((positions_n, 3), dtype=np.float32),
+                np.zeros(redshift_n, dtype=np.float32),
+                np.zeros(tracer_n, dtype=np.uint8),
+                max_points=2,
+            )
 
 
 class TestCatalogDownloadErrors:
@@ -298,6 +356,36 @@ class TestWarnIfSceneLacksLadder:
         out = capsys.readouterr().out
         assert "'By tracer type' finest level has no streaming" in out
         assert "'By redshift' finest level has no streaming" in out
+
+
+class TestScenePointCap:
+    def test_caps_both_layers_but_frames_the_full_catalog(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        rng = np.random.default_rng(7)
+        positions = rng.normal(size=(500, 3)).astype(np.float32)
+        positions[-1] = (0.0, 0.0, 1000.0)
+        redshift = np.linspace(0.01, 3.0, len(positions), dtype=np.float32)
+        tracer_ids = (np.arange(len(positions)) % 4).astype(np.uint8)
+        monkeypatch.setattr(_demo, "SCENE_MAX_POINTS", 100)
+        monkeypatch.setattr(_demo, "substitutive_lod_or_flat", lambda spec: None)
+
+        out = tmp_path / "desi.luxar.zarr"
+        _demo.create_scene(positions, redshift, tracer_ids, out)
+
+        import zarr
+
+        root = zarr.open(str(out), mode="r")
+        assert root["By tracer type"].attrs["n_points"] == 100
+        assert root["By redshift"].attrs["n_points"] == 100
+
+        radial = np.linalg.norm(positions.astype(np.float64), axis=1)
+        r95 = float(np.percentile(radial, 95))
+        cam_dist = 0.75 * r95 / np.tan(np.radians(50.0) / 2.0)
+        camera = root.attrs["viewer_config"]["camera"]
+        assert float(camera["far"]) == pytest.approx(
+            (cam_dist + float(radial.max())) * 1.5
+        )
 
 
 @pytest.mark.slow

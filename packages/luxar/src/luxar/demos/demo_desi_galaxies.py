@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""DESI DR1 — The Cosmic Web in 3D (~9.75M galaxies & quasars)
+"""DESI DR1 — The Cosmic Web in 3D (1.25M-point sample of ~9.75M objects)
 
 Renders the large-scale structure of the Universe as a point cloud built from
 the Dark Energy Spectroscopic Instrument's first data release (DESI DR1). Each
@@ -60,8 +60,8 @@ Controls:
 
 DEMO_META = {
     "key": "desi_galaxies",
-    "title": "DESI DR1 — The Cosmic Web in 3D (~9.75M galaxies & quasars)",
-    "description": "~9.75M real DESI DR1 galaxies and quasars placed in 3D by redshift to comoving Mpc.",
+    "title": "DESI DR1 — The Cosmic Web in 3D (~9.75M-object catalog)",
+    "description": "A 1.25M-point sample of ~9.75M real DESI DR1 galaxies and quasars placed in 3D by redshift.",
     "category": "astronomy",
     "geometry": "points",
     "requirements": {
@@ -169,21 +169,25 @@ Z_MAX = 4.0
 # Display / LOD parameters.
 POINT_RADIUS = 1.2  # Mpc (visualization scale)
 SCENE_INTENSITY = 0.05
+# The old finest child contained all 9.75M source rows and downloaded in full
+# after the opening frame. A 1.25M sample matches the density of that ladder's
+# previous one-coarser child while putting a hard bound on the selected finest.
+SCENE_MAX_POINTS = 1_250_000
+SCENE_SAMPLE_SEED = 0
 LOD = dict(compression_factor=8, levels=3, device="auto")
 
 # Streaming ladder for every LOD level. The composed default sizes the first
-# chunk from a generic bandwidth budget; at 9.75M points this scene is large
+# chunk from a generic bandwidth budget; at 1.25M points this scene is large
 # enough to be worth tuning explicitly, so the base is set small enough to land
 # in a single zarr chunk — one range request to first paint.
 #
 # That base applies as-written only to the COARSEST level, which is the eager
 # default level and therefore the one whose first chunk is the actual
-# time-to-first-pixel: it ladders 2000 / 2000 / 4000 / 8000 / 3014. Finer levels
+# time-to-first-pixel. Finer levels
 # have a coarser sibling on screen already, so the sibling-aware rule raises
-# their base to n/(2K) — the finest lands 609498 / 609498 / 1218996 / 2437992 /
-# 4875971. That is deliberate: an upgrade has to beat what is already displayed
-# to be worth swapping, and 609K commits in a few seconds where the old
-# un-laddered 9.75M single commit froze the main thread for ~85s.
+# their base to n/(2K) — the capped finest lands around 78K / 78K / 156K /
+# 312K / 625K. That is deliberate: an upgrade has to beat what is already
+# displayed to be worth swapping.
 STREAM_LOD = dict(counts="stream:2000", method="random", seed=0)
 
 # The shipped scene must carry a real ladder on its finest level. Anyone whose
@@ -202,6 +206,29 @@ Arbol.max_depth = 5
 # =============================================================================
 # Pure helpers (unit-tested)
 # =============================================================================
+
+
+def sample_scene_catalog(
+    positions: np.ndarray,
+    redshift: np.ndarray,
+    tracer_ids: np.ndarray,
+    *,
+    max_points: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Take one deterministic, row-aligned sample for both scene colorings."""
+    n_rows = len(positions)
+    if len(redshift) != n_rows or len(tracer_ids) != n_rows:
+        raise ValueError(
+            "positions, redshift, and tracer_ids must have the same number of rows"
+        )
+    if max_points < 1:
+        raise ValueError(f"max_points must be >= 1, got {max_points}")
+    if n_rows <= max_points:
+        return positions, redshift, tracer_ids
+
+    rng = np.random.default_rng(SCENE_SAMPLE_SEED)
+    indices = np.sort(rng.choice(n_rows, size=max_points, replace=False))
+    return positions[indices], redshift[indices], tracer_ids[indices]
 
 
 def radec_z_to_xyz(
@@ -563,7 +590,18 @@ def create_scene(
             f"{cam_dist:,.0f} Mpc (r95={r95:,.0f}, r_max={r_max:,.0f})"
         )
 
-        colors = tracer_colors(tracer_ids)
+        scene_positions, scene_redshift, scene_tracer_ids = sample_scene_catalog(
+            positions,
+            redshift,
+            tracer_ids,
+            max_points=SCENE_MAX_POINTS,
+        )
+        if len(scene_positions) < len(positions):
+            aprint(
+                f"  📉 Sampling {len(scene_positions):,} of {len(positions):,} "
+                "catalog rows to bound the finest LOD payload"
+            )
+        colors = tracer_colors(scene_tracer_ids)
 
         # Resolved ONCE for both layers so a torch/scipy-free machine prints one
         # notice, not one per layer.
@@ -578,7 +616,7 @@ def create_scene(
             # Layer 1: colored by tracer type (categorical populations).
             scene.add_points(
                 "By tracer type",
-                positions,
+                scene_positions,
                 colors=colors,
                 radii=POINT_RADIUS,
                 opacity=0.9,
@@ -595,8 +633,8 @@ def create_scene(
             # deduplicated by the encoder's array_ref.
             scene.add_points(
                 "By redshift",
-                positions,
-                colors=redshift_colors(redshift),
+                scene_positions,
+                colors=redshift_colors(scene_redshift),
                 radii=POINT_RADIUS,
                 opacity=0.9,
                 blending_mode="additive",
@@ -616,7 +654,7 @@ def create_scene(
                 blend_mode="difference",
             )
             scene.add_text(
-                "~9.75M galaxies & quasars • spectroscopic redshifts → comoving Mpc",
+                "1.25M-point sample of ~9.75M galaxies & quasars • redshift → comoving Mpc",
                 position=(0.98, 0.97),
                 font_size=0.015,
                 anchor="bottom-right",
