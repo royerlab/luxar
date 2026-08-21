@@ -172,7 +172,7 @@ The fitting pipeline orchestrates the entire process of fitting n-dimensional Ga
    spec is a user absolute and is never corrected. The subtracted level is
    recorded on `PreprocessedData.floor`; it is NOT added back (output amplitudes
    are background-relative).
-2. **Normalization**: Converts input to [0, 1] range (floor/percentile-based or full range)
+2. **Normalization**: Converts input to [0, 1] range (floor/percentile-based or full range). Tiled and planned fits resolve one raw-input `norm_range` for the whole selected volume and forward it to every child, keeping convergence thresholds and amplitude limits on one physical scale. Degenerate shared ranges are declined so a child can fall back to a local usable range.
 3. **Seed Generation**: Creates initial splat positions (auto or user-provided)
 4. **Pre-initialized amplitude rescaling**: Brings `init_amps` onto the
    normalized `[0, 1]` scale the optimizer works on. Which rescaling applies
