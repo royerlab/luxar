@@ -8,6 +8,21 @@ from typing import Dict, List, Optional
 import zarr
 
 
+def validate_wrapper_children(store: zarr.Group) -> None:
+    """Reject childless partition/LOD wrappers before publishing the scene."""
+
+    def visit(group: zarr.Group, path: str) -> None:
+        kind = group.attrs.get("kind")
+        child_names = list(group.group_keys())
+        if kind in {"partition", "lod"} and not child_names:
+            raise ValueError(f"Childless kind={kind} wrapper at '{path}'")
+        for child_name in child_names:
+            child_path = f"{path}/{child_name}" if path else child_name
+            visit(group[child_name], child_path)
+
+    visit(store, "")
+
+
 def validate_discrete_dimension_ranges(
     store: zarr.Group,
     scene_bounds: Optional[Dict[str, List[float]]],

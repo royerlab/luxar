@@ -25,9 +25,31 @@ from luxar.io._compiler.finalize.lod_backfill import (
     finalize_lod_position_bounds,
     warn_one_part_partition_anchors,
 )
-from luxar.io._compiler.finalize.validation import validate_discrete_dimension_ranges
+from luxar.io._compiler.finalize.validation import (
+    validate_discrete_dimension_ranges,
+    validate_wrapper_children,
+)
 from luxar.typing_utils._format_contract import GEOMETRY_TYPES
 from luxar.typing_utils.geometry_capabilities import lod_capable_types
+
+
+@pytest.mark.parametrize("kind", ["partition", "lod"])
+def test_validate_wrapper_children_rejects_childless_wrapper(kind: str) -> None:
+    root = zarr.group()
+    wrapper = root.create_group("broken")
+    wrapper.attrs["kind"] = kind
+
+    with pytest.raises(ValueError, match=rf"Childless kind={kind} wrapper at 'broken'"):
+        validate_wrapper_children(root)
+
+
+def test_validate_wrapper_children_accepts_populated_wrapper() -> None:
+    root = zarr.group()
+    wrapper = root.create_group("valid")
+    wrapper.attrs["kind"] = "partition"
+    wrapper.create_group("part_0")
+
+    validate_wrapper_children(root)
 
 
 def _lod_tree() -> zarr.Group:

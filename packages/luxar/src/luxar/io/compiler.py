@@ -8,11 +8,13 @@ memory constraints.
 from __future__ import annotations
 
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 from typing import (
     TYPE_CHECKING,
     Any,
     Dict,
+    Iterator,
     List,
     Literal,
     Mapping,
@@ -67,7 +69,10 @@ from ._compiler.finalize.lod_backfill import (
     finalize_lod_position_bounds,
     warn_one_part_partition_anchors,
 )
-from ._compiler.finalize.validation import validate_discrete_dimension_ranges
+from ._compiler.finalize.validation import (
+    validate_discrete_dimension_ranges,
+    validate_wrapper_children,
+)
 from ._compiler.geometry_writers.gsplats import (
     write_gsplat_leaf_subtree as _write_gsplat_leaf_subtree_impl,
 )
@@ -228,6 +233,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         self.compressor = compressor
         self._metadata_cache: Dict[str, Any] = {}
         self._is_finalized = False
+        self._transaction_depth = 0
 
         # Scene-level bounds tracking (union of all node bounds)
         # Each entry is [min_per_dim, max_per_dim] where each is a list of floats
@@ -505,6 +511,43 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         self._authoring_warnings = set(authoring_warnings)
         self._lut_tone_mapping_warned = lut_tone_mapping_warned
         self._encoder.restore(encoder_state)
+
+    @contextmanager
+    def transaction(self, path: NodePath) -> Iterator[None]:
+        """Roll back writes below ``path`` while preserving the original error."""
+        if self._transaction_depth:
+            self._transaction_depth += 1
+            try:
+                yield
+            finally:
+                self._transaction_depth -= 1
+            return
+
+        try:
+            rollback_state = self.snapshot_rollback_state()
+            path_existed = self.node_exists(path)
+        except Exception:
+            yield
+            return
+
+        self._transaction_depth = 1
+        try:
+            yield
+        except BaseException as error:
+            try:
+                self.restore_rollback_state(rollback_state)
+            except BaseException as rollback_error:
+                error.add_note(f"Writer state rollback also failed: {rollback_error}")
+            if not path_existed:
+                try:
+                    self.delete_node(path)
+                except BaseException as rollback_error:
+                    error.add_note(
+                        f"Writer store rollback also failed: {rollback_error}"
+                    )
+            raise
+        finally:
+            self._transaction_depth = 0
 
     @arbol_warnings()
     def write_points(  # type: ignore[override]
@@ -1443,6 +1486,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
     def _validate_discrete_dimension_ranges(self, store: zarr.Group) -> None:
         validate_discrete_dimension_ranges(store, self._scene_bounds)
 
+    def _validate_wrapper_children(self, store: zarr.Group) -> None:
+        validate_wrapper_children(store)
+
     def _finalize_lod_position_bounds(self, store: zarr.Group) -> None:
         finalize_lod_position_bounds(store)
 
@@ -1550,6 +1596,8 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             # that LuxarScene.load permanently rejects, with no way to retry.
             if "incomplete" in self.store.attrs:
                 del self.store.attrs["incomplete"]
+
+            self._validate_wrapper_children(self.store)
 
             # Auto-inject default hover overlay if labels exist but no hover
             # overlay defined. Inside the boundary: if it raises, the store is
