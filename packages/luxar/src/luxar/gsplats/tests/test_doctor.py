@@ -115,6 +115,36 @@ def _mixed_overlap_store(tmp: Path) -> tuple[Path, dict]:
     return path, tree
 
 
+def _two_part_overlap_store(tmp: Path) -> tuple[Path, dict]:
+    """Two overlapping x-ordered parts with one band-midpoint cut."""
+    regions = []
+    for lo_x, hi_x in ((0.0, 32.0), (24.0, 56.0)):
+        lo = np.array([lo_x, 0.0, 0.0], dtype=np.float32)
+        hi = np.array([hi_x, 10.0, 10.0], dtype=np.float32)
+        centers = np.stack((lo, hi))
+        chol = np.zeros((2, 6), dtype=np.float32)
+        chol[:, [0, 2, 5]] = 1.0
+        regions.append(
+            GSplatData(
+                centers=centers,
+                amplitudes=np.ones(2, dtype=np.float32),
+                cholesky_factors=chol,
+            )
+        )
+    tree = {
+        "axis": 0,
+        "split": 28.0,
+        "left": {"part": 0},
+        "right": {"part": 1},
+    }
+    node = GSplatData.partition_from_regions(
+        regions, bsp_tree=tree, region_labels=[0, 1]
+    )
+    path = tmp / "two-part.gsplats.zarr"
+    write_gsplats_tree(path, node)
+    return path, tree
+
+
 def _scale_tree_planes(tree: dict, factors: tuple[float, ...]) -> dict:
     if "part" in tree:
         return dict(tree)
@@ -387,6 +417,24 @@ class TestSplitPlanesCheck:
             assert "coordinate frame" not in finding.summary
             assert "downscale" not in finding.detail
             assert "overlap band" in finding.detail
+
+    def test_one_plane_is_recovered_without_claiming_a_frame_scale(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path, healthy = _two_part_overlap_store(Path(tmp))
+            broken = dict(healthy)
+            broken["split"] = 1e-6
+            _set_root_attr(path, "bsp_tree", broken)
+
+            report = diagnose_store(path)
+            (finding,) = report.findings
+            assert finding.fixable
+            assert "coordinate frame" not in finding.summary
+            assert "downscale" not in finding.detail
+            assert "overlap band" in finding.detail
+
+            repaired = diagnose_store(path, fix=True)
+            assert repaired.healthy
+            assert _root_attrs(path)["bsp_tree"] == healthy
 
     def test_unrecoverable_overlap_violation_names_the_actual_failure(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
