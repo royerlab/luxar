@@ -52,7 +52,11 @@ fit_planned(volume, plan)        -> GSplatData|GSplatNode   # fit each box, merg
   because a tile keeps every splat it fitted; a core-masked box does not).
   Non-finite values are dropped as well: the leaf writer stamps `lod_stats` raw, so
   a signal-free box's `psnr_db = inf` would reach a part's attrs as a bare
-  `Infinity` token that a strict JSON parser refuses.
+  `Infinity` token that a strict JSON parser refuses. A flat merge is scored once
+  against the whole reference volume and carries the merged `psnr_db` / `ssim` /
+  `mse` / foreground metrics. The score uses the same memory guard as uniform
+  tiling (`LUXAR_TILED_QUALITY_MAX_GB`); every decline is announced, including the
+  default `kind=partition` result, whose root currently has no fit-stats dict.
 - **`fit_planned_parallel`** (`fit_planned_parallel.py`) — the `-j N` path: fit
   each box in its own subprocess (`fit --plan-box`), then merge identically. A box
   that fits 0 splats writes a sibling `<output>.empty` marker (skipped at merge).
@@ -66,7 +70,9 @@ fit_planned(volume, plan)        -> GSplatData|GSplatNode   # fit each box, merg
   box resolve 5000 iterations where `-j 1` resolves 1000 (#1637). An absent
   `--cull-retention` does NOT mean the fitter's 0.95: the worker re-enters the same
   CLI resolution and lands on `CONTENT_CULL_RETENTION` itself, so `-j N` and `-j 1`
-  cull identically.
+  cull identically. The CLI also hands the parent process's reference volume to
+  the merge, so a parallel flat result gets the same whole-volume score as the
+  sequential path; direct callers that omit it receive an explicit notice.
 - **`CONTENT_CULL_RETENTION = 0.999`** (`fit_planned.py`) — the near-lossless
   post-fit retention every content box is fitted at, instead of the fitter's own
   0.95 (whose bottom-5% cull would compound across the re-merged boxes).
