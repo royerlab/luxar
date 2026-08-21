@@ -288,11 +288,11 @@ function readLodBounds(
   const attrs = childAttrs as Record<string, unknown>;
   if (!Object.prototype.hasOwnProperty.call(attrs, 'lod_bounds')) return undefined;
   const expectedDimensions = positionBounds.min.length;
-  if (expectedDimensions === 0) {
+  if (expectedDimensions === 0 || positionBounds.min.length !== positionBounds.max.length) {
     log.warning(
       Modules.SCENE_LOADER,
       `lod_group child ${childPath}: rejected lod_bounds; ` +
-        'child has no position_bounds to validate against'
+        'child has no usable position_bounds to validate against'
     );
     return undefined;
   }

@@ -445,36 +445,53 @@ describe('loadLodGroupNode — registry registration', () => {
     ['finite numbers', { min: [0, 0, Number.NaN], max: [1, 1, 1] }],
     ['ordered bounds', { min: [0, 0.8, 0], max: [1, 0.2, 1] }],
     ['bounds contained in position_bounds', { min: [-1, 0, 0], max: [1, 1, 1] }],
-  ])('rejects malformed lod_bounds with a diagnostic requiring %s', async (reason, lodBounds) => {
-    attachStubChildren();
-    const reg = new LODGroupRegistry({
-      getCamera: () => new THREE.Camera(),
-      getViewportSize: () => ({ width: 100, height: 100 }),
-      getDisplayDims: () => [0, 1, 2],
-    });
-    const ctx = makeCtx(reg);
-    const child = makeChildNode('/lod/child_0', 0);
-    (child.attrs as Record<string, unknown>).lod_bounds = lodBounds;
-    const warnSpy = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    [
+      'child has no usable position_bounds to validate against',
+      { min: [0, 0, 0], max: [1, 1, 1] },
+      { min: [0, 0, 0], max: [1, 1] },
+    ],
+  ])(
+    'rejects malformed lod_bounds with a diagnostic requiring %s',
+    async (
+      reason: string,
+      lodBounds: unknown,
+      positionBounds?: { min: number[]; max: number[] }
+    ) => {
+      attachStubChildren();
+      const reg = new LODGroupRegistry({
+        getCamera: () => new THREE.Camera(),
+        getViewportSize: () => ({ width: 100, height: 100 }),
+        getDisplayDims: () => [0, 1, 2],
+      });
+      const ctx = makeCtx(reg);
+      const child = makeChildNode('/lod/child_0', 0);
+      (child.attrs as Record<string, unknown>).lod_bounds = lodBounds;
+      if (positionBounds) {
+        (child.attrs as Record<string, unknown>).position_bounds = positionBounds;
+      }
+      const warnSpy = vi.spyOn(log, 'warning').mockImplementation(() => {});
 
-    try {
-      await loadLodGroupNode(
-        makeLodGroupNode([child]),
-        new THREE.Group(),
-        makeStubLoc(),
-        ctx,
-        loadSceneNodesMock
-      );
+      try {
+        await loadLodGroupNode(
+          makeLodGroupNode([child]),
+          new THREE.Group(),
+          makeStubLoc(),
+          ctx,
+          loadSceneNodesMock
+        );
 
-      expect(reg.get('/lod')!.children[0].lodBounds).toBeUndefined();
-      expect(warnSpy).toHaveBeenCalledWith(
-        expect.anything(),
-        expect.stringContaining(`/lod/child_0: rejected lod_bounds; expected ${reason}`)
-      );
-    } finally {
-      warnSpy.mockRestore();
+        expect(reg.get('/lod')!.children[0].lodBounds).toBeUndefined();
+        expect(warnSpy).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.stringContaining(
+            `/lod/child_0: rejected lod_bounds; ${positionBounds ? '' : 'expected '}${reason}`
+          )
+        );
+      } finally {
+        warnSpy.mockRestore();
+      }
     }
-  });
+  );
 
   it('reports a dimension mismatch without duplicating the expected shape', async () => {
     attachStubChildren();
@@ -533,7 +550,7 @@ describe('loadLodGroupNode — registry registration', () => {
       expect(warnSpy).toHaveBeenCalledWith(
         expect.anything(),
         'lod_group child /lod/child_0: rejected lod_bounds; ' +
-          'child has no position_bounds to validate against'
+          'child has no usable position_bounds to validate against'
       );
     } finally {
       warnSpy.mockRestore();
