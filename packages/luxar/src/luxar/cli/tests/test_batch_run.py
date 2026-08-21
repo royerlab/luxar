@@ -358,7 +358,7 @@ def test_batch_plan_resolves_one_global_normalization_range(tmp_path: Path) -> N
 def test_batch_denoise_does_not_pin_a_raw_sampled_normalization_range(
     tmp_path: Path,
 ) -> None:
-    """Denoising tasks resolve their scale on the data they actually fit."""
+    """Denoising tasks retain their denoise-aware range resolution."""
     src = tmp_path / "movie.zarr"
     _make_timelapse_zarr(src)
 

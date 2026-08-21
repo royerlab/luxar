@@ -446,6 +446,16 @@ class TestDefaultWorkerCmdBuilder:
 
         assert fit_kwargs.get("norm_range") is None
 
+    def test_denoising_boxes_do_not_inherit_a_raw_shared_normalization_range(self):
+        from luxar.gsplats.planner.fit_planned import _ensure_planned_norm_range
+
+        fit_kwargs = {"_denoise_h": 0.04, "_denoise_params": {}}
+        volume = np.linspace(10.0, 110.0, 32**3, dtype=np.float32).reshape(32, 32, 32)
+
+        _ensure_planned_norm_range(volume, fit_kwargs, False)
+
+        assert "norm_range" not in fit_kwargs
+
     def test_forwards_the_runs_fit_configuration(self, tmp_path):
         # `truncate:` is settable ONLY through a YAML --config (no preset sets it,
         # there is no --truncate flag), so an unforwarded config made every `-j N`
