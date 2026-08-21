@@ -385,7 +385,7 @@ tried after reading the Points docs.
 
 - `resolve_substitutive_axis_mesh(spec)` — the `substitutive_lod=` axis. Keys:
   `compression_factor` (`K`), `levels` (`n_lods`), `method`
-  (`{'auto', 'cluster', 'qem'}`; `auto` uses QEM through 5k vertices), `coverage_fractions`,
+  (`{'auto', 'cluster', 'qem'}`; `auto` uses QEM through 300 vertices), `coverage_fractions`,
   `coarsen_dims`. Refuses `truncation_radius` / `max_aspect` / `device` / `seed` —
   all four exist only for a lift to gsplats. `coarsen_dims` is the authoring name
   for the decimator's `spatial_dims`. `add_mesh_substitutive_lod_wrapper_impl`

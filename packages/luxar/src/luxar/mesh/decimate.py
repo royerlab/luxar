@@ -65,7 +65,7 @@ import numpy as np
 from arbol import aprint
 from numpy.typing import NDArray
 
-QEM_AUTO_VERTEX_LIMIT = 5_000
+QEM_AUTO_VERTEX_LIMIT = 300
 DECIMATION_METHODS = frozenset({"cluster", "qem"})
 
 

@@ -17,18 +17,26 @@ from .decimate import (
 
 # Dimensionless: large enough to dominate the few face quadrics at a rim vertex.
 _BOUNDARY_QUADRIC_WEIGHT = 1000.0
+_RELATIVE_GEOMETRY_TOLERANCE = 1e-12
+
+
+def _coordinate_extent(positions: NDArray[np.float64]) -> float:
+    """Largest coordinate span, used to scale geometric tolerances."""
+    flattened = positions.reshape(-1, positions.shape[-1])
+    return float(np.ptp(flattened, axis=0).max(initial=0.0))
 
 
 def _face_quadrics(positions: NDArray[np.float64]) -> NDArray[np.float64]:
     """One homogeneous squared-distance quadric per triangle."""
     n_faces, _, ndim = positions.shape
     quadrics = np.zeros((n_faces, ndim + 1, ndim + 1), dtype=np.float64)
+    extent = _coordinate_extent(positions)
     if ndim == 3:
         normal = np.cross(
             positions[:, 1] - positions[:, 0], positions[:, 2] - positions[:, 0]
         )
         length = np.linalg.norm(normal, axis=1)
-        valid = length > 1e-15
+        valid = length > extent**2 * _RELATIVE_GEOMETRY_TOLERANCE
         normal[valid] /= length[valid, None]
         plane = np.concatenate(
             [normal, -np.einsum("ij,ij->i", normal, positions[:, 0])[:, None]], axis=1
@@ -40,7 +48,7 @@ def _face_quadrics(positions: NDArray[np.float64]) -> NDArray[np.float64]:
     for index, triangle in enumerate(positions):
         edges = (triangle[1:] - triangle[0]).T
         basis, singular, _ = np.linalg.svd(edges, full_matrices=False)
-        rank = int(np.count_nonzero(singular > 1e-12))
+        rank = int(np.count_nonzero(singular > extent * _RELATIVE_GEOMETRY_TOLERANCE))
         projector = identity - basis[:, :rank] @ basis[:, :rank].T
         offset = -projector @ triangle[0]
         quadrics[index, :ndim, :ndim] = projector
@@ -67,7 +75,7 @@ def _vertex_quadrics(
     boundary_edges = unique_edges[counts == 1]
     edge_vectors = positions[boundary_edges[:, 1]] - positions[boundary_edges[:, 0]]
     lengths = np.linalg.norm(edge_vectors, axis=1)
-    valid = lengths > 1e-15
+    valid = lengths > _coordinate_extent(positions) * _RELATIVE_GEOMETRY_TOLERANCE
     for (u, v), edge_vector, length in zip(
         boundary_edges[valid], edge_vectors[valid], lengths[valid], strict=True
     ):
@@ -91,7 +99,8 @@ def _require_nondegenerate_surface(
     """Refuse input with no triangle spanning a two-dimensional surface."""
     triangles = positions[faces]
     edges = triangles[:, 1:] - triangles[:, :1]
-    if np.any(np.linalg.matrix_rank(edges, tol=1e-12) >= 2):
+    tolerance = _coordinate_extent(positions) * _RELATIVE_GEOMETRY_TOLERANCE
+    if np.any(np.linalg.matrix_rank(edges, tol=tolerance) >= 2):
         return
     raise ValueError(
         f"the input {positions.shape[0]}-vertex, {faces.shape[0]}-face mesh has no "
@@ -374,21 +383,20 @@ def _preserves_face_orientation(
     if positions.shape[1] != 3:
         return True
     incident = _edge_faces(u, v, vertex_faces, active_faces)
-    changed_faces = {
+    changed_indices = [
         index
         for index in vertex_faces[u] | vertex_faces[v]
         if active_faces[index] and index not in incident
-    }
-    for face_index in changed_faces:
-        face = work_faces[face_index]
-        before = positions[face]
-        after = before.copy()
-        after[(face == u) | (face == v)] = target
-        before_normal = np.cross(before[1] - before[0], before[2] - before[0])
-        after_normal = np.cross(after[1] - after[0], after[2] - after[0])
-        if float(before_normal @ after_normal) <= 0.0:
-            return False
-    return True
+    ]
+    if not changed_indices:
+        return True
+    faces = work_faces[changed_indices]
+    before = positions[faces]
+    after = before.copy()
+    after[(faces == u) | (faces == v)] = target
+    before_normal = np.cross(before[:, 1] - before[:, 0], before[:, 2] - before[:, 0])
+    after_normal = np.cross(after[:, 1] - after[:, 0], after[:, 2] - after[:, 0])
+    return bool(np.all(np.einsum("ij,ij->i", before_normal, after_normal) > 0.0))
 
 
 def _collapse_to_target(
@@ -552,7 +560,10 @@ def decimate_qem(
     Args:
         vertices: ``(N, D)`` vertex coordinates.
         faces: ``(F, 3)`` triangle indices.
-        target_vertices: Approximate maximum vertex count for the result.
+        target_vertices: Approximate maximum vertex count for the result. On an open
+            near-planar surface the orientation veto can stop well above this target,
+            which may remove a requested coarse ladder level; use ``cluster`` when
+            closely hitting the count matters more than topology preservation.
         normals: Optional per-vertex normals.
         normal_dims: Three coordinate columns defining the normal frame.
         colors: Optional per-vertex colours.

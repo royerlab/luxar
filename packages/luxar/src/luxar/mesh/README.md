@@ -79,7 +79,7 @@ caller: a ladder's levels are a true partition of the faces too, so
   levels, which were missing only a producer, now work: `decimate.py` dispatches
   between vectorized vertex clustering and the `qem.py` Garland-Heckbert edge-collapse
   tier. QEM applies the link-condition veto that preserves manifoldness and is selected
-  by `auto` through 5k vertices; `add_mesh(substitutive_lod=…)` writes the resulting
+  by `auto` through 300 vertices; `add_mesh(substitutive_lod=…)` writes the resulting
   `kind=lod` group. Partitioning (`split.py`, above) is a *different* axis and also
   ships — it divides one surface in space rather than approximating it at lower detail.
   No two of the three can be combined in one `add_mesh` call. See

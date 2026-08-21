@@ -18,7 +18,7 @@ from ..decimate import (
     decimate_cluster,
     resolve_decimation_method,
 )
-from ..qem import decimate_qem
+from ..qem import _face_quadrics, decimate_qem
 
 
 def octasphere(subdivisions: int = 4) -> tuple[np.ndarray, np.ndarray]:
@@ -539,10 +539,26 @@ class TestDecimateQEM:
             triangles[:, 1] - triangles[:, 0], triangles[:, 2] - triangles[:, 0]
         )[:, 2]
         assert len(result.vertices) >= 100
-        assert np.all(oriented_area < 0), "every coarse face must keep the input winding"
+        assert np.all(oriented_area < 0), (
+            "every coarse face must keep the input winding"
+        )
         assert np.abs(oriented_area).sum() == pytest.approx(
             abs(oriented_area.sum()), rel=1e-6
         )
+
+    def test_small_coordinate_scales_keep_a_valid_cost_function(self) -> None:
+        vertices, faces = octasphere(2)
+
+        for scale in (1e-7, 1e-13):
+            quadrics = _face_quadrics((vertices * scale).astype(np.float64)[faces])
+            assert np.all(np.abs(quadrics).max(axis=(1, 2)) > 0.0)
+
+            scaled = decimate_qem(vertices * scale, faces, target_vertices=30)
+            assert len(scaled.vertices) == 30
+            assert np.isfinite(scaled.vertices).all()
+            radii = np.linalg.norm(scaled.vertices / scale, axis=1)
+            assert radii.min() > 0.9
+            assert radii.max() < 1.15
 
     def test_nonspatial_columns_are_hard_collapse_barriers(self) -> None:
         vertices, faces = octasphere(1)

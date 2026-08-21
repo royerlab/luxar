@@ -309,7 +309,7 @@ def _run(
         node_name=None,
         levels=2,
         compression_factor=4,
-        method="auto",
+        method="cluster",
         overwrite=overwrite,
     )
 
