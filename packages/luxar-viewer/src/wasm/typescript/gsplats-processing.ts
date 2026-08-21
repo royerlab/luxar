@@ -292,7 +292,9 @@ function computeDisplayCholesky3D(
   // factors, displayDims [0,1]): the phantom diagonal differs from WASM in
   // 3116/20000 cases, by AT MOST 2 ulp (1 from `ln`, 1 from `exp`); before
   // this fix it was 5344/20000, also at 2 ulp. The rounding's real win here is
-  // the other five packed slots, which went 1294/100000 → 0/100000.
+  // the other five packed slots, which went 1294/100000 at this (unit) scale →
+  // 0/100000. The rescaled variants of the same fixture, discussed just below,
+  // went 1278 / 1216 / 1244 per 100000 → 0 at ×1e-4 / ×1e-7 / ×1e6.
   //
   // The 2-ulp figure is a property of that fixture's SCALE, not of the kernel:
   // `phantom = exp(mean(ln Lᵢᵢ))`, so the relative residual is ≈ |ln σ|·2⁻²⁴.
@@ -306,6 +308,14 @@ function computeDisplayCholesky3D(
   // a power of two is exact, and `phantom` is stored into a Float32Array, which
   // rounds it anyway. Mutating any of them changes nothing in the sweep above;
   // mutating the `ln` moves it to 4484/20000.
+  //
+  // Two of those three are inert only in EACH OTHER'S PRESENCE, so do not read
+  // the list above as three independently dead roundings. The accumulator
+  // `fround(logSum + …)` is a no-op because rounding COMMUTES with the exact
+  // power-of-two division that follows — it is redundant GIVEN
+  // `fround(logSum / counted)`, not on its own. Measured over six scene scales
+  // (120000 phantoms): dropping either alone changes 0, dropping BOTH changes
+  // 55473. The `exp` rounding is independently inert (the Float32Array store).
   const phantom =
     counted > 0
       ? Math.fround(Math.exp(Math.fround(logSum / counted)))

@@ -100,8 +100,11 @@ export function calculate_effective_radii(
     // Both the square and the difference are f32 operations in Rust; the
     // difference in particular cancels catastrophically for a point near the
     // rim of its own radius, which is exactly where the two backends used to
-    // disagree: 615/20000 outputs, up to 1003 ulp, on the randomized sweep in
-    // `tests/unit/wasm/wasm-vs-typescript.test.ts` before this fix.
+    // disagree: dropping just these two roundings moves 538/20000 outputs, by
+    // up to 405 ulp, on the randomized sweep in
+    // `tests/unit/wasm/wasm-vs-typescript.test.ts`. (Dropping every rounding in
+    // this kernel — the full pre-fix state — is 633/20000 at up to 1278 ulp,
+    // the figure that sweep's own comment quotes.)
     const radiusSquared = Math.fround(originalRadius * originalRadius);
     if (distanceSquared >= radiusSquared) {
       output[i] = 0;

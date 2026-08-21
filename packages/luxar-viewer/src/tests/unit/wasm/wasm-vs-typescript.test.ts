@@ -2015,7 +2015,11 @@ describe('WASM vs TypeScript Comparison', () => {
         // The DIFFERING COUNT is asserted too. The absolute bound alone is
         // satisfied by several partial reverts (dropping the `rawExp` rounding
         // leaves maxAbs at 1.19e-7); the count moves to 2632 for that one, and
-        // to between 2204 and 6039 for every other rounding on this path.
+        // to between 2107 and 6039 for every other rounding this count is the
+        // only thing that catches. (The four `computeMarginalCholesky`
+        // roundings reach lower — 1960 for the inner Crout product, under the
+        // 2000 cap — but each of those also breaks the exact display-Cholesky
+        // assertion below, so the count is not what has to catch them.)
         //
         // The visible SET is asserted equal, but that is a property of THIS
         // FIXTURE, not of the kernel: the smallest emitted amplitude here is
@@ -2094,7 +2098,8 @@ describe('WASM vs TypeScript Comparison', () => {
         //
         // Measured: 1802/19943 amplitudes differ by AT MOST 2 ulp (was
         // 11477/19943, up to 430 ulp). Dropping any single rounding inside
-        // `mahalanobisDistanceInternal` takes it to between 8 and 44 ulp.
+        // `mahalanobisDistanceInternal` takes it to between 17 and 44 ulp
+        // (44 / 40 / 32 / 27 / 17 for the five, in source order).
         const splatCount = 20000;
         const ndim = 5;
         const packedSize = 15;
@@ -2214,8 +2219,9 @@ describe('WASM vs TypeScript Comparison', () => {
       (scale, ulpBound, differingCap) => {
         // The phantom z diagonal is `exp(mean(ln(Lii)))`, so it inherits BOTH
         // transcendental residuals. The other five packed slots are pure
-        // arithmetic and must be exact; they were 1294/100000 wrong before this
-        // fix, at every scale.
+        // arithmetic and must be exact; before this fix they were wrong in
+        // ~1200-1300 of 100000 at every scale (1294 / 1278 / 1216 / 1244 at
+        // unit / 1e-4 / 1e-7 / 1e6 respectively).
         //
         // The phantom bound is SCALE-DEPENDENT, which is why this is a sweep
         // and not a single 2-ulp assertion: the relative residual is roughly

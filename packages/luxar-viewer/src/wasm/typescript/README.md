@@ -61,15 +61,15 @@ mismatches against the real WASM — and it is tracked as **#1830**.
 
 This directory is **not** uniformly verified. Current state:
 
-| File                    | f32 discipline                                                                                                             |
-| ----------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `depth-sort.ts`         | Frounded; sort permutation exact vs WASM                                                                                   |
-| `mesh-culling.ts`       | Slab bounds frounded; parity-tested                                                                                        |
-| `effective-radii.ts`    | Frounded end to end (#1820); bit-exact vs WASM over a 20k randomized sweep                                                 |
-| `gsplats-processing.ts` | Frounded end to end (#1820); bit-exact except the `exp`/`log` residual (#1830)                                             |
-| `decode.ts`             | Anchors frounded, decode arithmetic NOT — **known divergence**, 38 492/65 536 values differing by up to 33 008 ulp (#1831) |
-| `lines-clipping.ts`     | Slab bounds NOT frounded — being fixed under **#1780**; treat as unverified until it lands                                 |
-| `projection.ts`         | Pure copy, no arithmetic                                                                                                   |
+| File                    | f32 discipline                                                                                                                             |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `depth-sort.ts`         | Frounded; sort permutation exact vs WASM                                                                                                   |
+| `mesh-culling.ts`       | Slab bounds frounded; parity-tested                                                                                                        |
+| `effective-radii.ts`    | Frounded end to end (#1820); bit-exact vs WASM over a 20k randomized sweep                                                                 |
+| `gsplats-processing.ts` | Frounded end to end (#1820); bit-exact except the `exp`/`log` residual (#1830)                                                             |
+| `decode.ts`             | Anchors frounded, decode arithmetic NOT — **known divergence**, thousands of ulp on cancellation-prone ranges (#1831; measured case below) |
+| `lines-clipping.ts`     | Slab bounds NOT frounded — being fixed under **#1780**; treat as unverified until it lands                                                 |
+| `projection.ts`         | Pure copy, no arithmetic                                                                                                                   |
 
 ### Where `Math.fround` is mandatory
 
@@ -80,7 +80,17 @@ that difference is observable and must be closed with `Math.fround` at each step
 in the Rust operation order:
 
 - `depth-sort.ts` frounds every step so the sort permutation is exact.
-- `decode.ts` frounds the per-channel anchors, which arrive as f32 in WASM.
+- `decode.ts` frounds the per-channel anchors, which arrive as f32 in WASM. It
+  does **not** fround the decode arithmetic, and that is the known #1831
+  divergence. A reproducible measurement, driving all 65 536 u16 codes through
+  `decode_quantized_u16` and comparing bit-for-bit against the WASM kernel:
+  `min_val = -1e-6, max_val = 1e-6` differs in 37 429 values, by up to
+  21 605 ulp. What amplifies it is the cancellation in `min + code · scale`, so
+  the ulp figure is a property of the RANGE, not of the decoder: the same sweep
+  measures 44 218 values at ≤8 487 ulp for `∓1e-3`, 12 228 at ≤1 ulp for
+  `999.9 … 1000.1`, and 0 for `1e6 … 1e6 + 1`. Quote a range whenever you quote
+  a number here. The per-channel decoders take f64 scales on both sides and
+  measured 0 on every case tried.
 - `mesh-culling.ts` frounds the slab bounds. The f64 difference of two f32 values
   is _exact_ while Rust's f32 subtraction rounds; the gap is under half an ulp,
   but when the rounding goes DOWN the rounded bound is itself a legal f32 vertex
