@@ -427,7 +427,7 @@ class Group(Node):
         ``kind=partition`` group you built yourself, provided that group declares
         ``display_type='mesh'`` — a partition is homogeneous, so a mismatched
         declaration is refused. ``partition`` and ``substitutive_lod`` cannot be
-        combined, exactly as for Points / Lines.
+        combined for Mesh or Lines; Points uses that pair for its overview shape.
 
         ``additive_lod`` IS supported, as a **reveal ladder and nothing else**: it
         writes ``additive_<i>/`` levels inside the leaf, each holding one concentric

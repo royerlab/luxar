@@ -65,7 +65,7 @@ group is detached from a scene or the scene lacks a writer.
 
 | Method | Returns | Purpose |
 |--------|---------|---------|
-| `add_points(name, positions, ...)` | `Points` or `Group` | Add a point cloud; returns a `kind=partition` wrapper when `partition=` yields >1 part |
+| `add_points(name, positions, ...)` | `Points` or `Group` | Add a point cloud; `partition=` yields a partition, `substitutive_lod=` yields an LOD, and combining them yields an overview LOD whose finest child is partitioned |
 | `add_lines(name, vertices, widths, ...)` | `Lines` or `Group` | Add polylines/segments/loops; partition-aware (polylines stay atomic) |
 | `add_gsplats(name, centers, amplitudes, cholesky_factors, ...)` | `GSplats` or `Group` | Add Gaussian splats from explicit arrays |
 | `add_gsplats_from_data(name, result, ...)` | `GSplats` or `Group` | Add from a `GSplatData`; resolves substitutive (`lod_group=`) and additive (`additive_lod=`) LOD axes |

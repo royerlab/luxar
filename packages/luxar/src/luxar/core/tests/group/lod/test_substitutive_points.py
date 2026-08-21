@@ -682,9 +682,10 @@ def _partitioned_points(
     over-trigger control), so both variants get identical geometry and only the
     insertion point differs.
 
-    The shape ``demo_biodiversity_planetary_scale`` builds: ``add_points`` rejects
-    ``partition=`` with ``substitutive_lod=``, so a caller who wants per-tile
-    ladders creates the wrapper itself and calls the adder once per part.
+    The adaptive shape ``demo_biodiversity_planetary_scale`` builds: the combined
+    ``add_points(partition=..., substitutive_lod=...)`` spelling authors a global
+    overview cap, so a caller who wants one substitutive ladder per tile creates
+    the partition wrapper itself and calls the adder once per part.
 
     ``method="kmeans_lloyd"`` instead of the default ``"auto"``: at these sizes
     ``auto`` routes to the submodular ``greedy`` Runnalls path, whose sparse-Gram
