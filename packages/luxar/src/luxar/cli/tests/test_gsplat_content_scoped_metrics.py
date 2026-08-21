@@ -348,19 +348,10 @@ def test_decimate_keeps_the_provenance_and_drops_the_score(tmp_path: Path) -> No
         )
 
 
-def test_a_laddered_store_keeps_its_q_e_stamps_across_a_cull(tmp_path: Path) -> None:
-    """The Q·e ladder stamps survive a rewrite, on disk — the narrowed contract.
-
-    ``lod_stats.energy_fraction_cum`` (a rung's prefix energy e(k)),
-    ``level_stats.reference_energy`` (its weight w) and ``level_stats.quality`` are
-    measured on the artifact's OWN content, not against the source volume, so this
-    rule does not claim them: deleting them stripped the viewer's ``e(k) >= 0.6``
-    upgrade release and its ``1/e(k)`` compensation, and deleting w licensed
-    ``annotate-quality``'s leaf-local ``reference_energy`` fallback to fabricate a
-    group-inconsistent one. A reduction DOES make them stale; recomputing them (as
-    ``annotate-quality`` does) is the open follow-up, and dropping them is not the
-    interim answer.
-    """
+def test_a_laddered_store_recomputes_its_q_e_stamps_across_a_cull(
+    tmp_path: Path,
+) -> None:
+    """The persisted e(k)/w pair and counts describe the culled artifact."""
     src = _fixture(tmp_path / "fit.gsplats.zarr")
     laddered = tmp_path / "lad.gsplats.zarr"
     _run(("lod", "{in}", "{out}", "--recipe", "stream", "--n-lods", "3"), src, laddered)
@@ -378,19 +369,22 @@ def test_a_laddered_store_keeps_its_q_e_stamps_across_a_cull(tmp_path: Path) -> 
 
     after = _all_leaf_stats(culled)
     assert len(after) == len(before), "the cull changed the tree shape"
-    # (``level_stats`` itself does not reach a mask-rebuilt store at all — the
-    # rebuild constructs a fresh leaf with empty ``meta`` — so the on-disk claim
-    # here is about the per-rung e(k). The level scope is covered in memory by the
-    # domain test's scene-authoring case, which is the path that reads it.)
-    for i, (_level_stats, rungs) in enumerate(after):
+    for i, (level_stats, rungs) in enumerate(after):
         assert len(rungs) == len(before[i][1]), f"leaf {i} changed ladder shape"
+        cumulative_n = 0
         for j, rung in enumerate(rungs):
-            assert rung.get("energy_fraction_cum") == pytest.approx(
-                before[i][1][j]["energy_fraction_cum"]
-            ), f"leaf {i} rung {j} lost its e(k)"
+            cumulative_n += int(rung["lod_n_splats"])
+            assert rung["lod_cumulative_n"] == cumulative_n
+            assert 0.0 < rung["energy_fraction_cum"] <= 1.0
             # ...while the fit's MEASURED scores (this rule's actual subject) go.
             survivors = [k for k in _CONTENT_SCOPED_STATS_KEYS if k in rung]
             assert not survivors, f"leaf {i} rung {j} kept {survivors}"
+        assert rungs[-1]["energy_fraction_cum"] == pytest.approx(1.0)
+        assert level_stats["n_splats_total"] == cumulative_n
+        assert level_stats["reference_energy"] > 0.0
+        assert level_stats["reference_energy"] != pytest.approx(
+            before[i][0]["reference_energy"]
+        )
     assert not [k for k in _CONTENT_SCOPED_STATS_KEYS if k in _root_stats(culled)], (
         "the culled store still publishes the fit's score at the root"
     )
@@ -437,6 +431,108 @@ def test_overview_does_not_stamp_the_input_score_on_its_merged_cap(
             assert not survivors, (
                 f"leaf {i} rung {j} publishes the input fit's {survivors}"
             )
+
+    transformed = tmp_path / "ov_scaled.gsplats.zarr"
+    _run(("transform", "{in}", "{out}", "--scale-intensity", "0.5"), out, transformed)
+    before_node, _ = load_gsplat_node(out, include_stats=True)
+    node, _ = load_gsplat_node(transformed, include_stats=True)
+    from luxar.gsplats.tree import (
+        GSplatLeaf,
+        GSplatLodGroup,
+        GSplatPartition,
+        iter_leaves,
+    )
+
+    assert isinstance(before_node, GSplatLodGroup)
+    assert isinstance(node, GSplatLodGroup)
+    before_caps = [
+        child for child in before_node.children if isinstance(child, GSplatLeaf)
+    ]
+    caps = [child for child in node.children if isinstance(child, GSplatLeaf)]
+    assert len(before_caps) == len(caps) == 1, (
+        "overview output has no unique coarse cap"
+    )
+    before_reference = before_caps[0].meta["stats"]["reference_energy"]
+    cap_reference = caps[0].meta["stats"]["reference_energy"]
+    assert cap_reference == pytest.approx(before_reference * 0.25, rel=0.02)
+    partitions = [
+        child for child in node.children if isinstance(child, GSplatPartition)
+    ]
+    assert partitions, "overview output has no fine partition child"
+    fine_references = [
+        leaf.meta["stats"]["reference_energy"]
+        for partition in partitions
+        for leaf in iter_leaves(partition)
+    ]
+    assert cap_reference == pytest.approx(sum(fine_references))
+    assert all(
+        "quality" not in leaf.meta.get("stats", {}) for leaf in iter_leaves(node)
+    )
+    for partition in partitions:
+        assert "stats" not in partition.meta, (
+            "tree restamp invented level_stats on a non-leaf partition child"
+        )
+
+
+def test_tree_intensity_transform_preserves_substitutive_provenance(
+    tmp_path: Path,
+) -> None:
+    """A tree rewrite must not replace authored level provenance with defaults."""
+    src = _fixture(tmp_path / "fit.gsplats.zarr")
+    adaptive = tmp_path / "adaptive.gsplats.zarr"
+    _run(
+        (
+            "lod",
+            "{in}",
+            "{out}",
+            "--recipe",
+            "adaptive",
+            "--compression-factor",
+            "4",
+            "--levels",
+            "3",
+            "--max-elements",
+            "12",
+            "--no-additive",
+            "--device",
+            "cpu",
+        ),
+        src,
+        adaptive,
+    )
+
+    from luxar.gsplats.tree import iter_leaves
+
+    before_node, _ = load_gsplat_node(adaptive, include_stats=True)
+    before = [
+        (
+            leaf.meta.get("compression_factor"),
+            leaf.meta.get("parent_method"),
+            leaf.meta.get("level_index"),
+        )
+        for leaf in iter_leaves(before_node)
+    ]
+    assert any(
+        compression_factor != 1 or parent_method is not None or level_index != 0
+        for compression_factor, parent_method, level_index in before
+    ), "adaptive fixture has only default provenance; the test proves nothing"
+
+    transformed = tmp_path / "adaptive_scaled.gsplats.zarr"
+    _run(
+        ("transform", "{in}", "{out}", "--scale-intensity", "0.5"),
+        adaptive,
+        transformed,
+    )
+    after_node, _ = load_gsplat_node(transformed, include_stats=True)
+    after = [
+        (
+            leaf.meta.get("compression_factor"),
+            leaf.meta.get("parent_method"),
+            leaf.meta.get("level_index"),
+        )
+        for leaf in iter_leaves(after_node)
+    ]
+    assert after == before
 
 
 @pytest.mark.parametrize("name", sorted(_NO_PROVENANCE))

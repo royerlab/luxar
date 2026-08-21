@@ -123,6 +123,9 @@ class LODViewsMixin(_GSplatDataOps):
         )
         if level + 1 < n:
             drop_content_scoped_stats(view.stats)
+            from luxar.gsplats.lod.restamp import refresh_reduction_lod_stats
+
+            view = refresh_reduction_lod_stats(view, self)
         return view
 
     def flattened(self) -> "GSplatData":
