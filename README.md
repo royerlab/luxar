@@ -1002,7 +1002,7 @@ the full citation.
 - **Cells3D** — fluorescence microscopy provided by the [Allen Institute for Cell Science](https://www.allencell.org/), distributed as scikit-image sample data (`skimage.data.cells3d`); scikit-image itself: van der Walt et al. (2014), *PeerJ* 2:e453, [doi:10.7717/peerj.453](https://doi.org/10.7717/peerj.453).
 - **3D Organoid** — Blin et al. (2019), via the [Image Data Resource](https://idr.openmicroscopy.org/) (IDR; Williams et al. 2017, *Nat. Methods*, [doi:10.1038/nmeth.4326](https://doi.org/10.1038/nmeth.4326)).
 - **Zebrafish Neuromast** — Adrian Jacobo lab (CZ Biohub SF / Rockefeller); iSIM, deconvolved 4D timelapse.
-- **Tribolium Embryo** — [Cell Tracking Challenge](https://celltrackingchallenge.net/) ([Zenodo](https://zenodo.org/records/5270323)); Yin et al. (2022), *J. Cell Sci.*, [doi:10.1242/jcs.259022](https://doi.org/10.1242/jcs.259022); Maška et al. (2023), *Nat. Methods*.
+- **Tribolium Embryo** — [Cell Tracking Challenge](https://celltrackingchallenge.net/) ([Zenodo](https://zenodo.org/records/5270323)); Barry et al. (2022), *J. Cell Sci.* 135, jcs259511, [doi:10.1242/jcs.259511](https://doi.org/10.1242/jcs.259511); Maška et al. (2023), *Nat. Methods*.
 - **C. elegans nuclei tracking** — Hirsch et al. (2022), 3D+time confocal nuclei dataset, [Zenodo 6460303](https://doi.org/10.5281/zenodo.6460303).
 
 **Medical & anatomy**
