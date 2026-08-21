@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import numpy as np
 import pytest
 
@@ -22,6 +24,28 @@ def _rung(identifier: float, amplitude: float, level: int) -> AdditiveSubLOD:
             "lod_breakpoints_kind": "equal-count",
             "lod_n_splats": 1,
             "lod_cumulative_n": level + 1,
+        },
+    )
+
+
+def _wide_rung(
+    identifier: float, amplitudes: list[float], level: int
+) -> AdditiveSubLOD:
+    count = len(amplitudes)
+    centers = np.zeros((count, 3), dtype=np.float32)
+    centers[:, 0] = identifier
+    cholesky = np.tile(
+        np.array([1.0, 0.0, 1.0, 0.0, 0.0, 1.0], dtype=np.float32),
+        (count, 1),
+    )
+    return AdditiveSubLOD(
+        centers=centers,
+        amplitudes=np.asarray(amplitudes, dtype=np.float32),
+        cholesky_factors=cholesky,
+        stats={
+            "lod_level": level,
+            "lod_n_splats": count,
+            "lod_cumulative_n": (level + 1) * count,
         },
     )
 
@@ -112,7 +136,13 @@ def test_pruning_drops_stale_quality_stamps_without_inventing_rung_keys() -> Non
 
 
 def test_multi_level_pruning_refreshes_root_summary_from_finest_level() -> None:
-    summary = {"lod_n_lods": 2, "lod_cutpoints": [1, 2]}
+    summary = {
+        "lod_n_lods": 2,
+        "lod_cutpoints": [1, 2],
+        "reference_energy": 99.0,
+        "quality": 30.0,
+        "n_splats_total": 2,
+    }
     source = GSplatData.from_substitutive_levels(
         [
             SubstitutiveLevel(
@@ -132,8 +162,71 @@ def test_multi_level_pruning_refreshes_root_summary_from_finest_level() -> None:
     result = source.cull(method="cumulative", retention=0.99)
 
     assert [level.n_additive_lods for level in result.substitutive_levels] == [1, 1]
+    for level in result.substitutive_levels:
+        assert level.stats["lod_n_lods"] == 1
+        assert level.stats["lod_cutpoints"] == [1]
+        assert "reference_energy" not in level.stats
+        assert "quality" not in level.stats
+        assert "n_splats_total" not in level.stats
     assert result.stats["lod_n_lods"] == 1
     assert result.stats["lod_cutpoints"] == [1]
+    assert "reference_energy" not in result.stats
+    assert "quality" not in result.stats
+    assert "n_splats_total" not in result.stats
+
+
+def test_count_change_refreshes_ladder_stamps_without_pruning() -> None:
+    summary = {
+        "lod_n_lods": 2,
+        "lod_cutpoints": [2, 4],
+        "reference_energy": 99.0,
+        "quality": 30.0,
+        "n_splats_total": 4,
+        "label": "keep",
+    }
+    source = GSplatData.from_substitutive_levels(
+        [
+            SubstitutiveLevel(
+                additive_sublods=[
+                    _wide_rung(0.0, [10.0, 9.0], 0),
+                    _wide_rung(1.0, [8.0, 7.0], 1),
+                ],
+                compression_factor=4,
+                parent_method="greedy",
+                level_index=2,
+                stats=dict(summary),
+            )
+        ],
+        stats=dict(summary),
+    )
+
+    result = source.cull(method="cumulative", retention=0.79)
+
+    assert [lod.n_splats for lod in result.additive_sublods] == [2, 1]
+    assert [lod.stats["lod_level"] for lod in result.additive_sublods] == [0, 1]
+    assert [lod.stats["lod_n_splats"] for lod in result.additive_sublods] == [2, 1]
+    assert [lod.stats["lod_cumulative_n"] for lod in result.additive_sublods] == [2, 3]
+    level = result.substitutive_levels[0]
+    assert level.compression_factor == 4
+    assert level.parent_method == "greedy"
+    assert level.level_index == 2
+    assert level.stats == {
+        "lod_n_lods": 2,
+        "lod_cutpoints": [2, 3],
+        "label": "keep",
+    }
+    assert result.stats == {
+        "lod_n_lods": 2,
+        "lod_cutpoints": [2, 3],
+        "label": "keep",
+        "culled": True,
+        "culling_method": "cumulative",
+        "n_original": 4,
+        "n_culled": 1,
+        "amplitude_retention": pytest.approx(27.0 / 34.0),
+    }
+    assert all(type(value) is int for value in result.stats["lod_cutpoints"])
+    json.dumps(result.stats)
 
 
 def test_all_empty_ladder_keeps_writer_validation_path(tmp_path) -> None:

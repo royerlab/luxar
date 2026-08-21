@@ -38,6 +38,9 @@ def _level(seed: int, *, level_index: int) -> SubstitutiveLevel:
         "lod_n_lods": 3,
         "lod_breakpoints_kind": "equal-count",
         "lod_cutpoints": [100, 200, 300],
+        "reference_energy": 99.0,
+        "quality": 30.0,
+        "n_splats_total": 300,
     }
     return SubstitutiveLevel(
         additive_sublods=[
@@ -59,7 +62,13 @@ def test_cull_cli_writes_stream_and_levels_after_rung_empties(
     output = tmp_path / "culled.gsplats.zarr"
     GSplatData.from_substitutive_levels(
         [_level(10 * index, level_index=index) for index in range(n_levels)],
-        stats={"lod_n_lods": 3, "lod_cutpoints": [100, 200, 300]},
+        stats={
+            "lod_n_lods": 3,
+            "lod_cutpoints": [100, 200, 300],
+            "reference_energy": 99.0,
+            "quality": 30.0,
+            "n_splats_total": 300,
+        },
     ).save(source)
 
     result = CliRunner().invoke(
@@ -86,6 +95,9 @@ def test_cull_cli_writes_stream_and_levels_after_rung_empties(
         assert all(count > 0 for count in counts)
         assert level.stats["lod_n_lods"] == len(counts)
         assert level.stats["lod_cutpoints"] == list(np.cumsum(counts))
+        assert "reference_energy" not in level.stats
+        assert "quality" not in level.stats
+        assert "n_splats_total" not in level.stats
         assert [lod.stats["lod_level"] for lod in level.additive_sublods] == list(
             range(len(counts))
         )
@@ -98,3 +110,6 @@ def test_cull_cli_writes_stream_and_levels_after_rung_empties(
     assert pipeline_stats["lod_cutpoints"] == list(
         np.cumsum([lod.n_splats for lod in loaded.additive_sublods])
     )
+    assert "reference_energy" not in pipeline_stats
+    assert "quality" not in pipeline_stats
+    assert "n_splats_total" not in pipeline_stats

@@ -31,17 +31,20 @@ _PRUNED_LEVEL_STATS = ("reference_energy", "quality", "n_splats_total")
 def _prune_empty_additive_sublods(
     lods: "List[AdditiveSubLOD]",
 ) -> "tuple[List[AdditiveSubLOD], list[int] | None]":
-    """Drop zero-width ladder rungs and refresh their structural stamps.
+    """Drop zero-width rungs and refresh surviving structural stamps.
 
     A wholly empty leaf keeps its existing rung so the normal empty-dataset
     validation remains responsible for rejecting an unwritable result.  When
     at least one rung survives, empty rungs carry no prefix information and are
-    removed while the remaining rungs keep their original order.
+    removed while the remaining rungs keep their original order.  Structural
+    stamps are refreshed even when no rung empties; pruning additionally drops
+    the per-rung energy fraction because its prefix ladder changed shape.
     """
     nonempty = [lod for lod in lods if lod.n_splats > 0]
-    if not nonempty or len(nonempty) == len(lods):
+    if not nonempty:
         return lods, None
 
+    pruned = len(nonempty) != len(lods)
     authored_rung_keys = {
         key
         for lod in nonempty
@@ -55,7 +58,8 @@ def _prune_empty_additive_sublods(
         cumulative += int(lod.n_splats)
         cutpoints.append(cumulative)
         stats = dict(lod.stats)
-        stats.pop("energy_fraction_cum", None)
+        if pruned:
+            stats.pop("energy_fraction_cum", None)
         if "lod_level" in authored_rung_keys:
             stats["lod_level"] = level
         if "lod_n_splats" in authored_rung_keys:
@@ -76,11 +80,14 @@ def _refresh_ladder_summary(stats: dict, cutpoints: list[int]) -> dict:
     return refreshed
 
 
-def _stats_after_rung_prune(stats: dict, cutpoints: list[int]) -> dict:
-    """Refresh structural stamps and remove measurements invalidated by pruning."""
+def _stats_after_ladder_rebuild(
+    stats: dict, cutpoints: list[int], *, count_changed: bool
+) -> dict:
+    """Refresh structural stamps and remove count-invalidated measurements."""
     refreshed = _refresh_ladder_summary(stats, cutpoints)
-    for key in _PRUNED_LEVEL_STATS:
-        refreshed.pop(key, None)
+    if count_changed:
+        for key in _PRUNED_LEVEL_STATS:
+            refreshed.pop(key, None)
     return refreshed
 
 
@@ -103,28 +110,34 @@ class TransformsMixin(_GSplatDataOps):
         from luxar.gsplats.gsplat_data import GSplatData, SubstitutiveLevel
 
         new_levels: List["SubstitutiveLevel"] = []
+        finest_count_changed = False
         for s, src in enumerate(self.substitutive_levels):
             out = fn(self._view_of_level(src))
             out_level = out.substitutive_levels[0]
-            level_stats = dict(src.stats)
-            for key in ("lod_n_lods", "lod_cutpoints"):
-                if key in out_level.stats:
-                    level_stats[key] = out_level.stats[key]
+            if s == 0:
+                finest_count_changed = sum(
+                    lod.n_splats for lod in out_level.additive_sublods
+                ) != sum(lod.n_splats for lod in src.additive_sublods)
             new_levels.append(
                 SubstitutiveLevel(
                     additive_sublods=out_level.additive_sublods,
                     compression_factor=src.compression_factor,
                     parent_method=src.parent_method,
                     level_index=src.level_index,
-                    stats=level_stats,
+                    stats=dict(out_level.stats),
                 )
             )
-        finest_cutpoints = list(
-            np.cumsum([lod.n_splats for lod in new_levels[0].additive_sublods])
-        )
+        finest_cutpoints = [
+            int(c)
+            for c in np.cumsum([lod.n_splats for lod in new_levels[0].additive_sublods])
+        ]
         return GSplatData.from_substitutive_levels(
             new_levels,
-            stats=_refresh_ladder_summary(self.stats, finest_cutpoints),
+            stats=_stats_after_ladder_rebuild(
+                self.stats,
+                finest_cutpoints,
+                count_changed=finest_count_changed,
+            ),
         )
 
     def _map_additive(
@@ -149,16 +162,18 @@ class TransformsMixin(_GSplatDataOps):
             offset += n
         new_lods, cutpoints = _prune_empty_additive_sublods(new_lods)
         source_level = self.substitutive_levels[0]
-        level_stats = (
-            {}
-            if cutpoints is None
-            else _stats_after_rung_prune(source_level.stats, cutpoints)
+        count_changed = sum(lod.n_splats for lod in new_lods) != sum(
+            lod.n_splats for lod in source_level.additive_sublods
         )
-        root_stats = (
-            dict(self.stats)
-            if cutpoints is None
-            else _stats_after_rung_prune(self.stats, cutpoints)
-        )
+        level_stats = dict(source_level.stats)
+        root_stats = dict(self.stats)
+        if cutpoints is not None:
+            level_stats = _stats_after_ladder_rebuild(
+                level_stats, cutpoints, count_changed=count_changed
+            )
+            root_stats = _stats_after_ladder_rebuild(
+                root_stats, cutpoints, count_changed=count_changed
+            )
         return GSplatData.from_substitutive_levels(
             [
                 SubstitutiveLevel(
