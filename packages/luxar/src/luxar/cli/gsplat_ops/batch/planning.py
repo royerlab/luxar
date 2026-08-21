@@ -927,6 +927,44 @@ def _record_batch_norm_range(
         fit_args["norm_range"] = f"{norm_range[0]:.17g},{norm_range[1]:.17g}"
 
 
+def _resolve_planned_norm_range(
+    *,
+    input_path: Path,
+    configured: "Optional[Tuple[float, float]]",
+    denoise: bool,
+    norm_percentile: float,
+    n_timepoints: int,
+    n_channels: int,
+    array_key: Optional[str],
+    axes: Optional[str],
+    axes_labels: List[str],
+    channel_shape: Tuple[int, ...],
+    spatial_shape: Tuple[int, ...],
+    sampled_slices: "List[Tuple[int, int, Any]]",
+) -> "Optional[Tuple[float, float]]":
+    """Resolve the batch range without putting raw sampled bounds on denoised data."""
+    if configured is not None:
+        return configured
+    if denoise:
+        aprint(
+            "Denoising is enabled; each task resolves its normalization range "
+            "on the data it fits."
+        )
+        return None
+    return resolve_batch_norm_range(
+        input_path,
+        norm_percentile,
+        n_timepoints=n_timepoints,
+        n_channels=n_channels,
+        array_key=array_key,
+        axes=axes,
+        axes_labels=axes_labels,
+        channel_shape=channel_shape,
+        spatial_shape=spatial_shape,
+        sampled_slices=sampled_slices,
+    )
+
+
 def _load_scan_volume(
     input_path: Path,
     timepoints: List[int],
@@ -1999,25 +2037,20 @@ def plan_batch(
         spatial_shape=tuple(spatial),
         sampled_slices=sampled_slices,
     )
-    norm_range = configured_norm_range
-    if resolve_sampled_norm_range:
-        norm_range = resolve_batch_norm_range(
-            input_path,
-            effective_norm_percentile(fit),
-            n_timepoints=n_t_full,
-            n_channels=n_c_full,
-            array_key=array_key,
-            axes=",".join(axes_list) if axes_list else None,
-            axes_labels=list(ome_info.axes),
-            channel_shape=tuple(ome_info.channel_shape),
-            spatial_shape=tuple(spatial),
-            sampled_slices=sampled_slices,
-        )
-    elif denoise.denoise and configured_norm_range is None:
-        aprint(
-            "Denoising is enabled; each task resolves its normalization range "
-            "on the data it fits."
-        )
+    norm_range = _resolve_planned_norm_range(
+        input_path=input_path,
+        configured=configured_norm_range,
+        denoise=denoise.denoise,
+        norm_percentile=effective_norm_percentile(fit),
+        n_timepoints=n_t_full,
+        n_channels=n_c_full,
+        array_key=array_key,
+        axes=",".join(axes_list) if axes_list else None,
+        axes_labels=list(ome_info.axes),
+        channel_shape=tuple(ome_info.channel_shape),
+        spatial_shape=tuple(spatial),
+        sampled_slices=sampled_slices,
+    )
     _record_batch_norm_range(fit_args, norm_range)
 
     if mode == "content":
