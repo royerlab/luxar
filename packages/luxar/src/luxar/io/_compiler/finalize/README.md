@@ -296,12 +296,14 @@ attr.
 
 ## How the compiler wires these
 
-`LuxarZarrCompiler.finalize()` calls each pass against the open store. The
-display-type pass runs before the position-bounds pass (LOD-of-LOD constructions
-need a resolved type before bounds aggregation), the amplitude-window
-harmonization after those, the one-part-anchor warning after all three (it only
-reads), and `compute_content_hashes` runs last so the stamped hashes cover the
-back-filled and corrected attrs.
+`LuxarZarrCompiler.finalize()` calls each pass against the open store. After the
+discrete-range check, `prune_childless_wrappers` removes empty wrapper chains
+before the LOD back-fills can aggregate over them. The display-type pass then
+runs before the position-bounds pass (LOD-of-LOD constructions need a resolved
+type before bounds aggregation), the amplitude-window harmonization after
+those, the one-part-anchor warning after all three (it only reads), and
+`compute_content_hashes` runs last so the stamped hashes cover the back-filled
+and corrected attrs.
 
 ```python
 # packages/luxar/src/luxar/io/compiler.py (finalize-time)

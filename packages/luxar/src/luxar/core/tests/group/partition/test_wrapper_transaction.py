@@ -62,9 +62,7 @@ def test_partition_rollback_restores_labels_and_array_dedup_registry(
 
     assert not scene._has_labels
     monkeypatch.setattr(compiler, "write_points", write_points)
-    scene.add_points(
-        "good", positions, colors=colors, partition={"max_elements": 4}
-    )
+    scene.add_points("good", positions, colors=colors, partition={"max_elements": 4})
     compiler.finalize()
 
     def encodings(group: object) -> list[str]:

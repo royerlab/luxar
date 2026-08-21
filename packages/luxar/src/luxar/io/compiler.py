@@ -569,7 +569,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 try:
                     self.restore_rollback_state(rollback_state)
                 except BaseException as rollback_error:
-                    error.add_note(f"Writer state rollback also failed: {rollback_error}")
+                    error.add_note(
+                        f"Writer state rollback also failed: {rollback_error}"
+                    )
             if not path_existed:
                 try:
                     self.delete_node(path)

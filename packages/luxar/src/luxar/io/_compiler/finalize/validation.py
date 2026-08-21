@@ -7,6 +7,8 @@ from typing import Dict, List, Optional
 
 import zarr
 
+from ....typing_utils._format_contract import NODE_KINDS
+
 
 def prune_childless_wrappers(store: zarr.Group) -> None:
     """Remove childless partition/LOD wrappers before publishing the scene."""
@@ -19,7 +21,7 @@ def prune_childless_wrappers(store: zarr.Group) -> None:
                 del group[child_name]
 
         kind = group.attrs.get("kind")
-        if path and kind in {"partition", "lod"} and not list(group.group_keys()):
+        if path and kind in NODE_KINDS and not list(group.group_keys()):
             warnings.warn(
                 f"Pruning childless kind={kind} wrapper at '{path}'; "
                 "it was created but never populated.",
