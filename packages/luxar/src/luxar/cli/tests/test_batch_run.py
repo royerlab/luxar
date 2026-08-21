@@ -267,7 +267,7 @@ def _plan(
     denoise_kwargs: "dict[str, object] | None" = None,
     **fit_kwargs: object,
 ):
-    """Plan a uniform batch over a (T, Z, Y, X) store — one tile by default.
+    """Plan a batch over a (T, Z, Y, X) store — one uniform tile by default.
 
     ``axes_list`` defaults to the explicit ``t,z,y,x`` labels; pass ``None``
     explicitly via ``axes_list=[]`` — or rely on the store's own ``axes`` attr —

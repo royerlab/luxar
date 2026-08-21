@@ -1543,6 +1543,16 @@ def _assemble_fit_args(
     return fit_args, denoise_mode, None
 
 
+def _validate_denoise_tiling(tiling: str, denoise: DenoiseConfig) -> None:
+    """Reject denoising modes whose workers do not implement it."""
+    if tiling == "content" and denoise.denoise:
+        raise typer.BadParameter(
+            "--tiling content with --denoise is not supported: content workers "
+            "do not denoise yet. Use --tiling uniform or denoise the input "
+            "separately before batch-fit."
+        )
+
+
 def _announce_seed_split(mode: str, fit_args: dict, n_tiles: int) -> None:
     """Announce how an integer ``--seeds`` budget divides across a task's tiles.
 
@@ -1685,11 +1695,7 @@ def plan_batch(
             f"'{input_path.name}'. Convert it to zarr first, or use `gsplat fit` "
             f"for a single {input_path.suffix.lower()} volume."
         )
-    if tiling == "content" and denoise.denoise:
-        raise typer.BadParameter(
-            "--tiling content with --denoise is not supported: content workers "
-            "do not denoise yet. Use --tiling uniform or preprocess the input."
-        )
+    _validate_denoise_tiling(tiling, denoise)
 
     fit_args, denoise_mode, _ = _assemble_fit_args(fit, denoise)
     denoised_zarr_path = None
