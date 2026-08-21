@@ -427,6 +427,39 @@ describe('loadPartitionGroupNode', () => {
     expect(warningSpy).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['has no right subtree', { axis: 0, split: 0, left: { part: 0 } }],
+    ['has a null right subtree', { axis: 0, split: 0, left: { part: 0 }, right: null }],
+    ['uses a non-integer axis', { axis: 0.5, split: 0, left: { part: 0 }, right: { part: 1 } }],
+    ['uses an out-of-range axis', { axis: 5, split: 0, left: { part: 0 }, right: { part: 1 } }],
+    [
+      'uses a non-finite split',
+      { axis: 0, split: Infinity, left: { part: 0 }, right: { part: 1 } },
+    ],
+    ['duplicates a leaf label', { axis: 0, split: 0, left: { part: 0 }, right: { part: 0 } }],
+  ])(
+    'drops a structurally malformed bsp_tree without part bounds that %s',
+    async (_reason, bspTree) => {
+      attachStubChildren();
+      const ctx = makeCtx();
+      const parts = [
+        makePartNode('/partition/part_0', 'points', { child_index: 0 }),
+        makePartNode('/partition/part_1', 'points', { child_index: 1 }),
+      ];
+      const node = makePartitionGroupNode(parts, { bsp_tree: bspTree });
+
+      const wrapper = await loadPartitionGroupNode(
+        node,
+        new THREE.Group(),
+        makeStubLoc(),
+        ctx,
+        loadSceneNodesMock
+      );
+
+      expect(wrapper.userData.bspTree).toBeUndefined();
+    }
+  );
+
   it('leaves bspTree undefined when the partition has no stored tree (fallback path)', async () => {
     attachStubChildren();
     const ctx = makeCtx();

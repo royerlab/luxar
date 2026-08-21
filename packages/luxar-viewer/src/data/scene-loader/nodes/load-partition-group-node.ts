@@ -12,6 +12,8 @@
  *      type-specific loaders run. **All children stay visible** — no
  *      LOD-style selector — relying on THREE's per-mesh frustum culling
  *      for the per-part culling benefit.
+ *   3. Validates a stored `bsp_tree` before exposing it to depth sorting;
+ *      malformed or geometrically unsound trees fall back to centroid order.
  *
  * The wrapper's `position_bounds` (union over children) is on the
  * on-disk attrs already; loaders that need it read `node.attrs
@@ -109,6 +111,42 @@ function mergeSummaries(left: BspBoundsSummary, right: BspBoundsSummary): BspBou
   };
 }
 
+function bspTreeStructureIsValid(node: unknown, partCount: number, seenParts: boolean[]): boolean {
+  if (!node || typeof node !== 'object') return false;
+  const record = node as Record<string, unknown>;
+  if (Object.prototype.hasOwnProperty.call(record, 'part')) {
+    const part = record.part;
+    if (
+      typeof part !== 'number' ||
+      !Number.isInteger(part) ||
+      part < 0 ||
+      part >= partCount ||
+      seenParts[part]
+    ) {
+      return false;
+    }
+    seenParts[part] = true;
+    return true;
+  }
+
+  const axis = record.axis;
+  const split = record.split;
+  if (
+    typeof axis !== 'number' ||
+    !Number.isInteger(axis) ||
+    axis < 0 ||
+    axis > 2 ||
+    typeof split !== 'number' ||
+    !Number.isFinite(split)
+  ) {
+    return false;
+  }
+  return (
+    bspTreeStructureIsValid(record.left, partCount, seenParts) &&
+    bspTreeStructureIsValid(record.right, partCount, seenParts)
+  );
+}
+
 function summarizeStraddlingTree(
   node: unknown,
   bounds: PositionBounds[],
@@ -179,12 +217,20 @@ function summarizeStraddlingTree(
   return mergeSummaries(left, right);
 }
 
+/** Return a well-formed tree; `verified` says whether part bounds also graded its splits. */
 function validatedBspTree(tree: unknown, children: SceneNode[]): BspTreeValidation | undefined {
-  const bounds = indexedPartBounds(children);
-  if (!bounds) {
-    return { tree: tree as BspTreeNode, verified: false };
-  }
   try {
+    const structuredParts = new Array<boolean>(children.length).fill(false);
+    if (
+      !bspTreeStructureIsValid(tree, children.length, structuredParts) ||
+      !structuredParts.every(Boolean)
+    ) {
+      return undefined;
+    }
+    const bounds = indexedPartBounds(children);
+    if (!bounds) {
+      return { tree: tree as BspTreeNode, verified: false };
+    }
     const overlapFloors = [0, 0, 0];
     const collectedParts = new Array<boolean>(bounds.length).fill(false);
     if (

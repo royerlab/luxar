@@ -1167,7 +1167,9 @@ describe('depth-sort coordinator', () => {
     expect(await run([0, 1, 2], bspTree, onX)).not.toEqual(await run([0, 1, 2], undefined, onX));
   });
 
-  it('orders a partition wrapper with a rejected tree like the centroid-only path', async () => {
+  it('orders a partition wrapper without a bsp tree like the centroid-only path', async () => {
+    // `undefined` is the state a rejected tree leaves; the loader half of that
+    // contract is covered in load-partition-group-node.test.ts.
     const run = async (wrapped: boolean): Promise<number[]> => {
       const coord = await loadCoordinator();
       coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
