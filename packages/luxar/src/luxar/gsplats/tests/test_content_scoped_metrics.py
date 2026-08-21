@@ -880,6 +880,52 @@ def test_single_rung_filter_preserves_level_provenance_after_reduction() -> None
     assert "quality" not in level.stats
 
 
+@pytest.mark.parametrize(
+    "source_factory",
+    [
+        pytest.param(
+            lambda: GSplatData.from_substitutive_levels(
+                [
+                    SubstitutiveLevel(
+                        additive_sublods=[_laddered().additive_sublods[0]],
+                        compression_factor=4,
+                        parent_method="kmeans_lloyd",
+                        level_index=2,
+                        stats={**_stats(), **_LEVEL_LADDER},
+                    )
+                ],
+                stats=_stats(),
+            ),
+            id="single-rung",
+        ),
+        pytest.param(_laddered, id="additive-ladder"),
+        pytest.param(_pyramid, id="substitutive-pyramid"),
+    ],
+)
+def test_embed_dimension_restamps_lod_metadata(
+    source_factory: Callable[[], GSplatData],
+) -> None:
+    from luxar.gsplats.lod.quality import total_self_energy
+
+    source = source_factory()
+    out = source.embed_dimension(0.0, sigma=1.0)
+    expected_energy = total_self_energy(out.at_substitutive(0).flattened())
+
+    assert expected_energy != pytest.approx(_LEVEL_LADDER["reference_energy"])
+    assert [
+        (level.compression_factor, level.parent_method, level.level_index)
+        for level in out.substitutive_levels
+    ] == [
+        (level.compression_factor, level.parent_method, level.level_index)
+        for level in source.substitutive_levels
+    ]
+    for level in out.substitutive_levels:
+        assert level.stats["reference_energy"] == pytest.approx(expected_energy)
+        assert level.stats["n_splats_total"] == level.n_splats_total
+        assert "quality" not in level.stats
+        assert level.additive_sublods[-1].stats["energy_fraction_cum"] == 1.0
+
+
 def test_reveal_ladder_stays_without_energy_compensation_after_reduction() -> None:
     from luxar.gsplats.tree import iter_leaves
 
