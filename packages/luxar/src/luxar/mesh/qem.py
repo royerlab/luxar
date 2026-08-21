@@ -130,13 +130,7 @@ def _edge_target(
         # inside this envelope also keeps every decimated level inside the input bbox.
         lower = np.minimum(positions[u], positions[v])
         upper = np.maximum(positions[u], positions[v])
-        midpoint = candidates[-1]
-        edge_length = np.linalg.norm(positions[v] - positions[u])
-        if (
-            np.all(solved >= lower)
-            and np.all(solved <= upper)
-            and np.linalg.norm(solved - midpoint) <= edge_length
-        ):
+        if np.all(solved >= lower) and np.all(solved <= upper):
             candidates.append(solved)
     costs = [_quadric_cost(candidate, quadric) for candidate in candidates]
     best = min(range(len(costs)), key=costs.__getitem__)
