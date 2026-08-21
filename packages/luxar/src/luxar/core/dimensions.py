@@ -37,6 +37,16 @@ def _as_builtin(value: Any) -> Any:
     return value
 
 
+def _as_builtin_range(value: Any) -> Any:
+    """Convert each scalar in a range while preserving malformed inputs."""
+    if value is None:
+        return None
+    try:
+        return tuple(_as_builtin(item) for item in value)
+    except TypeError:
+        return value
+
+
 @dataclass
 class Dimension:
     """Definition of a single dimension in a scene.
@@ -74,15 +84,11 @@ class Dimension:
         # the scene unserialisable at save time -- after the compiler has
         # already created the store, so the failure leaves a stub directory
         # rather than nothing (see demo_ppi_flow_field).
-        if self.range is not None:
-            try:
-                # Element-wise, NOT `lo, hi = self.range`: a malformed range
-                # (say a 3-element list) must still reach the length check
-                # below and get its own "Range must be a tuple of (min, max)"
-                # rather than dying here on an unpacking error.
-                self.range = tuple(_as_builtin(v) for v in self.range)
-            except TypeError:
-                pass  # not iterable at all; the validation below reports it
+        # Element-wise, NOT `lo, hi = self.range`: a malformed range (say a
+        # 3-element list) must still reach the length check below and get its
+        # own "Range must be a tuple of (min, max)" rather than dying here on
+        # an unpacking error. Non-iterables pass through for the same reason.
+        self.range = _as_builtin_range(self.range)
         self.step = _as_builtin(self.step)
         self.scale = _as_builtin(self.scale)
 
