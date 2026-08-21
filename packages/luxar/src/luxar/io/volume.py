@@ -535,13 +535,11 @@ def _declared_levels(
             continue
         raw = entry["path"]
         raw_rel = raw.strip("/") if isinstance(raw, str) else ""
-        rel = _normalised_dataset_path(raw)
+        # A string retaining a `.` segment cannot resolve, but keep its own
+        # spelling so the failed lookup is reported instead of disappearing.
+        rel = _normalised_dataset_path(raw) or raw_rel
         if not rel:
-            if not raw_rel:
-                continue
-            # A string retaining a `.` segment cannot resolve, but keep its own
-            # spelling so the failed lookup is reported instead of disappearing.
-            rel = raw_rel
+            continue
         if not skip_groups.isdisjoint(rel.split("/")[:-1]):
             continue
         declared_path = f"{prefix}/{rel}" if prefix else rel
