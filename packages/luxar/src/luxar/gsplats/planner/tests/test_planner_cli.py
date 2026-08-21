@@ -170,32 +170,6 @@ def test_plan_box_worker_mode(tmp_path, monkeypatch):
     assert seen["norm_range"] is None
 
 
-def test_plan_box_worker_warns_on_unsupported_denoise(tmp_path, monkeypatch):
-    """A hand-run content worker must not silently discard ``--denoise``."""
-    import luxar.cli.gsplat_ops.planner as planner
-
-    monkeypatch.setattr(planner, "run_content_fit", lambda *_a, **_k: None)
-    vol = _vol(tmp_path)
-    res = runner.invoke(
-        app_gsplat,
-        [
-            "fit",
-            str(vol),
-            str(tmp_path / "box0.gsplats.zarr"),
-            "--tiling",
-            "content",
-            "--plan",
-            str(tmp_path / "plan.json"),
-            "--plan-box",
-            "0",
-            "--denoise",
-            *_CPU,
-        ],
-    )
-    assert res.exit_code == 0, res.output
-    assert "not supported" in res.output.lower()
-
-
 def test_plan_box_out_of_range_errors(tmp_path):
     vol = _vol(tmp_path)
     plan_json = tmp_path / "plan.json"

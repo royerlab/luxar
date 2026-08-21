@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, Any, List, Optional, Sequence, Tuple
 import typer
 from arbol import aprint, asection
 
+from luxar.cli.gsplat_ops.fitting.fit_utils import CONTENT_UNSUPPORTED_FIT_FLAGS
 from luxar.core.group.partition import prune_serialized_bsp_tree
 from luxar.gsplats.batch.manifest import BatchJob, BatchManifest, output_filename
 
@@ -1732,14 +1733,31 @@ def _assemble_fit_args(
     return fit_args, denoise_mode, None
 
 
-def _validate_denoise_tiling(tiling: str, denoise: DenoiseConfig) -> None:
-    """Reject denoising modes whose workers do not implement it."""
-    if tiling == "content" and denoise.denoise:
-        raise typer.BadParameter(
-            "--tiling content with --denoise is not supported: content workers "
-            "do not denoise yet. Use --tiling uniform or denoise the input "
-            "separately before batch-fit."
-        )
+def _validate_content_fit_flags(
+    tiling: str,
+    *,
+    denoise: bool = False,
+    downscale: bool = False,
+    progressive: bool = False,
+) -> None:
+    """Reject fit flags that content workers would silently ignore."""
+    if tiling != "content":
+        return
+    enabled = {
+        "--denoise": denoise,
+        "--downscale": downscale,
+        "--progressive": progressive,
+    }
+    unsupported = [flag for flag in CONTENT_UNSUPPORTED_FIT_FLAGS if enabled[flag]]
+    if not unsupported:
+        return
+    advice = "Use --tiling uniform"
+    if "--denoise" in unsupported:
+        advice += ", or use --preprocess with batch-fit submit"
+    raise typer.BadParameter(
+        f"--tiling content with {', '.join(unsupported)} is not supported: "
+        f"content workers ignore these options. {advice}."
+    )
 
 
 def _announce_seed_split(mode: str, fit_args: dict, n_tiles: int) -> None:
@@ -1884,9 +1902,12 @@ def plan_batch(
             f"'{input_path.name}'. Convert it to zarr first, or use `gsplat fit` "
             f"for a single {input_path.suffix.lower()} volume."
         )
-    _validate_denoise_tiling(tiling, denoise)
-
     fit_args, denoise_mode, _ = _assemble_fit_args(fit, denoise)
+    _validate_content_fit_flags(
+        tiling,
+        denoise=denoise_mode == "on-the-fly",
+        progressive=fit.progressive,
+    )
     denoised_zarr_path = None
     if denoise_mode == "preprocess":
         denoised_zarr_path = str(output_dir.resolve() / "denoised.zarr")

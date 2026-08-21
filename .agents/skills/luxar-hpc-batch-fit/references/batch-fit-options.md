@@ -23,9 +23,11 @@ box plan is scanned from a temporal **max-projection** over up to `--plan-sample
 evenly-spaced timepoints (covers signal at ANY t); `--plan-timepoint N` pins one
 timepoint instead. Tuning: `--saturation-exponent` (0.44), `--saturation-cap`,
 `--feature-threshold`, `--feature-metric` (peaks/edges/intensity), `--cell` (16),
-`--target-features`, `--min-leaf` (256), `--max-leaf` (512). Denoising is not yet
-implemented by content-box workers, so `--tiling content --denoise` is rejected at
-plan time instead of emitting tasks that would fit raw data.
+`--target-features`, `--min-leaf` (256), `--max-leaf` (512). Content-box workers do
+not implement on-the-fly denoising or progressive fitting, so batch planning rejects
+those combinations instead of emitting tasks that silently ignore them. `batch-fit
+submit --preprocess` is supported: it denoises to a store first, then points every
+content-box worker at that store.
 
 ## Shared fit params
 `--preset` (standard), `--config PATH`, `--seeds`, `--iters`/`-n`, `--progressive`,
@@ -60,9 +62,9 @@ Without denoising, the plan likewise records one sampled raw-input normalization
 range (`norm_range`) and forwards it to every task, keeping normalized optimizer
 thresholds consistent across timepoints, channels, and spatial partitions.
 Denoising runs leave that sampled range unset so each task resolves on the data it
-fits: denoise-corrected input for a uniform tile, the denoised store in `preprocess`
-mode, or its own `(t, c)` volume for a content box (content boxes do not yet denoise;
-#1813). A deliberately configured range remains an intentional override.
+fits: denoise-corrected input for an on-the-fly uniform tile, or the denoised store in
+`preprocess` mode (including content boxes). A deliberately configured range remains
+an intentional override.
 
 That one level is the **minimum** of the levels resolved on a bounded set of at
 most 16 evenly spaced `(t, c)` slices spanning the store's **full** extent: up to 4
