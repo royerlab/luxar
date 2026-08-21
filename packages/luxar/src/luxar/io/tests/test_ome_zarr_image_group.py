@@ -523,6 +523,59 @@ class TestLabelsAreNeverSelected:
         np.testing.assert_array_equal(load_volume(path), image.astype(np.float32))
 
     @pytest.mark.parametrize("zarr_format", ZARR_FORMATS)
+    @pytest.mark.parametrize(
+        "declared_path",
+        ["labels/seg/0", "aux/labels/seg/0"],
+        ids=["direct-labels-group", "nested-labels-group"],
+    )
+    def test_a_declared_label_path_is_not_an_image_level(
+        self, tmp_path: Path, zarr_format: int, declared_path: str
+    ) -> None:
+        """A stale declaration cannot override the image/mask boundary."""
+        image = _ramp((2, 8, 16, 16))
+        path = tmp_path / "declared_label.zarr"
+        root = open_group(path, mode="w", zarr_format=zarr_format)
+        image_group = root.create_group("0")
+        create_array(image_group, "0", data=image)
+
+        parent = image_group
+        parts = declared_path.split("/")
+        for part in parts[:-1]:
+            parent = parent.create_group(part)
+        create_array(parent, parts[-1], data=_ramp((4, 8, 16, 16), start=50_000))
+        image_group.attrs["multiscales"] = _tzyx_multiscales(1, paths=[declared_path])
+
+        for key in (None, "0"):
+            assert discover_ome_zarr_shape(path, array_key=key).shape == image.shape
+            np.testing.assert_array_equal(
+                np.asarray(open_volume_lazy(path, key)[...]), image
+            )
+            np.testing.assert_array_equal(
+                load_volume(path, array_key=key), image.astype(np.float32)
+            )
+
+    @pytest.mark.parametrize("zarr_format", ZARR_FORMATS)
+    def test_a_declared_array_named_labels_is_still_a_level(
+        self, tmp_path: Path, zarr_format: int
+    ) -> None:
+        """Only a traversed ``labels`` group is reserved, not an array leaf."""
+        image = _ramp((2, 8, 16, 16))
+        path = tmp_path / "labels_array.zarr"
+        root = open_group(path, mode="w", zarr_format=zarr_format)
+        image_group = root.create_group("0")
+        create_array(image_group, "labels", data=image)
+        image_group.attrs["multiscales"] = _tzyx_multiscales(1, paths=["labels"])
+
+        for key in (None, "0"):
+            assert discover_ome_zarr_shape(path, array_key=key).shape == image.shape
+            np.testing.assert_array_equal(
+                np.asarray(open_volume_lazy(path, key)[...]), image
+            )
+            np.testing.assert_array_equal(
+                load_volume(path, array_key=key), image.astype(np.float32)
+            )
+
+    @pytest.mark.parametrize("zarr_format", ZARR_FORMATS)
     def test_a_mask_nested_one_group_deeper_is_skipped_too(
         self, tmp_path: Path, zarr_format: int
     ) -> None:

@@ -451,7 +451,10 @@ def _largest_array(group: Any, prefix: str = "") -> Optional[Tuple[str, Any, Any
 
 
 def _declared_levels(
-    group: Any, prefix: str, report: bool = True
+    group: Any,
+    prefix: str,
+    report: bool = True,
+    skip_groups: frozenset[str] = frozenset(),
 ) -> List[Tuple[str, Any, Any]]:
     """The arrays ``group``'s own NGFF ``multiscales`` block names as its levels.
 
@@ -467,6 +470,10 @@ def _declared_levels(
     block names an array (:func:`_declares_array`), which walks candidate groups
     whose blocks are expected not to match: a stale declaration there explains
     why that block lost and is not a degraded selection to warn about.
+
+    ``skip_groups`` excludes a declared candidate when any NON-LEAF path segment
+    names one of those groups. The leaf is deliberately exempt: an array itself
+    may legitimately have the same name as a reserved subgroup.
 
     The reported owner is ``group`` ITSELF, not the level's immediate parent: the
     owner is used as "the node carrying the metadata that describes this array",
@@ -496,6 +503,8 @@ def _declared_levels(
         if not isinstance(rel, str) or not rel.strip("/"):
             continue
         rel = rel.strip("/")
+        if not skip_groups.isdisjoint(rel.split("/")[:-1]):
+            continue
         declared_path = f"{prefix}/{rel}" if prefix else rel
         try:
             item = group[rel]
@@ -570,7 +579,7 @@ def _image_group_array(
     """
     import zarr
 
-    declared = _pick_largest(_declared_levels(group, prefix))
+    declared = _pick_largest(_declared_levels(group, prefix, skip_groups=_LABELS))
     if declared is not None:
         return declared[0], declared[1], declared[2], True
 
