@@ -1123,7 +1123,13 @@ def restamp_lod_store(
             )
 
             if not report.restamped:
-                aprint("  Nothing to restamp — every LOD ladder is already current.")
+                if report.unsupported or report.unresolved:
+                    aprint("  Nothing was restamped — see below.")
+                else:
+                    aprint(
+                        "  Nothing to restamp — all inspected LOD ladders are "
+                        "already current."
+                    )
 
             # Only when something CHANGED: a clean no-op store must not have its
             # hash moved, and a dry run must not write at all.

@@ -168,6 +168,14 @@ def test_an_unsupported_selector_exits_one_but_still_writes_the_rest(
     consolidate(root)
     close(root)
 
+    refused = runner.invoke(
+        app, ["restamp-lod", str(store), "--group", "stale"]
+    )
+
+    assert refused.exit_code == 1, refused.output
+    assert "Nothing was restamped — see below." in refused.output
+    assert "every LOD ladder is already current" not in refused.output
+
     result = runner.invoke(app, ["restamp-lod", str(store)])
 
     assert result.exit_code == 1, result.output
