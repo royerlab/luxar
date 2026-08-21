@@ -38,6 +38,7 @@ quantize_positions = _demo.quantize_positions
 dequantize_positions = _demo.dequantize_positions
 save_derived = _demo.save_derived
 load_derived = _demo.load_derived
+sample_scene_catalog = _demo.sample_scene_catalog
 
 
 class TestRadecToXyz:
@@ -118,6 +119,63 @@ class TestQuantizeRoundtrip:
         assert np.max(np.abs(pos2 - pos)) < 0.15
         # float16 redshift → ~3 significant digits.
         np.testing.assert_allclose(z2, z, atol=2e-3)
+
+
+class TestSceneCatalogSampling:
+    def test_caps_deterministically_and_keeps_rows_aligned(self) -> None:
+        n = 100
+        row_ids = np.arange(n, dtype=np.int64)
+        positions = np.column_stack([row_ids, row_ids + 100, row_ids + 200])
+        redshift = row_ids.astype(np.float32)
+        tracer_ids = (row_ids % 4).astype(np.uint8)
+
+        first = sample_scene_catalog(positions, redshift, tracer_ids, max_points=25)
+        second = sample_scene_catalog(positions, redshift, tracer_ids, max_points=25)
+
+        for first_array, second_array in zip(first, second):
+            np.testing.assert_array_equal(first_array, second_array)
+            assert len(first_array) == 25
+        sampled_positions, sampled_redshift, sampled_tracers = first
+        np.testing.assert_array_equal(sampled_positions[:, 0], sampled_redshift)
+        np.testing.assert_array_equal(
+            sampled_tracers, sampled_redshift.astype(np.uint8) % 4
+        )
+        assert len(np.unique(sampled_redshift)) == 25
+
+    def test_does_not_copy_catalog_below_cap(self) -> None:
+        positions = np.zeros((5, 3), dtype=np.float32)
+        redshift = np.zeros(5, dtype=np.float32)
+        tracer_ids = np.zeros(5, dtype=np.uint8)
+
+        sampled = sample_scene_catalog(positions, redshift, tracer_ids, max_points=10)
+
+        assert sampled[0] is positions
+        assert sampled[1] is redshift
+        assert sampled[2] is tracer_ids
+
+    def test_rejects_non_positive_cap(self) -> None:
+        with pytest.raises(ValueError, match="max_points must be >= 1"):
+            sample_scene_catalog(
+                np.zeros((1, 3), dtype=np.float32),
+                np.zeros(1, dtype=np.float32),
+                np.zeros(1, dtype=np.uint8),
+                max_points=0,
+            )
+
+    @pytest.mark.parametrize(
+        ("positions_n", "redshift_n", "tracer_n"),
+        [(3, 2, 3), (3, 3, 2)],
+    )
+    def test_rejects_misaligned_catalog_columns(
+        self, positions_n: int, redshift_n: int, tracer_n: int
+    ) -> None:
+        with pytest.raises(ValueError, match="same number of rows"):
+            sample_scene_catalog(
+                np.zeros((positions_n, 3), dtype=np.float32),
+                np.zeros(redshift_n, dtype=np.float32),
+                np.zeros(tracer_n, dtype=np.uint8),
+                max_points=2,
+            )
 
 
 class TestCatalogDownloadErrors:
@@ -210,7 +268,7 @@ class TestCatalogDownloadErrors:
         assert message in capsys.readouterr().out
 
 
-class TestWarnIfSceneLacksLadder:
+class TestWarnIfSceneIsStale:
     """The stale-scene check must inspect BOTH laddered layers.
 
     Fast synthetic zarr stores (no compiler) — this pins that a missing ladder
@@ -231,7 +289,7 @@ class TestWarnIfSceneLacksLadder:
     ) -> None:
         scene = tmp_path / "desi.luxar.zarr"
         self._write_scene(scene, {"By tracer type": 5, "By redshift": 5})
-        _demo.warn_if_scene_lacks_ladder(scene)
+        _demo.warn_if_scene_is_stale(scene)
         assert "⚠" not in capsys.readouterr().out
 
     def test_warns_only_for_the_unladdered_layer(
@@ -239,7 +297,7 @@ class TestWarnIfSceneLacksLadder:
     ) -> None:
         scene = tmp_path / "desi.luxar.zarr"
         self._write_scene(scene, {"By tracer type": 5, "By redshift": 1})
-        _demo.warn_if_scene_lacks_ladder(scene)
+        _demo.warn_if_scene_is_stale(scene)
         out = capsys.readouterr().out
         assert "'By redshift' finest level has no streaming" in out
         assert "'By tracer type'" not in out
@@ -249,7 +307,7 @@ class TestWarnIfSceneLacksLadder:
     ) -> None:
         scene = tmp_path / "desi.luxar.zarr"
         self._write_scene(scene, {"By tracer type": 1})
-        _demo.warn_if_scene_lacks_ladder(scene)
+        _demo.warn_if_scene_is_stale(scene)
         out = capsys.readouterr().out
         assert "'By tracer type' finest level has no streaming" in out
         assert "Could not inspect" in out and "[By redshift]" in out
@@ -271,7 +329,7 @@ class TestWarnIfSceneLacksLadder:
         root.create_group("By tracer type").attrs["n_additive_sublods"] = 5
         root.create_group("By redshift").attrs["n_additive_sublods"] = 1
 
-        _demo.warn_if_scene_lacks_ladder(scene)
+        _demo.warn_if_scene_is_stale(scene)
         out = capsys.readouterr().out
         assert "Could not inspect" not in out
         assert "'By redshift' finest level has no streaming" in out
@@ -294,10 +352,127 @@ class TestWarnIfSceneLacksLadder:
             group.create_group("child_0").attrs["n_additive_sublods"] = 5
             group.create_group("child_9").attrs["n_additive_sublods"] = 5
             group.create_group("child_10").attrs["n_additive_sublods"] = 1
-        _demo.warn_if_scene_lacks_ladder(scene)
+        _demo.warn_if_scene_is_stale(scene)
         out = capsys.readouterr().out
         assert "'By tracer type' finest level has no streaming" in out
         assert "'By redshift' finest level has no streaming" in out
+
+    def test_warns_when_cached_finest_exceeds_payload_cap(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        import zarr
+
+        scene = tmp_path / "desi.luxar.zarr"
+        root = zarr.open(str(scene), mode="w")
+        for layer_name in ("By tracer type", "By redshift"):
+            finest = root.create_group(layer_name).create_group("child_3")
+            finest.attrs["n_additive_sublods"] = 5
+            finest.attrs["n_points"] = 9_751_955
+
+        _demo.warn_if_scene_is_stale(scene)
+
+        out = capsys.readouterr().out
+        assert out.count("above the current 1,250,000-point download cap") == 2
+        assert "rm -rf" in out
+
+
+class TestScenePointCap:
+    def test_caps_both_layers_but_frames_the_full_catalog(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        rng = np.random.default_rng(7)
+        positions = rng.normal(size=(500, 3)).astype(np.float32)
+        positions[-1] = (0.0, 0.0, 1000.0)
+        redshift = np.linspace(0.01, 3.0, len(positions), dtype=np.float32)
+        tracer_ids = (np.arange(len(positions)) % 4).astype(np.uint8)
+        monkeypatch.setattr(_demo, "SCENE_MAX_POINTS", 100)
+        monkeypatch.setattr(_demo, "substitutive_lod_or_flat", lambda spec: None)
+
+        out = tmp_path / "desi.luxar.zarr"
+        _demo.create_scene(positions, redshift, tracer_ids, out)
+
+        import zarr
+
+        root = zarr.open(str(out), mode="r")
+        assert root["By tracer type"].attrs["n_points"] == 100
+        assert root["By redshift"].attrs["n_points"] == 100
+        expected_intensity = _demo.SCENE_INTENSITY * len(positions) / 100
+        assert root["By tracer type"].attrs["intensity"] == pytest.approx(
+            expected_intensity
+        )
+        assert root["By redshift"].attrs["intensity"] == pytest.approx(
+            expected_intensity
+        )
+
+        radial = np.linalg.norm(positions.astype(np.float64), axis=1)
+        r95 = float(np.percentile(radial, 95))
+        cam_dist = 0.75 * r95 / np.tan(np.radians(50.0) / 2.0)
+        camera = root.attrs["viewer_config"]["camera"]
+        assert float(camera["far"]) == pytest.approx(
+            (cam_dist + float(radial.max())) * 1.5
+        )
+
+    def test_shipped_scene_caps_both_finest_children(self) -> None:
+        import json
+        import zipfile
+
+        scene_zip = _demo.SCENE_ZIP_SHIPPED
+        if not scene_zip.exists() or _demo.is_lfs_pointer(scene_zip):
+            pytest.skip("DESI Git LFS scene is not available")
+
+        with zipfile.ZipFile(scene_zip) as archive:
+            names = set(archive.namelist())
+
+            def read_attrs(path: str) -> dict:
+                document = json.loads(archive.read(f"{path}/zarr.json").decode("utf-8"))
+                return document.get("attributes", document)
+
+            for layer_name in ("By tracer type", "By redshift"):
+                layer_attrs = read_attrs(layer_name)
+                child_names = sorted(
+                    name.removeprefix(f"{layer_name}/").removesuffix("/zarr.json")
+                    for name in names
+                    if name.startswith(f"{layer_name}/child_")
+                    and name.count("/") == 2
+                    and name.endswith("/zarr.json")
+                )
+                assert child_names == ["child_0", "child_1", "child_2"]
+                child_attrs = [
+                    read_attrs(f"{layer_name}/{child_name}")
+                    for child_name in child_names
+                ]
+                assert layer_attrs["selector"] == "screen-area"
+                assert layer_attrs["intensity"] == pytest.approx(0.3900782)
+                assert [
+                    attrs.get("n_splats", attrs.get("n_points"))
+                    for attrs in child_attrs
+                ] == [19_519, 156_249, _demo.SCENE_MAX_POINTS]
+                assert [attrs["n_additive_sublods"] for attrs in child_attrs] == [
+                    5,
+                    5,
+                    5,
+                ]
+
+
+class TestMainSceneReuse:
+    def test_serve_only_checks_staleness_before_launch(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        scene = tmp_path / "desi_galaxies.luxar.zarr"
+        scene.mkdir()
+        calls: list[tuple[str, Path]] = []
+        monkeypatch.setattr(_demo, "SERVE_ONLY", True)
+        monkeypatch.setattr(_demo, "get_demos_output_dir", lambda: tmp_path)
+        monkeypatch.setattr(
+            _demo, "warn_if_scene_is_stale", lambda path: calls.append(("warn", path))
+        )
+        monkeypatch.setattr(
+            _demo, "launch_viewer", lambda path: calls.append(("launch", path))
+        )
+
+        _demo.main()
+
+        assert calls == [("warn", scene), ("launch", scene)]
 
 
 @pytest.mark.slow

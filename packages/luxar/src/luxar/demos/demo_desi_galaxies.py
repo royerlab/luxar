@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""DESI DR1 — The Cosmic Web in 3D (~9.75M galaxies & quasars)
+"""DESI DR1 — The Cosmic Web in 3D (1.25M-point sample of ~9.75M objects)
 
 Renders the large-scale structure of the Universe as a point cloud built from
 the Dark Energy Spectroscopic Instrument's first data release (DESI DR1). Each
@@ -39,16 +39,16 @@ DESI Collaboration (2025), "Data Release 1 of the Dark Energy Spectroscopic
 SELF-CONTAINED / CACHING
 ------------------------
 On a fresh machine this demo bootstraps itself with no manual steps:
-  1. Fast path: a fully-built scene (both LOD colorings, ~80 MB) shipped via
+  1. Fast path: a fully-built scene (both LOD colorings, ~10 MB) shipped via
      Git LFS (``demos/data/desi_galaxies/``); it is unzipped once into the demos
      output dir and loads instantly — no per-launch LOD build.
   2. If that asset isn't pulled, ``--recompute`` (or a missing asset)
      AUTOMATICALLY downloads the ~1 GB of DR1 LSS catalogs to
      ``~/.cache/luxar/desi_galaxies/`` (resumable), reads them with ``astropy``,
-     converts (RA, Dec, z) → comoving Mpc, and builds the scene (the substitutive
-     LOD over ~10M points is GPU-accelerated but slow on CPU-only machines —
-     which is exactly why the built scene ships precomputed). If the DESI host
-     is unavailable, ``git lfs pull`` restores the no-download fast path.
+     converts (RA, Dec, z) → comoving Mpc, samples 1.25M rows, and builds the
+     substitutive LOD (GPU-accelerated but slow on CPU-only machines — which is
+     exactly why the built scene ships precomputed). If the DESI host is
+     unavailable, ``git lfs pull`` restores the no-download fast path.
 
 USAGE
 -----
@@ -60,12 +60,12 @@ Controls:
 
 DEMO_META = {
     "key": "desi_galaxies",
-    "title": "DESI DR1 — The Cosmic Web in 3D (~9.75M galaxies & quasars)",
-    "description": "~9.75M real DESI DR1 galaxies and quasars placed in 3D by redshift to comoving Mpc.",
+    "title": "DESI DR1 — The Cosmic Web in 3D (~9.75M-object catalog)",
+    "description": "A 1.25M-point sample of ~9.75M real DESI DR1 galaxies and quasars placed in 3D by redshift.",
     "category": "astronomy",
     "geometry": "points",
     "requirements": {
-        "download_mb": 72,
+        "download_mb": 10,
         "compute": "heavy",
         "gpu": "none",
         "local_data": "git-lfs",
@@ -174,21 +174,26 @@ Z_MAX = 4.0
 # Display / LOD parameters.
 POINT_RADIUS = 1.2  # Mpc (visualization scale)
 SCENE_INTENSITY = 0.05
-LOD = dict(compression_factor=8, levels=3, device="auto")
+# The old finest child contained all 9.75M source rows and downloaded in full
+# after the opening frame. A 1.25M sample matches the density of that ladder's
+# previous one-coarser child while putting a hard bound on the selected finest.
+SCENE_MAX_POINTS = 1_250_000
+# The shipped archive is the canonical sample. This seed makes recomputation
+# repeatable within a NumPy release, not bit-stable across future NumPy releases.
+SCENE_SAMPLE_SEED = 0
+LOD = dict(compression_factor=8, levels=2, device="auto")
 
 # Streaming ladder for every LOD level. The composed default sizes the first
-# chunk from a generic bandwidth budget; at 9.75M points this scene is large
+# chunk from a generic bandwidth budget; at 1.25M points this scene is large
 # enough to be worth tuning explicitly, so the base is set small enough to land
 # in a single zarr chunk — one range request to first paint.
 #
 # That base applies as-written only to the COARSEST level, which is the eager
 # default level and therefore the one whose first chunk is the actual
-# time-to-first-pixel: it ladders 2000 / 2000 / 4000 / 8000 / 3014. Finer levels
-# have a coarser sibling on screen already, so the sibling-aware rule raises
-# their base to n/(2K) — the finest lands 609498 / 609498 / 1218996 / 2437992 /
-# 4875971. That is deliberate: an upgrade has to beat what is already displayed
-# to be worth swapping, and 609K commits in a few seconds where the old
-# un-laddered 9.75M single commit froze the main thread for ~85s.
+# time-to-first-pixel. Finer levels have a coarser sibling on screen already, so
+# the sibling-aware rule raises their base to n/(2K) — the capped finest lands
+# around 78K / 78K / 156K / 312K / 625K. That is deliberate: an upgrade has to
+# beat what is already displayed to be worth swapping.
 STREAM_LOD = dict(counts="stream:2000", method="random", seed=0)
 
 # The shipped scene must carry a real ladder on its finest level. Anyone whose
@@ -207,6 +212,29 @@ Arbol.max_depth = 5
 # =============================================================================
 # Pure helpers (unit-tested)
 # =============================================================================
+
+
+def sample_scene_catalog(
+    positions: np.ndarray,
+    redshift: np.ndarray,
+    tracer_ids: np.ndarray,
+    *,
+    max_points: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Take one deterministic, row-aligned sample for both scene colorings."""
+    n_rows = len(positions)
+    if len(redshift) != n_rows or len(tracer_ids) != n_rows:
+        raise ValueError(
+            "positions, redshift, and tracer_ids must have the same number of rows"
+        )
+    if max_points < 1:
+        raise ValueError(f"max_points must be >= 1, got {max_points}")
+    if n_rows <= max_points:
+        return positions, redshift, tracer_ids
+
+    rng = np.random.default_rng(SCENE_SAMPLE_SEED)
+    indices = np.sort(rng.choice(n_rows, size=max_points, replace=False))
+    return positions[indices], redshift[indices], tracer_ids[indices]
 
 
 def radec_z_to_xyz(
@@ -461,15 +489,14 @@ def extract_shipped_scene(zip_path: Path, output_path: Path) -> None:
         aprint(f"Scene ready: {output_path}")
 
 
-def warn_if_scene_lacks_ladder(scene_path: Path) -> None:
-    """Warn when a scene on disk predates the streaming ladder.
+def warn_if_scene_is_stale(scene_path: Path) -> None:
+    """Warn when a reused scene predates the streaming ladder or payload cap.
 
     ``main()`` reuses an existing ``datasets/demos/`` scene unconditionally, so a
-    user who built this demo before the finest level was laddered would keep
-    getting the old all-or-nothing scene forever — the multi-minute load looks
-    like the fix simply did not work. Warn loudly, name both remedies, and carry
-    on: the old scene still renders, just slowly. Both laddered layers ("By
-    tracer type" and "By redshift") are checked, since they share the same LOD.
+    user who built an older version would otherwise keep its all-or-nothing or
+    9.75M-point finest child forever. Warn loudly, name both remedies, and carry
+    on: the old scene still renders, just slowly. Both laddered layers are
+    checked, since they share the same LOD.
     """
     import zarr
 
@@ -495,6 +522,7 @@ def warn_if_scene_lacks_ladder(scene_path: Path) -> None:
             # finest level and still carries its own streaming ladder.
             finest = layer[child_names[-1]] if child_names else layer
             n_sublods = int(finest.attrs.get("n_additive_sublods", 1))
+            n_points = int(finest.attrs.get("n_points", 0))
         except Exception as exc:
             aprint(
                 f"  ⚠ Could not inspect {scene_path} [{layer_name}] for a "
@@ -508,6 +536,17 @@ def warn_if_scene_lacks_ladder(scene_path: Path) -> None:
                 f"ladder (n_additive_sublods={n_sublods}), so it will load "
                 "all-at-once and may freeze the browser for a long time. Rebuild "
                 "it with:\n"
+                "      luxar demo run desi_galaxies -- --recompute\n"
+                "    or delete the scene and re-run to unpack a current shipped "
+                "asset:\n"
+                f"      rm -rf {scene_path}"
+            )
+
+        if n_points > SCENE_MAX_POINTS:
+            aprint(
+                f"  ⚠ This scene's '{layer_name}' finest level contains "
+                f"{n_points:,} points, above the current {SCENE_MAX_POINTS:,}-point "
+                "download cap. Rebuild it with:\n"
                 "      luxar demo run desi_galaxies -- --recompute\n"
                 "    or delete the scene and re-run to unpack a current shipped "
                 "asset:\n"
@@ -568,7 +607,21 @@ def create_scene(
             f"{cam_dist:,.0f} Mpc (r95={r95:,.0f}, r_max={r_max:,.0f})"
         )
 
-        colors = tracer_colors(tracer_ids)
+        scene_positions, scene_redshift, scene_tracer_ids = sample_scene_catalog(
+            positions,
+            redshift,
+            tracer_ids,
+            max_points=SCENE_MAX_POINTS,
+        )
+        if len(scene_positions) < len(positions):
+            aprint(
+                f"  📉 Sampling {len(scene_positions):,} of {len(positions):,} "
+                "catalog rows to bound the finest LOD payload"
+            )
+        # Additive flux is linear in element count, and every coarse level
+        # preserves the sample's mass, so compensate every rung at the wrapper.
+        scene_intensity = SCENE_INTENSITY * len(positions) / len(scene_positions)
+        colors = tracer_colors(scene_tracer_ids)
 
         # Resolved ONCE for both layers so a torch/scipy-free machine prints one
         # notice, not one per layer.
@@ -585,12 +638,12 @@ def create_scene(
             # Layer 1: colored by tracer type (categorical populations).
             scene.add_points(
                 "By tracer type",
-                positions,
+                scene_positions,
                 colors=colors,
                 radii=POINT_RADIUS,
                 opacity=0.9,
                 blending_mode="additive",
-                intensity=SCENE_INTENSITY,
+                intensity=scene_intensity,
                 layer=True,
                 substitutive_lod=lod,
                 additive_lod=STREAM_LOD,
@@ -602,12 +655,12 @@ def create_scene(
             # deduplicated by the encoder's array_ref.
             scene.add_points(
                 "By redshift",
-                positions,
-                colors=redshift_colors(redshift),
+                scene_positions,
+                colors=redshift_colors(scene_redshift),
                 radii=POINT_RADIUS,
                 opacity=0.9,
                 blending_mode="additive",
-                intensity=SCENE_INTENSITY,
+                intensity=scene_intensity,
                 layer=True,
                 visible=False,
                 substitutive_lod=lod,
@@ -623,7 +676,7 @@ def create_scene(
                 blend_mode="difference",
             )
             scene.add_text(
-                "~9.75M galaxies & quasars • spectroscopic redshifts → comoving Mpc",
+                "1.25M-point sample of ~9.75M galaxies & quasars • redshift → comoving Mpc",
                 position=(0.98, 0.97),
                 font_size=0.015,
                 anchor="bottom-right",
@@ -656,6 +709,7 @@ def main() -> None:
 
     if SERVE_ONLY:
         if output_path.exists():
+            warn_if_scene_is_stale(output_path)
             launch_viewer(output_path)
         else:
             aprint(f"No scene at {output_path}. Run without --serve-only first.")
@@ -670,7 +724,7 @@ def main() -> None:
         # Fast path: unzip the shipped, fully-built scene (instant, no LOD build).
         if SCENE_ZIP_SHIPPED.exists() and not is_lfs_pointer(SCENE_ZIP_SHIPPED):
             extract_shipped_scene(SCENE_ZIP_SHIPPED, output_path)
-            warn_if_scene_lacks_ladder(output_path)
+            warn_if_scene_is_stale(output_path)
         else:
             aprint(
                 "Precomputed scene not available (Git LFS asset not pulled). "
@@ -681,7 +735,7 @@ def main() -> None:
             create_scene(positions, redshift, tracer_ids, output_path)
     else:
         aprint(f"Using cached scene: {output_path}")
-        warn_if_scene_lacks_ladder(output_path)
+        warn_if_scene_is_stale(output_path)
 
     if NO_SERVE:
         aprint(f"Dataset generated at {output_path}")

@@ -152,6 +152,13 @@ interface DemoEntry {
   category: string;
   script: string | null;
   dataset: string; // repo-relative
+  // Dataset credit, copied VERBATIM from the demo's DEMO_META citation.short (a
+  // Python test cross-checks the two). Present only when the demo declares a
+  // real credit: an ABSENT key means "unknown or not yet recorded", which is not
+  // the same claim as "nothing to credit", so a procedural demo carries no
+  // `citation` either. Declared so the manifest and this interface agree; the
+  // capture code never reads it (the on-scene footer is what a tile renders).
+  citation?: string;
   exposure?: number; // per-demo exposure override (log2 stops); else auto
   // Skip the screenshot-heavy auto steps for very heavy scenes (e.g. the 3M-star
   // Gaia field, where ~20 measurement screenshots time out in software GL). When
