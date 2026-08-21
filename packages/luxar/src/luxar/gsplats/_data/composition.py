@@ -480,9 +480,7 @@ class CompositionMixin(_GSplatDataOps):
         dim_mapping = list(range(d))
         fill_sigma = {d: sigma}
 
-        def _embed_lod(
-            lod: "AdditiveSubLOD", offset: int, nl: int
-        ) -> "AdditiveSubLOD":
+        def _embed_lod(lod: "AdditiveSubLOD", offset: int, nl: int) -> "AdditiveSubLOD":
             if is_scalar:
                 lod_col = np.full((nl, 1), values, dtype=lod.centers.dtype)
             else:

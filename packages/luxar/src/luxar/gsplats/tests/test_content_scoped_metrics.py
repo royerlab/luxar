@@ -433,8 +433,9 @@ _UNAFFECTED = {
     "concatenate": "builds merged_stats from scratch (no metric keys)",
     "combine_as_new_dimension": "goes through concatenate; fresh stats",
     "merge_with_channel_colors": "goes through concatenate; fresh stats",
-    "embed_dimension": "widens the center columns; the splat set is unchanged, "
-    "and it carries stats over exactly as a geometry transform does",
+    "embed_dimension": "widens the center columns; dataset-level source-volume "
+    "metrics survive, while promoted-dimensional count/energy stamps are "
+    "recomputed and stale quality/refine measurements are removed",
     "from_tree": "constructor — the caller supplies the stats",
     "from_additive_sublods": "constructor — the caller supplies the stats",
     "from_substitutive_levels": "constructor — the caller supplies the stats",
@@ -824,9 +825,7 @@ def test_decimate_recomputes_a_complete_single_rung_stamp() -> None:
         ),
         pytest.param(lambda gs: gs.with_colors((0.2, 0.4, 0.6)), id="with_colors"),
         pytest.param(lambda gs: gs.scale_intensity(1.0), id="scale_intensity_noop"),
-        pytest.param(
-            lambda gs: gs.filter_by(amplitude_min=0.0), id="filter_by_noop"
-        ),
+        pytest.param(lambda gs: gs.filter_by(amplitude_min=0.0), id="filter_by_noop"),
     ],
 )
 def test_content_preserving_rewrite_keeps_authored_q_e_stamps(

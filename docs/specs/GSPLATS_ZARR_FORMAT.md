@@ -817,7 +817,10 @@ store must apply both rules:
   method.
 
   A geometry-only transform (scale / rotate / translate / center) **keeps** them:
-  the splat set is identical and only the frame moved. Note this is a weaker
+  the splat set is identical and only the frame moved. Dimensional embedding is
+  a widening rather than a geometry-only transform: it preserves dataset-level
+  source-volume metrics, but recomputes counts, e(k), and w in the promoted
+  dimensionality while removing stale Q and `refine_stats`. Note this is a weaker
   claim than the reproducibility paragraph above — that argument holds for a
   `voxel_size` fit because the spacing is *recorded*, whereas `gsplat transform
   --scale` records no factor and does not update `fitted_shape` / `source_shape`,
