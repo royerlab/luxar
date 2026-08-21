@@ -346,9 +346,11 @@ sources fed to gsplat fitting/calibration), independent of the compiled
   notice ("declares a `multiscales` block that does not name it"), because the
   store plainly declared something. An owner block that wins the evidence gate
   but is then unusable (wrong axis count, no `axes` list) does not hide the
-  root's; the root's is retried. Dataset paths are matched
-  exactly relative to whichever group won, so a same-named root pyramid level
-  cannot be mistaken for a nested array. The custom (non-NGFF) bare `axes`
+  root's; the root's is retried. Dataset paths are normalised for both lookup and
+  metadata matching relative to whichever group won; real numeric scalars are
+  coerced for compatibility, while other non-string values name nothing. A
+  same-named root pyramid level therefore cannot be mistaken for a nested array.
+  The custom (non-NGFF) bare `axes`
   attribute goes the other way round, **root first**, because such a list names
   nothing and so no evidence about it is obtainable; an owner's `axes` is
   consulted only when the root has no usable list of its own.

@@ -497,11 +497,11 @@ def _declared_levels(
     whose blocks are expected not to match: a stale declaration there explains
     why that block lost and is not a degraded selection to warn about.
 
-    Declared paths use the same canonicalisation as metadata matching. That rule
-    deliberately coerces non-string values: although NGFF requires a string,
-    producers that serialise every level as a number are recoverable, and using
-    one rule here prevents lookup and metadata selection from disagreeing about
-    which declaration names the chosen array.
+    Declared paths use the same canonicalisation as metadata matching. Although
+    NGFF requires a string, real numeric scalars are deliberately recoverable;
+    other non-string values name nothing. Using one rule here prevents lookup and
+    metadata selection from disagreeing about which declaration names the chosen
+    array.
 
     ``skip_groups`` excludes a declared candidate when any NON-LEAF path segment
     names one of those groups. The leaf is deliberately exempt: an array itself
@@ -534,10 +534,14 @@ def _declared_levels(
         if not isinstance(entry, dict) or "path" not in entry:
             continue
         raw = entry["path"]
-        display_rel = str(raw).strip("/")
-        if not display_rel:
-            continue
-        rel = _normalised_dataset_path(raw) or display_rel
+        raw_rel = raw.strip("/") if isinstance(raw, str) else ""
+        rel = _normalised_dataset_path(raw)
+        if not rel:
+            if not raw_rel:
+                continue
+            # A string retaining a `.` segment cannot resolve, but keep its own
+            # spelling so the failed lookup is reported instead of disappearing.
+            rel = raw_rel
         if not skip_groups.isdisjoint(rel.split("/")[:-1]):
             continue
         declared_path = f"{prefix}/{rel}" if prefix else rel

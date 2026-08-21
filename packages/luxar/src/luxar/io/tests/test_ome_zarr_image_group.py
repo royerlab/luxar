@@ -472,6 +472,36 @@ class TestTheDeclaredLevelsBranch:
         np.testing.assert_array_equal(load_volume(path), level_zero.astype(np.float32))
 
     @pytest.mark.parametrize("zarr_format", ZARR_FORMATS)
+    @pytest.mark.parametrize(
+        ("declared_path", "array_name"),
+        [(None, "None"), (True, "True"), ([], "[]"), ({}, "{}")],
+        ids=["null", "boolean", "list", "mapping"],
+    )
+    def test_only_string_and_numeric_path_values_are_coercible(
+        self,
+        tmp_path: Path,
+        zarr_format: int,
+        declared_path: Any,
+        array_name: str,
+    ) -> None:
+        """Other malformed values must not become plausible array names."""
+        data = _ramp((2, 4, 4, 4))
+        path = tmp_path / f"non_scalar_path_{zarr_format}_{array_name}.zarr"
+        root = open_group(path, mode="w", zarr_format=zarr_format)
+        image = root.create_group("0")
+        create_array(image, array_name, data=data)
+        block = _multiscales(["t", "z", "y", "x"], [array_name], scale=[1, 9, 9, 9])
+        block[0]["datasets"][0]["path"] = declared_path
+        image.attrs["multiscales"] = block
+
+        info = discover_ome_zarr_shape(path)
+
+        assert info.axes == ["c", "z", "y", "x"]
+        assert info.voxel_size is None
+        np.testing.assert_array_equal(np.asarray(open_volume_lazy(path)[...]), data)
+        np.testing.assert_array_equal(load_volume(path), data.astype(np.float32))
+
+    @pytest.mark.parametrize("zarr_format", ZARR_FORMATS)
     def test_a_missing_numeric_path_is_reported(
         self,
         tmp_path: Path,
