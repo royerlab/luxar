@@ -50,7 +50,10 @@ that difference is observable and must be closed with `Math.fround` at each step
 in the Rust operation order:
 
 - `depth-sort.ts` frounds every step so the sort permutation is exact.
-- `decode.ts` frounds the per-channel anchors, which arrive as f32 in WASM.
+- `decode.ts` frounds linear bounds, geolog-scalar anchors, and the log-scalar
+  `maxLog` bound, all of which arrive as f32 in WASM; its log-scalar kernels
+  fround their arithmetic too but remain within one ULP of Rust's `expm1f`
+  pending #1843.
 - `mesh-culling.ts` frounds the slab bounds. The f64 difference of two f32 values
   is _exact_ while Rust's f32 subtraction rounds; the gap is under half an ulp,
   but when the rounding goes DOWN the rounded bound is itself a legal f32 vertex

@@ -21,6 +21,7 @@ import type { WasmModule } from '../../../wasm/types';
 import {
   arraysEqual as sharedArraysEqual,
   arraysAlmostEqual as sharedArraysAlmostEqual,
+  exactBitsEqual,
 } from '../../helpers/array-compare';
 import {
   WASM_BUILD_HINT,
@@ -69,6 +70,22 @@ function arraysAlmostEqual(a: ArrayLike<number>, b: ArrayLike<number>, epsilon =
 function arraysEqual(a: ArrayLike<number>, b: ArrayLike<number>): boolean {
   // Exact equality (epsilon=0 default in the shared helper).
   return sharedArraysEqual(a, b);
+}
+
+function arraysWithinFloat32Ulps(a: Float32Array, b: Float32Array, maxUlps: number): boolean {
+  if (a.length !== b.length) return false;
+  const aBits = new Uint32Array(a.buffer, a.byteOffset, a.length);
+  const bBits = new Uint32Array(b.buffer, b.byteOffset, b.length);
+  for (let i = 0; i < a.length; i++) {
+    const distance = Math.abs(aBits[i] - bBits[i]);
+    if (distance > maxUlps) {
+      console.log(
+        `ULP mismatch at index ${i}: 0x${aBits[i].toString(16).padStart(8, '0')} vs 0x${bBits[i].toString(16).padStart(8, '0')} (${distance} ULPs)`
+      );
+      return false;
+    }
+  }
+  return true;
 }
 
 beforeAll(async () => {
@@ -425,6 +442,43 @@ describe('WASM vs TypeScript Comparison', () => {
       expect(arraysAlmostEqual(wasmOutput, tsOutput)).toBe(true);
     });
 
+    it.skipIf(!wasmFilesExist).each([
+      { minVal: -12.3456789012345, maxVal: 98.7654321098765 },
+      { minVal: 2.6769986296248494e-5, maxVal: 6.059071789834555 },
+      { minVal: -9.391529450949973e-5, maxVal: 37.21074561637171 },
+    ])(
+      'decode_quantized_u16 should exactly match for bounds [$minVal, $maxVal]',
+      ({ minVal, maxVal }) => {
+        const data = Uint16Array.from({ length: 65536 }, (_, code) => code);
+        const tsOutput = new Float32Array(data.length);
+        const wasmOutput = new Float32Array(data.length);
+
+        tsModule.decode_quantized_u16(data, minVal, maxVal, tsOutput);
+        wasmModule!.decode_quantized_u16(data, minVal, maxVal, wasmOutput);
+
+        expect(exactBitsEqual(tsOutput, wasmOutput)).toBe(true);
+      }
+    );
+
+    it.skipIf(!wasmFilesExist).each([
+      { minVal: -12.3456789012345, maxVal: 98.7654321098765 },
+      { minVal: 2.6769986296248494e-5, maxVal: 6.059071789834555 },
+      { minVal: -9.391529450949973e-5, maxVal: 37.21074561637171 },
+      { minVal: -9860308715.14231, maxVal: 33712563323.788345 },
+    ])(
+      'decode_quantized_u8 should exactly match for bounds [$minVal, $maxVal]',
+      ({ minVal, maxVal }) => {
+        const data = Uint8Array.from({ length: 256 }, (_, code) => code);
+        const tsOutput = new Float32Array(data.length);
+        const wasmOutput = new Float32Array(data.length);
+
+        tsModule.decode_quantized_u8(data, minVal, maxVal, tsOutput);
+        wasmModule!.decode_quantized_u8(data, minVal, maxVal, wasmOutput);
+
+        expect(exactBitsEqual(tsOutput, wasmOutput)).toBe(true);
+      }
+    );
+
     it.skipIf(!wasmFilesExist)('decode_log_scalar_u8 should match', () => {
       const data = new Uint8Array([0, 50, 100, 150, 255]);
 
@@ -448,6 +502,36 @@ describe('WASM vs TypeScript Comparison', () => {
 
       expect(arraysAlmostEqual(wasmOutput, tsOutput)).toBe(true);
     });
+
+    it
+      .skipIf(!wasmFilesExist)
+      .each(
+        ['u8', 'u16']
+          .flatMap((label) =>
+            [Math.log(2), Math.log(10), Math.log(1e5)].map((maxLog) => ({ label, maxLog }))
+          )
+          .concat({ label: 'u8', maxLog: 1.3732879469562715 })
+      )(
+      'decode_log_scalar_$label should stay within one ULP across every code at maxLog=$maxLog',
+      ({ label, maxLog }) => {
+        const data =
+          label === 'u8'
+            ? Uint8Array.from({ length: 256 }, (_, code) => code)
+            : Uint16Array.from({ length: 65536 }, (_, code) => code);
+        const tsOutput = new Float32Array(data.length);
+        const wasmOutput = new Float32Array(data.length);
+
+        if (label === 'u8') {
+          tsModule.decode_log_scalar_u8(data as Uint8Array, maxLog, tsOutput);
+          wasmModule!.decode_log_scalar_u8(data as Uint8Array, maxLog, wasmOutput);
+        } else {
+          tsModule.decode_log_scalar_u16(data as Uint16Array, maxLog, tsOutput);
+          wasmModule!.decode_log_scalar_u16(data as Uint16Array, maxLog, wasmOutput);
+        }
+
+        expect(arraysWithinFloat32Ulps(tsOutput, wasmOutput, 1)).toBe(true);
+      }
+    );
 
     it.skipIf(!wasmFilesExist)('decode_geolog_scalar_u8 should match', () => {
       // level 0 = reserved exact zero; min/max-anchored true-log grid
