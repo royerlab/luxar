@@ -54,6 +54,16 @@ _CENTERS = np.array([[0, 0, 0]], dtype=np.float32)
 _CHOL = np.array([[1, 0, 1, 0, 0, 1]], dtype=np.float32)
 
 
+def _add_single_lod_child(lod: Group) -> None:
+    lod.add_gsplats(
+        "level_0",
+        centers=_CENTERS,
+        amplitudes=1.0,
+        cholesky_factors=_CHOL,
+        coverage_fraction=0.0,
+    )
+
+
 # ────────────────────────────────────────────────────────────────────────
 # Standalone builder — add_lod_group + child enumeration
 # ────────────────────────────────────────────────────────────────────────
@@ -73,9 +83,14 @@ class TestAddLodGroup:
             assert lod.attrs["kind"] == "lod"
             assert lod.attrs["selector"] == "coverage"
             assert lod.attrs["default_level"] == 0
+            _add_single_lod_child(lod)
 
         store = zarr.open(str(output_path), mode="r")
-        assert "multires" not in store
+        attrs = store["multires"].attrs
+        assert attrs["type"] == "group"
+        assert attrs["kind"] == "lod"
+        assert attrs["selector"] == "coverage"
+        assert attrs["default_level"] == 0
 
     def test_add_lod_group_with_explicit_default_level(self, tmp_path) -> None:
         """The default_level kwarg lands on the zarr attrs."""
@@ -83,10 +98,11 @@ class TestAddLodGroup:
 
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-            scene.add_lod_group("multires", default_level=2)
+            lod = scene.add_lod_group("multires", default_level=2)
+            _add_single_lod_child(lod)
 
         store = zarr.open(str(output_path), mode="r")
-        assert "multires" not in store
+        assert store["multires"].attrs["default_level"] == 2
 
     def test_add_lod_group_children_are_subgroups_with_coverage_fraction(
         self, tmp_path
@@ -128,10 +144,13 @@ class TestAddLodGroup:
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             g = scene.add_group("scene_root")
-            g.add_lod_group("multires")
+            lod = g.add_lod_group("multires")
+            _add_single_lod_child(lod)
 
         store = zarr.open(str(output_path), mode="r")
-        assert "multires" not in store["scene_root"]
+        nested = store["scene_root"]["multires"]
+        assert nested.attrs["type"] == "group"
+        assert nested.attrs["kind"] == "lod"
 
 
 # ────────────────────────────────────────────────────────────────────────
@@ -159,9 +178,10 @@ class TestLODGroupValidation:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             lod = scene.add_lod_group("multires", selector="screen-area")
             assert lod.attrs["selector"] == "screen-area"
+            _add_single_lod_child(lod)
 
         store = zarr.open(str(output_path), mode="r")
-        assert "multires" not in store
+        assert store["multires"].attrs["selector"] == "screen-area"
 
     def test_negative_default_level_rejected(self, tmp_path) -> None:
         with LuxarZarrCompiler(tmp_path / "x.luxar.zarr") as compiler:

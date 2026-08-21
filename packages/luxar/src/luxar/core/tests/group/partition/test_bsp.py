@@ -434,9 +434,15 @@ class TestAddPartitionGroup:
             assert grp.attrs["kind"] == "partition"
             assert grp.attrs["display_type"] == "points"
             assert grp.attrs["max_elements"] == 500
+            grp.add_points(
+                "part_0",
+                positions=np.zeros((1, 3), dtype=np.float32),
+            )
 
         store = zarr.open(str(tmp_path / "t.luxar.zarr"), mode="r")
-        assert "manual" not in store
+        attrs = store["manual"].attrs
+        assert attrs["type"] == "group"
+        assert attrs["kind"] == "partition"
 
     def test_invalid_display_type_rejected(self, tmp_path) -> None:
         with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
