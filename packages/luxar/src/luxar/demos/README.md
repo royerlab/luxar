@@ -606,14 +606,14 @@ Recreates the Cosmicflows-4 / Laniakea visualization by Simone Conradi and Manli
 
 ---
 
-#### demo_desi_galaxies.py - DESI DR1: The Cosmic Web in 3D (~9.75M galaxies & quasars)
-The large-scale structure of the Universe as a point cloud from the Dark Energy Spectroscopic Instrument's first data release. Each point is a real galaxy or quasar with a measured spectroscopic redshift; the redshift becomes a comoving distance so sky position + depth give true 3D Cartesian coordinates in megaparsecs. You sit at the observer's origin looking out at the two DESI footprint caps fanning into filaments, voids, and the baryon-acoustic shells. Two colorings toggle in the Layers panel: **by tracer** (BGS/LRG/ELG/QSO populations, naturally layered by distance) and **by redshift** (continuous depth colormap).
+#### demo_desi_galaxies.py - DESI DR1: The Cosmic Web in 3D (~9.75M-object catalog)
+The large-scale structure of the Universe as a deterministic 1.25M-point sample from the Dark Energy Spectroscopic Instrument's first data release. Each point is a real galaxy or quasar with a measured spectroscopic redshift; the redshift becomes a comoving distance so sky position + depth give true 3D Cartesian coordinates in megaparsecs. You sit at the observer's origin looking out at the two DESI footprint caps fanning into filaments, voids, and the baryon-acoustic shells. Two colorings toggle in the Layers panel: **by tracer** (BGS/LRG/ELG/QSO populations, naturally layered by distance) and **by redshift** (continuous depth colormap).
 
 **Run**: `luxar demo run desi_galaxies [-- --recompute]`
 
 **Requires**: Nothing extra by default — ships a compact precomputed point cloud (quantized XYZ + redshift + tracer id) via Git LFS. With `--recompute` (or if the LFS asset isn't pulled) it auto-downloads the ~1 GB of DR1 LSS clustering catalogs to `~/.cache/luxar/desi_galaxies/` (resumable), reads them with `astropy`, and converts (RA, Dec, z) → comoving Mpc. Adds `astropy` to the `demos` extra. The built scene (with substitutive LOD) is cached in the demos output dir, so only the first launch pays the LOD-build cost. If the DESI data host is unavailable, check `https://data.desi.lbl.gov/`, run `git lfs pull`, and rerun without `--recompute` to use the shipped scene without downloading the source catalogs. Substitutive Points LOD needs `luxar[gsplats]` (torch + scipy); without it the scene builds as a flat, fully viewable point cloud.
 
-**Demonstrates**: Real spectroscopic-survey catalogs → a 3D cosmic-web Points cloud, `(RA, Dec, redshift)` → comoving-Mpc conversion via `astropy.cosmology` (DESI fiducial ΛCDM), substitutive Points LOD at ~9.75M points, dual coloring (categorical tracer vs. continuous redshift colormap) via layer toggles, HDR additive rendering, self-contained download → convert → cache-processed bootstrap. Data: [DESI DR1](https://data.desi.lbl.gov/doc/releases/dr1/) (DESI Collaboration 2025, arXiv:2503.14745; CC BY 4.0).
+**Demonstrates**: Real spectroscopic-survey catalogs → a 3D cosmic-web Points cloud, `(RA, Dec, redshift)` → comoving-Mpc conversion via `astropy.cosmology` (DESI fiducial ΛCDM), deterministic sampling to bound a substitutive Points LOD at 1.25M points, dual coloring (categorical tracer vs. continuous redshift colormap) via layer toggles, HDR additive rendering, self-contained download → convert → cache-processed bootstrap. Data: [DESI DR1](https://data.desi.lbl.gov/doc/releases/dr1/) (DESI Collaboration 2025, arXiv:2503.14745; CC BY 4.0).
 
 ---
 
