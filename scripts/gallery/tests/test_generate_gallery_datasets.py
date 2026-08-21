@@ -297,6 +297,28 @@ def test_one_missing_file_in_a_git_lfs_cache_is_enough_to_demote(
     assert "failed" not in out
 
 
+def test_a_git_lfs_manifest_without_dir_uses_the_cache_key(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    calls = _setup(
+        tmp_path,
+        monkeypatch,
+        [("needs_input_lfs", "git-lfs", "fail")],
+        lfs_states={"needs_input_lfs": "pointer"},
+    )
+    manifest = json.loads(gen.DATA_MANIFEST.read_text())
+    del manifest["datasets"]["needs_input_lfs"]["dir"]
+    gen.DATA_MANIFEST.write_text(json.dumps(manifest))
+
+    code = _run_main(monkeypatch)
+    out = capsys.readouterr().out
+
+    assert calls == ["demo_needs_input_lfs.py"]
+    assert code == 0
+    assert "manual-data" in out
+    assert "failed" not in out
+
+
 @pytest.mark.parametrize(
     "stale_record",
     [None, {}, {"dir": "stale", "files": []}, {"dir": "stale", "files": [{}]}],

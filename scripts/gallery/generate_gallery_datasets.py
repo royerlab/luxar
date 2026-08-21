@@ -118,7 +118,7 @@ def _git_lfs_input_missing(meta: dict[str, Any]) -> bool:
         record = datasets.get(cache_key)
         if not isinstance(record, dict):
             continue
-        directory = record.get("dir")
+        directory = record.get("dir", cache_key)
         files = record.get("files")
         if not isinstance(directory, str) or not isinstance(files, list) or not files:
             continue
