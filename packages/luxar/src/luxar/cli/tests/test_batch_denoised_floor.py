@@ -67,6 +67,38 @@ def test_preprocess_floor_is_resolved_from_denoised_store(tmp_path: Path) -> Non
     assert payload == {"level": pytest.approx(10.0), "forward": pytest.approx(10.0)}
 
 
+def test_preprocess_floor_passes_lazy_axis_metadata(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from luxar.cli.gsplat_ops.batch import planning
+
+    seen: list[dict] = []
+
+    def _view(_path, **kwargs):
+        seen.append(kwargs)
+        return np.full((4, 4, 4), 10.0, dtype=np.float32)
+
+    monkeypatch.setattr(planning, "_pinned_slice_volume", _view)
+    manifest = BatchManifest(
+        output_dir=str(tmp_path),
+        n_timepoints=1,
+        n_channels=1,
+        spatial_shape=[4, 4, 4],
+        denoise=True,
+        denoise_mode="preprocess",
+        denoised_zarr_path=str(tmp_path / "denoised.zarr"),
+        floor_spec="p10",
+        floor_deferred=True,
+    )
+    save_manifest(manifest, tmp_path)
+
+    resolve_deferred_batch_floor(tmp_path)
+
+    assert seen[0]["axes_labels"] == ["time", "channel", "z", "y", "x"]
+    assert seen[0]["channel_shape"] == (1,)
+    assert seen[0]["spatial_shape"] == (4, 4, 4)
+
+
 def test_on_the_fly_percentile_uses_each_channels_calibrated_h(monkeypatch) -> None:
     from luxar.cli.gsplat_ops.batch import planning
     from luxar.gsplats.fitting import preprocessing

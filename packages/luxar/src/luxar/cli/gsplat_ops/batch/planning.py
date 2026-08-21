@@ -333,6 +333,8 @@ def _bounded_exact_range(view: Any, max_block_voxels: int) -> Tuple[float, float
     import numpy as np
 
     shape = tuple(int(size) for size in view.shape)
+    if not shape or any(size <= 0 for size in shape):
+        raise ValueError("volume is empty")
     block_shape = list(shape)
     while np.prod(block_shape, dtype=np.int64) > max_block_voxels:
         axis = max(range(len(block_shape)), key=block_shape.__getitem__)
@@ -477,6 +479,78 @@ def _floor_sample_pairs(n_timepoints: int, n_channels: int) -> List[Tuple[int, i
     return [(t, c) for c in channels for t in times]
 
 
+def _floor_resolution_pairs(
+    n_timepoints: int,
+    n_channels: int,
+    denoise_h_values: Optional[dict[int, float]],
+) -> List[Tuple[int, int]]:
+    """Choose full-store raw pairs or full-time calibrated-channel pairs."""
+    if denoise_h_values is None:
+        return _floor_sample_pairs(n_timepoints, n_channels)
+    calibrated_channels = sorted(denoise_h_values)
+    if not calibrated_channels:
+        raise ValueError("denoised floor resolution has no calibrated channels")
+    n_t = max(1, n_timepoints)
+    times = _evenly_spaced(n_t, min(n_t, FLOOR_SAMPLE_MAX_TIMEPOINTS))
+    channel_positions = _evenly_spaced(
+        len(calibrated_channels),
+        min(len(calibrated_channels), FLOOR_SAMPLE_MAX_CHANNELS),
+    )
+    channels = [calibrated_channels[index] for index in channel_positions]
+    return [(timepoint, channel) for channel in channels for timepoint in times]
+
+
+def _resolve_floor_slice(
+    view: Any,
+    floor_spec: "str | float | None",
+    *,
+    budget: int,
+    timepoint: int,
+    channel: int,
+    denoise_h_values: Optional[dict[int, float]],
+    denoise_params: Optional[dict[str, Any]],
+) -> Tuple[Optional[float], Optional[float], bool]:
+    """Return one slice's level, optional sampled max, and whether it was read."""
+    from luxar.gsplats.fitting.preprocessing import (
+        _sample_volume_for_floor,
+        resolve_volume_floor,
+        resolve_volume_floor_denoised,
+    )
+
+    if denoise_h_values is None:
+        sample = _sample_volume_for_floor(view, budget)
+        if sample is None or sample.size == 0:
+            return None, None, False
+        return resolve_volume_floor(sample, floor_spec), float(sample.max()), True
+
+    params = dict(denoise_params or {})
+    denoise_h = denoise_h_values.get(channel)
+    if denoise_h is None:
+        aprint(
+            f"Note: t={timepoint}, c={channel} has no calibrated denoise h; "
+            "resolving this slice on the raw basis."
+        )
+    try:
+        params["norm_range"] = _bounded_exact_range(view, budget)
+    except (TypeError, ValueError) as exc:
+        aprint(
+            f"Note: t={timepoint}, c={channel} exact normalization range could "
+            f"not be read ({exc}); resolving this slice on the raw basis."
+        )
+        return resolve_volume_floor(view, floor_spec, sample_budget=budget), None, True
+    return (
+        resolve_volume_floor_denoised(
+            view,
+            floor_spec,
+            denoise_h=denoise_h,
+            denoise_params=params,
+            sample_budget=budget,
+        ),
+        None,
+        True,
+    )
+
+
 def resolve_batch_floor(
     input_path: Path,
     floor_spec: "str | float | None",
@@ -560,9 +634,6 @@ def resolve_batch_floor(
     )
     from luxar.gsplats.fitting.preprocessing import (
         FLOOR_SAMPLE_BUDGET_VOXELS,
-        _sample_volume_for_floor,
-        resolve_volume_floor,
-        resolve_volume_floor_denoised,
     )
 
     if floor_spec is None:
@@ -578,33 +649,19 @@ def resolve_batch_floor(
             None, floor_spec, guard_numeric=False, scope="every (t, c) task"
         )
 
-    if denoise_h_values is None:
-        pairs = _floor_sample_pairs(n_timepoints, n_channels)
-    else:
-        calibrated_channels = sorted(denoise_h_values)
-        if not calibrated_channels:
-            raise ValueError("denoised floor resolution has no calibrated channels")
-        times = _evenly_spaced(
-            max(1, n_timepoints), min(max(1, n_timepoints), FLOOR_SAMPLE_MAX_TIMEPOINTS)
-        )
-        channels = [
-            calibrated_channels[index]
-            for index in _evenly_spaced(
-                len(calibrated_channels),
-                min(len(calibrated_channels), FLOOR_SAMPLE_MAX_CHANNELS),
-            )
-        ]
-        pairs = [(timepoint, channel) for channel in channels for timepoint in times]
+    pairs = _floor_resolution_pairs(n_timepoints, n_channels, denoise_h_values)
     budget = max(1, int(FLOOR_SAMPLE_BUDGET_VOXELS) // len(pairs))
     levels: List[Optional[float]] = []
-    maxima: List[float] = []
     with asection(
         f"Resolving background floor '{floor_spec}' (minimum over "
         f"{len(pairs)} slices spanning T={n_timepoints}, C={n_channels})"
     ):
         for t_pos, c_pos in pairs:
-            t = timepoint_indices[t_pos] if timepoint_indices is not None else t_pos
-            c = channel_indices[c_pos] if channel_indices is not None else c_pos
+            if denoise_h_values is None:
+                t = timepoint_indices[t_pos] if timepoint_indices is not None else t_pos
+                c = channel_indices[c_pos] if channel_indices is not None else c_pos
+            else:
+                t, c = t_pos, c_pos
             view = _pinned_slice_volume(
                 input_path,
                 channel=c,
@@ -615,36 +672,18 @@ def resolve_batch_floor(
                 channel_shape=channel_shape,
                 spatial_shape=spatial_shape,
             )
-            if denoise_h_values is None:
-                sample = _sample_volume_for_floor(view, budget)
-                if sample is None or sample.size == 0:
-                    continue
-                # The sample is already within budget, so resolving it reads once.
-                level_here = resolve_volume_floor(sample, floor_spec)
-                sampled_max = float(sample.max())
-            else:
-                # Workers normalize against exact whole-slice endpoints. Scan in
-                # bounded blocks, then let the floor and probe helpers make their
-                # own bounded reads (three passes, never one whole-slice allocation).
-                params = dict(denoise_params or {})
-                params["norm_range"] = _bounded_exact_range(view, budget)
-                denoise_h = denoise_h_values.get(c)
-                if denoise_h is None:
-                    aprint(
-                        f"Note: t={t}, c={c} has no calibrated denoise h; "
-                        "resolving this slice on the raw basis."
-                    )
-                level_here = resolve_volume_floor_denoised(
-                    view,
-                    floor_spec,
-                    denoise_h=denoise_h,
-                    denoise_params=params,
-                    sample_budget=budget,
-                )
-                sampled_max = None
+            level_here, sampled_max, processed = _resolve_floor_slice(
+                view,
+                floor_spec,
+                budget=budget,
+                timepoint=t,
+                channel=c,
+                denoise_h_values=denoise_h_values,
+                denoise_params=denoise_params,
+            )
+            if not processed:
+                continue
             levels.append(level_here)
-            if sampled_max is not None:
-                maxima.append(sampled_max)
             max_note = (
                 "" if sampled_max is None else f" (sampled max {sampled_max:.6g})"
             )
