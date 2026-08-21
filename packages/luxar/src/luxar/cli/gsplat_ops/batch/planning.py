@@ -332,17 +332,96 @@ def _materialize(view: Any) -> Any:
     return _np.asarray(view[:], dtype=_np.float32)
 
 
+def _bounded_exact_range(view: Any, max_block_voxels: int) -> Tuple[float, float]:
+    """Return exact finite endpoints without materializing the whole view."""
+    import itertools
+
+    import numpy as np
+
+    shape = tuple(int(size) for size in view.shape)
+    if not shape or any(size <= 0 for size in shape):
+        raise ValueError("volume is empty")
+    block_shape = list(shape)
+    while np.prod(block_shape, dtype=np.int64) > max_block_voxels:
+        axis = max(range(len(block_shape)), key=block_shape.__getitem__)
+        block_shape[axis] = max(1, block_shape[axis] // 2)
+    starts = [range(0, size, block) for size, block in zip(shape, block_shape)]
+    lo = float("inf")
+    hi = float("-inf")
+    for origin in itertools.product(*starts):
+        selection = tuple(
+            slice(start, min(start + block, size))
+            for start, block, size in zip(origin, block_shape, shape)
+        )
+        block = np.asarray(view[selection], dtype=np.float32)
+        if not bool(np.isfinite(block).all()):
+            raise ValueError("volume contains non-finite values")
+        lo = min(lo, float(block.min()))
+        hi = max(hi, float(block.max()))
+    return lo, hi
+
+
 # Bounded, deterministic (t, c) sampling for the ONE global floor level (see
 # :func:`resolve_batch_floor`). The two axes get INDEPENDENT caps, deliberately:
 # a shared budget spent on channels first would leave a store with >= 5
 # channel-like coordinates sampling a single timepoint, which is #1174's erase
 # bug back again in the time direction. 4 timepoints x 4 channel-like
 # coordinates = at most 16 slices, and the per-slice read budget is
-# FLOOR_SAMPLE_BUDGET_VOXELS // n_pairs (2M voxels at the cap), so the TOTAL
-# voxels read never exceed the single-slice whole-volume budget.
+# FLOOR_SAMPLE_BUDGET_VOXELS // n_pairs (2M voxels at the cap), so floor samples
+# total at most one whole-volume budget. Deferred on-the-fly resolution also
+# scans each sampled slice once for exact endpoints and reads bounded probe blocks.
 FLOOR_SAMPLE_MAX_SLICES = 16
 FLOOR_SAMPLE_MAX_TIMEPOINTS = 4
 FLOOR_SAMPLE_MAX_CHANNELS = 4
+
+
+def _should_defer_floor_resolution(
+    mode: str,
+    denoise: DenoiseConfig,
+    floor_spec: "str | float | None",
+    denoise_mode: Optional[str],
+) -> bool:
+    """Whether a uniform denoise plan must resolve its floor after planning."""
+    from luxar.cli.gsplat_ops.fitting.fit_utils import floor_spec_needs_volume
+    from luxar.gsplats.fitting.preprocessing import _floor_spec_is_percentile
+
+    if mode != "uniform" or not denoise.denoise:
+        return False
+    if not floor_spec_needs_volume(floor_spec):
+        return False
+    # Content planning consumes the level while placing boxes, so deferring it
+    # would require reordering the content plan itself.
+    return denoise_mode == "preprocess" or _floor_spec_is_percentile(floor_spec)
+
+
+def _resolve_planned_floor(
+    *,
+    deferred: bool,
+    input_path: Path,
+    fit: FitConfig,
+    fit_args: dict[str, Any],
+    n_timepoints: int,
+    n_channels: int,
+    array_key: Optional[str],
+    axes: Optional[str],
+    axes_labels: List[str],
+    channel_shape: Tuple[int, ...],
+    spatial_shape: Tuple[int, ...],
+) -> tuple[Optional[float], Optional[float]]:
+    if deferred:
+        return None, None
+    return _resolve_and_record_floor(
+        input_path,
+        fit,
+        fit_args,
+        n_timepoints=n_timepoints,
+        n_channels=n_channels,
+        array_key=array_key,
+        axes=axes,
+        axes_labels=axes_labels,
+        channel_shape=channel_shape,
+        spatial_shape=spatial_shape,
+    )
 
 
 def _evenly_spaced(n: int, k: int) -> List[int]:
@@ -406,6 +485,78 @@ def _floor_sample_pairs(n_timepoints: int, n_channels: int) -> List[Tuple[int, i
     return [(t, c) for c in channels for t in times]
 
 
+def _floor_resolution_pairs(
+    n_timepoints: int,
+    n_channels: int,
+    denoise_h_values: Optional[dict[int, float]],
+) -> List[Tuple[int, int]]:
+    """Choose full-store raw pairs or full-time calibrated-channel pairs."""
+    if denoise_h_values is None:
+        return _floor_sample_pairs(n_timepoints, n_channels)
+    calibrated_channels = sorted(denoise_h_values)
+    if not calibrated_channels:
+        raise ValueError("denoised floor resolution has no calibrated channels")
+    n_t = max(1, n_timepoints)
+    times = _evenly_spaced(n_t, min(n_t, FLOOR_SAMPLE_MAX_TIMEPOINTS))
+    channel_positions = _evenly_spaced(
+        len(calibrated_channels),
+        min(len(calibrated_channels), FLOOR_SAMPLE_MAX_CHANNELS),
+    )
+    channels = [calibrated_channels[index] for index in channel_positions]
+    return [(timepoint, channel) for channel in channels for timepoint in times]
+
+
+def _resolve_floor_slice(
+    view: Any,
+    floor_spec: "str | float | None",
+    *,
+    budget: int,
+    timepoint: int,
+    channel: int,
+    denoise_h_values: Optional[dict[int, float]],
+    denoise_params: Optional[dict[str, Any]],
+) -> Tuple[Optional[float], Optional[float], bool]:
+    """Return one slice's level, optional sampled max, and whether it was read."""
+    from luxar.gsplats.fitting.preprocessing import (
+        _sample_volume_for_floor,
+        resolve_volume_floor,
+        resolve_volume_floor_denoised,
+    )
+
+    if denoise_h_values is None:
+        sample = _sample_volume_for_floor(view, budget)
+        if sample is None or sample.size == 0:
+            return None, None, False
+        return resolve_volume_floor(sample, floor_spec), float(sample.max()), True
+
+    params = dict(denoise_params or {})
+    denoise_h = denoise_h_values.get(channel)
+    if denoise_h is None:
+        aprint(
+            f"Note: t={timepoint}, c={channel} has no calibrated denoise h; "
+            "resolving this slice on the raw basis."
+        )
+    try:
+        params["norm_range"] = _bounded_exact_range(view, budget)
+    except (TypeError, ValueError) as exc:
+        aprint(
+            f"Note: t={timepoint}, c={channel} exact normalization range could "
+            f"not be read ({exc}); resolving this slice on the raw basis."
+        )
+        return resolve_volume_floor(view, floor_spec, sample_budget=budget), None, True
+    return (
+        resolve_volume_floor_denoised(
+            view,
+            floor_spec,
+            denoise_h=denoise_h,
+            denoise_params=params,
+            sample_budget=budget,
+        ),
+        None,
+        True,
+    )
+
+
 def resolve_batch_floor(
     input_path: Path,
     floor_spec: "str | float | None",
@@ -417,27 +568,31 @@ def resolve_batch_floor(
     axes_labels: Optional[List[str]] = None,
     channel_shape: Tuple[int, ...] = (),
     spatial_shape: Optional[Tuple[int, ...]] = None,
+    denoise_h_values: Optional[dict[int, float]] = None,
+    denoise_params: Optional[dict[str, Any]] = None,
 ) -> "Tuple[Optional[float], Optional[str | float]]":
     """Resolve the batch's background floor ONCE, globally for the whole run.
 
     ``batch-fit`` uses **one global level for the whole timelapse**: it is
-    resolved here at plan time, recorded in the manifest (``floor_level``), and
-    handed as a concrete number to every ``(t, c)`` task. Forwarding the *spec*
+    resolved once here (at plan time or in the dependent post-denoise stage),
+    recorded in the manifest (``floor_level``), and handed as a concrete number
+    to every ``(t, c)`` task. Forwarding the *spec*
     instead would make each task re-estimate on its own timepoint — a
     time-varying pedestal, i.e. brightness flicker across the merged partition
     (issue #1174).
 
     One global level has to be safe for the dimmest **sampled** slice, not just
     for a typical one: the tile workers subtract it unguarded, so a level above
-    some ``(t, c)``'s maximum clips that whole sub-volume to zero — 0 splats, an
-    ``.empty`` marker, a task that exits 0 and a merge that skips it, i.e. a
-    silently MISSING slice while ``status`` reports success. Under
+    some ``(t, c)``'s maximum clips that whole sub-volume to zero. Status and
+    merge now reject an all-empty uniform slice, but the level is still biased
+    low to avoid destructive over-subtraction in the first place. Under
     ``clip(V - level, 0)`` a too-LOW level is a recoverable under-subtraction
     while a too-HIGH one destroys signal, so the level is biased low:
 
     * the spec is resolved on a bounded, deterministic set of evenly spaced
-      slices spanning the store's FULL extent — over time AND over channel-like
-      coordinates, with independent caps so both axes are covered
+      slices spanning the store's FULL time extent. Raw-basis resolution also
+      spans the full channel extent; denoised resolution spans the selected,
+      calibrated channels because NLM strength is channel-specific
       (:func:`_floor_sample_pairs`, at most :data:`FLOOR_SAMPLE_MAX_SLICES`) —
       each read through a lazy axis-pinned view with the whole-volume sample
       budget divided among them;
@@ -450,8 +605,8 @@ def resolve_batch_floor(
       "would erase all signal" guard refusing it), suppression is downgraded to
       none for the whole run, loudly, rather than erasing a slice.
 
-    Because the sampled set spans the whole store rather than the selection, the
-    same store resolves the same level for ``--timepoints 0:50`` and ``0:100``.
+    Because the sampled timepoints span the whole store rather than the selection,
+    the same store resolves the same level for ``--timepoints 0:50`` and ``0:100``.
 
     RESIDUAL RISK: the bound holds for the sampled slices only. A dimmer
     NON-sampled slice (a blank/bleached frame between samples, a channel above
@@ -483,8 +638,6 @@ def resolve_batch_floor(
     )
     from luxar.gsplats.fitting.preprocessing import (
         FLOOR_SAMPLE_BUDGET_VOXELS,
-        _sample_volume_for_floor,
-        resolve_volume_floor,
     )
 
     if floor_spec is None:
@@ -500,13 +653,14 @@ def resolve_batch_floor(
             None, floor_spec, guard_numeric=False, scope="every (t, c) task"
         )
 
-    pairs = _floor_sample_pairs(n_timepoints, n_channels)
+    pairs = _floor_resolution_pairs(n_timepoints, n_channels, denoise_h_values)
     budget = max(1, int(FLOOR_SAMPLE_BUDGET_VOXELS) // len(pairs))
+    sampled_times = sorted({t for t, _ in pairs})
+    sampled_channels = sorted({c for _, c in pairs})
     levels: List[Optional[float]] = []
-    maxima: List[float] = []
     with asection(
         f"Resolving background floor '{floor_spec}' (minimum over "
-        f"{len(pairs)} slices spanning T={n_timepoints}, C={n_channels})"
+        f"{len(pairs)} slices; sampled T={sampled_times}, C={sampled_channels})"
     ):
         for t, c in pairs:
             view = _pinned_slice_volume(
@@ -519,18 +673,25 @@ def resolve_batch_floor(
                 channel_shape=channel_shape,
                 spatial_shape=spatial_shape,
             )
-            sample = _sample_volume_for_floor(view, budget)
-            if sample is None or sample.size == 0:
+            level_here, sampled_max, processed = _resolve_floor_slice(
+                view,
+                floor_spec,
+                budget=budget,
+                timepoint=t,
+                channel=c,
+                denoise_h_values=denoise_h_values,
+                denoise_params=denoise_params,
+            )
+            if not processed:
                 continue
-            # `sample` is already within `budget`, so re-sampling it inside
-            # resolve_volume_floor reads it whole: one read, level + max both.
-            level_here = resolve_volume_floor(sample, floor_spec)
             levels.append(level_here)
-            maxima.append(float(sample.max()))
+            max_note = (
+                "" if sampled_max is None else f" (sampled max {sampled_max:.6g})"
+            )
             aprint(
                 f"t={t}, c={c}: level "
-                f"{'none' if level_here is None else format(level_here, '.6g')} "
-                f"(sampled max {maxima[-1]:.6g})"
+                f"{'none' if level_here is None else format(level_here, '.6g')}"
+                f"{max_note}"
             )
 
         level: Optional[float] = None
@@ -1639,21 +1800,26 @@ def plan_batch(
     # FULL extent, reduced by MINIMUM — a level above some slice's maximum would
     # clip that whole sub-volume to zero and drop it silently from the merge, so
     # the level is made a lower bound on every SAMPLED slice's pedestal (bounded
-    # sampling cannot bound an unsampled one), and must not
-    # depend on the --timepoints/--channels selection (see resolve_batch_floor).
+    # sampling cannot bound an unsampled one). Raw resolution must not depend on
+    # either selection; on-the-fly denoised resolution spans the full time extent
+    # but follows the selected channels because NLM h is calibrated per channel
+    # (see resolve_batch_floor).
     # Deliberately not the content plan's max-projection either, whose per-voxel
     # maximum biases the background mode upward relative to any single slice.
-    floor_level, recorded_floor_level = _resolve_and_record_floor(
-        input_path,
-        fit,
-        fit_args,
+    floor_spec = effective_floor_spec(fit)
+    floor_deferred = _should_defer_floor_resolution(
+        mode, denoise, floor_spec, denoise_mode
+    )
+    floor_level, recorded_floor_level = _resolve_planned_floor(
+        deferred=floor_deferred,
+        input_path=input_path,
+        fit=fit,
+        fit_args=fit_args,
         n_timepoints=n_t_full,
         n_channels=n_c_full,
         array_key=array_key,
         axes=",".join(axes_list) if axes_list else None,
-        # The DISCOVERED labels, so the representative slice is pinned by label
-        # even when the user passed no --axes (the positional 4D heuristic reads
-        # a (T, Z, Y, X) store as CZYX and would silently sample t=0).
+        # The DISCOVERED labels pin the representative slice even without --axes.
         axes_labels=list(ome_info.axes),
         channel_shape=tuple(ome_info.channel_shape),
         spatial_shape=tuple(spatial),
@@ -1827,6 +1993,8 @@ def plan_batch(
         preset=fit.preset,
         fit_args=fit_args,
         floor_level=recorded_floor_level,
+        floor_spec=floor_spec if floor_deferred else None,
+        floor_deferred=floor_deferred,
         grid_scale=grid_scale,
         gpu_name=resolved_gpu,
         estimated_seconds_per_task=est_seconds,

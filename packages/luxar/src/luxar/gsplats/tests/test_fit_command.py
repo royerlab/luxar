@@ -142,10 +142,8 @@ def test_axes_forwarded_to_argv_and_sbatch_parity() -> None:
     assert "--axes z,y,x" in script
 
 
-def test_uniform_argv_allows_empty_tile() -> None:
-    """Uniform tasks must tolerate a tile wholly below the background floor:
-    the worker writes an ``.empty`` marker and exits 0 instead of the task
-    failing (and re-failing on every re-fit) at the empty-store save."""
+def test_uniform_argv_allows_genuinely_empty_tile_without_floor() -> None:
+    """A floor-free empty region remains a legitimate successful task."""
     from luxar.gsplats.batch.slurm_gen import generate_fit_sbatch
 
     m = BatchManifest(
@@ -176,6 +174,29 @@ def test_uniform_argv_allows_empty_tile() -> None:
     # without error. Two occurrences: the pre-fit cleanup and the finalize branch.
     assert script.count('rm -f "${STAGING}.empty"') == 2
     assert script.index('rm -f "${STAGING}.empty"') < script.index("local FIT_RC")
+
+
+def test_uniform_argv_keeps_sparse_tiles_empty_when_floor_is_applied() -> None:
+    """Individual background tiles stay valid; only an all-empty slice is fatal."""
+    from luxar.gsplats.batch.slurm_gen import generate_fit_sbatch
+
+    manifest = BatchManifest(
+        input_path="in.zarr",
+        output_dir="/o",
+        mode="uniform",
+        n_tiles=1,
+        tile_size=64,
+        tile_overlap=8,
+        fit_args={"floor": "12.5"},
+    )
+
+    argv = build_task_fit_argv(manifest, _job(), "out.tmp", argv0=_ARGV0)
+    script = generate_fit_sbatch(manifest, "")
+
+    assert "--floor" in argv
+    assert "--allow-empty-tile" in argv
+    assert "--floor 12.5" in script
+    assert "--allow-empty-tile" in script
 
 
 def test_denoise_h_appended_for_on_the_fly_auto() -> None:
