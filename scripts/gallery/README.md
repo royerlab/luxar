@@ -147,7 +147,8 @@ README gallery table.
 
 Required: `id` (media + dataset stem), `title` (caption), `geometry`,
 `category`, `script` (`demo_*.py`, or `null` for a feature-branch demo whose
-dataset must be pre-generated), `dataset` (path under `datasets/demos/`).
+dataset must be pre-generated; currently unused), `dataset` (path under
+`datasets/demos/`).
 
 Optional capture hints (see the `DemoEntry` interface in the capture spec for
 the authoritative list and defaults): `exposure` (log2 stops, overrides

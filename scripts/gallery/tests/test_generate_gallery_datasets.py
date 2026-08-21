@@ -7,14 +7,14 @@ explicit path argument OVERRIDES ``testpaths``. Run in isolation with:
     hatch run pytest scripts/gallery/tests/test_generate_gallery_datasets.py -q
 
 What is guarded is the *demote-on-failure* rule. A demo whose ``DEMO_META``
-declares machine-local ``local_data`` (``manual-file`` / ``kaggle-auth`` /
-``git-lfs``) exits 1 wherever that input is absent, which used to make the whole
-gallery build report a hard failure and return 1 — on a fresh clone that meant
-``make generate-gallery`` aborted. Such an entry is now still RUN (so the machine
-that has the input keeps regenerating its tile, ``--force`` included) and only
-demoted to the soft ``manual-data`` bucket if it actually fails. The scoping is
-the delicate part: a ``timeout`` / ``no-output`` / death by signal stays hard even
-for a demoted mode.
+declares machine-local ``local_data`` exits 1 wherever that input is absent,
+which used to make the whole gallery build report a hard failure and return 1 —
+on a fresh clone that meant ``make generate-gallery`` aborted. Such an entry is
+still RUN (so the machine that has the input keeps regenerating its tile,
+``--force`` included) and only demoted to the soft ``manual-data`` bucket if it
+actually fails. ``git-lfs`` is demoted only while a declared payload is absent
+or still a pointer, so a release machine with pulled payloads keeps hard-failure
+signal. A ``timeout`` / ``no-output`` / death by signal stays hard for every mode.
 
 Behavioral cases run against a synthetic manifest + synthetic demo files; one
 separate invariant test reads the real manifest to keep ``script: null`` honest.
@@ -22,6 +22,7 @@ separate invariant test reads the real manifest to keep ``script: null`` honest.
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -48,19 +49,25 @@ DEMO_META = {{
         "gpu": "none",
         "local_data": {local_data},
     }},
-    "caches": [],
+    "caches": {caches},
     "outputs": ["{key}"],
 }}
 '''
 
 
-def _write_demo(demos_dir: Path, key: str, local_data: Optional[str]) -> str:
+def _write_demo(
+    demos_dir: Path,
+    key: str,
+    local_data: Optional[str],
+    caches: tuple[str, ...] = (),
+) -> str:
     """Write a synthetic ``demo_<key>.py``; return its filename."""
     name = f"demo_{key}.py"
     (demos_dir / name).write_text(
         _DEMO_TEMPLATE.format(
             key=key,
             local_data="None" if local_data is None else f'"{local_data}"',
+            caches=repr(list(caches)),
         )
     )
     return name
@@ -136,6 +143,7 @@ def _setup(
     present: tuple[str, ...] = (),
     missing_script: tuple[str, ...] = (),
     capture_only: tuple[str, ...] = (),
+    lfs_states: Optional[dict[str, str]] = None,
 ) -> _Recorder:
     """Point the harness at a synthetic tree; return the recorded-calls list.
 
@@ -149,9 +157,13 @@ def _setup(
     demos_dir.mkdir()
     monkeypatch.setattr(gen, "REPO_ROOT", tmp_path)
     monkeypatch.setattr(gen, "DEMOS_DIR", demos_dir)
+    data_manifest = tmp_path / "data_manifest.json"
+    monkeypatch.setattr(gen, "DATA_MANIFEST", data_manifest)
 
     manifest: list[dict[str, Any]] = []
+    data_datasets: dict[str, Any] = {}
     outcomes: dict[str, str] = {}
+    lfs_states = lfs_states or {}
     for demo_id, local_data, outcome in specs:
         script: Optional[str]
         if demo_id in capture_only:
@@ -159,7 +171,23 @@ def _setup(
         elif demo_id in missing_script:
             script = f"demo_{demo_id}.py"  # never written to disk
         else:
-            script = _write_demo(demos_dir, demo_id, local_data)
+            caches = (demo_id,) if local_data == "git-lfs" else ()
+            script = _write_demo(demos_dir, demo_id, local_data, caches)
+            if caches:
+                data_datasets[demo_id] = {
+                    "dir": demo_id,
+                    "files": [{"name": "input.bin"}],
+                }
+                state = lfs_states.get(demo_id, "payload")
+                input_path = demos_dir / "data" / demo_id / "input.bin"
+                if state != "missing":
+                    input_path.parent.mkdir(parents=True, exist_ok=True)
+                    if state == "pointer":
+                        input_path.write_text(
+                            "version https://git-lfs.github.com/spec/v1\n"
+                        )
+                    else:
+                        input_path.write_bytes(b"pulled payload")
         if script is not None:
             outcomes[script] = outcome
         manifest.append(
@@ -173,6 +201,7 @@ def _setup(
         (tmp_path / f"datasets/demos/{demo_id}.luxar.zarr").mkdir(parents=True)
 
     monkeypatch.setattr(gen, "load_manifest", lambda: manifest)
+    data_manifest.write_text(json.dumps({"datasets": data_datasets}))
     calls = _Recorder()
     monkeypatch.setattr(gen.subprocess, "run", _fake_run(tmp_path, calls, outcomes))
     return calls
@@ -183,13 +212,12 @@ def _run_main(monkeypatch: pytest.MonkeyPatch, *argv: str) -> int:
     return gen.main()
 
 
-@pytest.mark.parametrize("mode", ["manual-file", "kaggle-auth", "git-lfs"])
+@pytest.mark.parametrize("mode", ["manual-file", "kaggle-auth"])
 def test_a_failing_local_input_demo_is_demoted_not_failed(
     tmp_path, monkeypatch, capsys, mode
 ) -> None:
     # Each mode can legitimately be absent on the machine running the gallery:
-    # hand-placed files, Kaggle credentials, and Git LFS payloads are all
-    # provisioned outside the demo itself.
+    # hand-placed files and Kaggle credentials are provisioned outside the demo.
     calls = _setup(tmp_path, monkeypatch, [("needs_input", mode, "fail")])
 
     code = _run_main(monkeypatch)
@@ -205,6 +233,67 @@ def test_a_failing_local_input_demo_is_demoted_not_failed(
     # The advice names the mode that was actually declared: telling a Kaggle
     # failure to hand-place a file would send the reader down the wrong path.
     assert mode in out
+
+
+def test_a_git_lfs_demo_with_payload_still_fails_hard(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    # A release machine with the LFS payload pulled must not hide a real demo bug.
+    # The id deliberately shares the "input" token with the demoted entries, so
+    # an id heuristic in place of the DEMO_META read cannot pass here.
+    calls = _setup(tmp_path, monkeypatch, [("needs_input_lfs", "git-lfs", "fail")])
+
+    code = _run_main(monkeypatch)
+    out = capsys.readouterr().out
+
+    assert calls == ["demo_needs_input_lfs.py"]
+    assert code == 1
+    assert "failed" in out
+    assert "manual-data" not in out
+
+
+@pytest.mark.parametrize("state", ["missing", "pointer"])
+def test_a_git_lfs_demo_without_payload_is_demoted(
+    tmp_path, monkeypatch, capsys, state
+) -> None:
+    calls = _setup(
+        tmp_path,
+        monkeypatch,
+        [("needs_input_lfs", "git-lfs", "fail")],
+        lfs_states={"needs_input_lfs": state},
+    )
+
+    code = _run_main(monkeypatch)
+    out = capsys.readouterr().out
+
+    assert calls == ["demo_needs_input_lfs.py"]
+    assert code == 0
+    assert "manual-data" in out
+    assert "git-lfs" in out
+    assert "failed" not in out
+
+
+def test_one_missing_file_in_a_git_lfs_cache_is_enough_to_demote(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    calls = _setup(
+        tmp_path,
+        monkeypatch,
+        [("needs_input_lfs", "git-lfs", "fail")],
+    )
+    manifest = json.loads(gen.DATA_MANIFEST.read_text())
+    manifest["datasets"]["needs_input_lfs"]["files"].append(
+        {"name": "second-input.bin"}
+    )
+    gen.DATA_MANIFEST.write_text(json.dumps(manifest))
+
+    code = _run_main(monkeypatch)
+    out = capsys.readouterr().out
+
+    assert calls == ["demo_needs_input_lfs.py"]
+    assert code == 0
+    assert "manual-data" in out
+    assert "failed" not in out
 
 
 def test_the_child_command_contract(tmp_path, monkeypatch) -> None:
@@ -295,7 +384,7 @@ def test_a_signal_killed_local_input_demo_stays_hard(
 
 
 def test_capture_only_entries_have_no_runnable_demo_on_disk() -> None:
-    """``script: null`` must mean the demo is genuinely absent from this branch."""
+    """Guard the currently unused ``script: null`` shape against stale entries."""
     from luxar.demos.registry import extract_demo_meta
 
     on_disk = {
@@ -494,6 +583,7 @@ def test_list_marks_local_input_entries_and_generates_nothing(
         tmp_path,
         monkeypatch,
         [("needs_input", mode, "ok"), ("plain", None, "ok")],
+        lfs_states={"needs_input": "missing"} if mode == "git-lfs" else None,
     )
 
     code = _run_main(monkeypatch, "--list")
