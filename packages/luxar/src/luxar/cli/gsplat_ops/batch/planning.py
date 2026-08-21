@@ -1733,22 +1733,15 @@ def _assemble_fit_args(
     return fit_args, denoise_mode, None
 
 
-def _validate_content_fit_flags(
-    tiling: str,
-    *,
-    denoise: bool = False,
-    downscale: bool = False,
-    progressive: bool = False,
-) -> None:
+def _validate_content_fit_flags(tiling: str, fit_args: dict) -> None:
     """Reject fit flags that content workers would silently ignore."""
     if tiling != "content":
         return
-    enabled = {
-        "--denoise": denoise,
-        "--downscale": downscale,
-        "--progressive": progressive,
-    }
-    unsupported = [flag for flag in CONTENT_UNSUPPORTED_FIT_FLAGS if enabled[flag]]
+    unsupported = [
+        flag
+        for flag in CONTENT_UNSUPPORTED_FIT_FLAGS
+        if flag.removeprefix("--") in fit_args
+    ]
     if not unsupported:
         return
     advice = "Use --tiling uniform"
@@ -1902,12 +1895,9 @@ def plan_batch(
             f"'{input_path.name}'. Convert it to zarr first, or use `gsplat fit` "
             f"for a single {input_path.suffix.lower()} volume."
         )
+
     fit_args, denoise_mode, _ = _assemble_fit_args(fit, denoise)
-    _validate_content_fit_flags(
-        tiling,
-        denoise=denoise_mode == "on-the-fly",
-        progressive=fit.progressive,
-    )
+    _validate_content_fit_flags(tiling, fit_args)
     denoised_zarr_path = None
     if denoise_mode == "preprocess":
         denoised_zarr_path = str(output_dir.resolve() / "denoised.zarr")
