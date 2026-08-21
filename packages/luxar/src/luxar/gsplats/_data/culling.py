@@ -107,7 +107,8 @@ class CullingMixin(_GSplatDataOps):
                 contribution (0--1) below which a splat is redundant.
             max_binary_search_iters: *error_budget / redundancy only.*
                 Max iterations for the joint compounding binary search.
-            device: Device for GPU computation.  Auto-detected if None.
+            device: Device for GPU computation.  Auto-detected for None or
+                ``"auto"``.
             intensity_floor: Min intensity threshold for AABB computation.
             retention: *cumulative only.*  Fraction of total amplitude to
                 retain (0--1).
@@ -199,7 +200,7 @@ class CullingMixin(_GSplatDataOps):
         import torch
 
         from luxar.gsplats.culling import cull_by_contribution
-        from luxar.gsplats.rendering.volume_rendering import auto_detect_device
+        from luxar.gsplats.utils.device import resolve_torch_device
 
         if target is not None and shape is None:
             shape = target.shape
@@ -210,8 +211,7 @@ class CullingMixin(_GSplatDataOps):
                 "or provide a target volume."
             )
 
-        if device is None:
-            device = auto_detect_device()
+        device = str(resolve_torch_device(device))
 
         # Convert to GPU tensors
         centers_t = torch.from_numpy(self.centers.astype(np.float32)).to(device)

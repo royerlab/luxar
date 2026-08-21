@@ -702,6 +702,31 @@ class TestFitCommand:
         assert result.exit_code != 0
 
 
+class TestCullCommand:
+    def test_cull_accepts_auto_device(
+        self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
+    ) -> None:
+        out = tmp_path / "culled-auto.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "cull",
+                str(sample_gsplats),
+                str(out),
+                "--method",
+                "redundancy",
+                "--shape",
+                "16,16,16",
+                "--device",
+                "auto",
+            ],
+        )
+
+        assert result.exit_code == 0, f"cull failed: {result.stdout}"
+        assert out.exists()
+
+
 class TestConvertCommand:
     def test_convert_basic(
         self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
