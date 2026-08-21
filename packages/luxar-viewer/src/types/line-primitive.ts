@@ -66,8 +66,8 @@ export const LINE_PRIMITIVES: readonly LinePrimitive[] = ['screen-space', 'capsu
  * resolution; `parseLinePrimitive` still deliberately rejects `quad` for
  * `?linePrimitive=` — the URL parameter speaks the primitive vocabulary.
  *
- * - `auto` (default): capsule, except nodes whose effective segment
- *   load is very large, which build the cheaper quad — see
+ * - `auto` (default): capsule, except scenes whose aggregate effective
+ *   segment load is very large, which build the cheaper quad — see
  *   {@link resolveLinePrimitiveForNode} for the measured rationale.
  * - `capsule` / `quad`: force one primitive for every line node.
  */
