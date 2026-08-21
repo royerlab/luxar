@@ -118,7 +118,7 @@ describe('gsplats_processing: float32 transcendental call sites', () => {
   it('uses expf for hidden-dimension attenuation', () => {
     // Isolate the `rawExp` call: truncate=20 underflows shiftC to zero, so
     // invOneMinusC is exactly one, while minAmplitude=0 keeps the result.
-    // Host Math.exp produces 0x3b41c74f instead of the Rust 0x3b41c74e.
+    // Host Math.exp produces 0x3b41c750 instead of the Rust 0x3b41c74e.
     const outAmplitudes = new Float32Array(1);
     const count = project_gsplats_nd_to_3d(
       new Float32Array([0, 0, 0, 3.412810802459717]),
