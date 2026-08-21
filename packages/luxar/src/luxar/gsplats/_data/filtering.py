@@ -24,28 +24,25 @@ subsumes the other — a whole-volume bbox that removed nothing keeps both, a
 non-spatial cull keeps the region stamp and loses the metrics, an actual crop
 loses both.
 
-Deliberately OUT of scope here: the LOD Q·e ladder stamps —
+The LOD Q·e ladder stamps are a third, artifact-local category —
 ``lod_stats.energy_fraction_cum`` (the prefix energy e(k) of a rung),
 ``level_stats.reference_energy`` (its weight w) and ``level_stats.quality`` (the
 measured Q of a level against its group's finest). Those are measured on the
 artifact's OWN content rather than against a source volume, so a coarse level's
-stamps are true of that coarse level and the argument above does not reach them —
-and ``at_substitutive`` is a plain ACCESSOR on the scene-authoring path
+stamps are true of that coarse level and must survive a plain accessor —
+``at_substitutive`` is used directly on the scene-authoring path
 (``core/group/gsplats_pipeline/lod_dispatch.py``), which copies exactly these
-numbers onto every coarse child of a ``kind=lod`` group. Deleting them is also
-actively harmful downstream: ``lod/annotate.py:332`` writes a leaf-local
-``reference_energy`` only when none is present, so a scrub licenses
-``annotate-quality`` to FABRICATE a group-inconsistent w. The likely right answer
-for these is to RECOMPUTE them on a reduction (cheap, O(N), no volume — exactly
-what ``lod/annotate.py`` already does), which needs its own design pass.
+numbers onto every coarse child of a ``kind=lod`` group. A content-changing
+rewrite instead recomputes their counts, e(k), and group-consistent w from the
+rewritten artifact, while dropping Q until ``annotate-quality --with-quality``
+remeasures it; deleting w would license ``annotate-quality``'s leaf-local fallback
+to fabricate a group-inconsistent value.
 
-One more stamp shares that scope and that answer, without being a Q·e one: a
+One source-dependent stamp sits beside them but cannot be recomputed: a
 ``--refine l2|volume`` level records its build step as ``level_stats.refine_stats``
-(``mse_seed`` / ``mse_refit``), which IS measured against the source volume. It
-stays out of scope with the rest of ``level_stats`` because it is a record of what
-produced that level rather than a published score of the artifact — nothing reads
-it as "this dataset's quality" the way ``gsplat info`` reads ``psnr_db`` — and
-because a reduction wants it recomputed for the same reason.
+(``mse_seed`` / ``mse_refit``), measured against the source volume. A reduction
+removes that nested measurement while keeping the descriptive ``refine`` method;
+the rewriter has no source volume from which to remeasure it.
 
 Every scrub here is by KEY, never by dropping a whole nested container, and never
 reaches into a dict the caller still owns: ``GSplatData`` is conceptually
@@ -271,8 +268,8 @@ def _measured_stats_dicts(data: "GSplatData") -> "List[MutableMapping[str, Any]]
     l2|volume`` level's nested ``refine_stats`` (``mse_seed`` / ``mse_refit``,
     taken against the source volume). It goes with the Q·e stamps rather than
     with the scores above, for the same reason: it is the record of the build
-    step that produced THAT level, and the answer for a reduction is to recompute
-    it, not to delete it.
+    step that produced THAT level. A reduction drops it because remeasurement
+    requires the unavailable source volume; rebuilding with ``--refine`` restores it.
     """
     return [data.stats, *(lod.stats for lod in _all_sublods(data))]
 
@@ -319,7 +316,9 @@ def scrub_measured_stats(result: "GSplatData") -> None:
         drop_content_scoped_stats(stats)
 
 
-def _stats_after_content_change(result: "GSplatData", *, changed: bool) -> "GSplatData":
+def _stats_after_content_change(
+    result: "GSplatData", *, changed: bool, source: _GSplatDataOps
+) -> "GSplatData":
     """Drop the measured scores from ``result`` when the splat set ``changed``.
 
     ``changed`` is the caller's honest answer to "does this artifact hold
@@ -337,7 +336,20 @@ def _stats_after_content_change(result: "GSplatData", *, changed: bool) -> "GSpl
     if not changed:
         return result
     scrub_measured_stats(result)
-    return result
+    from luxar.gsplats.lod.restamp import refresh_reduction_lod_stats
+
+    return refresh_reduction_lod_stats(result, source)
+
+
+def _substitutive_counts_changed(
+    before: "_GSplatDataOps", after: "_GSplatDataOps"
+) -> bool:
+    before_levels = before.substitutive_levels
+    after_levels = after.substitutive_levels
+    return len(before_levels) != len(after_levels) or any(
+        old.n_splats_total != new.n_splats_total
+        for old, new in zip(before_levels, after_levels)
+    )
 
 
 def _is_crop(bbox: object, n_before: int, n_after: int) -> bool:
@@ -416,7 +428,7 @@ class FilteringMixin(_GSplatDataOps):
             >>> filtered = data.filter(data.volumes() < 100)
             >>> filtered = data.filter((data.amplitudes > 0.1) & (data.eccentricities() < 5))
         """
-        from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData
+        from luxar.gsplats.gsplat_data import AdditiveSubLOD
 
         mask = np.asarray(mask, dtype=bool)
         if mask.shape != (self.n_splats,):
@@ -443,34 +455,19 @@ class FilteringMixin(_GSplatDataOps):
         # excluded nothing keeps its region stamp").
         removed_any = bool(int(np.count_nonzero(mask)) < self.n_splats)
 
-        # Multi-LOD path: split mask across LODs
-        if self.n_additive_sublods > 1:
-
-            def _filter_lod(lod: AdditiveSubLOD, offset: int, n: int) -> AdditiveSubLOD:
-                lod_mask = mask[offset : offset + n]
-                return AdditiveSubLOD(
-                    centers=lod.centers[lod_mask],
-                    amplitudes=lod.amplitudes[lod_mask],
-                    cholesky_factors=lod.cholesky_factors[lod_mask],
-                    colors=lod.colors[lod_mask] if lod.colors is not None else None,
-                    stats=dict(lod.stats),
-                    truncation_radius=lod.truncation_radius,
-                )
-
-            return _stats_after_content_change(
-                self._map_additive(_filter_lod), changed=removed_any
+        def _filter_lod(lod: AdditiveSubLOD, offset: int, n: int) -> AdditiveSubLOD:
+            lod_mask = mask[offset : offset + n]
+            return AdditiveSubLOD(
+                centers=lod.centers[lod_mask],
+                amplitudes=lod.amplitudes[lod_mask],
+                cholesky_factors=lod.cholesky_factors[lod_mask],
+                colors=lod.colors[lod_mask] if lod.colors is not None else None,
+                stats=dict(lod.stats),
+                truncation_radius=lod.truncation_radius,
             )
 
         return _stats_after_content_change(
-            GSplatData(
-                centers=self.centers[mask],
-                amplitudes=self.amplitudes[mask],
-                cholesky_factors=self.cholesky_factors[mask],
-                colors=self.colors[mask] if self.colors is not None else None,
-                stats=dict(self.stats),
-                truncation_radius=self.truncation_radius,
-            ),
-            changed=removed_any,
+            self._map_additive(_filter_lod), changed=removed_any, source=self
         )
 
     @staticmethod
@@ -668,7 +665,9 @@ class FilteringMixin(_GSplatDataOps):
             # this one — and the scrub also takes `n_original`, which is exactly
             # the key stamped just below (the single-level path gets the same order
             # for free, scrubbing inside `self.filter(mask)`).
-            _stats_after_content_change(out, changed=out.n_splats != self.n_splats)
+            out = _stats_after_content_change(
+                out, changed=_substitutive_counts_changed(self, out), source=self
+            )
             out.stats.update(
                 {
                     "filtered": True,

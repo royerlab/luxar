@@ -209,6 +209,9 @@ def decimate(
         # whole fitted volume.
         out = GSplatData.from_tree(out.tree, stats=dict(data.stats))
         scrub_measured_stats(out)
+        from luxar.gsplats.lod.restamp import refresh_reduction_lod_stats
+
+        out = refresh_reduction_lod_stats(out, data)
         if verbose:
             aprint(f"Result: {out.n_splats:,} splats")
         return out
