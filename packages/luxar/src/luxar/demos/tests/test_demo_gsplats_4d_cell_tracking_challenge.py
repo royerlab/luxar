@@ -700,6 +700,24 @@ class TestPrecomputedRoundTrip:
             is None
         )
 
+    def test_a_fault_propagates_instead_of_triggering_kaggle_and_a_gpu_fit(
+        self, tmp_path
+    ) -> None:
+        """Only a routable absence may be answered with the fallback (#1618).
+
+        The fallback here is not cheap: an authenticated Kaggle download plus a
+        multi-crop GPU fit. A dataset key the manifest does not carry is a typo
+        or a rename — a fault — and used to come back as ``None`` with
+        "fitting locally instead" printed over it.
+        """
+        from luxar.utils.data_fetch import DatasetNotFound
+
+        manifest = {"records": {"cc-by": {}}, "datasets": {}}
+        with pytest.raises(DatasetNotFound):
+            _demo.load_precomputed_crops(
+                ["crop_x"], manifest=manifest, cache_root=tmp_path
+            )
+
     def test_a_crop_without_annotation_round_trips_as_none(self, tmp_path) -> None:
         """`tracks: None` is what the scene builder reads as "volume only".
 
