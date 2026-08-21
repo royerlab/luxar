@@ -98,9 +98,9 @@ def test_preprocess_floor_passes_lazy_axis_metadata(
 
     resolve_deferred_batch_floor(tmp_path)
 
-    assert seen[0]["axes_labels"] == ["time", "channel", "z", "y", "x"]
+    assert seen[0]["axes_labels"] == ["t", "c", "x", "y"]
     assert seen[0]["channel_shape"] == (1,)
-    assert seen[0]["spatial_shape"] == (4, 4, 4)
+    assert seen[0]["spatial_shape"] == (4, 4)
 
 
 def test_on_the_fly_percentile_uses_each_channels_calibrated_h(monkeypatch) -> None:
