@@ -14,7 +14,7 @@ here automatically — not just when WASM is missing.
 | File                    | Role                                                                                                                                        |
 | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
 | `index.ts`              | Barrel re-exporting every kernel and the `TypeScriptFallback` class implementing the `WasmModule` interface                                 |
-| `lines-clipping.ts`     | Liang-Barsky segment clipping, batched position/scalar/color interpolation, segment lengths, per-endpoint cap suppression                   |
+| `lines-clipping.ts`     | Liang-Barsky segment clipping and interpolation; frounds every float step in the Rust op order for exact WASM parity                        |
 | `mesh-culling.ts`       | Whole-triangle nD culling: per-vertex slab membership + face compaction preserving original vertex indices. `Math.fround`s the slab bounds  |
 | `gsplats-processing.ts` | Marginal Cholesky factorization, Mahalanobis distance, fused nD→3D projection (`project_gsplats_nd_to_3d`)                                  |
 | `effective-radii.ts`    | `calculate_effective_radii` — `R_eff = sqrt(R² − D²)` for nD points sliced by a hyperplane                                                  |
@@ -57,10 +57,9 @@ in the Rust operation order:
   coordinate, and a vertex sitting exactly there is visible in WASM and culled in
   unfrounded TS (`slice=1.0, tolerance=0.1` is such a case, and is a parity test).
 
-`lines-clipping.ts` does **not** fround its slab bounds. Its clipping arithmetic
-proceeds to a `t`-parameter comparison rather than a bare membership test, so the
-same construction has not been shown to diverge there — but treat it as
-unverified rather than as licence to skip fround in a new kernel.
+- `lines-clipping.ts` frounds every clipping and interpolation step in Rust's
+  operation order. Exact parity tests cover both the `slice=1.0, tolerance=0.1`
+  slab boundary and the separately rounded reciprocal used for t-parameters.
 
 ## Performance
 
