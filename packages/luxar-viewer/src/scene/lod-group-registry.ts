@@ -8,9 +8,9 @@
  *      **local-space** :type:`BoundingBox`, using the current ``displayDims``
  *      to map nD axes onto X/Y/Z, then transform it to world space for the
  *      frustum gate. Eviction uses the same full-geometry box.
- *   2. Fold the optional robust ``lodBounds`` the same way (falling back per
- *      child to ``positionBounds``) for metric sizing only, so excluded
- *      outliers remain visible and resident.
+ *   2. When any child publishes optional robust ``lodBounds``, fold them the
+ *      same way (falling back per child to ``positionBounds``) for metric
+ *      sizing only, so excluded outliers remain visible and resident.
  *   3. Transform the metric box into world space via
  *      :func:`transformBoundingBox` and the lod_group's ``matrixWorld``.
  *   4. Project the 8 corners through the camera and reduce them to the

@@ -1103,7 +1103,7 @@ _For implementation details, see the source files in this directory._
     `projectBoxDiagonalPx` and `pickChildWithHysteresis` from
     `lod-selector-math.ts`.
 - `lod-selector-math.ts` — The selector's camera-geometry math:
-  `computeEntryWorldBox` (nD position-bounds → world box via
+  `computeEntryWorldBox` (nD raw or robust bounds → world box via
   displayDims), `projectBoxAreaFraction` (world box → fraction of the
   viewport area) and `projectBoxDiagonalPx` (→ screen-space pixel
   diagonal) — both with near-plane saturation — and
