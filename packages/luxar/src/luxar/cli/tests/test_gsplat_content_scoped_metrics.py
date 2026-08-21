@@ -473,6 +473,67 @@ def test_overview_does_not_stamp_the_input_score_on_its_merged_cap(
         )
 
 
+def test_tree_intensity_transform_preserves_substitutive_provenance(
+    tmp_path: Path,
+) -> None:
+    """A tree rewrite must not replace authored level provenance with defaults."""
+    src = _fixture(tmp_path / "fit.gsplats.zarr")
+    adaptive = tmp_path / "adaptive.gsplats.zarr"
+    _run(
+        (
+            "lod",
+            "{in}",
+            "{out}",
+            "--recipe",
+            "adaptive",
+            "--compression-factor",
+            "4",
+            "--levels",
+            "3",
+            "--max-elements",
+            "12",
+            "--no-additive",
+            "--device",
+            "cpu",
+        ),
+        src,
+        adaptive,
+    )
+
+    from luxar.gsplats.tree import iter_leaves
+
+    before_node, _ = load_gsplat_node(adaptive, include_stats=True)
+    before = [
+        (
+            leaf.meta.get("compression_factor"),
+            leaf.meta.get("parent_method"),
+            leaf.meta.get("level_index"),
+        )
+        for leaf in iter_leaves(before_node)
+    ]
+    assert any(
+        compression_factor != 1 or parent_method is not None or level_index != 0
+        for compression_factor, parent_method, level_index in before
+    ), "adaptive fixture has only default provenance; the test proves nothing"
+
+    transformed = tmp_path / "adaptive_scaled.gsplats.zarr"
+    _run(
+        ("transform", "{in}", "{out}", "--scale-intensity", "0.5"),
+        adaptive,
+        transformed,
+    )
+    after_node, _ = load_gsplat_node(transformed, include_stats=True)
+    after = [
+        (
+            leaf.meta.get("compression_factor"),
+            leaf.meta.get("parent_method"),
+            leaf.meta.get("level_index"),
+        )
+        for leaf in iter_leaves(after_node)
+    ]
+    assert after == before
+
+
 @pytest.mark.parametrize("name", sorted(_NO_PROVENANCE))
 def test_no_provenance_commands_publish_no_scores(tmp_path: Path, name: str) -> None:
     """These carry nothing over — checked, not assumed."""

@@ -64,9 +64,7 @@ class TransformsMixin(_GSplatDataOps):
         ``fn`` receives ``(lod, offset, n)`` — the sub-LOD, its start offset
         into the flattened finest-leaf arrays, and its splat count — and returns
         a replacement :class:`AdditiveSubLOD` (which may change N, ndim, or
-        array widths). The additive-dimension sibling of :meth:`_map_substitutive`;
-        callers guard the multi-sub-LOD branch with
-        ``if self.n_additive_sublods > 1``.
+        array widths). The additive-dimension sibling of :meth:`_map_substitutive`.
         """
         from luxar.gsplats.gsplat_data import GSplatData, SubstitutiveLevel
 
@@ -113,11 +111,7 @@ class TransformsMixin(_GSplatDataOps):
             >>> M = np.eye(4); M[:3, 3] = [10, 20, 30]
             >>> transformed = data.transform(M)
         """
-        from luxar.gsplats.gsplat_data import (
-            AdditiveSubLOD,
-            GSplatData,
-            SubstitutiveLevel,
-        )
+        from luxar.gsplats.gsplat_data import AdditiveSubLOD
         from luxar.gsplats.utils.trils import pack_tril, unpack_tril
 
         # Multi-substitutive: transform every level and rebuild the pyramid
@@ -147,31 +141,18 @@ class TransformsMixin(_GSplatDataOps):
             )
 
         if self.n_splats == 0:
-            source_level = self.substitutive_levels[0]
-            return GSplatData.from_substitutive_levels(
-                [
-                    SubstitutiveLevel(
-                        additive_sublods=[
-                            AdditiveSubLOD(
-                                centers=lod.centers.copy(),
-                                amplitudes=lod.amplitudes,
-                                cholesky_factors=lod.cholesky_factors.copy(),
-                                colors=lod.colors,
-                                stats=dict(lod.stats),
-                                truncation_radius=lod.truncation_radius,
-                            )
-                            for lod in self.additive_sublods
-                        ],
-                        compression_factor=source_level.compression_factor,
-                        parent_method=source_level.parent_method,
-                        level_index=source_level.level_index,
-                        stats=dict(source_level.stats),
-                    )
-                ],
-                stats=dict(self.stats),
+            return self._map_additive(
+                lambda lod, offset, n: AdditiveSubLOD(
+                    centers=lod.centers.copy(),
+                    amplitudes=lod.amplitudes,
+                    cholesky_factors=lod.cholesky_factors.copy(),
+                    colors=lod.colors,
+                    stats=dict(lod.stats),
+                    truncation_radius=lod.truncation_radius,
+                )
             )
 
-        # Precompute cholesky transform (shared between single/multi-LOD paths)
+        # Precompute cholesky transform.
         is_diagonal = np.count_nonzero(A - np.diag(np.diagonal(A))) == 0
         if is_diagonal:
             diag = np.diagonal(A)

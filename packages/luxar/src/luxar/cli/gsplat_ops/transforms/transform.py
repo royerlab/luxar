@@ -422,7 +422,7 @@ def run_transform_dataset(
                         # The coverage_fraction threshold is scrubbed AFTER all
                         # transforms (from leaf AND group nodes) — see below.
                         new_leaf = op(GSplatData.from_tree(leaf)).tree
-                        return replace(new_leaf, meta={**leaf.meta, **new_leaf.meta})
+                        return replace(new_leaf, meta=dict(leaf.meta))
 
                     return _fn
 
