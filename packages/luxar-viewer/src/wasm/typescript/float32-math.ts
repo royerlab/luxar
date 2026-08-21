@@ -27,22 +27,25 @@ function bitsToFloat(bits: number): number {
   return floatBitsView.getFloat32(0, true);
 }
 
+const TWO_POW_127 = bitsToFloat(0x7f000000);
+const TWO_POW_NEG_102 = bitsToFloat(0x0c800000);
+const TWO_POW_25 = bitsToFloat(0x4c000000);
+
 function scalbnf(value: number, exponent: number): number {
   let scaled = value;
   let remaining = exponent;
   if (remaining > 127) {
-    scaled = Math.fround(scaled * bitsToFloat(0x7f000000));
+    scaled = Math.fround(scaled * TWO_POW_127);
     remaining -= 127;
     if (remaining > 127) {
-      scaled = Math.fround(scaled * bitsToFloat(0x7f000000));
+      scaled = Math.fround(scaled * TWO_POW_127);
       remaining = Math.min(remaining - 127, 127);
     }
   } else if (remaining < -126) {
-    const minimumNormalTimesMantissa = bitsToFloat(0x0c800000);
-    scaled = Math.fround(scaled * minimumNormalTimesMantissa);
+    scaled = Math.fround(scaled * TWO_POW_NEG_102);
     remaining += 102;
     if (remaining < -126) {
-      scaled = Math.fround(scaled * minimumNormalTimesMantissa);
+      scaled = Math.fround(scaled * TWO_POW_NEG_102);
       remaining = Math.max(remaining + 102, -126);
     }
   }
@@ -65,7 +68,7 @@ export function expf(value: number): number {
   if (magnitudeBits >= 0x42aeac50) {
     if (magnitudeBits > 0x7f800000) return x;
     if (magnitudeBits >= 0x42b17218 && sign === 0) {
-      return Math.fround(x * bitsToFloat(0x7f000000));
+      return Math.fround(x * TWO_POW_127);
     }
     if (sign !== 0 && magnitudeBits >= 0x42cff1b5) return 0;
   }
@@ -116,7 +119,7 @@ export function logf(value: number): number {
     if (bits << 1 === 0) return -Infinity;
     if (bits >>> 31 !== 0) return NaN;
     exponent -= 25;
-    x = Math.fround(x * bitsToFloat(0x4c000000));
+    x = Math.fround(x * TWO_POW_25);
     bits = floatToBits(x);
   } else if (bits >= 0x7f800000) {
     return x;

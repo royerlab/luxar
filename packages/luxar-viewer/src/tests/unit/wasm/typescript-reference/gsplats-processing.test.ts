@@ -116,6 +116,9 @@ describe('gsplats_processing: computeMarginalCholesky', () => {
 
 describe('gsplats_processing: float32 transcendental call sites', () => {
   it('uses expf for hidden-dimension attenuation', () => {
+    // Isolate the `rawExp` call: truncate=20 underflows shiftC to zero, so
+    // invOneMinusC is exactly one, while minAmplitude=0 keeps the result.
+    // Host Math.exp produces 0x3b41c74f instead of the Rust 0x3b41c74e.
     const outAmplitudes = new Float32Array(1);
     const count = project_gsplats_nd_to_3d(
       new Float32Array([0, 0, 0, 3.412810802459717]),
@@ -143,6 +146,9 @@ describe('gsplats_processing: float32 transcendental call sites', () => {
   });
 
   it('uses logf and expf for the phantom display axis', () => {
+    // Isolate the phantom-axis log/exp round trip with no hidden dimensions.
+    // Host-math substitutions produce 0x23415fe6, 0x23415fce, or 0x23415fdb
+    // instead of the Rust path's 0x23415fb6.
     const outCholesky3d = new Float32Array(6);
     const count = project_gsplats_nd_to_3d(
       new Float32Array([0, 0]),
