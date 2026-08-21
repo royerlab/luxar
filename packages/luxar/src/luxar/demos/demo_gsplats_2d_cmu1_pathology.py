@@ -79,6 +79,21 @@ Options:
 By default, the demo works at full resolution (46,000 x 32,914 pixels)
 using tiled fitting.
 
+IF THE HOSTED FIT CANNOT BE OBTAINED (#1618):
+=============================================
+The normal path loads the precomputed per-channel fits through the manifest.
+When those bytes exist nowhere yet — the Zenodo record is unpublished and no
+`git lfs pull` has run — the demo next looks for THIS machine's own earlier
+refit in ``~/.cache/luxar/gsplats_cmu1_pathology/local/``, and failing that
+falls through to exactly what ``--recompute`` does: the ~169 MB SVS download
+and a three-channel tiled fit over the full 1.5-gigapixel image. That is a
+long, unattended run on a first launch, and it is deliberate — the same
+"compute your own stand-in" fallback every migrated gsplat demo has, and the
+reason the result is cached in the local-fit namespace where nothing
+quarantines it. Only that one routable absence is answered this way: a
+checksum that will not verify, an unknown file name and a missing packaged
+manifest are faults and still crash.
+
 Output:
     - Scene saved to:  datasets/demos/gsplats_2d_cmu1_pathology.luxar.zarr
     - Automatically opens in browser

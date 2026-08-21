@@ -207,11 +207,15 @@ _MANIFEST_PATH_READERS = frozenset(
 #: ``Path`` methods that cannot write. A method call on a manifest-owned path
 #: whose name is not here is a write (``P.write_bytes(...)``, ``P.unlink()``)
 #: and is reported — a hole the first version of this gate had.
+#: ``open`` is deliberately absent from both this set and
+#: :data:`_MANIFEST_PATH_READERS`: ``P.open("wb")`` and ``open(P, "wb")`` write,
+#: so the mode decides and a static pass should not guess. No demo trips it.
 _MANIFEST_PATH_READ_METHODS = frozenset(
     {
         "exists",
         "is_file",
         "is_dir",
+        "is_symlink",
         "stat",
         "resolve",
         "absolute",
@@ -219,6 +223,16 @@ _MANIFEST_PATH_READ_METHODS = frozenset(
         "samefile",
         "read_bytes",
         "read_text",
+        # Derive-another-path and enumerate helpers: they return a value, they
+        # do not touch the manifest-owned path.
+        "joinpath",
+        "with_suffix",
+        "relative_to",
+        "is_relative_to",
+        "glob",
+        "rglob",
+        "iterdir",
+        "match",
     }
 )
 
@@ -260,11 +274,29 @@ def _local_consts(tree: ast.Module) -> dict[str, str | list[str]]:
 
 
 def _div_chain(node: ast.expr) -> list[ast.expr]:
-    """Flatten ``a / b / c`` (left-associative) into ``[a, b, c]``."""
+    """Flatten ``a / b / c`` (left-associative) into ``[a, b, c]``.
+
+    ``a.joinpath(b, c)`` is the same join spelled as a method and is flattened
+    the same way, so the ``/``-only version's silence on it is gone. The other
+    non-``/`` joins (``os.path.join``, ``.with_name()``) are still invisible —
+    see :func:`analyse_local_fit`'s honest-limits paragraph.
+    """
     parts: list[ast.expr] = []
-    while isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
-        parts.append(node.right)
-        node = node.left
+    while True:
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+            parts.append(node.right)
+            node = node.left
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "joinpath"
+            and node.args
+            and not node.keywords
+        ):
+            parts.extend(reversed(node.args))
+            node = node.func.value
+        else:
+            break
     parts.append(node)
     return list(reversed(parts))
 
@@ -305,11 +337,30 @@ def _base_atom(node: ast.expr) -> ast.expr:
 DirKind = tuple[str, str | None]
 
 
+def _path_names(tree: ast.Module) -> frozenset[str]:
+    """Local names denoting ``pathlib.Path``, aliased imports included.
+
+    ``from pathlib import Path as P`` used to make the packaged-data tree
+    unrecognisable, which turned the one LEGITIMATE copy into the manifest's
+    path (``visible_human_head`` promoting its shipped git-LFS pair) into a
+    reported violation. A name comparison against the literal ``"Path"`` is not
+    a spelling this gate gets to assume.
+    """
+    names = {"Path"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == "pathlib":
+            for alias in node.names:
+                if alias.name == "Path":
+                    names.add(alias.asname or alias.name)
+    return frozenset(names)
+
+
 class _Ctx:
     """Resolved module facts the directory classifier needs."""
 
     def __init__(self, tree: ast.Module) -> None:
         self.consts = _local_consts(tree)
+        self.path_names = _path_names(tree)
         self.dirs: dict[str, DirKind] = {}
         # Assignments in source order, twice: a name may be used before the pass
         # that classifies it has run (a helper defined above its constants).
@@ -347,19 +398,28 @@ class _Ctx:
             return self._extend(self.dirs[head.id], rest)
 
         # 4. A leftmost expression we can prove is not the cache: a `Path(...)`
-        #    call, i.e. an explicit filesystem anchor. `demos/data/...` (the
-        #    in-repo git-LFS tree) is called out so the one legitimate copy INTO
-        #    the manifest's path can be recognised by its source.
+        #    call, i.e. an explicit filesystem anchor. `Path(__file__)…/data/…`
+        #    (the in-repo git-LFS tree) is called out so the one legitimate copy
+        #    INTO the manifest's path can be recognised by its source. The
+        #    `__file__` root is REQUIRED, not decoration: `Path("/tmp/scratch") /
+        #    "data" / "myfit.zip"` would otherwise launder an arbitrary local
+        #    artifact through the exemption.
         base = _base_atom(head)
         if isinstance(base, ast.Call):
             func = base.func
-            is_path_call = (isinstance(func, ast.Name) and func.id == "Path") or (
+            is_path_call = (
+                isinstance(func, ast.Name) and func.id in self.path_names
+            ) or (
                 isinstance(func, ast.Attribute)
                 and isinstance(func.value, ast.Name)
-                and func.value.id == "Path"
+                and func.value.id in self.path_names
             )
             if is_path_call:
-                return ("packaged" if "data" in lits else "other", None)
+                rooted_in_file = any(
+                    isinstance(a, ast.Name) and a.id == "__file__" for a in base.args
+                )
+                packaged = rooted_in_file and "data" in lits
+                return ("packaged" if packaged else "other", None)
 
         return ("unknown", None)
 
@@ -443,8 +503,12 @@ def _manifest_owned(
     """``(kind, dataset, names)`` if *node* builds — or may build — a manifest dest.
 
     *kind* is ``"owned"`` when the directory resolves to the manifest's own
-    ``<root>/<dataset>``, and ``"blind"`` when the directory could not be
-    classified at all but the basename is one this demo's own dataset pins.
+    ``<root>/<dataset>`` AND the basename resolves to a name that dataset pins.
+    It is ``"blind"`` in the two states the analysis cannot settle: the
+    directory could not be classified but the basename is one this demo's own
+    dataset pins, and — the stronger evidence of the two — the directory IS
+    provably the manifest's own but the basename could not be resolved at all.
+    ``matched`` is empty in that second case.
     """
     chain = _div_chain(node)
     if len(chain) < 2:
@@ -460,7 +524,19 @@ def _manifest_owned(
         matched = {n for n in names if n in pinned}
         if pattern is not None:
             matched |= {p for p in pinned if pattern.match(p)}
-        return ("owned", dataset, sorted(matched)) if matched else None
+        if matched:
+            return ("owned", dataset, sorted(matched))
+        # An UNRESOLVABLE basename joined onto a directory PROVED to be the
+        # manifest's own is the strongest evidence this analysis can hold, and
+        # used to be its quietest answer — the exact asymmetry the weaker
+        # "unknown dir + pinned name" case already got right. Report it.
+        # (`names` non-empty means the basename resolved and simply is not
+        # pinned: a demo's own scratch file in its cache dir, nobody's business.
+        # An empty `pinned` set means the dataset never reaches the checksum
+        # gate at all.)
+        if not names and pattern is None and pinned:
+            return ("blind", dataset, [])
+        return None
 
     hits = {n: referenced[n] for n in names if n in referenced}
     if pattern is not None:
@@ -506,24 +582,41 @@ def analyse_local_fit(source: str, datasets: dict) -> tuple[list[str], list[str]
     ``_DEFAULT_CACHE_ROOT``), a name bound to either, and a name bound to a name
     bound to either.
 
-    A directory it CANNOT classify does not pass silently — that was the second
-    half of the hole. A pinned basename joined to an unknown directory is
-    returned as a BLIND SPOT: not proof of a squat, but proof that the gate
-    cannot vouch for the demo, which is a reviewable state rather than a green
-    tick. (A directory the analysis can prove is NOT the cache — a
-    ``Path(__file__)``-rooted packaged-data path, a subdirectory of the cache dir
-    — is neither.)
+    Neither half of a join passes silently when it cannot be settled — that was
+    the rest of the hole, and it was asymmetric. A BLIND SPOT is returned when
+    EITHER the directory is unknown and the basename is one the demo's own
+    dataset pins, OR the directory is provably the manifest's own and the
+    basename cannot be resolved (a ``zip``-bound loop variable, an f-string
+    behind one hop, a function parameter). Neither is proof of a squat; both are
+    proof that the gate cannot vouch for the demo, which is a reviewable state
+    rather than a green tick. (A directory the analysis can prove is NOT the
+    cache — a ``Path(__file__)``-rooted packaged-data path, a subdirectory of the
+    cache dir — is neither, and neither is a basename that resolves and simply
+    is not pinned.)
 
-    What it still CANNOT see, honestly: a path built from a runtime value that
-    is not a module constant, one assembled with ``os.path.join`` or
-    ``.with_name()``, and any write that goes through neither a call argument nor
-    a method on the path. ``atomic_copy_file`` is allowed to write a
-    manifest-owned destination when its SOURCE is the in-repo packaged-data tree
-    — that is ``visible_human_head`` promoting its shipped git-LFS pair, bytes
-    that DO match the pinned sha256, exactly as step 2 of ``_ensure_one`` does —
-    so a copy from a packaged path is the one write this gate permits by
-    construction; from anywhere else it is reported. It is a gate against the
-    shapes the demos use, not a proof.
+    What it still CANNOT see, honestly, and where each hole is BOUNDED:
+
+    * a join spelled with ``os.path.join(d, name)`` or ``d.with_name(name)``.
+      ``d.joinpath(name)`` IS flattened like ``/``; those two are not, so a
+      pinned basename reaching the cache dir through one of them is missed
+      entirely — the "keys on the dataset name, not the spelling" backstop
+      covers ``/`` and ``.joinpath`` only.
+    * a write whose receiver is an expression rather than a name or a join —
+      ``P.resolve().write_bytes(b)`` is invisible, because the receiver is a
+      ``Call``.
+    * ``pathlib`` reached as ``pathlib.Path(...)`` rather than an imported
+      ``Path`` (aliased ``from pathlib import Path as P`` IS handled): the
+      packaged-tree exemption would not recognise it, so a legitimate git-LFS
+      promotion spelled that way is REPORTED, not missed.
+
+    ``atomic_copy_file`` is allowed to write a manifest-owned destination when
+    its SOURCE is the in-repo packaged-data tree — a ``Path(__file__)``-rooted
+    chain containing ``data``, i.e. ``visible_human_head`` promoting its shipped
+    git-LFS pair, bytes that DO match the pinned sha256, exactly as step 2 of
+    ``_ensure_one`` does. The ``__file__`` root is load-bearing: without it
+    ``Path("/tmp/scratch") / "data" / …`` would launder any local artifact
+    through the exemption. From anywhere else the copy is reported. It is a gate
+    against the shapes the demos use, not a proof.
     """
     tree = ast.parse(source)
     ctx = _Ctx(tree)
@@ -567,6 +660,12 @@ def _describe(kind: str, dataset: str, matched: list[str], what: str) -> str:
         where = (
             f"~/.cache/luxar/{dataset}/{{{', '.join(matched)}}} — the path the "
             f"manifest fetch owns for {dataset!r}"
+        )
+    elif not matched:
+        where = (
+            f"~/.cache/luxar/{dataset}/<a basename this analysis cannot "
+            f"resolve> — the directory the manifest fetch owns for {dataset!r}, "
+            f"so the basename decides whether this is a squat"
         )
     else:
         where = (
@@ -639,7 +738,14 @@ def local_fit_violations(source: str, datasets: dict) -> list[str]:
 #: reason. Empty, and held empty by
 #: :func:`test_the_unanalysable_demo_list_is_exactly_right` — "the gate could not
 #: see this file" is an enumerated state, not a silent pass.
-_ANALYSIS_BLIND_SPOTS: dict[str, str] = {}
+_ANALYSIS_BLIND_SPOTS: dict[str, str] = {
+    # Downloads the eight DESI DR1 LSS source catalogs into its cache dir under
+    # names read out of the nested `TRACERS[name]["files"]` dict, which this
+    # analysis does not resolve. None of them can collide: the dataset pins one
+    # file, `desi_dr1_cosmic_web.luxar.zarr.zip`, and every downloaded name ends
+    # `_clustering.dat.fits`.
+    "demo_desi_galaxies": "source-catalog names come from a nested dict literal",
+}
 
 
 @pytest.mark.parametrize("path", DEMO_PATHS, ids=lambda p: p.stem)
@@ -792,6 +898,16 @@ def test_the_guard_sees_every_path_shape_the_demos_use() -> None:
         datasets,
     )
 
+    # 14. …and neither is a source that merely has "data" somewhere in it. The
+    #     exemption is for the PACKAGED tree, which is rooted at `__file__`;
+    #     without that anchor any local scratch directory could launder a fit
+    #     into the manifest's path.
+    assert local_fit_violations(
+        header
+        + 'atomic_copy_file(Path("/tmp/scratch") / "data" / "myfit.zip", CACHE_DIR / "toy_ch0.zip")\n',
+        datasets,
+    )
+
     # And the negatives: the fixed shape, a READ of the fetched file, a file the
     # manifest does not pin, and a dataset the checksum gate never touches.
     assert not local_fit_violations(
@@ -824,6 +940,16 @@ def test_the_guard_sees_every_path_shape_the_demos_use() -> None:
         'LFS = DATA_DIR / "toy_ch0.zip"\natomic_copy_file(LFS, CACHE_DIR / "toy_ch0.zip")\n',
         datasets,
     )
+    # …and the same copy spelled through an ALIASED pathlib import. Comparing
+    # the callee name against the literal "Path" made the real packaged tree
+    # unrecognisable, i.e. reported the one write that is legitimate.
+    assert not local_fit_violations(
+        'from pathlib import Path as P\nDS = "toy_ds"\n'
+        'CACHE_DIR = P.home() / ".cache" / "luxar" / DS\n'
+        'DATA_DIR = P(__file__).resolve().parent / "data" / DS\n'
+        'atomic_copy_file(DATA_DIR / "toy_ch0.zip", CACHE_DIR / "toy_ch0.zip")\n',
+        datasets,
+    )
     # The local-fit namespace itself is a SUBDIRECTORY of the cache dir, not the
     # manifest's own path — the distinction the whole fix rests on.
     assert not local_fit_violations(
@@ -834,10 +960,15 @@ def test_the_guard_sees_every_path_shape_the_demos_use() -> None:
 def test_the_guard_reports_a_directory_it_cannot_identify() -> None:
     """An unresolvable directory is a BLIND SPOT, never a silent pass.
 
-    This is the half that makes the gate hold against a spelling nobody has
-    thought of: it keys on the DATASET NAME (a file name that dataset pins),
-    not on the path spelling, so a directory built any way at all still gets
-    reported as unvouched-for rather than green.
+    This is the half that makes the gate hold against a DIRECTORY spelling
+    nobody has thought of: it keys on the DATASET NAME (a file name that dataset
+    pins), not on how the directory was built, so a directory built any way at
+    all still gets reported as unvouched-for rather than green.
+
+    Its reach is the JOIN, though, not the directory: ``d / name`` and
+    ``d.joinpath(name)`` are seen, ``os.path.join(d, name)`` and
+    ``d.with_name(name)`` are not — the last case below pins that limit so the
+    docstrings and the behaviour cannot drift apart again.
     """
     datasets = {
         "toy_ds": {"bucket": "zenodo", "files": [{"name": "toy_ch0.zip"}]},
@@ -848,6 +979,22 @@ def test_the_guard_reports_a_directory_it_cannot_identify() -> None:
     )
     assert not violations
     assert blind and "toy_ds" in blind[0]
+
+    # The same join spelled as a method: also reported (it used to be clean).
+    _, blind_joinpath = analyse_local_fit(
+        'DS = "toy_ds"\nD = some_helper(DS)\n'
+        'save_with_lod(fit, D.joinpath("toy_ch0.zip"))\n',
+        datasets,
+    )
+    assert blind_joinpath and "toy_ds" in blind_joinpath[0]
+
+    # …and the two spellings that are NOT covered, recorded as the known limit
+    # rather than left to be discovered as a surprise.
+    for expr in ('os.path.join(D, "toy_ch0.zip")', 'D.with_name("toy_ch0.zip")'):
+        assert analyse_local_fit(
+            f'DS = "toy_ds"\nD = some_helper(DS)\nsave_with_lod(fit, {expr})\n',
+            datasets,
+        ) == ([], []), f"{expr} is documented as invisible; update the docstring"
 
     # A directory the analysis can PROVE is not the cache is not a blind spot.
     _, blind_packaged = analyse_local_fit(
@@ -864,6 +1011,66 @@ def test_the_guard_reports_a_directory_it_cannot_identify() -> None:
         datasets,
     )
     assert not blind_unpinned
+
+
+def test_the_guard_reports_an_unresolvable_basename_in_the_manifests_own_dir() -> None:
+    """The mirror of the test above, and the STRONGER evidence of the two.
+
+    A directory proved to be ``~/.cache/luxar/<ds>`` joined with a basename the
+    analysis cannot resolve used to be its quietest answer, while the weaker
+    "unidentifiable directory + pinned name" was correctly reported. The
+    asymmetry was backwards: these shapes are one token from the squats the
+    migrated demos actually had.
+    """
+    datasets = {
+        "toy_ds": {
+            "bucket": "zenodo",
+            "files": [{"name": "toy_ch0.zip"}, {"name": "toy_ch1.zip"}],
+        },
+        "toy_local": {"bucket": "local-compute", "files": [{"name": "toy_ch0.zip"}]},
+    }
+    header = 'from pathlib import Path\nDS = "toy_ds"\nCACHE_DIR = Path.home() / ".cache" / "luxar" / DS\n'
+
+    def blind(src: str) -> list[str]:
+        violations, spots = analyse_local_fit(src, datasets)
+        assert not violations, violations
+        return spots
+
+    # A name bound by `zip(...)` — the kidney demos' idiom, one token away from
+    # the indexed form (case 3 above) that IS a confirmed violation.
+    assert blind(
+        header + 'FILES = ["toy_ch0.zip", "toy_ch1.zip"]\n'
+        "for volume, name in zip(volumes, FILES):\n"
+        "    fit_channel(volume, CACHE_DIR / name)\n"
+    )
+    # A basename bound to an f-string, then joined (the f-string is not visible
+    # through the extra hop, unlike the inline `CACHE_DIR / f"..."` of case 2).
+    assert blind(
+        header + "for i in range(2):\n"
+        '    n = f"toy_ch{i}.zip"\n'
+        "    save_with_lod(fit, CACHE_DIR / n)\n"
+    )
+    # A basename arriving as a function parameter.
+    assert blind(
+        header + "def fit_channel(volume, name):\n"
+        "    save_with_lod(volume, CACHE_DIR / name)\n"
+    )
+
+    # And the negatives, so this does not become a blanket "any join is blind":
+    # a basename that RESOLVES and simply is not pinned is a demo's own scratch
+    # file in its own cache dir, which is nobody's business.
+    assert not blind(header + 'save_with_lod(fit, CACHE_DIR / "scratch.zip")\n')
+    assert not blind(
+        header + 'RAW = "source.tif"\nrequests.download(CACHE_DIR / RAW)\n'
+    )
+    # A dataset that never reaches the checksum gate is not checked at all.
+    assert not blind(
+        'from pathlib import Path\nDS = "toy_local"\n'
+        'CACHE_DIR = Path.home() / ".cache" / "luxar" / DS\n'
+        "save_with_lod(fit, CACHE_DIR / name)\n"
+    )
+    # Nor is the local-fit namespace, which is a SUBDIRECTORY of the cache dir.
+    assert not blind(header + 'save_with_lod(fit, CACHE_DIR / "local" / name)\n')
 
 
 def test_no_shipped_variant_is_named_local() -> None:

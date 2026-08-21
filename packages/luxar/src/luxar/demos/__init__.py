@@ -12,6 +12,7 @@ See demos/README.md for more information on creating new demos.
 """
 
 from ..utils.data_fetch import (
+    LOCAL_FIT_DIRNAME,
     DatasetNotFound,
     DatasetUnavailable,
     LocalComputeDataset,
@@ -24,6 +25,7 @@ from ..utils.data_fetch import (
     local_fit_path,
 )
 from ..utils.demos import (
+    BundleMemberNotFound,
     cache_computed,
     cached_download,
     create_lorenz_attractor,
@@ -59,6 +61,8 @@ from ._dependencies import (
 
 __all__ = [
     "INSTALL_SPECS",
+    "LOCAL_FIT_DIRNAME",
+    "BundleMemberNotFound",
     "DatasetNotFound",
     "DatasetUnavailable",
     "DependencySpec",

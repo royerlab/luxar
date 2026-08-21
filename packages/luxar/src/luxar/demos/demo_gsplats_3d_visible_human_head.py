@@ -138,9 +138,13 @@ PNG_DIR = CACHE_DIR / "head_png"
 CACHE_FIT = CACHE_DIR / FIT_FILE
 CACHE_COLORS = CACHE_DIR / COLORS_FILE
 # A local refit is OUR pair, not a copy of the hosted one, so both halves go to
-# the demo's local-fit namespace. Under the manifest's names they would be
-# quarantined by the first fetch that checksums them, and the "one-time" refit
-# would run on every launch (#1618).
+# the demo's local-fit namespace (#1618). The hazard here is LATENT, not live:
+# nothing in this demo routes `gsplats_visible_human_head` through
+# `ensure_dataset` / `load_dataset_gsplats` / `load_dataset_bundle`, so no
+# checksum ever ran over these two names and a pre-fix launch 2 did reuse its
+# refit. It becomes live the moment the demo joins the manifest path — a
+# one-line change that would otherwise silently reintroduce the every-launch
+# refit — so the namespace is separated now, while it costs nothing.
 LOCAL_FIT = local_fit_path(DEMO_NAME, FIT_FILE)
 LOCAL_COLORS = local_fit_path(DEMO_NAME, COLORS_FILE)
 

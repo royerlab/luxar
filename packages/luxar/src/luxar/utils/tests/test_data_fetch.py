@@ -662,9 +662,14 @@ def test_a_pending_upload_entry_is_a_routable_absence(fake_repo):
 def test_a_bad_in_repo_copy_is_a_fault_not_an_absence(fake_repo):
     """The bytes are RIGHT THERE and wrong — a broken checkout or stale manifest.
 
-    Nine demos wrap their fetch in ``except DatasetUnavailable`` and fall through
-    to a multi-minute refit. This must not be one of the things they swallow: it
-    would present a repo fault as a routine rebuild, forever.
+    Every demo that falls back to a multi-minute refit when its manifest fetch
+    comes up empty catches this narrowly — eleven of them ``except
+    DatasetUnavailable``, and ``nexrad_supercell`` that plus
+    :class:`~luxar.utils.demos.BundleMemberNotFound`, the bundle-side routable
+    absence (its per-frame member names carry ``--dbz-floor`` and friends, so a
+    non-default run legitimately asks the shipped bundle for frames it cannot
+    hold). This must not be one of the things any of them swallow: it would
+    present a repo fault as a routine rebuild, forever.
     """
     manifest, cache = fake_repo
     payload = data_fetch._DEMOS_DATA_DIR / "gsplats_toy" / "toy_ch0.gsplats.zarr.zip"
@@ -1208,6 +1213,18 @@ def test_load_local_fit_at_reads_the_paths_it_is_given(tmp_path):
 
     assert out is not None and len(out[0].amplitudes) == 7
     assert load_local_fit_gsplats_at([tmp_path / "absent.zip"], verbose=False) is None
+
+
+def test_asking_for_no_files_at_all_is_a_caller_bug(tmp_path):
+    """``[]`` is neither a loaded set nor "rebuild it", so it must not be returned.
+
+    Every caller writes ``if fits is not None: fits[0]``; an empty list passes
+    that test and then raises ``IndexError`` somewhere else entirely.
+    """
+    with pytest.raises(ValueError, match="no paths"):
+        load_local_fit_gsplats("toy", [], cache_root=tmp_path, verbose=False)
+    with pytest.raises(ValueError, match="no paths"):
+        load_local_fit_gsplats_at([], verbose=False)
 
 
 # --------------------------------------------------------------------------- #

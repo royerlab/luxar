@@ -185,6 +185,8 @@ from arbol import Arbol, aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, ViewerConfig
 from luxar.demos import (
+    BundleMemberNotFound,
+    DatasetUnavailable,
     cached_download,
     detect_device,
     launch_viewer,
@@ -1618,12 +1620,16 @@ def main() -> None:
         gsplats_list = load_dataset_bundle(
             DEMO_NAME, _PRECOMPUTED_BUNDLE_NAME, file_names, recompute=RECOMPUTE
         )
-    except FileNotFoundError as exc:
+    except (DatasetUnavailable, BundleMemberNotFound) as exc:
         # Two distinct causes land here and the message must not conflate
         # them: the LFS asset genuinely absent (pointer not pulled), or a
         # non-default --dbz-floor/--splats/--grid-m changing the per-frame
         # cache names so they miss the shipped bundle. The exception says
-        # which; pass it through.
+        # which; pass it through. Both are routable absences — the bytes are
+        # not obtainable — which is why this is not a bare `FileNotFoundError`
+        # (#1618): a checksum that will not verify, a missing packaged manifest
+        # or a bundle name the manifest does not list are faults, and a refit
+        # from the NEXRAD archive must not disguise them.
         aprint(
             f"Precomputed bundle unavailable ({exc}). "
             "Falling back to recomputing from the NEXRAD archive."

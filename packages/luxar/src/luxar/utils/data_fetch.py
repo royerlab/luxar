@@ -548,6 +548,10 @@ def load_local_fit_gsplats(
     The ONE exception is a store that is structurally unloadable — a
     ``kind=partition`` / non-leaf lod tree, which has no flat ``GSplatData``
     form at all. See :func:`load_local_fit_gsplats_at`.
+
+    An empty ``file_names`` raises: ``[]`` is neither a loaded set nor "rebuild
+    it", and returning it would break the ``if fits is not None: fits[0]`` shape
+    every caller uses.
     """
     paths = [
         local_fit_path(name, f, variant=variant, cache_root=cache_root)
@@ -588,15 +592,26 @@ def load_local_fit_gsplats_at(
         ``list[GSplatData]``, or ``None`` when the caller should rebuild.
 
     Raises:
-        ValueError: the store is multi-part (``kind=partition`` or a lod group
-            with non-leaf children) and therefore has no flat ``GSplatData``
-            form. Deliberately NOT swallowed into a rebuild: the rebuild would
-            write the same unloadable shape, so the caller would refit on every
-            launch — exactly the #1618 symptom this namespace exists to end. It
-            is a recipe/loader mismatch in the demo, and only a code change
-            fixes it. :func:`load_dataset_gsplats` translates the same error.
+        ValueError: *paths* is empty, or the store is multi-part
+            (``kind=partition`` or a lod group with non-leaf children) and
+            therefore has no flat ``GSplatData`` form. The latter is
+            deliberately NOT swallowed into a rebuild: the rebuild would write
+            the same unloadable shape, so the caller would refit on every launch
+            — exactly the #1618 symptom this namespace exists to end. It is a
+            recipe/loader mismatch in the demo, and only a code change fixes it.
+            :func:`load_dataset_gsplats` translates the same error.
     """
     from ..gsplats.gsplat_data import GSplatData
+
+    if not paths:
+        # `[]` would otherwise sail through as a successful load of nothing, and
+        # the contract here is "a list, or None meaning rebuild" — a caller that
+        # tested `is not None` and indexed [0] would get an IndexError instead
+        # of taking its rebuild branch.
+        raise ValueError(
+            f"load_local_fit_gsplats_at({label!r}) was given no paths; asking for "
+            "zero artifacts is a caller bug, not an empty local fit."
+        )
 
     missing = [p for p in paths if not p.exists()]
     if missing:
