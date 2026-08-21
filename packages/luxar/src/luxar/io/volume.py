@@ -511,11 +511,12 @@ def _declared_levels(
     ``skip_groups`` excludes a declared candidate when any NON-LEAF path segment
     names one of those groups. The leaf is deliberately exempt: an array itself
     may legitimately have the same name as a reserved subgroup. It is asked of
-    the NORMALISED spelling, and that cannot weaken the exclusion: normalising
-    never ADDS a non-leaf segment and never moves the leaf (which is
-    ``split("/")[-1]`` under either spelling), it only DROPS a leading ``"."`` or
-    an empty segment (``".//0"`` checks ``{"", "."}`` raw and ``{}`` normalised),
-    and no caller skips a group named ``"."`` or ``""``. So ``"./labels/0"`` stays
+    the spelling the lookup uses — the NORMALISED one, or the SLASH-STRIPPED
+    original when normalisation yields nothing — and neither can weaken the
+    exclusion: they never ADD a non-leaf segment or move the leaf (which is
+    ``split("/")[-1]`` under every spelling), and only DROP a leading ``"."`` or
+    an empty segment (``".//0"`` checks ``{"", "."}`` raw and ``{}`` normalised).
+    No caller skips a group named ``"."`` or ``""``, so ``"./labels/0"`` stays
     excluded exactly as ``"labels/0"`` is.
 
     Every path this REPORTS — the ``Skipping declared level`` diagnostic and the
