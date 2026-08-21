@@ -735,6 +735,54 @@
       "script": "demo_gsplats_interop_sog_matrixcity.py",
       "dataset": "datasets/demos/gsplats_interop_sog_matrixcity.luxar.zarr",
       "lodFinest": false
+    },
+    {
+      "id": "sharpness_showcase",
+      "title": "Point Sharpness Showcase",
+      "geometry": "points",
+      "category": "synthetic",
+      "script": "demo_sharpness_showcase.py",
+      "dataset": "datasets/demos/sharpness_showcase.luxar.zarr"
+    },
+    {
+      "id": "nd_transforms",
+      "title": "nD Transforms Test Bench",
+      "geometry": "points+lines",
+      "category": "synthetic",
+      "script": "demo_nd_transforms.py",
+      "dataset": "datasets/demos/nd_transforms_bench.luxar.zarr"
+    },
+    {
+      "id": "ppi_flow_field",
+      "title": "Protein-Interaction Flow Field",
+      "geometry": "points+lines",
+      "category": "networks",
+      "script": "demo_ppi_flow_field.py",
+      "dataset": "datasets/demos/ppi_flow_field_full.luxar.zarr"
+    },
+    {
+      "id": "gsplats_3d_drosophila_gastrulation",
+      "title": "Drosophila Gastrulation (light-sheet)",
+      "geometry": "gsplats",
+      "category": "microscopy",
+      "script": "demo_gsplats_3d_drosophila_gastrulation.py",
+      "dataset": "datasets/demos/gsplats_3d_drosophila_gastrulation.luxar.zarr"
+    },
+    {
+      "id": "gsplats_3d_h2afva_stack",
+      "title": "Zebrafish Embryo, Single h2afva Stack",
+      "geometry": "gsplats",
+      "category": "microscopy",
+      "script": "demo_gsplats_3d_h2afva_stack.py",
+      "dataset": "datasets/demos/gsplats_3d_h2afva_stack.luxar.zarr"
+    },
+    {
+      "id": "gsplats_3d_decimation_study",
+      "title": "Splat Decimation Study (zebrafish embryo)",
+      "geometry": "gsplats",
+      "category": "microscopy",
+      "script": "demo_gsplats_3d_decimation_study.py",
+      "dataset": "datasets/demos/gsplats_3d_decimation_study.luxar.zarr"
     }
   ]
 }
