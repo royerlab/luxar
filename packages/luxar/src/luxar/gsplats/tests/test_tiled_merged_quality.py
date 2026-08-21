@@ -25,6 +25,7 @@ from luxar.gsplats.merged_quality import (
     _QUALITY_BUDGET_GB,
     _QUALITY_PEAK_VOLUMES,
     _quality_budget_gb,
+    announce_unscored_partition_merge,
 )
 
 #: Anisotropic on purpose: an isotropic spacing would hide a per-axis error in
@@ -228,3 +229,29 @@ def test_a_partition_is_left_alone_but_says_so(
     # (``GSplatData.load`` raises "not matrix-shaped"), so a recourse that omits
     # the flatten step tracebacks on the tiled default.
     assert "gsplat flatten" in out
+
+
+def test_partition_notice_describes_the_node_the_merge_returned(capsys) -> None:
+    """Collapsed LOD parts and real partitions get accurate shared recourse."""
+    from luxar.gsplats.gsplat_data import GSplatData
+
+    region = GSplatData(
+        centers=np.array([[1.0, 1.0, 1.0], [2.0, 2.0, 2.0]], np.float32),
+        amplitudes=np.ones(2, np.float32),
+        cholesky_factors=np.tile(
+            np.array([[1.0, 0.0, 1.0, 0.0, 0.0, 1.0]], np.float32), (2, 1)
+        ),
+    )
+
+    collapsed = GSplatData.partition_from_regions([region], recipe="levels")
+    announce_unscored_partition_merge(collapsed)
+    collapsed_notice = capsys.readouterr().out
+    assert "collapsed to a single matrix-shaped part" in collapsed_notice
+    assert "single leaf" not in collapsed_notice
+    assert "gsplat flatten" not in collapsed_notice
+
+    partition = GSplatData.partition_from_regions([region, region])
+    announce_unscored_partition_merge(partition)
+    partition_notice = capsys.readouterr().out
+    assert "produced a kind=partition tree" in partition_notice
+    assert "gsplat flatten" in partition_notice

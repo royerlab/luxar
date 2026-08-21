@@ -39,7 +39,7 @@ from luxar.gsplats.fitting.results import stamp_voxels_per_splat
 from luxar.gsplats.fitting.validation import _validate_floor
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.merged_quality import (
-    announce_unscored_merge,
+    announce_unscored_partition_merge,
     stamp_merged_quality,
 )
 from luxar.gsplats.tiling import (
@@ -49,7 +49,6 @@ from luxar.gsplats.tiling import (
     grid_bsp_tree,
     resolve_grid_scale,
 )
-from luxar.gsplats.tree import GSplatPartition
 
 _TILE_SIGNAL_EPS = 1e-8
 
@@ -910,17 +909,12 @@ def fit_tiled(
         # `kind=partition` merge by default, and nothing about the omission
         # reaches the store, so this notice is the only place it is ever stated.
         # A degenerate partition request with one surviving region hands back a
-        # matrix-shaped leaf, so derive the compare recourse from the returned
-        # node rather than insisting on a no-op flatten step.
-        is_partition = isinstance(merged, GSplatPartition)
-        reason = (
-            "the merged partition is a tree node with no fit-stats dict to stamp "
-            "onto, and this path threads none through on save"
-            if is_partition
-            else "the requested partition merge returned a single leaf with no "
-            "root fit-stats dict to stamp, and this path threads none through on save"
+        # matrix-shaped part (a leaf or LOD group), so derive the compare
+        # recourse from the returned node rather than insisting on a no-op
+        # flatten step.
+        announce_unscored_partition_merge(
+            merged, suffix=", and this path threads none through on save"
         )
-        announce_unscored_merge(reason, partition=is_partition)
     return merged
 
 
