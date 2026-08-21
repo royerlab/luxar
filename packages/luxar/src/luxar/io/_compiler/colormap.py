@@ -19,6 +19,8 @@ def write_colormap_lut_if_needed(
     attrs: Dict[str, Any],
     scene_tone_mapping: Optional[str],
     lut_tone_mapping_warned: bool,
+    *,
+    warn_on_missing_tone_mapping: bool = True,
 ) -> bool:
     """Write custom colormap LUT to zarr if colormap is an array.
 
@@ -68,6 +70,7 @@ def write_colormap_lut_if_needed(
     is_grayscale_default = isinstance(colormap, str) and colormap == "gray"
     if (
         not lut_tone_mapping_warned
+        and warn_on_missing_tone_mapping
         and scene_tone_mapping is None
         and not is_grayscale_default
     ):

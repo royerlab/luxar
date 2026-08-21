@@ -127,6 +127,7 @@ def _write_single_splat_set(
     scene_tone_mapping: Optional[str] = None,
     barrier_dims: Optional[Sequence[int]] = None,
     inherited_colormap: Optional[str] = None,
+    warn_on_missing_tone_mapping: bool = True,
 ) -> Dict[str, Any]:
     """Order + write one splat set's arrays into ``group``; return metadata.
 
@@ -229,6 +230,7 @@ def _write_single_splat_set(
             scene_tone_mapping=scene_tone_mapping,
             lut_tone_mapping_warned=False,
             inherited_colormap=inherited_colormap,
+            warn_on_missing_tone_mapping=warn_on_missing_tone_mapping,
         )
     return metadata
 
@@ -306,6 +308,7 @@ def write_gsplat_leaf(
     barrier_dims: Optional[Sequence[int]] = None,
     preflighted: bool = False,
     inherited_colormap: Optional[str] = None,
+    warn_on_missing_tone_mapping: bool = True,
 ) -> Dict[str, Any]:
     """Write a :class:`GSplatLeaf` (single set or additive ladder) into ``group``.
 
@@ -332,6 +335,7 @@ def write_gsplat_leaf(
             scene_tone_mapping=scene_tone_mapping,
             barrier_dims=barrier_dims,
             inherited_colormap=inherited_colormap,
+            warn_on_missing_tone_mapping=warn_on_missing_tone_mapping,
         )
 
     # Additive ladder → additive_<i>/ subgroups + aggregate parent attrs.
@@ -417,6 +421,7 @@ def write_gsplat_leaf(
         scene_tone_mapping=scene_tone_mapping,
         lut_tone_mapping_warned=False,
         inherited_colormap=inherited_colormap,
+        warn_on_missing_tone_mapping=warn_on_missing_tone_mapping,
     )
     group.attrs["n_additive_sublods"] = len(sublods)
     return agg_meta
@@ -541,6 +546,7 @@ def _resolve_group_colormap(
     attrs: Dict[str, Any],
     scene_tone_mapping: Optional[str],
     inherited_colormap: Optional[str],
+    warn_on_missing_tone_mapping: bool,
 ) -> Optional[str]:
     """Resolve a WRAPPER's own ``colormap`` and return what its children inherit.
 
@@ -561,7 +567,13 @@ def _resolve_group_colormap(
     the store walk to find.
     """
     if attrs.get("colormap") is not None:
-        write_colormap_lut_if_needed(group, attrs, scene_tone_mapping, False)
+        write_colormap_lut_if_needed(
+            group,
+            attrs,
+            scene_tone_mapping,
+            False,
+            warn_on_missing_tone_mapping=warn_on_missing_tone_mapping,
+        )
     return attrs.get("colormap") or inherited_colormap
 
 
@@ -577,6 +589,7 @@ def write_gsplat_node(
     barrier_dims: Optional[Sequence[int]] = None,
     under_partition: bool = False,
     inherited_colormap: Optional[str] = None,
+    warn_on_missing_tone_mapping: bool = True,
 ) -> Dict[str, Any]:
     """Recursively write any :class:`GSplatNode` into ``group``.
 
@@ -618,13 +631,18 @@ def write_gsplat_node(
             scene_tone_mapping=scene_tone_mapping,
             barrier_dims=barrier_dims,
             inherited_colormap=inherited_colormap,
+            warn_on_missing_tone_mapping=warn_on_missing_tone_mapping,
         )
 
     # Group prologue (kind=lod / kind=partition) — resolve a wrapper-authored
     # palette and work out what the children inherit.
     attrs = dict(attrs or {})
     child_colormap = _resolve_group_colormap(
-        group, attrs, scene_tone_mapping, inherited_colormap
+        group,
+        attrs,
+        scene_tone_mapping,
+        inherited_colormap,
+        warn_on_missing_tone_mapping,
     )
 
     if isinstance(node, GSplatLodGroup):
@@ -711,6 +729,7 @@ def write_gsplat_node(
                 # same tile, so the binding propagates down.
                 under_partition=partition_bound,
                 inherited_colormap=child_colormap,
+                warn_on_missing_tone_mapping=warn_on_missing_tone_mapping,
             )
             if "position_bounds" in cmeta:
                 child_bounds.append(cmeta["position_bounds"])
@@ -776,6 +795,7 @@ def write_gsplat_node(
                 barrier_dims=barrier_dims,
                 under_partition=child_under_partition,
                 inherited_colormap=child_colormap,
+                warn_on_missing_tone_mapping=warn_on_missing_tone_mapping,
             )
             if "position_bounds" in cmeta:
                 child_bounds.append(cmeta["position_bounds"])

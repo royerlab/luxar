@@ -1061,7 +1061,9 @@ class TestAncestorAuthoredColormapNotShadowed:
             for i in range(2):
                 assert store[f"part_{i}"].attrs["colormap"] == "gray"
 
-    def test_standalone_leaf_root_colormap_still_wins(self) -> None:
+    def test_standalone_leaf_root_colormap_still_wins(
+        self, recwarn: pytest.WarningsRecorder
+    ) -> None:
         """A leaf-rooted tree keeps the root_attrs palette on the leaf itself."""
         from luxar.gsplats.gsplat_data import AdditiveSubLOD
         from luxar.gsplats.io.save_gsplats import write_gsplats_tree
@@ -1083,3 +1085,4 @@ class TestAncestorAuthoredColormapNotShadowed:
 
             store = zarr.open(str(out), mode="r")
             assert store.attrs["colormap"] == "inferno"
+            assert not any("tone_mapping" in str(w.message) for w in recwarn)

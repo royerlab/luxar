@@ -29,7 +29,6 @@ import {
 } from '../../../rendering/gsplat-geometry';
 import { applyEffectiveAttrs } from '../../../data/scene-loader/view-state/effective-attrs';
 import type { SceneNode } from '../../../data/data-loader-types';
-import type { PointsMetadata } from '../../../types/points';
 
 function makeRgbLut(seed = 0): Uint8Array {
   const lut = new Uint8Array(768);
@@ -294,7 +293,7 @@ describe('custom LUT byte-loading', () => {
   });
 
   describe('an INHERITED custom palette reaches the material (#1600)', () => {
-    it('createPointsMaterial paints the ancestor LUT, not viridis', () => {
+    it('GSplatMaterial paints the ancestor LUT, not viridis', () => {
       // End-to-end for the composition half of #1600: only the GROUP declares
       // `colormap='custom'`, so only the group carries `customLutBytes` (the
       // scene loader stamps them on whichever node declared the sentinel).
@@ -315,9 +314,9 @@ describe('custom LUT byte-loading', () => {
             children: [
               {
                 path: '/layer/pts',
-                type: 'points',
+                type: 'gsplats',
                 hasSpatialIndex: true,
-                attrs: { has_scalars: true, scalar_data_range: [0, 1] },
+                attrs: { amplitude_data_range: [0, 1] },
               },
             ],
           },
@@ -326,16 +325,13 @@ describe('custom LUT byte-loading', () => {
       const leaf = graph.children![0].children![0];
       const effective = applyEffectiveAttrs(graph, leaf);
 
-      const geometry = new THREE.BufferGeometry();
-      geometry.userData.hasScalars = true;
-      // Same cast the real loader makes when it hands the composed record to
-      // the factory (`ZarrNodeAttrs` types `transform` as readonly).
-      const mat = new NodeFactory().createPointsMaterial(
-        effective as unknown as Partial<PointsMetadata>,
-        1.0,
-        geometry,
-        leaf.path
-      ) as THREE.ShaderMaterial;
+      const mat = new GSplatMaterial({
+        colormapTexture: getColormapTexture(
+          effective.colormap!,
+          effective.customLutBytes as Uint8Array | undefined
+        ),
+        scalarRange: effective.amplitude_data_range,
+      });
 
       expect(mat.defines.USE_COLORMAP).toBe('');
       expect(mat.uniforms.uColormapTex.value).toBe(getColormapTexture('custom', lut));

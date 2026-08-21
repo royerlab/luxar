@@ -1024,7 +1024,9 @@ def inherited_gsplat_colormap(
     * **already on disk** (the scene compiler): a Group node's attrs are
       written by ``LuxarZarrCompiler.write_group`` at construction time,
       i.e. BEFORE any child leaf exists, so walking ``group.path`` upward
-      through ``store`` finds them.
+      through ``store`` finds them. Consequently the palette must be authored
+      when the ancestor is created; setting ``group.attrs["colormap"]`` after
+      its children were written cannot retroactively suppress their gray.
     * **still in flight** (the standalone ``.gsplats.zarr`` tree writer): a
       ``kind=lod`` / ``kind=partition`` wrapper writes its own attrs only
       AFTER its children, so nothing is on disk to walk. There the value
@@ -1076,10 +1078,10 @@ def inherited_gsplat_colormap(
             ancestor = store[prefix] if prefix else store
         except KeyError:
             continue
-        colormap = getattr(ancestor, "attrs", None)
-        if colormap is None:
+        ancestor_attrs = getattr(ancestor, "attrs", None)
+        if ancestor_attrs is None:
             continue
-        value = colormap.get("colormap")
+        value = ancestor_attrs.get("colormap")
         if value is not None:
             return str(value)
     return None
@@ -1093,6 +1095,7 @@ def apply_gsplat_group_attrs(
     scene_tone_mapping: Optional[str],
     lut_tone_mapping_warned: bool,
     inherited_colormap: Optional[str] = None,
+    warn_on_missing_tone_mapping: bool = True,
 ) -> bool:
     """Set standard gsplats group attributes and rendering defaults.
 
@@ -1120,7 +1123,11 @@ def apply_gsplat_group_attrs(
 
     # Write colormap LUT if colormap is a custom array
     lut_tone_mapping_warned = write_colormap_lut_if_needed(
-        group, attrs, scene_tone_mapping, lut_tone_mapping_warned
+        group,
+        attrs,
+        scene_tone_mapping,
+        lut_tone_mapping_warned,
+        warn_on_missing_tone_mapping=warn_on_missing_tone_mapping,
     )
 
     # Process transform if present

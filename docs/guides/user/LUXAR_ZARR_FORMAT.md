@@ -302,8 +302,9 @@ Group nodes organize the scene hierarchy and can contain child nodes.
   "blending_mode": "additive",  // normal, additive, max, opaque, luminous, volumetric — written
                            //   only when explicitly set; unset ⇒ inherited from the
                            //   nearest ancestor that sets it (viewer default: additive)
-  "colormap": "viridis",   // Optional palette; also nearest-setter-wins, so a value on a
-                           //   group reaches every descendant (see Rendering Attribute
+  "colormap": "viridis",   // Optional palette; nearest-setter-wins for rendering. GSplats
+                           //   inherit it directly; Points / Lines / Mesh scalar leaves must
+                           //   still author their own colormap today (see Rendering Attribute
                            //   Composition)
   "layer": false,          // Optional: if true, node appears in the viewer's Layers panel
   "visible": true,         // Optional: initial visibility when the scene loads (default true)
@@ -1159,15 +1160,21 @@ it (with the other compositing attrs) onto the wrapper only — see
 layer's own subtree the panel treats the layer's mode as authoritative and
 ignores a mode authored on a non-layer descendant.
 
-An inherited `colormap` is offered to every descendant, but whether it applies
-is the geometry type's own decision: Points / Lines / Mesh require a scalar
-channel (`has_scalars`) and otherwise keep rendering direct colours, while a
+An inherited `colormap` is offered to every descendant at render time, but the
+current Python adders still require Points / Lines / Mesh scalar leaves to
+author a `colormap` themselves. Those types require a scalar channel
+(`has_scalars`) and otherwise keep rendering direct colours, while a
 GSplats leaf is always colormap-capable — its amplitude *is* the scalar — so an
 ancestor's palette overrides even per-splat colours there. This matches what the
 layers panel's colormap dropdown already does when it fans a palette out over a
 group. Note the corollary: the writers stamp the implicit `colormap="gray"` on a
 colorless gsplats leaf *only* when no ancestor authored a palette, since a
 manufactured value nearer the leaf would shadow the authored one.
+
+For GSplats, author the group palette before adding its children (normally by
+passing `colormap=...` to `add_group`). The writer consults ancestors while each
+leaf is created; assigning `group.attrs["colormap"]` afterwards does not
+retroactively remove a gray already stamped on existing leaves.
 
 ### Edits Are Viewer-Only
 
