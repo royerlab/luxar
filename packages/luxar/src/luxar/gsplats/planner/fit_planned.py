@@ -50,9 +50,11 @@ CONTENT_CULL_RETENTION: float = 0.999
 def _ensure_planned_norm_range(
     volume: np.ndarray, fit_kwargs: dict[str, Any], verbose: bool
 ) -> None:
-    """Resolve one raw-input range unless boxes use on-the-fly denoising."""
+    """Resolve one raw-input range for today's non-denoising content fits."""
     if fit_kwargs.get("norm_range") is not None:
         return
+    # Forward guard for #1813: once content boxes can denoise, they must resolve
+    # their range from the denoised crop rather than inherit this raw range.
     if fit_kwargs.get("_denoise_h") is not None:
         return
     from arbol import aprint

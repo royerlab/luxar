@@ -446,7 +446,8 @@ class TestDefaultWorkerCmdBuilder:
 
         assert fit_kwargs.get("norm_range") is None
 
-    def test_denoising_boxes_do_not_inherit_a_raw_shared_normalization_range(self):
+    def test_future_denoising_boxes_do_not_inherit_a_raw_shared_range(self):
+        """Keep the #1813 forward guard from sharing a raw range."""
         from luxar.gsplats.planner.fit_planned import _ensure_planned_norm_range
 
         fit_kwargs = {"_denoise_h": 0.04, "_denoise_params": {}}

@@ -947,8 +947,8 @@ def _resolve_planned_norm_range(
         return configured
     if denoise:
         aprint(
-            "Denoising is enabled; each task uses its denoise-aware "
-            "normalization-range resolver."
+            "Denoising is enabled; each task resolves its normalization range "
+            "on the data it fits."
         )
         return None
     return resolve_batch_norm_range(

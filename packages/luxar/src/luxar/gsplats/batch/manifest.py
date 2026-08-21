@@ -119,7 +119,7 @@ class BatchManifest:
 
     The range is measured from bounded samples of the same representative slices
     used for ``floor_level``. Denoising runs leave it unset unless the user supplied
-    an explicit range, so each task retains its denoise-aware range resolution.
+    an explicit range, so each task resolves against the data it actually fits.
     ``None`` means the manifest predates shared normalization or no usable range
     could be resolved, so tasks retain their historical per-sub-volume behavior.
     """

@@ -57,8 +57,10 @@ flicker across the merged partition.
 Without denoising, the plan likewise records one sampled raw-input normalization
 range (`norm_range`) and forwards it to every task, keeping normalized optimizer
 thresholds consistent across timepoints, channels, and spatial partitions.
-Denoising runs leave that sampled range unset so each task retains its denoise-aware
-resolver; a deliberately configured range remains an intentional override.
+Denoising runs leave that sampled range unset so each task resolves on the data it
+fits: denoise-corrected input for a uniform tile, the denoised store in `preprocess`
+mode, or its own `(t, c)` volume for a content box (content boxes do not yet denoise;
+#1813). A deliberately configured range remains an intentional override.
 
 That one level is the **minimum** of the levels resolved on a bounded set of at
 most 16 evenly spaced `(t, c)` slices spanning the store's **full** extent: up to 4
