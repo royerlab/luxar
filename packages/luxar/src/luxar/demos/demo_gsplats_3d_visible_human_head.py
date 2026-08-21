@@ -96,6 +96,7 @@ DEMO_META = {
     "citation": {
         "short": "NLM Visible Human Project (Spitzer et al. 1996)",
         "doi": "10.1136/jamia.1996.96236280",
+        "license": "Public domain (NLM)",
     },
 }
 

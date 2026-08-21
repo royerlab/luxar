@@ -61,6 +61,7 @@ DEMO_META = {
     "citation": {
         "short": "Zhang et al. 2011 (EMDB EMD-5384)",
         "doi": "10.1073/pnas.1107847108",
+        "license": "CC0 1.0",
     },
 }
 

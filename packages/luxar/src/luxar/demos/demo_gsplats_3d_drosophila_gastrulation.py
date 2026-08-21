@@ -92,6 +92,7 @@ DEMO_META = {
     "citation": {
         "short": "Royer et al. 2016",
         "doi": "10.1038/nbt.3708",
+        "license": "CC BY 4.0",
     },
 }
 

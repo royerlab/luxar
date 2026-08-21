@@ -75,6 +75,7 @@ DEMO_META = {
     "citation": {
         "short": "DESI Collaboration 2025 (DR1)",
         "doi": "10.48550/arXiv.2503.14745",
+        "license": "CC BY 4.0",
     },
 }
 

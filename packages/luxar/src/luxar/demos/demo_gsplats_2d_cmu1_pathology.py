@@ -101,6 +101,7 @@ DEMO_META = {
     "citation": {
         "short": "OpenSlide test data (Goode et al. 2013)",
         "doi": "10.4103/2153-3539.119005",
+        "license": "CC0 1.0",
     },
 }
 

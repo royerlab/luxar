@@ -166,6 +166,7 @@ DEMO_META = {
     "citation": {
         "short": "Meissner et al. 2023",
         "doi": "10.7554/eLife.80660",
+        "license": "CC BY 4.0",
     },
 }
 

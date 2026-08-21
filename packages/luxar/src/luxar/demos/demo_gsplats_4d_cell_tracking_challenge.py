@@ -100,7 +100,7 @@ DEMO_META = {
     "outputs": ["gsplats_4d_cell_tracking_challenge"],
     "citation": {
         "short": "CZ Biohub San Francisco; imaging by the Royer Group",
-        "license": "CC0",
+        "license": "CC0 1.0",
         "url": "https://www.kaggle.com/competitions/biohub-cell-tracking-during-development",
     },
 }

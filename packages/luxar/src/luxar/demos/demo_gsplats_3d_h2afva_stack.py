@@ -91,6 +91,7 @@ DEMO_META = {
     "citation": {
         "short": "Lange et al. 2024 (Zebrahub)",
         "doi": "10.1016/j.cell.2024.09.047",
+        "license": "CC BY 4.0",
     },
 }
 
