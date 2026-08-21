@@ -425,3 +425,10 @@ class TestOverlapSoundness:
         assert not serialized_bsp_tree_straddles_centers(
             self._tree(28.0 / 4.0), self._overlapping_boxes()
         )
+
+    def test_nonfinite_or_unrepresentable_geometry_is_rejected(self) -> None:
+        boxes = self._overlapping_boxes()
+        assert not serialized_bsp_tree_straddles_centers(self._tree(np.inf), boxes)
+        assert not serialized_bsp_tree_straddles_centers(self._tree(10**10000), boxes)
+        boxes[0][0][0] = np.nan
+        assert not serialized_bsp_tree_straddles_centers(self._tree(28.0), boxes)

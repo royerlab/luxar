@@ -503,7 +503,7 @@ def serialized_bsp_tree_straddles_centers(
         if sorted(labels) != list(range(len(boxes))):
             return False
         return _node_straddles_centers(tree, boxes)
-    except (KeyError, TypeError, ValueError, IndexError):
+    except (KeyError, TypeError, ValueError, IndexError, OverflowError):
         return False
 
 
@@ -531,6 +531,11 @@ def _node_straddles_centers(
     )
     left_high = max(float(boxes[i][1][axis]) for i in left_labels)
     right_low = min(float(boxes[i][0][axis]) for i in right_labels)
+    if not all(
+        np.isfinite(value)
+        for value in (left_center, right_center, left_high, right_low)
+    ):
+        return False
     overlap = max(0.0, left_high - right_low)
     if split < left_center - overlap or split > right_center + overlap:
         return False
