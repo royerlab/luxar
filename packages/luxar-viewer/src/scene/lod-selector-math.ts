@@ -340,7 +340,7 @@ export interface WorldBoxSource {
 }
 
 /**
- * Fold an entry's children nD ``positionBounds`` into a single world-space
+ * Fold an entry's children nD bounds into a single world-space
  * :type:`BoundingBox`, mapping nD axes onto X/Y/Z via the current
  * ``displayDims`` and lifting through the group's ``matrixWorld``. Returns
  * ``null`` when no child has usable bounds (mismatched/empty min-max). Shared

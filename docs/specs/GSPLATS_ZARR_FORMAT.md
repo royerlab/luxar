@@ -319,9 +319,10 @@ present:
 {"lod_bounds": {"min": [-1, -1, -1], "max": [1, 1, 1]}}
 ```
 
-The arrays MUST be finite, ordered (`min[i] <= max[i]`), and have the same
-length and axis order as `position_bounds`; they SHOULD be contained within
-that complete bound. This is a producer-chosen robust extent — for example
+The arrays MUST be finite, ordered (`min[i] <= max[i]`), have the same length
+and axis order as `position_bounds`, and be contained within that complete
+bound. A bound that is not contained is rejected and the child falls back to
+`position_bounds`. This is a producer-chosen robust extent — for example
 percentile bounds that exclude a sparse tail — and affects only the selector
 metric. Frustum gating, eviction, root framing, clipping, and scene ranges
 continue to use the complete `position_bounds`, so excluded outliers remain

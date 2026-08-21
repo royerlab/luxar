@@ -288,11 +288,20 @@ function readLodBounds(
   const attrs = childAttrs as Record<string, unknown>;
   if (!Object.prototype.hasOwnProperty.call(attrs, 'lod_bounds')) return undefined;
   const expectedDimensions = positionBounds.min.length;
-  const reject = (reason: string): undefined => {
+  if (expectedDimensions === 0) {
     log.warning(
       Modules.SCENE_LOADER,
-      `lod_group child ${childPath}: rejected lod_bounds; expected ${reason} ` +
-        `(${expectedDimensions} values per bound), falling back to position_bounds`
+      `lod_group child ${childPath}: rejected lod_bounds; ` +
+        'child has no position_bounds to validate against'
+    );
+    return undefined;
+  }
+  const reject = (reason: string, appendDimensions: boolean = true): undefined => {
+    const dimensions = appendDimensions ? ` (${expectedDimensions} values per bound)` : '';
+    log.warning(
+      Modules.SCENE_LOADER,
+      `lod_group child ${childPath}: rejected lod_bounds; expected ${reason}${dimensions}, ` +
+        'falling back to position_bounds'
     );
     return undefined;
   };
@@ -303,7 +312,7 @@ function readLodBounds(
   if (raw.min.length === 0) return reject('non-empty bounds');
   if (raw.min.length !== raw.max.length) return reject('equal min/max lengths');
   if (raw.min.length !== expectedDimensions) {
-    return reject(`${expectedDimensions} values per bound`);
+    return reject(`${expectedDimensions} values per bound`, false);
   }
   const min = raw.min;
   const max = raw.max;
@@ -381,6 +390,7 @@ export async function loadLodGroupNode(
   const coverageFractions = resolveCoverageFractions(node, sceneChildren);
 
   const registryChildren: LODGroupChild[] = [];
+  const childPaths = new Map<LODGroupChild, string>();
   // Registry index of the eagerly-loaded default child. `eagerIdx` indexes
   // `sceneChildren`, but a child that fails to attach is dropped from
   // `registryChildren`, shifting indices. Recomputing the default level from
@@ -503,6 +513,7 @@ export async function loadLodGroupNode(
         );
       }
       registryChildren.push(entryChild);
+      childPaths.set(entryChild, child.path);
       continue;
     }
 
@@ -567,6 +578,7 @@ export async function loadLodGroupNode(
         }
       );
       registryChildren.push(entryChild);
+      childPaths.set(entryChild, child.path);
       continue;
     }
 
@@ -595,12 +607,14 @@ export async function loadLodGroupNode(
 
     if (i === eagerIdx) eagerRegistryIdx = registryChildren.length;
     const positionBounds = readPositionBounds(child.attrs);
-    registryChildren.push({
+    const entryChild: LODGroupChild = {
       object: childObject,
       coverageFraction,
       positionBounds,
       lodBounds: readLodBounds(child.attrs, child.path, positionBounds),
-    });
+    };
+    registryChildren.push(entryChild);
+    childPaths.set(entryChild, child.path);
   }
 
   // Defense-in-depth: the per-frame selector (``pickChildWithHysteresis``)
@@ -646,7 +660,7 @@ export async function loadLodGroupNode(
   if (lodBoundsCount > 0 && lodBoundsCount < registryChildren.length) {
     const missingPaths = registryChildren
       .filter((child) => child.lodBounds == null)
-      .map((child) => child.object.name || '<unnamed>');
+      .map((child) => childPaths.get(child) ?? '<unknown>');
     log.warning(
       Modules.SCENE_LOADER,
       `lod_group ${node.path}: lod_bounds are only usable on part of the ladder; ` +
