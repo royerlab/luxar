@@ -19,6 +19,7 @@ import pytest
 
 from luxar.utils import data_fetch
 from luxar.utils.data_fetch import (
+    LOCAL_FIT_DIRNAME,
     MANIFEST_PATH,
     DatasetNotFound,
     LocalComputeDataset,
@@ -26,7 +27,9 @@ from luxar.utils.data_fetch import (
     dataset_spec,
     ensure_dataset,
     load_dataset_gsplats,
+    load_local_fit_gsplats,
     load_manifest,
+    local_fit_path,
 )
 from luxar.utils.download import QUARANTINE_SUFFIX, find_quarantined_files
 
@@ -972,6 +975,124 @@ def test_wrapper_repairs_a_corrupt_cache_before_loading(fake_gsplats_repo):
     assert first is not None and second is not None
     assert len(second[0].amplitudes) == len(first[0].amplitudes)
     assert find_quarantined_files(cached)
+
+
+# --------------------------------------------------------------------------- #
+# local_fit_path / load_local_fit_gsplats: the demo's OWN artifacts (#1618)
+# --------------------------------------------------------------------------- #
+def _tiny_gsplats(n: int = 8):
+    import numpy as np
+
+    from luxar.gsplats.gsplat_data import GSplatData
+
+    chol = np.zeros((n, 6), dtype=np.float32)
+    chol[:, [0, 2, 5]] = 1.0
+    return GSplatData(
+        centers=np.random.rand(n, 3).astype(np.float32),
+        amplitudes=np.ones(n, dtype=np.float32),
+        cholesky_factors=chol,
+    )
+
+
+def test_local_fit_path_is_namespaced_under_the_dataset_cache_dir(tmp_path):
+    path = local_fit_path(
+        "gsplats_toy", "toy_ch0.gsplats.zarr.zip", cache_root=tmp_path
+    )
+    assert path == tmp_path / "gsplats_toy" / "local" / "toy_ch0.gsplats.zarr.zip"
+    assert path.parent.name == LOCAL_FIT_DIRNAME
+    # The point of the namespace: it is NOT the manifest's destination.
+    assert path != tmp_path / "gsplats_toy" / "toy_ch0.gsplats.zarr.zip"
+
+
+def test_local_fit_path_mirrors_the_variant_layout(tmp_path):
+    """A variant's manifest dest is ``<name>/<variant>/<file>``; stay under it."""
+    path = local_fit_path("toy_ts", "ts.zip", variant="light", cache_root=tmp_path)
+    assert path == tmp_path / "toy_ts" / "light" / "local" / "ts.zip"
+
+
+def test_local_fit_path_refuses_the_one_colliding_variant_name(tmp_path):
+    with pytest.raises(ValueError, match="collide"):
+        local_fit_path("toy_ts", "ts.zip", variant="local", cache_root=tmp_path)
+
+
+def test_a_local_fit_survives_a_later_ensure_dataset(fake_repo):
+    """THE regression (#1618): the checksum gate must not see the local fit.
+
+    Written to the manifest's own ``<name>/<file>`` — what every migrated demo
+    used to do — the next fetch hashes it, fails, and renames it ``.corrupt``,
+    so the demo recomputes on every launch. Asserted both ways here: the local
+    copy is untouched and unquarantined, while the same bytes at the colliding
+    path ARE quarantined by the same call.
+    """
+    manifest, cache = fake_repo
+    payload = b"an eleven-minute GPU fit that matches no manifest hash"
+
+    local = local_fit_path("gsplats_toy", "toy_ch0.gsplats.zarr.zip", cache_root=cache)
+    local.parent.mkdir(parents=True, exist_ok=True)
+    local.write_bytes(payload)
+
+    colliding = cache / "gsplats_toy" / "toy_ch0.gsplats.zarr.zip"
+    colliding.parent.mkdir(parents=True, exist_ok=True)
+    colliding.write_bytes(payload)
+
+    ensure_dataset("gsplats_toy", manifest=manifest, cache_root=cache, verbose=False)
+
+    assert local.is_file(), "the local fit was deleted by the fetch"
+    assert local.read_bytes() == payload, "the local fit was overwritten"
+    assert not find_quarantined_files(local), "the local fit was quarantined"
+    # The control: at the manifest's own path those same bytes are destroyed.
+    assert find_quarantined_files(colliding)
+    assert colliding.read_bytes() != payload
+
+
+def test_load_local_fit_returns_the_data_when_every_file_is_present(tmp_path):
+    names = ["a.gsplats.zarr.zip", "b.gsplats.zarr.zip"]
+    for i, name in enumerate(names):
+        path = local_fit_path("toy", name, cache_root=tmp_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _tiny_gsplats(4 + i).save(path, ordering="none", compress="zip")
+
+    out = load_local_fit_gsplats("toy", names, cache_root=tmp_path, verbose=False)
+
+    assert out is not None
+    assert [len(g.amplitudes) for g in out] == [4, 5], "order must follow file_names"
+
+
+def test_load_local_fit_returns_none_when_any_file_is_missing(tmp_path):
+    """A partial set is not an answer: the refit rewrites all of them anyway."""
+    names = ["a.gsplats.zarr.zip", "b.gsplats.zarr.zip"]
+    present = local_fit_path("toy", names[0], cache_root=tmp_path)
+    present.parent.mkdir(parents=True, exist_ok=True)
+    _tiny_gsplats().save(present, ordering="none", compress="zip")
+
+    assert (
+        load_local_fit_gsplats("toy", names, cache_root=tmp_path, verbose=False) is None
+    )
+    assert (
+        load_local_fit_gsplats("toy", [names[1]], cache_root=tmp_path, verbose=False)
+        is None
+    )
+
+
+def test_load_local_fit_reports_a_corrupt_file_and_returns_none(tmp_path, capsys):
+    """Unreadable local bytes must not crash the demo — but must not be silent.
+
+    There is no checksum, no remote and no second copy for these files, so the
+    only recovery is the refit the caller can already do. Raising would strand
+    the demo on rubble it can heal; staying quiet would hide a machine that has
+    started refitting on every launch.
+    """
+    path = local_fit_path("toy", "a.gsplats.zarr.zip", cache_root=tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"not a zip at all")
+
+    out = load_local_fit_gsplats(
+        "toy", ["a.gsplats.zarr.zip"], cache_root=tmp_path, verbose=False
+    )
+
+    assert out is None
+    assert "could not be loaded" in capsys.readouterr().out
+    assert path.is_file(), "the bad file is left in place for inspection"
 
 
 # --------------------------------------------------------------------------- #

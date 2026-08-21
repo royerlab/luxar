@@ -195,8 +195,8 @@ class TestColorSidecarOrdering:
         rng = np.random.default_rng(7)
         rgb_vol = rng.uniform(0.0, 1.0, (16, 16, 16, 3)).astype(np.float32)
         fit = _scattered_gsplat_data(n, extent=15.49)
-        monkeypatch.setattr(_demo, "CACHE_FIT", tmp_path / _demo.FIT_FILE)
-        monkeypatch.setattr(_demo, "CACHE_COLORS", tmp_path / _demo.COLORS_FILE)
+        monkeypatch.setattr(_demo, "LOCAL_FIT", tmp_path / _demo.FIT_FILE)
+        monkeypatch.setattr(_demo, "LOCAL_COLORS", tmp_path / _demo.COLORS_FILE)
 
         stored, colors = _demo.save_and_sample_colors(fit, rgb_vol)
 
@@ -207,7 +207,7 @@ class TestColorSidecarOrdering:
 
         # An INDEPENDENT nearest-voxel sampling at the returned centers, taken
         # through the sidecar's own quantization. Comparing the returned `colors`
-        # against `_load_colors_f32(CACHE_COLORS)` instead would be vacuous:
+        # against `_load_colors_f32(LOCAL_COLORS)` instead would be vacuous:
         # `save_and_sample_colors` RETURNS exactly that read-back.
         expected = self._through_sidecar(
             sample_colors(rgb_vol, stored.centers), tmp_path, "expected.npz"
@@ -215,7 +215,7 @@ class TestColorSidecarOrdering:
         # Aligned with the fit that is RETURNED (== what the cache reloads)...
         np.testing.assert_array_equal(colors, expected)
         # ...and the sidecar ON DISK carries those same rows.
-        np.testing.assert_array_equal(_load_colors_f32(_demo.CACHE_COLORS), expected)
+        np.testing.assert_array_equal(_load_colors_f32(_demo.LOCAL_COLORS), expected)
         # ...and NOT the pre-save sampling the old code persisted.
         assert not np.array_equal(
             expected,
@@ -231,8 +231,8 @@ class TestColorSidecarOrdering:
         rng = np.random.default_rng(8)
         rgb_vol = rng.uniform(0.0, 1.0, (16, 16, 16, 3)).astype(np.float32)
         fit = _scattered_gsplat_data(n, extent=15.49, seed=1)
-        monkeypatch.setattr(_demo, "CACHE_FIT", tmp_path / _demo.FIT_FILE)
-        monkeypatch.setattr(_demo, "CACHE_COLORS", tmp_path / _demo.COLORS_FILE)
+        monkeypatch.setattr(_demo, "LOCAL_FIT", tmp_path / _demo.FIT_FILE)
+        monkeypatch.setattr(_demo, "LOCAL_COLORS", tmp_path / _demo.COLORS_FILE)
 
         stored, colors = _demo.save_and_sample_colors(fit, rgb_vol)
         assert _demo._colors_match_fit(stored, colors, "aligned")
@@ -308,8 +308,8 @@ class TestColorAgreementThreshold:
         rng = np.random.default_rng(41)
         rgb_vol = rng.uniform(0.0, 1.0, (16, 16, 16, 3)).astype(np.float32)
         fit = _scattered_gsplat_data(6000, extent=15.49, seed=3)
-        monkeypatch.setattr(_demo, "CACHE_FIT", tmp_path / (tag + _demo.FIT_FILE))
-        monkeypatch.setattr(_demo, "CACHE_COLORS", tmp_path / (tag + _demo.COLORS_FILE))
+        monkeypatch.setattr(_demo, "LOCAL_FIT", tmp_path / (tag + _demo.FIT_FILE))
+        monkeypatch.setattr(_demo, "LOCAL_COLORS", tmp_path / (tag + _demo.COLORS_FILE))
         return _demo.save_and_sample_colors(fit, rgb_vol)
 
     def _pair_with_broken(self, tmp_path, monkeypatch, n_broken: int):
@@ -386,16 +386,19 @@ class TestRejectedPairFallsThroughToRefit:
         rng = np.random.default_rng(42)
         rgb_vol = rng.uniform(0.0, 1.0, (16, 16, 16, 3)).astype(np.float32)
         fit = _scattered_gsplat_data(n, extent=15.49, seed=5)
-        monkeypatch.setattr(_demo, "CACHE_FIT", tmp_path / _demo.FIT_FILE)
-        monkeypatch.setattr(_demo, "CACHE_COLORS", tmp_path / _demo.COLORS_FILE)
+        monkeypatch.setattr(_demo, "LOCAL_FIT", tmp_path / _demo.FIT_FILE)
+        monkeypatch.setattr(_demo, "LOCAL_COLORS", tmp_path / _demo.COLORS_FILE)
         _, colors = _demo.save_and_sample_colors(fit, rgb_vol)
         if permute:
-            _save_colors_u8(colors[rng.permutation(n)], _demo.CACHE_COLORS)
+            _save_colors_u8(colors[rng.permutation(n)], _demo.LOCAL_COLORS)
 
         monkeypatch.setattr(_demo, "RECOMPUTE", False)
-        # The shipped LFS assets must not rescue (or mask) the outcome.
+        # The shipped LFS assets must not rescue (or mask) the outcome, and
+        # neither must a copy of them in the manifest's own cache path.
         monkeypatch.setattr(_demo, "LFS_FIT", tmp_path / "absent.gsplats.zarr.zip")
         monkeypatch.setattr(_demo, "LFS_COLORS", tmp_path / "absent.npz")
+        monkeypatch.setattr(_demo, "CACHE_FIT", tmp_path / "absent-cache.zip")
+        monkeypatch.setattr(_demo, "CACHE_COLORS", tmp_path / "absent-cache.npz")
         monkeypatch.setattr(_demo, "warn_if_no_cuda_gpu", lambda: None)
 
         sentinel_fit = _scattered_gsplat_data(4, extent=1.0, seed=6)
@@ -450,8 +453,8 @@ class TestShippedLfsPairIsGuardedToo:
         # Build the pair straight into the "shipped" location.
         lfs_dir = tmp_path / "lfs"
         lfs_dir.mkdir()
-        monkeypatch.setattr(_demo, "CACHE_FIT", lfs_dir / _demo.FIT_FILE)
-        monkeypatch.setattr(_demo, "CACHE_COLORS", lfs_dir / _demo.COLORS_FILE)
+        monkeypatch.setattr(_demo, "LOCAL_FIT", lfs_dir / _demo.FIT_FILE)
+        monkeypatch.setattr(_demo, "LOCAL_COLORS", lfs_dir / _demo.COLORS_FILE)
         _, colors = _demo.save_and_sample_colors(fit, rgb_vol)
         if permute:
             _save_colors_u8(colors[rng.permutation(n)], lfs_dir / _demo.COLORS_FILE)
@@ -459,13 +462,17 @@ class TestShippedLfsPairIsGuardedToo:
         monkeypatch.setattr(_demo, "LFS_FIT", lfs_dir / _demo.FIT_FILE)
         monkeypatch.setattr(_demo, "LFS_COLORS", lfs_dir / _demo.COLORS_FILE)
 
-        # …and empty the processed cache the LFS branch copies INTO, so the cache
-        # door misses and the LFS door is the one under test. CACHE_DIR must move
-        # too: the branch mkdirs it before the atomic copy.
+        # …and empty the processed cache the LFS branch copies INTO, plus the
+        # local-refit namespace, so the LFS door is the one under test.
+        # CACHE_DIR must move too: the branch mkdirs it before the atomic copy.
         cache_dir = tmp_path / "cache"
         monkeypatch.setattr(_demo, "CACHE_DIR", cache_dir)
         monkeypatch.setattr(_demo, "CACHE_FIT", cache_dir / _demo.FIT_FILE)
         monkeypatch.setattr(_demo, "CACHE_COLORS", cache_dir / _demo.COLORS_FILE)
+        monkeypatch.setattr(_demo, "LOCAL_FIT", tmp_path / "local" / _demo.FIT_FILE)
+        monkeypatch.setattr(
+            _demo, "LOCAL_COLORS", tmp_path / "local" / _demo.COLORS_FILE
+        )
 
         monkeypatch.setattr(_demo, "RECOMPUTE", False)
         monkeypatch.setattr(_demo, "warn_if_no_cuda_gpu", lambda: None)

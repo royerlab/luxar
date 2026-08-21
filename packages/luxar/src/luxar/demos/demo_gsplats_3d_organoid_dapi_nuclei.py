@@ -153,6 +153,8 @@ import os
 from luxar.demos import (
     launch_viewer,
     load_dataset_gsplats,
+    load_local_fit_gsplats,
+    local_fit_path,
     parse_demo_flags,
     warn_if_no_cuda_gpu,
 )
@@ -190,8 +192,13 @@ MAX_SPLATS = 12000
 DEVICE = None  # Auto-detect (cuda/mps/cpu)
 
 # Cache paths (use user cache directory for intermediate fit results)
-CACHE_DIR = Path.home() / ".cache" / "luxar" / "gsplats_dapi"
-CACHE_FILE = CACHE_DIR / "dapi.gsplats.zarr.zip"
+DEMO_NAME = "gsplats_dapi"
+GSPLATS_FILE = "dapi.gsplats.zarr.zip"
+# The local refit is OUR artifact, not a copy of the hosted one, so it lives in
+# the demo's local-fit namespace. Writing it to ~/.cache/luxar/<name>/<file> —
+# the path the manifest fetch owns — got it quarantined on the next launch for
+# failing the pinned sha256, and the demo refit every time (#1618).
+LOCAL_FIT = local_fit_path(DEMO_NAME, GSPLATS_FILE)
 
 # Parse command line flags
 FLAGS = parse_demo_flags()
@@ -203,7 +210,6 @@ SHOW_ROUNDTRIP = "--show-roundtrip" in sys.argv
 
 # Setup
 Arbol.max_depth = 3
-CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 
 # =============================================================================
@@ -382,10 +388,10 @@ def fit_dapi_gsplats(volume, acquisition=None):
         aprint(f"  Cholesky: {result.cholesky_factors.shape}")
 
         # Cache result in gsplats.zarr.zip format
-        CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        aprint(f"Caching fit to: {CACHE_FILE.name}")
+        LOCAL_FIT.parent.mkdir(parents=True, exist_ok=True)
+        aprint(f"Caching fit to: {LOCAL_FIT}")
         result.save(
-            CACHE_FILE,
+            LOCAL_FIT,
             encoding_mode=EncodingMode.MEMORY,
             include_fitting_info=True,
             compress="zip",
@@ -623,16 +629,25 @@ def main():
     volume = None
     gsplats_data_original = None
 
-    precomputed = load_dataset_gsplats(
-        "gsplats_dapi",
-        ["dapi.gsplats.zarr.zip"],
-        recompute=RECOMPUTE,
-    )
+    try:
+        precomputed = load_dataset_gsplats(
+            DEMO_NAME,
+            [GSPLATS_FILE],
+            recompute=RECOMPUTE,
+        )
+    except FileNotFoundError as exc:
+        aprint(f"Manifest fetch unavailable ({exc}).")
+        precomputed = None
+    if precomputed is None and not RECOMPUTE:
+        # A fit this machine built earlier, in its own namespace — checked
+        # BEFORE refitting, which is what makes the refit below one-time.
+        precomputed = load_local_fit_gsplats(DEMO_NAME, [GSPLATS_FILE])
 
     if precomputed is not None:
         gsplats_data_original = precomputed[0]
     else:
-        # --recompute path: download raw data, fit from scratch
+        # --recompute path (or no data to be had): download raw data, fit from
+        # scratch, and cache the fit under LOCAL_FIT.
         warn_if_no_cuda_gpu()
         volume, acquisition = load_dapi_data()
         gsplats_data_original = fit_dapi_gsplats(volume, acquisition)

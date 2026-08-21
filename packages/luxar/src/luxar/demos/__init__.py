@@ -17,7 +17,9 @@ from ..utils.data_fetch import (
     dataset_spec,
     ensure_dataset,
     load_dataset_gsplats,
+    load_local_fit_gsplats,
     load_manifest,
+    local_fit_path,
 )
 from ..utils.demos import (
     cache_computed,
@@ -75,9 +77,11 @@ __all__ = [
     "launch_viewer",
     "load_dataset_bundle",
     "load_dataset_gsplats",
+    "load_local_fit_gsplats",
     "load_manifest",
     "load_precomputed_bundle",
     "load_precomputed_gsplats",
+    "local_fit_path",
     "parse_demo_flags",
     "parse_int_arg",
     "parse_path_arg",

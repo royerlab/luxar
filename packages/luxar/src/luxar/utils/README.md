@@ -189,6 +189,8 @@ sha256.
 - `ensure_dataset(name, ...)`: Resolve a dataset's files to local paths, cache -> in-repo Git LFS -> Zenodo. The manifest sha256 is authoritative at every step: a copy that fails it is quarantined (`.corrupt`) and never returned, so a stale download can never be resumed onto corrupt bytes
 - `load_dataset_gsplats(name, ...)`: Mirror of `demos.load_precomputed_gsplats` (returns `GSplatData`, `None` on recompute) sourced through `ensure_dataset` — the one-line swap for migrating a demo. Only `zenodo`-bucket datasets are eligible
 - `load_manifest()` / `dataset_spec(name)`: Read the packaged manifest. The parse is memoised but each call returns an independent copy, so mutating the result (or a nested spec) cannot poison later readers; `clear_manifest_cache()` drops the parse after the manifest is rewritten on disk
+- `local_fit_path(name, filename)`: Where a demo's OWN locally computed stand-in belongs — `~/.cache/luxar/<name>/local/<filename>`. The cache dir is shared with the fetch but the two namespaces are not: `<name>/<filename>` is the manifest's destination, and `ensure_dataset` quarantines anything there that fails the pinned sha256 — which a local refit never matches, so one stored under the hosted name is destroyed and recomputed on every launch (#1618)
+- `load_local_fit_gsplats(name, file_names)`: Load a previous run's own local fit from that namespace, or `None` when the caller must (re)build it — `None` also when a requested file is missing or unreadable, reported loudly since the only recovery for uncheckummed local bytes is the refit
 - Raises `DatasetNotFound` for an unknown key and `LocalComputeDataset` for data we cannot redistribute (the caller builds it locally)
 
 ### `demos.py`

@@ -245,8 +245,8 @@ class TestLabelSidecarOrdering:
         rng = np.random.default_rng(7)
         label_vol = rng.integers(0, 118, (16, 16, 16)).astype(np.int32)
         fit = _scattered_gsplat_data(n, extent=15.49)
-        monkeypatch.setattr(_demo, "CACHE_FIT", tmp_path / _demo.FIT_FILE)
-        monkeypatch.setattr(_demo, "CACHE_LABELS", tmp_path / _demo.LABELS_FILE)
+        monkeypatch.setattr(_demo, "LOCAL_FIT", tmp_path / _demo.FIT_FILE)
+        monkeypatch.setattr(_demo, "LOCAL_LABELS", tmp_path / _demo.LABELS_FILE)
 
         stored, labels = _demo.save_and_sample_labels(fit, label_vol)
 
@@ -260,7 +260,7 @@ class TestLabelSidecarOrdering:
         # ...and NOT with the pre-save sampling the old code persisted.
         assert not np.array_equal(labels, sample_labels(label_vol, fit.centers))
         # The sidecar on disk carries those same rows.
-        np.testing.assert_array_equal(_load_labels(_demo.CACHE_LABELS), labels)
+        np.testing.assert_array_equal(_load_labels(_demo.LOCAL_LABELS), labels)
 
     def test_guard_accepts_the_aligned_pair_and_rejects_a_permuted_one(
         self, tmp_path, monkeypatch
@@ -269,8 +269,8 @@ class TestLabelSidecarOrdering:
         rng = np.random.default_rng(8)
         label_vol = rng.integers(0, 118, (16, 16, 16)).astype(np.int32)
         fit = _scattered_gsplat_data(n, extent=15.49, seed=1)
-        monkeypatch.setattr(_demo, "CACHE_FIT", tmp_path / _demo.FIT_FILE)
-        monkeypatch.setattr(_demo, "CACHE_LABELS", tmp_path / _demo.LABELS_FILE)
+        monkeypatch.setattr(_demo, "LOCAL_FIT", tmp_path / _demo.FIT_FILE)
+        monkeypatch.setattr(_demo, "LOCAL_LABELS", tmp_path / _demo.LABELS_FILE)
 
         stored, labels = _demo.save_and_sample_labels(fit, label_vol)
         assert _demo._labels_match_fit(stored, labels, "aligned")
@@ -365,8 +365,8 @@ class TestLabelAgreementThreshold:
         rng = np.random.default_rng(31)
         label_vol = rng.integers(0, 118, (16, 16, 16)).astype(np.int32)
         fit = _scattered_gsplat_data(n, extent=15.49, seed=3)
-        monkeypatch.setattr(_demo, "CACHE_FIT", tmp_path / _demo.FIT_FILE)
-        monkeypatch.setattr(_demo, "CACHE_LABELS", tmp_path / _demo.LABELS_FILE)
+        monkeypatch.setattr(_demo, "LOCAL_FIT", tmp_path / _demo.FIT_FILE)
+        monkeypatch.setattr(_demo, "LOCAL_LABELS", tmp_path / _demo.LABELS_FILE)
         stored, labels = _demo.save_and_sample_labels(fit, label_vol)
 
         order, collides = _same_voxel_pairs(stored.centers)
@@ -384,9 +384,9 @@ class TestLabelAgreementThreshold:
         Derived from the SAVED fit's own pair count (the writer permutes, so the
         pre-save centers are the wrong thing to count), hence the throwaway save.
         """
-        monkeypatch.setattr(_demo, "CACHE_FIT", tmp_path / ("probe-" + _demo.FIT_FILE))
+        monkeypatch.setattr(_demo, "LOCAL_FIT", tmp_path / ("probe-" + _demo.FIT_FILE))
         monkeypatch.setattr(
-            _demo, "CACHE_LABELS", tmp_path / ("probe-" + _demo.LABELS_FILE)
+            _demo, "LOCAL_LABELS", tmp_path / ("probe-" + _demo.LABELS_FILE)
         )
         stored, _ = _demo.save_and_sample_labels(
             _scattered_gsplat_data(6000, extent=15.49, seed=3),
@@ -422,9 +422,9 @@ class TestLabelAgreementThreshold:
         which is what stops the gate being lowered under a real near miss (0.90
         — the level pinned before — was under three of them).
         """
-        monkeypatch.setattr(_demo, "CACHE_FIT", tmp_path / ("nm-" + _demo.FIT_FILE))
+        monkeypatch.setattr(_demo, "LOCAL_FIT", tmp_path / ("nm-" + _demo.FIT_FILE))
         monkeypatch.setattr(
-            _demo, "CACHE_LABELS", tmp_path / ("nm-" + _demo.LABELS_FILE)
+            _demo, "LOCAL_LABELS", tmp_path / ("nm-" + _demo.LABELS_FILE)
         )
         stored, _ = _demo.save_and_sample_labels(
             _scattered_gsplat_data(6000, extent=15.49, seed=3),
@@ -491,11 +491,15 @@ class TestRejectedPairFallsThroughToRefit:
         rng = np.random.default_rng(33)
         label_vol = rng.integers(0, 118, (16, 16, 16)).astype(np.int32)
         fit = _scattered_gsplat_data(n, extent=15.49, seed=5)
-        monkeypatch.setattr(_demo, "CACHE_FIT", tmp_path / _demo.FIT_FILE)
+        # The refit writes to the local-fit namespace; the FETCHED sidecar door
+        # (CACHE_LABELS) is pointed at that same file, which is what
+        # ensure_dataset would have put there.
+        monkeypatch.setattr(_demo, "LOCAL_FIT", tmp_path / _demo.FIT_FILE)
+        monkeypatch.setattr(_demo, "LOCAL_LABELS", tmp_path / _demo.LABELS_FILE)
         monkeypatch.setattr(_demo, "CACHE_LABELS", tmp_path / _demo.LABELS_FILE)
         stored, labels = _demo.save_and_sample_labels(fit, label_vol)
         if permute:
-            _save_labels_u8(labels[rng.permutation(n)], _demo.CACHE_LABELS)
+            _save_labels_u8(labels[rng.permutation(n)], _demo.LOCAL_LABELS)
 
         monkeypatch.setattr(_demo, "RECOMPUTE", False)
         # The shipped LFS assets must not rescue (or mask) the outcome.
@@ -505,7 +509,7 @@ class TestRejectedPairFallsThroughToRefit:
         monkeypatch.setattr(
             _demo,
             "load_dataset_gsplats",
-            lambda *a, **k: [GSplatData.load(_demo.CACHE_FIT, include_stats=False)],
+            lambda *a, **k: [GSplatData.load(_demo.LOCAL_FIT, include_stats=False)],
         )
         monkeypatch.setattr(_demo, "warn_if_no_cuda_gpu", lambda: None)
 
@@ -561,19 +565,22 @@ class TestShippedLfsPairIsGuardedToo:
         # Build the pair straight into the "shipped" location.
         lfs_dir = tmp_path / "lfs"
         lfs_dir.mkdir()
-        monkeypatch.setattr(_demo, "CACHE_FIT", lfs_dir / _demo.FIT_FILE)
-        monkeypatch.setattr(_demo, "CACHE_LABELS", lfs_dir / _demo.LABELS_FILE)
+        monkeypatch.setattr(_demo, "LOCAL_FIT", lfs_dir / _demo.FIT_FILE)
+        monkeypatch.setattr(_demo, "LOCAL_LABELS", lfs_dir / _demo.LABELS_FILE)
         _, labels = _demo.save_and_sample_labels(fit, label_vol)
         if permute:
             _save_labels_u8(labels[rng.permutation(n)], lfs_dir / _demo.LABELS_FILE)
         monkeypatch.setattr(_demo, "LFS_FIT", lfs_dir / _demo.FIT_FILE)
         monkeypatch.setattr(_demo, "LFS_LABELS", lfs_dir / _demo.LABELS_FILE)
 
-        # …and make the manifest-fetch door miss, so the LFS door is the one
-        # under test: no fetched dataset and no cached sidecar.
-        monkeypatch.setattr(_demo, "CACHE_FIT", tmp_path / "cache" / _demo.FIT_FILE)
+        # …and make the OTHER two doors miss, so the LFS one is under test: no
+        # fetched dataset, no fetched sidecar, and no local refit either.
         monkeypatch.setattr(
             _demo, "CACHE_LABELS", tmp_path / "cache" / _demo.LABELS_FILE
+        )
+        monkeypatch.setattr(_demo, "LOCAL_FIT", tmp_path / "local" / _demo.FIT_FILE)
+        monkeypatch.setattr(
+            _demo, "LOCAL_LABELS", tmp_path / "local" / _demo.LABELS_FILE
         )
         monkeypatch.setattr(_demo, "load_dataset_gsplats", lambda *a, **k: None)
 

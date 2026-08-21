@@ -47,6 +47,14 @@ listed in `luxar.demos.registry.PROTECTED_INPUT_DIRS` — is inventoried by `dem
 cache list` (marked `🔒 hand-placed input`) but is never reported as an orphan and
 never deleted by `demo cache clear`, by key, under `--all` or under `--orphans`.
 
+A `local/` subdirectory inside a cache dir holds artifacts **this machine
+computed for itself** — a demo's own refit, when its hosted data could not be
+reached — written there by `luxar.utils.data_fetch.local_fit_path`. That is a
+separate namespace from the manifest's own `~/.cache/luxar/<dataset>/<file>`,
+which the fetch checksums and quarantines; a local fit stored under the hosted
+name is destroyed and recomputed on every launch (#1618). `demo cache clear`
+counts anything under `local/` as *computed*, so `--no-computed` spares it.
+
 Eleven gsplat demos also accept `--show-roundtrip`, which renders the fitted
 splats back and shows original / reconstruction / absolute-difference panels
 with PSNR and MSE (needs `matplotlib`). The five whose figure is one row per

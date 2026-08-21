@@ -106,6 +106,7 @@ from luxar.demos import (
     detect_device,
     is_lfs_pointer,
     launch_viewer,
+    local_fit_path,
     parse_demo_flags,
     voxel_sampled_payload_agreement,
     warn_if_no_cuda_gpu,
@@ -130,8 +131,17 @@ COLORS_FILE = "vh_head_colors.npz"
 
 CACHE_DIR = Path.home() / ".cache" / "luxar" / DEMO_NAME
 PNG_DIR = CACHE_DIR / "head_png"
+# The manifest's own paths, holding a copy of the SHIPPED pair (see the LFS
+# branch of `load_or_build`): those bytes are the hosted artifact, so they match
+# the pinned sha256 and a manifest fetch is happy to find them there.
 CACHE_FIT = CACHE_DIR / FIT_FILE
 CACHE_COLORS = CACHE_DIR / COLORS_FILE
+# A local refit is OUR pair, not a copy of the hosted one, so both halves go to
+# the demo's local-fit namespace. Under the manifest's names they would be
+# quarantined by the first fetch that checksums them, and the "one-time" refit
+# would run on every launch (#1618).
+LOCAL_FIT = local_fit_path(DEMO_NAME, FIT_FILE)
+LOCAL_COLORS = local_fit_path(DEMO_NAME, COLORS_FILE)
 
 DATA_DIR = Path(__file__).resolve().parent / "data" / DEMO_NAME
 LFS_FIT = DATA_DIR / FIT_FILE
@@ -420,10 +430,10 @@ def save_and_sample_colors(
     load next run — including the uint8 quantization of the colors.
     Returns ``(stored_fit, colors)``.
     """
-    CACHE_FIT.parent.mkdir(parents=True, exist_ok=True)
+    LOCAL_FIT.parent.mkdir(parents=True, exist_ok=True)
     save_with_lod(
         fit,
-        CACHE_FIT,
+        LOCAL_FIT,
         # `stream`, not `levels`: the head IS a large orbited single object, but
         # the scene is built from explicit `centers=`/`amplitudes=` arrays plus
         # the per-splat colours sidecar, and `add_gsplats` writes a flat leaf —
@@ -438,13 +448,14 @@ def save_and_sample_colors(
         compress="zip",
         zip_deflate=True,
     )
-    stored = GSplatData.load(CACHE_FIT, include_stats=False)
+    stored = GSplatData.load(LOCAL_FIT, include_stats=False)
     with asection("Sampling per-splat colors from the RGB volume"):
         colors = sample_colors(rgb_vol, stored.centers)
-    _save_colors_u8(colors, CACHE_COLORS)
+    _save_colors_u8(colors, LOCAL_COLORS)
+    aprint(f"Cached the refit pair under {LOCAL_FIT.parent}")
     # Read the sidecar back so the recompute path matches the shipped/cached path
     # exactly (both render the quantized colors).
-    return stored, _load_colors_f32(CACHE_COLORS)
+    return stored, _load_colors_f32(LOCAL_COLORS)
 
 
 def fit_head(rgb_vol: np.ndarray, acquisition=None) -> tuple[GSplatData, np.ndarray]:
@@ -512,6 +523,14 @@ def load_or_build() -> tuple[GSplatData, np.ndarray]:
             colors = _load_colors_f32(CACHE_COLORS)
             if _colors_match_fit(fit, colors, f"{LFS_FIT} + {LFS_COLORS}"):
                 return fit, colors
+        # A pair this machine refitted earlier, in its own namespace — checked
+        # BEFORE refitting, which is what makes the refit below one-time.
+        if LOCAL_FIT.exists() and LOCAL_COLORS.exists():
+            aprint("  Using this machine's own earlier refit")
+            fit = GSplatData.load(LOCAL_FIT, include_stats=False)
+            colors = _load_colors_f32(LOCAL_COLORS)
+            if _colors_match_fit(fit, colors, f"{LOCAL_FIT} + {LOCAL_COLORS}"):
+                return fit, colors
         # A rejected pair triggers a FULL refit, not a cheap re-sample of the
         # assembled volume at the stored centers, even though that would be far
         # cheaper (no fit, just the ~1.1 GB assembly). The reason is that a
@@ -524,7 +543,7 @@ def load_or_build() -> tuple[GSplatData, np.ndarray]:
         aprint(
             "Precomputed fit not available (Git LFS assets not pulled, or the "
             "cached/shipped fit and its colors sidecar disagree). Falling back to "
-            "download + fit (one-time; result is cached)."
+            f"download + fit (one-time; cached under {LOCAL_FIT.parent})."
         )
 
     warn_if_no_cuda_gpu()

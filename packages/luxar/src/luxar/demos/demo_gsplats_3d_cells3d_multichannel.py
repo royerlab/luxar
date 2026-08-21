@@ -85,7 +85,6 @@ DEMO_META = {
     },
 }
 
-from pathlib import Path
 
 import numpy as np
 from arbol import Arbol, aprint, asection
@@ -95,6 +94,8 @@ from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import (
     launch_viewer,
     load_dataset_gsplats,
+    load_local_fit_gsplats,
+    local_fit_path,
     parse_demo_flags,
     require_module,
     warn_if_no_cuda_gpu,
@@ -127,8 +128,16 @@ CHANNELS = [
 # well-behaved if a brighter render is wanted.
 LAYER_INTENSITY = 0.4
 
-# Cache directory
-CACHE_DIR = Path.home() / ".cache" / "luxar" / "gsplats_cells3d"
+# Manifest dataset + the files it pins, one per channel. A local refit is OUR
+# artifact, not a copy of the hosted one, so it lives in the demo's local-fit
+# namespace (~/.cache/luxar/<name>/local/, see `local_fit_path`). Writing it to
+# ~/.cache/luxar/<name>/<file> — the path the manifest fetch owns — got it
+# quarantined on the next launch for failing the pinned sha256 (#1618).
+DEMO_NAME = "gsplats_cells3d"
+GSPLATS_FILES = [
+    "cells3d_ch0.gsplats.zarr.zip",
+    "cells3d_ch1.gsplats.zarr.zip",
+]
 
 # Parse command-line flags
 FLAGS = parse_demo_flags()
@@ -240,8 +249,8 @@ def fit_channel(volume, channel_name, cache_file, source_dtype=None):
 
     # Cache result in compressed zarr format (AUTO = certified near-lossless,
     # the current default; centers→u16, Cholesky→certified u8).
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    aprint(f"  Caching to {cache_file.name}")
+    cache_file.parent.mkdir(parents=True, exist_ok=True)
+    aprint(f"  Caching to {cache_file}")
     result.save(
         cache_file,
         encoding_mode=EncodingMode.AUTO,
@@ -260,7 +269,7 @@ def fit_all_channels(volumes, source_dtype=None):
 
         for i, (volume, ch_config) in enumerate(zip(volumes, CHANNELS)):
             ch_name = ch_config["name"]
-            cache_file = CACHE_DIR / f"cells3d_ch{i}.gsplats.zarr.zip"
+            cache_file = local_fit_path(DEMO_NAME, GSPLATS_FILES[i])
 
             with asection(f"Channel {i}: {ch_name}"):
                 gsplats = fit_channel(
@@ -412,16 +421,25 @@ def main():
         return
 
     # Try the manifest-driven fetch (checksum-verified cache -> in-repo -> Zenodo)
-    precomputed = load_dataset_gsplats(
-        "gsplats_cells3d",
-        ["cells3d_ch0.gsplats.zarr.zip", "cells3d_ch1.gsplats.zarr.zip"],
-        recompute=RECOMPUTE,
-    )
+    try:
+        precomputed = load_dataset_gsplats(
+            DEMO_NAME,
+            GSPLATS_FILES,
+            recompute=RECOMPUTE,
+        )
+    except FileNotFoundError as exc:
+        aprint(f"Manifest fetch unavailable ({exc}).")
+        precomputed = None
+    if precomputed is None and not RECOMPUTE:
+        # A fit this machine built earlier, in its own namespace — checked
+        # BEFORE refitting, which is what makes the refit below one-time.
+        precomputed = load_local_fit_gsplats(DEMO_NAME, GSPLATS_FILES)
 
     if precomputed is not None:
         gsplats_list = precomputed
     else:
-        # --recompute path: load raw data, fit from scratch
+        # --recompute path (or no data to be had): load raw data, fit from
+        # scratch, and cache the fits in the local-fit namespace.
         warn_if_no_cuda_gpu()
         volumes, source_dtype = load_cells3d()
         gsplats_list = fit_all_channels(volumes, source_dtype=source_dtype)

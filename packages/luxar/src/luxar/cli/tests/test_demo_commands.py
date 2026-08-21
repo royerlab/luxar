@@ -900,6 +900,39 @@ class TestCacheClearClassification:
         assert not corrupt_dl.exists()  # corrupt download cleared with downloads
         assert corrupt_pkl.exists()  # corrupt pickle preserved by --no-computed
 
+    def test_a_local_fit_is_computed_not_a_download(
+        self, runner, tmp_path, monkeypatch
+    ) -> None:
+        """``<cache>/local/`` holds a GPU refit, which ``--no-computed`` must spare.
+
+        It has no suffix that says so — it is named after the hosted artifact it
+        stands in for (#1618) — so classifying on the suffix alone swept away
+        minutes-to-hours of compute as if it were a re-downloadable file.
+        """
+        from luxar.utils.data_fetch import LOCAL_FIT_DIRNAME
+
+        monkeypatch.setattr("luxar.demos.registry.DEMO_CACHE_ROOT", tmp_path)
+        demo = next(d for d in iter_demos() if d.caches)
+        cdir = tmp_path / demo.caches[0]
+        (cdir / LOCAL_FIT_DIRNAME).mkdir(parents=True)
+        local_fit = cdir / LOCAL_FIT_DIRNAME / "fit.gsplats.zarr.zip"
+        local_fit.write_bytes(b"f" * 4096)
+        fetched = cdir / "fit.gsplats.zarr.zip"  # the manifest's own copy
+        fetched.write_bytes(b"m" * 2048)
+
+        result = runner.invoke(
+            app, ["demo", "cache", "clear", demo.key, "--no-computed", "--yes"]
+        )
+
+        assert result.exit_code == 0
+        assert local_fit.exists(), "--no-computed deleted a local fit"
+        assert not fetched.exists(), "the fetched copy is a download; it should go"
+
+        # And the default (both scopes) does clear it, labelled by its subdir so
+        # the two same-named files are distinguishable in the listing.
+        result = runner.invoke(app, ["demo", "cache", "clear", demo.key, "--dry-run"])
+        assert f"{LOCAL_FIT_DIRNAME}/fit.gsplats.zarr.zip" in result.stdout
+
 
 @pytest.mark.slow
 class TestRunRealSubprocess:

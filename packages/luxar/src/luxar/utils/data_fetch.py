@@ -27,6 +27,13 @@ authority at every step — a copy that fails it is quarantined, never returned:
 :class:`LocalComputeDataset`, signalling the caller to run its own
 fetch-raw-and-build path (these are the datasets we cannot redistribute, plus the
 cheap CPU-rebuild ones).
+
+A demo that builds its own stand-in for a hosted file (a local GPU refit, when
+the record is unpublished and the git-LFS object was never pulled) must NOT store
+it at ``<dataset>/<file>``: that path belongs to the manifest, and step 1 above
+quarantines anything sitting there that fails the pinned sha256 — which a local
+fit never matches. :func:`local_fit_path` gives such an artifact its own
+namespace, ``<dataset>/local/<file>``, which the fetch never looks at (#1618).
 """
 
 from __future__ import annotations
@@ -417,6 +424,128 @@ class _null_ctx:
     ) -> None:
         # Returning None (not False) so mypy knows exceptions are never swallowed.
         return None
+
+
+#: Subdirectory, inside a dataset's cache dir, holding artifacts the machine
+#: computed for itself rather than obtained from the manifest.
+LOCAL_FIT_DIRNAME = "local"
+
+
+def local_fit_path(
+    name: str,
+    filename: str,
+    *,
+    variant: Optional[str] = None,
+    cache_root: Optional[Path] = None,
+) -> Path:
+    """Where a demo's OWN locally computed stand-in for a hosted file belongs.
+
+    Returns ``<cache_root>/<name>/local/<filename>`` (plus the variant subdir
+    when one is given, mirroring :func:`ensure_dataset`'s layout).
+
+    The split exists because ``<name>/<filename>`` — with no ``local/`` in it —
+    is the path :func:`ensure_dataset` resolves for that manifest entry, and step
+    1 of :func:`_ensure_one` treats whatever it finds there as a candidate copy
+    of the HOSTED file: it hashes it against the manifest sha256 and QUARANTINES
+    it on a mismatch. A local fit is a different artifact that happens to answer
+    the same need, so it can never match that hash. Storing one under the hosted
+    name therefore guarantees it is destroyed by the next fetch, and the demo
+    refits from scratch on every single launch (#1618/#1672).
+
+    Nothing under ``local/`` is ever hashed, quarantined or overwritten by the
+    fetch — the cache dir is shared, the two namespaces are not.
+
+    Args:
+        name: Manifest dataset key, i.e. the cache-dir name (``"gsplats_dapi"``).
+        filename: Basename of the computed artifact. Deliberately allowed to be
+            the manifest's own file name: reusing it documents what the local
+            artifact stands in for, and is now safe.
+        variant: Size variant, for a dataset that has them; see
+            :func:`ensure_dataset`. ``None`` (every dataset that needs this
+            today) puts the file directly under ``<name>/local/``.
+        cache_root: Override the cache root (tests). Defaults to
+            ``~/.cache/luxar``.
+
+    Raises:
+        ValueError: if *variant* is ``"local"``, which is the one name that
+            would put a manifest destination and this namespace back on top of
+            each other. ``test_no_shipped_variant_is_named_local`` holds the
+            shipped manifest to it too, so the check can only fire on a hand
+            rolled call.
+    """
+    if variant == LOCAL_FIT_DIRNAME:
+        raise ValueError(
+            f"A variant named {LOCAL_FIT_DIRNAME!r} would collide with the "
+            "local-fit namespace: ensure_dataset caches a variant's files at "
+            f"<name>/<variant>/<file>, i.e. <name>/{LOCAL_FIT_DIRNAME}/<file> "
+            "— the very directory this namespace exists to keep out of its "
+            "reach. Rename the variant."
+        )
+    root = Path(cache_root) if cache_root else _DEFAULT_CACHE_ROOT
+    parts = [p for p in (name, variant, LOCAL_FIT_DIRNAME) if p]
+    return root.joinpath(*parts, filename)
+
+
+def load_local_fit_gsplats(
+    name: str,
+    file_names: list[str],
+    *,
+    variant: Optional[str] = None,
+    cache_root: Optional[Path] = None,
+    verbose: bool = True,
+) -> Optional[list[Any]]:
+    """Load a previous run's own local fit, or ``None`` if the caller must build it.
+
+    Same return contract as :func:`load_dataset_gsplats` — a list of
+    ``GSplatData`` in the requested order, or ``None`` meaning "build it
+    yourself" — but it reads the :func:`local_fit_path` namespace instead of the
+    manifest. A demo consults it AFTER the manifest fetch comes up empty and
+    BEFORE it refits, which is what makes the "one-time" refit actually one-time.
+
+    ``None`` is returned when any requested file is missing (a partial set is not
+    a usable answer: the caller refits, and the fit rewrites all of them), and
+    also when one of them fails to load.
+
+    A broken local file does NOT raise. Unlike the manifest cache, these bytes
+    have no checksum, no remote to re-fetch from and no second copy — the only
+    recovery is the refit the caller is already able to do, so raising would
+    strand a demo on rubble it can heal itself. It is reported loudly (⚠️, with
+    the path and the error) rather than silently: a fit that keeps re-running is
+    the bug this whole namespace exists to fix, so a machine that has quietly
+    started refitting every launch must be able to see why. The bad file is left
+    in place for inspection; the refit overwrites it.
+    """
+    from ..gsplats.gsplat_data import GSplatData
+
+    paths = [
+        local_fit_path(name, f, variant=variant, cache_root=cache_root)
+        for f in file_names
+    ]
+    missing = [p for p in paths if not p.exists()]
+    if missing:
+        if verbose and len(missing) < len(paths):
+            aprint(
+                f"Local fit for {name!r} is incomplete "
+                f"({len(paths) - len(missing)}/{len(paths)} files) — rebuilding."
+            )
+        return None
+
+    results: list[Any] = []
+    with asection(f"Loading local fit ({name})") if verbose else _null_ctx():
+        for path in paths:
+            try:
+                gsplats = GSplatData.load(path, include_stats=False)
+            except Exception as exc:  # noqa: BLE001 — see the docstring
+                aprint(
+                    f"⚠️  Local fit {path} could not be loaded ({exc!r}). "
+                    "Rebuilding it from scratch; delete the file if the rebuild "
+                    "keeps happening."
+                )
+                return None
+            if verbose:
+                aprint(f"Loaded {path.name}: {len(gsplats.amplitudes):,} splats")
+            results.append(gsplats)
+    return results
 
 
 #: Suffixes the gsplat loader understands. A dataset may legitimately carry
