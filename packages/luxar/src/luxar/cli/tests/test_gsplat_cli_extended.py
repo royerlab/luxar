@@ -2102,6 +2102,7 @@ class TestCompareCommand:
         )
 
         assert result.exit_code == 0, f"compare failed: {result.stdout}"
+        assert "Rendering on " in result.stdout
         assert "Rendering on auto" not in result.stdout
 
     def test_compare_basic(

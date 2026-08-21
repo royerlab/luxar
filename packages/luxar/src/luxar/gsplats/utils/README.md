@@ -14,7 +14,7 @@ This package provides low-level utilities for working with Gaussian splat parame
 - `validate_cholesky_shape(cholesky_factors, ndim, ...)` - Validate packed Cholesky factor shapes
 - `permute_cholesky_packed(packed, d, perm)` - Reorder dimensions of packed Cholesky factors
 - `embed_cholesky_packed(packed, d_src, d_dst, dim_mapping, ...)` - Embed lower-dim Cholesky into higher-dim space
-- `resolve_torch_device(device, use_cuda=True, use_metal=True)` - Shared PyTorch device auto-selection helper
+- `resolve_torch_device(device, use_cuda=True, use_metal=True)` - Shared PyTorch device auto-selection helper; `"auto"` is equivalent to `None`
 
 ## Installation
 

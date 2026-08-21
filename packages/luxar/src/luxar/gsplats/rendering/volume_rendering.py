@@ -95,7 +95,7 @@ def render_to_volume_tensor(
     # Use CUDA splatting backend if available — it's tiled, memory-efficient,
     # and much faster than the pure-PyTorch renderer (which creates massive
     # meshgrid intermediates that can OOM on large volumes).
-    if device == "cuda" or (isinstance(device, str) and device.startswith("cuda")):
+    if device.startswith("cuda"):
         try:
             from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
                 CUDA_BACKEND_AVAILABLE,

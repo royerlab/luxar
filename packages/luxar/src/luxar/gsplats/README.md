@@ -545,7 +545,7 @@ from luxar.gsplats.fit_gsplats import GaussianSplatFitter
 
 # Initialize fitter with specific device and options
 fitter = GaussianSplatFitter(
-    device="cuda",  # or "mps", "cpu"; None auto-selects CUDA → MPS → CPU
+    device="cuda",  # or "mps", "cpu"; None/"auto" selects CUDA → MPS → CPU
     enable_dynamic_ops=True,  # fixed-pool splat relocation during fitting (default)
 )
 
@@ -834,7 +834,7 @@ tensor = render_to_volume_tensor(gsplat_data, shape=(128, 128, 128), device="cud
 **Parameters** (shared by both functions):
 - `gsplat_data`: GSplatData to render
 - `shape`: Output volume shape, e.g. `(128, 128, 128)`
-- `device`: `"cuda"`, `"mps"`, `"cpu"`, or `None` (auto-detect)
+- `device`: `"cuda"`, `"mps"`, `"cpu"`, `"auto"`, or `None` (auto-detect)
 - `truncate`: Truncation radius in standard deviations (default `DEFAULT_TRUNCATION_RADIUS` = 2.75)
 - `intensity_floor`: Amplitude-aware culling threshold (default 1e-5)
 - `chunk_size`: Optional chunk size for memory management on large volumes
@@ -982,7 +982,7 @@ Main fitting function with automatic optimizations.
 - `sigma_min_diag`: Minimum Gaussian size per axis
 - `sigma_max_diag`: Maximum Gaussian size per axis
 - `early_stop_patience`: Iterations without improvement before stopping (default: 300)
-- `device`: PyTorch device (auto-detect if None)
+- `device`: PyTorch device (auto-detect if `None` or `"auto"`)
 
 **Returns:** `GSplatData` with fields:
 - `centers`: np.ndarray, shape (N, d) - Splat center positions
