@@ -81,10 +81,11 @@ from arbol import Arbol, aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import (
+    DatasetUnavailable,
     detect_device,
     launch_viewer,
     load_dataset_gsplats,
-    load_local_fit_gsplats,
+    load_local_fit_gsplats_at,
     local_fit_path,
     parse_demo_flags,
     parse_int_arg,
@@ -289,12 +290,15 @@ def load_or_build_gsplats() -> GSplatData:
             precomputed = load_dataset_gsplats(DEMO_NAME, [GSPLATS_FILE])
             if precomputed is not None:
                 return precomputed[0]
-        except FileNotFoundError:
+        except DatasetUnavailable:
             aprint("")
             aprint("Precomputed fit not available (Git LFS asset not pulled).")
         # A fit this machine built earlier, in its own namespace — checked
-        # BEFORE refitting, which is what makes the refit below one-time.
-        local = load_local_fit_gsplats(DEMO_NAME, [GSPLATS_FILE])
+        # BEFORE refitting, which is what makes the refit below one-time. Read
+        # through LOCAL_FIT, the same constant `fit_dust` writes through: a door
+        # that re-derives the path from the cache root instead is a second
+        # source of truth for it (#1618 review, A).
+        local = load_local_fit_gsplats_at([LOCAL_FIT], label=DEMO_NAME)
         if local is not None:
             return local[0]
         aprint(f"Falling back to download + fit (one-time; cached at {LOCAL_FIT}).")

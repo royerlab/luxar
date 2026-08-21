@@ -42,7 +42,9 @@ the Git LFS object was never pulled — writes it to the sibling namespace
 `luxar.utils.data_fetch.local_fit_path`, which the fetch never inspects. Under
 the hosted name it would be quarantined on the next launch and refitted every
 single time (#1618). `luxar demo cache clear` counts anything under `local/` as
-a *computed* artifact, so `--no-computed` spares it.
+a *computed* artifact, so `--no-computed` spares it — but only what is under
+`local/`: a computed artifact a demo writes directly into its cache dir is
+still classified as a download (see `demos/README.md`).
 
 Licenses split three ways: mostly CC0 / CC-BY / public domain; **CC BY-SA** for
 `gsplats_zebrafish` and `gsplats_opencell_map4` (the derived product must be

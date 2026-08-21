@@ -73,6 +73,28 @@ class DatasetNotFound(KeyError):
     """The dataset name is not present in the manifest."""
 
 
+class DatasetUnavailable(FileNotFoundError):
+    """A hosted dataset's bytes cannot be obtained from anywhere — yet.
+
+    The narrow, *routable* half of the ``FileNotFoundError`` surface: the
+    manifest lists no files for the entry yet (pending upload), or none of the
+    three sources holds a good copy and the record has no URL. Nothing is
+    broken; the data simply is not there, so a demo may legitimately fall back
+    to computing its own stand-in.
+
+    Every OTHER ``FileNotFoundError`` out of this module is a fault a demo must
+    NOT route around — an unknown file name requested of
+    :func:`load_dataset_gsplats`, a dataset that lists no gsplat file at all, a
+    missing packaged manifest (broken install), an in-repo copy that fails its
+    pinned sha256 with no hosted fallback. Those stay plain
+    ``FileNotFoundError``, so ``except DatasetUnavailable`` lets them through
+    instead of disguising them as a routine multi-minute refit.
+
+    Subclasses ``FileNotFoundError``, so a caller that does not care about the
+    distinction keeps working.
+    """
+
+
 class LocalComputeDataset(RuntimeError):
     """Dataset is not hosted — the demo must fetch its raw source and build it.
 
@@ -238,7 +260,12 @@ def ensure_dataset(
     Raises:
         DatasetNotFound: unknown dataset.
         LocalComputeDataset: dataset is local-compute/regenerate (or recompute=True).
-        FileNotFoundError: data is neither cached, in-repo, nor hosted yet.
+        DatasetUnavailable: data is neither cached, in-repo, nor hosted yet — the
+            one condition a caller may route around by building its own copy.
+        FileNotFoundError: a fault, not an absence — a missing packaged manifest,
+            or an in-repo copy that fails its sha256 with no hosted fallback.
+            :class:`DatasetUnavailable` subclasses this, so catch the subclass
+            when you mean "not there yet".
     """
     m = manifest or load_manifest()
     spec = dataset_spec(name, m)
@@ -252,7 +279,7 @@ def ensure_dataset(
     files, variant_name = resolve_variant(name, spec, variant)
     if not files:
         detail = f" variant {variant_name!r}" if variant_name else ""
-        raise FileNotFoundError(
+        raise DatasetUnavailable(
             f"Dataset {name!r}{detail} has no files listed in the manifest yet "
             "(pending upload). Nothing to fetch."
         )
@@ -396,13 +423,16 @@ def _ensure_one(
         return download_with_checksum(url, dest, expected_sha256=sha)
 
     if inrepo_is_bad:
+        # Deliberately NOT `DatasetUnavailable`: the bytes are RIGHT THERE and
+        # wrong. That is a broken checkout or a stale manifest, and a demo that
+        # swallowed it would present a repo fault as a routine refit.
         raise FileNotFoundError(
             f"{fname} is present in-repo but fails its manifest sha256, and the "
             "dataset has no Zenodo URL yet — there is no good copy to fall back "
             "to. Re-pull the LFS object, or regenerate the manifest if the data "
             "was intentionally updated."
         )
-    raise FileNotFoundError(
+    raise DatasetUnavailable(
         f"{fname} is not cached (any cached copy failed its checksum and was "
         "quarantined), not present in-repo (git lfs pull), and the demo-data "
         "manifest builds no Zenodo URL for it yet — its record has no id, or is "
@@ -514,33 +544,90 @@ def load_local_fit_gsplats(
     the bug this whole namespace exists to fix, so a machine that has quietly
     started refitting every launch must be able to see why. The bad file is left
     in place for inspection; the refit overwrites it.
-    """
-    from ..gsplats.gsplat_data import GSplatData
 
+    The ONE exception is a store that is structurally unloadable — a
+    ``kind=partition`` / non-leaf lod tree, which has no flat ``GSplatData``
+    form at all. See :func:`load_local_fit_gsplats_at`.
+    """
     paths = [
         local_fit_path(name, f, variant=variant, cache_root=cache_root)
         for f in file_names
     ]
+    return load_local_fit_gsplats_at(paths, label=name, verbose=verbose)
+
+
+#: Reported when a local fit is present but unreadable — corrupt bytes, a
+#: truncated zip, a half-written store. The refit is the recovery.
+_LOCAL_FIT_UNREADABLE = (
+    "⚠️  Local fit {path} could not be loaded ({exc}). Rebuilding it from "
+    "scratch; delete the file if the rebuild keeps happening."
+)
+
+
+def load_local_fit_gsplats_at(
+    paths: list[Path],
+    *,
+    label: str = "local fit",
+    verbose: bool = True,
+) -> Optional[list[Any]]:
+    """:func:`load_local_fit_gsplats` for paths the caller already holds.
+
+    The name-based form re-derives its paths from the cache root, which is the
+    right default but is NOT the same object as a demo's module-level
+    ``LOCAL_FIT`` constant. A demo that publishes such a constant — and writes
+    its refit through it — must READ through it too, or the two halves of its
+    local door can be pointed at different files (a redirected constant that the
+    read side silently ignores; #1618 review finding A). Those demos call this.
+
+    Args:
+        paths: The artifacts to load, in the order they should be returned.
+        label: What to call this set in log output (usually the dataset name).
+        verbose: Print progress.
+
+    Returns:
+        ``list[GSplatData]``, or ``None`` when the caller should rebuild.
+
+    Raises:
+        ValueError: the store is multi-part (``kind=partition`` or a lod group
+            with non-leaf children) and therefore has no flat ``GSplatData``
+            form. Deliberately NOT swallowed into a rebuild: the rebuild would
+            write the same unloadable shape, so the caller would refit on every
+            launch — exactly the #1618 symptom this namespace exists to end. It
+            is a recipe/loader mismatch in the demo, and only a code change
+            fixes it. :func:`load_dataset_gsplats` translates the same error.
+    """
+    from ..gsplats.gsplat_data import GSplatData
+
     missing = [p for p in paths if not p.exists()]
     if missing:
         if verbose and len(missing) < len(paths):
             aprint(
-                f"Local fit for {name!r} is incomplete "
+                f"Local fit for {label!r} is incomplete "
                 f"({len(paths) - len(missing)}/{len(paths)} files) — rebuilding."
             )
         return None
 
     results: list[Any] = []
-    with asection(f"Loading local fit ({name})") if verbose else _null_ctx():
+    with asection(f"Loading local fit ({label})") if verbose else _null_ctx():
         for path in paths:
             try:
                 gsplats = GSplatData.load(path, include_stats=False)
+            except ValueError as exc:
+                if "matrix-shaped" not in str(exc):
+                    aprint(_LOCAL_FIT_UNREADABLE.format(path=path, exc=repr(exc)))
+                    return None
+                raise ValueError(
+                    f"{path} is a multi-part gsplats store (a partition, or a lod "
+                    "group with non-leaf children), which has no flat GSplatData "
+                    f"form and cannot be loaded by this helper: {exc}\n"
+                    "Rebuilding it would write the same shape again and refit on "
+                    "EVERY launch, so this is raised rather than routed around. "
+                    "Either save the local fit with a flat recipe, or keep the "
+                    "PATHS and hand them to Group.add_gsplats_from_file(), which "
+                    "grafts a multi-part subtree whole."
+                ) from exc
             except Exception as exc:  # noqa: BLE001 — see the docstring
-                aprint(
-                    f"⚠️  Local fit {path} could not be loaded ({exc!r}). "
-                    "Rebuilding it from scratch; delete the file if the rebuild "
-                    "keeps happening."
-                )
+                aprint(_LOCAL_FIT_UNREADABLE.format(path=path, exc=repr(exc)))
                 return None
             if verbose:
                 aprint(f"Loaded {path.name}: {len(gsplats.amplitudes):,} splats")

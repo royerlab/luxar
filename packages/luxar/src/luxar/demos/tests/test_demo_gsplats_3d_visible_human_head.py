@@ -430,6 +430,31 @@ class TestRejectedPairFallsThroughToRefit:
         assert got_fit is not sentinel_fit, "an aligned pair triggered a refit"
         np.testing.assert_array_equal(got_colors, colors)
 
+    def test_a_corrupt_local_fit_self_heals_instead_of_raising(
+        self, tmp_path, monkeypatch, capsys
+    ) -> None:
+        """Rubble in the local-fit namespace must not brick every future launch.
+
+        These bytes have no checksum, no remote and no second copy — the reason
+        the LFS branch a few lines up copies atomically — so an unguarded
+        ``GSplatData.load`` here raised ``BadZipFile`` out of ``load_or_build``
+        on EVERY launch, with a manual delete as the only recovery. The refit
+        below already overwrites the file; it just has to be reached.
+        """
+        _, sentinel_fit, sentinel_colors = self._sentinel_setup(
+            tmp_path, monkeypatch, permute=False
+        )
+        _demo.LOCAL_FIT.write_bytes(b"a Ctrl-C mid-save, not a zip")
+
+        got_fit, got_colors = _demo.load_or_build()
+
+        assert got_fit is sentinel_fit, "a corrupt local fit was not healed"
+        assert got_colors is sentinel_colors
+        out = capsys.readouterr().out
+        assert "could not be loaded" in out and _demo.LOCAL_FIT.name in out, (
+            "the failure must be reported loudly, with the path and the error"
+        )
+
 
 class TestShippedLfsPairIsGuardedToo:
     """The SHIPPED (Git LFS) branch of ``load_or_build`` must run the guard too.

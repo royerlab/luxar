@@ -114,6 +114,7 @@ from arbol import Arbol, aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import UIConfig, ViewerConfig
 from luxar.demos import (
+    DatasetUnavailable,
     MissingDependencyError,
     ensure_dataset,
     launch_viewer,
@@ -350,6 +351,15 @@ def local_fit_paths() -> list[Path] | None:
     why ``load_local_fit_gsplats`` cannot serve this demo — see
     ``create_luxar_scene``). Consulted only when the manifest fetch came up
     empty, and BEFORE refitting, which is what makes the refit one-time.
+
+    Existence is the ONLY test, deliberately: the artifacts are handed to
+    ``add_gsplats_from_file`` unopened, so there is nothing here that could
+    judge them without paying the whole graft. A present-but-unusable file
+    (a Ctrl-C mid-save) therefore does NOT self-heal the way the single-leaf
+    demos' ``load_local_fit_gsplats`` door does — the graft raises later, naming
+    the path, and deleting that file (or ``--recompute``) is the recovery. The
+    trade is deliberate: silently refitting a 2-D whole-slide image because one
+    of three channels looked odd is the more expensive mistake.
     """
     paths = [local_fit_path(DATASET, name) for name in GSPLATS_FILES]
     return paths if all(p.exists() for p in paths) else None
@@ -697,6 +707,29 @@ def show_roundtrip_comparison(
 # =============================================================================
 
 
+def resolve_or_local() -> list[Path] | None:
+    """The manifest fetch, then this machine's own earlier refit; None ⇒ build it.
+
+    ``None`` under ``--recompute`` too, which is how ``main`` reaches its
+    fit-from-scratch branch.
+
+    Only ``DatasetUnavailable`` falls through to the local door — the narrow
+    "these bytes are not obtainable from anywhere yet" case. An unknown file
+    name, a missing packaged manifest or an in-repo copy failing its sha256 are
+    faults, and must not be disguised as a routine multi-minute refit.
+    """
+    if RECOMPUTE:
+        return None
+    try:
+        return resolve_data()
+    except DatasetUnavailable as exc:
+        aprint(f"Manifest fetch unavailable ({exc}).")
+        cache_paths = local_fit_paths()
+        if cache_paths is not None:
+            aprint(f"Reusing this machine's own refit in {cache_paths[0].parent}")
+        return cache_paths
+
+
 def main():
     """Main demo execution."""
     aprint("=" * 70)
@@ -729,15 +762,7 @@ def main():
     images = None
     gsplats_list: list[GSplatData] = []
 
-    cache_paths = None
-    if not RECOMPUTE:
-        try:
-            cache_paths = resolve_data()
-        except FileNotFoundError as exc:
-            aprint(f"Manifest fetch unavailable ({exc}).")
-            cache_paths = local_fit_paths()
-            if cache_paths is not None:
-                aprint(f"Reusing this machine's own refit in {cache_paths[0].parent}")
+    cache_paths = resolve_or_local()
 
     if cache_paths is None:
         # --recompute path (or no data to be had): download raw data, fit from

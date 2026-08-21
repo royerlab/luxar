@@ -54,6 +54,12 @@ separate namespace from the manifest's own `~/.cache/luxar/<dataset>/<file>`,
 which the fetch checksums and quarantines; a local fit stored under the hosted
 name is destroyed and recomputed on every launch (#1618). `demo cache clear`
 counts anything under `local/` as *computed*, so `--no-computed` spares it.
+That classification keys on the `local/` path and nothing else: a demo that
+still writes an expensive computed artifact straight into its cache dir — the
+NEXRAD per-frame fits, the C. elegans preprocessed frames — is classified as a
+download and IS deleted by `--no-computed`. Those names collide with no pinned
+manifest entry, so they are not exposed to the #1618 quarantine and were left
+where they are.
 
 Eleven gsplat demos also accept `--show-roundtrip`, which renders the fitted
 splats back and shows original / reconstruction / absolute-difference panels

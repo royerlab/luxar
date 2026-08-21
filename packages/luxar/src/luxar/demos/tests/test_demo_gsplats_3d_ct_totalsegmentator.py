@@ -574,7 +574,11 @@ class TestShippedLfsPairIsGuardedToo:
         monkeypatch.setattr(_demo, "LFS_LABELS", lfs_dir / _demo.LABELS_FILE)
 
         # …and make the OTHER two doors miss, so the LFS one is under test: no
-        # fetched dataset, no fetched sidecar, and no local refit either.
+        # fetched dataset, no fetched sidecar, and no local refit either. The
+        # last of those is only true because `load_or_build` reads the local pair
+        # through these constants; while it re-derived the path from the cache
+        # root instead, this redirect was inert and the door opened onto the
+        # developer's real ~/.cache (#1618 review, A).
         monkeypatch.setattr(
             _demo, "CACHE_LABELS", tmp_path / "cache" / _demo.LABELS_FILE
         )
@@ -613,3 +617,102 @@ class TestShippedLfsPairIsGuardedToo:
         got_fit, got_labels = _demo.load_or_build()
         assert got_fit is not sentinel_fit, "an aligned SHIPPED pair triggered a refit"
         np.testing.assert_array_equal(got_labels, labels)
+
+
+class TestTheLocalDoorOpensOnTheSecondLaunch:
+    """The headline behaviour of #1618, for the one demo with a PAIR of artifacts.
+
+    Every other test in this file drives ``load_or_build`` with a pre-planted
+    pair; none of them lets the demo write one and then find it again. The CT
+    demo is the interesting case because both halves — the fit and the labels
+    sidecar — have to land in, and be read back out of, the local-fit namespace,
+    and because its local door was the one that ignored its own ``LOCAL_FIT``
+    constant and read the developer's real ``~/.cache`` instead.
+
+    Stubbed: the manifest fetch (nothing hosted, nothing in-repo — the situation
+    that sends the demo down this path), the 3.2 GB TotalSegmentator download,
+    and the GPU fit. The save, the reload, the label sampling and the alignment
+    guard all run for real.
+    """
+
+    @staticmethod
+    def _setup(tmp_path, monkeypatch):
+        from luxar.demos import DatasetUnavailable
+
+        monkeypatch.setattr(_demo, "RECOMPUTE", False)
+        # BOTH halves redirected, and the door must honour them: the refit writes
+        # through these constants, so a read that re-derives its path from the
+        # cache root would reach past the redirect (#1618 review, A).
+        monkeypatch.setattr(_demo, "LOCAL_FIT", tmp_path / "local" / _demo.FIT_FILE)
+        monkeypatch.setattr(
+            _demo, "LOCAL_LABELS", tmp_path / "local" / _demo.LABELS_FILE
+        )
+        monkeypatch.setattr(
+            _demo, "CACHE_LABELS", tmp_path / "cache" / _demo.LABELS_FILE
+        )
+        monkeypatch.setattr(_demo, "LFS_FIT", tmp_path / "absent.gsplats.zarr.zip")
+        monkeypatch.setattr(_demo, "LFS_LABELS", tmp_path / "absent.npz")
+
+        def _nothing_hosted(*args, **kwargs):
+            raise DatasetUnavailable("no cached copy, no in-repo copy, no record")
+
+        monkeypatch.setattr(_demo, "load_dataset_gsplats", _nothing_hosted)
+        monkeypatch.setattr(_demo, "warn_if_no_cuda_gpu", lambda: None)
+        monkeypatch.setattr(_demo, "detect_device", lambda: "cpu")
+
+        rng = np.random.default_rng(41)
+        label_vol = rng.integers(0, 118, (16, 16, 16)).astype(np.int32)
+        downloads: list[int] = []
+        fits: list[int] = []
+
+        def _download():
+            downloads.append(1)
+            return np.zeros((16, 16, 16), dtype=np.float32), label_vol, None, None
+
+        def _fit(*args, **kwargs):
+            fits.append(1)
+            return _scattered_gsplat_data(6000, extent=15.49, seed=42)
+
+        monkeypatch.setattr(_demo, "load_ct_and_labels", _download)
+        import luxar.gsplats as _gsplats
+
+        monkeypatch.setattr(_gsplats, "fit_progressive_gaussian_splats", _fit)
+        return downloads, fits
+
+    def test_the_second_launch_reuses_the_first_launch_s_pair(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        downloads, fits = self._setup(tmp_path, monkeypatch)
+
+        first_fit, first_labels = _demo.load_or_build()
+        assert (downloads, fits) == ([1], [1]), "launch 1 should download and fit once"
+        assert _demo.LOCAL_FIT.exists() and _demo.LOCAL_LABELS.exists(), (
+            "launch 1 left an incomplete pair behind, so launch 2 must refit"
+        )
+
+        second_fit, second_labels = _demo.load_or_build()
+        assert fits == [1], "launch 2 refitted — the local door never opened"
+        assert downloads == [1], "launch 2 re-downloaded the 3.2 GB subset"
+        np.testing.assert_array_equal(second_fit.centers, first_fit.centers)
+        np.testing.assert_array_equal(second_labels, first_labels)
+
+    def test_a_missing_sidecar_sends_the_second_launch_back_to_the_refit(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """Half a pair is not a usable answer — and it is the CHEAP half checked first."""
+        _, fits = self._setup(tmp_path, monkeypatch)
+        _demo.load_or_build()
+        _demo.LOCAL_LABELS.unlink()
+
+        _demo.load_or_build()
+        assert fits == [1, 1], "a fit with no labels sidecar was rendered anyway"
+
+    def test_recompute_bypasses_the_local_door(self, tmp_path, monkeypatch) -> None:
+        """``--recompute`` must refit even with a perfectly good local pair present."""
+        _, fits = self._setup(tmp_path, monkeypatch)
+        _demo.load_or_build()
+        assert _demo.LOCAL_FIT.exists()
+
+        monkeypatch.setattr(_demo, "RECOMPUTE", True)
+        _demo.load_or_build()
+        assert fits == [1, 1], "--recompute reused the cached local pair"

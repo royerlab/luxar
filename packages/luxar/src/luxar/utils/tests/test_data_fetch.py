@@ -22,12 +22,14 @@ from luxar.utils.data_fetch import (
     LOCAL_FIT_DIRNAME,
     MANIFEST_PATH,
     DatasetNotFound,
+    DatasetUnavailable,
     LocalComputeDataset,
     clear_manifest_cache,
     dataset_spec,
     ensure_dataset,
     load_dataset_gsplats,
     load_local_fit_gsplats,
+    load_local_fit_gsplats_at,
     load_manifest,
     local_fit_path,
 )
@@ -634,6 +636,72 @@ def test_unknown_dataset_raises(fake_repo):
         ensure_dataset("nope", manifest=manifest, cache_root=cache, verbose=False)
 
 
+# --------------------------------------------------------------------------- #
+# DatasetUnavailable: the ONE FileNotFoundError a demo may route around
+# --------------------------------------------------------------------------- #
+def test_nothing_obtainable_anywhere_is_a_routable_absence(fake_repo):
+    """No cache, no in-repo copy, no record → the demo may build its own."""
+    manifest, cache = fake_repo
+    manifest["datasets"]["gsplats_toy"]["files"][0]["name"] = "absent.zip"
+    with pytest.raises(DatasetUnavailable):
+        ensure_dataset(
+            "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
+        )
+
+
+def test_a_pending_upload_entry_is_a_routable_absence(fake_repo):
+    """A dataset the manifest pins no files for yet is likewise just "not there"."""
+    manifest, cache = fake_repo
+    manifest["datasets"]["gsplats_toy"]["files"] = []
+    with pytest.raises(DatasetUnavailable, match="pending upload"):
+        ensure_dataset(
+            "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
+        )
+
+
+def test_a_bad_in_repo_copy_is_a_fault_not_an_absence(fake_repo):
+    """The bytes are RIGHT THERE and wrong — a broken checkout or stale manifest.
+
+    Nine demos wrap their fetch in ``except DatasetUnavailable`` and fall through
+    to a multi-minute refit. This must not be one of the things they swallow: it
+    would present a repo fault as a routine rebuild, forever.
+    """
+    manifest, cache = fake_repo
+    payload = data_fetch._DEMOS_DATA_DIR / "gsplats_toy" / "toy_ch0.gsplats.zarr.zip"
+    payload.write_bytes(b"toy-splat-BYTES")  # same length, different content
+
+    with pytest.raises(FileNotFoundError) as excinfo:
+        ensure_dataset(
+            "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
+        )
+    assert not isinstance(excinfo.value, DatasetUnavailable)
+
+
+def test_an_unknown_requested_file_is_a_fault_not_an_absence(fake_gsplats_repo):
+    """A file list that is not the manifest's is a bug in the demo, not missing data."""
+    manifest, cache = fake_gsplats_repo
+    with pytest.raises(FileNotFoundError) as excinfo:
+        load_dataset_gsplats(
+            "gsplats_toy",
+            ["invented_at_runtime.gsplats.zarr.zip"],
+            manifest=manifest,
+            cache_root=cache,
+            verbose=False,
+        )
+    assert not isinstance(excinfo.value, DatasetUnavailable)
+
+
+def test_a_missing_packaged_manifest_is_a_fault_not_an_absence(tmp_path):
+    """A broken install must not look like a demo whose data is not up yet."""
+    clear_manifest_cache()
+    try:
+        with pytest.raises(FileNotFoundError) as excinfo:
+            load_manifest(str(tmp_path / "no_such_manifest.json"))
+        assert not isinstance(excinfo.value, DatasetUnavailable)
+    finally:
+        clear_manifest_cache()
+
+
 def test_missing_and_unhosted_raises_clear_error(fake_repo):
     """No cache, no in-repo file, no Zenodo URL → actionable FileNotFoundError."""
     manifest, cache = fake_repo
@@ -1093,6 +1161,53 @@ def test_load_local_fit_reports_a_corrupt_file_and_returns_none(tmp_path, capsys
     assert out is None
     assert "could not be loaded" in capsys.readouterr().out
     assert path.is_file(), "the bad file is left in place for inspection"
+
+
+def test_load_local_fit_raises_on_a_multi_part_store(tmp_path):
+    """The one failure a rebuild cannot fix, so the one it must not hide.
+
+    A ``kind=partition`` / non-leaf lod tree has no flat ``GSplatData`` form at
+    all. Swallowed into ``None``, the caller refits — and the refit writes the
+    same unloadable shape, so the demo refits on EVERY launch: exactly the #1618
+    symptom this namespace exists to end, with a printed "delete the file if the
+    rebuild keeps happening" that cannot help. ``load_dataset_gsplats`` already
+    translates this error; so does its local sibling.
+    """
+    from luxar.demos._lod_policy import save_with_lod
+
+    path = local_fit_path("toy", "a.gsplats.zarr.zip", cache_root=tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    save_with_lod(
+        _tiny_gsplats(64),
+        path,
+        recipe="adaptive",
+        device="cpu",
+        quiet=True,
+        compress="zip",
+    )
+
+    with pytest.raises(ValueError, match="multi-part gsplats store"):
+        load_local_fit_gsplats(
+            "toy", ["a.gsplats.zarr.zip"], cache_root=tmp_path, verbose=False
+        )
+
+
+def test_load_local_fit_at_reads_the_paths_it_is_given(tmp_path):
+    """The path-based door does NOT re-derive anything from the cache root.
+
+    A demo that publishes a ``LOCAL_FIT`` constant writes its refit through it;
+    if the read door recomputed the path instead, the two halves could point at
+    different files and a redirected constant would be silently ignored — which
+    is what ct_totalsegmentator did (#1618 review, A).
+    """
+    elsewhere = tmp_path / "not" / "the" / "cache" / "fit.gsplats.zarr.zip"
+    elsewhere.parent.mkdir(parents=True)
+    _tiny_gsplats(7).save(elsewhere, ordering="none", compress="zip")
+
+    out = load_local_fit_gsplats_at([elsewhere], verbose=False)
+
+    assert out is not None and len(out[0].amplitudes) == 7
+    assert load_local_fit_gsplats_at([tmp_path / "absent.zip"], verbose=False) is None
 
 
 # --------------------------------------------------------------------------- #

@@ -13,11 +13,13 @@ See demos/README.md for more information on creating new demos.
 
 from ..utils.data_fetch import (
     DatasetNotFound,
+    DatasetUnavailable,
     LocalComputeDataset,
     dataset_spec,
     ensure_dataset,
     load_dataset_gsplats,
     load_local_fit_gsplats,
+    load_local_fit_gsplats_at,
     load_manifest,
     local_fit_path,
 )
@@ -58,6 +60,7 @@ from ._dependencies import (
 __all__ = [
     "INSTALL_SPECS",
     "DatasetNotFound",
+    "DatasetUnavailable",
     "DependencySpec",
     "DependencyStatus",
     "LocalComputeDataset",
@@ -78,6 +81,7 @@ __all__ = [
     "load_dataset_bundle",
     "load_dataset_gsplats",
     "load_local_fit_gsplats",
+    "load_local_fit_gsplats_at",
     "load_manifest",
     "load_precomputed_bundle",
     "load_precomputed_gsplats",

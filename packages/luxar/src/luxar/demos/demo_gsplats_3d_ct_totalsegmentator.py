@@ -93,11 +93,12 @@ from arbol import Arbol, aprint, asection
 from luxar import CameraConfig, Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import (
+    DatasetUnavailable,
     detect_device,
     is_lfs_pointer,
     launch_viewer,
     load_dataset_gsplats,
-    load_local_fit_gsplats,
+    load_local_fit_gsplats_at,
     local_fit_path,
     parse_demo_flags,
     require_module,
@@ -715,6 +716,39 @@ def save_and_sample_labels(
     return stored, labels
 
 
+def local_refit_pair() -> tuple[GSplatData, np.ndarray] | None:
+    """A pair THIS machine refitted earlier, or None if there is nothing usable.
+
+    Consulted after the manifest fetch and the shipped LFS assets, and BEFORE
+    refitting, which is what makes the refit one-time (#1618). It gets the same
+    alignment guard as every other source: the labels are indexed positionally,
+    and a half-written pair is exactly the case the guard is for.
+
+    Read through the ``LOCAL_FIT`` / ``LOCAL_LABELS`` constants, NOT through the
+    name-based ``load_local_fit_gsplats(DEMO_NAME, [FIT_FILE])``: the refit
+    WRITES through those constants, and a door that re-derives its own path from
+    the cache root instead is a second source of truth — it ignores a redirected
+    constant and reads the real ``~/.cache`` (#1618 review, A).
+
+    The sidecar is checked FIRST because it is a ``stat()`` and the fit is a
+    multi-hundred-megabyte zip decode: without both halves the pair is unusable
+    whichever one is missing, so there is nothing to pay for.
+    """
+    if not LOCAL_LABELS.exists():
+        return None
+    local = load_local_fit_gsplats_at([LOCAL_FIT], label=DEMO_NAME)
+    if local is None:
+        return None
+    try:
+        labels = _load_labels(LOCAL_LABELS)
+    except Exception as exc:  # noqa: BLE001 — a refit is the recovery
+        aprint(f"⚠️  Local labels {LOCAL_LABELS} unreadable ({exc!r}).")
+        return None
+    if not _labels_match_fit(local[0], labels, f"{LOCAL_FIT} + {LOCAL_LABELS}"):
+        return None
+    return local[0], labels
+
+
 def load_or_build() -> tuple[GSplatData, np.ndarray]:
     """Return (fit, per-splat labels), self-contained on a fresh system."""
     if not RECOMPUTE:
@@ -725,7 +759,7 @@ def load_or_build() -> tuple[GSplatData, np.ndarray]:
         # that same call.
         try:
             precomputed = load_dataset_gsplats(DEMO_NAME, [FIT_FILE], recompute=False)
-        except FileNotFoundError as exc:
+        except DatasetUnavailable as exc:
             aprint(f"Manifest fetch unavailable ({exc}).")
             precomputed = None
         if precomputed is not None and CACHE_LABELS.exists():
@@ -743,19 +777,10 @@ def load_or_build() -> tuple[GSplatData, np.ndarray]:
             if _labels_match_fit(fit, labels, f"{LFS_FIT} + {LFS_LABELS}"):
                 return fit, labels
         # A pair this machine refitted earlier, in its own namespace — checked
-        # BEFORE refitting, which is what makes the refit below one-time. It gets
-        # the same alignment guard as every other source: the labels are indexed
-        # positionally, and a half-written pair is exactly the case the guard is
-        # for.
-        local = load_local_fit_gsplats(DEMO_NAME, [FIT_FILE])
-        if local is not None and LOCAL_LABELS.exists():
-            try:
-                labels = _load_labels(LOCAL_LABELS)
-            except Exception as exc:  # noqa: BLE001 — a refit is the recovery
-                aprint(f"⚠️  Local labels {LOCAL_LABELS} unreadable ({exc!r}).")
-            else:
-                if _labels_match_fit(local[0], labels, f"{LOCAL_FIT} + {LOCAL_LABELS}"):
-                    return local[0], labels
+        # BEFORE refitting, which is what makes the refit below one-time.
+        pair = local_refit_pair()
+        if pair is not None:
+            return pair
         aprint(
             "Precomputed atlas not available (Git LFS assets not pulled, or the "
             "shipped fit and its labels sidecar disagree). Falling back to "

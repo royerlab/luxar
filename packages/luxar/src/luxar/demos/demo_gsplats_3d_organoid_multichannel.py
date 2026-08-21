@@ -132,6 +132,7 @@ from arbol import Arbol, aprint, asection
 from luxar import Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import (
+    DatasetUnavailable,
     launch_viewer,
     load_dataset_gsplats,
     load_local_fit_gsplats,
@@ -142,6 +143,7 @@ from luxar.demos import (
 from luxar.demos._roundtrip_common import show_roundtrip_comparison
 from luxar.encoding import EncodingMode
 from luxar.gsplats import fit_gaussian_splats
+from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.models.gsplats.metal import is_metal_available
 from luxar.utils.paths import get_demos_output_dir
 
@@ -536,6 +538,30 @@ Controls:
 # =============================================================================
 
 
+def resolve_gsplats() -> list[GSplatData] | None:
+    """The manifest fetch, then this machine's own earlier refit; None ⇒ build it.
+
+    Only ``DatasetUnavailable`` falls through to the local door — the narrow
+    "these bytes are not obtainable from anywhere yet" case. An unknown file
+    name, a missing packaged manifest or an in-repo copy failing its sha256 are
+    faults, and must not be disguised as a routine multi-minute refit.
+    """
+    try:
+        precomputed = load_dataset_gsplats(
+            DEMO_NAME,
+            GSPLATS_FILES,
+            recompute=RECOMPUTE,
+        )
+    except DatasetUnavailable as exc:
+        aprint(f"Manifest fetch unavailable ({exc}).")
+        precomputed = None
+    if precomputed is None and not RECOMPUTE:
+        # A fit this machine built earlier, in its own namespace — checked
+        # BEFORE refitting, which is what makes the refit one-time.
+        precomputed = load_local_fit_gsplats(DEMO_NAME, GSPLATS_FILES)
+    return precomputed
+
+
 def main():
     """Main demo execution."""
     aprint("=" * 70)
@@ -559,19 +585,7 @@ def main():
             return
 
     # Try the manifest-driven fetch (checksum-verified cache -> in-repo -> Zenodo)
-    try:
-        precomputed = load_dataset_gsplats(
-            DEMO_NAME,
-            GSPLATS_FILES,
-            recompute=RECOMPUTE,
-        )
-    except FileNotFoundError as exc:
-        aprint(f"Manifest fetch unavailable ({exc}).")
-        precomputed = None
-    if precomputed is None and not RECOMPUTE:
-        # A fit this machine built earlier, in its own namespace — checked
-        # BEFORE refitting, which is what makes the refit below one-time.
-        precomputed = load_local_fit_gsplats(DEMO_NAME, GSPLATS_FILES)
+    precomputed = resolve_gsplats()
 
     volumes = None
 

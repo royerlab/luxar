@@ -155,6 +155,7 @@ from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.demos import (
+    DatasetUnavailable,
     launch_viewer,
     load_dataset_gsplats,
     load_local_fit_gsplats,
@@ -581,7 +582,7 @@ def main():
             _PRECOMPUTED_FILE_NAMES,
             recompute=RECOMPUTE,
         )
-    except FileNotFoundError as exc:
+    except DatasetUnavailable as exc:
         aprint(f"Manifest fetch unavailable ({exc}).")
         gsplats_list = None
     if gsplats_list is None and not RECOMPUTE:

@@ -754,9 +754,10 @@ def cache_clear(
 ) -> None:
     """Clear demo caches (and optionally generated outputs), with fine-grained scope.
 
-    By default clears the input caches (downloads + computed pickles) under
-    ~/.cache/luxar/<name>/ for the selected demos. Nothing is deleted without
-    either --dry-run (preview) or a confirmation (or --yes).
+    By default clears the input caches under ~/.cache/luxar/<name>/ for the
+    selected demos: downloads, computed pickles, and anything in a demo's
+    local-fit namespace (``local/``). Nothing is deleted without either
+    --dry-run (preview) or a confirmation (or --yes).
     """
     import shutil
 

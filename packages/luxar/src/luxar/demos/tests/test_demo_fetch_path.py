@@ -189,23 +189,45 @@ def test_the_exception_list_is_exactly_the_local_compute_datasets() -> None:
 
 #: Callees a manifest-owned path may legitimately be handed to. Everything else
 #: fails, so a new writer is caught by DEFAULT rather than by being remembered.
-#: Add to this list only for something that cannot write the path, and say why.
+#: Add to this list only for something that cannot write the path, and say why —
+#: and add a case to :func:`test_the_guard_sees_every_path_shape_the_demos_use`
+#: that NEEDS the entry, or it is an untested widening of the gate. (Four
+#: entries — ``is_lfs_pointer``, ``aprint``, ``print``, ``str`` — were exactly
+#: that and have been dropped: nothing reaches them with a manifest-owned path,
+#: because an f-string interior is skipped and a wrapped path is still found
+#: inside the outer call's argument subtree.)
 _MANIFEST_PATH_READERS = frozenset(
     {
         "load",  # GSplatData.load / np.load
         "_load_labels",  # ct_totalsegmentator's npz reader
         "_load_colors_f32",  # visible_human_head's npz reader
-        "is_lfs_pointer",  # peeks at the first bytes
-        # visible_human_head copies its SHIPPED git-LFS pair into the manifest's
-        # own cache path. Those bytes ARE the hosted artifact — they match the
-        # pinned sha256 — so this is the one write that belongs there; it is
-        # exactly what step 2 of `_ensure_one` does itself.
-        "atomic_copy_file",
-        "aprint",  # logging
-        "print",
-        "str",
     }
 )
+
+#: ``Path`` methods that cannot write. A method call on a manifest-owned path
+#: whose name is not here is a write (``P.write_bytes(...)``, ``P.unlink()``)
+#: and is reported — a hole the first version of this gate had.
+_MANIFEST_PATH_READ_METHODS = frozenset(
+    {
+        "exists",
+        "is_file",
+        "is_dir",
+        "stat",
+        "resolve",
+        "absolute",
+        "as_posix",
+        "samefile",
+        "read_bytes",
+        "read_text",
+    }
+)
+
+#: Names that denote the shared cache ROOT, ``~/.cache/luxar``. A dataset's
+#: cache dir is one of these joined with the dataset name — the spelling
+#: ``demo_gsplats_4d_cell_tracking_challenge`` already uses
+#: (``registry.DEMO_CACHE_ROOT / DS``), which the literal-chain-only first
+#: version of this analysis could not see at all.
+_CACHE_ROOT_NAMES = frozenset({"DEMO_CACHE_ROOT", "_DEFAULT_CACHE_ROOT", "CACHE_ROOT"})
 
 
 def _local_consts(tree: ast.Module) -> dict[str, str | list[str]]:
@@ -257,23 +279,109 @@ def _as_str(node: ast.expr, consts: dict[str, str | list[str]]) -> str | None:
     return None
 
 
-def _cache_dirs(tree: ast.Module, consts: dict[str, str | list[str]]) -> dict[str, str]:
-    """``{name: dataset}`` for every ``Path.home() / ".cache" / "luxar" / <ds>``."""
-    out: dict[str, str] = {}
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Assign):
-            continue
-        chain = _div_chain(node.value)
-        literals = [_as_str(part, consts) for part in chain[1:]]
-        if ".cache" not in literals or "luxar" not in literals:
-            continue
-        dataset = literals[-1]
+def _base_atom(node: ast.expr) -> ast.expr:
+    """Strip attribute access and method calls down to the anchoring expression.
+
+    ``Path(__file__).resolve().parent`` → ``Path(__file__)``; ``Path.home()``
+    stays itself, since the call IS the anchor there.
+    """
+    while True:
+        if isinstance(node, ast.Attribute):
+            node = node.value
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            inner = node.func.value
+            if isinstance(inner, ast.Name):
+                return node  # Path.home(), Path.cwd()
+            node = inner  # a method in a chain: …resolve(), …absolute()
+        else:
+            return node
+
+
+#: What a directory expression is. ``("cache", ds)`` is the one the manifest
+#: owns; ``("root", None)`` is ``~/.cache/luxar`` itself; ``("packaged", None)``
+#: is the in-repo ``demos/data`` tree; ``("other", None)`` is a directory we can
+#: PROVE is neither; ``("unknown", None)`` is one we cannot classify — the state
+#: that used to be indistinguishable from "clean".
+DirKind = tuple[str, str | None]
+
+
+class _Ctx:
+    """Resolved module facts the directory classifier needs."""
+
+    def __init__(self, tree: ast.Module) -> None:
+        self.consts = _local_consts(tree)
+        self.dirs: dict[str, DirKind] = {}
+        # Assignments in source order, twice: a name may be used before the pass
+        # that classifies it has run (a helper defined above its constants).
+        assigns = [n for n in ast.walk(tree) if isinstance(n, ast.Assign)]
+        for _ in range(2):
+            for node in assigns:
+                kind = self.kind_of(node.value)
+                if kind[0] == "unknown":
+                    continue
+                for target in node.targets:
+                    if isinstance(target, ast.Name):
+                        self.dirs[target.id] = kind
+
+    def kind_of(self, node: ast.expr) -> DirKind:
+        return self._kind_of_parts(_div_chain(node))
+
+    def _kind_of_parts(self, parts: list[ast.expr]) -> DirKind:
+        # 1. An explicit `.cache`/`luxar` pair anywhere in the chain fixes the
+        #    root, whatever spelled it (`Path.home()`, an expanded env var, …).
+        lits = [_as_str(p, self.consts) for p in parts]
+        for i in range(len(parts) - 1):
+            if lits[i] == ".cache" and lits[i + 1] == "luxar":
+                return self._after_root(parts[i + 2 :])
+
+        head, rest = parts[0], parts[1:]
+
+        # 2. A name or attribute that IS the cache root (registry.DEMO_CACHE_ROOT).
+        if isinstance(head, ast.Attribute) and head.attr in _CACHE_ROOT_NAMES:
+            return self._after_root(rest)
+        if isinstance(head, ast.Name) and head.id in _CACHE_ROOT_NAMES:
+            return self._after_root(rest)
+
+        # 3. A name already bound to a classified directory.
+        if isinstance(head, ast.Name) and head.id in self.dirs:
+            return self._extend(self.dirs[head.id], rest)
+
+        # 4. A leftmost expression we can prove is not the cache: a `Path(...)`
+        #    call, i.e. an explicit filesystem anchor. `demos/data/...` (the
+        #    in-repo git-LFS tree) is called out so the one legitimate copy INTO
+        #    the manifest's path can be recognised by its source.
+        base = _base_atom(head)
+        if isinstance(base, ast.Call):
+            func = base.func
+            is_path_call = (isinstance(func, ast.Name) and func.id == "Path") or (
+                isinstance(func, ast.Attribute)
+                and isinstance(func.value, ast.Name)
+                and func.value.id == "Path"
+            )
+            if is_path_call:
+                return ("packaged" if "data" in lits else "other", None)
+
+        return ("unknown", None)
+
+    def _after_root(self, rest: list[ast.expr]) -> DirKind:
+        """Classify what follows ``~/.cache/luxar``."""
+        if not rest:
+            return ("root", None)
+        dataset = _as_str(rest[0], self.consts)
         if dataset is None:
-            continue
-        for target in node.targets:
-            if isinstance(target, ast.Name):
-                out[target.id] = dataset
-    return out
+            return ("unknown", None)
+        # `<root>/<ds>` is the manifest's dir; `<root>/<ds>/<sub>/…` is not
+        # (`local/` itself lands here, which is the whole point).
+        return ("cache", dataset) if len(rest) == 1 else ("other", None)
+
+    def _extend(self, kind: DirKind, rest: list[ast.expr]) -> DirKind:
+        if not rest:
+            return kind
+        if kind[0] == "root":
+            return self._after_root(rest)
+        if kind[0] == "cache":
+            return ("other", None)  # a subdirectory of the cache dir
+        return (kind[0], None)
 
 
 def _basenames(
@@ -302,26 +410,64 @@ def _basenames(
     return [], None
 
 
+def _pinned(datasets: dict, dataset: str) -> set[str]:
+    """File names the manifest pins for a ``zenodo`` dataset (empty otherwise)."""
+    spec = datasets.get(dataset)
+    if spec is None or spec.get("bucket") != "zenodo":
+        return set()
+    return {f["name"] for f in (spec.get("files") or [])}
+
+
+def _referenced_pinned(tree: ast.Module, datasets: dict) -> dict[str, str]:
+    """``{pinned file name: dataset}`` over every zenodo dataset the module names.
+
+    Keyed on the DATASET NAME rather than on a path spelling: whatever a demo
+    calls the directory, a pinned file name of a dataset it talks about is a
+    name the manifest owns somewhere. This is what lets an UNRESOLVABLE
+    directory still be reported instead of passing silently.
+    """
+    out: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            for name in _pinned(datasets, node.value):
+                out[name] = node.value
+    return out
+
+
 def _manifest_owned(
     node: ast.expr,
-    cache_dirs: dict[str, str],
-    consts: dict[str, str | list[str]],
+    ctx: _Ctx,
     datasets: dict,
-) -> tuple[str, list[str]] | None:
-    """``(dataset, pinned names matched)`` if *node* builds a manifest dest."""
+    referenced: dict[str, str],
+) -> tuple[str, str, list[str]] | None:
+    """``(kind, dataset, names)`` if *node* builds — or may build — a manifest dest.
+
+    *kind* is ``"owned"`` when the directory resolves to the manifest's own
+    ``<root>/<dataset>``, and ``"blind"`` when the directory could not be
+    classified at all but the basename is one this demo's own dataset pins.
+    """
     chain = _div_chain(node)
-    if len(chain) != 2 or not isinstance(chain[0], ast.Name):
+    if len(chain) < 2:
         return None
-    dataset = cache_dirs.get(chain[0].id)
-    spec = datasets.get(dataset or "")
-    if spec is None or spec.get("bucket") != "zenodo":
+    dir_kind, dataset = ctx._kind_of_parts(chain[:-1])
+    if dir_kind not in ("cache", "unknown"):
         return None
-    pinned = {f["name"] for f in (spec.get("files") or [])}
-    names, pattern = _basenames(chain[1], consts)
-    matched = {n for n in names if n in pinned}
+    names, pattern = _basenames(chain[-1], ctx.consts)
+
+    if dir_kind == "cache":
+        assert dataset is not None
+        pinned = _pinned(datasets, dataset)
+        matched = {n for n in names if n in pinned}
+        if pattern is not None:
+            matched |= {p for p in pinned if pattern.match(p)}
+        return ("owned", dataset, sorted(matched)) if matched else None
+
+    hits = {n: referenced[n] for n in names if n in referenced}
     if pattern is not None:
-        matched |= {p for p in pinned if pattern.match(p)}
-    return (dataset, sorted(matched)) if matched else None  # type: ignore[return-value]
+        hits |= {p: ds for p, ds in referenced.items() if pattern.match(p)}
+    if not hits:
+        return None
+    return ("blind", sorted(set(hits.values()))[0], sorted(hits))
 
 
 def _searchable(args: list[ast.expr]) -> list[ast.expr]:
@@ -342,71 +488,158 @@ def _searchable(args: list[ast.expr]) -> list[ast.expr]:
     return out
 
 
-def local_fit_violations(source: str, datasets: dict) -> list[str]:
-    """Manifest-owned paths handed to something that is not a known reader.
+def analyse_local_fit(source: str, datasets: dict) -> tuple[list[str], list[str]]:
+    """``(violations, blind spots)`` — manifest-owned paths handed to a writer.
 
     Two-step, because construction alone is legal: ``ct_totalsegmentator`` builds
     ``CACHE_LABELS`` to READ the sidecar the fetch brought down.
 
       1. Bind every name assigned a ``<manifest cache dir> / <pinned file>``
-         expression (and note the inline ones).
-      2. Report each use of such a name (or expression) as a call argument,
-         unless the callee is in :data:`_MANIFEST_PATH_READERS`.
+         expression (and note the inline ones, and plain ``q = P`` aliases).
+      2. Report each use of such a name (or expression) as a call argument — or
+         as the receiver of a writing method — unless the callee is in
+         :data:`_MANIFEST_PATH_READERS`.
 
-    An argument is searched as a subtree, so a wrapper (``save(str(P))``) does
-    not launder the path — except inside an f-string, which is text and never a
-    write target, and is skipped so an error message may quote the path.
+    A directory is resolved through :class:`_Ctx`, which knows four spellings of
+    the cache dir: the literal ``Path.home() / ".cache" / "luxar" / <ds>`` chain,
+    a ``<CACHE ROOT NAME> / <ds>`` join (``registry.DEMO_CACHE_ROOT``,
+    ``_DEFAULT_CACHE_ROOT``), a name bound to either, and a name bound to a name
+    bound to either.
 
-    What it CANNOT see, honestly: a path laundered through another variable
-    (``p = CACHE_FILE; save(p)``), one built from a runtime value that is not a
-    module constant, one assembled with ``os.path.join`` or ``.with_name()``,
-    and any write that does not go through a call argument. It is a gate against
-    the shapes the demos use, not a proof.
+    A directory it CANNOT classify does not pass silently — that was the second
+    half of the hole. A pinned basename joined to an unknown directory is
+    returned as a BLIND SPOT: not proof of a squat, but proof that the gate
+    cannot vouch for the demo, which is a reviewable state rather than a green
+    tick. (A directory the analysis can prove is NOT the cache — a
+    ``Path(__file__)``-rooted packaged-data path, a subdirectory of the cache dir
+    — is neither.)
+
+    What it still CANNOT see, honestly: a path built from a runtime value that
+    is not a module constant, one assembled with ``os.path.join`` or
+    ``.with_name()``, and any write that goes through neither a call argument nor
+    a method on the path. ``atomic_copy_file`` is allowed to write a
+    manifest-owned destination when its SOURCE is the in-repo packaged-data tree
+    — that is ``visible_human_head`` promoting its shipped git-LFS pair, bytes
+    that DO match the pinned sha256, exactly as step 2 of ``_ensure_one`` does —
+    so a copy from a packaged path is the one write this gate permits by
+    construction; from anywhere else it is reported. It is a gate against the
+    shapes the demos use, not a proof.
     """
     tree = ast.parse(source)
-    consts = _local_consts(tree)
-    cache_dirs = _cache_dirs(tree, consts)
-    if not cache_dirs:
-        return []
+    ctx = _Ctx(tree)
+    referenced = _referenced_pinned(tree, datasets)
+    owned_names = _owned_names(tree, ctx, datasets, referenced)
 
-    owned_names: dict[str, tuple[str, list[str]]] = {}
+    found: dict[str, list[str]] = {"owned": [], "blind": []}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            _scan_call(node, ctx, datasets, referenced, owned_names, found)
+    return found["owned"], found["blind"]
+
+
+def _owned_names(
+    tree: ast.Module, ctx: _Ctx, datasets: dict, referenced: dict[str, str]
+) -> dict[str, tuple[str, str, list[str]]]:
+    """Names bound to a manifest-owned (or unvouched-for) path, aliases included."""
+    owned_names: dict[str, tuple[str, str, list[str]]] = {}
+    aliases: list[tuple[str, str]] = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Assign):
             continue
-        owned = _manifest_owned(node.value, cache_dirs, consts, datasets)
-        if owned is None:
-            continue
+        owned = _manifest_owned(node.value, ctx, datasets, referenced)
         for target in node.targets:
-            if isinstance(target, ast.Name):
+            if not isinstance(target, ast.Name):
+                continue
+            if owned is not None:
                 owned_names[target.id] = owned
+            elif isinstance(node.value, ast.Name):
+                aliases.append((target.id, node.value.id))
+    # `q = P; save(q)` — laundering through a second name was a documented hole.
+    for _ in range(len(aliases)):
+        for dst, src in aliases:
+            if src in owned_names and dst not in owned_names:
+                owned_names[dst] = owned_names[src]
+    return owned_names
 
-    violations: list[str] = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        func = node.func
-        callee = (
-            func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+
+def _describe(kind: str, dataset: str, matched: list[str], what: str) -> str:
+    if kind == "owned":
+        where = (
+            f"~/.cache/luxar/{dataset}/{{{', '.join(matched)}}} — the path the "
+            f"manifest fetch owns for {dataset!r}"
         )
-        if callee in _MANIFEST_PATH_READERS:
-            continue
-        args = list(node.args) + [kw.value for kw in node.keywords]
-        for arg in _searchable(args):
-            if isinstance(arg, ast.Name) and arg.id in owned_names:
-                dataset, matched = owned_names[arg.id]
-                where = f"{arg.id} (line {node.lineno})"
-            else:
-                owned = _manifest_owned(arg, cache_dirs, consts, datasets)
-                if owned is None:
-                    continue
-                dataset, matched = owned
-                where = f"an inline path (line {node.lineno})"
-            violations.append(
-                f"{callee}() is handed {where}, which resolves to "
-                f"~/.cache/luxar/{dataset}/{{{', '.join(matched)}}} — the path "
-                f"the manifest fetch owns for {dataset!r}"
+    else:
+        where = (
+            f"a directory this analysis cannot identify, joined with "
+            f"{{{', '.join(matched)}}} — name(s) the manifest pins for "
+            f"{dataset!r}, so it may or may not be the fetch's own path"
+        )
+    return f"{what} is handed {where}"
+
+
+def _scan_call(
+    node: ast.Call,
+    ctx: _Ctx,
+    datasets: dict,
+    referenced: dict[str, str],
+    owned_names: dict[str, tuple[str, str, list[str]]],
+    found: dict[str, list[str]],
+) -> None:
+    """Record every manifest-owned path this one call could write."""
+
+    def resolve(arg: ast.expr) -> tuple[str, str, list[str], str] | None:
+        if isinstance(arg, ast.Name) and arg.id in owned_names:
+            kind, dataset, matched = owned_names[arg.id]
+            return kind, dataset, matched, arg.id
+        owned = _manifest_owned(arg, ctx, datasets, referenced)
+        return None if owned is None else (*owned, "an inline path")
+
+    func = node.func
+    callee = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+
+    # `P.write_bytes(blob)` / `P.unlink()`: the path is the RECEIVER, not an
+    # argument, so the argument scan below cannot see it.
+    if isinstance(func, ast.Attribute) and callee not in _MANIFEST_PATH_READ_METHODS:
+        hit = resolve(func.value)
+        if hit is not None:
+            kind, dataset, matched, what = hit
+            found[kind].append(
+                _describe(
+                    kind, dataset, matched, f"{what}.{callee}() (line {node.lineno})"
+                )
             )
-    return violations
+
+    if callee in _MANIFEST_PATH_READERS:
+        return
+    if (
+        callee == "atomic_copy_file"
+        and node.args
+        and ctx.kind_of(node.args[0])[0] == "packaged"
+    ):
+        return  # in-repo git-LFS promotion; see analyse_local_fit's docstring
+    args = list(node.args) + [kw.value for kw in node.keywords]
+    for arg in _searchable(args):
+        hit = resolve(arg)
+        if hit is None:
+            continue
+        kind, dataset, matched, what = hit
+        found[kind].append(
+            _describe(
+                kind, dataset, matched, f"{what} ({callee}(), line {node.lineno})"
+            )
+        )
+
+
+def local_fit_violations(source: str, datasets: dict) -> list[str]:
+    """Just the confirmed squats — see :func:`analyse_local_fit`."""
+    return analyse_local_fit(source, datasets)[0]
+
+
+#: Demos whose local-artifact writes this analysis cannot vouch for, with the
+#: reason. Empty, and held empty by
+#: :func:`test_the_unanalysable_demo_list_is_exactly_right` — "the gate could not
+#: see this file" is an enumerated state, not a silent pass.
+_ANALYSIS_BLIND_SPOTS: dict[str, str] = {}
 
 
 @pytest.mark.parametrize("path", DEMO_PATHS, ids=lambda p: p.stem)
@@ -417,10 +650,16 @@ def test_a_local_artifact_never_squats_a_manifest_pinned_path(path: Path) -> Non
     each used to pass a ``CACHE_DIR / <pinned name>`` path to ``save``,
     ``save_with_lod`` or an ``_save_*`` sidecar writer, and every one of those
     call shapes is caught — verified by running this analysis over all eleven
-    pre-fix sources (see :func:`local_fit_violations` for what is and is not
+    pre-fix sources (see :func:`analyse_local_fit` for what is and is not
     visible to a static pass).
+
+    Five of those demos no longer bind a cache dir at all, which used to make
+    this test pass *unconditionally* for them: the analysis bailed out on an
+    empty cache-dir map and returned no violations whether or not there was
+    anything wrong. It no longer bails, and the blind-spot half below turns
+    "nothing I could analyse" into a reportable state.
     """
-    violations = local_fit_violations(path.read_text(), _manifest())
+    violations, blind = analyse_local_fit(path.read_text(), _manifest())
     assert not violations, (
         f"{path.name}: "
         + "; ".join(violations)
@@ -429,6 +668,36 @@ def test_a_local_artifact_never_squats_a_manifest_pinned_path(path: Path) -> Non
         "(#1618). Write it to luxar.utils.data_fetch.local_fit_path(<dataset>, "
         "<file>) instead. If the call really only READS the fetched file, add "
         "its name to _MANIFEST_PATH_READERS with a reason."
+    )
+    if path.stem in _ANALYSIS_BLIND_SPOTS:
+        return
+    assert not blind, (
+        f"{path.name}: "
+        + "; ".join(blind)
+        + ". Spell the directory in a way this gate can resolve (a "
+        "`~/.cache/luxar/<ds>` chain, or a join onto DEMO_CACHE_ROOT / "
+        "_DEFAULT_CACHE_ROOT), or — if the path really is not the fetch's — add "
+        "the demo to _ANALYSIS_BLIND_SPOTS with a reason a reviewer can check."
+    )
+
+
+def test_the_unanalysable_demo_list_is_exactly_right() -> None:
+    """``_ANALYSIS_BLIND_SPOTS`` names every demo the gate cannot vouch for.
+
+    The same shape as ``test_the_exception_list_is_exactly_the_local_compute_datasets``
+    above, and for the same reason: an exemption that is not enumerated is
+    indistinguishable from a demo that passed.
+    """
+    datasets = _manifest()
+    unanalysable = {
+        path.stem
+        for path in DEMO_PATHS
+        if analyse_local_fit(path.read_text(), datasets)[1]
+    }
+    assert unanalysable == set(_ANALYSIS_BLIND_SPOTS), (
+        "the set of demos this gate cannot analyse changed; every entry in "
+        "_ANALYSIS_BLIND_SPOTS must be a demo that really is unanalysable, and "
+        "every unanalysable demo must be listed there with a reason"
     )
 
 
@@ -481,6 +750,47 @@ def test_the_guard_sees_every_path_shape_the_demos_use() -> None:
         header + 'OUT = CACHE_DIR / "toy_ch0.zip"\nsave_with_lod(fit, str(OUT))\n',
         datasets,
     )
+    # 7. A second NAME must not launder it either (`q = P; save(q)`).
+    assert local_fit_violations(
+        header + 'P = CACHE_DIR / "toy_ch0.zip"\nq = P\nsave_with_lod(fit, q)\n',
+        datasets,
+    )
+    # 8. A write through a method ON the path, where it is the receiver.
+    assert local_fit_violations(
+        header + 'P = CACHE_DIR / "toy_ch0.zip"\nP.write_bytes(blob)\n', datasets
+    )
+    # 9. The `registry.DEMO_CACHE_ROOT / DS` head — the spelling
+    #    demo_gsplats_4d_cell_tracking_challenge already uses, and the one the
+    #    literal-chain-only version of this analysis was blind to.
+    assert local_fit_violations(
+        'from luxar.demos import registry\nDS = "toy_ds"\n'
+        "CACHE_DIR = registry.DEMO_CACHE_ROOT / DS\n"
+        'save_with_lod(fit, CACHE_DIR / "toy_ch0.zip")\n',
+        datasets,
+    )
+    # 10. …and the bare-name form of the same root.
+    assert local_fit_violations(
+        'from luxar.demos.registry import DEMO_CACHE_ROOT\nDS = "toy_ds"\n'
+        'save_with_lod(fit, DEMO_CACHE_ROOT / DS / "toy_ch0.zip")\n',
+        datasets,
+    )
+    # 11. A demo with NO cache-dir constant at all: the whole chain inline.
+    assert local_fit_violations(
+        'from pathlib import Path\nDS = "toy_ds"\n'
+        'save_with_lod(fit, Path.home() / ".cache" / "luxar" / DS / "toy_ch0.zip")\n',
+        datasets,
+    )
+    # 12. A cache dir bound indirectly, through another name.
+    assert local_fit_violations(
+        header + 'D = CACHE_DIR\nsave_with_lod(fit, D / "toy_ch0.zip")\n', datasets
+    )
+    # 13. An `atomic_copy_file` whose SOURCE is not the packaged tree is a write
+    #     like any other — only the in-repo git-LFS promotion is exempt.
+    assert local_fit_violations(
+        header
+        + 'atomic_copy_file(local_fit_path(DS, "toy_ch0.zip"), CACHE_DIR / "toy_ch0.zip")\n',
+        datasets,
+    )
 
     # And the negatives: the fixed shape, a READ of the fetched file, a file the
     # manifest does not pin, and a dataset the checksum gate never touches.
@@ -503,6 +813,57 @@ def test_the_guard_sees_every_path_shape_the_demos_use() -> None:
         'save_with_lod(fit, CACHE_DIR / "toy_ch0.zip")\n',
         datasets,
     )
+    # A non-writing method on the path (the existence probe every demo makes).
+    assert not local_fit_violations(
+        header + 'P = CACHE_DIR / "toy_ch0.zip"\nif P.exists():\n    pass\n', datasets
+    )
+    # The one permitted write: promoting the in-repo git-LFS copy, whose bytes
+    # ARE the hosted artifact (what visible_human_head does).
+    assert not local_fit_violations(
+        header + 'DATA_DIR = Path(__file__).parent / "data" / DS\n'
+        'LFS = DATA_DIR / "toy_ch0.zip"\natomic_copy_file(LFS, CACHE_DIR / "toy_ch0.zip")\n',
+        datasets,
+    )
+    # The local-fit namespace itself is a SUBDIRECTORY of the cache dir, not the
+    # manifest's own path — the distinction the whole fix rests on.
+    assert not local_fit_violations(
+        header + 'save_with_lod(fit, CACHE_DIR / "local" / "toy_ch0.zip")\n', datasets
+    )
+
+
+def test_the_guard_reports_a_directory_it_cannot_identify() -> None:
+    """An unresolvable directory is a BLIND SPOT, never a silent pass.
+
+    This is the half that makes the gate hold against a spelling nobody has
+    thought of: it keys on the DATASET NAME (a file name that dataset pins),
+    not on the path spelling, so a directory built any way at all still gets
+    reported as unvouched-for rather than green.
+    """
+    datasets = {
+        "toy_ds": {"bucket": "zenodo", "files": [{"name": "toy_ch0.zip"}]},
+    }
+    violations, blind = analyse_local_fit(
+        'DS = "toy_ds"\nD = some_helper(DS)\nsave_with_lod(fit, D / "toy_ch0.zip")\n',
+        datasets,
+    )
+    assert not violations
+    assert blind and "toy_ds" in blind[0]
+
+    # A directory the analysis can PROVE is not the cache is not a blind spot.
+    _, blind_packaged = analyse_local_fit(
+        'from pathlib import Path\nDS = "toy_ds"\n'
+        'D = Path(__file__).parent / "data" / DS\nsave_with_lod(fit, D / "toy_ch0.zip")\n',
+        datasets,
+    )
+    assert not blind_packaged
+
+    # Nor is an unresolvable directory joined with a name the manifest does not
+    # pin — a demo's own scratch file is nobody's business.
+    _, blind_unpinned = analyse_local_fit(
+        'DS = "toy_ds"\nD = some_helper(DS)\nsave_with_lod(fit, D / "scratch.zip")\n',
+        datasets,
+    )
+    assert not blind_unpinned
 
 
 def test_no_shipped_variant_is_named_local() -> None:

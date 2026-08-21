@@ -106,6 +106,7 @@ from luxar.demos import (
     detect_device,
     is_lfs_pointer,
     launch_viewer,
+    load_local_fit_gsplats_at,
     local_fit_path,
     parse_demo_flags,
     voxel_sampled_payload_agreement,
@@ -490,6 +491,40 @@ def fit_head(rgb_vol: np.ndarray, acquisition=None) -> tuple[GSplatData, np.ndar
     return save_and_sample_colors(result, rgb_vol)
 
 
+def local_refit_pair() -> tuple[GSplatData, np.ndarray] | None:
+    """A pair THIS machine refitted earlier, or None if there is nothing usable.
+
+    Consulted after the fetched cache and the shipped LFS assets, and BEFORE
+    refitting, which is what makes the refit one-time (#1618).
+
+    Guarded, unlike the two doors above it, for the reason the comment at the LFS
+    branch gives: these bytes have no checksum, no remote and no second copy, so
+    a truncated zip here (a Ctrl-C mid-save) would otherwise raise ``BadZipFile``
+    out of :func:`load_or_build` on EVERY launch with a manual delete as the only
+    recovery. ``load_local_fit_gsplats_at`` reports the path and the error and
+    returns None; the refit then overwrites the rubble.
+
+    Read through the ``LOCAL_*`` constants, which is also what the refit WRITES
+    through — a door that re-derived its path from the cache root would be a
+    second source of truth for it (#1618 review, A). The sidecar is checked first
+    because it is a ``stat()`` and the fit is a large zip decode.
+    """
+    if not LOCAL_COLORS.exists():
+        return None
+    local = load_local_fit_gsplats_at([LOCAL_FIT], label=DEMO_NAME)
+    if local is None:
+        return None
+    aprint("  Using this machine's own earlier refit")
+    try:
+        colors = _load_colors_f32(LOCAL_COLORS)
+    except Exception as exc:  # noqa: BLE001 — a refit is the recovery
+        aprint(f"⚠️  Local colors {LOCAL_COLORS} unreadable ({exc!r}).")
+        return None
+    if not _colors_match_fit(local[0], colors, f"{LOCAL_FIT} + {LOCAL_COLORS}"):
+        return None
+    return local[0], colors
+
+
 def load_or_build() -> tuple[GSplatData, np.ndarray]:
     """Return (fit, per-splat colors), self-contained on a fresh system."""
     if not RECOMPUTE:
@@ -525,12 +560,9 @@ def load_or_build() -> tuple[GSplatData, np.ndarray]:
                 return fit, colors
         # A pair this machine refitted earlier, in its own namespace — checked
         # BEFORE refitting, which is what makes the refit below one-time.
-        if LOCAL_FIT.exists() and LOCAL_COLORS.exists():
-            aprint("  Using this machine's own earlier refit")
-            fit = GSplatData.load(LOCAL_FIT, include_stats=False)
-            colors = _load_colors_f32(LOCAL_COLORS)
-            if _colors_match_fit(fit, colors, f"{LOCAL_FIT} + {LOCAL_COLORS}"):
-                return fit, colors
+        pair = local_refit_pair()
+        if pair is not None:
+            return pair
         # A rejected pair triggers a FULL refit, not a cheap re-sample of the
         # assembled volume at the stored centers, even though that would be far
         # cheaper (no fit, just the ~1.1 GB assembly). The reason is that a

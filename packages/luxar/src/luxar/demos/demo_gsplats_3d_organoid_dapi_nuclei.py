@@ -111,7 +111,8 @@ Use --recompute to re-fit from scratch (requires network + GPU).
 
 Output:
     - Scene saved to: demos/gsplats_3d_organoid_dapi_nuclei.luxar.zarr
-    - Cache saved to: ~/.cache/luxar/gsplats_dapi/dapi.gsplats.zarr.zip
+    - Local refit cached to: ~/.cache/luxar/gsplats_dapi/local/dapi.gsplats.zarr.zip
+      (the fetched copy lands beside it, at ~/.cache/luxar/gsplats_dapi/)
     - Automatically opens in your browser on the demo's own derived port
 
 Controls:
@@ -151,9 +152,10 @@ DEMO_META = {
 import os
 
 from luxar.demos import (
+    DatasetUnavailable,
     launch_viewer,
     load_dataset_gsplats,
-    load_local_fit_gsplats,
+    load_local_fit_gsplats_at,
     local_fit_path,
     parse_demo_flags,
     warn_if_no_cuda_gpu,
@@ -603,6 +605,33 @@ def serve_scene(scene_path):
 # =============================================================================
 
 
+def resolve_gsplats() -> list[GSplatData] | None:
+    """The manifest fetch, then this machine's own earlier refit; None ⇒ build it.
+
+    Only ``DatasetUnavailable`` falls through to the local door — the narrow
+    "these bytes are not obtainable from anywhere yet" case. An unknown file
+    name, a missing packaged manifest or an in-repo copy failing its sha256 are
+    faults, and must not be disguised as a routine multi-minute refit.
+    """
+    try:
+        precomputed = load_dataset_gsplats(
+            DEMO_NAME,
+            [GSPLATS_FILE],
+            recompute=RECOMPUTE,
+        )
+    except DatasetUnavailable as exc:
+        aprint(f"Manifest fetch unavailable ({exc}).")
+        precomputed = None
+    if precomputed is None and not RECOMPUTE:
+        # A fit this machine built earlier, in its own namespace — checked
+        # BEFORE refitting, which is what makes the refit one-time. Read through
+        # LOCAL_FIT, the same constant the fit writes through: a door that
+        # re-derives the path from the cache root instead is a second source of
+        # truth for it (#1618 review, A).
+        precomputed = load_local_fit_gsplats_at([LOCAL_FIT], label=DEMO_NAME)
+    return precomputed
+
+
 def main():
     """Main demo execution."""
     aprint("=" * 70)
@@ -629,19 +658,7 @@ def main():
     volume = None
     gsplats_data_original = None
 
-    try:
-        precomputed = load_dataset_gsplats(
-            DEMO_NAME,
-            [GSPLATS_FILE],
-            recompute=RECOMPUTE,
-        )
-    except FileNotFoundError as exc:
-        aprint(f"Manifest fetch unavailable ({exc}).")
-        precomputed = None
-    if precomputed is None and not RECOMPUTE:
-        # A fit this machine built earlier, in its own namespace — checked
-        # BEFORE refitting, which is what makes the refit below one-time.
-        precomputed = load_local_fit_gsplats(DEMO_NAME, [GSPLATS_FILE])
+    precomputed = resolve_gsplats()
 
     if precomputed is not None:
         gsplats_data_original = precomputed[0]
