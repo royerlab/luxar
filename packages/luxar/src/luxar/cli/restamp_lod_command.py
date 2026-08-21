@@ -62,11 +62,16 @@ def register_restamp_lod_command(app: typer.Typer) -> None:
         in its size); a standalone ``.gsplats.zarr`` gets a metadata-only stamp
         and stays instant. Nothing is read at all under ``--dry-run`` or when no
         ladder needed changing. The result is then read back — from both the
-        per-node documents and the consolidated index — and verified.
+        per-node documents and the consolidated index — and verified. A store
+        that carried NO index is not given one: ``is_consolidated`` is how
+        ``batch-fit`` tells a finished tile from an interrupted one.
 
-        A failed write is undone: every attr already rewritten is restored, the
-        index re-consolidated, and the error reported, rather than leaving a
-        ladder whose thresholds and ``selector`` disagree about their units.
+        A failed write is undone: every attr already rewritten is restored,
+        ``content_hash`` included — put back as the store had it, never
+        recomputed — and the error reported, rather than leaving a ladder whose
+        thresholds and ``selector`` disagree about their units. The index is
+        rebuilt only if the failed run had rewritten the store ROOT, which is
+        the write that invalidates it.
 
         Exits 1 if any group was left alone for a reason worth acting on: a
         selector outside the vocabulary (migrate with ``luxar gsplat

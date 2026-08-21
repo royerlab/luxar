@@ -1390,6 +1390,156 @@ def test_a_rollback_removes_a_threshold_that_was_absent_before(
     assert _snapshot_tree(store) == before
 
 
+def _node_attrs(store: Path) -> Dict[str, Dict[str, Any]]:
+    """Every node's attrs from the per-node DOCUMENTS, index bypassed.
+
+    The counterpart of :func:`_attrs`, for the stores below where the index is
+    either absent by design or the very thing under test.
+    """
+    out: Dict[str, Dict[str, Any]] = {}
+
+    def walk(group: zarr.Group) -> None:
+        out[group.path or "/"] = dict(group.attrs)
+        for name in group.group_keys():
+            walk(group[str(name)])
+
+    root = open_group(store, mode="r")
+    try:
+        walk(root)
+    finally:
+        close(root)
+    return out
+
+
+def test_a_rollback_that_never_wrote_the_root_leaves_the_index_alone(
+    legacy_scene: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Failing at attr write #1 must not put the store's index at risk.
+
+    At that instant the ROOT document is still pristine, so the format-3
+    consolidated index — which lives inside it, and which the viewer builds its
+    whole scene graph from with no directory-walk fallback — is still valid. A
+    rollback that restamps the ``content_hash`` writes the root, destroys that
+    index, and then depends on ``consolidate`` succeeding to put it back: a
+    failure needing no root write at all is upgraded into a published store that
+    loads as an EMPTY scene. Nothing about the recovery may touch the root, and
+    nothing may re-consolidate.
+    """
+    assert (legacy_scene / "zarr.json").exists(), (
+        "this is the format-3 hazard: v2 keeps its index in a separate document"
+    )
+    before = _snapshot_tree(legacy_scene)
+    assert is_consolidated(legacy_scene)
+
+    real_write = lod_restamp._write_attr
+    writes: List[str] = []
+
+    def explode(node: Any, path: str, key: str, value: Any, undo: Any) -> None:
+        real_write(node, path, key, value, undo)
+        writes.append(path)
+        # The SECOND threshold of the first ladder: still a child group, so the
+        # root document is untouched, but a write that really moved a value.
+        if len(writes) == 2:
+            raise PermissionError("simulated read-only child directory")
+
+    def no_index(root: Any) -> None:
+        raise OSError("simulated consolidate failure")
+
+    monkeypatch.setattr(lod_restamp, "_write_attr", explode)
+    monkeypatch.setattr(lod_restamp, "consolidate", no_index)
+
+    with pytest.raises(PermissionError, match="simulated"):
+        restamp_lod_store(legacy_scene)
+
+    # The first ladder's two child thresholds, whichever ladder the walk reached
+    # first: both are nested groups, so the root document is still untouched.
+    assert len(writes) == 2 and all("/" in path for path in writes), writes
+    assert is_consolidated(legacy_scene), (
+        "the index was valid when the write failed and must still be"
+    )
+    assert _snapshot_tree(legacy_scene) == before, "every byte must be restored"
+
+
+def test_a_failed_run_restores_a_digest_it_could_not_have_recomputed(
+    legacy_scene: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A rollback RESTORES the store's digests; it does not re-derive them.
+
+    A recompute only lands on the stored value when the stored value already was
+    this walk's answer. A legacy store hashed by an older walk, a hand-edited one,
+    or a scene whose inner groups carry no per-group hash — all of them shapes
+    this command exists to migrate — would instead have their digests silently
+    rewritten by a FAILED run, under a headline promising the store is exactly as
+    it was.
+    """
+
+    def strip(group: zarr.Group) -> None:
+        for name in list(group.group_keys()):
+            child = group[str(name)]
+            if "content_hash" in dict(child.attrs):
+                del child.attrs["content_hash"]
+            strip(child)
+
+    root = open_group(legacy_scene, mode="r+")
+    strip(root)
+    root.attrs["content_hash"] = "LEGACY-DIGEST"
+    consolidate(root)
+    close(root)
+    stale = _node_attrs(legacy_scene)
+    assert stale["/"]["content_hash"] == "LEGACY-DIGEST"
+    assert "content_hash" not in stale["pts"]
+
+    def no_index(root: Any) -> None:
+        raise OSError("simulated consolidate failure")
+
+    # Fails AFTER the hash pass, so the digests really were overwritten and the
+    # rollback has to put every one of them back.
+    monkeypatch.setattr(lod_restamp, "consolidate", no_index)
+
+    with pytest.raises(OSError, match="simulated consolidate failure"):
+        restamp_lod_store(legacy_scene)
+
+    after = _node_attrs(legacy_scene)
+    assert after["/"]["content_hash"] == "LEGACY-DIGEST"
+    assert [path for path, attrs in after.items() if "content_hash" in attrs] == ["/"]
+    assert after == stale, "an attrs-level rollback has to be exact everywhere"
+
+
+def test_a_clean_run_does_not_give_an_unconsolidated_store_an_index(
+    tmp_path: Path,
+) -> None:
+    """An index is rebuilt, never introduced.
+
+    ``is_consolidated`` is ``batch-fit``'s "this tile finished" sentinel, so
+    consolidating a store that arrived without one would mark an interrupted tile
+    complete. The rollback path already knows this (``was_consolidated``); the
+    success path must agree — and the verifier must not then report the absent
+    index it deliberately did not write.
+    """
+    store = tmp_path / "interrupted.luxar.zarr"
+    root = _synthetic_scene(store)
+    _synthetic_ladder(
+        root,
+        "pts",
+        [
+            {"coverage_fraction": 0.0, "n_points": 100},
+            {"coverage_fraction": 4.0, "n_points": 400},
+        ],
+    )
+    close(root)
+    assert not is_consolidated(store)
+
+    report = restamp_lod_store(store)
+
+    assert not is_consolidated(store), "an interrupted tile must not read finished"
+    assert report.was_consolidated is False
+    assert report.residual == [], "a deliberately absent index is not a residual"
+    assert report.clean
+    nodes = _node_attrs(store)
+    assert nodes["pts"]["selector"] == DERIVED_LOD_SELECTOR
+    assert nodes["pts/child_1"]["coverage_fraction"] == WHOLE_OBJECT_FINEST_ANCHOR
+
+
 # ────────────────────────────────────────────────────────────────────────
 # Per-recipe round trip — the invariant the whole command rests on
 # ────────────────────────────────────────────────────────────────────────

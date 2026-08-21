@@ -354,6 +354,8 @@ writers thread `under_partition=partition_bound`.
   old ones (at zarr format 2 the `zattrs-hash` fallback digests the root
   `.zattrs`, which a child's ladder edit does not touch either) until the store
   is republished under a new URL prefix. The CLI keys its exit code on it.
+  `report.was_consolidated` says whether the store carried a consolidated index
+  when the run started — and therefore whether it has one now.
 
 **Never automatic.** An authored `coverage_fractions=[...]` list and a legacy
 derived one are indistinguishable on disk — the point
@@ -389,16 +391,29 @@ A dry run, and a run that changes nothing, hash nothing. Then the store is read
 back and verified through BOTH readers, because they can disagree and the
 disagreement is the failure worth catching: `open_group` reports the per-node
 documents, while `read_consolidated_attrs` reports the root index, which is the
-only thing the viewer fetches.
+only thing the viewer fetches. An index is REBUILT, never introduced — a store
+that arrives unconsolidated leaves that way (`is_consolidated` is `batch-fit`'s
+finished-tile sentinel, so writing one would mark an interrupted tile complete),
+and the verifier then expects no index rather than reporting its absence.
 
 **All-or-nothing writes.** Every group is classified in a read-only planning
 walk before anything is written; if a write then fails, each attr already
-rewritten is restored (an absent `coverage_fraction` back to absent), the index
-is re-consolidated so exactly one valid index remains, and the original error is
-re-raised with a note saying what was rolled back. Without that, a mid-walk
-failure leaves a TORN ladder — a screen-area threshold under
+rewritten is restored (an absent `coverage_fraction` back to absent) and the
+original error is re-raised with a note saying what was rolled back. Without
+that, a mid-walk failure leaves a TORN ladder — a screen-area threshold under
 `selector="coverage"` — which is the silent, unrecoverable disagreement
 `resolve_lod_ladder` warns about.
+
+The recovery is a pure RESTORE, digests included: every `content_hash` is read
+into the same undo ledger before the hash pass overwrites it, so a store whose
+stored digest is not what a fresh recompute yields — a legacy one, a
+hand-edited one, a scene whose inner groups carry none — comes back carrying
+exactly what it came in with, and the failure path stays metadata-only instead
+of streaming every array again. The index is re-consolidated only when the run
+had rewritten the ROOT document (the write that destroys a format-3 index): a
+failure at attr write #1 needs no root write at all, and re-consolidating there
+would turn a recoverable failure into a store with no index — which the viewer
+loads as an empty scene.
 
 ### Input Volume Loading
 

@@ -62,12 +62,21 @@ own-children test is a bare ``any(isinstance(c, GSplatPartition))``.)
 
 **A failed run leaves the store as it found it.** The pass plans read-only, then
 applies; any exception during the apply restores every attr it had already
-written — including removing a ``coverage_fraction`` that was absent before —
-re-consolidates so exactly one valid index remains, and re-raises with a note
-saying so. A torn ladder (a screen-area threshold under ``selector="coverage"``)
-is the silent-and-unrecoverable failure
+written — including removing a ``coverage_fraction`` that was absent before, and
+putting back each ``content_hash`` the store arrived with rather than recomputing
+a digest for it — and re-raises with a note saying so. It re-consolidates only
+when it rewrote the ROOT document, since that is the write which destroys a
+format-3 index; a rollback that never touched the root leaves the existing index
+alone rather than risking a second failure on it. A torn ladder (a screen-area
+threshold under ``selector="coverage"``) is the silent-and-unrecoverable failure
 :func:`~luxar.core.group.lod.group.resolve_lod_ladder` warns about, and a store
 mid-way through this pass would carry one.
+
+**An index is rebuilt, never introduced.** A store that arrives without
+consolidated metadata leaves without it, on the success path as on the failure
+one: :func:`~luxar._zarr_compat.is_consolidated` is ``batch-fit``'s "this tile
+finished" sentinel, so consolidating an interrupted tile here would mark it
+complete.
 
 The public entry point is :func:`restamp_lod_store`; the CLI wrapper is
 ``luxar.cli.restamp_lod_command``.
@@ -177,6 +186,11 @@ class RestampReport:
     content_hash: Optional[str] = None
     content_hash_status: str = HASH_UNCHANGED
     residual: List[str] = field(default_factory=list)
+    #: Did the store carry a consolidated index when the run started — and
+    #: therefore when it ended? The pass rebuilds an index it found and never
+    #: introduces one it did not (``is_consolidated`` is ``batch-fit``'s
+    #: finished-tile sentinel), so this says why a store may still have none.
+    was_consolidated: bool = True
 
     @property
     def clean(self) -> bool:
@@ -576,12 +590,20 @@ def _normalise(path: str) -> str:
 
 @dataclass(frozen=True)
 class _AttrWrite:
-    """One attr write, with whatever was in its place before it."""
+    """One attr write, with whatever was in its place before it.
+
+    ``written`` distinguishes an attr this run actually WROTE from one merely
+    RECORDED before a later step might write it — the ``content_hash`` snapshot
+    :func:`_snapshot_content_hashes` takes before the hash pass. Both are undone
+    identically; only the first proves a document was rewritten, which is what
+    :func:`_roll_back` keys its re-consolidation on.
+    """
 
     path: str
     key: str
     existed: bool
     previous: Any
+    written: bool = True
 
 
 def _handle(
@@ -616,13 +638,75 @@ def _write_attr(
 
 def _undo_attr(
     root: "zarr.Group", entry: _AttrWrite, cache: Dict[str, "zarr.Group"]
-) -> None:
-    """Put one attr back exactly as it was — absent included."""
-    node = _handle(root, entry.path, cache)
-    if entry.existed:
-        node.attrs[entry.key] = entry.previous
-    else:
+) -> bool:
+    """Put one attr back exactly as it was — absent included.
+
+    Returns whether the node's document was rewritten, so :func:`_roll_back` knows
+    whether the ROOT one moved: at zarr format 3 writing the root destroys the
+    consolidated index, and re-consolidating a store whose index is still intact
+    is the very risk this rollback exists to avoid. An attr already holding the
+    value it would be restored to is left alone for the same reason.
+
+    WHICH HANDLE answers that comparison is the subtle part. An attr this run
+    WROTE is read back through the run's own cached handle, the only writer of it.
+    A SNAPSHOT entry — a ``content_hash`` the hash pass may since have overwritten
+    through handles of its own — is read and written through a FRESH one, because
+    a cached view of such a node predates the hash pass and would report the digest
+    unchanged when disk says otherwise. The two orders compose: snapshots are
+    undone first (they were recorded last), and the ladder restore that follows on
+    the same node rewrites its whole document from the run's pre-hash-pass view,
+    which carries the same restored digest.
+    """
+    node = (
+        _handle(root, entry.path, cache)
+        if entry.written
+        else (root if entry.path == "/" else root[entry.path])
+    )
+    attrs = dict(node.attrs)
+    present = entry.key in attrs
+    if not entry.existed:
+        if not present:
+            return False
         del node.attrs[entry.key]
+        return True
+    if present and attrs[entry.key] == entry.previous:
+        return False
+    node.attrs[entry.key] = entry.previous
+    return True
+
+
+def _snapshot_content_hashes(
+    group: "zarr.Group", undo: List[_AttrWrite], *, deep: bool
+) -> None:
+    """Record the ``content_hash`` digests the store carries, before restamping.
+
+    The rollback RESTORES those digests rather than recomputing them. A recompute
+    only lands back on the stored value when the stored value was already this
+    walk's answer, which a legacy store hashed by an older walk, a hand-edited
+    store, or a scene whose inner groups carry no per-group hash is not — so a
+    FAILED run would rewrite digests while reporting that it changed nothing.
+    Restoring is also the cheap direction: one attr read per group here, against a
+    full value walk over every array in the store on the failure path.
+
+    ``deep`` mirrors :func:`~luxar.io.optimise._restamp_content_hash`: a scene's
+    value walk stamps every group, a ``.gsplats.zarr`` root stamp only the root.
+    A store with neither marker is stamped nowhere, and the single recorded root
+    entry then undoes to nothing.
+    """
+    attrs = dict(group.attrs)
+    undo.append(
+        _AttrWrite(
+            path=group.path or "/",
+            key="content_hash",
+            existed="content_hash" in attrs,
+            previous=attrs.get("content_hash"),
+            written=False,
+        )
+    )
+    if not deep:
+        return
+    for name in group.group_keys():
+        _snapshot_content_hashes(group[str(name)], undo, deep=True)
 
 
 def _apply_one(
@@ -671,19 +755,25 @@ def _roll_back(
     describing neither. ``optimise`` is all-or-nothing for exactly this reason;
     this sibling writes in place and so has to unwind rather than stage.
 
-    The hash is restamped and the index rebuilt AFTER the restores, not skipped
-    as an optimisation, because neither is undone by putting the ladder attrs
-    back. The hash pass stamps ``content_hash`` on every group of a scene, and
-    writing the ROOT group's attrs DESTROYS a format-3 consolidated index until
-    :func:`~luxar._zarr_compat.consolidate` runs again — and the viewer builds its
+    The ``content_hash`` is RESTORED, not recomputed: the pre-run digests are in
+    the same ledger (:func:`_snapshot_content_hashes` records them before the hash
+    pass runs), so a store whose stored digest was never this walk's answer — a
+    legacy one, a hand-edited one, a scene whose inner groups carry none — comes
+    out carrying exactly the digests it came in with. That is what makes the
+    rollback byte-for-byte rather than merely semantic, and it is what lets the
+    failure path stay metadata-only instead of re-reading every array in the store.
+
+    The index is then rebuilt ONLY when this run rewrote the ROOT document, which
+    at zarr format 3 is what destroys a consolidated index (the viewer builds its
     whole scene graph from that index with no directory-walk fallback, so a store
-    left without one loads as an empty scene. Recomputing the digest over the
-    RESTORED attrs lands back on the store's original hash, which is what makes
-    the rollback byte-for-byte rather than merely semantic.
+    left without one loads as an empty scene). A rollback that never touched the
+    root leaves the index alone: it already describes the restored attrs, and
+    re-consolidating it is a write that can itself fail — turning a recoverable
+    failure at attr write #1 into a published store with no index at all.
 
     Args:
         root: The open store root.
-        undo: Every attr write made, in the order it was made.
+        undo: Every attr write made and every digest recorded, in order.
         error: The exception being unwound; notes are attached to it.
         cache: The apply phase's per-path handle cache, reused so a restore sees
             the writes it is undoing.
@@ -691,11 +781,18 @@ def _roll_back(
             A store that had none is not given one here.
     """
     failures: List[str] = []
+    restored = 0
+    root_written = any(entry.path == "/" and entry.written for entry in undo)
     for entry in reversed(undo):
         try:
-            _undo_attr(root, entry, cache)
+            if _undo_attr(root, entry, cache):
+                restored += 1
+                root_written = root_written or entry.path == "/"
         except BaseException as undo_error:  # pragma: no cover - defensive
             failures.append(f"{entry.path}.{entry.key}: {undo_error}")
+            # A restore that raised may have written the document part-way, so
+            # the index is presumed lost rather than presumed intact.
+            root_written = root_written or entry.path == "/"
 
     if failures:
         headline = (
@@ -704,9 +801,9 @@ def _roll_back(
             "store may carry a torn ladder (a screen-area threshold under "
             "selector='coverage') and must be re-run or regenerated."
         )
-    elif undo:
+    elif restored:
         headline = (
-            f"restamp-lod rolled back {len(undo)} attr write(s): every LOD "
+            f"restamp-lod rolled back {restored} attr write(s): every LOD "
             "ladder is exactly as it was before this run."
         )
     else:
@@ -717,16 +814,7 @@ def _roll_back(
     aprint(f"  ❌ {headline}")
     error.add_note(headline)
 
-    if not undo:
-        return
-    try:
-        _restamp_content_hash(root)
-    except BaseException as hash_error:
-        error.add_note(
-            "restamp-lod could not restore the content_hash after rolling back; "
-            f"it may now name content the store does not have: {hash_error}"
-        )
-    if was_consolidated:
+    if was_consolidated and root_written:
         try:
             consolidate(root)
         except BaseException as index_error:
@@ -751,6 +839,11 @@ def _apply(
     attrs-only change it would never see otherwise. Any exception anywhere in
     here — including inside the hash walk, which is the only step that reads
     arrays — unwinds the whole run through :func:`_roll_back`.
+
+    An index is only ever REBUILT, never introduced: a store that arrived without
+    one leaves without one. :func:`~luxar._zarr_compat.is_consolidated` is
+    ``batch-fit``'s "this tile finished" sentinel, so consolidating an
+    interrupted tile here would mark it complete.
     """
     undo: List[_AttrWrite] = []
     cache: Dict[str, "zarr.Group"] = {"/": root}
@@ -758,7 +851,8 @@ def _apply(
         for plan in plans:
             _apply_one(root, plan, undo, cache)
 
-        if dict(root.attrs).get("type") == "scene":
+        is_scene = dict(root.attrs).get("type") == "scene"
+        if is_scene:
             aprint(
                 "  ℹ️  Restamping the scene content_hash: that digest covers "
                 "array VALUES, so this reads every array in the store once "
@@ -770,18 +864,31 @@ def _apply(
                 "  ℹ️  Restamping the root content_hash (metadata only — this "
                 "store is not a scene, so no array is read)."
             )
+        # One attr read per group, before the stamp overwrites them, so a
+        # failure restores the store's OWN digests instead of recomputing them.
+        _snapshot_content_hashes(root, undo, deep=is_scene)
         report.content_hash = _restamp_content_hash(root)
         report.content_hash_status = (
             HASH_RESTAMPED if report.content_hash is not None else HASH_UNSTAMPABLE
         )
-        consolidate(root)
+        if was_consolidated:
+            consolidate(root)
+        else:
+            aprint(
+                "  ℹ️  This store carries no consolidated index and was not "
+                "given one: `is_consolidated` is how batch-fit tells a finished "
+                "tile from an interrupted one. The ladders and the content_hash "
+                "were written to the per-node documents."
+            )
     except BaseException as error:
         _roll_back(root, undo, error, cache=cache, was_consolidated=was_consolidated)
         raise
-    report.residual = _verify(store_path, report)
+    report.residual = _verify(store_path, report, expect_index=was_consolidated)
 
 
-def _verify(store_path: Path, report: RestampReport) -> List[str]:
+def _verify(
+    store_path: Path, report: RestampReport, *, expect_index: bool = True
+) -> List[str]:
     """Re-read the written store and confirm every restamp is really there.
 
     Both readers are consulted, because they can disagree and the disagreement is
@@ -790,6 +897,11 @@ def _verify(store_path: Path, report: RestampReport) -> List[str]:
     :func:`~luxar._zarr_compat.read_consolidated_attrs` reports the ROOT index —
     which is the only thing the viewer ever fetches. A consolidation mistake
     leaves the first correct and the second stale, and nothing raises.
+
+    ``expect_index`` is False for a store that carried no consolidated index to
+    begin with: the pass does not create one (see :func:`_apply`), so a missing
+    index is then the expected state rather than a consolidation mistake, and the
+    per-node documents are the whole contract.
 
     Returns one message per group that does not read back as expected.
     """
@@ -828,6 +940,8 @@ def _verify(store_path: Path, report: RestampReport) -> List[str]:
                 dict(group.attrs),
                 [_threshold_of(a) for _, _, a in children],
             )
+            if not expect_index:
+                continue
             if not consolidated:
                 residual.append(f"{path}: the store carries no consolidated index")
                 continue
@@ -904,7 +1018,10 @@ def restamp_lod_store(
     The ladder rewrite moves no chunk and opens no array. When anything changed,
     the store's ``content_hash`` is restamped and the metadata re-consolidated,
     in that order — an attrs-only change must still invalidate a warm viewer
-    cache — and the result is then read back and verified. That hash restamp is
+    cache — and the result is then read back and verified. A store that carried
+    NO consolidated index is not given one (``is_consolidated`` is ``batch-fit``'s
+    finished-tile sentinel); the report says so in
+    :attr:`~RestampReport.was_consolidated`. That hash restamp is
     the one expensive step: for a compiled SCENE the digest covers array VALUES,
     so it streams the whole store once; a standalone ``.gsplats.zarr`` gets a
     metadata-only stamp instead. A store with NEITHER marker carries no digest to
@@ -915,9 +1032,11 @@ def restamp_lod_store(
 
     All-or-nothing on the write side. Every group is classified in a read-only
     planning walk first; if any write then fails, every attr already written is
-    restored (an absent ``coverage_fraction`` back to absent), the index is
-    re-consolidated, and the original error is re-raised carrying a note saying
-    what was rolled back. A half-restamped store would carry a ladder whose
+    restored (an absent ``coverage_fraction`` back to absent, a ``content_hash``
+    back to the digest the store arrived with), the index is re-consolidated if
+    and only if the root document was rewritten, and the original error is
+    re-raised carrying a note saying what was rolled back. A half-restamped store
+    would carry a ladder whose
     thresholds and ``selector`` disagree about their units, which nothing
     downstream can detect.
 
@@ -984,8 +1103,10 @@ def restamp_lod_store(
                 f"in {store_path}. Available: {sorted(available) or '(none)'}"
             )
 
-    report = RestampReport(path=str(store_path), dry_run=dry_run)
     was_consolidated = is_consolidated(store_path)
+    report = RestampReport(
+        path=str(store_path), dry_run=dry_run, was_consolidated=was_consolidated
+    )
     try:
         with asection(
             f"{'🔎 Dry run: ' if dry_run else '🪜 '}restamp-lod {store_path}"

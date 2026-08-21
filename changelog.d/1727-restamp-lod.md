@@ -69,8 +69,23 @@ viewer fetches, so a consolidation mistake cannot pass silently.
 
 Writes are all-or-nothing. The pass classifies every group in a read-only
 planning walk first, and if a write then fails it restores each attribute it had
-already rewritten — an absent `coverage_fraction` back to absent — re-consolidates
-so exactly one valid index is left, and re-raises the original error with a note
-saying what was rolled back. Left unwound, a mid-walk failure published a torn
-ladder: screen-area thresholds under `selector="coverage"`, the two disagreeing
-about their units with nothing downstream able to notice.
+already rewritten — an absent `coverage_fraction` back to absent — and re-raises
+the original error with a note saying what was rolled back. Left unwound, a
+mid-walk failure published a torn ladder: screen-area thresholds under
+`selector="coverage"`, the two disagreeing about their units with nothing
+downstream able to notice.
+
+The recovery restores the store's `content_hash` digests rather than recomputing
+them: each is recorded before the hash pass overwrites it, so a legacy store
+hashed by an older walk, a hand-edited one, or a scene whose inner groups carry
+no per-group digest is not quietly re-digested by a run that FAILED — and the
+failure path stays metadata-only instead of streaming every array in the store a
+second time. The metadata is re-consolidated only when the run had rewritten the
+ROOT document, which at zarr format 3 is the write that destroys the index: a
+failure at the first attribute write needs no root write at all, and
+re-consolidating there could turn a fully recoverable failure into a published
+store with no index, which the viewer loads as an empty scene. On the success
+side an index is likewise rebuilt but never introduced — a store handed over
+unconsolidated leaves that way, since `is_consolidated` is how `batch-fit` tells
+a finished tile from an interrupted one, and the report now carries
+`was_consolidated` so an operator can see why.

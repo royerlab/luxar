@@ -188,13 +188,21 @@ minutes on a very large scene even though only two attributes changed. A
 standalone `.gsplats.zarr` takes the other branch, a metadata-only stamp, and
 stays instant. A `--dry-run`, and a run with nothing to change, read nothing at
 all. The result is then read back — from both the per-node documents and the
-consolidated index the viewer fetches — and verified.
+consolidated index the viewer fetches — and verified. An index is **rebuilt,
+never introduced**: a store handed over without consolidated metadata leaves
+without it, because `is_consolidated` is how `batch-fit` tells a finished tile
+from an interrupted one and creating one here would report an unfinished tile as
+complete.
 
-If a write fails part-way, every attribute already rewritten is restored, the
-metadata is re-consolidated, and the error is reported. The store is left as it
-was found rather than carrying a half-migrated ladder whose thresholds and
-`selector` disagree about their units — a disagreement nothing downstream can
-detect.
+If a write fails part-way, every attribute already rewritten is restored —
+including each `content_hash`, put back exactly as the store carried it rather
+than recomputed, so a legacy or hand-edited digest is not silently rewritten by
+a run that failed — and the error is reported. The metadata is re-consolidated
+only when the failed run had rewritten the store ROOT, the write that
+invalidates the index; a failure that never touched it leaves the valid index
+alone rather than risking a second one. The store is left as it was found rather
+than carrying a half-migrated ladder whose thresholds and `selector` disagree
+about their units — a disagreement nothing downstream can detect.
 
 The command exits 1 if any ladder was left alone for a reason worth acting on: a
 `selector` outside the vocabulary (migrate the store with `luxar gsplat
