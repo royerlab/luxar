@@ -173,8 +173,10 @@ SCENE_INTENSITY = 0.05
 # after the opening frame. A 1.25M sample matches the density of that ladder's
 # previous one-coarser child while putting a hard bound on the selected finest.
 SCENE_MAX_POINTS = 1_250_000
+# The shipped archive is the canonical sample. This seed makes recomputation
+# repeatable within a NumPy release, not bit-stable across future NumPy releases.
 SCENE_SAMPLE_SEED = 0
-LOD = dict(compression_factor=8, levels=3, device="auto")
+LOD = dict(compression_factor=8, levels=2, device="auto")
 
 # Streaming ladder for every LOD level. The composed default sizes the first
 # chunk from a generic bandwidth budget; at 1.25M points this scene is large
@@ -183,11 +185,10 @@ LOD = dict(compression_factor=8, levels=3, device="auto")
 #
 # That base applies as-written only to the COARSEST level, which is the eager
 # default level and therefore the one whose first chunk is the actual
-# time-to-first-pixel. Finer levels
-# have a coarser sibling on screen already, so the sibling-aware rule raises
-# their base to n/(2K) — the capped finest lands around 78K / 78K / 156K /
-# 312K / 625K. That is deliberate: an upgrade has to beat what is already
-# displayed to be worth swapping.
+# time-to-first-pixel. Finer levels have a coarser sibling on screen already, so
+# the sibling-aware rule raises their base to n/(2K) — the capped finest lands
+# around 78K / 78K / 156K / 312K / 625K. That is deliberate: an upgrade has to
+# beat what is already displayed to be worth swapping.
 STREAM_LOD = dict(counts="stream:2000", method="random", seed=0)
 
 # The shipped scene must carry a real ladder on its finest level. Anyone whose
@@ -612,6 +613,7 @@ def create_scene(
                 f"  📉 Sampling {len(scene_positions):,} of {len(positions):,} "
                 "catalog rows to bound the finest LOD payload"
             )
+        scene_intensity = SCENE_INTENSITY * len(positions) / len(scene_positions)
         colors = tracer_colors(scene_tracer_ids)
 
         # Resolved ONCE for both layers so a torch/scipy-free machine prints one
@@ -632,7 +634,7 @@ def create_scene(
                 radii=POINT_RADIUS,
                 opacity=0.9,
                 blending_mode="additive",
-                intensity=SCENE_INTENSITY,
+                intensity=scene_intensity,
                 layer=True,
                 substitutive_lod=lod,
                 additive_lod=STREAM_LOD,
@@ -649,7 +651,7 @@ def create_scene(
                 radii=POINT_RADIUS,
                 opacity=0.9,
                 blending_mode="additive",
-                intensity=SCENE_INTENSITY,
+                intensity=scene_intensity,
                 layer=True,
                 visible=False,
                 substitutive_lod=lod,

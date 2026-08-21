@@ -396,6 +396,13 @@ class TestScenePointCap:
         root = zarr.open(str(out), mode="r")
         assert root["By tracer type"].attrs["n_points"] == 100
         assert root["By redshift"].attrs["n_points"] == 100
+        expected_intensity = _demo.SCENE_INTENSITY * len(positions) / 100
+        assert root["By tracer type"].attrs["intensity"] == pytest.approx(
+            expected_intensity
+        )
+        assert root["By redshift"].attrs["intensity"] == pytest.approx(
+            expected_intensity
+        )
 
         radial = np.linalg.norm(positions.astype(np.float64), axis=1)
         r95 = float(np.percentile(radial, 95))
@@ -417,17 +424,33 @@ class TestScenePointCap:
             names = set(archive.namelist())
 
             def read_attrs(path: str) -> dict:
-                v3_name = f"{path}/zarr.json"
-                name = v3_name if v3_name in names else f"{path}/.zattrs"
-                document = json.loads(archive.read(name).decode("utf-8"))
+                document = json.loads(archive.read(f"{path}/zarr.json").decode("utf-8"))
                 return document.get("attributes", document)
 
             for layer_name in ("By tracer type", "By redshift"):
                 layer_attrs = read_attrs(layer_name)
-                finest_attrs = read_attrs(f"{layer_name}/child_3")
+                child_names = sorted(
+                    name.removeprefix(f"{layer_name}/").removesuffix("/zarr.json")
+                    for name in names
+                    if name.startswith(f"{layer_name}/child_")
+                    and name.count("/") == 2
+                    and name.endswith("/zarr.json")
+                )
+                assert child_names == ["child_0", "child_1", "child_2"]
+                child_attrs = [
+                    read_attrs(f"{layer_name}/{child_name}")
+                    for child_name in child_names
+                ]
                 assert layer_attrs["selector"] == "screen-area"
-                assert finest_attrs["n_points"] == _demo.SCENE_MAX_POINTS
-                assert finest_attrs["n_additive_sublods"] == 5
+                assert [
+                    attrs.get("n_splats", attrs.get("n_points"))
+                    for attrs in child_attrs
+                ] == [19_519, 156_249, _demo.SCENE_MAX_POINTS]
+                assert [attrs["n_additive_sublods"] for attrs in child_attrs] == [
+                    5,
+                    5,
+                    5,
+                ]
 
 
 class TestMainSceneReuse:
