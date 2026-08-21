@@ -54,6 +54,9 @@ in the Rust operation order:
 - `decode.ts` frounds the per-channel anchors, which arrive as f32 in WASM.
 - Kernels evaluating `exp` or `log` on an f32 use `expf` / `logf` from
   `float32-math.ts`, never host `Math.exp` / `Math.log`.
+- After #1836 lands the surrounding f32 operation-order fixes, replace the
+  fixture-specific transcendental ULP bounds with exact WASM↔TypeScript bit
+  assertions. The `truncate = 20` call sites already match over 20,000 offsets.
 - `mesh-culling.ts` frounds the slab bounds. The f64 difference of two f32 values
   is _exact_ while Rust's f32 subtraction rounds; the gap is under half an ulp,
   but when the rounding goes DOWN the rounded bound is itself a legal f32 vertex
