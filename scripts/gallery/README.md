@@ -162,6 +162,14 @@ beside it), `dimensionNav`
 `readme` (a current top README pick), `note` (free-text human annotation; the
 capture code never reads it).
 
+`citation` (optional, not a capture hint): the dataset credit, copied verbatim
+from the demo's `DEMO_META["citation"]["short"]`. It is here so a tile's credit
+is reviewable in the repo instead of only on the rendered page;
+`test_demo_meta.py` pins it equal to the demo's own value. Only demos that
+declare a real credit carry it — an absent key means "unknown or not yet
+recorded", which is deliberately *not* the same claim as "nothing to credit", so
+a procedurally generated demo has no `citation` here either.
+
 ## Requirements
 
 - Datasets: run the generator first (heavy demos download data / fit splats).
