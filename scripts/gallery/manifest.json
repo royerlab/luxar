@@ -70,7 +70,7 @@
     },
     {
       "id": "gaia_milky_way",
-      "title": "Gaia Milky Way (3M stars)",
+      "title": "Gaia Milky Way (DR3)",
       "geometry": "points",
       "category": "astronomy",
       "script": "demo_gaia_milky_way_3m.py",
@@ -729,7 +729,7 @@
     },
     {
       "id": "gsplats_interop_sog_matrixcity",
-      "title": "MatrixCity Aerial (13.6M splats)",
+      "title": "MatrixCity Aerial (PlayCanvas SOG)",
       "geometry": "gsplats",
       "category": "photogrammetry",
       "script": "demo_gsplats_interop_sog_matrixcity.py",
