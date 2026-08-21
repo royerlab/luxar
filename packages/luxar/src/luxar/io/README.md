@@ -302,6 +302,63 @@ root document bytes. The scene restamp is a slab-wise reimplementation of the
 finalize-time walk — the same digest, without the whole-array materialisation
 that would peak at twice a 629 MB array's size.
 
+### Re-deriving LOD thresholds in an existing store (`lod_restamp.py`)
+
+`luxar.io.lod_restamp` rewrites the LOD switch thresholds of a store that is
+**already on disk**, in place. It backs the `luxar restamp-lod` CLI command. The
+sibling of `optimise.py`, deliberately not a flag on it: that pass preserves
+every attribute and refuses same-path work, this one changes **only** attributes
+and never touches an array or a chunk.
+
+```python
+from luxar.io.lod_restamp import restamp_lod_store
+
+report = restamp_lod_store("scene.luxar.zarr", dry_run=True)
+for group in report.restamped:
+    print(group.path, group.anchor, group.old_thresholds, "→", group.new_thresholds)
+```
+
+Every `kind=lod` group still on the legacy `coverage` diagonal metric (or
+carrying no `selector` at all, which means the same) has its per-child
+`coverage_fraction` re-derived by screen-occupancy halving —
+`partitioned_coverage_fractions` when the group is bound to a REAL (>1 part)
+`kind=partition`, `coverage_fractions` otherwise, the same `under_partition or
+len(children) > 1` rule both gsplat tree writers thread — and its group stamped
+`screen-area`. Children are ordered coarsest→finest by `child_index`, and a
+group already on `screen-area` is skipped, so a second run is a no-op down to
+the `content_hash`.
+
+- `restamp_lod_store(path, *, dry_run=False, groups=None)` → `RestampReport` —
+  the groups restamped, skipped-as-current, skipped-as-unsupported and
+  skipped-as-unresolved, plus the new `content_hash` and any re-verification
+  residual. `report.clean` is False when anything was left alone for a reason
+  the caller must act on; the CLI keys its exit code on it.
+
+**Never automatic.** An authored `coverage_fractions=[...]` list and a legacy
+derived one are indistinguishable on disk — the point
+`_compiler/finalize/lod_backfill.py::warn_one_part_partition_anchors` makes
+normatively, which is why that check only warns. Calling this IS the opt-in, and
+the per-group old→new ladder is printed as the audit trail for a rewrite that may
+be overriding a deliberate choice.
+
+**What is refused, and what is skipped.** A compressed store is refused (an
+archive is read through a temp directory, so in-place is impossible), as is a
+store that is not a Luxar scene or `.gsplats.zarr` tree. A `selector` outside the
+vocabulary (`pixel_size`, the pre-v3.2 gsplats spelling) is REPORTED and left
+alone rather than converted, and so is a ladder whose finest child records no
+element count — the derivation's "finest LOD level is empty" guard reads that
+count, and fabricating one would defeat it on exactly the store that needs it. A
+coarser level's missing count is harmless (only the ladder's length and the
+finest entry are consumed) and is reported as `None` rather than invented.
+
+**Cache invalidation.** When something changed, `_restamp_content_hash` runs and
+the metadata is re-consolidated, in that order — an attrs-only edit must still
+invalidate a warm viewer cache. Then the store is read back and verified through
+BOTH readers, because they can disagree and the disagreement is the failure
+worth catching: `open_group` reports the per-node documents, while
+`read_consolidated_attrs` reports the root index, which is the only thing the
+viewer fetches.
+
 ### Input Volume Loading
 
 `luxar.io.volume` and `luxar.io.ome_zarr` load arbitrary input volumes (the

@@ -37,6 +37,7 @@ invented flag fails too, not just a stale command path.
 ```bash
 luxar info      # Dataset structure, dimensions, and compression statistics (--stats, --format json)
 luxar optimise  # Re-chunk an existing store for streaming; values stay bit-identical
+luxar restamp-lod  # Re-derive legacy LOD switch thresholds in place (attrs only)
 luxar serve     # Serve a .luxar.zarr over HTTP, optionally with the viewer (--viewer, --open)
 luxar viewer    # Serve the Luxar viewer, optionally with a dataset (--data)
 luxar export    # Export a scene + viewer as a standalone offline folder (or --native bundle)
@@ -129,6 +130,52 @@ store is renamed aside and deleted only once the replacement is in place — so 
 interrupted or failed run leaves no partial store and never costs you both
 copies. Run `luxar info` with its
 detailed-statistics flag to see a store's chunk layout before and after.
+
+## `luxar restamp-lod`
+
+Re-derive the LOD switch thresholds of a store that already exists, in place.
+An **attributes-only** pass: no chunk data moves, no array is opened.
+
+```bash
+luxar restamp-lod                          # Re-derive every legacy ladder in STORE
+luxar restamp-lod --dry-run                # Report the old→new ladders; write nothing
+luxar restamp-lod --group tiled/part_0     # Restrict to one ladder (repeatable)
+```
+
+Every `kind=lod` group carries per-child `coverage_fraction` thresholds plus a
+group-level `selector` naming the units they are in. Ladders written before the
+screen-area metric existed sit on the legacy `coverage` diagonal one (or carry
+no `selector` at all, which means the same). This command re-derives those
+thresholds by screen-occupancy halving — the whole-object anchor for a plain
+ladder, the fills-screen anchor for one bound to a real multi-part partition —
+and stamps the group `screen-area`. A group already on `screen-area` is skipped,
+so a second run changes nothing at all, down to the `content_hash`.
+
+**It is an explicit opt-in, and it may override a deliberate choice.** An
+authored `coverage_fractions=[...]` list and a legacy derived ladder are
+indistinguishable on disk, which is exactly why nothing does this automatically
+and why the compiler's one-part-partition check only ever warns. The per-group
+old→new ladder and the anchor used are printed for that reason — run `--dry-run`
+first, and use `--group` (repeatable; an unmatched path is an error, not a
+silent no-op) to restrict the pass to the ladders you meant.
+
+Sibling of `luxar optimise`, not a flag on it: that pass preserves every
+attribute and refuses same-path work, this one changes only attributes and works
+in place. Give it an uncompressed `.luxar.zarr` or `.gsplats.zarr`
+**directory** — a `.zarr.zip` is refused, since an archive is read through a
+temp directory and there is nothing to write back to.
+
+When anything changes, the store's `content_hash` is restamped and the metadata
+re-consolidated, in that order: an attrs-only edit must still invalidate a warm
+viewer cache. The result is then read back — from both the per-node documents
+and the consolidated index the viewer fetches — and verified.
+
+The command exits 1 if any ladder was left alone for a reason worth acting on: a
+`selector` outside the vocabulary (migrate the store with `luxar gsplat
+migrate-format` first), a finest level whose element count the store does not
+record, or a re-verification residual. Ladders that *were* restamped are still
+written in that case — nothing is silently ignored, and nothing is silently
+half-done.
 
 ## `luxar demo`
 

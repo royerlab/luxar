@@ -50,6 +50,7 @@ print(result.stdout)
 - `serving.py` - HTTP serving internals (`create_server_app`, data/viewer servers; re-exported by `main.py`)
 - `info_command.py` - The `luxar info` command implementation
 - `optimise_command.py` - The `luxar optimise` command (a thin Typer layer over `luxar.io.optimise`)
+- `restamp_lod_command.py` - The `luxar restamp-lod` command (a thin Typer layer over `luxar.io.lod_restamp`)
 - `gsplat_commands.py` - Thin registration hub (~56 lines) that assembles the `gsplat` sub-app: fit, cal, render, denoise, lod, convert, migrate-format, reencode, info, napari, view, compare, annotate-quality, transform, merge, cull, filter, slice, partition, flatten, additive, benchmark; the `batch-fit` group: run/submit/status/validate/cancel/merge/denoise-calibrate/denoise-preprocess
 - `gsplat_ops/` - The gsplat subcommand implementations: 7 root modules (scene/inspect/interchange registration, `benchmark`, `recipe_shared`, `planner`, `encoding`) plus three subpackages — `fitting/` (fit/cal/render/denoise), `batch/` (`batch-fit`), `transforms/` (edit-style commands) — 30 modules across them. Each subpackage's registration surface is its `commands.py`; the `__init__.py` files are docstring-only. See `gsplat_ops/README.md`.
 - `lod.py` - the unified `lod --recipe {flat,stream,levels,tiles,overview,adaptive}` command (thin wrapper over `gsplats/lod/recipes.py`; registered onto the `gsplat` app)
@@ -172,6 +173,35 @@ copies. Larger profiles trade partial-query bytes for
 full-load requests — see the CLI reference before reaching for `--profile
 hosting` on a store the viewer will slice into. The logic lives in
 `luxar.io.optimise`.
+
+### `luxar restamp-lod`
+Re-derive a store's LOD switch thresholds in place. An attributes-only pass: no
+chunk data moves and no array is opened.
+```bash
+luxar restamp-lod scene.luxar.zarr                      # every legacy ladder
+luxar restamp-lod scene.luxar.zarr --dry-run            # report only
+luxar restamp-lod scene.luxar.zarr --group tiled/part_0 # one ladder (repeatable)
+luxar restamp-lod fit.gsplats.zarr                      # standalone gsplat trees
+```
+
+Every `kind=lod` group still on the legacy `coverage` diagonal metric (or
+carrying no `selector`, which means the same) gets its per-child
+`coverage_fraction` thresholds re-derived by screen-occupancy halving — the
+whole-object anchor normally, the fills-screen one when the ladder is bound to a
+real multi-part partition — and its group stamped `screen-area`. A group already
+on `screen-area` is skipped, so a second run changes nothing, `content_hash`
+included.
+
+It is never automatic: an authored `coverage_fractions=[...]` list and a legacy
+derived one are indistinguishable on disk, so running the command IS the opt-in
+and the per-group old→new ladder is printed as the audit trail. Sibling of
+`luxar optimise` rather than a flag on it — that pass preserves every attribute
+and refuses same-path work; this one changes only attributes and works in place.
+A `.zarr.zip` is refused (nothing to write back to). When anything changes the
+`content_hash` is restamped and the metadata re-consolidated, then read back and
+verified from both the per-node documents and the consolidated index. Exit code
+1 when any ladder was left alone for a reason worth acting on. The logic lives in
+`luxar.io.lod_restamp`.
 
 ### `luxar profiles`
 List available network simulation profiles for testing.
