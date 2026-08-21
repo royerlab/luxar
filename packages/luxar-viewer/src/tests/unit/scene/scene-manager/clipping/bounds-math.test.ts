@@ -123,21 +123,23 @@ describe('bounds-math', () => {
   });
 
   describe('calculateCameraDistance', () => {
-    // W2/M2: reference implementation of the documented formula so tests can
-    // assert the exact value instead of a loose band. Mirrors bounds-math.ts:
-    //   vertical   = maxDim / fitRatio / (2*tan(halfFov))
-    //   horizontal = vertical / aspect
-    //   distance   = max(vertical, horizontal) * 1.2  (20% margin)
+    // Reference implementation of the documented formula so tests can assert
+    // the exact value instead of a loose band. Mirrors bounds-math.ts:
+    //   inPlane    = max(width, height)
+    //   vertical   = halfDepth + inPlane / fitRatio / (2*tan(halfFov))
+    //   horizontal = halfDepth + inPlane / fitRatio / (2*tan(halfFov)*aspect)
+    //   distance   = max(vertical, horizontal)
     const expectedCameraDistance = (
-      maxDim: number,
+      size: { x: number; y: number; z: number },
       fovDeg: number,
       aspect: number,
       fitRatio: number
     ): number => {
       const halfFov = (fovDeg * Math.PI) / 180 / 2;
-      const vertical = maxDim / fitRatio / (2 * Math.tan(halfFov));
-      const horizontal = vertical / aspect;
-      return Math.max(vertical, horizontal) * 1.2;
+      const screenPlaneSize = Math.max(size.x, size.y);
+      const vertical = size.z / 2 + screenPlaneSize / fitRatio / (2 * Math.tan(halfFov));
+      const horizontal = size.z / 2 + screenPlaneSize / fitRatio / (2 * Math.tan(halfFov) * aspect);
+      return Math.max(vertical, horizontal);
     };
 
     it('should calculate distance for perspective camera', () => {
@@ -155,7 +157,8 @@ describe('bounds-math', () => {
 
       const distance = calculateCameraDistance(box, camera);
 
-      // Should be approximately 10 / tan(30°) * 1.1 * fitRatio factor
+      // The nearest face contributes half the depth; the screen-plane radius
+      // contributes the perspective fit distance.
       expect(distance).toBeGreaterThan(10);
       expect(distance).toBeLessThan(50);
     });
@@ -167,8 +170,10 @@ describe('bounds-math', () => {
       const box: BoundingBox = { min: { x: -5, y: -5, z: -5 }, max: { x: 5, y: 5, z: 5 } };
       const camera: CameraConfig = { fov: 60, aspect: 16 / 9, near: 0.1, far: 1000 };
       const distance = calculateCameraDistance(box, camera, 0.75);
-      // maxDim = 10, fov = 60 (aspect > 1 → vertical fit dominates).
-      expect(distance).toBeCloseTo(expectedCameraDistance(10, 60, 16 / 9, 0.75), 6);
+      expect(distance).toBeCloseTo(
+        expectedCameraDistance({ x: 10, y: 10, z: 10 }, 60, 16 / 9, 0.75),
+        6
+      );
     });
 
     it('should handle different aspect ratios', () => {
@@ -197,14 +202,64 @@ describe('bounds-math', () => {
       // Tall camera needs more distance to fit same object
       expect(tallDistance).toBeGreaterThan(wideDistance);
 
-      // M1: pin the *magnitude* of the difference, not just the sign. For a
-      // wide aspect (>1) the vertical fit dominates, so wideDistance is
-      // independent of aspect. For the tall aspect (9/16) the horizontal fit
-      // dominates: distance = vertical / aspect. Hence the ratio equals
-      // exactly 1/aspect_tall = 16/9 ≈ 1.778. A mutant that drops the aspect
-      // term from horizontalFit would make the ratio 1 and survive a sign-only
-      // assertion.
-      expect(tallDistance / wideDistance).toBeCloseTo(16 / 9, 6);
+      expect(wideDistance).toBeCloseTo(
+        expectedCameraDistance({ x: 20, y: 20, z: 20 }, 60, 21 / 9, 0.75),
+        6
+      );
+      expect(tallDistance).toBeCloseTo(
+        expectedCameraDistance({ x: 20, y: 20, z: 20 }, 60, 9 / 16, 0.75),
+        6
+      );
+    });
+
+    it('fits a view-axis-elongated box from its projected extent', () => {
+      const box: BoundingBox = {
+        min: { x: -0.5, y: -0.5, z: -50 },
+        max: { x: 0.5, y: 0.5, z: 50 },
+      };
+      const camera: CameraConfig = { fov: 47, aspect: 16 / 9, near: 0.1, far: 1000 };
+
+      expect(calculateCameraDistance(box, camera, 0.75)).toBeCloseTo(
+        expectedCameraDistance({ x: 1, y: 1, z: 100 }, 47, 16 / 9, 0.75),
+        6
+      );
+    });
+
+    it('uses depth as a fallback extent for a line aligned with the view axis', () => {
+      const box: BoundingBox = {
+        min: { x: 0, y: 0, z: 0 },
+        max: { x: 0, y: 0, z: 100 },
+      };
+      const camera: CameraConfig = { fov: 60, aspect: 1, near: 0.1, far: 1000 };
+      const expected = 50 + 50 / 0.75 / Math.tan(Math.PI / 6);
+
+      expect(calculateCameraDistance(box, camera, 0.75)).toBeCloseTo(expected, 6);
+    });
+
+    it('fits bounds relative to an off-center look-at target', () => {
+      const box: BoundingBox = {
+        min: { x: 0, y: 0, z: 0 },
+        max: { x: 10, y: 10, z: 10 },
+      };
+      const camera: CameraConfig = { fov: 60, aspect: 16 / 9, near: 0.1, far: 1000 };
+      const target = { x: 0, y: 0, z: 0 };
+      const halfFov = (camera.fov * Math.PI) / 360;
+      const expected = 10 + 10 / 0.75 / Math.tan(halfFov);
+
+      expect(calculateCameraDistance(box, camera, 0.75, target)).toBeCloseTo(expected, 6);
+    });
+
+    it('keeps the camera on +Z when the look-at target is above the bounds', () => {
+      const box: BoundingBox = {
+        min: { x: -5, y: -5, z: 0 },
+        max: { x: 5, y: 5, z: 10 },
+      };
+      const camera: CameraConfig = { fov: 60, aspect: 1, near: 0.1, far: 1000 };
+
+      expect(calculateCameraDistance(box, camera, 0.75, { x: 0, y: 0, z: 20 })).toBeCloseTo(
+        5 / 0.75 / Math.tan(Math.PI / 6),
+        6
+      );
     });
 
     it('should scale distance proportionally with scene size', () => {
@@ -222,9 +277,9 @@ describe('bounds-math', () => {
       const smallDist = calculateCameraDistance(smallBox, camera);
       const largeDist = calculateCameraDistance(largeBox, camera);
 
-      // Distance scales linearly with scene size (maxDim ratio is exactly 500).
+      // Distance scales linearly with scene size (every extent ratio is exactly 500).
       // M2: the original tolerance of 0 digits (±5) let a constant-offset
-      // mutant (`maxDim/fitRatio + 1`) survive — it shifts the ratio only to
+      // mutant (adding 1 to the fitted distance) survive — it shifts the ratio only to
       // ~499.8. Tighten to 3 digits (±5e-4): pure linear scaling gives 500.0,
       // any additive constant breaks it.
       expect(largeDist / smallDist).toBeCloseTo(500, 3);

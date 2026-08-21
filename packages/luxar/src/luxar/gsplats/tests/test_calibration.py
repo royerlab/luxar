@@ -1213,6 +1213,21 @@ class TestEstimateFloor:
         # Padding is excluded, so the estimate still lands on the pedestal.
         assert floor == pytest.approx(110.0, abs=4.0)
 
+    def test_array_like_is_materialized_before_zero_exclusion(self) -> None:
+        class LazyArray:
+            def __init__(self, values: np.ndarray) -> None:
+                self.values = values
+
+            def __array__(self, dtype=None) -> np.ndarray:
+                return np.asarray(self.values, dtype=dtype)
+
+        values = self._pedestal_volume(pedestal=110.0)
+        values[:20] = 0.0
+
+        floor = estimate_floor(LazyArray(values), method="mode")
+
+        assert floor == pytest.approx(110.0, abs=4.0)
+
     def test_float32_high_offset_narrow_band(self) -> None:
         # A float32 background at a large offset makes 512 bins across the sub-p95
         # band narrower than float32 spacing; np.histogram used to raise "Too many

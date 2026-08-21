@@ -20,6 +20,8 @@ if HAS_TORCH:
     from luxar.gsplats.fitting.preprocessing import (
         _compression_ratio_to_target_count,
         _compute_floats_per_splat,
+        _normalize_data,
+        _resolve_floor,
         preprocess_data,
     )
 
@@ -185,6 +187,86 @@ class TestPreprocessData:
         # Real dynamic range preserved (not collapsed to a constant 0.5).
         assert result.V_normalized.max() == pytest.approx(1.0, abs=1e-6)
         assert result.V_normalized.min() == pytest.approx(0.0, abs=1e-6)
+
+    def test_floor_guard_uses_true_max_with_percentile_normalization(
+        self, mock_config_2d, capsys
+    ) -> None:
+        V = np.concatenate(
+            [
+                np.linspace(0.0, 10.0, 99, dtype=np.float32),
+                np.array([100.0], dtype=np.float32),
+            ]
+        ).reshape(10, 10)
+        mock_config_2d.V = V
+        mock_config_2d.norm_percentile = 10.0
+        mock_config_2d.floor = 20.0
+        mock_config_2d.verbose = True
+
+        result = preprocess_data(mock_config_2d)
+
+        assert result.floor == pytest.approx(20.0)
+        assert result.image_min == pytest.approx(20.0)
+        assert result.image_max == pytest.approx(100.0)
+        assert result.V_normalized.max() == pytest.approx(1.0)
+        assert "expanding high endpoint to data max 100" in capsys.readouterr().out
+
+    def test_supplied_norm_range_remains_authoritative_for_floor_guard(self) -> None:
+        V = np.array([0.0, 5.0], dtype=np.float32)
+
+        normalized, image_min, image_max, intensity_range, applied_floor = (
+            _normalize_data(
+                V,
+                norm_percentile=0.0,
+                verbose=False,
+                floor=8.0,
+                norm_range=(0.0, 10.0),
+            )
+        )
+
+        assert image_min == pytest.approx(8.0)
+        assert image_max == pytest.approx(10.0)
+        assert intensity_range == pytest.approx(2.0)
+        assert applied_floor == pytest.approx(8.0)
+        assert normalized.tolist() == pytest.approx([0.0, 0.0])
+
+    def test_supplied_norm_range_rejects_floor_at_shared_ceiling(self) -> None:
+        scales = []
+        for data_max in (20.0, 100.0):
+            V = np.array([0.0, 5.0, data_max], dtype=np.float32)
+
+            normalized, image_min, image_max, intensity_range, applied_floor = (
+                _normalize_data(
+                    V,
+                    norm_percentile=0.0,
+                    verbose=False,
+                    floor=10.0,
+                    norm_range=(0.0, 9.0),
+                )
+            )
+
+            scales.append((image_min, image_max, intensity_range, applied_floor))
+            assert normalized[1] == pytest.approx(5.0 / 9.0)
+
+        assert scales == [(0.0, 9.0, 9.0, None), (0.0, 9.0, 9.0, None)]
+
+    def test_percentile_floor_excludes_exact_zero_padding(self) -> None:
+        V = np.concatenate(
+            [np.zeros(100, dtype=np.float32), np.linspace(100.0, 120.0, 100)]
+        )
+
+        assert _resolve_floor(V, "p10") == pytest.approx(102.0, abs=0.1)
+
+    def test_percentile_floor_materializes_array_like_input(self) -> None:
+        class ArrayLike:
+            def __init__(self, values: np.ndarray) -> None:
+                self.values = values
+
+            def __array__(self, dtype=None) -> np.ndarray:
+                return np.asarray(self.values, dtype=dtype)
+
+        V = ArrayLike(np.array([0.0, 10.0, 20.0], dtype=np.float32))
+
+        assert _resolve_floor(V, "p10") == pytest.approx(11.0)
 
     def test_uniform_image_handling(self, mock_config_2d) -> None:
         """Test handling of nearly uniform images."""

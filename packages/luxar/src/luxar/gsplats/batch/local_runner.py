@@ -54,6 +54,18 @@ def _task_voxels(manifest: BatchManifest) -> int:
     return max(1, total)
 
 
+def _denoise_h_for_job(manifest: BatchManifest, job: BatchJob) -> Optional[float]:
+    """Return the pinned on-the-fly NLM strength for one local worker."""
+    if (
+        manifest.denoise
+        and manifest.denoise_mode == "on-the-fly"
+        and manifest.denoise_h is None
+        and manifest.denoise_h_values
+    ):
+        return manifest.denoise_h_values.get(str(job.channel))
+    return None
+
+
 def build_device_assignment(
     task_ids: List[int], workers: dict[int, int]
 ) -> dict[int, int]:
@@ -239,16 +251,6 @@ def run_batch_local(
     def _out_path(job: BatchJob) -> Path:
         return tiles_dir / job.output_filename
 
-    def _denoise_h(job: BatchJob) -> Optional[float]:
-        if (
-            manifest.denoise
-            and manifest.denoise_mode == "on-the-fly"
-            and manifest.denoise_h is None
-            and manifest.denoise_h_values
-        ):
-            return manifest.denoise_h_values.get(str(job.channel))
-        return None
-
     def _skip(task_id: int) -> bool:
         out = _out_path(job_by_id[task_id])
         return resume and (out.exists() or Path(str(out) + ".empty").exists())
@@ -265,7 +267,9 @@ def run_batch_local(
         # its replacement exists, and a failed refit would then leave nothing.
         shutil.rmtree(staging, ignore_errors=True)
         Path(str(staging) + ".empty").unlink(missing_ok=True)
-        return build_task_fit_argv(manifest, job, staging, denoise_h=_denoise_h(job))
+        return build_task_fit_argv(
+            manifest, job, staging, denoise_h=_denoise_h_for_job(manifest, job)
+        )
 
     def _env(task_id: int) -> dict[str, str]:
         gpu = assignment.get(task_id, -1)

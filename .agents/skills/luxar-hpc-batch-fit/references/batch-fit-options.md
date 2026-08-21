@@ -45,7 +45,8 @@ box takes its budget from the shared density plan.
 `--floor` (default `auto`, same as `fit`/`cal`): subtract a background floor /
 DC-offset (clip at 0) before normalization, so amplitudes are background-relative.
 `auto` = histogram-mode estimate (capped at median; no-op on clean data);
-`pNN` = subtract that percentile; a number = fixed value; `none` = disable.
+`pNN` = subtract that percentile of non-zero voxels; a number = fixed value;
+`none` or `0` = disable.
 
 The spec is resolved to **one global level for the whole timelapse** at plan time,
 recorded in the manifest (`floor_level`), and handed as a concrete number to every

@@ -208,6 +208,8 @@ encoder.encode(
 **Methods:**
 - `encode(data, zarr_group, name, semantic_type, mode=AUTO, n_elements=None, bounds=None, positive_scalar_encoding="linear", custom_encoder=None, color_mode=None, chunks=None, compressor=None, deduplicate=True)` - Encode and write array or scalar
 - `reset()` - Clear internal registry (call between scenes)
+- `snapshot()` - Capture deduplication state for a transactional writer operation
+- `restore(state)` - Restore deduplication state after a transactional writer rollback
 
 **Key keyword arguments:**
 - `n_elements` - Broadcast target count. Required for scalar/tuple/list input; optional for arrays (opts into broadcast/uniform validation when given).
@@ -469,6 +471,12 @@ else:
 # Clear registry between scenes
 registry.clear()
 ```
+
+**Methods:**
+- `check(data, path)` - Check for a duplicate and register new array content
+- `clear()` - Clear all registered array references
+- `snapshot()` - Return an independent snapshot of the registry maps
+- `restore(state)` - Replace the registry maps from a snapshot
 
 **Detection Algorithm:**
 1. **Quick Check** (for arrays > 32KB): Hash first 32KB + dtype + shape

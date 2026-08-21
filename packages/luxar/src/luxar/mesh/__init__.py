@@ -2,8 +2,9 @@
 
 Mirrors :mod:`luxar.gsplats`: the node class itself lives in :mod:`luxar.core.mesh`,
 while everything *about* meshes that is not the scene-graph object lives here. Today
-that is :mod:`luxar.mesh.interop`, which imports classical mesh files, and
-:mod:`luxar.mesh.split`, the by-face re-indexing behind ``add_mesh(partition=…)``.
+that is :mod:`luxar.mesh.interop`, which imports classical mesh files;
+:mod:`luxar.mesh.split`, the by-face re-indexing behind ``add_mesh(partition=…)``;
+and :mod:`luxar.mesh.decimate`, which produces substitutive mesh LOD levels.
 
 Deliberately does NOT re-export ``Mesh``. ``luxar.mesh`` and ``luxar.core.mesh`` are
 distinct modules, and pulling the node class up here would make this package import

@@ -14,6 +14,10 @@ denoises the whole volume first, estimates (#1178). That match is exact for a
 volume within the denoise probe's budget; above it, only a ``pNN`` floor is
 corrected onto the denoised basis and the default ``auto`` keeps its raw-basis
 level with a printed note.
+The shared normalization range follows the same basis: its whole-volume
+endpoints are shifted by the denoise-induced change measured on the bounded
+shape-preserving probe, so tiles are not normalized against raw extremes they
+never see.
 """
 
 from __future__ import annotations
@@ -31,7 +35,7 @@ from luxar.gsplats.fitting.preprocessing import (
     NORM_RANGE_MIN_SPAN,
     _floor_spec_is_volume_derived,
     resolve_volume_floor_denoised,
-    resolve_volume_norm_range,
+    resolve_volume_norm_range_denoised,
 )
 from luxar.gsplats.fitting.results import stamp_voxels_per_splat
 from luxar.gsplats.fitting.validation import _validate_floor
@@ -318,8 +322,9 @@ def _tile_norm_range(
 ) -> "tuple[float, float] | None":
     """Shared ``(image_min, image_max)`` for every tile of ``volume``.
 
-    The top comes from :func:`resolve_volume_norm_range` (whole volume, shifted
-    into post-floor terms). The bottom is pinned at **zero**, which is where the
+    The top comes from :func:`resolve_volume_norm_range_denoised` (whole volume,
+    shifted onto the denoised and post-floor basis). The bottom is pinned at
+    **zero**, which is where the
     array each tile fitter actually sees starts: the floor subtraction clips at
     0 and the Hann window then tapers every overlapped face down to 0.
 
@@ -364,10 +369,13 @@ def _tile_norm_range(
     this dim (a float stack topping out at 1e-13, floor or not) keeps its shared
     scale, because normalizing by its own true extent is exactly right.
     """
-    _, hi = resolve_volume_norm_range(
+    _, hi = resolve_volume_norm_range_denoised(
         volume,
         fit_kwargs.get("norm_percentile", 0.0),
+        denoise_h=fit_kwargs.get("_denoise_h"),
+        denoise_params=fit_kwargs.get("_denoise_params"),
         subtract=applied_floor,
+        probe_cache=fit_kwargs.get("_denoise_probe_cache"),
         verbose=verbose,
     )
     if not np.isfinite(hi):
@@ -517,6 +525,7 @@ def fit_tile(
     # not a user spec — _validate_floor guards user input and would reject
     # a legitimate negative resolved level.
     floor_spec = fit_kwargs.pop("floor", "auto")
+    probe_cache = fit_kwargs.setdefault("_denoise_probe_cache", {})
     if isinstance(floor_spec, str):
         _validate_floor(floor_spec)
     # Denoising is applied to the tile BELOW, before the level is subtracted, so
@@ -534,6 +543,7 @@ def fit_tile(
         floor_spec,
         denoise_h=fit_kwargs.get("_denoise_h"),
         denoise_params=fit_kwargs.get("_denoise_params"),
+        probe_cache=probe_cache,
     )
 
     # Resolve the INTENSITY SCALE against the whole volume too, for the same
@@ -559,6 +569,7 @@ def fit_tile(
     # Use pop to remove denoise keys before forwarding to fitting functions
     _denoise_h = fit_kwargs.pop("_denoise_h", None)
     _denoise_params = fit_kwargs.pop("_denoise_params", None)
+    fit_kwargs.pop("_denoise_probe_cache", None)
     if _denoise_h is not None and _denoise_params is not None:
         from arbol import asection as _asection
 
@@ -933,6 +944,7 @@ def fit_tiled(
     # against "floor >= max erases everything" too (matching the non-tiled
     # path, which warns and ignores such a floor).
     floor_spec = fit_kwargs.pop("floor", "auto")
+    probe_cache = fit_kwargs.setdefault("_denoise_probe_cache", {})
     floor_already_resolved = fit_kwargs.pop("_floor_resolved", False)
     if floor_already_resolved:
         applied_floor = None if floor_spec == "none" else float(floor_spec)
@@ -948,6 +960,7 @@ def fit_tiled(
             floor_spec,
             denoise_h=fit_kwargs.get("_denoise_h"),
             denoise_params=fit_kwargs.get("_denoise_params"),
+            probe_cache=probe_cache,
             guard_numeric=True,
             # Log the DENOISED basis the level was resolved on (raw level + the
             # measured shift) — the one number the summary line below cannot show.

@@ -364,6 +364,7 @@ class Scripts:
     preempt_fit_script: Optional[str]
     calibrate_script: Optional[str]
     denoise_script: Optional[str]
+    floor_script: Optional[str]
 
 
 def generate_all_scripts(
@@ -410,16 +411,20 @@ def generate_all_scripts(
     # Generate denoise scripts if needed
     calibrate_script = None
     denoise_script = None
+    floor_script = None
     if batch_denoise:
         from luxar.gsplats.batch.slurm_gen import (
             generate_calibrate_sbatch,
             generate_denoise_sbatch,
+            generate_floor_sbatch,
         )
 
         if batch_denoise_h is None:
             calibrate_script = generate_calibrate_sbatch(manifest, preamble)
         if denoise_mode == "preprocess":
             denoise_script = generate_denoise_sbatch(manifest, preamble)
+        if manifest.floor_deferred:
+            floor_script = generate_floor_sbatch(manifest, preamble)
 
     return Scripts(
         preamble=preamble,
@@ -428,4 +433,5 @@ def generate_all_scripts(
         preempt_fit_script=preempt_fit_script,
         calibrate_script=calibrate_script,
         denoise_script=denoise_script,
+        floor_script=floor_script,
     )
