@@ -34,13 +34,14 @@ a manual-file / Kaggle demo (or an LFS demo whose payload is absent) also lands
 in the soft bucket rather than returning 1 — its error tail is still printed, so
 it stays visible. And a ``timeout``, a
 ``no-output`` (exit 0 having written nothing) or a death by signal (a negative
-return code: the OOM killer, a segfault) stays HARD even for them, which leaves
-one real case unrescued:
-``arxiv_papers_kaggle`` needs no credentials to start and declares a ~30 GB
-download, so on a cold machine it can exhaust ``GEN_TIMEOUT_S`` and land in
-``timeout`` — a non-zero exit for the whole run. Fixing that by skipping large
-downloads is deliberately NOT done: it would stop regenerating the tile on a
-machine whose cache is warm.
+return code: the OOM killer, a segfault) stays HARD even for them. Two real cases
+remain unrescued: ``arxiv_papers_kaggle`` needs no credentials to start and
+declares a ~30 GB download, so on a cold machine it can exhaust
+``GEN_TIMEOUT_S`` and land in ``timeout``; and ``cellxgene_census_umap`` declares
+no cache key, so its LFS payload cannot be probed and a positive exit stays hard.
+Fixing the former by skipping large downloads would stop regenerating the tile
+on a machine whose cache is warm; guessing at payloads for the latter would
+weaken the observed-state rule.
 
 Usage::
 
@@ -116,17 +117,20 @@ def _git_lfs_input_missing(meta: dict[str, Any]) -> bool:
     for cache_key in meta["caches"]:
         record = datasets.get(cache_key)
         if not isinstance(record, dict):
-            return False
+            continue
         directory = record.get("dir")
         files = record.get("files")
         if not isinstance(directory, str) or not isinstance(files, list) or not files:
-            return False
+            continue
+        record_paths: list[Path] = []
         for file_info in files:
             if not isinstance(file_info, dict) or not isinstance(
                 file_info.get("name"), str
             ):
-                return False
-            paths.append(DEMOS_DIR / "data" / directory / file_info["name"])
+                break
+            record_paths.append(DEMOS_DIR / "data" / directory / file_info["name"])
+        else:
+            paths.extend(record_paths)
 
     if not paths:
         return False

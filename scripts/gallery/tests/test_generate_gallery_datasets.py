@@ -16,8 +16,9 @@ actually fails. ``git-lfs`` is demoted only while a declared payload is absent
 or still a pointer, so a release machine with pulled payloads keeps hard-failure
 signal. A ``timeout`` / ``no-output`` / death by signal stays hard for every mode.
 
-Behavioral cases run against a synthetic manifest + synthetic demo files; one
-separate invariant test reads the real manifest to keep ``script: null`` honest.
+Behavioral cases run against a synthetic manifest + synthetic demo files;
+separate invariant tests read the real manifests to keep ``script: null`` and
+the Git LFS cache-to-payload mapping honest.
 """
 
 from __future__ import annotations
@@ -296,6 +297,50 @@ def test_one_missing_file_in_a_git_lfs_cache_is_enough_to_demote(
     assert "failed" not in out
 
 
+def test_an_unresolvable_git_lfs_cache_does_not_hide_a_missing_sibling(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    calls = _setup(
+        tmp_path,
+        monkeypatch,
+        [("needs_input_lfs", "git-lfs", "fail")],
+        lfs_states={"needs_input_lfs": "missing"},
+    )
+    _write_demo(
+        gen.DEMOS_DIR,
+        "needs_input_lfs",
+        "git-lfs",
+        ("stale_cache_key", "needs_input_lfs"),
+    )
+
+    code = _run_main(monkeypatch)
+    out = capsys.readouterr().out
+
+    assert calls == ["demo_needs_input_lfs.py"]
+    assert code == 0
+    assert "manual-data" in out
+    assert "failed" not in out
+
+
+def test_a_cacheless_git_lfs_demo_still_fails_hard(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    calls = _setup(
+        tmp_path,
+        monkeypatch,
+        [("cacheless_lfs", "git-lfs", "fail")],
+    )
+    _write_demo(gen.DEMOS_DIR, "cacheless_lfs", "git-lfs")
+
+    code = _run_main(monkeypatch)
+    out = capsys.readouterr().out
+
+    assert calls == ["demo_cacheless_lfs.py"]
+    assert code == 1
+    assert "failed" in out
+    assert "manual-data" not in out
+
+
 def test_the_child_command_contract(tmp_path, monkeypatch) -> None:
     """What the harness actually spawns — the fake sees only what it records.
 
@@ -396,6 +441,28 @@ def test_capture_only_entries_have_no_runnable_demo_on_disk() -> None:
             assert entry["id"] not in on_disk, (
                 f"{entry['id']}: manifest says capture-only, but "
                 f"{on_disk[entry['id']]} is on disk and can generate the dataset"
+            )
+
+
+def test_gallery_git_lfs_caches_resolve_to_manifest_files() -> None:
+    """Keep the generator's cache-to-payload probe valid for the real tree."""
+    from luxar.demos.registry import extract_demo_meta
+
+    datasets = json.loads(gen.DATA_MANIFEST.read_text())["datasets"]
+    for entry in gen.load_manifest():
+        script = entry.get("script")
+        if script is None:
+            continue
+        meta = extract_demo_meta(gen.DEMOS_DIR / script)
+        if meta["requirements"]["local_data"] != "git-lfs" or not meta["caches"]:
+            continue
+        for cache_key in meta["caches"]:
+            record = datasets.get(cache_key)
+            assert isinstance(record, dict), (
+                f"{entry['id']}: cache {cache_key!r} has no data-manifest record"
+            )
+            assert isinstance(record.get("files"), list) and record["files"], (
+                f"{entry['id']}: cache {cache_key!r} has no flat payload file list"
             )
 
 
