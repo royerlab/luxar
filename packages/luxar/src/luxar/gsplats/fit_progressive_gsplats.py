@@ -78,6 +78,34 @@ from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData
 from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
 
 
+def _pin_pass0_norm_range(
+    pass_i: int,
+    V_original: np.ndarray,
+    applied_floor: "float | None",
+    pass_kwargs: dict[str, Any],
+) -> None:
+    """Put progressive pass 0 on the floor-subtracted normalization basis."""
+    if pass_i != 0 or applied_floor is None:
+        return
+    from luxar.gsplats.fitting.preprocessing import NORM_RANGE_MIN_SPAN
+
+    supplied_range = pass_kwargs.get("norm_range")
+    if supplied_range is None:
+        norm_percentile = float(pass_kwargs.get("norm_percentile", 0.0))
+        image_max = (
+            float(np.percentile(V_original, 100.0 - norm_percentile))
+            if norm_percentile > 0.0
+            else float(V_original.max())
+        )
+    else:
+        image_max = float(supplied_range[1]) - float(applied_floor)
+    pass_kwargs["norm_range"] = (
+        (0.0, image_max)
+        if np.isfinite(image_max) and image_max > NORM_RANGE_MIN_SPAN
+        else None
+    )
+
+
 def _compute_psnr_chunked(
     rendered_gpu: torch.Tensor,
     original_np: np.ndarray,
@@ -300,7 +328,7 @@ def fit_progressive_gaussian_splats(
     on the same GPU and fill the utilization gap.
     """
     from luxar.gsplats.fit_gsplats import fit_gaussian_splats
-    from luxar.gsplats.fitting.preprocessing import NORM_RANGE_MIN_SPAN, _resolve_floor
+    from luxar.gsplats.fitting.preprocessing import _resolve_floor
     from luxar.gsplats.fitting.validation import _validate_floor
     from luxar.gsplats.rendering.volume_rendering import render_to_volume_tensor
 
@@ -479,21 +507,7 @@ def fit_progressive_gaussian_splats(
         # zero-based basis. Preserve the caller's requested top-end rule: a
         # percentile fit uses the percentile of the already-subtracted volume,
         # while a supplied raw-input range is shifted by the applied floor.
-        if pass_i == 0 and applied_floor is not None:
-            supplied_range = pass_kwargs.get("norm_range")
-            if supplied_range is None:
-                norm_percentile = float(pass_kwargs.get("norm_percentile", 0.0))
-                image_max = (
-                    float(np.percentile(V_original, 100.0 - norm_percentile))
-                    if norm_percentile > 0.0
-                    else float(V_original.max())
-                )
-            else:
-                image_max = float(supplied_range[1]) - float(applied_floor)
-            if np.isfinite(image_max) and image_max > NORM_RANGE_MIN_SPAN:
-                pass_kwargs["norm_range"] = (0.0, image_max)
-            else:
-                pass_kwargs["norm_range"] = None
+        _pin_pass0_norm_range(pass_i, V_original, applied_floor, pass_kwargs)
 
         # A supplied whole-volume intensity scale describes the VOLUME, not the
         # residual chain built from it. Pass 0 shares it (that is the point);

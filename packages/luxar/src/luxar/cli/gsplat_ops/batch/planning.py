@@ -739,6 +739,14 @@ def resolve_batch_norm_range(
         return norm_range
 
 
+def _record_batch_norm_range(
+    fit_args: dict[str, Any], norm_range: "Optional[Tuple[float, float]]"
+) -> None:
+    """Forward a resolved batch range when one is usable."""
+    if norm_range is not None:
+        fit_args["norm_range"] = f"{norm_range[0]:.17g},{norm_range[1]:.17g}"
+
+
 def _load_scan_volume(
     input_path: Path,
     timepoints: List[int],
@@ -1543,8 +1551,7 @@ def plan_batch(
         spatial_shape=tuple(spatial),
         sampled_slices=sampled_slices,
     )
-    if norm_range is not None:
-        fit_args["norm_range"] = f"{norm_range[0]:.17g},{norm_range[1]:.17g}"
+    _record_batch_norm_range(fit_args, norm_range)
 
     if mode == "content":
         import numpy as _np

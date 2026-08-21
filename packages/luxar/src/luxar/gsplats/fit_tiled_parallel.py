@@ -66,6 +66,18 @@ def luxar_argv0() -> list[str]:
     return [sys.executable, "-m", "luxar"]
 
 
+def _norm_range_args(
+    norm_range: "Optional[tuple[float, float]]",
+) -> list[str]:
+    """Format the hidden shared-range worker option when present."""
+    if norm_range is None:
+        return []
+    return [
+        "--norm-range",
+        f"{float(norm_range[0]):.17g},{float(norm_range[1]):.17g}",
+    ]
+
+
 def build_worker_cmd(
     argv0: list[str],
     input_path: str | Path,
@@ -144,11 +156,7 @@ def build_worker_cmd(
         cmd += ["--lr", str(lr)]
     if floor is not None:
         cmd += ["--floor", str(floor)]
-    if norm_range is not None:
-        cmd += [
-            "--norm-range",
-            f"{float(norm_range[0]):.17g},{float(norm_range[1]):.17g}",
-        ]
+    cmd += _norm_range_args(norm_range)
     if seed_method:
         cmd += ["--seed-method", seed_method]
     if downscale is not None:
