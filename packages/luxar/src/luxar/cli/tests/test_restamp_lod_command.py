@@ -61,10 +61,14 @@ def test_a_clean_run_exits_zero_and_prints_the_audit_trail(tmp_path: Path) -> No
     result = runner.invoke(app, ["restamp-lod", str(store)])
 
     assert result.exit_code == 0, result.output
-    assert "pts" in result.output
     assert "[0, 4] → [0, 0.5]" in result.output
     assert "[0, 4] → [0, 1]" in result.output, "the tile anchor must be visible too"
-    assert "whole-object" in result.output and "fills-screen" in result.output
+    # Anchor pinned TO ITS GROUP on one line: asserting the two labels appear
+    # somewhere in the output passes just as happily when they are swapped, and
+    # a swapped anchor is exactly the mistake worth catching.
+    assert "pts: anchor whole-object" in result.output
+    assert "tiled/part_0: anchor fills-screen" in result.output
+    assert "tiled/part_1: anchor fills-screen" in result.output
     assert _node_attrs(store)["pts"]["selector"] == DERIVED_LOD_SELECTOR
 
 
@@ -172,6 +176,26 @@ def test_an_unsupported_selector_exits_one_but_still_writes_the_rest(
     assert attrs["ok"]["selector"] == DERIVED_LOD_SELECTOR
     assert attrs["stale"]["selector"] == "pixel_size"
     assert attrs["stale/child_1"]["coverage_fraction"] == 4.0
+
+
+def test_a_re_verification_residual_exits_one(tmp_path: Path, monkeypatch: Any) -> None:
+    """The end of the verify → report → exit-code chain, on a REAL failure.
+
+    The store is left with a stale consolidated index (``consolidate`` neutered
+    for this run), which is the silent failure the read-back exists to catch:
+    the per-node documents are right and the only document the viewer fetches is
+    not. A pipeline gates on this exit code, so it is the link that has to hold.
+    """
+    from luxar.io import lod_restamp
+
+    store = _legacy_scene(tmp_path)
+    monkeypatch.setattr(lod_restamp, "consolidate", lambda group: None)
+
+    result = runner.invoke(app, ["restamp-lod", str(store)])
+
+    assert result.exit_code == 1, result.output
+    assert "verify:" in result.output
+    assert "consolidated index" in result.output
 
 
 def test_a_second_run_exits_zero_and_reports_a_no_op(tmp_path: Path) -> None:

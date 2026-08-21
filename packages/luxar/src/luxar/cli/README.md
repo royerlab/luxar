@@ -175,21 +175,24 @@ hosting` on a store the viewer will slice into. The logic lives in
 `luxar.io.optimise`.
 
 ### `luxar restamp-lod`
-Re-derive a store's LOD switch thresholds in place. An attributes-only pass: no
-chunk data moves and no array is opened.
+Re-derive a store's LOD switch thresholds in place. An attributes-only pass: the
+ladder rewrite moves no chunk data and opens no array.
 ```bash
 luxar restamp-lod scene.luxar.zarr                      # every legacy ladder
 luxar restamp-lod scene.luxar.zarr --dry-run            # report only
 luxar restamp-lod scene.luxar.zarr --group tiled/part_0 # one ladder (repeatable)
-luxar restamp-lod fit.gsplats.zarr                      # standalone gsplat trees
+luxar restamp-lod fit.gsplats.zarr --group /            # the gsplats root ladder
 ```
 
 Every `kind=lod` group still on the legacy `coverage` diagonal metric (or
 carrying no `selector`, which means the same) gets its per-child
 `coverage_fraction` thresholds re-derived by screen-occupancy halving — the
-whole-object anchor normally, the fills-screen one when the ladder is bound to a
-real multi-part partition — and its group stamped `screen-area`. A group already
-on `screen-area` is skipped, so a second run changes nothing, `content_hash`
+whole-object anchor normally, the fills-screen one when the ladder is
+tile-bound — and its group stamped `screen-area`. Tile-bound is the tree
+writers' full rule: a real multi-part `kind=partition` above the ladder, OR a
+`kind=partition` among the ladder's own children (the `overview` recipe's coarse
+cap, which is pinned at fills-screen on purpose). A group already on
+`screen-area` is skipped, so a second run changes nothing, `content_hash`
 included.
 
 It is never automatic: an authored `coverage_fractions=[...]` list and a legacy
@@ -199,9 +202,12 @@ and the per-group old→new ladder is printed as the audit trail. Sibling of
 and refuses same-path work; this one changes only attributes and works in place.
 A `.zarr.zip` is refused (nothing to write back to). When anything changes the
 `content_hash` is restamped and the metadata re-consolidated, then read back and
-verified from both the per-node documents and the consolidated index. Exit code
-1 when any ladder was left alone for a reason worth acting on. The logic lives in
-`luxar.io.lod_restamp`.
+verified from both the per-node documents and the consolidated index — and that
+restamp is the one costly step, since a SCENE's digest covers array values and
+therefore reads the whole store once (a standalone `.gsplats.zarr` gets a
+metadata-only stamp). A failed write is rolled back rather than left half
+applied. Exit code 1 when any ladder was left alone for a reason worth acting
+on. The logic lives in `luxar.io.lod_restamp`.
 
 ### `luxar profiles`
 List available network simulation profiles for testing.

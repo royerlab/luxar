@@ -6,17 +6,26 @@ Every LOD ladder in the bundled demo corpus is on the legacy `coverage` selector
 viewer now prefers, and re-generating a dataset to fix a handful of numbers is
 absurd when nothing about the data has changed: only a `selector` attr and one
 `coverage_fraction` per ladder child are wrong. The new `luxar restamp-lod`
-command rewrites exactly those, in place, without opening a single array.
+command rewrites exactly those, in place, without opening a single array (the
+`content_hash` restamp that follows a real change is the one exception — see
+below).
 
 It walks the store, and for each `kind=lod` group still on `coverage` (or
 carrying no `selector`, which historically meant the same) re-derives the
 per-child thresholds by screen-occupancy halving and stamps the group
 `screen-area`. The anchor follows the tree writers' own rule rather than a
-guess: a ladder bound to a real multi-part `kind=partition` gets the
-fills-screen (per-tile) anchor, and everything else — including a ladder under a
+guess, both clauses of it: a ladder gets the fills-screen (per-tile) anchor when
+a real multi-part `kind=partition` encloses it, **and** when one of its own
+ladder children is a `kind=partition` — the `overview` recipe's coarse cap,
+pinned at fills-screen on purpose so the opening framing shows the cap rather
+than pulling in the whole dataset. Everything else — including a ladder under a
 ONE-part partition, whose single part's bbox is the whole object — keeps the
-whole-object anchor. Children are ordered coarsest→finest by `child_index`, so a
-ten-plus-level ladder does not get its finest threshold handed to `child_10`.
+whole-object anchor. The resolved binding is threaded down to a nested ladder
+just as the writers thread it. Children are ordered coarsest→finest by
+`child_index`, so a ten-plus-level ladder does not get its finest threshold
+handed to `child_10`. A per-recipe round trip (`levels`, `tiles`, `overview`,
+`adaptive`: write, age to legacy, restamp) pins the whole point of the command —
+a restamped store is indistinguishable from a freshly written one.
 
 The command is a deliberate opt-in and can never be triggered by anything else.
 An authored `coverage_fractions=[...]` list and a legacy derived one are
@@ -26,15 +35,29 @@ on purpose. It therefore prints the old→new ladder and the anchor for every
 group it touches, offers `--dry-run` and a repeatable `--group` to restrict the
 pass, and skips (loudly, with a non-zero exit) anything it cannot convert
 honestly: a `selector` outside the vocabulary, which wants `luxar gsplat
-migrate-format` first, or a finest level whose element count the store does not
+migrate-format` first, a finest level whose element count the store does not
 record, where fabricating a positive would defeat the derivation's own
-"finest LOD level is empty" guard.
+"finest LOD level is empty" guard, or a stored ladder that descends in the
+resolved coarsest→finest child order, where the two disagree about which level
+is finest and re-deriving would invert the ladder.
 
 It is a sibling of `luxar optimise`, not a flag on it: that pass documents that
 every attribute is preserved and refuses same-path work, while this one changes
 only attributes and works in place. A group already on `screen-area` is skipped,
 so a second run changes nothing at all — including the `content_hash`, which is
 restamped and re-consolidated only when something really moved, since an
-attrs-only edit still has to invalidate a warm viewer cache. The result is then
-read back and verified through both the per-node documents and the consolidated
-index the viewer fetches, so a consolidation mistake cannot pass silently.
+attrs-only edit still has to invalidate a warm viewer cache. That restamp is the
+one part of a run that is not free, and the docs now say so: a compiled scene's
+digest covers array VALUES, so moving it streams every array in the store once
+(linear in the store's size, however few attributes changed), while a standalone
+`.gsplats.zarr` gets a metadata-only stamp. The result is then read back and
+verified through both the per-node documents and the consolidated index the
+viewer fetches, so a consolidation mistake cannot pass silently.
+
+Writes are all-or-nothing. The pass classifies every group in a read-only
+planning walk first, and if a write then fails it restores each attribute it had
+already rewritten — an absent `coverage_fraction` back to absent — re-consolidates
+so exactly one valid index is left, and re-raises the original error with a note
+saying what was rolled back. Left unwound, a mid-walk failure published a torn
+ladder: screen-area thresholds under `selector="coverage"`, the two disagreeing
+about their units with nothing downstream able to notice.

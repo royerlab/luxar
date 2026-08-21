@@ -308,7 +308,7 @@ that would peak at twice a 629 MB array's size.
 **already on disk**, in place. It backs the `luxar restamp-lod` CLI command. The
 sibling of `optimise.py`, deliberately not a flag on it: that pass preserves
 every attribute and refuses same-path work, this one changes **only** attributes
-and never touches an array or a chunk.
+and moves no chunk.
 
 ```python
 from luxar.io.lod_restamp import restamp_lod_store
@@ -321,18 +321,35 @@ for group in report.restamped:
 Every `kind=lod` group still on the legacy `coverage` diagonal metric (or
 carrying no `selector` at all, which means the same) has its per-child
 `coverage_fraction` re-derived by screen-occupancy halving —
-`partitioned_coverage_fractions` when the group is bound to a REAL (>1 part)
-`kind=partition`, `coverage_fractions` otherwise, the same `under_partition or
-len(children) > 1` rule both gsplat tree writers thread — and its group stamped
-`screen-area`. Children are ordered coarsest→finest by `child_index`, and a
-group already on `screen-area` is skipped, so a second run is a no-op down to
-the `content_hash`.
+`partitioned_coverage_fractions` when the group is TILE-BOUND,
+`coverage_fractions` otherwise — and its group stamped `screen-area`. Children
+are ordered coarsest→finest by `child_index`, and a group already on
+`screen-area` is skipped, so a second run is a no-op down to the `content_hash`.
+
+Tile-binding is both gsplat tree writers' full rule, `under_partition or
+any(isinstance(c, GSplatPartition) for c in on_disk)`, read off the store — and
+it has two clauses, not one:
+
+- **ancestry** — an enclosing `kind=partition` that is a REAL tiling (>1 part;
+  a one-part partition's single part IS the whole object);
+- **own children** — one of this lod group's own ladder children is a
+  `kind=partition`. That is the `overview` recipe's `[coarse_leaf,
+  fine_partition]` cap, which `partitioned_coverage_fractions` documents as a
+  deliberate product contract. Miss this clause and an `overview` cap comes back
+  at the whole-object anchor, i.e. the viewer loads the entire dataset at the
+  opening framing — the one cost that recipe exists to avoid.
+
+The binding a lod group resolves is threaded down to its own descendants, as the
+writers thread `under_partition=partition_bound`.
 
 - `restamp_lod_store(path, *, dry_run=False, groups=None)` → `RestampReport` —
   the groups restamped, skipped-as-current, skipped-as-unsupported and
-  skipped-as-unresolved, plus the new `content_hash` and any re-verification
-  residual. `report.clean` is False when anything was left alone for a reason
-  the caller must act on; the CLI keys its exit code on it.
+  skipped-as-unresolved, plus the new `content_hash` (with a
+  `content_hash_status` of `unchanged` / `restamped` / `unstampable`, since a
+  `None` hash alone cannot distinguish "nothing changed" from "this store
+  carries no digest to move") and any re-verification residual. `report.clean`
+  is False when anything was left alone for a reason the caller must act on; the
+  CLI keys its exit code on it.
 
 **Never automatic.** An authored `coverage_fractions=[...]` list and a legacy
 derived one are indistinguishable on disk — the point
@@ -349,15 +366,31 @@ alone rather than converted, and so is a ladder whose finest child records no
 element count — the derivation's "finest LOD level is empty" guard reads that
 count, and fabricating one would defeat it on exactly the store that needs it. A
 coarser level's missing count is harmless (only the ladder's length and the
-finest entry are consumed) and is reported as `None` rather than invented.
+finest entry are consumed) and is reported as `None` rather than invented. A
+ladder whose stored thresholds DESCEND in the resolved child order is refused
+too: the order and the thresholds disagree about which level is finest, so
+writing an ascending ladder onto that order would silently invert it.
 
-**Cache invalidation.** When something changed, `_restamp_content_hash` runs and
-the metadata is re-consolidated, in that order — an attrs-only edit must still
-invalidate a warm viewer cache. Then the store is read back and verified through
-BOTH readers, because they can disagree and the disagreement is the failure
-worth catching: `open_group` reports the per-node documents, while
-`read_consolidated_attrs` reports the root index, which is the only thing the
-viewer fetches.
+**Cache invalidation, and what it costs.** When something changed,
+`_restamp_content_hash` runs and the metadata is re-consolidated, in that
+order — an attrs-only edit must still invalidate a warm viewer cache. This is
+the only part of the pass that is not free: a compiled SCENE's digest is over
+array VALUES, so the restamp streams every array in the store once (linear in
+total store size); a standalone `.gsplats.zarr` takes the metadata-only branch.
+A dry run, and a run that changes nothing, hash nothing. Then the store is read
+back and verified through BOTH readers, because they can disagree and the
+disagreement is the failure worth catching: `open_group` reports the per-node
+documents, while `read_consolidated_attrs` reports the root index, which is the
+only thing the viewer fetches.
+
+**All-or-nothing writes.** Every group is classified in a read-only planning
+walk before anything is written; if a write then fails, each attr already
+rewritten is restored (an absent `coverage_fraction` back to absent), the index
+is re-consolidated so exactly one valid index remains, and the original error is
+re-raised with a note saying what was rolled back. Without that, a mid-walk
+failure leaves a TORN ladder — a screen-area threshold under
+`selector="coverage"` — which is the silent, unrecoverable disagreement
+`resolve_lod_ladder` warns about.
 
 ### Input Volume Loading
 

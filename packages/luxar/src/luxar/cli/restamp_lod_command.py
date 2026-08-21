@@ -32,14 +32,16 @@ def register_restamp_lod_command(app: typer.Typer) -> None:
             "--group",
             help=(
                 "Restrict the pass to this kind=lod group path (repeatable); "
-                "an unmatched path is an error"
+                "an unmatched path is an error. Spell the store ROOT '/' — the "
+                "only way to name the ladder of a .gsplats.zarr whose root IS "
+                "the kind=lod group"
             ),
         ),
     ) -> None:
         """Re-derive legacy LOD thresholds under the screen-area selector.
 
-        An attrs-only pass, in place: no chunk data moves and no array is
-        opened. Every ``kind=lod`` group still on the legacy ``coverage``
+        An attrs-only pass, in place: the ladder rewrite moves no chunk data and
+        opens no array. Every ``kind=lod`` group still on the legacy ``coverage``
         diagonal metric (or carrying no ``selector`` at all, which means the
         same) gets its per-child ``coverage_fraction`` thresholds re-derived by
         screen-occupancy halving and its group stamped ``screen-area``. A group
@@ -54,9 +56,17 @@ def register_restamp_lod_command(app: typer.Typer) -> None:
 
         When anything changes, the store's ``content_hash`` is restamped and the
         metadata re-consolidated, so a warm viewer cache invalidates on an
-        attrs-only edit it would otherwise never notice. The result is then read
-        back — from both the per-node documents and the consolidated index — and
-        verified.
+        attrs-only edit it would otherwise never notice. **That restamp is the
+        one expensive step:** a SCENE's digest covers array values, so it reads
+        every array in the store once (minutes on a very large scene, and linear
+        in its size); a standalone ``.gsplats.zarr`` gets a metadata-only stamp
+        and stays instant. Nothing is read at all under ``--dry-run`` or when no
+        ladder needed changing. The result is then read back — from both the
+        per-node documents and the consolidated index — and verified.
+
+        A failed write is undone: every attr already rewritten is restored, the
+        index re-consolidated, and the error reported, rather than leaving a
+        ladder whose thresholds and ``selector`` disagree about their units.
 
         Exits 1 if any group was left alone for a reason worth acting on: a
         selector outside the vocabulary (migrate with ``luxar gsplat

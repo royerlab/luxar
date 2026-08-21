@@ -134,12 +134,14 @@ detailed-statistics flag to see a store's chunk layout before and after.
 ## `luxar restamp-lod`
 
 Re-derive the LOD switch thresholds of a store that already exists, in place.
-An **attributes-only** pass: no chunk data moves, no array is opened.
+An **attributes-only** pass: the ladder rewrite moves no chunk data and opens no
+array.
 
 ```bash
 luxar restamp-lod                          # Re-derive every legacy ladder in STORE
 luxar restamp-lod --dry-run                # Report the old→new ladders; write nothing
 luxar restamp-lod --group tiled/part_0     # Restrict to one ladder (repeatable)
+luxar restamp-lod --group /                # The store ROOT's own ladder
 ```
 
 Every `kind=lod` group carries per-child `coverage_fraction` thresholds plus a
@@ -147,9 +149,18 @@ group-level `selector` naming the units they are in. Ladders written before the
 screen-area metric existed sit on the legacy `coverage` diagonal one (or carry
 no `selector` at all, which means the same). This command re-derives those
 thresholds by screen-occupancy halving — the whole-object anchor for a plain
-ladder, the fills-screen anchor for one bound to a real multi-part partition —
-and stamps the group `screen-area`. A group already on `screen-area` is skipped,
-so a second run changes nothing at all, down to the `content_hash`.
+ladder, the fills-screen anchor for a **tile-bound** one — and stamps the group
+`screen-area`. A group already on `screen-area` is skipped, so a second run
+changes nothing at all, down to the `content_hash`.
+
+Tile-bound is the tree writers' own two-clause rule, so a restamped store
+matches a freshly written one: a ladder is tile-anchored when a REAL multi-part
+`kind=partition` encloses it (the `tiles` and `adaptive` per-tile ladders), **or**
+when one of its own ladder children is itself a `kind=partition` — the `overview`
+recipe's `[coarse cap, fine partition]` pair, which is pinned at the fills-screen
+anchor deliberately so the opening framing shows the coarse cap instead of
+loading the whole dataset. A one-part partition is not a tiling (its single part
+IS the whole object) and does not bind.
 
 **It is an explicit opt-in, and it may override a deliberate choice.** An
 authored `coverage_fractions=[...]` list and a legacy derived ladder are
@@ -157,7 +168,10 @@ indistinguishable on disk, which is exactly why nothing does this automatically
 and why the compiler's one-part-partition check only ever warns. The per-group
 old→new ladder and the anchor used are printed for that reason — run `--dry-run`
 first, and use `--group` (repeatable; an unmatched path is an error, not a
-silent no-op) to restrict the pass to the ladders you meant.
+silent no-op) to restrict the pass to the ladders you meant. Group paths are
+spelled as the store spells them (`tiled/part_0`), and the store root is `/` —
+the only way to name the ladder of a `.gsplats.zarr` whose root IS the
+`kind=lod` group.
 
 Sibling of `luxar optimise`, not a flag on it: that pass preserves every
 attribute and refuses same-path work, this one changes only attributes and works
@@ -167,13 +181,27 @@ temp directory and there is nothing to write back to.
 
 When anything changes, the store's `content_hash` is restamped and the metadata
 re-consolidated, in that order: an attrs-only edit must still invalidate a warm
-viewer cache. The result is then read back — from both the per-node documents
-and the consolidated index the viewer fetches — and verified.
+viewer cache. **That restamp is the one step that is not instant.** A compiled
+scene's `content_hash` is a digest of array VALUES, so restamping it reads every
+array in the store exactly once — linear in the store's total size, so expect
+minutes on a very large scene even though only two attributes changed. A
+standalone `.gsplats.zarr` takes the other branch, a metadata-only stamp, and
+stays instant. A `--dry-run`, and a run with nothing to change, read nothing at
+all. The result is then read back — from both the per-node documents and the
+consolidated index the viewer fetches — and verified.
+
+If a write fails part-way, every attribute already rewritten is restored, the
+metadata is re-consolidated, and the error is reported. The store is left as it
+was found rather than carrying a half-migrated ladder whose thresholds and
+`selector` disagree about their units — a disagreement nothing downstream can
+detect.
 
 The command exits 1 if any ladder was left alone for a reason worth acting on: a
 `selector` outside the vocabulary (migrate the store with `luxar gsplat
 migrate-format` first), a finest level whose element count the store does not
-record, or a re-verification residual. Ladders that *were* restamped are still
+record, a stored ladder that descends in the resolved coarsest→finest child
+order (its thresholds and its child order disagree, so re-deriving would invert
+it), or a re-verification residual. Ladders that *were* restamped are still
 written in that case — nothing is silently ignored, and nothing is silently
 half-done.
 

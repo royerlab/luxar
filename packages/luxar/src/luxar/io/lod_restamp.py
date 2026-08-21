@@ -6,8 +6,17 @@ naming the UNITS they are in. The whole shipped demo corpus predates the
 ``"screen-area"`` selector, so its ladders carry ``selector="coverage"`` — the
 legacy diagonal metric — over thresholds that were *derived* rather than
 authored (issue #1727). Re-deriving them under the current metric is a pure
-ATTRIBUTE rewrite: no chunk data moves, no array is touched, so a store already
-on disk can be upgraded in place instead of regenerated.
+ATTRIBUTE rewrite: the pass itself moves no chunk and opens no array, so a store
+already on disk can be upgraded in place instead of regenerated.
+
+**One part of a real run is not free, and it is not the attrs pass.** When
+something actually changed, the store's ``content_hash`` is restamped so a warm
+viewer cache invalidates — and for a compiled SCENE that digest is over array
+VALUES, so the restamp streams every array in the store exactly once (linear in
+total store size: a 100 GB scene reads 100 GB to change two attrs). A standalone
+``.gsplats.zarr`` takes the other branch, a metadata-only root stamp, and stays
+cheap. A ``--dry-run``, and a run that finds nothing to change, hash nothing and
+so read nothing.
 
 **Why this is not part of ``luxar optimise``.** That pass documents "every
 attribute is preserved" and refuses same-path work outright; this one changes
@@ -23,13 +32,42 @@ every group it rewrites so the audit trail exists even when the rewrite is
 overriding a deliberate choice.
 
 **Which anchor a ladder gets is decided from the STORE**, mirroring the tree
-writers' rule (``io/_compiler/gsplat_tree.py::write_gsplat_node``) rather than
-trusting the stamped values: a ladder is tile-anchored only when some enclosing
-``kind=partition`` is a real tiling (>1 part). One consequence is deliberate — a
-store whose one-part partition holds a tile-anchored ladder, exactly what
-``warn_one_part_partition_anchors`` reports and cannot repair, comes out of this
-pass re-anchored at whole-object. That is a rewrite, which is why it happens only
-here and only when asked for.
+writers' rule (``io/_compiler/gsplat_tree.py::write_gsplat_node`` and the
+identical ``core/group/gsplats_pipeline/from_io.py::graft_gsplat_node``) rather
+than trusting the stamped values. That rule has TWO clauses and a ladder is
+tile-anchored when EITHER holds:
+
+* **ancestry** — some enclosing ``kind=partition`` is a real tiling (>1 part).
+  The ``tiles`` and ``adaptive`` per-tile ladders.
+* **its own children** — one of THIS lod group's ladder children is itself a
+  ``kind=partition``. That is the ``overview`` recipe's
+  ``[coarse_leaf, fine_partition]`` cap, which
+  :func:`~luxar.core.group.lod.group.partitioned_coverage_fractions` documents as
+  a deliberate product contract rather than geometry: the coarse cap is what the
+  opening framing shows and the fine branch is the zoom-in branch. Deriving such
+  a cap at the whole-object anchor instead would select the fine partition at
+  half-screen occupancy and load the WHOLE dataset on frame one — precisely the
+  cost the recipe exists to avoid, on the largest stores there are.
+
+The binding a ``kind=lod`` group resolves is threaded down to its own
+descendants, exactly as the writers pass ``under_partition=partition_bound`` into
+that group's children.
+
+One consequence is deliberate — a store whose one-part partition holds a
+tile-anchored ladder, exactly what ``warn_one_part_partition_anchors`` reports
+and cannot repair, comes out of this pass re-anchored at whole-object. That is a
+rewrite, which is why it happens only here and only when asked for. (The one-part
+exclusion belongs to the ANCESTRY clause only, again mirroring the writers: their
+own-children test is a bare ``any(isinstance(c, GSplatPartition))``.)
+
+**A failed run leaves the store as it found it.** The pass plans read-only, then
+applies; any exception during the apply restores every attr it had already
+written — including removing a ``coverage_fraction`` that was absent before —
+re-consolidates so exactly one valid index remains, and re-raises with a note
+saying so. A torn ladder (a screen-area threshold under ``selector="coverage"``)
+is the silent-and-unrecoverable failure
+:func:`~luxar.core.group.lod.group.resolve_lod_ladder` warns about, and a store
+mid-way through this pass would carry one.
 
 The public entry point is :func:`restamp_lod_store`; the CLI wrapper is
 ``luxar.cli.restamp_lod_command``.
@@ -39,12 +77,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 import zarr
 from arbol import aprint, asection
 
-from .._zarr_compat import close, consolidate, open_group, read_consolidated_attrs
+from .._zarr_compat import (
+    close,
+    consolidate,
+    is_consolidated,
+    open_group,
+    read_consolidated_attrs,
+)
 from ..core.group.lod.group import coverage_fractions, partitioned_coverage_fractions
 from ..typing_utils.constants import DERIVED_LOD_SELECTOR, LOD_SELECTORS
 
@@ -58,6 +102,9 @@ from ._compiler.finalize.amplitude_window import _child_nodes, _lod_children
 from .optimise import _is_luxar_store, _restamp_content_hash
 
 __all__ = [
+    "HASH_RESTAMPED",
+    "HASH_UNCHANGED",
+    "HASH_UNSTAMPABLE",
     "RestampReport",
     "RestampedGroup",
     "SkippedGroup",
@@ -75,6 +122,16 @@ _ELEMENT_COUNT_ATTR: Dict[str, str] = {
     "mesh": "n_vertices",
     "gsplats": "n_splats",
 }
+
+#: ``RestampReport.content_hash_status`` — what became of the store's
+#: ``content_hash``. ``None`` alone cannot say: a store that carries neither the
+#: scene ``type`` nor a ``.gsplats.zarr`` ``content_hash`` marker has no digest
+#: to move (``optimise._restamp_content_hash`` returns ``None`` for it), and that
+#: is a very different report from "nothing changed, so nothing was restamped" —
+#: the first means a warm viewer cache will NOT invalidate.
+HASH_UNCHANGED = "unchanged"
+HASH_RESTAMPED = "restamped"
+HASH_UNSTAMPABLE = "unstampable"
 
 
 @dataclass(frozen=True)
@@ -114,6 +171,7 @@ class RestampReport:
     unsupported: List[SkippedGroup] = field(default_factory=list)
     unresolved: List[SkippedGroup] = field(default_factory=list)
     content_hash: Optional[str] = None
+    content_hash_status: str = HASH_UNCHANGED
     residual: List[str] = field(default_factory=list)
 
     @property
@@ -132,9 +190,15 @@ def _count_of(group: "zarr.Group", attrs: Dict[str, Any]) -> Optional[int]:
     """This node's element count, or ``None`` when the store does not record one.
 
     A LEAF is read from the one attr its geometry stamps
-    (:data:`_ELEMENT_COUNT_ATTR`); a WRAPPER child — a ``kind=partition``, a
-    nested ``kind=lod``, or a plain group, all of which are real ladder-child
-    shapes — carries no single count and is summed over its descendant leaves.
+    (:data:`_ELEMENT_COUNT_ATTR`). A WRAPPER child carries no single count, and
+    which number describes it depends on what the wrapper MEANS:
+
+    * a ``kind=partition`` (or a plain group) holds PARTS that all render
+      together, so its count is the sum over its descendant leaves;
+    * a nested ``kind=lod`` holds ALTERNATIVES — exactly one of its levels is
+      ever drawn — so summing them would report a level count nobody can see.
+      Its own finest level is the honest answer, and the one the enclosing
+      ladder's operator is comparing against its siblings.
 
     ``None`` (rather than ``0``) when NOTHING resolved, because the two must stay
     distinguishable: :func:`coverage_fractions` raises on a finest count of ``0``
@@ -149,6 +213,12 @@ def _count_of(group: "zarr.Group", attrs: Dict[str, Any]) -> Optional[int]:
         if isinstance(raw, (int, float)) and not isinstance(raw, bool):
             return int(raw)
         return None
+    if attrs.get("kind") == "lod":
+        nested = _lod_children(group)
+        if not nested:
+            return None
+        _, finest, finest_attrs = nested[-1]
+        return _count_of(finest, finest_attrs)
     total = 0
     resolved = False
     for _, child, child_attrs in _child_nodes(group):
@@ -177,15 +247,74 @@ def _format_counts(values: Sequence[Optional[int]]) -> str:
     return ", ".join("?" if v is None else f"{v:,}" for v in values)
 
 
-def _visit_lod(
+@dataclass(frozen=True)
+class _PlannedRestamp:
+    """One group's re-derivation, decided but not yet written.
+
+    Planning is a strictly READ-ONLY pass over the whole store, so a group that
+    the pass refuses (an unsupported selector, an unresolvable count, a
+    descending ladder) is discovered before ANY attr has been written — and the
+    apply phase below is then the only place a write can fail.
+
+    PATHS, not the ``zarr.Group`` handles the planning walk held: a zarr attr
+    write serialises the handle's whole cached attrs dict, so two handles on the
+    same node silently undo each other's writes. A nested ``kind=lod`` inside a
+    ``kind=lod`` is exactly that shape — the inner group's ``selector`` write
+    would restore the outer group's pre-run ``coverage_fraction`` on the node
+    they share. :func:`_handle` hands out one handle per path instead.
+    """
+
+    path: str
+    child_paths: List[str]
+    entry: RestampedGroup
+
+
+#: What ``_lod_children`` / ``_child_nodes`` yield: ``(name, group, attrs)``.
+_ChildNode = Tuple[str, "zarr.Group", Dict[str, Any]]
+
+
+def _is_partition_bound(under_partition: bool, children: Sequence[_ChildNode]) -> bool:
+    """The writers' full two-clause tile-binding rule for a ``kind=lod`` group.
+
+    ``under_partition`` is the ancestry clause (a real >1-part ``kind=partition``
+    somewhere above, threaded down by :func:`_walk`); the second clause is a
+    ladder child that IS a ``kind=partition`` — the ``overview`` cap. Both tree
+    writers spell it ``under_partition or any(isinstance(c, GSplatPartition) for
+    c in on_disk)``; this is the same test read off the store's ``kind`` attrs.
+
+    Args:
+        under_partition: Is some enclosing partition a real tiling?
+        children: This group's ladder children as ``(name, group, attrs)``, in
+            any order — the test is an ``any``.
+
+    Returns:
+        True when the ladder must be derived at the fills-screen (tile) anchor.
+    """
+    return under_partition or any(
+        child_attrs.get("kind") == "partition" for _, _, child_attrs in children
+    )
+
+
+def _plan_lod(
     group: "zarr.Group",
     attrs: Dict[str, Any],
     *,
-    under_partition: bool,
+    partition_bound: bool,
     report: RestampReport,
-    dry_run: bool,
-) -> None:
-    """Classify one ``kind=lod`` group and, when it is legacy, re-derive it."""
+) -> Optional[_PlannedRestamp]:
+    """Classify one ``kind=lod`` group and, when it is legacy, plan its rewrite.
+
+    Args:
+        group: The ``kind=lod`` group.
+        attrs: Its attrs, already read.
+        partition_bound: The resolved anchor binding (see
+            :func:`_is_partition_bound`).
+        report: Collects the classification — restamped, or one of the three
+            skip buckets.
+
+    Returns:
+        The planned rewrite, or ``None`` when the group is skipped.
+    """
     path = group.path or "/"
     selector = attrs.get("selector")
 
@@ -193,7 +322,7 @@ def _visit_lod(
         report.already_current.append(
             SkippedGroup(path, "already-current", f"selector={DERIVED_LOD_SELECTOR!r}")
         )
-        return
+        return None
 
     # An ABSENT selector is legacy — `add_lod_group`'s historical default — but a
     # PRESENT one outside the vocabulary (`pixel_size`, the pre-v3.2 gsplats
@@ -208,16 +337,61 @@ def _visit_lod(
                 "migrate the store first (`luxar gsplat migrate-format`)",
             )
         )
-        return
+        return None
 
     children = _lod_children(group)
     if not children:
-        report.unresolved.append(
-            SkippedGroup(path, "no-children", "kind=lod group has no ladder children")
-        )
-        return
+        # Two very different stores land here and the operator must be able to
+        # tell them apart: an EMPTY lod group (nothing to restamp, probably a
+        # broken write) versus one whose children exist but carry no scene-node
+        # `type` attr, where `_lod_children` cannot tell a ladder level from a
+        # bucket and the fix is to the store's stamps, not to this pass.
+        subgroups = sorted(str(name) for name in group.group_keys())
+        if subgroups:
+            report.unresolved.append(
+                SkippedGroup(
+                    path,
+                    "unclassifiable-children",
+                    f"kind=lod group has {len(subgroups)} child group(s) "
+                    f"({', '.join(subgroups)}) but none of them carries a "
+                    "scene-node 'type' attr, so the ladder cannot be ordered",
+                )
+            )
+        else:
+            report.unresolved.append(
+                SkippedGroup(
+                    path, "no-children", "kind=lod group has no child groups at all"
+                )
+            )
+        return None
 
     old = [_threshold_of(child_attrs) for _, _, child_attrs in children]
+
+    # A ladder is coarsest→finest, so its thresholds must ASCEND. When they
+    # descend, the resolved child order and the stored thresholds disagree about
+    # which level is finest, and re-deriving would write an ascending ladder onto
+    # a descending order — silently INVERTING it (the 100-element level shown at
+    # half-screen, the 10,000-element one only when tiny). Only checked when the
+    # whole ladder is present: a partially-stamped one carries no such claim.
+    if (
+        all(value is not None for value in old)
+        and any(
+            b < a  # type: ignore[operator]
+            for a, b in zip(old, old[1:])
+        )
+    ):
+        report.unresolved.append(
+            SkippedGroup(
+                path,
+                "descending-ladder",
+                f"the stored ladder {_format_ladder(old)} DESCENDS in the "
+                "resolved coarsest→finest child order, so the two disagree "
+                "about which level is finest; re-deriving would invert it. Fix "
+                "the children's 'child_index' stamps first",
+            )
+        )
+        return None
+
     counts = [_count_of(child, child_attrs) for _, child, child_attrs in children]
 
     finest = counts[-1]
@@ -230,7 +404,7 @@ def _visit_lod(
                 "'finest LOD level is empty' guard cannot be honoured",
             )
         )
-        return
+        return None
     if finest <= 0:
         report.unresolved.append(
             SkippedGroup(
@@ -240,9 +414,9 @@ def _visit_lod(
                 "not one to re-anchor",
             )
         )
-        return
+        return None
 
-    derive = partitioned_coverage_fractions if under_partition else coverage_fractions
+    derive = partitioned_coverage_fractions if partition_bound else coverage_fractions
     # Only the LENGTH and the finest entry are consumed (see the two derivation
     # docstrings), and the finest is checked above — so a coarser level whose
     # count the store never recorded is passed as 0 rather than blocking a
@@ -251,7 +425,7 @@ def _visit_lod(
 
     entry = RestampedGroup(
         path=path,
-        partition_bound=under_partition,
+        partition_bound=partition_bound,
         old_selector=None if selector is None else str(selector),
         old_thresholds=old,
         new_thresholds=[float(v) for v in new],
@@ -267,12 +441,11 @@ def _visit_lod(
         f"       {_format_ladder(old)} → {_format_ladder(entry.new_thresholds)}"
         f"  (elements {_format_counts(counts)})"
     )
-
-    if dry_run:
-        return
-    for (_, child, _), value in zip(children, entry.new_thresholds):
-        child.attrs["coverage_fraction"] = float(value)
-    group.attrs["selector"] = DERIVED_LOD_SELECTOR
+    return _PlannedRestamp(
+        path=path,
+        child_paths=[child.path for _, child, _ in children],
+        entry=entry,
+    )
 
 
 def _lod_paths(group: "zarr.Group") -> List[str]:
@@ -293,18 +466,28 @@ def _walk(
     group: "zarr.Group",
     *,
     under_partition: bool,
-    selected: Optional[set],
+    selected: Optional[Set[str]],
     report: RestampReport,
-    dry_run: bool,
+    plans: List[_PlannedRestamp],
 ) -> None:
-    """Recurse the store, handling every ``kind=lod`` group ``selected`` allows.
+    """Recurse the store read-only, planning every ``kind=lod`` ``selected`` allows.
 
-    ``under_partition`` is threaded with the WRITERS' rule
-    (``io/_compiler/gsplat_tree.py::write_gsplat_node``): a ``kind=partition``
-    binds its children only when it holds more than one part — a one-part
-    partition is not a tiling, its single part's bbox IS the whole object — and
-    the flag ORs in going down, never clears, so a lone wrapper nested inside a
-    real tiling is still inside one tile.
+    The tile binding is threaded with the WRITERS' rule
+    (``io/_compiler/gsplat_tree.py::write_gsplat_node``), which has two halves
+    and needs both:
+
+    * a ``kind=partition`` binds its children only when it holds more than one
+      part — a one-part partition is not a tiling, its single part's bbox IS the
+      whole object — and the flag ORs in going down, never clears, so a lone
+      wrapper nested inside a real tiling is still inside one tile;
+    * a ``kind=lod`` group with a ``kind=partition`` among its OWN ladder
+      children (the ``overview`` cap) is bound, and passes that binding — not the
+      ancestral flag — down to its descendants, exactly as the writers do with
+      ``under_partition=partition_bound``.
+
+    A group excluded by ``selected`` still resolves and threads its binding: what
+    ``--group`` restricts is which ladders get REWRITTEN, not what the topology
+    is.
 
     Child GROUPS only (``group_keys()``, never ``keys()``): a group's arrays are
     listed by the latter and recursing into a ``zarr.Array`` dies on
@@ -312,30 +495,240 @@ def _walk(
     """
     attrs = dict(group.attrs)
     kind = attrs.get("kind")
-    if kind == "lod" and (selected is None or (group.path or "/") in selected):
-        _visit_lod(
-            group,
-            attrs,
-            under_partition=under_partition,
-            report=report,
-            dry_run=dry_run,
-        )
-    child_under = under_partition or (
-        kind == "partition" and len(_child_nodes(group)) > 1
-    )
+    child_under = under_partition
+    if kind == "lod":
+        child_under = _is_partition_bound(under_partition, _lod_children(group))
+        if selected is None or (group.path or "/") in selected:
+            planned = _plan_lod(
+                group,
+                attrs,
+                partition_bound=child_under,
+                report=report,
+            )
+            if planned is not None:
+                plans.append(planned)
+    elif kind == "partition":
+        child_under = under_partition or len(_child_nodes(group)) > 1
     for name in group.group_keys():
         _walk(
             group[str(name)],
             under_partition=child_under,
             selected=selected,
             report=report,
-            dry_run=dry_run,
+            plans=plans,
         )
 
 
 def _normalise(path: str) -> str:
     """A user-supplied group path in the store's own spelling (root is ``"/"``)."""
     return path.strip().strip("/") or "/"
+
+
+@dataclass(frozen=True)
+class _AttrWrite:
+    """One attr write, with whatever was in its place before it."""
+
+    path: str
+    key: str
+    existed: bool
+    previous: Any
+
+
+def _handle(
+    root: "zarr.Group", path: str, cache: Dict[str, "zarr.Group"]
+) -> "zarr.Group":
+    """The ONE ``zarr.Group`` handle this run uses for ``path``.
+
+    zarr updates a handle's cached attrs in place and rewrites the node's whole
+    document on every attr write, so two handles on one node overwrite each
+    other with their own stale views. Memoising by path makes that impossible
+    without paying a metadata re-read per write.
+    """
+    node = cache.get(path)
+    if node is None:
+        node = root if path == "/" else root[path]
+        cache[path] = node
+    return node
+
+
+def _write_attr(
+    node: "zarr.Group", path: str, key: str, value: Any, undo: List[_AttrWrite]
+) -> None:
+    """Set ``node.attrs[key]``, recording the undo entry FIRST.
+
+    Before, never after: a write that raises part-way must still be covered by
+    the rollback, and an entry that restores an already-correct value is free.
+    """
+    attrs = dict(node.attrs)
+    undo.append(_AttrWrite(path, key, key in attrs, attrs.get(key)))
+    node.attrs[key] = value
+
+
+def _undo_attr(
+    root: "zarr.Group", entry: _AttrWrite, cache: Dict[str, "zarr.Group"]
+) -> None:
+    """Put one attr back exactly as it was — absent included."""
+    node = _handle(root, entry.path, cache)
+    if entry.existed:
+        node.attrs[entry.key] = entry.previous
+    else:
+        del node.attrs[entry.key]
+
+
+def _apply_one(
+    root: "zarr.Group",
+    plan: _PlannedRestamp,
+    undo: List[_AttrWrite],
+    cache: Dict[str, "zarr.Group"],
+) -> None:
+    """Write one planned ladder: the child thresholds, then the group selector.
+
+    Thresholds first so that the window in which the two disagree is as short as
+    possible, and the selector — the attr that DECLARES the units — is the very
+    last thing to move.
+    """
+    for child_path, value in zip(plan.child_paths, plan.entry.new_thresholds):
+        _write_attr(
+            _handle(root, child_path, cache),
+            child_path,
+            "coverage_fraction",
+            float(value),
+            undo,
+        )
+    _write_attr(
+        _handle(root, plan.path, cache),
+        plan.path,
+        "selector",
+        DERIVED_LOD_SELECTOR,
+        undo,
+    )
+
+
+def _roll_back(
+    root: "zarr.Group",
+    undo: List[_AttrWrite],
+    error: BaseException,
+    *,
+    cache: Dict[str, "zarr.Group"],
+    was_consolidated: bool,
+) -> None:
+    """Undo every attr this run wrote, then leave exactly one valid index.
+
+    The failure this exists for is not hypothetical: a mid-walk ``PermissionError``
+    leaves one ladder restamped, the failing one TORN (a screen-area threshold
+    under ``selector="coverage"`` — thresholds and selector disagreeing about
+    their units, which nothing downstream can detect), and the consolidated index
+    describing neither. ``optimise`` is all-or-nothing for exactly this reason;
+    this sibling writes in place and so has to unwind rather than stage.
+
+    The hash is restamped and the index rebuilt AFTER the restores, not skipped
+    as an optimisation, because neither is undone by putting the ladder attrs
+    back. The hash pass stamps ``content_hash`` on every group of a scene, and
+    writing the ROOT group's attrs DESTROYS a format-3 consolidated index until
+    :func:`~luxar._zarr_compat.consolidate` runs again — and the viewer builds its
+    whole scene graph from that index with no directory-walk fallback, so a store
+    left without one loads as an empty scene. Recomputing the digest over the
+    RESTORED attrs lands back on the store's original hash, which is what makes
+    the rollback byte-for-byte rather than merely semantic.
+
+    Args:
+        root: The open store root.
+        undo: Every attr write made, in the order it was made.
+        error: The exception being unwound; notes are attached to it.
+        cache: The apply phase's per-path handle cache, reused so a restore sees
+            the writes it is undoing.
+        was_consolidated: Did the store carry a consolidated index before the run?
+            A store that had none is not given one here.
+    """
+    failures: List[str] = []
+    for entry in reversed(undo):
+        try:
+            _undo_attr(root, entry, cache)
+        except BaseException as undo_error:  # pragma: no cover - defensive
+            failures.append(f"{entry.path}.{entry.key}: {undo_error}")
+
+    if failures:
+        headline = (
+            f"restamp-lod could NOT fully roll back: {len(failures)} of "
+            f"{len(undo)} attr restores failed ({'; '.join(failures)}). The "
+            "store may carry a torn ladder (a screen-area threshold under "
+            "selector='coverage') and must be re-run or regenerated."
+        )
+    elif undo:
+        headline = (
+            f"restamp-lod rolled back {len(undo)} attr write(s): every LOD "
+            "ladder is exactly as it was before this run."
+        )
+    else:
+        headline = (
+            "restamp-lod failed before writing anything, so nothing needed "
+            "rolling back: the store is exactly as it was."
+        )
+    aprint(f"  ❌ {headline}")
+    error.add_note(headline)
+
+    if not undo:
+        return
+    try:
+        _restamp_content_hash(root)
+    except BaseException as hash_error:
+        error.add_note(
+            "restamp-lod could not restore the content_hash after rolling back; "
+            f"it may now name content the store does not have: {hash_error}"
+        )
+    if was_consolidated:
+        try:
+            consolidate(root)
+        except BaseException as index_error:
+            error.add_note(
+                "restamp-lod could not re-consolidate the store; it may now "
+                f"carry no consolidated index (the viewer needs one): {index_error}"
+            )
+
+
+def _apply(
+    root: "zarr.Group",
+    plans: List[_PlannedRestamp],
+    report: RestampReport,
+    *,
+    store_path: Path,
+    was_consolidated: bool,
+) -> None:
+    """Write every planned ladder, then the hash and the index — or nothing.
+
+    The writers' finalize order: hash BEFORE consolidating, so the new hash lands
+    inside the index too and the viewer's persistent cache invalidates on an
+    attrs-only change it would never see otherwise. Any exception anywhere in
+    here — including inside the hash walk, which is the only step that reads
+    arrays — unwinds the whole run through :func:`_roll_back`.
+    """
+    undo: List[_AttrWrite] = []
+    cache: Dict[str, "zarr.Group"] = {"/": root}
+    try:
+        for plan in plans:
+            _apply_one(root, plan, undo, cache)
+
+        if dict(root.attrs).get("type") == "scene":
+            aprint(
+                "  ℹ️  Restamping the scene content_hash: that digest covers "
+                "array VALUES, so this reads every array in the store once "
+                "(the ladder rewrite above opened none). Expect it to take as "
+                "long as reading the whole store."
+            )
+        else:
+            aprint(
+                "  ℹ️  Restamping the root content_hash (metadata only — this "
+                "store is not a scene, so no array is read)."
+            )
+        report.content_hash = _restamp_content_hash(root)
+        report.content_hash_status = (
+            HASH_RESTAMPED if report.content_hash is not None else HASH_UNSTAMPABLE
+        )
+        consolidate(root)
+    except BaseException as error:
+        _roll_back(root, undo, error, cache=cache, was_consolidated=was_consolidated)
+        raise
+    report.residual = _verify(store_path, report)
 
 
 def _verify(store_path: Path, report: RestampReport) -> List[str]:
@@ -408,11 +801,24 @@ def _verify(store_path: Path, report: RestampReport) -> List[str]:
 
 
 def _summarise(report: RestampReport) -> None:
-    """Print the tail of the run: what was skipped, and why."""
+    """Print the tail of the run: what was skipped, and why.
+
+    ``❌`` rather than ``⚠️`` for the two skip buckets, per
+    ``docs/guides/developer/CONSOLE_OUTPUT_STYLE.md``: both make
+    :attr:`RestampReport.clean` False and so exit the CLI non-zero, which is an
+    error and not a warning.
+    """
     for entry in report.unsupported:
-        aprint(f"  ⚠️  {entry.path}: {entry.detail}")
+        aprint(f"  ❌ {entry.path}: {entry.detail}")
     for entry in report.unresolved:
-        aprint(f"  ⚠️  {entry.path}: {entry.detail}")
+        aprint(f"  ❌ {entry.path}: {entry.detail}")
+    if report.content_hash_status == HASH_UNSTAMPABLE:
+        aprint(
+            "  ⚠️  This store carries neither a scene 'type' nor a "
+            "'.gsplats.zarr' content_hash, so there was no digest to restamp: "
+            "a warm viewer cache will NOT see the new ladder. Republish under a "
+            "new URL prefix."
+        )
     aprint(
         f"  {len(report.restamped)} restamped, "
         f"{len(report.already_current)} already {DERIVED_LOD_SELECTOR}, "
@@ -435,16 +841,28 @@ def restamp_lod_store(
     ``"coverage"`` selector (or carrying none, which means the same thing), the
     per-child ``coverage_fraction`` thresholds are re-derived by screen-occupancy
     halving — :func:`~luxar.core.group.lod.group.partitioned_coverage_fractions`
-    when the group is bound to a real (>1 part) spatial partition,
+    when the group is tile-bound (a real >1-part partition above it, or a
+    ``kind=partition`` among its own ladder children — the ``overview`` cap),
     :func:`~luxar.core.group.lod.group.coverage_fractions` otherwise — and the
     group is stamped :data:`~luxar.typing_utils.constants.DERIVED_LOD_SELECTOR`.
     A group already on that selector is skipped, so a second run is a no-op down
     to the ``content_hash``.
 
-    No chunk data moves and no array is opened. When anything changed, the
-    store's ``content_hash`` is restamped and the metadata re-consolidated, in
-    that order — an attrs-only change must still invalidate a warm viewer cache —
-    and the result is then read back and verified.
+    The ladder rewrite moves no chunk and opens no array. When anything changed,
+    the store's ``content_hash`` is restamped and the metadata re-consolidated,
+    in that order — an attrs-only change must still invalidate a warm viewer
+    cache — and the result is then read back and verified. That hash restamp is
+    the one expensive step: for a compiled SCENE the digest covers array VALUES,
+    so it streams the whole store once; a standalone ``.gsplats.zarr`` gets a
+    metadata-only stamp instead.
+
+    All-or-nothing on the write side. Every group is classified in a read-only
+    planning walk first; if any write then fails, every attr already written is
+    restored (an absent ``coverage_fraction`` back to absent), the index is
+    re-consolidated, and the original error is re-raised carrying a note saying
+    what was rolled back. A half-restamped store would carry a ladder whose
+    thresholds and ``selector`` disagree about their units, which nothing
+    downstream can detect.
 
     Parameters
     ----------
@@ -464,7 +882,8 @@ def restamp_lod_store(
     -------
     RestampReport
         Every group restamped, skipped-as-current, skipped-as-unsupported and
-        skipped-as-unresolved, plus the new ``content_hash`` and any
+        skipped-as-unresolved, plus the new ``content_hash`` (with a
+        ``content_hash_status`` saying whether there was one to move) and any
         re-verification residual.
 
     Raises
@@ -487,6 +906,7 @@ def restamp_lod_store(
     # kind=lod group in a foreign store to restamp), so the CLASSIFICATION is
     # reused and the wording is this command's own.
     if not _is_luxar_store(root):
+        close(root)
         raise ValueError(
             f"{store_path} does not look like a Luxar scene or a .gsplats.zarr "
             f"tree, so it carries no kind=lod ladder to restamp"
@@ -508,30 +928,35 @@ def restamp_lod_store(
             )
 
     report = RestampReport(path=str(store_path), dry_run=dry_run)
+    was_consolidated = is_consolidated(store_path)
     try:
         with asection(
             f"{'🔎 Dry run: ' if dry_run else '🪜 '}restamp-lod {store_path}"
         ):
+            # PLAN first, in one read-only walk, so every refusal is known before
+            # a single attr moves and the apply below is the only fallible phase.
+            plans: List[_PlannedRestamp] = []
             _walk(
                 root,
                 under_partition=False,
                 selected=selected,
                 report=report,
-                dry_run=dry_run,
+                plans=plans,
             )
 
             if not report.restamped:
                 aprint("  Nothing to restamp — every LOD ladder is already current.")
 
-            if not dry_run and report.restamped:
-                # The writers' finalize order: hash BEFORE consolidating, so the
-                # new hash lands inside the index too and the viewer's persistent
-                # cache invalidates on an attrs-only change it would never see
-                # otherwise. Only when something CHANGED: a clean no-op store must
-                # not have its hash moved.
-                report.content_hash = _restamp_content_hash(root)
-                consolidate(root)
-                report.residual = _verify(store_path, report)
+            # Only when something CHANGED: a clean no-op store must not have its
+            # hash moved, and a dry run must not write at all.
+            if not dry_run and plans:
+                _apply(
+                    root,
+                    plans,
+                    report,
+                    store_path=store_path,
+                    was_consolidated=was_consolidated,
+                )
 
             _summarise(report)
             if dry_run:

@@ -30,6 +30,7 @@ from luxar._zarr_compat import (
     close,
     consolidate,
     create_root_group,
+    is_consolidated,
     open_group,
     read_consolidated_attrs,
 )
@@ -39,8 +40,12 @@ from luxar.core.group.lod.group import (
     WHOLE_OBJECT_FINEST_ANCHOR,
     coverage_fractions,
 )
+from luxar.io import lod_restamp
 from luxar.io.compiler import LuxarZarrCompiler
 from luxar.io.lod_restamp import (
+    HASH_RESTAMPED,
+    HASH_UNCHANGED,
+    HASH_UNSTAMPABLE,
     RestampedGroup,
     RestampReport,
     _verify,
@@ -85,11 +90,72 @@ def _add_derived_ladder(target: Any, name: str, seed: int) -> None:
     )
 
 
+def _add_legacy_lines_ladder(target: Any, name: str, seed: int) -> None:
+    """A two-level LINES ladder stamped with the LEGACY selector.
+
+    Sized by ``n_vertices`` — the finest child is a real ``type="lines"`` node,
+    so this is the only coverage of that row of ``_ELEMENT_COUNT_ATTR``. (The
+    coarse level is gsplats: a substitutive lines ladder lifts to splats.)
+    """
+    rng = np.random.default_rng(seed)
+    starts = rng.uniform(0, 60, (120, 3))
+    vertices = np.empty((240, 3), dtype=np.float32)
+    vertices[0::2] = starts
+    vertices[1::2] = starts + rng.normal(0, 5, (120, 3))
+    target.add_lines(
+        name,
+        vertices,
+        0.8,
+        line_type="segments",
+        substitutive_lod=dict(
+            levels=1, device="cpu", seed=0, coverage_fractions=LEGACY_LADDER
+        ),
+    )
+
+
+def _grid_mesh(side: int = 12) -> tuple:
+    """A ``(vertices, faces)`` height-field grid — small, but really decimatable."""
+    xs, ys = np.meshgrid(
+        np.linspace(0, 30, side), np.linspace(0, 30, side), indexing="ij"
+    )
+    zs = np.sin(xs / 5.0) * 3.0
+    vertices = np.stack([xs.ravel(), ys.ravel(), zs.ravel()], axis=1).astype(np.float32)
+    faces = [
+        (i * side + j, i * side + j + 1, (i + 1) * side + j)
+        for i in range(side - 1)
+        for j in range(side - 1)
+    ] + [
+        (i * side + j + 1, (i + 1) * side + j + 1, (i + 1) * side + j)
+        for i in range(side - 1)
+        for j in range(side - 1)
+    ]
+    return vertices, np.asarray(faces, dtype=np.uint32)
+
+
+def _add_legacy_mesh_ladder(target: Any, name: str) -> None:
+    """A two-level MESH ladder stamped with the LEGACY selector.
+
+    Both levels are ``type="mesh"``, so this covers the fourth
+    ``_ELEMENT_COUNT_ATTR`` row — and covers it at BOTH ladder positions, where
+    ``n_vertices`` and ``n_faces`` differ (36/44 and 144/242), so reading the
+    wrong one is visible in the reported counts.
+    """
+    vertices, faces = _grid_mesh()
+    target.add_mesh(
+        name,
+        vertices,
+        faces,
+        substitutive_lod={"levels": 1, "coverage_fractions": LEGACY_LADDER},
+    )
+
+
 @pytest.fixture(scope="module")
 def legacy_scene_template(tmp_path_factory) -> Path:
-    """A compiled scene holding the four ladder shapes that matter, all legacy.
+    """A compiled scene holding the ladder shapes that matter, all legacy.
 
     * ``pts`` — a plain whole-object ladder at the scene root.
+    * ``curves`` / ``surf`` — the same shape for LINES and MESH, the two
+      geometries whose element-count attr nothing else here exercises.
     * ``tiled/part_{0,1}`` — under a REAL (two-part) partition, so tile-anchored.
     * ``lonely/part_0`` — under a ONE-part partition, which is not a tiling: its
       single part's bbox IS the whole object, so it must keep the whole-object
@@ -102,6 +168,8 @@ def legacy_scene_template(tmp_path_factory) -> Path:
     with LuxarZarrCompiler(store) as compiler:
         scene = compiler.create_scene(dimensions=Dimensions.default_3d())
         _add_legacy_ladder(scene, "pts", 0)
+        _add_legacy_lines_ladder(scene, "curves", 4)
+        _add_legacy_mesh_ladder(scene, "surf")
         tiled = scene.add_partition_group(
             "tiled", display_type="points", max_elements=100_000
         )
@@ -112,6 +180,12 @@ def legacy_scene_template(tmp_path_factory) -> Path:
         )
         _add_legacy_ladder(lonely, "part_0", 3)
     return store
+
+
+#: Every ``kind=lod`` path in :func:`legacy_scene_template`.
+LEGACY_SCENE_LADDERS = frozenset(
+    {"pts", "curves", "surf", "tiled/part_0", "tiled/part_1", "lonely/part_0"}
+)
 
 
 @pytest.fixture
@@ -127,16 +201,26 @@ def _attrs(store: Path) -> Dict[str, Dict[str, Any]]:
     return dict(read_consolidated_attrs(store))
 
 
-def _ladder(store: Path, group_path: str) -> List[Optional[float]]:
-    """A lod group's thresholds, coarsest→finest by ``child_index``."""
+def _ladder(store: Path, group_path: str) -> List[float]:
+    """A lod group's thresholds, coarsest→finest by ``child_index``.
+
+    DIRECT children only (``"/" not in`` the remainder), and the store root is
+    spelled ``"/"``: a nested ladder or partition under one of these levels
+    carries thresholds of its own, and folding those in would silently read a
+    four-entry ladder off a two-level group.
+    """
     nodes = _attrs(store)
+    prefix = "" if group_path == "/" else f"{group_path}/"
     children = [
-        (path, attrs)
+        (int(attrs["child_index"]), float(attrs["coverage_fraction"]))
         for path, attrs in nodes.items()
-        if path.startswith(f"{group_path}/") and "coverage_fraction" in attrs
+        if path != group_path
+        and path.startswith(prefix)
+        and "/" not in path[len(prefix) :]
+        and "coverage_fraction" in attrs
+        and "child_index" in attrs
     ]
-    ordered = sorted(children, key=lambda kv: int(kv[1]["child_index"]))
-    return [float(attrs["coverage_fraction"]) for _, attrs in ordered]
+    return [value for _, value in sorted(children)]
 
 
 def _hash(store: Path) -> Any:
@@ -188,6 +272,36 @@ def test_a_whole_object_ladder_is_re_derived_and_relabelled(legacy_scene: Path) 
     assert entry.old_thresholds == LEGACY_LADDER
     assert entry.partition_bound is False
     assert report.clean
+
+
+@pytest.mark.parametrize(
+    "path, counts",
+    [
+        # lines → n_vertices (240), NOT n_segments (120); the coarse level of a
+        # substitutive lines ladder is lifted to gsplats, hence n_splats there.
+        ("curves", [475, 240]),
+        # mesh → n_vertices at both levels, NOT n_faces (44 / 242).
+        ("surf", [36, 144]),
+    ],
+)
+def test_a_lines_and_a_mesh_ladder_are_sized_by_their_own_count_attr(
+    legacy_scene: Path, path: str, counts: List[int]
+) -> None:
+    """Every row of ``_ELEMENT_COUNT_ATTR`` is a store this command exists for.
+
+    A wrong attr here does not fail loudly: the count reads back as ``None`` and
+    the whole ladder is silently skipped as ``unresolved-finest-count``, i.e.
+    exactly the stores the migration was written for go un-migrated. So the
+    reported counts are asserted, not just the derived ladder — the derivation
+    reads only the ladder's LENGTH and the finest entry's positivity, so a
+    ``n_segments``/``n_faces`` mix-up would leave the thresholds unchanged.
+    """
+    report = restamp_lod_store(legacy_scene)
+
+    entry = next(g for g in report.restamped if g.path == path)
+    assert entry.element_counts == counts
+    assert _ladder(legacy_scene, path) == [0.0, WHOLE_OBJECT_FINEST_ANCHOR]
+    assert _attrs(legacy_scene)[path]["selector"] == DERIVED_LOD_SELECTOR
 
 
 def test_a_multi_part_partition_binds_its_ladders_to_the_tile_anchor(
@@ -316,12 +430,53 @@ def test_children_are_ordered_by_child_index_not_by_name(tmp_path: Path) -> None
 
 
 def test_a_wrapper_child_is_sized_by_summing_its_leaves(tmp_path: Path) -> None:
-    """A ladder level that is itself a partition carries no single count."""
+    """A ladder level that is a plain wrapper carries no single count.
+
+    Deliberately NOT the ``overview`` shape (see the next test): a plain
+    ``type="group"`` level whose parts all render together is exactly where
+    SUMMING the leaves is the right answer, and it must not drag the anchor
+    along with it.
+    """
     store = tmp_path / "wrapper.luxar.zarr"
     root = _synthetic_scene(store)
     lod = _synthetic_ladder(
         root,
         "mixed",
+        [{"coverage_fraction": 0.0, "n_points": 50}],
+    )
+    fine = lod.create_group("child_1")
+    fine.attrs.update({"type": "group", "child_index": 1, "coverage_fraction": 4.0})
+    for part, count in enumerate((300, 400)):
+        leaf = fine.create_group(f"part_{part}")
+        leaf.attrs.update({"type": "points", "child_index": part, "n_points": count})
+    consolidate(root)
+    close(root)
+
+    report = restamp_lod_store(store)
+
+    assert report.restamped[0].element_counts == [50, 700]
+    assert report.restamped[0].partition_bound is False
+    assert _ladder(store, "mixed") == [0.0, WHOLE_OBJECT_FINEST_ANCHOR]
+
+
+def test_a_partition_CHILD_binds_the_ladder_to_the_tile_anchor(tmp_path: Path) -> None:
+    """The writers' SECOND binding clause: the ``overview`` cap.
+
+    ``[coarse_leaf, fine_partition]`` is what ``lod --recipe overview`` writes,
+    and both tree writers anchor it at fills-screen via ``any(isinstance(c,
+    GSplatPartition) for c in on_disk)`` — nothing about ancestry. That anchor is
+    a documented product CONTRACT, not geometry (see
+    ``partitioned_coverage_fractions``): the coarse cap is what the opening
+    framing shows, and the fine partition is the zoom-in branch. Re-deriving it
+    at the whole-object anchor halves the threshold, so the viewer pulls the
+    ENTIRE dataset at the opening framing — the one cost the recipe exists to
+    avoid, on the biggest stores in the corpus.
+    """
+    store = tmp_path / "overview_shaped.luxar.zarr"
+    root = _synthetic_scene(store)
+    lod = _synthetic_ladder(
+        root,
+        "cap",
         [{"coverage_fraction": 0.0, "n_points": 50}],
     )
     fine = lod.create_group("child_1")
@@ -341,8 +496,84 @@ def test_a_wrapper_child_is_sized_by_summing_its_leaves(tmp_path: Path) -> None:
 
     report = restamp_lod_store(store)
 
-    assert report.restamped[0].element_counts == [50, 700]
-    assert _ladder(store, "mixed") == [0.0, WHOLE_OBJECT_FINEST_ANCHOR]
+    assert report.restamped[0].partition_bound is True
+    assert _ladder(store, "cap") == [0.0, PARTITION_FINEST_AREA]
+
+
+def test_the_binding_from_a_partition_child_reaches_a_nested_ladder(
+    tmp_path: Path,
+) -> None:
+    """The writers pass ``under_partition=partition_bound`` INTO their children.
+
+    So a ladder nested under an overview-shaped cap is inside that cap's tiling
+    and must be tile-anchored too, even though no ``kind=partition`` sits between
+    it and the root.
+    """
+    store = tmp_path / "nested_cap.luxar.zarr"
+    root = _synthetic_scene(store)
+    lod = _synthetic_ladder(
+        root,
+        "cap",
+        [{"coverage_fraction": 0.0, "n_points": 50}],
+    )
+    fine = lod.create_group("child_1")
+    fine.attrs.update(
+        {
+            "type": "group",
+            "kind": "partition",
+            "child_index": 1,
+            "coverage_fraction": 4.0,
+        }
+    )
+    part = fine.create_group("part_0")
+    part.attrs.update({"type": "group", "child_index": 0})
+    _synthetic_ladder(
+        part,
+        "inner",
+        [{"coverage_fraction": 0.0}, {"coverage_fraction": 4.0, "n_points": 400}],
+    )
+    consolidate(root)
+    close(root)
+
+    restamp_lod_store(store)
+
+    assert _ladder(store, "cap") == [0.0, PARTITION_FINEST_AREA]
+    assert _ladder(store, "cap/child_1/part_0/inner") == [0.0, PARTITION_FINEST_AREA]
+
+
+def test_a_nested_lod_child_is_sized_by_its_own_FINEST_level(tmp_path: Path) -> None:
+    """A nested ladder's levels are ALTERNATIVES, so they must not be summed.
+
+    Only one of them is ever drawn. Summing reports a level count that exists
+    nowhere, in the very audit trail an operator uses to sanity-check a rewrite
+    they cannot undo.
+    """
+    store = tmp_path / "lod_in_lod.luxar.zarr"
+    root = _synthetic_scene(store)
+    outer = _synthetic_ladder(
+        root,
+        "outer",
+        [{"coverage_fraction": 0.0, "n_points": 50}],
+    )
+    inner = _synthetic_ladder(
+        outer,
+        "child_1",
+        [
+            {"coverage_fraction": 0.0, "n_points": 100},
+            {"coverage_fraction": 4.0, "n_points": 400},
+        ],
+    )
+    inner.attrs["child_index"] = 1
+    inner.attrs["coverage_fraction"] = 4.0
+    consolidate(root)
+    close(root)
+
+    report = restamp_lod_store(store)
+
+    outer_entry = next(g for g in report.restamped if g.path == "outer")
+    assert outer_entry.element_counts == [50, 400], "not 500 — the levels are not parts"
+    assert _ladder(store, "outer") == [0.0, WHOLE_OBJECT_FINEST_ANCHOR]
+    assert _ladder(store, "outer/child_1") == [0.0, WHOLE_OBJECT_FINEST_ANCHOR]
 
 
 # ────────────────────────────────────────────────────────────────────────
@@ -410,6 +641,104 @@ def test_an_absent_selector_is_treated_as_legacy(tmp_path: Path) -> None:
     assert report.restamped[0].old_selector is None
     assert _attrs(store)["old"]["selector"] == DERIVED_LOD_SELECTOR
     assert _ladder(store, "old") == [0.0, WHOLE_OBJECT_FINEST_ANCHOR]
+
+
+def test_a_descending_stored_ladder_is_refused_rather_than_inverted(
+    tmp_path: Path,
+) -> None:
+    """The store's own two signals disagree, so the pass must not pick one.
+
+    Neither ``child_index`` nor a ``child_<i>`` name is present here, so
+    ``_lod_children`` falls back to sorted NAME — which puts ``level_hi``
+    (10,000 elements, stored at the finest threshold 4.0) before ``level_lo``
+    (100 elements, stored at 0.0). Writing the derived ascending ladder onto
+    that order inverts it: the 100-element level would show at half-screen and
+    the 10,000-element one only once the object is tiny. The incoming ladder
+    says so plainly by descending, so the group is refused and named.
+    """
+    store = tmp_path / "descending.luxar.zarr"
+    root = _synthetic_scene(store)
+    _synthetic_ladder(
+        root,
+        "backwards",
+        [
+            {"name": "level_hi", "coverage_fraction": 4.0, "n_points": 10_000},
+            {"name": "level_lo", "coverage_fraction": 0.0, "n_points": 100},
+        ],
+    )
+    # No child_index anywhere: that is what forces the name-sorted fallback.
+    lod = root["backwards"]
+    for name in lod.group_keys():
+        del lod[str(name)].attrs["child_index"]
+    consolidate(root)
+    close(root)
+    before = _attrs(store)
+
+    report = restamp_lod_store(store)
+
+    assert not report.restamped
+    assert [g.path for g in report.unresolved] == ["backwards"]
+    assert report.unresolved[0].reason == "descending-ladder"
+    assert not report.clean
+    assert _attrs(store) == before, "a refused group must be left exactly as found"
+
+
+def test_a_kind_lod_group_with_no_children_at_all_is_unresolved(
+    tmp_path: Path,
+) -> None:
+    """An empty ladder is broken, not "already current" — the exit code must say so."""
+    store = tmp_path / "childless.luxar.zarr"
+    root = _synthetic_scene(store)
+    lod = root.create_group("empty")
+    lod.attrs.update(
+        {
+            "type": "group",
+            "kind": "lod",
+            "display_type": "points",
+            "selector": LEGACY_LOD_SELECTOR,
+        }
+    )
+    consolidate(root)
+    close(root)
+
+    report = restamp_lod_store(store)
+
+    assert not report.restamped and not report.already_current
+    assert [g.reason for g in report.unresolved] == ["no-children"]
+    assert "no child groups at all" in report.unresolved[0].detail
+    assert not report.clean
+
+
+def test_unclassifiable_children_get_their_own_message(tmp_path: Path) -> None:
+    """ "No ladder children" and "children nothing can classify" are different bugs.
+
+    Reporting the second as the first sends the operator looking for a missing
+    write when the real defect is a missing ``type`` stamp on children that are
+    right there.
+    """
+    store = tmp_path / "untyped.luxar.zarr"
+    root = _synthetic_scene(store)
+    lod = root.create_group("untyped")
+    lod.attrs.update(
+        {
+            "type": "group",
+            "kind": "lod",
+            "display_type": "points",
+            "selector": LEGACY_LOD_SELECTOR,
+        }
+    )
+    for index in (0, 1):
+        child = lod.create_group(f"child_{index}")
+        child.attrs.update({"child_index": index, "coverage_fraction": float(index)})
+    consolidate(root)
+    close(root)
+
+    report = restamp_lod_store(store)
+
+    assert [g.reason for g in report.unresolved] == ["unclassifiable-children"]
+    detail = report.unresolved[0].detail
+    assert "child_0, child_1" in detail and "'type'" in detail
+    assert not report.clean
 
 
 def test_an_unresolvable_finest_count_is_a_reported_skip(tmp_path: Path) -> None:
@@ -518,8 +847,9 @@ def test_a_second_run_changes_nothing_at_all(legacy_scene: Path) -> None:
     report = restamp_lod_store(legacy_scene)
 
     assert not report.restamped
-    assert len(report.already_current) == 4
+    assert len(report.already_current) == len(LEGACY_SCENE_LADDERS)
     assert report.content_hash is None
+    assert report.content_hash_status == HASH_UNCHANGED
     assert _attrs(legacy_scene) == after_first
 
 
@@ -538,21 +868,57 @@ def test_a_store_with_no_lod_group_is_left_completely_alone(tmp_path: Path) -> N
     assert _attrs(store) == before
 
 
+def test_a_store_with_no_digest_to_move_says_so(tmp_path: Path) -> None:
+    """``content_hash is None`` means two opposite things; the report must not.
+
+    A bare ``kind=lod`` root with no ``content_hash`` and no scene ``type`` IS a
+    Luxar node — so the ladder is restamped — but there is no digest to move, and
+    a warm viewer cache will therefore keep serving the old ladder. That is the
+    caller's problem to know about, and it is indistinguishable from "nothing
+    changed" if all they get back is ``None``.
+    """
+    store = tmp_path / "hashless.gsplats.zarr"
+    root = create_root_group(zarr.storage.LocalStore(str(store)))
+    root.attrs.update(
+        {
+            "type": "group",
+            "kind": "lod",
+            "display_type": "points",
+            "selector": LEGACY_LOD_SELECTOR,
+        }
+    )
+    for index, count in enumerate((100, 400)):
+        child = root.create_group(f"child_{index}")
+        child.attrs.update(
+            {
+                "type": "points",
+                "child_index": index,
+                "coverage_fraction": 4.0 * index,
+                "n_points": count,
+            }
+        )
+    consolidate(root)
+    close(root)
+
+    report = restamp_lod_store(store)
+
+    assert [g.path for g in report.restamped] == ["/"]
+    assert report.content_hash is None
+    assert report.content_hash_status == HASH_UNSTAMPABLE
+    assert _ladder(store, "/") == [0.0, WHOLE_OBJECT_FINEST_ANCHOR]
+
+
 def test_a_dry_run_reports_everything_and_writes_nothing(legacy_scene: Path) -> None:
     before = _attrs(legacy_scene)
 
     report = restamp_lod_store(legacy_scene, dry_run=True)
 
     assert report.dry_run
-    assert {g.path for g in report.restamped} == {
-        "pts",
-        "tiled/part_0",
-        "tiled/part_1",
-        "lonely/part_0",
-    }
+    assert {g.path for g in report.restamped} == set(LEGACY_SCENE_LADDERS)
     assert next(g for g in report.restamped if g.path == "tiled/part_0").new_thresholds
     assert _attrs(legacy_scene) == before, "a dry run must not touch the store"
     assert report.content_hash is None
+    assert report.content_hash_status == HASH_UNCHANGED
 
 
 # ────────────────────────────────────────────────────────────────────────
@@ -773,3 +1139,316 @@ def test_the_verifier_is_silent_on_a_store_that_agrees(legacy_scene: Path) -> No
     report = restamp_lod_store(legacy_scene)
 
     assert _verify(legacy_scene, report) == []
+
+
+def test_a_stale_index_makes_the_run_dirty_end_to_end(
+    legacy_scene: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The verify → report → exit-code chain, driven by a REAL failure.
+
+    Not a hand-built lying report: the store is genuinely left with a stale
+    consolidated index (``consolidate`` neutered for this one run), which is the
+    exact silent failure the verifier exists for — the per-node documents are
+    correct while the only thing the viewer ever fetches is not. Both links must
+    hold: ``_verify`` has to be called at all, and ``clean`` has to read its
+    result.
+    """
+    monkeypatch.setattr(lod_restamp, "consolidate", lambda group: None)
+
+    report = restamp_lod_store(legacy_scene)
+
+    assert report.restamped, "the run must actually have rewritten something"
+    assert report.residual, "a stale index has to surface as a residual"
+    assert any("consolidated index" in message for message in report.residual)
+    assert report.clean is False
+    assert not (report.unsupported or report.unresolved), (
+        "clean must be False because of the residual alone"
+    )
+
+
+# ────────────────────────────────────────────────────────────────────────
+# Atomicity: a failed write leaves the store exactly as it was
+# ────────────────────────────────────────────────────────────────────────
+
+
+def _snapshot_tree(store: Path) -> Dict[str, bytes]:
+    """Every file in the store, by relative path → bytes."""
+    return {
+        str(item.relative_to(store)): item.read_bytes()
+        for item in sorted(store.rglob("*"))
+        if item.is_file()
+    }
+
+
+def test_a_failed_write_rolls_the_whole_store_back(
+    legacy_scene: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A torn ladder is worse than no migration, so a failure must unwind.
+
+    Without a rollback the store is left with (a) some ladders restamped, (b) the
+    failing one TORN — a screen-area threshold under ``selector="coverage"``, the
+    thresholds and the selector disagreeing about their units, which nothing
+    downstream can detect — and (c) a consolidated index describing neither.
+    ``optimise`` is all-or-nothing for exactly this reason; this pass writes in
+    place and so has to unwind instead of staging.
+    """
+    before = _snapshot_tree(legacy_scene)
+    assert is_consolidated(legacy_scene)
+    calls: List[str] = []
+    real_apply = lod_restamp._apply_one
+
+    def explode(root: Any, plan: Any, undo: Any, cache: Any) -> None:
+        calls.append(plan.entry.path)
+        if len(calls) == 2:
+            raise PermissionError("simulated read-only child directory")
+        real_apply(root, plan, undo, cache)
+
+    monkeypatch.setattr(lod_restamp, "_apply_one", explode)
+
+    with pytest.raises(PermissionError, match="simulated"):
+        restamp_lod_store(legacy_scene)
+
+    assert len(calls) == 2, "the failure must land part-way through, not first"
+    assert _snapshot_tree(legacy_scene) == before, "every byte must be restored"
+    assert is_consolidated(legacy_scene), "the store must keep exactly one index"
+    for path in LEGACY_SCENE_LADDERS:
+        assert _attrs(legacy_scene)[path]["selector"] == LEGACY_LOD_SELECTOR
+        assert _ladder(legacy_scene, path) == LEGACY_LADDER
+
+
+def test_the_rollback_error_says_what_it_undid(
+    legacy_scene: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The raised error has to name the state it left behind, or nobody can act."""
+    real_apply = lod_restamp._apply_one
+    calls: List[str] = []
+
+    def explode(root: Any, plan: Any, undo: Any, cache: Any) -> None:
+        calls.append(plan.entry.path)
+        if len(calls) == 2:
+            raise OSError("disk gone")
+        real_apply(root, plan, undo, cache)
+
+    monkeypatch.setattr(lod_restamp, "_apply_one", explode)
+
+    with pytest.raises(OSError) as caught:
+        restamp_lod_store(legacy_scene)
+
+    notes = getattr(caught.value, "__notes__", [])
+    assert any("rolled back" in note for note in notes), notes
+    assert any("exactly as it was" in note for note in notes), notes
+
+
+def test_a_failure_in_the_hash_pass_also_rolls_back(
+    legacy_scene: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The ladders are written BEFORE the hash walk, which reads every array.
+
+    That walk is the step most likely to fail on a real store (a truncated chunk,
+    a permissions problem), and by then every ladder is already rewritten — so it
+    has to be inside the same unwind.
+    """
+    before = _snapshot_tree(legacy_scene)
+
+    def explode(root: Any) -> str:
+        raise RuntimeError("simulated hash failure")
+
+    monkeypatch.setattr(lod_restamp, "_restamp_content_hash", explode)
+
+    with pytest.raises(RuntimeError, match="simulated hash failure"):
+        restamp_lod_store(legacy_scene)
+
+    assert _snapshot_tree(legacy_scene) == before
+    assert is_consolidated(legacy_scene)
+
+
+def test_a_rollback_removes_a_threshold_that_was_absent_before(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Restoring an attr that never existed means DELETING it, not zeroing it.
+
+    A partially-authored ladder (a coarse level with no stored threshold) is a
+    real shape — it is what ``test_an_unresolvable_COARSER_count_...`` covers —
+    so the undo has to handle "absent" as a value.
+    """
+    store = tmp_path / "partial.luxar.zarr"
+    root = _synthetic_scene(store)
+    _synthetic_ladder(
+        root,
+        "partial",
+        [{}, {"coverage_fraction": 4.0, "n_points": 400}],
+    )
+    consolidate(root)
+    close(root)
+    before = _snapshot_tree(store)
+    assert "coverage_fraction" not in _attrs(store)["partial/child_0"]
+
+    def explode(root: Any) -> str:
+        raise RuntimeError("simulated failure after the ladder was written")
+
+    monkeypatch.setattr(lod_restamp, "_restamp_content_hash", explode)
+
+    with pytest.raises(RuntimeError, match="simulated failure"):
+        restamp_lod_store(store)
+
+    assert "coverage_fraction" not in _attrs(store)["partial/child_0"]
+    assert _snapshot_tree(store) == before
+
+
+# ────────────────────────────────────────────────────────────────────────
+# Per-recipe round trip — the invariant the whole command rests on
+# ────────────────────────────────────────────────────────────────────────
+
+
+def _recipe_store(recipe: str, store: Path) -> None:
+    """Write a real ``gsplat lod --recipe <recipe>`` tree to ``store``."""
+    from luxar.gsplats.gsplat_data import GSplatData
+    from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+    from luxar.gsplats.lod.recipes import RecipeParams, build_recipe
+
+    rng = np.random.default_rng(0)
+    n = 800
+    chol = np.zeros((n, 6), dtype=np.float32)
+    chol[:, [0, 2, 5]] = rng.uniform(0.5, 2.0, size=(n, 3))
+    data = GSplatData(
+        centers=rng.uniform(0, 100, size=(n, 3)).astype(np.float32),
+        amplitudes=rng.uniform(0.1, 1.0, size=n).astype(np.float32),
+        cholesky_factors=chol,
+    )
+    built = build_recipe(
+        data,
+        recipe,  # type: ignore[arg-type]
+        RecipeParams(
+            max_elements=250,
+            compression_factor=4,
+            levels=2,
+            device="cpu",
+            seed=0,
+            # Bare leaves: a stream ladder adds `additive_<i>` nodes, which are
+            # not `kind=lod` groups and so are noise for this test.
+            additive_ladders=False,
+        ),
+    )
+    if isinstance(built, GSplatData):
+        built.save(store, ordering="none")
+    else:
+        write_gsplats_tree(store, built, ordering="none")
+
+
+def _all_ladders(store: Path) -> Dict[str, List[float]]:
+    """Every ``kind=lod`` group's thresholds, coarsest→finest, keyed by path."""
+    return {
+        path: _ladder(store, path)
+        for path, attrs in _attrs(store).items()
+        if attrs.get("kind") == "lod"
+    }
+
+
+def _age_every_ladder(store: Path, scale: float = 4.0) -> None:
+    """Walk a freshly written store back to what an older Luxar left on disk.
+
+    ``selector="coverage"`` over the same ladder scaled off the screen-area
+    range — the same ageing the ``legacy_gsplats`` fixture does, applied to every
+    ``kind=lod`` group in the tree. Order-preserving, so nothing but the units
+    changes.
+    """
+    root = open_group(store, mode="r+")
+
+    def visit(group: zarr.Group) -> None:
+        if dict(group.attrs).get("kind") == "lod":
+            group.attrs["selector"] = LEGACY_LOD_SELECTOR
+            for name in group.group_keys():
+                child = group[str(name)]
+                stored = dict(child.attrs).get("coverage_fraction")
+                if stored is not None:
+                    child.attrs["coverage_fraction"] = scale * float(stored)
+        for name in group.group_keys():
+            visit(group[str(name)])
+
+    visit(root)
+    consolidate(root)
+    close(root)
+
+
+#: Per recipe: how many ``kind=lod`` groups it writes, and the finest threshold
+#: each of them carries. ``tiles`` has NO substitutive ladder at all (its tiles
+#: are bare leaves), which is itself worth pinning: the pass must not invent one.
+_RECIPE_SHAPE = {
+    "levels": (1, WHOLE_OBJECT_FINEST_ANCHOR),
+    "tiles": (0, None),
+    "overview": (1, PARTITION_FINEST_AREA),
+    "adaptive": (4, PARTITION_FINEST_AREA),
+}
+
+
+@pytest.mark.parametrize("recipe", sorted(_RECIPE_SHAPE))
+def test_a_restamped_store_matches_what_the_writer_would_have_written(
+    recipe: str, tmp_path: Path
+) -> None:
+    """The invariant the whole command rests on, per recipe.
+
+    Build a real tree with the production writer, record the ladder IT chose,
+    age every group to legacy stamps, restamp — and the ladder must come back
+    bit-for-bit. Anything the pass reads differently from the writers (the
+    anchor rule, the child ordering, the element counts) shows up here as a
+    mismatch on the recipe that exercises it, which is the only way to keep the
+    two rules from drifting apart.
+    """
+    store = tmp_path / f"{recipe}.gsplats.zarr"
+    _recipe_store(recipe, store)
+    expected_count, expected_finest = _RECIPE_SHAPE[recipe]
+
+    written = _all_ladders(store)
+    assert len(written) == expected_count, f"{recipe} wrote {sorted(written)}"
+    for ladder in written.values():
+        assert ladder[-1] == pytest.approx(expected_finest)
+
+    _age_every_ladder(store)
+    aged = _all_ladders(store)
+    assert (aged != written) or not written, "the ageing must move something"
+
+    report = restamp_lod_store(store)
+
+    assert _all_ladders(store) == pytest.approx(written)
+    assert {g.path for g in report.restamped} == set(written)
+    assert report.clean and not report.residual
+    for path in written:
+        assert _attrs(store)[path]["selector"] == DERIVED_LOD_SELECTOR
+
+
+# ────────────────────────────────────────────────────────────────────────
+# zarr format 2
+# ────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("write_format", [2, 3])
+def test_the_pass_works_at_either_zarr_format(
+    write_format: int, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Format 2 and 3 disagree about where attrs and the index LIVE.
+
+    Format 2 writes ``.zattrs`` per node plus a separate ``.zmetadata``; format 3
+    puts both inside one ``zarr.json`` per node, with the consolidated index
+    nested in the root document. This pass edits attrs and re-consolidates, so it
+    touches every one of those differences — and the shipped legacy corpus this
+    command exists for is format 2.
+    """
+    from luxar import _zarr_compat
+
+    monkeypatch.setattr(_zarr_compat, "ZARR_FORMAT", write_format)
+    with zarr.config.set({"default_zarr_format": write_format}):
+        store = tmp_path / f"v{write_format}.luxar.zarr"
+        with LuxarZarrCompiler(store) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            _add_legacy_ladder(scene, "pts", 0)
+        assert int(open_group(store, mode="r").metadata.zarr_format) == write_format
+        before = _hash(store)
+
+        report = restamp_lod_store(store)
+
+        assert [g.path for g in report.restamped] == ["pts"]
+        assert report.clean and not report.residual
+        assert report.content_hash_status == HASH_RESTAMPED
+        assert _attrs(store)["pts"]["selector"] == DERIVED_LOD_SELECTOR
+        assert _ladder(store, "pts") == [0.0, WHOLE_OBJECT_FINEST_ANCHOR]
+        assert _hash(store) not in (None, before)
