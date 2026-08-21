@@ -246,6 +246,13 @@ signatures and can never reach `**attrs`.
     check to the top of `add_mesh_impl`, above step 6 and every later step, so
     every mesh path now agrees with step 5's placement here too.
 
+The pre-write gates above remain the message-quality layer: known scene-level
+faults are rejected before a wrapper exists, so errors name the caller's node
+rather than a synthesized child. Structural correctness does not depend on
+anticipating every future child failure here; each public `Group.add_*` runs in
+a writer transaction that removes a new subtree and restores authoring state on
+failure, and finalize warns and prunes wrappers created but never populated.
+
 All `*_impl` entries wrap the body in a `try/except (ValueError, TypeError)`
 that re-raises as a `ValueError` with a `Could not add <type> '<name>': ...`
 message, built by `compositing.funnel_add_error` (#1491) rather than an f-string
