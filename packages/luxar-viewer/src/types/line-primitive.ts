@@ -29,6 +29,7 @@
  * default (#1352) must not leave authored attributes behind. It is selected
  * per session — `?linePrimitive=` override, then the `Advanced → Line
  * primitive` policy setting — with the `auto` policy additionally sizing
+ * the scene once before material build ({@link sceneEffectiveLineLoad}) and
  * each node once at material build ({@link resolveLinePrimitiveForNode}).
  *
  * It lives here, in the layer-neutral `types/`, rather than in `rendering/`
@@ -81,7 +82,8 @@ export const LINE_PRIMITIVE_POLICIES: readonly LinePrimitivePolicy[] = ['auto', 
 
 /**
  * Auto-policy switch point, in EFFECTIVE segments (= authored segments ×
- * the width factor below). Measured 2026-08-13 on a discrete NVIDIA GPU
+ * the width factor below), summed over concurrently drawn scene nodes.
+ * Measured 2026-08-13 on a discrete NVIDIA GPU
  * (RTX PRO 6000, WebGPU timestamp-query, A/A-replicated): the capsule
  * costs ~1.5× the quad's GPU pass at every thin-line count — parallel
  * curves, no crossover — and 3.16–3.38× on wide lines. Past ~2 M thin
@@ -184,9 +186,17 @@ export function setLinePrimitiveOverride(primitive: LinePrimitive | null): void 
  */
 let sessionPolicy: LinePrimitivePolicy = 'auto';
 
+/** Aggregate effective line load for the scene currently being constructed. */
+let sessionSceneLineLoad = 0;
+
 /** Install the session policy (call once from bootstrap). */
 export function setLinePrimitivePolicy(policy: LinePrimitivePolicy): void {
   sessionPolicy = policy;
+}
+
+/** Install the current scene's aggregate effective line load. */
+export function setSceneLineLoad(load: number): void {
+  sessionSceneLineLoad = Number.isFinite(load) && load > 0 ? load : 0;
 }
 
 /**
@@ -206,6 +216,43 @@ export interface LineNodeLoad {
   maxWidth?: number;
   /** Diagonal of the node's own bounding box, world units. */
   bboxDiagonal?: number;
+}
+
+type AuthoredLineLoadAttrs = Pick<
+  import('./lines').LinesMetadata,
+  'n_segments' | 'max_width' | 'vertex_ordering' | 'segment_ordering' | 'position_bounds'
+>;
+
+/** Scene-tree shape needed by {@link sceneEffectiveLineLoad}. */
+export interface SceneLineLoadNode {
+  type: string;
+  attrs: Record<string, unknown>;
+  children?: readonly SceneLineLoadNode[];
+}
+
+/** Diagonal of one authored min/max pair, or `undefined` when unusable. */
+function boundsDiagonal(min: unknown, max: unknown): number | undefined {
+  if (!Array.isArray(min) || !Array.isArray(max) || min.length !== max.length || !min.length) {
+    return undefined;
+  }
+  const diag = Math.hypot(...max.map((hi, i) => hi - min[i]));
+  return Number.isFinite(diag) && diag > 0 ? diag : undefined;
+}
+
+/**
+ * Extract the stable authored load inputs used by both scene aggregation and
+ * per-node material resolution. Vertex ordering is the tight D-space extent;
+ * segment ordering is a conservative √2-large fallback; `position_bounds`
+ * keeps width normalization available for unindexed nodes.
+ */
+export function lineNodeLoadFromAttrs(attrs: Partial<AuthoredLineLoadAttrs>): LineNodeLoad {
+  const ordering = attrs.vertex_ordering ?? attrs.segment_ordering;
+  const indexed = ordering && boundsDiagonal(ordering.ordering_min, ordering.ordering_max);
+  return {
+    nSegments: attrs.n_segments,
+    maxWidth: attrs.max_width,
+    bboxDiagonal: indexed ?? boundsDiagonal(attrs.position_bounds?.min, attrs.position_bounds?.max),
+  };
 }
 
 /**
@@ -230,6 +277,27 @@ export function effectiveSegmentLoad(load: LineNodeLoad): number {
     widthFactor = Math.max(1, openingPx / MIN_RENDERED_WIDTH_PX);
   }
   return segments * widthFactor;
+}
+
+/**
+ * Fold a scene graph into the effective line load that can be drawn
+ * concurrently. Plain groups and partitions sum their children; LOD groups
+ * take the maximum because their levels are substitutive. A lines node is a
+ * leaf for this purpose: additive line ladders already advertise their summed
+ * total in the parent node's authored `n_segments`.
+ */
+export function sceneEffectiveLineLoad(node: SceneLineLoadNode): number {
+  if (node.type === 'lines') {
+    return effectiveSegmentLoad(
+      lineNodeLoadFromAttrs(node.attrs as Partial<AuthoredLineLoadAttrs>)
+    );
+  }
+
+  const childLoads = node.children?.map(sceneEffectiveLineLoad) ?? [];
+  if (node.type === 'group' && node.attrs.kind === 'lod') {
+    return childLoads.reduce((maximum, load) => Math.max(maximum, load), 0);
+  }
+  return childLoads.reduce((total, load) => total + load, 0);
 }
 
 /**
@@ -260,9 +328,9 @@ function forcedPolicyPrimitive(): LinePrimitive | null {
  * both backends), so the two footprints agree by construction.
  *
  * Precedence: `?linePrimitive=` (explicit escape hatch) > forced policy
- * (`capsule` / `quad` setting) > the `auto` rule (quad when
- * {@link effectiveSegmentLoad} ≥ {@link AUTO_QUAD_EFFECTIVE_SEGMENTS},
- * capsule otherwise).
+ * (`capsule` / `quad` setting) > the `auto` rule (quad when the greater of
+ * this node's {@link effectiveSegmentLoad} and the installed scene load is ≥
+ * {@link AUTO_QUAD_EFFECTIVE_SEGMENTS}, capsule otherwise).
  *
  * The result must be resolved ONCE per node, at first material build,
  * and carried on `userData.linePrimitive` from then on (clones, the
@@ -274,7 +342,7 @@ function forcedPolicyPrimitive(): LinePrimitive | null {
 export function resolveLinePrimitiveForNode(load: LineNodeLoad): LinePrimitive {
   const forced = sessionOverride ?? forcedPolicyPrimitive();
   if (forced) return forced;
-  return effectiveSegmentLoad(load) >= AUTO_QUAD_EFFECTIVE_SEGMENTS
+  return Math.max(effectiveSegmentLoad(load), sessionSceneLineLoad) >= AUTO_QUAD_EFFECTIVE_SEGMENTS
     ? 'screen-space'
     : DEFAULT_LINE_PRIMITIVE;
 }
