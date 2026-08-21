@@ -257,6 +257,10 @@ class TestBuildWorkerCmd:
         # --config/--preset merge, defaulting to 'auto').
         assert "--floor" not in self._cmd()
 
+    def test_forwards_shared_raw_normalization_range(self) -> None:
+        cmd = self._cmd(norm_range=(10.25, 999.5))
+        assert cmd[cmd.index("--norm-range") + 1] == "10.25,999.5"
+
     def test_forwards_config_and_progressive_and_denoise_values(self) -> None:
         # Close the rest of the mutation-survivor class (config / progressive /
         # denoise VALUES, not just flag presence).

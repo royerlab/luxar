@@ -1064,6 +1064,18 @@ def _sample_volume_for_floor(volume: Any, budget: int) -> "np.ndarray | None":
 NORM_RANGE_MIN_SPAN = 1e-12
 
 
+def _norm_range_has_usable_span(norm_range: tuple[float, float]) -> bool:
+    """Whether a resolved shared range is safe to forward to another fit."""
+    lo, hi = float(norm_range[0]), float(norm_range[1])
+    span = hi - lo
+    return (
+        np.isfinite(lo)
+        and np.isfinite(hi)
+        and np.isfinite(span)
+        and span > NORM_RANGE_MIN_SPAN
+    )
+
+
 def resolve_volume_norm_range(
     volume: Any,
     norm_percentile: float,

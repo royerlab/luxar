@@ -77,10 +77,9 @@ def _stamp_content_floor(
 
     A content fit used to save NO record of the pedestal it removed: the merged
     result is built from fresh box nodes, and ``GSplatData.concatenate`` only
-    carries a block its inputs AGREE on — which per-box crops never do for their
-    own bounds, since each normalizes against its own crop. ``floor_level`` is
-    the one level `resolve_shared_floor` gave every box, so stamp it explicitly:
-    onto the flat leaf's ``stats``, or onto the root node's ``meta``, which
+    carries a block its inputs AGREE on. ``floor_level`` is the one level
+    `resolve_shared_floor` gave every box, so stamp it explicitly onto the flat
+    leaf's ``stats``, or onto the root node's ``meta``, which
     ``write_gsplats_tree`` promotes into the store's ``pipeline/`` group.
 
     The exception is a NEGATIVE resolved level, which cannot be forwarded as a
@@ -184,7 +183,10 @@ def run_content_fit(
         fit_planned,
         plan_volume,
     )
-    from luxar.gsplats.planner.fit_planned import _fit_one_box
+    from luxar.gsplats.planner.fit_planned import (
+        _ensure_planned_norm_range,
+        _fit_one_box,
+    )
 
     def _section(title: str) -> Any:
         # Skip the section header/indent when quiet; the body still runs.
@@ -268,12 +270,7 @@ def run_content_fit(
         # never the box crop" contract as the floor above; a hand-run worker (or
         # a manifest planned before the range existed) inherits none, so resolve
         # it here too rather than falling back to per-crop normalization.
-        if fk.get("norm_range") is None:
-            from luxar.gsplats.fitting.preprocessing import resolve_volume_norm_range
-
-            fk["norm_range"] = resolve_volume_norm_range(
-                vol, float(fk.get("norm_percentile", 0.0)), verbose=False
-            )
+        _ensure_planned_norm_range(vol, fk, False)
         cap = int(fitplan.density.get("saturation_cap", 0)) if fitplan.density else 0
         box_result = _fit_one_box(
             vol, fitplan.boxes[plan_box], int(fitplan.overlap), cap, **fk
@@ -337,14 +334,7 @@ def run_content_fit(
     # plan-time range through --norm-range; a direct content fit resolves it once
     # here against the whole selected volume. The floor remains a separate raw
     # zero point and _normalize_data combines the two without clipping the top.
-    if box_fit_kwargs.get("norm_range") is None:
-        from luxar.gsplats.fitting.preprocessing import resolve_volume_norm_range
-
-        box_fit_kwargs["norm_range"] = resolve_volume_norm_range(
-            vol,
-            float(box_fit_kwargs.get("norm_percentile", 0.0)),
-            verbose=verbose,
-        )
+    _ensure_planned_norm_range(vol, box_fit_kwargs, verbose)
 
     # ── obtain a plan: load --plan, or scan + plan ──
     created_plan = False
@@ -470,7 +460,7 @@ def run_content_fit(
             # The RESOLVED level, not the spec: each worker would otherwise
             # re-estimate on its own box crop (#1174).
             floor=floor_forward,
-            norm_range=box_fit_kwargs["norm_range"],
+            norm_range=box_fit_kwargs.get("norm_range"),
             channel=channel,
             timepoint=timepoint,
             array_key=array_key,

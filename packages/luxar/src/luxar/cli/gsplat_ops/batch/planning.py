@@ -692,7 +692,10 @@ def resolve_batch_norm_range(
     """
     import numpy as _np
 
-    from luxar.gsplats.fitting.preprocessing import resolve_volume_norm_range
+    from luxar.gsplats.fitting.preprocessing import (
+        _norm_range_has_usable_span,
+        resolve_volume_norm_range,
+    )
 
     pairs = _floor_sample_pairs(n_timepoints, n_channels)
     sampled = sampled_slices
@@ -722,6 +725,13 @@ def resolve_batch_norm_range(
             norm_percentile,
             verbose=False,
         )
+        if not _norm_range_has_usable_span(norm_range):
+            aprint(
+                f"Sampled normalization range [{norm_range[0]:.6g}, "
+                f"{norm_range[1]:.6g}] has no usable extent; each task resolves "
+                "its own scale."
+            )
+            return None
         aprint(
             f"Every (t, c) task uses normalization range "
             f"[{norm_range[0]:.6g}, {norm_range[1]:.6g}]"

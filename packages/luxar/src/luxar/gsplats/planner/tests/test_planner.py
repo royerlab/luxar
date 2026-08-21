@@ -435,6 +435,17 @@ class TestDefaultWorkerCmdBuilder:
         cmd = builder(0, tmp_path / "box0.gsplats.zarr")
         assert cmd[cmd.index("--norm-range") + 1] == "10.25,999.5"
 
+    def test_declines_a_degenerate_shared_normalization_range(self):
+        from luxar.gsplats.planner.fit_planned import _ensure_planned_norm_range
+
+        fit_kwargs = {"norm_percentile": 1.0}
+        volume = np.full((32, 32, 32), 100.0, np.float32)
+        volume.flat[:100] = 200.0
+
+        _ensure_planned_norm_range(volume, fit_kwargs, False)
+
+        assert fit_kwargs.get("norm_range") is None
+
     def test_forwards_the_runs_fit_configuration(self, tmp_path):
         # `truncate:` is settable ONLY through a YAML --config (no preset sets it,
         # there is no --truncate flag), so an unforwarded config made every `-j N`

@@ -53,11 +53,24 @@ def _ensure_planned_norm_range(
     """Resolve one raw-input normalization range for all planned boxes."""
     if fit_kwargs.get("norm_range") is not None:
         return
-    from luxar.gsplats.fitting.preprocessing import resolve_volume_norm_range
+    from arbol import aprint
 
-    fit_kwargs["norm_range"] = resolve_volume_norm_range(
+    from luxar.gsplats.fitting.preprocessing import (
+        _norm_range_has_usable_span,
+        resolve_volume_norm_range,
+    )
+
+    norm_range = resolve_volume_norm_range(
         volume, float(fit_kwargs.get("norm_percentile", 0.0)), verbose=verbose
     )
+    if not _norm_range_has_usable_span(norm_range):
+        aprint(
+            f"Whole-volume normalization range [{norm_range[0]:.6g}, "
+            f"{norm_range[1]:.6g}] has no usable extent — boxes fall back to "
+            "their own scale."
+        )
+        return
+    fit_kwargs["norm_range"] = norm_range
 
 
 def _padded_bounds(

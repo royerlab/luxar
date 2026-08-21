@@ -300,7 +300,7 @@ def fit_progressive_gaussian_splats(
     on the same GPU and fill the utilization gap.
     """
     from luxar.gsplats.fit_gsplats import fit_gaussian_splats
-    from luxar.gsplats.fitting.preprocessing import _resolve_floor
+    from luxar.gsplats.fitting.preprocessing import NORM_RANGE_MIN_SPAN, _resolve_floor
     from luxar.gsplats.fitting.validation import _validate_floor
     from luxar.gsplats.rendering.volume_rendering import render_to_volume_tensor
 
@@ -475,18 +475,25 @@ def fit_progressive_gaussian_splats(
         # wrongly eat signal.
         pass_kwargs["floor"] = "none"
 
-        # When the pedestal was subtracted up front, pin pass 0's normalization
-        # to the same zero point tiled fitting uses on floor-subtracted data
-        # (low end = 0), so pass 0 does not re-derive image_min from the
-        # residual's own minimum — which would reintroduce the per-crop "subtract
-        # your own minimum" the flat path drops in #1616. Only when the caller
-        # supplied no explicit whole-volume range of their own.
-        if (
-            pass_i == 0
-            and applied_floor is not None
-            and pass_kwargs.get("norm_range") is None
-        ):
-            pass_kwargs["norm_range"] = (0.0, float(V_original.max()))
+        # When the pedestal was subtracted up front, pin pass 0 to that same
+        # zero-based basis. Preserve the caller's requested top-end rule: a
+        # percentile fit uses the percentile of the already-subtracted volume,
+        # while a supplied raw-input range is shifted by the applied floor.
+        if pass_i == 0 and applied_floor is not None:
+            supplied_range = pass_kwargs.get("norm_range")
+            if supplied_range is None:
+                norm_percentile = float(pass_kwargs.get("norm_percentile", 0.0))
+                image_max = (
+                    float(np.percentile(V_original, 100.0 - norm_percentile))
+                    if norm_percentile > 0.0
+                    else float(V_original.max())
+                )
+            else:
+                image_max = float(supplied_range[1]) - float(applied_floor)
+            if np.isfinite(image_max) and image_max > NORM_RANGE_MIN_SPAN:
+                pass_kwargs["norm_range"] = (0.0, image_max)
+            else:
+                pass_kwargs["norm_range"] = None
 
         # A supplied whole-volume intensity scale describes the VOLUME, not the
         # residual chain built from it. Pass 0 shares it (that is the point);

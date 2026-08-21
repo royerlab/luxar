@@ -284,10 +284,10 @@ def lift_normalization_stats(
     fitter where ``image_min`` IS the applied level.
 
     ``floor`` is ``applied_floor`` itself, and ``image_min`` lifts back to it.
-    Pass 0 is handed ``norm_range=(0.0, V_original.max())`` (the same zero pin
-    ``fit_tile`` uses on floor-subtracted data), so it no longer re-derives a
-    remaining ``image_min`` from the subtracted array's own minimum: its inner
-    ``image_min`` is 0, and adding ``applied_floor`` back yields
+    Pass 0 is handed a zero-based range measured on the already floor-subtracted
+    ``V_original`` (the same zero pin ``fit_tile`` uses), so it no longer
+    re-derives a remaining ``image_min`` from the subtracted array's own minimum:
+    its inner ``image_min`` is 0, and adding ``applied_floor`` back yields
     ``image_min == floor``. That matches the single-pass fitter, which since
     #1616 pins ``image_min`` to the resolved floor rather than raising it to the
     crop's own minimum, so both paths record the same level for the same volume

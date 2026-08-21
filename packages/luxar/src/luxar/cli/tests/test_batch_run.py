@@ -353,6 +353,18 @@ def test_batch_plan_resolves_one_global_normalization_range(tmp_path: Path) -> N
     assert ranges == {manifest.fit_args["norm_range"]}
 
 
+def test_batch_declines_a_degenerate_shared_normalization_range(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from luxar.cli.gsplat_ops.batch import planning
+
+    sample = np.full(64, 50.0, np.float32)
+    monkeypatch.setattr(
+        planning, "_sample_batch_slices", lambda *a, **k: [(0, 0, sample)]
+    )
+    assert planning.resolve_batch_norm_range(tmp_path / "unused.zarr", 0.0) is None
+
+
 def test_batch_plan_preserves_an_explicit_config_normalization_range(
     tmp_path: Path, monkeypatch
 ) -> None:
