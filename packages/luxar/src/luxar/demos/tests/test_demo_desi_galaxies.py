@@ -442,6 +442,7 @@ class TestScenePointCap:
                     for child_name in child_names
                 ]
                 assert layer_attrs["selector"] == "screen-area"
+                assert layer_attrs["intensity"] == pytest.approx(0.3900782)
                 assert [
                     attrs.get("n_splats", attrs.get("n_points"))
                     for attrs in child_attrs

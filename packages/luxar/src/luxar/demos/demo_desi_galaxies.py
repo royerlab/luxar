@@ -39,7 +39,7 @@ DESI Collaboration (2025), "Data Release 1 of the Dark Energy Spectroscopic
 SELF-CONTAINED / CACHING
 ------------------------
 On a fresh machine this demo bootstraps itself with no manual steps:
-  1. Fast path: a fully-built scene (both LOD colorings, ~11 MB) shipped via
+  1. Fast path: a fully-built scene (both LOD colorings, ~10 MB) shipped via
      Git LFS (``demos/data/desi_galaxies/``); it is unzipped once into the demos
      output dir and loads instantly — no per-launch LOD build.
   2. If that asset isn't pulled, ``--recompute`` (or a missing asset)
@@ -65,7 +65,7 @@ DEMO_META = {
     "category": "astronomy",
     "geometry": "points",
     "requirements": {
-        "download_mb": 11,
+        "download_mb": 10,
         "compute": "heavy",
         "gpu": "none",
         "local_data": "git-lfs",
@@ -613,6 +613,8 @@ def create_scene(
                 f"  📉 Sampling {len(scene_positions):,} of {len(positions):,} "
                 "catalog rows to bound the finest LOD payload"
             )
+        # Additive flux is linear in element count, and every coarse level
+        # preserves the sample's mass, so compensate every rung at the wrapper.
         scene_intensity = SCENE_INTENSITY * len(positions) / len(scene_positions)
         colors = tracer_colors(scene_tracer_ids)
 
