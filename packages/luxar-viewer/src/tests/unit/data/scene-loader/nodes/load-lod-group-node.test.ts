@@ -4,7 +4,8 @@
  * Strategy: the lod_group loader is mostly a thin wrapper that
  * recurses children through ``loadSceneNodes`` and pushes the
  * resulting THREE nodes + per-child attrs (``coverage_fraction``,
- * ``position_bounds``) into the :class:`LODGroupRegistry`. We mock
+ * ``position_bounds``, optional ``lod_bounds``) into the
+ * :class:`LODGroupRegistry`. We mock
  * ``loadSceneNodes`` to attach a stub mesh per child, then assert on
  * what landed in the registry.
  *
@@ -103,7 +104,8 @@ function makeChildNode(
   positionBounds: { min: number[]; max: number[] } | undefined = {
     min: [0, 0, 0],
     max: [1, 1, 1],
-  }
+  },
+  lodBounds?: { min: number[]; max: number[] }
 ): SceneNode {
   return {
     path,
@@ -112,6 +114,7 @@ function makeChildNode(
       type: 'gsplats',
       coverage_fraction: coverageFraction,
       ...(positionBounds ? { position_bounds: positionBounds } : {}),
+      ...(lodBounds ? { lod_bounds: lodBounds } : {}),
     } as SceneNode['attrs'],
     hasSpatialIndex: false,
     children: [],
@@ -374,13 +377,23 @@ describe('loadLodGroupNode — registry registration', () => {
     const ctx = makeCtx(reg);
 
     const node = makeLodGroupNode([
-      makeChildNode('/lod/child_0', 0),
+      makeChildNode(
+        '/lod/child_0',
+        0,
+        { min: [-100, -100, -100], max: [100, 100, 100] },
+        { min: [-1, -1, -1], max: [1, 1, 1] }
+      ),
       makeChildNode('/lod/child_1', 0.5),
     ]);
     await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
     const entry = reg.get('/lod')!;
     expect(entry.children).toHaveLength(2);
     expect(entry.children.map((c) => c.coverageFraction)).toEqual([0, 0.5]);
+    expect(entry.children[0].lodBounds).toEqual({
+      min: [-1, -1, -1],
+      max: [1, 1, 1],
+    });
+    expect(entry.children[1].lodBounds).toBeUndefined();
   });
 
   it('falls back to center_bounds when position_bounds is absent', async () => {
@@ -410,6 +423,28 @@ describe('loadLodGroupNode — registry registration', () => {
       min: [1, 1, 1],
       max: [3, 3, 3],
     });
+  });
+
+  it('ignores malformed lod_bounds so selection falls back to position_bounds', async () => {
+    attachStubChildren();
+    const reg = new LODGroupRegistry({
+      getCamera: () => new THREE.Camera(),
+      getViewportSize: () => ({ width: 100, height: 100 }),
+      getDisplayDims: () => [0, 1, 2],
+    });
+    const ctx = makeCtx(reg);
+    const child = makeChildNode('/lod/child_0', 0);
+    (child.attrs as Record<string, unknown>).lod_bounds = { min: [-1, -1], max: [1, 1] };
+
+    await loadLodGroupNode(
+      makeLodGroupNode([child]),
+      new THREE.Group(),
+      makeStubLoc(),
+      ctx,
+      loadSceneNodesMock
+    );
+
+    expect(reg.get('/lod')!.children[0].lodBounds).toBeUndefined();
   });
 });
 

@@ -113,10 +113,12 @@ function attachLazyChild(
   hasMoreLODs?: () => boolean
 ): LODGroupChild {
   placeholder.visible = false;
+  const positionBounds = readPositionBounds(child.attrs);
   const entryChild: LODGroupChild = {
     object: placeholder,
     coverageFraction,
-    positionBounds: readPositionBounds(child.attrs),
+    positionBounds,
+    lodBounds: readLodBounds(child.attrs, positionBounds.min.length),
     ready: false,
     // Progressive (additive-laddered) levels report remaining LODs so the
     // registry can settle-gate further ``ensureLoaded`` passes to completion;
@@ -273,6 +275,37 @@ function readPositionBounds(childAttrs: SceneNode['attrs']): {
     min: (min as unknown[]).map(Number),
     max: (max as unknown[]).map(Number),
   };
+}
+
+/** Read optional robust nD bounds used only by the LOD metric. */
+function readLodBounds(
+  childAttrs: SceneNode['attrs'],
+  expectedDimensions: number
+): { min: readonly number[]; max: readonly number[] } | undefined {
+  const attrs = childAttrs as Record<string, unknown>;
+  const raw = attrs.lod_bounds as { min?: unknown; max?: unknown } | undefined;
+  if (!raw || !Array.isArray(raw.min) || !Array.isArray(raw.max)) return undefined;
+  if (
+    raw.min.length === 0 ||
+    raw.min.length !== raw.max.length ||
+    raw.min.length !== expectedDimensions
+  ) {
+    return undefined;
+  }
+  const min = raw.min;
+  const max = raw.max;
+  for (let i = 0; i < min.length; i++) {
+    if (
+      typeof min[i] !== 'number' ||
+      typeof max[i] !== 'number' ||
+      !Number.isFinite(min[i]) ||
+      !Number.isFinite(max[i]) ||
+      min[i] > max[i]
+    ) {
+      return undefined;
+    }
+  }
+  return { min: min as number[], max: max as number[] };
 }
 
 /**
@@ -549,10 +582,12 @@ export async function loadLodGroupNode(
     childObject.visible = false;
 
     if (i === eagerIdx) eagerRegistryIdx = registryChildren.length;
+    const positionBounds = readPositionBounds(child.attrs);
     registryChildren.push({
       object: childObject,
       coverageFraction,
-      positionBounds: readPositionBounds(child.attrs),
+      positionBounds,
+      lodBounds: readLodBounds(child.attrs, positionBounds.min.length),
     });
   }
 

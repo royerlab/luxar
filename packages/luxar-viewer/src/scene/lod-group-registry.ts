@@ -4,10 +4,13 @@
  * Tracks every `lod_group` scene-graph node currently loaded. For each
  * one, every frame:
  *
- *   1. Fold each child's nD ``positionBounds`` directly into a cached
+ *   1. Fold each child's nD ``lodBounds`` (falling back to
+ *      ``positionBounds``) directly into a cached
  *      per-entry **local-space** :type:`BoundingBox`, using the current
  *      ``displayDims`` to map nD axes onto X/Y/Z. (No intermediate
- *      per-child boxes — the union is computed in place.)
+ *      per-child boxes — the union is computed in place.) Raw
+ *      ``positionBounds`` remain the authority for frustum gating and
+ *      eviction so robust metric bounds cannot hide visible outliers.
  *   2. Transform the local box into world space via
  *      :func:`transformBoundingBox` and the lod_group's ``matrixWorld``.
  *   3. Project the 8 corners through the camera and reduce them to the
@@ -313,6 +316,14 @@ export interface LODGroupChild {
    * selector re-projects each frame.
    */
   positionBounds: { min: readonly number[]; max: readonly number[] };
+  /**
+   * Optional robust nD bounds from the child's ``lod_bounds`` zarr attribute.
+   * The selector uses these only to size the node for either LOD metric;
+   * frustum gating and eviction keep the full ``positionBounds`` so visible
+   * outliers are never treated as absent. Missing bounds fall back to
+   * ``positionBounds`` for legacy stores.
+   */
+  lodBounds?: { min: readonly number[]; max: readonly number[] };
   /**
    * Lazy-loading readiness. ``undefined`` means "always ready" (eagerly
    * loaded — the default for callers that don't opt into lazy loading,
@@ -1057,6 +1068,7 @@ export class LODGroupRegistry {
         desired = this.coarsestReadyIndex(entry);
         entry.offScreen = true;
       } else if (entry.selector === 'screen-area') {
+        const metricWorldBox = this.computeWorldBox(entry, displayDims, true) ?? worldBox;
         // Screen-area selector: the metric IS the fraction of the viewport
         // area the group's projected bbox rect covers (viewport-size
         // independent by construction — see projectBoxAreaFraction). The
@@ -1066,14 +1078,20 @@ export class LODGroupRegistry {
         // path; ``?lod-finest`` forces Infinity → always finest.
         coverageMetric = forceFinest
           ? Infinity
-          : projectBoxAreaFraction(worldBox, camera, FRUSTUM_MATRIX_SCRATCH);
+          : projectBoxAreaFraction(metricWorldBox, camera, FRUSTUM_MATRIX_SCRATCH);
         desired = pickChildWithHysteresis(cache.thresholds, entry.activeChildIndex, coverageMetric);
         entry.offScreen = false;
       } else {
+        const metricWorldBox = this.computeWorldBox(entry, displayDims, true) ?? worldBox;
         // Legacy 'coverage' selector (the default for older stores).
         // Reuse the per-frame projection×view product (FRUSTUM_MATRIX_SCRATCH,
         // built in evaluatePerFrame) instead of recomputing it per group.
-        const diagonalPx = projectBoxDiagonalPx(worldBox, camera, viewport, FRUSTUM_MATRIX_SCRATCH);
+        const diagonalPx = projectBoxDiagonalPx(
+          metricWorldBox,
+          camera,
+          viewport,
+          FRUSTUM_MATRIX_SCRATCH
+        );
         // Normalise the projected pixel diagonal to a dimensionless **coverage
         // metric** (1.0 == the projected diagonal has reached FILL_FACTOR of the
         // FITTED AXIS) so the viewport-relative coverage_fraction thresholds
@@ -1412,11 +1430,18 @@ export class LODGroupRegistry {
    */
   private computeWorldBox(
     entry: LODGroupEntry,
-    displayDims: readonly number[]
+    displayDims: readonly number[],
+    useLodBounds: boolean = false
   ): BoundingBox | null {
     const cache = this.caches.get(entry.path);
     if (!cache) return null;
-    return computeEntryWorldBox(entry, displayDims, cache.localBoxScratch, this.matrixScratch);
+    return computeEntryWorldBox(
+      entry,
+      displayDims,
+      cache.localBoxScratch,
+      this.matrixScratch,
+      useLodBounds
+    );
   }
 
   /**
