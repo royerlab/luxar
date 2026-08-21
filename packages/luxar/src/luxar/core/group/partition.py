@@ -489,9 +489,10 @@ def serialized_bsp_tree_straddles_centers(
 
     A uniform tiled fit keeps its apodization halo, so neighbouring part boxes
     overlap and no plane can separate their faces exactly. Their box centers
-    should still straddle the producer's split plane. The measured
-    interpenetration of the two sides is the tolerance, so ordinary halo-scale
-    uncertainty passes while a plane in a different coordinate frame does not.
+    should still straddle the producer's split plane. The largest measured
+    interpenetration on each axis is the tolerance floor for that axis, so
+    sparse content cannot erase the known halo scale while a plane in a
+    different coordinate frame still does not pass.
 
     Requires leaf labels ``0..len(boxes)-1`` exactly once, and returns ``False``
     for malformed or non-finite stored metadata.
@@ -502,14 +503,39 @@ def serialized_bsp_tree_straddles_centers(
         labels = serialized_bsp_leaf_labels(tree)
         if sorted(labels) != list(range(len(boxes))):
             return False
-        return _node_straddles_centers(tree, boxes)
+        overlap_floors = [0.0, 0.0, 0.0]
+        _collect_axis_overlap_floors(tree, boxes, overlap_floors)
+        return _node_straddles_centers(tree, boxes, overlap_floors)
     except (KeyError, TypeError, ValueError, IndexError, OverflowError):
         return False
+
+
+def _collect_axis_overlap_floors(
+    node: Dict[str, Any],
+    boxes: "Sequence[tuple[NDArray[np.floating], NDArray[np.floating]]]",
+    overlap_floors: List[float],
+) -> None:
+    if "part" in node:
+        return
+    axis = int(node.get("axis", -1))
+    if axis not in (0, 1, 2) or (boxes and axis >= len(boxes[0][0])):
+        raise ValueError("invalid split axis")
+    left_labels = serialized_bsp_leaf_labels(node["left"])
+    right_labels = serialized_bsp_leaf_labels(node["right"])
+    left_high = max(float(boxes[i][1][axis]) for i in left_labels)
+    right_low = min(float(boxes[i][0][axis]) for i in right_labels)
+    if np.isfinite(left_high) and np.isfinite(right_low):
+        overlap_floors[axis] = max(
+            overlap_floors[axis], max(0.0, left_high - right_low)
+        )
+    _collect_axis_overlap_floors(node["left"], boxes, overlap_floors)
+    _collect_axis_overlap_floors(node["right"], boxes, overlap_floors)
 
 
 def _node_straddles_centers(
     node: Dict[str, Any],
     boxes: "Sequence[tuple[NDArray[np.floating], NDArray[np.floating]]]",
+    overlap_floors: Sequence[float],
 ) -> bool:
     if "part" in node:
         return True
@@ -536,12 +562,12 @@ def _node_straddles_centers(
         for value in (left_center, right_center, left_high, right_low)
     ):
         return False
-    overlap = max(0.0, left_high - right_low)
+    overlap = max(overlap_floors[axis], left_high - right_low)
     if split < left_center - overlap or split > right_center + overlap:
         return False
-    return _node_straddles_centers(node["left"], boxes) and _node_straddles_centers(
-        node["right"], boxes
-    )
+    return _node_straddles_centers(
+        node["left"], boxes, overlap_floors
+    ) and _node_straddles_centers(node["right"], boxes, overlap_floors)
 
 
 def _node_separates(

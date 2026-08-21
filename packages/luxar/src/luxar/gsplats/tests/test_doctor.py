@@ -79,6 +79,34 @@ def _uniform_tiled_store(tmp: Path) -> Path:
     return path
 
 
+def _sparse_uniform_tiled_store(tmp: Path) -> Path:
+    """A producer-shaped grid whose sparse content under-fills one halo."""
+    from luxar.gsplats.tiling import compute_tile_specs, grid_bsp_tree
+
+    specs = compute_tile_specs((96, 16, 16), 32, 8)
+    x_bounds = ((0.0, 32.0), (24.0, 56.0), (72.0, 74.0), (72.0, 74.0))
+    regions = []
+    for lo_x, hi_x in x_bounds:
+        centers = np.array([[lo_x, 1.0, 1.0], [hi_x, 2.0, 2.0]], dtype=np.float32)
+        chol = np.zeros((2, 6), dtype=np.float32)
+        chol[:, [0, 2, 5]] = 1.0
+        regions.append(
+            GSplatData(
+                centers=centers,
+                amplitudes=np.ones(2, dtype=np.float32),
+                cholesky_factors=chol,
+            )
+        )
+    node = GSplatData.partition_from_regions(
+        regions,
+        bsp_tree=grid_bsp_tree(specs),
+        region_labels=[spec.index for spec in specs],
+    )
+    path = tmp / "sparse-uniform.gsplats.zarr"
+    write_gsplats_tree(path, node)
+    return path
+
+
 def _mixed_overlap_store(tmp: Path) -> tuple[Path, dict]:
     """Three x-ordered parts: one overlapping cut and one clean cut."""
     bounds = ((0.0, 32.0), (24.0, 56.0), (80.0, 112.0))
@@ -404,6 +432,27 @@ class TestSplitPlanesCheck:
 
             diagnose_store(path, fix=True)
             assert _root_attrs(path)["bsp_tree"] == before
+
+    def test_sparse_uniform_content_keeps_the_producer_tree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = _sparse_uniform_tiled_store(Path(tmp))
+            before = _root_attrs(path)["bsp_tree"]
+
+            report = diagnose_store(path)
+
+            (finding,) = report.findings
+            assert finding.severity == "note"
+            assert not finding.fixable
+            assert report.healthy
+
+            diagnose_store(path, fix=True)
+            assert _root_attrs(path)["bsp_tree"] == before
+
+            _set_root_attr(path, "bsp_tree", _scale_tree_planes(before, (0.25,) * 3))
+            report = diagnose_store(path)
+            (finding,) = report.findings
+            assert finding.severity == "error"
+            assert finding.fixable
 
     def test_an_approximate_tree_is_recovered_without_overclaiming_scale(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

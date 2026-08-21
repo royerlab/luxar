@@ -100,7 +100,8 @@ def check_partition_split_planes(root: "zarr.Group") -> List[Finding]:
       by REMOVING the tree when not: the centroid fallback is at least honest.
     * **Approximate.** Overlapping parts cannot be separated exactly. A stored
       tree is reported as a note when every cut remains plausible within the
-      measured overlap band. A cut outside that band is repaired when its
+      measured overlap band and its per-axis tolerance floor. A cut outside
+      that band is repaired when its
       position can be recovered safely, or removed when it cannot.
     """
     from luxar.core.group.partition import (
@@ -362,7 +363,8 @@ def _misframed_finding(
         summary = f"split planes for {n_parts} parts use a different coordinate frame"
         detail = (
             "The parts overlap, but their centers do not straddle the stored "
-            "planes even after allowing the measured overlap band. A single "
+            "planes even after allowing the measured overlap band and its "
+            "per-axis tolerance floor. A single "
             f"per-axis scale explains every plane ({used}), matching a tree "
             "written before a downscale or voxel-size conversion was applied "
             "to the splat centers."
@@ -372,7 +374,8 @@ def _misframed_finding(
         summary = f"split planes for {n_parts} parts fall outside their overlap bands"
         detail = (
             "The parts' centers do not straddle the stored planes even after "
-            "allowing the measured overlap band. The plane positions can be "
+            "allowing the measured overlap band and its per-axis tolerance "
+            "floor. The plane positions can be "
             "recovered from those bands, but the raw ratios do not provide "
             "enough consistent evidence to identify a coordinate-frame scale."
         )
@@ -440,7 +443,8 @@ def _stale_finding(
     if overlap_violation:
         reason = (
             "The parts' centers do not straddle the stored planes even after "
-            "allowing the measured overlap band, so the viewer "
+            "allowing the measured overlap band and its per-axis tolerance "
+            "floor, so the viewer "
         )
     else:
         reason = "The stored planes do not separate the parts they name, so the viewer "
