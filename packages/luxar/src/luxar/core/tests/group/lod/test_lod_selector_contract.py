@@ -726,9 +726,7 @@ def test_every_producer_calls_the_shared_resolver(rel: str) -> None:
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=rel)
     called = _called_names(tree)
     direct = sorted(
-        helper
-        for helper in _DERIVATION_HELPERS
-        if called & _aliases_of(tree, helper)
+        helper for helper in _DERIVATION_HELPERS if called & _aliases_of(tree, helper)
     )
     assert not direct, (
         f"{rel} calls derivation helpers directly ({direct}) instead of routing "
