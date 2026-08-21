@@ -253,7 +253,7 @@ export interface UrlParams {
    * Select the line rendering primitive for the session
    * (`?linePrimitive=screen-space|capsule`, issue #1352). The session's
    * strongest word: it overrides the `Advanced → Line primitive` policy
-   * setting (whose `auto` mode otherwise sizes each node at material
+   * setting (whose `auto` mode otherwise sizes the scene before material
    * build — see `types/line-primitive.ts`).
    *
    * `capsule` (the default) profiles the 2D point-to-segment distance in

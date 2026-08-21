@@ -47,6 +47,36 @@ ProgressCallback = Callable[[int, int, str], None]
 CONTENT_CULL_RETENTION: float = 0.999
 
 
+def _ensure_planned_norm_range(
+    volume: np.ndarray, fit_kwargs: dict[str, Any], verbose: bool
+) -> None:
+    """Resolve one raw-input range for today's non-denoising content fits."""
+    if fit_kwargs.get("norm_range") is not None:
+        return
+    # Forward guard for #1813: once content boxes can denoise, they must resolve
+    # their range from the denoised crop rather than inherit this raw range.
+    if fit_kwargs.get("_denoise_h") is not None:
+        return
+    from arbol import aprint
+
+    from luxar.gsplats.fitting.preprocessing import (
+        _norm_range_has_usable_span,
+        resolve_volume_norm_range,
+    )
+
+    norm_range = resolve_volume_norm_range(
+        volume, float(fit_kwargs.get("norm_percentile", 0.0)), verbose=verbose
+    )
+    if not _norm_range_has_usable_span(norm_range):
+        aprint(
+            f"Whole-volume normalization range [{norm_range[0]:.6g}, "
+            f"{norm_range[1]:.6g}] has no usable extent — boxes fall back to "
+            "their own scale."
+        )
+        return
+    fit_kwargs["norm_range"] = norm_range
+
+
 def _padded_bounds(
     box: PlanBox, overlap: int, shape: Tuple[int, int, int]
 ) -> Tuple[int, int, int, int, int, int]:
@@ -280,10 +310,12 @@ def fit_planned(
     boundaries. The CLI resolves it once against the whole volume before calling
     here (``luxar.cli.gsplat_ops.fitting.fit_utils.resolve_shared_floor``). What
     is shared is the floor ARGUMENT, not the input: every box is still handed its
-    own crop, and the subtraction is not bit-exact either, because the
-    normalization floor is clamped up to a crop's own minimum
-    (``image_min = max(level, min(crop))``) — so a box lying entirely above the
-    pedestal subtracts its own minimum instead.
+    own crop. The whole-volume ``norm_range`` below gives those crops the same
+    effective lower bound even when its low endpoint exceeds the resolved level.
+
+    ``fit_kwargs["norm_range"]`` should likewise describe the whole source volume
+    in raw input units. When omitted, this function resolves it once from
+    ``volume`` and forwards the same pair to every box.
 
     With ``partition=True`` (the CLI default) the per-box splats are kept as a
     ``kind=partition`` tree — one part per box (boxes are core-disjoint, so this
@@ -305,6 +337,7 @@ def fit_planned(
     fit_kwargs.setdefault("cull_retention", CONTENT_CULL_RETENTION)
     fit_kwargs.setdefault("verbose", False)
     fit_kwargs["device"] = device
+    _ensure_planned_norm_range(V, fit_kwargs, verbose)
 
     # Per-box saturation cap (from the calibration): the halo inflation must not
     # push the fit past the K the calibration measured as over-saturated.

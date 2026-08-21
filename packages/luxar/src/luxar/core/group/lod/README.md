@@ -395,11 +395,12 @@ tried after reading the Points docs.
 
 - `resolve_substitutive_axis_mesh(spec)` — the `substitutive_lod=` axis. Keys:
   `compression_factor` (`K`), `levels` (`n_lods`), `method`
-  (`{'auto', 'cluster', 'qem'}`; `auto` uses QEM through 300 vertices), `coverage_fractions`,
+  (`{'auto', 'cluster', 'qem'}`; `auto` uses QEM through 10,000 vertices), `coverage_fractions`,
   `coarsen_dims`. Refuses `truncation_radius` / `max_aspect` / `device` / `seed` —
   all four exist only for a lift to gsplats. `coarsen_dims` is the authoring name
   for the decimator's `spatial_dims`. `add_mesh_substitutive_lod_wrapper_impl`
-  (`adders/mesh.py`) then decimates via `luxar.mesh.decimate.decimate` and
+  (`adders/mesh.py`) then decimates via `luxar.mesh.decimate.decimate_ladder`
+  (sharing one QEM collapse sequence for a multi-level ladder) and
   assembles a `kind=lod` group whose finest child is the original surface.
 - `resolve_additive_axis_mesh(spec)` — the `additive_lod=` axis. Keys: `method`,
   `n_lods`, `counts` (alias `breakpoints`), `reveal_centre`, `spatial_dims`.

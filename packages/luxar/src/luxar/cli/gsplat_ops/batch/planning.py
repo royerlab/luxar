@@ -190,6 +190,37 @@ def effective_floor_spec(fit: FitConfig) -> "str | float | None":
     )
 
 
+def effective_norm_percentile(fit: FitConfig) -> float:
+    """The ``norm_percentile`` every task will inherit from preset/config."""
+    from luxar.cli.gsplat_config import load_fit_config
+
+    cfg = load_fit_config(preset=fit.preset, config_path=fit.config)
+    try:
+        value = float(cfg.get("norm_percentile", 0.0))
+    except (TypeError, ValueError) as exc:
+        raise typer.BadParameter(f"config `norm_percentile` is invalid: {exc}") from exc
+    if not 0.0 <= value < 50.0:
+        raise typer.BadParameter(
+            f"config `norm_percentile` must be in [0, 50), got {value}"
+        )
+    return value
+
+
+def effective_norm_range(fit: FitConfig) -> "Optional[Tuple[float, float]]":
+    """A deliberate ``norm_range`` from preset/config, if one was supplied."""
+    from luxar.cli.gsplat_config import load_fit_config
+    from luxar.gsplats.fitting.validation import _validate_norm_range
+
+    raw = load_fit_config(preset=fit.preset, config_path=fit.config).get("norm_range")
+    if raw is None:
+        return None
+    try:
+        _validate_norm_range(raw)
+        return float(raw[0]), float(raw[1])
+    except (IndexError, TypeError, ValueError) as exc:
+        raise typer.BadParameter(f"config `norm_range` is invalid: {exc}") from exc
+
+
 def _floor_axis_pins(
     axes_labels: List[str],
     channel_shape: Tuple[int, ...],
@@ -407,6 +438,7 @@ def _resolve_planned_floor(
     axes_labels: List[str],
     channel_shape: Tuple[int, ...],
     spatial_shape: Tuple[int, ...],
+    sampled_slices: "Optional[List[Tuple[int, int, Any]]]" = None,
 ) -> tuple[Optional[float], Optional[float]]:
     if deferred:
         return None, None
@@ -421,6 +453,7 @@ def _resolve_planned_floor(
         axes_labels=axes_labels,
         channel_shape=channel_shape,
         spatial_shape=spatial_shape,
+        sampled_slices=sampled_slices,
     )
 
 
@@ -483,6 +516,43 @@ def _floor_sample_pairs(n_timepoints: int, n_channels: int) -> List[Tuple[int, i
     times = _evenly_spaced(n_t, min(n_t, FLOOR_SAMPLE_MAX_TIMEPOINTS))
     channels = _evenly_spaced(n_c, min(n_c, FLOOR_SAMPLE_MAX_CHANNELS))
     return [(t, c) for c in channels for t in times]
+
+
+def _sample_batch_slices(
+    input_path: Path,
+    *,
+    n_timepoints: int,
+    n_channels: int,
+    array_key: Optional[str],
+    axes: Optional[str],
+    axes_labels: Optional[List[str]],
+    channel_shape: Tuple[int, ...],
+    spatial_shape: Optional[Tuple[int, ...]],
+) -> "List[Tuple[int, int, Any]]":
+    """Read bounded raw samples used to resolve one shared normalization range."""
+    from luxar.gsplats.fitting.preprocessing import (
+        FLOOR_SAMPLE_BUDGET_VOXELS,
+        _sample_volume_for_floor,
+    )
+
+    pairs = _floor_sample_pairs(n_timepoints, n_channels)
+    budget = max(1, int(FLOOR_SAMPLE_BUDGET_VOXELS) // len(pairs))
+    sampled = []
+    for timepoint, channel in pairs:
+        view = _pinned_slice_volume(
+            input_path,
+            channel=channel,
+            timepoint=timepoint,
+            array_key=array_key,
+            axes=axes,
+            axes_labels=axes_labels,
+            channel_shape=channel_shape,
+            spatial_shape=spatial_shape,
+        )
+        sample = _sample_volume_for_floor(view, budget)
+        if sample is not None and sample.size:
+            sampled.append((timepoint, channel, sample))
+    return sampled
 
 
 def _floor_resolution_pairs(
@@ -570,6 +640,7 @@ def resolve_batch_floor(
     spatial_shape: Optional[Tuple[int, ...]] = None,
     denoise_h_values: Optional[dict[int, float]] = None,
     denoise_params: Optional[dict[str, Any]] = None,
+    sampled_slices: "Optional[List[Tuple[int, int, Any]]]" = None,
 ) -> "Tuple[Optional[float], Optional[str | float]]":
     """Resolve the batch's background floor ONCE, globally for the whole run.
 
@@ -658,21 +729,28 @@ def resolve_batch_floor(
     sampled_times = sorted({t for t, _ in pairs})
     sampled_channels = sorted({c for _, c in pairs})
     levels: List[Optional[float]] = []
+    sampled_by_pair = (
+        {(timepoint, channel): sample for timepoint, channel, sample in sampled_slices}
+        if sampled_slices is not None and denoise_h_values is None
+        else {}
+    )
     with asection(
         f"Resolving background floor '{floor_spec}' (minimum over "
         f"{len(pairs)} slices; sampled T={sampled_times}, C={sampled_channels})"
     ):
         for t, c in pairs:
-            view = _pinned_slice_volume(
-                input_path,
-                channel=c,
-                timepoint=t,
-                array_key=array_key,
-                axes=axes,
-                axes_labels=axes_labels,
-                channel_shape=channel_shape,
-                spatial_shape=spatial_shape,
-            )
+            view = sampled_by_pair.get((t, c))
+            if view is None:
+                view = _pinned_slice_volume(
+                    input_path,
+                    channel=c,
+                    timepoint=t,
+                    array_key=array_key,
+                    axes=axes,
+                    axes_labels=axes_labels,
+                    channel_shape=channel_shape,
+                    spatial_shape=spatial_shape,
+                )
             level_here, sampled_max, processed = _resolve_floor_slice(
                 view,
                 floor_spec,
@@ -749,6 +827,7 @@ def _resolve_and_record_floor(
     axes_labels: Optional[List[str]] = None,
     channel_shape: Tuple[int, ...] = (),
     spatial_shape: Optional[Tuple[int, ...]] = None,
+    sampled_slices: "Optional[List[Tuple[int, int, Any]]]" = None,
 ) -> "Tuple[Optional[float], Optional[float]]":
     """:func:`resolve_batch_floor` + write the level into ``fit_args``/the manifest.
 
@@ -767,6 +846,7 @@ def _resolve_and_record_floor(
         axes_labels=axes_labels,
         channel_shape=channel_shape,
         spatial_shape=spatial_shape,
+        sampled_slices=sampled_slices,
     )
     recorded: Optional[float] = None
     if forward is not None:
@@ -774,6 +854,115 @@ def _resolve_and_record_floor(
         if not isinstance(forward, str):
             recorded = float(forward)
     return level, recorded
+
+
+def resolve_batch_norm_range(
+    input_path: Path,
+    norm_percentile: float,
+    *,
+    n_timepoints: int = 1,
+    n_channels: int = 1,
+    array_key: Optional[str] = None,
+    axes: Optional[str] = None,
+    axes_labels: Optional[List[str]] = None,
+    channel_shape: Tuple[int, ...] = (),
+    spatial_shape: Optional[Tuple[int, ...]] = None,
+    sampled_slices: "Optional[List[Tuple[int, int, Any]]]" = None,
+) -> "Optional[Tuple[float, float]]":
+    """Resolve one raw-input normalization range for the whole batch run."""
+    import numpy as np
+
+    from luxar.gsplats.fitting.preprocessing import (
+        _norm_range_has_usable_span,
+        resolve_volume_norm_range,
+    )
+
+    pairs = _floor_sample_pairs(n_timepoints, n_channels)
+    sampled = sampled_slices
+    if sampled is None:
+        sampled = _sample_batch_slices(
+            input_path,
+            n_timepoints=n_timepoints,
+            n_channels=n_channels,
+            array_key=array_key,
+            axes=axes,
+            axes_labels=axes_labels,
+            channel_shape=channel_shape,
+            spatial_shape=spatial_shape,
+        )
+    with asection(
+        f"Resolving normalization range over {len(pairs)} slices spanning "
+        f"T={n_timepoints}, C={n_channels}"
+    ):
+        if not sampled:
+            aprint(
+                "No sampled voxels; each task resolves its own normalization "
+                "range (no shared range pinned)."
+            )
+            return None
+        norm_range = resolve_volume_norm_range(
+            np.concatenate([sample for _, _, sample in sampled]),
+            norm_percentile,
+            verbose=False,
+        )
+        if not _norm_range_has_usable_span(norm_range):
+            aprint(
+                f"Sampled normalization range [{norm_range[0]:.6g}, "
+                f"{norm_range[1]:.6g}] has no usable extent; each task resolves "
+                "its own scale."
+            )
+            return None
+        aprint(
+            f"Every (t, c) task uses normalization range "
+            f"[{norm_range[0]:.6g}, {norm_range[1]:.6g}]"
+        )
+        return norm_range
+
+
+def _record_batch_norm_range(
+    fit_args: dict[str, Any], norm_range: "Optional[Tuple[float, float]]"
+) -> None:
+    """Forward a resolved batch range when one is usable."""
+    if norm_range is not None:
+        fit_args["norm_range"] = f"{norm_range[0]:.17g},{norm_range[1]:.17g}"
+
+
+def _resolve_planned_norm_range(
+    *,
+    input_path: Path,
+    configured: "Optional[Tuple[float, float]]",
+    denoise: bool,
+    norm_percentile: float,
+    n_timepoints: int,
+    n_channels: int,
+    array_key: Optional[str],
+    axes: Optional[str],
+    axes_labels: List[str],
+    channel_shape: Tuple[int, ...],
+    spatial_shape: Tuple[int, ...],
+    sampled_slices: "List[Tuple[int, int, Any]]",
+) -> "Optional[Tuple[float, float]]":
+    """Resolve the batch range without putting raw sampled bounds on denoised data."""
+    if configured is not None:
+        return configured
+    if denoise:
+        aprint(
+            "Denoising is enabled; each task resolves its normalization range "
+            "on the data it fits."
+        )
+        return None
+    return resolve_batch_norm_range(
+        input_path,
+        norm_percentile,
+        n_timepoints=n_timepoints,
+        n_channels=n_channels,
+        array_key=array_key,
+        axes=axes,
+        axes_labels=axes_labels,
+        channel_shape=channel_shape,
+        spatial_shape=spatial_shape,
+        sampled_slices=sampled_slices,
+    )
 
 
 def _load_scan_volume(
@@ -1817,9 +2006,32 @@ def plan_batch(
     # (see resolve_batch_floor).
     # Deliberately not the content plan's max-projection either, whose per-voxel
     # maximum biases the background mode upward relative to any single slice.
+    from luxar.cli.gsplat_ops.fitting.fit_utils import (
+        floor_spec_needs_volume,
+        validate_floor_spec,
+    )
+
     floor_spec = effective_floor_spec(fit)
+    validate_floor_spec(floor_spec)
     floor_deferred = _should_defer_floor_resolution(
         mode, denoise, floor_spec, denoise_mode
+    )
+    configured_norm_range = effective_norm_range(fit)
+    resolve_sampled_norm_range = configured_norm_range is None and not denoise.denoise
+    sampled_slices = (
+        _sample_batch_slices(
+            input_path,
+            n_timepoints=n_t_full,
+            n_channels=n_c_full,
+            array_key=array_key,
+            axes=",".join(axes_list) if axes_list else None,
+            axes_labels=list(ome_info.axes),
+            channel_shape=tuple(ome_info.channel_shape),
+            spatial_shape=tuple(spatial),
+        )
+        if (not floor_deferred and floor_spec_needs_volume(floor_spec))
+        or resolve_sampled_norm_range
+        else []
     )
     floor_level, recorded_floor_level = _resolve_planned_floor(
         deferred=floor_deferred,
@@ -1834,7 +2046,23 @@ def plan_batch(
         axes_labels=list(ome_info.axes),
         channel_shape=tuple(ome_info.channel_shape),
         spatial_shape=tuple(spatial),
+        sampled_slices=sampled_slices,
     )
+    norm_range = _resolve_planned_norm_range(
+        input_path=input_path,
+        configured=configured_norm_range,
+        denoise=denoise.denoise,
+        norm_percentile=effective_norm_percentile(fit),
+        n_timepoints=n_t_full,
+        n_channels=n_c_full,
+        array_key=array_key,
+        axes=",".join(axes_list) if axes_list else None,
+        axes_labels=list(ome_info.axes),
+        channel_shape=tuple(ome_info.channel_shape),
+        spatial_shape=tuple(spatial),
+        sampled_slices=sampled_slices,
+    )
+    _record_batch_norm_range(fit_args, norm_range)
 
     if mode == "content":
         import numpy as _np
@@ -2006,6 +2234,7 @@ def plan_batch(
         floor_level=recorded_floor_level,
         floor_spec=floor_spec if floor_deferred else None,
         floor_deferred=floor_deferred,
+        norm_range=norm_range,
         grid_scale=grid_scale,
         gpu_name=resolved_gpu,
         estimated_seconds_per_task=est_seconds,

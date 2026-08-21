@@ -16,7 +16,11 @@ import numpy as np
 from arbol import aprint
 
 from ...gsplats import GSplats
-from ..compositing import COMPOSITING_ATTRS, sync_custom_colormap_attr
+from ..compositing import (
+    COMPOSITING_ATTRS,
+    mirror_written_colormap,
+    sync_custom_colormap_attr,
+)
 from ..dim_order import apply_dim_order_cholesky, apply_dim_order_positions
 
 if TYPE_CHECKING:
@@ -83,10 +87,12 @@ def add_gsplats_as_lod_group_impl(
     # per-leaf gsplats attrs (go on each child). Anything not in the
     # compositing set falls through to the child level.
     #
-    # ``colormap`` is intentionally NOT compositing here: the writer
-    # auto-defaults a missing colormap to "gray" per leaf, which
-    # under nearest-ancestor-wins would shadow a parent's setting.
-    # Keep it on each child so the user's intent survives.
+    # ``colormap`` is not in COMPOSITING_ATTRS, so it falls through to each
+    # child. Since #1600 that is a routing preference rather than a
+    # correctness requirement (the writer no longer manufactures a shadowing
+    # "gray" and the viewer composes the attr root→leaf) — but a palette on
+    # every child is what the Layers panel's `deriveColormapFromDescendants`
+    # reads back, so the shape stays.
     lod_attrs = {k: v for k, v in attrs.items() if k in COMPOSITING_ATTRS}
     child_attrs = {k: v for k, v in attrs.items() if k not in COMPOSITING_ATTRS}
     # Defense in depth: ``add_gsplats_from_data`` rejects coverage_fraction
@@ -261,8 +267,10 @@ def add_gsplats_multi_lod_impl(
 
         sync_custom_colormap_attr(attrs)
 
-        if not metadata.get("has_colors") and "colormap" not in attrs:
-            attrs["colormap"] = "gray"
+        # Mirror the writer's own colormap decision (see
+        # mirror_written_colormap): no manufactured gray under an
+        # ancestor-authored palette.
+        mirror_written_colormap(attrs, writer, path)
 
         return GSplats(
             name,

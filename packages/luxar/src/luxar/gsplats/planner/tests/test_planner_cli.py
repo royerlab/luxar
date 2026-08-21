@@ -6,6 +6,8 @@ The standalone `gsplat plan` command was folded into `fit --tiling content`
 
 from __future__ import annotations
 
+import importlib
+
 import numpy as np
 import pytest
 from typer.testing import CliRunner
@@ -105,7 +107,7 @@ def test_content_missing_density_errors(tmp_path):
     assert res.exit_code != 0  # no --cal / --k-star-ref
 
 
-def test_plan_box_worker_mode(tmp_path):
+def test_plan_box_worker_mode(tmp_path, monkeypatch):
     # write a plan, then fit just box 0 from it (the -j parallel worker entry).
     vol = _vol(tmp_path)
     plan_json = tmp_path / "plan.json"
@@ -135,6 +137,37 @@ def test_plan_box_worker_mode(tmp_path):
     produced = out.exists()
     empty = (tmp_path / "box0.gsplats.zarr.empty").exists()
     assert produced ^ empty  # exactly one of a store or an .empty marker
+
+    seen = {}
+
+    class _EmptyResult:
+        n_splats = 0
+
+    def _capture_box(*args, **kwargs):
+        seen["norm_range"] = kwargs.get("norm_range")
+        return _EmptyResult()
+
+    fit_planned_module = importlib.import_module("luxar.gsplats.planner.fit_planned")
+    monkeypatch.setattr(fit_planned_module, "_fit_one_box", _capture_box)
+    np.save(vol, np.full((48, 48, 48), 50.0, np.float32))
+    degenerate_out = tmp_path / "constant-box.gsplats.zarr"
+    res = runner.invoke(
+        app_gsplat,
+        [
+            "fit",
+            str(vol),
+            str(degenerate_out),
+            "--tiling",
+            "content",
+            "--plan",
+            str(plan_json),
+            "--plan-box",
+            "0",
+            *_CPU,
+        ],
+    )
+    assert res.exit_code == 0, res.output
+    assert seen["norm_range"] is None
 
 
 def test_plan_box_worker_warns_on_unsupported_denoise(tmp_path, monkeypatch):

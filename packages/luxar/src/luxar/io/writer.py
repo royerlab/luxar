@@ -6,7 +6,17 @@ enabling memory-efficient handling of arbitrarily large datasets.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, List, Optional, Protocol, Sequence, Tuple, Union
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    ContextManager,
+    List,
+    Optional,
+    Protocol,
+    Sequence,
+    Tuple,
+    Union,
+)
 
 import numpy as np
 from numpy.typing import NDArray
@@ -34,6 +44,7 @@ RollbackState = Tuple[
     frozenset[Tuple[str, str]],
     bool,
     Tuple[dict[tuple, tuple[str, str]], dict[str, str]],
+    Optional[Tuple[bool, bool]],
 ]
 
 
@@ -359,6 +370,10 @@ class ZarrWriterProtocol(Protocol):
 
     def restore_rollback_state(self, state: RollbackState) -> None:
         """Restore compiler state captured before a rolled-back write."""
+        ...
+
+    def transaction(self, path: NodePath) -> ContextManager[None]:
+        """Roll back a newly-created subtree and compiler state on failure."""
         ...
 
     def finalize(self) -> None:

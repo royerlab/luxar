@@ -6,6 +6,8 @@ import shutil
 from pathlib import Path
 from typing import Any, Dict
 
+from arbol import aprint
+
 from luxar._zarr_compat import open_group as zc_open_group
 from luxar.gsplats import GSplatData
 from luxar.gsplats.io._archive import read_archive_root_attrs, resolve_store_path
@@ -60,10 +62,20 @@ def read_authored_appearance(path: str | Path) -> Dict[str, Any]:
     ``.gsplats.zarr.tar.gz`` archive alike — both are first-class inputs to the
     rebuild commands, so appearance must survive both (#1604).
 
-    Not every dropped attr is fixed by this: an authored ``colormap`` still
-    reverts to gray, and the 4x4 ``transform`` is deliberately left behind
-    because feeding a stored (column-major) matrix back through the writer
-    transposes it a second time. Both are documented on the key set below.
+    An authored ``colormap`` rides along too since #1600 — the writer stopped
+    manufacturing a ``"gray"`` that shadowed it and the viewer composes it
+    root→leaf. The one exception is the ``"custom"`` sentinel, which is DROPPED
+    (with a warning) rather than carried: it names a sibling ``colormap_lut``
+    ARRAY, and this function reads the root's attrs only — for an archive input
+    it never opens the store at all. Carrying the bare sentinel would write a
+    dangling reference and the viewer would fall back to viridis, which is
+    worse than the writer's own default. Re-apply such a palette explicitly
+    (e.g. ``gsplat convert --colormap NAME``) after the rebuild.
+
+    Not every dropped attr is fixed by this: the 4x4 ``transform`` is
+    deliberately left behind because feeding a stored (column-major) matrix
+    back through the writer transposes it a second time. It is documented on
+    the key set below.
 
     Only keys actually present are returned, so an input that authored nothing
     yields ``{}`` and the writer's defaults apply unchanged. Missing/unreadable
@@ -105,7 +117,20 @@ def read_authored_appearance(path: str | Path) -> Dict[str, Any]:
             attrs = read_archive_root_attrs(p)
     except Exception:
         return {}
-    return {k: attrs[k] for k in sorted(AUTHORED_APPEARANCE_ATTRS) if k in attrs}
+    carried = {k: attrs[k] for k in sorted(AUTHORED_APPEARANCE_ATTRS) if k in attrs}
+    if carried.get("colormap") == "custom":
+        # The palette itself lives in a sibling `colormap_lut` array, which
+        # this attrs-only read (and the archive peek in particular) cannot
+        # reach. See the docstring: a dangling sentinel renders worse than the
+        # writer's own default, so drop it and say so.
+        del carried["colormap"]
+        aprint(
+            "⚠️  Source root carries a custom colormap LUT; a structure-only "
+            "rebuild cannot carry the LUT array, so the palette is not "
+            "preserved. Re-apply it on the result (e.g. "
+            "`luxar gsplat convert --colormap NAME`)."
+        )
+    return carried
 
 
 def load_gsplat_node(

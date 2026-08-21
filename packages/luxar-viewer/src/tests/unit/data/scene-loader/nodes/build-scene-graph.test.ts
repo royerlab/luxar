@@ -16,6 +16,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Per-test attrs lookup the zarr.open mock walks at runtime.
 const attrsByPath: Record<string, Record<string, unknown>> = {};
+const arrayDataByPath: Record<string, Uint8Array> = {};
 const openCalls: string[] = [];
 
 // Stub zarr location: resolve() composes paths so the mock can echo
@@ -37,8 +38,13 @@ vi.mock('zarrita', () => ({
   root: (_store: unknown) => makeStubLoc(''),
   open: vi.fn(async (loc: { path: string }, _opts: unknown) => {
     openCalls.push(loc.path);
-    return { attrs: attrsByPath[`/${loc.path}`] ?? {} };
+    return { attrs: attrsByPath[`/${loc.path}`] ?? {}, path: loc.path };
   }),
+  get: vi.fn(async (array: { path: string }) => ({
+    data: arrayDataByPath[`/${array.path}`],
+    shape: [256, 3],
+    stride: [3, 1],
+  })),
   withMaybeConsolidatedMetadata: undefined,
 }));
 
@@ -50,6 +56,7 @@ vi.mock('../../../../../data/scene-loader/nodes/enumerate-store', () => ({
 }));
 
 import { buildSceneGraph } from '../../../../../data/scene-loader/nodes/build-scene-graph';
+import { sceneEffectiveLineLoad } from '../../../../../types/line-primitive';
 import type { ZarrSceneAttrs } from '../../../../../types/zarr';
 import { log } from '../../../../../utils/log';
 
@@ -59,6 +66,7 @@ function makeRootAttrs(): ZarrSceneAttrs {
 
 beforeEach(() => {
   for (const k of Object.keys(attrsByPath)) delete attrsByPath[k];
+  for (const k of Object.keys(arrayDataByPath)) delete arrayDataByPath[k];
   openCalls.length = 0;
   enumerateStoreMock.mockReset();
 });
@@ -417,6 +425,28 @@ describe('buildSceneGraph — gsplats internal-subtree skip', () => {
 });
 
 describe('buildSceneGraph — bare node root (standalone .gsplats.zarr)', () => {
+  it('loads a custom LUT authored on a bare partition root', async () => {
+    enumerateStoreMock.mockResolvedValue([
+      { path: '/part_0', kind: 'group' },
+      { path: '/part_1', kind: 'group' },
+    ]);
+    attrsByPath['/part_0'] = { type: 'gsplats', n_splats: 20 };
+    attrsByPath['/part_1'] = { type: 'gsplats', n_splats: 20 };
+    const lut = new Uint8Array(256 * 3).map((_, index) => index & 0xff);
+    arrayDataByPath['/colormap_lut'] = lut;
+    const rootAttrs = {
+      type: 'group',
+      kind: 'partition',
+      display_type: 'gsplats',
+      colormap: 'custom',
+    } as unknown as ZarrSceneAttrs;
+
+    const root = await buildSceneGraph(makeStubLoc('') as never, rootAttrs, {} as never);
+
+    expect((root.attrs as Record<string, unknown>).customLutBytes).toEqual(lut);
+    expect(openCalls).toContain('colormap_lut');
+  });
+
   it('a bare gsplats leaf root becomes a childless gsplats node', async () => {
     // A single-set v3.0 standalone file: arrays live directly under root,
     // there are no child GROUPS. The root IS the gsplats leaf.
@@ -547,5 +577,30 @@ describe('buildSceneGraph — bare node root (standalone .gsplats.zarr)', () => 
 
     expect(root.type).toBe('scene');
     expect(root.children?.[0].path).toBe('/g');
+  });
+
+  it('folds line load from the production SceneNode graph shape', async () => {
+    enumerateStoreMock.mockResolvedValue([
+      { path: '/line_a', kind: 'group' },
+      { path: '/line_b', kind: 'group' },
+      { path: '/lod', kind: 'group' },
+      { path: '/lod/child_0', kind: 'group' },
+      { path: '/lod/child_1', kind: 'group' },
+      { path: '/partition', kind: 'group' },
+      { path: '/partition/part_0', kind: 'group' },
+      { path: '/partition/part_1', kind: 'group' },
+    ]);
+    attrsByPath['/line_a'] = { type: 'lines', n_segments: 100 };
+    attrsByPath['/line_b'] = { type: 'lines', n_segments: 200 };
+    attrsByPath['/lod'] = { type: 'group', kind: 'lod' };
+    attrsByPath['/lod/child_0'] = { type: 'lines', n_segments: 300 };
+    attrsByPath['/lod/child_1'] = { type: 'lines', n_segments: 400 };
+    attrsByPath['/partition'] = { type: 'group', kind: 'partition' };
+    attrsByPath['/partition/part_0'] = { type: 'lines', n_segments: 500 };
+    attrsByPath['/partition/part_1'] = { type: 'lines', n_segments: 600 };
+
+    const root = await buildSceneGraph(makeStubLoc('') as never, makeRootAttrs(), {} as never);
+
+    expect(sceneEffectiveLineLoad(root)).toBe(1_800);
   });
 });

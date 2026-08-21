@@ -15,6 +15,11 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { SceneLoader } from '../../../../data';
+import {
+  AUTO_QUAD_EFFECTIVE_SEGMENTS,
+  resolveLinePrimitiveForNode,
+  setSceneLineLoad,
+} from '../../../../types/line-primitive';
 import * as zarr from 'zarrita';
 
 vi.mock('zarrita', () => ({
@@ -114,6 +119,15 @@ describe('SceneLoader lifecycle stress', () => {
     await sceneLoader.loadScene('http://localhost:8000/test.zarr');
     await sceneLoader.dispose();
     await expect(sceneLoader.dispose()).resolves.toBeUndefined();
+  });
+
+  it('dispose resets the installed scene line load', async () => {
+    setSceneLineLoad(AUTO_QUAD_EFFECTIVE_SEGMENTS);
+    expect(resolveLinePrimitiveForNode({ nSegments: 1 })).toBe('screen-space');
+
+    await sceneLoader.dispose();
+
+    expect(resolveLinePrimitiveForNode({ nSegments: 1 })).toBe('capsule');
   });
 
   it('clears predictive-prefetch baseline when a loader update throws', async () => {

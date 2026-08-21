@@ -228,8 +228,8 @@ export function buildSettingsPopover(host: HTMLElement, ctx: SettingsPopoverCont
       })
       .name('Renderer')
       .onChange(commit);
-    // Line primitive policy (#1352 follow-up). 'Auto' sizes each line
-    // node at material build (capsule, except very large nodes → quad);
+    // Line primitive policy (#1352 follow-up). 'Auto' sizes the whole
+    // scene before material build (capsule, except very large scenes → quad);
     // the forced values exist for A/B checks and taste. Reload-gated
     // like Renderer — the primitive is baked into each material's shader.
     advFolder

@@ -655,9 +655,9 @@ Microtubule cytoskeleton at nanometer resolution using real STORM super-resoluti
 
 **Run**: `luxar demo run storm_3d_microtubules`
 
-**Requires**: Internet access (downloads STORM localization data).
+**Requires**: Internet access on first run (downloads the size-verified STORM localization CSV) and an NVIDIA CUDA GPU for an uncached widefield fit.
 
-**Demonstrates**: STORM/PALM super-resolution data (~20 nm resolution), localization uncertainty as Gaussian splat size, 3D astigmatism-based z encoding, photon count-based coloring, microtubule cytoskeleton structure.
+**Demonstrates**: Two Gaussian-splat provenance classes in one categorical view: a compact basis fitted to a photon-weighted, diffraction-blurred widefield volume, and measured STORM localization ellipsoids whose per-axis σ combines CRLB with 17 nm antibody-linkage uncertainty (about 18-19 nm and linkage-dominated in this dataset). The default 5M-row frame-ordered prefix is used for both views, so its widefield image is explicitly a partial acquisition.
 
 ---
 
