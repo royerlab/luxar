@@ -124,7 +124,7 @@
       "id": "gsplats_3d_cryoem_virus",
       "title": "Cryo-EM Giant Virus Capsid",
       "geometry": "gsplats",
-      "category": "microscopy",
+      "category": "structural",
       "script": "demo_gsplats_3d_cryoem_virus.py",
       "dataset": "datasets/demos/gsplats_3d_cryoem_virus.luxar.zarr"
     },
