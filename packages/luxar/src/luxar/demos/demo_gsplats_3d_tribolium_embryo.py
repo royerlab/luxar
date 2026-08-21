@@ -86,6 +86,11 @@ DEMO_META = {
     },
     "caches": ["gsplats_tribolium"],
     "outputs": ["gsplats_3d_tribolium_embryo"],
+    "citation": {
+        "short": "Barry 2021 (GIANI)",
+        "doi": "10.5281/zenodo.5270323",
+        "license": "CC BY 4.0",
+    },
 }
 
 import sys
@@ -380,6 +385,7 @@ def create_luxar_scene(
                 # instead of clipping them flat. Moving it needs a live A/B, not
                 # a blind flip.
                 viewer_config=ViewerConfig(tone_mapping="Neutral", exposure=1.97),
+                citation=DEMO_META["citation"],
             )
 
             scene.attrs["title"] = "GSplats: Tribolium castaneum Embryo (Light-Sheet)"

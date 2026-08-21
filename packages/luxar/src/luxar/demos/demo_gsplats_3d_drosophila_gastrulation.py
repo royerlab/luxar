@@ -89,6 +89,10 @@ DEMO_META = {
     },
     "caches": ["gsplats_3d_drosophila_gastrulation"],
     "outputs": ["gsplats_3d_drosophila_gastrulation"],
+    "citation": {
+        "short": "Royer et al. 2016",
+        "doi": "10.1038/nbt.3708",
+    },
 }
 
 from pathlib import Path
@@ -172,6 +176,7 @@ def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
             scene = compiler.create_scene(
                 dimensions=dims,
                 viewer_config=ViewerConfig(tone_mapping="ACES"),
+                citation=DEMO_META["citation"],
             )
             scene.attrs["title"] = "GSplats: Drosophila Gastrulation (SiMView)"
             scene.attrs["description"] = (

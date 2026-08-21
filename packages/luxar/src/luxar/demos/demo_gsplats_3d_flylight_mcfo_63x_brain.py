@@ -163,6 +163,10 @@ DEMO_META = {
     },
     "caches": ["gsplats_flylight_mcfo_63x"],
     "outputs": ["gsplats_3d_flylight_mcfo_63x_brain"],
+    "citation": {
+        "short": "Meissner et al. 2023",
+        "doi": "10.7554/eLife.80660",
+    },
 }
 
 import math
@@ -334,6 +338,7 @@ def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
                         fov=CAMERA_FOV,
                     ),
                 ),
+                citation=DEMO_META["citation"],
             )
             scene.attrs["title"] = "GSplats: Drosophila Whole Brain (FlyLight MCFO)"
             scene.attrs["description"] = (

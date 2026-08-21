@@ -112,6 +112,11 @@ DEMO_META = {
     },
     "caches": ["storm_data"],
     "outputs": ["storm_3d_microtubules"],
+    "citation": {
+        "short": "Sieben 2019",
+        "doi": "10.5281/zenodo.3547521",
+        "license": "CC BY 4.0",
+    },
 }
 
 import sys
@@ -592,7 +597,9 @@ def create_storm_scene(
         )
 
         with LuxarZarrCompiler(output_path) as compiler:
-            scene = compiler.create_scene(dimensions=dims)
+            scene = compiler.create_scene(
+                dimensions=dims, citation=DEMO_META["citation"]
+            )
 
             # Add metadata (keep simple for JSON compatibility)
             scene.attrs["title"] = "3D STORM Microtubule Network"

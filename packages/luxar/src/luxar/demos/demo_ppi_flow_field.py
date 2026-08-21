@@ -52,6 +52,10 @@ DEMO_META = {
     },
     "caches": ["huri"],
     "outputs": ["ppi_flow_field_full"],
+    "citation": {
+        "short": "Luck et al. 2020",
+        "doi": "10.1038/s41586-020-2188-x",
+    },
 }
 
 import argparse
@@ -1104,7 +1108,11 @@ def write_scene(
         )
 
         with LuxarZarrCompiler(output_path) as compiler:
-            scene = compiler.create_scene(dimensions=dims, viewer_config=viewer_config)
+            scene = compiler.create_scene(
+                dimensions=dims,
+                viewer_config=viewer_config,
+                citation=DEMO_META["citation"],
+            )
 
             scene.add_points(
                 "Proteins (community color, PageRank radius)",
