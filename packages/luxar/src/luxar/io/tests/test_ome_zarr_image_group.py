@@ -1480,6 +1480,46 @@ class TestADroppedDeclaredLevelIsReported:
         assert info.shape == half.shape
         assert info.axes == ["t", "z", "y", "x"]
 
+    @pytest.mark.parametrize("zarr_format", ZARR_FORMATS)
+    def test_the_group_diagnostic_stays_silent_on_the_evidence_walk(
+        self, tmp_path: Path, zarr_format: int, capsys: pytest.CaptureFixture
+    ) -> None:
+        """The same block is resolved again just to ASK a question — silently.
+
+        ``_declared_levels`` has a second caller that is not selecting anything:
+        :func:`~luxar.io.volume._declares_array` re-resolves a candidate owner's
+        block only to answer "is this metadata about that array?", and every
+        ancestor of an explicit ``array_key`` is asked in turn
+        (:func:`~luxar.io.volume._declaring_owner`). Nothing is being dropped
+        there, so nothing may be reported — which is why the diagnostic is gated
+        on ``report`` rather than printed unconditionally.
+
+        Here the array is asked for by its own key, and the ancestor that
+        declares it also declares a sibling entry naming the intermediate GROUP.
+        The read is a complete success — the declared ``TZYX`` axes and voxel
+        size are honoured, not the ndim heuristic — so a skip line on this store
+        would be pure noise about a level nobody tried to use, on every single
+        ancestor the walk happens to touch.
+        """
+        full = _ramp((2, 8, 16, 16))
+        path = tmp_path / "evidence_walk.zarr"
+        root = open_group(path, mode="w", zarr_format=zarr_format)
+        image = root.create_group("img")
+        create_array(image.create_group("sub"), "0", data=full)
+        # `sub` names the intermediate group; `sub/0` names the array itself.
+        image.attrs["multiscales"] = _tzyx_multiscales(2, paths=["sub", "sub/0"])
+
+        info = discover_ome_zarr_shape(path, array_key="img/sub/0")
+
+        assert "Skipping declared level" not in capsys.readouterr().out
+        assert info.shape == full.shape
+        assert info.axes == ["t", "z", "y", "x"]
+        assert info.voxel_size == (2.0, 0.5, 0.5)
+        np.testing.assert_array_equal(
+            load_volume(path, array_key="img/sub/0"), full.astype(np.float32)
+        )
+        assert "Skipping declared level" not in capsys.readouterr().out
+
 
 class TestAnExplicitlyRelativeDeclaredPath:
     """``"./0"`` is a legal NGFF spelling of ``"0"``, and zarr REFUSES it.
@@ -1524,6 +1564,12 @@ class TestAnExplicitlyRelativeDeclaredPath:
         # Level 0's own spacing, not level 1's: the ENTRY that matched is pinned,
         # not merely that some entry did.
         assert info.voxel_size == (2.0, 0.5, 0.5)
+        # And "matched nothing" is pinned too, which level 0 alone cannot do —
+        # `datasets[0]` is also the no-match fall-back. Asking for the COARSER
+        # level must quote the coarser spacing, the halved-voxel-size hazard
+        # `discover_ome_zarr_shape` names, now under the relative spelling.
+        coarse = discover_ome_zarr_shape(path, array_key="0/1")
+        assert coarse.voxel_size == (4.0, 1.0, 1.0)
         assert info.unit == "micrometer"
         assert info.resolution_levels == 2
         # And the array itself is the declared full-resolution level, on all
@@ -1578,12 +1624,17 @@ class TestAnExplicitlyRelativeDeclaredPath:
         The reported key is what a reader is meant to be able to pass back as
         ``--array-key``, and ``"0/./0"`` is a key zarr rejects, so the line would
         advertise a lookup the very next command refuses. Two stores whose
-        declarations NORMALISE ALIKE log the same thing.
+        declarations NORMALISE ALIKE log the same thing. The round trip is
+        EXECUTED rather than only asserted as a string: the printed key really
+        reads the declared level back, and the spelling it was not printed as
+        really is refused, so "advertises a key the next command rejects" is a
+        claim under test rather than a claim in a docstring.
         """
+        declared = _ramp((2, 4, 4, 4))
         path = _bioformats2raw_store(
             tmp_path / "relative_console.zarr",
             zarr_format,
-            [("0", [_ramp((2, 4, 4, 4))])],
+            [("0", [declared])],
             image_attrs={"multiscales": _tzyx_multiscales(1, paths=["./0"])},
         )
 
@@ -1593,12 +1644,21 @@ class TestAnExplicitlyRelativeDeclaredPath:
         assert "Using array '0/0'" in out
         assert "Skipping declared level" not in out
 
+        np.testing.assert_array_equal(
+            load_volume(path, array_key="0/0"), declared.astype(np.float32)
+        )
+        with pytest.raises(ValueError, match=r"Array key '0/\./0' not found"):
+            load_volume(path, array_key="0/./0")
+
     @pytest.mark.parametrize("zarr_format", ZARR_FORMATS)
     @pytest.mark.parametrize(
         ("declared", "reported"),
         [
             (".", "0/."),
             ("a/./b", "0/a/./b"),
+            # The fall-back is to the SLASH-STRIPPED original, not the original:
+            # this one reports '0/a/./b', not '0//a/./b/'.
+            ("/a/./b/", "0/a/./b"),
             ("./a/./b", "0/./a/./b"),
             # Normalises cleanly and STILL does not resolve — the branch where
             # the raw-spelling fall-back does not fire, so the diagnostic quotes
@@ -1621,9 +1681,12 @@ class TestAnExplicitlyRelativeDeclaredPath:
         no level at all. Those normalise to nothing, so the SLASH-STRIPPED
         original is what gets looked up and what the skip quotes — near enough
         the declaration to find in the store's metadata, and unlike the
-        canonical spelling it exists (every declaration here is already
-        slash-stripped, so the two coincide). Collapsing them to ``""`` (or to
-        the owner) would either vanish or become a lookup of some other array.
+        canonical spelling it exists. The stripping is part of that and is
+        exercised here: ``"/a/./b/"`` reports ``'0/a/./b'``, since falling back
+        to the RAW spelling would quote ``'0//a/./b/'`` — a doubled-slash,
+        trailing-slash path that is neither the declaration as written nor a key
+        anyone can go and look up. Collapsing them to ``""`` (or to the owner)
+        would either vanish or become a lookup of some other array.
         Every OTHER declaration is quoted canonically whether or not it resolves,
         because that is the key the lookup used; the exact line is asserted, since
         a bare ``"."`` occurs in almost any console output.
