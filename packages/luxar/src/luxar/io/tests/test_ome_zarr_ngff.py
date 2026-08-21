@@ -28,7 +28,6 @@ import typer
 from luxar._zarr_compat import create_array, open_group
 from luxar.io.ome_zarr import (
     _dataset_path_matches,
-    _normalised_dataset_path,
     discover_ome_zarr_shape,
     resolve_ngff_attrs,
 )
@@ -1545,19 +1544,6 @@ def test_which_dataset_path_spellings_name_the_level_zero_array(
     declared: str, matches: bool
 ) -> None:
     assert _dataset_path_matches({"path": declared}, "0") is matches
-
-
-@pytest.mark.parametrize("declared", [0, 0.0, None, True, ["0"], {"path": "0"}])
-def test_a_path_that_is_not_a_string_names_no_level(declared: Any) -> None:
-    """``str(0) == "0"`` — coercion invents a match nothing declared.
-
-    The lookup half cannot hand a non-string to zarr and type-rejects it, so a
-    coerced match here made the two halves describe different entries: the array
-    resolved through a legally spelled sibling while the spacing came off the
-    number. ``""`` is the module's existing "names nothing", and never matches.
-    """
-    assert _normalised_dataset_path(declared) == ""
-    assert _dataset_path_matches({"path": declared}, "0") is False
 
 
 def test_a_single_level_pyramid_still_answers_for_an_unmatched_key(

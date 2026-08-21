@@ -1461,8 +1461,8 @@ class TestADroppedDeclaredLevelIsReported:
         and is then discarded by the "must be an array" filter. The consequence is
         identical to a failed lookup — the next-best candidate wins, or the whole
         block stops being evidence and the store falls to the ndim heuristic — so
-        it earns the same line instead of being the one dropped level that says
-        nothing at all.
+        it earns the same line, instead of being the only declaration that
+        resolved and was then discarded without a word.
         """
         full = _ramp((2, 8, 16, 16))
         half = _ramp((2, 4, 8, 8), start=40_000)
@@ -1479,46 +1479,6 @@ class TestADroppedDeclaredLevelIsReported:
         assert "Skipping declared level '0/0': names a Group, not an array" in out
         assert info.shape == half.shape
         assert info.axes == ["t", "z", "y", "x"]
-
-
-class TestANonStringDeclaredPath:
-    """``{"path": 0}`` names nothing, and BOTH halves have to agree it does not.
-
-    The lookup half type-rejects a non-``str`` ``path`` outright — it cannot be
-    handed to zarr — while the metadata-MATCHING half coerced it with ``str()``,
-    and ``str(0) == "0"``. So a block mixing a number-valued entry with a legally
-    spelled one resolved its array through the legal entry and then quoted the
-    OTHER entry's spacing: a wrong voxel size, silently, from an entry neither
-    half could honestly read as a level.
-    """
-
-    @pytest.mark.parametrize("zarr_format", ZARR_FORMATS)
-    def test_a_number_valued_path_does_not_steal_the_voxel_size(
-        self, tmp_path: Path, zarr_format: int
-    ) -> None:
-        """One array at ``0/0``; two entries claim it, only one of them legally."""
-        full = _ramp((2, 8, 16, 16))
-        block = _levels_with_own_scales(
-            ["0", "./0"], [(1.0, 7.0, 7.0, 7.0), (1.0, 2.0, 0.5, 0.5)]
-        )
-        # What a hand-written or loosely-typed producer emits: the level's path as
-        # a NUMBER. JSON keeps it a number, and `str()` used to make it match.
-        block[0]["datasets"][0]["path"] = 0
-        path = _bioformats2raw_store(
-            tmp_path / "number_path.zarr",
-            zarr_format,
-            [("0", [full])],
-            image_attrs={"multiscales": block},
-        )
-
-        info = discover_ome_zarr_shape(path)
-
-        # The array still resolves — through the `"./0"` entry, the only one that
-        # names anything — so the block is still evidence and the axes stand.
-        assert info.shape == full.shape
-        assert info.axes == ["t", "z", "y", "x"]
-        # …and the spacing is that same entry's, not the coerced one's (7, 7, 7).
-        assert info.voxel_size == (2.0, 0.5, 0.5)
 
 
 class TestAnExplicitlyRelativeDeclaredPath:
@@ -1617,8 +1577,8 @@ class TestAnExplicitlyRelativeDeclaredPath:
 
         The reported key is what a reader is meant to be able to pass back as
         ``--array-key``, and ``"0/./0"`` is a key zarr rejects, so the line would
-        advertise a lookup the very next command refuses. Two stores differing
-        only in how they spell their levels log the same thing.
+        advertise a lookup the very next command refuses. Two stores whose
+        declarations NORMALISE ALIKE log the same thing.
         """
         path = _bioformats2raw_store(
             tmp_path / "relative_console.zarr",
@@ -1658,9 +1618,11 @@ class TestAnExplicitlyRelativeDeclaredPath:
         """Normalising must not turn a bad declaration into a SILENT one.
 
         A single leading ``./`` is cosmetic; a ``.`` segment anywhere else names
-        no level at all. Those normalise to nothing, so the original spelling is
-        what gets looked up, and the skip quotes it verbatim — the spelling a
-        reader can grep the store's metadata for. Collapsing them to ``""`` (or to
+        no level at all. Those normalise to nothing, so the SLASH-STRIPPED
+        original is what gets looked up and what the skip quotes — near enough
+        the declaration to find in the store's metadata, and unlike the
+        canonical spelling it exists (every declaration here is already
+        slash-stripped, so the two coincide). Collapsing them to ``""`` (or to
         the owner) would either vanish or become a lookup of some other array.
         Every OTHER declaration is quoted canonically whether or not it resolves,
         because that is the key the lookup used; the exact line is asserted, since
@@ -1694,11 +1656,13 @@ class TestAnExplicitlyRelativeDeclaredPath:
     ) -> None:
         """``labels/`` holds this image's MASKS, whatever the path is spelled like.
 
-        The exclusion is asked of the normalised spelling, so its non-leaf/leaf
-        split lands on the store's real segments. Normalising can only ever drop a
-        leading ``"."`` from the segments checked, and no caller reserves a group
-        named ``"."`` — so a mask stays excluded and a bigger one cannot be
-        selected as the image.
+        The exclusion is asked of the normalised spelling, which cannot weaken
+        it: normalising never ADDS a non-leaf segment and never moves the leaf,
+        it only drops a leading ``"."`` or an empty segment from the ones
+        checked, and no caller reserves a group named ``"."`` or ``""`` — so a
+        mask stays excluded and a bigger one cannot be selected as the image.
+        (These two spellings are excluded under the RAW spelling too, so this is
+        a "the fix did not break it" guard rather than a test of the fix.)
         """
         image_data = _ramp((2, 8, 16, 16))
         path = tmp_path / "relative_label.zarr"

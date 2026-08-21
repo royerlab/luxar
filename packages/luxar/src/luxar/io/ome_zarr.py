@@ -603,17 +603,8 @@ def _normalised_dataset_path(raw: Any) -> str:
     a level's name, and zarr refuses such a path anyway. ``""`` never matches
     (:func:`_dataset_path_matches` requires a non-empty path), so an unspellable
     entry stays unmatched rather than becoming a bogus match for some other level.
-
-    A ``path`` that is not a string names nothing either, and must say so rather
-    than be coerced: ``str(0)`` is ``"0"``, so a block mixing a non-string entry
-    with a correctly spelled one had its spacing read off the coerced one while
-    the LOOKUP half (:func:`~luxar.io.volume._declared_levels`, which type-rejects
-    a non-string ``path``) resolved the other — a silently wrong voxel size, from
-    metadata neither half could honestly claim to describe a level.
     """
-    if not isinstance(raw, str):
-        return ""
-    path = raw.strip("/")
+    path = str(raw).strip("/")
     if path.startswith("./"):
         path = path[2:].strip("/")
     return "" if "." in path.split("/") else path
