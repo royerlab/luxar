@@ -1884,8 +1884,8 @@ partition could not be built at all before mesh became partition-capable.
 
 Still excluded, and unaffected by this: a partition **of** a mesh LOD ladder. A substitutive
 ladder now exists (§9), but `partition=` and `substitutive_lod=` cannot be combined in one
-`add_mesh` call — the same refusal `add_points` / `add_lines` carry, for the same reason
-(partition-of-substitutive is a topology nothing writes yet).
+`add_mesh` call — the same refusal `add_lines` carries. Points composes that pair into a
+global-coarse overview above partitioned fine detail; Mesh does not write that topology yet.
 
 ---
 

@@ -674,6 +674,38 @@ class TestSubstitutiveLinesGuards:
                     substitutive_lod=True,
                 )
 
+    def test_false_substitutive_lod_does_not_block_partition(self, tmp_path) -> None:
+        out = tmp_path / "partition.luxar.zarr"
+        verts = _segments(50)
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            node = scene.add_lines(
+                "c",
+                verts,
+                1.0,
+                line_type="segments",
+                partition=dict(max_elements=10),
+                substitutive_lod=False,
+            )
+
+        assert node.attrs["kind"] == "partition"
+
+    def test_false_partition_does_not_block_substitutive_lod(self, tmp_path) -> None:
+        out = tmp_path / "lod.luxar.zarr"
+        verts = _segments(50)
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            node = scene.add_lines(
+                "c",
+                verts,
+                1.0,
+                line_type="segments",
+                partition=False,
+                substitutive_lod=dict(levels=1, device="cpu", seed=0),
+            )
+
+        assert node.attrs["kind"] == "lod"
+
     def test_scalars_plus_colormap_bakes_colors(self, tmp_path) -> None:
         out = tmp_path / "t.luxar.zarr"
         verts = _segments(1500)
