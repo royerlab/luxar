@@ -348,8 +348,12 @@ writers thread `under_partition=partition_bound`.
   `content_hash_status` of `unchanged` / `restamped` / `unstampable`, since a
   `None` hash alone cannot distinguish "nothing changed" from "this store
   carries no digest to move") and any re-verification residual. `report.clean`
-  is False when anything was left alone for a reason the caller must act on; the
-  CLI keys its exit code on it.
+  is False when anything was left alone for a reason the caller must act on —
+  and also on `unstampable`, which can only happen after a real rewrite: the
+  ladders landed but no digest moved, so a warm viewer cache goes on serving the
+  old ones (at zarr format 2 the `zattrs-hash` fallback digests the root
+  `.zattrs`, which a child's ladder edit does not touch either) until the store
+  is republished under a new URL prefix. The CLI keys its exit code on it.
 
 **Never automatic.** An authored `coverage_fractions=[...]` list and a legacy
 derived one are indistinguishable on disk — the point
@@ -369,7 +373,11 @@ coarser level's missing count is harmless (only the ladder's length and the
 finest entry are consumed) and is reported as `None` rather than invented. A
 ladder whose stored thresholds DESCEND in the resolved child order is refused
 too: the order and the thresholds disagree about which level is finest, so
-writing an ascending ladder onto that order would silently invert it.
+writing an ascending ladder onto that order would silently invert it. So is a
+group with a child that carries a `coverage_fraction` but no scene-node `type`
+attr — the node filter drops it, and re-deriving over the rest would write a
+PARTIAL ladder, leaving that rung stranded on its legacy threshold (possibly
+above the screen-area ceiling of 1.0, where nothing can ever select it).
 
 **Cache invalidation, and what it costs.** When something changed,
 `_restamp_content_hash` runs and the metadata is re-consolidated, in that

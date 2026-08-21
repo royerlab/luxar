@@ -198,6 +198,60 @@ def test_a_re_verification_residual_exits_one(tmp_path: Path, monkeypatch: Any) 
     assert "consolidated index" in result.output
 
 
+def test_a_store_with_no_digest_to_restamp_exits_one(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """The ladders land, and the run still fails — because no client will see them.
+
+    A ``kind=partition`` root carries neither a scene ``type`` nor a
+    ``.gsplats.zarr`` ``content_hash``, so there is no digest to move; at zarr
+    format 2, the legacy corpus's format, the viewer's ``zattrs-hash`` fallback
+    digests the root ``.zattrs``, which a child's ladder edit does not touch
+    either. A pipeline gating on this exit code has to learn that the store needs
+    republishing under a new URL prefix, not that everything is fine.
+    """
+    import zarr
+
+    from luxar import _zarr_compat
+
+    monkeypatch.setattr(_zarr_compat, "ZARR_FORMAT", 2)
+    store = tmp_path / "parts.luxar.zarr"
+    root = create_root_group(zarr.storage.LocalStore(str(store)))
+    root.attrs.update({"kind": "partition", "display_type": "points"})
+    for part in (0, 1):
+        lod = root.create_group(f"part_{part}")
+        lod.attrs.update(
+            {
+                "type": "group",
+                "kind": "lod",
+                "display_type": "points",
+                "selector": LEGACY_LOD_SELECTOR,
+            }
+        )
+        for index, (fraction, count) in enumerate(((0.0, 100), (4.0, 400))):
+            child = lod.create_group(f"child_{index}")
+            child.attrs.update(
+                {
+                    "type": "points",
+                    "child_index": index,
+                    "coverage_fraction": fraction,
+                    "n_points": count,
+                }
+            )
+    consolidate(root)
+    close(root)
+
+    result = runner.invoke(app, ["restamp-lod", str(store)])
+
+    assert result.exit_code == 1, result.output
+    assert "no digest to restamp" in result.output
+    assert "new URL prefix" in result.output
+    attrs = _node_attrs(store)
+    assert attrs["part_0"]["selector"] == DERIVED_LOD_SELECTOR, (
+        "the rewrite itself must still have landed"
+    )
+
+
 def test_a_second_run_exits_zero_and_reports_a_no_op(tmp_path: Path) -> None:
     store = _legacy_scene(tmp_path)
     assert runner.invoke(app, ["restamp-lod", str(store)]).exit_code == 0

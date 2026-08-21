@@ -37,9 +37,22 @@ pass, and skips (loudly, with a non-zero exit) anything it cannot convert
 honestly: a `selector` outside the vocabulary, which wants `luxar gsplat
 migrate-format` first, a finest level whose element count the store does not
 record, where fabricating a positive would defeat the derivation's own
-"finest LOD level is empty" guard, or a stored ladder that descends in the
+"finest LOD level is empty" guard, a stored ladder that descends in the
 resolved coarsest→finest child order, where the two disagree about which level
-is finest and re-deriving would invert the ladder.
+is finest and re-deriving would invert the ladder, or a child that carries a
+`coverage_fraction` but no scene-node `type` attr, where re-deriving over the
+children that do resolve would leave a partial, non-monotonic ladder with that
+rung stranded on its legacy threshold.
+
+The exit code covers one further case, in which the rewrite itself succeeded: a
+store carrying neither a scene `type` nor a `.gsplats.zarr` `content_hash` — a
+bare `kind=partition` root, say — has no digest to restamp, so nothing tells a
+warm viewer cache the ladder moved. At zarr format 2, which is what the legacy
+corpus this command targets is written in, even the viewer's `zattrs-hash`
+fallback digests the root `.zattrs` bytes, and editing a child's ladder does not
+move those. The ladders are still written and the run says so plainly, but it
+exits non-zero: the store has to be republished under a new URL prefix or the
+migration is invisible to every client that already has it.
 
 It is a sibling of `luxar optimise`, not a flag on it: that pass documents that
 every attribute is preserved and refuses same-path work, while this one changes

@@ -97,7 +97,11 @@ from ..typing_utils.constants import DERIVED_LOD_SELECTOR, LOD_SELECTORS
 # ordering (child_index, then a `child_<i>` numeric suffix, then sorted name) and
 # `_child_nodes` is the "which subgroups are scene nodes" filter that keeps the
 # reserved fitting/provenance/pipeline buckets out. A local copy of either would
-# be one more place for the ordering convention to drift.
+# be one more place for the ordering convention to drift. (Considered: those
+# three names are documented as reserved on a standalone `.gsplats.zarr` ROOT,
+# while this pass applies the filter at EVERY depth — a partition part literally
+# named `pipeline` would go uncounted. Negligible, and not worth forking the
+# helper; a dropped child that carries a `coverage_fraction` is refused below.)
 from ._compiler.finalize.amplitude_window import _child_nodes, _lod_children
 from .optimise import _is_luxar_store, _restamp_content_hash
 
@@ -182,8 +186,23 @@ class RestampReport:
         out-of-vocabulary selector, an unresolvable finest element count, or a
         re-verification residual. Nothing is ever silently ignored, so the CLI
         keys its exit code on this.
+
+        Also False on :data:`HASH_UNSTAMPABLE`, which only ever happens when
+        ladders WERE rewritten: a store carrying neither the scene ``type`` nor a
+        ``.gsplats.zarr`` ``content_hash`` (a ``kind=partition`` root, say) has no
+        digest to move, and at zarr format 2 — precisely the legacy corpus this
+        pass targets — the root ``.zattrs`` bytes the viewer's ``zattrs-hash``
+        fallback digests instead do not move either. A warm cache would then serve
+        the OLD ladder indefinitely, which is the failure the pass exists to
+        prevent, so the run must not report success: the operator has to
+        republish under a new URL prefix.
         """
-        return not (self.unsupported or self.unresolved or self.residual)
+        return not (
+            self.unsupported
+            or self.unresolved
+            or self.residual
+            or self.content_hash_status == HASH_UNSTAMPABLE
+        )
 
 
 def _count_of(group: "zarr.Group", attrs: Dict[str, Any]) -> Optional[int]:
@@ -363,6 +382,37 @@ def _plan_lod(
                     path, "no-children", "kind=lod group has no child groups at all"
                 )
             )
+        return None
+
+    # A child group the node filter DROPPED but which carries a
+    # `coverage_fraction` is a ladder rung this pass cannot see. Deriving over the
+    # survivors alone writes a PARTIAL ladder: the dropped rung keeps its legacy
+    # threshold under the new `screen-area` selector, so the result is
+    # non-monotonic AND — a legacy value being on the 0..4 diagonal scale — may
+    # sit above the screen-area ceiling of 1.0, which no clipped area metric can
+    # ever satisfy. The viewer re-sorts such a ladder with a warning
+    # (`load-lod-group-node.ts`), swapping levels and stranding the real finest
+    # one. Refuse the group and name the child instead.
+    resolved = {name for name, _, _ in children}
+    orphans = sorted(
+        str(name)
+        for name in group.group_keys()
+        if str(name) not in resolved
+        and _threshold_of(dict(group[str(name)].attrs)) is not None
+    )
+    if orphans:
+        report.unresolved.append(
+            SkippedGroup(
+                path,
+                "unclassifiable-ladder-child",
+                f"{len(orphans)} child group(s) ({', '.join(orphans)}) carry a "
+                "'coverage_fraction' but do not resolve as ladder levels (no "
+                "scene-node 'type' attr, or a reserved bucket name), so "
+                f"re-deriving over the {len(children)} that do would leave a "
+                "PARTIAL, non-monotonic ladder with those rungs stranded on "
+                "their legacy thresholds. Fix the children's 'type' stamps first",
+            )
+        )
         return None
 
     old = [_threshold_of(child_attrs) for _, _, child_attrs in children]
@@ -806,7 +856,10 @@ def _summarise(report: RestampReport) -> None:
     ``❌`` rather than ``⚠️`` for the two skip buckets, per
     ``docs/guides/developer/CONSOLE_OUTPUT_STYLE.md``: both make
     :attr:`RestampReport.clean` False and so exit the CLI non-zero, which is an
-    error and not a warning.
+    error and not a warning. The unstampable-digest line keeps its ``⚠️`` even
+    though it too makes ``clean`` False: the ladders it describes were written
+    correctly and the store is not damaged — what is missing is the cache
+    invalidation, which the operator fixes by republishing, not by re-running.
     """
     for entry in report.unsupported:
         aprint(f"  ❌ {entry.path}: {entry.detail}")
@@ -854,7 +907,11 @@ def restamp_lod_store(
     cache — and the result is then read back and verified. That hash restamp is
     the one expensive step: for a compiled SCENE the digest covers array VALUES,
     so it streams the whole store once; a standalone ``.gsplats.zarr`` gets a
-    metadata-only stamp instead.
+    metadata-only stamp instead. A store with NEITHER marker carries no digest to
+    move: the ladders are still written, but the report comes back
+    :data:`HASH_UNSTAMPABLE` and therefore NOT :attr:`~RestampReport.clean`, since
+    a warm viewer cache would keep serving the old ladder until the store is
+    republished under a new URL prefix.
 
     All-or-nothing on the write side. Every group is classified in a read-only
     planning walk first; if any write then fails, every attr already written is

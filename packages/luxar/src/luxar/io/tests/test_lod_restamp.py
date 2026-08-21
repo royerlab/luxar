@@ -741,6 +741,47 @@ def test_unclassifiable_children_get_their_own_message(tmp_path: Path) -> None:
     assert not report.clean
 
 
+def test_a_ladder_child_the_node_filter_drops_is_refused_not_half_written(
+    tmp_path: Path,
+) -> None:
+    """A rung the filter cannot see must refuse the GROUP, not be skipped over.
+
+    ``_child_nodes`` keeps only children carrying a scene-node ``type``, so a
+    middle rung without one vanishes from the resolved ladder while keeping its
+    own stored ``coverage_fraction``. Deriving over the survivors then writes a
+    PARTIAL ladder — measured on this exact store, ``[child_0=0.0,
+    child_1=2.0, child_2=0.5]`` under ``selector="screen-area"``: non-monotonic,
+    with a 2.0 rung above the screen-area ceiling of 1.0 that the viewer's
+    clipped area metric can never satisfy. The viewer re-sorts it with a warning
+    and thereby SWAPS the two finest levels, stranding the real finest one. No
+    Python producer writes a type-less lod child, but hand-authored and
+    third-party stores are exactly what this command is for.
+    """
+    store = tmp_path / "holed.luxar.zarr"
+    root = _synthetic_scene(store)
+    lod = _synthetic_ladder(
+        root,
+        "holed",
+        [
+            {"coverage_fraction": 0.0, "n_points": 100},
+            {"coverage_fraction": 2.0, "n_points": 200},
+            {"coverage_fraction": 4.0, "n_points": 300},
+        ],
+    )
+    del lod["child_1"].attrs["type"]
+    consolidate(root)
+    close(root)
+    before = _attrs(store)
+
+    report = restamp_lod_store(store)
+
+    assert not report.restamped
+    assert [g.reason for g in report.unresolved] == ["unclassifiable-ladder-child"]
+    assert "child_1" in report.unresolved[0].detail
+    assert not report.clean
+    assert _attrs(store) == before, "a refused group must be left exactly as found"
+
+
 def test_an_unresolvable_finest_count_is_a_reported_skip(tmp_path: Path) -> None:
     """Never fabricate a positive count.
 
@@ -905,7 +946,61 @@ def test_a_store_with_no_digest_to_move_says_so(tmp_path: Path) -> None:
     assert [g.path for g in report.restamped] == ["/"]
     assert report.content_hash is None
     assert report.content_hash_status == HASH_UNSTAMPABLE
+    assert report.clean is False
     assert _ladder(store, "/") == [0.0, WHOLE_OBJECT_FINEST_ANCHOR]
+
+
+def test_a_rewrite_no_warm_cache_can_see_is_not_a_clean_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unstampable digest is a result the caller must act on, not a warning.
+
+    A ``kind=partition`` ROOT is a Luxar node — ``optimise._is_luxar_store``
+    admits it via ``_LUXAR_NODE_KINDS`` — but carries neither the scene ``type``
+    that selects the value-hashing branch nor a ``.gsplats.zarr``
+    ``content_hash`` to re-stamp. So both ladders are rewritten and NOTHING moves
+    that a client keys on. At zarr format 2, which is what the legacy corpus this
+    command exists for is written in, even the viewer's documented
+    ``zattrs-hash`` fallback digests the raw root ``.zattrs`` bytes — and editing
+    a child's ladder does not move those, as asserted below. Exiting 0 here would
+    report success on precisely the stale-cache failure the pass exists to
+    prevent; the only fix is to republish under a new URL prefix, which the
+    caller can only do if the run says so.
+    """
+    from luxar import _zarr_compat
+
+    monkeypatch.setattr(_zarr_compat, "ZARR_FORMAT", 2)
+    store = tmp_path / "parts.luxar.zarr"
+    root = create_root_group(zarr.storage.LocalStore(str(store)))
+    root.attrs.update({"kind": "partition", "display_type": "points"})
+    for part in (0, 1):
+        _synthetic_ladder(
+            root,
+            f"part_{part}",
+            [
+                {"coverage_fraction": 0.0, "n_points": 100},
+                {"coverage_fraction": 4.0, "n_points": 400},
+            ],
+        )
+    consolidate(root)
+    close(root)
+    assert int(open_group(store, mode="r").metadata.zarr_format) == 2
+    root_document = (store / ".zattrs").read_bytes()
+
+    report = restamp_lod_store(store)
+
+    assert {g.path for g in report.restamped} == {"part_0", "part_1"}
+    assert _ladder(store, "part_0") == [0.0, PARTITION_FINEST_AREA]
+    assert report.content_hash is None
+    assert report.content_hash_status == HASH_UNSTAMPABLE
+    assert report.clean is False, "a rewrite no cache can see must not report success"
+    assert not (report.unsupported or report.unresolved or report.residual), (
+        "clean must be False because of the unstampable digest alone"
+    )
+    assert (store / ".zattrs").read_bytes() == root_document, (
+        "the zattrs-hash fallback digests exactly these bytes, and they did not "
+        "move — which is why the run has to report the problem itself"
+    )
 
 
 def test_a_dry_run_reports_everything_and_writes_nothing(legacy_scene: Path) -> None:

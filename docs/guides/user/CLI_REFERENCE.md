@@ -201,9 +201,19 @@ The command exits 1 if any ladder was left alone for a reason worth acting on: a
 migrate-format` first), a finest level whose element count the store does not
 record, a stored ladder that descends in the resolved coarsest→finest child
 order (its thresholds and its child order disagree, so re-deriving would invert
-it), or a re-verification residual. Ladders that *were* restamped are still
+it), a child group that carries a `coverage_fraction` but cannot be classified as
+a ladder level (re-deriving over the rest would leave a partial, non-monotonic
+ladder), or a re-verification residual. Ladders that *were* restamped are still
 written in that case — nothing is silently ignored, and nothing is silently
 half-done.
+
+It exits 1 for one more case, where the rewrite fully succeeded: a store that
+carries neither a scene `type` nor a `.gsplats.zarr` `content_hash` has no digest
+to restamp, so nothing tells a warm viewer cache that the ladder moved. At zarr
+format 2 — the legacy corpus this command exists for — even the viewer's
+`zattrs-hash` fallback digests the root `.zattrs` bytes, which an edit to a child
+ladder does not touch, so a warm cache would serve the old ladder indefinitely.
+The run says so with a `⚠️` and exits non-zero; republish under a new URL prefix.
 
 ## `luxar demo`
 

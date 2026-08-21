@@ -207,7 +207,10 @@ restamp is the one costly step, since a SCENE's digest covers array values and
 therefore reads the whole store once (a standalone `.gsplats.zarr` gets a
 metadata-only stamp). A failed write is rolled back rather than left half
 applied. Exit code 1 when any ladder was left alone for a reason worth acting
-on. The logic lives in `luxar.io.lod_restamp`.
+on, and also when ladders were rewritten in a store that carries no
+`content_hash` to restamp — the rewrite landed, but nothing invalidates a warm
+viewer cache until the store is republished under a new URL prefix. The logic
+lives in `luxar.io.lod_restamp`.
 
 ### `luxar profiles`
 List available network simulation profiles for testing.

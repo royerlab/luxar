@@ -71,8 +71,13 @@ def register_restamp_lod_command(app: typer.Typer) -> None:
         Exits 1 if any group was left alone for a reason worth acting on: a
         selector outside the vocabulary (migrate with ``luxar gsplat
         migrate-format`` first), a finest level whose element count the store
-        does not record, or a re-verification residual. Groups that WERE
+        does not record, a ladder child that carries a threshold but cannot be
+        classified as a level, or a re-verification residual. Groups that WERE
         restamped are still written in that case; nothing is silently ignored.
+        It also exits 1 when ladders WERE rewritten but the store carries no
+        ``content_hash`` to restamp — the rewrite landed, but no warm viewer
+        cache will notice it until the store is republished under a new URL
+        prefix.
         """
         if not store.exists():
             aprint(f"❌ Error: path does not exist: {store}")
