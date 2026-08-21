@@ -62,6 +62,11 @@ DEMO_META = {
     },
     "caches": ["gsplats_interop_mipnerf"],
     "outputs": ["gsplats_interop_mipnerf_garden"],
+    "citation": {
+        "short": "Barron et al. 2022 (Mip-NeRF 360); Kerbl et al. 2023 (3DGS)",
+        "doi": "10.1109/CVPR52688.2022.00539",
+        "license": "Research use (Mip-NeRF 360, Google)",
+    },
 }
 
 import sys
@@ -146,6 +151,7 @@ def build_scene(scene_key: str = "garden") -> Path:
         title=f"Mip-NeRF 360 {scene_key} — 3D Gaussian Splatting → Luxar",
         layer_name=scene_key,
         credit="Mip-NeRF 360 (Barron 2022) • 3DGS (Kerbl 2023) • research use",
+        citation=DEMO_META["citation"],
     )
 
 

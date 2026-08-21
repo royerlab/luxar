@@ -98,6 +98,11 @@ DEMO_META = {
     },
     "caches": ["gsplats_cell_tracking"],
     "outputs": ["gsplats_4d_cell_tracking_challenge"],
+    "citation": {
+        "short": "CZ Biohub San Francisco; imaging by the Royer Group",
+        "license": "CC0 1.0",
+        "url": "https://www.kaggle.com/competitions/biohub-cell-tracking-during-development",
+    },
 }
 
 import math
@@ -1078,7 +1083,9 @@ def create_luxar_scene(
         with LuxarZarrCompiler(
             output_path, encoding_mode=EncodingMode.PRECISION
         ) as compiler:
-            scene = compiler.create_scene(dimensions=dims)
+            scene = compiler.create_scene(
+                citation=DEMO_META["citation"], dimensions=dims
+            )
 
             scene.attrs["title"] = (
                 f"GSplats: Cell Tracking Challenge — {n} zebrafish embryo timelapses"

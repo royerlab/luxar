@@ -45,6 +45,10 @@ DEMO_META = {
     },
     "caches": ["zebrahub_velocity"],
     "outputs": ["zebrahub_velocity_streamlines_standard"],
+    "citation": {
+        "short": "Lange et al. 2024 (Zebrahub)",
+        "doi": "10.1016/j.cell.2024.09.047",
+    },
 }
 
 import argparse
@@ -893,7 +897,11 @@ def write_scene(
         )
 
         with LuxarZarrCompiler(output_path) as compiler:
-            scene = compiler.create_scene(dimensions=dims, viewer_config=viewer_config)
+            scene = compiler.create_scene(
+                citation=DEMO_META["citation"],
+                dimensions=dims,
+                viewer_config=viewer_config,
+            )
 
             scene.add_points(
                 "Cells (anatomy color)",

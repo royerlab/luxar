@@ -38,6 +38,11 @@ DEMO_META = {
         "gpu": "none",
         "local_data": "manual-file",
     },
+    "citation": {
+        "short": "Domcke et al. 2020; peak-UMAP analysis Kim et al. 2024",
+        "doi": "10.1126/science.aba7612",
+        "license": "CC BY 4.0",
+    },
     "caches": [],
     "outputs": ["human_multiome_peak_umap", "human_umap"],
 }
@@ -217,7 +222,9 @@ def create_human_scene(
 
         # Create scene
         with LuxarZarrCompiler(output_path) as compiler:
-            scene = compiler.create_scene(dimensions=dims)
+            scene = compiler.create_scene(
+                dimensions=dims, citation=DEMO_META["citation"]
+            )
 
             total_points = len(positions_combined)
             radii = np.full(total_points, 0.02, dtype=np.float32)

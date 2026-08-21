@@ -59,6 +59,11 @@ DEMO_META = {
     },
     "caches": ["gsplats_interop_inria"],
     "outputs": ["gsplats_interop_inria_garden"],
+    "citation": {
+        "short": "Kerbl et al. 2023 (3D Gaussian Splatting); Barron et al. 2022 (Mip-NeRF 360)",
+        "doi": "10.1145/3592433",
+        "license": "Research / non-commercial (INRIA 3DGS)",
+    },
 }
 
 from pathlib import Path
@@ -159,6 +164,7 @@ def build_scene() -> Path:
         layer_name="garden",
         credit="INRIA 3DGS (Kerbl 2023) • Mip-NeRF 360 • research use",
         camera=TABLE_CAMERA,
+        citation=DEMO_META["citation"],
     )
 
 

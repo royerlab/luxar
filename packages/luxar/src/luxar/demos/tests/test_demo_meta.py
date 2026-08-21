@@ -45,6 +45,35 @@ def test_every_demo_has_valid_meta(path: Path) -> None:
 
 
 @pytest.mark.parametrize("path", DEMO_PATHS, ids=lambda p: p.name)
+def test_credited_demo_wires_citation(path: Path) -> None:
+    """Every credited demo must pass its citation into each scene constructor."""
+    meta = extract_demo_meta(path)
+    if meta.get("citation") is None:
+        return
+
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    scene_calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and (
+            (isinstance(node.func, ast.Attribute) and node.func.attr == "create_scene")
+            or (
+                isinstance(node.func, ast.Name)
+                and node.func.id == "build_interop_scene"
+            )
+        )
+    ]
+    assert scene_calls, f"{path.name} declares a citation but creates no scene"
+    unwired = [
+        call.lineno
+        for call in scene_calls
+        if not any(keyword.arg == "citation" for keyword in call.keywords)
+    ]
+    assert not unwired, f"{path.name} omits citation= at scene calls on lines {unwired}"
+
+
+@pytest.mark.parametrize("path", DEMO_PATHS, ids=lambda p: p.name)
 def test_every_demo_compiles(path: Path) -> None:
     """The file must compile to bytecode — not merely ast.parse.
 

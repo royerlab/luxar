@@ -151,6 +151,10 @@ DEMO_META = {
     },
     "caches": ["caida"],
     "outputs": ["caida_as_topology"],
+    "citation": {
+        "short": "CAIDA AS Relationships (Luckie et al. 2013)",
+        "doi": "10.1145/2504730.2504735",
+    },
 }
 
 import bz2
@@ -1369,7 +1373,9 @@ def build_scene(
         )
 
         with LuxarZarrCompiler(output_path) as compiler:
-            scene = compiler.create_scene(dimensions=dims)
+            scene = compiler.create_scene(
+                citation=DEMO_META["citation"], dimensions=dims
+            )
 
             scene.add_points(
                 "Autonomous Systems",
