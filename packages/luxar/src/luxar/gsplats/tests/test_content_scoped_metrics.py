@@ -824,6 +824,9 @@ def test_decimate_recomputes_a_complete_single_rung_stamp() -> None:
         ),
         pytest.param(lambda gs: gs.with_colors((0.2, 0.4, 0.6)), id="with_colors"),
         pytest.param(lambda gs: gs.scale_intensity(1.0), id="scale_intensity_noop"),
+        pytest.param(
+            lambda gs: gs.filter_by(amplitude_min=0.0), id="filter_by_noop"
+        ),
     ],
 )
 def test_content_preserving_rewrite_keeps_authored_q_e_stamps(
@@ -849,6 +852,32 @@ def test_content_preserving_rewrite_keeps_authored_q_e_stamps(
     assert [lod.stats for lod in out.additive_sublods] == [
         lod.stats for lod in source.additive_sublods
     ]
+
+
+def test_single_rung_filter_preserves_level_provenance_after_reduction() -> None:
+    source_lod = _laddered().additive_sublods[0]
+    source = GSplatData.from_substitutive_levels(
+        [
+            SubstitutiveLevel(
+                additive_sublods=[source_lod],
+                compression_factor=4,
+                parent_method="kmeans_lloyd",
+                level_index=2,
+                stats={**_stats(), **_LEVEL_LADDER},
+            )
+        ],
+        stats=_stats(),
+    )
+
+    out = source.filter(source.amplitudes > 0.5)
+    level = out.substitutive_levels[0]
+    assert (level.compression_factor, level.parent_method, level.level_index) == (
+        4,
+        "kmeans_lloyd",
+        2,
+    )
+    assert level.stats["n_splats_total"] == out.n_splats
+    assert "quality" not in level.stats
 
 
 def test_reveal_ladder_stays_without_energy_compensation_after_reduction() -> None:

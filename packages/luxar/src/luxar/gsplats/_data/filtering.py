@@ -428,7 +428,7 @@ class FilteringMixin(_GSplatDataOps):
             >>> filtered = data.filter(data.volumes() < 100)
             >>> filtered = data.filter((data.amplitudes > 0.1) & (data.eccentricities() < 5))
         """
-        from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData
+        from luxar.gsplats.gsplat_data import AdditiveSubLOD
 
         mask = np.asarray(mask, dtype=bool)
         if mask.shape != (self.n_splats,):
@@ -455,35 +455,19 @@ class FilteringMixin(_GSplatDataOps):
         # excluded nothing keeps its region stamp").
         removed_any = bool(int(np.count_nonzero(mask)) < self.n_splats)
 
-        # Multi-LOD path: split mask across LODs
-        if self.n_additive_sublods > 1:
-
-            def _filter_lod(lod: AdditiveSubLOD, offset: int, n: int) -> AdditiveSubLOD:
-                lod_mask = mask[offset : offset + n]
-                return AdditiveSubLOD(
-                    centers=lod.centers[lod_mask],
-                    amplitudes=lod.amplitudes[lod_mask],
-                    cholesky_factors=lod.cholesky_factors[lod_mask],
-                    colors=lod.colors[lod_mask] if lod.colors is not None else None,
-                    stats=dict(lod.stats),
-                    truncation_radius=lod.truncation_radius,
-                )
-
-            return _stats_after_content_change(
-                self._map_additive(_filter_lod), changed=removed_any, source=self
+        def _filter_lod(lod: AdditiveSubLOD, offset: int, n: int) -> AdditiveSubLOD:
+            lod_mask = mask[offset : offset + n]
+            return AdditiveSubLOD(
+                centers=lod.centers[lod_mask],
+                amplitudes=lod.amplitudes[lod_mask],
+                cholesky_factors=lod.cholesky_factors[lod_mask],
+                colors=lod.colors[lod_mask] if lod.colors is not None else None,
+                stats=dict(lod.stats),
+                truncation_radius=lod.truncation_radius,
             )
 
         return _stats_after_content_change(
-            GSplatData(
-                centers=self.centers[mask],
-                amplitudes=self.amplitudes[mask],
-                cholesky_factors=self.cholesky_factors[mask],
-                colors=self.colors[mask] if self.colors is not None else None,
-                stats=dict(self.stats),
-                truncation_radius=self.truncation_radius,
-            ),
-            changed=removed_any,
-            source=self,
+            self._map_additive(_filter_lod), changed=removed_any, source=self
         )
 
     @staticmethod
