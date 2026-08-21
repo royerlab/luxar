@@ -72,7 +72,7 @@ GEN_TIMEOUT_S = 3600
 LOCAL_INPUT_MODES = ("manual-file", "kaggle-auth", "git-lfs")
 
 # Manifest ids that CANNOT currently be built on any machine, mapped to why.
-# Soft-skipped without spawning anything, the way an un-fetchable `local_data`
+# Soft-skipped without spawning anything, the way a machine-local `local_data`
 # entry is demoted: the alternative is a hard `timeout` that returns 1 and aborts
 # `make generate-gallery` before it captures a single tile.
 #
@@ -99,7 +99,7 @@ def dataset_exists(entry: dict[str, Any]) -> bool:
 
 
 def needs_local_input(entry: dict[str, Any]) -> str | None:
-    """The entry's demo's ``local_data`` mode, if it is one of the un-fetchable ones.
+    """The entry's demo's ``local_data`` mode, if it is machine-local.
 
     Returns ``"manual-file"`` / ``"kaggle-auth"`` / ``"git-lfs"``, or ``None``
     for everything else. Read straight from the demo's ``DEMO_META`` by AST
@@ -278,7 +278,7 @@ def main() -> int:
 
     # Non-zero only on hard generation failures. capture-only, manual-data and
     # unbuildable are expected states, not errors: manual-data is a demo whose
-    # un-fetchable input this machine does not have, unbuildable one that cannot
+    # machine-local input this machine does not have, unbuildable one that cannot
     # be built anywhere yet (see `generate_one`).
     hard_failures = results["failed"] + results["timeout"] + results["no-output"]
     return 1 if hard_failures else 0

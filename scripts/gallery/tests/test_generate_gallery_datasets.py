@@ -142,8 +142,8 @@ def _setup(
     ``specs`` is ``(id, local_data, outcome)`` per manifest entry; ``present``
     names ids whose dataset already exists on disk; ``missing_script`` names ids
     whose demo file is deliberately never written (the ``missing-script`` shape);
-    ``capture_only`` names ids whose manifest entry declares ``script: null`` (the
-    feature-branch shape — three real entries look like this).
+    ``capture_only`` names ids whose manifest entry declares ``script: null``
+    (the feature-branch shape).
     """
     demos_dir = tmp_path / "demos"
     demos_dir.mkdir()
@@ -389,9 +389,9 @@ def test_only_on_a_failing_local_input_entry_is_still_soft(
 def test_a_capture_only_entry_is_reported_and_is_not_a_hard_failure(
     tmp_path, monkeypatch, capsys
 ) -> None:
-    # `script: null` describes three real manifest entries (feature-branch demos
-    # whose dataset is kept locally). Nothing to spawn, and never a failure —
-    # folding this bucket into the hard list would red every machine forever.
+    # A feature-branch demo may have only a locally kept dataset and no script in
+    # this checkout. Nothing to spawn, and never a failure — folding this bucket
+    # into the hard list would red every machine forever.
     calls = _setup(
         tmp_path,
         monkeypatch,
@@ -488,8 +488,8 @@ def test_only_still_warns_about_an_unknown_id(tmp_path, monkeypatch, capsys) -> 
 def test_list_marks_local_input_entries_and_generates_nothing(
     tmp_path, monkeypatch, capsys, mode
 ) -> None:
-    # Parametrized over BOTH modes: a mark narrowed to manual-file would silently
-    # leave the two real kaggle-auth entries unannotated.
+    # Parametrized over every mode: narrowing the mark would leave some
+    # machine-local entries unannotated.
     calls = _setup(
         tmp_path,
         monkeypatch,
