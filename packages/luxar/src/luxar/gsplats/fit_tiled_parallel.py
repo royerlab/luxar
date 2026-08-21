@@ -30,6 +30,7 @@ from arbol import aprint, asection
 from luxar.gsplats.batch.task_pool import cancel_pool_on_interrupt
 from luxar.gsplats.fit_tiled_gsplats import merge_tile_results
 from luxar.gsplats.gsplat_data import GSplatData
+from luxar.gsplats.merged_quality import announce_unscored_merge
 
 # Builds the argv for tile ``i`` of ``M`` writing to a given output path.
 WorkerCmdBuilder = Callable[[int, int, Path], "list[str]"]
@@ -459,12 +460,10 @@ def fit_tiled_parallel(
     # no PSNR is the failure the sequential path's scoring exists to end. Said
     # even on a quiet run: nothing about the omission reaches the store, so this
     # notice is the only place it is ever stated.
-    aprint(
-        "No merged quality metrics on the parallel tiled path: the tiles are "
-        "fitted in worker processes and only the tile grid's shape is passed "
-        "here, not the volume, so there is nothing to score against. Score the "
-        "written archive with `luxar gsplat compare` — on a `kind=partition` "
-        "result (the tiled default), run `luxar gsplat flatten` first."
+    announce_unscored_merge(
+        "the parallel tiled path receives only the tile grid's shape, not the "
+        "reference volume",
+        partition=None,
     )
 
     if not keep_tiles:

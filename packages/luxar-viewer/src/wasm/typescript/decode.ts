@@ -16,9 +16,13 @@ export function decode_quantized_u8(
   maxVal: number,
   output: Float32Array
 ): void {
-  const scale = (maxVal - minVal) / 255;
+  const lo = Math.fround(minVal);
+  const hi = Math.fround(maxVal);
+  const range = Math.fround(hi - lo);
+  const scale = Math.fround(range / 255);
   for (let i = 0; i < data.length; i++) {
-    output[i] = minVal + data[i] * scale;
+    const scaled = Math.fround(data[i] * scale);
+    output[i] = Math.fround(lo + scaled);
   }
 }
 
@@ -32,9 +36,15 @@ export function decode_quantized_u16(
   maxVal: number,
   output: Float32Array
 ): void {
-  const scale = (maxVal - minVal) / 65535;
+  // These linear kernels mirror the Rust/WASM f32 contract; ArrayDecoder.dequantize
+  // and Python _decode_bounded_scalar remain f64 metadata helpers with different operand order.
+  const lo = Math.fround(minVal);
+  const hi = Math.fround(maxVal);
+  const range = Math.fround(hi - lo);
+  const scale = Math.fround(range / 65535);
   for (let i = 0; i < data.length; i++) {
-    output[i] = minVal + data[i] * scale;
+    const scaled = Math.fround(data[i] * scale);
+    output[i] = Math.fround(lo + scaled);
   }
 }
 
@@ -43,6 +53,8 @@ export function decode_quantized_u16(
  * Decoding: expm1(normalized * maxLog)
  */
 export function decode_log_scalar_u8(data: Uint8Array, maxLog: number, output: Float32Array): void {
+  // This worker/WASM fallback kernel follows the Rust f32 contract. The main-thread
+  // ArrayDecoder still uses f64 divide-then-multiply algebra; see #1847.
   const limit = Math.fround(maxLog);
   const invMax = Math.fround(limit / 255);
   for (let i = 0; i < data.length; i++) {
@@ -59,6 +71,8 @@ export function decode_log_scalar_u16(
   maxLog: number,
   output: Float32Array
 ): void {
+  // This worker/WASM fallback kernel follows the Rust f32 contract. The main-thread
+  // ArrayDecoder still uses f64 divide-then-multiply algebra; see #1847.
   const limit = Math.fround(maxLog);
   const invMax = Math.fround(limit / 65535);
   for (let i = 0; i < data.length; i++) {

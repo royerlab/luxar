@@ -64,6 +64,8 @@ export function expm1f(value: number): number {
         exponent = -1;
       }
     } else {
+      // The magnitude guard above bounds x, making Math.trunc equivalent to Rust's
+      // saturating float-to-i32 cast and keeping the exponent bit shifts in range.
       exponent = Math.trunc(
         Math.fround(Math.fround(EXPM1_INV_LN2 * x) + Math.fround(negative ? -0.5 : 0.5))
       );

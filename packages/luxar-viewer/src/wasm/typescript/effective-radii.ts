@@ -37,6 +37,8 @@ export function calculate_effective_radii(
   numPoints: number,
   output: Float32Array
 ): number {
+  // Rust's `discrete_tolerance` is `0.5_f32`; 0.5 is exactly representable, so
+  // no rounding is needed on the constant itself.
   const discreteTolerance = 0.5;
   let visibleCount = 0;
 
@@ -64,12 +66,25 @@ export function calculate_effective_radii(
       const target = slicePosition[d];
 
       if (isSpatial) {
-        // Spatial dimension: accumulate squared distance
-        const diff = value - target;
-        distanceSquared += diff * diff;
+        // Spatial dimension: accumulate squared distance.
+        // Rust rounds EVERY step to f32 — the subtraction, the square, and each
+        // partial sum — while a plain JS chain keeps f64 all the way. That is not
+        // a cosmetic ulp: `distanceSquared` is compared against `radiusSquared`
+        // below, so a point a hair outside its own radius can be VISIBLE on one
+        // backend and culled on the other, changing `visibleCount` and the
+        // compaction the caller derives from it. (`value`/`target` come out of
+        // Float32Arrays, so their difference is normally exact in f64 — but Rust
+        // still rounds it, hence the fround on the subtraction too. That one is
+        // load-bearing whenever the slice position is not zero: dropping it
+        // alone moves 212/20000 outputs, by up to 2527 ulp, on the randomized
+        // sweep in `tests/unit/wasm/wasm-vs-typescript.test.ts`. With an
+        // all-zero slice position it is a no-op, which is why that fixture
+        // deliberately does not use one.)
+        const diff = Math.fround(value - target);
+        distanceSquared = Math.fround(distanceSquared + Math.fround(diff * diff));
       } else {
         // Discrete dimension: must match exactly (within tolerance)
-        if (Math.abs(value - target) > discreteTolerance) {
+        if (Math.abs(Math.fround(value - target)) > discreteTolerance) {
           discreteMatch = false;
           break;
         }
@@ -81,12 +96,20 @@ export function calculate_effective_radii(
       continue;
     }
 
-    // Apply Pythagorean theorem: R_effective = sqrt(R² - D²)
-    const radiusSquared = originalRadius * originalRadius;
+    // Apply Pythagorean theorem: R_effective = sqrt(R² - D²).
+    // Both the square and the difference are f32 operations in Rust; the
+    // difference in particular cancels catastrophically for a point near the
+    // rim of its own radius, which is exactly where the two backends used to
+    // disagree: dropping just these two roundings moves 538/20000 outputs, by
+    // up to 405 ulp, on the randomized sweep in
+    // `tests/unit/wasm/wasm-vs-typescript.test.ts`. (Dropping every rounding in
+    // this kernel — the full pre-fix state — is 633/20000 at up to 1278 ulp,
+    // the figure that sweep's own comment quotes.)
+    const radiusSquared = Math.fround(originalRadius * originalRadius);
     if (distanceSquared >= radiusSquared) {
       output[i] = 0;
     } else {
-      output[i] = Math.sqrt(radiusSquared - distanceSquared);
+      output[i] = Math.sqrt(Math.fround(radiusSquared - distanceSquared));
       visibleCount++;
     }
   }

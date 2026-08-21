@@ -79,6 +79,21 @@ Options:
 By default, the demo works at full resolution (46,000 x 32,914 pixels)
 using tiled fitting.
 
+IF THE HOSTED FIT CANNOT BE OBTAINED (#1618):
+=============================================
+The normal path loads the precomputed per-channel fits through the manifest.
+When those bytes exist nowhere yet — the Zenodo record is unpublished and no
+`git lfs pull` has run — the demo next looks for THIS machine's own earlier
+refit in ``~/.cache/luxar/gsplats_cmu1_pathology/local/``, and failing that
+falls through to exactly what ``--recompute`` does: the ~169 MB SVS download
+and a three-channel tiled fit over the full 1.5-gigapixel image. That is a
+long, unattended run on a first launch, and it is deliberate — the same
+"compute your own stand-in" fallback every migrated gsplat demo has, and the
+reason the result is cached in the local-fit namespace where nothing
+quarantines it. Only that one routable absence is answered this way: a
+checksum that will not verify, an unknown file name and a missing packaged
+manifest are faults and still crash.
+
 Output:
     - Scene saved to:  datasets/demos/gsplats_2d_cmu1_pathology.luxar.zarr
     - Automatically opens in browser
@@ -111,6 +126,7 @@ import os
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 
 import sys
+import zipfile
 from pathlib import Path
 
 import numpy as np
@@ -119,9 +135,11 @@ from arbol import Arbol, aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import UIConfig, ViewerConfig
 from luxar.demos import (
+    DatasetUnavailable,
     MissingDependencyError,
     ensure_dataset,
     launch_viewer,
+    local_fit_path,
     parse_demo_flags,
     require_module,
     warn_if_no_cuda_gpu,
@@ -162,10 +180,15 @@ OVERLAP = 512  # Overlap for Hann cosine apodization (seamless stitching)
 SEEDS_PER_TILE = 500000  # Seeds per tile
 N_ITERS = 6_000
 
-# Manifest key for the precomputed per-channel artifacts
+# Manifest key for the precomputed per-channel artifacts, and the files it pins.
 DATASET = "gsplats_cmu1_pathology"
+GSPLATS_FILES = [f"cmu1_ch{i}.gsplats.zarr.zip" for i in range(N_CHANNELS)]
 
-# Cache location
+# Cache location. CACHE_DIR holds the DOWNLOADED slide; a local refit is OUR
+# artifact, not a copy of the hosted one, so it goes to the demo's local-fit
+# namespace (~/.cache/luxar/<name>/local/, see `local_fit_path`). Written under
+# the manifest's own names it was quarantined by the next fetch for failing the
+# pinned sha256, and the demo refit every time (#1618).
 CACHE_DIR = Path.home() / ".cache" / "luxar" / DATASET
 
 # Parse command-line flags
@@ -333,13 +356,30 @@ def resolve_data() -> list[Path]:
     trips it just as a reordering does.
     """
     cache_paths = ensure_dataset(DATASET)
-    expected = [f"cmu1_ch{i}.gsplats.zarr.zip" for i in range(N_CHANNELS)]
-    if [p.name for p in cache_paths] != expected:
+    if [p.name for p in cache_paths] != GSPLATS_FILES:
         raise RuntimeError(
             f"Manifest file list for {DATASET} is {[p.name for p in cache_paths]}, "
-            f"which does not match the expected {expected} exactly."
+            f"which does not match the expected {GSPLATS_FILES} exactly."
         )
     return cache_paths
+
+
+def local_fit_paths() -> list[Path] | None:
+    """This machine's own earlier refit, or None if it is absent/incomplete.
+
+    Paths, not ``GSplatData``: a ``--recompute`` writes the ``adaptive``
+    topology, a ``kind=partition`` tree with no flat matrix form (which is also
+    why ``load_local_fit_gsplats`` cannot serve this demo — see
+    ``create_luxar_scene``). Consulted only when the manifest fetch came up
+    empty, and BEFORE refitting, which is what makes the refit one-time.
+
+    A ZIP header check catches the one cheap, unambiguous failure here: a
+    truncated save from a Ctrl-C. Deeper validation would pay the whole graft,
+    so structurally valid archives are left for ``add_gsplats_from_file`` to
+    inspect rather than risking an unnecessary whole-slide refit.
+    """
+    paths = [local_fit_path(DATASET, name) for name in GSPLATS_FILES]
+    return paths if all(zipfile.is_zipfile(path) for path in paths) else None
 
 
 # =============================================================================
@@ -401,7 +441,8 @@ def fit_channel_tiled(
     aprint(f"  Fitted {n_splats:,} splats across all tiles")
 
     # Cache result
-    aprint(f"  Caching to {cache_file.name}")
+    cache_file.parent.mkdir(parents=True, exist_ok=True)
+    aprint(f"  Caching to {cache_file}")
     save_with_lod(
         result,
         cache_file,
@@ -421,10 +462,11 @@ def fit_all_channels(
 ) -> tuple[list[Path], list[GSplatData]]:
     """Fit 2D gsplats to all RGB channels using tiled fitting.
 
-    Always fits: this runs only on the ``--recompute`` path (``main`` takes the
-    manifest fetch otherwise), so a "reuse the cache" branch here would be dead
-    code — and reading the cache back is not free anyway, since the artifact is
-    a ``kind=partition`` tree with no flat ``GSplatData`` form.
+    Always fits: ``main`` has already tried the manifest fetch and this
+    machine's own earlier refit (:func:`local_fit_paths`) by the time it gets
+    here, so a "reuse the cache" branch would be dead code — and reading the
+    cache back is not free anyway, since the artifact is a ``kind=partition``
+    tree with no flat ``GSplatData`` form.
 
     Returns:
         ``(cache_paths, gsplats)`` — the written artifacts, and the in-memory
@@ -436,7 +478,7 @@ def fit_all_channels(
 
         for i, (image, ch_config) in enumerate(zip(images, CHANNELS)):
             ch_name = ch_config["name"]
-            cache_file = CACHE_DIR / f"cmu1_ch{i}.gsplats.zarr.zip"
+            cache_file = local_fit_path(DATASET, GSPLATS_FILES[i])
 
             with asection(f"Channel {i}: {ch_name}"):
                 gsplats = fit_channel_tiled(
@@ -686,6 +728,29 @@ def show_roundtrip_comparison(
 # =============================================================================
 
 
+def resolve_or_local() -> list[Path] | None:
+    """The manifest fetch, then this machine's own earlier refit; None ⇒ build it.
+
+    ``None`` under ``--recompute`` too, which is how ``main`` reaches its
+    fit-from-scratch branch.
+
+    Only ``DatasetUnavailable`` falls through to the local door — the narrow
+    "these bytes are not obtainable from anywhere yet" case. An unknown file
+    name, a missing packaged manifest or an in-repo copy failing its sha256 are
+    faults, and must not be disguised as a routine multi-minute refit.
+    """
+    if RECOMPUTE:
+        return None
+    try:
+        return resolve_data()
+    except DatasetUnavailable as exc:
+        aprint(f"Manifest fetch unavailable ({exc}).")
+        cache_paths = local_fit_paths()
+        if cache_paths is not None:
+            aprint(f"Reusing this machine's own refit in {cache_paths[0].parent}")
+        return cache_paths
+
+
 def main():
     """Main demo execution."""
     aprint("=" * 70)
@@ -718,10 +783,11 @@ def main():
     images = None
     gsplats_list: list[GSplatData] = []
 
-    if not RECOMPUTE:
-        cache_paths = resolve_data()
-    else:
-        # --recompute path: download raw data, fit from scratch
+    cache_paths = resolve_or_local()
+
+    if cache_paths is None:
+        # --recompute path (or no data to be had): download raw data, fit from
+        # scratch, and cache the fits in the local-fit namespace.
         warn_if_no_cuda_gpu()
         images, acquisition = load_cmu1_image()
 

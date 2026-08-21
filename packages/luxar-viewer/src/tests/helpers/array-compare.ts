@@ -63,3 +63,23 @@ export function arraysAlmostEqual(
 ): boolean {
   return arraysEqual(a, b, epsilon);
 }
+
+/** Compare Float32 arrays by their exact IEEE-754 bit patterns. */
+export function exactBitsEqual(a: Float32Array, b: Float32Array): boolean {
+  if (a.length !== b.length) {
+    console.log(`Length mismatch: ${a.length} vs ${b.length}`);
+    return false;
+  }
+
+  const aBits = new Uint32Array(a.buffer, a.byteOffset, a.length);
+  const bBits = new Uint32Array(b.buffer, b.byteOffset, b.length);
+  for (let i = 0; i < a.length; i++) {
+    if (aBits[i] !== bBits[i]) {
+      console.log(
+        `Bit mismatch at index ${i}: 0x${aBits[i].toString(16).padStart(8, '0')} vs 0x${bBits[i].toString(16).padStart(8, '0')}`
+      );
+      return false;
+    }
+  }
+  return true;
+}

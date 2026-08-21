@@ -23,6 +23,7 @@ from arbol import aprint
 from ..demos import registry
 from ..demos.registry import DemoInfo
 from ..utils import demo_runs
+from ..utils.data_fetch import LOCAL_FIT_DIRNAME
 from ..utils.process import can_kill_process_groups, run_child_process
 from .demo_render import (
     STATUS_BUILT,
@@ -732,7 +733,9 @@ def cache_clear(
         True, "--downloads/--no-downloads", help="Clear downloaded artifacts."
     ),
     computed: bool = typer.Option(
-        True, "--computed/--no-computed", help="Clear pickled computations (*.pkl)."
+        True,
+        "--computed/--no-computed",
+        help="Clear computed artifacts (*.pkl and local/ fits).",
     ),
     outputs: bool = typer.Option(
         False, "--outputs", help="Also delete generated datasets/demos/*.luxar.zarr."
@@ -751,9 +754,10 @@ def cache_clear(
 ) -> None:
     """Clear demo caches (and optionally generated outputs), with fine-grained scope.
 
-    By default clears the input caches (downloads + computed pickles) under
-    ~/.cache/luxar/<name>/ for the selected demos. Nothing is deleted without
-    either --dry-run (preview) or a confirmation (or --yes).
+    By default clears the input caches under ~/.cache/luxar/<name>/ for the
+    selected demos: downloads, computed pickles, and anything in a demo's
+    local-fit namespace (``local/``). Nothing is deleted without either
+    --dry-run (preview) or a confirmation (or --yes).
     """
     import shutil
 
@@ -774,13 +778,24 @@ def cache_clear(
         for f in sorted(cache_dir.rglob("*")):
             if not f.is_file():
                 continue
-            # A computed artifact is a pickle (or a corrupt pickle); every other
-            # file — including a corrupt *download* like ``foo.zip.corrupt`` — is
-            # a download. ``Path("x.pkl.corrupt").suffix == ".corrupt"``, so the
-            # ``endswith`` check is what actually classifies corrupt pickles.
-            is_computed = f.suffix == ".pkl" or f.name.endswith(".pkl.corrupt")
+            rel = f.relative_to(cache_dir)
+            # A computed artifact is a pickle (or a corrupt pickle), or anything
+            # inside the local-fit namespace — a demo's own GPU refit, which can
+            # cost tens of minutes and which `--no-computed` must therefore
+            # spare. Every other file — including a corrupt *download* like
+            # ``foo.zip.corrupt`` — is a download. ``Path("x.pkl.corrupt").suffix
+            # == ".corrupt"``, so the ``endswith`` check is what actually
+            # classifies corrupt pickles.
+            is_computed = (
+                f.suffix == ".pkl"
+                or f.name.endswith(".pkl.corrupt")
+                or LOCAL_FIT_DIRNAME in rel.parts[:-1]
+            )
             if (is_computed and computed) or (not is_computed and downloads):
-                targets.append((f, f.stat().st_size, f"{demo_key}/{f.name}"))
+                # Labelled by the path RELATIVE to the cache dir, so
+                # ``local/x.zip`` is distinguishable from the manifest's own
+                # ``x.zip`` sitting next to it.
+                targets.append((f, f.stat().st_size, f"{demo_key}/{rel.as_posix()}"))
 
     # Hand-placed demo inputs (registry.PROTECTED_INPUT_DIRS) are refused on
     # every route — by key, --all and --orphans — and the names of the ones we
