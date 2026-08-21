@@ -1417,17 +1417,23 @@ def _worker_spatial_shape(
 
 
 def _validate_content_spatial_shape(
-    mode: str, spatial: Tuple[int, ...], axes_list: Optional[List[str]]
+    mode: str,
+    spatial: Tuple[int, ...],
+    discovered_spatial: Tuple[int, ...],
+    axes_list: Optional[List[str]],
 ) -> None:
     """Reject content scans whose worker-visible volume is not 3-D."""
     if mode != "content" or len(spatial) == 3:
         return
-    if axes_list is None:
+    if axes_list is None and spatial != discovered_spatial:
         reason = (
             f"the store's spatial axes squeeze to {spatial} because the "
             "positional volume loader drops singleton dimensions"
         )
         alternative = "Use --tiling uniform, or pass --axes to keep the axis."
+    elif axes_list is None:
+        reason = f"the store's spatial shape {spatial} is already {len(spatial)}-D"
+        alternative = "Use --tiling uniform, or provide a 3-D spatial array."
     else:
         reason = f"--axes resolves the store's spatial shape to {spatial}"
         alternative = "Use --tiling uniform, or provide a 3-D spatial array."
@@ -1601,7 +1607,7 @@ def plan_batch(
 
     # 3. Decompose the spatial volume into the slots fanned across (t, c).
     mode = "content" if tiling == "content" else "uniform"
-    _validate_content_spatial_shape(mode, spatial, axes_list)
+    _validate_content_spatial_shape(mode, spatial, ome_info.spatial_shape, axes_list)
     content_plan = None
     plan_path_str: Optional[str] = None
     total_voxels = math.prod(spatial)

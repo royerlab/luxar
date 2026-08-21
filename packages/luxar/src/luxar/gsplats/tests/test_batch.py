@@ -943,6 +943,48 @@ class TestBatchPlanRegression:
         assert "--axes" in message
         assert not (tmp_path / "out").exists()
 
+    def test_content_plan_rejects_already_2d_spatial_shape(
+        self, tmp_path: Path
+    ) -> None:
+        import typer
+        import zarr
+
+        from luxar.cli.gsplat_ops.batch.planning import (
+            ContentKnobs,
+            DenoiseConfig,
+            FitConfig,
+            MergeConfig,
+            plan_batch,
+        )
+
+        path = tmp_path / "plain-2d-content.zarr"
+        root = zarr.open(str(path), mode="w")
+        create_array(root, "0", data=np.ones((64, 64), dtype=np.float32))
+
+        with pytest.raises(typer.BadParameter) as excinfo:
+            plan_batch(
+                input_path=path,
+                output_dir=tmp_path / "out",
+                tiling="content",
+                tile_size=None,
+                tile_overlap=8,
+                axes_list=None,
+                array_key=None,
+                timepoints_slice=None,
+                channels_slice=None,
+                fit=FitConfig(floor="none"),
+                denoise=DenoiseConfig(),
+                content=ContentKnobs(k_star_ref=4000, n_features_ref=200),
+                merge=MergeConfig(),
+            )
+
+        message = str(excinfo.value)
+        assert "spatial shape (64, 64) is already 2-D" in message
+        assert "squeeze" not in message
+        assert "--tiling uniform" in message
+        assert "--axes" not in message
+        assert not (tmp_path / "out").exists()
+
     def test_planning_scan_squeezes_singleton_spatial_axes_lazily(
         self, tmp_path: Path
     ) -> None:
