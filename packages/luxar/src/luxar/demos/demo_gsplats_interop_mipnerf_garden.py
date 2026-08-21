@@ -63,9 +63,9 @@ DEMO_META = {
     "caches": ["gsplats_interop_mipnerf"],
     "outputs": ["gsplats_interop_mipnerf_garden"],
     "citation": {
-        "short": "Barron et al. 2022 (Mip-NeRF 360)",
+        "short": "Barron et al. 2022 (Mip-NeRF 360); Kerbl et al. 2023 (3DGS)",
         "doi": "10.1109/CVPR52688.2022.00539",
-        "license": "Research / non-commercial (INRIA 3DGS)",
+        "license": "Research use (Mip-NeRF 360, Google)",
     },
 }
 

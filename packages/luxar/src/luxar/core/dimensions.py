@@ -25,8 +25,8 @@ from ..validation.category_validation import (  # noqa: E402
 def _as_builtin(value: Any) -> Any:
     """A numpy scalar as its Python equivalent; anything else unchanged.
 
-    Duck-typed on ``.item()`` so this module keeps no numpy dependency. The
-    conversion preserves integrality, so an integer range stays integral.
+    Duck-typed on ``.item()`` to avoid an isinstance ladder over numpy's scalar
+    types. The conversion preserves integrality, so an integer range stays integral.
     """
     # Identify a numpy scalar by carrying BOTH `.item` and `.dtype`, not by
     # failing an isinstance check against the builtins: np.float64 SUBCLASSES
