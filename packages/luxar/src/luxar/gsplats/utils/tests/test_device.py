@@ -36,6 +36,15 @@ def test_resolve_explicit_device_overrides_accelerator_flags(monkeypatch) -> Non
     assert device.type == "cuda"
 
 
+def test_resolve_auto_honors_accelerator_opt_outs(monkeypatch) -> None:
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.backends, "mps", _FakeMPSBackend(True), raising=False)
+
+    device = resolve_torch_device("auto", use_cuda=False, use_metal=False)
+
+    assert device.type == "cpu"
+
+
 def test_resolve_honors_accelerator_opt_outs(monkeypatch) -> None:
     monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
     monkeypatch.setattr(torch.backends, "mps", _FakeMPSBackend(True), raising=False)

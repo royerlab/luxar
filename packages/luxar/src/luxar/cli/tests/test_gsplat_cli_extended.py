@@ -600,6 +600,32 @@ class TestFitCommand:
         assert result.exit_code == 0, f"fit failed: {result.stdout}"
         assert out.exists()
 
+    def test_fit_accepts_auto_device(
+        self, runner: CliRunner, small_volume_npy: Path, tmp_path: Path
+    ) -> None:
+        out = tmp_path / "fitted-auto.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "fit",
+                str(small_volume_npy),
+                str(out),
+                "--iters",
+                "1",
+                "--seeds",
+                "2",
+                "--tiling",
+                "none",
+                "--device",
+                "auto",
+                "--quiet",
+            ],
+        )
+
+        assert result.exit_code == 0, f"fit failed: {result.stdout}"
+        assert out.exists()
+
     def test_fit_output_is_loadable(
         self, runner: CliRunner, small_volume_npy: Path, tmp_path: Path
     ) -> None:

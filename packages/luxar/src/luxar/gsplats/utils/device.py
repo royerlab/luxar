@@ -39,11 +39,13 @@ def resolve_torch_device(
 ) -> torch.device:
     """Resolve an explicit or auto-selected PyTorch device.
 
-    Explicit ``device`` values always win. When ``device`` is ``None``, CUDA is
-    preferred over MPS/Metal, and both accelerator classes honor their
-    corresponding opt-in flags before falling back to CPU.
+    Explicit device names always win except ``"auto"``, which is equivalent to
+    ``None``. Auto-selection prefers CUDA over MPS/Metal, and both accelerator
+    classes honor their corresponding opt-in flags before falling back to CPU.
     """
-    if device is not None:
+    if device is not None and not (
+        isinstance(device, str) and device.strip().lower() == "auto"
+    ):
         return torch.device(device)
 
     if use_cuda and torch.cuda.is_available():
