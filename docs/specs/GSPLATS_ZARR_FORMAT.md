@@ -320,15 +320,17 @@ present:
 ```
 
 The arrays MUST be finite, ordered (`min[i] <= max[i]`), and have the same
-length and axis order as `position_bounds`. This is a producer-chosen robust
-extent — for example percentile bounds that exclude a sparse tail — and affects
-only the selector metric. Frustum gating, eviction, root framing, clipping, and
-scene ranges continue to use the complete `position_bounds`, so excluded
-outliers remain part of the drawable geometry. A missing or malformed
-`lod_bounds` falls back to that child's `position_bounds`; producers SHOULD
-stamp every child in a ladder when they intend one consistent robust extent.
-This optional metadata is backward-compatible and does not change the v3.4
-format version.
+length and axis order as `position_bounds`; they SHOULD be contained within
+that complete bound. This is a producer-chosen robust extent — for example
+percentile bounds that exclude a sparse tail — and affects only the selector
+metric. Frustum gating, eviction, root framing, clipping, and scene ranges
+continue to use the complete `position_bounds`, so excluded outliers remain
+part of the drawable geometry. A missing or malformed `lod_bounds` falls back
+to that child's `position_bounds`; producers SHOULD stamp every child in a
+ladder when they intend one consistent robust extent. Any operation that
+decimates, culls, or filters a child MUST recompute or remove its `lod_bounds`.
+Producer-side authoring policy is tracked in #1655. This optional metadata is
+backward-compatible and does not change the v3.4 format version.
 
 Under the legacy `selector: "coverage"`
 (older stores; never written for derived ladders since v3.4) the thresholds
