@@ -22,7 +22,7 @@ from typing import (
 import numpy as np
 from arbol import aprint
 
-from ....typing_utils.constants import DEFAULT_POINT_RADIUS, DERIVED_LOD_SELECTOR
+from ....typing_utils.constants import DEFAULT_POINT_RADIUS
 from ...points import Points
 from ..auto_partition import resolve_auto_partition
 from ..compositing import (
@@ -40,7 +40,7 @@ from ..compositing import (
     validate_points_channels_before_split,
 )
 from ..dim_order import apply_dim_order_positions
-from ..partition import reject_mismatched_partition_parent
+from ..partition import is_requested, reject_mismatched_partition_parent
 
 if TYPE_CHECKING:
     from ...node import Node
@@ -200,8 +200,8 @@ def add_points_impl(
         # point lifted to an isotropic Gaussian, then reduced by the gsplat
         # substitutive pipeline) under a kind=lod Group whose finest child is the
         # original Points node. Fires BEFORE (auto-)partition so substitutive
-        # takes precedence over the opt-in auto-partition heuristic; explicit
-        # An explicit partition= composes as an overview: the coarse levels stay
+        # takes precedence over the opt-in auto-partition heuristic. An explicit
+        # partition= composes as an overview: the coarse levels stay
         # global and the finest child becomes a spatial partition. Auto-partition
         # remains lower precedence, so enabling the compiler heuristic does not
         # silently change an ordinary substitutive ladder's topology.
@@ -213,7 +213,7 @@ def add_points_impl(
             substitutive_spec = resolve_substitutive_axis_points(substitutive_lod)
             if substitutive_spec is not None:
                 fine_partition = None
-                if partition is not None and partition is not False:
+                if is_requested(partition):
                     fine_partition = _resolve_points_partition(
                         pos_arr, partition, name, image_labels
                     )
@@ -752,7 +752,8 @@ def add_points_substitutive_lod_wrapper_impl(
     :func:`luxar.gsplats.lift.lift_points_to_gsplats`), the gsplat substitutive
     pipeline (:func:`luxar.gsplats.make_substitutive_lod`) synthesises
     fewer-but-larger representative levels, and those become the coarse children
-    of a ``kind=lod`` Group whose **finest** child is the original Points node.
+    of a ``kind=lod`` Group whose **finest** child is the original Points node,
+    or ``fine_partition`` for the overview topology.
     Coarse-level amplitudes are per-bin mass-preserving and rescaled to conserve
     render-light (``sum a·σ³``) so brightness is stable across the LOD seam (no
     zoom-out dimming); a ``max_aspect`` anisotropy cap (default 3) keeps merged
@@ -865,16 +866,21 @@ def add_points_substitutive_lod_wrapper_impl(
         max_aspect=spec.get("max_aspect", 3.0),
     )
 
-    # Degenerate input -> flat Points node rather than a one-child LOD group.
+    # Degenerate input -> finest Points shape rather than a one-child LOD group.
     # Covers BOTH no coarse levels AND an all-zero-radius cloud (the lift yields
     # 0 splats, so every coarse level is empty: coarse[-1] is the coarsest, and
     # writing a 0-element coarsest gsplat child would crash downstream). Mirrors
     # the lines.py degenerate guard. ``pos_arr`` is already dim_order-transformed,
     # so dim_order/fill are None and partition is disabled.
     if not coarse or int(coarse[-1].n_splats) == 0:
+        fallback = (
+            "partitioned Points branch"
+            if fine_partition is not None
+            else "flat Points node"
+        )
         aprint(
             f"  ⚠ substitutive_lod '{name}': input too small to synthesise coarse "
-            "levels; writing a flat Points node."
+            f"levels; writing the {fallback}."
         )
         if fine_partition is not None:
             max_elements, parts = fine_partition
@@ -931,23 +937,17 @@ def add_points_substitutive_lod_wrapper_impl(
     # screen-area halving ladder is derived — re-anchored at fills-screen when the
     # insertion point is partition-bound or the finest child is the partitioned
     # branch of an overview topology.
-    explicit_coverage = spec.get("coverage_fractions")
-    if fine_partition is not None and explicit_coverage is None:
-        from ..lod.group import partitioned_coverage_fractions
-
-        coverage_vals = partitioned_coverage_fractions(counts)
-        lod_selector = DERIVED_LOD_SELECTOR
-    else:
-        coverage_vals, lod_selector = resolve_lod_ladder(
-            explicit_coverage,
-            counts,
-            parent_node,
-            name=name,
-            length_error=lambda n_explicit, n_levels: (
-                f"coverage_fractions has {n_explicit} entries but the LOD ladder "
-                f"has {n_levels} levels ({len(coarse_first)} gsplat + 1 finest)"
-            ),
-        )
+    coverage_vals, lod_selector = resolve_lod_ladder(
+        spec.get("coverage_fractions"),
+        counts,
+        parent_node,
+        name=name,
+        partition_bound=fine_partition is not None,
+        length_error=lambda n_explicit, n_levels: (
+            f"coverage_fractions has {n_explicit} entries but the LOD ladder "
+            f"has {n_levels} levels ({len(coarse_first)} gsplat + 1 finest)"
+        ),
+    )
 
     # Compositing attrs ride on the kind=lod Group; everything else (colormap,
     # truncation_radius, ...) rides onto each child.
@@ -1006,12 +1006,7 @@ def add_points_substitutive_lod_wrapper_impl(
             parent=lod_group_node,
             extend_to_all=extend_to_all,
             max_elements=max_elements,
-            additive_lod=level_additive_lod(
-                composed_additive,
-                level_n=n_points,
-                compression_factor=compression_factor,
-                is_coarsest=False,
-            ),
+            additive_lod=composed_additive,
             wrapper_coverage_fraction=coverage_vals[-1],
             **child_attrs,
         )

@@ -485,7 +485,11 @@ def is_partition_bound(node: "Node") -> bool:
 
 
 def derive_coverage_fractions(
-    element_counts: list[int], insertion_point: "Node", *, name: str
+    element_counts: list[int],
+    insertion_point: "Node",
+    *,
+    name: str,
+    partition_bound: bool = False,
 ) -> list[float]:
     """Pick the right anchor for an auto-derived ladder, from where it is going.
 
@@ -497,33 +501,50 @@ def derive_coverage_fractions(
       :func:`is_partition_bound`) → :func:`partitioned_coverage_fractions`, the
       fills-screen anchor, because this ladder switches on ONE TILE's projected
       size, which is intrinsically a fraction of the whole object's;
+    * ``partition_bound=True`` → the same fills-screen anchor for an overview
+      ladder whose finest child is a verified multi-part partition. Here the
+      group's bbox is the whole object, so the reason is the overview contract:
+      keep the global coarse cap at the opening framing and reveal fine parts on
+      zoom, rather than geometry;
     * otherwise → :func:`coverage_fractions`, the whole-object anchor.
 
-    The adders reject ``partition=`` together with ``substitutive_lod=``, so the
-    partition-bound shape only ever arrives hand-built: a caller creates the
+    The ancestor-bound shape is hand-built: a caller creates the
     ``kind=partition`` wrapper itself and calls the adder once per part (what
-    ``demos/demo_biodiversity_planetary_scale.py`` does). That is worth one log
-    line rather than a silent anchor switch, so the partition-bound case reports
-    which anchor it chose.
+    ``demos/demo_biodiversity_planetary_scale.py`` does). The explicit flag is
+    used by ``add_points(partition=..., substitutive_lod=...)`` after it verifies
+    that the partition has at least two parts. Both switches are worth one log
+    line rather than a silent anchor change.
 
     Args:
         element_counts: One entry per level, coarsest→finest (same contract as
             :func:`coverage_fractions`).
         insertion_point: The node the ``kind=lod`` group is being added to.
         name: The lod group's name, for the log line.
+        partition_bound: Whether the finest child is a verified multi-part
+            partition even though ``insertion_point`` has no partition ancestor.
 
     Returns:
         The derived ladder, on whichever anchor the insertion point implies.
     """
-    if not is_partition_bound(insertion_point):
+    ancestor_bound = is_partition_bound(insertion_point)
+    if not partition_bound and not ancestor_bound:
         return coverage_fractions(element_counts)
     fractions = partitioned_coverage_fractions(element_counts)
+    if partition_bound:
+        reason = (
+            "verified partitioned finest child — anchoring this overview ladder "
+            "at fills-screen so the global coarse cap remains at the opening framing"
+        )
+    else:
+        reason = (
+            "kind=partition ancestor detected — anchoring this per-tile ladder at "
+            "fills-screen since a tile's projected size is only a fraction of the "
+            "whole object's"
+        )
     aprint(
-        f"  🧩 Substitutive-LOD '{name}': kind=partition ancestor detected — "
-        "anchoring this per-tile ladder at fills-screen (finest "
-        f"coverage_fraction={fractions[-1]:.1f} of the screen area, not "
-        f"{WHOLE_OBJECT_FINEST_ANCHOR:.1f}), since a tile's projected size is "
-        "only a fraction of the whole object's."
+        f"  🧩 Substitutive-LOD '{name}': {reason} (finest coverage_fraction="
+        f"{fractions[-1]:.1f} of the screen area, not "
+        f"{WHOLE_OBJECT_FINEST_ANCHOR:.1f})."
     )
     return fractions
 
@@ -534,6 +555,7 @@ def resolve_lod_ladder(
     insertion_point: "Node",
     *,
     name: str,
+    partition_bound: bool = False,
     length_error: Callable[[int, int], str],
 ) -> tuple[list[float], str]:
     """Decide a lod group's thresholds AND the selector that describes them.
@@ -597,6 +619,8 @@ def resolve_lod_ladder(
             anchor choice for a derived ladder — see
             :func:`derive_coverage_fractions`).
         name: The lod group's name, for the derivation's log line.
+        partition_bound: Forwarded to :func:`derive_coverage_fractions` when the
+            ladder is bound to a verified partition without a partition ancestor.
         length_error: ``(n_explicit, n_levels) -> message`` for the
             length-mismatch ``ValueError``. A callback because each geometry
             words that message in its own terms (how many of its levels are
@@ -616,7 +640,12 @@ def resolve_lod_ladder(
             raise ValueError(length_error(len(explicit), len(element_counts)))
         return list(explicit), LEGACY_LOD_SELECTOR
     return (
-        derive_coverage_fractions(element_counts, insertion_point, name=name),
+        derive_coverage_fractions(
+            element_counts,
+            insertion_point,
+            name=name,
+            partition_bound=partition_bound,
+        ),
         DERIVED_LOD_SELECTOR,
     )
 

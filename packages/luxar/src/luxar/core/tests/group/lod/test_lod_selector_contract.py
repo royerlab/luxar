@@ -80,6 +80,7 @@ GEOMETRIES = ("points", "lines", "gsplats", "mesh")
 #: hand-built two-part ``kind=partition`` (tile anchor), or with an explicit
 #: legacy list.
 VARIANTS = ("derived", "partition", "explicit")
+POINTS_COMBINED_VARIANT = "combined"
 
 
 # ────────────────────────────────────────────────────────────────────────
@@ -415,6 +416,19 @@ def ladders(tmp_path_factory) -> Dict[Tuple[str, str], Tuple[Any, List[float]]]:
                 "a fixture its coarsener can actually reduce — for mesh that "
                 "means enough subdivisions in _octahedron_sphere."
             )
+    combined_store = root / "points_combined.luxar.zarr"
+    with LuxarZarrCompiler(combined_store) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        positions = np.random.default_rng(0).normal(0, 20, (400, 3)).astype(np.float32)
+        scene.add_points(
+            "points",
+            positions,
+            radii=0.5,
+            partition={"max_elements": 100},
+            substitutive_lod=dict(levels=1, device="cpu", seed=0),
+            additive_lod=False,
+        )
+    out[("points", POINTS_COMBINED_VARIANT)] = _read_ladder(combined_store, "points")
     return out
 
 
@@ -443,6 +457,17 @@ def test_a_partition_bound_derived_ladder_still_stamps_screen_area(
     assert selector == DERIVED_LOD_SELECTOR, (
         f"{geometry}: a partition-bound derived ladder is still screen-area, "
         f"got {selector!r} over thresholds {thresholds}"
+    )
+
+
+def test_points_combined_spelling_routes_selector_with_thresholds(ladders) -> None:
+    selector, thresholds = ladders[("points", POINTS_COMBINED_VARIANT)]
+    assert selector == DERIVED_LOD_SELECTOR
+    assert_selector_describes_thresholds(
+        selector,
+        thresholds,
+        partition_bound=True,
+        where="points/combined",
     )
 
 

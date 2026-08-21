@@ -903,6 +903,35 @@ class TestSubstitutiveLodGuards:
         assert sum(int(fine[name].attrs["n_points"]) for name in part_names) == len(pos)
         assert all(fine[name].attrs["type"] == "points" for name in part_names)
 
+    def test_overview_fine_parts_keep_streaming_ladders(self, tmp_path) -> None:
+        """Each fine part sizes its additive ladder from its own point count."""
+        out = tmp_path / "t.luxar.zarr"
+        pos = np.random.RandomState(0).uniform(0, 40, (1200, 3)).astype(np.float32)
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_points(
+                "pts",
+                pos,
+                radii=1.0,
+                partition={"max_elements": 200},
+                substitutive_lod={
+                    "compression_factor": 4,
+                    "levels": 1,
+                    "method": "kmeans_lloyd",
+                    "device": "cpu",
+                    "seed": 0,
+                },
+                additive_lod={"method": "random", "counts": "stream:100", "seed": 0},
+            )
+
+        fine = zarr.open(str(out), mode="r")["pts/child_1"]
+        part_names = list(fine.keys())
+        assert len(part_names) > 1
+        assert all(
+            int(fine[name].attrs.get("n_additive_sublods", 1)) > 1
+            for name in part_names
+        )
+
     def test_one_part_combination_falls_back_to_whole_object_lod(
         self, tmp_path
     ) -> None:
@@ -1066,6 +1095,34 @@ class TestSubstitutiveLodGuards:
         grp = zarr.open(str(out), mode="r")["pts"]
         assert grp.attrs.get("kind") != "lod"  # flat fallback, not a 1-child LOD
         assert grp.attrs.get("type") == "points"
+
+    def test_all_zero_radius_overview_falls_back_to_partition(self, tmp_path) -> None:
+        out = tmp_path / "t.luxar.zarr"
+        pos = np.random.RandomState(0).normal(0, 20, (600, 3)).astype(np.float32)
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_points(
+                "pts",
+                pos,
+                radii=0.0,
+                partition={"max_elements": 200},
+                substitutive_lod=dict(levels=2, device="cpu", seed=0),
+                additive_lod=False,
+                opacity=0.5,
+            )
+
+        wrapper = zarr.open(str(out), mode="r")["pts"]
+        part_names = list(wrapper.keys())
+        assert wrapper.attrs["kind"] == "partition"
+        assert wrapper.attrs["opacity"] == pytest.approx(0.5)
+        assert len(part_names) > 1
+        assert sum(int(wrapper[name].attrs["n_points"]) for name in part_names) == len(
+            pos
+        )
+        assert all(
+            float(wrapper[name].attrs.get("opacity", 1.0)) == pytest.approx(1.0)
+            for name in part_names
+        )
 
     def test_tiny_input_builds_valid_group_without_crashing(self, tmp_path) -> None:
         # Very small N still reduces (each coarse level may be 1 splat); the
