@@ -84,18 +84,18 @@ describe('decode: quantized functions', () => {
     {
       label: 'u8',
       decode: decode_quantized_u8 as never,
-      data: new Uint8Array([0, 1, 9, 128, 255]),
+      data: new Uint8Array([0, 1, 9, 25, 128, 255]),
       lo: -9860308715.14231,
       hi: 33712563323.788345,
-      expectedBits: [0xd012ee18, 0xd0106243, 0xcff80734, 0x5032fc7a, 0x50fb2d9c],
+      expectedBits: [0xd012ee18, 0xd0106243, 0xcff80734, 0xcfa68c8f, 0x5032fc7a, 0x50fb2d9c],
     },
     {
       label: 'u16',
       decode: decode_quantized_u16 as never,
-      data: new Uint16Array([0, 1, 32768, 65535]),
+      data: new Uint16Array([0, 1, 39, 32768, 65535]),
       lo: 2.6769986296248494e-5,
       hi: 6.059071789834555,
-      expectedBits: [0x37e0901c, 0x38fa087c, 0x4041e4e5, 0x40c1e3eb],
+      expectedBits: [0x37e0901c, 0x38fa087c, 0x3b6e0f8f, 0x4041e4e5, 0x40c1e3eb],
     },
   ])('linear quantization: $label exact f32 golden', ({ decode, data, lo, hi, expectedBits }) => {
     const output = new Float32Array(data.length);
