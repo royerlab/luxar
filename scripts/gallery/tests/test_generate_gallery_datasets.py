@@ -297,14 +297,18 @@ def test_one_missing_file_in_a_git_lfs_cache_is_enough_to_demote(
     assert "failed" not in out
 
 
+@pytest.mark.parametrize(
+    "state, expected_code, expected_bucket",
+    [("pointer", 0, "manual-data"), ("payload", 1, "failed")],
+)
 def test_a_git_lfs_manifest_without_dir_uses_the_cache_key(
-    tmp_path, monkeypatch, capsys
+    tmp_path, monkeypatch, capsys, state, expected_code, expected_bucket
 ) -> None:
     calls = _setup(
         tmp_path,
         monkeypatch,
         [("needs_input_lfs", "git-lfs", "fail")],
-        lfs_states={"needs_input_lfs": "pointer"},
+        lfs_states={"needs_input_lfs": state},
     )
     manifest = json.loads(gen.DATA_MANIFEST.read_text())
     del manifest["datasets"]["needs_input_lfs"]["dir"]
@@ -314,9 +318,10 @@ def test_a_git_lfs_manifest_without_dir_uses_the_cache_key(
     out = capsys.readouterr().out
 
     assert calls == ["demo_needs_input_lfs.py"]
-    assert code == 0
-    assert "manual-data" in out
-    assert "failed" not in out
+    assert code == expected_code
+    assert expected_bucket in out
+    other_bucket = ({"manual-data", "failed"} - {expected_bucket}).pop()
+    assert other_bucket not in out
 
 
 @pytest.mark.parametrize(
