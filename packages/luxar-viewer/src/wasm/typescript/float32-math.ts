@@ -27,10 +27,6 @@ function bitsToFloat(bits: number): number {
   return floatBitsView.getFloat32(0, true);
 }
 
-const TWO_POW_127 = bitsToFloat(0x7f000000);
-const TWO_POW_NEG_102 = bitsToFloat(0x0c800000);
-const TWO_POW_25 = bitsToFloat(0x4c000000);
-
 function scalbnf(value: number, exponent: number): number {
   let scaled = value;
   let remaining = exponent;
@@ -52,6 +48,9 @@ function scalbnf(value: number, exponent: number): number {
   return Math.fround(scaled * bitsToFloat((127 + remaining) << 23));
 }
 
+const TWO_POW_127 = bitsToFloat(0x7f000000);
+const TWO_POW_NEG_102 = bitsToFloat(0x0c800000);
+const TWO_POW_25 = bitsToFloat(0x4c000000);
 const EXP_LN2_HI = bitsToFloat(0x3f317200);
 const EXP_LN2_LO = bitsToFloat(0x35bfbe8e);
 const EXP_INV_LN2 = bitsToFloat(0x3fb8aa3b);
