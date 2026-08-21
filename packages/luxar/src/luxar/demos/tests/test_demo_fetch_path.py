@@ -810,7 +810,7 @@ def local_fit_violations(source: str, datasets: dict) -> list[str]:
 
 
 #: Demos whose local-artifact writes this analysis cannot vouch for, with the
-#: reason. Empty, and held empty by
+#: reason. Enumerated, and held exact by
 #: :func:`test_the_unanalysable_demo_list_is_exactly_right` — "the gate could not
 #: see this file" is an enumerated state, not a silent pass.
 _ANALYSIS_BLIND_SPOTS: dict[str, str] = {
