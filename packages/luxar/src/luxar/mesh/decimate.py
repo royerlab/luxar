@@ -65,8 +65,9 @@ import numpy as np
 from arbol import aprint
 from numpy.typing import NDArray
 
-# Worst-case 3-level K=4 open-annulus ladder: 300 vertices takes 1.83 s.
-QEM_AUTO_VERTEX_LIMIT = 300
+# Worst-case 3-level K=4 open-annulus ladder: 9,882 vertices takes 42.0 s;
+# 19,866 takes 119.1 s. Keep the automatic tier below the one-minute boundary.
+QEM_AUTO_VERTEX_LIMIT = 10_000
 DECIMATION_METHODS = frozenset({"cluster", "qem"})
 
 

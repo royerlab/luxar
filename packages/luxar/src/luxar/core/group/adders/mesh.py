@@ -1189,6 +1189,7 @@ def add_mesh_substitutive_lod_wrapper_impl(
     """
     from ....io._compiler.geometry_writers.mesh import validate_mesh_arrays
     from ....mesh.decimate import decimate, resolve_decimation_method
+    from ....mesh.qem import decimate_qem_ladder
     from ..lod.group import resolve_coarsen_dims, resolve_lod_ladder
 
     # Fail-fast pre-write gate, part two: the ARRAYS, run BEFORE any decimation
@@ -1284,25 +1285,41 @@ def add_mesh_substitutive_lod_wrapper_impl(
     method = resolve_decimation_method(
         spec["method"], n_vertices, spatial_ndim=len(spatial_dims)
     )
-    coarse: List[Any] = []
-    previous = 0
-    for power in range(levels, 0, -1):
-        target = n_vertices // (compression_factor**power)
-        if target < 4:
-            continue
-        level = decimate(
+    targets = [
+        n_vertices // (compression_factor**power)
+        for power in range(levels, 0, -1)
+        if n_vertices // (compression_factor**power) >= 4
+    ]
+    if method == "qem":
+        candidates = decimate_qem_ladder(
             vert_arr,
             faces_arr.reshape(-1, 3).astype(np.uint32),
-            target_vertices=target,
-            method=method,
+            target_vertices=targets,
             normals=normals if normals is not None else None,
-            # The normal FRAME, which is not the coarsening axes — a grid may merge
-            # over any number of dims while a normal always lives in exactly three.
             normal_dims=tuple(normal_dims) if normal_dims is not None else None,
             colors=per_vertex_colors,
             scalars=per_vertex_scalars,
             spatial_dims=spatial_dims,
         )
+    else:
+        candidates = [
+            decimate(
+                vert_arr,
+                faces_arr.reshape(-1, 3).astype(np.uint32),
+                target_vertices=target,
+                method=method,
+                normals=normals if normals is not None else None,
+                normal_dims=tuple(normal_dims) if normal_dims is not None else None,
+                colors=per_vertex_colors,
+                scalars=per_vertex_scalars,
+                spatial_dims=spatial_dims,
+            )
+            for target in targets
+        ]
+
+    coarse: List[Any] = []
+    previous = 0
+    for level in candidates:
         count = int(level.vertices.shape[0])
         # Strictly between the previous (coarser) level and the original, or it
         # adds nothing: a duplicate would still be handed its own halving of

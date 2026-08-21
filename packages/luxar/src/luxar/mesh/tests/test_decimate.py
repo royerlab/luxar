@@ -12,13 +12,14 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from .. import qem
 from ..decimate import (
     QEM_AUTO_VERTEX_LIMIT,
     decimate,
     decimate_cluster,
     resolve_decimation_method,
 )
-from ..qem import _face_quadrics, decimate_qem
+from ..qem import _edge_target, _face_quadrics, decimate_qem, decimate_qem_ladder
 
 
 def octasphere(subdivisions: int = 4) -> tuple[np.ndarray, np.ndarray]:
@@ -439,6 +440,50 @@ def test_the_cell_search_is_robust_to_non_monotone_cluster_counts() -> None:
 
 
 class TestDecimateQEM:
+    def test_a_ladder_reuses_one_collapse_sequence(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        vertices, faces = octasphere(4)
+        build_heap = qem._build_heap
+        heap_builds = 0
+
+        def counted_build_heap(*args: object, **kwargs: object) -> object:
+            nonlocal heap_builds
+            heap_builds += 1
+            return build_heap(*args, **kwargs)
+
+        monkeypatch.setattr(qem, "_build_heap", counted_build_heap)
+
+        levels = decimate_qem_ladder(vertices, faces, target_vertices=[40, 120, 400])
+
+        assert heap_builds == 1
+        assert [len(level.vertices) for level in levels] == [40, 120, 400]
+        for level in levels:
+            edges, boundary, nonmanifold = edge_audit(len(level.vertices), level.faces)
+            assert len(level.vertices) - edges + len(level.faces) == 2
+            assert boundary == 0
+            assert nonmanifold == 0
+
+    def test_edge_target_does_not_run_an_svd_per_candidate(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        positions = np.array([[0.0, 0.0, 0.0], [2.0, 0.0, 0.0]])
+        quadrics = np.zeros((2, 4, 4), dtype=np.float64)
+        quadrics[:, :3, :3] = np.eye(3)
+        quadrics[0, :3, 3] = quadrics[0, 3, :3] = [-0.25, 0.0, 0.0]
+        quadrics[1, :3, 3] = quadrics[1, 3, :3] = [-0.75, 0.0, 0.0]
+
+        def reject_svd(*args: object, **kwargs: object) -> None:
+            raise AssertionError(
+                "the per-edge target path must not compute matrix rank"
+            )
+
+        monkeypatch.setattr(np.linalg, "matrix_rank", reject_svd)
+
+        _, target = _edge_target(0, 1, positions, quadrics)
+
+        np.testing.assert_allclose(target, [0.5, 0.0, 0.0])
+
     def test_an_at_target_mesh_is_returned_unchanged(self) -> None:
         vertices, faces = octasphere(1)
         result = decimate_qem(vertices, faces, target_vertices=len(vertices))
@@ -562,9 +607,7 @@ class TestDecimateQEM:
 
     def test_distant_component_does_not_zero_local_face_quadrics(self) -> None:
         vertices, faces = octasphere(2)
-        far = np.array(
-            [[1e9, 0, 0], [1e9 + 1, 0, 0], [1e9, 1, 0]], dtype=np.float64
-        )
+        far = np.array([[1e9, 0, 0], [1e9 + 1, 0, 0], [1e9, 1, 0]], dtype=np.float64)
         positions = np.concatenate([vertices.astype(np.float64), far])
         all_faces = np.concatenate(
             [faces, np.array([[len(vertices), len(vertices) + 1, len(vertices) + 2]])]
@@ -587,7 +630,9 @@ class TestDecimateQEM:
         )
         groups, counts = np.unique(result.vertices[:, 0], return_counts=True)
 
-        assert len(result.vertices) < len(vertices), "collapses must happen within groups"
+        assert len(result.vertices) < len(vertices), (
+            "collapses must happen within groups"
+        )
         assert groups.tolist() == [0.0, 1.0], "barrier values must not blend"
         assert np.all(counts > 10), "each barrier group must keep its own surface"
         assert result.scalars is not None

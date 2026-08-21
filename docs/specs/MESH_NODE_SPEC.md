@@ -1615,8 +1615,10 @@ nothing.
 
 The producer is `luxar.mesh.decimate`: vectorized vertex clustering for very large
 surfaces, or Garland-Heckbert QEM edge collapse with a link-condition veto when
-manifoldness must survive. `method="auto"` selects QEM through 300 vertices and
-clustering above that measured worst-case open-surface envelope. On an open near-planar
+manifoldness must survive. `method="auto"` selects QEM through 10,000 vertices and
+clustering above that measured worst-case open-surface envelope. QEM ladders reuse one
+collapse sequence and snapshot each requested level rather than restarting from the
+original mesh. On an open near-planar
 surface the orientation veto can stop well above the requested count and therefore
 shorten the ladder; `cluster` is the tier to use when closely hitting the count matters
 more than topology preservation. A QEM quadric also requires a

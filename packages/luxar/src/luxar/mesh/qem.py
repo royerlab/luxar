@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import heapq
-from typing import Any
+from typing import Any, NamedTuple, Sequence
 
 import numpy as np
 from numpy.typing import NDArray
@@ -35,9 +35,11 @@ def _face_quadrics(positions: NDArray[np.float64]) -> NDArray[np.float64]:
         edge2 = positions[:, 2] - positions[:, 0]
         normal = np.cross(edge1, edge2)
         length = np.linalg.norm(normal, axis=1)
-        valid = length > (
-            np.linalg.norm(edge1, axis=1) * np.linalg.norm(edge2, axis=1)
-        ) * _RELATIVE_GEOMETRY_TOLERANCE
+        valid = (
+            length
+            > (np.linalg.norm(edge1, axis=1) * np.linalg.norm(edge2, axis=1))
+            * _RELATIVE_GEOMETRY_TOLERANCE
+        )
         normal[valid] /= length[valid, None]
         plane = np.concatenate(
             [normal, -np.einsum("ij,ij->i", normal, positions[:, 0])[:, None]], axis=1
@@ -121,17 +123,51 @@ def _edge_target(
     matrix = quadric[:-1, :-1]
     rhs = -quadric[:-1, -1]
     candidates = [positions[u], positions[v], 0.5 * (positions[u] + positions[v])]
-    if np.linalg.matrix_rank(matrix, tol=1e-12) == matrix.shape[0]:
-        solved = np.linalg.solve(matrix, rhs)
+    solved = _solve_system(matrix, rhs)
+    if solved is not None:
         if np.isfinite(solved).all():
             candidates.append(solved)
-    homogeneous = np.concatenate(
-        [np.asarray(candidates), np.ones((len(candidates), 1), dtype=np.float64)],
-        axis=1,
+    costs = [_quadric_cost(candidate, quadric) for candidate in candidates]
+    best = min(range(len(costs)), key=costs.__getitem__)
+    return max(costs[best], 0.0), np.asarray(candidates[best]).copy()
+
+
+def _solve_system(
+    matrix: NDArray[np.float64], rhs: NDArray[np.float64]
+) -> NDArray[np.float64] | None:
+    """Solve the common 3x3 QEM system without a small-array LAPACK call."""
+    if matrix.shape != (3, 3):
+        try:
+            return np.linalg.solve(matrix, rhs)
+        except np.linalg.LinAlgError:
+            return None
+    a, b, c = matrix[0]
+    d, e, f = matrix[1]
+    g, h, i = matrix[2]
+    cofactor00 = e * i - f * h
+    cofactor01 = f * g - d * i
+    cofactor02 = d * h - e * g
+    determinant = a * cofactor00 + b * cofactor01 + c * cofactor02
+    scale = float(np.max(np.abs(matrix)))
+    if scale == 0.0 or abs(determinant) <= np.finfo(np.float64).eps * scale**3:
+        return None
+    inverse = np.array(
+        [
+            [cofactor00, c * h - b * i, b * f - c * e],
+            [cofactor01, a * i - c * g, c * d - a * f],
+            [cofactor02, b * g - a * h, a * e - b * d],
+        ]
     )
-    costs = np.einsum("ni,ij,nj->n", homogeneous, quadric, homogeneous)
-    best = int(np.argmin(costs))
-    return max(float(costs[best]), 0.0), np.asarray(candidates[best]).copy()
+    return inverse @ rhs / determinant
+
+
+def _quadric_cost(position: NDArray[np.float64], quadric: NDArray[np.float64]) -> float:
+    """Evaluate a homogeneous QEM quadric without allocating the trailing one."""
+    matrix = quadric[:-1, :-1]
+    linear = quadric[:-1, -1]
+    return float(
+        position @ matrix @ position + 2.0 * linear @ position + quadric[-1, -1]
+    )
 
 
 def _edge_cost(
@@ -142,40 +178,24 @@ def _edge_cost(
 ) -> float:
     """Cheap heap-ordering cost evaluated at the edge midpoint."""
     midpoint = 0.5 * (positions[u] + positions[v])
-    homogeneous = np.append(midpoint, 1.0)
-    return max(float(homogeneous @ (quadrics[u] + quadrics[v]) @ homogeneous), 0.0)
+    return max(_quadric_cost(midpoint, quadrics[u] + quadrics[v]), 0.0)
 
 
-def _edge_faces(
-    u: int, v: int, vertex_faces: list[set[int]], active_faces: NDArray[np.bool_]
-) -> set[int]:
+def _edge_faces(u: int, v: int, vertex_faces: list[set[int]]) -> set[int]:
     """Active triangles incident to both endpoints of an edge."""
-    return {index for index in vertex_faces[u] & vertex_faces[v] if active_faces[index]}
-
-
-def _boundary_vertex(
-    vertex: int,
-    neighbors: list[set[int]],
-    vertex_faces: list[set[int]],
-    active_faces: NDArray[np.bool_],
-) -> bool:
-    """Whether any active incident edge belongs to only one triangle."""
-    return any(
-        len(_edge_faces(vertex, other, vertex_faces, active_faces)) == 1
-        for other in neighbors[vertex]
-    )
+    return vertex_faces[u] & vertex_faces[v]
 
 
 def _link_condition(
     u: int,
     v: int,
     faces: NDArray[np.int64],
-    active_faces: NDArray[np.bool_],
     neighbors: list[set[int]],
     vertex_faces: list[set[int]],
+    boundary_vertices: NDArray[np.bool_],
 ) -> bool:
     """Veto collapses that change manifold topology or cross a boundary."""
-    incident = _edge_faces(u, v, vertex_faces, active_faces)
+    incident = _edge_faces(u, v, vertex_faces)
     if len(incident) not in (1, 2):
         return False
     opposite = {
@@ -186,19 +206,14 @@ def _link_condition(
     }
     if (neighbors[u] - {v}) & (neighbors[v] - {u}) != opposite:
         return False
-    endpoint_faces = {
-        index for index in vertex_faces[u] | vertex_faces[v] if active_faces[index]
-    }
+    endpoint_faces = vertex_faces[u] | vertex_faces[v]
     if endpoint_faces == incident:
         return False
-    if any(
-        {index for index in vertex_faces[vertex] if active_faces[index]} <= incident
-        for vertex in opposite
-    ):
+    if any(vertex_faces[vertex] <= incident for vertex in opposite):
         return False
 
-    boundary_u = _boundary_vertex(u, neighbors, vertex_faces, active_faces)
-    boundary_v = _boundary_vertex(v, neighbors, vertex_faces, active_faces)
+    boundary_u = bool(boundary_vertices[u])
+    boundary_v = bool(boundary_vertices[v])
     if boundary_u or boundary_v:
         return len(incident) == 1 and boundary_u and boundary_v
     if len(neighbors[u] | neighbors[v] | {u, v}) == 4:
@@ -209,7 +224,6 @@ def _link_condition(
 def _rebuild_neighbors(
     vertices: set[int],
     faces: NDArray[np.int64],
-    active_faces: NDArray[np.bool_],
     neighbors: list[set[int]],
     vertex_faces: list[set[int]],
 ) -> None:
@@ -217,10 +231,23 @@ def _rebuild_neighbors(
     for vertex in vertices:
         adjacent: set[int] = set()
         for face_index in vertex_faces[vertex]:
-            if active_faces[face_index]:
-                adjacent.update(int(value) for value in faces[face_index])
+            adjacent.update(int(value) for value in faces[face_index])
         adjacent.discard(vertex)
         neighbors[vertex] = adjacent
+
+
+def _refresh_boundary_vertices(
+    vertices: set[int],
+    neighbors: list[set[int]],
+    vertex_faces: list[set[int]],
+    boundary_vertices: NDArray[np.bool_],
+) -> None:
+    """Refresh boundary membership after a local topology rewrite."""
+    for vertex in vertices:
+        boundary_vertices[vertex] = any(
+            len(_edge_faces(vertex, other, vertex_faces)) == 1
+            for other in neighbors[vertex]
+        )
 
 
 def _aggregate_attributes(
@@ -250,9 +277,16 @@ def _aggregate_attributes(
 HeapEntry = tuple[float, int, int, int, int, int]
 
 
+class _CollapseState(NamedTuple):
+    heap: list[HeapEntry]
+    serial: int
+    parent: NDArray[np.int64]
+    remaining: int
+
+
 def _build_topology(
     faces: NDArray[np.int64], n_vertices: int
-) -> tuple[list[set[int]], list[set[int]]]:
+) -> tuple[list[set[int]], list[set[int]], NDArray[np.bool_]]:
     """Build incident-face and one-ring tables for the collapse loop."""
     vertex_faces: list[set[int]] = [set() for _ in range(n_vertices)]
     neighbors: list[set[int]] = [set() for _ in range(n_vertices)]
@@ -264,7 +298,11 @@ def _build_topology(
         neighbors[a].update((b, c))
         neighbors[b].update((a, c))
         neighbors[c].update((a, b))
-    return vertex_faces, neighbors
+    boundary_vertices = np.zeros(n_vertices, dtype=bool)
+    _refresh_boundary_vertices(
+        set(range(n_vertices)), neighbors, vertex_faces, boundary_vertices
+    )
+    return vertex_faces, neighbors, boundary_vertices
 
 
 def _push_edge(
@@ -347,6 +385,7 @@ def _apply_collapse(
     parent: NDArray[np.int64],
     neighbors: list[set[int]],
     vertex_faces: list[set[int]],
+    boundary_vertices: NDArray[np.bool_],
 ) -> None:
     """Apply one accepted edge collapse and rebuild its local topology."""
     affected = neighbors[u] | neighbors[v] | {u, v}
@@ -368,7 +407,8 @@ def _apply_collapse(
     quadrics[u] += quadrics[v]
     alive[v] = False
     parent[v] = u
-    _rebuild_neighbors(affected, work_faces, active_faces, neighbors, vertex_faces)
+    _rebuild_neighbors(affected, work_faces, neighbors, vertex_faces)
+    _refresh_boundary_vertices(affected, neighbors, vertex_faces, boundary_vertices)
 
 
 def _preserves_face_orientation(
@@ -378,17 +418,14 @@ def _preserves_face_orientation(
     *,
     positions: NDArray[np.float64],
     work_faces: NDArray[np.int64],
-    active_faces: NDArray[np.bool_],
     vertex_faces: list[set[int]],
 ) -> bool:
     """Whether every surviving incident triangle keeps its orientation."""
     if positions.shape[1] != 3:
         return True
-    incident = _edge_faces(u, v, vertex_faces, active_faces)
+    incident = _edge_faces(u, v, vertex_faces)
     changed_indices = [
-        index
-        for index in vertex_faces[u] | vertex_faces[v]
-        if active_faces[index] and index not in incident
+        index for index in vertex_faces[u] | vertex_faces[v] if index not in incident
     ]
     if not changed_indices:
         return True
@@ -396,9 +433,16 @@ def _preserves_face_orientation(
     before = positions[faces]
     after = before.copy()
     after[(faces == u) | (faces == v)] = target
-    before_normal = np.cross(before[:, 1] - before[:, 0], before[:, 2] - before[:, 0])
-    after_normal = np.cross(after[:, 1] - after[:, 0], after[:, 2] - after[:, 0])
-    return bool(np.all(np.einsum("ij,ij->i", before_normal, after_normal) > 0.0))
+    before_edge1 = before[:, 1] - before[:, 0]
+    before_edge2 = before[:, 2] - before[:, 0]
+    after_edge1 = after[:, 1] - after[:, 0]
+    after_edge2 = after[:, 2] - after[:, 0]
+    orientation = np.einsum("ij,ij->i", before_edge1, after_edge1) * np.einsum(
+        "ij,ij->i", before_edge2, after_edge2
+    ) - np.einsum("ij,ij->i", before_edge1, after_edge2) * np.einsum(
+        "ij,ij->i", before_edge2, after_edge1
+    )
+    return bool(np.all(orientation > 0.0))
 
 
 def _collapse_to_target(
@@ -414,19 +458,24 @@ def _collapse_to_target(
     quadrics: NDArray[np.float64],
     vertex_faces: list[set[int]],
     neighbors: list[set[int]],
-) -> NDArray[np.int64]:
+    boundary_vertices: NDArray[np.bool_],
+    state: _CollapseState | None = None,
+) -> _CollapseState:
     """Collapse valid edges until the referenced surface reaches its target."""
-    heap, serial = _build_heap(
-        neighbors,
-        alive=alive,
-        barrier_dims=barrier_dims,
-        vertices=vertices,
-        positions=positions,
-        quadrics=quadrics,
-        versions=versions,
-    )
-    parent = np.arange(len(vertices), dtype=np.int64)
-    remaining = int(np.unique(work_faces).size)
+    if state is None:
+        heap, serial = _build_heap(
+            neighbors,
+            alive=alive,
+            barrier_dims=barrier_dims,
+            vertices=vertices,
+            positions=positions,
+            quadrics=quadrics,
+            versions=versions,
+        )
+        parent = np.arange(len(vertices), dtype=np.int64)
+        remaining = int(np.unique(work_faces).size)
+    else:
+        heap, serial, parent, remaining = state
     while remaining > target_vertices and heap:
         _, u, v, version_u, version_v, _ = heapq.heappop(heap)
         if not alive[u] or not alive[v]:
@@ -437,7 +486,9 @@ def _collapse_to_target(
             or v not in neighbors[u]
         ):
             continue
-        if not _link_condition(u, v, work_faces, active_faces, neighbors, vertex_faces):
+        if not _link_condition(
+            u, v, work_faces, neighbors, vertex_faces, boundary_vertices
+        ):
             continue
         _, target = _edge_target(u, v, positions, quadrics)
         if not _preserves_face_orientation(
@@ -446,7 +497,6 @@ def _collapse_to_target(
             target,
             positions=positions,
             work_faces=work_faces,
-            active_faces=active_faces,
             vertex_faces=vertex_faces,
         ):
             continue
@@ -462,6 +512,7 @@ def _collapse_to_target(
             parent=parent,
             neighbors=neighbors,
             vertex_faces=vertex_faces,
+            boundary_vertices=boundary_vertices,
         )
         remaining -= 1
         # Only ``u`` acquired a new position and quadric. Costs for edges between
@@ -482,7 +533,7 @@ def _collapse_to_target(
                 quadrics=quadrics,
                 versions=versions,
             )
-    return parent
+    return _CollapseState(heap, serial, parent, remaining)
 
 
 def _compact_output(
@@ -599,8 +650,10 @@ def decimate_qem(
     alive = np.ones(len(vertices), dtype=bool)
     versions = np.zeros(len(vertices), dtype=np.int64)
     quadrics = _vertex_quadrics(positions, work_faces)
-    vertex_faces, neighbors = _build_topology(work_faces, len(vertices))
-    parent = _collapse_to_target(
+    vertex_faces, neighbors, boundary_vertices = _build_topology(
+        work_faces, len(vertices)
+    )
+    state = _collapse_to_target(
         target_vertices,
         vertices=vertices,
         positions=positions,
@@ -612,6 +665,7 @@ def decimate_qem(
         quadrics=quadrics,
         vertex_faces=vertex_faces,
         neighbors=neighbors,
+        boundary_vertices=boundary_vertices,
     )
     return _compact_output(
         vertices,
@@ -620,7 +674,7 @@ def decimate_qem(
         spatial_dims=spatial_dims,
         work_faces=work_faces,
         active_faces=active_faces,
-        parent=parent,
+        parent=state.parent,
         normals=normals,
         normal_dims=normal_dims,
         colors=colors,
@@ -628,4 +682,86 @@ def decimate_qem(
     )
 
 
-__all__ = ["decimate_qem"]
+def decimate_qem_ladder(
+    vertices: NDArray[np.float32],
+    faces: NDArray[np.uint32],
+    *,
+    target_vertices: Sequence[int],
+    normals: NDArray[np.float32] | None = None,
+    normal_dims: tuple[int, ...] | None = None,
+    colors: NDArray[Any] | None = None,
+    scalars: Any = None,
+    spatial_dims: tuple[int, ...] | None = None,
+) -> list[DecimatedMesh]:
+    """Build several QEM levels from one collapse sequence.
+
+    Results follow ``target_vertices`` order. Each snapshot aggregates attributes
+    from the original vertices rather than averaging an already-coarsened level.
+    """
+    targets = [int(target) for target in target_vertices]
+    if not targets:
+        return []
+    vertices = np.ascontiguousarray(vertices, dtype=np.float32)
+    input_faces = np.ascontiguousarray(faces, dtype=np.uint32)
+    spatial_dims = _validate_decimate_inputs(
+        vertices, input_faces, min(targets), normals, normal_dims, spatial_dims
+    )
+    if len(spatial_dims) < 3:
+        raise ValueError(
+            "QEM mesh decimation requires at least 3 coarsening dimensions; "
+            f"got {len(spatial_dims)}"
+        )
+
+    positions = vertices[:, spatial_dims].astype(np.float64)
+    _require_nondegenerate_surface(positions, input_faces)
+    barrier_dims = tuple(
+        index for index in range(vertices.shape[1]) if index not in spatial_dims
+    )
+    work_faces = input_faces.astype(np.int64)
+    active_faces = np.ones(len(work_faces), dtype=bool)
+    alive = np.ones(len(vertices), dtype=bool)
+    versions = np.zeros(len(vertices), dtype=np.int64)
+    quadrics = _vertex_quadrics(positions, work_faces)
+    vertex_faces, neighbors, boundary_vertices = _build_topology(
+        work_faces, len(vertices)
+    )
+    state: _CollapseState | None = None
+    levels: dict[int, DecimatedMesh] = {}
+    for target in sorted(set(targets), reverse=True):
+        if target >= len(vertices):
+            levels[target] = DecimatedMesh(
+                vertices, input_faces, normals, colors, scalars
+            )
+            continue
+        state = _collapse_to_target(
+            target,
+            vertices=vertices,
+            positions=positions,
+            barrier_dims=barrier_dims,
+            work_faces=work_faces,
+            active_faces=active_faces,
+            alive=alive,
+            versions=versions,
+            quadrics=quadrics,
+            vertex_faces=vertex_faces,
+            neighbors=neighbors,
+            boundary_vertices=boundary_vertices,
+            state=state,
+        )
+        levels[target] = _compact_output(
+            vertices,
+            input_faces,
+            positions=positions,
+            spatial_dims=spatial_dims,
+            work_faces=work_faces,
+            active_faces=active_faces,
+            parent=state.parent,
+            normals=normals,
+            normal_dims=normal_dims,
+            colors=colors,
+            scalars=scalars,
+        )
+    return [levels[target] for target in targets]
+
+
+__all__ = ["decimate_qem", "decimate_qem_ladder"]
