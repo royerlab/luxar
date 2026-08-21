@@ -823,6 +823,7 @@ def test_decimate_recomputes_a_complete_single_rung_stamp() -> None:
             lambda gs: gs.translate(np.array([1.0, 2.0, 3.0])), id="translate"
         ),
         pytest.param(lambda gs: gs.with_colors((0.2, 0.4, 0.6)), id="with_colors"),
+        pytest.param(lambda gs: gs.scale_intensity(1.0), id="scale_intensity_noop"),
     ],
 )
 def test_content_preserving_rewrite_keeps_authored_q_e_stamps(
@@ -830,7 +831,19 @@ def test_content_preserving_rewrite_keeps_authored_q_e_stamps(
 ) -> None:
     source = _laddered()
     if n_rungs == 1:
-        source = source.flattened()
+        first_lod = source.additive_sublods[0]
+        source = GSplatData.from_substitutive_levels(
+            [
+                SubstitutiveLevel(
+                    additive_sublods=[first_lod],
+                    compression_factor=1,
+                    parent_method=None,
+                    level_index=0,
+                    stats={**_stats(), **_LEVEL_LADDER},
+                )
+            ],
+            stats=_stats(),
+        )
     out = op(source)
     assert out.substitutive_levels[0].stats == source.substitutive_levels[0].stats
     assert [lod.stats for lod in out.additive_sublods] == [
