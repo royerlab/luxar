@@ -297,8 +297,12 @@ def test_one_missing_file_in_a_git_lfs_cache_is_enough_to_demote(
     assert "failed" not in out
 
 
+@pytest.mark.parametrize(
+    "stale_record",
+    [None, {}, {"dir": "stale", "files": []}, {"dir": "stale", "files": [{}]}],
+)
 def test_an_unresolvable_git_lfs_cache_does_not_hide_a_missing_sibling(
-    tmp_path, monkeypatch, capsys
+    tmp_path, monkeypatch, capsys, stale_record
 ) -> None:
     calls = _setup(
         tmp_path,
@@ -312,6 +316,10 @@ def test_an_unresolvable_git_lfs_cache_does_not_hide_a_missing_sibling(
         "git-lfs",
         ("stale_cache_key", "needs_input_lfs"),
     )
+    if stale_record is not None:
+        manifest = json.loads(gen.DATA_MANIFEST.read_text())
+        manifest["datasets"]["stale_cache_key"] = stale_record
+        gen.DATA_MANIFEST.write_text(json.dumps(manifest))
 
     code = _run_main(monkeypatch)
     out = capsys.readouterr().out
