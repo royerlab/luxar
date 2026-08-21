@@ -221,8 +221,11 @@ It currently diagnoses a `kind=partition` whose split planes (`bsp_tree`) are
 missing, or are present but disagree with where the parts actually sit. Without
 them the viewer orders parts by centroid, which is not a valid painter's order and
 pops at the seams under `normal`/`volumetric` blending; where the parts are
-disjoint the planes are recovered exactly from the part boxes. What cannot be
-repaired is reported with a remedy rather than guessed at.
+disjoint the planes are recovered exactly from the part boxes. For overlapping
+uniform-tiled parts, doctor tolerates the measured overlap band but still catches
+planes in the wrong coordinate frame; when one per-axis factor explains every
+plane it reports and repairs that scale. What cannot be repaired is reported with
+a remedy rather than guessed at.
 
 ### Editing & selection
 

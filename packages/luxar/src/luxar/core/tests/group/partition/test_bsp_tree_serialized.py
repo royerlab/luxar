@@ -30,6 +30,7 @@ from luxar.core.group.partition import (
     prune_serialized_bsp_tree,
     reconstruct_serialized_bsp_tree,
     serialized_bsp_tree_separates,
+    serialized_bsp_tree_straddles_centers,
     spatial_bsp_tree,
 )
 
@@ -391,3 +392,36 @@ class TestReconstructAndVerify:
             {"axis": 0, "split": 50.0, "left": {"part": 0}, "right": {"part": 1}}, boxes
         )
         assert not serialized_bsp_tree_separates(None, boxes)
+
+
+class TestOverlapSoundness:
+    @staticmethod
+    def _tree(split: float) -> dict:
+        return {
+            "axis": 0,
+            "split": split,
+            "left": {"part": 0},
+            "right": {"part": 1},
+        }
+
+    @staticmethod
+    def _overlapping_boxes() -> list:
+        return [
+            (np.array([0.0, 0.0]), np.array([32.0, 10.0])),
+            (np.array([24.0, 0.0]), np.array([56.0, 10.0])),
+        ]
+
+    def test_overlap_midplane_straddles_part_centers(self) -> None:
+        assert serialized_bsp_tree_straddles_centers(
+            self._tree(28.0), self._overlapping_boxes()
+        )
+
+    def test_overlap_width_is_the_tolerance(self) -> None:
+        boxes = self._overlapping_boxes()
+        assert serialized_bsp_tree_straddles_centers(self._tree(8.0), boxes)
+        assert not serialized_bsp_tree_straddles_centers(self._tree(7.9), boxes)
+
+    def test_wrong_coordinate_frame_is_rejected(self) -> None:
+        assert not serialized_bsp_tree_straddles_centers(
+            self._tree(28.0 / 4.0), self._overlapping_boxes()
+        )

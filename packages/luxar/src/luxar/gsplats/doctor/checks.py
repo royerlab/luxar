@@ -109,6 +109,7 @@ def check_partition_split_planes(root: "zarr.Group") -> List[Finding]:
     from luxar.core.group.partition import (
         reconstruct_serialized_bsp_tree,
         serialized_bsp_tree_separates,
+        serialized_bsp_tree_straddles_centers,
     )
 
     findings: List[Finding] = []
@@ -124,10 +125,21 @@ def check_partition_split_planes(root: "zarr.Group") -> List[Finding]:
                 continue  # healthy
             rebuilt = reconstruct_serialized_bsp_tree(boxes)
             if rebuilt is None and _labels_name_the_parts(dict(stored), len(boxes)):
-                # No tree separates these parts at all, so failing the test is
-                # not evidence of staleness — it is what an approximate tree over
-                # overlapping parts always does. Leave it alone.
-                findings.append(_approximate_finding(where, len(boxes)))
+                stored_dict = dict(stored)
+                if serialized_bsp_tree_straddles_centers(stored_dict, boxes):
+                    findings.append(_approximate_finding(where, len(boxes)))
+                    continue
+                recovered = _recover_frame_scale(stored_dict, boxes)
+                if recovered is not None:
+                    repaired, factors = recovered
+                    findings.append(
+                        _misframed_finding(group, where, len(boxes), repaired, factors)
+                    )
+                    continue
+                # The overlap exception is only for a geometrically plausible
+                # approximate tree. A grosser violation is stale even though no
+                # exact replacement can be reconstructed from intersecting boxes.
+                findings.append(_stale_finding(group, where, len(boxes), None))
                 continue
             findings.append(_stale_finding(group, where, len(boxes), rebuilt))
             continue
@@ -172,6 +184,91 @@ def check_partition_split_planes(root: "zarr.Group") -> List[Finding]:
     return findings
 
 
+def _recover_frame_scale(
+    stored: Dict[str, Any], boxes: "List[Tuple[np.ndarray, np.ndarray]]"
+) -> "Optional[Tuple[Dict[str, Any], Tuple[float, ...]]]":
+    """Recover a single positive multiplier per split axis, or decline.
+
+    The known producer failures are pure coordinate-frame scales
+    (``--downscale`` and ``voxel_size``). Each node estimates its intended cut
+    from the midpoint of the two sides' measured overlap band. The median ratio
+    is only accepted when applying one factor per axis makes EVERY node pass the
+    overlap-tolerant center-straddling check; otherwise guessing would be worse
+    than the honest centroid fallback.
+    """
+    from luxar.core.group.partition import (
+        map_serialized_bsp_tree,
+        serialized_bsp_leaf_labels,
+        serialized_bsp_tree_straddles_centers,
+    )
+
+    ratios: Dict[int, List[float]] = {0: [], 1: [], 2: []}
+
+    def collect(node: Dict[str, Any]) -> bool:
+        if "part" in node:
+            return True
+        try:
+            axis = int(node["axis"])
+            split = float(node["split"])
+            left = serialized_bsp_leaf_labels(node["left"])
+            right = serialized_bsp_leaf_labels(node["right"])
+            if axis not in ratios or not np.isfinite(split) or split == 0.0:
+                return False
+            left_high = max(float(boxes[i][1][axis]) for i in left)
+            right_low = min(float(boxes[i][0][axis]) for i in right)
+            expected = 0.5 * (left_high + right_low)
+            ratio = expected / split
+        except (KeyError, TypeError, ValueError, IndexError):
+            return False
+        if not np.isfinite(ratio) or ratio <= 0.0:
+            return False
+        ratios[axis].append(ratio)
+        return collect(node["left"]) and collect(node["right"])
+
+    if not collect(stored):
+        return None
+    ndim = len(boxes[0][0])
+    factors = tuple(
+        float(np.median(ratios[axis])) if ratios.get(axis) else 1.0
+        for axis in range(ndim)
+    )
+    repaired = map_serialized_bsp_tree(stored, linear=np.diag(factors))
+    if (
+        repaired is None
+        or not _planes_cross_overlap_bands(repaired, boxes)
+        or not serialized_bsp_tree_straddles_centers(repaired, boxes)
+    ):
+        return None
+    return repaired, factors
+
+
+def _planes_cross_overlap_bands(
+    tree: Dict[str, Any], boxes: "List[Tuple[np.ndarray, np.ndarray]]"
+) -> bool:
+    """True when every split lies inside the two sides' measured shared band."""
+    from luxar.core.group.partition import serialized_bsp_leaf_labels
+
+    def walk(node: Dict[str, Any]) -> bool:
+        if "part" in node:
+            return True
+        try:
+            axis = int(node["axis"])
+            split = float(node["split"])
+            left = serialized_bsp_leaf_labels(node["left"])
+            right = serialized_bsp_leaf_labels(node["right"])
+            left_high = max(float(boxes[i][1][axis]) for i in left)
+            right_low = min(float(boxes[i][0][axis]) for i in right)
+        except (KeyError, TypeError, ValueError, IndexError):
+            return False
+        return (
+            right_low <= split <= left_high
+            and walk(node["left"])
+            and walk(node["right"])
+        )
+
+    return walk(tree)
+
+
 def _labels_name_the_parts(stored: Dict[str, Any], n_parts: int) -> bool:
     """True when a stored tree's leaves are exactly ``0..n_parts-1``, each once.
 
@@ -204,6 +301,39 @@ def _approximate_finding(where: str, n_parts: int) -> Finding:
             "Nothing to do. For an exactly-ordered partition, fit with a content "
             "plan (or non-overlapping tiles) instead."
         ),
+    )
+
+
+def _misframed_finding(
+    group: "zarr.Group",
+    where: str,
+    n_parts: int,
+    repaired: Dict[str, Any],
+    factors: Tuple[float, ...],
+) -> Finding:
+    used = ", ".join(
+        f"axis {axis} ×{factor:g}"
+        for axis, factor in enumerate(factors)
+        if not np.isclose(factor, 1.0)
+    )
+
+    def replace() -> None:
+        group.attrs["bsp_tree"] = repaired
+
+    return Finding(
+        check="split-planes",
+        severity="error",
+        path=where,
+        summary=f"split planes for {n_parts} parts use a different coordinate frame",
+        detail=(
+            "The parts overlap, but their centers do not straddle the stored "
+            "planes even after allowing the measured overlap band. A single "
+            f"per-axis scale explains every plane ({used}), matching a tree "
+            "written before a downscale or voxel-size conversion was applied "
+            "to the splat centers."
+        ),
+        remedy="Rescale the stored planes into the parts' coordinate frame.",
+        fix=replace,
     )
 
 

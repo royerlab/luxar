@@ -58,9 +58,12 @@ def _uniform_tiled_store(tmp: Path) -> Path:
         hi = lo + np.array(spec.shape, dtype=float)
         chol = np.zeros((40, 6), dtype=np.float32)
         chol[:, [0, 2, 5]] = 1.0
+        centers = rng.uniform(lo, hi, size=(40, 3)).astype(np.float32)
+        centers[0] = lo
+        centers[1] = hi
         regions.append(
             GSplatData(
-                centers=rng.uniform(lo, hi, size=(40, 3)).astype(np.float32),
+                centers=centers,
                 amplitudes=np.ones(40, dtype=np.float32),
                 cholesky_factors=chol,
             )
@@ -74,6 +77,18 @@ def _uniform_tiled_store(tmp: Path) -> Path:
     path = tmp / "uniform.gsplats.zarr"
     write_gsplats_tree(path, node)
     return path
+
+
+def _scale_tree_planes(tree: dict, factors: tuple[float, ...]) -> dict:
+    if "part" in tree:
+        return dict(tree)
+    axis = int(tree["axis"])
+    return {
+        "axis": axis,
+        "split": float(tree["split"]) * factors[axis],
+        "left": _scale_tree_planes(tree["left"], factors),
+        "right": _scale_tree_planes(tree["right"], factors),
+    }
 
 
 def _root_attrs(path: Path) -> dict:
@@ -287,6 +302,38 @@ class TestSplitPlanesCheck:
 
             diagnose_store(path, fix=True)
             assert _root_attrs(path)["bsp_tree"] == before
+
+    def test_a_misframed_approximate_tree_is_reported_and_rescaled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = _uniform_tiled_store(Path(tmp))
+            healthy = _root_attrs(path)["bsp_tree"]
+            _set_root_attr(path, "bsp_tree", _scale_tree_planes(healthy, (0.25,) * 3))
+
+            report = diagnose_store(path)
+            (finding,) = report.findings
+            assert finding.severity == "error"
+            assert finding.fixable
+            assert "coordinate frame" in finding.summary
+            assert "4" in finding.detail
+
+            repaired = diagnose_store(path, fix=True)
+            assert repaired.healthy
+            assert _root_attrs(path)["bsp_tree"] == healthy
+
+    def test_inconsistent_plane_scales_are_not_guessed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = _uniform_tiled_store(Path(tmp))
+            broken = _scale_tree_planes(_root_attrs(path)["bsp_tree"], (0.25,) * 3)
+            broken["left"]["split"] *= 2.0
+            _set_root_attr(path, "bsp_tree", broken)
+
+            report = diagnose_store(path)
+            (finding,) = report.findings
+            assert finding.severity == "error"
+            assert "cannot be rebuilt" in finding.summary
+
+            diagnose_store(path, fix=True)
+            assert "bsp_tree" not in _root_attrs(path)
 
     def test_a_repair_that_leaves_a_lesser_condition_does_not_report_healthy(
         self,

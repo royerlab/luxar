@@ -29,7 +29,8 @@ This module hosts:
 * :func:`median_bsp_polylines` / :func:`midpoint_bsp_polylines` — the
   polyline-atomic variants for ``add_lines``.
 * :func:`prune_serialized_bsp_tree` / :func:`map_serialized_bsp_tree` /
-  :func:`reconstruct_serialized_bsp_tree` / :func:`serialized_bsp_tree_separates`
+  :func:`reconstruct_serialized_bsp_tree` / :func:`serialized_bsp_tree_separates` /
+  :func:`serialized_bsp_tree_straddles_centers`
   — the algebra on the *serialized* (``bsp_tree`` attr) form of that tree:
   renumbering it after empty regions are dropped, mapping its split coordinates
   through an affine on the centers (or refusing, when the affine is not
@@ -478,6 +479,64 @@ def serialized_bsp_tree_separates(
         return _node_separates(tree, boxes)
     except (KeyError, TypeError, ValueError, IndexError):  # malformed node shape
         return False
+
+
+def serialized_bsp_tree_straddles_centers(
+    tree: Optional[Dict[str, Any]],
+    boxes: "Sequence[tuple[NDArray[np.floating], NDArray[np.floating]]]",
+) -> bool:
+    """True when every plane is plausible for the overlapping parts below it.
+
+    A uniform tiled fit keeps its apodization halo, so neighbouring part boxes
+    overlap and no plane can separate their faces exactly. Their box centers
+    should still straddle the producer's split plane. The measured
+    interpenetration of the two sides is the tolerance, so ordinary halo-scale
+    uncertainty passes while a plane in a different coordinate frame does not.
+
+    Requires leaf labels ``0..len(boxes)-1`` exactly once, and returns ``False``
+    for malformed or non-finite stored metadata.
+    """
+    if tree is None:
+        return False
+    try:
+        labels = serialized_bsp_leaf_labels(tree)
+        if sorted(labels) != list(range(len(boxes))):
+            return False
+        return _node_straddles_centers(tree, boxes)
+    except (KeyError, TypeError, ValueError, IndexError):
+        return False
+
+
+def _node_straddles_centers(
+    node: Dict[str, Any],
+    boxes: "Sequence[tuple[NDArray[np.floating], NDArray[np.floating]]]",
+) -> bool:
+    if "part" in node:
+        return True
+    axis = int(node.get("axis", -1))
+    if axis not in (0, 1, 2) or (boxes and axis >= len(boxes[0][0])):
+        return False
+    split = float(node["split"])
+    if not np.isfinite(split):
+        return False
+
+    left_labels = serialized_bsp_leaf_labels(node["left"])
+    right_labels = serialized_bsp_leaf_labels(node["right"])
+    left_center = max(
+        0.5 * (float(boxes[i][0][axis]) + float(boxes[i][1][axis])) for i in left_labels
+    )
+    right_center = min(
+        0.5 * (float(boxes[i][0][axis]) + float(boxes[i][1][axis]))
+        for i in right_labels
+    )
+    left_high = max(float(boxes[i][1][axis]) for i in left_labels)
+    right_low = min(float(boxes[i][0][axis]) for i in right_labels)
+    overlap = max(0.0, left_high - right_low)
+    if split < left_center - overlap or split > right_center + overlap:
+        return False
+    return _node_straddles_centers(node["left"], boxes) and _node_straddles_centers(
+        node["right"], boxes
+    )
 
 
 def _node_separates(
