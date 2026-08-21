@@ -1,4 +1,4 @@
-"""Tests for extend_to_all functionality in Scene.add_gsplats()."""
+"""Tests for extend_to_all functionality at geometry wrapper doors."""
 
 import warnings
 from typing import Any, cast
@@ -22,6 +22,31 @@ def create_test_cholesky(n_splats: int, ndim: int) -> np.ndarray:
     """
     k = ndim * (ndim + 1) // 2
     return (np.random.random((n_splats, k)) * 0.1).astype(np.float32)
+
+
+def create_substitutive_gsplats(ndim: int, constant_last_dim: bool = False) -> Any:
+    """Create a two-level matrix-shaped GSplatData fixture."""
+    from luxar.gsplats.gsplat_data import (
+        AdditiveSubLOD,
+        GSplatData,
+        SubstitutiveLevel,
+    )
+
+    def level(n_splats: int, seed: int, compression_factor: int) -> Any:
+        rng = np.random.default_rng(seed)
+        centers = rng.random((n_splats, ndim), dtype=np.float32)
+        if constant_last_dim:
+            centers[:, -1] = 0.0
+        sublod = AdditiveSubLOD(
+            centers=centers,
+            amplitudes=np.ones(n_splats, dtype=np.float32),
+            cholesky_factors=create_test_cholesky(n_splats, ndim),
+        )
+        return SubstitutiveLevel(
+            additive_sublods=[sublod], compression_factor=compression_factor
+        )
+
+    return GSplatData.from_substitutive_levels([level(8, 1, 1), level(6, 2, 4)])
 
 
 class TestGSplatsExtendToAll:
@@ -92,6 +117,255 @@ class TestGSplatsExtendToAll:
         # Should still write without extension
         store = zarr.open_group(tmp_path / "test.luxar.zarr", mode="r")
         assert "extend_to_all" not in store["gsplats"].attrs
+
+    def test_partition_rejects_invalid_spec_before_creating_wrapper(
+        self, tmp_path
+    ) -> None:
+        dims = Dimensions(
+            [
+                Dimension("X", display=True),
+                Dimension("Y", display=True),
+                Dimension("Z", display=True),
+            ]
+        )
+        compiler = LuxarZarrCompiler(tmp_path / "partition_invalid.luxar.zarr")
+        scene = compiler.create_scene(dimensions=dims)
+        centers = np.random.default_rng(3).random((200, 3), dtype=np.float32)
+
+        with pytest.raises(ValueError, match="Invalid extend_to_all value"):
+            scene.add_gsplats(
+                "g",
+                centers,
+                amplitudes=1.0,
+                cholesky_factors=create_test_cholesky(200, 3),
+                partition={"max_elements": 100},
+                extend_to_all="NoSuchDim",
+            )
+
+        assert "g" not in compiler.store
+        assert scene.children == []
+
+    @pytest.mark.parametrize(
+        ("extra_kwargs", "message"),
+        [
+            ({"partition": {"max_elements": 0}}, "max_elements must be >= 1"),
+            (
+                {
+                    "partition": {"max_elements": 100},
+                    "image_labels": np.zeros(200, dtype=np.int32),
+                },
+                "image_labels is not supported alongside partition",
+            ),
+        ],
+    )
+    def test_partition_spec_checks_keep_precedence_over_extend_to_all(
+        self, tmp_path, extra_kwargs: dict[str, Any], message: str
+    ) -> None:
+        dims = Dimensions(
+            [
+                Dimension("X", display=True),
+                Dimension("Y", display=True),
+                Dimension("Z", display=True),
+            ]
+        )
+        compiler = LuxarZarrCompiler(tmp_path / "partition_precedence.luxar.zarr")
+        scene = compiler.create_scene(dimensions=dims)
+        centers = np.random.default_rng(5).random((200, 3), dtype=np.float32)
+
+        with pytest.raises(ValueError, match=message):
+            scene.add_gsplats(
+                "g",
+                centers,
+                amplitudes=1.0,
+                cholesky_factors=create_test_cholesky(200, 3),
+                extend_to_all="NoSuchDim",
+                **extra_kwargs,
+            )
+
+        assert "g" not in compiler.store
+        assert scene.children == []
+
+    @pytest.mark.parametrize(
+        ("geometry", "wrapper"),
+        [
+            ("points", "partition"),
+            ("points", "substitutive_lod"),
+            ("lines", "partition"),
+            ("lines", "substitutive_lod"),
+            ("gsplats", "partition"),
+        ],
+    )
+    def test_extend_preflight_matches_flat_channel_precedence(
+        self, tmp_path, geometry: str, wrapper: str
+    ) -> None:
+        dims = Dimensions(
+            [
+                Dimension("X", display=True),
+                Dimension("Y", display=True),
+                Dimension("Z", display=True),
+            ]
+        )
+        positions = np.random.default_rng(8).random((200, 3), dtype=np.float32)
+        wrapper_kwargs = (
+            {"partition": {"max_elements": 50}}
+            if wrapper == "partition"
+            else {"substitutive_lod": {"levels": 2}}
+        )
+
+        def capture_error(path_suffix: str, extra_kwargs: dict[str, Any]) -> str:
+            compiler = LuxarZarrCompiler(
+                tmp_path / f"{geometry}_{wrapper}_{path_suffix}.luxar.zarr"
+            )
+            scene = compiler.create_scene(dimensions=dims)
+
+            with pytest.raises(ValueError) as error:
+                if geometry == "points":
+                    scene.add_points(
+                        "g",
+                        positions,
+                        radii=np.ones(7, dtype=np.float32),
+                        extend_to_all="X!",
+                        **extra_kwargs,
+                    )
+                elif geometry == "lines":
+                    scene.add_lines(
+                        "g",
+                        positions,
+                        np.ones(7, dtype=np.float32),
+                        line_type="segments",
+                        extend_to_all="X!",
+                        **extra_kwargs,
+                    )
+                else:
+                    scene.add_gsplats(
+                        "g",
+                        positions,
+                        amplitudes=1.0,
+                        cholesky_factors=create_test_cholesky(200, 3),
+                        colors=np.ones((7, 3), dtype=np.float32),
+                        extend_to_all="X!",
+                        **extra_kwargs,
+                    )
+
+            assert "g" not in compiler.store
+            assert scene.children == []
+            return str(error.value)
+
+        flat_error = capture_error("flat", {})
+        wrapper_error = capture_error("wrapper", wrapper_kwargs)
+
+        assert wrapper_error == flat_error
+        assert "Invalid extend_to_all value: X!" in flat_error
+
+    @pytest.mark.parametrize(
+        ("geometry", "wrapper"),
+        [
+            ("points", "partition"),
+            ("points", "substitutive_lod"),
+            ("lines", "partition"),
+            ("lines", "substitutive_lod"),
+        ],
+    )
+    def test_other_geometry_wrappers_reject_before_creating_wrapper(
+        self, tmp_path, geometry: str, wrapper: str
+    ) -> None:
+        dims = Dimensions(
+            [
+                Dimension("X", display=True),
+                Dimension("Y", display=True),
+                Dimension("Z", display=True),
+            ]
+        )
+        compiler = LuxarZarrCompiler(
+            tmp_path / f"{geometry}_{wrapper}_invalid.luxar.zarr"
+        )
+        scene = compiler.create_scene(dimensions=dims)
+        positions = np.random.default_rng(6).random((200, 3), dtype=np.float32)
+        wrapper_kwargs = (
+            {"partition": {"max_elements": 50}}
+            if wrapper == "partition"
+            else {"substitutive_lod": {"levels": 2}}
+        )
+
+        with pytest.raises(ValueError, match="Invalid extend_to_all value"):
+            if geometry == "points":
+                scene.add_points(
+                    "g", positions, extend_to_all="NoSuchDim", **wrapper_kwargs
+                )
+            else:
+                scene.add_lines(
+                    "g",
+                    positions,
+                    1.0,
+                    line_type="segments",
+                    extend_to_all="NoSuchDim",
+                    **wrapper_kwargs,
+                )
+
+        assert "g" not in compiler.store
+        assert scene.children == []
+
+    def test_matrix_file_rejects_invalid_spec_before_creating_wrapper(
+        self, tmp_path
+    ) -> None:
+        dims = Dimensions(
+            [
+                Dimension("X", display=True),
+                Dimension("Y", display=True),
+                Dimension("Z", display=True),
+            ]
+        )
+        source = tmp_path / "matrix.gsplats.zarr"
+        create_substitutive_gsplats(3).save(source, ordering="none")
+        compiler = LuxarZarrCompiler(tmp_path / "matrix_invalid.luxar.zarr")
+        scene = compiler.create_scene(dimensions=dims)
+
+        with pytest.raises(ValueError, match="Unknown dimension.*NoSuchDim"):
+            scene.add_gsplats_from_file("g", source, extend_to_all=["NoSuchDim"])
+
+        assert "g" not in compiler.store
+        assert scene.children == []
+
+    @pytest.mark.parametrize("route", ["partition", "matrix_file"])
+    def test_none_keeps_one_candidate_warning_per_written_child(
+        self, tmp_path, route: str
+    ) -> None:
+        dims = Dimensions(
+            [
+                Dimension("X", display=True),
+                Dimension("Y", display=True),
+                Dimension("Z", display=True),
+                Dimension("Time", display=False, range=(0, 10)),
+            ]
+        )
+        compiler = LuxarZarrCompiler(tmp_path / f"{route}_warnings.luxar.zarr")
+        scene = compiler.create_scene(dimensions=dims)
+
+        with warnings.catch_warnings(record=True) as records:
+            warnings.simplefilter("always")
+            if route == "partition":
+                centers = np.random.default_rng(4).random((200, 4), dtype=np.float32)
+                centers[:, -1] = 0.0
+                scene.add_gsplats(
+                    "g",
+                    centers,
+                    amplitudes=1.0,
+                    cholesky_factors=create_test_cholesky(200, 4),
+                    partition={"max_elements": 100},
+                )
+            else:
+                source = tmp_path / "matrix_warnings.gsplats.zarr"
+                create_substitutive_gsplats(4, constant_last_dim=True).save(
+                    source, ordering="none"
+                )
+                scene.add_gsplats_from_file("g", source)
+
+        candidate_warnings = [
+            warning
+            for warning in records
+            if "Set extend_to_all explicitly" in str(warning.message)
+        ]
+        assert len(candidate_warnings) == len(list(compiler.store["g"].group_keys()))
 
     def test_no_warning_when_multiple_values_in_dimension(self, tmp_path) -> None:
         """Test no warning when dimension has multiple values (not a candidate)."""
