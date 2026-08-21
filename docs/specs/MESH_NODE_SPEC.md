@@ -1619,10 +1619,10 @@ manifoldness must survive. `method="auto"` selects QEM through 10,000 vertices a
 clustering above that measured worst-case open-surface envelope. QEM ladders reuse one
 collapse sequence and snapshot each requested level rather than restarting from the
 original mesh. Each coarse level is therefore a strict collapse-subsequence of the finer
-one, so a LOD swap cannot reshuffle the surface between independent approximations. On an open near-planar
-surface the orientation veto can stop well above the requested count and therefore
-shorten the ladder; `cluster` is the tier to use when closely hitting the count matters
-more than topology preservation. A QEM quadric also requires a
+one, so a LOD swap cannot reshuffle the surface between independent approximations. On
+an open near-planar surface the orientation veto can stop well above the requested count
+and therefore shorten the ladder; `cluster` is the tier to use when closely hitting the
+count matters more than topology preservation. A QEM quadric also requires a
 normal direction outside the triangle span, so fewer than three coarsening dimensions
 make `auto` fall back to clustering and make explicit `qem` invalid. It is reached from
 `add_mesh(substitutive_lod=…)` or `luxar mesh lod`. Per-level picking needed no work,
