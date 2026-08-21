@@ -7,6 +7,7 @@ single durable gate (the block generator that seeded them was a one-off).
 from __future__ import annotations
 
 import ast
+import html
 import json
 import re
 import subprocess
@@ -857,10 +858,11 @@ def _credit_claims(text: str) -> list[tuple[tuple[str, ...], str]]:
 
     A year the walk finds no name for yields NO claim: a bare number is not an
     attribution, and "2048³ voxels" or "1920 x 1080" would otherwise be read as
-    one. HTML tags render as no text, so they become separators before tokenizing
-    rather than staying attached to a name or splicing adjacent words together.
+    one. HTML tags render as no text, so they become separators before entities
+    are decoded and the rendered text is tokenized. That order keeps escaped tags
+    visible rather than mistaking them for markup.
     """
-    text = re.sub(r"<[^>]*>", " ", text)
+    text = html.unescape(re.sub(r"<[^>]*>", " ", text))
     tokens = [(m.group(), m.start()) for m in re.finditer(r"\S+", text)]
     claims: list[tuple[tuple[str, ...], str]] = []
     for match in _YEAR_RE.finditer(text):
@@ -1132,18 +1134,27 @@ def test_a_bare_year_is_not_a_credit_claim() -> None:
 
 
 def test_either_conjunction_holds_a_name_group_together() -> None:
-    """``&`` and ``+`` must behave identically, which needs BOTH lists to agree.
+    """HTML ``&amp;``, plain ``&``, and ``+`` must hold the same name group.
 
     ``+`` was listed in :data:`_CREDIT_CONJUNCTIONS` but missing from
     :data:`_TOKEN_TRIM`, so it never trimmed to nothing, never reached the
     conjunction test, and broke the walk as a name-shaped token instead — dropping
     the name in front of it and turning a correct credit into a reported problem.
-    The ``&`` row alone cannot see that, which is why both spellings are pinned.
+    Encoded HTML punctuation has the same failure mode unless entities are rendered
+    before tokenization, which is why all three spellings are pinned.
     """
     assert _credit_claims("Leike & Enßlin 2020") == [(("Enßlin", "Leike"), "2020")]
     assert _credit_claims("Leike + Enßlin 2020") == [(("Enßlin", "Leike"), "2020")]
+    assert _credit_claims("<b>Leike &amp; Enßlin 2020</b>") == [
+        (("Enßlin", "Leike"), "2020")
+    ]
+    assert _credit_claims("<span>Kim&nbsp;et&nbsp;al.&nbsp;2024</span>") == [
+        (("Kim",), "2024")
+    ]
+    # Tags are stripped before entities are decoded: escaped markup is visible text.
+    assert _credit_claims("&lt;b&gt;Kim et al. 2024&lt;/b&gt;") == []
     assert not _credit_contradictions(
-        "Leike et al. 2020", ["dust • Leike + Enßlin 2020"]
+        "Leike et al. 2020", ["<b>dust • Leike &amp; Enßlin 2020</b>"]
     )
 
 
