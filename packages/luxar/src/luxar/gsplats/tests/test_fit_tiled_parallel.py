@@ -447,6 +447,35 @@ class TestFitTiledParallel:
         assert "psnr_db" in merged.meta["fit_stats"]
         assert "No merged quality metrics" not in capsys.readouterr().out
 
+    def test_rejects_a_reference_on_another_grid(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture
+    ) -> None:
+        """A shape mismatch must not produce a plausible score."""
+        shape = (8, 8, 16)
+        m = self._specs_count(shape=shape, tile=8, overlap=0)
+        merged = fit_tiled_parallel(
+            num_tiles=m,
+            jobs=2,
+            tmp_dir=tmp_path / "tiles",
+            worker_cmd_builder=_fake_worker_builder(n_per_tile=5),
+            volume_shape=shape,
+            volume=np.zeros((8, 8, 8), dtype=np.float32),
+            device="cpu",
+            tile_size=8,
+            overlap=0,
+            progressive=False,
+            cull_retention=None,
+            partition=True,
+            verbose=False,
+        )
+
+        assert "psnr_db" not in merged.meta["fit_stats"]
+        out = capsys.readouterr().out
+        assert (
+            "reference shape (8, 8, 8) does not match the tile grid (8, 8, 16)" in out
+        )
+        assert "gsplat compare" in out
+
     def test_keep_tiles(self, tmp_path: Path) -> None:
         m = self._specs_count()
         fit_tiled_parallel(

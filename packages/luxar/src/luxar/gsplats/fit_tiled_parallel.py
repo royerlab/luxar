@@ -332,6 +332,24 @@ def fit_tiled_parallel(
         If any worker exits non-zero.  The message names the failing tiles and
         includes a tail of their stderr; ``tmp_dir`` is left in place.
     """
+    reference = volume
+    unscored_reason: Optional[str] = None
+    if volume is None:
+        unscored_reason = (
+            "this direct parallel tiled call was not given the reference volume"
+        )
+    else:
+        shape = getattr(volume, "shape", None)
+        if shape is None:
+            unscored_reason = "the supplied reference volume does not expose a shape"
+            reference = None
+        elif tuple(int(size) for size in shape) != volume_shape:
+            unscored_reason = (
+                f"reference shape {tuple(int(size) for size in shape)} does not match "
+                f"the tile grid {volume_shape}"
+            )
+            reference = None
+
     tmp_dir = Path(tmp_dir)
     # Start from a clean slate: a retained dir from a prior (failed or
     # keep_tiles) run could otherwise leave a stale tile_{i} that this run
@@ -455,15 +473,12 @@ def fit_tiled_parallel(
         grid_scale=grid_scale,
         source_shape=source_shape,
         source_dtype=source_dtype,
-        volume=volume,
+        volume=reference,
         device=device,
     )
 
-    if volume is None:
-        announce_unscored_merge(
-            "this direct parallel tiled call was not given the reference volume",
-            partition=None,
-        )
+    if unscored_reason is not None:
+        announce_unscored_merge(unscored_reason, partition=None)
 
     if not keep_tiles:
         shutil.rmtree(tmp_dir, ignore_errors=True)
