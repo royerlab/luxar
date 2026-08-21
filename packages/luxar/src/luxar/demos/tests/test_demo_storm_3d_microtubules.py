@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import numpy as np
@@ -12,6 +13,7 @@ from luxar.demos.demo_storm_3d_microtubules import (
     STORM_LOCALIZATION_SIZES,
     WIDEFIELD_PSF_SIGMA_NM,
     WIDEFIELD_VOXEL_SIZE_UM,
+    _widefield_cache_path,
     create_storm_scene,
     download_storm_localizations,
     extract_centers_and_amplitudes,
@@ -46,6 +48,20 @@ def test_download_uses_verified_shared_cache(monkeypatch, tmp_path: Path) -> Non
 def test_download_rejects_unknown_field() -> None:
     with np.testing.assert_raises_regex(ValueError, "field must be one of"):
         download_storm_localizations(field=5)
+
+
+def test_widefield_cache_key_ignores_source_mtime(tmp_path: Path) -> None:
+    csv_path = tmp_path / "localizations.csv"
+    csv_path.write_bytes(b"same bytes")
+    first = _widefield_cache_path(csv_path, 5_000_000)
+
+    original_mtime_ns = csv_path.stat().st_mtime_ns
+    os.utime(
+        csv_path, ns=(original_mtime_ns + 1_000_000, original_mtime_ns + 1_000_000)
+    )
+    assert csv_path.stat().st_mtime_ns != original_mtime_ns
+
+    assert _widefield_cache_path(csv_path, 5_000_000) == first
 
 
 def test_parser_converts_precision_with_its_coordinate_axis(tmp_path: Path) -> None:
@@ -224,6 +240,7 @@ def test_scene_keeps_fitted_and_measured_view_counts_independent(
         widefield,
         precision_um,
         output_path,
+        localization_limit=5_000_000,
     )
 
     root = zarr.open_group(output_path, mode="r")
@@ -239,4 +256,8 @@ def test_scene_keeps_fitted_and_measured_view_counts_independent(
         widefield_bounds[0, 1:].mean(axis=1),
         superresolution_bounds[0, 1:].mean(axis=1),
         atol=1e-6,
+    )
+    assert (
+        "up to first 5,000,000 frame-ordered localizations"
+        in root["overlays"]["overlay_1"].attrs["html"]
     )

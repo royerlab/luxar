@@ -76,7 +76,8 @@ https://zenodo.org/records/3547521
 - **Target**: Alpha-tubulin (microtubule protein)
 - **Stain**: Alexa Fluor 647 immunofluorescence
 - **Method**: 3D STORM with astigmatism
-- **Resolution**: ~20 nm lateral, ~50 nm axial
+- **Displayed uncertainty**: CRLB combined with 17 nm antibody-linkage error;
+  median splat sigma is about 18-19 nm on each axis and is linkage-dominated
 - **Localizations**: Millions per field of view
 - **Format**: CSV with columns (x, y, z, precision, photons, etc.)
 
@@ -92,7 +93,8 @@ Usage:
     python demo_storm_3d_microtubules.py [--max-localizations=N]
 
     Options:
-    --max-localizations=N   Limit number of localizations (default: 5M)
+    --max-localizations=N   Use the first N frame-ordered rows for both views
+                            (default: 5M; widefield is then a partial acquisition)
     --no-serve              Generate dataset without launching viewer
     --field=N               Select field of view (default: 4)
     --recompute             Ignore the cached widefield fit
@@ -167,15 +169,13 @@ WIDEFIELD_OVERLAP = (8, 32, 32)
 WIDEFIELD_SEEDS_PER_TILE = 6000
 WIDEFIELD_N_ITERS = 5000
 WIDEFIELD_CULL_RETENTION = 0.999
+# The raster is synthetic photon mass, not a camera image with a DC pedestal.
 WIDEFIELD_FLOOR = "none"
 WIDEFIELD_OUTPUT_SPACE = "real"
-WIDEFIELD_ENABLE_DYNAMIC_OPS = True
 
-# Visualization scale factor applied to every splat sigma (widefield and
-# super-res alike), preserving their relative sizes. 1.0 = physically faithful
-# widths (super-res splats really are ~tens of nm in a ~60 μm scene, so they
-# read as fine points); raise it only if you want to exaggerate splat size for
-# a zoomed-out overview.
+# Visualization scale factor for the measured super-resolution uncertainty
+# ellipsoids. 1.0 = physically faithful widths (tens of nm in a ~60 μm scene);
+# raise it only to make that view more legible in a zoomed-out overview.
 VIS_SCALE = 1.0
 
 
@@ -193,7 +193,6 @@ def _widefield_cache_path(
     cache_spec = (
         csv_path.name,
         source_stat.st_size,
-        source_stat.st_mtime_ns,
         max_localizations,
         WIDEFIELD_PSF_SIGMA_NM,
         WIDEFIELD_AXIAL_PSF_SIGMA_NM,
@@ -205,7 +204,6 @@ def _widefield_cache_path(
         WIDEFIELD_CULL_RETENTION,
         WIDEFIELD_FLOOR,
         WIDEFIELD_OUTPUT_SPACE,
-        WIDEFIELD_ENABLE_DYNAMIC_OPS,
         "stream",
     )
     digest = hashlib.sha256(repr(cache_spec).encode()).hexdigest()[:12]
@@ -542,10 +540,7 @@ def fit_widefield_gsplats(
             voxel_size=WIDEFIELD_VOXEL_SIZE_UM,
             output_space=WIDEFIELD_OUTPUT_SPACE,
             floor=WIDEFIELD_FLOOR,
-            source_shape=volume.shape,
-            source_dtype=str(volume.dtype),
             verbose=True,
-            enable_dynamic_ops=WIDEFIELD_ENABLE_DYNAMIC_OPS,
         ).translate(origin_zyx)
         aprint(f"✓ Fitted {len(result.amplitudes):,} widefield splats")
         save_with_lod(
@@ -603,6 +598,7 @@ def create_storm_scene(
     widefield_gsplats,
     precision_um: np.ndarray | None = None,
     output_path: Path | None = None,
+    localization_limit: int | None = None,
 ) -> Path:
     """Create Luxar scene with STORM data comparing widefield vs super-resolution.
 
@@ -620,6 +616,8 @@ def create_storm_scene(
         precision_um: Per-localization precision (N, 3) in μm, or None for a
             fixed super-resolution sigma.
         output_path: Optional path to save the scene (default: demos directory)
+        localization_limit: Frame-ordered CSV prefix used for both views, or None
+            when the complete localization file was loaded.
 
     Returns:
         Path to output scene
@@ -706,9 +704,14 @@ def create_storm_scene(
             )
 
             # Dimension-aware view mode labels
+            widefield_source = (
+                f"up to first {localization_limit:,} frame-ordered localizations"
+                if localization_limit is not None
+                else "complete localization acquisition"
+            )
             scene.add_html(
                 '<div style="font-size:1.5vh;font-weight:bold;color:#88bbff">Widefield</div>'
-                f'<div style="font-size:1.3vh;color:#aaa">fitted after {WIDEFIELD_PSF_SIGMA_NM:.0f}/{WIDEFIELD_AXIAL_PSF_SIGMA_NM:.0f} nm PSF blur</div>',
+                f'<div style="font-size:1.3vh;color:#aaa">{widefield_source}; fitted after {WIDEFIELD_PSF_SIGMA_NM:.0f}/{WIDEFIELD_AXIAL_PSF_SIGMA_NM:.0f} nm PSF blur</div>',
                 position=(0.02, 0.97),
                 anchor="bottom-left",
                 visible_range={"view": 0},
@@ -770,8 +773,8 @@ def main() -> None:
     aprint("")
     aprint("Resolution:")
     aprint("  • Conventional microscopy: ~250 nm (diffraction limit)")
-    aprint("  • STORM super-resolution: ~20 nm lateral, ~50 nm axial")
-    aprint("  • Improvement: 10-12x better!")
+    aprint("  • Displayed STORM σ: ~18-19 nm on each axis")
+    aprint("  • σ = localization CRLB ⊕ 17 nm label linkage (linkage-dominated)")
     aprint("")
     aprint("Parameters:")
     aprint(f"  • Field of view: {field}")
@@ -822,6 +825,7 @@ def main() -> None:
                 widefield_gsplats,
                 precision_um,
                 output_path=output_path,
+                localization_limit=max_loc,
             )
             aprint(f"Dataset generated at {scene_path}")
             aprint(f"Localizations: {len(centers_um):,}")
@@ -833,6 +837,7 @@ def main() -> None:
             amplitudes,
             widefield_gsplats,
             precision_um,
+            localization_limit=max_loc,
         )
 
         # Stats
@@ -849,7 +854,7 @@ def main() -> None:
         aprint("  - Press '1' to select VIEW dimension")
         aprint("  - Press '['/']' to toggle Widefield / Super-Resolution")
         aprint("  - Widefield: Blurry ~250 nm resolution (gray)")
-        aprint("  - Super-res: Sharp ~20 nm resolution (cyan splats)")
+        aprint("  - Super-res: ~18-19 nm displayed uncertainty (cyan splats)")
         aprint("  - Zoom in to see individual microtubules!")
         aprint("")
         aprint("=" * 70)
