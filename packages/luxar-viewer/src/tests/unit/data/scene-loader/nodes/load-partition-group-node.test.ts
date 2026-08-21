@@ -294,6 +294,42 @@ describe('loadPartitionGroupNode', () => {
     expect(wrapper.userData.bspTree).toEqual(bspTree);
   });
 
+  it('keeps a sparse grid bsp_tree using the measured per-axis overlap floor', async () => {
+    attachStubChildren();
+    const ctx = makeCtx();
+    const bspTree = {
+      axis: 0,
+      split: 0,
+      left: { axis: 0, split: -10, left: { part: 0 }, right: { part: 1 } },
+      right: { axis: 0, split: 10, left: { part: 2 }, right: { part: 3 } },
+    };
+    const parts = [
+      makePartNode('/partition/part_0', 'points', {
+        position_bounds: { min: [-9], max: [-8] },
+      }),
+      makePartNode('/partition/part_1', 'points', {
+        position_bounds: { min: [-7], max: [-6] },
+      }),
+      makePartNode('/partition/part_2', 'points', {
+        position_bounds: { min: [8], max: [12] },
+      }),
+      makePartNode('/partition/part_3', 'points', {
+        position_bounds: { min: [10], max: [14] },
+      }),
+    ];
+    const node = makePartitionGroupNode(parts, { bsp_tree: bspTree });
+
+    const wrapper = await loadPartitionGroupNode(
+      node,
+      new THREE.Group(),
+      makeStubLoc(),
+      ctx,
+      loadSceneNodesMock
+    );
+
+    expect(wrapper.userData.bspTree).toEqual(bspTree);
+  });
+
   it('drops a bsp_tree when a nested split is unsound', async () => {
     attachStubChildren();
     const ctx = makeCtx();
@@ -355,7 +391,7 @@ describe('loadPartitionGroupNode', () => {
     expect(wrapper.userData.bspTree).toBeUndefined();
   });
 
-  it('drops a bsp_tree when part bounds are missing or malformed', async () => {
+  it('keeps a bsp_tree when part bounds are unavailable for validation', async () => {
     attachStubChildren();
     const ctx = makeCtx();
     const bspTree = { axis: 0, split: 0, left: { part: 0 }, right: { part: 1 } };
@@ -376,7 +412,7 @@ describe('loadPartitionGroupNode', () => {
       loadSceneNodesMock
     );
 
-    expect(wrapper.userData.bspTree).toBeUndefined();
+    expect(wrapper.userData.bspTree).toEqual(bspTree);
   });
 
   it('leaves bspTree undefined when the partition has no stored tree (fallback path)', async () => {

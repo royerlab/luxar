@@ -42,6 +42,11 @@ interface BspBoundsSummary {
   maxHigh: number[];
 }
 
+interface BspTreeValidation {
+  tree: BspTreeNode;
+  verified: boolean;
+}
+
 function partIndexForChild(child: SceneNode, loadIndex: number): number {
   return (child.attrs?.child_index as number | undefined) ?? loadIndex;
 }
@@ -89,7 +94,7 @@ function summarizeLeaf(bounds: PositionBounds): BspBoundsSummary {
   const center = bounds.min.map((low, axis) => 0.5 * (low + bounds.max[axis]));
   return {
     minCenter: center.slice(),
-    maxCenter: center,
+    maxCenter: center.slice(),
     minLow: [...bounds.min],
     maxHigh: [...bounds.max],
   };
@@ -107,58 +112,95 @@ function mergeSummaries(left: BspBoundsSummary, right: BspBoundsSummary): BspBou
 function summarizeStraddlingTree(
   node: unknown,
   bounds: PositionBounds[],
-  seenParts: boolean[]
+  seenParts: boolean[],
+  overlapFloors: number[],
+  validateSplits: boolean
 ): BspBoundsSummary | null {
   if (!node || typeof node !== 'object') return null;
   const record = node as Record<string, unknown>;
   if (Object.prototype.hasOwnProperty.call(record, 'part')) {
     const part = record.part;
     if (
+      typeof part !== 'number' ||
       !Number.isInteger(part) ||
-      (part as number) < 0 ||
-      (part as number) >= bounds.length ||
-      seenParts[part as number]
+      part < 0 ||
+      part >= bounds.length ||
+      seenParts[part]
     ) {
       return null;
     }
-    seenParts[part as number] = true;
-    return summarizeLeaf(bounds[part as number]);
+    seenParts[part] = true;
+    return summarizeLeaf(bounds[part]);
   }
 
   const axis = record.axis;
   const split = record.split;
   if (
+    typeof axis !== 'number' ||
     !Number.isInteger(axis) ||
-    (axis as number) < 0 ||
-    (axis as number) > 2 ||
-    (axis as number) >= bounds[0].min.length ||
+    axis < 0 ||
+    axis > 2 ||
+    axis >= bounds[0].min.length ||
     typeof split !== 'number' ||
     !Number.isFinite(split)
   ) {
     return null;
   }
 
-  const left = summarizeStraddlingTree(record.left, bounds, seenParts);
-  const right = summarizeStraddlingTree(record.right, bounds, seenParts);
+  const left = summarizeStraddlingTree(
+    record.left,
+    bounds,
+    seenParts,
+    overlapFloors,
+    validateSplits
+  );
+  const right = summarizeStraddlingTree(
+    record.right,
+    bounds,
+    seenParts,
+    overlapFloors,
+    validateSplits
+  );
   if (!left || !right) return null;
 
-  const splitAxis = axis as number;
-  const overlap = Math.max(0, left.maxHigh[splitAxis] - right.minLow[splitAxis]);
-  if (split < left.maxCenter[splitAxis] - overlap || split > right.minCenter[splitAxis] + overlap) {
-    return null;
+  const measuredOverlap = Math.max(0, left.maxHigh[axis] - right.minLow[axis]);
+  if (!validateSplits) {
+    overlapFloors[axis] = Math.max(overlapFloors[axis], measuredOverlap);
+  } else {
+    // Keep this in parity with Python's serialized_bsp_tree_straddles_centers /
+    // serialized_bsp_tree_axis_overlap_floors in core/group/partition.py. The
+    // axis floor is a deliberately coarse worst-case halo tolerance, not a
+    // tight bound for this particular cut.
+    const overlap = Math.max(overlapFloors[axis], measuredOverlap);
+    if (split < left.maxCenter[axis] - overlap || split > right.minCenter[axis] + overlap) {
+      return null;
+    }
   }
   return mergeSummaries(left, right);
 }
 
-function validatedBspTree(tree: unknown, children: SceneNode[]): BspTreeNode | undefined {
+function validatedBspTree(tree: unknown, children: SceneNode[]): BspTreeValidation | undefined {
   const bounds = indexedPartBounds(children);
-  if (!bounds) return undefined;
+  if (!bounds) {
+    return { tree: tree as BspTreeNode, verified: false };
+  }
   try {
-    const seenParts = new Array<boolean>(bounds.length).fill(false);
-    if (!summarizeStraddlingTree(tree, bounds, seenParts) || !seenParts.every(Boolean)) {
+    const overlapFloors = [0, 0, 0];
+    const collectedParts = new Array<boolean>(bounds.length).fill(false);
+    if (
+      !summarizeStraddlingTree(tree, bounds, collectedParts, overlapFloors, false) ||
+      !collectedParts.every(Boolean)
+    ) {
       return undefined;
     }
-    return tree as BspTreeNode;
+    const validatedParts = new Array<boolean>(bounds.length).fill(false);
+    if (
+      !summarizeStraddlingTree(tree, bounds, validatedParts, overlapFloors, true) ||
+      !validatedParts.every(Boolean)
+    ) {
+      return undefined;
+    }
+    return { tree: tree as BspTreeNode, verified: true };
   } catch {
     return undefined;
   }
@@ -233,9 +275,15 @@ export async function loadPartitionGroupNode(
   // back-to-front part ordering; absent for streamed grid/content merges, where
   // the coordinator falls back to a per-part centroid heuristic.
   if (attrs.bsp_tree) {
-    const bspTree = validatedBspTree(attrs.bsp_tree, sceneChildren);
-    if (bspTree) {
-      partitionGroup.userData.bspTree = bspTree;
+    const validation = validatedBspTree(attrs.bsp_tree, sceneChildren);
+    if (validation) {
+      partitionGroup.userData.bspTree = validation.tree;
+      if (!validation.verified) {
+        log.info(
+          Modules.SCENE_LOADER,
+          `partition-kind group ${node.path} has a bsp_tree without verifiable part bounds; keeping the stored tree`
+        );
+      }
     } else {
       log.warning(
         Modules.SCENE_LOADER,
