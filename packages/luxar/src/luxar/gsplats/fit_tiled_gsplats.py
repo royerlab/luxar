@@ -571,6 +571,30 @@ def _empty_merge(
     )
 
 
+def _score_merged_if_reference(
+    merged: "GSplatData | Sequence[GSplatData]",
+    volume: "Any | None",
+    *,
+    volume_shape: tuple[int, ...],
+    grid_scale: "tuple[float, ...] | None",
+    device: Optional[str],
+    verbose: bool,
+    stats: "dict[str, Any] | None" = None,
+) -> None:
+    """Score a flat merge or partition parts when a reference is available."""
+    if volume is None:
+        return
+    stamp_merged_quality(
+        merged,
+        volume,
+        volume_shape=volume_shape,
+        grid_scale=grid_scale,
+        device=device,
+        verbose=verbose,
+        stats=stats,
+    )
+
+
 def _tiled_source_grid_stats(
     volume_shape: tuple[int, ...],
     source_shape: Optional[Sequence[int]],
@@ -961,7 +985,8 @@ def merge_tile_results(
         it with :func:`~luxar.gsplats.tiling.resolve_grid_scale`. Consumed only
         by the partition's split planes
         (:func:`~luxar.gsplats.tiling.grid_bsp_tree`), which would otherwise be
-        a factor too small and would no longer separate the parts they label.
+        a factor too small and would no longer separate the parts they label,
+        and by merged-quality scoring to render back on the reference grid.
         ``None`` when the grid and the splats share one frame.
     source_shape, source_dtype, source_itemsize : optional
         What the merged result is a representation of, stamped by
@@ -1027,8 +1052,8 @@ def merge_tile_results(
             region_labels=[i for i, _ in indexed],
         )
         # A partition has no flat stats dict, so the block rides on the ROOT
-        # node's meta and `write_gsplats_tree` promotes it into the store's
-        # `pipeline/` group on save.
+        # node's meta and `save_fit_output` splits it into the store's root
+        # fitting/config/provenance/pipeline groups.
         _stamp_merge_normalization(node.meta, regions, applied_floor)
         fit_stats = {
             "tiled_fitting": True,
@@ -1051,16 +1076,15 @@ def merge_tile_results(
             )
         )
         stamp_voxels_per_splat(fit_stats, node.n_splats)
-        if volume is not None:
-            stamp_merged_quality(
-                regions,
-                volume,
-                volume_shape=volume_shape,
-                grid_scale=grid_scale,
-                device=device,
-                verbose=verbose,
-                stats=fit_stats,
-            )
+        _score_merged_if_reference(
+            regions,
+            volume,
+            volume_shape=volume_shape,
+            grid_scale=grid_scale,
+            device=device,
+            verbose=verbose,
+            stats=fit_stats,
+        )
         node.meta["fit_stats"] = fit_stats
         if verbose:
             lod_note = f", per-part recipe={recipe}" if recipe else ""
@@ -1122,15 +1146,14 @@ def merge_tile_results(
     # above rather than beside the other source-grid stamps.
     stamp_voxels_per_splat(merged.stats, merged.n_splats)
 
-    if volume is not None:
-        stamp_merged_quality(
-            merged,
-            volume,
-            volume_shape=volume_shape,
-            grid_scale=grid_scale,
-            device=device,
-            verbose=verbose,
-        )
+    _score_merged_if_reference(
+        merged,
+        volume,
+        volume_shape=volume_shape,
+        grid_scale=grid_scale,
+        device=device,
+        verbose=verbose,
+    )
 
     return merged
 

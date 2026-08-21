@@ -164,6 +164,19 @@ def test_the_memory_budget_skips_rather_than_thrashes(
     assert "gsplat compare" in out
 
 
+def test_a_partition_budget_skip_includes_the_required_flatten_step(
+    volume: np.ndarray, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """The fallback command must accept the tree-shaped archive it describes."""
+    monkeypatch.setenv("LUXAR_TILED_QUALITY_MAX_GB", "0.0000001")
+    node = _fit(volume, partition=True)
+    assert "psnr_db" not in node.meta["fit_stats"]
+    out = capsys.readouterr().out
+    assert "Merged quality metrics skipped" in out
+    assert "gsplat flatten" in out
+    assert "gsplat compare" in out
+
+
 def test_the_peak_estimate_covers_ssims_intermediates() -> None:
     """The budget must count the SSIM peak, not just the two volumes it scores.
 
@@ -247,29 +260,6 @@ def test_an_unparseable_budget_override_does_not_lose_the_fit(
     stats = _fit(volume).stats
     assert np.isfinite(stats["psnr_db"])
     assert "LUXAR_TILED_QUALITY_MAX_GB" in capsys.readouterr().out
-
-
-def test_a_partition_is_left_alone_but_says_so(
-    volume: np.ndarray, capsys: pytest.CaptureFixture
-) -> None:
-    """A partition merge has no fit-stats dict to stamp, so it is not scored.
-
-    Asserted rather than assumed: the scoring call sits right after the merge,
-    and a partition returns a node with no ``stats`` dict to write into. The
-    absence is announced, so the missing PSNR is a stated limitation rather than
-    a hole the user has to discover in the store. ``verbose=False`` is
-    deliberate: a quiet scripted fit is exactly where the unexplained gap would
-    otherwise appear, since nothing about the omission reaches the store.
-    """
-    node = _fit(volume, partition=True, verbose=False)
-    assert not hasattr(node, "stats") or "psnr_db" not in getattr(node, "stats", {})
-    out = capsys.readouterr().out
-    assert "No merged quality metrics" in out
-    assert "gsplat compare" in out
-    # `compare` cannot load a `kind=partition` store directly
-    # (``GSplatData.load`` raises "not matrix-shaped"), so a recourse that omits
-    # the flatten step tracebacks on the tiled default.
-    assert "gsplat flatten" in out
 
 
 def test_partition_notice_describes_the_node_the_merge_returned(capsys) -> None:

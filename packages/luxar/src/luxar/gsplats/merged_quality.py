@@ -211,16 +211,23 @@ def stamp_merged_quality(
     ``--denoise`` is not a tiling artifact. A lazy source is materialized here — during the fit it
     is only ever read tile-by-tile — which is what the budget below bounds.
     """
-    parts = [merged] if isinstance(merged, GSplatData) else list(merged)
+    target_stats: dict[str, Any] | None
+    if isinstance(merged, GSplatData):
+        is_partition = False
+        parts = [merged]
+        target_stats = merged.stats
+    else:
+        is_partition = True
+        parts = list(merged)
+        target_stats = stats
     if not parts or sum(part.n_splats for part in parts) == 0:
         return
-    target_stats = merged.stats if isinstance(merged, GSplatData) else stats
     if target_stats is None:
         raise ValueError("partition merged-quality scoring requires a stats target")
     budget_gb = _quality_budget_gb()
     needed_gb = _QUALITY_PEAK_VOLUMES * 4 * float(np.prod(volume_shape)) / 1024**3
     if needed_gb > budget_gb:
-        recourse = _compare_recourse(partition=False)
+        recourse = _compare_recourse(partition=is_partition)
         aprint(
             f"Merged quality metrics skipped: scoring {volume_shape} peaks at "
             f"~{needed_gb:.1f} GiB (the reconstruction, the reference, and "

@@ -389,13 +389,12 @@ class TestFitTiledParallel:
     def test_says_it_carries_no_quality_metrics(
         self, tmp_path: Path, capsys: pytest.CaptureFixture
     ) -> None:
-        """The sequential path scores its merge; this one cannot, and says so.
+        """A direct caller that omits the optional reference gets clear recourse.
 
-        ``fit_tiled_parallel`` is handed only the tile grid's shape, not the
-        volume, so there is nothing here to score against (the CLI parent still
-        holds the loaded volume) — an unexplained missing PSNR is the very thing
-        the sequential path's scoring exists to end, so the gap is named with its
-        recourse.
+        The CLI parent supplies the matching volume, but the public orchestrator
+        still permits shape-only callers. An unexplained missing PSNR is the very
+        thing merged scoring exists to end, so that direct-use gap is named with
+        its recourse.
         ``verbose=False`` is passed explicitly (the default is True): a quiet
         scripted fit is exactly where the unexplained gap would otherwise
         appear, since nothing about the omission reaches the store.
@@ -445,6 +444,16 @@ class TestFitTiledParallel:
         )
 
         assert "psnr_db" in merged.meta["fit_stats"]
+        from luxar.cli.gsplat_ops.fitting.fit_utils import save_fit_output
+
+        output = tmp_path / "parallel.gsplats.zarr"
+        save_fit_output(merged, output, compress=None, verbose=False)
+        import zarr
+
+        root = zarr.open_group(str(output), mode="r")
+        assert root["fitting"].attrs["psnr_db"] == pytest.approx(
+            merged.meta["fit_stats"]["psnr_db"]
+        )
         assert "No merged quality metrics" not in capsys.readouterr().out
 
     def test_rejects_a_reference_on_another_grid(

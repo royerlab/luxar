@@ -36,6 +36,37 @@ from luxar.gsplats.merged_quality import announce_unscored_merge
 WorkerCmdBuilder = Callable[[int, int, Path], "list[str]"]
 
 
+def _resolve_reference_volume(
+    volume: "Any | None",
+    volume_shape: tuple[int, ...],
+) -> "tuple[Any | None, str | None]":
+    """Validate that a parallel merge reference matches the worker grid."""
+    if volume is None:
+        return (
+            None,
+            "this direct parallel tiled call was not given the reference volume",
+        )
+
+    shape = getattr(volume, "shape", None)
+    if shape is None:
+        return None, "the supplied reference volume does not expose a shape"
+
+    reference_shape = tuple(int(size) for size in shape)
+    if reference_shape != volume_shape:
+        return (
+            None,
+            f"reference shape {reference_shape} does not match the tile grid {volume_shape}",
+        )
+
+    return volume, None
+
+
+def _announce_unscored_reason(reason: str | None) -> None:
+    """Report why a direct parallel merge could not be scored."""
+    if reason is not None:
+        announce_unscored_merge(reason, partition=None)
+
+
 def _empty_tile(ndim: int) -> GSplatData:
     """A 0-splat placeholder for a skipped (empty) tile.
 
@@ -303,7 +334,8 @@ def fit_tiled_parallel(
         resolved by :func:`~luxar.gsplats.tiling.resolve_grid_scale`; ``None``
         when the two frames already agree.  Forwarded to
         :func:`merge_tile_results`, where it lifts the partition's split planes
-        into the workers' splat frame (#1587).  Nothing else consumes it.
+        into the workers' splat frame and maps the merged reconstruction back to
+        the reference's voxel grid for quality scoring (#1587).
     source_shape : sequence of int, optional
         Grid of the volume the merged result represents, when that is NOT
         ``volume_shape`` — i.e. when the caller decimated before tiling, since
@@ -323,8 +355,8 @@ def fit_tiled_parallel(
 
     Returns
     -------
-    GSplatData
-        Merged result. Multi-LOD if ``progressive`` and tiles carry sublods.
+    GSplatData or GSplatNode
+        Merged flat result or partition tree. Tile-local LODs are preserved.
 
     Raises
     ------
@@ -332,23 +364,7 @@ def fit_tiled_parallel(
         If any worker exits non-zero.  The message names the failing tiles and
         includes a tail of their stderr; ``tmp_dir`` is left in place.
     """
-    reference = volume
-    unscored_reason: Optional[str] = None
-    if volume is None:
-        unscored_reason = (
-            "this direct parallel tiled call was not given the reference volume"
-        )
-    else:
-        shape = getattr(volume, "shape", None)
-        if shape is None:
-            unscored_reason = "the supplied reference volume does not expose a shape"
-            reference = None
-        elif tuple(int(size) for size in shape) != volume_shape:
-            unscored_reason = (
-                f"reference shape {tuple(int(size) for size in shape)} does not match "
-                f"the tile grid {volume_shape}"
-            )
-            reference = None
+    reference, unscored_reason = _resolve_reference_volume(volume, volume_shape)
 
     tmp_dir = Path(tmp_dir)
     # Start from a clean slate: a retained dir from a prior (failed or
@@ -477,8 +493,7 @@ def fit_tiled_parallel(
         device=device,
     )
 
-    if unscored_reason is not None:
-        announce_unscored_merge(unscored_reason, partition=None)
+    _announce_unscored_reason(unscored_reason)
 
     if not keep_tiles:
         shutil.rmtree(tmp_dir, ignore_errors=True)

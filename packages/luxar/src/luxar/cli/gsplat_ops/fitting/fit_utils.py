@@ -604,14 +604,14 @@ def dispatch_parallel_tiled(
 ) -> bool:
     """Parallel tiled fitting: spawn one subprocess per tile.
 
-    Branches BEFORE the in-memory downscale in the command body — the parent
-    skips the in-memory downscale (it only needs the shape to compute the
-    grid); each worker re-invokes ``fit --tile i/M``, loading and downscaling
-    its own region and rescaling back to original coords, then we reload +
-    merge. (The parent still holds the loaded volume — only its shape is used
-    here.) When ``--jobs`` resolves to 1 (e.g. ``-j auto`` on a CPU/MPS box,
-    or an explicit ``-j 0/1``), falls through to the in-process sequential
-    path instead of spawning a subprocess.
+    Branches BEFORE the in-memory downscale in the command body. Each worker
+    re-invokes ``fit --tile i/M``, loading and downscaling its own region and
+    rescaling back to original coordinates, then the parent reloads and merges
+    the outputs. Once concurrency is confirmed, the parent also decimates one
+    matching reference for whole-merge quality scoring. When ``--jobs``
+    resolves to 1 (e.g. ``-j auto`` on a CPU/MPS box, or an explicit ``-j
+    0/1``), it falls through without materializing that reference so the
+    in-process sequential path performs the downscale only once.
 
     Returns ``True`` when the parallel path ran to completion (the caller
     raises ``typer.Exit(0)``); ``False`` when the run should fall through to
@@ -630,9 +630,9 @@ def dispatch_parallel_tiled(
     from luxar.gsplats.fitting.downscale import downscale_volume, normalize_downscale
     from luxar.gsplats.tiling import compute_tile_specs, resolve_grid_scale
 
-    # Compute the tile grid on the POST-downscale shape (shape math
-    # only — decimation is volume[::f]) so the parent and workers
-    # agree on the tile count M.
+    # Compute the tile grid on the POST-downscale shape without materializing
+    # the decimated reference yet, so a one-job fallback does not downscale the
+    # volume twice. Decimation is volume[::f], so shape math is exact here.
     ds_factors = (
         normalize_downscale(effective_downscale, volume.ndim)
         if effective_downscale is not None
@@ -644,10 +644,6 @@ def dispatch_parallel_tiled(
         )
     else:
         grid_shape = tuple(volume.shape)
-    reference_volume = (
-        downscale_volume(volume, ds_factors) if ds_factors is not None else volume
-    )
-
     specs = compute_tile_specs(grid_shape, ctx.tile_size, ctx.tile_overlap)
     n_tiles = len(specs)
     tile_voxels = max((int(math.prod(s.shape)) for s in specs), default=1)
@@ -667,6 +663,9 @@ def dispatch_parallel_tiled(
     # Otherwise (n_jobs == 1) fall through to the sequential tiled
     # path below — no subprocess overhead for a single worker.
     if n_jobs > 1:
+        reference_volume = (
+            downscale_volume(volume, ds_factors) if ds_factors is not None else volume
+        )
         aprint(
             f"Parallel tiled fitting: {n_tiles} tiles, grid={grid_shape}, "
             f"{n_jobs} concurrent worker(s)"
