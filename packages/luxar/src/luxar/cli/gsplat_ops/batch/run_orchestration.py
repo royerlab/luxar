@@ -33,6 +33,7 @@ def _resolve_local_deferred_floor(
             channel_indices=manifest.channel_indices,
             timepoint_indices=manifest.timepoint_indices,
             array_key=manifest.array_key,
+            axes=manifest.axes,
             calibration_samples=manifest.calibration_samples,
             patch_size=manifest.denoise_patch_size,
             search_distance=manifest.denoise_search_distance,

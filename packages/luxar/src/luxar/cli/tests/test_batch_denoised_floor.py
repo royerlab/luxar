@@ -196,6 +196,7 @@ def test_local_deferred_floor_pins_calibrated_h_into_worker_argv(
         channel_indices,
         timepoint_indices,
         array_key,
+        axes,
         calibration_samples,
         patch_size,
         search_distance,
@@ -206,6 +207,7 @@ def test_local_deferred_floor_pins_calibrated_h_into_worker_argv(
         assert channel_indices == [1]
         assert timepoint_indices is None
         assert array_key == "data"
+        assert axes == "time,channel,z,y,x"
         assert calibration_samples > 0
         assert patch_size > 0
         assert search_distance > 0
