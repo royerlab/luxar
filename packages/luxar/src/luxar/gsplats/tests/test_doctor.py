@@ -85,6 +85,7 @@ def _sparse_uniform_tiled_store(tmp: Path) -> Path:
 
     specs = compute_tile_specs((96, 16, 16), 32, 8)
     x_bounds = ((0.0, 32.0), (24.0, 56.0), (72.0, 74.0), (72.0, 74.0))
+    assert len(specs) == len(x_bounds)
     regions = []
     for lo_x, hi_x in x_bounds:
         centers = np.array([[lo_x, 1.0, 1.0], [hi_x, 2.0, 2.0]], dtype=np.float32)
