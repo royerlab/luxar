@@ -29,6 +29,7 @@ from luxar.core.group.partition import (
     map_serialized_bsp_tree,
     prune_serialized_bsp_tree,
     reconstruct_serialized_bsp_tree,
+    serialized_bsp_tree_axis_overlap_floors,
     serialized_bsp_tree_separates,
     serialized_bsp_tree_straddles_centers,
     spatial_bsp_tree,
@@ -427,6 +428,30 @@ class TestOverlapSoundness:
         assert not serialized_bsp_tree_straddles_centers(
             self._tree(28.0 / 4.0), self._overlapping_boxes()
         )
+
+    def test_axis_overlap_floor_applies_to_sparse_descendant_cuts(self) -> None:
+        boxes = [
+            (np.array([0.0, 0.0]), np.array([32.0, 10.0])),
+            (np.array([24.0, 0.0]), np.array([56.0, 10.0])),
+            (np.array([72.0, 0.0]), np.array([74.0, 10.0])),
+        ]
+        tree = {
+            "axis": 0,
+            "split": 28.0,
+            "left": {"part": 0},
+            "right": {
+                "axis": 0,
+                "split": 76.0,
+                "left": {"part": 1},
+                "right": {"part": 2},
+            },
+        }
+
+        assert serialized_bsp_tree_axis_overlap_floors(tree, boxes) == (8.0, 0.0, 0.0)
+        assert serialized_bsp_tree_straddles_centers(tree, boxes)
+        assert serialized_bsp_tree_axis_overlap_floors(self._tree(28.0), boxes) is None
+        malformed = {**tree, "axis": "not-an-axis"}
+        assert serialized_bsp_tree_axis_overlap_floors(malformed, boxes) is None
 
     def test_nonfinite_or_unrepresentable_geometry_is_rejected(self) -> None:
         boxes = self._overlapping_boxes()

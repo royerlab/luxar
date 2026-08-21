@@ -516,7 +516,12 @@ def serialized_bsp_tree_axis_overlap_floors(
     tree: Optional[Dict[str, Any]],
     boxes: "Sequence[tuple[NDArray[np.floating], NDArray[np.floating]]]",
 ) -> "Optional[Tuple[float, float, float]]":
-    """Largest measured part-box interpenetration on each serialized axis."""
+    """Largest measured part-box interpenetration on each serialized axis.
+
+    Returns a three-axis tuple, with ``0.0`` for axes the tree never splits.
+    Returns ``None`` when the leaf labels do not name ``boxes`` exactly or the
+    stored tree metadata is malformed.
+    """
     if tree is None:
         return None
     try:
