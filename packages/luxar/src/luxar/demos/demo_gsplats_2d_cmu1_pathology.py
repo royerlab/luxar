@@ -121,6 +121,7 @@ import os
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 
 import sys
+import zipfile
 from pathlib import Path
 
 import numpy as np
@@ -367,17 +368,13 @@ def local_fit_paths() -> list[Path] | None:
     ``create_luxar_scene``). Consulted only when the manifest fetch came up
     empty, and BEFORE refitting, which is what makes the refit one-time.
 
-    Existence is the ONLY test, deliberately: the artifacts are handed to
-    ``add_gsplats_from_file`` unopened, so there is nothing here that could
-    judge them without paying the whole graft. A present-but-unusable file
-    (a Ctrl-C mid-save) therefore does NOT self-heal the way the single-leaf
-    demos' ``load_local_fit_gsplats`` door does — the graft raises later, naming
-    the path, and deleting that file (or ``--recompute``) is the recovery. The
-    trade is deliberate: silently refitting a 2-D whole-slide image because one
-    of three channels looked odd is the more expensive mistake.
+    A ZIP header check catches the one cheap, unambiguous failure here: a
+    truncated save from a Ctrl-C. Deeper validation would pay the whole graft,
+    so structurally valid archives are left for ``add_gsplats_from_file`` to
+    inspect rather than risking an unnecessary whole-slide refit.
     """
     paths = [local_fit_path(DATASET, name) for name in GSPLATS_FILES]
-    return paths if all(p.exists() for p in paths) else None
+    return paths if all(zipfile.is_zipfile(path) for path in paths) else None
 
 
 # =============================================================================

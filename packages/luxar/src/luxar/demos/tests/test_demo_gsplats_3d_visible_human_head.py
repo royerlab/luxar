@@ -411,7 +411,7 @@ class TestRejectedPairFallsThroughToRefit:
         return colors, sentinel_fit, sentinel_colors
 
     def test_permuted_sidecar_falls_through_to_the_refit(
-        self, tmp_path, monkeypatch
+        self, tmp_path, monkeypatch, capsys
     ) -> None:
         _, sentinel_fit, sentinel_colors = self._sentinel_setup(
             tmp_path, monkeypatch, permute=True
@@ -419,9 +419,10 @@ class TestRejectedPairFallsThroughToRefit:
         got_fit, got_colors = _demo.load_or_build()
         assert got_fit is sentinel_fit, "a rejected pair was rendered anyway"
         assert got_colors is sentinel_colors
+        assert "Using this machine's own earlier refit" not in capsys.readouterr().out
 
     def test_aligned_sidecar_is_used_instead_of_refitting(
-        self, tmp_path, monkeypatch
+        self, tmp_path, monkeypatch, capsys
     ) -> None:
         colors, sentinel_fit, _ = self._sentinel_setup(
             tmp_path, monkeypatch, permute=False
@@ -429,6 +430,7 @@ class TestRejectedPairFallsThroughToRefit:
         got_fit, got_colors = _demo.load_or_build()
         assert got_fit is not sentinel_fit, "an aligned pair triggered a refit"
         np.testing.assert_array_equal(got_colors, colors)
+        assert "Using this machine's own earlier refit" in capsys.readouterr().out
 
     def test_a_corrupt_local_fit_self_heals_instead_of_raising(
         self, tmp_path, monkeypatch, capsys

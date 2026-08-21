@@ -518,7 +518,6 @@ def local_refit_pair() -> tuple[GSplatData, np.ndarray] | None:
     local = load_local_fit_gsplats_at([LOCAL_FIT], label=DEMO_NAME)
     if local is None:
         return None
-    aprint("  Using this machine's own earlier refit")
     try:
         colors = _load_colors_f32(LOCAL_COLORS)
     except Exception as exc:  # noqa: BLE001 — a refit is the recovery
@@ -526,6 +525,7 @@ def local_refit_pair() -> tuple[GSplatData, np.ndarray] | None:
         return None
     if not _colors_match_fit(local[0], colors, f"{LOCAL_FIT} + {LOCAL_COLORS}"):
         return None
+    aprint("  Using this machine's own earlier refit")
     return local[0], colors
 
 

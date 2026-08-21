@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import zipfile
 from collections.abc import Callable
 from pathlib import Path
 
@@ -92,3 +93,27 @@ def test_the_packaged_manifest_lists_the_channels_the_demo_expects() -> None:
         f"{demo.DATASET} no longer lists exactly the three channel fits in "
         f"channel order, so the demo's resolve_data() would refuse it: {files}"
     )
+
+
+def test_local_fit_paths_rejects_a_truncated_channel(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        demo, "local_fit_path", lambda _dataset, name: tmp_path / name
+    )
+    for name in demo.GSPLATS_FILES:
+        with zipfile.ZipFile(tmp_path / name, "w"):
+            pass
+    (tmp_path / demo.GSPLATS_FILES[1]).write_bytes(b"a Ctrl-C mid-save, not a zip")
+
+    assert demo.local_fit_paths() is None
+
+
+def test_local_fit_paths_accepts_a_complete_zip_set(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        demo, "local_fit_path", lambda _dataset, name: tmp_path / name
+    )
+    expected = [tmp_path / name for name in demo.GSPLATS_FILES]
+    for path in expected:
+        with zipfile.ZipFile(path, "w"):
+            pass
+
+    assert demo.local_fit_paths() == expected
