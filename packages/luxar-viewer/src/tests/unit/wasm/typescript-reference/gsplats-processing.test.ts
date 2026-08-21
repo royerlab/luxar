@@ -146,7 +146,7 @@ describe('gsplats_processing: float32 transcendental call sites', () => {
     const outCholesky3d = new Float32Array(6);
     const count = project_gsplats_nd_to_3d(
       new Float32Array([0, 0]),
-      new Float32Array([30603.033203125, 0, 862206.5]),
+      new Float32Array([2.2910858177244636e-17, 0, 4.796421257549451e-18]),
       new Float32Array([1]),
       new Float32Array([1, 1, 1]),
       new Uint8Array([1]),
@@ -166,7 +166,7 @@ describe('gsplats_processing: float32 transcendental call sites', () => {
     );
 
     expect(count).toBe(1);
-    expect(toBits(outCholesky3d[5])).toBe(0x481ea18a);
+    expect(toBits(outCholesky3d[5])).toBe(0x23415fb6);
   });
 });
 
