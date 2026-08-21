@@ -463,8 +463,9 @@ class CompositionMixin(_GSplatDataOps):
                     "different splat count). Pass a scalar coordinate to broadcast "
                     "across all levels, or operate per level via at_substitutive()."
                 )
+            scalar_value = cast(float, values)
             out = self._map_substitutive(
-                lambda lvl: lvl.embed_dimension(values, sigma)
+                lambda lvl: lvl.embed_dimension(scalar_value, sigma)
             )
             return refresh_reduction_lod_stats(out, self)
 
