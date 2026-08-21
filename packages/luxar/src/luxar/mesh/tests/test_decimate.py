@@ -583,12 +583,15 @@ class TestDecimateQEM:
             faces,
             target_vertices=80,
             spatial_dims=(1, 2, 3),
+            scalars=barrier[:, 0],
         )
         groups, counts = np.unique(result.vertices[:, 0], return_counts=True)
 
         assert len(result.vertices) < len(vertices), "collapses must happen within groups"
         assert groups.tolist() == [0.0, 1.0], "barrier values must not blend"
         assert np.all(counts > 10), "each barrier group must keep its own surface"
+        assert result.scalars is not None
+        np.testing.assert_array_equal(result.scalars, result.vertices[:, 0])
 
     def test_unreferenced_vertices_do_not_consume_the_target_budget(self) -> None:
         vertices, faces = octasphere(3)
