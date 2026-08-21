@@ -405,7 +405,10 @@ def load_precomputed_crops(
     except LocalComputeDataset:
         return None
     except (FileNotFoundError, DatasetNotFound) as exc:
-        aprint(f"Precomputed crops unavailable ({exc}); fitting locally instead.")
+        aprint(
+            f"Precomputed crops unavailable ({exc}); using the local fit cache "
+            "and fitting only missing timepoints."
+        )
         return None
 
     by_name = {p.name: p for p in paths}
@@ -414,7 +417,8 @@ def load_precomputed_crops(
         volume_name, tracks_name = precomputed_file_names(dataset)
         if volume_name not in by_name or tracks_name not in by_name:
             aprint(
-                f"Hosted dataset has no entry for {dataset}; fitting locally instead."
+                f"Hosted dataset has no entry for {dataset}; using the local fit "
+                "cache and fitting only missing timepoints."
             )
             return None
         crops.append(
