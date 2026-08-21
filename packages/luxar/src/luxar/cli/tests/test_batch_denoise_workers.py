@@ -133,11 +133,64 @@ def test_preprocess_fit_uses_explicit_axes_for_2d_store(tmp_path: Path) -> None:
     script = generate_fit_sbatch(manifest, "")
 
     assert "--axes t,c,x,y" in script
+    assert "--array-key data" in script
 
     manifest.axes = None
     script = generate_fit_sbatch(manifest, "")
 
-    assert "--axes" not in script
+    assert "--axes t,c,y,x" in script
+
+
+def test_preprocess_fit_without_source_axes_reads_assigned_2d_slice(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from luxar.cli.gsplat_ops.batch.denoise_workers import (
+        run_batch_denoise_preprocess_cmd,
+    )
+    from luxar.gsplats.batch.slurm_gen import generate_fit_sbatch
+    from luxar.gsplats.preprocessing import denoise_pipeline
+    from luxar.io.volume import load_volume
+
+    source = tmp_path / "source.zarr"
+    data = np.zeros((3, 2, 1, 4, 5), dtype=np.float32)
+    for timepoint in range(3):
+        for channel in range(2):
+            data[timepoint, channel] = 10 * timepoint + channel
+    root = open_group(source, mode="w")
+    create_array(root, "data", data=data)
+
+    output = tmp_path / "batch"
+    manifest = BatchManifest(
+        input_path=str(source),
+        output_dir=str(output),
+        array_key="data",
+        n_timepoints=3,
+        n_channels=2,
+        spatial_shape=(4, 5),
+        n_tiles=1,
+        total_tasks=6,
+        denoise=True,
+        denoise_mode="preprocess",
+        denoised_zarr_path=str(output / "denoised.zarr"),
+    )
+    save_manifest(manifest, output)
+    (output / "denoise_h_values.json").write_text(json.dumps({"1": 0.04}))
+    monkeypatch.setattr(
+        denoise_pipeline, "denoise_volume_array", lambda volume, **_: volume
+    )
+
+    run_batch_denoise_preprocess_cmd(output, task_id=5)
+
+    script = generate_fit_sbatch(manifest, "")
+    assert "--axes t,c,y,x" in script
+    loaded = load_volume(
+        output / "denoised.zarr",
+        channel=1,
+        timepoint=2,
+        array_key="data",
+        axes="t,c,y,x",
+    )
+    np.testing.assert_array_equal(loaded, data[2, 1, 0])
 
 
 def test_denoise_calibration_command_reads_source_axes(
