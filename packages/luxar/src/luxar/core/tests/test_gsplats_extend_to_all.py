@@ -192,6 +192,78 @@ class TestGSplatsExtendToAll:
             ("points", "substitutive_lod"),
             ("lines", "partition"),
             ("lines", "substitutive_lod"),
+            ("gsplats", "partition"),
+        ],
+    )
+    def test_extend_preflight_matches_flat_channel_precedence(
+        self, tmp_path, geometry: str, wrapper: str
+    ) -> None:
+        dims = Dimensions(
+            [
+                Dimension("X", display=True),
+                Dimension("Y", display=True),
+                Dimension("Z", display=True),
+            ]
+        )
+        positions = np.random.default_rng(8).random((200, 3), dtype=np.float32)
+        wrapper_kwargs = (
+            {"partition": {"max_elements": 50}}
+            if wrapper == "partition"
+            else {"substitutive_lod": {"levels": 2}}
+        )
+
+        def capture_error(path_suffix: str, extra_kwargs: dict[str, Any]) -> str:
+            compiler = LuxarZarrCompiler(
+                tmp_path / f"{geometry}_{wrapper}_{path_suffix}.luxar.zarr"
+            )
+            scene = compiler.create_scene(dimensions=dims)
+
+            with pytest.raises(ValueError) as error:
+                if geometry == "points":
+                    scene.add_points(
+                        "g",
+                        positions,
+                        radii=np.ones(7, dtype=np.float32),
+                        extend_to_all="X!",
+                        **extra_kwargs,
+                    )
+                elif geometry == "lines":
+                    scene.add_lines(
+                        "g",
+                        positions,
+                        np.ones(7, dtype=np.float32),
+                        line_type="segments",
+                        extend_to_all="X!",
+                        **extra_kwargs,
+                    )
+                else:
+                    scene.add_gsplats(
+                        "g",
+                        positions,
+                        amplitudes=1.0,
+                        cholesky_factors=create_test_cholesky(200, 3),
+                        colors=np.ones((7, 3), dtype=np.float32),
+                        extend_to_all="X!",
+                        **extra_kwargs,
+                    )
+
+            assert "g" not in compiler.store
+            assert scene.children == []
+            return str(error.value)
+
+        flat_error = capture_error("flat", {})
+        wrapper_error = capture_error("wrapper", wrapper_kwargs)
+
+        assert wrapper_error == flat_error
+        assert "Invalid extend_to_all value: X!" in flat_error
+
+    @pytest.mark.parametrize(
+        ("geometry", "wrapper"),
+        [
+            ("points", "partition"),
+            ("points", "substitutive_lod"),
+            ("lines", "partition"),
+            ("lines", "substitutive_lod"),
         ],
     )
     def test_other_geometry_wrappers_reject_before_creating_wrapper(

@@ -218,7 +218,10 @@ LOD wrapper builders:
   is reported first either way. The node-attrs check is a second exception:
   since #1529 (Points/Lines) and #1534 (Mesh, GSplats) `validate_render_attrs`
   also runs at every adder's entry, above this gate, so an unknown/reserved
-  attr wins there too on all four geometry types now.
+  attr wins there too on all four geometry types now. The explicit
+  `extend_to_all` preflight is a third exception on split paths: it runs at the
+  wrapper branch after those structural checks but before this channel gate,
+  matching the flat writer's order.
   Same placement rule as the labels guard (first statement of the wrapper impl,
   never a leaf adder). Labels, then image labels, come last, in that order, as in
   the flat write: for Points and Lines via `validate_labels_for_writing` then
