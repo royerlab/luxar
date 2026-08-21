@@ -33,9 +33,10 @@ stamps are true of that coarse level and must survive a plain accessor —
 ``at_substitutive`` is used directly on the scene-authoring path
 (``core/group/gsplats_pipeline/lod_dispatch.py``), which copies exactly these
 numbers onto every coarse child of a ``kind=lod`` group. A content-changing
-rewrite instead recomputes their counts, e(k), group-consistent w and authored Q
-from the rewritten artifact; deleting them would license ``annotate-quality``'s
-leaf-local fallback to fabricate a group-inconsistent w.
+rewrite instead recomputes their counts, e(k), and group-consistent w from the
+rewritten artifact, while dropping Q until ``annotate-quality --with-quality``
+remeasures it; deleting w would license ``annotate-quality``'s leaf-local fallback
+to fabricate a group-inconsistent value.
 
 One source-dependent stamp sits beside them but cannot be recomputed: a
 ``--refine l2|volume`` level records its build step as ``level_stats.refine_stats``
@@ -267,8 +268,8 @@ def _measured_stats_dicts(data: "GSplatData") -> "List[MutableMapping[str, Any]]
     l2|volume`` level's nested ``refine_stats`` (``mse_seed`` / ``mse_refit``,
     taken against the source volume). It goes with the Q·e stamps rather than
     with the scores above, for the same reason: it is the record of the build
-    step that produced THAT level, and the answer for a reduction is to recompute
-    it, not to delete it.
+    step that produced THAT level. A reduction drops it because remeasurement
+    requires the unavailable source volume; rebuilding with ``--refine`` restores it.
     """
     return [data.stats, *(lod.stats for lod in _all_sublods(data))]
 

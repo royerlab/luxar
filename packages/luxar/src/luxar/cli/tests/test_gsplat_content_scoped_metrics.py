@@ -433,14 +433,40 @@ def test_overview_does_not_stamp_the_input_score_on_its_merged_cap(
 
     transformed = tmp_path / "ov_scaled.gsplats.zarr"
     _run(("transform", "{in}", "{out}", "--scale-intensity", "0.5"), out, transformed)
+    before_node, _ = load_gsplat_node(out, include_stats=True)
     node, _ = load_gsplat_node(transformed, include_stats=True)
-    from luxar.gsplats.tree import GSplatLodGroup, GSplatPartition
+    from luxar.gsplats.tree import (
+        GSplatLeaf,
+        GSplatLodGroup,
+        GSplatPartition,
+        iter_leaves,
+    )
 
+    assert isinstance(before_node, GSplatLodGroup)
     assert isinstance(node, GSplatLodGroup)
+    before_caps = [
+        child for child in before_node.children if isinstance(child, GSplatLeaf)
+    ]
+    caps = [child for child in node.children if isinstance(child, GSplatLeaf)]
+    assert len(before_caps) == len(caps) == 1, (
+        "overview output has no unique coarse cap"
+    )
+    before_reference = before_caps[0].meta["stats"]["reference_energy"]
+    cap_reference = caps[0].meta["stats"]["reference_energy"]
+    assert cap_reference == pytest.approx(before_reference * 0.25, rel=0.02)
     partitions = [
         child for child in node.children if isinstance(child, GSplatPartition)
     ]
     assert partitions, "overview output has no fine partition child"
+    fine_references = [
+        leaf.meta["stats"]["reference_energy"]
+        for partition in partitions
+        for leaf in iter_leaves(partition)
+    ]
+    assert cap_reference == pytest.approx(sum(fine_references))
+    assert all(
+        "quality" not in leaf.meta.get("stats", {}) for leaf in iter_leaves(node)
+    )
     for partition in partitions:
         assert "stats" not in partition.meta, (
             "tree restamp invented level_stats on a non-leaf partition child"

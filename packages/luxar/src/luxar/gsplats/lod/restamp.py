@@ -143,9 +143,9 @@ def refresh_reduction_lod_stats(
     Only stamp families authored on ``source`` are recomputed; an unannotated
     dataset stays unannotated. The rewritten finest level supplies the
     group-consistent ``reference_energy`` for every substitutive level, and an
-    authored quality is remeasured against that same finest content. Source-
-    volume ``refine_stats`` cannot be remeasured without the volume, so it is
-    removed rather than published for a different splat set.
+    authored quality is dropped until ``annotate-quality --with-quality``
+    remeasures it. Source-volume ``refine_stats`` cannot be remeasured without
+    the volume, so it is removed rather than published for a different splat set.
     """
     source_levels = source.substitutive_levels
     result_levels = result.substitutive_levels

@@ -811,9 +811,24 @@ def test_decimate_recomputes_a_complete_single_rung_stamp() -> None:
     assert level.stats["reference_energy"] == pytest.approx(total_self_energy(out))
 
 
-def test_content_preserving_rewrite_keeps_authored_q_e_stamps() -> None:
+@pytest.mark.parametrize("n_rungs", [1, 2])
+@pytest.mark.parametrize(
+    "op",
+    [
+        pytest.param(lambda gs: gs.transform(np.diag([2.0, 2.0, 2.0])), id="transform"),
+        pytest.param(
+            lambda gs: gs.translate(np.array([1.0, 2.0, 3.0])), id="translate"
+        ),
+        pytest.param(lambda gs: gs.with_colors((0.2, 0.4, 0.6)), id="with_colors"),
+    ],
+)
+def test_content_preserving_rewrite_keeps_authored_q_e_stamps(
+    n_rungs: int, op: Callable[[GSplatData], GSplatData]
+) -> None:
     source = _laddered()
-    out = source.translate(np.array([1.0, 2.0, 3.0]))
+    if n_rungs == 1:
+        source = source.flattened()
+    out = op(source)
     assert out.substitutive_levels[0].stats == source.substitutive_levels[0].stats
     assert [lod.stats for lod in out.additive_sublods] == [
         lod.stats for lod in source.additive_sublods
