@@ -26,9 +26,123 @@ import * as THREE from 'three';
 import * as zarr from '../../zarr';
 import { log, Modules } from '../../../utils/log';
 import type { SceneNode } from '../../data-loader-types';
-import type { PartitionGroupMetadata } from '../../../types/partition-group';
+import type { BspTreeNode, PartitionGroupMetadata } from '../../../types/partition-group';
 import type { NodeBuildCtx } from './build-ctx';
 import type { LoadSceneChildren } from './load-lod-group-node';
+
+interface PositionBounds {
+  min: readonly number[];
+  max: readonly number[];
+}
+
+function partIndexForChild(child: SceneNode, loadIndex: number): number {
+  return (child.attrs?.child_index as number | undefined) ?? loadIndex;
+}
+
+function readPositionBounds(child: SceneNode): PositionBounds | null {
+  const attrs = child.attrs as Record<string, unknown>;
+  const raw = (attrs.position_bounds ?? attrs.center_bounds) as
+    { min?: unknown; max?: unknown } | undefined;
+  if (!raw || !Array.isArray(raw.min) || !Array.isArray(raw.max)) return null;
+  if (raw.min.length === 0 || raw.min.length !== raw.max.length) return null;
+  for (let axis = 0; axis < raw.min.length; axis++) {
+    const low = raw.min[axis];
+    const high = raw.max[axis];
+    if (typeof low !== 'number' || typeof high !== 'number') return null;
+    if (!Number.isFinite(low) || !Number.isFinite(high) || low > high) return null;
+  }
+  return { min: raw.min as number[], max: raw.max as number[] };
+}
+
+function indexedPartBounds(children: SceneNode[]): PositionBounds[] | null {
+  const bounds: Array<PositionBounds | undefined> = new Array(children.length);
+  let dimensions: number | undefined;
+  for (let loadIndex = 0; loadIndex < children.length; loadIndex++) {
+    const partIndex = partIndexForChild(children[loadIndex], loadIndex);
+    const partBounds = readPositionBounds(children[loadIndex]);
+    if (
+      !Number.isInteger(partIndex) ||
+      partIndex < 0 ||
+      partIndex >= children.length ||
+      bounds[partIndex] !== undefined ||
+      partBounds === null
+    ) {
+      return null;
+    }
+    dimensions ??= partBounds.min.length;
+    if (partBounds.min.length !== dimensions) return null;
+    bounds[partIndex] = partBounds;
+  }
+  return bounds.every((partBounds) => partBounds !== undefined)
+    ? (bounds as PositionBounds[])
+    : null;
+}
+
+function straddlingLeafLabels(node: unknown, bounds: PositionBounds[]): number[] | null {
+  if (!node || typeof node !== 'object') return null;
+  const record = node as Record<string, unknown>;
+  if (Object.prototype.hasOwnProperty.call(record, 'part')) {
+    return Number.isInteger(record.part) && (record.part as number) >= 0
+      ? [record.part as number]
+      : null;
+  }
+
+  const axis = record.axis;
+  const split = record.split;
+  if (
+    !Number.isInteger(axis) ||
+    (axis as number) < 0 ||
+    (axis as number) > 2 ||
+    (axis as number) >= bounds[0].min.length ||
+    typeof split !== 'number' ||
+    !Number.isFinite(split)
+  ) {
+    return null;
+  }
+
+  const leftLabels = straddlingLeafLabels(record.left, bounds);
+  const rightLabels = straddlingLeafLabels(record.right, bounds);
+  if (!leftLabels || !rightLabels) return null;
+  const labels = [...leftLabels, ...rightLabels];
+  if (labels.some((part) => part >= bounds.length)) return null;
+
+  const splitAxis = axis as number;
+  let leftCenter = -Infinity;
+  let rightCenter = Infinity;
+  let leftHigh = -Infinity;
+  let rightLow = Infinity;
+  for (const part of leftLabels) {
+    leftCenter = Math.max(
+      leftCenter,
+      0.5 * (bounds[part].min[splitAxis] + bounds[part].max[splitAxis])
+    );
+    leftHigh = Math.max(leftHigh, bounds[part].max[splitAxis]);
+  }
+  for (const part of rightLabels) {
+    rightCenter = Math.min(
+      rightCenter,
+      0.5 * (bounds[part].min[splitAxis] + bounds[part].max[splitAxis])
+    );
+    rightLow = Math.min(rightLow, bounds[part].min[splitAxis]);
+  }
+  const overlap = Math.max(0, leftHigh - rightLow);
+  if (split < leftCenter - overlap || split > rightCenter + overlap) return null;
+  return labels;
+}
+
+function validatedBspTree(tree: unknown, children: SceneNode[]): BspTreeNode | undefined {
+  const bounds = indexedPartBounds(children);
+  if (!bounds) return undefined;
+  try {
+    const labels = straddlingLeafLabels(tree, bounds);
+    if (!labels || labels.length !== bounds.length) return undefined;
+    labels.sort((a, b) => a - b);
+    if (labels.some((label, index) => label !== index)) return undefined;
+    return tree as BspTreeNode;
+  } catch {
+    return undefined;
+  }
+}
 
 /**
  * Load a kind=`partition` `Group` on initial scene construction.
@@ -89,7 +203,7 @@ export async function loadPartitionGroupNode(
     // can map a part's render mesh back to a `bsp_tree` leaf for exact
     // back-to-front ordering. A part subtree may add >1 object (e.g. a per-part
     // lod group) — tag them all.
-    const partIndex = (child.attrs?.child_index as number | undefined) ?? i;
+    const partIndex = partIndexForChild(child, i);
     for (let j = before; j < partitionGroup.children.length; j++) {
       partitionGroup.children[j].userData.partIndex = partIndex;
     }
@@ -99,7 +213,15 @@ export async function loadPartitionGroupNode(
   // back-to-front part ordering; absent for streamed grid/content merges, where
   // the coordinator falls back to a per-part centroid heuristic.
   if (attrs.bsp_tree) {
-    partitionGroup.userData.bspTree = attrs.bsp_tree;
+    const bspTree = validatedBspTree(attrs.bsp_tree, sceneChildren);
+    if (bspTree) {
+      partitionGroup.userData.bspTree = bspTree;
+    } else {
+      log.warning(
+        Modules.SCENE_LOADER,
+        `partition-kind group ${node.path} has an invalid bsp_tree; falling back to centroid ordering`
+      );
+    }
   }
 
   log.info(

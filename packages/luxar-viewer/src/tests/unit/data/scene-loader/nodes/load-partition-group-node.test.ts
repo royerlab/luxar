@@ -24,12 +24,17 @@ beforeEach(() => {
   loadSceneNodesMock.mockReset();
 });
 
-function makePartNode(path: string, partType: 'points' | 'gsplats' = 'points'): SceneNode {
+function makePartNode(
+  path: string,
+  partType: 'points' | 'gsplats' = 'points',
+  extraAttrs: Record<string, unknown> = {}
+): SceneNode {
   return {
     path,
     type: partType,
     attrs: {
       type: partType,
+      ...extraAttrs,
     } as SceneNode['attrs'],
     hasSpatialIndex: false,
     children: [],
@@ -186,9 +191,15 @@ describe('loadPartitionGroupNode', () => {
     const ctx = makeCtx();
     const bspTree = { axis: 0, split: 0, left: { part: 0 }, right: { part: 1 } };
     const parts = [
-      { ...makePartNode('/partition/part_0'), attrs: { type: 'points', child_index: 0 } },
-      { ...makePartNode('/partition/part_1'), attrs: { type: 'points', child_index: 1 } },
-    ] as SceneNode[];
+      makePartNode('/partition/part_0', 'points', {
+        child_index: 0,
+        position_bounds: { min: [-2, 0], max: [0.5, 1] },
+      }),
+      makePartNode('/partition/part_1', 'points', {
+        child_index: 1,
+        position_bounds: { min: [-0.5, 0], max: [2, 1] },
+      }),
+    ];
     const node = makePartitionGroupNode(parts, { bsp_tree: bspTree });
 
     const wrapper = await loadPartitionGroupNode(
@@ -201,6 +212,143 @@ describe('loadPartitionGroupNode', () => {
 
     expect(wrapper.userData.bspTree).toEqual(bspTree);
     expect(wrapper.children.map((c) => c.userData.partIndex)).toEqual([0, 1]);
+  });
+
+  it('drops a bsp_tree whose split plane is outside the overlap-tolerant center band', async () => {
+    attachStubChildren();
+    const ctx = makeCtx();
+    const bspTree = { axis: 0, split: -10, left: { part: 0 }, right: { part: 1 } };
+    const parts = [
+      makePartNode('/partition/part_0', 'points', {
+        child_index: 0,
+        position_bounds: { min: [-2, 0], max: [0.5, 1] },
+      }),
+      makePartNode('/partition/part_1', 'points', {
+        child_index: 1,
+        position_bounds: { min: [-0.5, 0], max: [2, 1] },
+      }),
+    ];
+    const node = makePartitionGroupNode(parts, { bsp_tree: bspTree });
+
+    const wrapper = await loadPartitionGroupNode(
+      node,
+      new THREE.Group(),
+      makeStubLoc(),
+      ctx,
+      loadSceneNodesMock
+    );
+
+    expect(wrapper.userData.bspTree).toBeUndefined();
+  });
+
+  it('validates bsp_tree leaves against child_index rather than child load order', async () => {
+    attachStubChildren();
+    const ctx = makeCtx();
+    const bspTree = { axis: 0, split: 0, left: { part: 0 }, right: { part: 1 } };
+    const parts = [
+      makePartNode('/partition/part_1', 'points', {
+        child_index: 1,
+        position_bounds: { min: [-0.5, 0], max: [2, 1] },
+      }),
+      makePartNode('/partition/part_0', 'points', {
+        child_index: 0,
+        position_bounds: { min: [-2, 0], max: [0.5, 1] },
+      }),
+    ];
+    const node = makePartitionGroupNode(parts, { bsp_tree: bspTree });
+
+    const wrapper = await loadPartitionGroupNode(
+      node,
+      new THREE.Group(),
+      makeStubLoc(),
+      ctx,
+      loadSceneNodesMock
+    );
+
+    expect(wrapper.userData.bspTree).toEqual(bspTree);
+    expect(wrapper.children.map((c) => c.userData.partIndex)).toEqual([1, 0]);
+  });
+
+  it('keeps a valid 2D bsp_tree whose split uses the second stored axis', async () => {
+    attachStubChildren();
+    const ctx = makeCtx();
+    const bspTree = { axis: 1, split: 0, left: { part: 0 }, right: { part: 1 } };
+    const parts = [
+      makePartNode('/partition/part_0', 'points', {
+        position_bounds: { min: [0, -2], max: [1, 0.5] },
+      }),
+      makePartNode('/partition/part_1', 'points', {
+        position_bounds: { min: [0, -0.5], max: [1, 2] },
+      }),
+    ];
+    const node = makePartitionGroupNode(parts, { bsp_tree: bspTree });
+
+    const wrapper = await loadPartitionGroupNode(
+      node,
+      new THREE.Group(),
+      makeStubLoc(),
+      ctx,
+      loadSceneNodesMock
+    );
+
+    expect(wrapper.userData.bspTree).toEqual(bspTree);
+  });
+
+  it('drops a bsp_tree when a nested split is unsound', async () => {
+    attachStubChildren();
+    const ctx = makeCtx();
+    const bspTree = {
+      axis: 0,
+      split: 0,
+      left: { axis: 1, split: -10, left: { part: 0 }, right: { part: 1 } },
+      right: { part: 2 },
+    };
+    const parts = [
+      makePartNode('/partition/part_0', 'points', {
+        position_bounds: { min: [-2, -2], max: [0.5, 0.5] },
+      }),
+      makePartNode('/partition/part_1', 'points', {
+        position_bounds: { min: [-2, -0.5], max: [0.5, 2] },
+      }),
+      makePartNode('/partition/part_2', 'points', {
+        position_bounds: { min: [-0.5, -2], max: [2, 2] },
+      }),
+    ];
+    const node = makePartitionGroupNode(parts, { bsp_tree: bspTree });
+
+    const wrapper = await loadPartitionGroupNode(
+      node,
+      new THREE.Group(),
+      makeStubLoc(),
+      ctx,
+      loadSceneNodesMock
+    );
+
+    expect(wrapper.userData.bspTree).toBeUndefined();
+  });
+
+  it('drops a bsp_tree when part bounds are missing or malformed', async () => {
+    attachStubChildren();
+    const ctx = makeCtx();
+    const bspTree = { axis: 0, split: 0, left: { part: 0 }, right: { part: 1 } };
+    const parts = [
+      makePartNode('/partition/part_0', 'points', {
+        child_index: 0,
+        position_bounds: { min: [-2, 0], max: [0.5, 1] },
+      }),
+      makePartNode('/partition/part_1', 'points', { child_index: 1 }),
+    ];
+    const node = makePartitionGroupNode(parts, { bsp_tree: bspTree });
+
+    const wrapper = await loadPartitionGroupNode(
+      node,
+      new THREE.Group(),
+      makeStubLoc(),
+      ctx,
+      loadSceneNodesMock
+    );
+
+    expect(wrapper.userData.bspTree).toBeUndefined();
   });
 
   it('leaves bspTree undefined when the partition has no stored tree (fallback path)', async () => {
