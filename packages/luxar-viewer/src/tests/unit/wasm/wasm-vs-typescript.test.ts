@@ -1049,6 +1049,580 @@ describe('WASM vs TypeScript Comparison', () => {
   });
 
   // ============================================================================
+  // f32 OPERATION-ORDER PARITY (#1820)
+  // ============================================================================
+  //
+  // The cases above compare with `arraysAlmostEqual` at 1e-5 — loose enough to
+  // pass while the TS reference did its multi-step arithmetic in f64 and Rust
+  // did it in f32. The TS kernels are not a fallback (CLAUDE.md: they are the
+  // PRODUCTION backend above 16 dimensions and whenever WASM is unavailable), so
+  // "close" is the wrong contract. These cases are EXACT wherever exactness is
+  // reachable and ULP/absolute-bounded, with a measured bound, where it is not.
+  describe('f32 operation-order parity (#1820)', () => {
+    /** Deterministic LCG — no Math.random, so a failure is reproducible. */
+    function lcg(seed: number): () => number {
+      let s = seed >>> 0;
+      return () => {
+        s = (s * 1664525 + 1013904223) >>> 0;
+        return s / 4294967296;
+      };
+    }
+
+    /**
+     * Bit-level mismatch summary: the total count plus the first few offenders.
+     * Asserting on this instead of `toEqual` over the whole array keeps the
+     * comparison exact while making a failure readable at 20 000 elements.
+     */
+    function exactMismatches(
+      ts: ArrayLike<number>,
+      wasm: ArrayLike<number>,
+      limit = 4
+    ): { total: number; first: Array<{ i: number; ts: number; wasm: number }> } {
+      const first: Array<{ i: number; ts: number; wasm: number }> = [];
+      let total = 0;
+      for (let i = 0; i < ts.length; i++) {
+        if (!Object.is(ts[i], wasm[i])) {
+          total++;
+          if (first.length < limit) first.push({ i, ts: ts[i], wasm: wasm[i] });
+        }
+      }
+      return { total, first };
+    }
+    const NO_MISMATCHES = { total: 0, first: [] };
+
+    /** Distance in f32 ulps between two values (both are already f32). */
+    function ulpDistance(a: number, b: number): number {
+      const f = new Float32Array([a, b]);
+      const i = new Int32Array(f.buffer);
+      const ordered = (x: number) => (x < 0 ? 0x80000000 - x : x);
+      return Math.abs(ordered(i[0]) - ordered(i[1]));
+    }
+
+    function maxUlp(ts: ArrayLike<number>, wasm: ArrayLike<number>): number {
+      let m = 0;
+      for (let i = 0; i < ts.length; i++) m = Math.max(m, ulpDistance(ts[i], wasm[i]));
+      return m;
+    }
+
+    function maxAbs(ts: ArrayLike<number>, wasm: ArrayLike<number>): number {
+      let m = 0;
+      for (let i = 0; i < ts.length; i++) m = Math.max(m, Math.abs(ts[i] - wasm[i]));
+      return m;
+    }
+
+    // ------------------------------------------------------------------
+    // effective_radii
+    // ------------------------------------------------------------------
+    it.skipIf(!wasmFilesExist)(
+      'calculate_effective_radii is BIT-EXACT over a 20k randomized nD sweep',
+      () => {
+        // Every step of this kernel is a plain arithmetic op — no
+        // transcendentals — so exactness is fully reachable and anything less
+        // is a bug. Mixed spatial/discrete hidden dims exercise both the
+        // Pythagorean accumulation and the tolerance gate.
+        const numPoints = 20000;
+        const ndim = 6;
+        const positions = new Float32Array(numPoints * ndim);
+        const radii = new Float32Array(numPoints);
+        const rnd = lcg(0x1820);
+        for (let i = 0; i < numPoints; i++) {
+          for (let d = 0; d < ndim; d++) positions[i * ndim + d] = (rnd() - 0.5) * 4;
+          radii[i] = 0.5 + rnd() * 2;
+        }
+        const displayDims = new Uint32Array([0, 1, 2]);
+        const slicePos = new Float32Array(ndim);
+        const spatialExtend = new Uint8Array([1, 1, 1, 1, 1, 0]); // dim 5 discrete
+        const tsOutput = new Float32Array(numPoints);
+        const wasmOutput = new Float32Array(numPoints);
+
+        const tsVisible = tsModule.calculate_effective_radii(
+          positions,
+          radii,
+          displayDims,
+          slicePos,
+          spatialExtend,
+          ndim,
+          numPoints,
+          tsOutput
+        );
+        const wasmVisible = wasmModule!.calculate_effective_radii(
+          positions,
+          radii,
+          displayDims,
+          slicePos,
+          spatialExtend,
+          ndim,
+          numPoints,
+          wasmOutput
+        );
+
+        expect(tsVisible).toBe(wasmVisible);
+        expect(exactMismatches(tsOutput, wasmOutput)).toEqual(NO_MISMATCHES);
+      }
+    );
+
+    it.skipIf(!wasmFilesExist)(
+      'calculate_effective_radii: f32 rounding decides VISIBILITY, not just the digits',
+      () => {
+        // Hand-picked so the Pythagorean test lands on opposite sides of the
+        // rim in the two precisions. With the hidden coords below,
+        //   f32:  distanceSquared == radiusSquared (0.28985107) -> CULLED
+        //   f64:  distanceSquared  < radiusSquared             -> VISIBLE
+        // so `visibleCount` — which the caller uses to size its compaction —
+        // differs by one between the backends, not by an ulp.
+        const positions = new Float32Array([0, 0, 0, 0.5120331645011902, 0.166352316737175]);
+        const radii = new Float32Array([0.5383781790733337]);
+        const displayDims = new Uint32Array([0, 1, 2]);
+        const slicePos = new Float32Array(5);
+        const spatialExtend = new Uint8Array([1, 1, 1, 1, 1]);
+        const tsOutput = new Float32Array(1);
+        const wasmOutput = new Float32Array(1);
+
+        const tsVisible = tsModule.calculate_effective_radii(
+          positions,
+          radii,
+          displayDims,
+          slicePos,
+          spatialExtend,
+          5,
+          1,
+          tsOutput
+        );
+        const wasmVisible = wasmModule!.calculate_effective_radii(
+          positions,
+          radii,
+          displayDims,
+          slicePos,
+          spatialExtend,
+          5,
+          1,
+          wasmOutput
+        );
+
+        expect(wasmVisible).toBe(0); // pin the f32 answer, not just agreement
+        expect(tsVisible).toBe(wasmVisible);
+        expect(tsOutput[0]).toBe(wasmOutput[0]);
+        expect(tsOutput[0]).toBe(0);
+      }
+    );
+
+    it.skipIf(!wasmFilesExist)(
+      'calculate_effective_radii: the DISCRETE tolerance gate is evaluated in f32',
+      () => {
+        // |value - target| is 0.5000000288709998 exactly (both operands are
+        // f32, so the difference is exact in f64) but rounds to exactly 0.5 in
+        // f32. Rust's `> 0.5` is therefore FALSE and the point survives the
+        // discrete gate; an f64 comparison rejects it. Opposite direction to
+        // the case above, so a fix that frounds one subtraction and not the
+        // other still fails here.
+        const target = 0.0012588808313012123;
+        const value = 0.501258909702301;
+        const positions = new Float32Array([0, 0, 0, value]);
+        const radii = new Float32Array([1.0]);
+        const displayDims = new Uint32Array([0, 1, 2]);
+        const slicePos = new Float32Array([0, 0, 0, target]);
+        const spatialExtend = new Uint8Array([1, 1, 1, 0]); // dim 3 discrete
+        const tsOutput = new Float32Array(1);
+        const wasmOutput = new Float32Array(1);
+
+        const tsVisible = tsModule.calculate_effective_radii(
+          positions,
+          radii,
+          displayDims,
+          slicePos,
+          spatialExtend,
+          4,
+          1,
+          tsOutput
+        );
+        const wasmVisible = wasmModule!.calculate_effective_radii(
+          positions,
+          radii,
+          displayDims,
+          slicePos,
+          spatialExtend,
+          4,
+          1,
+          wasmOutput
+        );
+
+        expect(wasmVisible).toBe(1); // f32 says "within tolerance"
+        expect(tsVisible).toBe(wasmVisible);
+        expect(tsOutput[0]).toBe(wasmOutput[0]);
+      }
+    );
+
+    // ------------------------------------------------------------------
+    // mahalanobis_distance
+    // ------------------------------------------------------------------
+    it.skipIf(!wasmFilesExist)(
+      'mahalanobis_distance is BIT-EXACT over 5k randomized correlated factors',
+      () => {
+        // Forward substitution + a norm — no transcendentals, so the scalar the
+        // TS twin returns must be the very same f64 wasm-bindgen hands back for
+        // Rust's f32, not merely within sqrt(ndim)*1e-5 of it.
+        const trials = 5000;
+        const ndim = 8;
+        const packedSize = (ndim * (ndim + 1)) / 2;
+        const rnd = lcg(0xc0ffee);
+        const diff = new Float32Array(ndim);
+        const packedL = new Float32Array(packedSize);
+        const mismatches: Array<{ trial: number; ts: number; wasm: number }> = [];
+        for (let t = 0; t < trials; t++) {
+          for (let i = 0; i < ndim; i++) diff[i] = (rnd() - 0.5) * 4;
+          for (let row = 0; row < ndim; row++) {
+            for (let col = 0; col <= row; col++) {
+              packedL[(row * (row + 1)) / 2 + col] =
+                col === row ? 0.5 + rnd() * 2 : (rnd() - 0.5) * 1.5;
+            }
+          }
+          const tsDist = tsModule.mahalanobis_distance(diff, packedL, ndim);
+          const wasmDist = wasmModule!.mahalanobis_distance(diff, packedL, ndim);
+          if (!Object.is(tsDist, wasmDist) && mismatches.length < 4) {
+            mismatches.push({ trial: t, ts: tsDist, wasm: wasmDist });
+          }
+        }
+        expect(mismatches).toEqual([]);
+      }
+    );
+
+    // ------------------------------------------------------------------
+    // project_gsplats_nd_to_3d
+    // ------------------------------------------------------------------
+    /** Run the fused kernel with explicit `minAmplitude` / `truncate`. */
+    const project = (
+      mod: WasmModule,
+      a: {
+        positions: Float32Array;
+        cholesky: Float32Array;
+        amplitudes: Float32Array;
+        discreteVisibility: Uint8Array;
+        slicePosition: Float32Array;
+        continuousHiddenDims: Uint32Array;
+        displayDims: Uint32Array;
+        ndim: number;
+        splatCount: number;
+        minAmplitude: number;
+        truncate?: number;
+      }
+    ) => {
+      const n = a.splatCount;
+      const centers = new Float32Array(n * 3);
+      const chol = new Float32Array(n * 6);
+      const amps = new Float32Array(n);
+      const cols = new Float32Array(n * 3);
+      const count = mod.project_gsplats_nd_to_3d(
+        a.positions,
+        a.cholesky,
+        a.amplitudes,
+        new Float32Array(n * 3).fill(1),
+        a.discreteVisibility,
+        a.slicePosition,
+        a.continuousHiddenDims,
+        a.displayDims,
+        a.ndim,
+        n,
+        3,
+        a.minAmplitude,
+        a.truncate ?? 3.0,
+        centers,
+        chol,
+        amps,
+        cols,
+        new Uint32Array(0)
+      );
+      return { count, centers, chol, amps };
+    };
+
+    it.skipIf(!wasmFilesExist)(
+      'project_gsplats_nd_to_3d is BIT-EXACT with no continuous hidden dims (no exp on the path)',
+      () => {
+        // Attenuation short-circuits to exactly 1.0, so the only float work is
+        // the display marginal Cholesky — Σ_S dot products and a Crout
+        // reduction, both pure arithmetic. Full exactness is reachable, and the
+        // Crout step is where cancellation used to blow the f64-vs-f32
+        // divergence out to thousands of ulps.
+        const splatCount = 20000;
+        const ndim = 3;
+        const packedSize = 6;
+        const positions = new Float32Array(splatCount * ndim);
+        const cholesky = new Float32Array(splatCount * packedSize);
+        const amplitudes = new Float32Array(splatCount);
+        const rnd = lcg(0xbeef);
+        for (let i = 0; i < splatCount; i++) {
+          for (let d = 0; d < ndim; d++) positions[i * ndim + d] = rnd() * 10;
+          const b = i * packedSize;
+          cholesky[b] = 0.5 + rnd() * 3;
+          cholesky[b + 1] = (rnd() - 0.5) * 2;
+          cholesky[b + 2] = 0.5 + rnd() * 3;
+          cholesky[b + 3] = (rnd() - 0.5) * 2;
+          cholesky[b + 4] = (rnd() - 0.5) * 2;
+          cholesky[b + 5] = 0.5 + rnd() * 3;
+          amplitudes[i] = 0.2 + rnd();
+        }
+        const args = {
+          positions,
+          cholesky,
+          amplitudes,
+          discreteVisibility: new Uint8Array(splatCount).fill(1),
+          slicePosition: new Float32Array(ndim),
+          continuousHiddenDims: new Uint32Array([]),
+          displayDims: new Uint32Array([0, 1, 2]),
+          ndim,
+          splatCount,
+          minAmplitude: 1e-6,
+        };
+        const ts = project(tsModule, args);
+        const w = project(wasmModule!, args);
+
+        expect(ts.count).toBe(w.count);
+        expect(ts.count).toBe(splatCount);
+        expect(exactMismatches(ts.chol, w.chol)).toEqual(NO_MISMATCHES);
+        expect(exactMismatches(ts.centers, w.centers)).toEqual(NO_MISMATCHES);
+        expect(exactMismatches(ts.amps, w.amps)).toEqual(NO_MISMATCHES);
+      }
+    );
+
+    it.skipIf(!wasmFilesExist)(
+      'project_gsplats_nd_to_3d: f32 accumulation decides the EMITTED SPLAT COUNT',
+      () => {
+        // One splat, two correlated continuous hidden dims. The f64 and f32
+        // marginal-Cholesky + forward-substitution chains land ~1700 ulps apart
+        // on the attenuated amplitude, and `minAmplitude` is placed strictly
+        // between them: WASM emits the splat, an f64 TS chain culls it.
+        const ndim = 5;
+        const cholesky = new Float32Array([
+          1.3153510093688965, -0.20379841327667236, 2.7451348304748535, -1.899763584136963,
+          0.9705871343612671, 1.3426613807678223, -0.3823320269584656, -0.2775517702102661,
+          1.0715609788894653, 2.4265294075012207, 0.28441232442855835, 0.37014153599739075,
+          -1.196919560432434, -1.545201301574707, 0.83291095495224,
+        ]);
+        const args = {
+          positions: new Float32Array([
+            0.38872674107551575, -1.677039384841919, -1.0393322706222534, -1.6747952699661255,
+            -1.6385165452957153,
+          ]),
+          cholesky,
+          amplitudes: new Float32Array([1.2808760404586792]),
+          discreteVisibility: new Uint8Array([1]),
+          slicePosition: new Float32Array(ndim),
+          continuousHiddenDims: new Uint32Array([3, 4]),
+          displayDims: new Uint32Array([0, 1, 2]),
+          ndim,
+          splatCount: 1,
+          minAmplitude: 0.00017888002912513912,
+        };
+        const ts = project(tsModule, args);
+        const w = project(wasmModule!, args);
+
+        expect(w.count).toBe(1); // pin the f32 answer
+        expect(ts.count).toBe(w.count);
+      }
+    );
+
+    it.skipIf(!wasmFilesExist)(
+      'project_gsplats_nd_to_3d: minAmplitude is thresholded as an f32',
+      () => {
+        // `min_amplitude: f32` on the Rust signature, so wasm-bindgen narrows
+        // 0.25 + 1e-9 to exactly 0.25 at the boundary and the splat passes
+        // `!(0.25 < 0.25)`. This backend gets the raw f64 and must narrow it
+        // itself; comparing against the f64 culls a splat WASM emits. No
+        // hidden dims, so attenuation is exactly 1 and nothing else can move.
+        const ndim = 3;
+        const args = {
+          positions: new Float32Array([0, 0, 0]),
+          cholesky: new Float32Array([1, 0, 1, 0, 0, 1]),
+          amplitudes: new Float32Array([0.25]),
+          discreteVisibility: new Uint8Array([1]),
+          slicePosition: new Float32Array(ndim),
+          continuousHiddenDims: new Uint32Array([]),
+          displayDims: new Uint32Array([0, 1, 2]),
+          ndim,
+          splatCount: 1,
+          minAmplitude: 0.25 + 1e-9,
+        };
+        expect(Math.fround(args.minAmplitude)).toBe(0.25); // the premise
+        const ts = project(tsModule, args);
+        const w = project(wasmModule!, args);
+
+        expect(w.count).toBe(1);
+        expect(ts.count).toBe(w.count);
+        expect(ts.amps[0]).toBe(w.amps[0]);
+      }
+    );
+
+    it.skipIf(!wasmFilesExist)(
+      'compute_marginal_cholesky: the degeneracy floor clamps at f32::MIN_POSITIVE',
+      () => {
+        // Σ_S = diag(L00², 0) with L00 = 1e-14 gives maxDiag ≈ 1e-28, so
+        // maxDiag × CHOLESKY_RELATIVE_EPSILON ≈ 1e-40 — a denormal f32, far
+        // below 2⁻¹²⁶. Rust clamps to f32::MIN_POSITIVE and regularizes the
+        // dead axis to √(2⁻¹²⁶) = 2⁻⁶³; clamping at `Number.MIN_VALUE`
+        // (≈5e-324) instead leaves 1e-40 and regularizes to ~1e-20 — four
+        // orders of magnitude apart, which is not a rounding difference.
+        const ndim = 2;
+        const args = {
+          positions: new Float32Array([0, 0]),
+          cholesky: new Float32Array([1e-14, 0, 0]), // packed 2D [L00, L10, L11]
+          amplitudes: new Float32Array([1]),
+          discreteVisibility: new Uint8Array([1]),
+          slicePosition: new Float32Array(ndim),
+          continuousHiddenDims: new Uint32Array([]),
+          displayDims: new Uint32Array([0, 1]),
+          ndim,
+          splatCount: 1,
+          minAmplitude: 1e-9,
+        };
+        const ts = project(tsModule, args);
+        const w = project(wasmModule!, args);
+
+        expect(w.count).toBe(1);
+        expect(ts.count).toBe(w.count);
+        // L11 is the regularized dead axis: √(f32::MIN_POSITIVE) = 2⁻⁶³.
+        expect(w.chol[2]).toBe(Math.pow(2, -63));
+        expect(Array.from(ts.chol.subarray(0, 6))).toEqual(Array.from(w.chol.subarray(0, 6)));
+      }
+    );
+
+    // ------------------------------------------------------------------
+    // The two paths where exactness is NOT reachable — bounded, with the
+    // bound measured rather than guessed.
+    // ------------------------------------------------------------------
+    it.skipIf(!wasmFilesExist)(
+      'project_gsplats_nd_to_3d attenuation: exp residual only, bounded absolutely',
+      () => {
+        // The full attenuation path — correlated 5D factors, TWO continuous
+        // hidden dims (so the marginal Cholesky and the forward substitution
+        // both do real work) and 3 display dims.
+        //
+        // `Math.fround(Math.exp(x))` is not `f32::exp(x)` — V8's ieee754 kernel
+        // and the wasm libm's `expf` are different approximations, so that ONE
+        // step can never be made exact (porting musl's expf is out of scope).
+        // Everything around it now is, which is what makes the residual
+        // bounded: the attenuated amplitude is `amp · inv · (rawExp − shiftC)`
+        // with rawExp ≤ 1, so a ≤1 ulp error in rawExp costs a few ulps of
+        // `amp · inv` and nothing accumulates behind it.
+        //
+        // Measured on this exact fixture (20 000 splats, seed 555):
+        //   before the f32 rounding: 16966/118014 display-Cholesky slots wrong
+        //                            (up to 39828 ulp), amplitudes off by up to
+        //                            5.36e-7 absolute (9·2⁻²⁴)
+        //   after:                   0 Cholesky slots wrong, amplitudes off by
+        //                            at most 1.79e-7 (3·2⁻²⁴)
+        // The bound below is 6·2⁻²⁴ — 2× the measured worst case (headroom for
+        // a libm change) and still comfortably under the pre-fix figure.
+        //
+        // A ULP bound is deliberately NOT used on the amplitudes: `rawExp −
+        // shiftC` cancels catastrophically at the truncation radius, so the
+        // RELATIVE error of a near-zero attenuated amplitude is unbounded while
+        // its absolute error stays tiny. The Cholesky, which crosses no
+        // transcendental, is held to exact equality instead.
+        const splatCount = 20000;
+        const ndim = 5;
+        const packedSize = 15;
+        const positions = new Float32Array(splatCount * ndim);
+        const cholesky = new Float32Array(splatCount * packedSize);
+        const amplitudes = new Float32Array(splatCount);
+        const rnd = lcg(555);
+        for (let i = 0; i < splatCount; i++) {
+          for (let d = 0; d < ndim; d++) positions[i * ndim + d] = (rnd() - 0.5) * 6;
+          for (let row = 0; row < ndim; row++) {
+            for (let col = 0; col <= row; col++) {
+              cholesky[i * packedSize + (row * (row + 1)) / 2 + col] =
+                col === row ? 0.3 + rnd() * 3 : (rnd() - 0.5) * 3;
+            }
+          }
+          amplitudes[i] = 0.2 + rnd();
+        }
+        const args = {
+          positions,
+          cholesky,
+          amplitudes,
+          discreteVisibility: new Uint8Array(splatCount).fill(1),
+          slicePosition: new Float32Array(ndim),
+          continuousHiddenDims: new Uint32Array([3, 4]),
+          displayDims: new Uint32Array([0, 1, 2]),
+          ndim,
+          splatCount,
+          minAmplitude: 1e-6,
+        };
+        const ts = project(tsModule, args);
+        const w = project(wasmModule!, args);
+
+        // The visible SET must agree exactly even though the amplitudes cannot.
+        expect(ts.count).toBe(w.count);
+        expect(ts.count).toBeGreaterThan(splatCount / 2); // the fixture is not degenerate
+        const n = ts.count;
+        // Centers and the display marginal never touch `exp`: still exact.
+        expect(
+          exactMismatches(ts.centers.subarray(0, n * 3), w.centers.subarray(0, n * 3))
+        ).toEqual(NO_MISMATCHES);
+        expect(exactMismatches(ts.chol.subarray(0, n * 6), w.chol.subarray(0, n * 6))).toEqual(
+          NO_MISMATCHES
+        );
+        expect(maxAbs(ts.amps.subarray(0, n), w.amps.subarray(0, n))).toBeLessThanOrEqual(
+          6 * Math.pow(2, -24)
+        );
+      }
+    );
+
+    it.skipIf(!wasmFilesExist)(
+      'computeDisplayCholesky3D 2D phantom: ln/exp residual only, within 2 ulp',
+      () => {
+        // The phantom z diagonal is `exp(mean(ln(Lii)))`, so it inherits BOTH
+        // transcendental residuals — measured at ≤2 ulp (one from `ln`, one
+        // from `exp`) over this 20 000-splat sweep, 3106/20000 differing. The
+        // other five packed slots are pure arithmetic and must be exact; they
+        // were 1247/100000 wrong before this fix.
+        const splatCount = 20000;
+        const ndim = 2;
+        const packedSize = 3;
+        const positions = new Float32Array(splatCount * ndim);
+        const cholesky = new Float32Array(splatCount * packedSize);
+        const rnd = lcg(4242);
+        for (let i = 0; i < splatCount; i++) {
+          for (let d = 0; d < ndim; d++) positions[i * ndim + d] = rnd() * 10;
+          const b = i * packedSize;
+          cholesky[b] = 0.5 + rnd() * 3;
+          cholesky[b + 1] = (rnd() - 0.5) * 2;
+          cholesky[b + 2] = 0.5 + rnd() * 3;
+        }
+        const args = {
+          positions,
+          cholesky,
+          amplitudes: new Float32Array(splatCount).fill(1),
+          discreteVisibility: new Uint8Array(splatCount).fill(1),
+          slicePosition: new Float32Array(ndim),
+          continuousHiddenDims: new Uint32Array([]),
+          displayDims: new Uint32Array([0, 1]),
+          ndim,
+          splatCount,
+          minAmplitude: 1e-6,
+        };
+        const ts = project(tsModule, args);
+        const w = project(wasmModule!, args);
+        expect(ts.count).toBe(w.count);
+        expect(ts.count).toBe(splatCount);
+
+        const tsPhantom = new Float32Array(splatCount);
+        const wPhantom = new Float32Array(splatCount);
+        const tsRest = new Float32Array(splatCount * 5);
+        const wRest = new Float32Array(splatCount * 5);
+        for (let i = 0; i < splatCount; i++) {
+          tsPhantom[i] = ts.chol[i * 6 + 5];
+          wPhantom[i] = w.chol[i * 6 + 5];
+          for (let k = 0; k < 5; k++) {
+            tsRest[i * 5 + k] = ts.chol[i * 6 + k];
+            wRest[i * 5 + k] = w.chol[i * 6 + k];
+          }
+        }
+        expect(exactMismatches(tsRest, wRest)).toEqual(NO_MISMATCHES);
+        expect(maxUlp(tsPhantom, wPhantom)).toBeLessThanOrEqual(2);
+      }
+    );
+  });
+
+  // ============================================================================
   // LINES CLIPPING MODULE
   // ============================================================================
   describe('lines_clipping functions', () => {
