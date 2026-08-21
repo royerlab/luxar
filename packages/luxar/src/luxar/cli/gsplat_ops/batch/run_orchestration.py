@@ -15,7 +15,12 @@ if TYPE_CHECKING:
 def _resolve_local_deferred_floor(
     manifest: "BatchManifest", output_dir: Path
 ) -> "BatchManifest":
-    """Resolve a local denoise-dependent floor after calibrating NLM if needed."""
+    """Resolve a local denoise-dependent floor after calibrating NLM if needed.
+
+    A deferred percentile floor pins one calibrated ``h`` per selected channel
+    into both the global floor resolver and subsequent local workers. Non-deferred
+    ``auto`` runs retain their historical per-worker self-calibration.
+    """
     from luxar.cli.gsplat_ops.batch.denoise_workers import resolve_deferred_batch_floor
     from luxar.gsplats.batch.manifest import load_manifest, save_manifest
     from luxar.gsplats.preprocessing.denoise_pipeline import calibrate_all_channels

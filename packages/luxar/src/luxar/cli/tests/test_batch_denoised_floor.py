@@ -7,6 +7,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+import typer
 
 from luxar._zarr_compat import create_array, open_group
 from luxar.cli.gsplat_ops.batch.denoise_workers import resolve_deferred_batch_floor
@@ -107,6 +108,56 @@ def test_on_the_fly_percentile_uses_each_channels_calibrated_h(monkeypatch) -> N
         (0.03, (10.0, 10.0), "cuda"),
         (0.05, (20.0, 20.0), "cuda"),
     ]
+
+
+def test_on_the_fly_floor_samples_only_calibrated_channels(monkeypatch) -> None:
+    from luxar.cli.gsplat_ops.batch import planning
+    from luxar.gsplats.fitting import preprocessing
+
+    sampled_channels: list[int] = []
+    volume = np.full((4, 4, 4), 10.0, dtype=np.float32)
+
+    def _view(_path, *, channel, **_kwargs):
+        sampled_channels.append(channel)
+        return volume
+
+    monkeypatch.setattr(planning, "_pinned_slice_volume", _view)
+    monkeypatch.setattr(
+        preprocessing, "resolve_volume_floor_denoised", lambda *_a, **_k: 9.0
+    )
+
+    level, forward = planning.resolve_batch_floor(
+        Path("unused.zarr"),
+        "p10",
+        n_channels=20,
+        denoise_h_values={3: 0.04},
+        denoise_params={"backend": "auto"},
+    )
+
+    assert level == forward == pytest.approx(9.0)
+    assert sampled_channels == [3]
+
+
+def test_exact_norm_range_scan_is_memory_bounded() -> None:
+    from luxar.cli.gsplat_ops.batch import planning
+
+    class CountingView:
+        def __init__(self, data: np.ndarray) -> None:
+            self.data = data
+            self.shape = data.shape
+            self.read_sizes: list[int] = []
+
+        def __getitem__(self, key):
+            block = self.data[key]
+            self.read_sizes.append(block.size)
+            return block
+
+    data = np.arange(17 * 19 * 23, dtype=np.float32).reshape(17, 19, 23)
+    view = CountingView(data)
+
+    assert planning._bounded_exact_range(view, 500) == (0.0, float(data.max()))
+    assert max(view.read_sizes) <= 500
+    assert sum(view.read_sizes) == data.size
 
 
 def test_deferred_on_the_fly_floor_keeps_discovered_time_axis(
@@ -251,9 +302,45 @@ def test_deferred_floor_scripts_feed_one_level_to_every_worker(tmp_path: Path) -
     floor_script = generate_floor_sbatch(manifest, "")
 
     assert "floor_level.json" in fit_script
-    assert "--floor $FLOOR_LEVEL" in fit_script
+    assert '--floor "$FLOOR_LEVEL"' in fit_script
     assert "--allow-empty-tile" in fit_script
     assert "batch-fit resolve-floor" in floor_script
+
+
+def test_preprocess_floor_job_uses_short_walltime(tmp_path: Path) -> None:
+    manifest = BatchManifest(
+        output_dir=str(tmp_path),
+        n_timepoints=20,
+        n_channels=20,
+        denoise_mode="preprocess",
+        slurm_partition="gpu",
+    )
+
+    assert "#SBATCH --time=01:00:00" in generate_floor_sbatch(manifest, "")
+
+
+def test_unparseable_floor_job_id_stops_submission(tmp_path: Path, monkeypatch) -> None:
+    class Result:
+        returncode = 0
+        stderr = ""
+        stdout = "submission accepted"
+
+    monkeypatch.setattr("subprocess.run", lambda *_a, **_k: Result())
+
+    with pytest.raises(typer.Exit):
+        submit_batch_jobs(
+            output_dir=tmp_path,
+            manifest=BatchManifest(output_dir=str(tmp_path), total_tasks=1),
+            fit_script="fit",
+            merge_script="merge",
+            preamble="env",
+            calibrate_script=None,
+            denoise_script=None,
+            floor_script="floor",
+            preempt_fit_script=None,
+            total_tasks=1,
+            preempt_partition=None,
+        )
 
 
 def test_slurm_fit_waits_for_denoised_floor_resolution(

@@ -221,5 +221,10 @@ def _submit_floor_job(
         aprint(f"Error submitting floor job: {result.stderr}")
         raise typer.Exit(1)
     job_id = parse_job_id(result.stdout)
+    if job_id is None:
+        aprint(
+            f"Error: could not parse floor job id from sbatch output: {result.stdout}"
+        )
+        raise typer.Exit(1)
     aprint(f"  Floor resolution job: {job_id}")
     return job_id

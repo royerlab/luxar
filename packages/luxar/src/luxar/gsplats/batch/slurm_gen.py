@@ -231,7 +231,7 @@ def generate_fit_sbatch(
         else:
             fit_cmd_parts.append(f"    {flag} {shlex.quote(value)}")
     if manifest.floor_deferred:
-        fit_cmd_parts.append("    --floor $FLOOR_LEVEL")
+        fit_cmd_parts.append('    --floor "$FLOOR_LEVEL"')
     if manifest.axes:
         # Forward the explicit axis order so each task loads the same shape the
         # planner discovered (else the positional heuristic can mis-order axes).
@@ -244,7 +244,7 @@ def generate_fit_sbatch(
     ):
         # The calibration job writes denoise_h_values.json.
         # Read per-channel h at runtime and inject --denoise-h.
-        fit_cmd_parts.append("    --denoise-h $DENOISE_H")
+        fit_cmd_parts.append('    --denoise-h "$DENOISE_H"')
 
     # For preprocess mode, override input path to denoised zarr.
     # The denoised.zarr stores volumes under "data" with shape
@@ -558,6 +558,9 @@ def generate_floor_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
     """Generate the single dependent job that resolves a denoised floor."""
     output_dir = _validated_output_dir(manifest.output_dir)
     sampled_pairs = min(manifest.n_timepoints, 4) * min(manifest.n_channels, 4)
+    walltime_hours = (
+        max(1, sampled_pairs) if manifest.denoise_mode == "on-the-fly" else 1
+    )
     lines = [
         "#!/bin/bash",
         "#SBATCH --job-name=luxar-floor",
@@ -565,7 +568,7 @@ def generate_floor_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
         "#SBATCH --ntasks=1",
         "#SBATCH --cpus-per-task=4",
         f"#SBATCH --mem={max(manifest.slurm_mem_gb, 32)}G",
-        f"#SBATCH --time={max(1, sampled_pairs):02d}:00:00",
+        f"#SBATCH --time={walltime_hours:02d}:00:00",
         f"#SBATCH --output={_slurm_log_path(output_dir, 'floor.out')}",
         f"#SBATCH --error={_slurm_log_path(output_dir, 'floor.err')}",
     ]

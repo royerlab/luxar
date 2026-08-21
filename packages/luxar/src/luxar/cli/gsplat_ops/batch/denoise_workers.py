@@ -32,6 +32,9 @@ def resolve_deferred_batch_floor(output_dir: Path) -> None:
             n_channels=manifest.n_channels,
             array_key="data",
             axes=",".join(["time", "channel", *spatial_axes]),
+            axes_labels=["time", "channel", *spatial_axes],
+            channel_shape=(manifest.n_channels,),
+            spatial_shape=tuple(manifest.spatial_shape),
         )
     else:
         from luxar.cli.gsplat_config import discover_ome_zarr_shape

@@ -1271,6 +1271,7 @@ def resolve_volume_floor(
     floor: "str | float | None",
     *,
     guard_numeric: bool = False,
+    sample_budget: "int | None" = None,
     verbose: bool = False,
 ) -> "float | None":
     """Resolve a ``floor`` spec against a whole volume, without loading it all.
@@ -1330,7 +1331,10 @@ def resolve_volume_floor(
       ``guard_numeric=True``.
     """
     resolved, sample_max = _floor_level_and_sample_max(
-        volume, floor, guard_numeric=guard_numeric
+        volume,
+        floor,
+        guard_numeric=guard_numeric,
+        sample_budget=sample_budget,
     )
     if resolved is None:
         return None
@@ -1499,6 +1503,8 @@ def _denoise_probe_arrays(
     denoised_flat = np.concatenate(
         [np.asarray(block, dtype=np.float32).ravel() for block in denoised]
     )
+    # Check the OUTPUT, not just the input: estimate_floor on NaN-bearing data
+    # can return a finite, plausible ~0.001 and silently disable suppression.
     if not bool(np.isfinite(denoised_flat).all()):
         raise ValueError("denoise probe produced non-finite values")
     if probe_cache is not None:
@@ -1739,7 +1745,11 @@ def resolve_volume_floor_denoised(
         # Denoise off, or a user absolute no measurement may move: identical to
         # the pre-#1178 behaviour, with no probe and no extra read.
         return resolve_volume_floor(
-            volume, floor, guard_numeric=guard_numeric, verbose=verbose
+            volume,
+            floor,
+            guard_numeric=guard_numeric,
+            sample_budget=sample_budget,
+            verbose=verbose,
         )
 
     # REGIME 2, decided from `volume.shape` alone — before any read, and in
@@ -1750,7 +1760,11 @@ def resolve_volume_floor_denoised(
         volume, int(DENOISE_PROBE_BUDGET_VOXELS)
     ) and not _floor_spec_is_percentile(floor):
         level = resolve_volume_floor(
-            volume, floor, guard_numeric=guard_numeric, verbose=verbose
+            volume,
+            floor,
+            guard_numeric=guard_numeric,
+            sample_budget=sample_budget,
+            verbose=verbose,
         )
         if level is not None:
             aprint(

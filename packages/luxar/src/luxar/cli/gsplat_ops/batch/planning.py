@@ -326,14 +326,42 @@ def _materialize(view: Any) -> Any:
     return _np.asarray(view[:], dtype=_np.float32)
 
 
+def _bounded_exact_range(view: Any, max_block_voxels: int) -> Tuple[float, float]:
+    """Return exact finite endpoints without materializing the whole view."""
+    import itertools
+
+    import numpy as np
+
+    shape = tuple(int(size) for size in view.shape)
+    block_shape = list(shape)
+    while np.prod(block_shape, dtype=np.int64) > max_block_voxels:
+        axis = max(range(len(block_shape)), key=block_shape.__getitem__)
+        block_shape[axis] = max(1, block_shape[axis] // 2)
+    starts = [range(0, size, block) for size, block in zip(shape, block_shape)]
+    lo = float("inf")
+    hi = float("-inf")
+    for origin in itertools.product(*starts):
+        selection = tuple(
+            slice(start, min(start + block, size))
+            for start, block, size in zip(origin, block_shape, shape)
+        )
+        block = np.asarray(view[selection], dtype=np.float32)
+        if not bool(np.isfinite(block).all()):
+            raise ValueError("volume contains non-finite values")
+        lo = min(lo, float(block.min()))
+        hi = max(hi, float(block.max()))
+    return lo, hi
+
+
 # Bounded, deterministic (t, c) sampling for the ONE global floor level (see
 # :func:`resolve_batch_floor`). The two axes get INDEPENDENT caps, deliberately:
 # a shared budget spent on channels first would leave a store with >= 5
 # channel-like coordinates sampling a single timepoint, which is #1174's erase
 # bug back again in the time direction. 4 timepoints x 4 channel-like
 # coordinates = at most 16 slices, and the per-slice read budget is
-# FLOOR_SAMPLE_BUDGET_VOXELS // n_pairs (2M voxels at the cap), so the TOTAL
-# voxels read never exceed the single-slice whole-volume budget.
+# FLOOR_SAMPLE_BUDGET_VOXELS // n_pairs (2M voxels at the cap), so floor samples
+# total at most one whole-volume budget. Deferred on-the-fly resolution also
+# scans each sampled slice once for exact endpoints and reads bounded probe blocks.
 FLOOR_SAMPLE_MAX_SLICES = 16
 FLOOR_SAMPLE_MAX_TIMEPOINTS = 4
 FLOOR_SAMPLE_MAX_CHANNELS = 4
@@ -484,8 +512,9 @@ def resolve_batch_floor(
     while a too-HIGH one destroys signal, so the level is biased low:
 
     * the spec is resolved on a bounded, deterministic set of evenly spaced
-      slices spanning the store's FULL extent — over time AND over channel-like
-      coordinates, with independent caps so both axes are covered
+      slices spanning the store's FULL time extent. Raw-basis resolution also
+      spans the full channel extent; denoised resolution spans the selected,
+      calibrated channels because NLM strength is channel-specific
       (:func:`_floor_sample_pairs`, at most :data:`FLOOR_SAMPLE_MAX_SLICES`) —
       each read through a lazy axis-pinned view with the whole-volume sample
       budget divided among them;
@@ -498,8 +527,8 @@ def resolve_batch_floor(
       "would erase all signal" guard refusing it), suppression is downgraded to
       none for the whole run, loudly, rather than erasing a slice.
 
-    Because the sampled set spans the whole store rather than the selection, the
-    same store resolves the same level for ``--timepoints 0:50`` and ``0:100``.
+    Because the sampled timepoints span the whole store rather than the selection,
+    the same store resolves the same level for ``--timepoints 0:50`` and ``0:100``.
 
     RESIDUAL RISK: the bound holds for the sampled slices only. A dimmer
     NON-sampled slice (a blank/bleached frame between samples, a channel above
@@ -549,7 +578,23 @@ def resolve_batch_floor(
             None, floor_spec, guard_numeric=False, scope="every (t, c) task"
         )
 
-    pairs = _floor_sample_pairs(n_timepoints, n_channels)
+    if denoise_h_values is None:
+        pairs = _floor_sample_pairs(n_timepoints, n_channels)
+    else:
+        calibrated_channels = sorted(denoise_h_values)
+        if not calibrated_channels:
+            raise ValueError("denoised floor resolution has no calibrated channels")
+        times = _evenly_spaced(
+            max(1, n_timepoints), min(max(1, n_timepoints), FLOOR_SAMPLE_MAX_TIMEPOINTS)
+        )
+        channels = [
+            calibrated_channels[index]
+            for index in _evenly_spaced(
+                len(calibrated_channels),
+                min(len(calibrated_channels), FLOOR_SAMPLE_MAX_CHANNELS),
+            )
+        ]
+        pairs = [(timepoint, channel) for channel in channels for timepoint in times]
     budget = max(1, int(FLOOR_SAMPLE_BUDGET_VOXELS) // len(pairs))
     levels: List[Optional[float]] = []
     maxima: List[float] = []
@@ -570,37 +615,43 @@ def resolve_batch_floor(
                 channel_shape=channel_shape,
                 spatial_shape=spatial_shape,
             )
-            sample = _sample_volume_for_floor(view, budget)
-            if sample is None or sample.size == 0:
-                continue
             if denoise_h_values is None:
-                # The sample is already within budget, so resolving it reads once
-                # and provides both the level and sampled maximum.
+                sample = _sample_volume_for_floor(view, budget)
+                if sample is None or sample.size == 0:
+                    continue
+                # The sample is already within budget, so resolving it reads once.
                 level_here = resolve_volume_floor(sample, floor_spec)
+                sampled_max = float(sample.max())
             else:
-                # Workers normalize against the whole slice. Read exact endpoints
-                # here, then let the probe helper sample shape-preserving blocks.
-                import numpy as np
-
-                full_slice = np.asarray(view[...])
+                # Workers normalize against exact whole-slice endpoints. Scan in
+                # bounded blocks, then let the floor and probe helpers make their
+                # own bounded reads (three passes, never one whole-slice allocation).
                 params = dict(denoise_params or {})
-                params["norm_range"] = (
-                    float(full_slice.min()),
-                    float(full_slice.max()),
-                )
+                params["norm_range"] = _bounded_exact_range(view, budget)
+                denoise_h = denoise_h_values.get(c)
+                if denoise_h is None:
+                    aprint(
+                        f"Note: t={t}, c={c} has no calibrated denoise h; "
+                        "resolving this slice on the raw basis."
+                    )
                 level_here = resolve_volume_floor_denoised(
                     view,
                     floor_spec,
-                    denoise_h=denoise_h_values.get(c),
+                    denoise_h=denoise_h,
                     denoise_params=params,
                     sample_budget=budget,
                 )
+                sampled_max = None
             levels.append(level_here)
-            maxima.append(float(sample.max()))
+            if sampled_max is not None:
+                maxima.append(sampled_max)
+            max_note = (
+                "" if sampled_max is None else f" (sampled max {sampled_max:.6g})"
+            )
             aprint(
                 f"t={t}, c={c}: level "
-                f"{'none' if level_here is None else format(level_here, '.6g')} "
-                f"(sampled max {maxima[-1]:.6g})"
+                f"{'none' if level_here is None else format(level_here, '.6g')}"
+                f"{max_note}"
             )
 
         level: Optional[float] = None
