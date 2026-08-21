@@ -268,7 +268,7 @@ class TestCatalogDownloadErrors:
         assert message in capsys.readouterr().out
 
 
-class TestWarnIfSceneLacksLadder:
+class TestWarnIfSceneIsStale:
     """The stale-scene check must inspect BOTH laddered layers.
 
     Fast synthetic zarr stores (no compiler) — this pins that a missing ladder
@@ -289,7 +289,7 @@ class TestWarnIfSceneLacksLadder:
     ) -> None:
         scene = tmp_path / "desi.luxar.zarr"
         self._write_scene(scene, {"By tracer type": 5, "By redshift": 5})
-        _demo.warn_if_scene_lacks_ladder(scene)
+        _demo.warn_if_scene_is_stale(scene)
         assert "⚠" not in capsys.readouterr().out
 
     def test_warns_only_for_the_unladdered_layer(
@@ -297,7 +297,7 @@ class TestWarnIfSceneLacksLadder:
     ) -> None:
         scene = tmp_path / "desi.luxar.zarr"
         self._write_scene(scene, {"By tracer type": 5, "By redshift": 1})
-        _demo.warn_if_scene_lacks_ladder(scene)
+        _demo.warn_if_scene_is_stale(scene)
         out = capsys.readouterr().out
         assert "'By redshift' finest level has no streaming" in out
         assert "'By tracer type'" not in out
@@ -307,7 +307,7 @@ class TestWarnIfSceneLacksLadder:
     ) -> None:
         scene = tmp_path / "desi.luxar.zarr"
         self._write_scene(scene, {"By tracer type": 1})
-        _demo.warn_if_scene_lacks_ladder(scene)
+        _demo.warn_if_scene_is_stale(scene)
         out = capsys.readouterr().out
         assert "'By tracer type' finest level has no streaming" in out
         assert "Could not inspect" in out and "[By redshift]" in out
@@ -329,7 +329,7 @@ class TestWarnIfSceneLacksLadder:
         root.create_group("By tracer type").attrs["n_additive_sublods"] = 5
         root.create_group("By redshift").attrs["n_additive_sublods"] = 1
 
-        _demo.warn_if_scene_lacks_ladder(scene)
+        _demo.warn_if_scene_is_stale(scene)
         out = capsys.readouterr().out
         assert "Could not inspect" not in out
         assert "'By redshift' finest level has no streaming" in out
@@ -352,10 +352,28 @@ class TestWarnIfSceneLacksLadder:
             group.create_group("child_0").attrs["n_additive_sublods"] = 5
             group.create_group("child_9").attrs["n_additive_sublods"] = 5
             group.create_group("child_10").attrs["n_additive_sublods"] = 1
-        _demo.warn_if_scene_lacks_ladder(scene)
+        _demo.warn_if_scene_is_stale(scene)
         out = capsys.readouterr().out
         assert "'By tracer type' finest level has no streaming" in out
         assert "'By redshift' finest level has no streaming" in out
+
+    def test_warns_when_cached_finest_exceeds_payload_cap(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        import zarr
+
+        scene = tmp_path / "desi.luxar.zarr"
+        root = zarr.open(str(scene), mode="w")
+        for layer_name in ("By tracer type", "By redshift"):
+            finest = root.create_group(layer_name).create_group("child_3")
+            finest.attrs["n_additive_sublods"] = 5
+            finest.attrs["n_points"] = 9_751_955
+
+        _demo.warn_if_scene_is_stale(scene)
+
+        out = capsys.readouterr().out
+        assert out.count("above the current 1,250,000-point download cap") == 2
+        assert "rm -rf" in out
 
 
 class TestScenePointCap:
@@ -410,6 +428,27 @@ class TestScenePointCap:
                 assert layer_attrs["selector"] == "screen-area"
                 assert finest_attrs["n_points"] == _demo.SCENE_MAX_POINTS
                 assert finest_attrs["n_additive_sublods"] == 5
+
+
+class TestMainSceneReuse:
+    def test_serve_only_checks_staleness_before_launch(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        scene = tmp_path / "desi_galaxies.luxar.zarr"
+        scene.mkdir()
+        calls: list[tuple[str, Path]] = []
+        monkeypatch.setattr(_demo, "SERVE_ONLY", True)
+        monkeypatch.setattr(_demo, "get_demos_output_dir", lambda: tmp_path)
+        monkeypatch.setattr(
+            _demo, "warn_if_scene_is_stale", lambda path: calls.append(("warn", path))
+        )
+        monkeypatch.setattr(
+            _demo, "launch_viewer", lambda path: calls.append(("launch", path))
+        )
+
+        _demo.main()
+
+        assert calls == [("warn", scene), ("launch", scene)]
 
 
 @pytest.mark.slow

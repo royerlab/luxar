@@ -39,16 +39,16 @@ DESI Collaboration (2025), "Data Release 1 of the Dark Energy Spectroscopic
 SELF-CONTAINED / CACHING
 ------------------------
 On a fresh machine this demo bootstraps itself with no manual steps:
-  1. Fast path: a fully-built scene (both LOD colorings, ~80 MB) shipped via
+  1. Fast path: a fully-built scene (both LOD colorings, ~11 MB) shipped via
      Git LFS (``demos/data/desi_galaxies/``); it is unzipped once into the demos
      output dir and loads instantly — no per-launch LOD build.
   2. If that asset isn't pulled, ``--recompute`` (or a missing asset)
      AUTOMATICALLY downloads the ~1 GB of DR1 LSS catalogs to
      ``~/.cache/luxar/desi_galaxies/`` (resumable), reads them with ``astropy``,
-     converts (RA, Dec, z) → comoving Mpc, and builds the scene (the substitutive
-     LOD over ~10M points is GPU-accelerated but slow on CPU-only machines —
-     which is exactly why the built scene ships precomputed). If the DESI host
-     is unavailable, ``git lfs pull`` restores the no-download fast path.
+     converts (RA, Dec, z) → comoving Mpc, samples 1.25M rows, and builds the
+     substitutive LOD (GPU-accelerated but slow on CPU-only machines — which is
+     exactly why the built scene ships precomputed). If the DESI host is
+     unavailable, ``git lfs pull`` restores the no-download fast path.
 
 USAGE
 -----
@@ -483,15 +483,14 @@ def extract_shipped_scene(zip_path: Path, output_path: Path) -> None:
         aprint(f"Scene ready: {output_path}")
 
 
-def warn_if_scene_lacks_ladder(scene_path: Path) -> None:
-    """Warn when a scene on disk predates the streaming ladder.
+def warn_if_scene_is_stale(scene_path: Path) -> None:
+    """Warn when a reused scene predates the streaming ladder or payload cap.
 
     ``main()`` reuses an existing ``datasets/demos/`` scene unconditionally, so a
-    user who built this demo before the finest level was laddered would keep
-    getting the old all-or-nothing scene forever — the multi-minute load looks
-    like the fix simply did not work. Warn loudly, name both remedies, and carry
-    on: the old scene still renders, just slowly. Both laddered layers ("By
-    tracer type" and "By redshift") are checked, since they share the same LOD.
+    user who built an older version would otherwise keep its all-or-nothing or
+    9.75M-point finest child forever. Warn loudly, name both remedies, and carry
+    on: the old scene still renders, just slowly. Both laddered layers are
+    checked, since they share the same LOD.
     """
     import zarr
 
@@ -517,6 +516,7 @@ def warn_if_scene_lacks_ladder(scene_path: Path) -> None:
             # finest level and still carries its own streaming ladder.
             finest = layer[child_names[-1]] if child_names else layer
             n_sublods = int(finest.attrs.get("n_additive_sublods", 1))
+            n_points = int(finest.attrs.get("n_points", 0))
         except Exception as exc:
             aprint(
                 f"  ⚠ Could not inspect {scene_path} [{layer_name}] for a "
@@ -530,6 +530,17 @@ def warn_if_scene_lacks_ladder(scene_path: Path) -> None:
                 f"ladder (n_additive_sublods={n_sublods}), so it will load "
                 "all-at-once and may freeze the browser for a long time. Rebuild "
                 "it with:\n"
+                "      luxar demo run desi_galaxies -- --recompute\n"
+                "    or delete the scene and re-run to unpack a current shipped "
+                "asset:\n"
+                f"      rm -rf {scene_path}"
+            )
+
+        if n_points > SCENE_MAX_POINTS:
+            aprint(
+                f"  ⚠ This scene's '{layer_name}' finest level contains "
+                f"{n_points:,} points, above the current {SCENE_MAX_POINTS:,}-point "
+                "download cap. Rebuild it with:\n"
                 "      luxar demo run desi_galaxies -- --recompute\n"
                 "    or delete the scene and re-run to unpack a current shipped "
                 "asset:\n"
@@ -687,6 +698,7 @@ def main() -> None:
 
     if SERVE_ONLY:
         if output_path.exists():
+            warn_if_scene_is_stale(output_path)
             launch_viewer(output_path)
         else:
             aprint(f"No scene at {output_path}. Run without --serve-only first.")
@@ -701,7 +713,7 @@ def main() -> None:
         # Fast path: unzip the shipped, fully-built scene (instant, no LOD build).
         if SCENE_ZIP_SHIPPED.exists() and not is_lfs_pointer(SCENE_ZIP_SHIPPED):
             extract_shipped_scene(SCENE_ZIP_SHIPPED, output_path)
-            warn_if_scene_lacks_ladder(output_path)
+            warn_if_scene_is_stale(output_path)
         else:
             aprint(
                 "Precomputed scene not available (Git LFS asset not pulled). "
@@ -712,7 +724,7 @@ def main() -> None:
             create_scene(positions, redshift, tracer_ids, output_path)
     else:
         aprint(f"Using cached scene: {output_path}")
-        warn_if_scene_lacks_ladder(output_path)
+        warn_if_scene_is_stale(output_path)
 
     if NO_SERVE:
         aprint(f"Dataset generated at {output_path}")
