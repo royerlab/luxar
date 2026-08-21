@@ -36,7 +36,8 @@ On a fresh machine this demo bootstraps itself with no manual steps:
      cube fit to ~675k Gaussian splats (PSNR ~35 dB).
   2. If that asset isn't pulled, it AUTOMATICALLY downloads the 2.4 GB cube to
      ``~/.cache/luxar/gsplats_milkyway_dust/`` (resumable), fits Gaussian splats
-     on the GPU, and caches the fit there — so subsequent runs are instant.
+     on the GPU, and caches the fit under that directory's ``local/`` subdir —
+     so subsequent runs are instant.
 ``--recompute`` forces the download + fit path.
 
 The ``--recompute`` default reproduces the shipped asset (native resolution,
