@@ -37,9 +37,10 @@ separate, explicitly opt-in ``luxar restamp-lod`` pass
 building one and so is out of scope for the routing guards below too — it calls
 neither ``add_lod_group`` nor :data:`_RESOLVER`, and pairs the two ladder
 functions with :data:`DERIVED_LOD_SELECTOR` itself because it has no live scene
-``Node`` to hand either helper. What the suite buys is that the pairing cannot drift back apart
-silently, in any of the four adders, and that a FIFTH producer has to make a
-deliberate choice (see ``test_no_unrouted_producer_builds_a_lod_group``).
+``Node`` to hand either helper. What the suite buys is that the pairing cannot
+drift back apart silently, in any of the four adders, and that a FIFTH producer
+has to make a deliberate choice (see
+``test_no_unrouted_producer_builds_a_lod_group``).
 
 **Also out of scope: the detached-tree paths**, which are a different question
 (what a *stored* tree already claims about its own thresholds, with no ``explicit``
