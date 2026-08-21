@@ -593,6 +593,9 @@ def test_written_cache_dirs_are_declared(path: Path) -> None:
 #     off from its names by a field bullet ("Lange et al. • 2024") or written in
 #     front of them ("2024 Lange et al."), and a lowercase surname, which the walk
 #     reads as prose and stops on;
+#   * a two-letter surname, which the walk treats as a short token rather than a
+#     name, and a spelled-out group longer than four names, whose earliest names
+#     fall outside the bounded lookback;
 #   * a credit that is not statically resolvable — an f-string hole, a
 #     ``list.append`` joined later, a conditional nested inside another (only the
 #     outer two branches unfold), a helper that assembles the footer from its own
@@ -1150,6 +1153,16 @@ def test_a_capitalized_non_name_beside_a_year_is_not_a_credit() -> None:
     # Skipped, not fatal: a real surname behind a stopword still forms its claim,
     # so listing a word that is also a surname costs that name and not the group.
     assert _credit_claims("Bühlmann & May 2024") == [(("Bühlmann",), "2024")]
+
+
+def test_short_surnames_and_long_author_groups_are_known_limits() -> None:
+    """The defensive name floor and bounded lookback can omit real surnames."""
+    assert _credit_claims("single-cell atlas • Li et al. 2024") == []
+    assert _credit_contradictions("Li et al. 2024", ["atlas • Li & Kim 2024"])
+    assert _credit_contradictions(
+        "Kerbl et al. 2023",
+        ["Kerbl, Kopanas, Leimkühler, Schmid, Drettakis 2023"],
+    )
 
 
 def test_credit_matching_is_token_bounded() -> None:
