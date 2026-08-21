@@ -1184,8 +1184,9 @@ describe('depth-sort coordinator', () => {
       return parts.map((mesh) => mesh.renderOrder);
     };
 
-    expect(await run(true)).toEqual(await run(false));
-    expect(await run(true)).toEqual([2, 0, 1]);
+    const wrappedOrder = await run(true);
+    expect(wrappedOrder).toEqual(await run(false));
+    expect(wrappedOrder).toEqual([2, 0, 1]);
   });
 
   it('orders BSP-partition parts correctly with the camera INSIDE the volume (centroid fails here)', async () => {

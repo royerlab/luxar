@@ -7,7 +7,7 @@
  * on the THREE-tree shape.
  */
 
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
 
 // Caller-injected recursion handle: the partition loader now takes
@@ -19,9 +19,14 @@ import { loadPartitionGroupNode } from '../../../../../data/scene-loader/nodes/l
 import type { NodeBuildCtx } from '../../../../../data/scene-loader/nodes/build-ctx';
 import { makeTestNodeBuildCtx } from '../../../../helpers/make-test-node-build-ctx';
 import type { SceneNode } from '../../../../../data/data-loader-types';
+import { log, Modules } from '../../../../../utils/log';
 
 beforeEach(() => {
   loadSceneNodesMock.mockReset();
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 function makePartNode(
@@ -394,6 +399,8 @@ describe('loadPartitionGroupNode', () => {
   it('keeps a bsp_tree when part bounds are unavailable for validation', async () => {
     attachStubChildren();
     const ctx = makeCtx();
+    const infoSpy = vi.spyOn(log, 'info').mockImplementation(() => {});
+    const warningSpy = vi.spyOn(log, 'warning').mockImplementation(() => {});
     const bspTree = { axis: 0, split: 0, left: { part: 0 }, right: { part: 1 } };
     const parts = [
       makePartNode('/partition/part_0', 'points', {
@@ -413,6 +420,11 @@ describe('loadPartitionGroupNode', () => {
     );
 
     expect(wrapper.userData.bspTree).toEqual(bspTree);
+    expect(infoSpy).toHaveBeenCalledWith(
+      Modules.SCENE_LOADER,
+      expect.stringContaining('without verifiable part bounds')
+    );
+    expect(warningSpy).not.toHaveBeenCalled();
   });
 
   it('leaves bspTree undefined when the partition has no stored tree (fallback path)', async () => {
