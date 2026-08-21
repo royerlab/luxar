@@ -1,5 +1,5 @@
 {
-  "$comment": "Single source of truth for the Luxar gallery harness. Consumed by BOTH scripts/gallery/generate_gallery_datasets.py (dataset generation) and packages/luxar-viewer/src/tests/screenshots/generate-gallery.spec.ts (still + orbit-video capture). Add a demo here to include it in the gallery; nothing else needs updating. The authoritative field list is the DemoEntry interface in generate-gallery.spec.ts; this comment and scripts/gallery/README.md must be kept in step with it. REQUIRED: id (gallery media filename stem + dataset stem), title (caption), geometry, category, script (demo_*.py under packages/luxar/src/luxar/demos, or null if the demo lives only on a feature branch and its dataset must be pre-generated; currently unused), dataset (path under datasets/demos, relative to repo root). OPTIONAL: exposure (log2-stops override; omit for auto-exposure), autoFrame (default true; set false for very heavy scenes to skip fill-to-screen and use the baked camera), autoExpose (default true; set false to use the demo's baked exposure), fillTarget (per-demo screen-coverage target for fill-to-screen; default 0.95), zoom (multiplicative zoom after fill: >1 in, <1 out), distance (absolute camera distance in world units — bypasses fill; for faint/diffuse subjects), viewAngle ({azimuth, elevation} in degrees — orients the camera before framing), orbitUp ('x'|'y'|'z' world up-axis the rock revolves about; DEFAULT = derived from the camera's own up-vector, so a baked non-Y up is honoured automatically - set this only to override, and note it also re-parks the camera on that axis and so usually wants a viewAngle beside it), dimensionNav ({key, steps} for nD demos), timelapse ({framePoint} — advance the time dim while recording a 4D series; framePoint = fraction of the range used to frame the still), lodFinest (default true; set false for a very heavy scene so the coverage-based LOD may pick a lighter level), readme (true = a current top pick for the README gallery), note (free-text human annotation; the capture code never reads it).",
+  "$comment": "Single source of truth for the Luxar gallery harness. Consumed by BOTH scripts/gallery/generate_gallery_datasets.py (dataset generation) and packages/luxar-viewer/src/tests/screenshots/generate-gallery.spec.ts (still + orbit-video capture). Add a demo here to include it in the gallery; nothing else needs updating. The authoritative field list is the DemoEntry interface in generate-gallery.spec.ts; this comment and scripts/gallery/README.md must be kept in step with it. REQUIRED: id (gallery media filename stem + dataset stem), title (caption), geometry, category, script (demo_*.py under packages/luxar/src/luxar/demos, or null if the demo lives only on a feature branch and its dataset must be pre-generated; currently unused), dataset (path under datasets/demos, relative to repo root). OPTIONAL: citation (dataset credit, copied verbatim from the demo's DEMO_META[\"citation\"][\"short\"] and pinned equal to it by test_demo_meta.py; present only for a demo that declares a real credit — an absent key means 'unknown or not yet recorded', which is NOT the same claim as 'nothing to credit'; the capture code never reads it), exposure (log2-stops override; omit for auto-exposure), autoFrame (default true; set false for very heavy scenes to skip fill-to-screen and use the baked camera), autoExpose (default true; set false to use the demo's baked exposure), fillTarget (per-demo screen-coverage target for fill-to-screen; default 0.95), zoom (multiplicative zoom after fill: >1 in, <1 out), distance (absolute camera distance in world units — bypasses fill; for faint/diffuse subjects), viewAngle ({azimuth, elevation} in degrees — orients the camera before framing), orbitUp ('x'|'y'|'z' world up-axis the rock revolves about; DEFAULT = derived from the camera's own up-vector, so a baked non-Y up is honoured automatically - set this only to override, and note it also re-parks the camera on that axis and so usually wants a viewAngle beside it), dimensionNav ({key, steps} for nD demos), timelapse ({framePoint} — advance the time dim while recording a 4D series; framePoint = fraction of the range used to frame the still), lodFinest (default true; set false for a very heavy scene so the coverage-based LOD may pick a lighter level), readme (true = a current top pick for the README gallery), note (free-text human annotation; the capture code never reads it).",
   "demos": [
     {
       "id": "lorenz",
@@ -75,6 +75,7 @@
       "category": "astronomy",
       "script": "demo_gaia_milky_way_3m.py",
       "dataset": "datasets/demos/gaia_milky_way.luxar.zarr",
+      "citation": "Gaia Collaboration et al. 2023",
       "autoFrame": false,
       "autoExpose": false,
       "readme": true
@@ -93,7 +94,8 @@
       "geometry": "gsplats",
       "category": "astronomy",
       "script": "demo_gsplats_3d_milky_way_dust.py",
-      "dataset": "datasets/demos/gsplats_3d_milky_way_dust.luxar.zarr"
+      "dataset": "datasets/demos/gsplats_3d_milky_way_dust.luxar.zarr",
+      "citation": "Leike et al. 2020"
     },
     {
       "id": "gsplats_3d_visible_human_head",
@@ -115,6 +117,7 @@
       "category": "medical",
       "script": "demo_gsplats_3d_ct_totalsegmentator.py",
       "dataset": "datasets/demos/gsplats_3d_ct_totalsegmentator.luxar.zarr",
+      "citation": "Wasserthal et al. 2023",
       "readme": true,
       "orbitUp": "z",
       "distance": 600,
@@ -134,7 +137,8 @@
       "geometry": "gsplats",
       "category": "microscopy",
       "script": "demo_gsplats_3d_cells3d_multichannel.py",
-      "dataset": "datasets/demos/gsplats_3d_cells3d_multichannel.luxar.zarr"
+      "dataset": "datasets/demos/gsplats_3d_cells3d_multichannel.luxar.zarr",
+      "citation": "Allen Institute for Cell Science (scikit-image cells3d)"
     },
     {
       "id": "mesh_isosurface_cells3d",
@@ -143,6 +147,7 @@
       "category": "microscopy",
       "script": "demo_mesh_isosurface_cells3d.py",
       "dataset": "datasets/demos/mesh_isosurface_cells3d.luxar.zarr",
+      "citation": "Allen Institute for Cell Science (scikit-image cells3d)",
       "orbitUp": "x",
       "viewAngle": {
         "azimuth": 45,
@@ -159,6 +164,7 @@
       "category": "microscopy",
       "script": "demo_gsplats_3d_organoid_multichannel.py",
       "dataset": "datasets/demos/gsplats_3d_organoid_multichannel.luxar.zarr",
+      "citation": "Blin et al. 2019",
       "distance": 400,
       "note": "the +2.5 exposure override was calibrated against the old occluding volumetric look; the scene now composites additive (brighter), so auto-exposure recalibrates"
     },
@@ -181,6 +187,7 @@
       "category": "microscopy",
       "script": "demo_gsplats_4d_celegans_tracking.py",
       "dataset": "datasets/demos/gsplats_4d_celegans_tracking.luxar.zarr",
+      "citation": "Santella et al. 2022",
       "readme": true,
       "timelapse": {
         "framePoint": 0.87
@@ -204,6 +211,7 @@
       "category": "genomics",
       "script": "demo_dipc_3d_genome.py",
       "dataset": "datasets/demos/dipc_3d_genome.luxar.zarr",
+      "citation": "Tan et al. 2018",
       "readme": true
     },
     {
@@ -213,6 +221,7 @@
       "category": "medical",
       "script": "demo_dmri_tractography.py",
       "dataset": "datasets/demos/dmri_tractography.luxar.zarr",
+      "citation": "Yeh 2022",
       "lodFinest": false,
       "autoFrame": false,
       "autoExpose": false,
@@ -258,7 +267,8 @@
       "geometry": "points",
       "category": "embeddings",
       "script": "demo_tabula_sapiens.py",
-      "dataset": "datasets/demos/tabula_sapiens.luxar.zarr"
+      "dataset": "datasets/demos/tabula_sapiens.luxar.zarr",
+      "citation": "Tabula Sapiens Consortium 2022"
     },
     {
       "id": "zebrahub_multiome_peak_umap",
@@ -266,7 +276,8 @@
       "geometry": "points",
       "category": "embeddings",
       "script": "demo_zebrahub_multiome_peak_umap.py",
-      "dataset": "datasets/demos/zebrahub_multiome_peak_umap.luxar.zarr"
+      "dataset": "datasets/demos/zebrahub_multiome_peak_umap.luxar.zarr",
+      "citation": "Kim et al. 2024"
     },
     {
       "id": "earthquakes",
@@ -284,6 +295,7 @@
       "category": "geoscience",
       "script": "demo_global_rivers_earth.py",
       "dataset": "datasets/demos/global_rivers_earth.luxar.zarr",
+      "citation": "ETOPO 2022 / HydroSHEDS",
       "lodFinest": false,
       "distance": 340,
       "note": "topographic globe (Points) + 2.3M-segment HydroRIVERS networks (Lines); lodFinest:false so the coverage LOD stays light enough for a software-GL orbit video, absolute distance frames the whole globe (sparse rivers fool the coverage fill)"
@@ -313,7 +325,8 @@
       "geometry": "points",
       "category": "structural",
       "script": "demo_nuclear_pore_complex.py",
-      "dataset": "datasets/demos/nuclear_pore_complex.luxar.zarr"
+      "dataset": "datasets/demos/nuclear_pore_complex.luxar.zarr",
+      "citation": "Bui et al. 2013"
     },
     {
       "id": "fractals_4d",
@@ -353,6 +366,7 @@
       "category": "structural",
       "script": "demo_atp_synthase.py",
       "dataset": "datasets/demos/atp_synthase.luxar.zarr",
+      "citation": "Zhou et al. 2015",
       "distance": 27,
       "note": "absolute dist reliable vs off-center bbox-fill"
     },
@@ -394,7 +408,8 @@
       "geometry": "points",
       "category": "embeddings",
       "script": "demo_esm3_protein_landscape.py",
-      "dataset": "datasets/demos/esm3_protein_landscape.luxar.zarr"
+      "dataset": "datasets/demos/esm3_protein_landscape.luxar.zarr",
+      "citation": "UniProt/Swiss-Prot; embeddings by EvolutionaryScale ESM C, 2024"
     },
     {
       "id": "gsplats_3d_acto3d_heart",
@@ -410,7 +425,8 @@
       "geometry": "gsplats",
       "category": "microscopy",
       "script": "demo_gsplats_3d_flylight_mcfo_neurons.py",
-      "dataset": "datasets/demos/gsplats_3d_flylight_mcfo_neurons.luxar.zarr"
+      "dataset": "datasets/demos/gsplats_3d_flylight_mcfo_neurons.luxar.zarr",
+      "citation": "Mais et al. 2024"
     },
     {
       "id": "gsplats_3d_kidney_multichannel_layers",
@@ -418,7 +434,8 @@
       "geometry": "gsplats",
       "category": "microscopy",
       "script": "demo_gsplats_3d_kidney_multichannel_layers.py",
-      "dataset": "datasets/demos/gsplats_3d_kidney_multichannel_layers.luxar.zarr"
+      "dataset": "datasets/demos/gsplats_3d_kidney_multichannel_layers.luxar.zarr",
+      "citation": "G. Buckley 2018 (scikit-image kidney)"
     },
     {
       "id": "gsplats_6d_kidney_multichannel_toggles",
@@ -427,6 +444,7 @@
       "category": "microscopy",
       "script": "demo_gsplats_3d_kidney_multichannel_toggles.py",
       "dataset": "datasets/demos/gsplats_6d_kidney_multichannel_toggles.luxar.zarr",
+      "citation": "G. Buckley 2018 (scikit-image kidney)",
       "dimensionNav": {
         "key": "1",
         "steps": 1
@@ -438,7 +456,8 @@
       "geometry": "gsplats",
       "category": "microscopy",
       "script": "demo_gsplats_3d_opencell_map4.py",
-      "dataset": "datasets/demos/gsplats_3d_opencell_map4.luxar.zarr"
+      "dataset": "datasets/demos/gsplats_3d_opencell_map4.luxar.zarr",
+      "citation": "Cho et al. 2022"
     },
     {
       "id": "gsplats_3d_organoid_dapi_nuclei",
@@ -446,7 +465,8 @@
       "geometry": "gsplats",
       "category": "microscopy",
       "script": "demo_gsplats_3d_organoid_dapi_nuclei.py",
-      "dataset": "datasets/demos/gsplats_3d_organoid_dapi_nuclei.luxar.zarr"
+      "dataset": "datasets/demos/gsplats_3d_organoid_dapi_nuclei.luxar.zarr",
+      "citation": "Blin et al. 2019"
     },
     {
       "id": "gsplats_3d_tribolium_embryo",
@@ -463,7 +483,8 @@
       "geometry": "gsplats",
       "category": "microscopy",
       "script": "demo_gsplats_4d_zebrafish_timelapse.py",
-      "dataset": "datasets/demos/gsplats_4d_zebrafish_timelapse.luxar.zarr"
+      "dataset": "datasets/demos/gsplats_4d_zebrafish_timelapse.luxar.zarr",
+      "citation": "Aanstad 2018"
     },
     {
       "id": "gsplats_4d_nexrad_supercell",
@@ -472,6 +493,7 @@
       "category": "geoscience",
       "script": "demo_gsplats_4d_nexrad_supercell.py",
       "dataset": "datasets/demos/gsplats_4d_nexrad_supercell.luxar.zarr",
+      "citation": "NOAA NEXRAD Level II (KTLX, 2013-05-31)",
       "timelapse": {
         "framePoint": 0.45
       }
@@ -507,7 +529,8 @@
       "geometry": "points+lines",
       "category": "networks",
       "script": "demo_huri_interactome.py",
-      "dataset": "datasets/demos/huri_interactome.luxar.zarr"
+      "dataset": "datasets/demos/huri_interactome.luxar.zarr",
+      "citation": "Luck et al. 2020"
     },
     {
       "id": "forest",
@@ -540,6 +563,7 @@
       "category": "embeddings",
       "script": "demo_protein_embeddings_cafa5.py",
       "dataset": "datasets/demos/protein_landscape.luxar.zarr",
+      "citation": "CAFA5 (Kaggle); embeddings by ProtT5 (Elnaggar et al. 2022)",
       "autoFrame": false,
       "zoom": 3,
       "note": "bounds-fit shows whole embedding incl outlier clusters; zoom 3x back in on the core, which the sparse outliers otherwise shrink to a speck"
@@ -593,7 +617,8 @@
       "geometry": "points",
       "category": "embeddings",
       "script": "demo_zebrahub_multiome.py",
-      "dataset": "datasets/demos/zebrahub_multiome.luxar.zarr"
+      "dataset": "datasets/demos/zebrahub_multiome.luxar.zarr",
+      "citation": "Kim et al. 2024"
     },
     {
       "id": "gsplats_3d_tng_cosmic_web",
@@ -602,6 +627,7 @@
       "category": "astronomy",
       "script": "demo_gsplats_3d_tng_cosmic_web.py",
       "dataset": "datasets/demos/gsplats_3d_tng_cosmic_web.luxar.zarr",
+      "citation": "Nelson et al. 2019",
       "autoExpose": false,
       "readme": true
     }
