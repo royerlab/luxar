@@ -435,6 +435,8 @@ def _merge_refit_volume(manifest: "BatchManifest") -> "tuple[Any, tuple]":
         )
     kinds = [_axis_kind(label, "--axes") for label in labels]
     t_indices, c_indices = _tile_indices(manifest)
+    # Validation rejects folded channel axes before this builder, so one flat
+    # selected channel index can pin at most one source axis here.
     pins = {
         axis: (c_indices[0] if kind == "c" else t_indices[0])
         for axis, kind in enumerate(kinds)
