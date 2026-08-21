@@ -32,6 +32,7 @@ def _make_additive(n_lods: int = 3, per_lod: int = 10) -> GSplatData:
 
 def test_map_additive_advances_offset_and_preserves_structure() -> None:
     data = _make_additive(n_lods=3, per_lod=10)
+    data._finest_leaf().meta["coverage_fraction"] = 0.75
 
     # fn doubles centers and stamps each splat's amplitude with its LOD's start
     # offset — so the finest amplitudes must be [0]*10 + [10]*10 + [20]*10 if the
@@ -57,6 +58,7 @@ def test_map_additive_advances_offset_and_preserves_structure() -> None:
     assert np.array_equal(out.amplitudes, expected_amps)
     # per-sub-LOD stats carried through
     assert [lod.stats["pass_index"] for lod in out.additive_sublods] == [0, 1, 2]
+    assert "coverage_fraction" not in out._finest_leaf().meta
 
 
 def _pyramid() -> GSplatData:

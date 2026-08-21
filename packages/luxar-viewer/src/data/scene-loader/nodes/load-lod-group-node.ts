@@ -11,8 +11,9 @@
  *      ladders span [0, 1/2], a partition tile anchors at 1.0 — or the legacy
  *      diagonal metric under ``'coverage'``, up to 4.0 ==
  *      ``SCREEN_FILL_DIAGONAL_RATIO / FILL_FACTOR``)
- *      plus its own ``position_bounds`` (the raw nD AABB). Both are read from
- *      the child's zarr attrs.
+ *      plus its own ``position_bounds`` (the raw nD AABB) and optional
+ *      ``lod_bounds`` (a robust selector-only AABB). All are read from the
+ *      child's zarr attrs.
  *      Legacy (pre-v3.2) datasets that still carry ``min_pixel_size`` /
  *      selector ``'pixel_size'`` are auto-adapted with a warning
  *      (see ``resolveCoverageFractions``).
@@ -34,8 +35,9 @@
  * matters for their substitutive ladders, whose finest child is the full
  * cloud / line set / full-resolution surface (eager-loading it would defeat
  * progressive loading). The selector math needs
- * only the per-child ``coverage_fraction`` / ``position_bounds`` attrs (read here),
- * not loaded geometry, so deferral is fully correct.
+ * only the per-child ``coverage_fraction`` / ``position_bounds`` / optional
+ * ``lod_bounds`` attrs (read here), not loaded geometry, so deferral is fully
+ * correct.
  *
  * Sibling of `data/scene-loader/nodes/load-scene-nodes.ts` (dispatch),
  * `data/scene-loader/nodes/load-gsplats-node.ts` +
@@ -113,10 +115,12 @@ function attachLazyChild(
   hasMoreLODs?: () => boolean
 ): LODGroupChild {
   placeholder.visible = false;
+  const positionBounds = readPositionBounds(child.attrs);
   const entryChild: LODGroupChild = {
     object: placeholder,
     coverageFraction,
-    positionBounds: readPositionBounds(child.attrs),
+    positionBounds,
+    lodBounds: readLodBounds(child.attrs, child.path, positionBounds),
     ready: false,
     // Progressive (additive-laddered) levels report remaining LODs so the
     // registry can settle-gate further ``ensureLoaded`` passes to completion;
@@ -275,6 +279,56 @@ function readPositionBounds(childAttrs: SceneNode['attrs']): {
   };
 }
 
+/** Read optional robust nD bounds used only by the LOD metric. */
+function readLodBounds(
+  childAttrs: SceneNode['attrs'],
+  childPath: string,
+  positionBounds: { min: readonly number[]; max: readonly number[] }
+): { min: readonly number[]; max: readonly number[] } | undefined {
+  const attrs = childAttrs as Record<string, unknown>;
+  if (!Object.prototype.hasOwnProperty.call(attrs, 'lod_bounds')) return undefined;
+  const expectedDimensions = positionBounds.min.length;
+  if (expectedDimensions === 0 || positionBounds.min.length !== positionBounds.max.length) {
+    log.warning(
+      Modules.SCENE_LOADER,
+      `lod_group child ${childPath}: rejected lod_bounds; ` +
+        'child has no usable position_bounds to validate against'
+    );
+    return undefined;
+  }
+  const reject = (reason: string, appendDimensions: boolean = true): undefined => {
+    const dimensions = appendDimensions ? ` (${expectedDimensions} values per bound)` : '';
+    log.warning(
+      Modules.SCENE_LOADER,
+      `lod_group child ${childPath}: rejected lod_bounds; expected ${reason}${dimensions}, ` +
+        'falling back to position_bounds'
+    );
+    return undefined;
+  };
+  const raw = attrs.lod_bounds as { min?: unknown; max?: unknown } | undefined;
+  if (!raw || !Array.isArray(raw.min) || !Array.isArray(raw.max)) {
+    return reject('an object with min/max arrays');
+  }
+  if (raw.min.length === 0) return reject('non-empty bounds');
+  if (raw.min.length !== raw.max.length) return reject('equal min/max lengths');
+  if (raw.min.length !== expectedDimensions) {
+    return reject(`${expectedDimensions} values per bound`, false);
+  }
+  const min = raw.min;
+  const max = raw.max;
+  for (let i = 0; i < min.length; i++) {
+    if (typeof min[i] !== 'number' || typeof max[i] !== 'number') {
+      return reject('numeric entries');
+    }
+    if (!Number.isFinite(min[i]) || !Number.isFinite(max[i])) return reject('finite numbers');
+    if (min[i] > max[i]) return reject('ordered bounds');
+    if (min[i] < positionBounds.min[i] || max[i] > positionBounds.max[i]) {
+      return reject('bounds contained in position_bounds');
+    }
+  }
+  return { min: min as number[], max: max as number[] };
+}
+
 /**
  * Load an ``lod_group`` node on initial scene construction.
  *
@@ -336,6 +390,7 @@ export async function loadLodGroupNode(
   const coverageFractions = resolveCoverageFractions(node, sceneChildren);
 
   const registryChildren: LODGroupChild[] = [];
+  const childPaths = new Map<LODGroupChild, string>();
   // Registry index of the eagerly-loaded default child. `eagerIdx` indexes
   // `sceneChildren`, but a child that fails to attach is dropped from
   // `registryChildren`, shifting indices. Recomputing the default level from
@@ -458,6 +513,7 @@ export async function loadLodGroupNode(
         );
       }
       registryChildren.push(entryChild);
+      childPaths.set(entryChild, child.path);
       continue;
     }
 
@@ -522,6 +578,7 @@ export async function loadLodGroupNode(
         }
       );
       registryChildren.push(entryChild);
+      childPaths.set(entryChild, child.path);
       continue;
     }
 
@@ -549,11 +606,15 @@ export async function loadLodGroupNode(
     childObject.visible = false;
 
     if (i === eagerIdx) eagerRegistryIdx = registryChildren.length;
-    registryChildren.push({
+    const positionBounds = readPositionBounds(child.attrs);
+    const entryChild: LODGroupChild = {
       object: childObject,
       coverageFraction,
-      positionBounds: readPositionBounds(child.attrs),
-    });
+      positionBounds,
+      lodBounds: readLodBounds(child.attrs, child.path, positionBounds),
+    };
+    registryChildren.push(entryChild);
+    childPaths.set(entryChild, child.path);
   }
 
   // Defense-in-depth: the per-frame selector (``pickChildWithHysteresis``)
@@ -592,6 +653,19 @@ export async function loadLodGroupNode(
         'non-geometry group (e.g. a metadata sidecar) was adopted as a child and ' +
         'defaulted to coverage_fraction=0, or the producer emitted a malformed ladder ' +
         '(coverage_fractions guarantees strictly ascending thresholds).'
+    );
+  }
+
+  const lodBoundsCount = registryChildren.filter((child) => child.lodBounds != null).length;
+  if (lodBoundsCount > 0 && lodBoundsCount < registryChildren.length) {
+    const missingPaths = registryChildren
+      .filter((child) => child.lodBounds == null)
+      .map((child) => childPaths.get(child) ?? '<unknown>');
+    log.warning(
+      Modules.SCENE_LOADER,
+      `lod_group ${node.path}: lod_bounds are only usable on part of the ladder; ` +
+        `missing ${missingPaths.join(', ')}. The metric falls back to position_bounds ` +
+        'for those children, so one raw AABB can dominate the group union.'
     );
   }
 

@@ -668,7 +668,9 @@ def graft_gsplat_node(
     :func:`~luxar.core.group.gsplats_pipeline.lod_dispatch.add_gsplats_as_lod_group_impl`
     (via ``derive_coverage_fractions``), not in this function. The public
     ``Group.add_gsplats_from_file`` entry covers that matrix-shaped route with
-    the same outer writer transaction as this graft path.
+    the same outer writer transaction as this graft path. Explicit
+    ``extend_to_all`` values are still preflighted before its wrapper is written
+    so that known failures keep the caller-facing node name.
     """
     if _under_partition is None:
         return _graft_gsplat_node_transaction(

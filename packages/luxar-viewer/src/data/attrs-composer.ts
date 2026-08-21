@@ -14,6 +14,11 @@
  *                          for mesh — docs/specs/MESH_NODE_SPEC.md §6.3)
  *   effective_join       = nearest ancestor (root-to-leaf) that sets join,
  *                          else undefined (lines apply DEFAULT_LINE_JOIN)
+ *   effective_colormap   = nearest ancestor (root-to-leaf) that sets colormap,
+ *                          else undefined (the leaf renders direct colours).
+ *                          `customLutBytes` travels WITH it, from the same node
+ *                          — a name and a LUT from different nodes would paint
+ *                          the wrong palette.
  *
  * Note: the offset composition is additive per the spec. This is mathematically
  * different from chaining the shader's `color * I + O` model through successive
@@ -44,6 +49,20 @@ export interface ComposableAttrs {
    * in both places would warn twice.
    */
   join?: string;
+  /**
+   * Palette name as authored (a builtin name, or the `'custom'` sentinel that
+   * points at the node's sibling `colormap_lut` array). Nearest-setter-wins,
+   * like `blending_mode`: the Python writer no longer manufactures a per-leaf
+   * `'gray'` when an ancestor authored one (#1600), so an ancestor's palette
+   * is what a bare leaf should render through.
+   */
+  colormap?: string;
+  /**
+   * The `colormap === 'custom'` LUT bytes the scene loader stashed on the node
+   * that declared it. Carried as part of the SAME record as `colormap` so the
+   * two can never be composed from different nodes.
+   */
+  customLutBytes?: Uint8Array;
 }
 
 export interface EffectiveAttrs {
@@ -65,6 +84,25 @@ export interface EffectiveAttrs {
    * `DEFAULT_LINE_JOIN`. Left raw on purpose: the consumer validates.
    */
   join: string | undefined;
+  /**
+   * Nearest ancestor (root-to-leaf) that sets `colormap`, `undefined` when no
+   * level of the chain does (the leaf renders its direct colours). Left raw:
+   * `getColormapTexture` owns the unknown-name fallback.
+   *
+   * Whether an inherited palette actually applies is the consumer's call and
+   * differs by geometry: points / lines / mesh gate on `has_scalars` (no
+   * scalar channel, no colormap), while a gsplats leaf is always
+   * colormap-capable — its amplitude IS the scalar — so an ancestor-authored
+   * palette overrides even per-splat colours there. That matches the Layers
+   * panel's imperative fan-out (`layer-apply.ts::applyColormap`), so the
+   * authored and interactive routes agree.
+   */
+  colormap: string | undefined;
+  /**
+   * The custom LUT bytes belonging to whichever node supplied `colormap`;
+   * `undefined` when that node declared no `'custom'` palette.
+   */
+  customLutBytes: Uint8Array | undefined;
 }
 
 /**
@@ -87,6 +125,8 @@ export function composeAttrs(chainRootToLeaf: readonly ComposableAttrs[]): Effec
   let offset = 0.0;
   let blending_mode: string | undefined;
   let join: string | undefined;
+  let colormap: string | undefined;
+  let customLutBytes: Uint8Array | undefined;
 
   for (const a of chainRootToLeaf) {
     if (a.opacity !== undefined) opacity *= a.opacity;
@@ -96,6 +136,13 @@ export function composeAttrs(chainRootToLeaf: readonly ComposableAttrs[]): Effec
     if (a.offset !== undefined) offset += a.offset;
     if (a.blending_mode !== undefined) blending_mode = a.blending_mode;
     if (a.join !== undefined) join = a.join;
+    // Name and LUT move together, always from the SAME record: a node that
+    // sets a builtin palette must also clear an ancestor's `'custom'` bytes,
+    // or the pair would describe two different nodes' intent.
+    if (a.colormap !== undefined) {
+      colormap = a.colormap;
+      customLutBytes = a.customLutBytes;
+    }
   }
 
   // Clamp per spec
@@ -117,6 +164,10 @@ export function composeAttrs(chainRootToLeaf: readonly ComposableAttrs[]): Effec
     // Passed through as authored — `createLinesNode` is the one place that
     // validates a join style, so it also owns the unknown-value warning.
     join,
+    // Passed through as authored, for the same reason: `getColormapTexture`
+    // owns the unknown-name → viridis fallback and its warning.
+    colormap,
+    customLutBytes,
   };
 }
 
@@ -205,5 +256,7 @@ function toComposable(attrs: SceneNode['attrs']): ComposableAttrs {
     offset: attrs.offset as number | undefined,
     blending_mode: attrs.blending_mode as string | undefined,
     join: attrs.join as string | undefined,
+    colormap: attrs.colormap as string | undefined,
+    customLutBytes: attrs.customLutBytes as Uint8Array | undefined,
   };
 }

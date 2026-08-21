@@ -607,6 +607,7 @@ def write_gsplats_tree(
             store=root,
             barrier_dims=barrier_dims,
             attrs=dict(root_attrs) if root_attrs else None,
+            warn_on_missing_tone_mapping=False,
         )
 
         # Self-identifying v3.0 header (the node's own type/kind/position_bounds attrs
@@ -775,6 +776,7 @@ def write_partition_streaming(
                 # standalone partition writer (prevents part_10 < part_2 reorder).
                 attrs={"child_index": n_written},
                 barrier_dims=part_barrier,
+                warn_on_missing_tone_mapping=False,
                 # This writer's ROOT is stamped kind=partition below, so every
                 # part_<i> is under a partition by construction — exactly what the
                 # GSplatPartition branch of write_gsplat_node passes. Without it a
