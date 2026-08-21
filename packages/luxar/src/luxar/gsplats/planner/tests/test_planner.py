@@ -1173,6 +1173,71 @@ class TestFitPlannedParallel:
         )
         assert d.exists() and any(d.iterdir())
 
+    def test_missing_reference_is_announced_even_when_quiet(self, tmp_path, capsys):
+        merged = fit_planned_parallel(
+            _toy_plan(n_boxes=1),
+            jobs=1,
+            tmp_dir=tmp_path / "boxes",
+            worker_cmd_builder=_fake_box_builder(5),
+            verbose=False,
+        )
+
+        assert "psnr_db" not in merged.stats
+        notice = capsys.readouterr().out
+        assert "No merged quality metrics" in notice
+        assert "reference volume" in notice
+        assert "gsplat compare" in notice
+
+    def test_flat_merge_with_reference_records_quality(self, tmp_path):
+        plan = _toy_plan(n_boxes=1)
+        volume = _corner_blobs(tuple(plan.volume_shape), n=3, corner=12)
+        merged = fit_planned_parallel(
+            plan,
+            jobs=1,
+            tmp_dir=tmp_path / "boxes",
+            worker_cmd_builder=_fake_box_builder(5),
+            volume=volume,
+            device="cpu",
+            verbose=False,
+        )
+
+        assert np.isfinite(merged.stats["psnr_db"])
+        assert np.isfinite(merged.stats["foreground_psnr_db"])
+
+    def test_mismatched_reference_shape_is_announced(self, tmp_path, capsys):
+        plan = _toy_plan(n_boxes=1)
+        merged = fit_planned_parallel(
+            plan,
+            jobs=1,
+            tmp_dir=tmp_path / "boxes",
+            worker_cmd_builder=_fake_box_builder(5),
+            volume=np.zeros((8, 8, 8), np.float32),
+            verbose=False,
+        )
+
+        assert "psnr_db" not in merged.stats
+        notice = capsys.readouterr().out
+        assert "No merged quality metrics" in notice
+        assert "does not match the plan grid" in notice
+        assert str(tuple(plan.volume_shape)) in notice
+
+    def test_partition_skip_is_announced_even_with_a_reference(self, tmp_path, capsys):
+        plan = _toy_plan(n_boxes=2)
+        fit_planned_parallel(
+            plan,
+            jobs=2,
+            tmp_dir=tmp_path / "boxes",
+            worker_cmd_builder=_fake_box_builder(5),
+            volume=np.zeros(plan.volume_shape, np.float32),
+            partition=True,
+            verbose=False,
+        )
+
+        notice = capsys.readouterr().out
+        assert "No merged quality metrics" in notice
+        assert "kind=partition" in notice
+        assert "gsplat flatten" in notice
+
 
 # ── The fit's truncation radius survives the planned path (#1637) ──
 #
@@ -1240,11 +1305,44 @@ class TestPlannedFitTruncationRadius:
         assert merged.stats["n_boxes_fit"] >= 1
         assert merged.stats["overlap"] == plan.overlap
         assert list(merged.stats["volume_shape"]) == list(V.shape)
+        assert np.isfinite(merged.stats["psnr_db"])
+        assert np.isfinite(merged.stats["foreground_psnr_db"])
         # Wall clock for the fit loop, so it is bounded by the wall clock of the
         # whole call — the SUM of the boxes' own fit times need not be.
         assert 0 < merged.stats["time_seconds"] <= wall
 
-    def test_partition_parts_keep_the_configured_radius_and_box_stats(self, tmp_path):
+    def test_quality_budget_skip_is_announced_and_stamps_nothing(
+        self, monkeypatch, capsys
+    ):
+        from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.planner import fit_planned as fit_planned_fn
+
+        fit_planned_module = __import__(
+            "luxar.gsplats.planner.fit_planned", fromlist=["_fit_one_box"]
+        )
+        volume = np.ones((16, 16, 16), np.float32)
+        plan = _toy_plan(n_boxes=1)
+
+        def _fake_fit(*args, **kwargs):
+            return GSplatData(
+                centers=np.array([[8.0, 8.0, 8.0]], np.float32),
+                amplitudes=np.ones((1,), np.float32),
+                cholesky_factors=np.array([[1, 0, 1, 0, 0, 1]], np.float32),
+            )
+
+        monkeypatch.setattr(fit_planned_module, "_fit_one_box", _fake_fit)
+        monkeypatch.setenv("LUXAR_TILED_QUALITY_MAX_GB", "0")
+        merged = fit_planned_fn(volume, plan, verbose=False)
+
+        assert "psnr_db" not in merged.stats
+        assert "foreground_psnr_db" not in merged.stats
+        notice = capsys.readouterr().out
+        assert "Merged quality metrics skipped" in notice
+        assert "LUXAR_TILED_QUALITY_MAX_GB" in notice
+
+    def test_partition_parts_keep_the_configured_radius_and_box_stats(
+        self, tmp_path, capsys
+    ):
         """Sequential ``partition=True``: every part leaf carries ``truncate``."""
         from luxar.gsplats._data.filtering import _REGION_SCOPED_STATS_KEYS
         from luxar.gsplats.io.load_gsplats import load_gsplat_node
@@ -1253,6 +1351,10 @@ class TestPlannedFitTruncationRadius:
 
         V, plan = self._tiny_volume_and_plan()
         node = fit_planned(V, plan, partition=True, truncate=3.5, **_FAST_FIT)
+        notice = capsys.readouterr().out
+        assert "No merged quality metrics" in notice
+        assert "gsplat flatten" in notice
+        assert "gsplat compare" in notice
 
         leaves = _leaf_nodes(node)
         assert leaves

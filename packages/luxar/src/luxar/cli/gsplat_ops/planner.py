@@ -476,6 +476,8 @@ def run_content_fit(
                 jobs=n_jobs,
                 tmp_dir=tmp_dir,
                 worker_cmd_builder=builder,
+                volume=vol,
+                device=device,
                 keep_boxes=keep_boxes,
                 partition=partition,
                 recipe=recipe,

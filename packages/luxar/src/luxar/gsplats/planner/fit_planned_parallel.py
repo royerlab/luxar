@@ -32,7 +32,7 @@ from arbol import aprint, asection
 from luxar.gsplats.batch.task_pool import cancel_pool_on_interrupt
 from luxar.gsplats.fit_tiled_parallel import luxar_argv0
 
-from .fit_planned import _padded_bounds
+from .fit_planned import _announce_unscored_planned_merge, _padded_bounds
 from .spec import FitPlan
 
 # Builds the argv for plan box ``i`` writing to a given output path.
@@ -145,6 +145,8 @@ def fit_planned_parallel(
     jobs: int,
     tmp_dir: Path,
     worker_cmd_builder: WorkerCmdBuilder,
+    volume: Any = None,
+    device: Optional[str] = None,
     keep_boxes: bool = False,
     partition: bool = False,
     recipe: Optional[str] = None,
@@ -165,6 +167,13 @@ def fit_planned_parallel(
     worker_cmd_builder : callable
         ``(box_idx, out_path) -> argv`` returning the command to fit one box.
         The injection seam for testing (see :func:`_default_worker_cmd_builder`).
+    volume : array-like, optional
+        Whole reference volume on ``plan.volume_shape``'s grid. Required to stamp
+        merged quality metrics on a flat result; direct callers may omit it, in
+        which case the omission is announced.
+    device : str, optional
+        Device used to render the merged reconstruction for scoring. ``None``
+        auto-detects, matching :func:`render_to_volume_tensor`.
     keep_boxes : bool, default False
         Keep the per-box temp outputs after a successful merge.
     verbose : bool, default True
@@ -307,6 +316,10 @@ def fit_planned_parallel(
             bsp_tree=plan.bsp_tree,
             region_labels=region_boxes,
         )
+        _announce_unscored_planned_merge(
+            "the result is kind=partition, whose root has no fit-stats dict to stamp",
+            partition=True,
+        )
     else:
         # `concatenate` keeps the reloaded boxes' shared truncation_radius; a
         # manual re-`GSplatData(...)` of the three arrays reset it to the default
@@ -333,6 +346,29 @@ def fit_planned_parallel(
                 "time_seconds": float(elapsed),
             }
         )
+        plan_shape = tuple(int(s) for s in plan.volume_shape)
+        if volume is None:
+            _announce_unscored_planned_merge(
+                "this parallel merge was not given a reference volume"
+            )
+        else:
+            reference_shape = tuple(int(s) for s in volume.shape)
+            if reference_shape != plan_shape:
+                _announce_unscored_planned_merge(
+                    f"reference shape {reference_shape} does not match the plan grid "
+                    f"{plan_shape}"
+                )
+            else:
+                from luxar.gsplats.fit_tiled_gsplats import _stamp_merged_quality
+
+                _stamp_merged_quality(
+                    result,
+                    volume,
+                    volume_shape=plan_shape,
+                    grid_scale=None,
+                    device=device,
+                    verbose=verbose,
+                )
 
     if not keep_boxes:
         shutil.rmtree(tmp_dir, ignore_errors=True)

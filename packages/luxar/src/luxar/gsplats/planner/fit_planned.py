@@ -47,6 +47,19 @@ ProgressCallback = Callable[[int, int, str], None]
 CONTENT_CULL_RETENTION: float = 0.999
 
 
+def _announce_unscored_planned_merge(reason: str, *, partition: bool = False) -> None:
+    """Explain why a planned merge carries no whole-volume quality metrics."""
+    from arbol import aprint
+
+    recourse = (
+        "Flatten the written archive with `luxar gsplat flatten`, then run "
+        "`luxar gsplat compare`."
+        if partition
+        else "Run `luxar gsplat compare` on the written archive instead."
+    )
+    aprint(f"No merged quality metrics: {reason}. {recourse}")
+
+
 def _ensure_planned_norm_range(
     volume: np.ndarray, fit_kwargs: dict[str, Any], verbose: bool
 ) -> None:
@@ -380,7 +393,7 @@ def fit_planned(
         # One part per box — boxes are core-disjoint, so this is an exact
         # spatial partition (viewer frustum-culls per part). Returns a tree node.
         # ``recipe`` gives each part its own LOD ladder/group as it is assembled.
-        return GSplatData.partition_from_regions(
+        result = GSplatData.partition_from_regions(
             regions,
             recipe=recipe,
             recipe_params=recipe_params,
@@ -389,6 +402,11 @@ def fit_planned(
             bsp_tree=plan.bsp_tree,
             region_labels=region_boxes,
         )
+        _announce_unscored_planned_merge(
+            "the result is kind=partition, whose root has no fit-stats dict to stamp",
+            partition=True,
+        )
+        return result
 
     # `concatenate` (what the uniform tiled path's `merge_tile_results` uses)
     # carries the boxes' shared truncation_radius through the merge — a manual
@@ -408,6 +426,22 @@ def fit_planned(
             "time_seconds": float(elapsed),
         }
     )
+    plan_shape = tuple(int(s) for s in plan.volume_shape)
+    if tuple(V.shape) != plan_shape:
+        _announce_unscored_planned_merge(
+            f"reference shape {tuple(V.shape)} does not match the plan grid {plan_shape}"
+        )
+    else:
+        from luxar.gsplats.fit_tiled_gsplats import _stamp_merged_quality
+
+        _stamp_merged_quality(
+            merged,
+            V,
+            volume_shape=plan_shape,
+            grid_scale=None,
+            device=device,
+            verbose=verbose,
+        )
     return merged
 
 
