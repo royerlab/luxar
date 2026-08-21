@@ -300,15 +300,7 @@ class TestLadderShape:
 
         levels = level_colors(store)
         assert len(levels) == 4, "3 coarse levels + the original"
-        # Integer channels round to whole values. SDR float colours may take the
-        # encoder's documented rgb_uint8 path, so allow one 8-bit code step there.
-        # HDR stays wide-range float.
-        if np.issubdtype(np.dtype(dtype), np.integer):
-            slack = 1.0
-        elif high <= 1.0:
-            slack = 1.0 / 255.0 + 1e-6
-        else:
-            slack = 1e-4
+        slack = 1.0 if np.issubdtype(np.dtype(dtype), np.integer) else 1e-4
         for index, level in enumerate(levels):
             assert level.dtype == dtype, (
                 f"level {index} came back as {level.dtype}, not {dtype.__name__} — "
