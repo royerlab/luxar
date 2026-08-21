@@ -506,6 +506,8 @@ interface LODGroupEntryCache {
    * way the list is viewport-independent and needs no per-frame rebuild.
    */
   thresholds: number[];
+  /** Whether any child needs the optional robust-bounds metric fold. */
+  hasLodBounds: boolean;
   localBoxScratch: BoundingBox;
 }
 
@@ -678,6 +680,7 @@ export class LODGroupRegistry {
     this.entries.set(entry.path, entry);
     this.caches.set(entry.path, {
       thresholds: entry.children.map((c) => c.coverageFraction),
+      hasLodBounds: entry.children.some((c) => c.lodBounds != null),
       localBoxScratch: {
         min: { x: 0, y: 0, z: 0 },
         max: { x: 0, y: 0, z: 0 },
@@ -1067,49 +1070,51 @@ export class LODGroupRegistry {
       if (!forceFinest && !frustum.intersectsBox(WORLD_BOX3_SCRATCH)) {
         desired = this.coarsestReadyIndex(entry);
         entry.offScreen = true;
-      } else if (entry.selector === 'screen-area') {
-        const metricWorldBox = this.computeWorldBox(entry, displayDims, true) ?? worldBox;
-        // Screen-area selector: the metric IS the fraction of the viewport
-        // area the group's projected bbox rect covers (viewport-size
-        // independent by construction — see projectBoxAreaFraction). The
-        // thresholds are literal area fractions ([0, …, 1/4, 1/2] whole-object;
-        // a partition tile anchors at 1.0), so no FILL_FACTOR normalisation.
-        // Camera inside the box → +Infinity → finest, same as the diagonal
-        // path; ``?lod-finest`` forces Infinity → always finest.
-        coverageMetric = forceFinest
-          ? Infinity
-          : projectBoxAreaFraction(metricWorldBox, camera, FRUSTUM_MATRIX_SCRATCH);
-        desired = pickChildWithHysteresis(cache.thresholds, entry.activeChildIndex, coverageMetric);
-        entry.offScreen = false;
       } else {
-        const metricWorldBox = this.computeWorldBox(entry, displayDims, true) ?? worldBox;
-        // Legacy 'coverage' selector (the default for older stores).
-        // Reuse the per-frame projection×view product (FRUSTUM_MATRIX_SCRATCH,
-        // built in evaluatePerFrame) instead of recomputing it per group.
-        const diagonalPx = projectBoxDiagonalPx(
-          metricWorldBox,
-          camera,
-          viewport,
-          FRUSTUM_MATRIX_SCRATCH
-        );
-        // Normalise the projected pixel diagonal to a dimensionless **coverage
-        // metric** (1.0 == the projected diagonal has reached FILL_FACTOR of the
-        // FITTED AXIS) so the viewport-relative coverage_fraction thresholds
-        // anchor the finest at half the fitted screen axis — any normal
-        // full-frame view — on any monitor OR aspect ratio (see the
-        // ``FILL_FACTOR`` doc for why this denominator, unlike the viewport
-        // diagonal it replaces, stays invariant across aspect ratio).
-        // diagonalPx == +Infinity (camera inside the box) → Infinity →
-        // finest, unchanged. fittedAxisPx is > 0 here (evaluatePerFrame guards
-        // width/height == 0). ``?lod-finest`` forces Infinity → always finest.
-        //
-        // fittedAxisPx mirrors calculateCameraDistance's own fit selection
-        // (bounds-math.ts): that function fits the VERTICAL fov for aspect >= 1
-        // (distance independent of width) and the HORIZONTAL fov for aspect < 1
-        // (distance ∝ 1/aspect) — i.e. ``min(width, height)`` in pixel space is
-        // exactly the extent the opening framing fits, on both sides of aspect 1.
-        const fittedAxisPx = Math.min(viewport.width, viewport.height);
-        coverageMetric = forceFinest ? Infinity : diagonalPx / (FILL_FACTOR * fittedAxisPx);
+        if (forceFinest) {
+          coverageMetric = Infinity;
+        } else {
+          const metricWorldBox = cache.hasLodBounds
+            ? (this.computeWorldBox(entry, displayDims, true) ?? worldBox)
+            : worldBox;
+          if (entry.selector === 'screen-area') {
+            // Screen-area selector: the metric IS the fraction of the viewport
+            // area the group's projected bbox rect covers (viewport-size
+            // independent by construction — see projectBoxAreaFraction). The
+            // thresholds are literal area fractions ([0, …, 1/4, 1/2] whole-object;
+            // a partition tile anchors at 1.0), so no FILL_FACTOR normalisation.
+            // Camera inside the box → +Infinity → finest, same as the diagonal path.
+            coverageMetric = projectBoxAreaFraction(metricWorldBox, camera, FRUSTUM_MATRIX_SCRATCH);
+          } else {
+            // Legacy 'coverage' selector (the default for older stores).
+            // Reuse the per-frame projection×view product (FRUSTUM_MATRIX_SCRATCH,
+            // built in evaluatePerFrame) instead of recomputing it per group.
+            const diagonalPx = projectBoxDiagonalPx(
+              metricWorldBox,
+              camera,
+              viewport,
+              FRUSTUM_MATRIX_SCRATCH
+            );
+            // Normalise the projected pixel diagonal to a dimensionless **coverage
+            // metric** (1.0 == the projected diagonal has reached FILL_FACTOR of the
+            // FITTED AXIS) so the viewport-relative coverage_fraction thresholds
+            // anchor the finest at half the fitted screen axis — any normal
+            // full-frame view — on any monitor OR aspect ratio (see the
+            // ``FILL_FACTOR`` doc for why this denominator, unlike the viewport
+            // diagonal it replaces, stays invariant across aspect ratio).
+            // diagonalPx == +Infinity (camera inside the box) → Infinity →
+            // finest, unchanged. fittedAxisPx is > 0 here (evaluatePerFrame guards
+            // width/height == 0).
+            //
+            // fittedAxisPx mirrors calculateCameraDistance's own fit selection
+            // (bounds-math.ts): that function fits the VERTICAL fov for aspect >= 1
+            // (distance independent of width) and the HORIZONTAL fov for aspect < 1
+            // (distance ∝ 1/aspect) — i.e. ``min(width, height)`` in pixel space is
+            // exactly the extent the opening framing fits, on both sides of aspect 1.
+            const fittedAxisPx = Math.min(viewport.width, viewport.height);
+            coverageMetric = diagonalPx / (FILL_FACTOR * fittedAxisPx);
+          }
+        }
         desired = pickChildWithHysteresis(cache.thresholds, entry.activeChildIndex, coverageMetric);
         entry.offScreen = false;
       }

@@ -118,7 +118,7 @@ function attachLazyChild(
     object: placeholder,
     coverageFraction,
     positionBounds,
-    lodBounds: readLodBounds(child.attrs, positionBounds.min.length),
+    lodBounds: readLodBounds(child.attrs, child.path, positionBounds),
     ready: false,
     // Progressive (additive-laddered) levels report remaining LODs so the
     // registry can settle-gate further ``ensureLoaded`` passes to completion;
@@ -280,29 +280,39 @@ function readPositionBounds(childAttrs: SceneNode['attrs']): {
 /** Read optional robust nD bounds used only by the LOD metric. */
 function readLodBounds(
   childAttrs: SceneNode['attrs'],
-  expectedDimensions: number
+  childPath: string,
+  positionBounds: { min: readonly number[]; max: readonly number[] }
 ): { min: readonly number[]; max: readonly number[] } | undefined {
   const attrs = childAttrs as Record<string, unknown>;
-  const raw = attrs.lod_bounds as { min?: unknown; max?: unknown } | undefined;
-  if (!raw || !Array.isArray(raw.min) || !Array.isArray(raw.max)) return undefined;
-  if (
-    raw.min.length === 0 ||
-    raw.min.length !== raw.max.length ||
-    raw.min.length !== expectedDimensions
-  ) {
+  if (!Object.prototype.hasOwnProperty.call(attrs, 'lod_bounds')) return undefined;
+  const expectedDimensions = positionBounds.min.length;
+  const reject = (reason: string): undefined => {
+    log.warning(
+      Modules.SCENE_LOADER,
+      `lod_group child ${childPath}: rejected lod_bounds; expected ${reason} ` +
+        `(${expectedDimensions} values per bound), falling back to position_bounds`
+    );
     return undefined;
+  };
+  const raw = attrs.lod_bounds as { min?: unknown; max?: unknown } | undefined;
+  if (!raw || !Array.isArray(raw.min) || !Array.isArray(raw.max)) {
+    return reject('an object with min/max arrays');
+  }
+  if (raw.min.length === 0) return reject('non-empty bounds');
+  if (raw.min.length !== raw.max.length) return reject('equal min/max lengths');
+  if (raw.min.length !== expectedDimensions) {
+    return reject(`${expectedDimensions} values per bound`);
   }
   const min = raw.min;
   const max = raw.max;
   for (let i = 0; i < min.length; i++) {
-    if (
-      typeof min[i] !== 'number' ||
-      typeof max[i] !== 'number' ||
-      !Number.isFinite(min[i]) ||
-      !Number.isFinite(max[i]) ||
-      min[i] > max[i]
-    ) {
-      return undefined;
+    if (typeof min[i] !== 'number' || typeof max[i] !== 'number') {
+      return reject('finite numbers');
+    }
+    if (!Number.isFinite(min[i]) || !Number.isFinite(max[i])) return reject('finite numbers');
+    if (min[i] > max[i]) return reject('ordered bounds');
+    if (min[i] < positionBounds.min[i] || max[i] > positionBounds.max[i]) {
+      return reject('bounds contained in position_bounds');
     }
   }
   return { min: min as number[], max: max as number[] };
@@ -587,7 +597,7 @@ export async function loadLodGroupNode(
       object: childObject,
       coverageFraction,
       positionBounds,
-      lodBounds: readLodBounds(child.attrs, positionBounds.min.length),
+      lodBounds: readLodBounds(child.attrs, child.path, positionBounds),
     });
   }
 
@@ -627,6 +637,19 @@ export async function loadLodGroupNode(
         'non-geometry group (e.g. a metadata sidecar) was adopted as a child and ' +
         'defaulted to coverage_fraction=0, or the producer emitted a malformed ladder ' +
         '(coverage_fractions guarantees strictly ascending thresholds).'
+    );
+  }
+
+  const lodBoundsCount = registryChildren.filter((child) => child.lodBounds != null).length;
+  if (lodBoundsCount > 0 && lodBoundsCount < registryChildren.length) {
+    const missingPaths = registryChildren
+      .filter((child) => child.lodBounds == null)
+      .map((child) => child.object.name || '<unnamed>');
+    log.warning(
+      Modules.SCENE_LOADER,
+      `lod_group ${node.path}: lod_bounds are only usable on part of the ladder; ` +
+        `missing ${missingPaths.join(', ')}. The metric falls back to position_bounds ` +
+        'for those children, so one raw AABB can dominate the group union.'
     );
   }
 

@@ -362,7 +362,7 @@ describe('loadLodGroupNode — registry registration', () => {
     expect(reg.get('/lod')!.activeChildIndex).toBe(1);
   });
 
-  it('registers every loaded child with its threshold and bounds', async () => {
+  it('registers every loaded child and warns when lod_bounds only stamp part of the ladder', async () => {
     // Atomic-swap on initial load is enforced by the loader's
     // sequential-await + visible=false-after-attach pattern + atomic
     // ``register()`` at the end (see the no-stacked-LOD-flash test
@@ -385,15 +385,26 @@ describe('loadLodGroupNode — registry registration', () => {
       ),
       makeChildNode('/lod/child_1', 0.5),
     ]);
-    await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
-    const entry = reg.get('/lod')!;
-    expect(entry.children).toHaveLength(2);
-    expect(entry.children.map((c) => c.coverageFraction)).toEqual([0, 0.5]);
-    expect(entry.children[0].lodBounds).toEqual({
-      min: [-1, -1, -1],
-      max: [1, 1, 1],
-    });
-    expect(entry.children[1].lodBounds).toBeUndefined();
+    const warnSpy = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    try {
+      await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
+      const entry = reg.get('/lod')!;
+      expect(entry.children).toHaveLength(2);
+      expect(entry.children.map((c) => c.coverageFraction)).toEqual([0, 0.5]);
+      expect(entry.children[0].lodBounds).toEqual({
+        min: [-1, -1, -1],
+        max: [1, 1, 1],
+      });
+      expect(entry.children[1].lodBounds).toBeUndefined();
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.stringContaining(
+          'lod_group /lod: lod_bounds are only usable on part of the ladder; missing /lod/child_1'
+        )
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   it('falls back to center_bounds when position_bounds is absent', async () => {
@@ -425,7 +436,15 @@ describe('loadLodGroupNode — registry registration', () => {
     });
   });
 
-  it('ignores malformed lod_bounds so selection falls back to position_bounds', async () => {
+  it.each([
+    ['an object with min/max arrays', 'bad'],
+    ['non-empty', { min: [], max: [] }],
+    ['equal min/max lengths', { min: [-1, -1, -1], max: [1, 1] }],
+    ['3 values per bound', { min: [-1, -1], max: [1, 1] }],
+    ['finite numbers', { min: [0, 0, Number.NaN], max: [1, 1, 1] }],
+    ['ordered bounds', { min: [0, 0.8, 0], max: [1, 0.2, 1] }],
+    ['bounds contained in position_bounds', { min: [-1, 0, 0], max: [1, 1, 1] }],
+  ])('rejects malformed lod_bounds with a diagnostic requiring %s', async (reason, lodBounds) => {
     attachStubChildren();
     const reg = new LODGroupRegistry({
       getCamera: () => new THREE.Camera(),
@@ -434,17 +453,26 @@ describe('loadLodGroupNode — registry registration', () => {
     });
     const ctx = makeCtx(reg);
     const child = makeChildNode('/lod/child_0', 0);
-    (child.attrs as Record<string, unknown>).lod_bounds = { min: [-1, -1], max: [1, 1] };
+    (child.attrs as Record<string, unknown>).lod_bounds = lodBounds;
+    const warnSpy = vi.spyOn(log, 'warning').mockImplementation(() => {});
 
-    await loadLodGroupNode(
-      makeLodGroupNode([child]),
-      new THREE.Group(),
-      makeStubLoc(),
-      ctx,
-      loadSceneNodesMock
-    );
+    try {
+      await loadLodGroupNode(
+        makeLodGroupNode([child]),
+        new THREE.Group(),
+        makeStubLoc(),
+        ctx,
+        loadSceneNodesMock
+      );
 
-    expect(reg.get('/lod')!.children[0].lodBounds).toBeUndefined();
+      expect(reg.get('/lod')!.children[0].lodBounds).toBeUndefined();
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.stringContaining(`/lod/child_0: rejected lod_bounds; expected ${reason}`)
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 });
 
