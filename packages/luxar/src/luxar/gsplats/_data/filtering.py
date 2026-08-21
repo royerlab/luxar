@@ -296,12 +296,15 @@ def restore_measured_stats(
 ) -> "GSplatData":
     """Put a :func:`measured_stats_snapshot` back, positionally.
 
-    Sound because a mask-based op emits one sub-LOD per input sub-LOD (the ladder
-    is preserved, only its members are trimmed). A rebuild that changed the ladder
-    LENGTH restores only the positions both share, which is the safe direction:
-    an unmatched sub-LOD keeps no score rather than borrowing another's.
+    Per-sub-LOD scores are restored only when the ladder shape is unchanged.  If
+    a mask-based op pruned an empty rung, positional pairing is no longer sound;
+    in that case only the top-level measurement is restored.
     """
-    for target, saved in zip(_measured_stats_dicts(data), snapshot):
+    targets = _measured_stats_dicts(data)
+    if len(targets) != len(snapshot):
+        data.stats.update(snapshot[0])
+        return data
+    for target, saved in zip(targets, snapshot):
         target.update(saved)
     return data
 
