@@ -9,6 +9,7 @@ CLI/Typer coupling. Previously lived in ``luxar.cli.gsplat_config``.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from numbers import Real
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
@@ -603,7 +604,16 @@ def _normalised_dataset_path(raw: Any) -> str:
     a level's name, and zarr refuses such a path anyway. ``""`` never matches
     (:func:`_dataset_path_matches` requires a non-empty path), so an unspellable
     entry stays unmatched rather than becoming a bogus match for some other level.
+
+    NGFF requires ``path`` to be a string, but some producers serialise numeric
+    level names as numbers. Those real numeric scalars are intentionally coerced;
+    booleans and structured/null values name nothing rather than plausible arrays
+    called ``"True"``, ``"None"``, ``"[]"`` or ``"{}"``. Lookup and matching
+    share this policy so malformed metadata cannot name different levels in the
+    two halves of selection.
     """
+    if isinstance(raw, bool) or not isinstance(raw, (str, Real)):
+        return ""
     path = str(raw).strip("/")
     if path.startswith("./"):
         path = path[2:].strip("/")
