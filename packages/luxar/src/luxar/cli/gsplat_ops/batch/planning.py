@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, Any, List, Optional, Sequence, Tuple
 import typer
 from arbol import aprint, asection
 
+from luxar.cli.gsplat_ops.fitting.fit_utils import CONTENT_UNSUPPORTED_FIT_FLAGS
 from luxar.core.group.partition import prune_serialized_bsp_tree
 from luxar.gsplats.batch.manifest import BatchJob, BatchManifest, output_filename
 
@@ -1732,6 +1733,26 @@ def _assemble_fit_args(
     return fit_args, denoise_mode, None
 
 
+def _validate_content_fit_flags(tiling: str, fit_args: dict) -> None:
+    """Reject fit flags that content workers would silently ignore."""
+    if tiling != "content":
+        return
+    unsupported = [
+        flag
+        for flag in CONTENT_UNSUPPORTED_FIT_FLAGS
+        if flag.removeprefix("--") in fit_args
+    ]
+    if not unsupported:
+        return
+    advice = "Use --tiling uniform"
+    if "--denoise" in unsupported:
+        advice += ", or use --preprocess with batch-fit submit"
+    raise typer.BadParameter(
+        f"--tiling content with {', '.join(unsupported)} is not supported: "
+        f"content workers ignore these options. {advice}."
+    )
+
+
 def _announce_seed_split(mode: str, fit_args: dict, n_tiles: int) -> None:
     """Announce how an integer ``--seeds`` budget divides across a task's tiles.
 
@@ -1876,6 +1897,7 @@ def plan_batch(
         )
 
     fit_args, denoise_mode, _ = _assemble_fit_args(fit, denoise)
+    _validate_content_fit_flags(tiling, fit_args)
     denoised_zarr_path = None
     if denoise_mode == "preprocess":
         denoised_zarr_path = str(output_dir.resolve() / "denoised.zarr")
