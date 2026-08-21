@@ -253,6 +253,7 @@ def test_a_store_with_no_digest_to_restamp_exits_one(
 
     assert result.exit_code == 1, result.output
     assert "no digest to restamp" in result.output
+    assert "at zarr format 2" in result.output
     assert "new URL prefix" in result.output
     attrs = _node_attrs(store)
     assert attrs["part_0"]["selector"] == DERIVED_LOD_SELECTOR, (

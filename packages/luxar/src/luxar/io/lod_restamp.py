@@ -983,8 +983,8 @@ def _summarise(report: RestampReport) -> None:
         aprint(
             "  ⚠️  This store carries neither a scene 'type' nor a "
             "'.gsplats.zarr' content_hash, so there was no digest to restamp: "
-            "a warm viewer cache will NOT see the new ladder. Republish under a "
-            "new URL prefix."
+            "at zarr format 2, a warm viewer cache will NOT see the new ladder. "
+            "Republish under a new URL prefix."
         )
     aprint(
         f"  {len(report.restamped)} restamped, "
