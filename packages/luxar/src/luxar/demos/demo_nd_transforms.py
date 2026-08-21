@@ -114,6 +114,8 @@ DEMO_META = {
     },
     "caches": [],
     "outputs": ["nd_transforms_bench"],
+    # Procedurally generated: no external dataset, nothing to credit.
+    "citation": None,
 }
 
 from pathlib import Path

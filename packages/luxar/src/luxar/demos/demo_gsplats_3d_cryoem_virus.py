@@ -32,7 +32,8 @@ On a fresh machine this demo bootstraps itself with no manual steps:
      (``demos/data/gsplats_cryoem_virus/``).
   2. If that asset isn't pulled, it AUTOMATICALLY downloads the 1.3 GB map to
      ``~/.cache/luxar/gsplats_cryoem_virus/``, fits Gaussian splats on the GPU,
-     and caches the fit — so subsequent runs are instant.
+     and caches the fit under that directory's ``local/`` subdir — so subsequent
+     runs are instant.
 ``--recompute`` forces the download + fit path.
 
 USAGE
@@ -58,6 +59,11 @@ DEMO_META = {
     },
     "caches": ["gsplats_cryoem_virus"],
     "outputs": ["gsplats_3d_cryoem_virus"],
+    "citation": {
+        "short": "Zhang et al. 2011 (EMDB EMD-5384)",
+        "doi": "10.1073/pnas.1107847108",
+        "license": "CC0 1.0",
+    },
 }
 
 import sys
@@ -69,9 +75,12 @@ from arbol import Arbol, aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import (
+    DatasetUnavailable,
     detect_device,
     launch_viewer,
     load_dataset_gsplats,
+    load_local_fit_gsplats_at,
+    local_fit_path,
     parse_demo_flags,
     parse_int_arg,
     require_module,
@@ -97,7 +106,11 @@ GSPLATS_FILE = "cryoem_virus.gsplats.zarr.zip"
 
 CACHE_DIR = Path.home() / ".cache" / "luxar" / DEMO_NAME
 CACHE_MAP = CACHE_DIR / "emd_5384.map.gz"
-CACHE_FILE = CACHE_DIR / GSPLATS_FILE
+# The local refit is OUR artifact, not a copy of the hosted one, so it lives in
+# the demo's local-fit namespace. Writing it to CACHE_DIR / GSPLATS_FILE — the
+# path the manifest fetch owns — got it quarantined on the next launch for
+# failing the pinned sha256, and the demo refit every time (#1618).
+LOCAL_FIT = local_fit_path(DEMO_NAME, GSPLATS_FILE)
 
 # Fitting parameters (GPU). The 700³ map is downsampled before fitting; the
 # capsid shell is smooth (9.8 Å) so a moderate budget captures the capsomers.
@@ -217,10 +230,11 @@ def fit_map(volume: np.ndarray, acquisition=None) -> GSplatData:
             verbose=True,
         )
         aprint(f"Fitted {len(result.amplitudes):,} splats")
-        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        LOCAL_FIT.parent.mkdir(parents=True, exist_ok=True)
+        aprint(f"Caching fit to {LOCAL_FIT}")
         save_with_lod(
             result,
-            CACHE_FILE,
+            LOCAL_FIT,
             recipe="levels",
             encoding_mode=EncodingMode.MEMORY,
             include_fitting_info=True,
@@ -237,11 +251,17 @@ def load_or_build_gsplats() -> GSplatData:
             precomputed = load_dataset_gsplats(DEMO_NAME, [GSPLATS_FILE])
             if precomputed is not None:
                 return precomputed[0]
-        except FileNotFoundError:
-            aprint(
-                "Precomputed fit not available (Git LFS asset not pulled). "
-                "Falling back to download + fit (one-time; result is cached)."
-            )
+        except DatasetUnavailable:
+            aprint("Precomputed fit not available (Git LFS asset not pulled).")
+        # A fit this machine built earlier, in its own namespace — checked
+        # BEFORE refitting, which is what makes the refit below one-time. Read
+        # through LOCAL_FIT, the same constant `fit_map` writes through: a door
+        # that re-derives the path from the cache root instead is a second
+        # source of truth for it (#1618 review, A).
+        local = load_local_fit_gsplats_at([LOCAL_FIT], label=DEMO_NAME)
+        if local is not None:
+            return local[0]
+        aprint(f"Falling back to download + fit (one-time; cached at {LOCAL_FIT}).")
 
     warn_if_no_cuda_gpu()
     volume, acquisition = load_map_volume()
@@ -270,6 +290,7 @@ def create_luxar_scene(gsplats_data: GSplatData, output_path: Path) -> Path:
             output_path, encoding_mode=EncodingMode.PRECISION
         ) as compiler:
             scene = compiler.create_scene(
+                citation=DEMO_META["citation"],
                 dimensions=dims,
                 viewer_config=ViewerConfig(tone_mapping="ACES"),
             )

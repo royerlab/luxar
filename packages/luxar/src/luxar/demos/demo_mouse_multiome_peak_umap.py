@@ -38,6 +38,11 @@ DEMO_META = {
         "gpu": "none",
         "local_data": "manual-file",
     },
+    "citation": {
+        "short": "Argelaguet et al. 2022; peak-UMAP analysis Kim et al. 2024",
+        "doi": "10.1101/2022.06.15.496239",
+        "license": "CC BY 4.0",
+    },
     "caches": [],
     "outputs": ["mouse_multiome_peak_umap", "mouse_umap"],
 }
@@ -218,7 +223,9 @@ def create_mouse_scene(
 
         # Create scene
         with LuxarZarrCompiler(output_path) as compiler:
-            scene = compiler.create_scene(dimensions=dims)
+            scene = compiler.create_scene(
+                dimensions=dims, citation=DEMO_META["citation"]
+            )
 
             total_points = len(positions_combined)
             radii = np.full(total_points, 0.02, dtype=np.float32)

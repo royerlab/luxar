@@ -14,11 +14,11 @@ here automatically — not just when WASM is missing.
 | File                    | Role                                                                                                                                                                                                                             |
 | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `index.ts`              | Barrel re-exporting every kernel and the `TypeScriptFallback` class implementing the `WasmModule` interface                                                                                                                      |
-| `lines-clipping.ts`     | Liang-Barsky segment clipping, batched position/scalar/color interpolation, segment lengths, per-endpoint cap suppression                                                                                                        |
+| `lines-clipping.ts`     | Liang-Barsky segment clipping, batched position/scalar/color interpolation, segment lengths, and per-endpoint cap suppression; frounds every float step in the Rust op order for exact WASM parity                           |
 | `mesh-culling.ts`       | Whole-triangle nD culling: per-vertex slab membership + face compaction preserving original vertex indices. `Math.fround`s the slab bounds                                                                                       |
 | `gsplats-processing.ts` | Marginal Cholesky factorization, Mahalanobis distance, fused nD→3D projection (`project_gsplats_nd_to_3d`). Frounds every float step in the Rust op order (#1820); exact vs WASM except `exp`/`log`                              |
 | `effective-radii.ts`    | `calculate_effective_radii` — `R_eff = sqrt(R² − D²)` for nD points sliced by a hyperplane. Frounds every float step in the Rust op order (#1820); bit-exact vs WASM                                                             |
-| `decode.ts`             | LUT / quantized / log-scalar / geolog-scalar / per-channel (linear, log, signed-log, geolog) decoders + `decode_broadcasted`. Frounds the per-channel anchors but NOT the decode arithmetic — a known unfixed divergence (#1831) |
+| `decode.ts`             | LUT / quantized / log-scalar / geolog-scalar / per-channel (linear, log, signed-log, geolog) decoders + `decode_broadcasted`; frounds Rust-f32 inputs and arithmetic, with a ≤1-ULP `expm1f` residual tracked by #1843        |
 | `projection.ts`         | nD→3D position extraction (`extract_3d_positions`)                                                                                                                                                                               |
 | `depth-sort.ts`         | `sort_splats_by_depth` — back-to-front splat ordering; frounds every float step in the Rust op order so WASM↔TS parity is exact-permutation                                                                                      |
 
@@ -67,8 +67,8 @@ This directory is **not** uniformly verified. Current state:
 | `mesh-culling.ts`       | Slab bounds frounded; parity-tested                                                                                                        |
 | `effective-radii.ts`    | Frounded end to end (#1820); bit-exact vs WASM over a 20k randomized sweep                                                                 |
 | `gsplats-processing.ts` | Frounded end to end (#1820); bit-exact except the `exp`/`log` residual (#1830)                                                             |
-| `decode.ts`             | Anchors frounded, decode arithmetic NOT — **known divergence**, thousands of ulp on cancellation-prone ranges (#1831; measured case below) |
-| `lines-clipping.ts`     | Slab bounds NOT frounded — being fixed under **#1780**; treat as unverified until it lands                                                 |
+| `decode.ts`             | Frounds Rust-f32 inputs and decode arithmetic; log-scalar output remains within one ULP of Rust's `expm1f` pending #1843                   |
+| `lines-clipping.ts`     | Frounded end to end (#1821); exact parity cases cover slab boundaries and t-parameter accumulation                                        |
 | `projection.ts`         | Pure copy, no arithmetic                                                                                                                   |
 
 ### Where `Math.fround` is mandatory
@@ -80,17 +80,10 @@ that difference is observable and must be closed with `Math.fround` at each step
 in the Rust operation order:
 
 - `depth-sort.ts` frounds every step so the sort permutation is exact.
-- `decode.ts` frounds the per-channel anchors, which arrive as f32 in WASM. It
-  does **not** fround the decode arithmetic, and that is the known #1831
-  divergence. A reproducible measurement, driving all 65 536 u16 codes through
-  `decode_quantized_u16` and comparing bit-for-bit against the WASM kernel:
-  `min_val = -1e-6, max_val = 1e-6` differs in 37 429 values, by up to
-  21 605 ulp. What amplifies it is the cancellation in `min + code · scale`, so
-  the ulp figure is a property of the RANGE, not of the decoder: the same sweep
-  measures 44 218 values at ≤8 487 ulp for `∓1e-3`, 12 228 at ≤1 ulp for
-  `999.9 … 1000.1`, and 0 for `1e6 … 1e6 + 1`. Quote a range whenever you quote
-  a number here. The per-channel decoders take f64 scales on both sides and
-  measured 0 on every case tried.
+- `decode.ts` frounds linear bounds, geolog-scalar anchors, and the log-scalar
+  `maxLog` bound, all of which arrive as f32 in WASM; its log-scalar kernels
+  fround their arithmetic too but remain within one ULP of Rust's `expm1f`
+  pending #1843.
 - `mesh-culling.ts` frounds the slab bounds. The f64 difference of two f32 values
   is _exact_ while Rust's f32 subtraction rounds; the gap is under half an ulp,
   but when the rounding goes DOWN the rounded bound is itself a legal f32 vertex
@@ -113,10 +106,9 @@ precision through the whole reduction. `sqrt` and `/` on operands that are
 already f32 need no explicit fround (f64's 53 bits ≥ 2·24 + 2 makes the double
 rounding provably benign) — it is the accumulators and the comparisons that do.
 
-`lines-clipping.ts` does **not** fround its slab bounds (#1780 is fixing that).
-Its clipping arithmetic proceeds to a `t`-parameter comparison rather than a bare
-membership test, so the same construction has not been shown to diverge there —
-but treat it as unverified rather than as licence to skip fround in a new kernel.
+- `lines-clipping.ts` frounds every clipping and interpolation step in Rust's
+  operation order. Exact parity tests cover both the `slice=1.0, tolerance=0.1`
+  slab boundary and the separately rounded reciprocal used for t-parameters.
 
 ## Performance
 

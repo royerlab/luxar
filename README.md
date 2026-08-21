@@ -108,7 +108,7 @@ geometry, what it needs, and whether you have already built it:
  ASTRONOMY ───────────────────────────────────────────────────────────── 6 demos
  ✓  3  asteroids_solar_system                  points+lines  300 MB
  ✓ 12  cosmicflows_laniakea                    points+lines  25 MB
- • 15  desi_galaxies                           points        72 MB git-lfs
+ • 15  desi_galaxies                           points        10 MB git-lfs
 
  MEDICAL ─────────────────────────────────────────────────────────────── 4 demos
  ✓ 17  dmri_tractography                       lines         588 MB
@@ -1002,7 +1002,7 @@ the full citation.
 - **Cells3D** — fluorescence microscopy provided by the [Allen Institute for Cell Science](https://www.allencell.org/), distributed as scikit-image sample data (`skimage.data.cells3d`); scikit-image itself: van der Walt et al. (2014), *PeerJ* 2:e453, [doi:10.7717/peerj.453](https://doi.org/10.7717/peerj.453).
 - **3D Organoid** — Blin et al. (2019), via the [Image Data Resource](https://idr.openmicroscopy.org/) (IDR; Williams et al. 2017, *Nat. Methods*, [doi:10.1038/nmeth.4326](https://doi.org/10.1038/nmeth.4326)).
 - **Zebrafish Neuromast** — Adrian Jacobo lab (CZ Biohub SF / Rockefeller); iSIM, deconvolved 4D timelapse.
-- **Tribolium Embryo** — [Cell Tracking Challenge](https://celltrackingchallenge.net/) ([Zenodo](https://zenodo.org/records/5270323)); Yin et al. (2022), *J. Cell Sci.*, [doi:10.1242/jcs.259022](https://doi.org/10.1242/jcs.259022); Maška et al. (2023), *Nat. Methods*.
+- **Tribolium Embryo** — [Cell Tracking Challenge](https://celltrackingchallenge.net/) ([Zenodo](https://zenodo.org/records/5270323)); Barry et al. (2022), *J. Cell Sci.* 135, jcs259511, [doi:10.1242/jcs.259511](https://doi.org/10.1242/jcs.259511); Maška et al. (2023), *Nat. Methods*.
 - **C. elegans nuclei tracking** — Hirsch et al. (2022), 3D+time confocal nuclei dataset, [Zenodo 6460303](https://doi.org/10.5281/zenodo.6460303).
 
 **Medical & anatomy**

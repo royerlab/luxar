@@ -54,6 +54,11 @@ DEMO_META = {
         "gsplats_interop_observatory_rubin",
         "gsplats_interop_observatory_gemini-south",
     ],
+    "citation": {
+        "short": "Observatory captures by khyron",
+        "license": "CC BY 4.0",
+        "url": "https://github.com/khyron/Gaussian-Splatting",
+    },
 }
 
 import sys
@@ -131,6 +136,7 @@ def build_scene(scene_key: str = "rubin") -> Path:
         title=f"{spec['title']} — Gaussian splat → Luxar",
         layer_name=spec["layer"],
         credit=f"{spec['title']} • khyron • CC BY 4.0",
+        citation=DEMO_META["citation"],
     )
 
 

@@ -432,16 +432,19 @@ default (the finest level the `.centers` accessor returns).
   every tile on its finest level while the object is merely full-frame. Every
   producer emits it automatically once it can see the binding: the `adaptive` /
   `overview` gsplat recipes; the two gsplat writers' topology-aware fallback (a
-  `kind=partition` crossed on the way down); and all **four** scene-side adders
-  (`add_points` / `add_lines` / `add_mesh` `substitutive_lod=`, `lod_group=`, and
-  `add_gsplats_from_file`'s graft fallback), which detect a `kind=partition`
-  ancestor of the insertion point. An **explicitly authored**
+  `kind=partition` crossed on the way down); scene-side adders that detect a
+  `kind=partition` ancestor; and `add_points(partition=...,
+  substitutive_lod=...)`, which verifies a multi-part fine branch directly. In
+  that overview topology the group's bbox is the whole object, so the anchor is
+  the recipe contract (coarse at opening frame, fine on zoom), not tile geometry.
+  An **explicitly authored**
   `coverage_fractions=[...]` list always wins over all of them. The rule assumes
   >= 2 parts. Every producer that can see the final sibling count excludes a
   **one-part** partition and falls back to the whole-object `0.5` anchor —
-  `--recipe adaptive` and both gsplat writers do, which matters because a dataset
-  below `--max-elements` yields exactly that shape. The scene-side adders are the
-  one path that cannot check it (part 0's ladder is derived before part 1 exists);
+  `--recipe adaptive`, both gsplat writers, and the Points overview composition
+  do, which matters because a dataset below `--max-elements` yields exactly that
+  shape. The partition-ancestor scene-adder route cannot check it (part 0's
+  ladder is derived before part 1 exists);
   the compiler's finalize pass warns when it sees the result, without rewriting it.
 - A child MAY carry `"lod_bounds": {"min": [...], "max": [...]}` with the
   same nD axis order and shape as `position_bounds`. This is a producer-chosen

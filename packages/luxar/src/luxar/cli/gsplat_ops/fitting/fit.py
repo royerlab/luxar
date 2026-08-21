@@ -11,6 +11,7 @@ from arbol import aprint, asection
 from luxar.utils.lod_methods import GSPLAT_ADDITIVE_CHOICES_HELP
 
 from .fit_utils import (
+    CONTENT_UNSUPPORTED_FIT_FLAGS,
     FitPipelineCtx,
     assemble_fit_config,
     dispatch_parallel_tiled,
@@ -719,16 +720,17 @@ def run_fit_volume(
 
                 # Flags the content path does not implement — warn loudly rather
                 # than silently ignore (the fit knobs below ARE honored).
+                enabled_unsupported = {
+                    "--denoise": denoise,
+                    "--downscale": downscale is not None,
+                    "--progressive": progressive,
+                }
                 _unsupported = [
-                    name
-                    for name, on in (
-                        ("--denoise", denoise),
-                        ("--downscale", downscale is not None),
-                        ("--progressive", progressive),
-                    )
-                    if on
+                    flag
+                    for flag in CONTENT_UNSUPPORTED_FIT_FLAGS
+                    if enabled_unsupported[flag]
                 ]
-                if _unsupported and plan_box is None:
+                if _unsupported:
                     aprint(
                         f"⚠ {', '.join(_unsupported)} are not supported with "
                         "--tiling content and are ignored."

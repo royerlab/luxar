@@ -88,6 +88,11 @@ DEMO_META = {
     },
     "caches": ["gsplats_3d_h2afva_stack"],
     "outputs": ["gsplats_3d_h2afva_stack"],
+    "citation": {
+        "short": "Lange et al. 2024 (Zebrahub)",
+        "doi": "10.1016/j.cell.2024.09.047",
+        "license": "CC BY 4.0",
+    },
 }
 
 import colorsys
@@ -249,6 +254,7 @@ def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
 
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(
+                citation=DEMO_META["citation"],
                 dimensions=dims,
                 viewer_config=ViewerConfig(tone_mapping="ACES"),
             )

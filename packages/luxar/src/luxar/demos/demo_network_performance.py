@@ -59,6 +59,8 @@ DEMO_META = {
     },
     "caches": [],
     "outputs": ["performance_test"],
+    # Procedurally generated: no external dataset, nothing to credit.
+    "citation": None,
 }
 
 import argparse
