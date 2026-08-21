@@ -48,11 +48,19 @@ structural skeleton and highway system. They're perfect for STORM because:
 
 GAUSSIAN SPLATS FOR STORM:
 ---------------------------
-Each localization is NATURALLY a Gaussian splat!
+The two views deliberately use Gaussian splats with different provenance:
+
+Widefield splats are a BASIS fitted to a continuous diffraction-blurred field:
+- Rasterize localization events, weighted by detected photons
+- Convolve with the lateral/axial widefield PSF
+- Fit a compact set of anisotropic Gaussian splats to that volume
+
+Super-resolution splats are EPISTEMIC uncertainty ellipsoids, placed directly
+from the detector output — there is nothing to fit:
 - **Center**: Detected molecule position (x, y, z)
-- **Covariance**: Localization precision (σx, σy, σz)
+- **Covariance**: CRLB combined with antibody-label linkage uncertainty
 - **Amplitude**: Photon count or intensity
-- **Sharpness**: Can represent localization quality
+- **Variation**: Dimmer, uncertain localizations remain visibly fuzzier
 
 This demo shows:
 1. **Super-resolved view**: Each localization as a Gaussian splat
@@ -151,6 +159,9 @@ WIDEFIELD_OVERLAP = (8, 32, 32)
 WIDEFIELD_SEEDS_PER_TILE = 6000
 WIDEFIELD_N_ITERS = 5000
 WIDEFIELD_CULL_RETENTION = 0.999
+WIDEFIELD_FLOOR = "none"
+WIDEFIELD_OUTPUT_SPACE = "real"
+WIDEFIELD_ENABLE_DYNAMIC_OPS = True
 
 # Visualization scale factor applied to every splat sigma (widefield and
 # super-res alike), preserving their relative sizes. 1.0 = physically faithful
@@ -184,6 +195,9 @@ def _widefield_cache_path(
         WIDEFIELD_SEEDS_PER_TILE,
         WIDEFIELD_N_ITERS,
         WIDEFIELD_CULL_RETENTION,
+        WIDEFIELD_FLOOR,
+        WIDEFIELD_OUTPUT_SPACE,
+        WIDEFIELD_ENABLE_DYNAMIC_OPS,
     )
     digest = hashlib.sha256(repr(cache_spec).encode()).hexdigest()[:12]
     return CACHE_DIR / f"{csv_path.stem}_widefield_{digest}.gsplats.zarr.zip"
@@ -416,6 +430,7 @@ def parse_storm_localizations(
             df = pd.read_csv(csv_path)
             aprint(f"✓ Loaded {len(df):,} total localizations")
 
+        df.columns = [column.strip() for column in df.columns]
         aprint(f"  Columns: {list(df.columns)[:10]}")
 
         # Extract key columns (column names may vary)
@@ -453,7 +468,7 @@ def parse_storm_localizations(
             ]:
                 if variant in df.columns:
                     values = df[variant].values
-                    if "nm" not in variant:
+                    if variant.startswith("crlb_") and "nm" not in variant:
                         values = values * coordinate_scales.get(key_base, 1.0)
                     result[f"precision_{key_base}"] = values
                     break
@@ -507,9 +522,9 @@ def extract_centers_and_amplitudes(
     Returns:
         Tuple ``(centers_um, amplitudes, precision_um)`` where centers are in
         micrometers and ``precision_um`` is an ``(N, 3)`` array of per-axis
-        localization precision (σx, σy, σz) in micrometers — the physical width
-        of each super-resolution Gaussian. ``precision_um`` is ``None`` when the
-        dataset carries no CRLB columns (caller falls back to a fixed sigma).
+        uncertainty (σx, σy, σz) in micrometers, combining the localization CRLB
+        and label-linkage error in quadrature. ``precision_um`` is ``None`` when
+        the dataset carries no CRLB columns (caller falls back to a fixed sigma).
     """
     with asection("Extracting splat data from localizations"):
         n_loc = len(localizations["x"])
@@ -672,10 +687,10 @@ def fit_widefield_gsplats(
             cull_retention=WIDEFIELD_CULL_RETENTION,
             device=device,
             voxel_size=WIDEFIELD_VOXEL_SIZE_UM,
-            output_space="real",
-            floor="none",
+            output_space=WIDEFIELD_OUTPUT_SPACE,
+            floor=WIDEFIELD_FLOOR,
             verbose=True,
-            enable_dynamic_ops=True,
+            enable_dynamic_ops=WIDEFIELD_ENABLE_DYNAMIC_OPS,
         ).translate(origin_zyx)
         aprint(f"✓ Fitted {len(result.amplitudes):,} widefield splats")
         result.save(

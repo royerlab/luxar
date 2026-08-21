@@ -42,6 +42,30 @@ def test_parser_converts_precision_with_its_coordinate_axis(tmp_path: Path) -> N
     np.testing.assert_allclose(parsed["precision_z"], [7.0, 11.0])
 
 
+def test_parser_strips_dataset_header_whitespace_before_nm_lookup(
+    tmp_path: Path,
+) -> None:
+    csv_path = tmp_path / "localizations.csv"
+    pd.DataFrame(
+        {
+            "x_nm": [100.0],
+            "y_nm": [200.0],
+            "z_nm": [300.0],
+            "crlb_x": [0.1],
+            "crlb_y": [0.2],
+            "crlb_z": [9.0],
+            "crlb_xnm": [10.6],
+            "crlb_ynm ": [21.2],
+        }
+    ).to_csv(csv_path, index=False)
+
+    parsed = parse_storm_localizations(csv_path)
+
+    np.testing.assert_allclose(parsed["precision_x"], [10.6])
+    np.testing.assert_allclose(parsed["precision_y"], [21.2])
+    np.testing.assert_allclose(parsed["precision_z"], [9.0])
+
+
 def test_superresolution_sigma_combines_crlb_and_label_linkage() -> None:
     localizations = {
         "x": np.array([0.0, 1000.0]),
@@ -146,4 +170,3 @@ def test_scene_keeps_fitted_and_measured_view_counts_independent(
     np.testing.assert_allclose(superresolution_bounds[:, 0].mean(axis=1), 1.0)
     assert widefield_bounds[:, 0, 1].max() < 0.5
     assert superresolution_bounds[:, 0, 0].min() > 0.5
-    (create_storm_scene,)
