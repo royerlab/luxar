@@ -193,10 +193,7 @@ def generate_one(entry: dict[str, Any]) -> tuple[str, str]:
 
     script = entry.get("script")
     if not script:
-        return (
-            "capture-only",
-            "no generator script (feature-branch shape; currently unused)",
-        )
+        return ("capture-only", "no generator script (capture-only entry)")
 
     script_path = DEMOS_DIR / script
     if not script_path.exists():
