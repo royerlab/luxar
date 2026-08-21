@@ -74,7 +74,12 @@ export function calculate_effective_radii(
         // backend and culled on the other, changing `visibleCount` and the
         // compaction the caller derives from it. (`value`/`target` come out of
         // Float32Arrays, so their difference is normally exact in f64 — but Rust
-        // still rounds it, hence the fround on the subtraction too.)
+        // still rounds it, hence the fround on the subtraction too. That one is
+        // load-bearing whenever the slice position is not zero: dropping it
+        // alone moves 212/20000 outputs, by up to 2527 ulp, on the randomized
+        // sweep in `tests/unit/wasm/wasm-vs-typescript.test.ts`. With an
+        // all-zero slice position it is a no-op, which is why that fixture
+        // deliberately does not use one.)
         const diff = Math.fround(value - target);
         distanceSquared = Math.fround(distanceSquared + Math.fround(diff * diff));
       } else {
@@ -95,7 +100,8 @@ export function calculate_effective_radii(
     // Both the square and the difference are f32 operations in Rust; the
     // difference in particular cancels catastrophically for a point near the
     // rim of its own radius, which is exactly where the two backends used to
-    // disagree by hundreds of ulps.
+    // disagree: 615/20000 outputs, up to 1003 ulp, on the randomized sweep in
+    // `tests/unit/wasm/wasm-vs-typescript.test.ts` before this fix.
     const radiusSquared = Math.fround(originalRadius * originalRadius);
     if (distanceSquared >= radiusSquared) {
       output[i] = 0;
