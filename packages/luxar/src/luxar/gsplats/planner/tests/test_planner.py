@@ -1247,6 +1247,28 @@ class TestFitPlannedParallel:
         assert "kind=partition" in notice
         assert "gsplat flatten" in notice
 
+    def test_single_region_partition_notice_does_not_require_flatten(
+        self, tmp_path, capsys
+    ):
+        from luxar.gsplats.tree import GSplatPartition
+
+        plan = _toy_plan(n_boxes=1)
+        result = fit_planned_parallel(
+            plan,
+            jobs=1,
+            tmp_dir=tmp_path / "boxes",
+            worker_cmd_builder=_fake_box_builder(5),
+            volume=np.zeros(plan.volume_shape, np.float32),
+            partition=True,
+            verbose=False,
+        )
+
+        assert not isinstance(result, GSplatPartition)
+        notice = capsys.readouterr().out
+        assert "No merged quality metrics" in notice
+        assert "gsplat compare" in notice
+        assert "gsplat flatten" not in notice
+
 
 # ── The fit's truncation radius survives the planned path (#1637) ──
 #

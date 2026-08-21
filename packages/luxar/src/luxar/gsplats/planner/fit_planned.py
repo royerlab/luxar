@@ -27,6 +27,7 @@ from luxar.gsplats.merged_quality import (
     announce_unscored_merge,
     stamp_merged_quality,
 )
+from luxar.gsplats.tree import GSplatPartition
 
 from .spec import FitPlan, PlanBox
 
@@ -444,9 +445,16 @@ def fit_planned(
             bsp_tree=plan.bsp_tree,
             region_labels=region_boxes,
         )
+        is_partition = isinstance(result, GSplatPartition)
         announce_unscored_merge(
-            "the result is kind=partition, whose root has no fit-stats dict to stamp",
-            partition=True,
+            (
+                "the result is kind=partition, whose root has no fit-stats dict "
+                "to stamp"
+                if is_partition
+                else "the requested partition merge returned a single leaf with "
+                "no root fit-stats dict to stamp"
+            ),
+            partition=is_partition,
         )
         return result
 

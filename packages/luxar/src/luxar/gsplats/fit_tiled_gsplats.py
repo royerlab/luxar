@@ -49,6 +49,7 @@ from luxar.gsplats.tiling import (
     grid_bsp_tree,
     resolve_grid_scale,
 )
+from luxar.gsplats.tree import GSplatPartition
 
 _TILE_SIGNAL_EPS = 1e-8
 
@@ -912,11 +913,15 @@ def fit_tiled(
         # degenerate merge (a single surviving region, or none at all) hands back
         # a matrix-shaped leaf, which is why the flatten step is worded as a
         # condition rather than as a fact about this result.
-        announce_unscored_merge(
+        is_partition = isinstance(merged, GSplatPartition)
+        reason = (
             "the merged partition is a tree node with no fit-stats dict to stamp "
-            "onto, and this path threads none through on save",
-            partition=True,
+            "onto, and this path threads none through on save"
+            if is_partition
+            else "the requested partition merge returned a single leaf with no "
+            "root fit-stats dict to stamp, and this path threads none through on save"
         )
+        announce_unscored_merge(reason, partition=is_partition)
     return merged
 
 

@@ -32,6 +32,7 @@ from arbol import aprint, asection
 from luxar.gsplats.batch.task_pool import cancel_pool_on_interrupt
 from luxar.gsplats.fit_tiled_parallel import luxar_argv0
 from luxar.gsplats.merged_quality import announce_unscored_merge
+from luxar.gsplats.tree import GSplatPartition
 
 from .fit_planned import (
     _padded_bounds,
@@ -322,9 +323,16 @@ def fit_planned_parallel(
             bsp_tree=plan.bsp_tree,
             region_labels=region_boxes,
         )
+        is_partition = isinstance(result, GSplatPartition)
         announce_unscored_merge(
-            "the result is kind=partition, whose root has no fit-stats dict to stamp",
-            partition=True,
+            (
+                "the result is kind=partition, whose root has no fit-stats dict "
+                "to stamp"
+                if is_partition
+                else "the requested partition merge returned a single leaf with "
+                "no root fit-stats dict to stamp"
+            ),
+            partition=is_partition,
         )
     else:
         # `concatenate` keeps the reloaded boxes' shared truncation_radius; a
