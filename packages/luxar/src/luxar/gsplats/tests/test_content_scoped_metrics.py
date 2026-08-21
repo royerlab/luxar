@@ -1137,6 +1137,38 @@ def test_the_fitters_keep_the_score_across_their_own_closing_trim() -> None:
         assert trimmed.stats[key] == value, f"{key!r} was not restored on the pyramid"
 
 
+def test_fitter_score_restore_refuses_a_pruned_ladder_shape() -> None:
+    from luxar.gsplats._data.filtering import (
+        measured_stats_snapshot,
+        restore_measured_stats,
+    )
+
+    faint = AdditiveSubLOD(
+        centers=np.zeros((2, 3), dtype=np.float32),
+        amplitudes=np.array([0.01, 0.01], dtype=np.float32),
+        cholesky_factors=_chol(2),
+        stats={"pass_index": 20, "cumulative_psnr_db": 20.0},
+    )
+    bright = AdditiveSubLOD(
+        centers=np.ones((2, 3), dtype=np.float32),
+        amplitudes=np.array([1.0, 0.9], dtype=np.float32),
+        cholesky_factors=_chol(2),
+        stats={"pass_index": 35, "cumulative_psnr_db": 35.0},
+    )
+    fitted = GSplatData.from_additive_sublods([faint, bright], stats=_stats())
+    saved = measured_stats_snapshot(fitted)
+
+    trimmed = fitted.cull(method="cumulative", retention=0.95)
+    assert trimmed.n_additive_sublods == 1
+    assert np.all(trimmed.additive_sublods[0].centers == 1.0)
+
+    restore_measured_stats(trimmed, saved)
+
+    assert trimmed.stats["psnr_db"] == _METRICS["psnr_db"]
+    assert trimmed.additive_sublods[0].stats["pass_index"] == 35
+    assert "cumulative_psnr_db" not in trimmed.additive_sublods[0].stats
+
+
 def test_a_real_fit_still_publishes_its_psnr() -> None:
     """End to end, on the default path: `cull_retention=0.95` fires every time."""
     pytest.importorskip("torch")
