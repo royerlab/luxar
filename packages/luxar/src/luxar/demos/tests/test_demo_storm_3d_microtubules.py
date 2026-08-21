@@ -6,16 +6,46 @@ import numpy as np
 import pandas as pd
 import zarr
 
+from luxar.demos import demo_storm_3d_microtubules as storm_demo
 from luxar.demos.demo_storm_3d_microtubules import (
     LABEL_LINKAGE_SIGMA_NM,
+    STORM_LOCALIZATION_SIZES,
     WIDEFIELD_PSF_SIGMA_NM,
     WIDEFIELD_VOXEL_SIZE_UM,
     create_storm_scene,
+    download_storm_localizations,
     extract_centers_and_amplitudes,
+    fit_widefield_gsplats,
     parse_storm_localizations,
     rasterize_widefield_volume,
 )
 from luxar.gsplats.gsplat_data import GSplatData
+
+
+def test_download_uses_verified_shared_cache(monkeypatch, tmp_path: Path) -> None:
+    expected_path = tmp_path / "Cos7_MT_A647_FOV_4_Localizations.csv"
+    calls = []
+
+    def fake_cached_download(url, name, filename, *, expected_size):
+        calls.append((url, name, filename, expected_size))
+        return expected_path
+
+    monkeypatch.setattr(storm_demo, "cached_download", fake_cached_download)
+
+    assert download_storm_localizations(field=4) == expected_path
+    assert calls == [
+        (
+            f"{storm_demo.ZENODO_BASE_URL}/{expected_path.name}",
+            "storm_data",
+            expected_path.name,
+            STORM_LOCALIZATION_SIZES[4],
+        )
+    ]
+
+
+def test_download_rejects_unknown_field() -> None:
+    with np.testing.assert_raises_regex(ValueError, "field must be one of"):
+        download_storm_localizations(field=5)
 
 
 def test_parser_converts_precision_with_its_coordinate_axis(tmp_path: Path) -> None:
@@ -140,15 +170,50 @@ def test_widefield_raster_accumulates_localization_photon_weights() -> None:
     np.testing.assert_allclose(volume.sum(), 18.0, rtol=1e-5)
 
 
+def test_widefield_raster_preserves_xyz_registration() -> None:
+    center_xyz = np.array([[-3.0, 0.0, 0.5]], dtype=np.float32)
+
+    volume, origin_zyx = rasterize_widefield_volume(
+        center_xyz, np.array([1.0], dtype=np.float32)
+    )
+
+    peak_index_zyx = np.array(np.unravel_index(np.argmax(volume), volume.shape))
+    peak_zyx = origin_zyx + peak_index_zyx * WIDEFIELD_VOXEL_SIZE_UM
+    np.testing.assert_allclose(
+        peak_zyx,
+        center_xyz[0, ::-1],
+        atol=WIDEFIELD_VOXEL_SIZE_UM / 2,
+    )
+
+
+def test_widefield_fit_requires_gpu_after_cache_miss(
+    monkeypatch, tmp_path: Path
+) -> None:
+    class NoGpuError(RuntimeError):
+        pass
+
+    def reject_cpu_fallback() -> None:
+        raise NoGpuError
+
+    monkeypatch.setattr(storm_demo, "warn_if_no_cuda_gpu", reject_cpu_fallback)
+
+    with np.testing.assert_raises(NoGpuError):
+        fit_widefield_gsplats(
+            np.array([[0.0, 0.0, 0.0]], dtype=np.float32),
+            np.array([1.0], dtype=np.float32),
+            tmp_path / "missing.gsplats.zarr.zip",
+        )
+
+
 def test_scene_keeps_fitted_and_measured_view_counts_independent(
     tmp_path: Path,
 ) -> None:
     widefield = GSplatData(
-        centers=np.array([[0.0, 0.0, 0.0]], dtype=np.float32),
+        centers=np.array([[0.5, 0.0, -3.0]], dtype=np.float32),
         amplitudes=np.array([1.0], dtype=np.float32),
         cholesky_factors=np.array([[0.2, 0.0, 0.1, 0.0, 0.0, 0.1]], dtype=np.float32),
     )
-    centers_um = np.array([[-0.1, 0.0, 0.0], [0.1, 0.0, 0.0]], dtype=np.float32)
+    centers_um = np.array([[-3.0, 0.0, 0.5], [-3.0, 0.0, 0.5]], dtype=np.float32)
     amplitudes = np.array([0.5, 1.0], dtype=np.float32)
     precision_um = np.full((2, 3), 0.02, dtype=np.float32)
     output_path = tmp_path / "storm.luxar.zarr"
@@ -170,3 +235,8 @@ def test_scene_keeps_fitted_and_measured_view_counts_independent(
     np.testing.assert_allclose(superresolution_bounds[:, 0].mean(axis=1), 1.0)
     assert widefield_bounds[:, 0, 1].max() < 0.5
     assert superresolution_bounds[:, 0, 0].min() > 0.5
+    np.testing.assert_allclose(
+        widefield_bounds[0, 1:].mean(axis=1),
+        superresolution_bounds[0, 1:].mean(axis=1),
+        atol=1e-6,
+    )

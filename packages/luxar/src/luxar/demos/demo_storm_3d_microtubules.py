@@ -128,11 +128,15 @@ import sys
 from pathlib import Path
 
 import numpy as np
-import requests
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import launch_viewer, require_module
+from luxar.demos import (
+    cached_download,
+    launch_viewer,
+    require_module,
+    warn_if_no_cuda_gpu,
+)
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -142,6 +146,10 @@ from luxar.utils.paths import get_demos_output_dir
 # Zenodo dataset
 ZENODO_RECORD = "3547521"
 ZENODO_BASE_URL = f"https://zenodo.org/records/{ZENODO_RECORD}/files"
+STORM_LOCALIZATION_SIZES = {
+    2: 603_229_618,
+    4: 1_762_998_675,
+}
 
 # Default parameters
 DEFAULT_FIELD = 4  # Field of view number
@@ -211,188 +219,29 @@ def _widefield_cache_path(
 
 def download_storm_localizations(
     field: int = 4,
-    cache_dir: Path = CACHE_DIR,
 ) -> Path:
     """Download STORM localization CSV from Zenodo.
 
     Args:
-        field: Field of view number (4 or 5)
-        cache_dir: Where to cache the download
+        field: Field of view number (2 or 4)
 
     Returns:
         Path to downloaded CSV file
     """
+    if field not in STORM_LOCALIZATION_SIZES:
+        raise ValueError(f"field must be one of {sorted(STORM_LOCALIZATION_SIZES)}")
+
     filename = f"Cos7_MT_A647_FOV_{field}_Localizations.csv"
-    cache_file = cache_dir / filename
     url = f"{ZENODO_BASE_URL}/{filename}"
-
     with asection(f"Downloading STORM localizations (FOV {field})"):
-        if cache_file.exists():
-            size_mb = cache_file.stat().st_size / (1024**2)
-            aprint(f"✓ Using cached file: {cache_file.name}")
-            aprint(f"  Size: {size_mb:.1f} MB")
-            return cache_file
-
         aprint("Dataset: 3D STORM - COS7 Microtubules")
         aprint(f"Source: Zenodo record {ZENODO_RECORD}")
-        aprint(f"URL: {url}")
-        aprint("")
-        aprint("⏱️  Downloading ~1.8 GB (may take 2-5 minutes)...")
-        aprint("")
-
-        # Try curl first (more robust), fallback to requests
-        import shutil
-        import subprocess
-        import time
-
-        if shutil.which("curl"):
-            # Use curl for robust download with automatic resume
-            aprint("Using curl for download (automatic resume support)...")
-            try:
-                cmd = [
-                    "curl",
-                    "-L",  # Follow redirects
-                    "-C",
-                    "-",  # Resume from partial
-                    "--retry",
-                    "10",
-                    "--retry-delay",
-                    "5",
-                    "--max-time",
-                    "3600",
-                    "-o",
-                    str(cache_file),
-                    "-#",  # Progress bar
-                    url,
-                ]
-
-                subprocess.run(cmd, check=True)
-                aprint(f"✓ Downloaded to {cache_file}")
-                aprint(f"  Size: {cache_file.stat().st_size / (1024**2):.1f} MB")
-                return cache_file
-
-            except subprocess.CalledProcessError:
-                aprint("⚠️  curl failed, trying Python requests...")
-
-        # Fallback: Python requests with manual resume
-        try:
-            temp_file = cache_file.parent / f"{cache_file.name}.partial"
-            resume_pos = 0
-            if temp_file.exists():
-                resume_pos = temp_file.stat().st_size
-                aprint(
-                    f"Found partial download ({resume_pos / (1024**2):.1f} MB), resuming..."
-                )
-
-            # Robust download with resume support
-            max_retries = 5
-            retry_delay = 10
-
-            for attempt in range(max_retries):
-                try:
-                    # Request with resume support + browser headers
-                    headers = {
-                        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-                        "Accept-Language": "en-US,en;q=0.5",
-                        "Accept-Encoding": "gzip, deflate, br",
-                        "DNT": "1",
-                        "Connection": "keep-alive",
-                        "Upgrade-Insecure-Requests": "1",
-                    }
-                    if resume_pos > 0:
-                        headers["Range"] = f"bytes={resume_pos}-"
-
-                    response = requests.get(
-                        url, headers=headers, stream=True, timeout=300
-                    )
-
-                    # Handle rate limiting
-                    if response.status_code == 429:
-                        if attempt < max_retries - 1:
-                            aprint(
-                                f"⚠️  Rate limited, waiting {retry_delay}s (attempt {attempt + 1}/{max_retries})..."
-                            )
-                            time.sleep(retry_delay)
-                            retry_delay *= 2
-                            continue
-                        else:
-                            raise Exception("Rate limit exceeded after retries")
-
-                    # Handle resume response codes
-                    if response.status_code == 206:  # Partial content (resume)
-                        aprint(f"✓ Resuming from {resume_pos / (1024**2):.1f} MB")
-                        mode = "ab"  # Append mode
-                    elif response.status_code == 200:  # Full download
-                        mode = "wb"  # Write mode
-                        resume_pos = 0
-                    else:
-                        response.raise_for_status()
-                        continue
-
-                    # Get total size
-                    content_range = response.headers.get("Content-Range")
-                    if content_range:
-                        total_size = int(content_range.split("/")[-1])
-                    else:
-                        total_size = (
-                            int(response.headers.get("content-length", 0)) + resume_pos
-                        )
-
-                    aprint(f"File size: {total_size / (1024**2):.1f} MB")
-
-                    downloaded = resume_pos
-                    chunk_size = 1024 * 1024  # 1 MB chunks
-
-                    with open(temp_file, mode) as f:
-                        last_progress = downloaded
-                        for chunk in response.iter_content(chunk_size=chunk_size):
-                            if chunk:
-                                f.write(chunk)
-                                downloaded += len(chunk)
-
-                                # Progress every 100 MB
-                                if downloaded - last_progress >= 100 * 1024 * 1024:
-                                    percent = (
-                                        (downloaded / total_size * 100)
-                                        if total_size > 0
-                                        else 0
-                                    )
-                                    aprint(
-                                        f"  Progress: {downloaded / (1024**2):.0f} / {total_size / (1024**2):.0f} MB ({percent:.0f}%)"
-                                    )
-                                    last_progress = downloaded
-
-                    # Download complete - move temp to final
-                    temp_file.rename(cache_file)
-                    aprint(f"✓ Downloaded to {cache_file}")
-                    aprint(
-                        f"  Final size: {cache_file.stat().st_size / (1024**2):.1f} MB"
-                    )
-                    break  # Success!
-
-                except (
-                    requests.exceptions.ChunkedEncodingError,
-                    requests.exceptions.ConnectionError,
-                ) as e:
-                    if attempt < max_retries - 1:
-                        aprint(f"⚠️  Download interrupted ({e})")
-                        aprint(
-                            f"   Retrying in {retry_delay}s (attempt {attempt + 1}/{max_retries})..."
-                        )
-                        time.sleep(retry_delay)
-                        retry_delay = min(retry_delay * 2, 120)  # Max 2 min
-                        continue
-                    else:
-                        raise
-
-        except Exception as e:
-            aprint(f"❌ Download failed: {e}")
-            if cache_file.exists():
-                cache_file.unlink()
-            raise
-
-    return cache_file
+        return cached_download(
+            url,
+            "storm_data",
+            filename,
+            expected_size=STORM_LOCALIZATION_SIZES[field],
+        )
 
 
 # =============================================================================
@@ -663,6 +512,8 @@ def fit_widefield_gsplats(
             result = GSplatData.load(cache_file, include_stats=False)
             aprint(f"✓ Loaded {len(result.amplitudes):,} fitted splats")
             return result
+
+    warn_if_no_cuda_gpu()
 
     from luxar.demos import detect_device
     from luxar.demos._lod_policy import save_with_lod
