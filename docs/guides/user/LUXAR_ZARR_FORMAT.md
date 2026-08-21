@@ -443,6 +443,18 @@ default (the finest level the `.centers` accessor returns).
   below `--max-elements` yields exactly that shape. The scene-side adders are the
   one path that cannot check it (part 0's ladder is derived before part 1 exists);
   the compiler's finalize pass warns when it sees the result, without rewriting it.
+- A child MAY carry `"lod_bounds": {"min": [...], "max": [...]}` with the
+  same nD axis order and shape as `position_bounds`. This is a producer-chosen
+  robust extent (for example percentile bounds that exclude a sparse tail), used
+  **only** to size the node for either LOD selector metric. Frustum gating,
+  eviction, framing, clipping, and scene ranges continue to use the complete
+  `position_bounds`, so excluded outliers remain visible and resident when they
+  should. The robust bound must stay within `position_bounds`; a bound that is
+  not contained is rejected and the child falls back to `position_bounds`.
+  Missing or malformed `lod_bounds` fall back to that child's `position_bounds`;
+  producers should therefore stamp every child in a ladder when they want one
+  consistent robust extent. Decimation, culling, and filtering must recompute or
+  remove the derived bound. Producer-side authoring policy is tracked in #1655.
 - Children themselves are standard nodes — they retain their own
   `type` (`gsplats` / `points` / `lines` / `group`, possibly with their
   own `kind` attr) and full attr set.
