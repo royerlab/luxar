@@ -381,11 +381,16 @@ def load_precomputed_crops(
       ``pending_upload``, so until the bytes are on Zenodo there is nothing to
       resolve; that is an expected state during the migration rather than a
       fault, and it is reported rather than swallowed.
+    * the hosted record does not carry one of the CHOSEN crops. That is the same
+      condition one crop at a time — ``--datasets N`` asks for the first N of a
+      list the record may only partly cover — so it is routed the same way, and
+      announced by name. It is not detectable as a fault: a partial record is
+      exactly what a migration in progress looks like.
 
-    Anything else — a checksum that will not verify, a half-listed dataset, a
-    missing packaged manifest, a ``PRECOMPUTED_DATASET`` the manifest does not
-    know (:class:`DatasetNotFound`) — raises, because those are faults a demo
-    must not route around. The fallback here is not cheap: it downloads from the
+    Anything else — a checksum that will not verify, a missing packaged
+    manifest, a ``PRECOMPUTED_DATASET`` the manifest does not know
+    (:class:`DatasetNotFound`) — raises, because those are faults a demo must
+    not route around. The fallback here is not cheap: it downloads from the
     authenticated Kaggle endpoint and fits every chosen crop on the GPU, so
     disguising a broken install as "the data is not published yet" costs a user
     many minutes and an account they may not have.

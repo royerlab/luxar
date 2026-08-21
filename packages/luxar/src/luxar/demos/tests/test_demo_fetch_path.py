@@ -253,6 +253,15 @@ def _local_consts(tree: ast.Module) -> dict[str, str | list[str]]:
     which is deliberate: the per-channel demos bind ``cache_file`` in
     ``fit_all_channels`` and write it in ``fit_channel``, and a scope-aware
     analysis would lose that pair.
+
+    It cuts both ways, and the unhelpful direction is a real (unexercised) hole:
+    last assignment in SOURCE ORDER wins, so a module-level ``F = "pinned.zip"``
+    rebound later by a function-local ``F = "scratch.zip"`` resolves to the
+    scratch name everywhere, and a squat spelled with the module constant goes
+    clean. No demo shadows a file-name constant; if one ever does, make this
+    scope-aware (and keep the cross-function pair above by binding
+    function-locals into their enclosing module scope) rather than deleting the
+    shadowing.
     """
     out: dict[str, str | list[str]] = {}
     for node in ast.walk(tree):
@@ -329,11 +338,15 @@ def _base_atom(node: ast.expr) -> ast.expr:
             return node
 
 
-#: What a directory expression is. ``("cache", ds)`` is the one the manifest
-#: owns; ``("root", None)`` is ``~/.cache/luxar`` itself; ``("packaged", None)``
-#: is the in-repo ``demos/data`` tree; ``("other", None)`` is a directory we can
-#: PROVE is neither; ``("unknown", None)`` is one we cannot classify — the state
-#: that used to be indistinguishable from "clean".
+#: What a directory expression is. ``("cache", ds)`` is one the manifest owns —
+#: ``<root>/<ds>`` or ``<root>/<ds>/<declared variant>``, both of which
+#: ``ensure_dataset`` fetches into and quarantines from; ``("root", None)`` is
+#: ``~/.cache/luxar`` itself; ``("packaged", None)`` is the in-repo
+#: ``demos/data`` tree; ``("other", None)`` is a directory we can PROVE is
+#: neither (a ``Path(__file__)``-rooted chain, a non-variant subdirectory of a
+#: cache dir); ``("unknown", None)`` is one we cannot classify — the state that
+#: used to be indistinguishable from "clean", and that any other ``Path(...)``
+#: head now correctly lands in.
 DirKind = tuple[str, str | None]
 
 
@@ -358,7 +371,8 @@ def _path_names(tree: ast.Module) -> frozenset[str]:
 class _Ctx:
     """Resolved module facts the directory classifier needs."""
 
-    def __init__(self, tree: ast.Module) -> None:
+    def __init__(self, tree: ast.Module, datasets: dict) -> None:
+        self.datasets = datasets
         self.consts = _local_consts(tree)
         self.path_names = _path_names(tree)
         self.dirs: dict[str, DirKind] = {}
@@ -397,13 +411,21 @@ class _Ctx:
         if isinstance(head, ast.Name) and head.id in self.dirs:
             return self._extend(self.dirs[head.id], rest)
 
-        # 4. A leftmost expression we can prove is not the cache: a `Path(...)`
-        #    call, i.e. an explicit filesystem anchor. `Path(__file__)…/data/…`
-        #    (the in-repo git-LFS tree) is called out so the one legitimate copy
-        #    INTO the manifest's path can be recognised by its source. The
-        #    `__file__` root is REQUIRED, not decoration: `Path("/tmp/scratch") /
-        #    "data" / "myfit.zip"` would otherwise launder an arbitrary local
-        #    artifact through the exemption.
+        # 4. A leftmost expression we can prove is not the cache: a
+        #    `Path(__file__)`-rooted chain, i.e. the in-repo source tree. With
+        #    `data` in it that is the packaged git-LFS tree, called out so the
+        #    one legitimate copy INTO the manifest's path can be recognised by
+        #    its source; without it, still provably not `~/.cache/luxar`,
+        #    because `__file__` is the installed module. The `__file__` root is
+        #    REQUIRED, not decoration: `Path("/tmp/scratch") / "data" /
+        #    "myfit.zip"` would otherwise launder an arbitrary local artifact
+        #    through the exemption — and any OTHER `Path(...)` head is a
+        #    directory whose contents this pass cannot read, so it falls through
+        #    to "unknown" below rather than claiming a proof it does not have.
+        #    `Path.home() / ".cache/luxar" / DS` (one literal, not two) and
+        #    `Path("~/.cache/luxar").expanduser() / DS` are exactly that shape:
+        #    they ARE the cache dir, and calling them "other" would make the
+        #    #1618 bug class re-introducible by one plausible edit.
         base = _base_atom(head)
         if isinstance(base, ast.Call):
             func = base.func
@@ -414,14 +436,18 @@ class _Ctx:
                 and isinstance(func.value, ast.Name)
                 and func.value.id in self.path_names
             )
-            if is_path_call:
-                rooted_in_file = any(
-                    isinstance(a, ast.Name) and a.id == "__file__" for a in base.args
-                )
-                packaged = rooted_in_file and "data" in lits
-                return ("packaged" if packaged else "other", None)
+            rooted_in_file = any(
+                isinstance(a, ast.Name) and a.id == "__file__" for a in base.args
+            )
+            if is_path_call and rooted_in_file:
+                return ("packaged" if "data" in lits else "other", None)
 
         return ("unknown", None)
+
+    def _variants(self, dataset: str | None) -> frozenset[str]:
+        """Variant names the manifest declares for *dataset*."""
+        spec = self.datasets.get(dataset or "") or {}
+        return frozenset(spec.get("variants") or {})
 
     def _after_root(self, rest: list[ast.expr]) -> DirKind:
         """Classify what follows ``~/.cache/luxar``."""
@@ -430,9 +456,7 @@ class _Ctx:
         dataset = _as_str(rest[0], self.consts)
         if dataset is None:
             return ("unknown", None)
-        # `<root>/<ds>` is the manifest's dir; `<root>/<ds>/<sub>/…` is not
-        # (`local/` itself lands here, which is the whole point).
-        return ("cache", dataset) if len(rest) == 1 else ("other", None)
+        return self._extend(("cache", dataset), rest[1:])
 
     def _extend(self, kind: DirKind, rest: list[ast.expr]) -> DirKind:
         if not rest:
@@ -440,42 +464,79 @@ class _Ctx:
         if kind[0] == "root":
             return self._after_root(rest)
         if kind[0] == "cache":
-            return ("other", None)  # a subdirectory of the cache dir
+            # A subdirectory of the cache dir — with ONE exception the fix
+            # rests on being right about: `ensure_dataset` caches a VARIANT's
+            # files under `<root>/<ds>/<variant>/` and checksum-verifies and
+            # quarantines them there exactly as it does the flat case (see
+            # `data_fetch.ensure_dataset`), which is precisely why
+            # `local_fit_path` inserts `local/` AFTER the variant. So a
+            # declared variant is still the manifest's own directory; anything
+            # else (`local/`, and — held by
+            # `test_no_shipped_variant_is_named_local` — nothing named `local`
+            # is ever a variant) is not.
+            variants = self._variants(kind[1])
+            sub = _as_str(rest[0], self.consts)
+            if sub is None:
+                # Unresolvable subdir: only a dataset that HAS variants could
+                # have one that is manifest-owned. Claim no proof there.
+                return ("unknown", None) if variants else ("other", None)
+            if len(rest) == 1 and sub in variants:
+                return ("cache", kind[1])
+            return ("other", None)
         return (kind[0], None)
 
 
 def _basenames(
     node: ast.expr, consts: dict[str, str | list[str]]
-) -> tuple[list[str], re.Pattern[str] | None]:
-    """Basenames a path-component expression can denote: exact names + a pattern.
+) -> tuple[list[str], re.Pattern[str] | None, bool]:
+    """``(exact names, pattern, pattern-is-all-wildcard)`` for a path component.
 
     Covers the three shapes the demos actually use — a literal, a module constant
     (single or indexed out of a list), and an f-string built in a per-channel
     loop. The f-string becomes a regex with ``.*`` for each interpolation, so
     ``f"kidney_ch{i}.gsplats.zarr.zip"`` still matches the three pinned names.
+
+    The third element flags an f-string with NO literal text of its own
+    (``f"{name}"``): its pattern is ``.*``, which matches every pinned name and
+    is therefore evidence of nothing. Reported as a CONFIRMED squat, it accused
+    a raw-source download of being handed a file name its source never mentions,
+    and the only way to satisfy it was to rename a variable.
     """
     literal = _as_str(node, consts)
     if literal is not None:
-        return [literal], None
+        return [literal], None, False
     if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name):
         value = consts.get(node.value.id)
         if isinstance(value, list):
-            return value, None
+            return value, None, False
     if isinstance(node, ast.JoinedStr):
         pattern = "".join(
             re.escape(str(v.value)) if isinstance(v, ast.Constant) else ".*"
             for v in node.values
         )
-        return [], re.compile(pattern + r"\Z")
-    return [], None
+        wildcard = not any(
+            isinstance(v, ast.Constant) and str(v.value) for v in node.values
+        )
+        return [], re.compile(pattern + r"\Z"), wildcard
+    return [], None, False
 
 
 def _pinned(datasets: dict, dataset: str) -> set[str]:
-    """File names the manifest pins for a ``zenodo`` dataset (empty otherwise)."""
+    """File names the manifest pins for a ``zenodo`` dataset (empty otherwise).
+
+    Every VARIANT's files count too: ``ensure_dataset`` resolves a variant to
+    ``<root>/<ds>/<variant>/<file>`` and checksum-verifies it there, so a
+    variant-pinned name is a name the manifest owns. Reading only the top-level
+    ``files`` made ``h2afva``'s ``253tp`` payload invisible to the whole
+    analysis.
+    """
     spec = datasets.get(dataset)
     if spec is None or spec.get("bucket") != "zenodo":
         return set()
-    return {f["name"] for f in (spec.get("files") or [])}
+    names = {f["name"] for f in (spec.get("files") or [])}
+    for meta in (spec.get("variants") or {}).values():
+        names |= {f["name"] for f in (meta.get("files") or [])}
+    return names
 
 
 def _referenced_pinned(tree: ast.Module, datasets: dict) -> dict[str, str]:
@@ -516,7 +577,7 @@ def _manifest_owned(
     dir_kind, dataset = ctx._kind_of_parts(chain[:-1])
     if dir_kind not in ("cache", "unknown"):
         return None
-    names, pattern = _basenames(chain[-1], ctx.consts)
+    names, pattern, wildcard = _basenames(chain[-1], ctx.consts)
 
     if dir_kind == "cache":
         assert dataset is not None
@@ -524,6 +585,10 @@ def _manifest_owned(
         matched = {n for n in names if n in pinned}
         if pattern is not None:
             matched |= {p for p in pinned if pattern.match(p)}
+        if matched and wildcard:
+            # `f"{name}"` matches every pinned name and identifies none of
+            # them: an unresolved basename, not a proven squat.
+            return ("blind", dataset, [])
         if matched:
             return ("owned", dataset, sorted(matched))
         # An UNRESOLVABLE basename joined onto a directory PROVED to be the
@@ -587,12 +652,22 @@ def analyse_local_fit(source: str, datasets: dict) -> tuple[list[str], list[str]
     EITHER the directory is unknown and the basename is one the demo's own
     dataset pins, OR the directory is provably the manifest's own and the
     basename cannot be resolved (a ``zip``-bound loop variable, an f-string
-    behind one hop, a function parameter). Neither is proof of a squat; both are
+    behind one hop, a fully interpolated ``f"{name}"``, a function parameter).
+    Neither is proof of a squat; both are
     proof that the gate cannot vouch for the demo, which is a reviewable state
     rather than a green tick. (A directory the analysis can prove is NOT the
-    cache — a ``Path(__file__)``-rooted packaged-data path, a subdirectory of the
-    cache dir — is neither, and neither is a basename that resolves and simply
-    is not pinned.)
+    cache — a ``Path(__file__)``-rooted path, whether or not it is the packaged
+    ``data`` tree; a subdirectory of the cache dir that is not a declared
+    VARIANT of that dataset, ``local/`` above all — is neither, and neither is a
+    basename that resolves and simply is not pinned. A directory spelling that
+    is merely unfamiliar is NOT a proof: only the ``__file__`` root is, so
+    ``Path.home() / ".cache/luxar" / DS`` and ``Path("~/.cache/luxar")
+    .expanduser() / DS`` come back as blind spots, not as green.)
+
+    A VARIANT subdirectory is the manifest's own directory: ``ensure_dataset``
+    caches ``<root>/<ds>/<variant>/<file>`` and checksum-verifies it there, so
+    ``_pinned`` unions every variant's ``files`` and ``local/`` is exempt only
+    because no variant may be called that.
 
     What it still CANNOT see, honestly, and where each hole is BOUNDED:
 
@@ -619,7 +694,7 @@ def analyse_local_fit(source: str, datasets: dict) -> tuple[list[str], list[str]
     against the shapes the demos use, not a proof.
     """
     tree = ast.parse(source)
-    ctx = _Ctx(tree)
+    ctx = _Ctx(tree, datasets)
     referenced = _referenced_pinned(tree, datasets)
     owned_names = _owned_names(tree, ctx, datasets, referenced)
 
@@ -969,6 +1044,12 @@ def test_the_guard_reports_a_directory_it_cannot_identify() -> None:
     ``d.joinpath(name)`` are seen, ``os.path.join(d, name)`` and
     ``d.with_name(name)`` are not — the last case below pins that limit so the
     docstrings and the behaviour cannot drift apart again.
+
+    "Any way at all" is load-bearing and was once untrue: a ``Path(...)``-headed
+    chain used to be classified as PROVABLY not the cache, which took three
+    ordinary spellings of ``~/.cache/luxar`` out of the gate's reach silently.
+    Only a ``Path(__file__)``-rooted head is a proof (it is the installed module,
+    not the cache); the rest are pinned below.
     """
     datasets = {
         "toy_ds": {"bucket": "zenodo", "files": [{"name": "toy_ch0.zip"}]},
@@ -996,13 +1077,34 @@ def test_the_guard_reports_a_directory_it_cannot_identify() -> None:
             datasets,
         ) == ([], []), f"{expr} is documented as invisible; update the docstring"
 
-    # A directory the analysis can PROVE is not the cache is not a blind spot.
-    _, blind_packaged = analyse_local_fit(
-        'from pathlib import Path\nDS = "toy_ds"\n'
-        'D = Path(__file__).parent / "data" / DS\nsave_with_lod(fit, D / "toy_ch0.zip")\n',
-        datasets,
-    )
-    assert not blind_packaged
+    # Three ordinary spellings of the cache dir itself that the literal
+    # `.cache`/`luxar` PAIR does not match. None of them is provably anything,
+    # so each must come back as a blind spot rather than green — the #1618 bug
+    # class is one plausible edit away from every one of them.
+    for head in (
+        'Path.home() / ".cache/luxar"',  # one literal, not two
+        'Path("~/.cache/luxar").expanduser()',  # already a demos idiom
+        'Path(os.path.expanduser("~/.cache/luxar"))',
+    ):
+        violations, spots = analyse_local_fit(
+            f'from pathlib import Path\nimport os\nDS = "toy_ds"\n'
+            f"CACHE_DIR = {head} / DS\n"
+            'save_with_lod(fit, CACHE_DIR / "toy_ch0.zip")\n',
+            datasets,
+        )
+        assert not violations, (head, violations)
+        assert spots and "toy_ds" in spots[0], f"{head} passed silently"
+
+    # A directory the analysis can PROVE is not the cache is not a blind spot:
+    # a `Path(__file__)`-rooted chain, which is the installed module's own tree.
+    for tail in ('/ "data" / DS', "/ DS"):
+        _, blind_packaged = analyse_local_fit(
+            'from pathlib import Path\nDS = "toy_ds"\n'
+            f"D = Path(__file__).parent {tail}\n"
+            'save_with_lod(fit, D / "toy_ch0.zip")\n',
+            datasets,
+        )
+        assert not blind_packaged, tail
 
     # Nor is an unresolvable directory joined with a name the manifest does not
     # pin — a demo's own scratch file is nobody's business.
@@ -1055,6 +1157,20 @@ def test_the_guard_reports_an_unresolvable_basename_in_the_manifests_own_dir() -
         header + "def fit_channel(volume, name):\n"
         "    save_with_lod(volume, CACHE_DIR / name)\n"
     )
+    # An f-string with no literal text of its own is the same unresolved state
+    # spelled differently: its `.*` pattern matches every pinned name and
+    # identifies none. Reported as a CONFIRMED squat it accused a raw-source
+    # download of being handed `toy_ch0.zip`, which its source never mentions —
+    # and no edit short of renaming the variable could satisfy it.
+    assert blind(header + 'requests.download(CACHE_DIR / f"{raw_name}")\n')
+    # …while an f-string that DOES carry literal text still resolves to the
+    # pinned names it matches, and stays a confirmed violation.
+    assert local_fit_violations(
+        header + 'save_with_lod(fit, CACHE_DIR / f"toy_ch{i}.zip")\n', datasets
+    )
+    assert not local_fit_violations(
+        header + 'save_with_lod(fit, CACHE_DIR / f"scratch_{i}.zip")\n', datasets
+    )
 
     # And the negatives, so this does not become a blanket "any join is blind":
     # a basename that RESOLVES and simply is not pinned is a demo's own scratch
@@ -1071,6 +1187,74 @@ def test_the_guard_reports_an_unresolvable_basename_in_the_manifests_own_dir() -
     )
     # Nor is the local-fit namespace, which is a SUBDIRECTORY of the cache dir.
     assert not blind(header + 'save_with_lod(fit, CACHE_DIR / "local" / name)\n')
+
+
+def test_a_variant_subdirectory_is_the_manifests_own_directory_too() -> None:
+    """``<root>/<ds>/<variant>/`` is a fetch destination, not a free subdirectory.
+
+    ``ensure_dataset`` sets ``cache_dir = root / name / variant_name`` and
+    checksum-verifies and quarantines there exactly as it does the flat case —
+    which is *why* ``local_fit_path`` inserts ``local/`` after the variant. A
+    blanket "any subdirectory of the cache dir is not the manifest's" rule made
+    the whole variant namespace invisible, both here and in ``_pinned``, which
+    read only the top-level ``files``.
+
+    Latent today (no demo requests a variant), so it is pinned synthetically
+    against the shape the shipped ``h2afva`` entry already has.
+    """
+    datasets = {
+        "toy_ds": {
+            "bucket": "zenodo",
+            "files": [{"name": "toy_base.zip"}],
+            "variants": {
+                "light": {"default": True, "files": [{"name": "toy_light.zip"}]},
+                "full": {"files": [{"name": "toy_full.zip"}]},
+            },
+        },
+    }
+    header = 'from pathlib import Path\nDS = "toy_ds"\nCACHE_DIR = Path.home() / ".cache" / "luxar" / DS\n'
+
+    # The variant's own file, in the variant's own cache dir: a squat.
+    assert local_fit_violations(
+        header + 'save_with_lod(fit, CACHE_DIR / "full" / "toy_full.zip")\n', datasets
+    )
+    # Spelled as one inline chain, and through the root name.
+    assert local_fit_violations(
+        'from pathlib import Path\nDS = "toy_ds"\n'
+        'save_with_lod(fit, Path.home() / ".cache" / "luxar" / DS / "light" / "toy_light.zip")\n',
+        datasets,
+    )
+    assert local_fit_violations(
+        'from luxar.demos import registry\nDS = "toy_ds"\n'
+        'save_with_lod(fit, registry.DEMO_CACHE_ROOT / DS / "light" / "toy_light.zip")\n',
+        datasets,
+    )
+    # A variant-pinned name is pinned for the dataset wherever it appears.
+    assert local_fit_violations(
+        header + 'save_with_lod(fit, CACHE_DIR / "toy_full.zip")\n', datasets
+    )
+    # `local/` INSIDE the variant is the exempt namespace — the reason the fix
+    # puts it after the variant rather than before it.
+    assert not local_fit_violations(
+        header + 'save_with_lod(fit, CACHE_DIR / "full" / "local" / "toy_full.zip")\n',
+        datasets,
+    )
+    # A subdirectory that is not a declared variant is still not a destination.
+    assert not local_fit_violations(
+        header + 'save_with_lod(fit, CACHE_DIR / "scratch" / "toy_full.zip")\n',
+        datasets,
+    )
+    # An UNRESOLVABLE subdirectory of a dataset that HAS variants might be one,
+    # so it is a blind spot rather than a silent pass. (For a dataset with no
+    # variants the classifier can prove the subdirectory is not a destination —
+    # but that is not observable from out here, because `CACHE_DIR / sub` is
+    # itself an unresolvable basename in the manifest's own dir, which the rule
+    # above this one already reports. Both spellings end up reviewed; only the
+    # variant one is reported for the right reason.)
+    _, blind_variant = analyse_local_fit(
+        header + 'save_with_lod(fit, CACHE_DIR / sub / "toy_full.zip")\n', datasets
+    )
+    assert blind_variant and "toy_ds" in blind_variant[0]
 
 
 def test_no_shipped_variant_is_named_local() -> None:
