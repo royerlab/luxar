@@ -422,6 +422,19 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             path = _validate_node_path(path)
             group = self.store.require_group(path)
 
+        # Resolve a custom colormap (ndarray LUT, or a matplotlib/colorcet
+        # name) into a sibling ``colormap_lut`` array on THIS node, exactly as
+        # the leaf writers do. A GROUP is now a legitimate place to author a
+        # colormap — the viewer composes it root→leaf (#1600) — and an
+        # unresolved ndarray would not even serialize into the group's attrs,
+        # while an unresolved non-builtin NAME would reach the viewer, which
+        # only knows the builtins, and silently fall back to viridis. Leaves
+        # come through here too (``Node.__init__`` writes every node's attrs
+        # via this method), but their colormap has already been resolved to the
+        # ``"custom"`` sentinel by then, which the helper passes through.
+        if attrs.get("colormap") is not None:
+            self._write_colormap_lut_if_needed(group, attrs)
+
         # Update attributes - preserve existing ones
         if attrs:
             # Get existing attributes

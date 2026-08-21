@@ -91,6 +91,7 @@ import {
   ABSORPTION_DEFAULT_MAX,
   absorptionSliderRange,
 } from '../../../../ui/layers/absorption-range';
+import { getColormapTexture } from '../../../../rendering/colormap-textures';
 
 /**
  * Normalised thumb position for a κ value on a log track — the inverse of
@@ -1615,6 +1616,48 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     expect(calls.pickAlphaCutoff).toHaveBeenCalledWith(
       expect.closeTo(MESH_DEFAULTS.alphaCutoff, 6)
     );
+  });
+
+  it('reset reapplies an inherited custom palette with its composed LUT bytes', () => {
+    const lut = new Uint8Array(768);
+    lut[767] = 255;
+    const material = makeColormapRoutingStub();
+    const mesh = new THREE.Mesh(new THREE.BufferGeometry(), material as unknown as THREE.Material);
+    mesh.name = '/palette/gs';
+    mesh.userData.nodeType = 'gsplats';
+    const rootGroup = new THREE.Group();
+    rootGroup.add(mesh);
+
+    const graph: SceneNode = {
+      path: '/',
+      type: 'scene',
+      attrs: {},
+      hasSpatialIndex: false,
+      children: [
+        {
+          path: '/palette',
+          type: 'group',
+          attrs: { colormap: 'custom', customLutBytes: lut },
+          hasSpatialIndex: false,
+          children: [
+            {
+              path: '/palette/gs',
+              type: 'gsplats',
+              attrs: { layer: true, amplitude_data_range: [2, 8] },
+              hasSpatialIndex: true,
+            },
+          ],
+        },
+      ],
+    };
+
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(rootGroup, graph);
+    vi.mocked(getColormapTexture).mockClear();
+
+    panel.resetAllLayers();
+
+    expect(getColormapTexture).toHaveBeenCalledWith('custom', lut);
   });
 
   it('a mesh inheriting `volumetric` reports the RESOLVED mode, so the panel matches the render', () => {

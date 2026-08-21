@@ -302,6 +302,10 @@ Group nodes organize the scene hierarchy and can contain child nodes.
   "blending_mode": "additive",  // normal, additive, max, opaque, luminous, volumetric — written
                            //   only when explicitly set; unset ⇒ inherited from the
                            //   nearest ancestor that sets it (viewer default: additive)
+  "colormap": "viridis",   // Optional palette; nearest-setter-wins for rendering. GSplats
+                           //   inherit it directly; Points / Lines / Mesh scalar leaves must
+                           //   still author their own colormap today (see Rendering Attribute
+                           //   Composition)
   "layer": false,          // Optional: if true, node appears in the viewer's Layers panel
   "visible": true,         // Optional: initial visibility when the scene loads (default true)
   "child_index": 0         // Insertion order among siblings (stamped on add). The viewer
@@ -1131,13 +1135,20 @@ eye icon in the panel and is **not** persisted back to zarr.
 
 ### Rendering Attribute Composition
 
-Rendering attributes compose along the scene graph (root → leaf):
+Rendering attributes compose along the scene graph (nearest data/group root → leaf):
 
 - `opacity`, `absorption`, `gamma`, `intensity` — multiplied (`absorption`
   has identity 1.0, is floored at 0, and has no upper clamp)
 - `offset` — summed
-- `blending_mode`, `join` — the nearest ancestor that sets it wins
-  (`join` is lines-only)
+- `blending_mode`, `join`, `colormap` — the nearest ancestor that sets it wins
+  (`join` is lines-only; a `colormap='custom'` carries its sibling
+  `colormap_lut` bytes down with the name, and a leaf that names a different
+  palette does *not* inherit those bytes)
+
+The scene root is a carrier and is excluded from this composition chain. Put a
+scene-wide palette on a Group containing the geometry rather than on the scene
+root. A standalone `.gsplats.zarr` root is a data node, not a scene root, so its
+palette does compose into its children.
 
 Example: a group with `opacity=0.5` and a child with `opacity=0.5` yields
 an effective opacity of `0.25` for the child's material. Unset values are
@@ -1153,6 +1164,22 @@ it (with the other compositing attrs) onto the wrapper only — see
 `COMPOSITING_ATTRS` in `core/group/compositing.py`. Correspondingly, within a
 layer's own subtree the panel treats the layer's mode as authoritative and
 ignores a mode authored on a non-layer descendant.
+
+An inherited `colormap` is offered to every descendant at render time, but the
+current Python adders still require Points / Lines / Mesh scalar leaves to
+author a `colormap` themselves. Those types require a scalar channel
+(`has_scalars`) and otherwise keep rendering direct colours, while a
+GSplats leaf is always colormap-capable — its amplitude *is* the scalar — so an
+ancestor's palette overrides even per-splat colours there. This matches what the
+layers panel's colormap dropdown already does when it fans a palette out over a
+group. Note the corollary: the writers stamp the implicit `colormap="gray"` on a
+colorless gsplats leaf *only* when no ancestor authored a palette, since a
+manufactured value nearer the leaf would shadow the authored one.
+
+For GSplats, author the group palette before adding its children (normally by
+passing `colormap=...` to `add_group`). The writer consults ancestors while each
+leaf is created; assigning `group.attrs["colormap"]` afterwards does not
+retroactively remove a gray already stamped on existing leaves.
 
 ### Edits Are Viewer-Only
 

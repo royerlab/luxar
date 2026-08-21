@@ -560,6 +560,9 @@ effective_gamma     = clamp(∏ gamma_i,     0.1, 10)
 effective_intensity = max(0, ∏ intensity_i)
 effective_offset    = Σ offset_i
 effective_blending  = nearest ancestor that sets blending_mode, else 'additive'
+effective_colormap  = nearest ancestor that sets colormap, else undefined
+                      (its `customLutBytes` travel with the name, from the
+                       SAME node — never a name/LUT pair from two nodes)
 ```
 
 Composition is applied by `SceneLoader.applyEffectiveAttrs()` (uses

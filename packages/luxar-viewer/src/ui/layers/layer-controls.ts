@@ -430,8 +430,8 @@ export class LayerControls {
         }
         if (!this.deps.apply.applyColormap(sel) && cmName) {
           // The C1 fail-closed guard suppressed the colormap on every leaf
-          // (e.g. a group layer over scalar-less points, where the dropdown is
-          // still offered). The layer keeps rendering DIRECT COLOUR, so the
+          // (e.g. an explicitly colormapped group over scalar-less points).
+          // The layer keeps rendering DIRECT COLOUR, so the
           // scalar window would be applied as a colour gain — put the identity
           // window back and re-push the corrected GOG. Drop the rejected
           // palette too: keeping it would leave contradictory state (`colormap`

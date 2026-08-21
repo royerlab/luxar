@@ -27,6 +27,8 @@ import {
   createInstancedGSplatsMesh,
   type InstancedGSplatsMeshConfig,
 } from '../../../rendering/gsplat-geometry';
+import { applyEffectiveAttrs } from '../../../data/scene-loader/view-state/effective-attrs';
+import type { SceneNode } from '../../../data/data-loader-types';
 
 function makeRgbLut(seed = 0): Uint8Array {
   const lut = new Uint8Array(768);
@@ -287,6 +289,53 @@ describe('custom LUT byte-loading', () => {
       const mat = new LineMaterial({ colormapTexture: tex, scalarRange: [0, 1] });
       expect(mat.defines.USE_COLORMAP).toBe('');
       expect(mat.uniforms.uColormapTex.value).toBe(tex);
+    });
+  });
+
+  describe('an INHERITED custom palette reaches the material (#1600)', () => {
+    it('GSplatMaterial paints the ancestor LUT, not viridis', () => {
+      // End-to-end for the composition half of #1600: only the GROUP declares
+      // `colormap='custom'`, so only the group carries `customLutBytes` (the
+      // scene loader stamps them on whichever node declared the sentinel).
+      // Before composition the leaf read its own — absent — attrs and fell
+      // back to viridis with a warning.
+      const lut = makeRgbLut(77);
+      const graph: SceneNode = {
+        path: '/',
+        type: 'scene',
+        hasSpatialIndex: false,
+        attrs: {},
+        children: [
+          {
+            path: '/layer',
+            type: 'group',
+            hasSpatialIndex: false,
+            attrs: { layer: true, colormap: 'custom', customLutBytes: lut },
+            children: [
+              {
+                path: '/layer/pts',
+                type: 'gsplats',
+                hasSpatialIndex: true,
+                attrs: { amplitude_data_range: [0, 1] },
+              },
+            ],
+          },
+        ],
+      };
+      const leaf = graph.children![0].children![0];
+      const effective = applyEffectiveAttrs(graph, leaf);
+
+      const mat = new GSplatMaterial({
+        colormapTexture: getColormapTexture(
+          effective.colormap!,
+          effective.customLutBytes as Uint8Array | undefined
+        ),
+        scalarRange: effective.amplitude_data_range,
+      });
+
+      expect(mat.defines.USE_COLORMAP).toBe('');
+      expect(mat.uniforms.uColormapTex.value).toBe(getColormapTexture('custom', lut));
+      expect(mat.uniforms.uColormapTex.value).not.toBe(getColormapTexture('viridis'));
     });
   });
 });
