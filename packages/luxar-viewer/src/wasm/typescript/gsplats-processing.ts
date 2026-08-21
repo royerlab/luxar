@@ -36,8 +36,49 @@ const MAX_PACKED_CHOLESKY_SIZE = (MAX_SUPPORTED_DIMS * (MAX_SUPPORTED_DIMS + 1))
  * diagonal of the covariance being factorized. Keeps the degeneracy test a
  * condition-number bound rather than a scene-scale one. MUST stay identical to
  * `CHOLESKY_RELATIVE_EPSILON` in `wasm/rust/src/common.rs`.
+ *
+ * Rust declares it `pub const CHOLESKY_RELATIVE_EPSILON: f32 = 1e-12`, so the
+ * value that actually multiplies `maxDiag` there is f32(1e-12), NOT the f64
+ * literal — hence the `Math.fround`. Same reasoning for every other constant in
+ * this module that Rust types as `f32`.
  */
-const CHOLESKY_RELATIVE_EPSILON = 1e-12;
+const CHOLESKY_RELATIVE_EPSILON = Math.fround(1e-12);
+
+/**
+ * `CHOLESKY_EPSILON` as the f32 Rust actually holds it. The shared export in
+ * `config/constants.ts` is the mirrored SOURCE value (pinned by
+ * `tests/unit/data/loaders/spatial-query/tolerance-computer.test.ts`) and must
+ * stay an ordinary f64 literal there; the f32 rounding belongs at the point of
+ * use, inside the kernel that has to agree with `common.rs`.
+ *
+ * This particular narrowing is UNOBSERVABLE and kept for consistency with the
+ * three constants around it. Both of its uses take a square root, and
+ * `fround(sqrt(fround(1e-10)))` and `fround(sqrt(1e-10))` are the same f32
+ * (9.999999747378752e-6); the only other consumer is `sum > degenerateFloor`,
+ * and this branch is reached only when `maxDiag === 0`, which forces every
+ * diagonal `sum` to be ≤ 0. The all-zero-Σ_S parity case in
+ * `tests/unit/wasm/wasm-vs-typescript.test.ts` pins the value the branch
+ * produces; no fixture can distinguish the fround itself.
+ */
+const CHOLESKY_EPSILON_F32 = Math.fround(CHOLESKY_EPSILON);
+
+/**
+ * `f32::MIN_POSITIVE` — the smallest positive NORMAL f32, 2⁻¹²⁶.
+ *
+ * NOT `Number.MIN_VALUE` (≈5e-324, the smallest f64 SUBNORMAL), which is what
+ * this file used to clamp with. The two agree only while `maxDiag × 1e-12`
+ * stays above 2⁻¹²⁶; below that Rust returns 2⁻¹²⁶ and an f64 clamp returns the
+ * product, so the regularized diagonal — and every splat that goes through it —
+ * differs grossly rather than by an ulp.
+ */
+const F32_MIN_POSITIVE = 1.1754943508222875e-38;
+
+/**
+ * Degenerate-diagonal epsilon for the forward substitution, mirroring the
+ * function-local `const EPSILON: f32 = 1e-10` in
+ * `gsplats_processing.rs::mahalanobis_distance_internal`.
+ */
+const MAHALANOBIS_EPSILON_F32 = Math.fround(1e-10);
 
 // Module-level workspace buffers — safe because JS is single-threaded.
 // Avoids per-call allocation in hot loops. Sized for the common ndim <= 16 case
@@ -108,11 +149,15 @@ export function computeMarginalCholesky(
     for (let j = 0; j <= i; j++) {
       const sj = keepDims[j];
       const kMax = Math.min(si, sj);
+      // Rust accumulates this dot product in f32, rounding after every product
+      // AND every partial sum. The store into `sigma` (a Float32Array) only
+      // rounds the FINAL value, so an f64 accumulator here silently carries
+      // extra precision through the whole reduction.
       let sum = 0;
       for (let k = 0; k <= kMax; k++) {
         const lSiK = fullPackedL[fullPackedOffset + packedIndex(si, k)];
         const lSjK = fullPackedL[fullPackedOffset + packedIndex(sj, k)];
-        sum += lSiK * lSjK;
+        sum = Math.fround(sum + Math.fround(lSiK * lSjK));
       }
       sigma[i * stride + j] = sum;
       sigma[j * stride + i] = sum;
@@ -140,18 +185,28 @@ export function computeMarginalCholesky(
   // The absolute constant is a fallback for a SCALELESS (all-zero) Σ_S only —
   // as a general lower bound it would re-impose the scene-scale threshold this
   // replaces, since maxDiag * 1e-12 is below 1e-10 for any σ < ~1e-1.
-  // MIN_VALUE keeps the floor non-zero if the relative product underflows.
+  // f32::MIN_POSITIVE keeps the floor non-zero if the relative product
+  // underflows — see F32_MIN_POSITIVE above for why it is not Number.MIN_VALUE.
   const degenerateFloor =
     maxDiag > 0
-      ? Math.max(maxDiag * CHOLESKY_RELATIVE_EPSILON, Number.MIN_VALUE)
-      : CHOLESKY_EPSILON;
+      ? Math.max(Math.fround(maxDiag * CHOLESKY_RELATIVE_EPSILON), F32_MIN_POSITIVE)
+      : CHOLESKY_EPSILON_F32;
 
   for (let i = 0; i < subNdim; i++) {
     for (let j = 0; j <= i; j++) {
+      // Crout: same f32-at-every-step rule as the Σ_S dot product above. This
+      // reduction is a difference of like-magnitude terms, so the divergence an
+      // f64 accumulator introduces is amplified by the cancellation rather than
+      // damped — measured at up to ~3300 ulp against WASM before this fix.
       let sum = sigma[i * stride + j];
       for (let k = 0; k < j; k++) {
-        sum -= lSub[packedIndex(i, k)] * lSub[packedIndex(j, k)];
+        sum = Math.fround(sum - Math.fround(lSub[packedIndex(i, k)] * lSub[packedIndex(j, k)]));
       }
+      // The sqrt and the division need no explicit fround: `lSub` is a
+      // Float32Array, so the store already rounds, and for √ and ÷ on operands
+      // that are exactly f32 the f64-then-f32 double rounding is provably
+      // benign (f64's 53 bits ≥ 2·24 + 2). It is only the ACCUMULATORS above
+      // that have to be rounded by hand.
       if (i === j) {
         lSub[packedIndex(i, i)] =
           sum > degenerateFloor ? Math.sqrt(sum) : Math.sqrt(degenerateFloor);
@@ -209,16 +264,62 @@ function computeDisplayCholesky3D(
   // floors every diagonal to a strictly positive, SCALE-RELATIVE value, so an
   // absolute threshold here would drop legitimately tiny diagonals (σ < 1e-10)
   // from the mean — reintroducing the scene-scale dependence in miniature.
+  //
+  // Rust runs the whole reduction in f32: `log_sum += diag.ln()` then
+  // `(log_sum / counted as f32).exp()`. Rounding each step matches all of that
+  // EXCEPT the transcendentals themselves — see the note on `phantom` below.
   let logSum = 0;
   let counted = 0;
   for (let i = 0; i < n; i++) {
     const diag = output[outputOffset + packedIndex(i, i)];
     if (diag > 0) {
-      logSum += Math.log(diag);
+      logSum = Math.fround(logSum + Math.fround(Math.log(diag)));
       counted++;
     }
   }
-  const phantom = counted > 0 ? Math.exp(logSum / counted) : Math.sqrt(CHOLESKY_EPSILON);
+  // RESIDUAL, measured and accepted: `Math.fround(Math.log/exp(x))` is not
+  // bit-identical to Rust's `f32::ln`/`f32::exp`, because V8's ieee754 kernels
+  // and the wasm libm's `logf`/`expf` are different approximations of the same
+  // function. That is a CHOICE, not a wall: porting musl's `logf`/`expf`
+  // (what `f32::ln`/`f32::exp` lower to on wasm32) into frounded TS closes it
+  // — a ~35-line `expf` port measured 0/200 000 mismatches against the real
+  // WASM where `Math.fround(Math.exp(x))` measured 19 282 (9.64%). Deferred to
+  // #1830 rather than done here; until then, treat the two transcendentals as
+  // the only approximate steps in this file.
+  //
+  // Measured on the 20 000-splat 2D sweep in
+  // `tests/unit/wasm/wasm-vs-typescript.test.ts` (mulberry32(4242) 2×2
+  // factors, displayDims [0,1]): the phantom diagonal differs from WASM in
+  // 3116/20000 cases, by AT MOST 2 ulp (1 from `ln`, 1 from `exp`); before
+  // this fix it was 5344/20000, also at 2 ulp. The rounding's real win here is
+  // the other five packed slots, which went 1294/100000 at this (unit) scale →
+  // 0/100000. The rescaled variants of the same fixture, discussed just below,
+  // went 1278 / 1216 / 1244 per 100000 → 0 at ×1e-4 / ×1e-7 / ×1e6.
+  //
+  // The 2-ulp figure is a property of that fixture's SCALE, not of the kernel:
+  // `phantom = exp(mean(ln Lᵢᵢ))`, so the relative residual is ≈ |ln σ|·2⁻²⁴.
+  // Same fixture with the factors rescaled: unit 2 ulp, ×1e-4 16 ulp, ×1e-7
+  // 32 ulp, ×1e6 16 ulp. Parity tests over the phantom must be ULP-bounded
+  // with a bound derived from the scale they use, never exact.
+  //
+  // Only the `ln` here is load-bearing. The other three roundings on this path
+  // are provably inert and kept solely to mirror `common.rs` step for step:
+  // `counted` can only be 1 or 2 (the n === 3 case returned above), division by
+  // a power of two is exact, and `phantom` is stored into a Float32Array, which
+  // rounds it anyway. Mutating any of them changes nothing in the sweep above;
+  // mutating the `ln` moves it to 4484/20000.
+  //
+  // Two of those three are inert only in EACH OTHER'S PRESENCE, so do not read
+  // the list above as three independently dead roundings. The accumulator
+  // `fround(logSum + …)` is a no-op because rounding COMMUTES with the exact
+  // power-of-two division that follows — it is redundant GIVEN
+  // `fround(logSum / counted)`, not on its own. Measured over six scene scales
+  // (120000 phantoms): dropping either alone changes 0, dropping BOTH changes
+  // 55473. The `exp` rounding is independently inert (the Float32Array store).
+  const phantom =
+    counted > 0
+      ? Math.fround(Math.exp(Math.fround(logSum / counted)))
+      : Math.fround(Math.sqrt(CHOLESKY_EPSILON_F32));
 
   let idx = outputOffset + (n * (n + 1)) / 2;
   for (let row = n; row < 3; row++) {
@@ -247,29 +348,40 @@ export function mahalanobis_distance(
   packedL: Float32Array,
   ndim: number
 ): number {
-  // Forward substitution: solve L · y = diff
+  // Forward substitution: solve L · y = diff.
+  // `y` is a Float32Array, so each SOLVED component is already rounded; the two
+  // f64 accumulators (`val` and `sumSq` below) are what has to be frounded by
+  // hand to reproduce Rust's f32 arithmetic step for step.
   const y = new Float32Array(ndim);
 
   for (let i = 0; i < ndim; i++) {
     let val = diff[i];
     for (let j = 0; j < i; j++) {
-      val -= packedL[packedIndex(i, j)] * y[j];
+      val = Math.fround(val - Math.fround(packedL[packedIndex(i, j)] * y[j]));
     }
     const diag = packedL[packedIndex(i, i)];
-    y[i] = diag > 1e-10 ? val / diag : 0;
+    y[i] = diag > MAHALANOBIS_EPSILON_F32 ? val / diag : 0;
   }
 
   // Compute ||y||
   let sumSq = 0;
   for (let i = 0; i < ndim; i++) {
-    sumSq += y[i] * y[i];
+    sumSq = Math.fround(sumSq + Math.fround(y[i] * y[i]));
   }
-  return Math.sqrt(sumSq);
+  // Rust returns an `f32`; wasm-bindgen hands that to JS as the f64 widening of
+  // an f32. Round the result so the two backends return the SAME JS number
+  // rather than one that merely compares close.
+  return Math.fround(Math.sqrt(sumSq));
 }
 
 /**
  * Internal Mahalanobis distance (matches Rust internal function).
  * Accepts an optional pre-allocated buffer to avoid per-call allocation.
+ *
+ * Same f32 discipline as the exported twin: the accumulators are frounded and
+ * the result is rounded to the f32 Rust returns, because the caller squares it
+ * and feeds it to `exp` — an f64 residual there moves the attenuation and can
+ * flip the `minAmplitude` gate.
  */
 function mahalanobisDistanceInternal(
   diff: Float32Array,
@@ -282,17 +394,17 @@ function mahalanobisDistanceInternal(
   for (let i = 0; i < ndim; i++) {
     let val = diff[i];
     for (let j = 0; j < i; j++) {
-      val -= packedL[packedIndex(i, j)] * y[j];
+      val = Math.fround(val - Math.fround(packedL[packedIndex(i, j)] * y[j]));
     }
     const diag = packedL[packedIndex(i, i)];
-    y[i] = diag > 1e-10 ? val / diag : 0;
+    y[i] = diag > MAHALANOBIS_EPSILON_F32 ? val / diag : 0;
   }
 
   let sumSq = 0;
   for (let i = 0; i < ndim; i++) {
-    sumSq += y[i] * y[i];
+    sumSq = Math.fround(sumSq + Math.fround(y[i] * y[i]));
   }
-  return Math.sqrt(sumSq);
+  return Math.fround(Math.sqrt(sumSq));
 }
 
 // Module-level forward-substitution + marginal-Cholesky scratch for the fused
@@ -353,8 +465,27 @@ export function project_gsplats_nd_to_3d(
   const numDisplay = Math.min(displayDims.length, 3);
   const fullPackedSize = (ndim * (ndim + 1)) / 2;
 
-  const shiftC = Math.exp(-0.5 * truncate * truncate);
-  const invOneMinusC = 1.0 / (1.0 - shiftC);
+  // `truncate` and `minAmplitude` are declared `f32` on the Rust side, so
+  // wasm-bindgen narrows them at the boundary. This backend receives the raw
+  // f64, so it has to narrow them itself or it thresholds against a value WASM
+  // never sees.
+  const truncateF32 = Math.fround(truncate);
+  const minAmplitudeF32 = Math.fround(minAmplitude);
+
+  // Rust: `(-0.5f32 * truncate * truncate).exp()`, left-associative, every step
+  // f32; then `1.0 / (1.0 - shift_c)` — the reciprocal is rounded BEFORE it is
+  // used as a multiplier below, so a single fused JS division would differ.
+  //
+  // `Math.fround(-0.5 * x)` is provably exact for any f32 `x` (halving only
+  // decrements the exponent) and is kept for 1:1 symmetry with `common.rs`, not
+  // because it can change an answer. The other roundings here DO matter, but
+  // only at small `truncate`: `invOneMinusC = 1/(1 - shiftC)` is ~1.01 at
+  // truncate 3, where an ulp of `shiftC` cannot move `1 - shiftC` at all, and
+  // ~8.5 at truncate 0.5, where it moves the amplitude of every splat. Since
+  // `truncate` is author-controlled (a per-dataset `truncation_radius`), the
+  // parity fixtures deliberately sweep small values too.
+  const shiftC = Math.fround(Math.exp(Math.fround(Math.fround(-0.5 * truncateF32) * truncateF32)));
+  const invOneMinusC = Math.fround(1.0 / Math.fround(1.0 - shiftC));
 
   // Grow the fused scratch when numContinuous > 16 (the uncapped >16-D backend);
   // the <= 16 case keeps the pre-allocated buffers (no reallocation). Re-bind the
@@ -401,14 +532,51 @@ export function project_gsplats_nd_to_3d(
       // Pass `diff` whole — mahalanobisDistanceInternal reads only [0, ndim), so a
       // `.subarray(0, numContinuous)` view would allocate once PER SPLAT here.
       const mahalDist = mahalanobisDistanceInternal(diff, hiddenCholesky, numContinuous, _fusedY);
-      const rawExp = Math.exp(-0.5 * mahalDist * mahalDist);
+      // Rust: `(-0.5 * mahal_dist * mahal_dist).exp()` — left-associative f32.
+      // RESIDUAL: `Math.fround(Math.exp(x))` is NOT bit-identical to Rust's
+      // `f32::exp` (V8's ieee754 `exp` and the wasm libm's `expf` are different
+      // approximations). That is a deliberate scope choice, not an impossibility
+      // — porting musl's `expf` into frounded TS measured 0/200 000 mismatches
+      // against the real WASM, and is tracked as #1830. Until then this one
+      // operation stays approximate.
+      // Measured over the 20 000-splat sweeps in
+      // `tests/unit/wasm/wasm-vs-typescript.test.ts`: with `truncate` large
+      // enough that the shift below underflows to 0 (so `exp` is the ONLY
+      // approximate step), the emitted amplitudes differ in 1802/19943 cases by
+      // AT MOST 2 ulp — that is the whole residual. At truncate = 3 everything
+      // around it is exact and the same sweep went from 11907/19323 amplitudes
+      // differing at up to 1367 ulp to 1734/19323 within 2⁻²³ absolute.
+      // Parity tests crossing this path must be ULP- or absolute-bounded.
+      // (As at the `shiftC` site above, the INNER `fround(-0.5 * x)` is exact
+      // for any f32 `x` and is kept only to mirror `common.rs` step for step;
+      // the outer product and the `exp` are the ones that can change an answer.)
+      const rawExp = Math.fround(Math.exp(Math.fround(Math.fround(-0.5 * mahalDist) * mahalDist)));
       // Clamp at 0 with a comparison rather than Math.max: Rust's `f32::max`
       // IGNORES NaN and returns 0.0, while `Math.max(0, NaN)` is NaN. A NaN
       // anywhere in a splat's center/covariance would otherwise leave this
       // backend with a NaN attenuation where WASM had 0.0. `NaN > 0` is false,
       // so the two twins agree on every input. (The visibility gate below is
       // the second line of defence, for a NaN that arrives in `amplitudes`.)
-      const shifted = invOneMinusC * (rawExp - shiftC);
+      // `rawExp - shiftC` cancels catastrophically as a splat approaches the
+      // truncation radius (that is the point of the shift — the attenuation
+      // must reach 0 there), so the ≤2 ulp `exp` residual above is amplified
+      // without bound near the cut: measured up to 134 ulp on the attenuated
+      // amplitude at truncate = 3, and 475 ulp at truncate = 0.5. Inherent to
+      // the formula, not to this rounding.
+      //
+      // Consequence worth stating plainly: the VISIBLE SET can still differ
+      // between the two backends for splats sitting exactly on the shell. At
+      // production defaults (`GSPLAT_DEFAULT_TRUNCATION_RADIUS` 2.75,
+      // `MIN_AMPLITUDE` 1e-6), 200 000 splats with amplitudes uniform in
+      // [0.2, 1.2] and their hidden coordinate in [2.7495, 2.7505] emit 94 550
+      // from WASM and 94 540 from this backend — 10 splats apart. The f32
+      // rounding makes that class much
+      // rarer (it used to reach any splat whose amplitude sat within thousands
+      // of ulps of the gate); it does not remove it, and it cannot while `exp`
+      // differs at all. Do not write a test that asserts count equality as a
+      // general property of the kernel — only on a fixture whose nearest
+      // emitted amplitude clears the residual by a stated margin.
+      const shifted = Math.fround(invOneMinusC * Math.fround(rawExp - shiftC));
       attenuation = shifted > 0.0 ? shifted : 0.0;
     }
 
@@ -417,8 +585,12 @@ export function project_gsplats_nd_to_3d(
     // attenuated) is neither `<` nor `>=` the threshold, and plain `<` would let
     // it through to be emitted with a NaN amplitude — the #725 silent-corruption
     // mode. Mirrors the Rust twin.
-    const attenuatedAmplitude = amplitudes[i] * attenuation;
-    if (attenuatedAmplitude < minAmplitude || Number.isNaN(attenuatedAmplitude)) continue;
+    // The product is an f32 in Rust and the gate reads that rounded value, so
+    // this is a DECISION, not just an output digit: an unrounded f64 product
+    // sitting a fraction of an ulp under `minAmplitude` emits on one backend
+    // and is culled on the other, changing the returned visible count.
+    const attenuatedAmplitude = Math.fround(amplitudes[i] * attenuation);
+    if (attenuatedAmplitude < minAmplitudeF32 || Number.isNaN(attenuatedAmplitude)) continue;
 
     // (4) Write compacted outputs at dense slot `out`.
     const cOff = out * 3;
