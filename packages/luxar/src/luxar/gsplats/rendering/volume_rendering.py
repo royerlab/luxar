@@ -55,7 +55,8 @@ def render_to_volume_tensor(
     shape : Tuple[int, ...]
         Output volume shape (e.g., (128, 128, 128) for 3D).
     device : str, optional
-        Device to use for rendering. If None, auto-detects the best device.
+        Device to use for rendering. ``None`` and ``"auto"`` auto-detect the
+        best device.
     truncate : float, default=DEFAULT_TRUNCATION_RADIUS
         Truncation radius in standard deviations.
     intensity_floor : float, default=1e-5
@@ -68,9 +69,9 @@ def render_to_volume_tensor(
     torch.Tensor
         Rendered volume on the rendering device.
     """
-    # Auto-detect device if not specified
-    if device is None:
-        device = auto_detect_device()
+    from luxar.gsplats.utils.device import resolve_torch_device
+
+    device = str(resolve_torch_device(device))
 
     # Convert to PyTorch tensors
     centers_t = torch.from_numpy(gsplat_data.centers).to(device)
