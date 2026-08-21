@@ -854,8 +854,10 @@ def _credit_claims(text: str) -> list[tuple[tuple[str, ...], str]]:
 
     A year the walk finds no name for yields NO claim: a bare number is not an
     attribution, and "2048³ voxels" or "1920 x 1080" would otherwise be read as
-    one.
+    one. HTML tags render as no text, so they become separators before tokenizing
+    rather than staying attached to a name or splicing adjacent words together.
     """
+    text = re.sub(r"<[^>]*>", " ", text)
     tokens = [(m.group(), m.start()) for m in re.finditer(r"\S+", text)]
     claims: list[tuple[tuple[str, ...], str]] = []
     for match in _YEAR_RE.finditer(text):
@@ -1037,6 +1039,8 @@ def test_overlay_extraction_covers_the_call_and_argument_shapes() -> None:
     )
     overlays = _overlay_strings(source)
     assert "<b>Tan et al. 2018</b>" in overlays
+    assert _credit_claims("<b>Tan et al. 2018</b>") == [(("Tan",), "2018")]
+    assert _credit_contradictions("Lange et al. 2018", ["<b>Tan et al. 2018</b>"])
     assert "Kim et al. 2024" in overlays
     assert "Dip-C, Tan et al. 2018" in overlays
     # An unresolvable operand becomes a break, never an elision.
