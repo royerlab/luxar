@@ -353,10 +353,12 @@ sources fed to gsplat fitting/calibration), independent of the compiled
   same-named root pyramid level cannot be mistaken for a nested array. Resolving
   a declared level to an actual array normalises the same way, so a pyramid
   spelled `["./0", "./1"]` selects and describes the same arrays as one spelled
-  `["0", "1"]`. The custom (non-NGFF) bare `axes` attribute goes the other way
-  round, **root first**, because such a list names nothing and so no evidence
-  about it is obtainable; an owner's `axes` is consulted only when the root has
-  no usable list of its own.
+  `["0", "1"]`. Although NGFF requires strings, real numeric scalar paths are
+  coerced for compatibility while other non-string values name nothing; lookup
+  and metadata matching apply that same rule. The custom (non-NGFF) bare `axes`
+  attribute goes the other way round, **root first**, because such a list names
+  nothing and so no evidence about it is obtainable; an owner's `axes` is
+  consulted only when the root has no usable list of its own.
 - Voxel size composes any multiscales-level `coordinateTransformations` on top;
   where that match or that composition cannot be made honestly (an `array_key`
   matching no entry of a multi-level pyramid, or two scale vectors of different

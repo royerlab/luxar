@@ -499,14 +499,15 @@ def _declared_levels(
 
     A declared path is NORMALISED before it is looked up
     (:func:`~luxar.io.ome_zarr._normalised_dataset_path`, the same rule the
-    metadata-MATCHING side uses, so both halves apply the same rule to any STRING
+    metadata-MATCHING side uses, so both halves apply the same rule to every
     spelling). ``"./0"`` is a legal NGFF spelling of ``"0"`` and writers do emit
     it, while zarr REFUSES a path holding a ``.`` segment outright — so the raw
     spelling resolved no level at all, the block stopped being evidence about the
     array it declares (:func:`_declares_array`), and a 4D ``TZYX`` image group
-    fell onto the ``CZYX`` shape heuristic. (A NON-string ``path`` is a separate,
-    pre-existing disagreement, deliberately untouched here: this half type-rejects
-    it, while the matching half coerces it with ``str()``.)
+    fell onto the ``CZYX`` shape heuristic. Although NGFF requires a string, real
+    numeric scalars are deliberately recoverable; other non-string values name
+    nothing. Using one rule prevents lookup and metadata selection from
+    disagreeing about which declaration names the chosen array.
 
     ``skip_groups`` excludes a declared candidate when any NON-LEAF path segment
     names one of those groups. The leaf is deliberately exempt: an array itself
@@ -563,14 +564,13 @@ def _declared_levels(
     results: List[Tuple[str, Any, Any]] = []
     for entry in datasets:
         raw = entry.get("path") if isinstance(entry, dict) else None
-        if not isinstance(raw, str) or not raw.strip("/"):
+        # A string retaining a `.` segment cannot resolve, but keep its own
+        # spelling so the failed lookup is reported instead of disappearing.
+        rel = _normalised_dataset_path(raw) or (
+            raw.strip("/") if isinstance(raw, str) else ""
+        )
+        if not rel:
             continue
-        # `""` back from the normalisation means the entry still holds a `.`
-        # SEGMENT (`"."`, `"a/./b"`): it names no level, and zarr will not open it
-        # under any spelling. Falling back to the slash-stripped original keeps it
-        # a lookup that fails and is REPORTED under that spelling, rather than one
-        # that silently vanishes or is collapsed into a lookup of some other path.
-        rel = _normalised_dataset_path(raw) or raw.strip("/")
         if not skip_groups.isdisjoint(rel.split("/")[:-1]):
             continue
         declared_path = f"{prefix}/{rel}" if prefix else rel

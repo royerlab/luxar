@@ -429,6 +429,115 @@ class TestTheDeclaredLevelsBranch:
         np.testing.assert_array_equal(load_volume(path), declared.astype(np.float32))
 
     @pytest.mark.parametrize("zarr_format", ZARR_FORMATS)
+    def test_a_numeric_path_and_its_string_alias_use_the_first_declaration(
+        self, tmp_path: Path, zarr_format: int
+    ) -> None:
+        """Malformed aliases must not make selection and metadata disagree.
+
+        The permissive path rule treats numeric ``0`` and string ``"./0"`` as
+        the same level. The first declaration therefore remains authoritative
+        for that level's scale, just as it is when both paths are strings.
+        """
+        data = _ramp((2, 4, 4, 4))
+        block = _multiscales(["t", "z", "y", "x"], ["0", "./0"])
+        datasets = block[0]["datasets"]
+        datasets[0]["path"] = 0
+        datasets[0]["coordinateTransformations"][0]["scale"] = [1, 7, 7, 7]
+        datasets[1]["coordinateTransformations"][0]["scale"] = [1, 2, 0.5, 0.5]
+
+        path = _bioformats2raw_store(
+            tmp_path / "mixed_numeric_path.zarr",
+            zarr_format,
+            [("0", [data])],
+            image_attrs={"multiscales": block},
+        )
+
+        info = discover_ome_zarr_shape(path)
+
+        assert info.axes == ["t", "z", "y", "x"]
+        assert info.voxel_size == (7.0, 7.0, 7.0)
+        np.testing.assert_array_equal(np.asarray(open_volume_lazy(path)[...]), data)
+        np.testing.assert_array_equal(load_volume(path), data.astype(np.float32))
+
+    @pytest.mark.parametrize("zarr_format", ZARR_FORMATS)
+    def test_an_all_numeric_pyramid_recovers_its_declared_metadata(
+        self, tmp_path: Path, zarr_format: int
+    ) -> None:
+        """Numeric paths from a consistently malformed producer still resolve."""
+        level_zero = _ramp((2, 8, 8, 8), start=10_000)
+        level_one = _ramp((2, 4, 4, 4), start=20_000)
+        block = _multiscales(["t", "z", "y", "x"], ["0", "1"], scale=[1, 2, 0.5, 0.5])
+        for index, dataset in enumerate(block[0]["datasets"]):
+            dataset["path"] = index
+
+        path = _bioformats2raw_store(
+            tmp_path / "numeric_pyramid.zarr",
+            zarr_format,
+            [("0", [level_zero, level_one])],
+            image_attrs={"multiscales": block},
+        )
+
+        info = discover_ome_zarr_shape(path)
+
+        assert info.axes == ["t", "z", "y", "x"]
+        assert info.voxel_size == (2.0, 0.5, 0.5)
+        np.testing.assert_array_equal(
+            np.asarray(open_volume_lazy(path)[...]), level_zero
+        )
+        np.testing.assert_array_equal(load_volume(path), level_zero.astype(np.float32))
+
+    @pytest.mark.parametrize("zarr_format", ZARR_FORMATS)
+    @pytest.mark.parametrize(
+        ("declared_path", "array_name"),
+        [(None, "None"), (True, "True"), ([], "[]"), ({}, "{}")],
+        ids=["null", "boolean", "list", "mapping"],
+    )
+    def test_only_string_and_numeric_path_values_are_coercible(
+        self,
+        tmp_path: Path,
+        zarr_format: int,
+        declared_path: Any,
+        array_name: str,
+    ) -> None:
+        """Other malformed values must not become plausible array names."""
+        data = _ramp((2, 4, 4, 4))
+        path = tmp_path / f"non_scalar_path_{zarr_format}_{array_name}.zarr"
+        root = open_group(path, mode="w", zarr_format=zarr_format)
+        image = root.create_group("0")
+        create_array(image, array_name, data=data)
+        block = _multiscales(["t", "z", "y", "x"], [array_name], scale=[1, 9, 9, 9])
+        block[0]["datasets"][0]["path"] = declared_path
+        image.attrs["multiscales"] = block
+
+        info = discover_ome_zarr_shape(path)
+
+        assert info.axes == ["c", "z", "y", "x"]
+        assert info.voxel_size is None
+        np.testing.assert_array_equal(np.asarray(open_volume_lazy(path)[...]), data)
+        np.testing.assert_array_equal(load_volume(path), data.astype(np.float32))
+
+    @pytest.mark.parametrize("zarr_format", ZARR_FORMATS)
+    def test_a_missing_numeric_path_is_reported(
+        self,
+        tmp_path: Path,
+        zarr_format: int,
+        capsys: pytest.CaptureFixture,
+    ) -> None:
+        """Coercion must not make an unresolved malformed declaration silent."""
+        block = _multiscales(["t", "z", "y", "x"], ["7"])
+        block[0]["datasets"][0]["path"] = 7
+        path = _bioformats2raw_store(
+            tmp_path / "missing_numeric_path.zarr",
+            zarr_format,
+            [("0", [_ramp((2, 4, 4, 4))])],
+            image_attrs={"multiscales": block},
+        )
+
+        discover_ome_zarr_shape(path)
+
+        assert "Skipping declared level '0/7'" in capsys.readouterr().out
+
+    @pytest.mark.parametrize("zarr_format", ZARR_FORMATS)
     def test_a_level_declared_one_group_deeper_keeps_its_declarers_metadata(
         self, tmp_path: Path, zarr_format: int
     ) -> None:
