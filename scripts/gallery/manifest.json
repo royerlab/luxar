@@ -59,7 +59,7 @@
       "title": "DESI DR1 Cosmic Web",
       "geometry": "points",
       "category": "astronomy",
-      "script": null,
+      "script": "demo_desi_galaxies.py",
       "dataset": "datasets/demos/desi_galaxies.luxar.zarr",
       "fillTarget": 0.55,
       "viewAngle": {
@@ -113,7 +113,7 @@
       "title": "CT Anatomy Atlas (TotalSegmentator)",
       "geometry": "gsplats",
       "category": "medical",
-      "script": null,
+      "script": "demo_gsplats_3d_ct_totalsegmentator.py",
       "dataset": "datasets/demos/gsplats_3d_ct_totalsegmentator.luxar.zarr",
       "readme": true,
       "orbitUp": "z",
@@ -125,7 +125,7 @@
       "title": "Cryo-EM Giant Virus Capsid",
       "geometry": "gsplats",
       "category": "microscopy",
-      "script": null,
+      "script": "demo_gsplats_3d_cryoem_virus.py",
       "dataset": "datasets/demos/gsplats_3d_cryoem_virus.luxar.zarr"
     },
     {

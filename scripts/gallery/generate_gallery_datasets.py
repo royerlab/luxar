@@ -11,14 +11,15 @@ already be present (typically generated once, then committed/kept locally). Such
 entries are reported as *capture-only* and skipped by the generator — the
 capture spec still picks them up if their dataset is on disk.
 
-A demo whose ``DEMO_META`` declares ``local_data`` (``manual-file`` — the Gaia
-catalog is CC BY-NC, so it is not shipped and has to be placed by hand — or
-``kaggle-auth``, which needs API credentials) exits non-zero wherever that input
-is absent, which used to make the whole run report a hard ``failed`` and return
-1. Such an entry is now *demoted on failure*: it is RUN like any other (so the
-machine that does have the input regenerates its tile on every route, ``--force``
-included), and only a NON-ZERO EXIT is reclassified into the soft *manual-data*
-bucket instead of ``failed``.
+A demo whose ``DEMO_META`` declares machine-local ``local_data``
+(``manual-file`` — the Gaia catalog is CC BY-NC, so it is not shipped and has to
+be placed by hand — ``kaggle-auth``, which needs API credentials, or
+``git-lfs``, whose payload may not have been pulled) exits non-zero wherever that
+input is absent, which used to make the whole run report a hard ``failed`` and
+return 1. Such an entry is now *demoted on failure*: it is RUN like any other
+(so the machine that does have the input regenerates its tile on every route,
+``--force`` included), and only a NON-ZERO EXIT is reclassified into the soft
+*manual-data* bucket instead of ``failed``.
 
 A demo listed in ``UNBUILDABLE_IDS`` is skipped WITHOUT being run at all — not
 demoted after the fact — because there is no machine on which it currently
@@ -68,7 +69,7 @@ GEN_TIMEOUT_S = 3600
 # Provisioning modes whose input cannot be fetched by the demo itself, so a
 # non-zero exit is more likely to mean "this machine doesn't have it" than "the
 # demo is broken". Mirrors the pair `luxar demo run-all` skips outright.
-LOCAL_INPUT_MODES = ("manual-file", "kaggle-auth")
+LOCAL_INPUT_MODES = ("manual-file", "kaggle-auth", "git-lfs")
 
 # Manifest ids that CANNOT currently be built on any machine, mapped to why.
 # Soft-skipped without spawning anything, the way an un-fetchable `local_data`
@@ -100,11 +101,10 @@ def dataset_exists(entry: dict[str, Any]) -> bool:
 def needs_local_input(entry: dict[str, Any]) -> str | None:
     """The entry's demo's ``local_data`` mode, if it is one of the un-fetchable ones.
 
-    Returns ``"manual-file"`` / ``"kaggle-auth"``, or ``None`` for everything else
-    — including ``git-lfs``, which `git lfs pull` provides and whose ~20 demos
-    must keep failing hard. Read straight from the demo's ``DEMO_META`` by AST
-    (never importing it): the gallery manifest carries no such field, and the demo
-    file is the source of truth the ``luxar demo`` commands already use. A
+    Returns ``"manual-file"`` / ``"kaggle-auth"`` / ``"git-lfs"``, or ``None``
+    for everything else. Read straight from the demo's ``DEMO_META`` by AST
+    (never importing it): the gallery manifest carries no such field, and the
+    demo file is the source of truth the ``luxar demo`` commands already use. A
     malformed or missing block is *not* this predicate's business — report
     ``None`` and let the normal generation path fail loudly in its own vocabulary.
     """

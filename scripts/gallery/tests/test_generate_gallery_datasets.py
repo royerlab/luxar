@@ -7,17 +7,17 @@ explicit path argument OVERRIDES ``testpaths``. Run in isolation with:
     hatch run pytest scripts/gallery/tests/test_generate_gallery_datasets.py -q
 
 What is guarded is the *demote-on-failure* rule. A demo whose ``DEMO_META``
-declares an un-fetchable ``local_data`` (``manual-file`` / ``kaggle-auth``) exits 1
-wherever that input is absent, which used to make the whole gallery build report a
-hard failure and return 1 — on a fresh clone that meant ``make generate-gallery``
-aborted. Such an entry is now still RUN (so the machine that has the input keeps
-regenerating its tile, ``--force`` included) and only demoted to the soft
-``manual-data`` bucket if it actually fails. The scoping is the delicate part: a
-``git-lfs`` demo must keep failing hard, and a ``timeout`` / ``no-output`` / death
-by signal stays hard even for a demoted mode.
+declares machine-local ``local_data`` (``manual-file`` / ``kaggle-auth`` /
+``git-lfs``) exits 1 wherever that input is absent, which used to make the whole
+gallery build report a hard failure and return 1 — on a fresh clone that meant
+``make generate-gallery`` aborted. Such an entry is now still RUN (so the machine
+that has the input keeps regenerating its tile, ``--force`` included) and only
+demoted to the soft ``manual-data`` bucket if it actually fails. The scoping is
+the delicate part: a ``timeout`` / ``no-output`` / death by signal stays hard even
+for a demoted mode.
 
-Everything runs against a synthetic manifest + synthetic demo files: the subject
-is the rule, not today's contents of ``scripts/gallery/manifest.json``.
+Behavioral cases run against a synthetic manifest + synthetic demo files; one
+separate invariant test reads the real manifest to keep ``script: null`` honest.
 """
 
 from __future__ import annotations
@@ -183,20 +183,19 @@ def _run_main(monkeypatch: pytest.MonkeyPatch, *argv: str) -> int:
     return gen.main()
 
 
-@pytest.mark.parametrize("mode", ["manual-file", "kaggle-auth"])
+@pytest.mark.parametrize("mode", ["manual-file", "kaggle-auth", "git-lfs"])
 def test_a_failing_local_input_demo_is_demoted_not_failed(
     tmp_path, monkeypatch, capsys, mode
 ) -> None:
-    # Both modes are un-fetchable by the demo itself. `kaggle-auth` matters as
-    # much as `manual-file`: the manifest has two Kaggle entries, so a fresh
-    # clone returned 1 (and `make generate-gallery` aborted) even after the
-    # manual-file case was handled.
+    # Each mode can legitimately be absent on the machine running the gallery:
+    # hand-placed files, Kaggle credentials, and Git LFS payloads are all
+    # provisioned outside the demo itself.
     calls = _setup(tmp_path, monkeypatch, [("needs_input", mode, "fail")])
 
     code = _run_main(monkeypatch)
     out = capsys.readouterr().out
 
-    assert code == 0, "a missing hand-placed input must not red the whole build"
+    assert code == 0, "a missing machine-local input must not red the whole build"
     assert "manual-data" in out
     assert "failed" not in out  # the summary lists only non-empty buckets
     # Demoted, not pre-skipped: the demo really ran…
@@ -254,32 +253,16 @@ def test_a_local_input_demo_that_succeeds_is_generated(
     assert "manual-data" not in out
 
 
-def test_a_git_lfs_demo_still_fails_hard(tmp_path, monkeypatch, capsys) -> None:
-    # The scoping test. `git-lfs` data is provisioned by `git lfs pull`, so a
-    # failure there is a real problem — widening the predicate to "declares any
-    # local_data" would silently green ~20 demos that produced no tile.
-    # The id deliberately SHARES the "input" token with the demoted entries'
-    # ids, so an id heuristic in place of the DEMO_META read cannot pass here.
-    calls = _setup(tmp_path, monkeypatch, [("needs_input_lfs", "git-lfs", "fail")])
-
-    code = _run_main(monkeypatch)
-    out = capsys.readouterr().out
-
-    assert calls == ["demo_needs_input_lfs.py"]
-    assert code == 1
-    assert "failed" in out
-    assert "manual-data" not in out
-
-
 @pytest.mark.parametrize(
     "outcome,bucket", [("timeout", "timeout"), ("silent", "no-output")]
 )
+@pytest.mark.parametrize("mode", ["manual-file", "kaggle-auth", "git-lfs"])
 def test_timeout_and_no_output_stay_hard_for_a_local_input_demo(
-    tmp_path, monkeypatch, capsys, outcome, bucket
+    tmp_path, monkeypatch, capsys, outcome, bucket, mode
 ) -> None:
     # Demotion is scoped to a non-zero exit. A demo that hangs, or that exits 0
     # having written nothing, is a bug in the demo — not a missing input.
-    _setup(tmp_path, monkeypatch, [("needs_input", "manual-file", outcome)])
+    _setup(tmp_path, monkeypatch, [("needs_input", mode, outcome)])
 
     code = _run_main(monkeypatch)
     out = capsys.readouterr().out
@@ -289,7 +272,7 @@ def test_timeout_and_no_output_stay_hard_for_a_local_input_demo(
     assert "manual-data" not in out
 
 
-@pytest.mark.parametrize("mode", ["manual-file", "kaggle-auth"])
+@pytest.mark.parametrize("mode", ["manual-file", "kaggle-auth", "git-lfs"])
 def test_a_signal_killed_local_input_demo_stays_hard(
     tmp_path, monkeypatch, capsys, mode
 ) -> None:
@@ -309,6 +292,22 @@ def test_a_signal_killed_local_input_demo_stays_hard(
     assert "failed" in out
     assert "manual-data" not in out
     assert "appears not to have" not in out
+
+
+def test_capture_only_entries_have_no_runnable_demo_on_disk() -> None:
+    """``script: null`` must mean the demo is genuinely absent from this branch."""
+    from luxar.demos.registry import extract_demo_meta
+
+    on_disk = {
+        extract_demo_meta(path)["key"]: path.name
+        for path in gen.DEMOS_DIR.glob("demo_*.py")
+    }
+    for entry in gen.load_manifest():
+        if entry.get("script") is None:
+            assert entry["id"] not in on_disk, (
+                f"{entry['id']}: manifest says capture-only, but "
+                f"{on_disk[entry['id']]} is on disk and can generate the dataset"
+            )
 
 
 def test_a_present_local_input_entry_reports_already_present(
