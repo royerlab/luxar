@@ -570,8 +570,6 @@ def resolve_batch_floor(
     spatial_shape: Optional[Tuple[int, ...]] = None,
     denoise_h_values: Optional[dict[int, float]] = None,
     denoise_params: Optional[dict[str, Any]] = None,
-    timepoint_indices: Optional[List[int]] = None,
-    channel_indices: Optional[List[int]] = None,
 ) -> "Tuple[Optional[float], Optional[str | float]]":
     """Resolve the batch's background floor ONCE, globally for the whole run.
 
@@ -657,23 +655,14 @@ def resolve_batch_floor(
 
     pairs = _floor_resolution_pairs(n_timepoints, n_channels, denoise_h_values)
     budget = max(1, int(FLOOR_SAMPLE_BUDGET_VOXELS) // len(pairs))
-    resolved_pairs = [
-        (
-            timepoint_indices[t] if timepoint_indices is not None else t,
-            channel_indices[c] if channel_indices is not None else c,
-        )
-        if denoise_h_values is None
-        else (t, c)
-        for t, c in pairs
-    ]
-    sampled_times = sorted({t for t, _ in resolved_pairs})
-    sampled_channels = sorted({c for _, c in resolved_pairs})
+    sampled_times = sorted({t for t, _ in pairs})
+    sampled_channels = sorted({c for _, c in pairs})
     levels: List[Optional[float]] = []
     with asection(
         f"Resolving background floor '{floor_spec}' (minimum over "
         f"{len(pairs)} slices; sampled T={sampled_times}, C={sampled_channels})"
     ):
-        for t, c in resolved_pairs:
+        for t, c in pairs:
             view = _pinned_slice_volume(
                 input_path,
                 channel=c,
