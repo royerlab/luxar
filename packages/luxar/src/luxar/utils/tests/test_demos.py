@@ -778,6 +778,30 @@ class TestExtractBundleAndLoad:
                 b, "b.zip", tmp_path / "cache", ["nope.zip"], validate_lfs=False
             )
 
+    def test_a_missing_member_is_the_ROUTABLE_error_not_a_bare_one(
+        self, tmp_path, monkeypatch
+    ):
+        """It must be distinguishable from the faults beside it (#1618).
+
+        The bundle itself resolved and verified; only a per-frame name missed,
+        and those names are derived from the caller's own flags (NEXRAD's
+        ``--dbz-floor`` / ``--splats`` / ``--grid-m``), so recomputing is right.
+        The demo therefore catches this SPECIFIC type — if it degrades back to a
+        plain ``FileNotFoundError`` the demo either crashes on a legitimate
+        non-default run, or has to widen its catch and start swallowing the
+        checksum faults ``DatasetUnavailable`` exists to keep out.
+        """
+        from luxar.utils import demos as du
+
+        self._load_stub(monkeypatch)
+        b = tmp_path / "b.zip"
+        self._bundle(b, {"f0.zip": b"zero"})
+        with pytest.raises(du.BundleMemberNotFound):
+            du._extract_bundle_and_load(
+                b, "b.zip", tmp_path / "cache", ["nope.zip"], validate_lfs=False
+            )
+        assert issubclass(du.BundleMemberNotFound, FileNotFoundError)
+
     def test_a_traversal_member_name_is_refused(self, tmp_path, monkeypatch):
         from luxar.utils import demos as du
 
