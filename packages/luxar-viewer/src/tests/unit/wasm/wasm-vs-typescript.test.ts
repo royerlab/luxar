@@ -141,9 +141,9 @@ describe('WASM vs TypeScript Comparison', () => {
         wT2
       );
       expect(wCount).toBe(tsCount);
-      expect(arraysEqual(wVis, tsVis)).toBe(true);
-      expect(arraysAlmostEqual(wT1, tsT1)).toBe(true);
-      expect(arraysAlmostEqual(wT2, tsT2)).toBe(true);
+      expect(Array.from(tsVis)).toEqual(Array.from(wVis));
+      expect(Array.from(tsT1)).toEqual(Array.from(wT1));
+      expect(Array.from(tsT2)).toEqual(Array.from(wT2));
     });
   });
 
@@ -1052,6 +1052,140 @@ describe('WASM vs TypeScript Comparison', () => {
   // LINES CLIPPING MODULE
   // ============================================================================
   describe('lines_clipping functions', () => {
+    it.skipIf(!wasmFilesExist)('agrees exactly at a sub-ulp f32 slab boundary', () => {
+      const slice = Math.fround(1.0);
+      const tol = Math.fround(0.1);
+      const exactBound = slice - tol;
+      const f32Bound = Math.fround(exactBound);
+
+      expect(f32Bound).toBeLessThan(exactBound);
+
+      const p1 = new Float32Array([0, 0, 0, f32Bound]);
+      const p2 = new Float32Array([1, 1, 1, slice]);
+      const slicePos = new Float32Array([0, 0, 0, slice]);
+      const tolerance = new Float32Array([1e10, 1e10, 1e10, tol]);
+      const displayDims = new Uint32Array([0, 1, 2]);
+
+      const tsSingle = tsModule.clip_segment_single(p1, p2, slicePos, tolerance, displayDims, 4);
+      const wasmSingle = wasmModule!.clip_segment_single(
+        p1,
+        p2,
+        slicePos,
+        tolerance,
+        displayDims,
+        4
+      );
+      expect(Array.from(tsSingle)).toEqual(Array.from(wasmSingle));
+
+      const positions = new Float32Array([...p1, ...p2]);
+      const segments = new Uint32Array([0, 1]);
+      const tsVisibility = new Uint8Array(1);
+      const tsT1 = new Float32Array(1);
+      const tsT2 = new Float32Array(1);
+      const wasmVisibility = new Uint8Array(1);
+      const wasmT1 = new Float32Array(1);
+      const wasmT2 = new Float32Array(1);
+
+      const tsCount = tsModule.clip_segments_batch(
+        positions,
+        segments,
+        slicePos,
+        tolerance,
+        displayDims,
+        4,
+        1,
+        tsVisibility,
+        tsT1,
+        tsT2
+      );
+      const wasmCount = wasmModule!.clip_segments_batch(
+        positions,
+        segments,
+        slicePos,
+        tolerance,
+        displayDims,
+        4,
+        1,
+        wasmVisibility,
+        wasmT1,
+        wasmT2
+      );
+
+      expect(tsCount).toBe(wasmCount);
+      expect(Array.from(tsVisibility)).toEqual(Array.from(wasmVisibility));
+      expect(Array.from(tsT1)).toEqual(Array.from(wasmT1));
+      expect(Array.from(tsT2)).toEqual(Array.from(wasmT2));
+    });
+
+    it.skipIf(!wasmFilesExist)('matches f32 reciprocal and t-range accumulation exactly', () => {
+      const positions = new Float32Array([
+        0, 0, 0, -0.2653183341026306, -0.5240607261657715, 1, 1, 1, 0.3167182207107544,
+        -0.13231058418750763,
+      ]);
+      const segments = new Uint32Array([0, 1]);
+      const slicePos = new Float32Array(5);
+      const tolerance = new Float32Array([
+        1e10, 1e10, 1e10, 0.23722794651985168, 0.35342466831207275,
+      ]);
+      const displayDims = new Uint32Array([0, 1, 2]);
+      const p1 = positions.subarray(0, 5);
+      const p2 = positions.subarray(5, 10);
+      const dv = Math.fround(p2[4] - p1[4]);
+      const numerator = Math.fround(-tolerance[4] - p1[4]);
+      const rustOrderT = Math.fround(numerator * Math.fround(1.0 / dv));
+      const directDivisionT = Math.fround((-tolerance[4] - p1[4]) / (p2[4] - p1[4]));
+
+      expect(rustOrderT).not.toBe(directDivisionT);
+
+      const tsSingle = tsModule.clip_segment_single(p1, p2, slicePos, tolerance, displayDims, 5);
+      const wasmSingle = wasmModule!.clip_segment_single(
+        p1,
+        p2,
+        slicePos,
+        tolerance,
+        displayDims,
+        5
+      );
+      expect(Array.from(tsSingle)).toEqual(Array.from(wasmSingle));
+
+      const tsVisibility = new Uint8Array(1);
+      const tsT1 = new Float32Array(1);
+      const tsT2 = new Float32Array(1);
+      const wasmVisibility = new Uint8Array(1);
+      const wasmT1 = new Float32Array(1);
+      const wasmT2 = new Float32Array(1);
+
+      const tsCount = tsModule.clip_segments_batch(
+        positions,
+        segments,
+        slicePos,
+        tolerance,
+        displayDims,
+        5,
+        1,
+        tsVisibility,
+        tsT1,
+        tsT2
+      );
+      const wasmCount = wasmModule!.clip_segments_batch(
+        positions,
+        segments,
+        slicePos,
+        tolerance,
+        displayDims,
+        5,
+        1,
+        wasmVisibility,
+        wasmT1,
+        wasmT2
+      );
+
+      expect(tsCount).toBe(wasmCount);
+      expect(Array.from(tsVisibility)).toEqual(Array.from(wasmVisibility));
+      expect(Array.from(tsT1)).toEqual(Array.from(wasmT1));
+      expect(Array.from(tsT2)).toEqual(Array.from(wasmT2));
+    });
+
     it.skipIf(!wasmFilesExist)('clip_segment_single should match', () => {
       const p1 = new Float32Array([0, 0, 0, 0]);
       const p2 = new Float32Array([10, 10, 10, 10]);
@@ -1069,7 +1203,7 @@ describe('WASM vs TypeScript Comparison', () => {
         4
       );
 
-      expect(arraysAlmostEqual(wasmResult, tsResult)).toBe(true);
+      expect(Array.from(tsResult)).toEqual(Array.from(wasmResult));
     });
 
     it.skipIf(!wasmFilesExist)('clip_segments_batch should match', () => {
@@ -1112,17 +1246,20 @@ describe('WASM vs TypeScript Comparison', () => {
       );
 
       expect(wasmCount).toBe(tsCount);
-      expect(arraysEqual(wasmVisibility, tsVisibility)).toBe(true);
-      expect(arraysAlmostEqual(wasmT1, tsT1)).toBe(true);
-      expect(arraysAlmostEqual(wasmT2, tsT2)).toBe(true);
+      expect(Array.from(tsVisibility)).toEqual(Array.from(wasmVisibility));
+      expect(Array.from(tsT1)).toEqual(Array.from(wasmT1));
+      expect(Array.from(tsT2)).toEqual(Array.from(wasmT2));
     });
 
     it.skipIf(!wasmFilesExist)('interpolate_clipped_positions should match', () => {
-      const positions = new Float32Array([0, 0, 0, 0, 10, 20, 30, 10]);
+      const positions = new Float32Array([
+        -4.11237096786499, 3.7138946056365967, -2.3870370388031006, 0, 0.3802664279937744,
+        -4.748578071594238, 1.6990193128585815, 0,
+      ]);
       const segments = new Uint32Array([0, 1]);
       const visibility = new Uint8Array([1]);
-      const t1Params = new Float32Array([0.25]);
-      const t2Params = new Float32Array([0.75]);
+      const t1Params = new Float32Array([0.8854133486747742]);
+      const t2Params = new Float32Array([0.5823075771331787]);
       const displayDims = new Uint32Array([0, 1, 2]);
 
       const tsStart = new Float32Array(3);
@@ -1156,21 +1293,21 @@ describe('WASM vs TypeScript Comparison', () => {
       );
 
       expect(wasmCount).toBe(tsCount);
-      expect(arraysAlmostEqual(wasmStart, tsStart)).toBe(true);
-      expect(arraysAlmostEqual(wasmEnd, tsEnd)).toBe(true);
+      expect(Array.from(tsStart)).toEqual(Array.from(wasmStart));
+      expect(Array.from(tsEnd)).toEqual(Array.from(wasmEnd));
     });
 
     it.skipIf(!wasmFilesExist)('interpolate_scalars_batch should match', () => {
-      const values = new Float32Array([0.1, 0.5, 0.9]);
-      const segments = new Uint32Array([0, 1, 1, 2]);
-      const visibility = new Uint8Array([1, 1]);
-      const t1Params = new Float32Array([0.0, 0.5]);
-      const t2Params = new Float32Array([1.0, 1.0]);
+      const values = new Float32Array([-4.11237096786499, 0.3802664279937744]);
+      const segments = new Uint32Array([0, 1]);
+      const visibility = new Uint8Array([1]);
+      const t1Params = new Float32Array([0.8854133486747742]);
+      const t2Params = new Float32Array([0.5823075771331787]);
 
-      const tsStart = new Float32Array(2);
-      const tsEnd = new Float32Array(2);
-      const wasmStart = new Float32Array(2);
-      const wasmEnd = new Float32Array(2);
+      const tsStart = new Float32Array(1);
+      const tsEnd = new Float32Array(1);
+      const wasmStart = new Float32Array(1);
+      const wasmEnd = new Float32Array(1);
 
       const tsCount = tsModule.interpolate_scalars_batch(
         values,
@@ -1178,7 +1315,7 @@ describe('WASM vs TypeScript Comparison', () => {
         visibility,
         t1Params,
         t2Params,
-        2,
+        1,
         tsStart,
         tsEnd
       );
@@ -1188,27 +1325,30 @@ describe('WASM vs TypeScript Comparison', () => {
         visibility,
         t1Params,
         t2Params,
-        2,
+        1,
         wasmStart,
         wasmEnd
       );
 
       expect(wasmCount).toBe(tsCount);
-      expect(arraysAlmostEqual(wasmStart, tsStart)).toBe(true);
-      expect(arraysAlmostEqual(wasmEnd, tsEnd)).toBe(true);
+      expect(Array.from(tsStart)).toEqual(Array.from(wasmStart));
+      expect(Array.from(tsEnd)).toEqual(Array.from(wasmEnd));
     });
 
     it.skipIf(!wasmFilesExist)('interpolate_colors_batch should match', () => {
-      const colors = new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]);
-      const segments = new Uint32Array([0, 1, 1, 2]);
-      const visibility = new Uint8Array([1, 1]);
-      const t1Params = new Float32Array([0.0, 0.5]);
-      const t2Params = new Float32Array([0.5, 1.0]);
+      const colors = new Float32Array([
+        -4.11237096786499, 3.7138946056365967, -2.3870370388031006, 0.3802664279937744,
+        -4.748578071594238, 1.6990193128585815,
+      ]);
+      const segments = new Uint32Array([0, 1]);
+      const visibility = new Uint8Array([1]);
+      const t1Params = new Float32Array([0.8854133486747742]);
+      const t2Params = new Float32Array([0.5823075771331787]);
 
-      const tsStart = new Float32Array(6);
-      const tsEnd = new Float32Array(6);
-      const wasmStart = new Float32Array(6);
-      const wasmEnd = new Float32Array(6);
+      const tsStart = new Float32Array(3);
+      const tsEnd = new Float32Array(3);
+      const wasmStart = new Float32Array(3);
+      const wasmEnd = new Float32Array(3);
 
       const tsCount = tsModule.interpolate_colors_batch(
         colors,
@@ -1216,7 +1356,7 @@ describe('WASM vs TypeScript Comparison', () => {
         visibility,
         t1Params,
         t2Params,
-        2,
+        1,
         tsStart,
         tsEnd
       );
@@ -1226,14 +1366,14 @@ describe('WASM vs TypeScript Comparison', () => {
         visibility,
         t1Params,
         t2Params,
-        2,
+        1,
         wasmStart,
         wasmEnd
       );
 
       expect(wasmCount).toBe(tsCount);
-      expect(arraysAlmostEqual(wasmStart, tsStart)).toBe(true);
-      expect(arraysAlmostEqual(wasmEnd, tsEnd)).toBe(true);
+      expect(Array.from(tsStart)).toEqual(Array.from(wasmStart));
+      expect(Array.from(tsEnd)).toEqual(Array.from(wasmEnd));
     });
 
     it.skipIf(!wasmFilesExist)('calculate_segment_lengths should match', () => {
@@ -1847,7 +1987,7 @@ describe('WASM vs TypeScript Comparison', () => {
       }
 
       const slicePos = new Float32Array(ndim).fill(0);
-      const tolerance = new Float32Array([1e10, 1e10, 1e10, 1.0, 1.0]);
+      const tolerance = new Float32Array([1e10, 1e10, 1e10, 2.5, 2.5]);
       const displayDims = new Uint32Array([0, 1, 2]);
 
       const tsVisibility = new Uint8Array(numSegments);
@@ -1882,10 +2022,18 @@ describe('WASM vs TypeScript Comparison', () => {
         wasmT2
       );
 
+      const clippedCount = tsVisibility.reduce(
+        (count, visible, index) =>
+          count + (visible !== 0 && (tsT1[index] !== 0 || tsT2[index] !== 1) ? 1 : 0),
+        0
+      );
+
+      expect(tsCount).toBe(253);
+      expect(clippedCount).toBe(64);
       expect(wasmCount).toBe(tsCount);
-      expect(arraysEqual(wasmVisibility, tsVisibility)).toBe(true);
-      expect(arraysAlmostEqual(wasmT1, tsT1)).toBe(true);
-      expect(arraysAlmostEqual(wasmT2, tsT2)).toBe(true);
+      expect(Array.from(tsVisibility)).toEqual(Array.from(wasmVisibility));
+      expect(Array.from(tsT1)).toEqual(Array.from(wasmT1));
+      expect(Array.from(tsT2)).toEqual(Array.from(wasmT2));
     });
 
     // The hand-written 2D cases above pin one matrix each. This sweeps many
