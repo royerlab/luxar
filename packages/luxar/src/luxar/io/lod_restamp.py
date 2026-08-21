@@ -1131,6 +1131,11 @@ def restamp_lod_store(
                         "already current."
                     )
 
+            if dry_run and plans:
+                attrs = dict(root.attrs)
+                if attrs.get("type") != "scene" and "content_hash" not in attrs:
+                    report.content_hash_status = HASH_UNSTAMPABLE
+
             # Only when something CHANGED: a clean no-op store must not have its
             # hash moved, and a dry run must not write at all.
             if not dry_run and plans:

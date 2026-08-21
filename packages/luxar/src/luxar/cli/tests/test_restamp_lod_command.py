@@ -247,6 +247,13 @@ def test_a_store_with_no_digest_to_restamp_exits_one(
     consolidate(root)
     close(root)
 
+    dry_result = runner.invoke(app, ["restamp-lod", str(store), "--dry-run"])
+
+    assert dry_result.exit_code == 1, dry_result.output
+    assert "no digest to restamp" in dry_result.output
+    assert "Nothing was written" in dry_result.output
+    assert _node_attrs(store)["part_0"]["selector"] == LEGACY_LOD_SELECTOR
+
     result = runner.invoke(app, ["restamp-lod", str(store)])
 
     assert result.exit_code == 1, result.output
