@@ -39,7 +39,7 @@ from ..compositing import (
     validate_lines_channels_before_split,
 )
 from ..dim_order import apply_dim_order_positions
-from ..partition import reject_mismatched_partition_parent
+from ..partition import is_requested, reject_mismatched_partition_parent
 
 if TYPE_CHECKING:
     from ...node import Node
@@ -94,7 +94,7 @@ def add_lines_impl(
     # renders at the current zoom, additive describes HOW each level streams in.
     # Passing substitutive_lod alone ladders every level by default; pass
     # additive_lod=False to opt out. See lod/group.py's "Composed axes" section.
-    if substitutive_lod is not None and partition is not None:
+    if is_requested(substitutive_lod) and is_requested(partition):
         raise ValueError(
             "partition= and substitutive_lod= cannot be combined yet "
             "(Points supports a global overview LOD above partitioned fine detail; "
