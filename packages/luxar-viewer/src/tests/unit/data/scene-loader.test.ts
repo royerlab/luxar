@@ -27,6 +27,7 @@ import type { ViewStateQueue } from '../../../data/scene-loader/view-state/view-
 import { releaseDepthSortNode } from '../../../rendering/depth-sort-coordinator';
 import * as THREE from 'three';
 import { getPointTexture } from '../../../rendering/point-geometry';
+import { resolveLinePrimitiveForNode } from '../../../types/line-primitive';
 import * as zarr from 'zarrita';
 
 // THREE is NOT mocked here. The classes SceneLoader touches —
@@ -62,6 +63,15 @@ vi.mock('../../../rendering/material-manager', () => ({
       userData: {},
       updateCameraParams: vi.fn(),
     }),
+    getLineMaterial: vi.fn().mockReturnValue({
+      uniforms: {},
+      vertexShader: '',
+      fragmentShader: '',
+      userData: {},
+      updateCameraParams: vi.fn(),
+    }),
+    createLinePickingMaterial: vi.fn().mockReturnValue({ userData: {} }),
+    register: vi.fn(),
   },
   // The barrel re-exports the soft-dispose sentinel; supply a stand-in
   // Symbol so any barrel consumer resolves the import in jsdom even
@@ -231,6 +241,31 @@ describe('SceneLoader', () => {
 
       // Verify scene graph was built
       expect(mockRootLoc.resolve).toHaveBeenCalled();
+    });
+
+    it('installs aggregate line load before constructing sibling materials', async () => {
+      mockStore.contents.mockResolvedValue([
+        { path: '/', kind: 'group' },
+        { path: '/lines_a', kind: 'group' },
+        { path: '/lines_b', kind: 'group' },
+      ]);
+      (zarr.open as any).mockImplementation((loc: any) =>
+        Promise.resolve(
+          loc === mockRootLoc ? mockZarrGroup : { attrs: { type: 'lines', n_segments: 1_200_000 } }
+        )
+      );
+
+      const { materialManager } = await import('../../../rendering/material-manager');
+      const getLineMaterial = materialManager.getLineMaterial as ReturnType<typeof vi.fn>;
+
+      await sceneLoader.loadScene('http://localhost:8000/test.zarr');
+
+      expect(resolveLinePrimitiveForNode({ nSegments: 100 })).toBe('screen-space');
+      expect(getLineMaterial).toHaveBeenCalledTimes(2);
+      expect(getLineMaterial.mock.calls.map(([config]) => config.primitive)).toEqual([
+        'screen-space',
+        'screen-space',
+      ]);
     });
 
     it('should detect and log extend_to_all dimensions', async () => {
