@@ -38,6 +38,7 @@ import {
   composeAttrs,
   collectAncestorNodes,
   collectDataDescendants,
+  getEffectiveAttrs,
   type ComposableAttrs,
   type EffectiveAttrs,
 } from '../../data/attrs-composer';
@@ -700,13 +701,18 @@ export class LayerApplyEngine {
 
     let colormapInEffect = false;
     let anyMaterialReached = false;
-    const tex = layer.colormap ? getColormapTexture(layer.colormap) : null;
     for (const leaf of leaves) {
       const obj = this.getMesh(leaf.path);
       if (!obj) continue;
       const mat = this.getLeafMaterial(obj);
       if (!mat || !mat.updateColormapTexture) continue;
       anyMaterialReached = true;
+      const tex = layer.colormap
+        ? getColormapTexture(
+            layer.colormap,
+            getEffectiveAttrs(sceneGraph, leaf.path).customLutBytes
+          )
+        : null;
       if (layer.colormap && tex) {
         // C1 fail-closed guard: enabling USE_COLORMAP requires real
         // scalar data behind the geometry (the `userData.hasScalars`

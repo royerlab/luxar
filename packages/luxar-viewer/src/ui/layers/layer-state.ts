@@ -6,7 +6,7 @@
  */
 
 import type { SceneNode } from '../../data/data-loader-types';
-import { getEffectiveAttrs } from '../../data/attrs-composer';
+import { collectDataDescendants, getEffectiveAttrs } from '../../data/attrs-composer';
 import type { BlendingMode } from '../../types/blending';
 import type { GeometryTypeName, NodeKind } from '../../types/format-contract';
 import { defaultBlendingMode, isGeometryType } from '../../types/geometry-capabilities';
@@ -198,8 +198,8 @@ function deriveMeshAttrFromDescendants(node: SceneNode, attr: string): number | 
  *   which windows to gain 16.7 / offset −12 and renders as saturated BLUE.
  *   So direct colour starts at the identity window.
  */
-function initialDisplayRange(node: SceneNode): [number, number] {
-  if (!usesColormap(node)) return [0, 1];
+function initialDisplayRange(node: SceneNode, scalarWindow: boolean): [number, number] {
+  if (!scalarWindow) return [0, 1];
   const scalarRange = (node.attrs.scalar_data_range || node.attrs.amplitude_data_range) as
     [number, number] | undefined;
   return scalarRange ?? deriveScalarRangeFromDescendants(node) ?? [0, 1];
@@ -430,38 +430,41 @@ export class LayerStateManager {
       if (isLayerType) {
         const name = node.path.split('/').pop() || node.path;
 
-        // The window the layer starts at. Colormapped layers window a scalar
-        // (from this node or, for a composite kind=lod / kind=partition group,
-        // its finest descendant leaf); direct-colour layers window authored RGB
-        // and so start at the identity [0, 1] — see `initialDisplayRange`.
         const ampRange = node.attrs.amplitude_data_range as [number, number] | undefined;
         const scalarRange = node.attrs.scalar_data_range as [number, number] | undefined;
-        const dataRange = initialDisplayRange(node);
 
-        // Colormap support — groups and gsplats inherit palettes directly;
-        // points / lines / mesh inherit one only when they have scalars.
+        // Colormap support — gsplats inherit palettes directly; points / lines /
+        // mesh inherit one only when they have scalars. A group inherits only
+        // when at least one descendant can consume the palette.
         // Gsplats only support a colormap when they actually have scalar
         // data (`has_scalars`) or an authored `colormap`; a bare gsplats
         // node with no scalars must NOT advertise colormap support, or
         // the UI offers a no-op colormap dropdown.
-        // kind=lod / kind=partition groups are composite containers; the
-        // colormap applies to descendants via composition just like a
-        // plain group.
-        // The wrapper's own attr, else the (uniform) palette its descendants
-        // carry — `scalarWindow` below is descendant-aware, and a `colormap`
-        // that isn't would misreport an actively colormapped partition/lod
-        // layer as "(direct colors)" in the dropdown and hide it from the
-        // legend.
+        const groupCanUseInheritedColormap =
+          node.type === 'group' &&
+          collectDataDescendants(node).some(
+            (descendant) => descendant.type === 'gsplats' || !!descendant.attrs.has_scalars
+          );
         const canUseInheritedColormap =
-          node.type === 'group' || node.type === 'gsplats' || !!node.attrs.has_scalars;
-        const composedColormap = canUseInheritedColormap
+          groupCanUseInheritedColormap || node.type === 'gsplats' || !!node.attrs.has_scalars;
+        const inheritedColormap = canUseInheritedColormap
           ? getEffectiveAttrs(root, node.path).colormap
-          : (node.attrs.colormap as string | undefined);
-        const colormap = composedColormap || deriveColormapFromDescendants(node);
+          : undefined;
+        const colormap =
+          (node.attrs.colormap as string | undefined) ||
+          deriveColormapFromDescendants(node) ||
+          inheritedColormap;
         const scalarWindow = !!colormap || usesColormap(node);
-        const supportsColormap = node.type === 'group' || !!node.attrs.has_scalars || !!colormap;
+        const supportsColormap =
+          groupCanUseInheritedColormap || !!node.attrs.has_scalars || !!colormap;
         const colormapScalarRange =
           scalarRange || ampRange || deriveScalarRangeFromDescendants(node);
+
+        // The window the layer starts at. Colormapped layers window a scalar
+        // (from this node or, for a composite kind=lod / kind=partition group,
+        // its finest descendant leaf); direct-colour layers window authored RGB
+        // and so start at the identity [0, 1] — see `initialDisplayRange`.
+        const dataRange = initialDisplayRange(node, scalarWindow);
 
         // Initialize display range from existing intensity/offset if present,
         // otherwise default to full data range

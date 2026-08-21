@@ -185,6 +185,86 @@ describe('LayerStateManager', () => {
     expect(layer.colormap).toBe('plasma');
     expect(layer.scalarWindow).toBe(true);
     expect(layer.scalarDataRange).toEqual([2, 8]);
+    expect(layer.displayMin).toBe(2);
+    expect(layer.displayMax).toBe(8);
+    expect(layer.dataMin).toBe(2);
+    expect(layer.dataMax).toBe(8);
+  });
+
+  it('prefers a wrapper descendant palette over an inherited ancestor palette', () => {
+    const graph: SceneNode = {
+      path: '',
+      type: 'scene',
+      attrs: {},
+      hasSpatialIndex: false,
+      children: [
+        {
+          path: 'outer',
+          type: 'group',
+          attrs: { colormap: 'plasma' },
+          hasSpatialIndex: false,
+          children: [
+            {
+              path: 'outer/partition',
+              type: 'group',
+              attrs: { layer: true, kind: 'partition', display_type: 'gsplats' },
+              hasSpatialIndex: false,
+              children: [
+                {
+                  path: 'outer/partition/part_0',
+                  type: 'gsplats',
+                  attrs: { colormap: 'viridis', amplitude_data_range: [2, 8] },
+                  hasSpatialIndex: true,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+
+    mgr.initFromSceneGraph(graph);
+    expect(mgr.getLayer('outer/partition')!.colormap).toBe('viridis');
+  });
+
+  it('does not report an inherited palette on a scalarless points wrapper layer', () => {
+    const graph: SceneNode = {
+      path: '',
+      type: 'scene',
+      attrs: {},
+      hasSpatialIndex: false,
+      children: [
+        {
+          path: 'outer',
+          type: 'group',
+          attrs: { colormap: 'plasma' },
+          hasSpatialIndex: false,
+          children: [
+            {
+              path: 'outer/partition',
+              type: 'group',
+              attrs: { layer: true, kind: 'partition', display_type: 'points' },
+              hasSpatialIndex: false,
+              children: [
+                {
+                  path: 'outer/partition/part_0',
+                  type: 'points',
+                  attrs: { color_data_range: [0, 255] },
+                  hasSpatialIndex: true,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+
+    mgr.initFromSceneGraph(graph);
+    const layer = mgr.getLayer('outer/partition')!;
+    expect(layer.colormap).toBeUndefined();
+    expect(layer.scalarWindow).toBe(false);
+    expect(layer.supportsColormap).toBe(false);
+    expect([layer.dataMin, layer.dataMax]).toEqual([0, 255]);
   });
 
   it('does not report an inherited palette on a scalarless points layer', () => {

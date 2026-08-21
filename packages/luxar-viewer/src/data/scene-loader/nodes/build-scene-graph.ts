@@ -61,6 +61,16 @@ function normalizeNodeExtendDims(node: SceneNode): void {
   }
 }
 
+/**
+ * Load a node-authored custom colormap LUT without making scene loading depend
+ * on the optional sibling array being valid.
+ *
+ * The Python writer stores LUTs as uint8 arrays of shape [256, 3] or [256, 4],
+ * but tolerate other typed arrays so a malformed producer degrades to the same
+ * texture path instead of aborting the whole scene. A missing or unreadable LUT
+ * is likewise non-fatal: `getColormapTexture` owns the warning-backed viridis
+ * fallback for `colormap='custom'` without bytes.
+ */
 async function loadCustomColormapLut(
   node: SceneNode,
   loc: zarr.Location<zarr.Readable>
@@ -77,6 +87,7 @@ async function loadCustomColormapLut(
     } else if (data instanceof Int8Array || data instanceof Uint8ClampedArray) {
       bytes = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
     } else {
+      // Float / int16 etc. — unexpected for a LUT but recover by copying the bytes view.
       bytes = new Uint8Array((data as ArrayBufferView).buffer);
     }
     (node.attrs as ZarrNodeAttrs).customLutBytes = bytes;
@@ -85,6 +96,9 @@ async function loadCustomColormapLut(
       `${node.path}: loaded custom colormap LUT (${bytes.length} bytes)`
     );
   } catch (e: unknown) {
+    // A producer may declare `colormap='custom'` without the sibling array.
+    // Keep loading the scene; the texture helper falls back to viridis and this
+    // warning preserves the diagnosis without turning appearance into I/O failure.
     log.warning(
       Modules.SCENE_LOADER,
       `${node.path}: colormap='custom' but failed to load colormap_lut zarr array — falling back to viridis. ${e instanceof Error ? e.message : ''}`
