@@ -1070,9 +1070,10 @@ def inherited_gsplat_colormap(
         return None
 
     segments = node_path.split("/")
+    minimum_depth = int(getattr(store, "attrs", {}).get("type") == "scene")
     # Nearest ancestor first (the leaf itself is excluded: its own attrs are
     # the caller's `attrs` bag, checked separately).
-    for depth in range(len(segments) - 1, -1, -1):
+    for depth in range(len(segments) - 1, minimum_depth - 1, -1):
         prefix = "/".join(segments[:depth])
         try:
             ancestor = store[prefix] if prefix else store
@@ -1080,8 +1081,6 @@ def inherited_gsplat_colormap(
             continue
         ancestor_attrs = getattr(ancestor, "attrs", None)
         if ancestor_attrs is None:
-            continue
-        if not prefix and ancestor_attrs.get("type") == "scene":
             continue
         value = ancestor_attrs.get("colormap")
         if value is not None:
