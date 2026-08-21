@@ -595,5 +595,6 @@ __all__ = [
     "QEM_AUTO_VERTEX_LIMIT",
     "decimate",
     "decimate_cluster",
+    "decimate_ladder",
     "resolve_decimation_method",
 ]
