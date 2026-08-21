@@ -438,8 +438,8 @@ export class LayerStateManager {
         const scalarRange = node.attrs.scalar_data_range as [number, number] | undefined;
         const dataRange = initialDisplayRange(node);
 
-        // Colormap support — groups inherit no colormap, but they do apply
-        // a chosen colormap to every data descendant that can accept one.
+        // Colormap support — groups and gsplats inherit palettes directly;
+        // points / lines / mesh inherit one only when they have scalars.
         // Gsplats only support a colormap when they actually have scalar
         // data (`has_scalars`) or an authored `colormap`; a bare gsplats
         // node with no scalars must NOT advertise colormap support, or
@@ -452,7 +452,11 @@ export class LayerStateManager {
         // that isn't would misreport an actively colormapped partition/lod
         // layer as "(direct colors)" in the dropdown and hide it from the
         // legend.
-        const composedColormap = getEffectiveAttrs(root, node.path).colormap;
+        const canUseInheritedColormap =
+          node.type === 'group' || node.type === 'gsplats' || !!node.attrs.has_scalars;
+        const composedColormap = canUseInheritedColormap
+          ? getEffectiveAttrs(root, node.path).colormap
+          : (node.attrs.colormap as string | undefined);
         const colormap = composedColormap || deriveColormapFromDescendants(node);
         const scalarWindow = !!colormap || usesColormap(node);
         const supportsColormap = node.type === 'group' || !!node.attrs.has_scalars || !!colormap;

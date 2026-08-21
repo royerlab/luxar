@@ -187,6 +187,46 @@ describe('LayerStateManager', () => {
     expect(layer.scalarDataRange).toEqual([2, 8]);
   });
 
+  it('does not report an inherited palette on a scalarless points layer', () => {
+    const graph: SceneNode = {
+      path: '',
+      type: 'scene',
+      attrs: {},
+      hasSpatialIndex: false,
+      children: [
+        {
+          path: 'palette',
+          type: 'group',
+          attrs: { colormap: 'plasma' },
+          hasSpatialIndex: false,
+          children: [
+            {
+              path: 'palette/points',
+              type: 'points',
+              attrs: { layer: true, color_data_range: [0, 255] },
+              hasSpatialIndex: true,
+            },
+          ],
+        },
+      ],
+    };
+
+    mgr.initFromSceneGraph(graph);
+    const layer = mgr.getLayer('palette/points')!;
+    expect(layer.colormap).toBeUndefined();
+    expect(layer.scalarWindow).toBe(false);
+    expect(layer.supportsColormap).toBe(false);
+    expect([layer.dataMin, layer.dataMax]).toEqual([0, 255]);
+  });
+
+  it('keeps a scalarless points layer own authored palette', () => {
+    mgr.initFromSceneGraph(makeSceneGraph([{ colormap: 'magma' }]));
+    const layer = mgr.getLayer('layer_0')!;
+    expect(layer.colormap).toBe('magma');
+    expect(layer.scalarWindow).toBe(true);
+    expect(layer.supportsColormap).toBe(true);
+  });
+
   it('honors the `visible` attr for initial visibility', () => {
     const graph: SceneNode = {
       path: '',
