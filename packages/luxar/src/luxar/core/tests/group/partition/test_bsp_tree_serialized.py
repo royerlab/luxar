@@ -420,6 +420,8 @@ class TestOverlapSoundness:
         boxes = self._overlapping_boxes()
         assert serialized_bsp_tree_straddles_centers(self._tree(8.0), boxes)
         assert not serialized_bsp_tree_straddles_centers(self._tree(7.9), boxes)
+        assert serialized_bsp_tree_straddles_centers(self._tree(48.0), boxes)
+        assert not serialized_bsp_tree_straddles_centers(self._tree(48.1), boxes)
 
     def test_wrong_coordinate_frame_is_rejected(self) -> None:
         assert not serialized_bsp_tree_straddles_centers(
@@ -430,5 +432,6 @@ class TestOverlapSoundness:
         boxes = self._overlapping_boxes()
         assert not serialized_bsp_tree_straddles_centers(self._tree(np.inf), boxes)
         assert not serialized_bsp_tree_straddles_centers(self._tree(10**10000), boxes)
+        assert not serialized_bsp_tree_separates(self._tree(10**10000), boxes)
         boxes[0][0][0] = np.nan
         assert not serialized_bsp_tree_straddles_centers(self._tree(28.0), boxes)

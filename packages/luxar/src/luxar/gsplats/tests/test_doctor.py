@@ -79,6 +79,42 @@ def _uniform_tiled_store(tmp: Path) -> Path:
     return path
 
 
+def _mixed_overlap_store(tmp: Path) -> tuple[Path, dict]:
+    """Three x-ordered parts: one overlapping cut and one clean cut."""
+    bounds = ((0.0, 32.0), (24.0, 56.0), (80.0, 112.0))
+    regions = []
+    for lo_x, hi_x in bounds:
+        lo = np.array([lo_x, 0.0, 0.0], dtype=np.float32)
+        hi = np.array([hi_x, 10.0, 10.0], dtype=np.float32)
+        centers = np.stack((lo, hi))
+        chol = np.zeros((2, 6), dtype=np.float32)
+        chol[:, [0, 2, 5]] = 1.0
+        regions.append(
+            GSplatData(
+                centers=centers,
+                amplitudes=np.ones(2, dtype=np.float32),
+                cholesky_factors=chol,
+            )
+        )
+    tree = {
+        "axis": 0,
+        "split": 68.0,
+        "left": {
+            "axis": 0,
+            "split": 28.0,
+            "left": {"part": 0},
+            "right": {"part": 1},
+        },
+        "right": {"part": 2},
+    }
+    node = GSplatData.partition_from_regions(
+        regions, bsp_tree=tree, region_labels=[0, 1, 2]
+    )
+    path = tmp / "mixed.gsplats.zarr"
+    write_gsplats_tree(path, node)
+    return path, tree
+
+
 def _scale_tree_planes(tree: dict, factors: tuple[float, ...]) -> dict:
     if "part" in tree:
         return dict(tree)
@@ -303,7 +339,7 @@ class TestSplitPlanesCheck:
             diagnose_store(path, fix=True)
             assert _root_attrs(path)["bsp_tree"] == before
 
-    def test_a_misframed_approximate_tree_is_reported_and_rescaled(self) -> None:
+    def test_an_approximate_tree_is_recovered_without_overclaiming_scale(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = _uniform_tiled_store(Path(tmp))
             healthy = _root_attrs(path)["bsp_tree"]
@@ -315,14 +351,54 @@ class TestSplitPlanesCheck:
             (finding,) = report.findings
             assert finding.severity == "error"
             assert finding.fixable
-            assert "coordinate frame" in finding.summary
-            assert "4" in finding.detail
-            assert "2" in finding.detail
-            assert "8" in finding.detail
+            assert "coordinate frame" not in finding.summary
+            assert "overlap band" in finding.detail
 
             repaired = diagnose_store(path, fix=True)
             assert repaired.healthy
             assert _root_attrs(path)["bsp_tree"] == healthy
+
+    def test_a_clean_cut_does_not_disable_overlap_scale_recovery(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path, healthy = _mixed_overlap_store(Path(tmp))
+            _set_root_attr(path, "bsp_tree", _scale_tree_planes(healthy, (0.25,) * 3))
+
+            report = diagnose_store(path)
+            (finding,) = report.findings
+            assert finding.fixable
+            assert "coordinate frame" in finding.summary
+
+            repaired = diagnose_store(path, fix=True)
+            assert repaired.healthy
+            assert _root_attrs(path)["bsp_tree"] == healthy
+
+    def test_overlap_recovery_does_not_claim_a_frame_scale_without_evidence(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path, healthy = _mixed_overlap_store(Path(tmp))
+            broken = _scale_tree_planes(healthy, (0.25,) * 3)
+            broken["left"]["split"] *= 1.2
+            _set_root_attr(path, "bsp_tree", broken)
+
+            report = diagnose_store(path)
+            (finding,) = report.findings
+            assert finding.fixable
+            assert "coordinate frame" not in finding.summary
+            assert "downscale" not in finding.detail
+            assert "overlap band" in finding.detail
+
+    def test_unrecoverable_overlap_violation_names_the_actual_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = _uniform_tiled_store(Path(tmp))
+            broken = _scale_tree_planes(_root_attrs(path)["bsp_tree"], (0.25,) * 3)
+            broken["left"]["split"] *= 2.0
+            _set_root_attr(path, "bsp_tree", broken)
+
+            report = diagnose_store(path)
+            (finding,) = report.findings
+            assert "centers do not straddle" in finding.detail
+            assert "measured overlap band" in finding.detail
 
     def test_inconsistent_plane_scales_are_not_guessed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -84,7 +84,7 @@ def check_partition_split_planes(root: "zarr.Group") -> List[Finding]:
     discretely as the camera moves, so an order-dependent blending mode
     (``normal`` or ``volumetric``) pops at the seams on every orbit.
 
-    Two conditions, both silent in the viewer:
+    The conditions below are silent in the viewer:
 
     * **Missing.** Written by a producer that did not record its planes (any
       tiled fit before #1555), or dropped by a tool that rebuilt the tree. When
@@ -98,13 +98,10 @@ def check_partition_split_planes(root: "zarr.Group") -> List[Finding]:
       still returns a plausible permutation — the ordering is confidently wrong
       instead of falling back. Repaired by recovering planes when possible, and
       by REMOVING the tree when not: the centroid fallback is at least honest.
-
-    Overlapping parts are the exception to that second condition, and are
-    reported as a note rather than condemned: no tree separates them, so the
-    separation test cannot tell a stale tree from the producer's DOCUMENTED
-    approximation (a uniform-tiled fit's apodized parts keep their overlap band
-    and its cuts are the band midplanes). Deleting one of those would throw away
-    correct metadata for the ordering the tree exists to avoid.
+    * **Approximate.** Overlapping parts cannot be separated exactly. A stored
+      tree is reported as a note when every cut remains plausible within the
+      measured overlap band. A cut outside that band is repaired when its
+      position can be recovered safely, or removed when it cannot.
     """
     from luxar.core.group.partition import (
         reconstruct_serialized_bsp_tree,
@@ -131,15 +128,26 @@ def check_partition_split_planes(root: "zarr.Group") -> List[Finding]:
                     continue
                 recovered = _recover_frame_scale(stored_dict, boxes)
                 if recovered is not None:
-                    repaired, factors = recovered
+                    repaired, factors, frame_scale_supported = recovered
                     findings.append(
-                        _misframed_finding(group, where, len(boxes), repaired, factors)
+                        _misframed_finding(
+                            group,
+                            where,
+                            len(boxes),
+                            repaired,
+                            factors,
+                            frame_scale_supported,
+                        )
                     )
                     continue
                 # The overlap exception is only for a geometrically plausible
                 # approximate tree. A grosser violation is stale even though no
                 # exact replacement can be reconstructed from intersecting boxes.
-                findings.append(_stale_finding(group, where, len(boxes), None))
+                findings.append(
+                    _stale_finding(
+                        group, where, len(boxes), None, overlap_violation=True
+                    )
+                )
                 continue
             findings.append(_stale_finding(group, where, len(boxes), rebuilt))
             continue
@@ -186,7 +194,7 @@ def check_partition_split_planes(root: "zarr.Group") -> List[Finding]:
 
 def _recover_frame_scale(
     stored: Dict[str, Any], boxes: "List[Tuple[np.ndarray, np.ndarray]]"
-) -> "Optional[Tuple[Dict[str, Any], Tuple[float, ...]]]":
+) -> "Optional[Tuple[Dict[str, Any], Tuple[float, ...], bool]]":
     """Recover a single positive multiplier per split axis, or decline.
 
     The known producer failures are pure coordinate-frame scales
@@ -211,7 +219,7 @@ def _recover_frame_scale(
     repaired = map_serialized_bsp_tree(stored, linear=np.diag(factors))
     if repaired is None or not serialized_bsp_tree_straddles_centers(repaired, boxes):
         return None
-    return repaired, factors
+    return repaired, factors, _frame_scale_is_supported(ratios, factors)
 
 
 def _collect_frame_scale_ranges(
@@ -234,8 +242,6 @@ def _collect_frame_scale_ranges(
         left_high = max(float(boxes[i][1][axis]) for i in left)
         right_low = min(float(boxes[i][0][axis]) for i in right)
     except (KeyError, TypeError, ValueError, IndexError, OverflowError):
-        return False
-    if right_low > left_high:
         return False
     if split == 0.0:
         valid = right_low <= 0.0 <= left_high
@@ -270,6 +276,23 @@ def _resolve_frame_factors(
         estimate = float(np.median(ratios[axis]))
         factors.append(min(max(estimate, low), high))
     return tuple(factors)
+
+
+def _frame_scale_is_supported(
+    ratios: Dict[int, List[float]], factors: Tuple[float, ...]
+) -> bool:
+    """Whether every changed axis has repeated, tightly agreeing scale evidence."""
+    for axis, factor in enumerate(factors):
+        if np.isclose(factor, 1.0):
+            continue
+        samples = ratios[axis]
+        if len(samples) < 2:
+            return False
+        estimate = float(np.median(samples))
+        spread = (max(samples) - min(samples)) / abs(estimate)
+        if spread > 0.05:
+            return False
+    return True
 
 
 def _labels_name_the_parts(stored: Dict[str, Any], n_parts: int) -> bool:
@@ -313,6 +336,7 @@ def _misframed_finding(
     n_parts: int,
     repaired: Dict[str, Any],
     factors: Tuple[float, ...],
+    frame_scale_supported: bool,
 ) -> Finding:
     used = ", ".join(
         f"axis {axis} ×{factor:g}"
@@ -323,19 +347,33 @@ def _misframed_finding(
     def replace() -> None:
         group.attrs["bsp_tree"] = repaired
 
-    return Finding(
-        check="split-planes",
-        severity="error",
-        path=where,
-        summary=f"split planes for {n_parts} parts use a different coordinate frame",
-        detail=(
+    if frame_scale_supported:
+        summary = f"split planes for {n_parts} parts use a different coordinate frame"
+        detail = (
             "The parts overlap, but their centers do not straddle the stored "
             "planes even after allowing the measured overlap band. A single "
             f"per-axis scale explains every plane ({used}), matching a tree "
             "written before a downscale or voxel-size conversion was applied "
             "to the splat centers."
-        ),
-        remedy="Rescale the stored planes into the parts' coordinate frame.",
+        )
+        remedy = "Rescale the stored planes into the parts' coordinate frame."
+    else:
+        summary = f"split planes for {n_parts} parts fall outside their overlap bands"
+        detail = (
+            "The parts' centers do not straddle the stored planes even after "
+            "allowing the measured overlap band. The plane positions can be "
+            "recovered from those bands, but the raw ratios do not provide "
+            "enough consistent evidence to identify a coordinate-frame scale."
+        )
+        remedy = "Replace the stored planes with the recovered overlap-band cuts."
+
+    return Finding(
+        check="split-planes",
+        severity="error",
+        path=where,
+        summary=summary,
+        detail=detail,
+        remedy=remedy,
         fix=replace,
     )
 
@@ -381,11 +419,23 @@ def _missing_finding(
 
 
 def _stale_finding(
-    group: "zarr.Group", where: str, n_parts: int, rebuilt: Optional[Dict[str, Any]]
+    group: "zarr.Group",
+    where: str,
+    n_parts: int,
+    rebuilt: Optional[Dict[str, Any]],
+    *,
+    overlap_violation: bool = False,
 ) -> Finding:
+    if overlap_violation:
+        reason = (
+            "The parts' centers do not straddle the stored planes even after "
+            "allowing the measured overlap band, so the viewer "
+        )
+    else:
+        reason = "The stored planes do not separate the parts they name, so the viewer "
     detail = (
-        "The stored planes do not separate the parts they name, so the viewer "
-        "orders confidently WRONG rather than falling back to centroids. Usually "
+        reason
+        + "orders confidently WRONG rather than falling back to centroids. Usually "
         "a tree left behind in a pre-transform coordinate space, or one written "
         "against a different part set."
     )

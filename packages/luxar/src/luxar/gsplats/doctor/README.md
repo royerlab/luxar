@@ -39,7 +39,7 @@ if not report.healthy:
 |---|---|---|
 | `split-planes` | a `kind=partition` records no `bsp_tree` | recover the planes from the part boxes, when those are disjoint |
 | `split-planes` | the stored `bsp_tree` does not separate the parts it names (stale after a transform, or written against a different part set) | rebuild from the part boxes, or remove the tree so ordering falls back honestly |
-| `split-planes` | overlapping parts carry planes in a different coordinate frame | recover one scale per axis from the parts and rescale the tree, but only when the same factors explain every plane |
+| `split-planes` | overlapping parts carry planes outside their measured overlap bands | recover the band-bounded cuts; report a coordinate-frame scale only when repeated planes support the same factors |
 | `split-planes` | the parts OVERLAP, so no tree separates them and the stored one cannot be checked exactly | none — reported as a note; this is what a uniform-tiled fit's approximate planes look like, and deleting them would be a downgrade |
 
 Why it matters: the viewer orders partition parts back-to-front by traversing
@@ -57,8 +57,10 @@ such a partition already carries its producer's approximate planes, the
 separation test fails by construction. Doctor still checks that each plane lies
 between the two sides' part-box centers, allowing the measured overlap width as
 tolerance. A grosser violation is an error. When one constant multiplier per
-axis moves every plane back into the measured overlap bands, doctor names those
-factors and can rescale the tree; otherwise it removes the misleading tree
+axis moves every plane back into the measured overlap bands, doctor can rescale
+the tree; it names a coordinate-frame scale only when at least two raw ratios on
+each changed axis agree closely. Otherwise it describes the repair as recovering
+the measured band cuts. If no safe factors exist, it removes the misleading tree
 rather than guessing. A geometrically plausible approximate tree is reported as
 a note and kept rather than condemned.
 

@@ -477,7 +477,7 @@ def serialized_bsp_tree_separates(
         if sorted(labels) != list(range(len(boxes))):
             return False
         return _node_separates(tree, boxes)
-    except (KeyError, TypeError, ValueError, IndexError):  # malformed node shape
+    except (KeyError, TypeError, ValueError, IndexError, OverflowError):
         return False
 
 
